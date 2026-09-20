@@ -6,8 +6,11 @@ seconds. 2 to 9 players.
 
 Live at **https://www.michael-han.com/gto-solver/** (the solver runs in your
 browser via Pyodide, nothing is uploaded). The **Download** button there gives
-you the native version, about 30x faster: unzip, double-click `run.command`
-(Mac) or `run.bat` (Windows), and the same page opens against a local solver.
+you the native version: unzip, double-click `run.command` (Mac) or `run.bat`
+(Windows), and the same page opens against a local solver. Native numpy is
+about 10x faster per iteration than the browser build, so the app answers a
+flop in 2.5 s with more iterations and a fuller tree than the site gets in 8 s;
+its **Deep** setting spends 8 s for the most converged answer.
 
 It is a review tool for hands you have already played. There is deliberately no
 screen capture, table reading or live-play hook; using anything like that on a
@@ -39,8 +42,8 @@ a custom size, all-in. A seat strip shows who has folded and who is to act;
 clicking a seat folds everyone before it, and a single context shortcut
 ("Fold to me", "Everyone checks", "Everyone else folds") skips the boring bits.
 
-Whenever it becomes your turn the advice panel solves the spot (about 4 s
-postflop) and shows the recommended action with its size (preflop: 2.5bb
+Whenever it becomes your turn the advice panel solves the spot (2.5 s
+postflop by default in the app, Deep = 8 s) and shows the recommended action with its size (preflop: 2.5bb
 opens, 3bb from the small blind, 3x or 4x 3-bets, 2.3x 4-bets, then all-in;
 postflop: the solver's bet and raise sizes in big blinds), the mixed strategy for your exact
 hand with EVs, and a 13x13 grid of your whole range at that spot with your hand
@@ -97,7 +100,7 @@ range, and solver stats.
 | Layer | File | Method |
 |---|---|---|
 | Cards, ranges | `gto/cards.py`, `gto/ranges.py` | 1326-combo weight vectors, PIO-style range syntax |
-| Hand strength | `gto/evaluator.py` | `treys` 7-card evaluator, cached per board |
+| Hand strength | `gto/evaluator.py` | numpy-vectorised 7-card evaluator built on treys' lookup tables: all 21 five-card subsets of every combo on a board in one pass, about 1 ms per board |
 | Preflop | `gto/preflop.py` | Hand-written 100bb charts: RFI, vs RFI, vs 3-bet, vs 4-bet, cold vs 3-bet, mixed frequencies. Seats for 2 to 9 players map onto the charts by how many players are left to act (9-max LJ plays the 6-max UTG chart, 7+ handed UTG plays a tighter EP chart, heads-up has its own button and big-blind charts). Replaying the preflop action through the charts gives every player's range going to the flop. |
 | Postflop | `gto/solver.py` | Heads-up range-vs-range **discounted CFR** over a bet tree (2 bet sizes per street, raises to half pot and full pot after the call, all-in when the stack is short or a raise size would exceed it, max 2 raises). Vectors are compressed to combos in either range. A showdown is one matvec with a precomputed antisymmetric matrix. |
 | Hand replay | `gto/advisor.py` | The whole hand is replayed for any number of seats: blinds, folds, dead money from players who folded, all-ins, acting order (heads-up the button acts first preflop and last postflop). Whenever exactly two players remain the spot is solved heads-up: from the start of the street if it began heads-up, or from the current node if a third player just folded. With three or more live players it falls back to Monte Carlo equity against every live range plus pot-odds logic, and says so. |

@@ -15,6 +15,7 @@
   header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--line); }
   header h1 { font-size: 15px; margin: 0; font-weight: 600; }
   header .spacer { flex: 1; }
+  header .ctl { display: inline-flex; align-items: center; gap: 8px; }
   a.dl { color: var(--accent); text-decoration: none; font-size: 13px; border: 1px solid var(--accent); border-radius: 8px; padding: 7px 12px; }
   a.dl:hover { background: #2a2413; }
   main { display: grid; grid-template-columns: minmax(440px, 540px) 1fr; gap: 18px; padding: 18px 20px; max-width: 1400px; margin: 0 auto; }
@@ -130,6 +131,8 @@
 <header>
   <h1>GTO Solver</h1>
   <span class="spacer"></span>
+  <span class="ctl" id="solvectl" hidden><span class="muted" style="font-size:12px">Solve</span>
+    <div class="segment"><button data-b="2.5" class="active">Quick</button><button data-b="8">Deep</button></div></span>
   <a id="download" class="dl" href="gto-solver.zip" download hidden title="The same solver running natively on your computer: about 30x faster than in the browser">Download the fast version</a>
   <button id="copyhand" title="Copy the hand, the advice and a link that reopens this exact spot">Copy hand</button>
   <button id="newhand">New hand</button>
@@ -196,7 +199,7 @@ const STREETS = ["preflop", "flop", "turn", "river"];
 const NEED = { preflop: 0, flop: 3, turn: 4, river: 5 };
 const SLOT_NAMES = ["your first card", "your second card", "flop card 1", "flop card 2", "flop card 3", "the turn", "the river"];
 let BUDGET = 4;
-const WORKER_VERSION = "4";
+const WORKER_VERSION = "5";
 
 // ---- backend: the local Python server if present, otherwise the solver runs in the browser (Pyodide worker)
 let MODE = null, worker = null, reqId = 0;
@@ -204,6 +207,11 @@ const pending = {};
 const modeReady = (async () => {
   try { const r = await fetch("health", { cache: "no-store" }); if (r.ok && (await r.json()).ok) MODE = "server"; } catch (e) {}
   if (!MODE) { MODE = "wasm"; BUDGET = 8; document.getElementById("download").hidden = false; }
+  else {
+    BUDGET = 2.5;   // native is ~10x faster per iteration than the browser build, so a short budget already beats it
+    const ctl = document.getElementById("solvectl"); ctl.hidden = false;
+    ctl.querySelectorAll("button").forEach(b => b.onclick = () => { BUDGET = parseFloat(b.dataset.b); ctl.querySelectorAll("button").forEach(x => x.classList.toggle("active", x === b)); lastKey = null; renderAll(); });
+  }
 })();
 function setStatus(msg) { const el = document.getElementById("result"); if (el.querySelector(".spinner")) el.innerHTML = `<div class="muted"><span class="spinner"></span>${msg}</div>`; }
 function callAdvise(state) {
