@@ -193,6 +193,7 @@ const STREETS = ["preflop", "flop", "turn", "river"];
 const NEED = { preflop: 0, flop: 3, turn: 4, river: 5 };
 const SLOT_NAMES = ["your first card", "your second card", "flop card 1", "flop card 2", "flop card 3", "the turn", "the river"];
 let BUDGET = 4;
+const WORKER_VERSION = "3";
 
 // ---- backend: the local Python server if present, otherwise the solver runs in the browser (Pyodide worker)
 let MODE = null, worker = null, reqId = 0;
@@ -206,7 +207,7 @@ function setStatus(msg) { const el = document.getElementById("result"); if (el.q
 function callAdvise(state) {
   if (MODE === "server") return fetch("advise", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(state) }).then(r => r.json());
   if (!worker) {
-    worker = new Worker("worker.js");
+    worker = new Worker("worker.js?v=" + WORKER_VERSION);   // query busts the 4h GitHub Pages cache on redeploys
     worker.onmessage = (e) => { const m = e.data; if (m.status) setStatus(m.status); if (m.id != null && pending[m.id]) { pending[m.id](m.error ? { error: m.error } : m.result); delete pending[m.id]; } };
     worker.onerror = (e) => { for (const k in pending) { pending[k]({ error: "solver worker failed: " + e.message }); delete pending[k]; } };
   }
