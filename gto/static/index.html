@@ -129,6 +129,7 @@
   <h1>GTO Solver</h1>
   <span class="muted" id="modeLabel" style="font-size:12px"></span>
   <span class="spacer"></span>
+  <button id="copyhand" title="Copy the hand, the advice and a link that reopens this exact spot">Copy hand</button>
   <button id="newhand">New hand</button>
 </header>
 
@@ -193,7 +194,7 @@ const STREETS = ["preflop", "flop", "turn", "river"];
 const NEED = { preflop: 0, flop: 3, turn: 4, river: 5 };
 const SLOT_NAMES = ["your first card", "your second card", "flop card 1", "flop card 2", "flop card 3", "the turn", "the river"];
 let BUDGET = 4;
-const WORKER_VERSION = "3";
+const WORKER_VERSION = "4";
 
 // ---- backend: the local Python server if present, otherwise the solver runs in the browser (Pyodide worker)
 let MODE = null, worker = null, reqId = 0;
@@ -220,6 +221,7 @@ setPositions(S.players);
 let selSlot = null;
 let lastKey = null;
 let solving = false;
+let lastResult = null;
 
 function fresh(n) { n = n || 6; return { players: n, hero: n === 2 ? "SB" : "BTN", stack: 100, cards: [null, null, null, null, null, null, null], actions: { preflop: [], flop: [], turn: [], river: [] } }; }
 function save() { try { localStorage.setItem("handreview", JSON.stringify(S)); } catch (e) {} }
@@ -459,6 +461,7 @@ async function analyze(sim) {
 const COLORS = (n) => n === "fold" ? "var(--fold)" : n === "check" || n === "call" ? "var(--passive)" : n === "all-in" ? "var(--allin)" : /75|100|raise/.test(n) ? "var(--bet2)" : "var(--bet)";
 
 function renderResult(res) {
+  lastResult = res;
   const el = document.getElementById("result"); el.className = "";
   if (res.error) { el.innerHTML = `<div class="err">${res.error}</div>`; return; }
   const board = res.board ? res.board.match(/../g).map(c => c[0] + SUIT_SYM[c[1]]).join(" ") : "";
@@ -510,6 +513,49 @@ function resetAdvice() {
   const el = document.getElementById("result"); lastKey = null;
   if (el.className !== "empty") { el.className = "empty"; el.innerHTML = "Pick your seat and cards, then enter the action seat by seat.<br>Advice appears here whenever it's your turn."; }
 }
+// ---- share: plain-text summary + link that reopens the spot
+function handText() {
+  const n = S.players, seat = SEAT_LABEL(S.hero, n);
+  const lines = [`GTO Solver hand: ${n}-handed, ${S.stack}bb effective, I am ${seat} with ${S.cards[0] || "?"}${S.cards[1] || "?"}`];
+  const act = (a) => `${SEAT_LABEL(a.pos, n)} ${a.action === "bet" ? "bets " + fmt(a.to) : a.action === "raise" ? "raises to " + fmt(a.to) : a.action === "all-in" ? "all-in" : a.action + "s"}`;
+  const bd = (s) => s === "preflop" ? "" : " (" + boardCards().slice(NEED[s] - (s === "flop" ? 3 : 1), NEED[s]).join(" ") + ")";
+  const sim = simulate();
+  for (const s of STREETS) {
+    if (!S.actions[s].length && !(sim.current === s && sim.cur)) continue;
+    let line = `${s[0].toUpperCase() + s.slice(1)}${bd(s)}: ` + S.actions[s].map(act).join(", ");
+    if (sim.current === s && sim.cur) line += `${S.actions[s].length ? " — " : ""}${SEAT_LABEL(sim.toAct, n)} to act, pot ${fmt(sim.cur.pot)}bb`;
+    lines.push(line);
+  }
+  const r = lastResult;
+  if (r && !r.error) {
+    lines.push(`Advice (${r.street}${r.position ? ", " + r.position : ""}): ${r.recommended}`);
+    lines.push("  " + r.actions.map(a => `${a.action}${a.amount_bb != null ? " " + a.amount_bb + "bb" : ""} ${(a.freq * 100).toFixed(1)}%${a.ev_bb !== undefined ? " EV " + (a.ev_bb > 0 ? "+" : "") + a.ev_bb.toFixed(2) : ""}`).join(" | "));
+    if (r.range_action_freq) lines.push("  whole range: " + Object.entries(r.range_action_freq).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(", "));
+    if (r.villain_range) lines.push(`  ${r.villain} range (${r.villain_range_combos} combos): ${r.villain_range}`);
+    if (r.multiway) lines.push(`  equity vs field ${(r.equity_vs_field * 100).toFixed(0)}% (heuristic, ${r.opponents.length + 1} players)`);
+    if (r.solver) lines.push(`  solver: ${r.solver.iterations} iterations, ${r.solver.solve_seconds}s, ${r.solver.active_combos} combos, sizes ${r.solver.tree_actions.join(", ")}`);
+    if (r.notes && r.notes.length) lines.push("  notes: " + r.notes.join("; "));
+  }
+  const link = location.origin + location.pathname + "#h=" + btoa(unescape(encodeURIComponent(JSON.stringify(S))));
+  lines.push("Open this spot: " + link);
+  lines.push("State JSON: " + JSON.stringify(payload()));
+  return lines.join("\n");
+}
+document.getElementById("copyhand").onclick = async () => {
+  const b = document.getElementById("copyhand"), text = handText();
+  try { await navigator.clipboard.writeText(text); b.textContent = "Copied"; }
+  catch (e) { window.prompt("Copy this:", text); b.textContent = "Copy hand"; return; }
+  setTimeout(() => b.textContent = "Copy hand", 1500);
+};
+(function loadFromLink() {
+  const m = location.hash.match(/#h=([A-Za-z0-9+/=]+)/);
+  if (!m) return;
+  try {
+    const st = JSON.parse(decodeURIComponent(escape(atob(m[1]))));
+    if (st && st.cards && st.actions && SEATS[st.players]) { S = st; setPositions(S.players); save(); }
+  } catch (e) {}
+  history.replaceState(null, "", location.pathname);
+})();
 document.getElementById("stack").value = S.stack;
 document.getElementById("stack").onchange = (e) => { S.stack = parseFloat(e.target.value) || 100; save(); renderAll(); };
 document.getElementById("newhand").onclick = () => {

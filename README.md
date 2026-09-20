@@ -44,6 +44,9 @@ postflop: the solver's bet and raise sizes in big blinds), the mixed strategy fo
 hand with EVs, and a 13x13 grid of your whole range at that spot with your hand
 boxed. Click an advice row to record it as what you did and keep going.
 Solver stats and the villain's inferred range sit behind a "Details" toggle.
+**Copy hand** puts a plain-text summary on the clipboard: the full action, the
+advice with frequencies, EVs and sizes, the villain range, solver stats, a link
+that reopens the exact spot, and the raw state JSON for the API or CLI.
 The hand is kept in the browser between reloads; **New hand** clears it.
 
 ## Use from the shell
@@ -103,11 +106,15 @@ range, and solver stats.
 
 * **River**: exact for the bet-size abstraction; converges in well under a second.
 * **Turn**: turn decisions are full; river subtrees are full for `n_rivers` sampled
-  rivers (default 6). About 100 iterations in the 4 s budget.
+  rivers (default 12). About 65 iterations in the 4 s budget on wide ranges.
 * **Flop**: flop decisions are full, turn decisions are full on `n_turns` sampled
-  turns (default 4), and the river is an **equity leaf**: the average showdown matrix
+  turns (default 6), and the river is an **equity leaf**: the average showdown matrix
   over 16 sampled rivers. So flop play can't see river bluffs or thin value bets.
-  80 to 130 iterations in 4 s depending on range width.
+  About 80 iterations in 4 s on wide ranges.
+* **Earlier streets** used for range narrowing get 2 s each, and a solve that is
+  reused later in the same hand keeps iterating from its stored regrets instead of
+  restarting. When a real bet or raise size differs from the abstraction by more
+  than 15%, that street's tree uses the real size so narrowing is exact.
 * Multiway pots (3+ players live at your decision) are not solved; an
   equity-vs-field pot-odds heuristic is returned with a note. Once the pot is
   heads-up it is solved, but streets that were multiway do not narrow ranges.

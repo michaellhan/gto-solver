@@ -21,7 +21,7 @@ import numpy as np
 from .cards import cards as parse_cards, COMBO_INDEX, hand_class, ALL_COMBOS, cards_str
 from .ranges import N_COMBOS, range_to_text
 from . import preflop as pf
-from .solver import solve, Config, Solution, Decision, Terminal, Chance, match_action, expand, MEMBER_FULL, Solver
+from .solver import solve, Config, Solution, Decision, Terminal, Chance, match_action, expand, MEMBER_FULL, _inv_of
 
 DEFAULT_OPEN = {"SB": 3.0}
 STREET_OF = {0: "preflop", 3: "flop", 4: "turn", 5: "river"}
@@ -160,7 +160,7 @@ def _range_key(v: np.ndarray) -> str:
 
 # ----------------------------------------------------------------------------- advisor
 class Advisor:
-    def __init__(self, cfg: Optional[Config] = None, time_budget: float = 4.0, prior_budget: float = 1.5,
+    def __init__(self, cfg: Optional[Config] = None, time_budget: float = 4.0, prior_budget: float = 2.0,
                  prior_smoothing: float = 0.15):
         self.cfg = cfg or Config()
         self.time_budget = time_budget
@@ -280,11 +280,13 @@ class Advisor:
                     notes.append(f"{st.name}: was multiway, ranges not narrowed")
                     continue
                 eff = min(stack - st.inv_start[oop], stack - st.inv_start[ip])
-                sol = self._solve_cached(sub_board, r0, r1, st.pot_start, eff, self.prior_budget)
+                cfg = self._cfg_with_real_sizes(st, oop, ip, eff)
+                sol = self._solve_cached(sub_board, r0, r1, st.pot_start, eff, self.prior_budget, cfg=cfg)
                 node, c0, c1 = self._walk(sol, st.actions, oop, ip, st.pot_start, eff, notes, st.name, self.prior_smoothing)
                 r0, r1 = expand(sol.ctx, c0), expand(sol.ctx, c1)
             eff = min(stack - cur.inv_start[oop], stack - cur.inv_start[ip])
-            sol = self._solve_cached(board, r0, r1, cur.pot_start, eff, self.time_budget)
+            cfg = self._cfg_with_real_sizes(cur, oop, ip, eff)
+            sol = self._solve_cached(board, r0, r1, cur.pot_start, eff, self.time_budget, cfg=cfg)
             node, n_r0, n_r1 = self._walk(sol, cur.actions, oop, ip, cur.pot_start, eff, notes, cur.name, 0.0)
         else:
             # pot became heads-up during this street: solve from the current node
@@ -297,8 +299,8 @@ class Advisor:
             return {"error": "no decision pending at this point in the tree", "notes": notes}
         if node.player != hero_p:
             notes.append("warning: tree expected the other player to act; reporting that node")
-        evs = self._node_evs(sol, node, n_r0, n_r1)
-        strat = node.avg_strategy()
+        evs = sol.solver.node_action_evs(node, n_r0, n_r1)
+        strat = node.avg_strategy0()
         idx = COMBO_INDEX[(min(hole), max(hole))]
         pos_in_active = np.nonzero(sol.ctx.active == idx)[0]
         ci = int(pos_in_active[0]) if len(pos_in_active) else None
@@ -395,13 +397,48 @@ class Advisor:
                 "seconds": round(time.time() - t0, 2)}
 
     # ------------------------------------------------------------ helpers
-    def _solve_cached(self, board, r0, r1, pot, stack, budget, bets=(0.0, 0.0), to_act=0, n_raises=0):
-        key = (tuple(board), _range_key(r0), _range_key(r1), round(pot, 2), round(stack, 2), tuple(round(b, 2) for b in bets), to_act, n_raises)
+    def _solve_cached(self, board, r0, r1, pot, stack, budget, bets=(0.0, 0.0), to_act=0, n_raises=0, cfg=None):
+        cfg = cfg or self.cfg
+        key = (tuple(board), _range_key(r0), _range_key(r1), round(pot, 2), round(stack, 2),
+               tuple(round(b, 2) for b in bets), to_act, n_raises, cfg.sizes_key())
         sol = self._cache.get(key)
-        if sol is None or (sol.seconds < budget * 0.8 and sol.iters < 1000):
-            sol = solve(board, r0, r1, pot, stack, bets=bets, to_act=to_act, n_raises=n_raises, cfg=self.cfg, time_budget=budget)
+        if sol is None:
+            sol = solve(board, r0, r1, pot, stack, bets=bets, to_act=to_act, n_raises=n_raises, cfg=cfg, time_budget=budget)
             self._cache[key] = sol
+        elif sol.seconds < budget * 0.8 and sol.iters < 1000:
+            sol.extend(budget - sol.seconds)        # keep going from the stored regrets instead of restarting
         return sol
+
+    def _cfg_with_real_sizes(self, st: StreetState, oop: str, ip: str, stack: float) -> Config:
+        """Tree config for this street where the bet/raise sizes actually taken replace the
+        nearest abstract size (only when they differ by more than 15%), so range narrowing
+        uses the real action instead of snapping it to the abstraction."""
+        cfg = self.cfg.copy()
+        bets = [0.0, 0.0]
+        pot = st.pot_start
+        for a in st.actions:
+            if a["pos"] not in (oop, ip):
+                continue
+            p = 0 if a["pos"] == oop else 1
+            act = a["action"]
+            pot_total = pot + bets[0] + bets[1]
+            if act == "bet" and (a.get("amount") or a.get("to")):
+                amt = a.get("amount") or a.get("to")
+                frac = amt / max(pot_total, 1e-9)
+                _swap_nearest(cfg.bet_sizes[st.name], frac)
+                bets[p] = amt
+            elif act == "raise" and (a.get("to") or a.get("amount")):
+                to = a.get("to") or a.get("amount")
+                call_amt = bets[1 - p] - bets[p]
+                frac = (to - bets[1 - p]) / max(pot_total + call_amt, 1e-9)
+                if to < stack - 1e-9:
+                    _swap_nearest(cfg.raise_sizes[st.name], frac)
+                bets[p] = to
+            elif act == "call":
+                bets[p] = min(bets[1 - p], stack)
+            elif act == "all-in":
+                bets[p] = stack
+        return cfg
 
     def _walk(self, sol: Solution, acts: List[dict], oop, ip, pot, stack, notes, street, smoothing=0.0):
         """Follow real actions through the solved tree, narrowing ranges."""
@@ -419,7 +456,7 @@ class Advisor:
                 continue
             name = self._tree_action_name(node, a, p, bets, pot)
             k = match_action(node.names, name)
-            s = node.avg_strategy()[k]
+            s = node.avg_strategy0()[k]
             if smoothing > 0:
                 s = (1.0 - smoothing) * s + smoothing / len(node.names)
             if p == 0:
@@ -452,18 +489,6 @@ class Advisor:
         to = a.get("to") or a.get("amount") or 0.0
         return f"raise to {to:g}"
 
-    def _node_evs(self, sol: Solution, node: Decision, r0, r1):
-        s = Solver(sol.ctx, sol.root, set(node.board))
-        p = node.player
-        ro = r1 if p == 0 else r0
-        cs = s.compat_sum(ro)
-        inv_p = _inv_of(node, p)
-        evs = np.zeros((len(node.names), sol.ctx.n))
-        for a, child in enumerate(node.children):
-            u = s._cfr(child, p, r0, r1, update=False, use_avg=True)
-            evs[a] = np.where(cs > 1e-12, u / np.where(cs > 1e-12, cs, 1.0), 0.0) + inv_p
-        return evs
-
     @staticmethod
     def _amount(name: str, node: Decision, p: int) -> Optional[float]:
         child = dict(zip(node.names, node.children)).get(name)
@@ -483,14 +508,20 @@ class Advisor:
 
 
 def _stack_left(node: Decision, p: int) -> float:
-    # walk to any terminal to read the invested totals; the all-in child commits everything
     for n, c in zip(node.names, node.children):
         if n == "all-in":
-            t = c
-            while not isinstance(t, Terminal):
-                t = t.children[0]
-            return t.inv[p] - _inv_of(node, p)
+            return _inv_of(c, p) - _inv_of(node, p)
     return 0.0
+
+
+def _swap_nearest(sizes: List[float], frac: float, tol: float = 0.15) -> None:
+    """Replace the entry of `sizes` closest to `frac` with `frac` if it is more than `tol`
+    (relative) away; otherwise keep the abstraction (keeps solves cache-friendly)."""
+    if not sizes or frac <= 0:
+        return
+    i = min(range(len(sizes)), key=lambda k: abs(sizes[k] - frac))
+    if abs(sizes[i] - frac) / max(sizes[i], 1e-9) > tol and frac not in sizes:
+        sizes[i] = round(frac, 3)
 
 
 RANKS = "AKQJT98765432"
@@ -512,13 +543,6 @@ def strategy_grid(strats: List[np.ndarray], names: List[str], weights: np.ndarra
         out[cls] = {"w": round(tot / len(idxs), 3),
                     "f": [round(float((s[idx] * w).sum() / tot), 3) for s in strats]}
     return {"actions": names, "cells": out}
-
-
-def _inv_of(node: Decision, p: int) -> float:
-    n = node
-    while not isinstance(n, Terminal):
-        n = n.children[0]
-    return n.inv[p]
 
 
 def state_board(board) -> str:
