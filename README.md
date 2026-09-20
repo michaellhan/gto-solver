@@ -27,7 +27,9 @@ python -m gto.server --port 18877
 
 Open http://127.0.0.1:18877/ . (The same page is what is deployed to the
 website; there it detects that no server is present and runs the identical
-Python code in a web worker with Pyodide, with a slightly longer solve budget.) Pick the number of players (2 to 9), your seat
+Python code in a web worker with Pyodide. Pyodide's numpy is much slower than
+native, so the browser build uses a lighter tree, fewer sampled runouts, and an
+8 s budget; the local server gives better postflop accuracy.) Pick the number of players (2 to 9), your seat
 and stack, click cards into your
 hand and the board (click a placed card to remove it), then enter the action
 seat by seat with the buttons: fold, check or call, one or a few preset sizes,

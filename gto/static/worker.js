@@ -16,7 +16,9 @@ const ready = (async () => {
     const src = await (await fetch(`gto/${f}.py`, { cache: "no-store" })).text();
     py.FS.writeFile(`/app/gto/${f}.py`, src);
   }
-  py.runPython("import sys, json; sys.path.insert(0, '/app'); from gto.advisor import Advisor; adv = Advisor()");
+  // lighter tree than the native server: Pyodide numpy is far slower, so trade abstraction for iterations
+  py.runPython("import sys, json; sys.path.insert(0, '/app'); from gto.advisor import Advisor; from gto.solver import Config; "
+             + "adv = Advisor(Config(n_turns=2, n_rivers=3, leaf_turns=4, leaf_rivers_flop=8), time_budget=8.0, prior_budget=2.5)");
   postMessage({ status: "Solving…" });
   return py;
 })();

@@ -199,7 +199,7 @@ let MODE = null, worker = null, reqId = 0;
 const pending = {};
 const modeReady = (async () => {
   try { const r = await fetch("health", { cache: "no-store" }); if (r.ok && (await r.json()).ok) MODE = "server"; } catch (e) {}
-  if (!MODE) { MODE = "wasm"; BUDGET = 7; }
+  if (!MODE) { MODE = "wasm"; BUDGET = 8; }
   document.getElementById("modeLabel").textContent = MODE === "server" ? "local server" : "runs in your browser";
 })();
 function setStatus(msg) { const el = document.getElementById("result"); if (el.querySelector(".spinner")) el.innerHTML = `<div class="muted"><span class="spinner"></span>${msg}</div>`; }
