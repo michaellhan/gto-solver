@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GTO Solver</title>
+<style>
+  :root {
+    --bg: #0f1216; --panel: #171b21; --panel2: #1e242c; --line: #2a313b;
+    --text: #e6e9ee; --muted: #8b94a3; --accent: #f5b942;
+    --fold: #4a7bd0; --passive: #3fae6a; --bet: #e0603a; --bet2: #b8402a; --allin: #8a1f2f;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  header .spacer { flex: 1; }
+  main { display: grid; grid-template-columns: minmax(440px, 540px) 1fr; gap: 18px; padding: 18px 20px; max-width: 1400px; margin: 0 auto; }
+  @media (max-width: 1000px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
+  .panel h2 { margin: 0 0 10px; font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); font-weight: 600; display: flex; align-items: center; }
+  .panel h2 .right { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 500; }
+  button { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 13px; font: inherit; cursor: pointer; }
+  button:hover { border-color: #3c4653; background: #242b34; }
+  button.active { background: var(--accent); color: #1a1200; border-color: var(--accent); font-weight: 600; }
+  button.small { padding: 4px 9px; font-size: 12px; }
+  button:disabled { opacity: .35; cursor: default; }
+  input[type=number] { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font: inherit; width: 80px; }
+  input:focus { outline: none; border-color: var(--accent); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .muted { color: var(--muted); }
+  .seats button { min-width: 50px; padding: 7px 10px; }
+  .segment { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .segment button { border: 0; border-radius: 0; min-width: 32px; }
+  .segment button + button { border-left: 1px solid var(--line); }
+
+  /* cards */
+  .slots { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 12px; }
+  .slotgroup { display: flex; flex-direction: column; gap: 4px; }
+  .slotgroup label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .slotrow { display: flex; gap: 5px; }
+  .slot { width: 40px; height: 56px; border-radius: 6px; border: 1px dashed var(--line); background: var(--panel2); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 17px; cursor: pointer; }
+  .slot.filled { border-style: solid; background: #f7f7f2; color: #111; }
+  .slot.filled:hover { opacity: .55; }
+  .slot.sel, .slot.need { outline: 2px solid var(--accent); border-color: var(--accent); }
+  .slot.need { animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 50% { outline-color: transparent; } }
+  .picker { display: grid; grid-template-columns: repeat(13, 1fr); gap: 3px; }
+  .pc { height: 34px; border-radius: 5px; background: #f7f7f2; color: #111; font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center; cursor: pointer; border: 1px solid #ddd; user-select: none; }
+  .pc:hover { transform: translateY(-1px); box-shadow: 0 2px 6px rgba(0,0,0,.4); }
+  .pc.used { opacity: .22; }
+  .pc.used:hover { opacity: .6; }
+  .pc.h, .pc.d, .slot.filled.h, .slot.filled.d { color: #d3232a; }
+
+  /* table strip */
+  .table { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-bottom: 24px; }
+  .seat { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 6px; text-align: center; position: relative; min-height: 56px; }
+  .seat .pos { font-weight: 700; font-size: 13px; }
+  .seat .you { display: block; font-size: 9px; letter-spacing: .1em; color: var(--accent); text-transform: uppercase; }
+  .seat .amt { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .seat.folded { opacity: .3; }
+  .seat.folded .pos { text-decoration: line-through; }
+  .seat.toact { border-color: var(--accent); background: #2a2413; box-shadow: 0 0 0 1px var(--accent) inset; }
+  .seat.toact::after { content: "▲ to act"; position: absolute; left: 0; right: 0; bottom: -16px; font-size: 9px; color: var(--accent); letter-spacing: .06em; }
+  .seat.allin .amt { color: var(--bet); }
+  .seat.clickable { cursor: pointer; }
+
+  /* action */
+  .prompt { display: flex; align-items: baseline; gap: 10px; margin: 0 0 10px; flex-wrap: wrap; }
+  .prompt .who { font-size: 17px; font-weight: 700; }
+  .prompt .who.hero { color: var(--accent); }
+  .prompt .pot { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .prompt .ask { width: 100%; color: var(--muted); font-size: 13px; }
+  .acts { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .acts button { padding: 10px 14px; font-weight: 600; }
+  .acts button.fold { border-color: #3a5a97; }
+  .acts button.pass { border-color: #2f7a4d; }
+  .acts button.agg { border-color: #9a4a34; }
+  .acts button small { display: block; font-weight: 400; font-size: 11px; color: var(--muted); }
+  .custom { display: none; gap: 6px; align-items: center; margin-bottom: 10px; }
+  .custom.open { display: flex; }
+  .err { color: #f28b82; font-size: 12px; min-height: 16px; }
+  .timeline { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
+  .tl { display: grid; grid-template-columns: 64px 1fr; gap: 6px 10px; align-items: baseline; font-size: 13px; margin-bottom: 5px; }
+  .tl .st { color: var(--muted); text-transform: uppercase; font-size: 10px; letter-spacing: .08em; }
+  .tl .line { display: flex; gap: 5px; flex-wrap: wrap; }
+  .chip { background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; white-space: nowrap; font-size: 12px; }
+  .chip.hero { border-color: var(--accent); }
+  .chip.agg { border-color: var(--bet); }
+  .chip.fold { opacity: .6; }
+
+  /* advice */
+  .verdict { display: flex; gap: 14px; align-items: baseline; margin: 4px 0 12px; flex-wrap: wrap; }
+  .verdict .big { font-size: 24px; font-weight: 700; }
+  .verdict .mix { color: var(--muted); font-size: 13px; }
+  .arows { display: flex; flex-direction: column; gap: 8px; }
+  .arow { display: grid; grid-template-columns: 140px 1fr 70px 80px; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 8px; background: var(--panel2); border: 1px solid transparent; cursor: pointer; }
+  .arow:hover { border-color: #3c4653; }
+  .arow.best { border-color: var(--accent); }
+  .arow .name { font-weight: 600; }
+  .arow .name small { color: var(--muted); font-weight: 400; margin-left: 6px; }
+  .bar { height: 12px; background: #0f1216; border-radius: 4px; overflow: hidden; }
+  .bar > div { height: 100%; border-radius: 4px; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .num.pos { color: #6bd394; } .num.neg { color: #f28b82; }
+  .meta { color: var(--muted); font-size: 12px; margin-top: 10px; line-height: 1.6; }
+  .grid { display: grid; grid-template-columns: repeat(13, 1fr); gap: 2px; margin-top: 6px; }
+  .cell { aspect-ratio: 1; border-radius: 3px; position: relative; background: #12161b; font-size: 10px; overflow: hidden; }
+  .cell .lbl { position: absolute; left: 3px; top: 2px; color: #fff; text-shadow: 0 0 3px #000; font-weight: 600; z-index: 2; }
+  .cell .stack { position: absolute; inset: 0; display: flex; }
+  .cell .stack div { height: 100%; }
+  .cell.pair .lbl { color: #ffe9b0; }
+  .cell.me { outline: 3px solid var(--accent); outline-offset: -1px; z-index: 3; opacity: 1 !important; transform: scale(1.18); box-shadow: 0 0 0 3px #0f1216, 0 0 14px 2px rgba(245,185,66,.8); overflow: visible; border-radius: 4px; }
+  .cell.me .lbl { font-weight: 800; }
+  .cell.me .you { position: absolute; right: -2px; bottom: -2px; background: var(--accent); color: #1a1200; font-size: 8px; font-weight: 800; letter-spacing: .08em; padding: 1px 4px; border-radius: 3px; z-index: 4; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; color: var(--muted); }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; background: var(--c); }
+  .legend .mehint::before { background: transparent; outline: 2px solid var(--accent); }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -3px; margin-right: 8px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .empty { color: var(--muted); padding: 30px 10px; text-align: center; line-height: 1.7; }
+  details { margin-top: 12px; }
+  summary { color: var(--muted); font-size: 12px; cursor: pointer; }
+  .villain { font-size: 12px; color: var(--muted); word-break: break-word; margin-top: 6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>GTO Solver</h1>
+  <span class="muted" id="modeLabel" style="font-size:12px"></span>
+  <span class="spacer"></span>
+  <button id="newhand">New hand</button>
+</header>
+
+<main>
+  <div>
+    <section class="panel">
+      <div class="row" style="margin-bottom:8px">
+        <span class="muted">Players</span>
+        <div class="segment" id="players"></div>
+        <span class="muted" style="margin-left:auto">stacks</span>
+        <input type="number" id="stack" value="100" min="5" step="1"><span class="muted">bb</span>
+      </div>
+      <div class="row">
+        <span class="muted">You are</span>
+        <div class="row seats" id="seats"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Cards <span class="right muted" id="cardsHint"></span></h2>
+      <div class="slots">
+        <div class="slotgroup"><label>Your hand</label><div class="slotrow" id="holeSlots"></div></div>
+        <div class="slotgroup"><label>Flop</label><div class="slotrow" id="flopSlots"></div></div>
+        <div class="slotgroup"><label>Turn</label><div class="slotrow" id="turnSlots"></div></div>
+        <div class="slotgroup"><label>River</label><div class="slotrow" id="riverSlots"></div></div>
+      </div>
+      <div class="picker" id="picker"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Action <span class="right muted" id="stepLabel"></span></h2>
+      <div id="tableStrip" class="table"></div>
+      <div id="actionArea"></div>
+      <div class="err" id="err"></div>
+      <div class="timeline" id="timeline"></div>
+    </section>
+  </div>
+
+  <div>
+    <section class="panel">
+      <h2>Advice</h2>
+      <div id="result" class="empty">Pick your seat and cards, then enter the action seat by seat.<br>Advice appears here whenever it's your turn.</div>
+    </section>
+  </div>
+</main>
+
+<script>
+const RANKS = "AKQJT98765432";
+const SUITS = ["s", "h", "d", "c"];
+const SUIT_SYM = { s: "♠", h: "♥", d: "♦", c: "♣" };
+const SEATS = {
+  2: ["SB", "BB"], 3: ["BTN", "SB", "BB"], 4: ["CO", "BTN", "SB", "BB"], 5: ["HJ", "CO", "BTN", "SB", "BB"],
+  6: ["UTG", "HJ", "CO", "BTN", "SB", "BB"], 7: ["UTG", "LJ", "HJ", "CO", "BTN", "SB", "BB"],
+  8: ["UTG", "UTG1", "LJ", "HJ", "CO", "BTN", "SB", "BB"], 9: ["UTG", "UTG1", "UTG2", "LJ", "HJ", "CO", "BTN", "SB", "BB"] };
+const SEAT_LABEL = (p, n) => n === 2 && p === "SB" ? "BTN/SB" : p;
+let POS = SEATS[6], ORDER_PRE = POS, ORDER_POST = ["SB", "BB", "UTG", "HJ", "CO", "BTN"];
+function setPositions(n) {
+  POS = SEATS[n]; ORDER_PRE = POS;
+  ORDER_POST = n === 2 ? ["BB", "SB"] : ["SB", "BB", ...POS.filter(p => p !== "SB" && p !== "BB")];
+}
+const STREETS = ["preflop", "flop", "turn", "river"];
+const NEED = { preflop: 0, flop: 3, turn: 4, river: 5 };
+const SLOT_NAMES = ["your first card", "your second card", "flop card 1", "flop card 2", "flop card 3", "the turn", "the river"];
+let BUDGET = 4;
+
+// ---- backend: the local Python server if present, otherwise the solver runs in the browser (Pyodide worker)
+let MODE = null, worker = null, reqId = 0;
+const pending = {};
+const modeReady = (async () => {
+  try { const r = await fetch("health", { cache: "no-store" }); if (r.ok && (await r.json()).ok) MODE = "server"; } catch (e) {}
+  if (!MODE) { MODE = "wasm"; BUDGET = 7; }
+  document.getElementById("modeLabel").textContent = MODE === "server" ? "local server" : "runs in your browser";
+})();
+function setStatus(msg) { const el = document.getElementById("result"); if (el.querySelector(".spinner")) el.innerHTML = `<div class="muted"><span class="spinner"></span>${msg}</div>`; }
+function callAdvise(state) {
+  if (MODE === "server") return fetch("advise", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(state) }).then(r => r.json());
+  if (!worker) {
+    worker = new Worker("worker.js");
+    worker.onmessage = (e) => { const m = e.data; if (m.status) setStatus(m.status); if (m.id != null && pending[m.id]) { pending[m.id](m.error ? { error: m.error } : m.result); delete pending[m.id]; } };
+    worker.onerror = (e) => { for (const k in pending) { pending[k]({ error: "solver worker failed: " + e.message }); delete pending[k]; } };
+  }
+  return new Promise(res => { const id = ++reqId; pending[id] = res; worker.postMessage({ id, state }); });
+}
+
+let S = load() || fresh();
+if (!S.players) S.players = 6;
+setPositions(S.players);
+let selSlot = null;
+let lastKey = null;
+let solving = false;
+
+function fresh(n) { n = n || 6; return { players: n, hero: n === 2 ? "SB" : "BTN", stack: 100, cards: [null, null, null, null, null, null, null], actions: { preflop: [], flop: [], turn: [], river: [] } }; }
+function save() { try { localStorage.setItem("handreview", JSON.stringify(S)); } catch (e) {} }
+function load() { try { const s = localStorage.getItem("handreview"); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
+function boardCards() { return S.cards.slice(2).filter(Boolean); }
+function fmt(x) { return (Math.round(x * 100) / 100).toString(); }
+function showErr(m) { document.getElementById("err").textContent = m || ""; }
+
+// ------------------------------------------------------------------ engine
+function simulate() {
+  const active = new Set(POS), allin = new Set();
+  const inv = Object.fromEntries(POS.map(p => [p, 0]));
+  const out = { streets: {}, current: null, toAct: null, waiting: null, handOver: false, runout: false, invested: inv, active, allin };
+  const nb = boardCards().length;
+  for (const street of STREETS) {
+    if (nb < NEED[street]) { out.waiting = street; break; }
+    const pre = street === "preflop", order = pre ? ORDER_PRE : ORDER_POST;
+    const bets = Object.fromEntries(POS.map(p => [p, 0]));
+    if (pre) { bets.SB = 0.5; bets.BB = 1; }
+    let curBet = pre ? 1 : 0, nRaises = 0, acted = new Set(), lastActor = null;
+    const potBefore = Object.values(inv).reduce((a, b) => a + b, 0);
+    for (const a of S.actions[street]) {
+      const p = a.pos; if (!active.has(p)) continue;
+      const remaining = S.stack - inv[p] - bets[p];
+      if (a.action === "fold") active.delete(p);
+      else if (a.action === "check" || a.action === "call") {
+        bets[p] = Math.min(curBet, bets[p] + remaining);
+        if (bets[p] + inv[p] >= S.stack - 1e-9) allin.add(p);
+        acted.add(p);
+      } else if (a.action === "bet" || a.action === "raise") {
+        bets[p] = Math.min(a.to, bets[p] + remaining);
+        if (bets[p] > curBet) { curBet = bets[p]; nRaises++; acted = new Set([p]); } else acted.add(p);
+        if (bets[p] + inv[p] >= S.stack - 1e-9) allin.add(p);
+      } else if (a.action === "all-in") {
+        bets[p] += remaining; allin.add(p);
+        if (bets[p] > curBet) { curBet = bets[p]; nRaises++; acted = new Set([p]); } else acted.add(p);
+      }
+      lastActor = p;
+    }
+    const actors = [...active].filter(p => !allin.has(p));
+    const closed = active.size <= 1 || actors.every(p => acted.has(p));
+    let toAct = null;
+    if (!closed) {
+      const N = order.length, start = lastActor ? (order.indexOf(lastActor) + 1) % N : 0;
+      for (let k = 0; k < N; k++) { const p = order[(start + k) % N]; if (active.has(p) && !allin.has(p) && !acted.has(p)) { toAct = p; break; } }
+    }
+    const pot = potBefore + Object.values(bets).reduce((a, b) => a + b, 0);
+    out.streets[street] = { bets, curBet, nRaises, closed, toAct, pot, order };
+    if (!closed) { out.current = street; out.toAct = toAct; break; }
+    for (const p of POS) inv[p] += bets[p];
+    if (active.size <= 1) { out.handOver = true; out.current = street; break; }
+    if (actors.length <= 1) out.runout = true;
+    if (street === "river") { out.handOver = true; out.current = street; }
+  }
+  out.cur = out.current && !out.streets[out.current].closed ? out.streets[out.current] : null;
+  out.pot = Object.values(inv).reduce((a, b) => a + b, 0) + (out.cur ? Object.values(out.cur.bets).reduce((a, b) => a + b, 0) : 0);
+  return out;
+}
+
+function act(a) {
+  const sim = simulate();
+  if (!sim.cur) return sim.waiting ? "Deal the next card first." : "The hand is over.";
+  const p = sim.toAct, info = sim.cur;
+  const toCall = info.curBet - info.bets[p], remaining = S.stack - sim.invested[p] - info.bets[p], facing = toCall > 1e-9;
+  let rec;
+  if (a.action === "fold") rec = { action: "fold" };
+  else if (a.action === "check") { if (facing) return `${p} can't check, there's ${fmt(toCall)}bb to call.`; rec = { action: "check" }; }
+  else if (a.action === "call") rec = facing ? { action: "call" } : { action: "check" };
+  else if (a.action === "all-in") rec = { action: "all-in" };
+  else {
+    const to = Math.round(a.to * 2) / 2;
+    if (!(to > 0)) return "Enter an amount.";
+    if (to >= info.bets[p] + remaining - 1e-9) rec = { action: "all-in" };
+    else if (to <= info.curBet + 1e-9) return `${fmt(to)}bb isn't a raise, the bet is ${fmt(info.curBet)}bb.`;
+    else rec = { action: facing || info.curBet > 0 ? "raise" : "bet", to };
+  }
+  S.actions[sim.current].push({ pos: p, ...rec }); save(); return null;
+}
+function advanceTo(pos) {
+  for (let i = 0; i < 9; i++) {
+    const sim = simulate();
+    if (!sim.cur) return "Deal the next card first.";
+    if (sim.toAct === pos) return null;
+    if (!sim.active.has(pos)) return `${pos} already folded.`;
+    const facing = sim.cur.curBet - sim.cur.bets[sim.toAct] > 1e-9;
+    act({ action: facing || sim.current === "preflop" ? "fold" : "check" });
+  }
+  return null;
+}
+function undo() { for (const s of [...STREETS].reverse()) if (S.actions[s].length) { S.actions[s].pop(); break; } save(); renderAll(); }
+
+// ------------------------------------------------------------------ cards
+function nextSlot() { if (selSlot !== null) return selSlot; const i = S.cards.findIndex(c => !c); return i < 0 ? null : i; }
+function toggleCard(c) {
+  const j = S.cards.indexOf(c);
+  if (j >= 0) S.cards[j] = null;
+  else { const i = nextSlot(); if (i === null) return; S.cards[i] = c; }
+  selSlot = null; save(); renderAll();
+}
+function renderSeats() {
+  const el = document.getElementById("seats"); el.innerHTML = "";
+  for (const p of POS) { const b = document.createElement("button"); b.textContent = SEAT_LABEL(p, POS.length); if (p === S.hero) b.classList.add("active");
+    b.onclick = () => { S.hero = p; save(); renderAll(); }; el.appendChild(b); }
+  const pl = document.getElementById("players"); pl.innerHTML = "";
+  for (let n = 2; n <= 9; n++) { const b = document.createElement("button"); b.className = "small"; b.textContent = n; if (n === S.players) b.classList.add("active");
+    b.onclick = () => { if (n === S.players) return; S = { ...fresh(n), stack: S.stack, cards: S.cards }; setPositions(n); selSlot = null; save(); resetAdvice(); renderAll(); }; pl.appendChild(b); }
+}
+function renderSlots(sim) {
+  const needIdx = sim.waiting ? S.cards.findIndex((c, i) => !c && i >= 2 && i < 2 + NEED[sim.waiting]) : (!S.cards[0] ? 0 : !S.cards[1] ? 1 : -1);
+  for (const [id, idxs] of [["holeSlots", [0, 1]], ["flopSlots", [2, 3, 4]], ["turnSlots", [5]], ["riverSlots", [6]]]) {
+    const el = document.getElementById(id); el.innerHTML = "";
+    for (const i of idxs) {
+      const c = S.cards[i], s = document.createElement("div");
+      s.className = "slot" + (c ? " filled " + c[1] : "") + (selSlot === i ? " sel" : "") + (!c && i === needIdx && selSlot === null ? " need" : "");
+      if (c) { s.textContent = c[0] + SUIT_SYM[c[1]]; s.title = "Click to remove"; }
+      s.onclick = () => { if (c) { S.cards[i] = null; selSlot = null; save(); renderAll(); } else { selSlot = selSlot === i ? null : i; renderAll(); } };
+      el.appendChild(s);
+    }
+  }
+  const ns = nextSlot();
+  document.getElementById("cardsHint").textContent = ns === null ? "" : "next: " + SLOT_NAMES[ns];
+}
+function renderPicker() {
+  const el = document.getElementById("picker"); el.innerHTML = "";
+  const used = new Set(S.cards.filter(Boolean));
+  for (const su of SUITS) for (const r of RANKS) {
+    const c = r + su, d = document.createElement("div");
+    d.className = "pc " + su + (used.has(c) ? " used" : "");
+    d.innerHTML = r + "<span style='font-size:.8em'>" + SUIT_SYM[su] + "</span>";
+    d.onclick = () => toggleCard(c);
+    el.appendChild(d);
+  }
+}
+
+// ------------------------------------------------------------------ table + action
+function renderTable(sim) {
+  const el = document.getElementById("tableStrip"); el.innerHTML = ""; el.style.gridTemplateColumns = `repeat(${POS.length}, 1fr)`;
+  for (const p of POS) {
+    const d = document.createElement("div");
+    const folded = !sim.active.has(p), bet = sim.cur ? sim.cur.bets[p] : 0, total = sim.invested[p] + bet;
+    const clickable = !folded && sim.cur && sim.toAct !== p && !sim.allin.has(p);
+    d.className = "seat" + (folded ? " folded" : "") + (sim.toAct === p ? " toact" : "") + (sim.allin.has(p) ? " allin" : "") + (clickable ? " clickable" : "");
+    const amt = folded ? "folded" : sim.allin.has(p) ? "all-in" : bet > 0 ? fmt(bet) + " bb" : total > 0 ? "in " + fmt(total) : "";
+    d.innerHTML = `<span class="pos">${SEAT_LABEL(p, POS.length)}</span>${p === S.hero ? '<span class="you">you</span>' : ""}<span class="amt">${amt}</span>`;
+    if (clickable) { d.title = `Everyone before ${p} folds`; d.onclick = () => { showErr(advanceTo(p)); renderAll(); }; }
+    el.appendChild(d);
+  }
+}
+
+function renderAction(sim) {
+  const el = document.getElementById("actionArea"); el.innerHTML = "";
+  const step = document.getElementById("stepLabel");
+  const prompt = document.createElement("div"); prompt.className = "prompt";
+  if (!S.cards[0] || !S.cards[1]) { step.textContent = ""; prompt.innerHTML = `<span class="ask">Place your two hole cards to start.</span>`; el.appendChild(prompt); return; }
+  if (sim.handOver) { step.textContent = "hand over"; prompt.innerHTML = `<span class="who">Hand over</span><span class="pot">pot ${fmt(sim.pot)} bb</span>`; el.appendChild(prompt); return; }
+  if (sim.waiting) {
+    step.textContent = sim.waiting;
+    prompt.innerHTML = `<span class="who">Deal the ${sim.waiting}</span><span class="pot">pot ${fmt(sim.pot)} bb</span><span class="ask">${sim.runout ? "Everyone is all-in. " : ""}Click the ${sim.waiting === "flop" ? "three flop cards" : sim.waiting + " card"} above.</span>`;
+    el.appendChild(prompt); return;
+  }
+  const street = sim.current, info = sim.cur, p = sim.toAct, isHero = p === S.hero;
+  const myBet = info.bets[p], toCall = info.curBet - myBet, remaining = S.stack - sim.invested[p] - myBet, facing = toCall > 1e-9;
+  step.textContent = street;
+  prompt.innerHTML = `<span class="who ${isHero ? "hero" : ""}">${isHero ? "Your turn" : p + " to act"}</span><span class="pot">pot ${fmt(info.pot)} bb${facing ? " · " + fmt(Math.min(toCall, remaining)) + " to call" : ""}</span><span class="ask">${isHero ? "Advice is on the right. What did you do?" : "What did " + p + " do?"}</span>`;
+  el.appendChild(prompt);
+
+  const acts = document.createElement("div"); acts.className = "acts";
+  const mk = (label, cls, a, sub) => { const b = document.createElement("button"); b.className = cls; b.innerHTML = label + (sub ? `<small>${sub}</small>` : "");
+    b.onclick = () => { showErr(act(a)); renderAll(); }; acts.appendChild(b); };
+  if (facing) { mk("Fold", "fold", { action: "fold" }); mk("Call", "pass", { action: "call" }, fmt(Math.min(toCall, remaining)) + " bb"); }
+  else mk("Check", "pass", { action: "check" });
+  const canRaise = remaining > toCall + 1e-9;
+  if (canRaise) {
+    const verb = facing || info.curBet > 0 ? "Raise to" : "Bet";
+    let sizes;
+    if (street === "preflop") sizes = info.nRaises === 0 ? [[p === "SB" ? 3 : 2.5, "open"]] : [[info.curBet * (p === "SB" || p === "BB" ? 4 : 3), p === "SB" || p === "BB" ? "4x" : "3x"]];
+    else if (!facing) sizes = [[info.pot / 3, "⅓ pot"], [info.pot * 2 / 3, "⅔ pot"], [info.pot, "pot"]];
+    else sizes = [[info.curBet * 2.5, "2.5x"], [info.curBet + info.pot + toCall, "pot"]];
+    for (let [v, l] of sizes) { v = Math.round(v * 2) / 2; if (v < myBet + remaining - 1e-9 && v > info.curBet + 1e-9) mk(`${verb} ${fmt(v)}`, "agg", { action: "bet", to: v }, l); }
+    const custom = document.createElement("button"); custom.className = "agg"; custom.innerHTML = `${verb} …`;
+    custom.onclick = () => { document.getElementById("customBox").classList.toggle("open"); document.getElementById("customAmt").focus(); };
+    acts.appendChild(custom);
+  }
+  if (remaining > 0) mk("All-in", "agg", { action: "all-in" }, fmt(myBet + remaining) + " bb");
+  el.appendChild(acts);
+
+  const cb = document.createElement("div"); cb.className = "custom"; cb.id = "customBox";
+  cb.innerHTML = `<span class="muted">${facing || info.curBet > 0 ? "raise to" : "bet"}</span><input type="number" id="customAmt" step="0.5" min="0"><span class="muted">bb</span>`;
+  const go = document.createElement("button"); go.className = "small"; go.textContent = "Apply";
+  go.onclick = () => { showErr(act({ action: "bet", to: parseFloat(document.getElementById("customAmt").value) })); renderAll(); };
+  cb.appendChild(go); el.appendChild(cb);
+  document.getElementById("customAmt").addEventListener("keydown", (e) => { if (e.key === "Enter") go.click(); });
+
+  // one shortcut
+  let sc = null;
+  if (!isHero && sim.active.has(S.hero) && !sim.allin.has(S.hero) && info.order.indexOf(S.hero) > info.order.indexOf(p)) sc = ["Fold to me", () => advanceTo(S.hero)];
+  else if (!isHero && facing) sc = ["Everyone else folds", () => { for (let i = 0; i < 9; i++) { const s2 = simulate(); if (!s2.cur || s2.current !== street) return null; const e = act({ action: "fold" }); if (e) return e; } }];
+  else if (!isHero && !facing && street !== "preflop") sc = ["Everyone checks", () => { for (let i = 0; i < 6; i++) { const s2 = simulate(); if (!s2.cur || s2.current !== street) return null; const e = act({ action: "check" }); if (e) return e; } }];
+  if (sc) { const b = document.createElement("button"); b.className = "small"; b.textContent = sc[0]; b.onclick = () => { showErr(sc[1]()); renderAll(); }; el.appendChild(b); }
+}
+
+function renderTimeline() {
+  const el = document.getElementById("timeline"); el.innerHTML = "";
+  let any = false;
+  for (const s of STREETS) {
+    const acts = S.actions[s]; if (!acts.length) continue; any = true;
+    const line = document.createElement("div"); line.className = "tl";
+    const chips = acts.map(a => `<span class="chip${a.pos === S.hero ? " hero" : ""}${["bet", "raise", "all-in"].includes(a.action) ? " agg" : ""}${a.action === "fold" ? " fold" : ""}">${a.pos} ${a.action === "bet" ? "bets " + fmt(a.to) : a.action === "raise" ? "raises to " + fmt(a.to) : a.action === "all-in" ? "all-in" : a.action + "s"}</span>`).join("");
+    const b = s === "preflop" ? "" : ` <span class="muted">${boardCards().slice(NEED[s] - (s === "flop" ? 3 : 1), NEED[s]).map(c => c[0] + SUIT_SYM[c[1]]).join(" ")}</span>`;
+    line.innerHTML = `<span class="st">${s}${b}</span><span class="line">${chips}</span>`;
+    el.appendChild(line);
+  }
+  const u = document.createElement("button"); u.className = "small"; u.textContent = "Undo"; u.disabled = !any; u.onclick = undo; u.style.marginTop = "6px";
+  el.appendChild(u);
+}
+
+// ------------------------------------------------------------------ advice
+function payload() {
+  const conv = (arr) => arr.map(a => a.action === "bet" ? { pos: a.pos, action: "bet", amount: a.to } : a.action === "raise" ? { pos: a.pos, action: "raise", to: a.to } : { pos: a.pos, action: a.action });
+  return { players: S.players, hero: S.hero, hole: S.cards[0] + S.cards[1], board: boardCards().join(""), stack: S.stack,
+           preflop: conv(S.actions.preflop), flop: conv(S.actions.flop), turn: conv(S.actions.turn), river: conv(S.actions.river), budget: BUDGET };
+}
+async function analyze(sim) {
+  if (!S.cards[0] || !S.cards[1]) return;
+  await modeReady;
+  const key = JSON.stringify(payload());
+  if (key === lastKey || solving) return;
+  lastKey = key; solving = true;
+  const el = document.getElementById("result");
+  el.className = ""; el.innerHTML = `<div class="muted"><span class="spinner"></span>Solving the ${sim.current}…</div>`;
+  try { renderResult(await callAdvise(JSON.parse(key))); }
+  catch (e) { el.innerHTML = `<div class="err">Request failed: ${e}</div>`; }
+  solving = false;
+  const now = JSON.stringify(payload());
+  if (now !== key && simulate().toAct === S.hero) analyze(simulate());
+}
+const COLORS = (n) => n === "fold" ? "var(--fold)" : n === "check" || n === "call" ? "var(--passive)" : n === "all-in" ? "var(--allin)" : /75|100|raise/.test(n) ? "var(--bet2)" : "var(--bet)";
+
+function renderResult(res) {
+  const el = document.getElementById("result"); el.className = "";
+  if (res.error) { el.innerHTML = `<div class="err">${res.error}</div>`; return; }
+  const board = res.board ? res.board.match(/../g).map(c => c[0] + SUIT_SYM[c[1]]).join(" ") : "";
+  let h = `<div class="meta" style="margin:0 0 4px">${res.street} · ${res.hero} ${res.hand}${res.position ? " · " + res.position : ""}${board ? " · " + board : ""}${res.pot_bb ? " · pot " + res.pot_bb + " bb" : ""}</div>`;
+  if (res.multiway) h += `<div class="verdict"><span class="big">${res.recommended}</span><span class="mix">${res.opponents.length + 1} players in · equity vs field ${(res.equity_vs_field * 100).toFixed(0)}% · heuristic, not a solve</span></div><div class="arows">`;
+  else h += `<div class="verdict"><span class="big">${res.recommended}</span><span class="mix">random draw from the mix: <b>${res.sampled}</b></span></div><div class="arows">`;
+  for (const a of res.actions) {
+    const ev = a.ev_bb !== undefined ? `<span class="num ${a.ev_bb > 0.005 ? "pos" : a.ev_bb < -0.005 ? "neg" : ""}">${a.ev_bb > 0 ? "+" : ""}${a.ev_bb.toFixed(2)} bb</span>` : "<span></span>";
+    h += `<div class="arow ${a.action === res.recommended ? "best" : ""}" data-act='${JSON.stringify(a)}' title="Click to record this as what you did"><span class="name">${a.action}${a.amount_bb != null ? `<small>${a.amount_bb} bb</small>` : ""}</span><div class="bar"><div style="width:${(a.freq * 100).toFixed(1)}%;background:${COLORS(a.action)}"></div></div><span class="num">${(a.freq * 100).toFixed(1)}%</span>${ev}</div>`;
+  }
+  h += `</div><div class="meta">Click a row to record it as what you did.</div>`;
+  if (res.grid) h += renderGrid(res.grid, res.hand);
+  h += `<details><summary>Details</summary>`;
+  if (res.range_action_freq) h += `<div class="meta">Whole range: ${Object.entries(res.range_action_freq).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(" · ")}</div>`;
+  if (res.villain_range) h += `<div class="meta">${res.villain} range (${res.villain_range_combos} combos):</div><div class="villain">${res.villain_range}</div>`;
+  if (res.solver) h += `<div class="meta">${res.solver.iterations} iterations · ${res.solver.solve_seconds}s · ${res.solver.active_combos} combos · sizes: ${res.solver.tree_actions.join(", ")}</div>`;
+  if (res.notes && res.notes.length) h += `<div class="meta">${res.notes.join("<br>")}</div>`;
+  h += `</details>`;
+  el.innerHTML = h;
+  el.querySelectorAll(".arow").forEach(r => r.onclick = () => applyAction(JSON.parse(r.dataset.act)));
+}
+function renderGrid(grid, heroHand) {
+  const names = grid.actions;
+  let h = `<div class="meta" style="margin-top:14px">Your range here</div><div class="grid">`;
+  for (let i = 0; i < 13; i++) for (let j = 0; j < 13; j++) {
+    const cls = i === j ? RANKS[i] + RANKS[i] : i < j ? RANKS[i] + RANKS[j] + "s" : RANKS[j] + RANKS[i] + "o";
+    const c = grid.cells[cls] || { w: 0, f: [] }, me = cls === heroHand;
+    const op = c.w <= 0 ? 0.08 : 0.25 + 0.75 * Math.min(1, c.w);
+    let stack = "";
+    if (c.w > 0) for (let a = 0; a < names.length; a++) stack += `<div style="width:${(c.f[a] * 100).toFixed(1)}%;background:${COLORS(names[a])}"></div>`;
+    h += `<div class="cell${i === j ? " pair" : ""}${me ? " me" : ""}" style="opacity:${op}" title="${cls}: ${c.w > 0 ? names.map((n, a) => n + " " + (c.f[a] * 100).toFixed(0) + "%").join(", ") : "not in range"}"><div class="stack">${stack}</div><span class="lbl">${cls}</span>${me ? '<span class="you">YOU</span>' : ""}</div>`;
+  }
+  return h + `</div><div class="legend">` + names.map(n => `<span style="--c:${COLORS(n)}">${n}</span>`).join("") + `<span class="mehint">your hand</span></div>`;
+}
+function applyAction(a) {
+  const sim = simulate();
+  if (sim.toAct !== S.hero || !sim.cur) { showErr("It's not your turn now."); return; }
+  showErr(act(["check", "call", "fold", "all-in"].includes(a.action) ? { action: a.action } : { action: "bet", to: a.amount_bb })); renderAll();
+}
+
+// ------------------------------------------------------------------ wiring
+function renderAll() {
+  const sim = simulate();
+  renderSeats(); renderSlots(sim); renderPicker(); renderTable(sim); renderAction(sim); renderTimeline();
+  if (sim.toAct === S.hero && S.cards[0] && S.cards[1] && !sim.handOver) analyze(sim);
+  else if (!S.cards[0] || !S.cards[1]) resetAdvice();
+}
+function resetAdvice() {
+  const el = document.getElementById("result"); lastKey = null;
+  if (el.className !== "empty") { el.className = "empty"; el.innerHTML = "Pick your seat and cards, then enter the action seat by seat.<br>Advice appears here whenever it's your turn."; }
+}
+document.getElementById("stack").value = S.stack;
+document.getElementById("stack").onchange = (e) => { S.stack = parseFloat(e.target.value) || 100; save(); renderAll(); };
+document.getElementById("newhand").onclick = () => {
+  S = { ...fresh(S.players), hero: S.hero, stack: S.stack }; selSlot = null; save(); resetAdvice(); renderAll();
+};
+renderAll();
+</script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "hero": "BB",
+  "hole": "Jh9h",
+  "board": "Kh7h2cTd5s",
+  "bb": 0.02,
+  "stacks": {"CO": 2.0, "BB": 2.0},
+  "preflop": [
+    {"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 0.05},
+    {"pos": "BTN", "action": "fold"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}
+  ],
+  "flop": [{"pos": "BB", "action": "check"}, {"pos": "CO", "action": "bet", "amount": 0.04}, {"pos": "BB", "action": "call"}],
+  "turn": [{"pos": "BB", "action": "check"}, {"pos": "CO", "action": "check"}],
+  "river": [{"pos": "BB", "action": "check"}, {"pos": "CO", "action": "bet", "amount": 0.19}]
+}

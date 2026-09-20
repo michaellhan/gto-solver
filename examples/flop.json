@@ -1,0 +1,11 @@
+{
+  "hero": "BTN",
+  "hole": "AhQd",
+  "board": "Qs8d3c",
+  "stacks": {"BTN": 100, "BB": 100},
+  "preflop": [
+    {"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "fold"},
+    {"pos": "BTN", "action": "raise", "to": 2.5}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}
+  ],
+  "flop": [{"pos": "BB", "action": "check"}]
+}
