@@ -1,7 +1,8 @@
 // Runs the Python solver in the browser with Pyodide. Used when no local server is present.
 importScripts("https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js");
 
-const FILES = ["__init__", "cards", "ranges", "evaluator", "preflop", "solver", "advisor"];
+// no __init__ here: GitHub Pages (Jekyll) will not serve files starting with an underscore
+const FILES = ["cards", "ranges", "evaluator", "preflop", "solver", "advisor"];
 
 const ready = (async () => {
   postMessage({ status: "Loading the solver runtime (about 15 MB, cached after the first visit)…" });
@@ -12,9 +13,11 @@ const ready = (async () => {
   await py.pyimport("micropip").install("treys");
   postMessage({ status: "Loading solver code…" });
   py.FS.mkdir("/app"); py.FS.mkdir("/app/gto");
+  py.FS.writeFile("/app/gto/__init__.py", "");
   for (const f of FILES) {
-    const src = await (await fetch(`gto/${f}.py`, { cache: "no-store" })).text();
-    py.FS.writeFile(`/app/gto/${f}.py`, src);
+    const r = await fetch(`gto/${f}.py`, { cache: "no-store" });
+    if (!r.ok) throw new Error(`could not load gto/${f}.py (${r.status})`);
+    py.FS.writeFile(`/app/gto/${f}.py`, await r.text());
   }
   // lighter tree than the native server: Pyodide numpy is far slower, so trade abstraction for iterations
   py.runPython("import sys, json; sys.path.insert(0, '/app'); from gto.advisor import Advisor; from gto.solver import Config; "
