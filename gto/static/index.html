@@ -15,6 +15,8 @@
   header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--line); }
   header h1 { font-size: 15px; margin: 0; font-weight: 600; }
   header .spacer { flex: 1; }
+  a.dl { color: var(--accent); text-decoration: none; font-size: 13px; border: 1px solid var(--accent); border-radius: 8px; padding: 7px 12px; }
+  a.dl:hover { background: #2a2413; }
   main { display: grid; grid-template-columns: minmax(440px, 540px) 1fr; gap: 18px; padding: 18px 20px; max-width: 1400px; margin: 0 auto; }
   @media (max-width: 1000px) { main { grid-template-columns: 1fr; } }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
@@ -127,8 +129,8 @@
 <body>
 <header>
   <h1>GTO Solver</h1>
-  <span class="muted" id="modeLabel" style="font-size:12px"></span>
   <span class="spacer"></span>
+  <a id="download" class="dl" href="gto-solver.zip" download hidden title="The same solver running natively on your computer: about 30x faster than in the browser">Download the fast version</a>
   <button id="copyhand" title="Copy the hand, the advice and a link that reopens this exact spot">Copy hand</button>
   <button id="newhand">New hand</button>
 </header>
@@ -201,8 +203,7 @@ let MODE = null, worker = null, reqId = 0;
 const pending = {};
 const modeReady = (async () => {
   try { const r = await fetch("health", { cache: "no-store" }); if (r.ok && (await r.json()).ok) MODE = "server"; } catch (e) {}
-  if (!MODE) { MODE = "wasm"; BUDGET = 8; }
-  document.getElementById("modeLabel").textContent = MODE === "server" ? "local server" : "runs in your browser";
+  if (!MODE) { MODE = "wasm"; BUDGET = 8; document.getElementById("download").hidden = false; }
 })();
 function setStatus(msg) { const el = document.getElementById("result"); if (el.querySelector(".spinner")) el.innerHTML = `<div class="muted"><span class="spinner"></span>${msg}</div>`; }
 function callAdvise(state) {

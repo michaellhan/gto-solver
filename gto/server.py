@@ -12,6 +12,7 @@ import json
 import os
 import threading
 import traceback
+import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from .advisor import Advisor
 from .solver import Config
@@ -82,12 +83,19 @@ def main(argv=None):
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--budget", type=float, default=4.0)
     ap.add_argument("--depth", type=int, default=2)
+    ap.add_argument("--open", action="store_true", help="open the review page in the default browser")
     args = ap.parse_args(argv)
     Handler.advisor = Advisor(Config(depth=args.depth), time_budget=args.budget)
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"review UI:  http://{args.host}:{args.port}/")
-    print(f"API:        POST http://{args.host}:{args.port}/advise")
-    srv.serve_forever()
+    url = f"http://{args.host}:{args.port}/"
+    print(f"review UI:  {url}")
+    print(f"API:        POST {url}advise")
+    if args.open:
+        threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        print("\nstopped")
 
 
 if __name__ == "__main__":

@@ -9,6 +9,8 @@ rm -rf "$WORK/site/gto-solver"
 mkdir -p "$WORK/site/gto-solver/gto"
 cp "$HERE/gto/static/index.html" "$HERE/gto/static/worker.js" "$WORK/site/gto-solver/"
 cp "$HERE"/gto/*.py "$WORK/site/gto-solver/gto/"
+"$HERE/scripts/build_release.sh" >/dev/null
+cp "$HERE/dist/gto-solver.zip" "$WORK/site/gto-solver/"
 cd "$WORK/site"
 git add -A
 if git diff --cached --quiet; then echo "Site already up to date."; exit 0; fi

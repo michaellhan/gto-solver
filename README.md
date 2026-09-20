@@ -5,7 +5,9 @@ a GTO-style mixed strategy with EVs and sizes, preflop through river, in a few
 seconds. 2 to 9 players.
 
 Live at **https://www.michael-han.com/gto-solver/** (the solver runs in your
-browser via Pyodide, nothing is uploaded).
+browser via Pyodide, nothing is uploaded). The **Download** button there gives
+you the native version, about 30x faster: unzip, double-click `run.command`
+(Mac) or `run.bat` (Windows), and the same page opens against a local solver.
 
 It is a review tool for hands you have already played. There is deliberately no
 screen capture, table reading or live-play hook; using anything like that on a
