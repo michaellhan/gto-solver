@@ -1,0 +1,37 @@
+name: Build desktop apps
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            asset: dist/GTO-Solver-mac.dmg
+          - os: windows-latest
+            asset: dist/GTO-Solver-windows.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install numpy treys pyinstaller pywebview
+      - name: Build
+        shell: bash
+        run: PYTHON=python scripts/build_app.sh
+      - name: Upload to release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${GITHUB_REF_NAME}" "${{ matrix.asset }}" --clobber
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}
+          path: ${{ matrix.asset }}

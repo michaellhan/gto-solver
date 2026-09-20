@@ -5,12 +5,19 @@ a GTO-style mixed strategy with EVs and sizes, preflop through river, in a few
 seconds. 2 to 9 players.
 
 Live at **https://www.michael-han.com/gto-solver/** (the solver runs in your
-browser via Pyodide, nothing is uploaded). The **Download** button there gives
-you the native version: unzip, double-click `run.command` (Mac) or `run.bat`
-(Windows), and the same page opens against a local solver. Native numpy is
-about 10x faster per iteration than the browser build, so the app answers a
-flop in 2.5 s with more iterations and a fuller tree than the site gets in 8 s;
-its **Deep** setting spends 8 s for the most converged answer.
+browser via Pyodide, nothing is uploaded).
+
+**Desktop app**: the Download button on the site, or
+[Releases](https://github.com/michaellhan/gto-solver/releases/latest), gives a
+Mac app (`GTO-Solver-mac.dmg`) and a Windows app (`GTO-Solver-windows.exe`).
+Same page, same solver, but native numpy is about 10x faster per iteration than
+the browser build: a flop answers in 2.5 s with more iterations and a fuller tree
+than the site gets in 8 s, and **Deep** spends 8 s for the most converged answer.
+The apps are not code-signed: on a Mac, right-click the app and choose Open the
+first time; on Windows, choose "More info, Run anyway" in the SmartScreen prompt.
+
+Build it yourself: `scripts/build_app.sh` (needs Python 3.10+ with `pyinstaller`
+and `pywebview`; `.github/workflows/release.yml` builds both platforms on a tag).
 
 It is a review tool for hands you have already played. There is deliberately no
 screen capture, table reading or live-play hook; using anything like that on a
