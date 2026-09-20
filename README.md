@@ -7,18 +7,6 @@ seconds. 2 to 9 players.
 Live at **https://www.michael-han.com/gto-solver/** (the solver runs in your
 browser via Pyodide, nothing is uploaded).
 
-**Desktop app**: the Download button on the site, or
-[Releases](https://github.com/michaellhan/gto-solver/releases/latest), gives a
-Mac app (`GTO-Solver-mac.dmg`) and a Windows app (`GTO-Solver-windows.exe`).
-Same page, same solver, but native numpy is about 10x faster per iteration than
-the browser build: a flop answers in 2.5 s with more iterations and a fuller tree
-than the site gets in 8 s, and **Deep** spends 8 s for the most converged answer.
-The apps are not code-signed: on a Mac, right-click the app and choose Open the
-first time; on Windows, choose "More info, Run anyway" in the SmartScreen prompt.
-
-Build it yourself: `scripts/build_app.sh` (needs Python 3.10+ with `pyinstaller`
-and `pywebview`; `.github/workflows/release.yml` builds both platforms on a tag).
-
 It is a review tool for hands you have already played. There is deliberately no
 screen capture, table reading or live-play hook; using anything like that on a
 real-money site is against every site's terms.
@@ -49,8 +37,8 @@ a custom size, all-in. A seat strip shows who has folded and who is to act;
 clicking a seat folds everyone before it, and a single context shortcut
 ("Fold to me", "Everyone checks", "Everyone else folds") skips the boring bits.
 
-Whenever it becomes your turn the advice panel solves the spot (2.5 s
-postflop by default in the app, Deep = 8 s) and shows the recommended action with its size (preflop: 2.5bb
+Whenever it becomes your turn the advice panel solves the spot (about 8 s
+postflop in the browser; against the local server 2.5 s, or Deep = 8 s) and shows the recommended action with its size (preflop: 2.5bb
 opens, 3bb from the small blind, 3x or 4x 3-bets, 2.3x 4-bets, then all-in;
 postflop: the solver's bet and raise sizes in big blinds), the mixed strategy for your exact
 hand with EVs, and a 13x13 grid of your whole range at that spot with your hand

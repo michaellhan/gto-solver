@@ -3,7 +3,3 @@ __pycache__/
 *.pyc
 .DS_Store
 .claude/
-dist/
-.venv-build/
-build/
-*.spec
