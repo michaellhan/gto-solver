@@ -195,13 +195,15 @@ class Advisor:
         streets = {s: _norm_actions(state.get(s), bb) for s in STREETS}
         if not board:
             return self._preflop(hero, hole, streets["preflop"], positions, stack, t0)
-        saved = self.time_budget
+        saved = self.time_budget, self.prior_budget
         if state.get("budget"):
-            self.time_budget = max(0.5, min(30.0, float(state["budget"])))
+            self.time_budget = max(0.5, min(120.0, float(state["budget"])))
+        if state.get("prior_budget"):
+            self.prior_budget = max(0.3, min(30.0, float(state["prior_budget"])))
         try:
             return self._postflop(hero, hole, board, stack, streets, positions, t0)
         finally:
-            self.time_budget = saved
+            self.time_budget, self.prior_budget = saved
 
     # ------------------------------------------------------------ preflop
     def _preflop(self, hero, hole, preflop, positions, stack, t0):

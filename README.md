@@ -37,8 +37,13 @@ a custom size, all-in. A seat strip shows who has folded and who is to act;
 clicking a seat folds everyone before it, and a single context shortcut
 ("Fold to me", "Everyone checks", "Everyone else folds") skips the boring bits.
 
-Whenever it becomes your turn the advice panel solves the spot (about 8 s
-postflop in the browser; against the local server 2.5 s, or Deep = 8 s) and shows the recommended action with its size (preflop: 2.5bb
+Whenever it becomes your turn the advice panel solves the spot. The **Fast /
+Accurate** toggle in the header (remembered between visits) picks the solve
+time: Fast is 8 s in the browser and 2.5 s against the local server; Accurate
+is about 60 s in the browser and 30 s locally, with more time for the earlier
+streets used to narrow ranges. River spots are solid either way; turn spots need
+Accurate to get close to a full solver (see Accuracy vs speed below).
+The panel shows the recommended action with its size (preflop: 2.5bb
 opens, 3bb from the small blind, 3x or 4x 3-bets, 2.3x 4-bets, then all-in;
 postflop: the solver's bet and raise sizes in big blinds), the mixed strategy for your exact
 hand with EVs, and a 13x13 grid of your whole range at that spot with your hand
