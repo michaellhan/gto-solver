@@ -148,3 +148,103 @@ class TestTableSizes(unittest.TestCase):
         self.assertEqual(r["villain"], "BB")
         self.assertAlmostEqual(r["pot_bb"], 12.0)
         self.assertEqual(r["actions"][0]["action"], "fold")
+
+
+def _exact_equity(board, hero, villain_range):
+    """Hero's equity against a range, every runout enumerated."""
+    import itertools
+    from gto.cards import COMBO_INDEX
+    hi = COMBO_INDEX[tuple(sorted(hero))]
+    vis = [int(j) for j in np.nonzero(villain_range)[0]]
+    rest = [c for c in range(52) if c not in board and c not in hero]
+    tot = wsum = 0.0
+    for run in itertools.combinations(rest, 5 - len(board)):
+        b = tuple(board) + run
+        st = dict(zip([hi] + vis, eval_board(b, [hi] + vis)))
+        for j in vis:
+            if set(ALL_COMBOS[j]) & (set(b) | set(hero)):
+                continue
+            tot += villain_range[j] * ((st[hi] > st[j]) + 0.5 * (st[hi] == st[j]))
+            wsum += villain_range[j]
+    return tot / wsum
+
+
+class TestAccuracy(unittest.TestCase):
+    """Checks against exact enumeration and against known equilibria."""
+
+    NO_BETS = {s: [] for s in ("flop", "turn", "river")}
+
+    def test_leaf_matrix_averages_over_cards_both_hands_miss(self):
+        # AA vs KK on 2c7d9hTs: 44 live rivers, KK wins on 2 of them
+        from gto.cards import COMBO_INDEX
+        board = tuple(cards("2c7d9hTs"))
+        aa, kk = COMBO_INDEX[tuple(sorted(cards("AhAs")))], COMBO_INDEX[tuple(sorted(cards("KhKs")))]
+        ctx = Ctx(np.array(sorted([aa, kk])), Config())
+        ctx.root_len = 4
+        L = ctx.leaf_matrix(board, set(board))
+        i, j = list(ctx.active).index(aa), list(ctx.active).index(kk)
+        self.assertAlmostEqual(float(L[i, j]), 40 / 44, places=5)
+
+    def test_checked_down_ev_equals_pot_times_equity(self):
+        # a tree with no bets: checking is worth exactly pot * equity, through chance nodes
+        # (turn -> every river) and through equity leaves (flop -> every turn and river)
+        hero, vr = cards("AhAs"), parse_range("KK, 88, QQ, JTs, 76s")
+        for board, depth in (("Kh8d5c3s", 2), ("Kh8d5c", 1)):
+            cfg = Config(bet_sizes=self.NO_BETS, raise_sizes=self.NO_BETS, allin_spr=0, depth=depth,
+                         leaf_turns=49, leaf_rivers_flop=48)
+            b = cards(board)
+            sol = solve(b, parse_range("AA"), vr, pot=10, stack=100, time_budget=0.1, max_iters=3, cfg=cfg)
+            ev = sol.for_combo(tuple(hero))["check"][1]
+            self.assertAlmostEqual(ev, 10 * _exact_equity(b, hero, vr), places=3)
+
+    def test_fast_showdown_matches_matrix(self):
+        board = tuple(cards("Ks7d2cTh"))
+        bm = np.ones(N_FULL)
+        for c in board:
+            bm *= 1 - MEMBER_FULL[c]
+        active = np.nonzero(parse_range("22+, A2s+, K9s+, QTs+, JTs, T9s, 98s, A9o+, KJo+") * bm > 0)[0]
+        ctx = Ctx(active, Config())
+        boards = [board + (c,) for c in range(52) if c not in board]
+        ro = np.random.default_rng(0).random((len(boards), ctx.n))
+        for bi, b in enumerate(boards):
+            ro[bi] *= 1 - ctx.member[b[-1]]
+        fast = ctx.ranking(boards).utility(ro)
+        dense = np.matmul(ctx.stacked("showdown", boards, set()), ro[:, :, None].astype(np.float32))[:, :, 0]
+        live = np.array([1 - ctx.member[b[-1]] for b in boards])
+        self.assertLess(np.abs((fast - dense) * live).max(), 1e-3)
+        sel = [3, 17, 40]
+        self.assertTrue(np.allclose(ctx.ranking(boards).utility(ro[sel], sel), fast[sel]))
+
+    def test_polarized_river_game(self):
+        # nuts-or-air vs a bluff-catcher: bluffs are b/(1+2b) of bets, the catcher calls 1/(1+b)
+        board = cards("Kh8d5c3s2h")                       # IP: 88 (3 sets) + T9o (12 air), OOP: QQ
+        oop, ip = parse_range("QQ"), parse_range("88, T9o")
+        for b in (0.5, 1.0, 2.0):
+            cfg = Config(bet_sizes={s: [b] for s in ("flop", "turn", "river")}, raise_sizes=self.NO_BETS, allin_spr=0)
+            sol = solve(board, oop, ip, pot=10, stack=100, time_budget=2, max_iters=2000, cfg=cfg)
+            ipn = sol.root.children[0]
+            k = 1
+            st = ipn.avg_strategy0()
+            air = parse_range("T9o")[sol.ctx.active] > 0
+            self.assertAlmostEqual(float(st[k][air].mean()), 3 * b / (1 + b) / 12, places=2)
+            vs_bet = ipn.children[k]
+            qq = parse_range("QQ")[sol.ctx.active] > 0
+            self.assertAlmostEqual(float(vs_bet.avg_strategy0()[1][qq].mean()), 1 / (1 + b), places=2)
+            # includes lines off the equilibrium path (OOP leading), which must be trained too
+            self.assertLess(sol.exploitability(), 0.1)
+
+    def test_turn_solve_converges_on_every_river(self):
+        r_oop = parse_range("22+, A2s+, KTs+, QTs+, JTs, T9s, 98s, ATo+, KQo")
+        r_ip = parse_range("22+, A2s+, K5s+, Q8s+, J8s+, T8s+, 97s+, A8o+, KTo+, QTo+, JTo")
+        cfg = Config(bet_sizes={s: [0.75] for s in ("flop", "turn", "river")}, raise_sizes=self.NO_BETS)
+        sol = solve(cards("Ks7d2cTh"), r_oop, r_ip, pot=10, stack=50, time_budget=60, max_iters=80, cfg=cfg)
+        self.assertLess(sol.exploitability(), 1.0)
+        cfg.river_sample = 8                              # public chance sampling runs and stays sane
+        sol = solve(cards("Ks7d2cTh"), r_oop, r_ip, pot=10, stack=50, time_budget=60, max_iters=40, cfg=cfg)
+        self.assertTrue(np.allclose(sol.strategy[:, sol.ctx.active].sum(axis=0), 1.0, atol=1e-5))
+
+    def test_rfi_widths_match_published_charts(self):
+        # 6-max 100bb solver charts: UTG 15-18%, HJ 19-22%, CO 26-29%, BTN 40-48%
+        for pos, lo, hi in (("UTG", 15, 18), ("HJ", 19, 22), ("CO", 26, 29), ("BTN", 40, 48)):
+            pct = pf.RFI[pos].sum() / 1326 * 100
+            self.assertTrue(lo <= pct <= hi, f"{pos} opens {pct:.1f}%")

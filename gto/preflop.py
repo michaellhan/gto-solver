@@ -49,7 +49,8 @@ R = parse_range
 
 # ---------- raise first in ----------
 RFI: Dict[str, np.ndarray] = {
-    "UTG": R("66+, 22-55:0.5, A9s+, A5s:0.5, A4s:0.5, A3s:0.3, A2s:0.3, AJo+, ATo:0.5, KJs+, KTs:0.5, KQo, QJs, QTs:0.5, JTs, T9s:0.5"),
+    # 6-max UTG (~17%, published solver charts put it at 15-18%)
+    "UTG": R("55+, 44:0.5, 33:0.3, 22:0.3, A2s+, ATo+, KTs+, K9s:0.5, KQo, KJo:0.5, QTs+, QJo:0.3, JTs, J9s:0.3, T9s, 98s:0.5, 87s:0.3, 76s:0.3, 65s:0.3"),
     "HJ": R("22+, A2s+, ATo+, A9o:0.3, KTs+, K9s:0.5, KJo+, KTo:0.3, QTs+, QJo, JTs, J9s:0.5, T9s, 98s, 87s:0.5, 76s:0.5"),
     "CO": R("22+, A2s+, A8o+, A7o:0.5, A5o:0.3, K8s+, K7s:0.5, K6s:0.5, K5s:0.5, KTo+, K9o:0.3, Q9s+, Q8s:0.5, QTo+, J9s+, J8s:0.5, JTo, T9s, T8s, 98s, 97s:0.5, 87s, 76s, 65s, 54s:0.5"),
     "BTN": R("22+, A2s+, A5o+, A4o:0.5, A3o:0.5, A2o:0.5, K2s+, K7o+, K6o:0.5, K5o:0.5, Q4s+, Q3s:0.5, Q2s:0.5, Q9o+, Q8o:0.5, J6s+, J9o+, J8o:0.5, T6s+, T9o, T8o:0.5, 96s+, 98o, 86s+, 87o:0.5, 75s+, 64s+, 54s, 53s:0.5, 43s:0.5"),

@@ -28,7 +28,7 @@ python -m gto.server --port 18877
 Open http://127.0.0.1:18877/ . (The same page is what is deployed to the
 website; there it detects that no server is present and runs the identical
 Python code in a web worker with Pyodide. Pyodide's numpy is much slower than
-native, so the browser build uses a lighter tree, fewer sampled runouts, and an
+native, so the browser build uses a lighter tree, samples 6 rivers per iteration, and has an
 8 s budget; the local server gives better postflop accuracy.) Pick the number of players (2 to 9), your seat
 and stack, click cards into your
 hand and the board (click a placed card to remove it), then enter the action
@@ -97,20 +97,40 @@ range, and solver stats.
 | Cards, ranges | `gto/cards.py`, `gto/ranges.py` | 1326-combo weight vectors, PIO-style range syntax |
 | Hand strength | `gto/evaluator.py` | numpy-vectorised 7-card evaluator built on treys' lookup tables: all 21 five-card subsets of every combo on a board in one pass, about 1 ms per board |
 | Preflop | `gto/preflop.py` | Hand-written 100bb charts: RFI, vs RFI, vs 3-bet, vs 4-bet, cold vs 3-bet, mixed frequencies. Seats for 2 to 9 players map onto the charts by how many players are left to act (9-max LJ plays the 6-max UTG chart, 7+ handed UTG plays a tighter EP chart, heads-up has its own button and big-blind charts). Replaying the preflop action through the charts gives every player's range going to the flop. |
-| Postflop | `gto/solver.py` | Heads-up range-vs-range **discounted CFR** over a bet tree (2 bet sizes per street, raises to half pot and full pot after the call, all-in when the stack is short or a raise size would exceed it, max 2 raises). Vectors are compressed to combos in either range. A showdown is one matvec with a precomputed antisymmetric matrix. |
+| Postflop | `gto/solver.py` | Heads-up range-vs-range **discounted CFR** over a bet tree (2 bet sizes per street, raises to half pot and full pot after the call, all-in when the stack is short or a raise size would exceed it, max 2 raises). Vectors are compressed to combos in either range. A river showdown is O(N) per board: combos sorted by strength, cumulative reach sums, and a per-card correction for card removal. Equity leaves are one matvec with a precomputed antisymmetric matrix. |
 | Hand replay | `gto/advisor.py` | The whole hand is replayed for any number of seats: blinds, folds, dead money from players who folded, all-ins, acting order (heads-up the button acts first preflop and last postflop). Whenever exactly two players remain the spot is solved heads-up: from the start of the street if it began heads-up, or from the current node if a third player just folded. With three or more live players it falls back to Monte Carlo equity against every live range plus pot-odds logic, and says so. |
 | Multi-street | `gto/advisor.py` | Earlier streets are solved with a small budget and each player's range is narrowed by the frequency of the action they actually took, mixed with a 15% uniform floor so an approximate solve never prunes a line to nothing. The current street is solved from the start of the street and the tree is walked to hero's node with exact frequencies. Solutions are cached per hand so the flop solve is reused on the turn. |
 | Front ends | `gto/cli.py`, `gto/server.py`, `gto/static/index.html` | Manual CLI; local HTTP endpoint; click-driven review page served at `/`. |
 
 ### Accuracy vs speed
 
-* **River**: exact for the bet-size abstraction; converges in well under a second.
-* **Turn**: turn decisions are full; river subtrees are full for `n_rivers` sampled
-  rivers (default 12). About 65 iterations in the 4 s budget on wide ranges.
+Checked against exact enumeration, toy games with known solutions, and the
+open-source [postflop-solver](https://github.com/b-inary/postflop-solver) on
+identical trees and ranges (BTN open vs BB call, K72r runouts):
+
+* **Evaluator**: identical to treys on 18,000 random hands.
+* **River**: matches the reference to about 1% in every node's aggregate
+  frequencies and converges in well under a second. The polarized river game
+  (nuts or air vs a bluff-catcher) reproduces the theory: bluffs are b/(1+2b) of
+  the bets and the catcher calls 1/(1+b).
+* **Turn**: every river is in the tree (`n_rivers=None`), so the turn is solved
+  exactly for the bet-size abstraction. Run long enough it matches the
+  reference, but it takes time: about 20 s to reach ~3% of the pot
+  exploitability on wide ranges and about 60 s to reach ~0.6%. At 2.5 to 8 s the
+  answer is only roughly right. `river_sample=k` traverses k fresh random rivers
+  per iteration instead (public chance sampling; the browser uses 6). That makes
+  each iteration cheaper and stays unbiased, but it is noisier. Do not use a small
+  fixed river set (`n_rivers=k`): the solver then plays a game where only those
+  k rivers can come, and on K72r-T it donk-bet 32% where the real answer is 6%.
 * **Flop**: flop decisions are full, turn decisions are full on `n_turns` sampled
-  turns (default 6), and the river is an **equity leaf**: the average showdown matrix
-  over 16 sampled rivers. So flop play can't see river bluffs or thin value bets.
-  About 80 iterations in 4 s on wide ranges.
+  turns (default 6), and the river is an **equity leaf**: both hands check it
+  down. This is the main remaining error. Against the full-tree reference on K72r
+  (one 50% size), BB's check frequency is right (~100%), but BTN c-bets 57-65%
+  where the full game c-bets ~100%. Turn sampling is not the cause: all 49 turns
+  give the same result. The check-down leaf undervalues betting and position.
+  Treat flop output as directional.
+* `Solution.exploitability()` reports how far a solve is from equilibrium in
+  % of the pot (it plays a best response for each side against the other).
 * **Earlier streets** used for range narrowing get 2 s each, and a solve that is
   reused later in the same hand keeps iterating from its stored regrets instead of
   restarting. When a real bet or raise size differs from the abstraction by more

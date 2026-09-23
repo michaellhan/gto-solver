@@ -41,7 +41,9 @@ class Config:
     allin_spr: float = 2.5            # offer all-in when stack/pot <= this
     depth: int = 2                    # streets with full decisions from the root street
     n_turns: int = 6                  # sampled turns for full-decision turn subtrees (from flop)
-    n_rivers: Optional[int] = 12      # rivers for full-decision river subtrees from the turn (None = all)
+    n_rivers: Optional[int] = None    # rivers in the tree for full-decision river subtrees from the turn (None = all)
+    river_sample: Optional[int] = None  # rivers traversed per iteration from the turn, redrawn every iteration
+                                      # (public chance sampling; None = traverse all of them)
     n_rivers_from_flop: int = 8       # rivers per turn for full-decision river subtrees when the root is the flop
     leaf_turns: int = 6               # sampled turns for equity leaves reached from the flop
     leaf_rivers: Optional[int] = None # rivers for equity leaves when solving from the turn (None = all)
@@ -52,7 +54,8 @@ class Config:
         return Config(bet_sizes={k: list(v) for k, v in self.bet_sizes.items()},
                       raise_sizes={k: list(v) for k, v in self.raise_sizes.items()},
                       max_raises=self.max_raises, allin_spr=self.allin_spr, depth=self.depth,
-                      n_turns=self.n_turns, n_rivers=self.n_rivers, n_rivers_from_flop=self.n_rivers_from_flop,
+                      n_turns=self.n_turns, n_rivers=self.n_rivers, river_sample=self.river_sample,
+                      n_rivers_from_flop=self.n_rivers_from_flop,
                       leaf_turns=self.leaf_turns, leaf_rivers=self.leaf_rivers, leaf_rivers_flop=self.leaf_rivers_flop,
                       seed=self.seed)
 
@@ -72,6 +75,7 @@ class Ctx:
         self.active = active
         self.n = len(active)
         self.member = MEMBER_FULL[:, active]
+        self.member32 = self.member.astype(np.float32)
         self.ca = CA_FULL[active]
         self.cb = CB_FULL[active]
         self.compat = 1.0 - np.clip(self.member.T @ self.member, 0, 1)
@@ -111,6 +115,26 @@ class Ctx:
             self._stacks[key] = M
         return M
 
+    def ranking(self, boards) -> "Ranking":
+        """Sorted-strength index for a list of river boards (shared by every terminal on them)."""
+        key = ("rank", tuple(boards))
+        R = self._stacks.get(key)
+        if R is None:
+            R = Ranking(self, [self.strength(b) for b in boards])
+            self._stacks[key] = R
+        return R
+
+    def card_rows(self):
+        """(52, m) combo indices holding each card, padded with n (a dummy combo)."""
+        if not hasattr(self, "_card_rows"):
+            rows = [np.nonzero(self.member[c])[0] for c in range(52)]
+            m = max(1, max(len(r) for r in rows))
+            G = np.full((52, m), self.n, dtype=np.int64)
+            for c, r in enumerate(rows):
+                G[c, :len(r)] = r
+            self._card_rows = G
+        return self._card_rows
+
     def turn_picks(self, flop: tuple, dead: set, k: int) -> list:
         key = tuple(sorted(flop))
         picks = self._turn_picks.get(key)
@@ -143,9 +167,98 @@ class Ctx:
             L = np.zeros((self.n, self.n), dtype=np.float32)
             for c in picks:
                 L += self.leaf_matrix(board + (c,), dead)
-            L /= len(picks)
+            # average per pair over the picked cards neither hand holds (the sub-matrices
+            # are zero for the rest), not over all picks
+            h = self.member[picks].sum(axis=0)
+            L /= np.maximum(len(picks) - h[:, None] - h[None, :], 1.0).astype(np.float32)
         self._leaf[key] = L
         return L
+
+
+class Ranking:
+    """Showdown utilities in O(N) per board instead of an N x N matrix product.
+
+    For combo i, wins = reach of all weaker opponent combos minus the weaker ones that share
+    a card with i, and likewise for losses. The card-sharing part is computed per card from
+    each card's combos in strength order; only i itself holds both of i's cards and it is
+    neither weaker nor stronger than itself, so no inclusion-exclusion term is needed."""
+
+    def __init__(self, ctx: "Ctx", strengths):
+        n = ctx.n
+        G = ctx.card_rows()                                   # (52, m)
+        B, m = len(strengths), G.shape[1]
+        S = np.stack(strengths).astype(np.float64)            # (B, n); -1 = holds a board card
+        self.order = np.argsort(S, axis=1, kind="stable")
+        ss = np.take_along_axis(S, self.order, axis=1)
+        self.lo = np.empty((B, n), dtype=np.int64); self.hi = np.empty((B, n), dtype=np.int64)
+        Sp = np.concatenate([S, np.full((B, 1), np.inf)], axis=1)
+        self.G = np.empty((B, 52, m), dtype=np.int64)
+        self.klo = np.zeros((B, 2, n), dtype=np.int64); self.khi = np.zeros((B, 2, n), dtype=np.int64)
+        for b in range(B):
+            self.lo[b] = np.searchsorted(ss[b], S[b], "left")
+            self.hi[b] = np.searchsorted(ss[b], S[b], "right")
+            sg = Sp[b][G]                                     # (52, m)
+            o = np.argsort(sg, axis=1, kind="stable")
+            self.G[b] = np.take_along_axis(G, o, axis=1)
+            sg = np.take_along_axis(sg, o, axis=1)
+            for slot, cards in enumerate((ctx.ca, ctx.cb)):
+                for c in np.unique(cards):
+                    idx = np.nonzero(cards == c)[0]
+                    self.klo[b, slot, idx] = np.searchsorted(sg[c], S[b, idx], "left")
+                    self.khi[b, slot, idx] = np.searchsorted(sg[c], S[b, idx], "right")
+        self.blocked = S < 0
+        # every lookup below is a flat index into a raveled (B, ...) array
+        rowc = np.arange(B)[:, None] * (52 * (m + 1))
+        cw = [rowc + cards[None, :] * (m + 1) for cards in (ctx.ca, ctx.cb)]
+        self.flo = np.concatenate([(cw[k] + self.klo[:, k]).ravel() for k in range(2)])
+        self.fhi = np.concatenate([(cw[k] + self.khi[:, k]).ravel() for k in range(2)])
+        self.fend = np.concatenate([(cw[k] + m).ravel() for k in range(2)])
+        rown = np.arange(B)[:, None] * (n + 1)
+        self.fsort = (np.arange(B)[:, None] * n + self.order).ravel()
+        self.fwin = (rown + self.lo).ravel()
+        self.flose = (rown + self.hi).ravel()
+        self.ftop = np.broadcast_to(rown + n, (B, n)).ravel()
+        self.Gflat = (np.arange(B)[:, None, None] * (n + 1) + self.G).ravel()
+        self.n, self.m, self.B = n, m, B
+
+    def utility(self, ro: np.ndarray, sel=None) -> np.ndarray:
+        """ro: (B, n) opponent reach -> (B, n) sum over compatible opponent combos of
+        +reach (weaker) / -reach (stronger). With `sel`, ro holds only those boards' rows."""
+        if sel is not None:
+            return self._sub(sel).utility(ro)
+        B, n, m = self.B, self.n, self.m
+        cum = np.zeros((B, n + 1), dtype=ro.dtype); np.cumsum(ro.ravel()[self.fsort].reshape(B, n), axis=1, out=cum[:, 1:])
+        cum = cum.ravel()
+        u = cum[self.fwin] - (cum[self.ftop] - cum[self.flose])             # wins - losses
+        rp = np.concatenate([ro, np.zeros((B, 1), dtype=ro.dtype)], axis=1).ravel()
+        cg = np.zeros((B, 52, m + 1), dtype=ro.dtype); np.cumsum(rp[self.Gflat].reshape(B, 52, m), axis=2, out=cg[:, :, 1:])
+        cg = cg.ravel()
+        # card-sharing corrections: -weaker + stronger, for each of the two cards
+        corr = cg[self.fend] - cg[self.fhi] - cg[self.flo]
+        u += corr[:B * n] + corr[B * n:]
+        u = u.reshape(B, n)
+        u[self.blocked] = 0.0
+        return u
+
+    def _sub(self, sel) -> "Ranking":
+        """The same index restricted to boards `sel` (flat offsets rebuilt for fewer rows)."""
+        B, n, m = len(sel), self.n, self.m
+        r = Ranking.__new__(Ranking)
+        r.B, r.n, r.m = B, n, m
+        r.blocked = self.blocked[sel]
+        rows = np.arange(B)[:, None]
+        r.fsort = (rows * n + self.order[sel]).ravel()
+        r.fwin = (rows * (n + 1) + self.lo[sel]).ravel()
+        r.flose = (rows * (n + 1) + self.hi[sel]).ravel()
+        r.ftop = np.broadcast_to(rows * (n + 1) + n, (B, n)).ravel()
+        r.Gflat = (rows[:, :, None] * (n + 1) + self.G[sel]).ravel()
+        shift = (np.asarray(sel)[:, None] - rows) * (52 * (m + 1))
+        full = self.B * n
+        for name in ("flo", "fhi", "fend"):
+            flat = getattr(self, name)
+            setattr(r, name, np.concatenate([(flat[k * full:(k + 1) * full].reshape(self.B, n)[sel] - shift).ravel()
+                                             for k in range(2)]))
+        return r
 
 
 # ----------------------------------------------------------------- tree nodes
@@ -158,11 +271,28 @@ class Terminal:
 
 
 class Chance:
-    """Parent batch B, K cards per parent element; the child has batch B*K."""
-    __slots__ = ("boards", "K", "masks", "child")
+    """Parent batch B, K cards per parent element; the child has batch B*K.
 
-    def __init__(self, boards, K, masks, child):
+    A combo's summed child utility is divided by the number of traversed cards it doesn't
+    hold, times the share of those the opponent's hand doesn't hold either
+    ((avail - 4) / (avail - 2)). With every card enumerated that is exactly the avail - 4
+    runouts possible for any pair of hands.
+
+    With `sample` set, each traversal visits a fresh random subset of `sample` of the K
+    cards (public chance sampling). Every card keeps its own strategy, so the solver still
+    solves the real game rather than one where only a few fixed cards can come."""
+    __slots__ = ("boards", "K", "masks", "child", "norm", "avail", "sample")
+
+    def __init__(self, boards, K, masks, child, avail, sample=None):
         self.boards, self.K, self.masks, self.child = boards, K, masks, child
+        self.avail = avail
+        self.sample = sample if sample is not None and sample < K else None
+        B = len(boards)
+        self.norm = self.norm_for(masks.reshape(B, K, -1))
+
+    def norm_for(self, m3: np.ndarray) -> np.ndarray:
+        """m3: (B, k, N) masks of the traversed cards -> (B, N) divisor."""
+        return np.maximum(m3.sum(axis=1) * ((self.avail - 4) / (self.avail - 2)), 1e-9)
 
 
 class Decision:
@@ -173,22 +303,23 @@ class Decision:
         self.pot_now, self.bets = pot_now, bets
         self.B = len(boards)
         A = len(names)
-        self.regret = np.zeros((self.B, A, n))
-        self.ssum = np.zeros((self.B, A, n))
+        self.regret = np.zeros((self.B, A, n), dtype=np.float32)
+        self.ssum = np.zeros((self.B, A, n), dtype=np.float32)
 
     @property
     def board(self):
         return self.boards[0]
 
-    def strategy(self) -> np.ndarray:
-        pos = np.maximum(self.regret, 0.0)
+    def strategy(self, sel=None) -> np.ndarray:
+        pos = np.maximum(self.regret if sel is None else self.regret[sel], 0.0)
         tot = pos.sum(axis=1, keepdims=True)
         return np.where(tot > 0, pos / np.where(tot > 0, tot, 1.0), 1.0 / len(self.names))
 
-    def avg_strategy(self) -> np.ndarray:
-        """(B, A, N) average strategy."""
-        tot = self.ssum.sum(axis=1, keepdims=True)
-        return np.where(tot > 0, self.ssum / np.where(tot > 0, tot, 1.0), 1.0 / len(self.names))
+    def avg_strategy(self, sel=None) -> np.ndarray:
+        """(B, A, N) average strategy (rows `sel` only if given)."""
+        ss = self.ssum if sel is None else self.ssum[sel]
+        tot = ss.sum(axis=1, keepdims=True)
+        return np.where(tot > 0, ss / np.where(tot > 0, tot, 1.0), 1.0 / len(self.names))
 
     def avg_strategy0(self) -> np.ndarray:
         """(A, N) average strategy of the first (or only) batch element."""
@@ -235,10 +366,13 @@ class TreeBuilder:
 
     def _chance(self, boards, pot, stack, inv):
         cfg = self.cfg
+        sample = None
         if len(boards[0]) == 3:
             k = cfg.n_turns
+        elif self.root_street_len == 3:
+            k = cfg.n_rivers_from_flop
         else:
-            k = cfg.n_rivers_from_flop if self.root_street_len == 3 else cfg.n_rivers
+            k, sample = cfg.n_rivers, cfg.river_sample
         child_boards, cards = [], []
         for b in boards:
             cs = self._next_cards(b, k)
@@ -246,7 +380,7 @@ class TreeBuilder:
                 cs = cs[:k]
             cards.append(cs)
         K = min(len(cs) for cs in cards)
-        masks = np.ones((len(boards) * K, self.ctx.n))
+        masks = np.ones((len(boards) * K, self.ctx.n), dtype=np.float32)
         for bi, b in enumerate(boards):
             for ki in range(K):
                 c = cards[bi][ki]
@@ -254,7 +388,8 @@ class TreeBuilder:
                 masks[bi * K + ki] = 1.0 - self.ctx.member[c]
         child = self._decision(child_boards, pot, stack, (0.0, 0.0), 0, 0, inv, False)
         self.n_nodes += 1
-        return Chance(boards, K, masks, child)
+        avail = sum(1 for c in range(52) if c not in self.dead and c not in boards[0])
+        return Chance(boards, K, masks, child, avail, sample)
 
     def _decision(self, boards, pot, stack, bets, p, n_raises, inv, checked):
         cfg = self.cfg
@@ -335,7 +470,8 @@ class Solver:
         self.ctx, self.root, self.dead = ctx, root, dead
         self.iters = 0
         self.alpha, self.beta, self.gamma = 1.5, 0.0, 2.0   # DCFR parameters
-        self.prune_eps = 0.0          # skip subtrees the opponent reaches with negligible mass
+        self.rng = random.Random(ctx.cfg.seed + 2)
+        self.sampling = True          # chance sampling while training; off for EVs and reports
         self._nodes: List[Decision] = []
         self._collect(root)
 
@@ -349,7 +485,7 @@ class Solver:
 
     def compat_sum(self, ro):
         """ro: (B, N) -> (B, N) mass of opponent combos sharing no card with each combo."""
-        cs = ro @ self.ctx.member.T            # (B, 52)
+        cs = ro @ (self.ctx.member32 if ro.dtype == np.float32 else self.ctx.member).T   # (B, 52)
         return ro.sum(axis=1, keepdims=True) - cs[:, self.ctx.ca] - cs[:, self.ctx.cb] + ro
 
     def _terminal_M(self, node: Terminal):
@@ -357,43 +493,62 @@ class Solver:
             node.M = self.ctx.stacked(node.kind, node.boards, self.dead)
         return node.M
 
-    def _cfr(self, node, p, r0, r1, update, use_avg):
-        """r0, r1: (B, N) reaches. Returns (B, N) utility for player p."""
+    def _cfr(self, node, p, r0, r1, update, use_avg, sel=None):
+        """r0, r1: (B, N) reaches. Returns (B, N) utility for player p.
+        `sel`: which of the node's batch rows r0/r1 are for (None = all of them)."""
+        # no reach pruning: a subtree the opponent almost never enters must still be trained,
+        # because the real hand can go there (a donk bet, an overbet) and we read its strategy
         ro = r1 if p == 0 else r0
-        if update and ro.sum() < self.prune_eps:
-            return np.zeros_like(r0)
         if isinstance(node, Terminal):
             if node.kind == "fold":
                 if node.folder == p:
                     return -node.inv[p] * self.compat_sum(ro)
                 return node.inv[1 - p] * self.compat_sum(ro)
+            if len(node.boards[0]) == 5:
+                if node.M is None:
+                    node.M = self.ctx.ranking(node.boards)
+                return node.inv[p] * node.M.utility(ro, sel)
             M = self._terminal_M(node)
-            return node.inv[p] * np.matmul(M, ro[:, :, None].astype(np.float32))[:, :, 0].astype(np.float64)
+            if sel is not None:
+                M = M[sel]
+            return np.float32(node.inv[p]) * np.matmul(M, ro[:, :, None].astype(np.float32))[:, :, 0]
         if isinstance(node, Chance):
             B, K, n = r0.shape[0], node.K, self.ctx.n
-            m = node.masks
-            r0c = (r0[:, None, :] * m.reshape(B, K, n)).reshape(B * K, n)
-            r1c = (r1[:, None, :] * m.reshape(B, K, n)).reshape(B * K, n)
-            u = self._cfr(node.child, p, r0c, r1c, update, use_avg)
-            return (u * m).reshape(B, K, n).mean(axis=1)
-        strat = node.avg_strategy() if use_avg else node.strategy()     # (B, A, N)
-        A = len(node.names)
+            rows = np.arange(B) if sel is None else np.asarray(sel)
+            if node.sample is not None and self.sampling:
+                ks = np.array(sorted(self.rng.sample(range(K), node.sample)))
+            else:
+                ks = np.arange(K)
+            k = len(ks)
+            csel = (rows[:, None] * K + ks[None, :]).ravel()
+            m3 = node.masks[csel].reshape(B, k, n)
+            r0c = (r0[:, None, :] * m3).reshape(B * k, n)
+            r1c = (r1[:, None, :] * m3).reshape(B * k, n)
+            full = sel is None and k == K
+            u = self._cfr(node.child, p, r0c, r1c, update, use_avg, None if full else csel)
+            norm = node.norm_for(m3) if k < K else node.norm[rows]
+            return (u.reshape(B, k, n) * m3).sum(axis=1) / norm
+        strat = node.avg_strategy(sel) if use_avg else node.strategy(sel)     # (B, A, N)
         if node.player == p:
             utils = np.empty_like(strat)
             for a, child in enumerate(node.children):
-                utils[:, a, :] = self._cfr(child, p, r0, r1, update, use_avg)
+                utils[:, a, :] = self._cfr(child, p, r0, r1, update, use_avg, sel)
             node_util = (strat * utils).sum(axis=1)                     # (B, N)
             if update:
                 rp = r0 if p == 0 else r1
-                node.regret += utils - node_util[:, None, :]
-                node.ssum += rp[:, None, :] * strat
+                if sel is None:
+                    node.regret += utils - node_util[:, None, :]
+                    node.ssum += rp[:, None, :] * strat
+                else:
+                    node.regret[sel] += utils - node_util[:, None, :]
+                    node.ssum[sel] += rp[:, None, :] * strat
             return node_util
         util = np.zeros_like(r0)
         for a, child in enumerate(node.children):
             if p == 0:
-                util += self._cfr(child, p, r0, r1 * strat[:, a, :], update, use_avg)
+                util += self._cfr(child, p, r0, r1 * strat[:, a, :], update, use_avg, sel)
             else:
-                util += self._cfr(child, p, r0 * strat[:, a, :], r1, update, use_avg)
+                util += self._cfr(child, p, r0 * strat[:, a, :], r1, update, use_avg, sel)
         return util
 
     def _discount(self):
@@ -408,8 +563,7 @@ class Solver:
 
     def run(self, r0, r1, time_budget=3.0, max_iters=1000, min_iters=10):
         """r0, r1: (N,) root reaches. Adds iterations until the budget is spent."""
-        r0b, r1b = r0[None, :], r1[None, :]
-        self.prune_eps = 1e-6 * min(r0.sum(), r1.sum())
+        r0b, r1b = r0[None, :].astype(np.float32), r1[None, :].astype(np.float32)
         t0 = time.time()
         start = self.iters
         while self.iters < max_iters:
@@ -421,6 +575,37 @@ class Solver:
                 break
         return self.iters, time.time() - t0
 
+    def _best_response(self, node, p, r0, r1):
+        """Counterfactual utility for p playing a best response to the opponent's average
+        strategy, every chance card enumerated."""
+        if isinstance(node, Terminal):
+            return self._cfr(node, p, r0, r1, update=False, use_avg=True)
+        if isinstance(node, Chance):
+            B, K, n = r0.shape[0], node.K, self.ctx.n
+            m3 = node.masks.reshape(B, K, n)
+            u = self._best_response(node.child, p, (r0[:, None, :] * m3).reshape(B * K, n),
+                                    (r1[:, None, :] * m3).reshape(B * K, n))
+            return (u.reshape(B, K, n) * m3).sum(axis=1) / node.norm
+        if node.player == p:
+            return np.max([self._best_response(c, p, r0, r1) for c in node.children], axis=0)
+        strat = node.avg_strategy()
+        u = np.zeros(r0.shape)
+        for a, c in enumerate(node.children):
+            if p == 0:
+                u += self._best_response(c, p, r0, r1 * strat[:, a, :])
+            else:
+                u += self._best_response(c, p, r0 * strat[:, a, :], r1)
+        return u
+
+    def exploitability(self, r0, r1) -> float:
+        """Average of what each player's best response wins against the other's average
+        strategy, in percent of the pot at the root (0 at an exact equilibrium of this tree)."""
+        a, b = r0[None, :].astype(np.float32), r1[None, :].astype(np.float32)
+        v0 = float((self._best_response(self.root, 0, a, b)[0] * r0).sum())
+        v1 = float((self._best_response(self.root, 1, a, b)[0] * r1).sum())
+        pairs = float((self.compat_sum(r1[None, :])[0] * r0).sum())
+        return (v0 + v1) / 2 / max(pairs, 1e-12) / self.root.pot_now * 100
+
     def node_action_evs(self, node: Decision, r0, r1):
         """EV per action for the node's player, chips relative to folding now, both players
         on their average strategies. r0, r1: (N,) reaches at the node."""
@@ -429,9 +614,13 @@ class Solver:
         cs = self.compat_sum(ro)[0]
         inv_p = _inv_of(node, p)
         evs = np.zeros((len(node.names), self.ctx.n))
-        for a, child in enumerate(node.children):
-            u = self._cfr(child, p, r0[None, :], r1[None, :], update=False, use_avg=True)[0]
-            evs[a] = np.where(cs > 1e-12, u / np.where(cs > 1e-12, cs, 1.0), 0.0) + inv_p
+        self.sampling = False           # exact expectation over every card in the tree
+        try:
+            for a, child in enumerate(node.children):
+                u = self._cfr(child, p, r0[None, :], r1[None, :], update=False, use_avg=True)[0]
+                evs[a] = np.where(cs > 1e-12, u / np.where(cs > 1e-12, cs, 1.0), 0.0) + inv_p
+        finally:
+            self.sampling = True
         return evs
 
 
@@ -463,6 +652,10 @@ class Solution:
     def range_strategy(self, r_full: np.ndarray) -> Dict[str, float]:
         w = r_full / max(r_full.sum(), 1e-12)
         return {n: float((self.strategy[a] * w).sum()) for a, n in enumerate(self.names)}
+
+    def exploitability(self) -> float:
+        """Percent of the pot a best response wins on average (see Solver.exploitability)."""
+        return self.solver.exploitability(self.r0, self.r1)
 
     def extend(self, time_budget: float, max_iters: int = 1000):
         """Keep solving from the current regrets for another `time_budget` seconds."""
