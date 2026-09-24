@@ -9,23 +9,27 @@
     --bg: #0f1216; --panel: #171b21; --panel2: #1e242c; --line: #2a313b;
     --text: #e6e9ee; --muted: #8b94a3; --accent: #f5b942;
     --fold: #4a7bd0; --passive: #3fae6a; --bet: #e0603a; --bet2: #b8402a; --allin: #8a1f2f;
+    --good: #6bd394; --meh: #f5b942; --bad: #f28b82;
+    --red: #d3232a; --blue: #1f5fd1; --green: #1c8a3c;
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif; }
-  header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--line); }
+  header { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
   header h1 { font-size: 15px; margin: 0; font-weight: 600; }
   header .spacer { flex: 1; }
   header .ctl { display: inline-flex; align-items: center; gap: 8px; }
   kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; margin-left: 6px; color: var(--muted); }
   main { display: grid; grid-template-columns: minmax(440px, 540px) 1fr; gap: 18px; padding: 18px 20px; max-width: 1400px; margin: 0 auto; }
-  @media (max-width: 1000px) { main { grid-template-columns: 1fr; } }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
-  .panel h2 { margin: 0 0 10px; font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); font-weight: 600; display: flex; align-items: center; }
+  .panel h2 { margin: 0 0 10px; font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); font-weight: 600; display: flex; align-items: center; gap: 8px; }
   .panel h2 .right { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 500; }
   button { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 13px; font: inherit; cursor: pointer; }
   button:hover { border-color: #3c4653; background: #242b34; }
   button.active { background: var(--accent); color: #1a1200; border-color: var(--accent); font-weight: 600; }
   button.small { padding: 4px 9px; font-size: 12px; }
+  button.link { background: none; border: 0; padding: 0; color: var(--accent); font-size: 12px; }
+  button.link:hover { text-decoration: underline; background: none; }
   button:disabled { opacity: .35; cursor: default; }
   input[type=number] { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font: inherit; width: 80px; }
   input:focus { outline: none; border-color: var(--accent); }
@@ -36,8 +40,13 @@
   .segment button { border: 0; border-radius: 0; min-width: 32px; }
   .segment button + button { border-left: 1px solid var(--line); }
 
+  /* setup summary (collapsed once the hand starts) */
+  .setupsum { display: flex; align-items: center; gap: 10px; }
+  .setupsum b { font-weight: 600; }
+
   /* cards */
-  .slots { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 12px; }
+  .slots { display: flex; gap: 14px; flex-wrap: wrap; }
+  .slots + .picker { margin-top: 12px; }
   .slotgroup { display: flex; flex-direction: column; gap: 4px; }
   .slotgroup label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
   .slotrow { display: flex; gap: 5px; }
@@ -46,26 +55,42 @@
   .slot.filled:hover { opacity: .55; }
   .slot.sel, .slot.need { outline: 2px solid var(--accent); border-color: var(--accent); }
   .slot.need { animation: pulse 1.2s ease-in-out infinite; }
+  .slot.flash { animation: flash .35s ease-in-out 3; }
   @keyframes pulse { 50% { outline-color: transparent; } }
+  @keyframes flash { 50% { outline: 3px solid var(--accent); transform: translateY(-3px); } }
   .picker { display: grid; grid-template-columns: repeat(13, 1fr); gap: 3px; }
   .pc { height: 34px; border-radius: 5px; background: #f7f7f2; color: #111; font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center; cursor: pointer; border: 1px solid #ddd; user-select: none; }
   .pc:hover { transform: translateY(-1px); box-shadow: 0 2px 6px rgba(0,0,0,.4); }
-  .pc.used { opacity: .22; }
-  .pc.used:hover { opacity: .6; }
-  .pc.h, .pc.d, .slot.filled.h, .slot.filled.d { color: #d3232a; }
+  .pc.used { opacity: .18; cursor: not-allowed; }
+  .pc.used:hover { transform: none; box-shadow: none; }
+  .pc.pend { outline: 2px solid var(--accent); }
+  .h, .d { color: var(--red) !important; }
+  .four .d { color: var(--blue) !important; }
+  .four .c { color: var(--green) !important; }
+  .typehint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .typehint b { color: var(--accent); font-family: ui-monospace, Menlo, monospace; }
 
-  /* table strip */
-  .table { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-bottom: 24px; }
-  .seat { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 6px; text-align: center; position: relative; min-height: 56px; }
+  /* table */
+  .felt { position: relative; height: 270px; margin: 4px 0 10px; }
+  .felt::before { content: ""; position: absolute; inset: 30px 46px; border-radius: 999px; background: radial-gradient(ellipse at center, #1f5a40 0%, #173f2e 70%, #12311f 100%); border: 7px solid #2b2119; box-shadow: inset 0 0 30px rgba(0,0,0,.45), 0 0 0 1px #3a2c20; }
+  .felt .center { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center; }
+  .board { display: flex; gap: 4px; justify-content: center; }
+  .bc { width: 30px; height: 42px; border-radius: 4px; background: #f7f7f2; color: #111; font-weight: 700; font-size: 13px; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.05; }
+  .bc.empty { background: rgba(0,0,0,.18); border: 1px dashed rgba(255,255,255,.18); }
+  .felt .pot { margin-top: 6px; font-size: 12px; color: #d8e6dc; font-variant-numeric: tabular-nums; }
+  .seat { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 5px 4px; text-align: center; position: absolute; width: 74px; transform: translate(-50%, -50%); z-index: 2; }
   .seat .pos { font-weight: 700; font-size: 13px; }
   .seat .you { display: block; font-size: 9px; letter-spacing: .1em; color: var(--accent); text-transform: uppercase; }
-  .seat .amt { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; font-variant-numeric: tabular-nums; }
-  .seat.folded { opacity: .3; }
+  .seat .hc { display: block; font-weight: 700; font-size: 12px; }
+  .seat .amt { display: block; font-size: 11px; color: var(--muted); margin-top: 1px; font-variant-numeric: tabular-nums; min-height: 15px; }
+  .seat.folded { opacity: .35; }
   .seat.folded .pos { text-decoration: line-through; }
-  .seat.toact { border-color: var(--accent); background: #2a2413; box-shadow: 0 0 0 1px var(--accent) inset; }
-  .seat.toact::after { content: "▲ to act"; position: absolute; left: 0; right: 0; bottom: -16px; font-size: 9px; color: var(--accent); letter-spacing: .06em; }
+  .seat.hero { border-color: #5a4a26; }
+  .seat.toact { border-color: var(--accent); background: #2a2413; box-shadow: 0 0 0 1px var(--accent) inset, 0 0 14px rgba(245,185,66,.35); }
+  .seat .ta { color: var(--accent); display: block; }
   .seat.allin .amt { color: var(--bet); }
   .seat.clickable { cursor: pointer; }
+  .seat.clickable:hover { border-color: #4a5566; }
 
   /* action */
   .prompt { display: flex; align-items: baseline; gap: 10px; margin: 0 0 10px; flex-wrap: wrap; }
@@ -74,56 +99,105 @@
   .prompt .pot { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
   .prompt .ask { width: 100%; color: var(--muted); font-size: 13px; }
   .acts { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
-  .acts button { padding: 10px 14px; font-weight: 600; }
+  .acts button { padding: 10px 22px 10px 14px; font-weight: 600; position: relative; }
   .acts button.fold { border-color: #3a5a97; }
   .acts button.pass { border-color: #2f7a4d; }
   .acts button.agg { border-color: #9a4a34; }
   .acts button small { display: block; font-weight: 400; font-size: 11px; color: var(--muted); }
+  .acts button kbd, .shortcut kbd { position: absolute; top: 3px; right: 3px; margin: 0; font-size: 9px; padding: 0 3px; line-height: 13px; }
+  .shortcut { position: relative; padding-right: 26px !important; }
   .custom { display: none; gap: 6px; align-items: center; margin-bottom: 10px; }
   .custom.open { display: flex; }
-  .err { color: #f28b82; font-size: 12px; min-height: 16px; }
+  .err { color: var(--bad); font-size: 12px; min-height: 16px; }
   .timeline { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
-  .tl { display: grid; grid-template-columns: 64px 1fr; gap: 6px 10px; align-items: baseline; font-size: 13px; margin-bottom: 5px; }
+  .tl { display: grid; grid-template-columns: 96px 1fr; gap: 6px 10px; align-items: baseline; font-size: 13px; margin-bottom: 5px; }
   .tl .st { color: var(--muted); text-transform: uppercase; font-size: 10px; letter-spacing: .08em; }
   .tl .line { display: flex; gap: 5px; flex-wrap: wrap; }
   .chip { background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; white-space: nowrap; font-size: 12px; }
   .chip.hero { border-color: var(--accent); }
   .chip.agg { border-color: var(--bet); }
   .chip.fold { opacity: .6; }
+  .g { font-weight: 800; margin-left: 5px; }
+  .g.ok { color: var(--good); } .g.meh { color: var(--meh); } .g.bad { color: var(--bad); }
+  .keys { font-size: 11px; color: var(--muted); margin-top: 8px; }
 
   /* advice */
+  .note { font-size: 12px; color: var(--muted); background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; line-height: 1.6; }
+  .note b { color: var(--text); }
+  .review { list-style: none; margin: 6px 0 0; padding: 0; }
+  .review li { display: flex; gap: 8px; align-items: baseline; }
+  .review .st { text-transform: uppercase; font-size: 10px; letter-spacing: .08em; width: 52px; flex: none; }
+  #result.stale { opacity: .45; }
   .verdict { display: flex; gap: 14px; align-items: baseline; margin: 4px 0 12px; flex-wrap: wrap; }
   .verdict .big { font-size: 24px; font-weight: 700; }
   .verdict .mix { color: var(--muted); font-size: 13px; }
   .arows { display: flex; flex-direction: column; gap: 8px; }
   .arow { display: grid; grid-template-columns: 140px 1fr 70px 80px; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 8px; background: var(--panel2); border: 1px solid transparent; cursor: pointer; }
+  .arows.noev .arow { grid-template-columns: 140px 1fr 70px; }
   .arow:hover { border-color: #3c4653; }
   .arow.best { border-color: var(--accent); }
+  .arow.head { white-space: nowrap; background: none; cursor: default; padding: 0 10px; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  .arow.head:hover { border-color: transparent; }
   .arow .name { font-weight: 600; }
   .arow .name small { color: var(--muted); font-weight: 400; margin-left: 6px; }
   .bar { height: 12px; background: #0f1216; border-radius: 4px; overflow: hidden; }
   .bar > div { height: 100%; border-radius: 4px; }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
-  .num.pos { color: #6bd394; } .num.neg { color: #f28b82; }
+  .num.pos { color: var(--good); } .num.neg { color: var(--bad); }
   .meta { color: var(--muted); font-size: 12px; margin-top: 10px; line-height: 1.6; }
   .grid { display: grid; grid-template-columns: repeat(13, 1fr); gap: 2px; margin-top: 6px; }
-  .cell { aspect-ratio: 1; border-radius: 3px; position: relative; background: #12161b; font-size: 10px; overflow: hidden; }
-  .cell .lbl { position: absolute; left: 3px; top: 2px; color: #fff; text-shadow: 0 0 3px #000; font-weight: 600; z-index: 2; }
-  .cell .stack { position: absolute; inset: 0; display: flex; }
+  .cell { aspect-ratio: 1; border-radius: 3px; position: relative; background: #12161b; font-size: 10px; overflow: hidden; cursor: crosshair; }
+  .cell .lbl { position: absolute; left: 3px; top: 2px; color: #fff; text-shadow: 0 0 3px #000; font-weight: 600; z-index: 2; pointer-events: none; }
+  .cell .stack { position: absolute; inset: 0; display: flex; pointer-events: none; }
   .cell .stack div { height: 100%; }
   .cell.pair .lbl { color: #ffe9b0; }
+  .cell.hov { outline: 2px solid #fff; outline-offset: -1px; z-index: 3; }
   .cell.me { outline: 3px solid var(--accent); outline-offset: -1px; z-index: 3; opacity: 1 !important; transform: scale(1.18); box-shadow: 0 0 0 3px #0f1216, 0 0 14px 2px rgba(245,185,66,.8); overflow: visible; border-radius: 4px; }
   .cell.me .lbl { font-weight: 800; }
-  .cell.me .you { position: absolute; right: -2px; bottom: -2px; background: var(--accent); color: #1a1200; font-size: 8px; font-weight: 800; letter-spacing: .08em; padding: 1px 4px; border-radius: 3px; z-index: 4; }
+  .cell.me .you { position: absolute; right: -2px; bottom: -2px; background: var(--accent); color: #1a1200; font-size: 8px; font-weight: 800; letter-spacing: .08em; padding: 1px 4px; border-radius: 3px; z-index: 4; pointer-events: none; }
+  .readout { margin-top: 8px; font-size: 13px; min-height: 20px; font-variant-numeric: tabular-nums; }
+  .readout b { font-weight: 700; margin-right: 6px; }
+  .readout span.a { margin-right: 10px; white-space: nowrap; }
+  .readout span.a::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; background: var(--c); }
   .legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; color: var(--muted); }
   .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; background: var(--c); }
   .legend .mehint::before { background: transparent; outline: 2px solid var(--accent); }
   .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -3px; margin-right: 8px; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  .prog { height: 4px; background: var(--panel2); border-radius: 2px; overflow: hidden; margin-top: 10px; }
+  .prog > div { height: 100%; width: 0; background: var(--accent); transition: width .1s linear; }
+  .solvehead { display: flex; align-items: center; }
+  .solvehead .num { margin-left: auto; color: var(--muted); font-size: 12px; }
   .empty { color: var(--muted); padding: 30px 10px; text-align: center; line-height: 1.7; }
   details { margin-top: 12px; }
   summary { color: var(--muted); font-size: 12px; cursor: pointer; }
   .villain { font-size: 12px; color: var(--muted); word-break: break-word; margin-top: 6px; }
+
+  .toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); background: #262d37; border: 1px solid #3c4653; border-radius: 10px; padding: 10px 14px; display: flex; gap: 14px; align-items: center; box-shadow: 0 8px 30px rgba(0,0,0,.5); z-index: 50; max-width: calc(100% - 32px); font-size: 13px; }
+
+  /* one column: table first, advice jumps above the action buttons on your turn */
+  @media (max-width: 1000px) {
+    main { display: flex; flex-direction: column; gap: 0; padding: 16px; }
+    .col { display: contents; }
+    #pSetup { order: 10; } #pTable { order: 20; } #pCards { order: 30; } #pAction { order: 40; } #pAdvice { order: 50; }
+    body.heroturn #pAdvice { order: 35; }
+  }
+  @media (max-width: 560px) {
+    header { padding: 10px 16px; gap: 8px; }
+    .panel { padding: 12px; }
+    .felt { height: 230px; }
+    .felt::before { inset: 26px 26px; }
+    .seat { width: 58px; padding: 4px 2px; }
+    .seat .pos { font-size: 11px; }
+    .bc { width: 24px; height: 34px; font-size: 11px; }
+    .pc { height: 30px; font-size: 11px; }
+    .slot { width: 34px; height: 48px; font-size: 15px; }
+    .slots { gap: 10px; }
+    .arow { grid-template-columns: 92px 1fr 48px 62px; gap: 8px; }
+    .arows.noev .arow { grid-template-columns: 92px 1fr 48px; }
+    .cell { font-size: 7px; }
+    .cell .lbl { left: 1px; top: 1px; }
+  }
 </style>
 </head>
 <body>
@@ -132,26 +206,31 @@
   <span class="spacer"></span>
   <span class="ctl" id="solvectl"><span class="muted" style="font-size:12px">Solve</span>
     <div class="segment"><button data-m="fast" class="active" title="A few seconds per spot. River answers are solid; turn and flop answers are rough.">Fast</button><button data-m="accurate" title="Much longer per spot (about 30 s with the local server, about a minute in the browser). Turn answers get close to a full solver.">Accurate</button></div></span>
+  <button id="fourcolor" class="small" title="Four-colour deck: diamonds blue, clubs green">4-colour</button>
   <button id="copyhand" title="Copy the hand, the advice and a link that reopens this exact spot">Copy hand</button>
   <button id="newhand" title="Shortcut: N">New hand <kbd>N</kbd></button>
 </header>
 
 <main>
-  <div>
-    <section class="panel">
-      <div class="row" style="margin-bottom:8px">
-        <span class="muted">Players</span>
-        <div class="segment" id="players"></div>
-        <span class="muted" style="margin-left:auto">stacks</span>
-        <input type="number" id="stack" value="100" min="5" step="1"><span class="muted">bb</span>
+  <div class="col">
+    <section class="panel" id="pSetup">
+      <div id="setupFull">
+        <div class="row" style="margin-bottom:8px">
+          <span class="muted">Players</span>
+          <div class="segment" id="players"></div>
+          <span class="muted" style="margin-left:auto">stacks</span>
+          <input type="number" id="stack" value="100" min="5" step="1"><span class="muted">bb</span>
+        </div>
+        <div class="row">
+          <span class="muted">You are</span>
+          <div class="row seats" id="seats"></div>
+          <button class="link" id="setupDone" style="margin-left:auto" hidden>Done</button>
+        </div>
       </div>
-      <div class="row">
-        <span class="muted">You are</span>
-        <div class="row seats" id="seats"></div>
-      </div>
+      <div id="setupSum" class="setupsum" hidden></div>
     </section>
 
-    <section class="panel">
+    <section class="panel" id="pCards">
       <h2>Cards <span class="right muted" id="cardsHint"></span></h2>
       <div class="slots">
         <div class="slotgroup"><label>Your hand</label><div class="slotrow" id="holeSlots"></div></div>
@@ -160,24 +239,31 @@
         <div class="slotgroup"><label>River</label><div class="slotrow" id="riverSlots"></div></div>
       </div>
       <div class="picker" id="picker"></div>
+      <div class="typehint" id="typeHint"></div>
     </section>
 
-    <section class="panel">
+    <section class="panel" id="pAction">
       <h2>Action <span class="right muted" id="stepLabel"></span></h2>
-      <div id="tableStrip" class="table"></div>
       <div id="actionArea"></div>
       <div class="err" id="err"></div>
       <div class="timeline" id="timeline"></div>
     </section>
   </div>
 
-  <div>
-    <section class="panel">
+  <div class="col">
+    <section class="panel" id="pTable">
+      <h2>Table <span class="right muted" id="tableHint"></span></h2>
+      <div id="felt" class="felt"></div>
+    </section>
+
+    <section class="panel" id="pAdvice">
       <h2>Advice</h2>
+      <div id="adviceNote" class="note" hidden></div>
       <div id="result" class="empty">Pick your seat and cards, then enter the action seat by seat.<br>Advice appears here whenever it's your turn.</div>
     </section>
   </div>
 </main>
+<div id="toast" class="toast" hidden></div>
 
 <script>
 const RANKS = "AKQJT98765432";
@@ -196,6 +282,7 @@ function setPositions(n) {
 const STREETS = ["preflop", "flop", "turn", "river"];
 const NEED = { preflop: 0, flop: 3, turn: 4, river: 5 };
 const SLOT_NAMES = ["your first card", "your second card", "flop card 1", "flop card 2", "flop card 3", "the turn", "the river"];
+const SLOT_WHERE = ["in your hand", "in your hand", "on the flop", "on the flop", "on the flop", "on the turn", "on the river"];
 // seconds per solve for each speed setting: [current street, each earlier street used for range narrowing]
 const BUDGETS = { server: { fast: [2.5, 1.2], accurate: [30, 6] }, wasm: { fast: [8, 3], accurate: [60, 12] } };
 let SPEED = "fast";
@@ -218,7 +305,12 @@ const modeReady = (async () => {
   setSpeed(SPEED);
   ctl.querySelectorAll("button").forEach(b => b.onclick = () => { if (b.dataset.m === SPEED) return; setSpeed(b.dataset.m); lastKey = null; renderAll(); });
 })();
-function setStatus(msg) { const el = document.getElementById("result"); if (el.querySelector(".spinner")) el.innerHTML = `<div class="muted"><span class="spinner"></span>${msg}</div>`; }
+let solveStart = 0;
+function setStatus(msg) {
+  const m = document.getElementById("solveMsg"); if (!m) return;
+  m.textContent = msg;
+  if (msg === "Solving…") solveStart = performance.now();   // runtime loading is done; time the solve itself
+}
 function callAdvise(state) {
   if (MODE === "server") return fetch("advise", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(state) }).then(r => r.json());
   if (!worker) {
@@ -232,17 +324,31 @@ function callAdvise(state) {
 let S = load() || fresh();
 if (!S.players) S.players = 6;
 setPositions(S.players);
-let selSlot = null;
-let lastKey = null;
+let selSlot = null;       // board/hand slot the user picked by hand
+let showDeck = false;     // deck opened manually while no card is needed
+let editSetup = false;    // setup panel expanded mid-hand
+let pendingRank = null;   // first half of a typed card ("A" of "Ah")
+let lastKey = null;       // payload of the solve in flight or last shown
+let resultKey = null;     // payload the shown advice belongs to
 let solving = false;
 let lastResult = null;
+const cache = new Map();  // payload -> result, so undo/redo doesn't re-solve
 
 function fresh(n) { n = n || 6; return { players: n, hero: n === 2 ? "SB" : "BTN", stack: 100, cards: [null, null, null, null, null, null, null], actions: { preflop: [], flop: [], turn: [], river: [] } }; }
 function save() { try { localStorage.setItem("handreview", JSON.stringify(S)); } catch (e) {} }
 function load() { try { const s = localStorage.getItem("handreview"); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
 function boardCards() { return S.cards.slice(2).filter(Boolean); }
 function fmt(x) { return (Math.round(x * 100) / 100).toString(); }
+function cardHtml(c) { return `<span class="${c[1]}">${c[0]}${SUIT_SYM[c[1]]}</span>`; }
+function cardText(c) { return c[0] + SUIT_SYM[c[1]]; }
 function showErr(m) { document.getElementById("err").textContent = m || ""; }
+let toastTimer = null;
+function toast(msg, undoFn) {
+  const t = document.getElementById("toast"); clearTimeout(toastTimer);
+  t.innerHTML = `<span>${msg}</span>`;
+  if (undoFn) { const b = document.createElement("button"); b.className = "link"; b.textContent = "Undo"; b.onclick = () => { t.hidden = true; undoFn(); }; t.appendChild(b); }
+  t.hidden = false; toastTimer = setTimeout(() => t.hidden = true, 4000);
+}
 
 // ------------------------------------------------------------------ engine
 function simulate() {
@@ -312,8 +418,29 @@ function act(a) {
     else if (to <= info.curBet + 1e-9) return `${fmt(to)}bb isn't a raise, the bet is ${fmt(info.curBet)}bb.`;
     else rec = { action: facing || info.curBet > 0 ? "raise" : "bet", to };
   }
+  if (p === S.hero) { const g = gradeFor(rec); if (g) rec.g = g; }
   S.actions[sim.current].push({ pos: p, ...rec }); save(); return null;
 }
+// How your recorded action compares with the advice that was on screen for this exact spot.
+function gradeFor(rec) {
+  const r = lastResult;
+  if (!r || r.error || r.multiway || resultKey !== JSON.stringify(payload())) return null;
+  let m;
+  if (["fold", "check", "call", "all-in"].includes(rec.action)) m = r.actions.find(a => a.action === rec.action);
+  else {
+    const agg = r.actions.filter(a => /^(bet|raise)/.test(a.action) && a.amount_bb != null);
+    if (agg.length) m = agg.reduce((b, a) => Math.abs(a.amount_bb - rec.to) < Math.abs(b.amount_bb - rec.to) ? a : b);
+  }
+  if (!m) return null;
+  const best = r.actions.reduce((b, a) => a.freq > b.freq ? a : b);
+  const evs = r.actions.filter(a => a.ev_bb !== undefined).map(a => a.ev_bb);
+  const loss = evs.length && m.ev_bb !== undefined ? Math.max(0, Math.max(...evs) - m.ev_bb) : null;
+  return { m: m.action, f: m.freq, b: best.action, bf: best.freq, l: loss == null ? null : Math.round(loss * 100) / 100 };
+}
+const gradeClass = (g) => g.f >= 0.15 ? "ok" : g.f >= 0.03 ? "meh" : "bad";
+const gradeMark = (g) => ({ ok: "✓", meh: "~", bad: "✗" })[gradeClass(g)];
+const gradeTip = (g) => `Solver: ${g.b} ${(g.bf * 100).toFixed(0)}%. Your line (${g.m}) ${(g.f * 100).toFixed(0)}%${g.l ? `, ${g.l.toFixed(2)} bb below the best EV` : ""}.`;
+
 function advanceTo(pos) {
   for (let i = 0; i < 9; i++) {
     const sim = simulate();
@@ -325,17 +452,46 @@ function advanceTo(pos) {
   }
   return null;
 }
+// Everyone (but never you) folds/checks until the street ends or it's your turn.
+function autoRest(street, action) {
+  for (let i = 0; i < 9; i++) {
+    const s2 = simulate();
+    if (!s2.cur || s2.current !== street || s2.toAct === S.hero) return null;
+    const e = act({ action }); if (e) return e;
+  }
+  return null;
+}
 function undo() { for (const s of [...STREETS].reverse()) if (S.actions[s].length) { S.actions[s].pop(); break; } save(); renderAll(); }
 
 // ------------------------------------------------------------------ cards
+function needCard(sim) { return !S.cards[0] || !S.cards[1] || !!sim.waiting || selSlot !== null || showDeck; }
 function nextSlot() { if (selSlot !== null) return selSlot; const i = S.cards.findIndex(c => !c); return i < 0 ? null : i; }
-function toggleCard(c) {
+function placeCard(c) {
   const j = S.cards.indexOf(c);
-  if (j >= 0) S.cards[j] = null;
-  else { const i = nextSlot(); if (i === null) return; S.cards[i] = c; }
-  selSlot = null; save(); renderAll();
+  if (j >= 0) {   // already on the table: point at it, never silently pull it out of the hand
+    toast(`${cardText(c)} is already ${SLOT_WHERE[j]}. Click it there to remove it.`);
+    const el = document.querySelector(`.slot[data-i="${j}"]`); if (el) { el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); }
+    return;
+  }
+  const i = nextSlot(); if (i === null) { toast("All seven cards are placed. Click one to replace it."); return; }
+  S.cards[i] = c; selSlot = null; save(); renderAll();
 }
-function renderSeats() {
+function removeCard(i) {
+  const c = S.cards[i]; S.cards[i] = null; selSlot = i; save(); renderAll();
+  toast(`Removed ${cardText(c)} from ${SLOT_WHERE[i].replace(/^(in|on) /, "")}. Pick its replacement.`, () => {
+    if (!S.cards[i] && !S.cards.includes(c)) { S.cards[i] = c; selSlot = null; save(); renderAll(); }
+  });
+}
+function renderSetup() {
+  const started = (S.cards[0] && S.cards[1]) || STREETS.some(s => S.actions[s].length);
+  const full = !started || editSetup;
+  document.getElementById("setupFull").hidden = !full;
+  document.getElementById("setupDone").hidden = !started;
+  const sum = document.getElementById("setupSum"); sum.hidden = full;
+  sum.innerHTML = `<span><b>${S.players}-handed</b> <span class="muted">·</span> you are <b>${SEAT_LABEL(S.hero, S.players)}</b> <span class="muted">·</span> <b>${fmt(S.stack)}bb</b> stacks</span>`;
+  const e = document.createElement("button"); e.className = "link"; e.style.marginLeft = "auto"; e.textContent = "Edit"; e.onclick = () => { editSetup = true; renderAll(); };
+  sum.appendChild(e);
+
   const el = document.getElementById("seats"); el.innerHTML = "";
   for (const p of POS) { const b = document.createElement("button"); b.textContent = SEAT_LABEL(p, POS.length); if (p === S.hero) b.classList.add("active");
     b.onclick = () => { S.hero = p; save(); renderAll(); }; el.appendChild(b); }
@@ -349,40 +505,65 @@ function renderSlots(sim) {
     const el = document.getElementById(id); el.innerHTML = "";
     for (const i of idxs) {
       const c = S.cards[i], s = document.createElement("div");
+      s.dataset.i = i;
       s.className = "slot" + (c ? " filled " + c[1] : "") + (selSlot === i ? " sel" : "") + (!c && i === needIdx && selSlot === null ? " need" : "");
-      if (c) { s.textContent = c[0] + SUIT_SYM[c[1]]; s.title = "Click to remove"; }
-      s.onclick = () => { if (c) { S.cards[i] = null; selSlot = null; save(); renderAll(); } else { selSlot = selSlot === i ? null : i; renderAll(); } };
+      if (c) { s.textContent = cardText(c); s.title = "Click to remove"; } else s.title = "Click to choose this card next";
+      s.onclick = () => { if (c) removeCard(i); else { selSlot = selSlot === i ? null : i; renderAll(); } };
       el.appendChild(s);
     }
   }
-  const ns = nextSlot();
-  document.getElementById("cardsHint").textContent = ns === null ? "" : "next: " + SLOT_NAMES[ns];
+  const need = needCard(sim), ns = nextSlot();
+  const hint = document.getElementById("cardsHint"); hint.innerHTML = "";
+  if (need && ns !== null) hint.append("next: " + SLOT_NAMES[ns] + " ");
+  const auto = !S.cards[0] || !S.cards[1] || !!sim.waiting;
+  if (!auto) {   // deck is optional right now: let the user open/close it
+    const b = document.createElement("button"); b.className = "link";
+    b.textContent = need ? "Hide deck" : "Show deck";
+    b.onclick = () => { if (need) { showDeck = false; selSlot = null; pendingRank = null; } else showDeck = true; renderAll(); };
+    hint.appendChild(b);
+  }
+  document.getElementById("typeHint").innerHTML = need
+    ? (pendingRank ? `Typed <b>${pendingRank === "1" ? "1_" : pendingRank + "_"}</b> now the suit: <b>s</b> <b>h</b> <b>d</b> <b>c</b> · Esc cancels` : `Or type it: rank then suit, e.g. <b>A</b><b>h</b> or <b>T</b><b>c</b>`)
+    : "";
 }
-function renderPicker() {
+function renderPicker(sim) {
   const el = document.getElementById("picker"); el.innerHTML = "";
+  el.hidden = !needCard(sim);
+  if (el.hidden) return;
   const used = new Set(S.cards.filter(Boolean));
   for (const su of SUITS) for (const r of RANKS) {
     const c = r + su, d = document.createElement("div");
-    d.className = "pc " + su + (used.has(c) ? " used" : "");
+    d.className = "pc " + su + (used.has(c) ? " used" : "") + (pendingRank === r ? " pend" : "");
     d.innerHTML = r + "<span style='font-size:.8em'>" + SUIT_SYM[su] + "</span>";
-    d.onclick = () => toggleCard(c);
+    if (used.has(c)) d.title = "Already placed. Click the card in its slot to remove it.";
+    d.onclick = () => { pendingRank = null; placeCard(c); };
     el.appendChild(d);
   }
 }
 
 // ------------------------------------------------------------------ table + action
 function renderTable(sim) {
-  const el = document.getElementById("tableStrip"); el.innerHTML = ""; el.style.gridTemplateColumns = `repeat(${POS.length}, 1fr)`;
-  for (const p of POS) {
+  const el = document.getElementById("felt"); el.innerHTML = "";
+  const n = POS.length, hi = Math.max(0, POS.indexOf(S.hero));
+  POS.forEach((p, i) => {
     const d = document.createElement("div");
     const folded = !sim.active.has(p), bet = sim.cur ? sim.cur.bets[p] : 0, total = sim.invested[p] + bet;
     const clickable = !folded && sim.cur && sim.toAct !== p && !sim.allin.has(p);
-    d.className = "seat" + (folded ? " folded" : "") + (sim.toAct === p ? " toact" : "") + (sim.allin.has(p) ? " allin" : "") + (clickable ? " clickable" : "");
+    const th = (90 + (i - hi) * 360 / n) * Math.PI / 180;   // hero at the bottom, action runs clockwise
+    d.style.left = (50 + 43 * Math.cos(th)) + "%"; d.style.top = (50 + 40 * Math.sin(th)) + "%";
+    d.className = "seat" + (p === S.hero ? " hero" : "") + (folded ? " folded" : "") + (sim.toAct === p ? " toact" : "") + (sim.allin.has(p) ? " allin" : "") + (clickable ? " clickable" : "");
     const amt = folded ? "folded" : sim.allin.has(p) ? "all-in" : bet > 0 ? fmt(bet) + " bb" : total > 0 ? "in " + fmt(total) : "";
-    d.innerHTML = `<span class="pos">${SEAT_LABEL(p, POS.length)}</span>${p === S.hero ? '<span class="you">you</span>' : ""}<span class="amt">${amt}</span>`;
+    const hc = p === S.hero && S.cards[0] && S.cards[1] ? `<span class="hc">${cardHtml(S.cards[0])}${cardHtml(S.cards[1])}</span>` : p === S.hero ? '<span class="you">you</span>' : "";
+    const ta = sim.toAct === p ? `<span class="ta">to act</span>` : "";
+    d.innerHTML = `<span class="pos">${SEAT_LABEL(p, n)}</span>${hc}<span class="amt">${amt}${ta}</span>`;
     if (clickable) { d.title = `Everyone before ${p} folds`; d.onclick = () => { showErr(advanceTo(p)); renderAll(); }; }
     el.appendChild(d);
-  }
+  });
+  const center = document.createElement("div"); center.className = "center";
+  const b = S.cards.slice(2).map(c => c ? `<div class="bc ${c[1]}">${c[0]}<span>${SUIT_SYM[c[1]]}</span></div>` : `<div class="bc empty"></div>`).join("");
+  center.innerHTML = `<div class="board">${b}</div><div class="pot">pot ${fmt(sim.pot)} bb</div>`;
+  el.appendChild(center);
+  document.getElementById("tableHint").textContent = sim.cur ? "click a seat to fold everyone before it" : "";
 }
 
 function renderAction(sim) {
@@ -390,23 +571,24 @@ function renderAction(sim) {
   const step = document.getElementById("stepLabel");
   const prompt = document.createElement("div"); prompt.className = "prompt";
   if (!S.cards[0] || !S.cards[1]) { step.textContent = ""; prompt.innerHTML = `<span class="ask">Place your two hole cards to start.</span>`; el.appendChild(prompt); return; }
-  if (sim.handOver) { step.textContent = "hand over"; prompt.innerHTML = `<span class="who">Hand over</span><span class="pot">pot ${fmt(sim.pot)} bb</span>`; el.appendChild(prompt); return; }
+  if (sim.handOver) { step.textContent = "hand over"; prompt.innerHTML = `<span class="who">Hand over</span><span class="pot">pot ${fmt(sim.pot)} bb</span><span class="ask">Press <kbd style="margin:0">N</kbd> for a new hand.</span>`; el.appendChild(prompt); return; }
   if (sim.waiting) {
     step.textContent = sim.waiting;
-    prompt.innerHTML = `<span class="who">Deal the ${sim.waiting}</span><span class="pot">pot ${fmt(sim.pot)} bb</span><span class="ask">${sim.runout ? "Everyone is all-in. " : ""}Click the ${sim.waiting === "flop" ? "three flop cards" : sim.waiting + " card"} above.</span>`;
+    prompt.innerHTML = `<span class="who">Deal the ${sim.waiting}</span><span class="pot">pot ${fmt(sim.pot)} bb</span><span class="ask">${sim.runout ? "Everyone is all-in. " : ""}Click or type the ${sim.waiting === "flop" ? "three flop cards" : sim.waiting + " card"} above.</span>`;
     el.appendChild(prompt); return;
   }
   const street = sim.current, info = sim.cur, p = sim.toAct, isHero = p === S.hero;
   const myBet = info.bets[p], toCall = info.curBet - myBet, remaining = S.stack - sim.invested[p] - myBet, facing = toCall > 1e-9;
   step.textContent = street;
-  prompt.innerHTML = `<span class="who ${isHero ? "hero" : ""}">${isHero ? "Your turn" : p + " to act"}</span><span class="pot">pot ${fmt(info.pot)} bb${facing ? " · " + fmt(Math.min(toCall, remaining)) + " to call" : ""}</span><span class="ask">${isHero ? "Advice is on the right. What did you do?" : "What did " + p + " do?"}</span>`;
+  prompt.innerHTML = `<span class="who ${isHero ? "hero" : ""}">${isHero ? "Your turn" : p + " to act"}</span><span class="pot">pot ${fmt(info.pot)} bb${facing ? " · " + fmt(Math.min(toCall, remaining)) + " to call" : ""}</span><span class="ask">${isHero ? "Check the advice, then record what you did." : "What did " + p + " do?"}</span>`;
   el.appendChild(prompt);
 
   const acts = document.createElement("div"); acts.className = "acts";
-  const mk = (label, cls, a, sub) => { const b = document.createElement("button"); b.className = cls; b.innerHTML = label + (sub ? `<small>${sub}</small>` : "");
-    b.onclick = () => { showErr(act(a)); renderAll(); }; acts.appendChild(b); };
-  if (facing) { mk("Fold", "fold", { action: "fold" }); mk("Call", "pass", { action: "call" }, fmt(Math.min(toCall, remaining)) + " bb"); }
-  else mk("Check", "pass", { action: "check" });
+  const mk = (label, cls, a, sub, key) => { const b = document.createElement("button"); b.className = cls; b.innerHTML = label + (sub ? `<small>${sub}</small>` : "") + (key ? `<kbd>${key}</kbd>` : "");
+    if (key) b.dataset.key = key.toLowerCase();
+    b.onclick = () => { showErr(act(a)); renderAll(); }; acts.appendChild(b); return b; };
+  if (facing) { mk("Fold", "fold", { action: "fold" }, "", "F"); mk("Call", "pass", { action: "call" }, fmt(Math.min(toCall, remaining)) + " bb", "C"); }
+  else mk("Check", "pass", { action: "check" }, "", "C");
   const canRaise = remaining > toCall + 1e-9;
   if (canRaise) {
     const verb = facing || info.curBet > 0 ? "Raise to" : "Bet";
@@ -414,12 +596,13 @@ function renderAction(sim) {
     if (street === "preflop") sizes = info.nRaises === 0 ? [[p === "SB" ? 3 : 2.5, "open"]] : [[info.curBet * (p === "SB" || p === "BB" ? 4 : 3), p === "SB" || p === "BB" ? "4x" : "3x"]];
     else if (!facing) sizes = [[info.pot / 3, "⅓ pot"], [info.pot * 2 / 3, "⅔ pot"], [info.pot, "pot"]];
     else sizes = [[info.curBet * 2.5, "2.5x"], [info.curBet + info.pot + toCall, "pot"]];
-    for (let [v, l] of sizes) { v = Math.round(v * 2) / 2; if (v < myBet + remaining - 1e-9 && v > info.curBet + 1e-9) mk(`${verb} ${fmt(v)}`, "agg", { action: "bet", to: v }, l); }
-    const custom = document.createElement("button"); custom.className = "agg"; custom.innerHTML = `${verb} …`;
+    let k = 0;
+    for (let [v, l] of sizes) { v = Math.round(v * 2) / 2; if (v < myBet + remaining - 1e-9 && v > info.curBet + 1e-9) mk(`${verb} ${fmt(v)}`, "agg", { action: "bet", to: v }, l, String(++k)); }
+    const custom = document.createElement("button"); custom.className = "agg"; custom.innerHTML = `${verb} …<kbd>R</kbd>`; custom.dataset.key = "r";
     custom.onclick = () => { document.getElementById("customBox").classList.toggle("open"); document.getElementById("customAmt").focus(); };
     acts.appendChild(custom);
   }
-  if (remaining > 0) mk("All-in", "agg", { action: "all-in" }, fmt(myBet + remaining) + " bb");
+  if (remaining > 0) mk("All-in", "agg", { action: "all-in" }, fmt(myBet + remaining) + " bb", "A");
   el.appendChild(acts);
 
   const cb = document.createElement("div"); cb.className = "custom"; cb.id = "customBox";
@@ -427,14 +610,14 @@ function renderAction(sim) {
   const go = document.createElement("button"); go.className = "small"; go.textContent = "Apply";
   go.onclick = () => { showErr(act({ action: "bet", to: parseFloat(document.getElementById("customAmt").value) })); renderAll(); };
   cb.appendChild(go); el.appendChild(cb);
-  document.getElementById("customAmt").addEventListener("keydown", (e) => { if (e.key === "Enter") go.click(); });
+  document.getElementById("customAmt").addEventListener("keydown", (e) => { if (e.key === "Enter") go.click(); if (e.key === "Escape") { cb.classList.remove("open"); e.target.blur(); } });
 
   // one shortcut
   let sc = null;
   if (!isHero && sim.active.has(S.hero) && !sim.allin.has(S.hero) && info.order.indexOf(S.hero) > info.order.indexOf(p)) sc = ["Fold to me", () => advanceTo(S.hero)];
-  else if (!isHero && facing) sc = ["Everyone else folds", () => { for (let i = 0; i < 9; i++) { const s2 = simulate(); if (!s2.cur || s2.current !== street) return null; const e = act({ action: "fold" }); if (e) return e; } }];
-  else if (!isHero && !facing && street !== "preflop") sc = ["Everyone checks", () => { for (let i = 0; i < 6; i++) { const s2 = simulate(); if (!s2.cur || s2.current !== street) return null; const e = act({ action: "check" }); if (e) return e; } }];
-  if (sc) { const b = document.createElement("button"); b.className = "small"; b.textContent = sc[0]; b.onclick = () => { showErr(sc[1]()); renderAll(); }; el.appendChild(b); }
+  else if (!isHero && facing) sc = ["Everyone else folds", () => autoRest(street, "fold")];
+  else if (!isHero && !facing && street !== "preflop") sc = ["Everyone checks", () => autoRest(street, "check")];
+  if (sc) { const b = document.createElement("button"); b.className = "small shortcut"; b.innerHTML = sc[0] + "<kbd>S</kbd>"; b.dataset.key = "s"; b.onclick = () => { showErr(sc[1]()); renderAll(); }; el.appendChild(b); }
 }
 
 function renderTimeline() {
@@ -443,12 +626,12 @@ function renderTimeline() {
   for (const s of STREETS) {
     const acts = S.actions[s]; if (!acts.length) continue; any = true;
     const line = document.createElement("div"); line.className = "tl";
-    const chips = acts.map(a => `<span class="chip${a.pos === S.hero ? " hero" : ""}${["bet", "raise", "all-in"].includes(a.action) ? " agg" : ""}${a.action === "fold" ? " fold" : ""}">${a.pos} ${a.action === "bet" ? "bets " + fmt(a.to) : a.action === "raise" ? "raises to " + fmt(a.to) : a.action === "all-in" ? "all-in" : a.action + "s"}</span>`).join("");
-    const b = s === "preflop" ? "" : ` <span class="muted">${boardCards().slice(NEED[s] - (s === "flop" ? 3 : 1), NEED[s]).map(c => c[0] + SUIT_SYM[c[1]]).join(" ")}</span>`;
+    const chips = acts.map(a => `<span class="chip${a.pos === S.hero ? " hero" : ""}${["bet", "raise", "all-in"].includes(a.action) ? " agg" : ""}${a.action === "fold" ? " fold" : ""}"${a.g ? ` title="${gradeTip(a.g)}"` : ""}>${a.pos} ${a.action === "bet" ? "bets " + fmt(a.to) : a.action === "raise" ? "raises to " + fmt(a.to) : a.action === "all-in" ? "all-in" : a.action + "s"}${a.g ? `<span class="g ${gradeClass(a.g)}">${gradeMark(a.g)}</span>` : ""}</span>`).join("");
+    const b = s === "preflop" ? "" : ` <span class="muted">${boardCards().slice(NEED[s] - (s === "flop" ? 3 : 1), NEED[s]).map(cardHtml).join(" ")}</span>`;
     line.innerHTML = `<span class="st">${s}${b}</span><span class="line">${chips}</span>`;
     el.appendChild(line);
   }
-  const u = document.createElement("button"); u.className = "small"; u.textContent = "Undo"; u.disabled = !any; u.onclick = undo; u.style.marginTop = "6px";
+  const u = document.createElement("button"); u.className = "small"; u.innerHTML = "Undo<kbd>U</kbd>"; u.disabled = !any; u.onclick = undo; u.style.marginTop = "6px";
   el.appendChild(u);
 }
 
@@ -463,30 +646,46 @@ async function analyze(sim) {
   await modeReady;
   const key = JSON.stringify(payload());
   if (key === lastKey || solving) return;
-  lastKey = key; solving = true;
+  lastKey = key;
+  if (cache.has(key)) { renderResult(cache.get(key), key); return; }
+  solving = true;
   const el = document.getElementById("result");
-  el.className = ""; el.innerHTML = `<div class="muted"><span class="spinner"></span>Solving the ${sim.current}…${sim.current !== "preflop" && SPEED === "accurate" ? ` <span style="font-size:12px">(Accurate mode: this can take ${MODE === "wasm" ? "a couple of minutes" : "up to a minute"})</span>` : ""}</div>`;
-  try { renderResult(await callAdvise(JSON.parse(key))); }
-  catch (e) { el.innerHTML = `<div class="err">Request failed: ${e}</div>`; }
+  el.className = "";
+  el.innerHTML = `<div class="solvehead muted"><span class="spinner"></span><span id="solveMsg">Solving the ${sim.current}…${sim.current !== "preflop" && SPEED === "accurate" ? ` (Accurate mode: this can take ${MODE === "wasm" ? "a couple of minutes" : "up to a minute"})` : ""}</span><span class="num" id="solveTime"></span></div>${sim.current === "preflop" ? "" : '<div class="prog"><div id="solveBar"></div></div>'}`;
+  solveStart = performance.now();
+  const est = BUDGET + PRIOR * Math.max(0, STREETS.indexOf(sim.current) - 1);   // earlier postflop streets are re-solved to narrow ranges
+  const tick = setInterval(() => {
+    const t = (performance.now() - solveStart) / 1000, tm = document.getElementById("solveTime"), bar = document.getElementById("solveBar");
+    if (tm && sim.current !== "preflop") tm.textContent = `${t.toFixed(1)}s of ~${fmt(est)}s`;
+    if (bar) bar.style.width = Math.min(97, t / est * 100) + "%";
+  }, 100);
+  let res;
+  try { res = await callAdvise(JSON.parse(key)); }
+  catch (e) { res = { error: "Request failed: " + e }; }
+  clearInterval(tick);
+  if (!res.error) cache.set(key, res);
+  renderResult(res, key);
   solving = false;
   const now = JSON.stringify(payload());
   if (now !== key && simulate().toAct === S.hero) analyze(simulate());
 }
 const COLORS = (n) => n === "fold" ? "var(--fold)" : n === "check" || n === "call" ? "var(--passive)" : n === "all-in" ? "var(--allin)" : /75|100|raise/.test(n) ? "var(--bet2)" : "var(--bet)";
 
-function renderResult(res) {
-  lastResult = res;
+function renderResult(res, key) {
+  lastResult = res; resultKey = key;
   const el = document.getElementById("result"); el.className = "";
-  if (res.error) { el.innerHTML = `<div class="err">${res.error}</div>`; return; }
-  const board = res.board ? res.board.match(/../g).map(c => c[0] + SUIT_SYM[c[1]]).join(" ") : "";
+  if (res.error) { el.innerHTML = `<div class="err">${res.error}</div>`; updateAdviceState(); return; }
+  const board = res.board ? res.board.match(/../g).map(cardHtml).join(" ") : "";
   let h = `<div class="meta" style="margin:0 0 4px">${res.street} · ${res.hero} ${res.hand}${res.position ? " · " + res.position : ""}${board ? " · " + board : ""}${res.pot_bb ? " · pot " + res.pot_bb + " bb" : ""}</div>`;
-  if (res.multiway) h += `<div class="verdict"><span class="big">${res.recommended}</span><span class="mix">${res.opponents.length + 1} players in · equity vs field ${(res.equity_vs_field * 100).toFixed(0)}% · heuristic, not a solve</span></div><div class="arows">`;
-  else h += `<div class="verdict"><span class="big">${res.recommended}</span><span class="mix">random draw from the mix: <b>${res.sampled}</b></span></div><div class="arows">`;
+  if (res.multiway) h += `<div class="verdict"><span class="big">${res.recommended}</span><span class="mix">${res.opponents.length + 1} players in · equity vs field ${(res.equity_vs_field * 100).toFixed(0)}% · heuristic, not a solve</span></div>`;
+  else h += `<div class="verdict"><span class="big">${res.recommended}</span><span class="mix">random draw from the mix: <b>${res.sampled}</b></span></div>`;
+  const hasEv = res.actions.some(a => a.ev_bb !== undefined);
+  h += `<div class="arows${hasEv ? "" : " noev"}"><div class="arow head"><span>Action</span><span>${res.multiway ? "" : "Solver mix"}</span><span class="num">${res.multiway ? "" : "Freq"}</span>${hasEv ? '<span class="num" title="Expected value of taking this action, in big blinds">EV</span>' : ""}</div>`;
   for (const a of res.actions) {
-    const ev = a.ev_bb !== undefined ? `<span class="num ${a.ev_bb > 0.005 ? "pos" : a.ev_bb < -0.005 ? "neg" : ""}">${a.ev_bb > 0 ? "+" : ""}${a.ev_bb.toFixed(2)} bb</span>` : "<span></span>";
+    const ev = hasEv ? (a.ev_bb !== undefined ? `<span class="num ${a.ev_bb > 0.005 ? "pos" : a.ev_bb < -0.005 ? "neg" : ""}">${a.ev_bb > 0 ? "+" : ""}${a.ev_bb.toFixed(2)} bb</span>` : "<span></span>") : "";
     h += `<div class="arow ${a.action === res.recommended ? "best" : ""}" data-act='${JSON.stringify(a)}' title="Click to record this as what you did"><span class="name">${a.action}${a.amount_bb != null ? `<small>${a.amount_bb} bb</small>` : ""}</span><div class="bar"><div style="width:${(a.freq * 100).toFixed(1)}%;background:${COLORS(a.action)}"></div></div><span class="num">${(a.freq * 100).toFixed(1)}%</span>${ev}</div>`;
   }
-  h += `</div><div class="meta">Click a row to record it as what you did.</div>`;
+  h += `</div><div class="meta">Click a row to record it as what you did.${hasEv ? " EV is in big blinds against the opponent's range." : res.street === "preflop" ? " Preflop comes from charts, so there's no EV column." : ""}</div>`;
   if (res.grid) h += renderGrid(res.grid, res.hand);
   h += `<details><summary>Details</summary>`;
   if (res.range_action_freq) h += `<div class="meta">Whole range: ${Object.entries(res.range_action_freq).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(" · ")}</div>`;
@@ -495,43 +694,80 @@ function renderResult(res) {
   if (res.notes && res.notes.length) h += `<div class="meta">${res.notes.join("<br>")}</div>`;
   h += `</details>`;
   el.innerHTML = h;
-  el.querySelectorAll(".arow").forEach(r => r.onclick = () => applyAction(JSON.parse(r.dataset.act)));
+  el.querySelectorAll(".arow:not(.head)").forEach(r => r.onclick = () => applyAction(JSON.parse(r.dataset.act)));
+  if (res.grid) wireGrid(el, res.grid, res.hand);
+  updateAdviceState();
 }
+function gridClass(i, j) { return i === j ? RANKS[i] + RANKS[i] : i < j ? RANKS[i] + RANKS[j] + "s" : RANKS[j] + RANKS[i] + "o"; }
 function renderGrid(grid, heroHand) {
   const names = grid.actions;
-  let h = `<div class="meta" style="margin-top:14px">Your range here</div><div class="grid">`;
+  let h = `<div class="meta" style="margin-top:14px">Your range here <span class="muted">· hover a hand for its mix</span></div><div class="grid">`;
   for (let i = 0; i < 13; i++) for (let j = 0; j < 13; j++) {
-    const cls = i === j ? RANKS[i] + RANKS[i] : i < j ? RANKS[i] + RANKS[j] + "s" : RANKS[j] + RANKS[i] + "o";
+    const cls = gridClass(i, j);
     const c = grid.cells[cls] || { w: 0, f: [] }, me = cls === heroHand;
     const op = c.w <= 0 ? 0.08 : 0.25 + 0.75 * Math.min(1, c.w);
     let stack = "";
     if (c.w > 0) for (let a = 0; a < names.length; a++) stack += `<div style="width:${(c.f[a] * 100).toFixed(1)}%;background:${COLORS(names[a])}"></div>`;
-    h += `<div class="cell${i === j ? " pair" : ""}${me ? " me" : ""}" style="opacity:${op}" title="${cls}: ${c.w > 0 ? names.map((n, a) => n + " " + (c.f[a] * 100).toFixed(0) + "%").join(", ") : "not in range"}"><div class="stack">${stack}</div><span class="lbl">${cls}</span>${me ? '<span class="you">YOU</span>' : ""}</div>`;
+    h += `<div class="cell${i === j ? " pair" : ""}${me ? " me" : ""}" data-h="${cls}" style="opacity:${op}"><div class="stack">${stack}</div><span class="lbl">${cls}</span>${me ? '<span class="you">YOU</span>' : ""}</div>`;
   }
-  return h + `</div><div class="legend">` + names.map(n => `<span style="--c:${COLORS(n)}">${n}</span>`).join("") + `<span class="mehint">your hand</span></div>`;
+  return h + `</div><div class="readout" id="readout"></div><div class="legend">` + names.map(n => `<span style="--c:${COLORS(n)}">${n}</span>`).join("") + `<span class="mehint">your hand</span></div>`;
+}
+function wireGrid(root, grid, heroHand) {
+  const out = root.querySelector("#readout"), g = root.querySelector(".grid");
+  const show = (cls) => {
+    const c = grid.cells[cls];
+    out.innerHTML = `<b>${cls}${cls === heroHand ? " (you)" : ""}</b>` + (c && c.w > 0
+      ? grid.actions.map((n, a) => c.f[a] >= 0.005 ? `<span class="a" style="--c:${COLORS(n)}">${n} ${(c.f[a] * 100).toFixed(0)}%</span>` : "").join("")
+      : `<span class="muted">not in your range here</span>`);
+  };
+  let hov = null;
+  const over = (e) => { const cell = e.target.closest(".cell"); if (!cell || cell === hov) return; if (hov) hov.classList.remove("hov"); hov = cell; cell.classList.add("hov"); show(cell.dataset.h); };
+  g.addEventListener("mouseover", over); g.addEventListener("click", over);
+  g.addEventListener("mouseleave", () => { if (hov) hov.classList.remove("hov"); hov = null; show(heroHand); });
+  show(heroHand);
 }
 function applyAction(a) {
   const sim = simulate();
   if (sim.toAct !== S.hero || !sim.cur) { showErr("It's not your turn now."); return; }
   showErr(act(["check", "call", "fold", "all-in"].includes(a.action) ? { action: a.action } : { action: "bet", to: a.amount_bb })); renderAll();
 }
+// Say what the advice panel is showing: live advice, old advice from an earlier decision, or the end-of-hand review.
+function updateAdviceState() {
+  const sim = simulate(), note = document.getElementById("adviceNote"), el = document.getElementById("result");
+  const heroTurn = sim.toAct === S.hero && !!sim.cur && S.cards[0] && S.cards[1];
+  document.body.classList.toggle("heroturn", !!heroTurn);
+  const live = heroTurn && (solving || resultKey === JSON.stringify(payload()));
+  el.classList.toggle("stale", !!lastResult && !live && !solving);
+  const mine = []; for (const s of STREETS) for (const a of S.actions[s]) if (a.pos === S.hero && a.g) mine.push([s, a]);
+  const list = mine.length ? `<ul class="review">${mine.map(([s, a]) => `<li title="${gradeTip(a.g)}"><span class="st">${s}</span><span class="g ${gradeClass(a.g)}" style="margin:0">${gradeMark(a.g)}</span><span><b>${a.action === "bet" ? "bet " + fmt(a.to) : a.action === "raise" ? "raise to " + fmt(a.to) : a.action}</b> · solver ${(a.g.f * 100).toFixed(0)}%${a.g.l ? ` · <span class="num neg">−${a.g.l.toFixed(2)} bb</span>` : ""}</span></li>`).join("")}</ul>` : "";
+  let msg = "";
+  if (sim.handOver && S.cards[0] && S.cards[1]) {
+    const lost = mine.reduce((t, [, a]) => t + (a.g.l || 0), 0), good = mine.filter(([, a]) => gradeClass(a.g) === "ok").length;
+    msg = mine.length ? `<b>Hand review</b> · ${good} of ${mine.length} decisions in the solver's mix${lost > 0.005 ? ` · ${lost.toFixed(2)} bb EV given up` : ""}${list}` : `<b>Hand over.</b> No solved decisions to review.`;
+  } else if (lastResult && !live && !solving) {
+    msg = `<b>Advice from your last decision (${lastResult.street || "earlier"}).</b> New advice appears when it's your turn again.${list}`;
+  } else if (!heroTurn && mine.length) msg = `<b>Your decisions so far</b>${list}`;
+  note.hidden = !msg; note.innerHTML = msg;
+}
 
 // ------------------------------------------------------------------ wiring
 function renderAll() {
   const sim = simulate();
-  renderSeats(); renderSlots(sim); renderPicker(); renderTable(sim); renderAction(sim); renderTimeline();
+  if (!needCard(sim)) pendingRank = null;
+  renderSetup(); renderSlots(sim); renderPicker(sim); renderTable(sim); renderAction(sim); renderTimeline();
   if (sim.toAct === S.hero && S.cards[0] && S.cards[1] && !sim.handOver) analyze(sim);
   else if (!S.cards[0] || !S.cards[1]) resetAdvice();
+  updateAdviceState();
 }
 function resetAdvice() {
-  const el = document.getElementById("result"); lastKey = null;
+  const el = document.getElementById("result"); lastKey = null; lastResult = null; resultKey = null;
   if (el.className !== "empty") { el.className = "empty"; el.innerHTML = "Pick your seat and cards, then enter the action seat by seat.<br>Advice appears here whenever it's your turn."; }
 }
 // ---- share: plain-text summary + link that reopens the spot
 function handText() {
   const n = S.players, seat = SEAT_LABEL(S.hero, n);
   const lines = [`GTO Solver hand: ${n}-handed, ${S.stack}bb effective, I am ${seat} with ${S.cards[0] || "?"}${S.cards[1] || "?"}`];
-  const act = (a) => `${SEAT_LABEL(a.pos, n)} ${a.action === "bet" ? "bets " + fmt(a.to) : a.action === "raise" ? "raises to " + fmt(a.to) : a.action === "all-in" ? "all-in" : a.action + "s"}`;
+  const act = (a) => `${SEAT_LABEL(a.pos, n)} ${a.action === "bet" ? "bets " + fmt(a.to) : a.action === "raise" ? "raises to " + fmt(a.to) : a.action === "all-in" ? "all-in" : a.action + "s"}${a.g ? ` [${gradeMark(a.g)} solver ${(a.g.f * 100).toFixed(0)}%${a.g.l ? `, -${a.g.l.toFixed(2)}bb` : ""}]` : ""}`;
   const bd = (s) => s === "preflop" ? "" : " (" + boardCards().slice(NEED[s] - (s === "flop" ? 3 : 1), NEED[s]).join(" ") + ")";
   const sim = simulate();
   for (const s of STREETS) {
@@ -572,12 +808,39 @@ document.getElementById("copyhand").onclick = async () => {
 })();
 document.getElementById("stack").value = S.stack;
 document.getElementById("stack").onchange = (e) => { S.stack = parseFloat(e.target.value) || 100; save(); renderAll(); };
+document.getElementById("setupDone").onclick = () => { editSetup = false; renderAll(); };
+
+// ---- four-colour deck (per browser)
+function applyFour(on) { document.body.classList.toggle("four", on); document.getElementById("fourcolor").classList.toggle("active", on); }
+let four = false; try { four = localStorage.getItem("fourcolor") === "1"; } catch (e) {}
+applyFour(four);
+document.getElementById("fourcolor").onclick = () => { four = !four; applyFour(four); try { localStorage.setItem("fourcolor", four ? "1" : "0"); } catch (e) {} };
+
+// ---- keyboard: cards are typed as rank+suit while a card is needed, otherwise keys pick actions
 document.addEventListener("keydown", (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey || /input|textarea|select/i.test(e.target.tagName)) return;
-  if (e.key === "n" || e.key === "N") { e.preventDefault(); document.getElementById("newhand").click(); }
+  const k = e.key, low = k.toLowerCase();
+  if (k === "Escape") { pendingRank = null; selSlot = null; showDeck = false; const cb = document.getElementById("customBox"); if (cb) cb.classList.remove("open"); renderAll(); return; }
+  if (low === "n") { e.preventDefault(); document.getElementById("newhand").click(); return; }
+  const sim = simulate();
+  if (needCard(sim)) {
+    if (pendingRank && "shdc".includes(low) && k.length === 1) {
+      e.preventDefault();
+      if (pendingRank === "1") { pendingRank = null; renderAll(); return; }
+      const c = pendingRank + low; pendingRank = null; placeCard(c); renderAll(); return;
+    }
+    if (pendingRank === "1" && k === "0") { e.preventDefault(); pendingRank = "T"; renderAll(); return; }
+    if (k.length === 1 && (RANKS.includes(k.toUpperCase()) || k === "1")) { e.preventDefault(); pendingRank = k.toUpperCase(); renderAll(); return; }
+    if (k === "Backspace" && pendingRank) { e.preventDefault(); pendingRank = null; renderAll(); return; }
+    return;
+  }
+  if (low === "u" || k === "Backspace") { e.preventDefault(); undo(); return; }
+  const key = low === "x" ? "c" : low;   // X also checks
+  const b = document.querySelector(`#actionArea [data-key="${CSS.escape(key)}"]`);
+  if (b) { e.preventDefault(); b.click(); }
 });
 document.getElementById("newhand").onclick = () => {
-  S = { ...fresh(S.players), hero: S.hero, stack: S.stack }; selSlot = null; save(); resetAdvice(); renderAll();
+  S = { ...fresh(S.players), hero: S.hero, stack: S.stack }; selSlot = null; showDeck = false; editSetup = false; pendingRank = null; save(); resetAdvice(); renderAll();
 };
 renderAll();
 </script>

@@ -31,11 +31,15 @@ Python code in a web worker with Pyodide. Pyodide's numpy is much slower than
 native, so the browser build uses a lighter tree, samples 6 rivers per iteration, and has an
 8 s budget; the local server gives better postflop accuracy.) Pick the number of players (2 to 9), your seat
 and stack, click cards into your
-hand and the board (click a placed card to remove it), then enter the action
-seat by seat with the buttons: fold, check or call, one or a few preset sizes,
-a custom size, all-in. A seat strip shows who has folded and who is to act;
-clicking a seat folds everyone before it, and a single context shortcut
-("Fold to me", "Everyone checks", "Everyone else folds") skips the boring bits.
+hand and the board (click a placed card in its slot to remove it; cards already
+on the table can't be picked again), or type them as rank then suit (`Ah`, `Tc`).
+The setup folds into one line once the hand starts, and the deck only shows
+while a card is needed ("Show deck" opens it otherwise). Enter the action seat
+by seat with the buttons or keys: F fold, C check or call, 1 to 3 preset sizes,
+R custom size, A all-in, S the context shortcut, U undo. A table view shows who
+has folded, who is to act, the board and the pot; clicking a seat folds
+everyone before it, and a single context shortcut ("Fold to me", "Everyone
+checks", "Everyone else folds") skips the boring bits.
 
 Whenever it becomes your turn the advice panel solves the spot. The **Fast /
 Accurate** toggle in the header (remembered between visits) picks the solve
@@ -49,6 +53,11 @@ postflop: the solver's bet and raise sizes in big blinds), the mixed strategy fo
 hand with EVs, and a 13x13 grid of your whole range at that spot with your hand
 boxed. Click an advice row to record it as what you did and keep going.
 Solver stats and the villain's inferred range sit behind a "Details" toggle.
+Each decision you record is marked against the advice that was showing (✓ in
+the mix, ~ rarely played, ✗ outside it, with the EV given up), and when the
+hand ends the advice panel lists them as a hand review. While others act, the
+last advice stays visible but dimmed and labelled. **4-colour** switches
+diamonds to blue and clubs to green.
 **Copy hand** puts a plain-text summary on the clipboard: the full action, the
 advice with frequencies, EVs and sizes, the villain range, solver stats, a link
 that reopens the exact spot, and the raw state JSON for the API or CLI.
