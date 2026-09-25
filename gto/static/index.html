@@ -300,14 +300,14 @@ const BUDGETS = { server: { fast: [2.5, 1.2], accurate: [30, 6] }, wasm: { fast:
 let SPEED = "fast";
 try { if (localStorage.getItem("gto-speed") === "accurate") SPEED = "accurate"; } catch (e) {}
 let BUDGET = 4, PRIOR = 2;
-const WORKER_VERSION = "9";
+const WORKER_VERSION = "10";
 
 // ---- backend: the local Python server if present, otherwise the solver runs in the browser (Pyodide worker)
 let MODE = null, worker = null, reqId = 0;
 const pending = {};
 const modeReady = (async () => {
   try { const r = await fetch("health", { cache: "no-store" }); if (r.ok && (await r.json()).ok) MODE = "server"; } catch (e) {}
-  if (!MODE) MODE = "wasm";   // native is ~10x faster per iteration than the browser build
+  if (!MODE) { MODE = "wasm"; startWorker(); }   // start loading the in-browser solver while the hand is entered
   const ctl = document.getElementById("solvectl");
   const setSpeed = (m) => {
     SPEED = m; [BUDGET, PRIOR] = BUDGETS[MODE][m];
@@ -323,13 +323,16 @@ function setStatus(msg) {
   m.textContent = msg;
   if (msg === "Solving…") solveStart = performance.now();   // runtime loading is done; time the solve itself
 }
+let workerStatus = "";
+function startWorker() {
+  if (worker) return;
+  worker = new Worker("worker.js?v=" + WORKER_VERSION);   // query busts the 4h GitHub Pages cache on redeploys
+  worker.onmessage = (e) => { const m = e.data; if (m.status) { workerStatus = m.status; setStatus(m.status); } if (m.id != null && pending[m.id]) { pending[m.id](m.error ? { error: m.error } : m.result); delete pending[m.id]; } };
+  worker.onerror = (e) => { for (const k in pending) { pending[k]({ error: "solver worker failed: " + e.message }); delete pending[k]; } };
+}
 function callAdvise(state) {
   if (MODE === "server") return fetch("advise", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(state) }).then(r => r.json());
-  if (!worker) {
-    worker = new Worker("worker.js?v=" + WORKER_VERSION);   // query busts the 4h GitHub Pages cache on redeploys
-    worker.onmessage = (e) => { const m = e.data; if (m.status) setStatus(m.status); if (m.id != null && pending[m.id]) { pending[m.id](m.error ? { error: m.error } : m.result); delete pending[m.id]; } };
-    worker.onerror = (e) => { for (const k in pending) { pending[k]({ error: "solver worker failed: " + e.message }); delete pending[k]; } };
-  }
+  startWorker();
   return new Promise(res => { const id = ++reqId; pending[id] = res; worker.postMessage({ id, state }); });
 }
 
@@ -692,11 +695,13 @@ async function analyze(sim) {
   solving = true;
   const el = document.getElementById("result");
   el.className = "";
-  el.innerHTML = `<div class="solvehead muted"><span class="spinner"></span><span id="solveMsg">Solving the ${sim.current}…${sim.current !== "preflop" && SPEED === "accurate" ? ` (Accurate mode: this can take ${MODE === "wasm" ? "a couple of minutes" : "up to a minute"})` : ""}</span><span class="num" id="solveTime"></span></div>${sim.current === "preflop" ? "" : '<div class="prog"><div id="solveBar"></div></div>'}`;
+  el.innerHTML = `<div class="solvehead muted"><span class="spinner"></span><span id="solveMsg">Solving the ${sim.current}…${sim.current !== "preflop" && SPEED === "accurate" ? ` (Accurate mode: this can take ${MODE === "wasm" ? "a minute or more" : "up to a minute"})` : ""}</span><span class="num" id="solveTime"></span></div>${sim.current === "preflop" ? "" : '<div class="prog"><div id="solveBar"></div></div>'}`;
   solveStart = performance.now();
+  if (MODE === "wasm" && workerStatus !== "Solving…") setStatus(workerStatus || "Loading the solver runtime…");   // runtime still loading
   const est = BUDGET + PRIOR * Math.max(0, STREETS.indexOf(sim.current) - 1);   // earlier postflop streets are re-solved to narrow ranges
   const tick = setInterval(() => {
     const t = (performance.now() - solveStart) / 1000, tm = document.getElementById("solveTime"), bar = document.getElementById("solveBar");
+    if (MODE === "wasm" && workerStatus !== "Solving…") { if (tm) tm.textContent = ""; return; }   // runtime still loading: no solve clock yet
     if (tm && sim.current !== "preflop") tm.textContent = `${t.toFixed(1)}s of ~${fmt(est)}s`;
     if (bar) bar.style.width = Math.min(97, t / est * 100) + "%";
   }, 100);
