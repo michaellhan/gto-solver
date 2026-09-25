@@ -332,7 +332,9 @@ class Advisor:
             "villain_range_combos": round(float(vill_r.sum()), 1),
             "villain_range": range_to_text(vill_r, 0.05)[:400],
             "solver": {"iterations": sol.iters, "solve_seconds": round(sol.seconds, 2), "nodes": sol.n_nodes,
-                       "active_combos": sol.ctx.n, "tree_actions": node.names},
+                       "active_combos": sol.ctx.n, "tree_actions": node.names,
+                       # how far this street's solve is from equilibrium, % of the street's starting pot
+                       "exploitability_pct": round(max(0.0, sol.exploitability()), 2)},
             "notes": notes, "seconds": round(time.time() - t0, 2),
         }
 

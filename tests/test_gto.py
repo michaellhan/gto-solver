@@ -91,6 +91,7 @@ class TestAdvisor(unittest.TestCase):
         r = adv.advise({"hero": "CO", "hole": "AhKh", "board": "Kd7s2c", "preflop": pre,
                         "flop": [{"pos": "BB", "action": "check"}]})
         self.assertEqual(r["position"], "IP")
+        self.assertGreaterEqual(r["solver"]["exploitability_pct"], 0.0)
         self.assertAlmostEqual(sum(a["freq"] for a in r["actions"]), 1.0, places=2)
         r = adv.advise({"hero": "BB", "hole": "9h8h", "board": "Kd7s2cTh", "preflop": pre,
                         "flop": [{"pos": "BB", "action": "check"}, {"pos": "CO", "action": "bet", "amount": 2},

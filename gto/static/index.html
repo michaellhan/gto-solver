@@ -8,7 +8,9 @@
   :root {
     --bg: #0f1216; --panel: #171b21; --panel2: #1e242c; --line: #2a313b;
     --text: #e6e9ee; --muted: #8b94a3; --accent: #f5b942;
-    --fold: #4a7bd0; --passive: #3fae6a; --bet: #e0603a; --bet2: #b8402a; --allin: #8a1f2f;
+    --fold: #4a7bd0; --passive: #3fae6a; --allin: #8b5cc9;
+    /* bet/raise sizes, smallest to largest: light to dark so neighbours stay distinct */
+    --agg0: #f4a261; --agg1: #e0603a; --agg2: #b3302a; --agg3: #7a1a3a;
     --good: #6bd394; --meh: #f5b942; --bad: #f28b82;
     --red: #d3232a; --blue: #1f5fd1; --green: #1c8a3c;
   }
@@ -20,7 +22,7 @@
   header .spacer { flex: 1; }
   header .ctl { display: inline-flex; align-items: center; gap: 8px; }
   kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; margin-left: 6px; color: var(--muted); }
-  main { display: grid; grid-template-columns: minmax(440px, 540px) 1fr; gap: 18px; padding: 18px 20px; max-width: 1400px; margin: 0 auto; }
+  main { display: grid; grid-template-columns: minmax(440px, 540px) minmax(0, 1fr); gap: 18px; padding: 18px 20px; max-width: 1400px; margin: 0 auto; }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
   .panel h2 { margin: 0 0 10px; font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); font-weight: 600; display: flex; align-items: center; gap: 8px; }
   .panel h2 .right { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 500; }
@@ -88,7 +90,7 @@
   .seat.hero { border-color: #5a4a26; }
   .seat.toact { border-color: var(--accent); background: #2a2413; box-shadow: 0 0 0 1px var(--accent) inset, 0 0 14px rgba(245,185,66,.35); }
   .seat .ta { color: var(--accent); display: block; }
-  .seat.allin .amt { color: var(--bet); }
+  .seat.allin .amt { color: var(--agg1); }
   .seat.clickable { cursor: pointer; }
   .seat.clickable:hover { border-color: #4a5566; }
 
@@ -104,6 +106,15 @@
   .acts button.pass { border-color: #2f7a4d; }
   .acts button.agg { border-color: #9a4a34; }
   .acts button small { display: block; font-weight: 400; font-size: 11px; color: var(--muted); }
+  .acts button small .fq { color: var(--text); font-weight: 600; }
+  .acts button.best { box-shadow: 0 0 0 2px var(--accent); }
+  .acts.solver::before { content: "Solver sizes"; width: 100%; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  .conv { font-size: 11px; font-weight: 600; border-radius: 999px; padding: 1px 8px; border: 1px solid currentColor; white-space: nowrap; }
+  .conv.ok { color: var(--good); } .conv.meh { color: var(--meh); } .conv.bad { color: var(--bad); }
+  .chip.rewind, .review li.rewind { cursor: pointer; }
+  .chip.rewind:hover { background: #2a313b; }
+  .review li.rewind:hover b { text-decoration: underline; }
+  .review .streetsum { margin-top: 6px; color: var(--muted); }
   .acts button kbd, .shortcut kbd { position: absolute; top: 3px; right: 3px; margin: 0; font-size: 9px; padding: 0 3px; line-height: 13px; }
   .shortcut { position: relative; padding-right: 26px !important; }
   .custom { display: none; gap: 6px; align-items: center; margin-bottom: 10px; }
@@ -115,7 +126,7 @@
   .tl .line { display: flex; gap: 5px; flex-wrap: wrap; }
   .chip { background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; white-space: nowrap; font-size: 12px; }
   .chip.hero { border-color: var(--accent); }
-  .chip.agg { border-color: var(--bet); }
+  .chip.agg { border-color: var(--agg1); }
   .chip.fold { opacity: .6; }
   .g { font-weight: 800; margin-left: 5px; }
   .g.ok { color: var(--good); } .g.meh { color: var(--meh); } .g.bad { color: var(--bad); }
@@ -128,17 +139,18 @@
   .review li { display: flex; gap: 8px; align-items: baseline; }
   .review .st { text-transform: uppercase; font-size: 10px; letter-spacing: .08em; width: 52px; flex: none; }
   #result.stale { opacity: .45; }
+  #result.stale #goAccurate { display: none; }
   .verdict { display: flex; gap: 14px; align-items: baseline; margin: 4px 0 12px; flex-wrap: wrap; }
   .verdict .big { font-size: 24px; font-weight: 700; }
   .verdict .mix { color: var(--muted); font-size: 13px; }
   .arows { display: flex; flex-direction: column; gap: 8px; }
-  .arow { display: grid; grid-template-columns: 140px 1fr 70px 80px; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 8px; background: var(--panel2); border: 1px solid transparent; cursor: pointer; }
-  .arows.noev .arow { grid-template-columns: 140px 1fr 70px; }
+  .arow { display: grid; grid-template-columns: minmax(0, 140px) minmax(40px, 1fr) 62px 76px; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 8px; background: var(--panel2); border: 1px solid transparent; cursor: pointer; }
+  .arows.noev .arow { grid-template-columns: minmax(0, 140px) minmax(40px, 1fr) 62px; }
   .arow:hover { border-color: #3c4653; }
   .arow.best { border-color: var(--accent); }
   .arow.head { white-space: nowrap; background: none; cursor: default; padding: 0 10px; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
   .arow.head:hover { border-color: transparent; }
-  .arow .name { font-weight: 600; }
+  .arow .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .arow .name small { color: var(--muted); font-weight: 400; margin-left: 6px; }
   .bar { height: 12px; background: #0f1216; border-radius: 4px; overflow: hidden; }
   .bar > div { height: 100%; border-radius: 4px; }
@@ -193,8 +205,8 @@
     .pc { height: 30px; font-size: 11px; }
     .slot { width: 34px; height: 48px; font-size: 15px; }
     .slots { gap: 10px; }
-    .arow { grid-template-columns: 92px 1fr 48px 62px; gap: 8px; }
-    .arows.noev .arow { grid-template-columns: 92px 1fr 48px; }
+    .arow { grid-template-columns: 104px 1fr 48px 62px; gap: 8px; }
+    .arows.noev .arow { grid-template-columns: 104px 1fr 48px; }
     .cell { font-size: 7px; }
     .cell .lbl { left: 1px; top: 1px; }
   }
@@ -343,11 +355,11 @@ function cardHtml(c) { return `<span class="${c[1]}">${c[0]}${SUIT_SYM[c[1]]}</s
 function cardText(c) { return c[0] + SUIT_SYM[c[1]]; }
 function showErr(m) { document.getElementById("err").textContent = m || ""; }
 let toastTimer = null;
-function toast(msg, undoFn) {
+function toast(msg, undoFn, ms = 4000) {
   const t = document.getElementById("toast"); clearTimeout(toastTimer);
   t.innerHTML = `<span>${msg}</span>`;
   if (undoFn) { const b = document.createElement("button"); b.className = "link"; b.textContent = "Undo"; b.onclick = () => { t.hidden = true; undoFn(); }; t.appendChild(b); }
-  t.hidden = false; toastTimer = setTimeout(() => t.hidden = true, 4000);
+  t.hidden = false; toastTimer = setTimeout(() => t.hidden = true, ms);
 }
 
 // ------------------------------------------------------------------ engine
@@ -435,11 +447,13 @@ function gradeFor(rec) {
   const best = r.actions.reduce((b, a) => a.freq > b.freq ? a : b);
   const evs = r.actions.filter(a => a.ev_bb !== undefined).map(a => a.ev_bb);
   const loss = evs.length && m.ev_bb !== undefined ? Math.max(0, Math.max(...evs) - m.ev_bb) : null;
-  return { m: m.action, f: m.freq, b: best.action, bf: best.freq, l: loss == null ? null : Math.round(loss * 100) / 100 };
+  const conv = convergence(r);
+  return { m: m.action, f: m.freq, b: best.action, bf: best.freq, l: loss == null ? null : Math.round(loss * 100) / 100, ...(conv && conv.cls === "bad" ? { r: 1 } : {}) };
 }
-const gradeClass = (g) => g.f >= 0.15 ? "ok" : g.f >= 0.03 ? "meh" : "bad";
+// A rough (unconverged) solve can't condemn a line: its worst grade is "~".
+const gradeClass = (g) => g.f >= 0.15 ? "ok" : g.f >= 0.03 || g.r ? "meh" : "bad";
 const gradeMark = (g) => ({ ok: "✓", meh: "~", bad: "✗" })[gradeClass(g)];
-const gradeTip = (g) => `Solver: ${g.b} ${(g.bf * 100).toFixed(0)}%. Your line (${g.m}) ${(g.f * 100).toFixed(0)}%${g.l ? `, ${g.l.toFixed(2)} bb below the best EV` : ""}.`;
+const gradeTip = (g) => `Solver: ${g.b} ${(g.bf * 100).toFixed(0)}%. Your line (${g.m}) ${(g.f * 100).toFixed(0)}%${g.l ? `, ${g.l.toFixed(2)} bb below the best EV` : ""}.${g.r ? " Rough solve: treat this as a hint, not a verdict." : ""}`;
 
 function advanceTo(pos) {
   for (let i = 0; i < 9; i++) {
@@ -460,6 +474,16 @@ function autoRest(street, action) {
     const e = act({ action }); if (e) return e;
   }
   return null;
+}
+// Go back to one of your decisions to try another line: later actions and later board cards are cleared.
+function rewindTo(street, i) {
+  const before = JSON.stringify(S);
+  const si = STREETS.indexOf(street);
+  S.actions[street] = S.actions[street].slice(0, i);
+  for (const s of STREETS.slice(si + 1)) S.actions[s] = [];
+  for (let c = 2 + NEED[street]; c < 7; c++) S.cards[c] = null;
+  selSlot = null; showDeck = false; save(); renderAll();
+  toast(`Back to your ${street} decision. Try another line.`, () => { S = JSON.parse(before); save(); renderAll(); }, 8000);
 }
 function undo() { for (const s of [...STREETS].reverse()) if (S.actions[s].length) { S.actions[s].pop(); break; } save(); renderAll(); }
 
@@ -580,29 +604,45 @@ function renderAction(sim) {
   const street = sim.current, info = sim.cur, p = sim.toAct, isHero = p === S.hero;
   const myBet = info.bets[p], toCall = info.curBet - myBet, remaining = S.stack - sim.invested[p] - myBet, facing = toCall > 1e-9;
   step.textContent = street;
-  prompt.innerHTML = `<span class="who ${isHero ? "hero" : ""}">${isHero ? "Your turn" : p + " to act"}</span><span class="pot">pot ${fmt(info.pot)} bb${facing ? " · " + fmt(Math.min(toCall, remaining)) + " to call" : ""}</span><span class="ask">${isHero ? "Check the advice, then record what you did." : "What did " + p + " do?"}</span>`;
+  const callAmt = Math.min(toCall, remaining), need = callAmt / (info.pot + callAmt);
+  prompt.innerHTML = `<span class="who ${isHero ? "hero" : ""}">${isHero ? "Your turn" : p + " to act"}</span><span class="pot">pot ${fmt(info.pot)} bb${facing ? ` · ${fmt(callAmt)} to call · <span title="Pot odds: the equity a call needs to break even">need ${(need * 100).toFixed(0)}%</span>` : ""}</span><span class="ask">${isHero ? "Check the advice, then record what you did." : "What did " + p + " do?"}</span>`;
   el.appendChild(prompt);
 
-  const acts = document.createElement("div"); acts.className = "acts";
-  const mk = (label, cls, a, sub, key) => { const b = document.createElement("button"); b.className = cls; b.innerHTML = label + (sub ? `<small>${sub}</small>` : "") + (key ? `<kbd>${key}</kbd>` : "");
+  // On your turn, once the advice for this exact spot is in, the buttons use the solver's sizes and show its mix.
+  const res = isHero && lastResult && !lastResult.error && !lastResult.multiway && resultKey === JSON.stringify(payload()) ? lastResult : null;
+  const solverAct = (name) => res && res.actions.find(x => x.action === name);
+  const pct = (x) => x ? ` · <span class="fq">${(x.freq * 100).toFixed(0)}%</span>` : "";
+  const acts = document.createElement("div"); acts.className = "acts" + (res ? " solver" : "");
+  const mk = (label, cls, a, sub, key, sa) => { const b = document.createElement("button"); b.className = cls + (sa && sa.action === res.recommended ? " best" : ""); b.innerHTML = label + (sub ? `<small>${sub}</small>` : "") + (key ? `<kbd>${key}</kbd>` : "");
     if (key) b.dataset.key = key.toLowerCase();
     b.onclick = () => { showErr(act(a)); renderAll(); }; acts.appendChild(b); return b; };
-  if (facing) { mk("Fold", "fold", { action: "fold" }, "", "F"); mk("Call", "pass", { action: "call" }, fmt(Math.min(toCall, remaining)) + " bb", "C"); }
-  else mk("Check", "pass", { action: "check" }, "", "C");
+  if (facing) { mk("Fold", "fold", { action: "fold" }, res ? pct(solverAct("fold")).replace(/^ · /, "") : "", "F", solverAct("fold")); mk("Call", "pass", { action: "call" }, fmt(callAmt) + " bb" + pct(solverAct("call")), "C", solverAct("call")); }
+  else mk("Check", "pass", { action: "check" }, res ? pct(solverAct("check")).replace(/^ · /, "") : "", "C", solverAct("check"));
   const canRaise = remaining > toCall + 1e-9;
-  if (canRaise) {
-    const verb = facing || info.curBet > 0 ? "Raise to" : "Bet";
+  const verb = facing || info.curBet > 0 ? "Raise to" : "Bet";
+  if (canRaise && res) {
+    let k = 0;
+    for (const x of res.actions) {
+      if (!/^(bet|raise)/.test(x.action) || x.amount_bb == null) continue;
+      const v = Math.round(x.amount_bb * 2) / 2;
+      if (!(v > info.curBet + 1e-9 && v < myBet + remaining - 1e-9)) continue;
+      const tag = /%$/.test(x.action) ? x.action.replace(/^bet /, "") + " pot" : street === "preflop" ? (info.nRaises === 0 ? "open" : (v / info.curBet).toFixed(1) + "x") : (v / info.curBet).toFixed(1) + "x";
+      mk(`${verb} ${fmt(v)}`, "agg", { action: "bet", to: v }, tag + pct(x), String(++k), x);
+    }
+  } else if (canRaise) {
     let sizes;
     if (street === "preflop") sizes = info.nRaises === 0 ? [[p === "SB" ? 3 : 2.5, "open"]] : [[info.curBet * (p === "SB" || p === "BB" ? 4 : 3), p === "SB" || p === "BB" ? "4x" : "3x"]];
     else if (!facing) sizes = [[info.pot / 3, "⅓ pot"], [info.pot * 2 / 3, "⅔ pot"], [info.pot, "pot"]];
     else sizes = [[info.curBet * 2.5, "2.5x"], [info.curBet + info.pot + toCall, "pot"]];
     let k = 0;
     for (let [v, l] of sizes) { v = Math.round(v * 2) / 2; if (v < myBet + remaining - 1e-9 && v > info.curBet + 1e-9) mk(`${verb} ${fmt(v)}`, "agg", { action: "bet", to: v }, l, String(++k)); }
+  }
+  if (canRaise) {
     const custom = document.createElement("button"); custom.className = "agg"; custom.innerHTML = `${verb} …<kbd>R</kbd>`; custom.dataset.key = "r";
     custom.onclick = () => { document.getElementById("customBox").classList.toggle("open"); document.getElementById("customAmt").focus(); };
     acts.appendChild(custom);
   }
-  if (remaining > 0) mk("All-in", "agg", { action: "all-in" }, fmt(myBet + remaining) + " bb", "A");
+  if (remaining > 0) mk("All-in", "agg", { action: "all-in" }, fmt(myBet + remaining) + " bb" + pct(solverAct("all-in")), "A", solverAct("all-in"));
   el.appendChild(acts);
 
   const cb = document.createElement("div"); cb.className = "custom"; cb.id = "customBox";
@@ -614,7 +654,7 @@ function renderAction(sim) {
 
   // one shortcut
   let sc = null;
-  if (!isHero && sim.active.has(S.hero) && !sim.allin.has(S.hero) && info.order.indexOf(S.hero) > info.order.indexOf(p)) sc = ["Fold to me", () => advanceTo(S.hero)];
+  if (!isHero && sim.active.has(S.hero) && !sim.allin.has(S.hero) && info.order.indexOf(S.hero) > info.order.indexOf(p)) sc = [facing || street === "preflop" ? "Fold to me" : "Check to me", () => advanceTo(S.hero)];
   else if (!isHero && facing) sc = ["Everyone else folds", () => autoRest(street, "fold")];
   else if (!isHero && !facing && street !== "preflop") sc = ["Everyone checks", () => autoRest(street, "check")];
   if (sc) { const b = document.createElement("button"); b.className = "small shortcut"; b.innerHTML = sc[0] + "<kbd>S</kbd>"; b.dataset.key = "s"; b.onclick = () => { showErr(sc[1]()); renderAll(); }; el.appendChild(b); }
@@ -626,9 +666,10 @@ function renderTimeline() {
   for (const s of STREETS) {
     const acts = S.actions[s]; if (!acts.length) continue; any = true;
     const line = document.createElement("div"); line.className = "tl";
-    const chips = acts.map(a => `<span class="chip${a.pos === S.hero ? " hero" : ""}${["bet", "raise", "all-in"].includes(a.action) ? " agg" : ""}${a.action === "fold" ? " fold" : ""}"${a.g ? ` title="${gradeTip(a.g)}"` : ""}>${a.pos} ${a.action === "bet" ? "bets " + fmt(a.to) : a.action === "raise" ? "raises to " + fmt(a.to) : a.action === "all-in" ? "all-in" : a.action + "s"}${a.g ? `<span class="g ${gradeClass(a.g)}">${gradeMark(a.g)}</span>` : ""}</span>`).join("");
+    const chips = acts.map((a, i) => `<span data-s="${s}" data-i="${i}" class="chip${a.pos === S.hero ? " hero rewind" : ""}${["bet", "raise", "all-in"].includes(a.action) ? " agg" : ""}${a.action === "fold" ? " fold" : ""}" title="${a.pos === S.hero ? "Replay from here. " : ""}${a.g ? gradeTip(a.g) : ""}">${a.pos} ${a.action === "bet" ? "bets " + fmt(a.to) : a.action === "raise" ? "raises to " + fmt(a.to) : a.action === "all-in" ? "all-in" : a.action + "s"}${a.g ? `<span class="g ${gradeClass(a.g)}">${gradeMark(a.g)}</span>` : ""}</span>`).join("");
     const b = s === "preflop" ? "" : ` <span class="muted">${boardCards().slice(NEED[s] - (s === "flop" ? 3 : 1), NEED[s]).map(cardHtml).join(" ")}</span>`;
     line.innerHTML = `<span class="st">${s}${b}</span><span class="line">${chips}</span>`;
+    line.querySelectorAll(".rewind").forEach(c => c.onclick = () => rewindTo(c.dataset.s, +c.dataset.i));
     el.appendChild(line);
   }
   const u = document.createElement("button"); u.className = "small"; u.innerHTML = "Undo<kbd>U</kbd>"; u.disabled = !any; u.onclick = undo; u.style.marginTop = "6px";
@@ -669,34 +710,57 @@ async function analyze(sim) {
   const now = JSON.stringify(payload());
   if (now !== key && simulate().toAct === S.hero) analyze(simulate());
 }
-const COLORS = (n) => n === "fold" ? "var(--fold)" : n === "check" || n === "call" ? "var(--passive)" : n === "all-in" ? "var(--allin)" : /75|100|raise/.test(n) ? "var(--bet2)" : "var(--bet)";
+// Bets and raises are shaded light to dark by size, so "bet 33%" and "bet 75%" never look alike.
+let CMAP = {};
+function setColors(names) {
+  const size = (n) => { const m = n.match(/[\d.]+/); return m ? parseFloat(m[0]) : 0; };
+  const agg = names.filter(n => /^(bet|raise)/.test(n)).sort((a, b) => size(a) - size(b));
+  const shades = agg.length === 1 ? [1] : agg.length === 2 ? [0, 2] : agg.length === 3 ? [0, 1, 2] : [0, 1, 2, 3];
+  CMAP = {}; agg.forEach((n, i) => CMAP[n] = `var(--agg${shades[Math.min(i, shades.length - 1)]})`);
+}
+const COLORS = (n) => n === "fold" ? "var(--fold)" : n === "check" || n === "call" ? "var(--passive)" : n === "all-in" ? "var(--allin)" : CMAP[n] || "var(--agg1)";
+// Convergence of the solve, from exploitability in % of the pot (0 = exact equilibrium of the tree).
+function convergence(res) {
+  const x = res && res.solver && res.solver.exploitability_pct;
+  if (x == null) return null;
+  return x < 3 ? { cls: "ok", label: "converged", x } : x < 10 ? { cls: "meh", label: "fair", x } : { cls: "bad", label: "rough", x };
+}
+const convTip = (c) => `Exploitability ${c.x.toFixed(1)}% of the pot: a perfect counter-strategy would win that much from this solve. Under 3% is close to a full solver.`;
 
 function renderResult(res, key) {
   lastResult = res; resultKey = key;
   const el = document.getElementById("result"); el.className = "";
-  if (res.error) { el.innerHTML = `<div class="err">${res.error}</div>`; updateAdviceState(); return; }
+  if (res.error) { el.innerHTML = `<div class="err">${res.error}</div>`; updateAdviceState(); renderAction(simulate()); return; }
+  setColors([...res.actions.map(a => a.action), ...(res.grid ? res.grid.actions : [])]);
+  const conv = convergence(res);
   const board = res.board ? res.board.match(/../g).map(cardHtml).join(" ") : "";
   let h = `<div class="meta" style="margin:0 0 4px">${res.street} · ${res.hero} ${res.hand}${res.position ? " · " + res.position : ""}${board ? " · " + board : ""}${res.pot_bb ? " · pot " + res.pot_bb + " bb" : ""}</div>`;
   if (res.multiway) h += `<div class="verdict"><span class="big">${res.recommended}</span><span class="mix">${res.opponents.length + 1} players in · equity vs field ${(res.equity_vs_field * 100).toFixed(0)}% · heuristic, not a solve</span></div>`;
-  else h += `<div class="verdict"><span class="big">${res.recommended}</span><span class="mix">random draw from the mix: <b>${res.sampled}</b></span></div>`;
+  else h += `<div class="verdict"><span class="big">${res.recommended}</span>${conv ? `<span class="conv ${conv.cls}" title="${convTip(conv)}">${conv.label} · ${conv.x.toFixed(1)}% pot</span>` : ""}${conv && conv.cls === "bad" && SPEED === "fast" ? `<button class="link" id="goAccurate">Solve again on Accurate</button>` : ""}</div>`;
   const hasEv = res.actions.some(a => a.ev_bb !== undefined);
   h += `<div class="arows${hasEv ? "" : " noev"}"><div class="arow head"><span>Action</span><span>${res.multiway ? "" : "Solver mix"}</span><span class="num">${res.multiway ? "" : "Freq"}</span>${hasEv ? '<span class="num" title="Expected value of taking this action, in big blinds">EV</span>' : ""}</div>`;
   for (const a of res.actions) {
     const ev = hasEv ? (a.ev_bb !== undefined ? `<span class="num ${a.ev_bb > 0.005 ? "pos" : a.ev_bb < -0.005 ? "neg" : ""}">${a.ev_bb > 0 ? "+" : ""}${a.ev_bb.toFixed(2)} bb</span>` : "<span></span>") : "";
     h += `<div class="arow ${a.action === res.recommended ? "best" : ""}" data-act='${JSON.stringify(a)}' title="Click to record this as what you did"><span class="name">${a.action}${a.amount_bb != null ? `<small>${a.amount_bb} bb</small>` : ""}</span><div class="bar"><div style="width:${(a.freq * 100).toFixed(1)}%;background:${COLORS(a.action)}"></div></div><span class="num">${(a.freq * 100).toFixed(1)}%</span>${ev}</div>`;
   }
-  h += `</div><div class="meta">Click a row to record it as what you did.${hasEv ? " EV is in big blinds against the opponent's range." : res.street === "preflop" ? " Preflop comes from charts, so there's no EV column." : ""}</div>`;
+  h += `</div><div class="meta">Click a row to record it as what you did.${hasEv ? " EV is in big blinds against the opponent's range." : res.street === "preflop" ? " Preflop comes from charts, so there's no EV column." : ""}${conv && conv.cls !== "ok" ? " Actions the solver mixes should have near-equal EVs; gaps here mean the solve hasn't settled." : ""}</div>`;
   if (res.grid) h += renderGrid(res.grid, res.hand);
   h += `<details><summary>Details</summary>`;
   if (res.range_action_freq) h += `<div class="meta">Whole range: ${Object.entries(res.range_action_freq).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(" · ")}</div>`;
   if (res.villain_range) h += `<div class="meta">${res.villain} range (${res.villain_range_combos} combos):</div><div class="villain">${res.villain_range}</div>`;
-  if (res.solver) h += `<div class="meta">${res.solver.iterations} iterations · ${res.solver.solve_seconds}s · ${res.solver.active_combos} combos · sizes: ${res.solver.tree_actions.join(", ")}</div>`;
+  if (res.solver) h += `<div class="meta">${res.solver.iterations} iterations · ${res.solver.solve_seconds}s · ${res.solver.active_combos} combos · sizes: ${res.solver.tree_actions.join(", ")}${res.solver.exploitability_pct != null ? ` · exploitability ${res.solver.exploitability_pct}% pot` : ""}</div>`;
   if (res.notes && res.notes.length) h += `<div class="meta">${res.notes.join("<br>")}</div>`;
+  if (!res.multiway) h += `<div class="meta">Want to play a mixed strategy? <button class="link" id="randomise">Randomise</button> <span id="drawn"></span></div>`;
   h += `</details>`;
   el.innerHTML = h;
+  const rz = el.querySelector("#randomise");
+  if (rz) rz.onclick = () => { let r = Math.random(), pick = res.actions[res.actions.length - 1]; for (const a of res.actions) { if ((r -= a.freq) <= 0) { pick = a; break; } } el.querySelector("#drawn").innerHTML = `→ <b>${pick.action}</b>`; };
+  const ga = el.querySelector("#goAccurate");
+  if (ga) ga.onclick = () => document.querySelector('#solvectl button[data-m="accurate"]').click();
   el.querySelectorAll(".arow:not(.head)").forEach(r => r.onclick = () => applyAction(JSON.parse(r.dataset.act)));
   if (res.grid) wireGrid(el, res.grid, res.hand);
   updateAdviceState();
+  renderAction(simulate());   // on your turn the buttons carry the solver's sizes and frequencies
 }
 function gridClass(i, j) { return i === j ? RANKS[i] + RANKS[i] : i < j ? RANKS[i] + RANKS[j] + "s" : RANKS[j] + RANKS[i] + "o"; }
 function renderGrid(grid, heroHand) {
@@ -739,7 +803,9 @@ function updateAdviceState() {
   const live = heroTurn && (solving || resultKey === JSON.stringify(payload()));
   el.classList.toggle("stale", !!lastResult && !live && !solving);
   const mine = []; for (const s of STREETS) for (const a of S.actions[s]) if (a.pos === S.hero && a.g) mine.push([s, a]);
-  const list = mine.length ? `<ul class="review">${mine.map(([s, a]) => `<li title="${gradeTip(a.g)}"><span class="st">${s}</span><span class="g ${gradeClass(a.g)}" style="margin:0">${gradeMark(a.g)}</span><span><b>${a.action === "bet" ? "bet " + fmt(a.to) : a.action === "raise" ? "raise to " + fmt(a.to) : a.action}</b> · solver ${(a.g.f * 100).toFixed(0)}%${a.g.l ? ` · <span class="num neg">−${a.g.l.toFixed(2)} bb</span>` : ""}</span></li>`).join("")}</ul>` : "";
+  const perStreet = STREETS.map(s => [s, mine.filter(([ms]) => ms === s).reduce((t, [, a]) => t + (a.g.l || 0), 0)]).filter(([s]) => mine.some(([ms]) => ms === s));
+  const streetSum = perStreet.length > 1 ? `<li class="streetsum">EV given up: ${perStreet.map(([s, l]) => `${s} ${l > 0.005 ? `<span class="num neg">−${l.toFixed(2)}</span>` : "0"}`).join(" · ")}</li>` : "";
+  const list = mine.length ? `<ul class="review">${mine.map(([s, a]) => `<li class="rewind" data-s="${s}" data-i="${S.actions[s].indexOf(a)}" title="Replay from here. ${gradeTip(a.g)}"><span class="st">${s}</span><span class="g ${gradeClass(a.g)}" style="margin:0">${gradeMark(a.g)}</span><span><b>${a.action === "bet" ? "bet " + fmt(a.to) : a.action === "raise" ? "raise to " + fmt(a.to) : a.action}</b> · solver ${(a.g.f * 100).toFixed(0)}%${a.g.l ? ` · <span class="num neg">−${a.g.l.toFixed(2)} bb</span>` : ""}${a.g.r ? ` <span class="muted">(rough solve)</span>` : ""}</span></li>`).join("")}${streetSum}</ul>` : "";
   let msg = "";
   if (sim.handOver && S.cards[0] && S.cards[1]) {
     const lost = mine.reduce((t, [, a]) => t + (a.g.l || 0), 0), good = mine.filter(([, a]) => gradeClass(a.g) === "ok").length;
@@ -748,6 +814,11 @@ function updateAdviceState() {
     msg = `<b>Advice from your last decision (${lastResult.street || "earlier"}).</b> New advice appears when it's your turn again.${list}`;
   } else if (!heroTurn && mine.length) msg = `<b>Your decisions so far</b>${list}`;
   note.hidden = !msg; note.innerHTML = msg;
+  note.querySelectorAll("li.rewind").forEach(li => li.onclick = () => rewindTo(li.dataset.s, +li.dataset.i));
+  if (sim.handOver && mine.length) note.insertAdjacentHTML("beforeend", `<div class="muted" style="margin-top:4px">Click a decision to replay the hand from there.</div>`);
+  if (el.classList.contains("empty")) el.innerHTML = S.cards[0] && S.cards[1]
+    ? (sim.handOver ? "Hand over." : "Waiting for your turn.<br>Enter what the others do; advice appears when the action reaches you.")
+    : EMPTY_ADVICE;
 }
 
 // ------------------------------------------------------------------ wiring
@@ -759,9 +830,10 @@ function renderAll() {
   else if (!S.cards[0] || !S.cards[1]) resetAdvice();
   updateAdviceState();
 }
+const EMPTY_ADVICE = "Pick your seat and cards, then enter the action seat by seat.<br>Advice appears here whenever it's your turn.";
 function resetAdvice() {
   const el = document.getElementById("result"); lastKey = null; lastResult = null; resultKey = null;
-  if (el.className !== "empty") { el.className = "empty"; el.innerHTML = "Pick your seat and cards, then enter the action seat by seat.<br>Advice appears here whenever it's your turn."; }
+  if (el.className !== "empty") { el.className = "empty"; el.innerHTML = EMPTY_ADVICE; }
 }
 // ---- share: plain-text summary + link that reopens the spot
 function handText() {
