@@ -19,9 +19,18 @@ const ready = (async () => {
     if (!r.ok) throw new Error(`could not load gto/${f}.py (${r.status})`);
     py.FS.writeFile(`/app/gto/${f}.py`, await r.text());
   }
-  // lighter tree than the native server: Pyodide numpy is far slower, so trade abstraction for iterations
+  // Pyodide numpy is 10-30x slower per iteration than native, so the browser plays a smaller game:
+  // two flop bet sizes and one turn/river bet and raise size. Measured against a long native solve
+  // with the full size menu (BTN vs BB, 2c Jd 7s and Kh 7c 2d Ts runouts):
+  // Fast (8 s): 8 fixed rivers under each turn. Sampling fresh rivers each iteration is unbiased but
+  //   too noisy in the ~50 iterations 8 s affords (BB donked 20-37% where the answer is 0-2%); the
+  //   fixed set was closest (10-15%). Its bias only dominates once a solve runs to convergence.
+  // Accurate (60 s): every river, so the turn is unbiased (donk 1-4%), and 4 turns x 8 rivers from the flop,
+  //   which matched the reference flop mix to within 3 points.
+  const LS = "bet_sizes={'flop': [0.33, 0.75], 'turn': [0.75], 'river': [0.75]}, raise_sizes={'flop': [0.5], 'turn': [0.75], 'river': [0.75]}";
   py.runPython("import sys, json; sys.path.insert(0, '/app'); from gto.advisor import Advisor; from gto.solver import Config; "
-             + "adv = Advisor(Config(n_turns=3, river_sample=6, leaf_turns=4, leaf_rivers_flop=8), time_budget=8.0, prior_budget=3.0)");
+             + `advs = {'fast': Advisor(Config(n_turns=3, n_rivers=8, leaf_turns=4, leaf_rivers_flop=4, n_rivers_from_flop=4, ${LS})), `
+             + `'accurate': Advisor(Config(n_turns=4, leaf_turns=4, leaf_rivers_flop=8, n_rivers_from_flop=8, ${LS}))}`);
   postMessage({ status: "Solving…" });
   return py;
 })();
@@ -31,7 +40,7 @@ onmessage = async (e) => {
   try {
     const py = await ready;
     py.globals.set("state_json", JSON.stringify(state));
-    const out = py.runPython("json.dumps(adv.advise(json.loads(state_json)))");
+    const out = py.runPython("st = json.loads(state_json); json.dumps(advs.get(st.get('speed'), advs['fast']).advise(st))");
     postMessage({ id, result: JSON.parse(out) });
   } catch (err) {
     postMessage({ id, error: String(err).split("\n").slice(-3).join(" ") });

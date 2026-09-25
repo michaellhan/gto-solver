@@ -27,9 +27,10 @@ python -m gto.server --port 18877
 
 Open http://127.0.0.1:18877/ . (The same page is what is deployed to the
 website; there it detects that no server is present and runs the identical
-Python code in a web worker with Pyodide. Pyodide's numpy is much slower than
-native, so the browser build uses a lighter tree, samples 6 rivers per iteration, and has an
-8 s budget; the local server gives better postflop accuracy.) Pick the number of players (2 to 9), your seat
+Python code in a web worker with Pyodide. Pyodide's numpy is 10 to 30 times slower
+per iteration than native, so the browser solves a smaller game: two flop bet sizes and one
+turn and river bet and raise size. Fast uses 8 fixed rivers under each turn; Accurate uses
+every river. The local server keeps the full size menu and gives better postflop accuracy.) Pick the number of players (2 to 9), your seat
 and stack, click cards into your
 hand and the board (click a placed card in its slot to remove it; cards already
 on the table can't be picked again), or type them as rank then suit (`Ah`, `Tc`).
@@ -139,10 +140,14 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   reference, but it takes time: about 20 s to reach ~3% of the pot
   exploitability on wide ranges and about 60 s to reach ~0.6%. At 2.5 to 8 s the
   answer is only roughly right. `river_sample=k` traverses k fresh random rivers
-  per iteration instead (public chance sampling; the browser uses 6). That makes
-  each iteration cheaper and stays unbiased, but it is noisier. Do not use a small
-  fixed river set (`n_rivers=k`): the solver then plays a game where only those
-  k rivers can come, and on K72r-T it donk-bet 32% where the real answer is 6%.
+  per iteration instead (public chance sampling). That makes each iteration
+  cheaper and stays unbiased, but it is noisy: in the ~50 iterations the browser
+  gets in 8 s, BB donked 20-37% on K72r-T and J72-5 where the answer is 0-2%.
+  A small fixed river set (`n_rivers=k`) is biased once converged (the solver plays
+  a game where only those k rivers can come; on K72r-T it donk-bet 32% where the
+  real answer is 6%), but under a tight time budget it was the least wrong option
+  (10-15%), so only the browser's Fast mode uses it (8 rivers). The browser's
+  Accurate mode enumerates every river with one turn/river size (donk 1-4%).
 * **Flop**: flop decisions are full, turn decisions are full on `n_turns` sampled
   turns (default 6), and the river is an **equity leaf**: both hands check it
   down. This is the main remaining error. Against the full-tree reference on K72r
