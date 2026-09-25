@@ -174,6 +174,13 @@
   .legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; color: var(--muted); }
   .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; background: var(--c); }
   .legend .mehint::before { background: transparent; outline: 2px solid var(--accent); }
+  /* whole-range totals above the grid */
+  .rangebar { display: flex; height: 16px; border-radius: 4px; overflow: hidden; margin-top: 6px; background: #12161b; }
+  .rangebar div { height: 100%; }
+  .rangetot { display: flex; gap: 6px 14px; flex-wrap: wrap; margin-top: 6px; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .rangetot span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; background: var(--c); }
+  .rangetot b { font-weight: 700; }
+  .rangetot small { color: var(--muted); }
   .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -3px; margin-right: 8px; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .prog { height: 4px; background: var(--panel2); border-radius: 2px; overflow: hidden; margin-top: 10px; }
@@ -751,7 +758,6 @@ function renderResult(res, key) {
   h += `</div><div class="meta">Click a row to record it as what you did.${hasEv ? " EV is in big blinds against the opponent's range." : res.street === "preflop" ? " Preflop comes from charts, so there's no EV column." : ""}${conv && conv.cls !== "ok" ? " Actions the solver mixes should have near-equal EVs; gaps here mean the solve hasn't settled." : ""}</div>`;
   if (res.grid) h += renderGrid(res.grid, res.hand);
   h += `<details><summary>Details</summary>`;
-  if (res.range_action_freq) h += `<div class="meta">Whole range: ${Object.entries(res.range_action_freq).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(" · ")}</div>`;
   if (res.villain_range) h += `<div class="meta">${res.villain} range (${res.villain_range_combos} combos):</div><div class="villain">${res.villain_range}</div>`;
   if (res.solver) h += `<div class="meta">${res.solver.iterations} iterations · ${res.solver.solve_seconds}s · ${res.solver.active_combos} combos · sizes: ${res.solver.tree_actions.join(", ")}${res.solver.exploitability_pct != null ? ` · exploitability ${res.solver.exploitability_pct}% pot` : ""}</div>`;
   if (res.notes && res.notes.length) h += `<div class="meta">${res.notes.join("<br>")}</div>`;
@@ -770,7 +776,19 @@ function renderResult(res, key) {
 function gridClass(i, j) { return i === j ? RANKS[i] + RANKS[i] : i < j ? RANKS[i] + RANKS[j] + "s" : RANKS[j] + RANKS[i] + "o"; }
 function renderGrid(grid, heroHand) {
   const names = grid.actions;
-  let h = `<div class="meta" style="margin-top:14px">Your range here <span class="muted">· hover a hand for its mix</span></div><div class="grid">`;
+  // Whole-range totals: each cell's w is its average combo weight, so combos = w x (6 pairs, 4 suited, 12 offsuit).
+  const tot = names.map(() => 0); let combos = 0;
+  for (const [cls, c] of Object.entries(grid.cells)) {
+    if (!(c.w > 0)) continue;
+    const n = c.w * (cls.length === 2 ? 6 : cls[2] === "s" ? 4 : 12);
+    combos += n; c.f.forEach((f, a) => tot[a] += f * n);
+  }
+  let h = `<div class="meta" style="margin-top:14px">Your whole range here <span class="muted">· ${fmt(Math.round(combos * 10) / 10)} combos</span></div>`;
+  if (combos > 0) {
+    h += `<div class="rangebar" title="How your whole range plays this spot">${names.map((n, a) => `<div style="width:${(tot[a] / combos * 100).toFixed(2)}%;background:${COLORS(n)}" title="${n} ${(tot[a] / combos * 100).toFixed(1)}%"></div>`).join("")}</div>`;
+    h += `<div class="rangetot">${names.map((n, a) => `<span style="--c:${COLORS(n)}">${n} <b>${(tot[a] / combos * 100).toFixed(0)}%</b> <small>${fmt(Math.round(tot[a] * 10) / 10)} combos</small></span>`).join("")}</div>`;
+  }
+  h += `<div class="meta" style="margin-top:10px">By hand <span class="muted">· hover a hand for its mix</span></div><div class="grid">`;
   for (let i = 0; i < 13; i++) for (let j = 0; j < 13; j++) {
     const cls = gridClass(i, j);
     const c = grid.cells[cls] || { w: 0, f: [] }, me = cls === heroHand;
@@ -779,7 +797,7 @@ function renderGrid(grid, heroHand) {
     if (c.w > 0) for (let a = 0; a < names.length; a++) stack += `<div style="width:${(c.f[a] * 100).toFixed(1)}%;background:${COLORS(names[a])}"></div>`;
     h += `<div class="cell${i === j ? " pair" : ""}${me ? " me" : ""}" data-h="${cls}" style="opacity:${op}"><div class="stack">${stack}</div><span class="lbl">${cls}</span>${me ? '<span class="you">YOU</span>' : ""}</div>`;
   }
-  return h + `</div><div class="readout" id="readout"></div><div class="legend">` + names.map(n => `<span style="--c:${COLORS(n)}">${n}</span>`).join("") + `<span class="mehint">your hand</span></div>`;
+  return h + `</div><div class="readout" id="readout"></div><div class="legend"><span class="mehint">your hand</span></div>`;
 }
 function wireGrid(root, grid, heroHand) {
   const out = root.querySelector("#readout"), g = root.querySelector(".grid");

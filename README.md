@@ -51,8 +51,9 @@ Accurate to get close to a full solver (see Accuracy vs speed below).
 The panel shows the recommended action with its size (preflop: 2.5bb
 opens, 3bb from the small blind, 3x or 4x 3-bets, 2.3x 4-bets, then all-in;
 postflop: the solver's bet and raise sizes in big blinds), the mixed strategy for your exact
-hand with EVs, and a 13x13 grid of your whole range at that spot with your hand
-boxed. Click an advice row to record it as what you did and keep going. Once the advice
+hand with EVs, your whole range's totals at that spot (the percentage and number of
+combos that fold, call, check, bet or raise each size, with a bar), and a 13x13 grid of
+that range by hand with your hand boxed. Click an advice row to record it as what you did and keep going. Once the advice
 is in, your action buttons switch to the solver's own sizes with its frequency on each,
 so what you record is exactly what was solved. Postflop, a badge shows how well the solve
 converged (exploitability in % of the pot: converged under 3%, fair under 10%, rough
