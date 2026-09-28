@@ -115,6 +115,7 @@
   .chip.rewind:hover { background: #2a313b; }
   .review li.rewind:hover b { text-decoration: underline; }
   .review .streetsum { margin-top: 6px; color: var(--muted); }
+  .review .streetsum.total { color: inherit; border-top: 1px solid var(--line); padding-top: 6px; }
   .acts button kbd, .shortcut kbd { position: absolute; top: 3px; right: 3px; margin: 0; font-size: 9px; padding: 0 3px; line-height: 13px; }
   .shortcut { position: relative; padding-right: 26px !important; }
   .custom { display: none; gap: 6px; align-items: center; margin-bottom: 10px; }
@@ -471,14 +472,18 @@ function gradeFor(rec) {
   if (!m) return null;
   const best = r.actions.reduce((b, a) => a.freq > b.freq ? a : b);
   const evs = r.actions.filter(a => a.ev_bb !== undefined).map(a => a.ev_bb);
-  const loss = evs.length && m.ev_bb !== undefined ? Math.max(0, Math.max(...evs) - m.ev_bb) : null;
-  const conv = convergence(r);
-  return { m: m.action, f: m.freq, b: best.action, bf: best.freq, l: loss == null ? null : Math.round(loss * 100) / 100, ...(conv && conv.cls === "bad" ? { r: 1 } : {}) };
+  const hasEv = evs.length && m.ev_bb !== undefined, top = hasEv ? Math.max(...evs) : null;
+  const loss = hasEv ? Math.max(0, top - m.ev_bb) : null;
+  const conv = convergence(r), r2 = (x) => Math.round(x * 100) / 100;
+  return { m: m.action, f: m.freq, b: best.action, bf: best.freq, l: loss == null ? null : r2(loss), ...(hasEv ? { e: r2(m.ev_bb), o: r2(top) } : {}), ...(conv && conv.cls === "bad" ? { r: 1 } : {}) };
 }
 // A rough (unconverged) solve can't condemn a line: its worst grade is "~".
 const gradeClass = (g) => g.f >= 0.15 ? "ok" : g.f >= 0.03 || g.r ? "meh" : "bad";
 const gradeMark = (g) => ({ ok: "✓", meh: "~", bad: "✗" })[gradeClass(g)];
-const gradeTip = (g) => `Solver: ${g.b} ${(g.bf * 100).toFixed(0)}%. Your line (${g.m}) ${(g.f * 100).toFixed(0)}%${g.l ? `, ${g.l.toFixed(2)} bb below the best EV` : ""}.${g.r ? " Rough solve: treat this as a hint, not a verdict." : ""}`;
+const sgn = (x) => (x > 0 ? "+" : x < 0 ? "−" : "") + Math.abs(x).toFixed(2);
+// Your EV vs the GTO-best EV for one decision, plus the EV lost.
+const evLossHtml = (g) => g.e == null ? `<span class="muted">no EV (preflop chart)</span>` : `EV ${sgn(g.e)} vs GTO ${sgn(g.o)} · ${g.l > 0.005 ? `<span class="num neg">−${g.l.toFixed(2)} bb</span>` : `<span class="num pos">0.00 bb</span>`}`;
+const gradeTip = (g) => `Solver: ${g.b} ${(g.bf * 100).toFixed(0)}%. Your line (${g.m}) ${(g.f * 100).toFixed(0)}%${g.e != null ? `, EV ${sgn(g.e)} bb vs GTO ${sgn(g.o)} bb (${g.l > 0.005 ? "−" + g.l.toFixed(2) : "0.00"} bb)` : g.l ? `, ${g.l.toFixed(2)} bb below the best EV` : ""}.${g.r ? " Rough solve: treat this as a hint, not a verdict." : ""}`;
 
 function advanceTo(pos) {
   for (let i = 0; i < 9; i++) {
@@ -843,11 +848,13 @@ function updateAdviceState() {
   const mine = []; for (const s of STREETS) for (const a of S.actions[s]) if (a.pos === S.hero && a.g) mine.push([s, a]);
   const perStreet = STREETS.map(s => [s, mine.filter(([ms]) => ms === s).reduce((t, [, a]) => t + (a.g.l || 0), 0)]).filter(([s]) => mine.some(([ms]) => ms === s));
   const streetSum = perStreet.length > 1 ? `<li class="streetsum">EV given up: ${perStreet.map(([s, l]) => `${s} ${l > 0.005 ? `<span class="num neg">−${l.toFixed(2)}</span>` : "0"}`).join(" · ")}</li>` : "";
-  const list = mine.length ? `<ul class="review">${mine.map(([s, a]) => `<li class="rewind" data-s="${s}" data-i="${S.actions[s].indexOf(a)}" title="Replay from here. ${gradeTip(a.g)}"><span class="st">${s}</span><span class="g ${gradeClass(a.g)}" style="margin:0">${gradeMark(a.g)}</span><span><b>${a.action === "bet" ? "bet " + fmt(a.to) : a.action === "raise" ? "raise to " + fmt(a.to) : a.action}</b> · solver ${(a.g.f * 100).toFixed(0)}%${a.g.l ? ` · <span class="num neg">−${a.g.l.toFixed(2)} bb</span>` : ""}${a.g.r ? ` <span class="muted">(rough solve)</span>` : ""}</span></li>`).join("")}${streetSum}</ul>` : "";
+  const withEv = mine.filter(([, a]) => a.g.l != null), totalLost = withEv.reduce((t, [, a]) => t + a.g.l, 0);
+  const totalSum = withEv.length ? `<li class="streetsum total"><b>EV loss vs GTO: ${totalLost > 0.005 ? `<span class="num neg">−${totalLost.toFixed(2)} bb</span>` : `<span class="num pos">0.00 bb</span>`}</b>${withEv.length < mine.length ? ` <span class="muted">(${withEv.length} of ${mine.length} decisions have EVs)</span>` : ""}</li>` : "";
+  const list = mine.length ? `<ul class="review">${mine.map(([s, a]) => `<li class="rewind" data-s="${s}" data-i="${S.actions[s].indexOf(a)}" title="Replay from here. ${gradeTip(a.g)}"><span class="st">${s}</span><span class="g ${gradeClass(a.g)}" style="margin:0">${gradeMark(a.g)}</span><span><b>${a.action === "bet" ? "bet " + fmt(a.to) : a.action === "raise" ? "raise to " + fmt(a.to) : a.action}</b> · solver ${(a.g.f * 100).toFixed(0)}% · ${a.g.e != null || !a.g.l ? evLossHtml(a.g) : `<span class="num neg">−${a.g.l.toFixed(2)} bb</span>`}${a.g.r ? ` <span class="muted">(rough solve)</span>` : ""}</span></li>`).join("")}${streetSum}${totalSum}</ul>` : "";
   let msg = "";
   if (sim.handOver && S.cards[0] && S.cards[1]) {
     const lost = mine.reduce((t, [, a]) => t + (a.g.l || 0), 0), good = mine.filter(([, a]) => gradeClass(a.g) === "ok").length;
-    msg = mine.length ? `<b>Hand review</b> · ${good} of ${mine.length} decisions in the solver's mix${lost > 0.005 ? ` · ${lost.toFixed(2)} bb EV given up` : ""}${list}` : `<b>Hand over.</b> No solved decisions to review.`;
+    msg = mine.length ? `<b>Hand review</b> · ${good} of ${mine.length} decisions in the solver's mix${withEv.length ? ` · ${lost > 0.005 ? `<span class="num neg">−${lost.toFixed(2)} bb</span>` : "0.00 bb"} EV vs GTO` : ""}${list}` : `<b>Hand over.</b> No solved decisions to review.`;
   } else if (lastResult && !live && !solving) {
     msg = `<b>Advice from your last decision (${lastResult.street || "earlier"}).</b> New advice appears when it's your turn again.${list}`;
   } else if (!heroTurn && mine.length) msg = `<b>Your decisions so far</b>${list}`;
