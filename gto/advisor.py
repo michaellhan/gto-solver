@@ -352,8 +352,8 @@ class Advisor:
     # ------------------------------------------------------------ multiway
     def _multiway(self, hero, hole, board, ranges, remaining, cur: StreetState, stack, t0, notes):
         """3+ players still in: Monte Carlo vs every live range, not a solve. Frequencies are 0/1 (the
-        highest EV action) and EVs are relative to folding, assuming the hand is checked down after
-        this action (after a check, after at most one opponent bet). Against a bet or raise each opponent continues with the top of their range, sized
+        highest EV action) and EVs are relative to folding. A check faces at most one bet from the
+        opponents behind and a call faces one bet per later street; otherwise it checks down. Against a bet or raise each opponent continues with the top of their range, sized
         so the field together folds as often as a pure bluff needs to break even."""
         from .evaluator import eval_board
         rng = random.Random(1)
@@ -416,8 +416,51 @@ class Advisor:
                 v = (1.0 - (b / (pot + b)) ** (1.0 / n_opp)) / 2
                 bluff = min(v * b / (pot + b), 1.0 - v)
                 bets[i] = (b, top(opp_ranges[i], v) | top(opp_ranges[i], bluff, order[::-1]))
+        # If we call, the later streets get one bet each by the same rule: the first live opponent
+        # with a betting hand bets 66% pot and the rest fold. We call when we beat at least the pot-odds
+        # share of their betting range (plus 2%) on that street's board, else fold and lose what we put in.
+        turn_scores = {}   # turn card -> (strength averaged over rivers, combos strongest first)
+        srng = random.Random(2)
+        def score(run, n, st):
+            if n == 5:
+                return st, np.argsort(-st)
+            if run[3] not in turn_scores:
+                rest = [c for c in avail if c != run[3]]
+                tot4 = np.zeros(N_COMBOS); cnt4 = np.zeros(N_COMBOS)
+                for c in srng.sample(rest, 6):
+                    st4 = eval_board(list(run[:4]) + [c]); ok4 = st4 >= 0
+                    tot4[ok4] += st4[ok4]; cnt4[ok4] += 1
+                sc = np.where(cnt4 > 0, tot4 / np.maximum(cnt4, 1), -1.0)
+                turn_scores[run[3]] = (sc, np.argsort(-sc))
+            return turn_scores[run[3]]
+
+        def after_call(run, st, hands, call_in):
+            """Our result from calling (relative to folding) with later streets bet as above."""
+            alive = list(range(n_opp))
+            p, put = pot + call_in, call_in
+            left = {"hero": hero_rem - call_in, **{i: stack - cur.inv_start[opps[i]] - cur.cur_bet for i in alive}}
+            for n in range(len(board) + 1, 6):
+                sc, rank = score(run, n, st)
+                b = min(round(0.66 * p * 2) / 2, left["hero"], *(left[i] for i in alive))
+                if b <= 1e-9:
+                    continue
+                v = (1.0 - (b / (p + b)) ** (1.0 / len(alive))) / 2
+                bluff = min(v * b / (p + b), 1.0 - v)
+                for i in alive:
+                    r = opp_ranges[i] * (sc >= 0)   # drop combos holding a card dealt since
+                    m = top(r, v, rank) | top(r, bluff, rank[::-1])
+                    if m[hands[i]]:
+                        w = r * m
+                        beat = (w[sc < sc[idx]].sum() + 0.5 * w[sc == sc[idx]].sum()) / max(w.sum(), 1e-12)
+                        if beat < b / (p + 2 * b) + 0.02:   # beating only the bluffs is break-even: fold
+                            return -put
+                        p += 2 * b; put += b; left["hero"] -= b; left[i] -= b
+                        alive = [i]
+                        break
+            return _showdown_share(st, idx, [hands[i] for i in alive]) * p - put
+
         faced = {i: [0.0, 0] for i in bets}   # bettor -> [sum of our call EV, times they bet first]
-        share_all = ev_agg = trials = checkdown = 0.0
+        share_all = ev_agg = ev_call = trials = checkdown = 0.0
         for _ in range(400):
             run = list(board) + rng.sample(avail, 5 - len(board))
             st = eval_board(run)
@@ -435,6 +478,8 @@ class Advisor:
                 trials += 1
                 share = _showdown_share(st, idx, hands)
                 share_all += share
+                if to_call > 1e-9:
+                    ev_call += after_call(run, st, hands, call_amt)
                 first = next((i for i in bettors if i in bets and bets[i][1][hands[i]]), None)
                 if first is None:
                     checkdown += share * pot
@@ -454,7 +499,7 @@ class Advisor:
         if to_call > 1e-9:
             need = call_amt / (pot + call_amt)
             acts.append({"action": "fold", "freq": 0.0, "ev_bb": 0.0})
-            acts.append({"action": "call", "freq": 0.0, "ev_bb": round(eq * (pot + call_amt) - call_amt, 2), "amount_bb": round(call_amt, 2)})
+            acts.append({"action": "call", "freq": 0.0, "ev_bb": round(float(ev_call / trials), 2), "amount_bb": round(call_amt, 2)})
             notes.append(f"pot odds need {need*100:.0f}% equity, you have {eq*100:.0f}%")
         else:
             ev_check = checkdown + sum(max(0.0, tot) for tot, _ in faced.values())
