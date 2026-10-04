@@ -353,7 +353,7 @@ class Advisor:
     def _multiway(self, hero, hole, board, ranges, remaining, cur: StreetState, stack, t0, notes):
         """3+ players still in: Monte Carlo vs every live range, not a solve. Frequencies are 0/1 (the
         highest EV action) and EVs are relative to folding, assuming the hand is checked down after
-        this action. Against a bet or raise each opponent continues with the top of their range, sized
+        this action (after a check, after at most one opponent bet). Against a bet or raise each opponent continues with the top of their range, sized
         so the field together folds as often as a pure bluff needs to break even."""
         from .evaluator import eval_board
         rng = random.Random(1)
@@ -391,13 +391,33 @@ class Advisor:
             ok = st >= 0
             tot[ok] += st[ok]; cnt[ok] += 1
         order = np.argsort(-np.where(cnt > 0, tot / np.maximum(cnt, 1), -1.0))
-        conts = []
-        for r in opp_ranges:
-            cum = np.cumsum(r[order])
-            cont = np.zeros(N_COMBOS, dtype=bool)
-            cont[order[:int(np.searchsorted(cum, keep * cum[-1] - 1e-9)) + 1]] = True
-            conts.append(cont)
-        share_all = ev_agg = trials = 0.0
+
+        def top(r, frac, rank=order):
+            """Mask of the strongest combos (by rank) holding frac of range r's weight."""
+            m = np.zeros(N_COMBOS, dtype=bool)
+            if frac > 1e-9:
+                cum = np.cumsum(r[rank])
+                m[rank[:int(np.searchsorted(cum, frac * cum[-1] - 1e-9)) + 1]] = True
+            return m
+
+        conts = [top(r, keep) for r in opp_ranges]
+        # If we check, opponents still to act may bet 66% pot: value with the stronger half of what
+        # would call that bet, plus bluffs from the bottom of the range at the balanced ratio, bluffs = value * B / (pot + B).
+        # The first to bet takes it heads-up (the rest fold); we then call or fold, whichever is
+        # better against that player's betting range. If nobody bets, it checks down.
+        later = cur.order[cur.order.index(hero) + 1:] if hero in cur.order else []
+        bettors = [i for i, p in enumerate(opps) if p in later and p not in cur.allin]
+        bets = {}
+        if to_call <= 1e-9:
+            for i in bettors:
+                b = min(round(0.66 * pot * 2) / 2, stack - cur.inv_start[opps[i]], hero_rem)
+                if b <= 1e-9:
+                    continue
+                v = (1.0 - (b / (pot + b)) ** (1.0 / n_opp)) / 2
+                bluff = min(v * b / (pot + b), 1.0 - v)
+                bets[i] = (b, top(opp_ranges[i], v) | top(opp_ranges[i], bluff, order[::-1]))
+        faced = {i: [0.0, 0] for i in bets}   # bettor -> [sum of our call EV, times they bet first]
+        share_all = ev_agg = trials = checkdown = 0.0
         for _ in range(400):
             run = list(board) + rng.sample(avail, 5 - len(board))
             st = eval_board(run)
@@ -413,7 +433,15 @@ class Advisor:
                 used |= set(ALL_COMBOS[j]); hands.append(j)
             else:
                 trials += 1
-                share_all += _showdown_share(st, idx, hands)
+                share = _showdown_share(st, idx, hands)
+                share_all += share
+                first = next((i for i in bettors if i in bets and bets[i][1][hands[i]]), None)
+                if first is None:
+                    checkdown += share * pot
+                else:
+                    b = bets[first][0]
+                    faced[first][0] += _showdown_share(st, idx, [hands[first]]) * (pot + 2 * b) - b
+                    faced[first][1] += 1
                 callers = [i for i, j in enumerate(hands) if conts[i][j]]
                 if not callers:
                     ev_agg += pot
@@ -429,7 +457,13 @@ class Advisor:
             acts.append({"action": "call", "freq": 0.0, "ev_bb": round(eq * (pot + call_amt) - call_amt, 2), "amount_bb": round(call_amt, 2)})
             notes.append(f"pot odds need {need*100:.0f}% equity, you have {eq*100:.0f}%")
         else:
-            acts.append({"action": "check", "freq": 0.0, "ev_bb": round(eq * pot, 2)})
+            ev_check = checkdown + sum(max(0.0, tot) for tot, _ in faced.values())
+            acts.append({"action": "check", "freq": 0.0, "ev_bb": round(float(ev_check / trials), 2)})
+            if bets:
+                p_bet = sum(n for _, n in faced.values()) / trials
+                calls = [opps[i] for i, (tot, n) in faced.items() if n and tot > 0]
+                notes.append(f"if you check, someone bets {p_bet*100:.0f}% of the time"
+                             + (f"; you'd call {', '.join(calls)}" if calls else "; you'd fold to it"))
         if hero_add > 1e-9:
             acts.append({"action": agg_name, "freq": 0.0, "ev_bb": round(float(ev_agg / trials), 2), "amount_bb": round(agg_to, 2)})
             notes.append(f"vs {agg_name} each opponent continues with the top {keep*100:.0f}% of their range")

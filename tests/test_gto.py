@@ -164,6 +164,7 @@ class TestTableSizes(unittest.TestCase):
         self.assertTrue(r.get("multiway"))
         self.assertAlmostEqual(r["pot_bb"], 8.0)
         self.assertEqual(r["recommended"], max(r["actions"], key=lambda a: a["ev_bb"])["action"])
+        self.assertTrue(any(n.startswith("if you check, someone bets") for n in r["notes"]))  # BTN still to act
         r = adv.advise({"players": 6, "hero": "CO", "hole": "AhAd", "board": "Kh7c2d", "preflop": pre,
                         "flop": [{"pos": "BB", "action": "bet", "amount": 3.3}]})
         self.assertEqual([a["action"] for a in r["actions"]], ["fold", "call", "raise to 14"])
