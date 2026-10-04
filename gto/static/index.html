@@ -323,7 +323,7 @@ const BUDGETS = { server: { fast: [2.5, 1.2], accurate: [30, 6] }, wasm: { fast:
 let SPEED = "fast";
 try { if (localStorage.getItem("gto-speed") === "accurate") SPEED = "accurate"; } catch (e) {}
 let BUDGET = 4, PRIOR = 2;
-const WORKER_VERSION = "11";
+const WORKER_VERSION = "12";
 
 // ---- backend: the local Python server if present, otherwise the solver runs in the browser (Pyodide worker)
 let MODE = null, worker = null, reqId = 0;
@@ -745,7 +745,11 @@ async function analyze(sim) {
   el.innerHTML = `<div class="solvehead muted"><span class="spinner"></span><span id="solveMsg">Solving the ${sim.current}…${sim.current !== "preflop" && SPEED === "accurate" ? ` (Accurate mode: this can take ${MODE === "wasm" ? "a minute or more" : "up to a minute"})` : ""}</span><span class="num" id="solveTime"></span></div>${sim.current === "preflop" ? "" : '<div class="prog"><div id="solveBar"></div></div>'}`;
   solveStart = performance.now();
   if (MODE === "wasm" && workerStatus !== "Solving…") setStatus(workerStatus || "Loading the solver runtime…");   // runtime still loading
-  const est = BUDGET + PRIOR * Math.max(0, STREETS.indexOf(sim.current) - 1);   // earlier postflop streets are re-solved to narrow ranges
+  let est = BUDGET + PRIOR * Math.max(0, STREETS.indexOf(sim.current) - 1);   // earlier postflop streets are re-solved to narrow ranges
+  if (SPEED === "accurate") {   // Accurate continues from a Fast solve of this spot, counting its time
+    const [fb, fp] = BUDGETS[MODE].fast, f = cache.get(JSON.stringify({ ...JSON.parse(key), budget: fb, prior_budget: fp, speed: "fast" }));
+    if (f && f.seconds) est = Math.round(Math.max(est * 0.2, est - f.seconds));
+  }
   const tick = setInterval(() => {
     const t = (performance.now() - solveStart) / 1000, tm = document.getElementById("solveTime"), bar = document.getElementById("solveBar");
     if (MODE === "wasm" && workerStatus !== "Solving…") { if (tm) tm.textContent = ""; return; }   // runtime still loading: no solve clock yet

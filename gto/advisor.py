@@ -168,6 +168,8 @@ class Advisor:
         self.prior_smoothing = prior_smoothing
         self._cache: Dict[tuple, Solution] = {}
         self.should_stop = None   # callable; when it returns true the running solve raises solver.Cancelled
+        self.warm_from: Optional["Advisor"] = None   # another advisor (e.g. a faster config) whose solves seed ours
+        self._by_spot: Dict[tuple, Solution] = {}    # latest solve per spot, whatever the ranges
         self.rng = random.Random()
 
     # ------------------------------------------------------------ public
@@ -404,13 +406,21 @@ class Advisor:
     # ------------------------------------------------------------ helpers
     def _solve_cached(self, board, r0, r1, pot, stack, budget, bets=(0.0, 0.0), to_act=0, n_raises=0, cfg=None):
         cfg = cfg or self.cfg
-        key = (tuple(board), _range_key(r0), _range_key(r1), round(pot, 2), round(stack, 2),
-               tuple(round(b, 2) for b in bets), to_act, n_raises, cfg.sizes_key())
+        spot = (tuple(board), round(pot, 2), round(stack, 2), tuple(round(b, 2) for b in bets), to_act, n_raises,
+                cfg.sizes_key())
+        key = (_range_key(r0), _range_key(r1)) + spot
         sol = self._cache.get(key)
         if sol is None:
-            sol = solve(board, r0, r1, pot, stack, bets=bets, to_act=to_act, n_raises=n_raises, cfg=cfg, time_budget=budget,
-                        should_stop=self.should_stop)
+            # Same spot solved by warm_from (ranges can differ a little: they come from its own earlier
+            # streets): start from it and count its time against the budget, as extend() does below.
+            warm = self.warm_from._by_spot.get(spot) if self.warm_from is not None else None
+            sol = solve(board, r0, r1, pot, stack, bets=bets, to_act=to_act, n_raises=n_raises, cfg=cfg,
+                        time_budget=max(budget - warm.seconds, 0.2 * budget) if warm else budget,
+                        should_stop=self.should_stop, warm=warm)
+            if warm is not None:
+                sol.seconds += warm.seconds
             self._cache[key] = sol
+            self._by_spot[spot] = sol
         elif sol.seconds < budget * 0.8 and sol.iters < 1000:
             sol.extend(budget - sol.seconds, should_stop=self.should_stop)        # keep going from the stored regrets instead of restarting
         return sol

@@ -680,6 +680,34 @@ class Solution:
         self.strategy[:, active] = strat; self.evs[:, active] = evs
 
 
+def warm_start(dst: Decision, dst_ctx: Ctx, src: Decision, src_ctx: Ctx):
+    """Copy regrets and average-strategy sums from another solve of the same spot into this
+    tree wherever the two line up: same action sequence, same board, same combo. Lets a
+    bigger tree (more turn/river cards) pick up where a smaller one stopped."""
+    pos = np.full(N_FULL, -1)
+    pos[src_ctx.active] = np.arange(src_ctx.n)
+    s_cols = pos[dst_ctx.active]
+    d_cols = np.nonzero(s_cols >= 0)[0]
+    s_cols = s_cols[d_cols]
+
+    def walk(d, s):
+        if isinstance(d, Chance) and isinstance(s, Chance):
+            return walk(d.child, s.child)
+        if not (isinstance(d, Decision) and isinstance(s, Decision)) or d.names != s.names:
+            return
+        rows = {tuple(sorted(b)): i for i, b in enumerate(s.boards)}
+        pairs = [(i, rows[k]) for i, k in enumerate(tuple(sorted(b)) for b in d.boards) if k in rows]
+        if pairs:
+            d_rows, s_rows = (np.array(x) for x in zip(*pairs))
+            for f in ("regret", "ssum"):
+                getattr(d, f)[d_rows[:, None, None], np.arange(len(d.names))[None, :, None], d_cols[None, None, :]] = \
+                    getattr(s, f)[s_rows[:, None, None], np.arange(len(s.names))[None, :, None], s_cols[None, None, :]]
+        for dc, sc in zip(d.children, s.children):
+            walk(dc, sc)
+
+    walk(dst, src)
+
+
 class Cancelled(Exception):
     """A solve was stopped early through its should_stop callback."""
 
@@ -692,7 +720,9 @@ def expand(ctx: Ctx, v: np.ndarray) -> np.ndarray:
 
 def solve(board: Sequence[int], r_oop: np.ndarray, r_ip: np.ndarray, pot: float, stack: float,
           bets=(0.0, 0.0), to_act: int = 0, n_raises: int = 0, cfg: Optional[Config] = None,
-          time_budget: float = 3.0, max_iters: int = 1000, dead: Sequence[int] = (), should_stop=None) -> Solution:
+          time_budget: float = 3.0, max_iters: int = 1000, dead: Sequence[int] = (), should_stop=None,
+          warm: Optional[Solution] = None) -> Solution:
+    """`warm`: an earlier solve of the same spot (possibly with a different card sampling) to start from."""
     cfg = cfg or Config()
     board = tuple(board)
     bm = np.ones(N_FULL)
@@ -707,6 +737,10 @@ def solve(board: Sequence[int], r_oop: np.ndarray, r_ip: np.ndarray, pot: float,
     root = tb.build(board, pot, stack, bets, to_act, n_raises)
     r0, r1 = r0f[active], r1f[active]
     s = Solver(ctx, root, dead_set)
+    if warm is not None:
+        # DCFR's iteration count starts over: carrying it on would weight the copied average strategy
+        # (from a different tree, and slightly different ranges) like hundreds of iterations of this one
+        warm_start(root, ctx, warm.root, warm.ctx)
     iters, secs = s.run(r0, r1, time_budget=time_budget, max_iters=max_iters, should_stop=should_stop)
     sol = Solution(root, root.names, None, None, iters, secs, tb.n_nodes, ctx, r0, r1, s)
     sol._refresh()

@@ -30,7 +30,8 @@ const ready = (async () => {
   const LS = "bet_sizes={'flop': [0.33, 0.75], 'turn': [0.75], 'river': [0.75]}, raise_sizes={'flop': [0.5], 'turn': [0.75], 'river': [0.75]}";
   py.runPython("import sys, json; sys.path.insert(0, '/app'); from gto.advisor import Advisor; from gto.solver import Config; "
              + `advs = {'fast': Advisor(Config(n_turns=3, n_rivers=8, leaf_turns=4, leaf_rivers_flop=4, n_rivers_from_flop=4, ${LS})), `
-             + `'accurate': Advisor(Config(n_turns=4, leaf_turns=4, leaf_rivers_flop=8, n_rivers_from_flop=8, ${LS}))}`);
+             + `'accurate': Advisor(Config(n_turns=4, leaf_turns=4, leaf_rivers_flop=8, n_rivers_from_flop=8, ${LS}))}; `
+             + "advs['accurate'].warm_from = advs['fast']");   // Accurate picks up from a Fast solve of the same spot
   postMessage({ status: "Solving…" });
   return py;
 })();

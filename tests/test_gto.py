@@ -58,6 +58,26 @@ class TestSolverMath(unittest.TestCase):
         # frequencies sum to one
         self.assertTrue(np.allclose(sol.strategy[:, sol.ctx.active].sum(axis=0), 1.0))
 
+    def test_warm_start_copies_matching_nodes(self):
+        # a turn solve over 8 rivers seeds one over every river: same rivers copied, new ones start at zero
+        board = cards("Ks7d2cTh")
+        r_oop = parse_range("22+, A2s+, KTs+, QTs+, JTs, T9s, ATo+, KQo")
+        r_ip = parse_range("22+, A2s+, K5s+, Q8s+, J8s+, T8s+, A8o+, KTo+, QTo+")
+        src = solve(board, r_oop, r_ip, pot=6.5, stack=97.5, cfg=Config(n_rivers=8), time_budget=0.3)
+        dst = solve(board, r_oop, r_ip, pot=6.5, stack=97.5, cfg=Config(), max_iters=0, warm=src)
+        self.assertEqual(dst.iters, 0)
+        self.assertTrue(np.array_equal(dst.root.regret, src.root.regret))
+        self.assertTrue(np.allclose(dst.strategy, src.strategy))
+        s_river = src.root.children[0].children[0].child   # check, check, then the river
+        d_river = dst.root.children[0].children[0].child
+        self.assertEqual((len(s_river.boards), len(d_river.boards)), (8, 48))
+        for i, b in enumerate(d_river.boards):
+            j = s_river.boards.index(b) if b in s_river.boards else None
+            if j is None:
+                self.assertFalse(d_river.ssum[i].any())
+            else:
+                self.assertTrue(np.array_equal(d_river.ssum[i], s_river.ssum[j]))
+
     def test_match_action(self):
         names = ["check", "bet 33%", "bet 75%"]
         self.assertEqual(match_action(names, "bet 40%"), 1)
