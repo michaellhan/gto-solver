@@ -178,6 +178,19 @@ class TestTableSizes(unittest.TestCase):
         self.assertEqual(r["actions"][0]["action"], "fold")
 
 
+    def test_multiway_players_behind_and_bluffs(self):
+        adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        pre = [{"pos": "UTG", "action": "raise", "to": 2.5}, {"pos": "HJ", "action": "call"}, {"pos": "CO", "action": "call"},
+               {"pos": "BTN", "action": "fold"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
+        st = {"players": 6, "hero": "HJ", "hole": "2c3d", "board": "Kc8h4h", "preflop": pre,
+              "flop": [{"pos": "BB", "action": "check"}, {"pos": "UTG", "action": "bet", "amount": 5}]}
+        r = adv.advise(st)
+        self.assertIn("after a call, CO, BB still to act", r["notes"])
+        self.assertEqual(r["recommended"], "fold")
+        self.assertLess(r["actions"][2]["ev_bb"], -1.0)        # opponents call too much for a pure bluff raise
+        self.assertGreater(r["actions"][1]["ev_bb"], -5.5)     # later streets never cost more than the call
+        self.assertIn("error", adv.advise(dict(st, hole="8h2c")))   # 8h is on the board
+
     def test_hand_outside_range_still_gets_a_strategy(self):
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
         pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},

@@ -164,11 +164,14 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   than 15%, that street's tree uses the real size so narrowing is exact.
 * Multiway pots (3+ players live at your decision) are not solved. Instead a Monte
   Carlo heuristic picks the highest-EV action among fold / call / raise to 75% pot
-  (or check / bet 66% pot): opponents continue against a bet or raise with the top
-  of their range so the field folds as often as a pure bluff needs to break even;
-  after a check one opponent behind may bet (value plus balanced bluffs); and every
-  line then faces one bet per later street, which we call or fold against the
-  bettor's range. Once the pot is heads-up it is solved, but streets that were
+  (or check / bet 66% pot), with opponents following simple range rules:
+  facing a bet they fold together a quarter less often than a balanced defence
+  (people call too much), the strongest third of what continues raises, and when
+  they bet it's value plus balanced bluffs. Players still to act behind you can
+  call or raise after you call, a raise can be re-raised, and every line plays to
+  the river with one bet per later street. You call or fold those by your equity
+  against the aggressor's range (on the turn, also counting the river bet that
+  may follow). Once the pot is heads-up it is solved, but streets that were
   multiway do not narrow ranges.
 * If your hand isn't in your range for the line you took (a preflop call the charts
   never make, say), it is added to the solve as a near-zero-weight combo so it
