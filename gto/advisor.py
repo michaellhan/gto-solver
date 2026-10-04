@@ -299,11 +299,13 @@ class Advisor:
                 r0, r1 = expand(sol.ctx, c0), expand(sol.ctx, c1)
             eff = min(stack - cur.inv_start[oop], stack - cur.inv_start[ip])
             cfg = self._cfg_with_real_sizes(cur, oop, ip, eff)
+            r0, r1 = self._with_hero(r0, r1, hero_p, hole, notes)
             sol = self._solve_cached(board, r0, r1, cur.pot_start, eff, self.time_budget, cfg=cfg)
             node, n_r0, n_r1 = self._walk(sol, cur.actions, oop, ip, cur.pot_start, eff, notes, cur.name, 0.0)
         else:
             # pot became heads-up during this street: solve from the current node
             eff = min(stack - cur.inv_start[oop], stack - cur.inv_start[ip])
+            r0, r1 = self._with_hero(r0, r1, hero_p, hole, notes)
             sol = self._solve_cached(board, r0, r1, cur.pot_start, eff, self.time_budget,
                                      bets=(cur.bets[oop], cur.bets[ip]), to_act=hero_p, n_raises=cur.n_raises)
             node, n_r0, n_r1 = sol.root, sol.r0.copy(), sol.r1.copy()
@@ -324,7 +326,7 @@ class Advisor:
             acts_out.append({"action": name, "freq": round(f, 3), "ev_bb": round(ev, 2),
                              "amount_bb": self._amount(name, node, hero_p)})
         if ci is None:
-            notes.append("hero's hand is outside the chart range for this line; frequencies are uniform")
+            notes.append("hero's hand was not solved; frequencies are uniform")
         best = max(acts_out, key=lambda a: a["freq"])["action"]
         hero_r = expand(sol.ctx, n_r0 if hero_p == 0 else n_r1)
         vill_r = expand(sol.ctx, n_r1 if hero_p == 0 else n_r0)
@@ -353,7 +355,7 @@ class Advisor:
     def _multiway(self, hero, hole, board, ranges, remaining, cur: StreetState, stack, t0, notes):
         """3+ players still in: Monte Carlo vs every live range, not a solve. Frequencies are 0/1 (the
         highest EV action) and EVs are relative to folding. A check faces at most one bet from the
-        opponents behind and a call faces one bet per later street; otherwise it checks down. Against a bet or raise each opponent continues with the top of their range, sized
+        opponents behind, then every line faces one bet per later street (see play_out). Against a bet or raise each opponent continues with the top of their range, sized
         so the field together folds as often as a pure bluff needs to break even."""
         from .evaluator import eval_board
         rng = random.Random(1)
@@ -434,11 +436,14 @@ class Advisor:
                 turn_scores[run[3]] = (sc, np.argsort(-sc))
             return turn_scores[run[3]]
 
-        def after_call(run, st, hands, call_in):
-            """Our result from calling (relative to folding) with later streets bet as above."""
-            alive = list(range(n_opp))
-            p, put = pot + call_in, call_in
-            left = {"hero": hero_rem - call_in, **{i: stack - cur.inv_start[opps[i]] - cur.cur_bet for i in alive}}
+        def play_out(run, st, hands, line):
+            """Our result (relative to folding now) once this street's betting ends, with the later
+            streets bet as above. line: [(opponent, their range now)], pot, what we put in this
+            street, and the street's bet everyone left matched."""
+            live, p, put, matched = line
+            alive = [i for i, _ in live]
+            rs = dict(live)
+            left = {"hero": hero_rem - put, **{i: stack - cur.inv_start[opps[i]] - matched for i in alive}}
             for n in range(len(board) + 1, 6):
                 sc, rank = score(run, n, st)
                 b = min(round(0.66 * p * 2) / 2, left["hero"], *(left[i] for i in alive))
@@ -447,7 +452,7 @@ class Advisor:
                 v = (1.0 - (b / (p + b)) ** (1.0 / len(alive))) / 2
                 bluff = min(v * b / (p + b), 1.0 - v)
                 for i in alive:
-                    r = opp_ranges[i] * (sc >= 0)   # drop combos holding a card dealt since
+                    r = rs[i] * (sc >= 0)   # drop combos holding a card dealt since
                     m = top(r, v, rank) | top(r, bluff, rank[::-1])
                     if m[hands[i]]:
                         w = r * m
@@ -455,7 +460,7 @@ class Advisor:
                         if beat < b / (p + 2 * b) + 0.02:   # beating only the bluffs is break-even: fold
                             return -put
                         p += 2 * b; put += b; left["hero"] -= b; left[i] -= b
-                        alive = [i]
+                        alive = [i]; rs[i] = w
                         break
             return _showdown_share(st, idx, [hands[i] for i in alive]) * p - put
 
@@ -478,21 +483,24 @@ class Advisor:
                 trials += 1
                 share = _showdown_share(st, idx, hands)
                 share_all += share
+                everyone = list(enumerate(opp_ranges))
                 if to_call > 1e-9:
-                    ev_call += after_call(run, st, hands, call_amt)
-                first = next((i for i in bettors if i in bets and bets[i][1][hands[i]]), None)
-                if first is None:
-                    checkdown += share * pot
+                    ev_call += play_out(run, st, hands, (everyone, pot + call_amt, call_amt, cur.cur_bet))
                 else:
-                    b = bets[first][0]
-                    faced[first][0] += _showdown_share(st, idx, [hands[first]]) * (pot + 2 * b) - b
-                    faced[first][1] += 1
+                    first = next((i for i in bettors if i in bets and bets[i][1][hands[i]]), None)
+                    if first is None:
+                        checkdown += play_out(run, st, hands, (everyone, pot, 0.0, cur.cur_bet))
+                    else:
+                        b, m = bets[first]
+                        faced[first][0] += play_out(run, st, hands, ([(first, opp_ranges[first] * m)], pot + 2 * b, b, b))
+                        faced[first][1] += 1
                 callers = [i for i, j in enumerate(hands) if conts[i][j]]
                 if not callers:
                     ev_agg += pot
-                else:
+                elif hero_add > 1e-9:
                     final = pot + hero_add + sum(opp_add[i] for i in callers)
-                    ev_agg += _showdown_share(st, idx, [hands[i] for i in callers]) * final - hero_add
+                    ev_agg += play_out(run, st, hands, ([(i, opp_ranges[i] * conts[i]) for i in callers], final,
+                                                        hero_add, agg_to))
         trials = max(trials, 1)
         eq = float(share_all / trials)
         acts = []
@@ -522,6 +530,18 @@ class Advisor:
                 "seconds": round(time.time() - t0, 2)}
 
     # ------------------------------------------------------------ helpers
+    @staticmethod
+    def _with_hero(r0, r1, hero_p, hole, notes):
+        """Our hand gets a negligible weight when the ranges say we'd never be here, so the solve
+        still gives it a strategy and EVs (against the opponent's range) without changing the rest."""
+        i = COMBO_INDEX[(min(hole), max(hole))]
+        r = r0 if hero_p == 0 else r1
+        if r[i] > 1e-9:
+            return r0, r1
+        r = r.copy(); r[i] = 1e-3
+        notes.append("your hand isn't in your range for this line, so it was solved as a near-zero-weight combo")
+        return (r, r1) if hero_p == 0 else (r0, r)
+
     def _solve_cached(self, board, r0, r1, pot, stack, budget, bets=(0.0, 0.0), to_act=0, n_raises=0, cfg=None):
         cfg = cfg or self.cfg
         spot = (tuple(board), round(pot, 2), round(stack, 2), tuple(round(b, 2) for b in bets), to_act, n_raises,

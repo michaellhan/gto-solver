@@ -178,6 +178,16 @@ class TestTableSizes(unittest.TestCase):
         self.assertEqual(r["actions"][0]["action"], "fold")
 
 
+    def test_hand_outside_range_still_gets_a_strategy(self):
+        adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
+               {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "fold"}]
+        r = adv.advise({"players": 6, "hero": "BTN", "hole": "Ks2c", "board": "6dQh4h", "preflop": pre,
+                        "flop": [{"pos": "CO", "action": "bet", "amount": 9}]})
+        self.assertGreater(r["actions"][0]["freq"], 0.9)   # K2o folds, not a uniform mix
+        self.assertLess(r["actions"][1]["ev_bb"], 0.0)
+
+
 def _exact_equity(board, hero, villain_range):
     """Hero's equity against a range, every runout enumerated."""
     import itertools
