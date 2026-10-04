@@ -808,7 +808,7 @@ function renderResult(res, key) {
     const ev = hasEv ? (a.ev_bb !== undefined ? `<span class="num ${a.ev_bb > 0.005 ? "pos" : a.ev_bb < -0.005 ? "neg" : ""}">${a.ev_bb > 0 ? "+" : ""}${a.ev_bb.toFixed(2)} bb</span>` : "<span></span>") : "";
     h += `<div class="arow ${a.action === res.recommended ? "best" : ""}" data-act='${JSON.stringify(a)}' title="Click to record this as what you did"><span class="name">${a.action}${a.amount_bb != null ? `<small>${a.amount_bb} bb</small>` : ""}</span><div class="bar"><div style="width:${(a.freq * 100).toFixed(1)}%;background:${COLORS(a.action)}"></div></div><span class="num">${(a.freq * 100).toFixed(1)}%</span>${ev}</div>`;
   }
-  h += `</div><div class="meta">Click a row to record it as what you did.${hasEv ? " EV is in big blinds against the opponent's range." : res.street === "preflop" ? " Preflop comes from charts, so there's no EV column." : ""}${conv && conv.cls !== "ok" ? " Actions the solver mixes should have near-equal EVs; gaps here mean the solve hasn't settled." : ""}</div>`;
+  h += `</div><div class="meta">Click a row to record it as what you did.${hasEv ? " EV is in big blinds relative to folding now, so fold is 0: chips already in the pot are gone either way." : res.street === "preflop" ? " Preflop comes from charts, so there's no EV column." : ""}${conv && conv.cls !== "ok" ? " Actions the solver mixes should have near-equal EVs; gaps here mean the solve hasn't settled." : ""}</div>`;
   if (res.grid) h += renderGrid(res.grid, res.hand);
   h += `<details><summary>Details</summary>`;
   if (res.villain_range) h += `<div class="meta">${res.villain} range (${res.villain_range_combos} combos):</div><div class="villain">${res.villain_range}</div>`;

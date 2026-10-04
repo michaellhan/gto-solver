@@ -163,6 +163,12 @@ class TestTableSizes(unittest.TestCase):
         r = adv.advise({"players": 6, "hero": "CO", "hole": "AhAd", "board": "Kh7c2d", "preflop": pre, "flop": [{"pos": "BB", "action": "check"}]})
         self.assertTrue(r.get("multiway"))
         self.assertAlmostEqual(r["pot_bb"], 8.0)
+        self.assertEqual(r["recommended"], max(r["actions"], key=lambda a: a["ev_bb"])["action"])
+        r = adv.advise({"players": 6, "hero": "CO", "hole": "AhAd", "board": "Kh7c2d", "preflop": pre,
+                        "flop": [{"pos": "BB", "action": "bet", "amount": 3.3}]})
+        self.assertEqual([a["action"] for a in r["actions"]], ["fold", "call", "raise to 14"])
+        self.assertEqual(r["actions"][0]["ev_bb"], 0.0)
+        self.assertGreater(r["actions"][2]["ev_bb"], r["actions"][1]["ev_bb"])
         r = adv.advise({"players": 6, "hero": "BTN", "hole": "KsQs", "board": "Kh7c2d", "preflop": pre,
                         "flop": [{"pos": "BB", "action": "bet", "amount": 4}, {"pos": "CO", "action": "fold"}]})
         self.assertFalse(r.get("multiway"))

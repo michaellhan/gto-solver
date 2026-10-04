@@ -62,6 +62,14 @@ class StreetState:
     actions: List[dict] = field(default_factory=list)
 
 
+def _showdown_share(st, idx, hands) -> float:
+    """Hero's (combo idx) share of the pot at showdown against these opponent combos, strengths st."""
+    best = max(st[j] for j in hands)
+    if st[idx] != best:
+        return float(st[idx] > best)
+    return 1.0 / (1 + sum(st[j] == best for j in hands))
+
+
 def replay_hand(positions: List[str], stack: float, streets: Dict[str, List[dict]], n_streets: int) -> List[StreetState]:
     """Replay preflop..current street. Sizes: bet=amount added this street, raise=to."""
     inv = {p: 0.0 for p in positions}
@@ -343,8 +351,10 @@ class Advisor:
 
     # ------------------------------------------------------------ multiway
     def _multiway(self, hero, hole, board, ranges, remaining, cur: StreetState, stack, t0, notes):
-        """3+ players still in: Monte Carlo equity vs every live range, then pot-odds logic.
-        Not a solve; frequencies are 0/1 and EVs assume the hand is checked down after this action."""
+        """3+ players still in: Monte Carlo vs every live range, not a solve. Frequencies are 0/1 (the
+        highest EV action) and EVs are relative to folding, assuming the hand is checked down after
+        this action. Against a bet or raise each opponent continues with the top of their range, sized
+        so the field together folds as often as a pure bluff needs to break even."""
         from .evaluator import eval_board
         rng = random.Random(1)
         opps = [p for p in remaining if p != hero]
@@ -357,44 +367,73 @@ class Advisor:
             for c in dead:
                 r *= 1.0 - MEMBER_FULL[c]
             opp_ranges.append(r if r.sum() > 0 else np.ones(N_COMBOS))
-        wins = trials = 0.0
-        for _ in range(400):
-            run = list(board) + rng.sample(avail, 5 - len(board))
-            st = eval_board(run)
-            used = set(run) | set(hole)
-            best_v = -1; ok = True
-            for r in opp_ranges:
-                w = r.copy()
-                for c in used:
-                    w *= 1.0 - MEMBER_FULL[c]
-                if w.sum() <= 0:
-                    ok = False; break
-                j = rng.choices(range(N_COMBOS), weights=w, k=1)[0]
-                used |= set(ALL_COMBOS[j]); best_v = max(best_v, st[j])
-            if not ok:
-                continue
-            trials += 1; wins += 1.0 if st[idx] > best_v else 0.5 if st[idx] == best_v else 0.0
-        eq = wins / max(trials, 1)
         pot = cur.pot_start + sum(cur.bets.values())
         to_call = cur.cur_bet - cur.bets[hero]
         hero_rem = stack - cur.inv_start[hero] - cur.bets[hero]
         call_amt = min(to_call, hero_rem)
         n_opp = len(opps)
+        # Our aggressive option: raise to 75% pot after calling, or bet 66% pot, to the nearest 0.5bb.
+        if to_call > 1e-9:
+            agg_to = min(round((cur.cur_bet + 0.75 * (pot + call_amt)) * 2) / 2, cur.bets[hero] + hero_rem)
+            agg_name = f"raise to {agg_to:g}"
+        else:
+            agg_to = min(round(0.66 * pot * 2) / 2, hero_rem)
+            agg_name = "bet 66%"
+        hero_add = agg_to - cur.bets[hero]
+        opp_add = [max(0.0, min(agg_to, stack - cur.inv_start[p]) - cur.bets[p]) for p in opps]
+        # Who continues vs it: rank each range by average showdown strength over runouts, then keep
+        # the top share c per opponent, with (1 - c) ** n_opp = hero_add / (pot + hero_add).
+        alpha = hero_add / (pot + hero_add) if hero_add > 1e-9 else 1.0
+        keep = 1.0 - alpha ** (1.0 / n_opp)
+        tot = np.zeros(N_COMBOS); cnt = np.zeros(N_COMBOS)
+        for _ in range(1 if len(board) == 5 else 40):
+            st = eval_board(list(board) + rng.sample(avail, 5 - len(board)))
+            ok = st >= 0
+            tot[ok] += st[ok]; cnt[ok] += 1
+        order = np.argsort(-np.where(cnt > 0, tot / np.maximum(cnt, 1), -1.0))
+        conts = []
+        for r in opp_ranges:
+            cum = np.cumsum(r[order])
+            cont = np.zeros(N_COMBOS, dtype=bool)
+            cont[order[:int(np.searchsorted(cum, keep * cum[-1] - 1e-9)) + 1]] = True
+            conts.append(cont)
+        share_all = ev_agg = trials = 0.0
+        for _ in range(400):
+            run = list(board) + rng.sample(avail, 5 - len(board))
+            st = eval_board(run)
+            used = set(run) | set(hole)
+            hands = []
+            for r in opp_ranges:
+                w = r.copy()
+                for c in used:
+                    w *= 1.0 - MEMBER_FULL[c]
+                if w.sum() <= 0:
+                    break
+                j = rng.choices(range(N_COMBOS), weights=w, k=1)[0]
+                used |= set(ALL_COMBOS[j]); hands.append(j)
+            else:
+                trials += 1
+                share_all += _showdown_share(st, idx, hands)
+                callers = [i for i, j in enumerate(hands) if conts[i][j]]
+                if not callers:
+                    ev_agg += pot
+                else:
+                    final = pot + hero_add + sum(opp_add[i] for i in callers)
+                    ev_agg += _showdown_share(st, idx, [hands[i] for i in callers]) * final - hero_add
+        trials = max(trials, 1)
+        eq = float(share_all / trials)
         acts = []
         if to_call > 1e-9:
-            ev_call = eq * (pot + call_amt) - call_amt
             need = call_amt / (pot + call_amt)
-            raise_to = min(cur.cur_bet + 0.75 * (pot + call_amt), cur.bets[hero] + hero_rem)
             acts.append({"action": "fold", "freq": 0.0, "ev_bb": 0.0})
-            acts.append({"action": "call", "freq": 0.0, "ev_bb": round(ev_call, 2), "amount_bb": round(call_amt, 2)})
-            acts.append({"action": f"raise to {raise_to:g}", "freq": 0.0, "ev_bb": round(eq * (pot + 2 * (raise_to - cur.bets[hero])) - (raise_to - cur.bets[hero]), 2), "amount_bb": round(raise_to, 2)})
-            pick = 2 if eq > 0.5 + 0.08 * (n_opp - 1) else 1 if eq > need + 0.03 else 0
+            acts.append({"action": "call", "freq": 0.0, "ev_bb": round(eq * (pot + call_amt) - call_amt, 2), "amount_bb": round(call_amt, 2)})
             notes.append(f"pot odds need {need*100:.0f}% equity, you have {eq*100:.0f}%")
         else:
-            bet = min(round(0.66 * pot * 2) / 2, hero_rem)
             acts.append({"action": "check", "freq": 0.0, "ev_bb": round(eq * pot, 2)})
-            acts.append({"action": "bet 66%", "freq": 0.0, "ev_bb": round(eq * (pot + 2 * bet) - bet, 2), "amount_bb": round(bet, 2)})
-            pick = 1 if eq > 0.45 + 0.08 * (n_opp - 1) else 0
+        if hero_add > 1e-9:
+            acts.append({"action": agg_name, "freq": 0.0, "ev_bb": round(float(ev_agg / trials), 2), "amount_bb": round(agg_to, 2)})
+            notes.append(f"vs {agg_name} each opponent continues with the top {keep*100:.0f}% of their range")
+        pick = max(range(len(acts)), key=lambda i: acts[i]["ev_bb"])
         acts[pick]["freq"] = 1.0
         return {"street": cur.name, "hero": hero, "hand": hand_class(hole), "board": cards_str(board),
                 "players": len(remaining) + 0, "multiway": True, "opponents": opps,
