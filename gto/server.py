@@ -4,6 +4,7 @@
     curl -X POST localhost:8765/advise -d @examples/flop.json
 
 POST /advise  body: game state JSON (see advisor.py)  -> recommendation JSON
+POST /cancel  stops the solve in progress (its /advise answers {"cancelled": true})
 GET  /health
 """
 from __future__ import annotations
@@ -15,12 +16,13 @@ import traceback
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from .advisor import Advisor
-from .solver import Config
+from .solver import Cancelled, Config
 
 
 class Handler(BaseHTTPRequestHandler):
     advisor: Advisor = None
     lock = threading.Lock()
+    cancel = threading.Event()
 
     def _send(self, code: int, obj):
         body = json.dumps(obj).encode()
@@ -57,6 +59,9 @@ class Handler(BaseHTTPRequestHandler):
         self._send(404, {"error": "not found"})
 
     def do_POST(self):
+        if self.path.startswith("/cancel"):
+            self.cancel.set()
+            return self._send(200, {"ok": True})
         if not self.path.startswith("/advise"):
             return self._send(404, {"error": "not found"})
         n = int(self.headers.get("Content-Length", 0))
@@ -66,7 +71,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"error": f"bad json: {e}"})
         try:
             with self.lock:   # one solve at a time; the solver is CPU bound
+                self.cancel.clear()
+                self.advisor.should_stop = self.cancel.is_set
                 res = self.advisor.advise(state)
+        except Cancelled:
+            return self._send(200, {"cancelled": True})
         except Exception as e:  # noqa: BLE001
             print("[server] advise failed for body:", json.dumps(state)[:2000])
             traceback.print_exc()

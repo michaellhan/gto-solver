@@ -35,10 +35,15 @@ const ready = (async () => {
   return py;
 })();
 
+// A solve can only be cancelled before it starts (runPython blocks this thread); the page terminates
+// the worker to stop one that is running.
+const cancelled = new Set();
 onmessage = async (e) => {
+  if (e.data.cancel != null) { cancelled.add(e.data.cancel); return; }
   const { id, state } = e.data;
   try {
     const py = await ready;
+    if (cancelled.delete(id)) return postMessage({ id, result: { cancelled: true } });
     py.globals.set("state_json", JSON.stringify(state));
     const out = py.runPython("st = json.loads(state_json); json.dumps(advs.get(st.get('speed'), advs['fast']).advise(st))");
     postMessage({ id, result: JSON.parse(out) });

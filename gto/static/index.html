@@ -323,7 +323,7 @@ const BUDGETS = { server: { fast: [2.5, 1.2], accurate: [30, 6] }, wasm: { fast:
 let SPEED = "fast";
 try { if (localStorage.getItem("gto-speed") === "accurate") SPEED = "accurate"; } catch (e) {}
 let BUDGET = 4, PRIOR = 2;
-const WORKER_VERSION = "10";
+const WORKER_VERSION = "11";
 
 // ---- backend: the local Python server if present, otherwise the solver runs in the browser (Pyodide worker)
 let MODE = null, worker = null, reqId = 0;
@@ -338,7 +338,12 @@ const modeReady = (async () => {
     try { localStorage.setItem("gto-speed", m); } catch (e) {}
   };
   setSpeed(SPEED);
-  ctl.querySelectorAll("button").forEach(b => b.onclick = () => { if (b.dataset.m === SPEED) return; setSpeed(b.dataset.m); lastKey = null; renderAll(); });
+  ctl.querySelectorAll("button").forEach(b => b.onclick = async () => {
+    if (b.dataset.m === SPEED) return;
+    setSpeed(b.dataset.m);
+    await cancelSolve();   // don't make the new speed wait behind a solve at the old one
+    lastKey = null; renderAll();
+  });
 })();
 let solveStart = 0;
 function setStatus(msg) {
@@ -358,6 +363,19 @@ function callAdvise(state) {
   startWorker();
   return new Promise(res => { const id = ++reqId; pending[id] = res; worker.postMessage({ id, state }); });
 }
+// Stop the solve in flight; its analyze() call then returns without showing anything.
+async function cancelSolve() {
+  if (!solving) return;
+  solveGen++; solving = false;
+  if (MODE === "server") { try { await fetch("cancel", { method: "POST" }); } catch (e) {} return; }
+  if (workerStatus === "Solving…") {
+    // the runtime is up, so the solve is running and blocks the worker: restart it (the runtime reloads from cache)
+    worker.onmessage = worker.onerror = null;   // a dying worker can still raise an error; it must not fail the next solve
+    worker.terminate(); worker = null; workerStatus = "";
+    for (const k in pending) { pending[k]({ cancelled: true }); delete pending[k]; }
+    startWorker();
+  } else for (const k in pending) worker.postMessage({ cancel: +k });   // still loading: skip it once loaded
+}
 
 let S = load() || fresh();
 if (!S.players) S.players = 6;
@@ -369,6 +387,7 @@ let pendingRank = null;   // first half of a typed card ("A" of "Ah")
 let lastKey = null;       // payload of the solve in flight or last shown
 let resultKey = null;     // payload the shown advice belongs to
 let solving = false;
+let solveGen = 0;         // bumped by cancelSolve so a cancelled analyze() drops its result
 let lastResult = null;
 const cache = new Map();  // payload -> result, so undo/redo doesn't re-solve
 
@@ -720,6 +739,7 @@ async function analyze(sim) {
   lastKey = key;
   if (cache.has(key)) { renderResult(cache.get(key), key); return; }
   solving = true;
+  const gen = ++solveGen;
   const el = document.getElementById("result");
   el.className = "";
   el.innerHTML = `<div class="solvehead muted"><span class="spinner"></span><span id="solveMsg">Solving the ${sim.current}…${sim.current !== "preflop" && SPEED === "accurate" ? ` (Accurate mode: this can take ${MODE === "wasm" ? "a minute or more" : "up to a minute"})` : ""}</span><span class="num" id="solveTime"></span></div>${sim.current === "preflop" ? "" : '<div class="prog"><div id="solveBar"></div></div>'}`;
@@ -736,6 +756,8 @@ async function analyze(sim) {
   try { res = await callAdvise(JSON.parse(key)); }
   catch (e) { res = { error: "Request failed: " + e }; }
   clearInterval(tick);
+  if (gen !== solveGen) return;                                         // cancelled here; a newer solve owns the panel
+  if (res.cancelled) { solving = false; lastKey = null; return; }        // cancelled by another tab on the same server
   if (!res.error) cache.set(key, res);
   renderResult(res, key);
   solving = false;

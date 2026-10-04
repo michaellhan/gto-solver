@@ -167,6 +167,7 @@ class Advisor:
         self.prior_budget = prior_budget
         self.prior_smoothing = prior_smoothing
         self._cache: Dict[tuple, Solution] = {}
+        self.should_stop = None   # callable; when it returns true the running solve raises solver.Cancelled
         self.rng = random.Random()
 
     # ------------------------------------------------------------ public
@@ -407,10 +408,11 @@ class Advisor:
                tuple(round(b, 2) for b in bets), to_act, n_raises, cfg.sizes_key())
         sol = self._cache.get(key)
         if sol is None:
-            sol = solve(board, r0, r1, pot, stack, bets=bets, to_act=to_act, n_raises=n_raises, cfg=cfg, time_budget=budget)
+            sol = solve(board, r0, r1, pot, stack, bets=bets, to_act=to_act, n_raises=n_raises, cfg=cfg, time_budget=budget,
+                        should_stop=self.should_stop)
             self._cache[key] = sol
         elif sol.seconds < budget * 0.8 and sol.iters < 1000:
-            sol.extend(budget - sol.seconds)        # keep going from the stored regrets instead of restarting
+            sol.extend(budget - sol.seconds, should_stop=self.should_stop)        # keep going from the stored regrets instead of restarting
         return sol
 
     def _cfg_with_real_sizes(self, st: StreetState, oop: str, ip: str, stack: float) -> Config:

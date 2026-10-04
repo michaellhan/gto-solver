@@ -561,12 +561,15 @@ class Solver:
             r *= np.where(r > 0, pos_f, neg_f)
             n.ssum *= s_f
 
-    def run(self, r0, r1, time_budget=3.0, max_iters=1000, min_iters=10):
-        """r0, r1: (N,) root reaches. Adds iterations until the budget is spent."""
+    def run(self, r0, r1, time_budget=3.0, max_iters=1000, min_iters=10, should_stop=None):
+        """r0, r1: (N,) root reaches. Adds iterations until the budget is spent.
+        Raises Cancelled as soon as should_stop() is true."""
         r0b, r1b = r0[None, :].astype(np.float32), r1[None, :].astype(np.float32)
         t0 = time.time()
         start = self.iters
         while self.iters < max_iters:
+            if should_stop is not None and should_stop():
+                raise Cancelled()
             for p in (0, 1):
                 self._cfr(self.root, p, r0b, r1b, update=True, use_avg=False)
             self.iters += 1
@@ -657,11 +660,12 @@ class Solution:
         """Percent of the pot a best response wins on average (see Solver.exploitability)."""
         return self.solver.exploitability(self.r0, self.r1)
 
-    def extend(self, time_budget: float, max_iters: int = 1000):
+    def extend(self, time_budget: float, max_iters: int = 1000, should_stop=None):
         """Keep solving from the current regrets for another `time_budget` seconds."""
         if self.iters >= max_iters:
             return self
-        _, secs = self.solver.run(self.r0, self.r1, time_budget=time_budget, max_iters=max_iters, min_iters=1)
+        _, secs = self.solver.run(self.r0, self.r1, time_budget=time_budget, max_iters=max_iters, min_iters=1,
+                                  should_stop=should_stop)
         self.iters = self.solver.iters
         self.seconds += secs
         self._refresh()
@@ -676,6 +680,10 @@ class Solution:
         self.strategy[:, active] = strat; self.evs[:, active] = evs
 
 
+class Cancelled(Exception):
+    """A solve was stopped early through its should_stop callback."""
+
+
 def expand(ctx: Ctx, v: np.ndarray) -> np.ndarray:
     out = np.zeros(N_FULL)
     out[ctx.active] = v
@@ -684,7 +692,7 @@ def expand(ctx: Ctx, v: np.ndarray) -> np.ndarray:
 
 def solve(board: Sequence[int], r_oop: np.ndarray, r_ip: np.ndarray, pot: float, stack: float,
           bets=(0.0, 0.0), to_act: int = 0, n_raises: int = 0, cfg: Optional[Config] = None,
-          time_budget: float = 3.0, max_iters: int = 1000, dead: Sequence[int] = ()) -> Solution:
+          time_budget: float = 3.0, max_iters: int = 1000, dead: Sequence[int] = (), should_stop=None) -> Solution:
     cfg = cfg or Config()
     board = tuple(board)
     bm = np.ones(N_FULL)
@@ -699,7 +707,7 @@ def solve(board: Sequence[int], r_oop: np.ndarray, r_ip: np.ndarray, pot: float,
     root = tb.build(board, pot, stack, bets, to_act, n_raises)
     r0, r1 = r0f[active], r1f[active]
     s = Solver(ctx, root, dead_set)
-    iters, secs = s.run(r0, r1, time_budget=time_budget, max_iters=max_iters)
+    iters, secs = s.run(r0, r1, time_budget=time_budget, max_iters=max_iters, should_stop=should_stop)
     sol = Solution(root, root.names, None, None, iters, secs, tb.n_nodes, ctx, r0, r1, s)
     sol._refresh()
     return sol
