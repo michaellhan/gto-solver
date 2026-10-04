@@ -323,7 +323,7 @@ const BUDGETS = { server: { fast: [2.5, 1.2], accurate: [30, 6] }, wasm: { fast:
 let SPEED = "fast";
 try { if (localStorage.getItem("gto-speed") === "accurate") SPEED = "accurate"; } catch (e) {}
 let BUDGET = 4, PRIOR = 2;
-const WORKER_VERSION = "12";
+const WORKER_VERSION = "13";
 
 // ---- backend: the local Python server if present, otherwise the solver runs in the browser (Pyodide worker)
 let MODE = null, worker = null, reqId = 0;
@@ -731,6 +731,11 @@ function payload() {
   return { players: S.players, hero: S.hero, hole: S.cards[0] + S.cards[1], board: boardCards().join(""), stack: S.stack,
            preflop: conv(S.actions.preflop), flop: conv(S.actions.flop), turn: conv(S.actions.turn), river: conv(S.actions.river), budget: BUDGET, prior_budget: PRIOR, speed: SPEED };
 }
+// the payload key of the same spot at another speed
+function keyFor(key, speed) {
+  const [budget, prior_budget] = BUDGETS[MODE][speed];
+  return JSON.stringify({ ...JSON.parse(key), budget, prior_budget, speed });
+}
 async function analyze(sim) {
   if (!S.cards[0] || !S.cards[1]) return;
   await modeReady;
@@ -738,6 +743,8 @@ async function analyze(sim) {
   if (key === lastKey || solving) return;
   lastKey = key;
   if (cache.has(key)) { renderResult(cache.get(key), key); return; }
+  const acc = SPEED === "fast" && cache.get(keyFor(key, "accurate"));
+  if (acc) { cache.set(key, acc); renderResult(acc, key); return; }   // an Accurate answer for this spot beats a Fast re-solve
   solving = true;
   const gen = ++solveGen;
   const el = document.getElementById("result");
@@ -747,7 +754,7 @@ async function analyze(sim) {
   if (MODE === "wasm" && workerStatus !== "Solving…") setStatus(workerStatus || "Loading the solver runtime…");   // runtime still loading
   let est = BUDGET + PRIOR * Math.max(0, STREETS.indexOf(sim.current) - 1);   // earlier postflop streets are re-solved to narrow ranges
   if (SPEED === "accurate") {   // Accurate continues from a Fast solve of this spot, counting its time
-    const [fb, fp] = BUDGETS[MODE].fast, f = cache.get(JSON.stringify({ ...JSON.parse(key), budget: fb, prior_budget: fp, speed: "fast" }));
+    const f = cache.get(keyFor(key, "fast"));
     if (f && f.seconds) est = Math.round(Math.max(est * 0.2, est - f.seconds));
   }
   const tick = setInterval(() => {

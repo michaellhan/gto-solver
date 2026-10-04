@@ -32,6 +32,7 @@ const ready = (async () => {
              + `advs = {'fast': Advisor(Config(n_turns=3, n_rivers=8, leaf_turns=4, leaf_rivers_flop=4, n_rivers_from_flop=4, ${LS})), `
              + `'accurate': Advisor(Config(n_turns=4, leaf_turns=4, leaf_rivers_flop=8, n_rivers_from_flop=8, ${LS}))}; `
              + "advs['accurate'].warm_from = advs['fast']");   // Accurate picks up from a Fast solve of the same spot
+  // (not the reverse: Fast's few seconds can't re-fit an Accurate solve to its own tree; the page shows Accurate's answer instead)
   postMessage({ status: "Solving…" });
   return py;
 })();
