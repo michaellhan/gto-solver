@@ -121,7 +121,7 @@ range, and solver stats.
 | Hand strength | `gto/evaluator.py` | numpy-vectorised 7-card evaluator built on treys' lookup tables: all 21 five-card subsets of every combo on a board in one pass, about 1 ms per board |
 | Preflop | `gto/preflop.py` | Hand-written 100bb charts: RFI, vs RFI, vs 3-bet, vs 4-bet, cold vs 3-bet, mixed frequencies. Seats for 2 to 9 players map onto the charts by how many players are left to act (9-max LJ plays the 6-max UTG chart, 7+ handed UTG plays a tighter EP chart, heads-up has its own button and big-blind charts). Replaying the preflop action through the charts gives every player's range going to the flop. |
 | Postflop | `gto/solver.py` | Heads-up range-vs-range **discounted CFR** over a bet tree (2 bet sizes per street, raises to half pot and full pot after the call, all-in when the stack is short or a raise size would exceed it, max 2 raises). Vectors are compressed to combos in either range. A river showdown is O(N) per board: combos sorted by strength, cumulative reach sums, and a per-card correction for card removal. Equity leaves are one matvec with a precomputed antisymmetric matrix. |
-| Hand replay | `gto/advisor.py` | The whole hand is replayed for any number of seats: blinds, folds, dead money from players who folded, all-ins, acting order (heads-up the button acts first preflop and last postflop). Whenever exactly two players remain the spot is solved heads-up: from the start of the street if it began heads-up, or from the current node if a third player just folded. With three or more live players it falls back to Monte Carlo equity against every live range plus pot-odds logic, and says so. |
+| Hand replay | `gto/advisor.py` | The whole hand is replayed for any number of seats: blinds, folds, dead money from players who folded, all-ins, acting order (heads-up the button acts first preflop and last postflop). Whenever exactly two players remain the spot is solved heads-up: from the start of the street if it began heads-up, or from the current node if a third player just folded. With three or more live players it falls back to a Monte Carlo heuristic against every live range (see Limits), and says so. |
 | Multi-street | `gto/advisor.py` | Earlier streets are solved with a small budget and each player's range is narrowed by the frequency of the action they actually took, mixed with a 15% uniform floor so an approximate solve never prunes a line to nothing. The current street is solved from the start of the street and the tree is walked to hero's node with exact frequencies. Solutions are cached per hand so the flop solve is reused on the turn. |
 | Front ends | `gto/cli.py`, `gto/server.py`, `gto/static/index.html` | Manual CLI; local HTTP endpoint; click-driven review page served at `/`. |
 
@@ -162,9 +162,17 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   reused later in the same hand keeps iterating from its stored regrets instead of
   restarting. When a real bet or raise size differs from the abstraction by more
   than 15%, that street's tree uses the real size so narrowing is exact.
-* Multiway pots (3+ players live at your decision) are not solved; an
-  equity-vs-field pot-odds heuristic is returned with a note. Once the pot is
-  heads-up it is solved, but streets that were multiway do not narrow ranges.
+* Multiway pots (3+ players live at your decision) are not solved. Instead a Monte
+  Carlo heuristic picks the highest-EV action among fold / call / raise to 75% pot
+  (or check / bet 66% pot): opponents continue against a bet or raise with the top
+  of their range so the field folds as often as a pure bluff needs to break even;
+  after a check one opponent behind may bet (value plus balanced bluffs); and every
+  line then faces one bet per later street, which we call or fold against the
+  bettor's range. Once the pot is heads-up it is solved, but streets that were
+  multiway do not narrow ranges.
+* If your hand isn't in your range for the line you took (a preflop call the charts
+  never make, say), it is added to the solve as a near-zero-weight combo so it
+  still gets a strategy and EVs without changing anyone else's play.
 
 ### Deploy to the website
 
