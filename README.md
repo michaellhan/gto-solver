@@ -169,10 +169,20 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   (people call too much), the strongest third of what continues raises, and when
   they bet it's value plus balanced bluffs. Players still to act behind you can
   call or raise after you call, a raise can be re-raised, and every line plays to
-  the river with one bet per later street. You call or fold those by your equity
-  against the aggressor's range (on the turn, also counting the river bet that
-  may follow). Once the pot is heads-up it is solved, but streets that were
-  multiway do not narrow ranges.
+  the river: on each later street you lead for value when you're ahead of what
+  would call, otherwise an opponent may bet and you raise, call or fold by your
+  equity against their range (on the turn, also counting the river bet that may
+  follow). Trials continue until the gap between the two best actions is clear of
+  the sampling noise (or a time cap), and the notes give that gap with its error.
+* Streets that started multiway narrow every player's range by the same rules
+  (a check drops most hands that would have bet, a bet keeps its value + bluff
+  range, a call drops what would have folded or raised); hands a rule rules out
+  keep 15% of their weight. That covers multiway spots and heads-up pots that
+  were multiway earlier, including a pot that became heads-up on this street.
+* In heads-up spots the villain's actions this street narrow their range exactly,
+  unless the solve takes that line with under 10% of their range; then it is
+  smoothed like earlier streets and the advice says so (EVs are then against the
+  wider range, so actions the solver mixes can show different EVs).
 * If your hand isn't in your range for the line you took (a preflop call the charts
   never make, say), it is added to the solve as a near-zero-weight combo so it
   still gets a strategy and EVs without changing anyone else's play.

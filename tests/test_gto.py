@@ -169,7 +169,7 @@ class TestTableSizes(unittest.TestCase):
                         "flop": [{"pos": "BB", "action": "bet", "amount": 3.3}]})
         self.assertEqual([a["action"] for a in r["actions"]], ["fold", "call", "raise to 14"])
         self.assertEqual(r["actions"][0]["ev_bb"], 0.0)
-        self.assertGreater(r["actions"][2]["ev_bb"], r["actions"][1]["ev_bb"])
+        self.assertGreater(min(r["actions"][1]["ev_bb"], r["actions"][2]["ev_bb"]), 5.0)   # AA: call and raise both win
         r = adv.advise({"players": 6, "hero": "BTN", "hole": "KsQs", "board": "Kh7c2d", "preflop": pre,
                         "flop": [{"pos": "BB", "action": "bet", "amount": 4}, {"pos": "CO", "action": "fold"}]})
         self.assertFalse(r.get("multiway"))
@@ -190,6 +190,24 @@ class TestTableSizes(unittest.TestCase):
         self.assertLess(r["actions"][2]["ev_bb"], -1.0)        # opponents call too much for a pure bluff raise
         self.assertGreater(r["actions"][1]["ev_bb"], -5.5)     # later streets never cost more than the call
         self.assertIn("error", adv.advise(dict(st, hole="8h2c")))   # 8h is on the board
+
+    def test_multiway_streets_narrow_ranges(self):
+        from gto.advisor import replay_hand, _narrow_street
+        import gto.preflop as pf
+        pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "raise", "to": 2.5}, {"pos": "CO", "action": "fold"},
+               {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
+        flop = [{"pos": "BB", "action": "check"}, {"pos": "HJ", "action": "bet", "amount": 5}, {"pos": "BTN", "action": "call"}]
+        pos = pf.SEATS[6]
+        ranges = pf.replay_ranges(pre, pos)
+        before = {p: ranges[p].copy() for p in ("HJ", "BTN", "BB")}
+        st = replay_hand(pos, 100.0, {"preflop": pre, "flop": flop}, 2)[1]
+        _narrow_street(ranges, cards("Jc7h2s"), st, 100.0)
+        from gto.cards import COMBO_INDEX
+        sets = COMBO_INDEX[tuple(sorted(cards("JdJh")))]
+        for p in ("HJ", "BTN"):
+            self.assertLess(ranges[p].sum(), 0.8 * before[p].sum())
+        self.assertGreater(ranges["HJ"][sets] / before["HJ"][sets], 0.9)   # a set bets
+        self.assertLess(ranges["BB"][sets] / before["BB"][sets], 0.2)      # and doesn't check
 
     def test_hand_outside_range_still_gets_a_strategy(self):
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
