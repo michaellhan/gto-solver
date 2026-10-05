@@ -61,12 +61,13 @@ def spots():
 def solve_all(cache_path, budget):
     cache = json.load(open(cache_path)) if os.path.exists(cache_path) else {}
     adv = A.Advisor(Config(**SIZES), time_budget=budget, prior_budget=1)
+    adv._with_hero = lambda r0, r1, *a: (r0, r1)   # skip hands outside the range instead of re-solving for them
     for st, line in spots():
         key = f"{st['board']}|{line}|{st['hole']}"
         if key in cache:
             continue
         r = adv.advise(st)
-        off = any("isn't in your range" in n for n in r.get("notes", []))
+        off = any("not solved" in n for n in r.get("notes", []))
         cache[key] = None if r.get("error") or off else {kind(a["action"]): a["ev_bb"] for a in r["actions"]}
         json.dump(cache, open(cache_path, "w"))
         print(f"solved {key}: {cache[key]}", flush=True)

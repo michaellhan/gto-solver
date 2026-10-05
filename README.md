@@ -177,12 +177,19 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
 * Streets that started multiway narrow every player's range by the same rules
   (a check drops most hands that would have bet, a bet keeps its value + bluff
   range, a call drops what would have folded or raised); hands a rule rules out
-  keep 15% of their weight. That covers multiway spots and heads-up pots that
+  keep 30% of their weight. That covers multiway spots and heads-up pots that
   were multiway earlier, including a pot that became heads-up on this street.
 * In heads-up spots the villain's actions this street narrow their range exactly,
   unless the solve takes that line with under 10% of their range; then it is
   smoothed like earlier streets and the advice says so (EVs are then against the
   wider range, so actions the solver mixes can show different EVs).
+* The rule constants (value share of a bet, share of continuing hands that raise,
+  lead threshold, narrowing softness) are fitted to the heads-up solver with
+  `scripts/calibrate_multiway.py`: on ~200 heads-up flop spots the heuristic's pick
+  gives up 0.10 bb on average against the solver's best action, and its EVs are
+  off by 1.0 bb on average (1.35 bb before fitting). The "players call too much"
+  shade is deliberate and not fitted, and nothing here checks the multiway
+  interactions themselves, which the solver can't play.
 * If your hand isn't in your range for the line you took (a preflop call the charts
   never make, say), it is added to the solve as a near-zero-weight combo so it
   still gets a strategy and EVs without changing anyone else's play.

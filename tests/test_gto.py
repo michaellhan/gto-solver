@@ -207,7 +207,8 @@ class TestTableSizes(unittest.TestCase):
         for p in ("HJ", "BTN"):
             self.assertLess(ranges[p].sum(), 0.8 * before[p].sum())
         self.assertGreater(ranges["HJ"][sets] / before["HJ"][sets], 0.9)   # a set bets
-        self.assertLess(ranges["BB"][sets] / before["BB"][sets], 0.2)      # and doesn't check
+        from gto.advisor import NARROW_SOFT
+        self.assertLessEqual(ranges["BB"][sets] / before["BB"][sets], NARROW_SOFT + 1e-9)   # and doesn't check
 
     def test_hand_outside_range_still_gets_a_strategy(self):
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)

@@ -26,9 +26,11 @@ from .solver import solve, Config, Solution, Decision, Terminal, Chance, match_a
 
 DEFAULT_OPEN = {"SB": 3.0}
 FOLD_SHADE = 0.75   # multiway: opponents fold this share of what a balanced defence would
-NARROW_SOFT = 0.15  # multiway narrowing: weight kept by hands the rules say would have played differently
-VALUE_SHARE = 0.5   # multiway: a bet's value range is this share of what would call it
-RAISE_SHARE = 1 / 3 # multiway: facing a bet, this share of what continues (the strongest) raises
+# The next four are fitted to the heads-up solver by scripts/calibrate_multiway.py (RAISE_EQ barely
+# mattered there, so it stays a judgment call).
+NARROW_SOFT = 0.3   # multiway narrowing: weight kept by hands the rules say would have played differently
+VALUE_SHARE = 0.35  # multiway: a bet's value range is this share of what would call it
+RAISE_SHARE = 0.2   # multiway: facing a bet, this share of what continues (the strongest) raises
 LEAD_EQ = 0.5       # multiway, later streets: we lead when our equity beats this vs every calling range
 RAISE_EQ = 0.55     # multiway, later streets: we raise their bet when our equity beats this vs what continues
 RARE_LINE = 0.10    # heads-up: widen the villain's range when the solve takes their line less often than this
