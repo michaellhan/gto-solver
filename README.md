@@ -109,7 +109,8 @@ big blinds. Positions are the 6-max names `UTG HJ CO BTN SB BB`.
 
 Response: per-action `freq` (the mixed strategy for hero's exact hand), `ev_bb`
 (relative to folding now), `amount_bb`, a `recommended` action (highest
-frequency), a `sampled` action (drawn from the mix, use this if you want to
+frequency, or highest EV when the solve is 3%+ of the pot from equilibrium and that
+EV beats the top of the mix by over 1% of the pot), a `sampled` action (drawn from the mix, use this if you want to
 actually play unexploitably), the range-wide frequencies, the villain's inferred
 range, and solver stats.
 

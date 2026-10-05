@@ -34,6 +34,8 @@ RAISE_SHARE = 0.2   # multiway: facing a bet, this share of what continues (the 
 LEAD_EQ = 0.5       # multiway, later streets: we lead when our equity beats this vs every calling range
 RAISE_EQ = 0.55     # multiway, later streets: we raise their bet when our equity beats this vs what continues
 RARE_LINE = 0.10    # heads-up: widen the villain's range when the solve takes their line less often than this
+UNSETTLED = 3.0     # heads-up: a solve this far from equilibrium (% pot) hasn't settled (the page's "converged" cutoff)
+EV_GAP = 1.0        # heads-up, unsettled solve: recommend the highest EV when it beats the top of the mix by this % of pot
 STREET_OF = {0: "preflop", 3: "flop", 4: "turn", 5: "river"}
 STREETS = ["preflop", "flop", "turn", "river"]
 
@@ -457,6 +459,16 @@ class Advisor:
                 notes.append(f"recommending {ev_best}, the highest EV against {', '.join(widened)}'s rule-based range; "
                              f"the solve's mix ({best}) assumes they almost never play this way")
             best = sampled = ev_best
+        expl = max(0.0, sol.exploitability())
+        if not widened and ci is not None and expl >= UNSETTLED:
+            # Mixed actions have equal EVs only at equilibrium; short of it the mix lags behind, so
+            # a clear EV gap says where the solve is heading.
+            top = max(acts_out, key=lambda a: a["ev_bb"])
+            mix_ev = next(a["ev_bb"] for a in acts_out if a["action"] == best)
+            if top["action"] != best and top["ev_bb"] - mix_ev > EV_GAP / 100 * node.pot_now:
+                notes.append(f"recommending {top['action']}, the highest EV: the solve is {expl:.1f}% of the pot "
+                             f"from equilibrium, so its mix ({best} most often) hasn't caught up")
+                best = sampled = top["action"]
         hero_r = expand(sol.ctx, n_r0 if hero_p == 0 else n_r1)
         vill_r = expand(sol.ctx, n_r1 if hero_p == 0 else n_r0)
         w = hero_r / max(hero_r.sum(), 1e-12)
@@ -476,7 +488,7 @@ class Advisor:
             "solver": {"iterations": sol.iters, "solve_seconds": round(sol.seconds, 2), "nodes": sol.n_nodes,
                        "active_combos": sol.ctx.n, "tree_actions": node.names,
                        # how far this street's solve is from equilibrium, % of the street's starting pot
-                       "exploitability_pct": round(max(0.0, sol.exploitability()), 2)},
+                       "exploitability_pct": round(expl, 2)},
             "widened": widened,
             "notes": notes, "seconds": round(time.time() - t0, 2),
         }

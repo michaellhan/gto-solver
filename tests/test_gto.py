@@ -156,6 +156,21 @@ class TestTableSizes(unittest.TestCase):
     def test_same_high_card_range_syntax(self):
         self.assertEqual(parse_range("ATo-A5o").sum(), 72)
 
+    def test_unsettled_solve_recommends_clear_ev_winner(self):
+        from gto.advisor import UNSETTLED, EV_GAP
+        adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        pre = [{"pos": p, "action": "fold"} for p in ["UTG", "HJ", "CO", "BTN"]] + \
+              [{"pos": "SB", "action": "raise", "to": 3}, {"pos": "BB", "action": "call"}]
+        r = adv.advise({"players": 6, "hero": "SB", "hole": "AsJs", "board": "8h5c9s", "preflop": pre,
+                        "flop": [{"pos": "SB", "action": "check"}, {"pos": "BB", "action": "bet", "amount": 4.5}]})
+        acts = r["actions"]
+        top_freq, top_ev = max(acts, key=lambda a: a["freq"]), max(acts, key=lambda a: a["ev_bb"])
+        if r["solver"]["exploitability_pct"] >= UNSETTLED and top_ev["ev_bb"] - top_freq["ev_bb"] > EV_GAP / 100 * r["pot_bb"]:
+            self.assertEqual(r["recommended"], top_ev["action"])
+            self.assertTrue(any(n.startswith("recommending") for n in r["notes"]))
+        else:
+            self.assertEqual(r["recommended"], top_freq["action"])
+
     def test_multiway_and_mid_street_hu(self):
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
         pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
