@@ -237,6 +237,27 @@ class TestTableSizes(unittest.TestCase):
         from gto.advisor import NARROW_SOFT
         self.assertLessEqual(ranges["BB"][sets] / before["BB"][sets], NARROW_SOFT + 1e-9)   # and doesn't check
 
+    def test_big_bet_range_is_mostly_by_the_rules(self):
+        # BB checks a three-diamond flop 3-way, then overbets the fourth diamond: the rule's range is
+        # small, and hands off it mustn't swamp it (they used to be ~2/3 of the range).
+        from gto.advisor import replay_hand, _narrow_street
+        pre = [{"pos": "UTG", "action": "call"}, {"pos": "HJ", "action": "raise", "to": 2.5}, {"pos": "CO", "action": "fold"},
+               {"pos": "BTN", "action": "fold"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"},
+               {"pos": "UTG", "action": "call"}]
+        streets = {"preflop": pre, "flop": [{"pos": p, "action": "check"} for p in ("BB", "UTG", "HJ")],
+                   "turn": [{"pos": "BB", "action": "bet", "amount": 15}, {"pos": "UTG", "action": "fold"}]}
+        pos, board, hole = pf.SEATS[6], cards("6d4d3dKd"), cards("AcJs")
+        ranges = pf.replay_ranges(pre, pos)
+        rep = replay_hand(pos, 100.0, streets, 3)
+        _narrow_street(ranges, board[:3], rep[1], 100.0, "HJ", hole)
+        _narrow_street(ranges, board, rep[2], 100.0, "HJ", hole)
+        bb = ranges["BB"] * np.prod([1 - MEMBER_FULL[c] for c in board + hole], axis=0)
+        flush = np.array([a % 4 == board[0] % 4 or b % 4 == board[0] % 4 for a, b in ALL_COMBOS])
+        self.assertGreater(bb[flush].sum() / bb.sum(), 0.45)
+        r = Advisor(time_budget=1.0, prior_budget=0.5).advise(dict(
+            players=6, hero="HJ", hole="AcJs", board="6d4d3dKd", stack=100, **streets))
+        self.assertEqual(r["recommended"], "fold")
+
     def test_hand_outside_range_still_gets_a_strategy(self):
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
         pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},

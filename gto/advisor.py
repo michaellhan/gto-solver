@@ -268,7 +268,7 @@ def _soften(r, keep_m) -> np.ndarray:
     NARROW_SOFT off them, lowered so the off-rule hands make up at most OFF_RULE_MAX of the result."""
     on, off = float(r[keep_m].sum()), float(r[~keep_m].sum())
     soft = NARROW_SOFT
-    if off * soft > 0:
+    if off * soft > 0 and OFF_RULE_MAX < 1.0:
         soft = min(soft, OFF_RULE_MAX / (1.0 - OFF_RULE_MAX) * on / off)
     return np.where(keep_m, 1.0, soft)
 

@@ -39,7 +39,8 @@ LINES = {   # name: (hero, flop actions so far)
 HANDS = ["AsAd", "KsKd", "QsQh", "JsJc", "TsTd", "9s9d", "7s7d", "5s5d", "3s3h", "AsKs", "AhQd", "AsJs", "KsQd",
          "KsJs", "QsJs", "JsTs", "Ts9s", "9d8d", "8h7h", "7c6c", "6d5d", "As5s", "Ks9d", "Qs8s", "Jd7d", "AdTc"]
 PARAMS = {"VALUE_SHARE": [0.35, 0.5, 0.65], "RAISE_SHARE": [0.2, 1 / 3, 0.5], "LEAD_EQ": [0.45, 0.5, 0.6],
-          "RAISE_EQ": [0.5, 0.55, 0.65], "NARROW_SOFT": [0.05, 0.15, 0.3]}
+          "RAISE_EQ": [0.5, 0.55, 0.65], "NARROW_SOFT": [0.05, 0.15, 0.3],
+          "OFF_RULE_MAX": [0.15, 0.25, 0.4, 1.0]}
 SIZES = dict(bet_sizes={s: [0.66] for s in ("flop", "turn", "river")},
              raise_sizes={s: [0.75] for s in ("flop", "turn", "river")})
 
