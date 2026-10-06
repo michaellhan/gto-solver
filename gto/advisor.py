@@ -22,6 +22,7 @@ import numpy as np
 from .cards import cards as parse_cards, COMBO_INDEX, hand_class, ALL_COMBOS, cards_str
 from .ranges import N_COMBOS, range_to_text
 from . import preflop as pf
+from .pf_classes import push_fold
 from .solver import solve, Config, Solution, Decision, Terminal, Chance, match_action, expand, MEMBER_FULL, _inv_of
 
 DEFAULT_OPEN = {"SB": 3.0}
@@ -36,7 +37,6 @@ LEAD_EQ = 0.5       # multiway, later streets: we lead when our equity beats thi
 RAISE_EQ = 0.55     # multiway, later streets: we raise their bet when our equity beats this vs what continues
 RARE_LINE = 0.10    # heads-up: widen the villain's range when the solve takes their line less often than this
 UNSETTLED = 3.0     # heads-up: a solve this far from equilibrium (% pot) hasn't settled (the page's "converged" cutoff)
-JAM_EXP = 0.5       # preflop: an open/3bet jam j where a raise to r is standard comes from the top (r/j)**JAM_EXP of the raise range
 JAM_BLEND = 0.04    # preflop vs a jam: call frequency ramps from 0 to 1 over this much equity around the pot odds
 PREFLOP_BOARDS = 400  # boards sampled for preflop all-in equity
 EV_GAP = 1.0        # heads-up, unsettled solve: recommend the highest EV when it beats the top of the mix by this % of pot
@@ -204,18 +204,6 @@ def _preflop_boards():
     from .evaluator import eval_board
     rng = random.Random(1)
     return np.array([eval_board(rng.sample(range(52), 5)) for _ in range(PREFLOP_BOARDS)])
-
-
-@lru_cache(maxsize=1)
-def _preflop_rank() -> np.ndarray:
-    """Combos strongest first by equity against a random hand (averaged per hand class)."""
-    eq = _preflop_equity(np.ones(N_COMBOS))
-    by_class: Dict[str, List[int]] = {}
-    for i, cb in enumerate(ALL_COMBOS):
-        by_class.setdefault(hand_class(cb), []).append(i)
-    for idx in by_class.values():
-        eq[idx] = eq[idx].mean()
-    return np.argsort(-eq, kind="stable")
 
 
 _CARD_MASK = np.array([(1 << a) | (1 << b) for a, b in ALL_COMBOS], dtype=np.int64)
@@ -422,17 +410,25 @@ class Advisor:
         ji = max(i for i, a in enumerate(preflop) if a["action"] in ("raise", "all-in", "bet"))
         jammer, before = preflop[ji]["pos"], preflop[:ji]
         prev = replay_hand(positions, stack, {"preflop": before}, 1)[0]
-        rng = pf.replay_ranges(before, positions).get(jammer, np.ones(N_COMBOS))
-        rng = rng * pf.strategy_for(jammer, before, positions).get("raise", np.ones(N_COMBOS))
+        arr = pf.replay_ranges(before, positions)
+        rng = arr.get(jammer, np.ones(N_COMBOS))
         jam = st.bets[jammer]
         notes = ["preflop: facing an all-in, call when equity beats the pot odds"]
         if prev.n_raises <= 1:
-            # an open- or 3bet-jam far bigger than the usual raise comes from the top of the raise range
-            frac = min(1.0, (_default_size(prev, jammer, True) / jam) ** JAM_EXP)
-            if frac < 1.0:
-                rng = rng * _top(rng, frac, _preflop_rank())
-                notes.append(f"jam is {jam:g}bb, standard raise {_default_size(prev, jammer, True):g}bb: "
-                             f"jammer's range is the top {frac:.0%} of their raise range")
+            # open- or 3bet-jam: push/fold equilibrium against the players left to act (the opener, if
+            # any, is the one who calls)
+            opp = [p for p in prev.order if p in prev.active and p != jammer]
+            caller = next((p for p in opp if prev.bets[p] >= prev.cur_bet - 1e-9 and prev.n_raises), None)
+            call_rng = arr.get(caller, np.ones(N_COMBOS)) if caller else np.ones(N_COMBOS)
+            caller_in = prev.bets[caller] if caller else float(np.mean([prev.bets[p] for p in opp]))
+            pot_before = prev.pot_start + sum(prev.bets.values())
+            push = push_fold(rng, call_rng, jam, prev.bets[jammer], caller_in, pot_before, len(opp))
+            share = float((rng * push).sum() / max(rng.sum(), 1e-12))
+            rng = rng * push
+            notes.append(f"{jammer}'s {jam:g}bb jam range: push/fold equilibrium against {len(opp)} "
+                         f"player{'s' * (len(opp) > 1)} left ({share:.0%} of their hands)")
+        else:
+            rng = rng * pf.strategy_for(jammer, before, positions).get("raise", np.ones(N_COMBOS))
         remaining = stack - st.inv_start[hero] - st.bets[hero]
         to_call = min(st.cur_bet - st.bets[hero], remaining)
         pot = st.pot_start + sum(st.bets.values())

@@ -127,6 +127,9 @@ class TestAdvisor(unittest.TestCase):
         self.assertEqual(r["recommended"], "fold")
         self.assertEqual({a["action"] for a in r["actions"]}, {"call", "fold"})
         self.assertEqual(adv.advise(dict(st, hole="QsQh"))["recommended"], "call")
+        # short stacks: the SB shoves wide (push/fold equilibrium), so K5s calls 10bb but folds 20bb
+        self.assertEqual(adv.advise(dict(st, hole="Kd5d", stack=10))["recommended"], "call")
+        self.assertEqual(adv.advise(dict(st, hole="Kd5d", stack=20))["recommended"], "fold")
 
 
 if __name__ == "__main__":
