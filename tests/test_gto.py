@@ -119,6 +119,15 @@ class TestAdvisor(unittest.TestCase):
         self.assertEqual(r["street"], "turn")
         self.assertAlmostEqual(r["pot_bb"], 9.5)
 
+    def test_preflop_vs_open_jam(self):
+        adv = Advisor()
+        pre = [{"pos": p, "action": "fold"} for p in ("UTG", "HJ", "CO", "BTN")] + [{"pos": "SB", "action": "all-in"}]
+        st = {"players": 6, "hero": "BB", "board": "", "stack": 100, "preflop": pre}
+        r = adv.advise(dict(st, hole="Kd5d"))
+        self.assertEqual(r["recommended"], "fold")
+        self.assertEqual({a["action"] for a in r["actions"]}, {"call", "fold"})
+        self.assertEqual(adv.advise(dict(st, hole="QsQh"))["recommended"], "call")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -29,12 +29,16 @@ FOLD_SHADE = 0.75   # multiway: opponents fold this share of what a balanced def
 # The next four are fitted to the heads-up solver by scripts/calibrate_multiway.py (RAISE_EQ barely
 # mattered there, so it stays a judgment call).
 NARROW_SOFT = 0.3   # multiway narrowing: weight kept by hands the rules say would have played differently
+OFF_RULE_MAX = 0.25  # ...but those hands are at most this share of the narrowed range (a big bet's rule range is small)
 VALUE_SHARE = 0.35  # multiway: a bet's value range is this share of what would call it
 RAISE_SHARE = 0.2   # multiway: facing a bet, this share of what continues (the strongest) raises
 LEAD_EQ = 0.5       # multiway, later streets: we lead when our equity beats this vs every calling range
 RAISE_EQ = 0.55     # multiway, later streets: we raise their bet when our equity beats this vs what continues
 RARE_LINE = 0.10    # heads-up: widen the villain's range when the solve takes their line less often than this
 UNSETTLED = 3.0     # heads-up: a solve this far from equilibrium (% pot) hasn't settled (the page's "converged" cutoff)
+JAM_EXP = 0.5       # preflop: an open/3bet jam j where a raise to r is standard comes from the top (r/j)**JAM_EXP of the raise range
+JAM_BLEND = 0.04    # preflop vs a jam: call frequency ramps from 0 to 1 over this much equity around the pot odds
+PREFLOP_BOARDS = 400  # boards sampled for preflop all-in equity
 EV_GAP = 1.0        # heads-up, unsettled solve: recommend the highest EV when it beats the top of the mix by this % of pot
 STREET_OF = {0: "preflop", 3: "flop", 4: "turn", 5: "river"}
 STREETS = ["preflop", "flop", "turn", "river"]
@@ -194,11 +198,49 @@ def _street_rank(board: tuple):
     return sc, np.argsort(-sc)
 
 
+@lru_cache(maxsize=1)
+def _preflop_boards():
+    """Fixed random boards and every combo's strength on each (-1 = blocked), for preflop equity."""
+    from .evaluator import eval_board
+    rng = random.Random(1)
+    return np.array([eval_board(rng.sample(range(52), 5)) for _ in range(PREFLOP_BOARDS)])
+
+
+@lru_cache(maxsize=1)
+def _preflop_rank() -> np.ndarray:
+    """Combos strongest first by equity against a random hand (averaged per hand class)."""
+    eq = _preflop_equity(np.ones(N_COMBOS))
+    by_class: Dict[str, List[int]] = {}
+    for i, cb in enumerate(ALL_COMBOS):
+        by_class.setdefault(hand_class(cb), []).append(i)
+    for idx in by_class.values():
+        eq[idx] = eq[idx].mean()
+    return np.argsort(-eq, kind="stable")
+
+
+_CARD_MASK = np.array([(1 << a) | (1 << b) for a, b in ALL_COMBOS], dtype=np.int64)
+
+
+def _preflop_equity(villain: np.ndarray) -> np.ndarray:
+    """All-in preflop equity of every combo against the weighted range `villain`."""
+    sts = _preflop_boards()
+    v = np.nonzero(villain > 1e-9)[0]
+    w = villain[v]
+    ok = (_CARD_MASK[:, None] & _CARD_MASK[None, v]) == 0            # (1326, m) no shared cards
+    num = np.zeros(N_COMBOS); den = np.zeros(N_COMBOS)
+    for s in sts[: max(60, min(len(sts), int(6e7 / (N_COMBOS * max(len(v), 1)))))]:
+        sv = s[v]
+        wl = (ok & (sv >= 0)[None, :] & (s >= 0)[:, None]) * w
+        num += (wl * ((s[:, None] > sv[None, :]) + 0.5 * (s[:, None] == sv[None, :]))).sum(1)
+        den += wl.sum(1)
+    return np.where(den > 0, num / np.maximum(den, 1e-12), np.nan)
+
+
 def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack: float, hero=None, hole=()) -> None:
     """Narrow each player's range (in place) by what they did on a street that started multiway,
     with the multiway rules: a check drops most of the hands that would have bet, a bet or raise
     keeps its value + bluff range, a call keeps what continues minus what would have raised.
-    Hands a rule rules out keep NARROW_SOFT of their weight (players don't follow our rules)."""
+    Hands a rule rules out keep some weight (players don't follow our rules), see _soften."""
     sc, rank = _street_rank(tuple(board))
     dead = [MEMBER_FULL[c] for c in hole]
     bets = {p: 0.0 for p in st.inv_start}
@@ -230,7 +272,17 @@ def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack:
         keep_m = _rule_mask(r, to, cur, to_call, pot, n, rank)
         cur = max(cur, to)
         bets[p] = max(bets[p], min(to, bets[p] + remaining))
-        ranges[p] = r * np.where(keep_m, 1.0, NARROW_SOFT)
+        ranges[p] = r * _soften(r, keep_m)
+
+
+def _soften(r, keep_m) -> np.ndarray:
+    """Per-combo weights for range r after a line the rules play with keep_m: 1 on the rule's hands,
+    NARROW_SOFT off them, lowered so the off-rule hands make up at most OFF_RULE_MAX of the result."""
+    on, off = float(r[keep_m].sum()), float(r[~keep_m].sum())
+    soft = NARROW_SOFT
+    if off * soft > 0:
+        soft = min(soft, OFF_RULE_MAX / (1.0 - OFF_RULE_MAX) * on / off)
+    return np.where(keep_m, 1.0, soft)
 
 
 def _rule_mask(r, to, cur, to_call, pot, n, rank) -> np.ndarray:
@@ -335,6 +387,9 @@ class Advisor:
             return {"error": "preflop betting is already closed (deal the flop)"}
         if st.to_act != hero:
             return {"error": f"it is {st.to_act}'s turn, not {hero}'s"}
+        aggr = [a["pos"] for a in preflop if a["action"] in ("raise", "all-in", "bet")]
+        if aggr and aggr[-1] in st.allin and aggr[-1] != hero:
+            return self._vs_jam(hero, hole, preflop, positions, stack, st, t0)
         strat = pf.hand_strategy(hero, hole, preflop, positions)
         remaining = stack - st.inv_start[hero] - st.bets[hero]
         to_call = min(st.cur_bet - st.bets[hero], remaining)
@@ -360,6 +415,47 @@ class Advisor:
             "pot_bb": round(st.pot_start + sum(st.bets.values()), 2), "to_call_bb": round(to_call, 2),
             "grid": strategy_grid([full[k] for k in names], names, arriving),
             "notes": ["preflop: chart approximation"], "seconds": round(time.time() - t0, 3),
+        }
+
+    def _vs_jam(self, hero, hole, preflop, positions, stack, st, t0):
+        """Facing a preflop all-in: call when equity against the jammer's range beats the pot odds."""
+        ji = max(i for i, a in enumerate(preflop) if a["action"] in ("raise", "all-in", "bet"))
+        jammer, before = preflop[ji]["pos"], preflop[:ji]
+        prev = replay_hand(positions, stack, {"preflop": before}, 1)[0]
+        rng = pf.replay_ranges(before, positions).get(jammer, np.ones(N_COMBOS))
+        rng = rng * pf.strategy_for(jammer, before, positions).get("raise", np.ones(N_COMBOS))
+        jam = st.bets[jammer]
+        notes = ["preflop: facing an all-in, call when equity beats the pot odds"]
+        if prev.n_raises <= 1:
+            # an open- or 3bet-jam far bigger than the usual raise comes from the top of the raise range
+            frac = min(1.0, (_default_size(prev, jammer, True) / jam) ** JAM_EXP)
+            if frac < 1.0:
+                rng = rng * _top(rng, frac, _preflop_rank())
+                notes.append(f"jam is {jam:g}bb, standard raise {_default_size(prev, jammer, True):g}bb: "
+                             f"jammer's range is the top {frac:.0%} of their raise range")
+        remaining = stack - st.inv_start[hero] - st.bets[hero]
+        to_call = min(st.cur_bet - st.bets[hero], remaining)
+        pot = st.pot_start + sum(st.bets.values())
+        # hero's call only wins what the jammer can match
+        win = pot - max(0.0, st.bets[jammer] - (st.bets[hero] + to_call))
+        need = to_call / (win + to_call)
+        eq = _preflop_equity(rng)
+        idx = COMBO_INDEX[(min(hole), max(hole))]
+        call = np.clip(0.5 + (eq - need) / JAM_BLEND, 0.0, 1.0)
+        call[np.isnan(call)] = 0.0
+        others = [p for p in st.active if p not in (hero, jammer) and p not in st.allin]
+        if others:
+            notes.append("other players are still in; equity is against the jammer only")
+        notes.append(f"equity {eq[idx]:.1%} vs {need:.1%} needed")
+        acts = [{"action": "call", "freq": round(float(call[idx]), 3), "amount_bb": round(to_call, 2)},
+                {"action": "fold", "freq": round(1 - float(call[idx]), 3)}]
+        arriving = pf.replay_ranges(preflop, positions).get(hero, np.ones(N_COMBOS))
+        return {
+            "street": "preflop", "hero": hero, "hand": hand_class(hole), "players": len(positions),
+            "actions": acts, "recommended": "call" if call[idx] >= 0.5 else "fold", "sampled": self._sample(acts),
+            "pot_bb": round(pot, 2), "to_call_bb": round(to_call, 2), "equity": round(float(eq[idx]), 4),
+            "grid": strategy_grid([call, 1 - call], ["call", "fold"], arriving),
+            "notes": notes, "seconds": round(time.time() - t0, 3),
         }
 
     # ------------------------------------------------------------ postflop
@@ -967,7 +1063,7 @@ class Advisor:
                       else cur_bet)
                 full = expand(sol.ctx, rp) * (sc >= 0)
                 m = _rule_mask(full, to, cur_bet, max(0.0, cur_bet - bets[p]), pot_total, 1, rank)
-                s = np.where(m[sol.ctx.active], 1.0, NARROW_SOFT)
+                s = _soften(full, m)[sol.ctx.active]
             elif smoothing > 0 and only is None:
                 s = (1.0 - smoothing) * s + smoothing / len(node.names)
             if p == 0:
