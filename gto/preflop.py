@@ -151,8 +151,8 @@ def _norm(key: str) -> str:
 def vs_rfi_chart(hero_key: str, opener_key: str) -> Dict[str, np.ndarray]:
     if hero_key == "HU_BB":
         return HU_BB_VS_SB
-    if opener_key == "EP" and hero_key not in ("SB", "BB"):
-        return VS_EP
+    if opener_key == "EP":
+        return {"BB": BB_VS_EP, "SB": SB_VS_EP}.get(hero_key, VS_EP)
     h, o = _norm(hero_key), _norm(opener_key)
     chart = VS_RFI.get((h, o))
     if chart is not None:
@@ -207,10 +207,31 @@ VS_4BET = {
     "call": R("QQ:0.4, JJ, TT:0.6, 99:0.3, AKo:0.5, AQs, AJs:0.5, KQs:0.5, A5s:0.3, A4s:0.3, AQo:0.3"),
 }
 # cold-facing a 3bet (hero neither opener nor 3bettor)
-COLD_VS_3BET = {
+COLD_VS_3BET = {   # the 3bet came over an early open (a tight 3bet)
     "4bet": R("KK+, AKs, QQ:0.3, AKo:0.3"),
     "call": R("QQ:0.7, JJ, TT:0.5, AKo:0.5, AQs, AJs:0.5, KQs:0.5"),
 }
+# ...over a late open (CO/BTN/SB: the 3bet is wider, so more continues)
+COLD_VS_LATE_3BET = {
+    "4bet": R("QQ+, AKs, AKo:0.7, JJ:0.3, A5s:0.4, A4s:0.3"),
+    "call": R("JJ:0.7, TT, 99:0.5, AKo:0.3, AQs, AJs:0.6, ATs:0.3, KQs:0.7, KJs:0.3, AQo:0.3"),
+}
+COLD_OOP_CALL = 0.5   # out of position against the 3bettor postflop, cold calls are this share (4bet or fold)
+
+
+def cold_vs_3bet(hero: str, opener_key: str, threebettor: str, positions) -> Dict[str, np.ndarray]:
+    """Facing a 3bet without having raised: by how wide the 3bet is (the opener's seat) and whether
+    hero has position on the 3bettor postflop."""
+    c = COLD_VS_LATE_3BET if _norm(opener_key) in ("CO", "BTN", "SB") else COLD_VS_3BET
+    order = postflop_order(list(positions))
+    if order.index(hero) < order.index(threebettor):
+        # out of position: half the cold calls go, premiums into 4bets, the rest folds
+        moved = c["call"] * (1.0 - COLD_OOP_CALL)
+        c = {"4bet": np.minimum(1.0, c["4bet"] + moved * COLD_PREMIUM), "call": c["call"] * COLD_OOP_CALL}
+    return c
+
+
+COLD_PREMIUM = R("QQ+, AKs, AKo")
 # facing a 5bet: call or fold when it is all-in, and deep enough to have chips behind, jam the top
 VS_5BET = {"call": R("KK+, QQ:0.7, AKs, AKo:0.7, JJ:0.3")}
 VS_5BET_DEEP = {"raise": R("AA, KK:0.6, AKs:0.4"), "call": R("KK:0.4, QQ:0.8, AKs:0.6, AKo:0.6, JJ:0.3")}
@@ -229,6 +250,15 @@ HU_BB_VS_4BET = {
 # an iso-raiser facing the limper's re-raise (a trapped range: mostly QQ+ and AK)
 VS_LIMP_RERAISE = {"4bet": R("KK+, AKs:0.5"), "call": R("QQ, JJ:0.6, TT:0.3, AKs:0.5, AKo:0.6, AQs:0.3")}
 # a seat in position facing a 7+ handed early-position open (~13%: tighter than the 6-max UTG chart)
+# the blinds facing a 7+ handed early-position open (tighter than vs a 6-max UTG open)
+BB_VS_EP = {
+    "3bet": R("QQ+, JJ:0.3, AKs, AKo:0.8, AQs:0.3, A5s:0.5, A4s:0.3"),
+    "call": R("22-TT, JJ:0.7, AQs:0.7, AJs-A6s, A5s:0.5, A4s-A2s:0.7, AQo, AJo:0.7, ATo:0.3, KTs+, K9s:0.6, KQo, KJo:0.3, QTs+, Q9s:0.5, J9s+, T8s+, 97s+, 86s+, 75s+, 64s:0.6, 54s:0.5"),
+}
+SB_VS_EP = {
+    "3bet": R("QQ+, JJ:0.4, AKs, AKo:0.8, AQs:0.5, A5s:0.5"),
+    "call": R("TT-88:0.5, JJ:0.3, AQs:0.3, AJs:0.3, KQs:0.3"),
+}
 VS_EP = {
     "3bet": R("QQ+, AKs, AKo:0.6, A5s:0.3, JJ:0.3"),
     "call": R("22-TT, JJ:0.7, AQs, AJs, ATs:0.5, AQo:0.5, KQs, KJs:0.5, QJs:0.5, JTs:0.5, T9s:0.3, 98s:0.2"),
@@ -311,12 +341,14 @@ def _actions_at(hero: str, actions: List[dict], positions: Optional[List[str]] =
         if hero == opener:
             c = vs_3bet(key(opener), key(threebettor))
             return {"raise": c["4bet"], "call": c["call"]}
-        return {"raise": COLD_VS_3BET["4bet"], "call": COLD_VS_3BET["call"]}
+        c = cold_vs_3bet(hero, key(opener), threebettor, positions)
+        return {"raise": c["4bet"], "call": c["call"]}
     if n_raises == 3:
         if hero == raisers[1]:
             c = HU_BB_VS_4BET if len(positions) == 2 else VS_4BET
             return {"raise": c["jam"], "call": c["call"]}
-        return {"raise": COLD_VS_3BET["4bet"] * 0.5, "call": COLD_VS_3BET["call"] * 0.5}
+        c = cold_vs_3bet(hero, key(raisers[0]), raisers[1], positions)
+        return {"raise": c["4bet"] * 0.5, "call": c["call"] * 0.5}
     if [a["action"] for a in actions if a["action"] in ("raise", "all-in")][-1] == "raise":
         return dict(VS_5BET_DEEP)       # a 5bet that leaves chips behind (an all-in goes to the jam logic)
     return {"call": VS_5BET["call"]}

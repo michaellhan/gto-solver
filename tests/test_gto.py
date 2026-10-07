@@ -218,6 +218,20 @@ class TestAdvisor(unittest.TestCase):
         # 9-handed early opens are tighter, so KJs calls less than against a 6-max UTG
         self.assertLess(go("UTG1", "KhJh", [R("UTG", "raise", 2.5)], players=9)[1]["call"]["freq"],
                         go("HJ", "KhJh", [R("UTG", "raise", 2.5)])[1]["call"]["freq"])
+        # facing a 3bet cold: in position calls more than the big blind out of position, whose premiums 4bet
+        early3 = [R("UTG", "raise", 2.5), R("HJ", "raise", 7.5)]
+        btn = go("BTN", "QsQd", early3 + [R("CO", "fold")])[1]
+        bb = go("BB", "QsQd", early3 + F("CO", "BTN", "SB"))[1]
+        self.assertGreater(btn["call"]["freq"], bb["call"]["freq"])
+        self.assertGreater(bb["raise"]["freq"], btn["raise"]["freq"])
+        self.assertEqual(bb["fold"]["freq"], 0.0)
+        # ...and continues more against a 3bet over a late open (a wider 3bet)
+        late3 = F("UTG", "HJ") + [R("CO", "raise", 2.5), R("BTN", "raise", 7.5), R("SB", "fold")]
+        self.assertLess(go("BB", "JhJd", late3)[1]["fold"]["freq"], go("BB", "JhJd", early3 + F("CO", "BTN", "SB"))[1]["fold"]["freq"])
+        # 7+ handed blinds defend tighter against an early open
+        ep = lambda n, seats: pf.strategy_for("BB", [R("UTG", "raise", 2.5)] + F(*seats), pf.Table(pf.SEATS[n]))
+        cont = lambda s: float((s["call"] + s["raise"]).sum())
+        self.assertLess(cont(ep(9, ("UTG1", "UTG2", "LJ", "HJ", "CO", "BTN", "SB"))), cont(ep(6, ("HJ", "CO", "BTN", "SB"))))
 
 
 if __name__ == "__main__":
