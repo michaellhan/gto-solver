@@ -150,6 +150,23 @@ class TestAdvisor(unittest.TestCase):
         self.assertGreater(adv.advise(dict(st, hole="8s8d", preflop=std))["actions"][1]["freq"], 0.5)
         self.assertEqual(adv.advise(dict(st, hole="8s8d", preflop=big))["recommended"], "fold")
 
+    def test_preflop_squeeze(self):
+        adv = Advisor()
+        R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
+        st = {"players": 6, "hero": "BB", "board": "", "stack": 100}
+        alone = [R("UTG", "raise", 2.5)] + [R(p, "fold") for p in ("HJ", "CO", "BTN", "SB")]
+        two = [R("UTG", "raise", 2.5), R("HJ", "call"), R("CO", "call"), R("BTN", "fold"), R("SB", "fold")]
+        size = lambda r: next(a["amount_bb"] for a in r["actions"] if a["action"] == "raise")
+        freq = lambda r, k: next(a["freq"] for a in r["actions"] if a["action"] == k)
+        # one more open-size per caller: 10bb alone, 15bb over two callers
+        a, b = adv.advise(dict(st, hole="AhKd", preflop=alone)), adv.advise(dict(st, hole="AhKd", preflop=two))
+        self.assertEqual((size(a), size(b)), (10.0, 15.0))
+        self.assertEqual((freq(a, "raise"), freq(b, "raise")), (1.0, 1.0))
+        # a bluff squeeze shrinks: everyone has to fold
+        a, b = adv.advise(dict(st, hole="Ah5h", preflop=alone)), adv.advise(dict(st, hole="Ah5h", preflop=two))
+        self.assertLess(freq(b, "raise"), freq(a, "raise"))
+        self.assertTrue(any("raises re-drawn" in n for n in b["notes"]))
+
 
 if __name__ == "__main__":
     unittest.main()

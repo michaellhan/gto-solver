@@ -40,6 +40,7 @@ UNSETTLED = 3.0     # heads-up: a solve this far from equilibrium (% pot) hasn't
 JAM_BLEND = 0.04    # preflop vs a jam: call frequency ramps from 0 to 1 over this much equity around the pot odds
 PREFLOP_BOARDS = 400  # boards sampled for preflop all-in equity
 PRICE_BLEND = 0.02  # preflop, off-chart price: continue frequency ramps over this much (scaled) equity around the pot odds
+RAISE_BLEND = 0.03  # preflop, more players in: value-raise frequency ramps over this much equity when called
 PRICE_TOL = 0.02    # ...and a spot within this much of the chart's pot odds, against the raisers only, is the chart's own
 EV_GAP = 1.0        # heads-up, unsettled solve: recommend the highest EV when it beats the top of the mix by this % of pot
 STREET_OF = {0: "preflop", 3: "flop", 4: "turn", 5: "river"}
@@ -319,11 +320,16 @@ def _default_size_post(pot, cur, mine) -> float:
 
 def _default_size(st: StreetState, p: str, pre: bool) -> float:
     if pre:
+        # chips the other live players (not the last raiser) put in beyond their blinds: a caller of
+        # the current bet adds one bet to the size (a squeeze), a limper 1bb (an iso-raise)
+        last = next((a["pos"] for a in reversed(st.actions) if a["action"] in ("raise", "all-in", "bet")), None)
+        extra = sum(max(0.0, st.bets[q] - {"SB": 0.5, "BB": 1.0}.get(q, 0.0))
+                    for q in st.active if q not in (p, last))
         if st.n_raises == 0:
-            return DEFAULT_OPEN.get(p, 2.5)
+            return DEFAULT_OPEN.get(p, 2.5) + extra
         if st.n_raises == 1:
-            return st.cur_bet * (4.0 if p in ("SB", "BB") else 3.0)
-        return st.cur_bet * 2.3
+            return st.cur_bet * (4.0 if p in ("SB", "BB") else 3.0) + extra
+        return st.cur_bet * 2.3 + extra
     pot = st.pot_start + sum(st.bets.values())
     if st.cur_bet > st.bets[p]:
         return st.cur_bet + 0.75 * (pot + st.cur_bet - st.bets[p])
@@ -438,17 +444,44 @@ class Advisor:
     @staticmethod
     def _priced(hero, preflop, positions, stack, st, full, notes):
         """The charts assume a standard-sized raise and nobody else in the pot. When the price or the
-        players in differ, re-draw the continue line: the chart's continuing share of hero's range in the
-        standard line marks an equity bar (its weakest continuing hand's equity against the raisers,
-        relative to that line's pot odds), and hero continues where equity against everyone in, held to
-        the same bar, beats the actual pot odds. A better price only adds calls, a worse one only removes
-        them; the chart's raises stay."""
+        players in differ, re-draw hero's line against the chart's own standard line (same raisers at
+        default sizes, everyone else folding):
+        - continuing: the chart's continuing share of hero's range there marks an equity bar (its
+          weakest continuing hand's equity against the raisers, relative to that line's pot odds); hero
+          continues where equity against everyone in, held to the same bar, beats the actual pot odds. A
+          better price only adds, a worse one only removes.
+        - raising, when more players are in: each player's chart facing hero's raise gives their continuing
+          range and how often they continue. The chart's raises split into value (the top of hero's range
+          by equity when called, as many hands as it raises) and bluffs. A value raise stays only while its
+          equity when called (against each continuing range, weighted by how often it continues) reaches
+          the chart's weakest value raise heads-up; bluffs shrink by how much less often everyone folds."""
         def priced(s):
             opp = [p for p in s.order if p in s.active and p != hero and
                    (p in s.acted or s.bets[p] > {"SB": 0.5, "BB": 1.0}.get(p, 0.0) + 1e-9)]
             call = min(s.cur_bet - s.bets[hero], stack - s.inv_start[hero] - s.bets[hero])
             return opp, call / (s.pot_start + sum(s.bets.values()) + call)
-        # the standard line: same raisers at default sizes, everyone else folds
+
+        def facing_raise(line, opp, arr):
+            # each player facing hero's raise, by their chart: the chance everyone folds, and hero's
+            # equity when called (against each continuing range, weighted by how often it continues)
+            line = line + [{"pos": hero, "action": "raise"}]
+            f, num, den = 1.0, np.zeros(N_COMBOS), 0.0
+            for p in opp:
+                w = arr[p]
+                cont = w * (1.0 - pf.strategy_for(p, line, positions).get("fold", 0.0))
+                c = float(cont.sum() / max(w.sum(), 1e-12))
+                f *= 1.0 - c
+                if c > 1e-6:
+                    num = num + c * _preflop_equity(cont)
+                    den += c
+            return f, num / max(den, 1e-12)
+
+        def quantile(eq, w, share):
+            ok = ~np.isnan(eq) & (w > 0)
+            order = np.argsort(-eq[ok])
+            cum = np.cumsum(w[ok][order])
+            return float(eq[ok][order][min(np.searchsorted(cum, share * cum[-1]), len(cum) - 1)])
+
         std_line = [{"pos": a["pos"], "action": "fold"} if a["action"] == "call" and a["pos"] != hero
                     else {"pos": a["pos"], "action": a["action"]} for a in preflop]
         std = replay_hand(positions, stack, {"preflop": std_line}, 1)[0]
@@ -456,31 +489,58 @@ class Advisor:
             return full
         opp, need = priced(st)
         opp_std, need_std = priced(std)
-        if sorted(opp) == sorted(opp_std) and abs(need - need_std) < PRICE_TOL:
+        more = sorted(opp) != sorted(opp_std)
+        reprice = abs(need - need_std) >= PRICE_TOL
+        if not (more or reprice):
             return full
-        cont = full.get("raise", 0.0) + full["call"]
+        raise_c = full.get("raise", np.zeros(N_COMBOS))
+        call_c = full["call"]
         arr_std = pf.replay_ranges(std_line, positions)
         w = arr_std[hero]
-        q = float((w * cont).sum() / max(w.sum(), 1e-12))
-        if not 0.02 < q < 0.98:
-            return full
+        tot = max(w.sum(), 1e-12)
         eq_std = _preflop_equity_multi([arr_std[p] for p in opp_std])
-        ok = ~np.isnan(eq_std) & (w > 0)
-        order = np.argsort(-eq_std[ok])
-        cum = np.cumsum(w[ok][order])
-        bar = float(eq_std[ok][order][min(np.searchsorted(cum, q * cum[-1]), len(cum) - 1)])
-        realize = need_std / max(bar, 1e-6)
         arr = pf.replay_ranges(preflop, positions)
         eq = _preflop_equity_multi([arr[p] for p in opp])
-        rule = np.clip(0.5 + (eq * realize - need) / PRICE_BLEND, 0.0, 1.0)
-        rule[np.isnan(rule)] = 0.0
-        new = np.maximum(cont, rule) if need < need_std else np.minimum(cont, rule)
         out = dict(full)
-        out["raise"] = np.minimum(full.get("raise", 0.0), new)
-        out["call"] = new - out["raise"]
+        msg = []
+        value_n = bluff_n = raise_c
+        value_c = raise_c
+        r = float((w * raise_c).sum() / tot)
+        if more and r > 0.005:
+            f, eq_c = facing_raise(preflop, opp, arr)
+            f_std, eq_c_std = facing_raise(std_line, opp_std, arr_std)
+            v_bar = quantile(eq_c_std, w, r)
+            value_c = np.where(eq_c_std >= v_bar, raise_c, 0.0)
+            bluff_c = raise_c - value_c
+            keep = np.clip(0.5 + (eq_c - v_bar) / RAISE_BLEND, 0.0, 1.0)
+            keep[np.isnan(keep)] = 0.0
+            # only ever tighter than the chart: the charts' continuing ranges don't see the bigger
+            # squeeze size, and capped callers would otherwise make value raises look wider
+            value_n = np.minimum(value_c, keep)
+            scale = min(1.0, f / max(f_std, 1e-9))
+            bluff_n = bluff_c * scale
+            out["raise"] = np.minimum(1.0, value_n + bluff_n)
+            msg.append(f"raises re-drawn for {len(opp)} players in: value raises keep {v_bar:.0%} equity against "
+                       f"what continues (the chart's weakest value raise heads-up); bluffs x{scale:.2f} "
+                       f"(everyone folds {f:.0%} vs {f_std:.0%})")
+        raise_n = out.get("raise", raise_c)
+        # continuing before the price: the chart's calls and value raises, kept bluffs, new value raises
+        base = np.minimum(1.0, np.maximum(call_c + value_c + (raise_n - value_n if more else raise_c - value_c), raise_n))
+        new = base
+        if reprice:
+            q = float((w * (call_c + raise_c)).sum() / tot)
+            if 0.02 < q < 0.98:
+                realize = need_std / max(quantile(eq_std, w, q), 1e-6)
+                rule = np.clip(0.5 + (eq * realize - need) / PRICE_BLEND, 0.0, 1.0)
+                rule[np.isnan(rule)] = 0.0
+                new = np.maximum(base, rule) if need < need_std else np.minimum(base, rule)
+                msg.insert(0, f"price {need:.0%} of the pot against {', '.join(opp)} (the chart assumes "
+                              f"{need_std:.0%} against {', '.join(opp_std)}): calls re-drawn by equity against the pot odds")
+        if "raise" in full:
+            out["raise"] = np.minimum(raise_n, new)
+        out["call"] = new - out.get("raise", 0.0)
         out["fold"] = 1.0 - new
-        notes.append(f"price {need:.0%} of the pot against {', '.join(opp)} (the chart assumes {need_std:.0%} "
-                     f"against {', '.join(opp_std)}): calls re-drawn by equity against the pot odds")
+        notes.extend(msg)
         return out
 
     def _vs_jam(self, hero, hole, preflop, positions, stack, st, t0):
