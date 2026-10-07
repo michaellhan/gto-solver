@@ -323,7 +323,7 @@ const BUDGETS = { server: { fast: [2.5, 1.2], accurate: [30, 6] }, wasm: { fast:
 let SPEED = "fast";
 try { if (localStorage.getItem("gto-speed") === "accurate") SPEED = "accurate"; } catch (e) {}
 let BUDGET = 4, PRIOR = 2;
-const WORKER_VERSION = "13";
+const WORKER_VERSION = "14";   // scripts/deploy.sh replaces this with a hash of worker.js
 
 // ---- backend: the local Python server if present, otherwise the solver runs in the browser (Pyodide worker)
 let MODE = null, worker = null, reqId = 0;
