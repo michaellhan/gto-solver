@@ -39,6 +39,8 @@ RARE_LINE = 0.10    # heads-up: widen the villain's range when the solve takes t
 UNSETTLED = 3.0     # heads-up: a solve this far from equilibrium (% pot) hasn't settled (the page's "converged" cutoff)
 JAM_BLEND = 0.04    # preflop vs a jam: call frequency ramps from 0 to 1 over this much equity around the pot odds
 PREFLOP_BOARDS = 400  # boards sampled for preflop all-in equity
+PRICE_BLEND = 0.02  # preflop, off-chart price: continue frequency ramps over this much (scaled) equity around the pot odds
+PRICE_TOL = 0.02    # ...and a spot within this much of the chart's pot odds, against the raisers only, is the chart's own
 EV_GAP = 1.0        # heads-up, unsettled solve: recommend the highest EV when it beats the top of the mix by this % of pot
 STREET_OF = {0: "preflop", 3: "flop", 4: "turn", 5: "river"}
 STREETS = ["preflop", "flop", "turn", "river"]
@@ -224,6 +226,30 @@ def _preflop_equity(villain: np.ndarray) -> np.ndarray:
     return np.where(den > 0, num / np.maximum(den, 1e-12), np.nan)
 
 
+def _preflop_equity_multi(villains: List[np.ndarray]) -> np.ndarray:
+    """Preflop equity of every combo against several weighted ranges at once: on each board, the product
+    of the chances of beating each (ties count half; card removal between the villains is ignored)."""
+    if len(villains) == 1:
+        return _preflop_equity(villains[0])
+    sts = _preflop_boards()
+    vs = []
+    for r in villains:
+        v = np.nonzero(r > 1e-9)[0]
+        vs.append((v, r[v], (_CARD_MASK[:, None] & _CARD_MASK[None, v]) == 0))
+    n = sum(len(v) for v, _, _ in vs)
+    num = np.zeros(N_COMBOS); den = np.zeros(N_COMBOS)
+    for s in sts[: max(60, min(len(sts), int(6e7 / (N_COMBOS * max(n, 1)))))]:
+        p = (s >= 0).astype(float)
+        for v, w, ok in vs:
+            sv = s[v]
+            wl = (ok & (sv >= 0)[None, :]) * w
+            d = wl.sum(1)
+            win = (wl * ((s[:, None] > sv[None, :]) + 0.5 * (s[:, None] == sv[None, :]))).sum(1)
+            p = p * np.where(d > 0, win / np.maximum(d, 1e-12), 0.0)
+        num += p; den += s >= 0
+    return np.where(den > 0, num / np.maximum(den, 1), np.nan)
+
+
 def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack: float, hero=None, hole=()) -> None:
     """Narrow each player's range (in place) by what they did on a street that started multiway,
     with the multiway rules: a check drops most of the hands that would have bet, a bet or raise
@@ -378,7 +404,12 @@ class Advisor:
         aggr = [a["pos"] for a in preflop if a["action"] in ("raise", "all-in", "bet")]
         if aggr and aggr[-1] in st.allin and aggr[-1] != hero:
             return self._vs_jam(hero, hole, preflop, positions, stack, st, t0)
-        strat = pf.hand_strategy(hero, hole, preflop, positions)
+        full = pf.strategy_for(hero, preflop, positions)
+        notes = ["preflop: chart approximation"]
+        if "call" in full:
+            full = self._priced(hero, preflop, positions, stack, st, full, notes)
+        idx = COMBO_INDEX[(min(hole), max(hole))]
+        strat = {k: float(v[idx]) for k, v in full.items()}
         remaining = stack - st.inv_start[hero] - st.bets[hero]
         to_call = min(st.cur_bet - st.bets[hero], remaining)
         size = min(_default_size(st, hero, True), st.bets[hero] + remaining)
@@ -394,7 +425,6 @@ class Advisor:
                 a["amount_bb"] = round(to_call, 2)
             acts.append(a)
         best = max(acts, key=lambda a: a["freq"])["action"]
-        full = pf.strategy_for(hero, preflop, positions)
         names = list(full.keys())
         arriving = pf.replay_ranges(preflop, positions).get(hero, np.ones(N_COMBOS))
         return {
@@ -402,8 +432,56 @@ class Advisor:
             "actions": acts, "recommended": best, "sampled": self._sample(acts),
             "pot_bb": round(st.pot_start + sum(st.bets.values()), 2), "to_call_bb": round(to_call, 2),
             "grid": strategy_grid([full[k] for k in names], names, arriving),
-            "notes": ["preflop: chart approximation"], "seconds": round(time.time() - t0, 3),
+            "notes": notes, "seconds": round(time.time() - t0, 3),
         }
+
+    @staticmethod
+    def _priced(hero, preflop, positions, stack, st, full, notes):
+        """The charts assume a standard-sized raise and nobody else in the pot. When the price or the
+        players in differ, re-draw the continue line: the chart's continuing share of hero's range in the
+        standard line marks an equity bar (its weakest continuing hand's equity against the raisers,
+        relative to that line's pot odds), and hero continues where equity against everyone in, held to
+        the same bar, beats the actual pot odds. A better price only adds calls, a worse one only removes
+        them; the chart's raises stay."""
+        def priced(s):
+            opp = [p for p in s.order if p in s.active and p != hero and
+                   (p in s.acted or s.bets[p] > {"SB": 0.5, "BB": 1.0}.get(p, 0.0) + 1e-9)]
+            call = min(s.cur_bet - s.bets[hero], stack - s.inv_start[hero] - s.bets[hero])
+            return opp, call / (s.pot_start + sum(s.bets.values()) + call)
+        # the standard line: same raisers at default sizes, everyone else folds
+        std_line = [{"pos": a["pos"], "action": "fold"} if a["action"] == "call" and a["pos"] != hero
+                    else {"pos": a["pos"], "action": a["action"]} for a in preflop]
+        std = replay_hand(positions, stack, {"preflop": std_line}, 1)[0]
+        if std.closed or std.to_act != hero:
+            return full
+        opp, need = priced(st)
+        opp_std, need_std = priced(std)
+        if sorted(opp) == sorted(opp_std) and abs(need - need_std) < PRICE_TOL:
+            return full
+        cont = full.get("raise", 0.0) + full["call"]
+        arr_std = pf.replay_ranges(std_line, positions)
+        w = arr_std[hero]
+        q = float((w * cont).sum() / max(w.sum(), 1e-12))
+        if not 0.02 < q < 0.98:
+            return full
+        eq_std = _preflop_equity_multi([arr_std[p] for p in opp_std])
+        ok = ~np.isnan(eq_std) & (w > 0)
+        order = np.argsort(-eq_std[ok])
+        cum = np.cumsum(w[ok][order])
+        bar = float(eq_std[ok][order][min(np.searchsorted(cum, q * cum[-1]), len(cum) - 1)])
+        realize = need_std / max(bar, 1e-6)
+        arr = pf.replay_ranges(preflop, positions)
+        eq = _preflop_equity_multi([arr[p] for p in opp])
+        rule = np.clip(0.5 + (eq * realize - need) / PRICE_BLEND, 0.0, 1.0)
+        rule[np.isnan(rule)] = 0.0
+        new = np.maximum(cont, rule) if need < need_std else np.minimum(cont, rule)
+        out = dict(full)
+        out["raise"] = np.minimum(full.get("raise", 0.0), new)
+        out["call"] = new - out["raise"]
+        out["fold"] = 1.0 - new
+        notes.append(f"price {need:.0%} of the pot against {', '.join(opp)} (the chart assumes {need_std:.0%} "
+                     f"against {', '.join(opp_std)}): calls re-drawn by equity against the pot odds")
+        return out
 
     def _vs_jam(self, hero, hole, preflop, positions, stack, st, t0):
         """Facing a preflop all-in: call when equity against the jammer's range beats the pot odds."""

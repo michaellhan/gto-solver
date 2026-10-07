@@ -131,6 +131,25 @@ class TestAdvisor(unittest.TestCase):
         self.assertEqual(adv.advise(dict(st, hole="Kd5d", stack=10))["recommended"], "call")
         self.assertEqual(adv.advise(dict(st, hole="Kd5d", stack=20))["recommended"], "fold")
 
+    def test_preflop_price_and_callers(self):
+        adv = Advisor()
+        st = {"players": 6, "hero": "UTG", "hole": "6s6d", "board": "", "stack": 100}
+        R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
+        # a standard 3bet heads-up is the chart's spot: 66 folds, no price note
+        std = [R("UTG", "raise", 2.5), R("HJ", "fold"), R("CO", "raise", 7.5)] + [R(p, "fold") for p in ("BTN", "SB", "BB")]
+        r = adv.advise(dict(st, preflop=std))
+        self.assertEqual(r["recommended"], "fold")
+        self.assertEqual(r["notes"], ["preflop: chart approximation"])
+        # a min-3bet with two callers: 2.5bb into 16bb, 66 calls
+        multi = [R("UTG", "raise", 2.5), R("HJ", "call"), R("CO", "raise", 5), R("BTN", "fold"), R("SB", "call"), R("BB", "fold")]
+        r = adv.advise(dict(st, preflop=multi))
+        self.assertEqual(r["recommended"], "call")
+        self.assertTrue(any("price" in n for n in r["notes"]))
+        # a huge 3bet: a chart call (88 mixes vs a standard 3bet) folds at the worse price
+        big = [R("UTG", "raise", 2.5), R("HJ", "fold"), R("CO", "raise", 20)] + [R(p, "fold") for p in ("BTN", "SB", "BB")]
+        self.assertGreater(adv.advise(dict(st, hole="8s8d", preflop=std))["actions"][1]["freq"], 0.5)
+        self.assertEqual(adv.advise(dict(st, hole="8s8d", preflop=big))["recommended"], "fold")
+
 
 if __name__ == "__main__":
     unittest.main()
