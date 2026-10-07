@@ -167,6 +167,48 @@ class TestAdvisor(unittest.TestCase):
         self.assertLess(freq(b, "raise"), freq(a, "raise"))
         self.assertTrue(any("raises re-drawn" in n for n in b["notes"]))
 
+    def test_preflop_off_chart_spots(self):
+        adv = Advisor()
+        R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
+        F = lambda *ps: [R(p, "fold") for p in ps]
+        def go(hero, hole, pre, **kw):
+            r = adv.advise(dict({"players": 6, "hero": hero, "hole": hole, "board": "", "stack": 100, "preflop": pre}, **kw))
+            return r, {a["action"]: a for a in r.get("actions", [])}
+        # limps: the big blind raises AA (checks 72o), the button isolates to 3x + 1 per limper or over-limps 33
+        limps = [R("UTG", "call"), R("HJ", "call")] + F("CO", "BTN") + [R("SB", "call")]
+        self.assertEqual(go("BB", "AhAd", limps)[0]["recommended"], "raise")
+        self.assertEqual(go("BB", "7h2d", limps)[0]["recommended"], "check")
+        r, a = go("BTN", "AhAd", [R("UTG", "call")] + F("HJ", "CO"))
+        self.assertEqual((r["recommended"], a["raise"]["amount_bb"]), ("raise", 4.0))
+        self.assertEqual(go("BTN", "3h3d", [R("UTG", "call")] + F("HJ", "CO"))[0]["recommended"], "call")
+        self.assertEqual(go("BB", "KhKd", [R("SB", "call")], players=2)[0]["recommended"], "raise")
+        # short stacks: a 3bet at 25bb is all-in; QQ never folds to a 3bet at 40bb
+        r, a = go("CO", "AhKd", [R("UTG", "raise", 2.2), R("HJ", "fold")], stack=25)
+        self.assertEqual((r["recommended"], a["all-in"]["amount_bb"]), ("all-in", 25.0))
+        r, a = go("UTG", "QsQd", [R("UTG", "raise", 2.2), R("HJ", "fold"), R("CO", "raise", 6.5)] + F("BTN", "SB", "BB"), stack=40)
+        self.assertLess(a["fold"]["freq"], 0.05)
+        # deep stacks: 55 calls a 3bet at 200bb (implied odds), folds at 100bb
+        pre = [R("UTG", "raise", 2.5), R("HJ", "fold"), R("CO", "raise", 7.5)] + F("BTN", "SB", "BB")
+        self.assertEqual(go("UTG", "5s5d", pre)[0]["recommended"], "fold")
+        self.assertEqual(go("UTG", "5s5d", pre, stack=200)[0]["recommended"], "call")
+        # the opener calls wider in position (vs the big blind's 3bet) than out of position (vs the button's)
+        ip = go("CO", "6s6d", F("UTG", "HJ") + [R("CO", "raise", 2.5)] + F("BTN", "SB") + [R("BB", "raise", 10)])[1]
+        oop = go("CO", "6s6d", F("UTG", "HJ") + [R("CO", "raise", 2.5), R("BTN", "raise", 7.5)] + F("SB", "BB"))[1]
+        self.assertGreater(ip["call"]["freq"], oop["call"]["freq"])
+        # heads-up the button defends a 3bet wide (in position postflop)
+        r = go("SB", "Qh8h", [R("SB", "raise", 2.5), R("BB", "raise", 8)], players=2)[0]
+        self.assertEqual(r["recommended"], "call")
+        # facing a 5bet with chips behind, AA can shove
+        r, a = go("UTG", "AhAd", [R("UTG", "raise", 2.5), R("HJ", "raise", 8)] + F("CO", "BTN", "SB", "BB")
+                  + [R("UTG", "raise", 20), R("HJ", "raise", 45)], stack=200)
+        self.assertEqual(r["recommended"], "all-in")
+        # antes widen opens; a straddle makes HJ first to act and the opens 2.5x the straddle
+        self.assertEqual(go("UTG", "Ah9d", [])[0]["recommended"], "fold")
+        self.assertGreater(go("UTG", "Ah9d", [], ante=1 / 6)[1]["raise"]["freq"], 0)
+        r, a = go("HJ", "AhJd", [], straddle=True)
+        self.assertEqual((r["recommended"], a["raise"]["amount_bb"], r["pot_bb"]), ("raise", 5.0, 3.5))
+        self.assertIn("error", go("UTG", "AhJd", [], straddle=True)[0])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -26,6 +26,24 @@ SEATS = {
 }
 
 
+class Table(list):
+    """Seats in seating order (SEATS), plus the game's ante (bb per player, dead money) and whether the
+    first seat straddles 2bb (it then acts last preflop and plays the big blind's charts)."""
+    def __init__(self, seats, ante: float = 0.0, straddle: bool = False):
+        super().__init__(seats)
+        self.ante = float(ante or 0.0)
+        self.straddle = bool(straddle) and len(seats) >= 3
+
+    def preflop_order(self) -> List[str]:
+        return list(self[1:]) + [self[0]] if self.straddle else list(self)
+
+    def posted(self) -> Dict[str, float]:
+        out = {"SB": 0.5, "BB": 1.0} if "SB" in self else {"BB": 1.0}
+        if self.straddle:
+            out[self[0]] = 2.0
+        return out
+
+
 def postflop_order(positions: List[str]) -> List[str]:
     """First to act first. Heads-up the button (SB) acts last postflop."""
     if len(positions) == 2:
@@ -39,6 +57,17 @@ def chart_key(pos: str, positions: List[str]) -> str:
     n = len(positions)
     if n == 2:
         return {"SB": "HU_SB", "BB": "HU_BB"}[pos]
+    if getattr(positions, "straddle", False):
+        # straddled: the straddler plays the big blind, the big blind the small blind, the small blind a
+        # middle seat; the rest by how many act behind them
+        if pos == positions[0]:
+            return "BB"
+        if pos == "BB":
+            return "SB"
+        if pos == "SB":
+            return "CO"
+        behind = len(positions) - 1 - positions.preflop_order().index(pos)
+        return {2: "BTN", 3: "CO", 4: "HJ", 5: "UTG"}.get(behind, "EP")
     if pos in ("UTG", "UTG1") and n >= 7:
         return "EP"
     if pos in ("UTG2", "LJ"):
@@ -135,7 +164,20 @@ def vs_rfi_chart(hero_key: str, opener_key: str) -> Dict[str, np.ndarray]:
 
 # ---------- opener facing a 3bet ----------
 def vs_3bet(opener: str, threebettor: str) -> Dict[str, np.ndarray]:
-    opener = _norm(opener)
+    """The UTG/HJ/CO charts are for a 3bet from a later seat (opener out of position postflop); against
+    a blind's 3bet the opener has position and calls wider."""
+    if opener == "HU_SB":
+        return HU_SB_VS_3BET
+    c = _vs_3bet(_norm(opener))
+    if _norm(opener) in ("UTG", "HJ", "CO") and _norm(threebettor) in ("SB", "BB"):
+        c = {"4bet": c["4bet"], "call": np.minimum(1.0, c["call"] * 1.25 + IP_VS_3BET_EXTRA)}
+    return c
+
+
+IP_VS_3BET_EXTRA = R("66:0.4, 55:0.3, A9s:0.4, KTs:0.4, QTs:0.4, J9s:0.3, 98s:0.4, 87s:0.3")
+
+
+def _vs_3bet(opener: str) -> Dict[str, np.ndarray]:
     if opener in ("UTG", "HJ"):
         return {
             "4bet": R("KK+, QQ:0.7, AKs, AKo:0.6, A5s:0.4, A4s:0.3, JJ:0.2"),
@@ -167,8 +209,46 @@ COLD_VS_3BET = {
     "4bet": R("KK+, AKs, QQ:0.3, AKo:0.3"),
     "call": R("QQ:0.7, JJ, TT:0.5, AKo:0.5, AQs, AJs:0.5, KQs:0.5"),
 }
-# opener facing a 5bet jam (call or fold)
+# facing a 5bet: call or fold when it is all-in, and deep enough to have chips behind, jam the top
 VS_5BET = {"call": R("KK+, QQ:0.7, AKs, AKo:0.7, JJ:0.3")}
+VS_5BET_DEEP = {"raise": R("AA, KK:0.6, AKs:0.4"), "call": R("KK:0.4, QQ:0.8, AKs:0.6, AKo:0.6, JJ:0.3")}
+
+# heads-up button (SB, in position postflop) facing the big blind's 3bet
+HU_SB_VS_3BET = {
+    "4bet": R("QQ+, JJ:0.5, AKs, AKo, AQs:0.5, A5s-A2s:0.4, K9s:0.2, Q9s:0.2, J9s:0.2"),
+    "call": R("22-TT, JJ:0.5, A2s-AJs, AQs:0.5, A8o-AQo, A7o-A5o:0.5, K6s+, KTo+, K9o:0.5, Q8s+, QTo+, J8s+, JTo, T7s+, T9o:0.5, 97s+, 86s+, 75s+, 64s+, 54s, 53s:0.5"),
+}
+
+# ---------- limped pots ----------
+# open-limp range (players who limp first in: rarely the premiums, which raise)
+LIMP = R("22-99, TT+:0.2, A2s-AJs, AQs+:0.2, A2o-ATo, AJo+:0.3, K2s+, K9o+, Q6s+, Q9o+, J7s+, J9o+, T7s+, T9o, 96s+, 86s+, 75s+, 64s+, 54s")
+# raising over limpers (tighter than an open: the limpers are in the pot) and over-limping
+ISO = {
+    "UTG": R("77+, ATs+, A5s:0.5, KTs+, QJs, AJo+, KQo"),
+    "HJ": R("77+, ATs+, A5s:0.5, KTs+, QJs, AJo+, KQo"),
+    "CO": R("66+, A8s+, A5s-A4s:0.5, KTs+, QTs+, JTs, ATo+, KJo+"),
+    "BTN": R("55+, A7s+, A5s-A2s:0.7, K9s+, QTs+, JTs, T9s:0.5, ATo+, KJo+, QJo:0.5"),
+    "SB": R("77+, A9s+, A5s:0.5, KTs+, QJs, AJo+, KQo"),
+}
+OVERLIMP = {
+    "UTG": R("22-66, A2s-A9s:0.5, KTs:0.5, QTs:0.5, JTs:0.5, T9s:0.5, 98s:0.5, 87s:0.3, 76s:0.3"),
+    "HJ": R("22-66, A2s-A9s:0.5, KTs:0.5, QTs:0.5, JTs:0.5, T9s:0.5, 98s:0.5, 87s:0.3, 76s:0.3"),
+    "CO": R("22-55, A2s-A7s:0.5, K8s-K9s:0.5, Q9s, J9s, T9s, 98s, 87s, 76s, 65s:0.5"),
+    "BTN": R("22-44, A2s-A6s:0.3, K5s-K8s, Q8s-Q9s, J8s-J9s, T8s-T9s, 97s+, 86s+, 75s+, 64s+, 54s, A9o-A2o:0.3, KTo:0.5, QTo+, JTo"),
+    # small blind completing
+    "SB": R("22-66, A2s-A8s, A2o-ATo:0.5, K2s-K9s, KJo-KTo, Q5s+, Q9o+, J7s+, J9o+, T7s+, T9o, 96s+, 86s+, 75s+, 64s+, 54s, 53s, 43s"),
+}
+# big blind raising over limps (the rest checks): only the small blind limped / several limpers
+BB_VS_SB_LIMP = R("55+, A2s+, A7o+, K7s+, KTo+, Q9s+, QJo, J9s+, T9s, 98s:0.5, 87s:0.5, 65s:0.5, 54s:0.5, K6o-K2o:0.3, Q5s-Q2s:0.3")
+BB_VS_LIMPS = R("88+, ATs+, A5s:0.5, KJs+, AJo+, KQo:0.5")
+
+# antes: the dead money makes opens wider, played as the chart this many seats later (UTG -> HJ ...)
+RFI_LADDER = ["EP", "UTG", "HJ", "CO", "BTN"]
+
+
+def ante_shift(positions) -> int:
+    dead = getattr(positions, "ante", 0.0) * len(positions)
+    return min(2, int(round(dead / 0.8)))
 
 
 def _actions_at(hero: str, actions: List[dict], positions: Optional[List[str]] = None) -> Dict[str, np.ndarray]:
@@ -183,9 +263,18 @@ def _actions_at(hero: str, actions: List[dict], positions: Optional[List[str]] =
     raisers = [a["pos"] for a in actions if a["action"] in ("raise", "all-in")]
     n_raises = len(raisers)
     if n_raises == 0:
-        if hero == "BB":  # everyone folded / limped: treat as check
-            return {"check": np.ones(N_COMBOS)}
-        return {"raise": RFI[_norm(key(hero)) if key(hero) not in RFI else key(hero)]}
+        limpers = [a["pos"] for a in actions if a["action"] == "call"]
+        role = _norm(key(hero))
+        if role == "BB":   # the big blind (or straddler) checks or raises the limpers
+            r = BB_VS_SB_LIMP if limpers == ["SB"] or (len(positions) == 2 and limpers) else BB_VS_LIMPS
+            return {"raise": r, "check": 1.0 - r}
+        if limpers:
+            k = role if role in ISO else "UTG"
+            return {"raise": ISO[k], "call": OVERLIMP[k]}
+        k = key(hero)
+        if k in RFI_LADDER:
+            k = RFI_LADDER[min(RFI_LADDER.index(k) + ante_shift(positions), len(RFI_LADDER) - 1)]
+        return {"raise": RFI[k if k in RFI else _norm(k)]}
     if n_raises == 1:
         chart = vs_rfi_chart(key(hero), key(raisers[0]))
         return {"raise": chart["3bet"], "call": chart["call"]}
@@ -199,6 +288,8 @@ def _actions_at(hero: str, actions: List[dict], positions: Optional[List[str]] =
         if hero == raisers[1]:
             return {"raise": VS_4BET["jam"], "call": VS_4BET["call"]}
         return {"raise": COLD_VS_3BET["4bet"] * 0.5, "call": COLD_VS_3BET["call"] * 0.5}
+    if [a["action"] for a in actions if a["action"] in ("raise", "all-in")][-1] == "raise":
+        return dict(VS_5BET_DEEP)       # a 5bet that leaves chips behind (an all-in goes to the jam logic)
     return {"call": VS_5BET["call"]}
 
 
@@ -234,10 +325,12 @@ def replay_ranges(actions: List[dict], positions: Optional[List[str]] = None) ->
         if act == "fold":
             active.discard(pos)
         else:
-            key = "raise" if act == "all-in" else ("call" if act == "check" else act)
+            key = "raise" if act == "all-in" else ("call" if act == "check" and "check" not in strat else act)
             if key in strat:
                 ranges[pos] = ranges[pos] * strat[key]
-            # unknown action (e.g. limp) leaves range unchanged
+            elif act == "call" and not any(h["action"] in ("raise", "all-in") for h in history):
+                ranges[pos] = ranges[pos] * LIMP     # open-limp
+            # other off-chart actions leave the range unchanged
         history.append(a)
     return {p: ranges[p] for p in active}
 

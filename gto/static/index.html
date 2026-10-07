@@ -256,6 +256,11 @@
           <span class="muted" style="margin-left:auto">stacks</span>
           <input type="number" id="stack" value="100" min="5" step="1"><span class="muted">bb</span>
         </div>
+        <div class="row" style="margin-bottom:8px">
+          <span class="muted">Ante</span>
+          <input type="number" id="ante" value="0" min="0" step="0.05" title="Ante per player, in big blinds"><span class="muted">bb each</span>
+          <label class="muted" id="straddleBox" style="margin-left:auto" title="The first seat posts a 2bb straddle and acts last preflop"><input type="checkbox" id="straddle"> straddle</label>
+        </div>
         <div class="row">
           <span class="muted">You are</span>
           <div class="row seats" id="seats"></div>
@@ -310,6 +315,10 @@ const SEATS = {
   8: ["UTG", "UTG1", "LJ", "HJ", "CO", "BTN", "SB", "BB"], 9: ["UTG", "UTG1", "UTG2", "LJ", "HJ", "CO", "BTN", "SB", "BB"] };
 const SEAT_LABEL = (p, n) => n === 2 && p === "SB" ? "BTN/SB" : p;
 let POS = SEATS[6], ORDER_PRE = POS, ORDER_POST = ["SB", "BB", "UTG", "HJ", "CO", "BTN"];
+// antes (bb per player) and a straddle by the first seat (2bb, acts last preflop)
+const ANTE = () => Math.max(0, +S.ante || 0);
+const STRADDLER = () => S.straddle && S.players >= 3 ? POS[0] : null;
+const IS_BLIND = (p) => p === "SB" || p === "BB" || p === STRADDLER();
 function setPositions(n) {
   POS = SEATS[n]; ORDER_PRE = POS;
   ORDER_POST = n === 2 ? ["BB", "SB"] : ["SB", "BB", ...POS.filter(p => p !== "SB" && p !== "BB")];
@@ -410,15 +419,15 @@ function toast(msg, undoFn, ms = 4000) {
 // ------------------------------------------------------------------ engine
 function simulate() {
   const active = new Set(POS), allin = new Set();
-  const inv = Object.fromEntries(POS.map(p => [p, 0]));
+  const inv = Object.fromEntries(POS.map(p => [p, Math.min(ANTE(), S.stack)]));
   const out = { streets: {}, current: null, toAct: null, waiting: null, handOver: false, runout: false, invested: inv, active, allin };
   const nb = boardCards().length;
   for (const street of STREETS) {
     if (nb < NEED[street]) { out.waiting = street; break; }
-    const pre = street === "preflop", order = pre ? ORDER_PRE : ORDER_POST;
+    const pre = street === "preflop", order = pre ? (STRADDLER() ? [...POS.slice(1), POS[0]] : ORDER_PRE) : ORDER_POST;
     const bets = Object.fromEntries(POS.map(p => [p, 0]));
-    if (pre) { bets.SB = 0.5; bets.BB = 1; }
-    let curBet = pre ? 1 : 0, nRaises = 0, acted = new Set(), lastActor = null;
+    if (pre) { bets.SB = 0.5; bets.BB = 1; if (STRADDLER()) bets[STRADDLER()] = 2; }
+    let curBet = pre ? (STRADDLER() ? 2 : 1) : 0, nRaises = 0, acted = new Set(), lastActor = null;
     const potBefore = Object.values(inv).reduce((a, b) => a + b, 0);
     for (const a of S.actions[street]) {
       const p = a.pos; if (!active.has(p)) continue;
@@ -561,16 +570,17 @@ function renderSetup() {
   document.getElementById("setupFull").hidden = !full;
   document.getElementById("setupDone").hidden = !started;
   const sum = document.getElementById("setupSum"); sum.hidden = full;
-  sum.innerHTML = `<span><b>${S.players}-handed</b> <span class="muted">·</span> you are <b>${SEAT_LABEL(S.hero, S.players)}</b> <span class="muted">·</span> <b>${fmt(S.stack)}bb</b> stacks</span>`;
+  sum.innerHTML = `<span><b>${S.players}-handed</b> <span class="muted">·</span> you are <b>${SEAT_LABEL(S.hero, S.players)}</b> <span class="muted">·</span> <b>${fmt(S.stack)}bb</b> stacks${ANTE() ? ` <span class="muted">·</span> ${fmt(ANTE())}bb ante` : ""}${STRADDLER() ? ` <span class="muted">·</span> ${SEAT_LABEL(STRADDLER(), S.players)} straddles` : ""}</span>`;
   const e = document.createElement("button"); e.className = "link"; e.style.marginLeft = "auto"; e.textContent = "Edit"; e.onclick = () => { editSetup = true; renderAll(); };
   sum.appendChild(e);
 
+  document.getElementById("straddleBox").hidden = S.players < 3;
   const el = document.getElementById("seats"); el.innerHTML = "";
   for (const p of POS) { const b = document.createElement("button"); b.textContent = SEAT_LABEL(p, POS.length); if (p === S.hero) b.classList.add("active");
     b.onclick = () => { S.hero = p; save(); renderAll(); }; el.appendChild(b); }
   const pl = document.getElementById("players"); pl.innerHTML = "";
   for (let n = 2; n <= 9; n++) { const b = document.createElement("button"); b.className = "small"; b.textContent = n; if (n === S.players) b.classList.add("active");
-    b.onclick = () => { if (n === S.players) return; S = { ...fresh(n), stack: S.stack, cards: S.cards }; setPositions(n); selSlot = null; save(); resetAdvice(); renderAll(); }; pl.appendChild(b); }
+    b.onclick = () => { if (n === S.players) return; S = { ...fresh(n), stack: S.stack, ante: S.ante, straddle: S.straddle, cards: S.cards }; setPositions(n); selSlot = null; save(); resetAdvice(); renderAll(); }; pl.appendChild(b); }
 }
 function renderSlots(sim) {
   const needIdx = sim.waiting ? S.cards.findIndex((c, i) => !c && i >= 2 && i < 2 + NEED[sim.waiting]) : (!S.cards[0] ? 0 : !S.cards[1] ? 1 : -1);
@@ -680,7 +690,7 @@ function renderAction(sim) {
     }
   } else if (canRaise) {
     let sizes;
-    if (street === "preflop") sizes = info.nRaises === 0 ? [[p === "SB" ? 3 : 2.5, "open"]] : [[info.curBet * (p === "SB" || p === "BB" ? 4 : 3), p === "SB" || p === "BB" ? "4x" : "3x"]];
+    if (street === "preflop") sizes = info.nRaises === 0 ? [[(p === "SB" ? 3 : 2.5) * info.curBet, "open"]] : [[info.curBet * (IS_BLIND(p) ? 4 : 3), IS_BLIND(p) ? "4x" : "3x"]];
     else if (!facing) sizes = [[info.pot / 3, "⅓ pot"], [info.pot * 2 / 3, "⅔ pot"], [info.pot, "pot"]];
     else sizes = [[info.curBet * 2.5, "2.5x"], [info.curBet + info.pot + toCall, "pot"]];
     let k = 0;
@@ -729,6 +739,7 @@ function renderTimeline() {
 function payload() {
   const conv = (arr) => arr.map(a => a.action === "bet" ? { pos: a.pos, action: "bet", amount: a.to } : a.action === "raise" ? { pos: a.pos, action: "raise", to: a.to } : { pos: a.pos, action: a.action });
   return { players: S.players, hero: S.hero, hole: S.cards[0] + S.cards[1], board: boardCards().join(""), stack: S.stack,
+           ...(ANTE() ? { ante: ANTE() } : {}), ...(STRADDLER() ? { straddle: true } : {}),
            preflop: conv(S.actions.preflop), flop: conv(S.actions.flop), turn: conv(S.actions.turn), river: conv(S.actions.river), budget: BUDGET, prior_budget: PRIOR, speed: SPEED };
 }
 // the payload key of the same spot at another speed
@@ -917,7 +928,7 @@ function resetAdvice() {
 // ---- share: plain-text summary + link that reopens the spot
 function handText() {
   const n = S.players, seat = SEAT_LABEL(S.hero, n);
-  const lines = [`GTO Solver hand: ${n}-handed, ${S.stack}bb effective, I am ${seat} with ${S.cards[0] || "?"}${S.cards[1] || "?"}`];
+  const lines = [`GTO Solver hand: ${n}-handed, ${S.stack}bb effective${ANTE() ? `, ${fmt(ANTE())}bb ante` : ""}${STRADDLER() ? `, ${SEAT_LABEL(STRADDLER(), n)} straddles 2bb` : ""}, I am ${seat} with ${S.cards[0] || "?"}${S.cards[1] || "?"}`];
   const act = (a) => `${SEAT_LABEL(a.pos, n)} ${a.action === "bet" ? "bets " + fmt(a.to) : a.action === "raise" ? "raises to " + fmt(a.to) : a.action === "all-in" ? "all-in" : a.action + "s"}${a.g ? ` [${gradeMark(a.g)} solver ${(a.g.f * 100).toFixed(0)}%${a.g.l ? `, -${a.g.l.toFixed(2)}bb` : ""}]` : ""}`;
   const bd = (s) => s === "preflop" ? "" : " (" + boardCards().slice(NEED[s] - (s === "flop" ? 3 : 1), NEED[s]).join(" ") + ")";
   const sim = simulate();
@@ -959,6 +970,10 @@ document.getElementById("copyhand").onclick = async () => {
 })();
 document.getElementById("stack").value = S.stack;
 document.getElementById("stack").onchange = (e) => { S.stack = parseFloat(e.target.value) || 100; save(); renderAll(); };
+document.getElementById("ante").value = ANTE();
+document.getElementById("ante").onchange = (e) => { S.ante = Math.max(0, parseFloat(e.target.value) || 0); save(); resetAdvice(); renderAll(); };
+document.getElementById("straddle").checked = !!S.straddle;
+document.getElementById("straddle").onchange = (e) => { S.straddle = e.target.checked; save(); resetAdvice(); renderAll(); };
 document.getElementById("setupDone").onclick = () => { editSetup = false; renderAll(); };
 
 // ---- four-colour deck (per browser)
@@ -991,7 +1006,7 @@ document.addEventListener("keydown", (e) => {
   if (b) { e.preventDefault(); b.click(); }
 });
 document.getElementById("newhand").onclick = () => {
-  S = { ...fresh(S.players), hero: S.hero, stack: S.stack }; selSlot = null; showDeck = false; editSetup = false; pendingRank = null; save(); resetAdvice(); renderAll();
+  S = { ...fresh(S.players), hero: S.hero, stack: S.stack, ante: S.ante, straddle: S.straddle }; selSlot = null; showDeck = false; editSetup = false; pendingRank = null; save(); resetAdvice(); renderAll();
 };
 renderAll();
 </script>

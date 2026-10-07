@@ -82,7 +82,8 @@ python -m gto.cli --hero BB --hole 9h8h --board Ks7d2cTh \
 ```
 
 Action tokens are `POS:act` with `f` fold, `x` check, `c` call, `r<to>` raise to,
-`b<amount>` bet, `ai` all-in. Amounts are in big blinds.
+`b<amount>` bet, `ai` all-in. Amounts are in big blinds. `--ante 0.2` adds an ante
+per player, `--straddle` has the first seat straddle 2bb.
 
 Server for your sandbox table:
 
@@ -105,7 +106,8 @@ Request body (see `examples/`):
 ```
 
 Set `bb` to your blind size and pass amounts in chips, or leave it at 1 and pass
-big blinds. Positions are the 6-max names `UTG HJ CO BTN SB BB`.
+big blinds. Optional `"ante"` (per player, same units) and `"straddle": true` (the
+first seat posts 2bb and acts last preflop). Positions are the 6-max names `UTG HJ CO BTN SB BB`.
 
 Response: per-action `freq` (the mixed strategy for hero's exact hand), `ev_bb`
 (relative to folding now), `amount_bb`, a `recommended` action (highest
@@ -120,7 +122,7 @@ range, and solver stats.
 |---|---|---|
 | Cards, ranges | `gto/cards.py`, `gto/ranges.py` | 1326-combo weight vectors, PIO-style range syntax |
 | Hand strength | `gto/evaluator.py` | numpy-vectorised 7-card evaluator built on treys' lookup tables: all 21 five-card subsets of every combo on a board in one pass, about 1 ms per board |
-| Preflop | `gto/preflop.py` | Hand-written 100bb charts: RFI, vs RFI, vs 3-bet, vs 4-bet, cold vs 3-bet, mixed frequencies. Seats for 2 to 9 players map onto the charts by how many players are left to act (9-max LJ plays the 6-max UTG chart, 7+ handed UTG plays a tighter EP chart, heads-up has its own button and big-blind charts). Replaying the preflop action through the charts gives every player's range going to the flop. The charts assume a standard-sized raise and nobody else in the pot; when the price or the players in differ (a min-3bet, callers ahead), calls are re-drawn by preflop equity against everyone in versus the pot odds, held to the equity bar the chart's own continue range sets in the standard line. With callers in, raises are re-drawn too: a value raise stays while its equity against what continues (each player's chart facing the raise) reaches the chart's weakest value raise heads-up, bluffs shrink by how much less often everyone folds, and the default raise size adds the callers' chips (a squeeze over two callers of a 2.5bb open is 15bb from the BB). |
+| Preflop | `gto/preflop.py` | Hand-written 100bb charts: RFI, vs RFI, vs 3-bet, vs 4-bet, cold vs 3-bet, mixed frequencies. Seats for 2 to 9 players map onto the charts by how many players are left to act (9-max LJ plays the 6-max UTG chart, 7+ handed UTG plays a tighter EP chart, heads-up has its own button and big-blind charts). Replaying the preflop action through the charts gives every player's range going to the flop. The charts assume a standard-sized raise and nobody else in the pot; when the price or the players in differ (a min-3bet, callers ahead), calls are re-drawn by preflop equity against everyone in versus the pot odds, held to the equity bar the chart's own continue range sets in the standard line. With callers in, raises are re-drawn too: a value raise stays while its equity against what continues (each player's chart facing the raise) reaches the chart's weakest value raise heads-up, bluffs shrink by how much less often everyone folds, and the default raise size adds the callers' chips (a squeeze over two callers of a 2.5bb open is 15bb from the BB). Off-chart games and depths: limpers get iso-raise / over-limp / big-blind-raise charts (and an open-limp range); antes play the open chart of a later seat and re-price calls; a straddle makes the straddler the big blind and the rest play by seats behind; stacks other than 100bb re-price calls with implied odds for small pairs and suited hands; a raise that commits the stack (40% of it, or under 1.5 pots behind once called) goes all-in, with the push/fold equilibrium as the range when shallower than the charts (and every open at 12bb or less). The opener calls a blind's 3bet wider (in position), the heads-up button has its own vs-3bet chart, and a 5bet that leaves chips behind can be shoved over. |
 | Postflop | `gto/solver.py` | Heads-up range-vs-range **discounted CFR** over a bet tree (2 bet sizes per street, raises to half pot and full pot after the call, all-in when the stack is short or a raise size would exceed it, max 2 raises). Vectors are compressed to combos in either range. A river showdown is O(N) per board: combos sorted by strength, cumulative reach sums, and a per-card correction for card removal. Equity leaves are one matvec with a precomputed antisymmetric matrix. |
 | Hand replay | `gto/advisor.py` | The whole hand is replayed for any number of seats: blinds, folds, dead money from players who folded, all-ins, acting order (heads-up the button acts first preflop and last postflop). Whenever exactly two players remain the spot is solved heads-up: from the start of the street if it began heads-up, or from the current node if a third player just folded. With three or more live players it falls back to a Monte Carlo heuristic against every live range (see Limits), and says so. |
 | Multi-street | `gto/advisor.py` | Earlier streets are solved with a small budget and each player's range is narrowed by the frequency of the action they actually took, mixed with a 15% uniform floor so an approximate solve never prunes a line to nothing. The current street is solved from the start of the street and the tree is walked to hero's node with exact frequencies. Solutions are cached per hand so the flop solve is reused on the turn. |
@@ -213,5 +215,7 @@ the tree traversal to C or Rust or a GPU, which makes full flop trees feasible.
 
 * Preflop charts are approximations written by hand, not solver output. Replace
   them with real chart exports if you have them; the format is a range string.
-* No limps, no straddles, no antes, one effective stack for the table.
+* Limps, antes, straddles and stack depth are handled by adjusting the 100bb
+  no-ante charts (see Preflop above), not by charts built for those games.
+* One effective stack for the table.
 * The bet-size abstraction is coarse; real actions are mapped to the nearest size.

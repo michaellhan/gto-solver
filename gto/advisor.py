@@ -41,6 +41,12 @@ JAM_BLEND = 0.04    # preflop vs a jam: call frequency ramps from 0 to 1 over th
 PREFLOP_BOARDS = 400  # boards sampled for preflop all-in equity
 PRICE_BLEND = 0.02  # preflop, off-chart price: continue frequency ramps over this much (scaled) equity around the pot odds
 RAISE_BLEND = 0.03  # preflop, more players in: value-raise frequency ramps over this much equity when called
+COMMIT = 0.4       # preflop: a raise that would put in this share of the stack goes all-in instead
+JAM_SPR = 1.5      # ...as does one leaving less than this many pots behind once called
+PUSH_FOLD_STACK = 12.0  # preflop: at or below this many bb, raising first in is all-in (push/fold)
+CHART_STACK = 100.0  # the depth the preflop charts are written for
+IMPLIED = {"pair": 0.06, "suited": 0.03}  # preflop calls: share of the stack behind (beyond the chart's) small pairs / suited hands expect to win later
+DEPTH_TOL = 20.0   # ...a spot this many bb deeper or shallower than the charts re-prices calls
 PRICE_TOL = 0.02    # ...and a spot within this much of the chart's pot odds, against the raisers only, is the chart's own
 EV_GAP = 1.0        # heads-up, unsettled solve: recommend the highest EV when it beats the top of the mix by this % of pot
 STREET_OF = {0: "preflop", 3: "flop", 4: "turn", 5: "river"}
@@ -79,6 +85,7 @@ class StreetState:
     to_act: Optional[str] = None
     closed: bool = False
     actions: List[dict] = field(default_factory=list)
+    posted: Dict[str, float] = field(default_factory=dict)   # blinds (and straddle) posted this street
 
 
 def _showdown_share(st, idx, hands) -> float:
@@ -91,7 +98,8 @@ def _showdown_share(st, idx, hands) -> float:
 
 def replay_hand(positions: List[str], stack: float, streets: Dict[str, List[dict]], n_streets: int) -> List[StreetState]:
     """Replay preflop..current street. Sizes: bet=amount added this street, raise=to."""
-    inv = {p: 0.0 for p in positions}
+    ante = min(getattr(positions, "ante", 0.0), stack)
+    inv = {p: ante for p in positions}          # antes: dead money in the pot from the start
     active = set(positions)
     allin: set = set()
     out: List[StreetState] = []
@@ -99,14 +107,15 @@ def replay_hand(positions: List[str], stack: float, streets: Dict[str, List[dict
     for si in range(n_streets):
         name = STREETS[si]
         pre = name == "preflop"
-        order = list(positions) if pre else post
+        order = (positions.preflop_order() if hasattr(positions, "preflop_order") else list(positions)) if pre else post
         st = StreetState(name, order, [p for p in order if p in active], sum(inv.values()), dict(inv))
         st.bets = {p: 0.0 for p in positions}
         if pre:
-            if "SB" in positions:
-                st.bets["SB"] = min(0.5, stack)
-            st.bets["BB"] = min(1.0, stack)
-            st.cur_bet = 1.0
+            st.posted = positions.posted() if hasattr(positions, "posted") else (
+                {"SB": 0.5, "BB": 1.0} if "SB" in positions else {"BB": 1.0})
+            for p, b in st.posted.items():
+                st.bets[p] = min(b, stack - inv[p])
+            st.cur_bet = max(st.posted.values())
         st.active, st.allin = set(active), set(allin)
         last = None
         for a in streets.get(name, []):
@@ -209,6 +218,17 @@ def _preflop_boards():
     return np.array([eval_board(rng.sample(range(52), 5)) for _ in range(PREFLOP_BOARDS)])
 
 
+def _implied_w(h: str) -> float:
+    """Implied-odds weight of a hand class: the ones that win big pots by hitting (pairs 22-99, suited
+    hands that aren't two big cards); premiums and offsuit hands don't depend on it."""
+    if len(h) == 2:
+        return IMPLIED["pair"] if h[0] in "23456789" else 0.0
+    if h.endswith("s") and not (h[0] in "AKQJT" and h[1] in "AKQJT"):
+        return IMPLIED["suited"]
+    return 0.0
+
+
+_IMPLIED_W = np.array([_implied_w(hand_class(c)) for c in ALL_COMBOS])
 _CARD_MASK = np.array([(1 << a) | (1 << b) for a, b in ALL_COMBOS], dtype=np.int64)
 
 
@@ -323,12 +343,13 @@ def _default_size(st: StreetState, p: str, pre: bool) -> float:
         # chips the other live players (not the last raiser) put in beyond their blinds: a caller of
         # the current bet adds one bet to the size (a squeeze), a limper 1bb (an iso-raise)
         last = next((a["pos"] for a in reversed(st.actions) if a["action"] in ("raise", "all-in", "bet")), None)
-        extra = sum(max(0.0, st.bets[q] - {"SB": 0.5, "BB": 1.0}.get(q, 0.0))
-                    for q in st.active if q not in (p, last))
+        extra = sum(max(0.0, st.bets[q] - st.posted.get(q, 0.0)) for q in st.active if q not in (p, last))
         if st.n_raises == 0:
-            return DEFAULT_OPEN.get(p, 2.5) + extra
+            if extra > 0:   # over limpers: 3x (4x from the blinds) plus one bet per limper
+                return st.cur_bet * (4.0 if p in st.posted else 3.0) + extra
+            return DEFAULT_OPEN.get(p, 2.5) * st.cur_bet
         if st.n_raises == 1:
-            return st.cur_bet * (4.0 if p in ("SB", "BB") else 3.0) + extra
+            return st.cur_bet * (4.0 if p in st.posted else 3.0) + extra
         return st.cur_bet * 2.3 + extra
     pot = st.pot_start + sum(st.bets.values())
     if st.cur_bet > st.bets[p]:
@@ -373,7 +394,9 @@ class Advisor:
         n = int(state.get("players", 6))
         if n not in pf.SEATS:
             return {"error": f"players must be 2..9, got {n}"}
-        positions = pf.SEATS[n]
+        ante = float(state.get("ante") or 0.0) / bb
+        straddle = bool(state.get("straddle")) and n >= 3
+        positions = pf.Table(pf.SEATS[n], ante, straddle)
         hero = str(state["hero"]).upper()
         if hero not in positions:
             return {"error": f"hero seat {hero} is not one of {positions}"}
@@ -420,6 +443,19 @@ class Advisor:
         to_call = min(st.cur_bet - st.bets[hero], remaining)
         size = min(_default_size(st, hero, True), st.bets[hero] + remaining)
         size = round(size * 2) / 2
+        if "raise" in full and remaining > to_call + 1e-9:
+            # all-in instead: the raise is most of the stack, or leaves under JAM_SPR pots behind once called
+            pot = st.pot_start + sum(st.bets.values())
+            pot_called = pot + 2 * size - st.bets[hero] - st.cur_bet
+            short_open = st.n_raises == 0 and stack <= PUSH_FOLD_STACK
+            if (size >= st.bets[hero] + remaining - 1e-9 or st.inv_start[hero] + size >= COMMIT * stack
+                    or (stack - st.inv_start[hero] - size) < JAM_SPR * pot_called or short_open):
+                size = st.bets[hero] + remaining
+                if short_open or stack < CHART_STACK - DEPTH_TOL:
+                    full = self._push(hero, preflop, positions, st, size, full, notes)
+                else:
+                    notes.append("the raise would commit the stack, so it goes all-in")
+                strat = {k: float(v[idx]) for k, v in full.items()}
         acts = []
         for k, v in strat.items():
             a = {"action": k, "freq": round(v, 3)}
@@ -442,26 +478,53 @@ class Advisor:
         }
 
     @staticmethod
+    def _push(hero, preflop, positions, st, jam, full, notes):
+        """A raise that would commit much of the stack is an all-in: hero's range for it is the push/fold
+        equilibrium against the players still in (the last raiser's range calls, if there is one); hands
+        the chart continued with that don't shove call."""
+        arr = pf.replay_ranges(preflop, positions)
+        last = next((a["pos"] for a in reversed(preflop) if a["action"] in ("raise", "all-in")), None)
+        opp = [p for p in st.order if p in st.active and p != hero and p not in st.allin]
+        call_rng = arr.get(last, np.ones(N_COMBOS)) if last else np.ones(N_COMBOS)
+        caller_in = st.bets[last] if last else float(np.mean([st.bets[p] for p in opp]))
+        pot = st.pot_start + sum(st.bets.values())
+        push = push_fold(arr.get(hero, np.ones(N_COMBOS)), call_rng, jam, st.bets[hero], caller_in, pot,
+                         max(1, len(opp)))
+        out = dict(full)
+        out["raise"] = push
+        if "call" in full:   # what the chart continued with and doesn't shove calls
+            out["call"] = np.minimum(full["call"] + full.get("raise", 0.0), 1.0 - push)
+        if "check" in full:
+            out["check"] = 1.0 - push
+        else:
+            out["fold"] = 1.0 - push - out.get("call", 0.0)
+        notes.append(f"a raise here commits too much of a {jam + st.inv_start[hero]:g}bb stack: all-in, "
+                     f"range from the push/fold equilibrium against {len(opp)} player{'s' * (len(opp) > 1)}")
+        return out
+
+    @staticmethod
     def _priced(hero, preflop, positions, stack, st, full, notes):
-        """The charts assume a standard-sized raise and nobody else in the pot. When the price or the
-        players in differ, re-draw hero's line against the chart's own standard line (same raisers at
-        default sizes, everyone else folding):
+        """The charts assume a standard-sized raise, nobody else in the pot, 100bb and no antes. When the
+        spot differs, re-draw hero's line against the chart's own standard line (same raisers at default
+        sizes, everyone else folding, chart depth, no antes):
         - continuing: the chart's continuing share of hero's range there marks an equity bar (its
           weakest continuing hand's equity against the raisers, relative to that line's pot odds); hero
-          continues where equity against everyone in, held to the same bar, beats the actual pot odds. A
-          better price only adds, a worse one only removes.
+          continues where equity against everyone in, held to the same bar, beats the actual pot odds
+          (with implied odds for small pairs and suited hands by how much deeper or shallower than the
+          charts). A better price only adds calls, a worse one only removes them.
         - raising, when more players are in: each player's chart facing hero's raise gives their continuing
           range and how often they continue. The chart's raises split into value (the top of hero's range
           by equity when called, as many hands as it raises) and bluffs. A value raise stays only while its
           equity when called (against each continuing range, weighted by how often it continues) reaches
           the chart's weakest value raise heads-up; bluffs shrink by how much less often everyone folds."""
-        def priced(s):
+        def priced(s, stk):
             opp = [p for p in s.order if p in s.active and p != hero and
-                   (p in s.acted or s.bets[p] > {"SB": 0.5, "BB": 1.0}.get(p, 0.0) + 1e-9)]
-            call = min(s.cur_bet - s.bets[hero], stack - s.inv_start[hero] - s.bets[hero])
-            return opp, call / (s.pot_start + sum(s.bets.values()) + call)
+                   (p in s.acted or s.bets[p] > s.posted.get(p, 0.0) + 1e-9)]
+            call = min(s.cur_bet - s.bets[hero], stk - s.inv_start[hero] - s.bets[hero])
+            pot = s.pot_start + sum(s.bets.values())
+            return opp, call / (pot + call), call, pot, stk - s.inv_start[hero] - s.bets[hero] - call
 
-        def facing_raise(line, opp, arr):
+        def facing_raise(line, opp, arr, positions):
             # each player facing hero's raise, by their chart: the chance everyone folds, and hero's
             # equity when called (against each continuing range, weighted by how often it continues)
             line = line + [{"pos": hero, "action": "raise"}]
@@ -484,18 +547,23 @@ class Advisor:
 
         std_line = [{"pos": a["pos"], "action": "fold"} if a["action"] == "call" and a["pos"] != hero
                     else {"pos": a["pos"], "action": a["action"]} for a in preflop]
-        std = replay_hand(positions, stack, {"preflop": std_line}, 1)[0]
+        # the chart's own spot: its depth, no antes
+        table = pf.Table(positions, 0.0, getattr(positions, "straddle", False))
+        std = replay_hand(table, CHART_STACK, {"preflop": std_line}, 1)[0]
         if std.closed or std.to_act != hero:
             return full
-        opp, need = priced(st)
-        opp_std, need_std = priced(std)
+        opp, need, call, pot, behind = priced(st, stack)
+        opp_std, need_std, _, _, behind_std = priced(std, CHART_STACK)
+        # implied odds: deeper than the charts, pairs and suited hands win more when they hit
+        depth = behind - behind_std
+        need_v = call / np.maximum(pot + call + _IMPLIED_W * depth, call + 1e-9)
         more = sorted(opp) != sorted(opp_std)
-        reprice = abs(need - need_std) >= PRICE_TOL
+        reprice = abs(need - need_std) >= PRICE_TOL or abs(depth) >= DEPTH_TOL
         if not (more or reprice):
             return full
         raise_c = full.get("raise", np.zeros(N_COMBOS))
         call_c = full["call"]
-        arr_std = pf.replay_ranges(std_line, positions)
+        arr_std = pf.replay_ranges(std_line, table)
         w = arr_std[hero]
         tot = max(w.sum(), 1e-12)
         eq_std = _preflop_equity_multi([arr_std[p] for p in opp_std])
@@ -507,8 +575,8 @@ class Advisor:
         value_c = raise_c
         r = float((w * raise_c).sum() / tot)
         if more and r > 0.005:
-            f, eq_c = facing_raise(preflop, opp, arr)
-            f_std, eq_c_std = facing_raise(std_line, opp_std, arr_std)
+            f, eq_c = facing_raise(preflop, opp, arr, positions)
+            f_std, eq_c_std = facing_raise(std_line, opp_std, arr_std, table)
             v_bar = quantile(eq_c_std, w, r)
             value_c = np.where(eq_c_std >= v_bar, raise_c, 0.0)
             bluff_c = raise_c - value_c
@@ -531,11 +599,15 @@ class Advisor:
             q = float((w * (call_c + raise_c)).sum() / tot)
             if 0.02 < q < 0.98:
                 realize = need_std / max(quantile(eq_std, w, q), 1e-6)
-                rule = np.clip(0.5 + (eq * realize - need) / PRICE_BLEND, 0.0, 1.0)
+                rule = np.clip(0.5 + (eq * realize - need_v) / PRICE_BLEND, 0.0, 1.0)
                 rule[np.isnan(rule)] = 0.0
-                new = np.maximum(base, rule) if need < need_std else np.minimum(base, rule)
+                # a worse price removes calls, never raises
+                new = np.where(need_v < need_std, np.maximum(base, rule), np.minimum(base, np.maximum(rule, raise_n)))
+                deep = (f", {abs(depth):g}bb {'deeper' if depth > 0 else 'shallower'} than the charts "
+                        f"(implied odds for pairs and suited hands)" if abs(depth) >= DEPTH_TOL else "")
                 msg.insert(0, f"price {need:.0%} of the pot against {', '.join(opp)} (the chart assumes "
-                              f"{need_std:.0%} against {', '.join(opp_std)}): calls re-drawn by equity against the pot odds")
+                              f"{need_std:.0%} against {', '.join(opp_std)}{deep}): calls re-drawn by equity "
+                              f"against the pot odds")
         if "raise" in full:
             out["raise"] = np.minimum(raise_n, new)
         out["call"] = new - out.get("raise", 0.0)

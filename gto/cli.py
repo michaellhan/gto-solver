@@ -50,12 +50,15 @@ def main(argv=None):
     ap.add_argument("--turn", default="")
     ap.add_argument("--river", default="")
     ap.add_argument("--stack", type=float, default=100.0, help="starting stacks in bb")
+    ap.add_argument("--ante", type=float, default=0.0, help="ante per player in bb")
+    ap.add_argument("--straddle", action="store_true", help="the first seat straddles 2bb")
     ap.add_argument("--budget", type=float, default=4.0, help="seconds for the current street solve")
     ap.add_argument("--depth", type=int, default=2)
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
     state = {
         "hero": args.hero, "hole": args.hole, "board": args.board, "stack": args.stack,
+        "ante": args.ante, "straddle": args.straddle,
         "preflop": parse_actions(args.preflop), "flop": parse_actions(args.flop),
         "turn": parse_actions(args.turn), "river": parse_actions(args.river),
     }
