@@ -238,6 +238,12 @@ OVERLIMP = {
     # small blind completing
     "SB": R("22-66, A2s-A8s, A2o-ATo:0.5, K2s-K9s, KJo-KTo, Q5s+, Q9o+, J7s+, J9o+, T7s+, T9o, 96s+, 86s+, 75s+, 64s+, 54s, 53s, 43s"),
 }
+# a limper facing a raise: the trapped premiums re-raise, the rest of a limping range calls a lot
+# (it already has chips in and the range is capped) and folds its weakest hands
+LIMP_VS_RAISE = {
+    "raise": R("QQ+, AKs, AKo:0.7"),
+    "call": R("22-JJ, A2s-AQs, ATo-AQo, A9o:0.5, K9s+, KJo+, KTo:0.5, Q9s+, QJo, J9s+, T8s+, 97s+, 86s+, 75s+, 64s+, 54s"),
+}
 # big blind raising over limps (the rest checks): only the small blind limped / several limpers
 BB_VS_SB_LIMP = R("55+, A2s+, A7o+, K7s+, KTo+, Q9s+, QJo, J9s+, T9s, 98s:0.5, 87s:0.5, 65s:0.5, 54s:0.5, K6o-K2o:0.3, Q5s-Q2s:0.3")
 BB_VS_LIMPS = R("88+, ATs+, A5s:0.5, KJs+, AJo+, KQo:0.5")
@@ -276,6 +282,9 @@ def _actions_at(hero: str, actions: List[dict], positions: Optional[List[str]] =
             k = RFI_LADDER[min(RFI_LADDER.index(k) + ante_shift(positions), len(RFI_LADDER) - 1)]
         return {"raise": RFI[k if k in RFI else _norm(k)]}
     if n_raises == 1:
+        first = next(i for i, a in enumerate(actions) if a["action"] in ("raise", "all-in"))
+        if any(a["pos"] == hero and a["action"] == "call" for a in actions[:first]):
+            return dict(LIMP_VS_RAISE)      # hero limped, then someone raised
         chart = vs_rfi_chart(key(hero), key(raisers[0]))
         return {"raise": chart["3bet"], "call": chart["call"]}
     if n_raises == 2:

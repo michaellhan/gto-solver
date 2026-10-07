@@ -365,6 +365,61 @@ def preflop_investments(actions: List[dict], stacks: Dict[str, float]) -> Tuple[
     return inv, [p for p in pf.POSITIONS if p in st.active]
 
 
+# ----------------------------------------------------------------------------- adjusted preflop play
+# Every player's preflop decisions get the same off-chart adjustments as hero's (Advisor._priced: price,
+# players in, depth, antes), so the ranges replayed into later decisions match the advice. Cached per
+# action line: each decision is worked out once.
+_PF_CACHE: Dict[tuple, object] = {}
+
+
+def _pf_key(kind, p, actions, positions, stack) -> tuple:
+    acts = tuple((a["pos"], a["action"], a.get("to"), a.get("amount")) for a in actions)
+    return (kind, p, acts, tuple(positions), getattr(positions, "ante", 0.0), getattr(positions, "straddle", False), stack)
+
+
+def _pf_cached(key, fn):
+    if key not in _PF_CACHE:
+        if len(_PF_CACHE) > 512:
+            _PF_CACHE.clear()
+        _PF_CACHE[key] = fn()
+    return _PF_CACHE[key]
+
+
+def preflop_strategy(p: str, before: List[dict], positions, stack: float) -> Dict[str, np.ndarray]:
+    """p's preflop strategy per combo after the actions `before`: the chart, adjusted like hero's."""
+    def work():
+        full = pf.strategy_for(p, before, positions)
+        if "call" in full:
+            st = replay_hand(positions, stack, {"preflop": before}, 1)[0]
+            if not st.closed and st.to_act == p:
+                full = Advisor._priced(p, before, positions, stack, st, full, [])
+        return full
+    return _pf_cached(_pf_key("s", p, before, positions, stack), work)
+
+
+def preflop_ranges(actions: List[dict], positions, stack: float) -> Dict[str, np.ndarray]:
+    """Each still-active player's range after the preflop actions (pf.replay_ranges with the adjusted
+    strategies)."""
+    def work():
+        ranges = {p: np.ones(N_COMBOS) for p in positions}
+        active = set(positions)
+        for i, a in enumerate(actions):
+            pos, act = a["pos"], a["action"]
+            if pos not in ranges:
+                continue
+            if act == "fold":
+                active.discard(pos)
+                continue
+            strat = preflop_strategy(pos, actions[:i], positions, stack)
+            key = "raise" if act == "all-in" else ("call" if act == "check" and "check" not in strat else act)
+            if key in strat:
+                ranges[pos] = ranges[pos] * strat[key]
+            elif act == "call" and not any(h["action"] in ("raise", "all-in") for h in actions[:i]):
+                ranges[pos] = ranges[pos] * pf.LIMP
+        return {p: ranges[p] for p in active}
+    return _pf_cached(_pf_key("r", None, actions, positions, stack), work)
+
+
 def _range_key(v: np.ndarray) -> str:
     return hashlib.md5(np.round(v, 6).tobytes()).hexdigest()[:12]
 
@@ -452,7 +507,7 @@ class Advisor:
                     or (stack - st.inv_start[hero] - size) < JAM_SPR * pot_called or short_open):
                 size = st.bets[hero] + remaining
                 if short_open or stack < CHART_STACK - DEPTH_TOL:
-                    full = self._push(hero, preflop, positions, st, size, full, notes)
+                    full = self._push(hero, preflop, positions, stack, st, size, full, notes)
                 else:
                     notes.append("the raise would commit the stack, so it goes all-in")
                 strat = {k: float(v[idx]) for k, v in full.items()}
@@ -468,7 +523,7 @@ class Advisor:
             acts.append(a)
         best = max(acts, key=lambda a: a["freq"])["action"]
         names = list(full.keys())
-        arriving = pf.replay_ranges(preflop, positions).get(hero, np.ones(N_COMBOS))
+        arriving = preflop_ranges(preflop, positions, stack).get(hero, np.ones(N_COMBOS))
         return {
             "street": "preflop", "hero": hero, "hand": hand_class(hole), "players": len(positions),
             "actions": acts, "recommended": best, "sampled": self._sample(acts),
@@ -478,11 +533,11 @@ class Advisor:
         }
 
     @staticmethod
-    def _push(hero, preflop, positions, st, jam, full, notes):
+    def _push(hero, preflop, positions, stack, st, jam, full, notes):
         """A raise that would commit much of the stack is an all-in: hero's range for it is the push/fold
         equilibrium against the players still in (the last raiser's range calls, if there is one); hands
         the chart continued with that don't shove call."""
-        arr = pf.replay_ranges(preflop, positions)
+        arr = preflop_ranges(preflop, positions, stack)
         last = next((a["pos"] for a in reversed(preflop) if a["action"] in ("raise", "all-in")), None)
         opp = [p for p in st.order if p in st.active and p != hero and p not in st.allin]
         call_rng = arr.get(last, np.ones(N_COMBOS)) if last else np.ones(N_COMBOS)
@@ -567,7 +622,7 @@ class Advisor:
         w = arr_std[hero]
         tot = max(w.sum(), 1e-12)
         eq_std = _preflop_equity_multi([arr_std[p] for p in opp_std])
-        arr = pf.replay_ranges(preflop, positions)
+        arr = preflop_ranges(preflop, positions, stack)
         eq = _preflop_equity_multi([arr[p] for p in opp])
         out = dict(full)
         msg = []
@@ -620,7 +675,7 @@ class Advisor:
         ji = max(i for i, a in enumerate(preflop) if a["action"] in ("raise", "all-in", "bet"))
         jammer, before = preflop[ji]["pos"], preflop[:ji]
         prev = replay_hand(positions, stack, {"preflop": before}, 1)[0]
-        arr = pf.replay_ranges(before, positions)
+        arr = preflop_ranges(before, positions, stack)
         rng = arr.get(jammer, np.ones(N_COMBOS))
         jam = st.bets[jammer]
         notes = ["preflop: facing an all-in, call when equity beats the pot odds"]
@@ -638,24 +693,29 @@ class Advisor:
             notes.append(f"{jammer}'s {jam:g}bb jam range: push/fold equilibrium against {len(opp)} "
                          f"player{'s' * (len(opp) > 1)} left ({share:.0%} of their hands)")
         else:
-            rng = rng * pf.strategy_for(jammer, before, positions).get("raise", np.ones(N_COMBOS))
+            rng = rng * preflop_strategy(jammer, before, positions, stack).get("raise", np.ones(N_COMBOS))
         remaining = stack - st.inv_start[hero] - st.bets[hero]
         to_call = min(st.cur_bet - st.bets[hero], remaining)
         pot = st.pot_start + sum(st.bets.values())
         # hero's call only wins what the jammer can match
         win = pot - max(0.0, st.bets[jammer] - (st.bets[hero] + to_call))
         need = to_call / (win + to_call)
-        eq = _preflop_equity(rng)
+        # everyone who already called the jam is in the pot too: equity against all of them
+        after = preflop_ranges(preflop, positions, stack)
+        callers = [a["pos"] for a in preflop[ji + 1:] if a["action"] in ("call", "all-in") and a["pos"] in st.active]
+        eq = _preflop_equity_multi([rng] + [after[p] for p in callers])
         idx = COMBO_INDEX[(min(hole), max(hole))]
         call = np.clip(0.5 + (eq - need) / JAM_BLEND, 0.0, 1.0)
         call[np.isnan(call)] = 0.0
-        others = [p for p in st.active if p not in (hero, jammer) and p not in st.allin]
-        if others:
-            notes.append("other players are still in; equity is against the jammer only")
+        if callers:
+            notes.append(f"{', '.join(callers)} already called: equity is against {jammer} and them")
+        behind = [p for p in st.active if p not in (hero, jammer) and p not in st.allin and p not in callers]
+        if behind:
+            notes.append(f"{', '.join(behind)} still to act behind (not counted)")
         notes.append(f"equity {eq[idx]:.1%} vs {need:.1%} needed")
         acts = [{"action": "call", "freq": round(float(call[idx]), 3), "amount_bb": round(to_call, 2)},
                 {"action": "fold", "freq": round(1 - float(call[idx]), 3)}]
-        arriving = pf.replay_ranges(preflop, positions).get(hero, np.ones(N_COMBOS))
+        arriving = after.get(hero, np.ones(N_COMBOS))
         return {
             "street": "preflop", "hero": hero, "hand": hand_class(hole), "players": len(positions),
             "actions": acts, "recommended": "call" if call[idx] >= 0.5 else "fold", "sampled": self._sample(acts),
@@ -678,7 +738,7 @@ class Advisor:
             return {"error": "this street's betting is already closed (deal the next card)"}
         if cur.to_act != hero:
             return {"error": f"it is {cur.to_act}'s turn, not {hero}'s"}
-        ranges = pf.replay_ranges(streets["preflop"], positions)
+        ranges = preflop_ranges(streets["preflop"], positions, stack)
         # Streets that started with 3+ players can't be solved; narrow ranges there by rule.
         mw_streets = [st for st in rep[1:] if len(st.players_start) > 2]
         for st in mw_streets:
