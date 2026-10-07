@@ -255,6 +255,17 @@ class TestAdvisor(unittest.TestCase):
             ("BTN", btn + [R("SB", "raise", 10), R("BB", "fold")], 0.38, 0.55),
             ("CO", co + [R("BTN", "raise", 7.5)] + F("SB", "BB"), 0.38, 0.52),
         ]
+        # a hand never continues less often than one it dominates (JJ vs TT facing a 4bet used to flip on
+        # board-sampling noise; AKo folded where AQo called)
+        from gto.pf_classes import CLASS_OF, CLASS_INDEX, N_IN
+        lines = [("HJ", utg), ("CO", [R("HJ", "raise", 2.5), R("CO", "raise", 7.5)] + F("BTN", "SB", "BB") + [R("HJ", "raise", 22)]),
+                 ("CO", co + [R("BTN", "raise", 7.5)] + F("SB", "BB")), ("BB", btn + F("SB"))]
+        for hero, pre in lines:
+            s = preflop_strategy(hero, pre, T, 100)
+            c = np.bincount(CLASS_OF, weights=1 - s["fold"], minlength=len(N_IN)) / N_IN
+            for chain in pf._dominance_chains():
+                for weak, strong in zip(chain, chain[1:]):
+                    self.assertLessEqual(c[CLASS_INDEX[weak]], c[CLASS_INDEX[strong]] + 1e-6, f"{hero}: {weak} > {strong}")
         for hero, pre, lo, hi in bands:
             r = rate(hero, pre)
             self.assertTrue(lo <= r <= hi, f"{hero} after {[(a['pos'], a['action']) for a in pre]}: {r:.2f} not in [{lo}, {hi}]")

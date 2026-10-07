@@ -215,7 +215,7 @@ the tree traversal to C or Rust or a GPU, which makes full flop trees feasible.
 
 * Preflop charts are approximations written by hand, not solver output, and the
   off-chart adjustments are rules on top of them. `scripts/preflop_sweep.py` runs
-  every standard line for 2-9 players and flags broken frequencies; a test keeps
+  every standard line for 2-9 players and flags broken frequencies and any hand continuing less often than one it dominates (pairs, kickers, suited over offsuit; the strategy is also kept that way at run time); a test keeps
   key 6-max continue rates near typical solver output. Replace them with real chart
   exports if you have them; the format is a range string.
 * Limps, antes, straddles and stack depth are handled by adjusting the 100bb

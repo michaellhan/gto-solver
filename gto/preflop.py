@@ -101,7 +101,7 @@ def _vs_rfi_ip(early: bool) -> Dict[str, np.ndarray]:
     if early:  # HJ/CO facing UTG/HJ
         return {
             "3bet": R("QQ+, JJ:0.5, AKs, AKo:0.7, AQs, A5s, A4s:0.5, KQs:0.3"),
-            "call": R("22-TT, JJ:0.5, AQo, AJs, ATs, KQs:0.7, KJs, KTs:0.5, QJs, QTs:0.5, JTs, T9s, 98s, 87s:0.5"),
+            "call": R("22-TT, JJ:0.5, AKo:0.3, AQo, AJs, ATs, KQs:0.7, KJs, KTs:0.5, QJs, QTs:0.5, JTs, T9s, 98s, 87s:0.5"),
         }
     return {  # BTN facing UTG/HJ/CO, or CO facing HJ-ish
         "3bet": R("JJ+, TT:0.4, AKs, AKo, AQs, AQo:0.4, AJs:0.5, A5s, A4s, A3s:0.5, KQs:0.5, KJs:0.3, 76s:0.3, 65s:0.3"),
@@ -181,7 +181,7 @@ def vs_3bet(opener: str, threebettor: str) -> Dict[str, np.ndarray]:
     return c
 
 
-IP_VS_3BET_EXTRA = R("66:0.4, 55:0.3, A9s:0.4, KTs:0.4, QTs:0.4, J9s:0.3, 98s:0.4, 87s:0.3")
+IP_VS_3BET_EXTRA = R("88:0.3, 77:0.4, 66:0.4, 55:0.3, A9s:0.4, KTs:0.4, QTs:0.4, J9s:0.3, 98s:0.4, 87s:0.3")
 
 
 def _vs_3bet(opener: str) -> Dict[str, np.ndarray]:
@@ -193,7 +193,7 @@ def _vs_3bet(opener: str) -> Dict[str, np.ndarray]:
     if opener == "CO":
         return {
             "4bet": R("KK+, QQ:0.6, AKs, AKo:0.7, A5s:0.5, A4s:0.4, A3s:0.2, JJ:0.2, KQs:0.2"),
-            "call": R("QQ:0.4, JJ:0.8, TT, 99, 88, 77:0.6, 66:0.4, 55:0.3, AKo:0.3, AQs, AJs, ATs, A9s:0.4, AQo:0.6, AJo:0.3, KQs, KJs, KTs:0.6, QJs, QTs:0.5, JTs, T9s, 98s:0.6, 87s:0.5, 76s:0.6, 65s:0.5, 54s:0.3, 55:0.6, 44:0.3, A8s:0.4, AJo:0.5, KQo:0.5, KJo:0.3, K9s:0.4, Q9s:0.3, J9s:0.5, T8s:0.4, 97s:0.3"),
+            "call": R("QQ:0.4, JJ:0.8, TT, 99, 88, 77:0.6, 66:0.4, 55:0.3, AKo:0.3, AQs, AJs, ATs, A9s:0.4, AQo:0.6, AJo:0.3, KQs, KJs, KTs:0.6, QJs, QTs:0.5, JTs, T9s, 98s:0.6, 87s:0.5, 76s:0.6, 65s:0.5, 54s:0.3, 66:0.6, 55:0.5, 44:0.3, A8s:0.4, AJo:0.5, KQo:0.5, KJo:0.3, K9s:0.4, Q9s:0.3, J9s:0.5, T8s:0.4, 97s:0.3"),
         }
     if opener == "BTN":
         return {
@@ -368,7 +368,51 @@ def strategy_for(hero: str, actions: List[dict], positions: Optional[List[str]] 
     total = sum(acts.values())
     if "check" not in acts:
         acts["fold"] = np.clip(1.0 - total, 0.0, 1.0)
-    return acts
+    return monotone(acts)
+
+
+def _dominance_chains() -> List[List[str]]:
+    """Hand classes in order weakest -> strongest where the stronger never continues less: the pairs,
+    each high card's broadway kickers (suited and offsuit), and each suited hand over its offsuit twin."""
+    rk = "AKQJT98765432"
+    chains = [[r + r for r in reversed(rk)]]
+    for hi in "AKQJ":
+        ks = [k for k in rk[rk.index(hi) + 1:] if k in "KQJT"]
+        for s in "so":
+            chains.append([hi + k + s for k in reversed(ks)])
+    for i in range(13):
+        for j in range(i + 1, 13):
+            chains.append([rk[i] + rk[j] + "o", rk[i] + rk[j] + "s"])
+    return [c for c in chains if len(c) > 1]
+
+
+_CHAINS = None
+
+
+def monotone(acts: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+    """Keep the strategy consistent: a hand never continues (doesn't fold) less often than a hand it
+    dominates. Where it would, the shortfall moves from its fold to its call (or raise, when calling
+    isn't an option). Fixes chart slips and equity noise alike."""
+    global _CHAINS
+    if "fold" not in acts:
+        return acts
+    from .pf_classes import CLASS_OF, CLASS_INDEX, N_IN
+    if _CHAINS is None:
+        _CHAINS = [[CLASS_INDEX[h] for h in c] for c in _dominance_chains()]
+    cont = np.bincount(CLASS_OF, weights=1.0 - acts["fold"], minlength=len(N_IN)) / N_IN
+    new = cont.copy()
+    for _ in range(3):
+        for chain in _CHAINS:
+            new[chain] = np.maximum.accumulate(new[chain])
+    gap = (new - cont)[CLASS_OF]
+    if gap.max() < 1e-9:
+        return acts
+    out = dict(acts)
+    k = "call" if "call" in out else "raise"
+    add = np.minimum(gap, out["fold"])
+    out[k] = out[k] + add
+    out["fold"] = out["fold"] - add
+    return out
 
 
 def hand_strategy(hero: str, hole: Tuple[int, int], actions: List[dict], positions: Optional[List[str]] = None) -> Dict[str, float]:

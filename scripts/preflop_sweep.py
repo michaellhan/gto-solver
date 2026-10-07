@@ -1,6 +1,6 @@
 """Sweep every standard preflop line (opens, vs an open, vs a 3bet, cold vs a 3bet, vs a 4bet) for 2..9
 players through the charts and their adjustments, and flag errors, frequencies that don't sum to 1,
-AA/KK folding, and 72o continuing. -v prints each line's continue rate.
+AA/KK folding, 72o continuing, and a hand continuing less often than one it dominates. -v prints each line's continue rate.
 
     python scripts/preflop_sweep.py [-v]
 """
@@ -33,6 +33,13 @@ def check(n, label, line, hero, stack=100):
     if fold[KK] > 0.05 and "5bet" not in label and "4bet" not in label: issues.append(f"{n}h {label}: KK folds {fold[KK]:.2f}")
     if "open" not in label and "check" not in s and 1 - fold[T72] > 0.05 and not label.startswith("BB") and n > 2:
         issues.append(f"{n}h {label}: 72o continues {1-fold[T72]:.2f}")
+    # a hand never continues less often than one it dominates (pairs, kickers, suited over offsuit)
+    from gto.pf_classes import CLASS_OF, CLASS_INDEX, N_IN
+    c = np.bincount(CLASS_OF, weights=1 - fold, minlength=len(N_IN)) / N_IN
+    for chain in pf._dominance_chains():
+        for weak, strong in zip(chain, chain[1:]):
+            if c[CLASS_INDEX[weak]] - c[CLASS_INDEX[strong]] > 0.01:
+                issues.append(f"{n}h {label}: {weak} continues {c[CLASS_INDEX[weak]]:.2f} > {strong} {c[CLASS_INDEX[strong]]:.2f}")
     w = arr / max(arr.sum(), 1e-9)
     cont = float((w * (1 - fold)).sum()) if "check" not in s else float((w * s["raise"]).sum())
     table.append((n, label, round(arr.sum()), round(cont, 2)))

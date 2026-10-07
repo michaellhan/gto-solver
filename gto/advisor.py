@@ -233,18 +233,14 @@ _CARD_MASK = np.array([(1 << a) | (1 << b) for a, b in ALL_COMBOS], dtype=np.int
 
 
 def _preflop_equity(villain: np.ndarray) -> np.ndarray:
-    """All-in preflop equity of every combo against the weighted range `villain`."""
-    sts = _preflop_boards()
-    v = np.nonzero(villain > 1e-9)[0]
-    w = villain[v]
-    ok = (_CARD_MASK[:, None] & _CARD_MASK[None, v]) == 0            # (1326, m) no shared cards
-    num = np.zeros(N_COMBOS); den = np.zeros(N_COMBOS)
-    for s in sts[: max(60, min(len(sts), int(6e7 / (N_COMBOS * max(len(v), 1)))))]:
-        sv = s[v]
-        wl = (ok & (sv >= 0)[None, :] & (s >= 0)[:, None]) * w
-        num += (wl * ((s[:, None] > sv[None, :]) + 0.5 * (s[:, None] == sv[None, :]))).sum(1)
-        den += wl.sum(1)
-    return np.where(den > 0, num / np.maximum(den, 1e-12), np.nan)
+    """All-in preflop equity of every combo against the weighted range `villain`, from the precomputed
+    hand-class equity table (exact up to class-level card removal; board sampling was noisier than the
+    gaps between neighbouring hands)."""
+    from .pf_classes import equity_matrix, to_classes, PAIR_COMPAT, CLASS_OF
+    w = PAIR_COMPAT * to_classes(villain)[None, :]
+    den = w.sum(1)
+    eq = np.where(den > 1e-12, (equity_matrix() * w).sum(1) / np.maximum(den, 1e-12), np.nan)
+    return eq[CLASS_OF]
 
 
 def _preflop_equity_multi(villains: List[np.ndarray]) -> np.ndarray:
@@ -553,6 +549,7 @@ class Advisor:
             out["check"] = 1.0 - push
         else:
             out["fold"] = 1.0 - push - out.get("call", 0.0)
+            out = pf.monotone(out)
         notes.append(f"a raise here commits too much of a {jam + st.inv_start[hero]:g}bb stack: all-in, "
                      f"range from the push/fold equilibrium against {len(opp)} player{'s' * (len(opp) > 1)}")
         return out
@@ -668,7 +665,7 @@ class Advisor:
         out["call"] = new - out.get("raise", 0.0)
         out["fold"] = 1.0 - new
         notes.extend(msg)
-        return out
+        return pf.monotone(out)
 
     def _vs_jam(self, hero, hole, preflop, positions, stack, st, t0):
         """Facing a preflop all-in: call when equity against the jammer's range beats the pot odds."""
