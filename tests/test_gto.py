@@ -233,6 +233,32 @@ class TestAdvisor(unittest.TestCase):
         cont = lambda s: float((s["call"] + s["raise"]).sum())
         self.assertLess(cont(ep(9, ("UTG1", "UTG2", "LJ", "HJ", "CO", "BTN", "SB"))), cont(ep(6, ("HJ", "CO", "BTN", "SB"))))
 
+    def test_preflop_continue_rates(self):
+        """Chart continue rates stay near typical 6-max 100bb solver output (share of the range that
+        reaches the spot and doesn't fold), so a chart edit can't drift far without notice."""
+        from gto.advisor import preflop_strategy, preflop_ranges
+        R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
+        F = lambda *ps: [R(p, "fold") for p in ps]
+        T = pf.Table(pf.SEATS[6])
+        def rate(hero, pre):
+            s, w = preflop_strategy(hero, pre, T, 100), preflop_ranges(pre, T, 100)[hero]
+            return float((w * (1 - s["fold"])).sum() / w.sum())
+        utg, co, btn = [R("UTG", "raise", 2.5)], F("UTG", "HJ") + [R("CO", "raise", 2.5)], F("UTG", "HJ", "CO") + [R("BTN", "raise", 2.5)]
+        bands = [
+            ("BB", utg + F("HJ", "CO", "BTN", "SB"), 0.30, 0.42),
+            ("BB", co + F("BTN", "SB"), 0.42, 0.55),
+            ("BB", btn + F("SB"), 0.60, 0.72),
+            ("BB", F("UTG", "HJ", "CO", "BTN") + [R("SB", "raise", 3)], 0.65, 0.80),
+            ("BTN", co, 0.15, 0.24),
+            ("HJ", utg, 0.08, 0.14),
+            ("UTG", utg + [R("HJ", "raise", 7.5)] + F("CO", "BTN", "SB", "BB"), 0.35, 0.50),
+            ("BTN", btn + [R("SB", "raise", 10), R("BB", "fold")], 0.38, 0.55),
+            ("CO", co + [R("BTN", "raise", 7.5)] + F("SB", "BB"), 0.38, 0.52),
+        ]
+        for hero, pre, lo, hi in bands:
+            r = rate(hero, pre)
+            self.assertTrue(lo <= r <= hi, f"{hero} after {[(a['pos'], a['action']) for a in pre]}: {r:.2f} not in [{lo}, {hi}]")
+
 
 if __name__ == "__main__":
     unittest.main()
