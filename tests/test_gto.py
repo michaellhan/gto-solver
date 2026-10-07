@@ -208,6 +208,16 @@ class TestAdvisor(unittest.TestCase):
         r, a = go("HJ", "AhJd", [], straddle=True)
         self.assertEqual((r["recommended"], a["raise"]["amount_bb"], r["pot_bb"]), ("raise", 5.0, 3.5))
         self.assertIn("error", go("UTG", "AhJd", [], straddle=True)[0])
+        # heads-up the big blind continues wider against a 4bet than 6-max
+        hu4 = [R("SB", "raise", 2.5), R("BB", "raise", 8), R("SB", "raise", 20)]
+        self.assertEqual(go("BB", "KhQh", hu4, players=2)[0]["recommended"], "call")
+        # a limp-reraise is a trapped range: TT folds most of the time, KK goes in
+        lrr = [R("UTG", "call")] + F("HJ", "CO") + [R("BTN", "raise", 4)] + F("SB", "BB") + [R("UTG", "raise", 14)]
+        self.assertEqual(go("BTN", "TsTd", lrr)[0]["recommended"], "fold")
+        self.assertEqual(go("BTN", "KsKd", lrr)[0]["recommended"], "all-in")
+        # 9-handed early opens are tighter, so KJs calls less than against a 6-max UTG
+        self.assertLess(go("UTG1", "KhJh", [R("UTG", "raise", 2.5)], players=9)[1]["call"]["freq"],
+                        go("HJ", "KhJh", [R("UTG", "raise", 2.5)])[1]["call"]["freq"])
 
 
 if __name__ == "__main__":

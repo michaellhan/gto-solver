@@ -151,6 +151,8 @@ def _norm(key: str) -> str:
 def vs_rfi_chart(hero_key: str, opener_key: str) -> Dict[str, np.ndarray]:
     if hero_key == "HU_BB":
         return HU_BB_VS_SB
+    if opener_key == "EP" and hero_key not in ("SB", "BB"):
+        return VS_EP
     h, o = _norm(hero_key), _norm(opener_key)
     chart = VS_RFI.get((h, o))
     if chart is not None:
@@ -217,6 +219,19 @@ VS_5BET_DEEP = {"raise": R("AA, KK:0.6, AKs:0.4"), "call": R("KK:0.4, QQ:0.8, AK
 HU_SB_VS_3BET = {
     "4bet": R("QQ+, JJ:0.5, AKs, AKo, AQs:0.5, A5s-A2s:0.4, K9s:0.2, Q9s:0.2, J9s:0.2"),
     "call": R("22-TT, JJ:0.5, A2s-AJs, AQs:0.5, A8o-AQo, A7o-A5o:0.5, K6s+, KTo+, K9o:0.5, Q8s+, QTo+, J8s+, JTo, T7s+, T9o:0.5, 97s+, 86s+, 75s+, 64s+, 54s, 53s:0.5"),
+}
+
+# heads-up big blind facing the button's 4bet (its 3bets are wide, so it continues wider than 6-max)
+HU_BB_VS_4BET = {
+    "jam": R("QQ+, JJ:0.5, AKs, AKo, AQs:0.3, A5s:0.3, A4s:0.2"),
+    "call": R("JJ:0.5, TT, 99:0.5, AQs:0.7, AQo:0.6, AJs, AJo:0.3, KQs, KJs:0.6, KQo:0.3, QJs:0.5, JTs:0.5"),
+}
+# an iso-raiser facing the limper's re-raise (a trapped range: mostly QQ+ and AK)
+VS_LIMP_RERAISE = {"4bet": R("KK+, AKs:0.5"), "call": R("QQ, JJ:0.6, TT:0.3, AKs:0.5, AKo:0.6, AQs:0.3")}
+# a seat in position facing a 7+ handed early-position open (~13%: tighter than the 6-max UTG chart)
+VS_EP = {
+    "3bet": R("QQ+, AKs, AKo:0.6, A5s:0.3, JJ:0.3"),
+    "call": R("22-TT, JJ:0.7, AQs, AJs, ATs:0.5, AQo:0.5, KQs, KJs:0.5, QJs:0.5, JTs:0.5, T9s:0.3, 98s:0.2"),
 }
 
 # ---------- limped pots ----------
@@ -289,13 +304,18 @@ def _actions_at(hero: str, actions: List[dict], positions: Optional[List[str]] =
         return {"raise": chart["3bet"], "call": chart["call"]}
     if n_raises == 2:
         opener, threebettor = raisers
+        first = next(i for i, a in enumerate(actions) if a["action"] in ("raise", "all-in"))
+        if hero == opener and any(a["pos"] == threebettor and a["action"] == "call" for a in actions[:first]):
+            c = VS_LIMP_RERAISE        # the 3bettor limped first: a limp-reraise
+            return {"raise": c["4bet"], "call": c["call"]}
         if hero == opener:
             c = vs_3bet(key(opener), key(threebettor))
             return {"raise": c["4bet"], "call": c["call"]}
         return {"raise": COLD_VS_3BET["4bet"], "call": COLD_VS_3BET["call"]}
     if n_raises == 3:
         if hero == raisers[1]:
-            return {"raise": VS_4BET["jam"], "call": VS_4BET["call"]}
+            c = HU_BB_VS_4BET if len(positions) == 2 else VS_4BET
+            return {"raise": c["jam"], "call": c["call"]}
         return {"raise": COLD_VS_3BET["4bet"] * 0.5, "call": COLD_VS_3BET["call"] * 0.5}
     if [a["action"] for a in actions if a["action"] in ("raise", "all-in")][-1] == "raise":
         return dict(VS_5BET_DEEP)       # a 5bet that leaves chips behind (an all-in goes to the jam logic)
