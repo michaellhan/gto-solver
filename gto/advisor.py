@@ -607,9 +607,13 @@ class Advisor:
             return full
         opp, need, call, pot, behind = priced(st, stack)
         opp_std, need_std, _, _, behind_std = priced(std, CHART_STACK)
-        # implied odds: deeper than the charts, pairs and suited hands win more when they hit
+        # implied odds: pairs and suited hands win more when they hit, by the stack behind. Deeper or
+        # shallower than the charts moves their price by how their odds with those winnings change at
+        # this price, so 20bb shallower costs a small pair a little of the implied odds it had at chart
+        # depth, not all of them.
         depth = behind - behind_std
-        need_v = call / np.maximum(pot + call + _IMPLIED_W * depth, call + 1e-9)
+        implied = lambda b: call / np.maximum(pot + call + _IMPLIED_W * max(b, 0.0), call + 1e-9)
+        need_v = need + implied(behind) - implied(behind_std)
         more = sorted(opp) != sorted(opp_std)
         reprice = abs(need - need_std) >= PRICE_TOL or abs(depth) >= DEPTH_TOL
         if not (more or reprice):

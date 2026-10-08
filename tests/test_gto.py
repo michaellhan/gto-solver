@@ -280,6 +280,15 @@ class TestAdvisor(unittest.TestCase):
         chart, priced = preflop_ranges(pre(2.5), T, 100)["SB"], preflop_ranges(pre(3), T, 100)["SB"]
         self.assertLess(priced.sum(), chart.sum())
         self.assertGreater(priced.sum(), 0.7 * chart.sum())
+        # depth: 40bb less used to cost small pairs and suited hands all their implied odds (SB kept 17 of 85
+        # flats vs a CO open, no pair or suited connector), and 100bb more made SB flat 276 combos
+        co = [{"pos": p, "action": "fold"} for p in ("UTG", "HJ")] + [
+            {"pos": "CO", "action": "raise", "to": 2.5}, {"pos": "BTN", "action": "fold"}, {"pos": "SB", "action": "call"}]
+        chart, short = preflop_ranges(co, T, 100)["SB"], preflop_ranges(co, T, 60)["SB"]
+        small = np.array([hand_class(c) in ("22", "33", "44", "54s", "65s") for c in ALL_COMBOS])
+        self.assertGreater(short.sum(), 0.5 * chart.sum())
+        self.assertGreater((short * small).sum(), 0.3 * (chart * small).sum())
+        self.assertLess(preflop_ranges(pre(2.5), T, 200)["SB"].sum(), 2 * preflop_ranges(pre(2.5), T, 100)["SB"].sum())
 
     def test_called_barrels_keep_a_range(self):
         """SB flats a 3bb open, then check-calls flop and turn: a short turn prior solve that folds most
