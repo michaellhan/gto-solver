@@ -240,7 +240,7 @@
   <h1>GTO Solver</h1>
   <span class="spacer"></span>
   <span class="ctl" id="oppctl"><span class="muted" style="font-size:12px">Opponents</span>
-    <div class="segment"><button data-o="gto" class="active" title="Opponents play the equilibrium (GTO): advice that can't be exploited, whoever you face.">GTO</button><button data-o="pool" title="Opponents play like a typical player pool: they call small bets too often, fold too often to big turn and river bets, and raise and bluff less (preflop they flat more and 3bet less). Advice is the highest-EV play against that, after the flop.">Pool</button></div></span>
+    <div class="segment"><button data-o="gto" class="active" title="Opponents play the equilibrium (GTO): advice that can't be exploited, whoever you face.">GTO</button><button data-o="pool" title="Opponents play like a typical player pool: they call small bets too often, fold too often to big turn and river bets, and raise and bluff less (preflop they flat more, 3bet less and 4bet only premiums). Preflop, your calls and raises adjust to those ranges (opens follow the chart); after the flop, advice is the highest-EV play against them.">Pool</button></div></span>
   <span class="ctl" id="solvectl"><span class="muted" style="font-size:12px">Solve</span>
     <div class="segment"><button data-m="fast" class="active" title="A few seconds per spot. River answers are solid; turn and flop answers are rough.">Fast</button><button data-m="accurate" title="Much longer per spot (about 30 s with the local server, about a minute in the browser). Turn answers get close to a full solver.">Accurate</button></div></span>
   <button id="fourcolor" class="small" title="Four-colour deck: diamonds blue, clubs green">4-colour</button>
@@ -759,7 +759,7 @@ function payload() {
   return { players: S.players, hero: S.hero, hole: S.cards[0] + S.cards[1], board: boardCards().join(""), stack: S.stack,
            ...(ANTE() ? { ante: ANTE() } : {}), ...(STRADDLER() ? { straddle: true } : {}),
            preflop: conv(S.actions.preflop), flop: conv(S.actions.flop), turn: conv(S.actions.turn), river: conv(S.actions.river), budget: BUDGET, prior_budget: PRIOR, speed: SPEED,
-           ...(OPP === "pool" && boardCards().length ? { opponents: "pool" } : {}) };   // preflop advice follows the charts either way
+           ...(OPP === "pool" ? { opponents: "pool" } : {}) };
 }
 // the payload key of the same spot at another speed
 function keyFor(key, speed) {

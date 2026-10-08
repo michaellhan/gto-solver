@@ -596,6 +596,19 @@ class TestExploit(unittest.TestCase):
         # the pool under-bluffs river bets: the best response folds more of the range than GTO
         self.assertGreater(pool["range_action_freq"]["fold"], gto["range_action_freq"]["fold"] + 0.1)
 
+    def test_pool_preflop_advice(self):
+        """Facing a pool 4bet (QQ+/AK) hero folds more than against the chart's; opens stay the chart's."""
+        adv = Advisor()
+        R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
+        F = lambda *ps: [R(p, "fold") for p in ps]
+        four = F("UTG", "HJ") + [R("CO", "raise", 2.5), R("BTN", "raise", 7.5), R("SB", "fold"), R("BB", "fold"), R("CO", "raise", 22)]
+        st = {"players": 6, "hero": "BTN", "hole": "JsJh", "board": "", "stack": 100, "preflop": four}
+        fold = lambda r: next(a["freq"] for a in r["actions"] if a["action"] == "fold")
+        self.assertGreater(fold(adv.advise(dict(st, opponents="pool"))), fold(adv.advise(st)) + 0.3)
+        self.assertLess(fold(adv.advise(dict(st, hole="KsKh", opponents="pool"))), 0.01)
+        opens = dict(st, hero="CO", hole="As9h", preflop=F("UTG", "HJ"))
+        self.assertEqual(adv.advise(dict(opens, opponents="pool"))["actions"], adv.advise(opens)["actions"])
+
     def test_multiway_narrowing_leaves_cached_ranges_alone(self):
         """Multiway narrowing used to write into the cached preflop ranges, so the same request twice gave
         different answers (and the next street started from ranges narrowed twice)."""
