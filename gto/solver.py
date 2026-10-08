@@ -578,26 +578,29 @@ class Solver:
                 break
         return self.iters, time.time() - t0
 
-    def _best_response(self, node, p, r0, r1):
+    def _best_response(self, node, p, r0, r1, lock=None):
         """Counterfactual utility for p playing a best response to the opponent's average
-        strategy, every chance card enumerated."""
+        strategy, every chance card enumerated. `lock(node, strat, reach)` turns the opponent's
+        strategy into the one they actually play (exploit mode's player pool)."""
         if isinstance(node, Terminal):
             return self._cfr(node, p, r0, r1, update=False, use_avg=True)
         if isinstance(node, Chance):
             B, K, n = r0.shape[0], node.K, self.ctx.n
             m3 = node.masks.reshape(B, K, n)
             u = self._best_response(node.child, p, (r0[:, None, :] * m3).reshape(B * K, n),
-                                    (r1[:, None, :] * m3).reshape(B * K, n))
+                                    (r1[:, None, :] * m3).reshape(B * K, n), lock)
             return (u.reshape(B, K, n) * m3).sum(axis=1) / node.norm
         if node.player == p:
-            return np.max([self._best_response(c, p, r0, r1) for c in node.children], axis=0)
+            return np.max([self._best_response(c, p, r0, r1, lock) for c in node.children], axis=0)
         strat = node.avg_strategy()
+        if lock is not None:
+            strat = lock(node, strat, r1 if p == 0 else r0)
         u = np.zeros(r0.shape)
         for a, c in enumerate(node.children):
             if p == 0:
-                u += self._best_response(c, p, r0, r1 * strat[:, a, :])
+                u += self._best_response(c, p, r0, r1 * strat[:, a, :], lock)
             else:
-                u += self._best_response(c, p, r0 * strat[:, a, :], r1)
+                u += self._best_response(c, p, r0 * strat[:, a, :], r1, lock)
         return u
 
     def exploitability(self, r0, r1) -> float:
@@ -624,6 +627,19 @@ class Solver:
                 evs[a] = np.where(cs > 1e-12, u / np.where(cs > 1e-12, cs, 1.0), 0.0) + inv_p
         finally:
             self.sampling = True
+        return evs
+
+    def node_action_br_evs(self, node: Decision, r0, r1, lock=None):
+        """Like node_action_evs, but the node's player best-responds after each action (to the
+        opponent's average strategy, or the strategy `lock` makes of it)."""
+        p = node.player
+        ro = (r1 if p == 0 else r0)[None, :]
+        cs = self.compat_sum(ro)[0]
+        inv_p = _inv_of(node, p)
+        evs = np.zeros((len(node.names), self.ctx.n))
+        for a, child in enumerate(node.children):
+            u = self._best_response(child, p, r0[None, :].astype(np.float32), r1[None, :].astype(np.float32), lock)[0]
+            evs[a] = np.where(cs > 1e-12, u / np.where(cs > 1e-12, cs, 1.0), 0.0) + inv_p
         return evs
 
 

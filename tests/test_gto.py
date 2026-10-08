@@ -304,9 +304,6 @@ class TestAdvisor(unittest.TestCase):
         self.assertGreater(out["villain_range_combos"], 1.0, out)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class TestTableSizes(unittest.TestCase):
     def test_replay_hand_dead_money_and_order(self):
@@ -538,3 +535,83 @@ class TestAccuracy(unittest.TestCase):
         for pos, lo, hi in (("UTG", 15, 18), ("HJ", 19, 22), ("CO", 26, 29), ("BTN", 40, 48)):
             pct = pf.RFI[pos].sum() / 1326 * 100
             self.assertTrue(lo <= pct <= hi, f"{pos} opens {pct:.1f}%")
+
+
+class TestExploit(unittest.TestCase):
+    """Exploit mode: opponents play like a typical player pool (gto/exploit.py) and hero best-responds."""
+
+    def test_pool_lock_folds_weakest_to_big_bets_and_calls_small_ones(self):
+        from gto.exploit import PoolLock
+        from gto.solver import Ctx
+        board = tuple(cards("Qs7c3d8h2s"))
+        live = np.array([i for i, (a, b) in enumerate(ALL_COMBOS) if a not in board and b not in board])
+        ctx = Ctx(live, Config())
+        lock = PoolLock(ctx, 1)
+        n = len(live)
+        class Node:   # player 1 faces a bet of `to_call` into `pot`
+            def __init__(self, to_call, pot, b=board):
+                self.boards, self.names, self.player = [b], ["fold", "call"], 1
+                self.bets, self.pot_now = (to_call, 0.0), pot + to_call
+        strat = np.full((1, 2, n), 0.5, dtype=np.float32)
+        reach = np.ones((1, n))
+        big = lock(Node(15.0, 10.0), strat, reach)
+        fold = float(big[0, 0].mean())
+        self.assertAlmostEqual(fold - 0.5, 0.15, places=2)       # a 1.5x-pot river overbet: 15% more of the range folds
+        pct = lock.pct(board)
+        self.assertGreater(big[0, 0][pct < 0.2].mean(), big[0, 0][pct > 0.8].mean())   # ...the weakest calls
+        flop = tuple(cards("Qs7c3d"))
+        small = PoolLock(Ctx(np.array([i for i, (a, b) in enumerate(ALL_COMBOS) if a not in flop and b not in flop]), Config()), 1)
+        n2 = len(small.ctx.active)
+        out = small(Node(2.0, 6.0, flop), np.full((1, 2, n2), 0.5, dtype=np.float32), np.ones((1, n2)))
+        self.assertLess(float(out[0, 0].mean()), 0.5)             # a third-pot flop bet: fewer folds
+        raised = Node(10.0, 10.0); raised.bets = (20.0, 10.0)    # facing a raise of its own bet: no shift
+        self.assertAlmostEqual(float(lock(raised, strat, reach)[0, 0].mean()), 0.5, places=5)
+
+    def test_pool_preflop_flats_more_and_3bets_less(self):
+        from gto.advisor import preflop_ranges
+        T = pf.Table(pf.SEATS[6])
+        F = lambda *ps: [{"pos": p, "action": "fold"} for p in ps]
+        line = lambda act: F("UTG", "HJ", "CO") + [{"pos": "BTN", "action": "raise", "to": 2.5}, {"pos": "SB", "action": act}]
+        gto_call, pool_call = preflop_ranges(line("call"), T, 100)["SB"], preflop_ranges(line("call"), T, 100, "BTN")["SB"]
+        gto_3b, pool_3b = preflop_ranges(line("raise"), T, 100)["SB"], preflop_ranges(line("raise"), T, 100, "BTN")["SB"]
+        self.assertGreater(pool_call.sum(), 2 * gto_call.sum())
+        self.assertLess(pool_3b.sum(), 0.6 * gto_3b.sum())
+        # hero's own range is the chart's
+        self.assertAlmostEqual(preflop_ranges(line("call"), T, 100, "SB")["SB"].sum(), gto_call.sum())
+
+    def test_pool_advice_best_responds(self):
+        adv = Advisor(time_budget=1.0, prior_budget=0.5)
+        F = lambda *ps: [{"pos": p, "action": "fold"} for p in ps]
+        st = {"players": 6, "hero": "BB", "hole": "QdJd", "board": "Qs7c3d8h2s", "stack": 100,
+              "preflop": F("UTG", "HJ", "CO") + [{"pos": "BTN", "action": "raise", "to": 2.5}] + F("SB") + [{"pos": "BB", "action": "call"}],
+              "flop": [{"pos": "BB", "action": "check"}, {"pos": "BTN", "action": "bet", "amount": 2}, {"pos": "BB", "action": "call"}],
+              "turn": [{"pos": "BB", "action": "check"}, {"pos": "BTN", "action": "bet", "amount": 6}, {"pos": "BB", "action": "call"}],
+              "river": [{"pos": "BB", "action": "check"}, {"pos": "BTN", "action": "bet", "amount": 15}]}
+        gto, pool = adv.advise(st), adv.advise(dict(st, opponents="pool"))
+        self.assertNotIn("gto_freq", gto["actions"][0])
+        self.assertTrue(all("gto_freq" in a for a in pool["actions"]))
+        best = max(pool["actions"], key=lambda a: a["ev_bb"])
+        self.assertEqual(pool["recommended"], best["action"])
+        self.assertEqual(sorted(a["freq"] for a in pool["actions"])[-1], 1.0)
+        # the pool under-bluffs river bets: the best response folds more of the range than GTO
+        self.assertGreater(pool["range_action_freq"]["fold"], gto["range_action_freq"]["fold"] + 0.1)
+
+    def test_multiway_narrowing_leaves_cached_ranges_alone(self):
+        """Multiway narrowing used to write into the cached preflop ranges, so the same request twice gave
+        different answers (and the next street started from ranges narrowed twice)."""
+        from gto.advisor import preflop_ranges
+        pre = [{"pos": "UTG", "action": "raise", "to": 2.5}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "call"},
+               {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "fold"}]
+        T = pf.Table(pf.SEATS[6])
+        before = {p: v.sum() for p, v in preflop_ranges(pre, T, 100).items()}
+        st = {"players": 6, "hero": "BTN", "hole": "AhKh", "board": "Ks7d2c9h", "stack": 100, "preflop": pre,
+              "flop": [{"pos": "UTG", "action": "bet", "amount": 4}, {"pos": "CO", "action": "call"}, {"pos": "BTN", "action": "call"}],
+              "turn": [{"pos": "UTG", "action": "check"}, {"pos": "CO", "action": "check"}]}
+        adv = Advisor(time_budget=0.5, prior_budget=0.3)
+        r1 = adv.advise(st)
+        self.assertEqual({p: v.sum() for p, v in preflop_ranges(pre, T, 100).items()}, before)
+        self.assertEqual([a["ev_bb"] for a in r1["actions"]], [a["ev_bb"] for a in adv.advise(st)["actions"]])
+
+
+if __name__ == "__main__":
+    unittest.main()

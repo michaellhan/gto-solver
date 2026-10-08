@@ -239,6 +239,8 @@
 <header>
   <h1>GTO Solver</h1>
   <span class="spacer"></span>
+  <span class="ctl" id="oppctl"><span class="muted" style="font-size:12px">Opponents</span>
+    <div class="segment"><button data-o="gto" class="active" title="Opponents play the equilibrium (GTO): advice that can't be exploited, whoever you face.">GTO</button><button data-o="pool" title="Opponents play like a typical player pool: they call small bets too often, fold too often to big turn and river bets, and raise and bluff less (preflop they flat more and 3bet less). Advice is the highest-EV play against that, after the flop.">Pool</button></div></span>
   <span class="ctl" id="solvectl"><span class="muted" style="font-size:12px">Solve</span>
     <div class="segment"><button data-m="fast" class="active" title="A few seconds per spot. River answers are solid; turn and flop answers are rough.">Fast</button><button data-m="accurate" title="Much longer per spot (about 30 s with the local server, about a minute in the browser). Turn answers get close to a full solver.">Accurate</button></div></span>
   <button id="fourcolor" class="small" title="Four-colour deck: diamonds blue, clubs green">4-colour</button>
@@ -332,6 +334,9 @@ const BUDGETS = { server: { fast: [2.5, 1.2], accurate: [30, 6] }, wasm: { fast:
 let SPEED = "fast";
 try { if (localStorage.getItem("gto-speed") === "accurate") SPEED = "accurate"; } catch (e) {}
 let BUDGET = 4, PRIOR = 2;
+// opponents: "gto" (equilibrium) or "pool" (a typical player pool, exploited); a preference like the speed
+let OPP = "gto";
+try { if (localStorage.getItem("gto-opponents") === "pool") OPP = "pool"; } catch (e) {}
 const WORKER_VERSION = "14";   // scripts/deploy.sh replaces this with a hash of worker.js
 
 // ---- backend: the local Python server if present, otherwise the solver runs in the browser (Pyodide worker)
@@ -347,6 +352,19 @@ const modeReady = (async () => {
     try { localStorage.setItem("gto-speed", m); } catch (e) {}
   };
   setSpeed(SPEED);
+  const octl = document.getElementById("oppctl");
+  const setOpp = (o) => {
+    OPP = o;
+    octl.querySelectorAll("button").forEach(x => x.classList.toggle("active", x.dataset.o === o));
+    try { localStorage.setItem("gto-opponents", o); } catch (e) {}
+  };
+  setOpp(OPP);
+  octl.querySelectorAll("button").forEach(b => b.onclick = async () => {
+    if (b.dataset.o === OPP) return;
+    setOpp(b.dataset.o);
+    await cancelSolve();
+    lastKey = null; renderAll();
+  });
   ctl.querySelectorAll("button").forEach(b => b.onclick = async () => {
     if (b.dataset.m === SPEED) return;
     setSpeed(b.dataset.m);
@@ -740,7 +758,8 @@ function payload() {
   const conv = (arr) => arr.map(a => a.action === "bet" ? { pos: a.pos, action: "bet", amount: a.to } : a.action === "raise" ? { pos: a.pos, action: "raise", to: a.to } : { pos: a.pos, action: a.action });
   return { players: S.players, hero: S.hero, hole: S.cards[0] + S.cards[1], board: boardCards().join(""), stack: S.stack,
            ...(ANTE() ? { ante: ANTE() } : {}), ...(STRADDLER() ? { straddle: true } : {}),
-           preflop: conv(S.actions.preflop), flop: conv(S.actions.flop), turn: conv(S.actions.turn), river: conv(S.actions.river), budget: BUDGET, prior_budget: PRIOR, speed: SPEED };
+           preflop: conv(S.actions.preflop), flop: conv(S.actions.flop), turn: conv(S.actions.turn), river: conv(S.actions.river), budget: BUDGET, prior_budget: PRIOR, speed: SPEED,
+           ...(OPP === "pool" && boardCards().length ? { opponents: "pool" } : {}) };   // preflop advice follows the charts either way
 }
 // the payload key of the same spot at another speed
 function keyFor(key, speed) {
@@ -817,7 +836,7 @@ function renderResult(res, key) {
   h += `<div class="arows${hasEv ? "" : " noev"}"><div class="arow head"><span>Action</span><span>${res.multiway ? "" : "Solver mix"}</span><span class="num">${res.multiway ? "" : "Freq"}</span>${hasEv ? '<span class="num" title="Expected value of taking this action, in big blinds">EV</span>' : ""}</div>`;
   for (const a of res.actions) {
     const ev = hasEv ? (a.ev_bb !== undefined ? `<span class="num ${a.ev_bb > 0.005 ? "pos" : a.ev_bb < -0.005 ? "neg" : ""}">${a.ev_bb > 0 ? "+" : ""}${a.ev_bb.toFixed(2)} bb</span>` : "<span></span>") : "";
-    h += `<div class="arow ${a.action === res.recommended ? "best" : ""}" data-act='${JSON.stringify(a)}' title="Click to record this as what you did"><span class="name">${a.action}${a.amount_bb != null ? `<small>${a.amount_bb} bb</small>` : ""}</span><div class="bar"><div style="width:${(a.freq * 100).toFixed(1)}%;background:${COLORS(a.action)}"></div></div><span class="num">${(a.freq * 100).toFixed(1)}%</span>${ev}</div>`;
+    h += `<div class="arow ${a.action === res.recommended ? "best" : ""}" data-act='${JSON.stringify(a)}' title="Click to record this as what you did"><span class="name">${a.action}${a.amount_bb != null ? `<small>${a.amount_bb} bb</small>` : ""}</span><div class="bar"><div style="width:${(a.freq * 100).toFixed(1)}%;background:${COLORS(a.action)}"></div></div><span class="num"${a.gto_freq !== undefined ? ` title="GTO plays this ${(a.gto_freq * 100).toFixed(1)}% of the time"` : ""}>${(a.freq * 100).toFixed(1)}%${a.gto_freq !== undefined ? `<small class="muted" style="display:block;font-size:10px">GTO ${(a.gto_freq * 100).toFixed(0)}%</small>` : ""}</span>${ev}</div>`;
   }
   h += `</div><div class="meta">Click a row to record it as what you did.${hasEv ? " EV is in big blinds relative to folding now, so fold is 0: chips already in the pot are gone either way." : res.street === "preflop" ? " Preflop comes from charts, so there's no EV column." : ""}${res.widened && res.widened.length ? ` The solve rarely has ${res.widened.join(" and ")} play this way, so their range comes from simple betting rules instead; the EVs (and the pick) are against that range, so they can disagree with the solver's mix.` : conv && conv.cls !== "ok" ? " Actions the solver mixes should have near-equal EVs; gaps here mean the solve hasn't settled." : ""}</div>`;
   if (res.grid) h += renderGrid(res.grid, res.hand);
@@ -940,8 +959,8 @@ function handText() {
   }
   const r = lastResult;
   if (r && !r.error) {
-    lines.push(`Advice (${r.street}${r.position ? ", " + r.position : ""}): ${r.recommended}`);
-    lines.push("  " + r.actions.map(a => `${a.action}${a.amount_bb != null ? " " + a.amount_bb + "bb" : ""} ${(a.freq * 100).toFixed(1)}%${a.ev_bb !== undefined ? " EV " + (a.ev_bb > 0 ? "+" : "") + a.ev_bb.toFixed(2) : ""}`).join(" | "));
+    lines.push(`Advice (${r.street}${r.position ? ", " + r.position : ""}${r.actions.some(a => a.gto_freq !== undefined) ? ", vs a typical player pool" : ""}): ${r.recommended}`);
+    lines.push("  " + r.actions.map(a => `${a.action}${a.amount_bb != null ? " " + a.amount_bb + "bb" : ""} ${(a.freq * 100).toFixed(1)}%${a.gto_freq !== undefined ? ` (GTO ${(a.gto_freq * 100).toFixed(0)}%)` : ""}${a.ev_bb !== undefined ? " EV " + (a.ev_bb > 0 ? "+" : "") + a.ev_bb.toFixed(2) : ""}`).join(" | "));
     if (r.range_action_freq) lines.push("  whole range: " + Object.entries(r.range_action_freq).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(", "));
     if (r.villain_range) lines.push(`  ${r.villain} range (${r.villain_range_combos} combos): ${r.villain_range}`);
     if (r.multiway) lines.push(`  equity vs field ${(r.equity_vs_field * 100).toFixed(0)}% (heuristic, ${r.opponents.length + 1} players)`);

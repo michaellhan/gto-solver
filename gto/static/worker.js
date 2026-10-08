@@ -2,7 +2,7 @@
 importScripts("https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js");
 
 // no __init__ here: GitHub Pages (Jekyll) will not serve files starting with an underscore
-const FILES = ["cards", "ranges", "evaluator", "preflop", "pf_equity", "pf_classes", "solver", "advisor"];
+const FILES = ["cards", "ranges", "evaluator", "preflop", "pf_equity", "pf_classes", "solver", "exploit", "advisor"];
 
 const ready = (async () => {
   postMessage({ status: "Loading the solver runtime (about 15 MB, cached after the first visit)…" });
