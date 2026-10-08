@@ -48,6 +48,7 @@ CHART_STACK = 100.0  # the depth the preflop charts are written for
 IMPLIED = {"pair": 0.06, "suited": 0.03}  # preflop calls: share of the stack behind (beyond the chart's) small pairs / suited hands expect to win later
 DEPTH_TOL = 20.0   # ...a spot this many bb deeper or shallower than the charts re-prices calls
 PRICE_TOL = 0.02    # ...and a spot within this much of the chart's pot odds, against the raisers only, is the chart's own
+CUT_FLOOR = 0.05    # ...a worse price holds the chart's continuing hands to the equity of its weakest this share of them
 EV_GAP = 1.0        # heads-up, unsettled solve: recommend the highest EV when it beats the top of the mix by this % of pot
 STREET_OF = {0: "preflop", 3: "flop", 4: "turn", 5: "river"}
 STREETS = ["preflop", "flop", "turn", "river"]
@@ -650,11 +651,17 @@ class Advisor:
         if reprice:
             q = float((w * (call_c + raise_c)).sum() / tot)
             if 0.02 < q < 0.98:
+                # a better price adds hands the chart folds that clear its bar (the equity at its continuing share)
                 realize = need_std / max(quantile(eq_std, w, q), 1e-6)
-                rule = np.clip(0.5 + (eq * realize - need_v) / PRICE_BLEND, 0.0, 1.0)
-                rule[np.isnan(rule)] = 0.0
-                # a worse price removes calls, never raises
-                new = np.where(need_v < need_std, np.maximum(base, rule), np.minimum(base, np.maximum(rule, raise_n)))
+                add = np.clip(0.5 + (eq * realize - need_v) / PRICE_BLEND, 0.0, 1.0)
+                add[np.isnan(add)] = 0.0
+                # a worse price removes calls, never raises. The chart keeps playable hands (small pairs,
+                # suited connectors) below that raw-equity bar, so its continuing hands are held to its
+                # weakest ones instead: a slightly worse price trims the bottom, not every such hand.
+                floor = quantile(eq_std, w * (call_c + raise_c), 1.0 - CUT_FLOOR)
+                cut = np.clip(1.0 + (eq * need_std / max(floor, 1e-6) - need_v) / PRICE_BLEND, 0.0, 1.0)
+                cut[np.isnan(cut)] = 0.0
+                new = np.where(need_v < need_std, np.maximum(base, add), np.minimum(base, np.maximum(cut, raise_n)))
                 deep = (f", {abs(depth):g}bb {'deeper' if depth > 0 else 'shallower'} than the charts "
                         f"(implied odds for pairs and suited hands)" if abs(depth) >= DEPTH_TOL else "")
                 msg.insert(0, f"price {need:.0%} of the pot against {', '.join(opp)} (the chart assumes "
@@ -773,7 +780,8 @@ class Advisor:
                 eff = min(stack - st.inv_start[oop], stack - st.inv_start[ip])
                 cfg = self._cfg_with_real_sizes(st, oop, ip, eff)
                 sol = self._solve_cached(sub_board, r0, r1, st.pot_start, eff, self.prior_budget, cfg=cfg)
-                node, c0, c1 = self._walk(sol, st.actions, oop, ip, st.pot_start, eff, notes, st.name, self.prior_smoothing)
+                node, c0, c1 = self._walk(sol, st.actions, oop, ip, st.pot_start, eff, notes, st.name, self.prior_smoothing,
+                                          board=sub_board, rules=(0, 1))
                 r0, r1 = expand(sol.ctx, c0), expand(sol.ctx, c1)
             eff = min(stack - cur.inv_start[oop], stack - cur.inv_start[ip])
             cfg = self._cfg_with_real_sizes(cur, oop, ip, eff)
@@ -1288,12 +1296,16 @@ class Advisor:
         return cfg
 
     def _walk(self, sol: Solution, acts: List[dict], oop, ip, pot, stack, notes, street, smoothing=0.0, only=None,
-              widened=None, board=None):
+              widened=None, board=None, rules=None):
         """Follow real actions through the solved tree, narrowing ranges. Smoothing mixes each
         strategy with uniform so a line the solve rarely takes doesn't shrink a range to nothing.
         With `only` (0 = OOP, 1 = IP) and `board`, that player's actions are exact unless the solve
         takes one with less than RARE_LINE of their range: then their range for it comes from the
-        multiway betting rules instead (see _rule_mask), and their seat is appended to `widened`."""
+        multiway betting rules instead (see _rule_mask), and their seat is appended to `widened`.
+        `rules` (players, with `board`) gives the same fallback on an earlier street, where the other
+        actions stay smoothed: a short prior solve can be far from equilibrium, and a line it rarely
+        takes (a turn call it folds two pair to) would leave the range a sliver."""
+        rules = (only,) if rules is None and only is not None else rules or ()
         node = sol.root
         r0, r1 = sol.r0.copy(), sol.r1.copy()
         bets = [0.0, 0.0]
@@ -1310,9 +1322,9 @@ class Advisor:
             k = match_action(node.names, name)
             s = node.avg_strategy0()[k]
             rp = r0 if p == 0 else r1
-            rare = only is None or (rp * s).sum() < RARE_LINE * max(rp.sum(), 1e-12)
-            if only is not None and p == only and rare and board is not None and a["action"] != "fold":
-                if widened is not None:
+            rare = (rp * s).sum() < RARE_LINE * max(rp.sum(), 1e-12)
+            if p in rules and rare and board is not None and a["action"] != "fold":
+                if widened is not None and p == only:
                     widened.append(a["pos"])
                 notes.append(f"{street}: the solve rarely has {a['pos']} {a['action']} here "
                              f"({(rp * s).sum() / max(rp.sum(), 1e-12) * 100:.0f}% of their range), so their range "

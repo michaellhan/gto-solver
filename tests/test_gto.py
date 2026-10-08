@@ -270,6 +270,30 @@ class TestAdvisor(unittest.TestCase):
             r = rate(hero, pre)
             self.assertTrue(lo <= r <= hi, f"{hero} after {[(a['pos'], a['action']) for a in pre]}: {r:.2f} not in [{lo}, {hi}]")
 
+    def test_slightly_worse_price_trims_flats(self):
+        """A 3bb button open (the chart's is 2.5bb) used to cut SB's flats from 85 combos to 24: the chart
+        keeps small pairs and suited connectors below the raw-equity bar, and any worse price cut them all."""
+        from gto.advisor import preflop_ranges
+        T = pf.Table(pf.SEATS[6])
+        pre = lambda to: [{"pos": p, "action": "fold"} for p in ("UTG", "HJ", "CO")] + [
+            {"pos": "BTN", "action": "raise", "to": to}, {"pos": "SB", "action": "call"}]
+        chart, priced = preflop_ranges(pre(2.5), T, 100)["SB"], preflop_ranges(pre(3), T, 100)["SB"]
+        self.assertLess(priced.sum(), chart.sum())
+        self.assertGreater(priced.sum(), 0.7 * chart.sum())
+
+    def test_called_barrels_keep_a_range(self):
+        """SB flats a 3bb open, then check-calls flop and turn: a short turn prior solve that folds most
+        of SB's range (two pair included) used to leave it under one combo on the river."""
+        adv = Advisor(time_budget=0.5, prior_budget=0.5)
+        F = lambda *ps: [{"pos": p, "action": "fold"} for p in ps]
+        xbc = lambda amt: [{"pos": "SB", "action": "check"}, {"pos": "BTN", "action": "bet", "amount": amt},
+                           {"pos": "SB", "action": "call"}]
+        out = adv.advise({"players": 6, "hero": "BTN", "hole": "As4d", "board": "3s2cQs9hKc", "stack": 100,
+                          "preflop": F("UTG", "HJ", "CO") + [{"pos": "BTN", "action": "raise", "to": 3},
+                                                             {"pos": "SB", "action": "call"}] + F("BB"),
+                          "flop": xbc(5), "turn": xbc(13), "river": [{"pos": "SB", "action": "check"}]})
+        self.assertGreater(out["villain_range_combos"], 1.0, out)
+
 
 if __name__ == "__main__":
     unittest.main()
