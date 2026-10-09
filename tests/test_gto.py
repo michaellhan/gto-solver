@@ -387,6 +387,37 @@ class TestTableSizes(unittest.TestCase):
         self.assertGreater(r["actions"][1]["ev_bb"], -5.5)     # later streets never cost more than the call
         self.assertIn("error", adv.advise(dict(st, hole="8h2c")))   # 8h is on the board
 
+    def test_multiway_folds_follow_range_strength(self):
+        # BB checks flop and turn, then leads the river; CO calls. BB's range is mostly air, CO's
+        # call is mostly better than Q9. Each used to fold 64% of their range to a raise, so CO
+        # folded QK and AA and a raise with the bluff-catcher Q9 showed +8bb; the folds now come
+        # from the weak range.
+        from gto.advisor import _joint_top, _top
+        adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
+               {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
+        r = adv.advise({"players": 6, "hero": "BTN", "hole": "Qc9c", "board": "Qd8s3h2c7d", "preflop": pre,
+                        "flop": [{"pos": "BB", "action": "check"}, {"pos": "CO", "action": "bet", "amount": 2.5},
+                                 {"pos": "BTN", "action": "call"}, {"pos": "BB", "action": "call"}],
+                        "turn": [{"pos": p, "action": "check"} for p in ("BB", "CO", "BTN")],
+                        "river": [{"pos": "BB", "action": "bet", "amount": 8}, {"pos": "CO", "action": "call"}]})
+        self.assertTrue(r.get("multiway"))
+        self.assertNotEqual(r["recommended"], "raise to 37.5")
+        self.assertLess(r["actions"][2]["ev_bb"], 0.0)
+        note = next(n for n in r["notes"] if n.startswith("vs raise"))
+        bb, co = (int(note.split(f"{p} continues with ")[1].split("%")[0]) for p in ("BB", "CO"))
+        self.assertLess(bb, co)
+        # One range: the same as keeping its top share.
+        rng = np.random.default_rng(1)
+        w, sc = rng.random(1326), rng.random(1326)
+        self.assertTrue((_joint_top([w], 0.4, np.argsort(-sc))[0] == _top(w, 0.6, np.argsort(-sc))).all())
+        # A strong and a weak range: the weak one folds more, and they fold together 40% of the time.
+        strong, weak = np.where(sc > 0.5, 1.0, 0.1), np.where(sc < 0.5, 1.0, 0.1)
+        ms, mw = _joint_top([strong, weak], 0.4, np.argsort(-sc))
+        share = lambda r, m: (r * m).sum() / r.sum()
+        self.assertGreater(share(strong, ms), share(weak, mw))
+        self.assertAlmostEqual((1 - share(strong, ms)) * (1 - share(weak, mw)), 0.4, delta=0.01)
+
     def test_multiway_streets_narrow_ranges(self):
         from gto.advisor import replay_hand, _narrow_street
         import gto.preflop as pf

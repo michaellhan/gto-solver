@@ -175,7 +175,9 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   Carlo heuristic picks the highest-EV action among fold / call / raise to 75% pot
   (or check / bet 66% pot), with opponents following simple range rules:
   facing a bet they fold together a quarter less often than a balanced defence
-  (people call too much), the strongest third of what continues raises, and when
+  (people call too much), with everyone keeping the hands above one strength bar, so a
+  weak range (a lead after checking twice) folds more of itself than a strong one (a
+  call of that lead), the strongest part of what continues raises, and when
   they bet it's value plus balanced bluffs. Players still to act behind you can
   call or raise after you call, a raise can be re-raised, and every line plays to
   the river: on each later street you lead for value when you're ahead of what

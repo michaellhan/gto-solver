@@ -197,6 +197,37 @@ def _keep(b, p, n, shade=None) -> float:
     return 1.0 - (shade * b / (p + b)) ** (1.0 / max(n, 1))
 
 
+def _joint_top(rs: List[np.ndarray], fold: float, rank: np.ndarray) -> List[np.ndarray]:
+    """What each of the ranges rs continues with against a bet they fold to together with
+    probability `fold`: everyone keeps the hands above one strength bar (in `rank` order), set so
+    the chance that every player's hand is below it is `fold`. A range of weak hands gives up more
+    of itself than a strong one: after a lead and a call, the caller (who called with what beats
+    the lead) keeps most of their range and the leader's bluffs fold. One range: _top(r, 1 - fold)."""
+    below = np.ones(N_COMBOS + 1)      # below[m]: chance all hands are outside the top m combos
+    for r in rs:
+        c = np.cumsum(r[rank])
+        if c[-1] > 0:
+            below *= 1.0 - np.concatenate(([0.0], c)) / c[-1]
+    m = int(np.argmax(below <= fold + 1e-9)) if fold < 1.0 else 0
+    out = []
+    for _ in rs:
+        mask = np.zeros(N_COMBOS, dtype=bool)
+        mask[rank[:m]] = True
+        out.append(mask)
+    return out
+
+
+def _share(r, mask) -> float:
+    """Share of range r's weight on mask."""
+    t = r.sum()
+    return float((r * mask).sum() / t) if t > 0 else 0.0
+
+
+def _fold_together(costs, p, shade=None) -> float:
+    """Chance the players paying `costs` to continue into a pot of p fold together (see _keep)."""
+    return float(np.prod([1.0 - _keep(c, p, len(costs), shade) for c in costs]))
+
+
 @lru_cache(maxsize=64)
 def _street_rank(board: tuple):
     """(strength averaged over runouts, combos strongest first) on this board; -1 = blocked."""
@@ -929,8 +960,10 @@ class Advisor:
         Opponents follow simple range rules, with hands ranked by average strength over runouts:
         - Facing a bet or raise of size b into pot p, the n players who can continue fold together
           with probability FOLD_SHADE * b / (p + b): a quarter less often than a balanced defence
-          (which would let a pure bluff break even), since real players call too much. Each keeps
-          the top of their range, and the strongest third of what continues raises instead.
+          (which would let a pure bluff break even), since real players call too much. They all
+          keep the hands above one strength bar, so a range of weak hands (a lead into the field
+          after checking twice) folds more of itself than a strong one (a call of that lead), and
+          the strongest part of what each continues with raises instead.
         - Betting into us: value with the top half of what would call that bet (balanced, unshaded), plus bluffs from
           the bottom of the range at the balanced ratio, bluffs = value * b / (p + b).
         - Once someone bets or raises, the players not involved fold.
@@ -1060,9 +1093,9 @@ class Advisor:
                 ids = tuple(id(rs[i]) for i in alive)
                 tkey = (run[3], tuple(alive), ids, round(p, 2)) if n == 4 else None
                 # We lead for value when we're ahead of every range that would call it.
-                k_lead = keep(b, p, len(alive))
                 def lead_fn():
-                    cs = {i: top(rs[i] * (sc >= 0), k_lead, rank) for i in alive}
+                    ws = [rs[i] * (sc >= 0) for i in alive]
+                    cs = dict(zip(alive, _joint_top(ws, _fold_together([b] * len(alive), p), rank)))
                     return all(equity(rs[i] * (sc >= 0) * cs[i], sts) > LEAD_EQ for i in alive), cs
                 lead, cs = cached(tkey and ("lead",) + tkey, lead_fn)
                 if lead:
@@ -1116,10 +1149,10 @@ class Advisor:
             behind = [i for i in after if cur.bets[opps[i]] < cur.cur_bet - 1e-9 and opps[i] not in cur.allin]
             matched = [i for i in range(n_opp) if i not in behind]
             beh = {}
-            for i in behind:
-                cost = min(cur.cur_bet, cap[i]) - cur.bets[opps[i]]
-                k = keep(cost, p_call, len(behind))
-                cont = top(opp_ranges[i], k, rank0)
+            costs = [min(cur.cur_bet, cap[i]) - cur.bets[opps[i]] for i in behind]
+            beh_conts = _joint_top([opp_ranges[i] for i in behind], _fold_together(costs, p_call), rank0)
+            for i, cost, cont in zip(behind, costs, beh_conts):
+                k = _share(opp_ranges[i], cont)
                 rto = min(round((cur.cur_bet + 0.75 * (p_call + cost)) * 2) / 2, cap[i])
                 hero_to = min(rto, cur.bets[hero] + hero_rem)
                 extra = hero_to - cur.cur_bet
@@ -1140,8 +1173,14 @@ class Advisor:
         hero_add = agg_to - cur.bets[hero] if agg_to > cur.cur_bet + 1e-9 else 0.0   # no raise once a call is all-in
         if hero_add > 1e-9:
             opp_add = [max(0.0, min(agg_to, cap[i]) - cur.bets[opps[i]]) for i in range(n_opp)]
-            k_agg = keep(hero_add, pot, n_opp)
-            conts = [top(r, k_agg, rank0) for r in opp_ranges]
+            # Players already all-in can't fold; the rest share one strength bar (see _joint_top).
+            can_fold = [i for i in range(n_opp) if opp_add[i] > 1e-9]
+            conts = [np.ones(N_COMBOS, dtype=bool) for _ in range(n_opp)]
+            if can_fold:
+                fold = _fold_together([hero_add] * n_opp, pot)
+                for i, m in zip(can_fold, _joint_top([opp_ranges[i] for i in can_fold], fold, rank0)):
+                    conts[i] = m
+            k_agg = [_share(opp_ranges[i], conts[i]) for i in range(n_opp)]
             agg_cont_r = [opp_ranges[i] * conts[i] for i in range(n_opp)]
             rr = {}
             for i in range(n_opp):
@@ -1149,7 +1188,7 @@ class Advisor:
                 hero_to = min(rto, cur.bets[hero] + hero_rem)
                 extra = hero_to - agg_to
                 if extra > 1e-9:
-                    m = aggro(opp_ranges[i], k_agg * RAISE_SHARE, rto - agg_to, pot + hero_add + opp_add[i], rank0)
+                    m = aggro(opp_ranges[i], k_agg[i] * RAISE_SHARE, rto - agg_to, pot + hero_add + opp_add[i], rank0)
                     p_r = pot + hero_add + rto - cur.bets[opps[i]]
                     rr[i] = (m, opp_ranges[i] * m, hero_to, extra, p_r,
                              calls(opp_ranges[i] * m, sts0, extra, p_r))
@@ -1280,7 +1319,8 @@ class Advisor:
                              + (f"; you'd call {', '.join(called)}" if called else "; you'd fold to it"))
         if hero_add > 1e-9:
             acts.append({"action": agg_name, "freq": 0.0, "ev_bb": round(ev["agg"], 2), "amount_bb": round(agg_to, 2)})
-            notes.append(f"vs {agg_name} each opponent continues with the top {k_agg*100:.0f}% of their range")
+            notes.append(f"vs {agg_name}: " + ", ".join(f"{opps[i]} continues with {k_agg[i]*100:.0f}%"
+                                                         for i in range(n_opp)) + " of their range")
         pick = max(range(len(acts)), key=lambda i: acts[i]["ev_bb"])
         acts[pick]["freq"] = 1.0
         notes.append(f"{trials} trials; the best action leads the next by {d:.2f} ± {se:.2f} bb")
