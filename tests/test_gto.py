@@ -449,6 +449,42 @@ class TestTableSizes(unittest.TestCase):
         self.assertEqual(r["actions"][1]["amount_bb"], 95.5)
         self.assertFalse(any("mapped 'all-in'" in n for n in r["notes"]))
 
+    def test_real_sizes_reach_the_tree(self):
+        adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "fold"},
+               {"pos": "BTN", "action": "raise", "to": 2.5}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
+        flop = [{"pos": "BB", "action": "check"}, {"pos": "BTN", "action": "bet", "amount": 2}, {"pos": "BB", "action": "call"}]
+        base = {"players": 6, "hero": "BTN", "hole": "7h6h", "board": "Th2hKd2s", "stack": 100, "preflop": pre, "flop": flop}
+        bet = [{"pos": "BB", "action": "check"}, {"pos": "BTN", "action": "bet", "amount": 5}]
+        cases = [
+            # a jam entered as a bet of the whole stack
+            (dict(base, turn=[{"pos": "BB", "action": "bet", "amount": 95.5}]), 95.5),
+            # a raise to the whole stack
+            (dict(base, turn=bet + [{"pos": "BB", "action": "raise", "to": 95.5}]), 90.5),
+            # an off-size raise and then a jam: the jam's size doesn't replace the raise's
+            (dict(base, hero="BB", hole="KhQs", turn=bet + [{"pos": "BB", "action": "raise", "to": 30},
+                                                           {"pos": "BTN", "action": "all-in"}]), 65.5),
+        ]
+        for state, to_call in cases:
+            r = adv.advise(state)
+            self.assertEqual(dict((a["action"], a["amount_bb"]) for a in r["actions"])["call"], to_call)
+            self.assertFalse(any(n.startswith("turn: mapped") and "bet 53%" not in n for n in r["notes"]), r["notes"])
+        # a flop 3bet past the tree's raise cap is a 3bet, not an all-in
+        r = adv.advise({"players": 6, "hero": "BB", "hole": "KhQs", "board": "Th2hKd", "stack": 100, "preflop": pre,
+                        "flop": [{"pos": "BB", "action": "check"}, {"pos": "BTN", "action": "bet", "amount": 2},
+                                 {"pos": "BB", "action": "raise", "to": 7}, {"pos": "BTN", "action": "raise", "to": 18}]})
+        self.assertLess(dict((a["action"], a["amount_bb"]) for a in r["actions"])["call"], 15)
+        self.assertFalse(any("to tree action 'all-in'" in n for n in r["notes"]))
+
+    def test_swap_nearest_keeps_sizes_taken(self):
+        from gto.advisor import _swap_nearest
+        sizes, fixed = [0.5, 1.0], set()
+        _swap_nearest(sizes, 1.3, fixed=fixed)
+        _swap_nearest(sizes, 5.0, fixed=fixed)
+        self.assertEqual(sizes, [5.0, 1.3])
+        _swap_nearest(sizes, 0.4, fixed=fixed)
+        self.assertEqual(sizes, [5.0, 1.3, 0.4])
+
 
 def _exact_equity(board, hero, villain_range):
     """Hero's equity against a range, every runout enumerated."""

@@ -1328,40 +1328,48 @@ class Advisor:
     def _cfg_with_real_sizes(self, st: StreetState, oop: str, ip: str, stack: float) -> Config:
         """Tree config for this street where the bet/raise sizes actually taken replace the
         nearest abstract size (only when they differ by more than 15%), so range narrowing
-        uses the real action instead of snapping it to the abstraction."""
+        uses the real action instead of snapping it to the abstraction. A size already taken
+        this street is never swapped out by a later one, an all-in deeper than the tree's
+        all-in SPR gets a size that reaches the stack, and the raise cap covers the raises made."""
         cfg = self.cfg.copy()
         bets = [0.0, 0.0]
         pot = st.pot_start
+        fixed = {"bet": set(), "raise": set()}
+        n_aggr = 0
         for a in st.actions:
             if a["pos"] not in (oop, ip):
                 continue
             p = 0 if a["pos"] == oop else 1
             act = a["action"]
             pot_total = pot + bets[0] + bets[1]
-            if act == "bet" and (a.get("amount") or a.get("to")):
-                amt = a.get("amount") or a.get("to")
-                frac = amt / max(pot_total, 1e-9)
-                _swap_nearest(cfg.bet_sizes[st.name], frac)
+            amt = a.get("amount") or a.get("to") if act == "bet" else a.get("to") or a.get("amount")
+            if act in ("bet", "raise") and amt and (bets[p] + amt if act == "bet" else amt) >= stack - 1e-9:
+                act = "all-in"   # a bet or raise of the whole stack
+            if act == "bet" and amt:
+                _swap_nearest(cfg.bet_sizes[st.name], amt / max(pot_total, 1e-9), fixed=fixed["bet"])
                 bets[p] = amt
-            elif act == "raise" and (a.get("to") or a.get("amount")):
-                to = a.get("to") or a.get("amount")
+            elif act == "raise" and amt:
                 call_amt = bets[1 - p] - bets[p]
-                frac = (to - bets[1 - p]) / max(pot_total + call_amt, 1e-9)
-                if to < stack - 1e-9:
-                    _swap_nearest(cfg.raise_sizes[st.name], frac)
-                bets[p] = to
+                _swap_nearest(cfg.raise_sizes[st.name], (amt - bets[1 - p]) / max(pot_total + call_amt, 1e-9),
+                              fixed=fixed["raise"])
+                bets[p] = amt
             elif act == "call":
                 bets[p] = min(bets[1 - p], stack)
             elif act == "all-in":
                 # the tree offers all-in only at low SPR; a deeper jam would map to the biggest bet,
                 # so swap in a size that reaches the stack (half a bb over, past the tree's rounding)
                 if bets[1 - p] <= bets[p]:
-                    _swap_nearest(cfg.bet_sizes[st.name], (stack - bets[p] + 0.5) / max(pot_total, 1e-9))
+                    _swap_nearest(cfg.bet_sizes[st.name], (stack - bets[p] + 0.5) / max(pot_total, 1e-9),
+                                  fixed=fixed["bet"])
                 else:
                     call_amt = bets[1 - p] - bets[p]
                     _swap_nearest(cfg.raise_sizes[st.name],
-                                  (stack - bets[1 - p] + 0.5) / max(pot_total + call_amt, 1e-9))
+                                  (stack - bets[1 - p] + 0.5) / max(pot_total + call_amt, 1e-9), fixed=fixed["raise"])
                 bets[p] = stack
+            if act in ("bet", "raise", "all-in"):
+                n_aggr += 1
+        # past the cap the tree offers only all-in, so a 3bet that isn't one would be read as a jam
+        cfg.max_raises = max(cfg.max_raises, n_aggr)
         return cfg
 
     def _walk(self, sol: Solution, acts: List[dict], oop, ip, pot, stack, notes, street, smoothing=0.0, only=None,
@@ -1388,7 +1396,7 @@ class Advisor:
             if p != node.player:
                 notes.append(f"{street}: action order mismatch at {a['pos']} {a['action']}; ignoring")
                 continue
-            name = self._tree_action_name(node, a, p, bets, pot)
+            name = self._tree_action_name(node, a, p, bets, pot, stack)
             k = match_action(node.names, name)
             rp = r0 if p == 0 else r1
             if lock is not None and p == lock.player:
@@ -1433,16 +1441,18 @@ class Advisor:
             node = node.children[k]
         return node, r0, r1
 
-    def _tree_action_name(self, node: Decision, a: dict, p: int, bets, pot) -> str:
+    def _tree_action_name(self, node: Decision, a: dict, p: int, bets, pot, stack: float = float("inf")) -> str:
         act = a["action"]
         if act in ("check", "fold", "call", "all-in"):
             return act
         pot_total = pot + bets[0] + bets[1]
         if act == "bet":
             amt = a.get("amount") or a.get("to") or 0.0
+            if bets[p] + amt >= stack - 1e-9:
+                return "all-in"
             return f"bet {amt / max(pot_total, 1e-9) * 100:.0f}%"
         to = a.get("to") or a.get("amount") or 0.0
-        return f"raise to {to:g}"
+        return "all-in" if to >= stack - 1e-9 else f"raise to {to:g}"
 
     @staticmethod
     def _amount(name: str, node: Decision, p: int) -> Optional[float]:
@@ -1469,14 +1479,26 @@ def _stack_left(node: Decision, p: int) -> float:
     return 0.0
 
 
-def _swap_nearest(sizes: List[float], frac: float, tol: float = 0.15) -> None:
+def _swap_nearest(sizes: List[float], frac: float, tol: float = 0.15, fixed: Optional[set] = None) -> None:
     """Replace the entry of `sizes` closest to `frac` with `frac` if it is more than `tol`
-    (relative) away; otherwise keep the abstraction (keeps solves cache-friendly)."""
+    (relative) away; otherwise keep the abstraction (keeps solves cache-friendly). Entries in
+    `fixed` (indices of sizes taken earlier this street) are never replaced: with all of them
+    taken, `frac` is added. The entry used is added to `fixed`."""
+    fixed = set() if fixed is None else fixed
     if not sizes or frac <= 0:
         return
-    i = min(range(len(sizes)), key=lambda k: abs(sizes[k] - frac))
-    if abs(sizes[i] - frac) / max(sizes[i], 1e-9) > tol and frac not in sizes:
+    near = min(range(len(sizes)), key=lambda k: abs(sizes[k] - frac))
+    if abs(sizes[near] - frac) / max(sizes[near], 1e-9) <= tol or frac in sizes:
+        fixed.add(sizes.index(frac) if frac in sizes else near)
+        return
+    free = [k for k in range(len(sizes)) if k not in fixed]
+    if free:
+        i = min(free, key=lambda k: abs(sizes[k] - frac))
         sizes[i] = round(frac, 3)
+    else:
+        sizes.append(round(frac, 3))
+        i = len(sizes) - 1
+    fixed.add(i)
 
 
 RANKS = "AKQJT98765432"

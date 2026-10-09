@@ -61,7 +61,7 @@ class Config:
 
     def sizes_key(self) -> tuple:
         return (tuple((k, tuple(v)) for k, v in sorted(self.bet_sizes.items())),
-                tuple((k, tuple(v)) for k, v in sorted(self.raise_sizes.items())), self.depth)
+                tuple((k, tuple(v)) for k, v in sorted(self.raise_sizes.items())), self.depth, self.max_raises)
 
 
 def street_of(board_len: int) -> str:
