@@ -1353,6 +1353,14 @@ class Advisor:
             elif act == "call":
                 bets[p] = min(bets[1 - p], stack)
             elif act == "all-in":
+                # the tree offers all-in only at low SPR; a deeper jam would map to the biggest bet,
+                # so swap in a size that reaches the stack (half a bb over, past the tree's rounding)
+                if bets[1 - p] <= bets[p]:
+                    _swap_nearest(cfg.bet_sizes[st.name], (stack - bets[p] + 0.5) / max(pot_total, 1e-9))
+                else:
+                    call_amt = bets[1 - p] - bets[p]
+                    _swap_nearest(cfg.raise_sizes[st.name],
+                                  (stack - bets[1 - p] + 0.5) / max(pot_total + call_amt, 1e-9))
                 bets[p] = stack
         return cfg
 

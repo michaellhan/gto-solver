@@ -436,6 +436,19 @@ class TestTableSizes(unittest.TestCase):
         self.assertGreater(r["actions"][0]["freq"], 0.9)   # K2o folds, not a uniform mix
         self.assertLess(r["actions"][1]["ev_bb"], 0.0)
 
+    def test_deep_jam_is_in_the_tree(self):
+        # a 95bb turn jam into 9.5bb: hero faces the jam, not the tree's biggest bet
+        adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "fold"},
+               {"pos": "BTN", "action": "raise", "to": 2.5}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
+        r = adv.advise({"players": 6, "hero": "BTN", "hole": "7h6h", "board": "Th2hKd2s", "stack": 100, "preflop": pre,
+                        "flop": [{"pos": "BB", "action": "check"}, {"pos": "BTN", "action": "bet", "amount": 2},
+                                 {"pos": "BB", "action": "call"}],
+                        "turn": [{"pos": "BB", "action": "all-in"}]})
+        self.assertEqual([a["action"] for a in r["actions"]], ["fold", "call"])
+        self.assertEqual(r["actions"][1]["amount_bb"], 95.5)
+        self.assertFalse(any("mapped 'all-in'" in n for n in r["notes"]))
+
 
 def _exact_equity(board, hero, villain_range):
     """Hero's equity against a range, every runout enumerated."""
