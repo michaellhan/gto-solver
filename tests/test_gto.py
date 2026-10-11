@@ -352,17 +352,37 @@ class TestAdvisor(unittest.TestCase):
         self.assertLess(cold["raise"][ix("Ah5h")], 0.5 * std["raise"][ix("Ah5h")])
         for h in ("KsKd", "QsQd", "AhKd"):
             self.assertAlmostEqual(1 - cold["fold"][ix(h)], 1 - std["fold"][ix(h)], places=6)
-        # QQ and AK jam less into a value-heavy 4bet and call instead; KK+ and AKs keep jamming
+        # QQ and AK jam less where the 4bettor folds to a jam much less often (a flat, then a 4bet over
+        # an early open), calling instead; KK+ and AKs keep jamming
+        flat4 = pf.strategy_for("BB", [R("UTG", "raise", 2.5), R("HJ", "fold"), R("CO", "fold"), R("BTN", "call"),
+                                       R("SB", "fold"), R("BB", "raise", 12.5), R("UTG", "fold"), R("BTN", "raise", 28)], T)
         for h in ("QsQd", "AhKd"):
-            self.assertLess(cold["raise"][ix(h)], 0.75 * std["raise"][ix(h)])
-            self.assertGreater(cold["call"][ix(h)], std["call"][ix(h)])
+            self.assertLess(flat4["raise"][ix(h)], 0.5 * std["raise"][ix(h)])
+            self.assertGreater(flat4["call"][ix(h)], std["call"][ix(h)])
         for h in ("AsAd", "KsKd", "AhKh"):
             self.assertEqual(float(cold["raise"][ix(h)]), 1.0)
+            self.assertEqual(float(flat4["raise"][ix(h)]), 1.0)
         # the value bar follows the price, not how wide the 3bet range is: JJ, with more equity against
         # a cold 4bet over the button than over UTG, continues at least as often there
         btn = pf.strategy_for("SB", [R("UTG", "fold"), R("HJ", "fold"), R("CO", "fold"), R("BTN", "raise", 2.5),
                                      R("SB", "raise", 11), R("BB", "raise", 25), R("BTN", "fold")], T)
         self.assertGreaterEqual(1 - btn["fold"][ix("JsJd")], 1 - cold["fold"][ix("JsJd")])
+
+    def test_4bettor_vs_jam_matches_advice(self):
+        """The replayed 4bettor facing a 5bet jam calls by equity against the jam range, as hero's advice
+        does (the fixed chart called QQ and AK 70% where they have 36% and need 41%)."""
+        R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
+        from gto.cards import COMBO_INDEX, cards
+        ix = lambda h: COMBO_INDEX[tuple(sorted(cards(h)))]
+        T = pf.Table(pf.SEATS[6])
+        pre = [R("UTG", "raise", 2.5), R("HJ", "fold"), R("CO", "raise", 7.5), R("BTN", "fold"), R("SB", "fold"),
+               R("BB", "fold"), R("UTG", "raise", 18), R("CO", "all-in")]
+        s = pf.strategy_for("UTG", pre, T)
+        adv = Advisor()
+        for h in ("AsAd", "KsKd", "QsQd", "AhKd", "AhKh"):
+            r = adv.advise({"players": 6, "hero": "UTG", "hole": h, "board": "", "stack": 100, "preflop": pre})
+            self.assertAlmostEqual(float(s["call"][ix(h)]), r["actions"][0]["freq"], delta=0.02, msg=h)
+        self.assertEqual(float(s["call"][ix("QsQd")]), 0.0)
 
     def test_off_chart_line_not_face_up(self):
         """BTN flats CO (the chart's flats never 4bet), then 4bets BB's squeeze: hero's range would be

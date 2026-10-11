@@ -375,6 +375,7 @@ def strategy_for(hero: str, actions: List[dict], positions: Optional[List[str]] 
             acts["fold"] = np.clip(1.0 - total, 0.0, 1.0)
             acts = _caller_continues(hero, actions, positions, acts)
             acts = _vs_4bet_range(hero, actions, positions, acts)
+            acts = _vs_5bet_jam(hero, actions, positions, acts)
         _STRAT_CACHE[key] = monotone(acts)
     return dict(_STRAT_CACHE[key])
 
@@ -445,12 +446,15 @@ def _vs_4bet_range(hero: str, actions: List[dict], positions, acts: Dict[str, np
     out = {k: (v if k == "fold" else np.where(better, v, v * keep)) for k, v in acts.items()}
     out["call"] = out["call"] + np.where(better, add, 0.0)
     if "raise" in out:
-        # how often the 4bettor folds to a jam, here and for the opener (a value-only 4bet hardly folds)
-        def folds(line, p4, r4):
-            s5 = strategy_for(p4, line + [{"pos": hero, "action": "all-in"}], positions)
-            return float((r4 * s5.get("fold", 0.0)).sum() / max(r4.sum(), 1e-12))
-        f_s = folds(std, opener, std_r[opener])
-        scale = min(1.0, folds(actions, four, act_r[four]) / max(f_s, 1e-9)) if f_s > 1e-6 else 1.0
+        # how often the 4bettor folds to a jam, here and for the opener (a value-only 4bet hardly folds):
+        # calling by equity against the chart's jams from hero's range there (not the scaled jams below,
+        # which depend on this)
+        def folds(line, p4, ranges):
+            jams = line + [{"pos": hero, "action": "all-in"}]
+            call = _jam_calls(ranges[hero] * acts["raise"], jams, p4)
+            return float((ranges[p4] * (1.0 - call)).sum() / max(ranges[p4].sum(), 1e-12))
+        f_s = folds(std, opener, std_r)
+        scale = min(1.0, folds(actions, four, act_r) / max(f_s, 1e-9)) if f_s > 1e-6 else 1.0
         # jams below the bar are bluffs: they live on the 4bettor folding, so they scale by it. Value
         # hands the chart mixes between jam and call (QQ, AK) are about even against the opener: a jam's
         # edge over a call is the equity it denies the 4bettor's bluffs (against its value both get the
@@ -463,6 +467,37 @@ def _vs_4bet_range(hero: str, actions: List[dict], positions, acts: Dict[str, np
         out["call"] = out["call"] + np.where(mixed, cut, 0.0)
     out["fold"] = np.clip(1.0 - sum(v for k, v in out.items() if k != "fold"), 0.0, 1.0)
     return out
+
+
+JAM_CALL_BLEND = 0.04   # facing a 5bet jam: call frequency ramps over this much equity around the pot odds
+
+
+def _vs_5bet_jam(hero: str, actions: List[dict], positions, acts: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+    """Facing a 5bet (or later) all-in, call where equity against the jammer's replayed range beats the
+    pot odds, as hero's own advice does (Advisor._vs_jam). The fixed VS_5BET chart called QQ 70% and AK
+    70% whoever jammed, looser than the charts' own value-heavy jam ranges allow (QQ has 36% against a
+    standard one, needing 41%), and blind to a jam from a tighter line or with dead money in."""
+    is_raise = lambda a: a["action"] in ("raise", "all-in")
+    aggr = [a for a in actions if is_raise(a)]
+    if len(aggr) < 4 or aggr[-1]["action"] != "all-in" or aggr[-1]["pos"] == hero or "call" not in acts:
+        return acts
+    r = replay_ranges(actions, positions).get(aggr[-1]["pos"])
+    if r is None or r.sum() < 1e-9:
+        return acts
+    call = _jam_calls(r, actions, hero)
+    return {"call": call, "fold": 1.0 - call}
+
+
+def _jam_calls(jam_range: np.ndarray, actions: List[dict], caller: str) -> np.ndarray:
+    """Per combo, how often `caller` calls the all-in that ends `actions` from `jam_range`: by equity
+    against it versus the pot odds."""
+    from .pf_classes import equity_vs
+    if jam_range.sum() < 1e-9:
+        return np.zeros(N_COMBOS)
+    bets = _bets(actions)
+    owe = bets[actions[-1]["pos"]] - bets.get(caller, 0.0)
+    need = owe / max(sum(bets.values()) + owe, 1e-9)
+    return np.clip(0.5 + (np.nan_to_num(equity_vs(jam_range), nan=0.0) - need) / JAM_CALL_BLEND, 0.0, 1.0)
 
 
 def _caller_continues(hero: str, actions: List[dict], positions, acts: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
