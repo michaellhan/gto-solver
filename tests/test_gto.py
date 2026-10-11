@@ -323,6 +323,17 @@ class TestAdvisor(unittest.TestCase):
         s4 = preflop_strategy("BTN", pre + [R("CO", "raise", 23)], T, 100)
         self.assertLess(float((w * (1 - s4["fold"])).sum() / w.sum()), 0.05)
 
+    def test_jam_after_flat_has_a_range(self):
+        """CO flats, BB squeezes, HJ 4bets, CO jams: the jam range was CO's flats times the jam chart,
+        empty, so equity was NaN and HJ folded AA. It is now the jam chart's range, rebuilt."""
+        R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
+        pre = [R("UTG", "fold"), R("HJ", "raise", 2.5), R("CO", "call"), R("BTN", "fold"), R("SB", "fold"),
+               R("BB", "raise", 12.5), R("HJ", "raise", 28.7), R("CO", "all-in"), R("BB", "fold")]
+        adv = Advisor()
+        st = {"players": 6, "hero": "HJ", "board": "", "stack": 100, "preflop": pre}
+        self.assertEqual(adv.advise(dict(st, hole="AsAd"))["recommended"], "call")
+        self.assertEqual(adv.advise(dict(st, hole="JsJd"))["recommended"], "fold")
+
     def test_off_chart_line_not_face_up(self):
         """BTN flats CO (the chart's flats never 4bet), then 4bets BB's squeeze: hero's range would be
         empty and KK solved face-up, so BB folds everything to a jam (all-in EV = the pot, +49).

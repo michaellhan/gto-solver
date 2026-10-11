@@ -786,11 +786,15 @@ class Advisor:
             notes.append(f"{jammer}'s {jam:g}bb jam range: push/fold equilibrium against {len(opp)} "
                          f"player{'s' * (len(opp) > 1)} left ({share:.0%} of their hands)")
         else:
-            s_j = preflop_strategy(jammer, before, positions, stack)
+            # the replayed range through the jam: the chart's (or the pool's) raising range, rebuilt
+            # from it alone when the jammer's line is off-chart (a flat, then a jam over the 4bet)
+            jr = preflop_ranges(preflop[:ji + 1], positions, stack, pool_except)
+            rng = jr.get(jammer, rng)
             if pool:
-                s_j = pool_strategy(s_j, jammer, before, arr)
                 notes.append(f"exploit mode: {jammer}'s jam is the player pool's raising range")
-            rng = rng * s_j.get("raise", np.ones(N_COMBOS))
+            if jammer in getattr(jr, "rebuilt", []):
+                notes.append(f"{jammer}'s line isn't in the chart, so their jam range is the hands that jam "
+                             "there from scratch")
         remaining = stack - st.inv_start[hero] - st.bets[hero]
         to_call = min(st.cur_bet - st.bets[hero], remaining)
         pot = st.pot_start + sum(st.bets.values())
