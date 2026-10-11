@@ -36,7 +36,6 @@ VALUE_SHARE = 0.35  # multiway: a bet's value range is this share of what would 
 RAISE_SHARE = 0.2   # multiway: facing a bet, this share of what continues (the strongest) raises
 LEAD_EQ = 0.5       # multiway, later streets: we lead when our equity beats this vs every calling range
 RAISE_EQ = 0.55     # multiway, later streets: we raise their bet when our equity beats this vs what continues
-MIN_LINE_COMBOS = 3.0   # preflop: a line leaving fewer combos than this is off-chart; rebuild the range
 RARE_LINE = 0.10    # heads-up: widen the villain's range when the solve takes their line less often than this
 UNSETTLED = 3.0     # heads-up: a solve this far from equilibrium (% pot) hasn't settled (the page's "converged" cutoff)
 JAM_BLEND = 0.04    # preflop vs a jam: call frequency ramps from 0 to 1 over this much equity around the pot odds
@@ -443,7 +442,7 @@ def preflop_ranges(actions: List[dict], positions, stack: float, pool_except: Op
             key = "raise" if act == "all-in" else ("call" if act == "check" and "check" not in strat else act)
             if key in strat:
                 r = ranges[pos] * strat[key]
-                if r.sum() < MIN_LINE_COMBOS and strat[key].sum() > r.sum():
+                if r.sum() < pf.MIN_LINE_COMBOS and strat[key].sum() > r.sum():
                     # off-chart line (a flat the chart never 4bets from): the hands that take this
                     # action, rather than an empty range that would leave the solve facing a face-up hand
                     r = strat[key].copy()

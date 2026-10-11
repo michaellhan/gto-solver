@@ -334,6 +334,24 @@ class TestAdvisor(unittest.TestCase):
         self.assertEqual(adv.advise(dict(st, hole="AsAd"))["recommended"], "call")
         self.assertEqual(adv.advise(dict(st, hole="JsJd"))["recommended"], "fold")
 
+    def test_vs_4bet_follows_the_4bet_range(self):
+        """The 3bettor's vs-4bet chart is written against the opener's 4bet; against a cold 4bet (no
+        bluffs) the marginal continues and bluff jams shrink, and against the opener nothing changes."""
+        from gto.cards import COMBO_INDEX, cards
+        R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
+        F = lambda *ps: [R(p, "fold") for p in ps]
+        T = pf.Table(pf.SEATS[6])
+        ix = lambda h: COMBO_INDEX[tuple(sorted(cards(h)))]
+        three = [R("UTG", "raise", 2.5), R("HJ", "fold"), R("CO", "raise", 7.5)] + F("BTN", "SB")
+        std = pf.strategy_for("CO", three + [R("BB", "fold"), R("UTG", "raise", 18)], T)
+        cold = pf.strategy_for("CO", three + [R("BB", "raise", 18.8), R("UTG", "fold")], T)
+        chart = pf.VS_4BET
+        self.assertAlmostEqual(float(std["call"][ix("AhQh")]), float(chart["call"][ix("AhQh")]), places=6)
+        self.assertLess(cold["call"][ix("AhQh")], 0.5 * std["call"][ix("AhQh")])
+        self.assertLess(cold["raise"][ix("Ah5h")], 0.5 * std["raise"][ix("Ah5h")])
+        for h in ("KsKd", "QsQd", "AhKd"):
+            self.assertAlmostEqual(1 - cold["fold"][ix(h)], 1 - std["fold"][ix(h)], places=6)
+
     def test_off_chart_line_not_face_up(self):
         """BTN flats CO (the chart's flats never 4bet), then 4bets BB's squeeze: hero's range would be
         empty and KK solved face-up, so BB folds everything to a jam (all-in EV = the pot, +49).

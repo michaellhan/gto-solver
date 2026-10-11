@@ -374,11 +374,13 @@ def strategy_for(hero: str, actions: List[dict], positions: Optional[List[str]] 
         if "check" not in acts:
             acts["fold"] = np.clip(1.0 - total, 0.0, 1.0)
             acts = _caller_continues(hero, actions, positions, acts)
+            acts = _vs_4bet_range(hero, actions, positions, acts)
         _STRAT_CACHE[key] = monotone(acts)
     return dict(_STRAT_CACHE[key])
 
 
 _STRAT_CACHE: Dict[tuple, Dict[str, np.ndarray]] = {}
+MIN_LINE_COMBOS = 3.0   # a line leaving fewer combos than this is off-chart; the range is rebuilt
 # A player who called a raise and now faces the next one continues with at least this share of the
 # range they called with, by the raises in now: a flat facing a squeeze, a cold call of a 3bet facing
 # the 4bet, a call of a 4bet facing the jam. The charts for those spots are written for a player who
@@ -386,6 +388,58 @@ _STRAT_CACHE: Dict[tuple, Dict[str, np.ndarray]] = {}
 # they leave a caller's range nearly empty. For scale, openers continue ~40% against a 3bet and
 # 3bettors ~50% against a 4bet.
 CALLER_CONTINUE = {2: 0.30, 3: 0.35, 4: 0.55}
+
+
+VS_4BET_BLEND = 0.04   # equity over which a 3bettor's continue frequency ramps against an unusual 4bet range
+
+
+def _vs_4bet_range(hero: str, actions: List[dict], positions, acts: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+    """The 3bettor facing a 4bet: the vs-4bet charts are written against the opener's 4bet, which
+    carries bluffs. A cold 4bet, or one from a player who flatted first, is nearly all value, so each
+    hand is re-drawn by its equity against the actual 4bet range versus against the opener's: a hand
+    that does worse continues less (a value hand once it drops below the equity at the chart's
+    continuing share, a bluff or a playable hand by how far it drops), and one that does better calls
+    more. Bluff jams also scale by how often the 4bettor folds to a jam compared with the opener.
+    Against the opener's own 4bet nothing changes."""
+    from .pf_classes import equity_vs
+    is_raise = lambda a: a["action"] in ("raise", "all-in")
+    raisers = [a["pos"] for a in actions if is_raise(a)]
+    if len(raisers) != 3 or raisers[1] != hero or len(positions or POSITIONS) == 2 or "fold" not in acts:
+        return acts
+    opener, four = raisers[0], raisers[2]
+    i3 = max(i for i, a in enumerate(actions) if a["pos"] == hero and is_raise(a))
+    std = [a if a["pos"] in (opener, hero) else {"pos": a["pos"], "action": "fold"} for a in actions[:i3 + 1]]
+    std.append({"pos": opener, "action": "raise"})
+    act_r, std_r = replay_ranges(actions, positions), replay_ranges(std, positions)
+    if four not in act_r or opener not in std_r or hero not in std_r:
+        return acts
+    eq, eq_std = equity_vs(act_r[four]), equity_vs(std_r[opener])
+    if np.allclose(np.nan_to_num(eq), np.nan_to_num(eq_std), atol=1e-6):
+        return acts
+    w = std_r[hero]
+    cont = 1.0 - acts["fold"]
+    q = float((w * cont).sum() / max(w.sum(), 1e-12))
+    ok = ~np.isnan(eq_std) & (w > 0)
+    order = np.argsort(-eq_std[ok])
+    cum = np.cumsum(w[ok][order])
+    bar = float(eq_std[ok][order][min(np.searchsorted(cum, q * cum[-1]), len(cum) - 1)])
+    eq, eq_std = np.nan_to_num(eq, nan=0.0), np.nan_to_num(eq_std, nan=0.0)
+    keep = np.clip(1.0 + (eq - np.minimum(eq_std, bar)) / VS_4BET_BLEND, 0.0, 1.0)
+    add = np.clip(0.5 + (eq - bar) / VS_4BET_BLEND, 0.0, 1.0) * acts["fold"]
+    better = eq > eq_std
+    out = {k: (v if k == "fold" else np.where(better, v, v * keep)) for k, v in acts.items()}
+    out["call"] = out["call"] + np.where(better, add, 0.0)
+    if "raise" in out:
+        # jams below the bar are bluffs: they live on the 4bettor folding, so they scale by how often
+        # this 4bet range folds to a jam against how often the opener's does (a value-only 4bet hardly folds)
+        def folds(line, r):
+            s5 = strategy_for(four if line is actions else opener, line + [{"pos": hero, "action": "all-in"}], positions)
+            return float((r * s5.get("fold", 0.0)).sum() / max(r.sum(), 1e-12))
+        f_std = folds(std, std_r[opener])
+        scale = min(1.0, folds(actions, act_r[four]) / max(f_std, 1e-9)) if f_std > 1e-6 else 1.0
+        out["raise"] = np.where(eq_std < bar, out["raise"] * scale, out["raise"])
+    out["fold"] = np.clip(1.0 - sum(v for k, v in out.items() if k != "fold"), 0.0, 1.0)
+    return out
 
 
 def _caller_continues(hero: str, actions: List[dict], positions, acts: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
@@ -503,7 +557,9 @@ def replay_ranges(actions: List[dict], positions: Optional[List[str]] = None) ->
         else:
             key = "raise" if act == "all-in" else ("call" if act == "check" and "check" not in strat else act)
             if key in strat:
-                ranges[pos] = ranges[pos] * strat[key]
+                r = ranges[pos] * strat[key]
+                # an off-chart line (a flat, then a 4bet): the hands that take this action alone
+                ranges[pos] = r if r.sum() >= MIN_LINE_COMBOS or strat[key].sum() <= r.sum() else strat[key].copy()
             elif act == "call" and not any(h["action"] in ("raise", "all-in") for h in history):
                 ranges[pos] = ranges[pos] * LIMP     # open-limp
             # other off-chart actions leave the range unchanged
