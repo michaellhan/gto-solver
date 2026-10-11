@@ -303,6 +303,20 @@ class TestAdvisor(unittest.TestCase):
                           "flop": xbc(5), "turn": xbc(13), "river": [{"pos": "SB", "action": "check"}]})
         self.assertGreater(out["villain_range_combos"], 1.0, out)
 
+    def test_off_chart_line_not_face_up(self):
+        """BTN flats CO (the chart's flats never 4bet), then 4bets BB's squeeze: hero's range would be
+        empty and KK solved face-up, so BB folds everything to a jam (all-in EV = the pot, +49).
+        The range is rebuilt from the 4bet, and BB pays off."""
+        R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
+        pre = [R("UTG", "fold"), R("HJ", "fold"), R("CO", "raise", 2.5), R("BTN", "call"), R("SB", "fold"),
+               R("BB", "raise", 10), R("CO", "fold"), R("BTN", "raise", 23), R("BB", "call")]
+        out = Advisor(time_budget=1.0, prior_budget=0.5).advise(
+            {"players": 6, "hero": "BTN", "hole": "KsKd", "board": "7d2s5s", "stack": 100,
+             "preflop": pre, "flop": [R("BB", "check")]})
+        self.assertGreater(out["hero_range_combos"], 20, out)
+        self.assertGreater(max(a["ev_bb"] for a in out["actions"]), 52, out["actions"])
+        self.assertTrue(any("isn't in the chart" in n for n in out["notes"]), out["notes"])
+
 
 
 class TestTableSizes(unittest.TestCase):

@@ -36,6 +36,7 @@ VALUE_SHARE = 0.35  # multiway: a bet's value range is this share of what would 
 RAISE_SHARE = 0.2   # multiway: facing a bet, this share of what continues (the strongest) raises
 LEAD_EQ = 0.5       # multiway, later streets: we lead when our equity beats this vs every calling range
 RAISE_EQ = 0.55     # multiway, later streets: we raise their bet when our equity beats this vs what continues
+MIN_LINE_COMBOS = 3.0   # preflop: a line leaving fewer combos than this is off-chart; rebuild the range
 RARE_LINE = 0.10    # heads-up: widen the villain's range when the solve takes their line less often than this
 UNSETTLED = 3.0     # heads-up: a solve this far from equilibrium (% pot) hasn't settled (the page's "converged" cutoff)
 JAM_BLEND = 0.04    # preflop vs a jam: call frequency ramps from 0 to 1 over this much equity around the pot odds
@@ -433,6 +434,7 @@ def preflop_ranges(actions: List[dict], positions, stack: float, pool_except: Op
     def work():
         ranges = {p: np.ones(N_COMBOS) for p in positions}
         active = set(positions)
+        rebuilt: List[str] = []
         for i, a in enumerate(actions):
             pos, act = a["pos"], a["action"]
             if pos not in ranges:
@@ -445,11 +447,25 @@ def preflop_ranges(actions: List[dict], positions, stack: float, pool_except: Op
                 strat = pool_strategy(strat, pos, actions[:i], ranges)
             key = "raise" if act == "all-in" else ("call" if act == "check" and "check" not in strat else act)
             if key in strat:
-                ranges[pos] = ranges[pos] * strat[key]
+                r = ranges[pos] * strat[key]
+                if r.sum() < MIN_LINE_COMBOS and strat[key].sum() > r.sum():
+                    # off-chart line (a flat the chart never 4bets from): the hands that take this
+                    # action, rather than an empty range that would leave the solve facing a face-up hand
+                    r = strat[key].copy()
+                    rebuilt.append(pos)
+                ranges[pos] = r
             elif act == "call" and not any(h["action"] in ("raise", "all-in") for h in actions[:i]):
                 ranges[pos] = ranges[pos] * pf.LIMP
-        return {p: ranges[p] for p in active}
+        out = PreflopRanges({p: ranges[p] for p in active})
+        out.rebuilt = [p for p in dict.fromkeys(rebuilt) if p in active]
+        return out
     return _pf_cached(_pf_key("r", pool_except, actions, positions, stack), work)
+
+
+class PreflopRanges(dict):
+    """preflop_ranges' result; `rebuilt`: seats whose line left their range empty, so it was rebuilt
+    from their last such action alone."""
+    rebuilt: List[str] = []
 
 
 def pool_strategy(strat: Dict[str, np.ndarray], p: str, before: List[dict], ranges: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
@@ -817,7 +833,11 @@ class Advisor:
         if cur.to_act != hero:
             return {"error": f"it is {cur.to_act}'s turn, not {hero}'s"}
         # a copy: narrowing below replaces entries, and the cached dict is shared with later requests
-        ranges = dict(preflop_ranges(streets["preflop"], positions, stack, hero if pool else None))
+        pf_r = preflop_ranges(streets["preflop"], positions, stack, hero if pool else None)
+        ranges = dict(pf_r)
+        for p in getattr(pf_r, "rebuilt", []):
+            notes.append(f"{'your' if p == hero else p + chr(39) + 's'} preflop line isn't in the chart, so "
+                         f"{'your' if p == hero else 'their'} range is the hands that take its last action")
         # Streets that started with 3+ players can't be solved; narrow ranges there by rule.
         mw_streets = [st for st in rep[1:] if len(st.players_start) > 2]
         for st in mw_streets:

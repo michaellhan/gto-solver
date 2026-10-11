@@ -204,6 +204,10 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
 * If your hand isn't in your range for the line you took (a preflop call the charts
   never make, say), it is added to the solve as a near-zero-weight combo so it
   still gets a strategy and EVs without changing anyone else's play.
+* If a preflop line leaves a player with no range at all (a flat the charts never
+  4bet from, then a 4bet), that range is rebuilt from the hands that take the last
+  such action. Otherwise the solve plays against a face-up hand: BB would fold
+  everything to a jam with KK and pay off nothing smaller.
 
 ### Deploy to the website
 
