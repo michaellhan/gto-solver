@@ -303,6 +303,26 @@ class TestAdvisor(unittest.TestCase):
                           "flop": xbc(5), "turn": xbc(13), "river": [{"pos": "SB", "action": "check"}]})
         self.assertGreater(out["villain_range_combos"], 1.0, out)
 
+    def test_caller_continues_vs_next_raise(self):
+        """A flat facing a squeeze continues with ~30% of the flatting range (the cold-vs-3bet chart alone
+        continued 2%), the playable part first; once the opener 4bets too, the flatter folds nearly all."""
+        from gto.advisor import preflop_strategy, preflop_ranges
+        from gto.cards import COMBO_INDEX, cards
+        R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
+        T = pf.Table(pf.SEATS[6])
+        pre = [R("UTG", "fold"), R("HJ", "fold"), R("CO", "raise", 2.5), R("BTN", "call"), R("SB", "fold"),
+               R("BB", "raise", 10)]
+        w, s = preflop_ranges(pre, T, 100)["BTN"], preflop_strategy("BTN", pre, T, 100)
+        cont = float((w * (1 - s["fold"])).sum() / w.sum())
+        self.assertTrue(0.28 <= cont <= 0.45, cont)
+        ix = lambda h: COMBO_INDEX[tuple(sorted(cards(h)))]
+        self.assertGreater(1 - s["fold"][ix("8s8d")], 0.9)
+        self.assertGreater(1 - s["fold"][ix("JhTh")], 0.9)
+        after = preflop_ranges(pre + [R("CO", "fold"), R("BTN", "call")], T, 100)["BTN"]
+        self.assertGreater(after.sum(), 30)
+        s4 = preflop_strategy("BTN", pre + [R("CO", "raise", 23)], T, 100)
+        self.assertLess(float((w * (1 - s4["fold"])).sum() / w.sum()), 0.05)
+
     def test_off_chart_line_not_face_up(self):
         """BTN flats CO (the chart's flats never 4bet), then 4bets BB's squeeze: hero's range would be
         empty and KK solved face-up, so BB folds everything to a jam (all-in EV = the pot, +49).

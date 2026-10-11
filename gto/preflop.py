@@ -361,14 +361,80 @@ def _actions_at(hero: str, actions: List[dict], positions: Optional[List[str]] =
 
 def strategy_for(hero: str, actions: List[dict], positions: Optional[List[str]] = None) -> Dict[str, np.ndarray]:
     """Full mixed strategy (including fold) per combo for hero at this point."""
-    acts = _actions_at(hero, actions, positions)
-    total = sum(acts.values())
-    scale = np.where(total > 1, 1.0 / np.maximum(total, 1e-12), 1.0)
-    acts = {k: v * scale for k, v in acts.items()}
-    total = sum(acts.values())
-    if "check" not in acts:
-        acts["fold"] = np.clip(1.0 - total, 0.0, 1.0)
-    return monotone(acts)
+    key = (hero, tuple((a["pos"], a["action"], a.get("to"), a.get("amount")) for a in actions),
+           tuple(positions or POSITIONS), getattr(positions, "ante", 0.0), getattr(positions, "straddle", False))
+    if key not in _STRAT_CACHE:
+        if len(_STRAT_CACHE) > 4096:
+            _STRAT_CACHE.clear()
+        acts = _actions_at(hero, actions, positions)
+        total = sum(acts.values())
+        scale = np.where(total > 1, 1.0 / np.maximum(total, 1e-12), 1.0)
+        acts = {k: v * scale for k, v in acts.items()}
+        total = sum(acts.values())
+        if "check" not in acts:
+            acts["fold"] = np.clip(1.0 - total, 0.0, 1.0)
+            acts = _caller_continues(hero, actions, positions, acts)
+        _STRAT_CACHE[key] = monotone(acts)
+    return dict(_STRAT_CACHE[key])
+
+
+_STRAT_CACHE: Dict[tuple, Dict[str, np.ndarray]] = {}
+# A player who called a raise and now faces the next one continues with at least this share of the
+# range they called with, by the raises in now: a flat facing a squeeze, a cold call of a 3bet facing
+# the 4bet, a call of a 4bet facing the jam. The charts for those spots are written for a player who
+# hasn't put chips in (continuing with QQ+/AK, which a flat or cold call rarely holds), so on their own
+# they leave a caller's range nearly empty. For scale, openers continue ~40% against a 3bet and
+# 3bettors ~50% against a 4bet.
+CALLER_CONTINUE = {2: 0.30, 3: 0.35, 4: 0.55}
+
+
+def _caller_continues(hero: str, actions: List[dict], positions, acts: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+    """Top up a caller's continuing range (see CALLER_CONTINUE) with calls by its strongest folds:
+    ranked by how readily the button continues against a 3bet (the charts' sense of what plays well
+    in a reraised pot: TT-77 and suited broadways over 22-55), then equity against the raiser's
+    range. Only for the raise right after hero's call; once another raise is in too (hero
+    sandwiched), the charts' near-total folding stands."""
+    from .pf_classes import equity_vs
+    mine = [i for i, a in enumerate(actions) if a["pos"] == hero and a["action"] not in ("fold", "check")]
+    if not mine or actions[mine[-1]]["action"] != "call" or "call" not in acts:
+        return acts
+    is_raise = lambda a: a["action"] in ("raise", "all-in")
+    n_then = sum(map(is_raise, actions[:mine[-1]]))
+    n_now = sum(map(is_raise, actions))
+    if n_then == 0 or n_now - n_then != 1:
+        return acts        # a limp (LIMP_VS_RAISE is written for it), or sandwiched
+    target = CALLER_CONTINUE[min(n_now, max(CALLER_CONTINUE))]
+    ranges = replay_ranges(actions, positions)
+    w = ranges.get(hero)
+    raiser = next(a["pos"] for a in reversed(actions) if is_raise(a))
+    if w is None or w.sum() < 1e-9 or raiser not in ranges:
+        return acts
+    fold = acts["fold"]
+    need = (target - float((w * (1.0 - fold)).sum() / w.sum())) * w.sum()
+    if need <= 1e-9:
+        return acts
+    ref = _vs_3bet("BTN")
+    eq = np.minimum(ref["4bet"] + ref["call"], 1.0) + 0.01 * np.nan_to_num(equity_vs(ranges[raiser]), nan=-1.0)
+    # strongest folds first: whole classes above the bar, a share of the class at it
+    levels = np.unique(eq)[::-1]
+    add = np.zeros(N_COMBOS)
+    for e in levels:
+        at = eq == e
+        avail = float((w * fold * at).sum())
+        if avail <= 1e-12:
+            continue
+        frac = min(1.0, need / avail)
+        add[at] = fold[at] * frac
+        need -= avail * frac
+        if need <= 1e-9:
+            break
+    # hands outside the range above the bar continue too, so a hand hero holds off-range plays the same
+    bar = e
+    add = np.where(eq > bar, fold, add)
+    out = dict(acts)
+    out["call"] = acts["call"] + add
+    out["fold"] = fold - add
+    return out
 
 
 def _dominance_chains() -> List[List[str]]:

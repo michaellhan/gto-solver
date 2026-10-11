@@ -42,6 +42,16 @@ def to_classes(r: np.ndarray) -> np.ndarray:
     return np.bincount(CLASS_OF, weights=r, minlength=len(CLASSES))
 
 
+def equity_vs(villain: np.ndarray) -> np.ndarray:
+    """All-in preflop equity of every combo against the weighted range `villain`, from the precomputed
+    hand-class equity table (exact up to class-level card removal; board sampling was noisier than the
+    gaps between neighbouring hands)."""
+    w = PAIR_COMPAT * to_classes(villain)[None, :]
+    den = w.sum(1)
+    eq = np.where(den > 1e-12, (equity_matrix() * w).sum(1) / np.maximum(den, 1e-12), np.nan)
+    return eq[CLASS_OF]
+
+
 def push_fold(jam_range: np.ndarray, call_range: np.ndarray, jam: float, jammer_in: float, caller_in: float,
               pot: float, n_callers: int = 1, iters: int = 400) -> np.ndarray:
     """Push/fold equilibrium by fictitious play, in hand classes.

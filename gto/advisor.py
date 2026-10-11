@@ -267,14 +267,9 @@ _CARD_MASK = np.array([(1 << a) | (1 << b) for a, b in ALL_COMBOS], dtype=np.int
 
 
 def _preflop_equity(villain: np.ndarray) -> np.ndarray:
-    """All-in preflop equity of every combo against the weighted range `villain`, from the precomputed
-    hand-class equity table (exact up to class-level card removal; board sampling was noisier than the
-    gaps between neighbouring hands)."""
-    from .pf_classes import equity_matrix, to_classes, PAIR_COMPAT, CLASS_OF
-    w = PAIR_COMPAT * to_classes(villain)[None, :]
-    den = w.sum(1)
-    eq = np.where(den > 1e-12, (equity_matrix() * w).sum(1) / np.maximum(den, 1e-12), np.nan)
-    return eq[CLASS_OF]
+    """All-in preflop equity of every combo against the weighted range `villain` (pf_classes.equity_vs)."""
+    from .pf_classes import equity_vs
+    return equity_vs(villain)
 
 
 def _preflop_equity_multi(villains: List[np.ndarray]) -> np.ndarray:
@@ -633,8 +628,9 @@ class Advisor:
         - raising, when more players are in: each player's chart facing hero's raise gives their continuing
           range and how often they continue. The chart's raises split into value (the top of hero's range
           by equity when called, as many hands as it raises) and bluffs. A value raise stays only while its
-          equity when called (against each continuing range, weighted by how often it continues) reaches
-          the chart's weakest value raise heads-up; bluffs shrink by how much less often everyone folds.
+          equity when called (against each continuing range, weighted by how often it continues) clears
+          break-even by as much as the chart's weakest value raise heads-up does (more dead money,
+          thinner value); bluffs shrink by how much less often everyone folds.
         With `pool` (exploit mode) the other players' ranges and their responses to hero's raise are the
         player pool's (exploit.pool_preflop), so this runs even in the chart's own spot: calls follow
         equity against what the pool actually plays, and bluff raises grow (up to 1.5x) when the pool
@@ -712,7 +708,14 @@ class Advisor:
             v_bar = quantile(eq_c_std, w, r)
             value_c = np.where(eq_c_std >= v_bar, raise_c, 0.0)
             bluff_c = raise_c - value_c
-            keep = np.clip(0.5 + (eq_c - v_bar) / RAISE_BLEND, 0.0, 1.0)
+            # held to the bar over break-even (equity when called that pays for the raise), since the
+            # callers' dead money in a squeeze makes thinner value raises pay
+            def breakeven(s, stk):
+                to = min(_default_size(s, hero, True), stk - s.inv_start[hero])
+                add = to - s.bets[hero]
+                return add / max(s.pot_start + sum(s.bets.values()) + add + to - s.cur_bet, 1e-9)
+            keep = np.clip(0.5 + (eq_c - breakeven(st, stack) - v_bar + breakeven(std, CHART_STACK)) / RAISE_BLEND,
+                           0.0, 1.0)
             keep[np.isnan(keep)] = 0.0
             # only ever tighter than the chart: the charts' continuing ranges don't see the bigger
             # squeeze size, and capped callers would otherwise make value raises look wider
@@ -720,8 +723,8 @@ class Advisor:
             scale = min(1.5 if pool else 1.0, f / max(f_std, 1e-9))
             bluff_n = bluff_c * scale
             out["raise"] = np.minimum(1.0, value_n + bluff_n)
-            msg.append(f"raises re-drawn for {'the player pool' if pool and not more else f'{len(opp)} players in'}: value raises keep {v_bar:.0%} equity against "
-                       f"what continues (the chart's weakest value raise heads-up); bluffs x{scale:.2f} "
+            msg.append(f"raises re-drawn for {'the player pool' if pool and not more else f'{len(opp)} players in'}: value raises keep the equity over break-even "
+                       f"against what continues that the chart's weakest value raise has heads-up ({v_bar:.0%}); bluffs x{scale:.2f} "
                        f"(everyone folds {f:.0%} vs {f_std:.0%})")
         raise_n = out.get("raise", raise_c)
         # continuing before the price: the chart's calls and value raises, kept bluffs, new value raises
