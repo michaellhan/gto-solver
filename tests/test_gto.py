@@ -336,7 +336,8 @@ class TestAdvisor(unittest.TestCase):
 
     def test_vs_4bet_follows_the_4bet_range(self):
         """The 3bettor's vs-4bet chart is written against the opener's 4bet; against a cold 4bet (no
-        bluffs) the marginal continues and bluff jams shrink, and against the opener nothing changes."""
+        bluffs) the marginal continues and bluff jams shrink, mixed value jams turn into calls, and
+        against the opener nothing changes."""
         from gto.cards import COMBO_INDEX, cards
         R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
         F = lambda *ps: [R(p, "fold") for p in ps]
@@ -351,6 +352,17 @@ class TestAdvisor(unittest.TestCase):
         self.assertLess(cold["raise"][ix("Ah5h")], 0.5 * std["raise"][ix("Ah5h")])
         for h in ("KsKd", "QsQd", "AhKd"):
             self.assertAlmostEqual(1 - cold["fold"][ix(h)], 1 - std["fold"][ix(h)], places=6)
+        # QQ and AK jam less into a value-heavy 4bet and call instead; KK+ and AKs keep jamming
+        for h in ("QsQd", "AhKd"):
+            self.assertLess(cold["raise"][ix(h)], 0.75 * std["raise"][ix(h)])
+            self.assertGreater(cold["call"][ix(h)], std["call"][ix(h)])
+        for h in ("AsAd", "KsKd", "AhKh"):
+            self.assertEqual(float(cold["raise"][ix(h)]), 1.0)
+        # the value bar follows the price, not how wide the 3bet range is: JJ, with more equity against
+        # a cold 4bet over the button than over UTG, continues at least as often there
+        btn = pf.strategy_for("SB", [R("UTG", "fold"), R("HJ", "fold"), R("CO", "fold"), R("BTN", "raise", 2.5),
+                                     R("SB", "raise", 11), R("BB", "raise", 25), R("BTN", "fold")], T)
+        self.assertGreaterEqual(1 - btn["fold"][ix("JsJd")], 1 - cold["fold"][ix("JsJd")])
 
     def test_off_chart_line_not_face_up(self):
         """BTN flats CO (the chart's flats never 4bet), then 4bets BB's squeeze: hero's range would be

@@ -391,15 +391,32 @@ CALLER_CONTINUE = {2: 0.30, 3: 0.35, 4: 0.55}
 
 
 VS_4BET_BLEND = 0.04   # equity over which a 3bettor's continue frequency ramps against an unusual 4bet range
+VS_4BET_REALIZE = 0.8  # ...and the share of its equity a call of a 4bet realizes (sets the value bar)
+
+
+def _bets(actions: List[dict]) -> Dict[str, float]:
+    """Each seat's chips in after the preflop actions (blinds posted; default sizes where none given)."""
+    bets = {"SB": 0.5, "BB": 1.0}
+    cur = 1.0
+    for a in actions:
+        if a["action"] == "call":
+            bets[a["pos"]] = cur
+        elif a["action"] in ("raise", "all-in"):
+            cur = 100.0 if a["action"] == "all-in" else float(a.get("to") or a.get("amount") or cur * 3)
+            bets[a["pos"]] = cur
+        else:
+            bets.setdefault(a["pos"], 0.0)
+    return bets
 
 
 def _vs_4bet_range(hero: str, actions: List[dict], positions, acts: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
     """The 3bettor facing a 4bet: the vs-4bet charts are written against the opener's 4bet, which
     carries bluffs. A cold 4bet, or one from a player who flatted first, is nearly all value, so each
     hand is re-drawn by its equity against the actual 4bet range versus against the opener's: a hand
-    that does worse continues less (a value hand once it drops below the equity at the chart's
-    continuing share, a bluff or a playable hand by how far it drops), and one that does better calls
-    more. Bluff jams also scale by how often the 4bettor folds to a jam compared with the opener.
+    that does worse continues less (a value hand once it drops below the price of calling over the
+    equity a call realizes, a bluff or a playable hand by how far it drops), and one that does better
+    calls more. Bluff jams, and the value jams the chart mixes with calls, also scale by how often the
+    4bettor folds to a jam compared with the opener (the rest of those value jams call).
     Against the opener's own 4bet nothing changes."""
     from .pf_classes import equity_vs
     is_raise = lambda a: a["action"] in ("raise", "all-in")
@@ -416,13 +433,11 @@ def _vs_4bet_range(hero: str, actions: List[dict], positions, acts: Dict[str, np
     eq, eq_std = equity_vs(act_r[four]), equity_vs(std_r[opener])
     if np.allclose(np.nan_to_num(eq), np.nan_to_num(eq_std), atol=1e-6):
         return acts
-    w = std_r[hero]
-    cont = 1.0 - acts["fold"]
-    q = float((w * cont).sum() / max(w.sum(), 1e-12))
-    ok = ~np.isnan(eq_std) & (w > 0)
-    order = np.argsort(-eq_std[ok])
-    cum = np.cumsum(w[ok][order])
-    bar = float(eq_std[ok][order][min(np.searchsorted(cum, q * cum[-1]), len(cum) - 1)])
+    # the bar a value hand is held to: the price of calling the 4bet, over the share of its equity a
+    # call realizes (the same in every spot, however wide the 3bet range the chart is applied to)
+    bets = _bets(actions)
+    owe = bets[four] - bets[hero]
+    bar = owe / max(sum(bets.values()) + owe, 1e-9) / VS_4BET_REALIZE
     eq, eq_std = np.nan_to_num(eq, nan=0.0), np.nan_to_num(eq_std, nan=0.0)
     keep = np.clip(1.0 + (eq - np.minimum(eq_std, bar)) / VS_4BET_BLEND, 0.0, 1.0)
     add = np.clip(0.5 + (eq - bar) / VS_4BET_BLEND, 0.0, 1.0) * acts["fold"]
@@ -430,14 +445,22 @@ def _vs_4bet_range(hero: str, actions: List[dict], positions, acts: Dict[str, np
     out = {k: (v if k == "fold" else np.where(better, v, v * keep)) for k, v in acts.items()}
     out["call"] = out["call"] + np.where(better, add, 0.0)
     if "raise" in out:
-        # jams below the bar are bluffs: they live on the 4bettor folding, so they scale by how often
-        # this 4bet range folds to a jam against how often the opener's does (a value-only 4bet hardly folds)
-        def folds(line, r):
-            s5 = strategy_for(four if line is actions else opener, line + [{"pos": hero, "action": "all-in"}], positions)
-            return float((r * s5.get("fold", 0.0)).sum() / max(r.sum(), 1e-12))
-        f_std = folds(std, std_r[opener])
-        scale = min(1.0, folds(actions, act_r[four]) / max(f_std, 1e-9)) if f_std > 1e-6 else 1.0
-        out["raise"] = np.where(eq_std < bar, out["raise"] * scale, out["raise"])
+        # how often the 4bettor folds to a jam, here and for the opener (a value-only 4bet hardly folds)
+        def folds(line, p4, r4):
+            s5 = strategy_for(p4, line + [{"pos": hero, "action": "all-in"}], positions)
+            return float((r4 * s5.get("fold", 0.0)).sum() / max(r4.sum(), 1e-12))
+        f_s = folds(std, opener, std_r[opener])
+        scale = min(1.0, folds(actions, four, act_r[four]) / max(f_s, 1e-9)) if f_s > 1e-6 else 1.0
+        # jams below the bar are bluffs: they live on the 4bettor folding, so they scale by it. Value
+        # hands the chart mixes between jam and call (QQ, AK) are about even against the opener: a jam's
+        # edge over a call is the equity it denies the 4bettor's bluffs (against its value both get the
+        # stacks in), while a call keeps the option of folding bad flops. So their jams scale by it too,
+        # the rest becoming calls; hands that always jam (KK+, AKs) keep jamming.
+        bluff = eq_std < bar
+        mixed = ~bluff & (acts["raise"] > 1e-9) & (acts["call"] > 1e-9)
+        cut = out["raise"] * (1.0 - scale)
+        out["raise"] = np.where(bluff | mixed, out["raise"] - cut, out["raise"])
+        out["call"] = out["call"] + np.where(mixed, cut, 0.0)
     out["fold"] = np.clip(1.0 - sum(v for k, v in out.items() if k != "fold"), 0.0, 1.0)
     return out
 
