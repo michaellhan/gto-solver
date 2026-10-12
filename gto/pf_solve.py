@@ -63,8 +63,11 @@ class Spot:
 
 # Pot shares measured with the postflop solver (gto/pf_realize.py, scripts/build_realization.py): per
 # class against each opponent strength bucket, so KK's postflop edge counts against weaker hands and
-# not against AA.
-USE_TABLE = True
+# not against AA. Off by default: measured on 96 flops a spot it is still too noisy for close calls
+# (the tables from the two halves of the flops put the opener's calls against a 3bet 10-22 points
+# apart in four of six spots; see tests TestRealizationTable).
+USE_TABLE = False
+TABLE_OVERRIDE = None   # a table to use instead of gto/pf_realize.py's (tests: the two halves of the flops)
 
 
 TABLE_PRIOR = 0.5  # the parametric model counts as this much of a typical entry's measurement
@@ -90,11 +93,13 @@ def _table(pot_type: str, pos: str):
     (0 where unmeasured), or None."""
     if not USE_TABLE:
         return None
-    try:
-        from .pf_realize import TABLE
-    except ImportError:
-        return None
-    rows = TABLE[pot_type][pos]
+    table = TABLE_OVERRIDE
+    if table is None:
+        try:
+            from .pf_realize import TABLE as table
+        except ImportError:
+            return None
+    rows = table[pot_type][pos]
     d = np.array([[0.0 if v is None else v[0] for v in row] for row in rows])
     w = np.array([[0.0 if v is None else v[1] for v in row] for row in rows])
     return d, w

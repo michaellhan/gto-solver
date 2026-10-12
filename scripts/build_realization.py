@@ -1,19 +1,25 @@
-"""Build gto/pf_realize.py: how much of its equity each hand class realizes after a preflop call, measured
-with the postflop solver, for the preflop subgame solver (gto/pf_solve.py).
+"""Build gto/pf_realize.py: per hand class and opponent strength bucket, how far a hand's pot share after a
+preflop call that sees a flop runs above its all-in equity, measured with the postflop solver, for the
+preflop subgame solver (gto/pf_solve.py).
 
-For three standard 3bet pots (CO vs BTN, BTN vs BB, UTG vs CO) the subgame is solved, giving the
-ranges that see a flop: in the 3bet pot, the opener's calls against the whole 3bet range; in the 4bet
-pot, the 3bettor's calls against the opener's 4bets. Each is solved on a fixed sample of flops; a
-combo's realized share of the pot is its EV over the pot, and its realization that share over its
-preflop all-in equity against the other range. Summed by class (weighted by combo pairs and flops)
-for each pot type and position, it becomes the table. The subgame is then solved again with the new
-table and the measurement repeated (--rounds), since the ranges that see a flop depend on it.
+Measured once, on the charts' ranges (gto/preflop.py), for six standard 3bet pots (the spots in
+scripts/calibrate_pf_solve.py: openers out of position against a later seat's 3bet and in position
+against a blind's): in the 3bet pot, the opener's chart calls against the whole 3bet range; in the 4bet
+pot, the 3bettor's chart calls against the opener's chart 4bets. Each is solved on a fixed sample of
+flops; a combo's pot share is its EV over the pot (later bets included, so it can fall below 0 or rise
+above 1) and its excess that share minus its preflop equity against the opponent's combos in that
+bucket. Pair-weighted sums by class and bucket, for each pot type and position, make the table.
 
-  python scripts/build_realization.py                       # 2 rounds, 24 flops, 4s per solve
-  python scripts/build_realization.py --flops 8 --budget 2  # quick look
+An earlier version re-measured on the ranges of the subgame's own solution, round after round, to a
+fixed point: it didn't settle (many hands sit near indifference, so a small change in the table flipped
+strategies and so the ranges measured next), so the reference ranges are now fixed.
+
+  python scripts/build_realization.py                        # 96 flops, 5s per solve
+  python scripts/build_realization.py --flops 8 --budget 1   # quick look
+  python scripts/build_realization.py --split DIR            # also write tables from each half of the flops
+                                                              # (DIR/pf_realize_a.py, _b.py) to check stability
 """
 import argparse
-import importlib
 import os
 import random
 import sys
@@ -25,11 +31,6 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "..", "gto", "pf_realize.py")
-
-
-def cases():
-    from calibrate_pf_solve import prepare
-    return prepare()
 
 
 def flop_sample(n, seed=11):
@@ -82,37 +83,38 @@ def measure(job):
     return out
 
 
-def ranges_for(case):
-    """The two flop spots of a case from the current subgame solve: (pot type, oop range, ip range,
-    pot, stack behind, oop is the opener)."""
-    import gto.pf_solve as P
-    from gto.pf_classes import CLASS_OF
+def chart_spots(o, t, line_text, four):
+    """The two flop spots of a case on the charts' ranges: (pot type, oop range, ip range, pot, stack behind)."""
+    import calibrate_pf_solve as C
     from gto import preflop as pf
-    name, wo, wt, spot = case[:4]
-    S = P.solve(wo, wt, spot, iters=1500)
-    ro_full, rt_full = case[5], case[6]
-    o_call = ro_full * S["o_call"][CLASS_OF]
-    o_4bet = ro_full * S["o_4bet"][CLASS_OF]
-    t_call4 = rt_full * S["t_call"][CLASS_OF]
-    pot3 = spot.pot + (spot.three - spot.open_in)
-    pot4 = spot.pot + (spot.four - spot.open_in) + (spot.four - spot.three)
-    out = []
-    if spot.opener_ip:
-        out.append(("3bet", rt_full, o_call, pot3, spot.stack - spot.three, False))
-        out.append(("4bet", t_call4, o_4bet, pot4, spot.stack - spot.four, False))
-    else:
-        out.append(("3bet", o_call, rt_full, pot3, spot.stack - spot.three, True))
-        out.append(("4bet", o_4bet, t_call4, pot4, spot.stack - spot.four, True))
-    return out
+    a = C.line(line_text)
+    st = C.replay_hand(C.T, 100, {"preflop": a}, 1)[0]
+    while st.to_act != o:               # everyone else folds before the opener acts on the 3bet
+        a.append({"pos": st.to_act, "action": "fold"})
+        st = C.replay_hand(C.T, 100, {"preflop": a}, 1)[0]
+    R = pf.replay_ranges(a, C.T)
+    ch = pf.strategy_for(o, a, C.T)
+    a4 = a + [{"pos": o, "action": "raise", "to": four}]
+    cht = pf.strategy_for(t, a4, C.T)
+    o_call, o_4bet = R[o] * ch["call"], R[o] * ch["raise"]
+    t_call = pf.replay_ranges(a4, C.T)[t] * cht["call"]
+    pot0 = st.pot_start + sum(st.bets.values())
+    three, open_in = st.bets[t], st.bets[o]
+    pot3 = pot0 + (three - open_in)
+    pot4 = pot0 + (four - open_in) + (four - three)
+    post = pf.postflop_order(list(C.T))
+    if post.index(o) > post.index(t):   # opener in position
+        return [("3bet", R[t], o_call, pot3, 100 - three), ("4bet", t_call, o_4bet, pot4, 100 - four)]
+    return [("3bet", o_call, R[t], pot3, 100 - three), ("4bet", o_4bet, t_call, pot4, 100 - four)]
 
 
-def write_table(acc, rounds, flops, budget):
+def write_table(acc, n_cases, flops, budget):
     from gto.pf_classes import CLASSES
     from gto.pf_solve import BUCKET_EDGES
     lines = ['"""Generated by scripts/build_realization.py: per hand class and opponent strength bucket (gto/pf_solve.py',
              'bucket_of, BUCKET_EDGES), how far its pot share after a call that sees a flop (its EV over the pot,',
              'later bets included) runs above its preflop all-in equity, measured with the postflop solver on the',
-             f'ranges of three standard 3bet pots ({rounds} rounds, {flops} flops, {budget}s per solve; buckets',
+             f"charts' ranges of {n_cases} standard 3bet pots ({flops} flops, {budget}s per solve; buckets",
              f'{BUCKET_EDGES}). Entries are [excess share, weight relative to a typical entry], None where',
              'unmeasured; gto/pf_solve.py blends thin measurements with its parametric model."""',
              "TABLE = {"]
@@ -133,53 +135,41 @@ def write_table(acc, rounds, flops, budget):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--flops", type=int, default=24)
-    ap.add_argument("--budget", type=float, default=4.0)
-    ap.add_argument("--rounds", type=int, default=2)
+    ap.add_argument("--flops", type=int, default=96)
+    ap.add_argument("--budget", type=float, default=5.0)
     ap.add_argument("--procs", type=int, default=max(1, (os.cpu_count() or 2) - 1))
+    ap.add_argument("--split", help="directory to also write the tables from each half of the flops")
     args = ap.parse_args()
     sys.path.insert(0, HERE)
     import calibrate_pf_solve as C
-    import gto.pf_solve as P
-    from gto import preflop as pf
-    # measurements accumulate over the rounds (each on the ranges the previous table gave), which damps
-    # the fixed point and averages out sampling noise
-    acc = {(pt, pos): 0.0 for pt in ("3bet", "4bet") for pos in ("oop", "ip")}
-    for rnd in range(args.rounds):
-        t0 = time.time()
-        base = C.prepare()
-        # full combo ranges alongside the class weights
-        full = []
-        for (o, t, s, four), case in zip(C.CASES, base):
-            a = C.line(s)
-            st = C.replay_hand(C.T, 100, {"preflop": a}, 1)[0]
-            while st.to_act != o:
-                a.append({"pos": st.to_act, "action": "fold"})
-                st = C.replay_hand(C.T, 100, {"preflop": a}, 1)[0]
-            R = pf.replay_ranges(a, C.T)
-            full.append(case + (R[o], R[t]))
-        flops = flop_sample(args.flops, seed=11 + rnd)
-        jobs, keys = [], []
-        for case in full:
-            for pt, r_oop, r_ip, pot, stack, _ in ranges_for(case):
-                for f in flops:
-                    jobs.append((f, r_oop, r_ip, pot, stack, args.budget))
-                    keys.append(pt)
-        with Pool(args.procs) as pool:
-            res = pool.map(measure, jobs)
-        for pt, r in zip(keys, res):
-            for pos, a in zip(("oop", "ip"), r):
-                acc[(pt, pos)] = acc[(pt, pos)] + a
-        write_table(acc, rnd + 1, args.flops, args.budget)
-        importlib.reload(importlib.import_module("gto.pf_realize"))
-        importlib.reload(P)
-        print(f"round {rnd + 1}: {len(jobs)} solves in {time.time() - t0:.0f}s; "
-              f"score vs charts {C.score(C.prepare(), 1500):.3f}")
-        for pt in ("3bet", "4bet"):
-            for pos in ("oop", "ip"):
-                sh, eq, w = acc[(pt, pos)]
-                print(f"  {pt} {pos}: pot share {float(sh.sum() / w.sum()):.3f} against equity "
-                      f"{float(eq.sum() / w.sum()):.3f}")
+    t0 = time.time()
+    flops = flop_sample(args.flops)
+    jobs, keys = [], []
+    for o, t, s, four in C.CASES:
+        for pt, r_oop, r_ip, pot, stack in chart_spots(o, t, s, four):
+            for k, f in enumerate(flops):
+                jobs.append((f, r_oop, r_ip, pot, stack, args.budget))
+                keys.append((pt, k % 2))
+    with Pool(args.procs) as pool:
+        res = pool.map(measure, jobs)
+    halves = [{(pt, pos): 0.0 for pt in ("3bet", "4bet") for pos in ("oop", "ip")} for _ in range(2)]
+    for (pt, h), r in zip(keys, res):
+        for pos, a in zip(("oop", "ip"), r):
+            halves[h][(pt, pos)] = halves[h][(pt, pos)] + a
+    total = {k: halves[0][k] + halves[1][k] for k in halves[0]}
+    write_table(total, len(C.CASES), args.flops, args.budget)
+    if args.split:
+        global OUT
+        out = OUT
+        for h, name in ((0, "a"), (1, "b")):
+            OUT = os.path.join(args.split, f"pf_realize_{name}.py")
+            write_table(halves[h], len(C.CASES), args.flops // 2, args.budget)
+        OUT = out
+    print(f"{len(jobs)} solves in {time.time() - t0:.0f}s")
+    for pt in ("3bet", "4bet"):
+        for pos in ("oop", "ip"):
+            sh, eq, w = total[(pt, pos)]
+            print(f"  {pt} {pos}: pot share {float(sh.sum() / w.sum()):.3f} against equity {float(eq.sum() / w.sum()):.3f}")
 
 
 if __name__ == "__main__":

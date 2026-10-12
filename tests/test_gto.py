@@ -833,3 +833,140 @@ class TestPreflopSubgame(unittest.TestCase):
         jam = wt_ = to_classes(rng["BTN"]) * S["t_jam"]
         self.assertGreater(float(jam.sum() - jam[prem].sum()), 0.5)
 
+
+
+def _subgame_cases():
+    """The six standard 3bet pots of scripts/calibrate_pf_solve.py: (name, opener classes, 3bettor
+    classes, Spot, chart shares [opener call, opener 4bet, 3bettor call, 3bettor jam])."""
+    import os, sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+    import calibrate_pf_solve
+    return calibrate_pf_solve.prepare()
+
+
+def _half_table(name):
+    import os
+    ns = {}
+    with open(os.path.join(os.path.dirname(__file__), "data", f"pf_realize_{name}.py")) as f:
+        exec(f.read(), ns)
+    return ns["TABLE"]
+
+
+class TestRealizationTable(unittest.TestCase):
+    """gto/pf_realize.py (measured with the postflop solver on the charts' ranges) and the preflop
+    subgame solved with it."""
+
+    @classmethod
+    def setUpClass(cls):
+        from gto import pf_solve as P
+        cls.P = P
+        cls._use = P.USE_TABLE
+        P.USE_TABLE = True
+        cls.cases = _subgame_cases()
+        cls.sols = {name: P.solve(wo, wt, spot, iters=1500) for name, wo, wt, spot, _ in cls.cases}
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.P.USE_TABLE = cls._use
+
+    def test_table_shape_and_bounds(self):
+        from gto.pf_realize import TABLE
+        from gto.pf_solve import bucket_of, K
+        nb = int(bucket_of().max()) + 1
+        for pt in ("3bet", "4bet"):
+            for pos in ("oop", "ip"):
+                rows = TABLE[pt][pos]
+                self.assertEqual(len(rows), K)
+                for row in rows:
+                    self.assertEqual(len(row), nb)
+                    for v in row:
+                        if v is not None:
+                            self.assertTrue(-3.0 < v[0] < 3.0 and v[1] >= 0.0, (pt, pos, v))
+
+    def test_table_makes_poker_sense(self):
+        """Where well measured: KK loses chips after the flop against AA and AA wins them against KK;
+        AA runs at or above its equity against everything weaker; AKo and AJo run below it against the
+        top buckets (they pay off)."""
+        from gto.pf_realize import TABLE
+        from gto.pf_classes import CLASS_INDEX as C
+        for pt in ("3bet", "4bet"):
+            for pos in ("oop", "ip"):
+                t = TABLE[pt][pos]
+                kk_aa, aa_kk = t[C["KK"]][0], t[C["AA"]][1]
+                if kk_aa and kk_aa[1] > 0.2:
+                    self.assertLess(kk_aa[0], 0.0, (pt, pos))
+                if aa_kk and aa_kk[1] > 0.2:
+                    self.assertGreater(aa_kk[0], 0.0, (pt, pos))
+                for b in range(1, 9):
+                    v = t[C["AA"]][b]
+                    if v and v[1] > 0.5:
+                        self.assertGreater(v[0], -0.05, (pt, pos, b))
+                for h in ("AKo", "AJo"):
+                    for b in (0, 1):
+                        v = t[C[h]][b]
+                        if v and v[1] > 0.2:
+                            self.assertLess(v[0], 0.0, (pt, pos, h, b))
+
+    def test_shares_bounded_and_follow_equity(self):
+        from gto.pf_classes import equity_matrix
+        eq = equity_matrix()
+        for name, wo, wt, spot, _ in self.cases:
+            for pt in ("3bet", "4bet"):
+                sh = self.P._shares(eq, 1.0, 1.0, pt, spot.opener_ip)
+                self.assertTrue(np.isfinite(sh).all(), name)
+                self.assertTrue((sh > -2.0).all() and (sh < 3.0).all(), name)
+                m = (wo[:, None] * wt[None, :]) > 0
+                self.assertGreater(np.corrcoef(sh[m], eq[m])[0, 1], 0.8, (name, pt))
+
+    def test_every_spot_converges_and_plays_sanely(self):
+        from gto.pf_classes import CLASS_INDEX as C, equity_matrix, PAIR_COMPAT
+        for name, wo, wt, spot, _ in self.cases:
+            S = self.sols[name]
+            self.assertLess(S["exploitability"], 0.05, name)
+            for h in ("AA", "KK"):
+                self.assertLess(S["o_fold"][C[h]], 0.01, (name, h))
+                self.assertLess(S["t_fold"][C[h]], 0.01, (name, h))
+            self.assertGreater(S["o_vs_jam"][C["AA"]], 0.99, name)
+            self.assertGreater(S["o_vs_jam"][C["KK"]], 0.9, name)
+            # the weakest hands the opener opened fold to the 3bet
+            e = (equity_matrix() * PAIR_COMPAT * wt).sum(1) / (PAIR_COMPAT * wt).sum(1)
+            weak = [i for i in np.argsort(e) if wo[i] > 0.5][:5]
+            self.assertGreater(min(S["o_fold"][i] for i in weak), 0.95, name)
+            # pairs continue against the 3bet at least about as often as smaller pairs
+            cont = [1 - S["o_fold"][C[p]] for p in ("AA", "KK", "QQ", "JJ", "TT") if wo[C[p]] > 0.5]
+            for hi, lo in zip(cont, cont[1:]):
+                self.assertGreater(hi, lo - 0.1, (name, cont))
+
+    # Known failure: on 48 flops a half, the opener's call share against the 3bet moves 10-22 points
+    # between halves in four of six spots (4bet and jam shares agree within 5): many hands sit near the
+    # call/fold line, and a hand's postflop result varies a lot from flop to flop.
+    @unittest.expectedFailure
+    def test_stable_across_flop_halves(self):
+        """Solved with the table from each half of the flops, the range-level shares and the key hands
+        come out nearly the same: the measurement isn't noise-driven."""
+        from gto.pf_classes import CLASS_INDEX as C
+        P = self.P
+        res = {}
+        try:
+            for half in ("a", "b"):
+                P.TABLE_OVERRIDE = _half_table(half)
+                res[half] = {name: P.solve(wo, wt, spot, iters=1500) for name, wo, wt, spot, _ in self.cases}
+        finally:
+            P.TABLE_OVERRIDE = None
+        for name, wo, wt, spot, _ in self.cases:
+            a, b = res["a"][name], res["b"][name]
+            sh = lambda S, k, w: float((w * S[k]).sum() / w.sum())
+            for k, w in (("o_call", wo), ("o_4bet", wo), ("t_call", wt), ("t_jam", wt)):
+                self.assertLess(abs(sh(a, k, w) - sh(b, k, w)), 0.08, (name, k, sh(a, k, w), sh(b, k, w)))
+            for h in ("AA", "KK"):
+                self.assertLess(abs(a["o_vs_jam"][C[h]] - b["o_vs_jam"][C[h]]), 0.15, (name, h))
+
+    # Known failure, from the same noise: UTG vs CO calls 14% (chart 26%), BTN vs SB 58% (chart 36%).
+    @unittest.expectedFailure
+    def test_close_to_charts(self):
+        """The opener's response to the 3bet stays near the charts (hand-written solver approximations)."""
+        for name, wo, wt, spot, target in self.cases:
+            S = self.sols[name]
+            sh = lambda k, w: float((w * S[k]).sum() / w.sum())
+            self.assertLess(abs(sh("o_call", wo) - target[0]), 0.12, (name, sh("o_call", wo), target[0]))
+            self.assertLess(abs(sh("o_4bet", wo) - target[1]), 0.08, (name, sh("o_4bet", wo), target[1]))

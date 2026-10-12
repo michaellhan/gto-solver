@@ -4,7 +4,7 @@ gto/pf_solve.py solves the 3bet pot heads-up (opener facing the 3bet: fold/call/
 the 4bet: fold/call/jam; opener facing the jam: fold/call). Calls that see a flop pay realized equity,
 set by REALIZE (base by position and pot type) and REALIZE_SLOPE (below / above 50% equity). The
 charts in gto/preflop.py are hand-written approximations of solver output, so their continue rates
-are the target: for three standard spots, the opener's call and 4bet shares and the 3bettor's call
+are the target: for six standard spots, the opener's call and 4bet shares and the 3bettor's call
 and jam shares against the 4bet. Position stays ordered (in position realizes at least as much).
 
 Score: sum of squared differences in those shares.
@@ -25,9 +25,13 @@ from gto.advisor import replay_hand
 from gto.pf_classes import CLASSES, to_classes
 
 T = pf.Table(pf.SEATS[6])
+# opener out of position (a later seat 3bets) and in position (a blind 3bets)
 CASES = [("CO", "BTN", "CO raise 2.5, BTN raise 7.5", 18.0),
          ("BTN", "BB", "BTN raise 2.5, BB raise 10", 23.0),
-         ("UTG", "CO", "UTG raise 2.5, CO raise 7.5", 18.0)]
+         ("UTG", "CO", "UTG raise 2.5, CO raise 7.5", 18.0),
+         ("HJ", "BTN", "HJ raise 2.5, BTN raise 7.5", 18.0),
+         ("CO", "BB", "CO raise 2.5, BB raise 10", 23.0),
+         ("BTN", "SB", "BTN raise 2.5, SB raise 11", 25.0)]
 
 
 def line(s):
