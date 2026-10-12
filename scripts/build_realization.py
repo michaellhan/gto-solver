@@ -5,8 +5,9 @@ preflop subgame solver (gto/pf_solve.py).
 Measured once, on the charts' ranges (gto/preflop.py), for six standard 3bet pots (the spots in
 scripts/calibrate_pf_solve.py: openers out of position against a later seat's 3bet and in position
 against a blind's): in the 3bet pot, the opener's chart calls against the whole 3bet range; in the 4bet
-pot, the 3bettor's chart calls against the opener's chart 4bets. Each is solved on a fixed sample of
-flops; a combo's pot share is its EV over the pot (later bets included, so it can fall below 0 or rise
+pot, the 3bettor's chart calls against the opener's chart 4bets. Each is solved on the same flops,
+stratified by texture (suit pattern, pairing, high card, connectedness) and weighted by the share of all
+flops each stands for, which removes most of the noise of picking flops at random; a combo's pot share is its EV over the pot (later bets included, so it can fall below 0 or rise
 above 1) and its excess that share minus its preflop equity against the opponent's combos in that
 bucket. Pair-weighted sums by class and bucket, for each pot type and position, make the table.
 
@@ -14,8 +15,8 @@ An earlier version re-measured on the ranges of the subgame's own solution, roun
 fixed point: it didn't settle (many hands sit near indifference, so a small change in the table flipped
 strategies and so the ranges measured next), so the reference ranges are now fixed.
 
-  python scripts/build_realization.py                        # 96 flops, 5s per solve
-  python scripts/build_realization.py --flops 8 --budget 1   # quick look
+  python scripts/build_realization.py                        # 128 flops, 5s per solve
+  python scripts/build_realization.py --flops 64 --budget 1  # quick look
   python scripts/build_realization.py --split DIR            # also write tables from each half of the flops
                                                               # (DIR/pf_realize_a.py, _b.py) to check stability
 """
@@ -33,13 +34,68 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "..", "gto", "pf_realize.py")
 
 
-def flop_sample(n, seed=11):
+def iso_flops():
+    """Every flop up to suit symmetry, with how many of the 22100 flops each stands for."""
+    from itertools import combinations, permutations
+    counts = {}
+    for f in combinations(range(52), 3):
+        key = min(tuple(sorted(4 * (c // 4) + p[c % 4] for c in f)) for p in permutations(range(4)))
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def texture(f):
+    """Stratum of a flop: suit pattern, pairing, high card, and (unpaired) whether it is connected; the
+    rare textures coarser (trips one stratum, monotone by high card only)."""
+    ranks = sorted((c // 4 for c in f), reverse=True)
+    suits = len({c % 4 for c in f})
+    pairing = 3 - len(set(ranks))
+    hi = ranks[0]
+    if pairing == 2:
+        return ("trips",)
+    if suits == 1:
+        return ("monotone", 0 if hi == 12 else 1 if hi >= 10 else 2)
+    hi_b = 0 if hi == 12 else 1 if hi == 11 else 2 if hi >= 9 else 3 if hi >= 6 else 4
+    conn = pairing == 0 and (ranks[0] - ranks[2] <= 4 or (hi == 12 and ranks[1] <= 3))
+    return (suits, pairing, hi_b, conn)
+
+
+def flop_sample(n, seed=11, min_per=2):
+    """n flops stratified by texture: each stratum gets at least min_per (so each half has it) and the
+    rest in proportion to the flops it holds (largest remainder), picked by systematic sampling over its
+    suit-isomorphic flops by weight. Returns [(flop, weight, half, weight within its half)]: a flop's
+    weight is its stratum's share of all flops over the number picked there (scaled to sum to n), the
+    halves alternate within each stratum, and each half is weighted on its own."""
     rng = random.Random(seed)
+    counts = iso_flops()
+    strata = {}
+    for f, c in counts.items():
+        strata.setdefault(texture(f), []).append((f, c))
+    total = sum(counts.values())
+    keys = sorted(strata, key=str)
+    share = {k: sum(c for _, c in strata[k]) / total for k in keys}
+    rest = n - min_per * len(keys)
+    if rest < 0:
+        raise ValueError(f"need at least {min_per * len(keys)} flops for {len(keys)} strata")
+    alloc = {k: min_per + int(rest * share[k]) for k in keys}
+    for k in sorted(keys, key=lambda k: rest * share[k] - int(rest * share[k]), reverse=True)[:n - sum(alloc.values())]:
+        alloc[k] += 1
     out = []
-    while len(out) < n:
-        f = tuple(sorted(rng.sample(range(52), 3)))
-        if f not in out:
-            out.append(f)
+    for k in keys:
+        m = alloc[k]
+        items = strata[k][:]
+        rng.shuffle(items)
+        w_tot = sum(c for _, c in items)
+        step, start = w_tot / m, rng.random() * w_tot / m
+        cum, j, picks = 0.0, 0, []
+        for f, c in items:
+            while j < m and start + j * step < cum + c:
+                picks.append(f); j += 1
+            cum += c
+        m_half = [sum(1 for i in range(m) if i % 2 == h) for h in (0, 1)]
+        for idx, f in enumerate(picks):
+            h = idx % 2
+            out.append((f, share[k] * n / m, h, share[k] * (n / 2) / m_half[h]))
     return out
 
 
@@ -135,7 +191,7 @@ def write_table(acc, n_cases, flops, budget):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--flops", type=int, default=96)
+    ap.add_argument("--flops", type=int, default=128)
     ap.add_argument("--budget", type=float, default=5.0)
     ap.add_argument("--procs", type=int, default=max(1, (os.cpu_count() or 2) - 1))
     ap.add_argument("--split", help="directory to also write the tables from each half of the flops")
@@ -147,16 +203,17 @@ def main():
     jobs, keys = [], []
     for o, t, s, four in C.CASES:
         for pt, r_oop, r_ip, pot, stack in chart_spots(o, t, s, four):
-            for k, f in enumerate(flops):
+            for f, fw, half, fw_half in flops:
                 jobs.append((f, r_oop, r_ip, pot, stack, args.budget))
-                keys.append((pt, k % 2))
+                keys.append((pt, half, fw, fw_half))
     with Pool(args.procs) as pool:
         res = pool.map(measure, jobs)
-    halves = [{(pt, pos): 0.0 for pt in ("3bet", "4bet") for pos in ("oop", "ip")} for _ in range(2)]
-    for (pt, h), r in zip(keys, res):
-        for pos, a in zip(("oop", "ip"), r):
-            halves[h][(pt, pos)] = halves[h][(pt, pos)] + a
-    total = {k: halves[0][k] + halves[1][k] for k in halves[0]}
+    zero = lambda: {(pt, pos): 0.0 for pt in ("3bet", "4bet") for pos in ("oop", "ip")}
+    total, halves = zero(), [zero(), zero()]
+    for (pt, h, fw, fw_half), r in zip(keys, res):
+        for pos, a in zip(("oop", "ip"), r):     # each flop by its stratum's weight
+            total[(pt, pos)] = total[(pt, pos)] + fw * a
+            halves[h][(pt, pos)] = halves[h][(pt, pos)] + fw_half * a
     write_table(total, len(C.CASES), args.flops, args.budget)
     if args.split:
         global OUT

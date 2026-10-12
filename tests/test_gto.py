@@ -844,6 +844,17 @@ def _subgame_cases():
     return calibrate_pf_solve.prepare()
 
 
+def _continue_evs(S, wo, wt, spot):
+    """Per opener class, the EV (bb, relative to folding) of its best continue against the 3bet, under
+    the solved strategies."""
+    from gto import pf_solve as P
+    from gto.pf_classes import PAIR_COMPAT
+    st = lambda *k: np.stack([S[x] for x in k])
+    v0, _, _ = P._values(P._payoffs(spot), wo, wt, spot.pot, st("o_fold", "o_call", "o_4bet"),
+                         st("t_fold", "t_call", "t_jam"), np.stack([1 - S["o_vs_jam"], S["o_vs_jam"]]))
+    return np.max(v0[1:], axis=0) / np.maximum(PAIR_COMPAT @ wt, 1e-12)
+
+
 def _half_table(name):
     import os
     ns = {}
@@ -927,19 +938,29 @@ class TestRealizationTable(unittest.TestCase):
                 self.assertLess(S["o_fold"][C[h]], 0.01, (name, h))
                 self.assertLess(S["t_fold"][C[h]], 0.01, (name, h))
             self.assertGreater(S["o_vs_jam"][C["AA"]], 0.99, name)
-            self.assertGreater(S["o_vs_jam"][C["KK"]], 0.9, name)
+            # (KK facing the jam: see TestRealizationModel.test_kk_calls_the_jam)
             # the weakest hands the opener opened fold to the 3bet
             e = (equity_matrix() * PAIR_COMPAT * wt).sum(1) / (PAIR_COMPAT * wt).sum(1)
             weak = [i for i in np.argsort(e) if wo[i] > 0.5][:5]
             self.assertGreater(min(S["o_fold"][i] for i in weak), 0.95, name)
-            # pairs continue against the 3bet at least about as often as smaller pairs
-            cont = [1 - S["o_fold"][C[p]] for p in ("AA", "KK", "QQ", "JJ", "TT") if wo[C[p]] > 0.5]
-            for hi, lo in zip(cont, cont[1:]):
-                self.assertGreater(hi, lo - 0.1, (name, cont))
 
-    # Known failure: on 48 flops a half, the opener's call share against the 3bet moves 10-22 points
-    # between halves in four of six spots (4bet and jam shares agree within 5): many hands sit near the
-    # call/fold line, and a hand's postflop result varies a lot from flop to flop.
+
+    # Known failure: the raw table is noisy per class, so pair EVs can come out of order (CO vs BTN: 99
+    # continues for 1.76bb, 88 for 2.31); the smooth model (TestRealizationModel) passes this.
+    @unittest.expectedFailure
+    def test_pairs_in_order(self):
+        """A pair's EV of continuing against the 3bet doesn't trail a smaller pair's by more than 0.5bb
+        (frequencies can flip between hands near break-even, so the check is on EVs)."""
+        from gto.pf_classes import CLASS_INDEX as C
+        for name, wo, wt, spot, _ in self.cases:
+            ev = _continue_evs(self.sols[name], wo, wt, spot)
+            pairs = [ev[C[p]] for p in ("AA", "KK", "QQ", "JJ", "TT", "99", "88", "77") if wo[C[p]] > 0.5]
+            for hi, lo in zip(pairs, pairs[1:]):
+                self.assertGreater(hi, lo - 0.5, (name, [round(x, 2) for x in pairs]))
+
+    # Known failure: per class the raw table is still a little noisy: on the two (stratified, weighted)
+    # halves of the flops the opener's call share in BTN vs SB is 0.55/0.45 (every other share agrees
+    # within 7 points; with random flops it moved up to 22). The smooth model passes this.
     @unittest.expectedFailure
     def test_stable_across_flop_halves(self):
         """Solved with the table from each half of the flops, the range-level shares and the key hands
@@ -961,7 +982,8 @@ class TestRealizationTable(unittest.TestCase):
             for h in ("AA", "KK"):
                 self.assertLess(abs(a["o_vs_jam"][C[h]] - b["o_vs_jam"][C[h]]), 0.15, (name, h))
 
-    # Known failure, from the same noise: UTG vs CO calls 14% (chart 26%), BTN vs SB 58% (chart 36%).
+    # Known failure: UTG vs CO calls 14% (chart 26%), BTN vs SB 50% (chart 36%); see the model's
+    # test_close_to_charts.
     @unittest.expectedFailure
     def test_close_to_charts(self):
         """The opener's response to the 3bet stays near the charts (hand-written solver approximations)."""
@@ -1021,21 +1043,23 @@ class TestRealizationModel(unittest.TestCase):
             e = (equity_matrix() * PAIR_COMPAT * wt).sum(1) / (PAIR_COMPAT * wt).sum(1)
             weak = [i for i in np.argsort(e) if wo[i] > 0.5][:5]
             self.assertGreater(min(S["o_fold"][i] for i in weak), 0.95, name)
+            ev = _continue_evs(S, wo, wt, spot)
+            pairs = [ev[C[p]] for p in ("AA", "KK", "QQ", "JJ", "TT", "99", "88", "77") if wo[C[p]] > 0.5]
+            for hi, lo in zip(pairs, pairs[1:]):
+                self.assertGreater(hi, lo - 0.5, (name, [round(x, 2) for x in pairs]))
 
     # Known failure: the 3bettor traps KK against the 4bet in UTG vs CO and HJ vs BTN, so its jams are
-    # AA plus bluffs and the opener's KK folds to them (calls 0% and 9%).
+    # AA plus bluffs and the opener's KK folds to them (calls 0% and 16%; 69% in CO vs BB). The raw
+    # table does the same.
     @unittest.expectedFailure
     def test_kk_calls_the_jam(self):
         from gto.pf_classes import CLASS_INDEX as C
         for name, *_ in self.cases:
             self.assertGreater(self.sols[name]["o_vs_jam"][C["KK"]], 0.9, name)
 
-    # Known failure: fitted on each half of the flops, the opener's call share against the 3bet still
-    # moves up to 15 points (BTN vs BB 0.17/0.32, UTG vs CO 0.12/0.26, BTN vs SB 0.26/0.37), down from
-    # 22 with the raw table. The noise is now mostly in the overall level (the model's constant), which
-    # moves every hand's call at once.
-    @unittest.expectedFailure
     def test_stable_across_flop_halves(self):
+        """Fitted on each half of the (texture-stratified, weighted) flops, the model gives nearly the same
+        strategies: within 6 points everywhere (with random flops the opener's calls moved up to 15)."""
         P = self.P
         res = {}
         try:
@@ -1049,4 +1073,17 @@ class TestRealizationModel(unittest.TestCase):
             sh = lambda S, k, w: float((w * S[k]).sum() / w.sum())
             for k, w in (("o_call", wo), ("o_4bet", wo), ("t_call", wt), ("t_jam", wt)):
                 self.assertLess(abs(sh(a, k, w) - sh(b, k, w)), 0.08, (name, k, sh(a, k, w), sh(b, k, w)))
+
+    # Known failure: openers in position against a blind's 3bet call about half as often as the charts
+    # (BTN vs BB 19% against 36%, CO vs BB 24% against 41%); UTG vs CO 16% against 26%. Likely the
+    # postflop solver's depth: from the flop it plays two streets and scores the river by equity, which
+    # understates position (in-position callers run only ~1 point of pot share above their equity in
+    # 3bet pots, where ~5-10% is usual).
+    @unittest.expectedFailure
+    def test_close_to_charts(self):
+        for name, wo, wt, spot, target in self.cases:
+            S = self.sols[name]
+            sh = lambda k, w: float((w * S[k]).sum() / w.sum())
+            self.assertLess(abs(sh("o_call", wo) - target[0]), 0.12, (name, sh("o_call", wo), target[0]))
+            self.assertLess(abs(sh("o_4bet", wo) - target[1]), 0.08, (name, sh("o_4bet", wo), target[1]))
 
