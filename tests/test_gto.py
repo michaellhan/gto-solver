@@ -838,6 +838,22 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class TestPoolOverfold(unittest.TestCase):
+    def test_overfold_keeps_strong_calls(self):
+        """The pool's extra folds to a big bet were a flat share of the range: against a turn jam that
+        equilibrium calls with a few percent of the range, every call went, queens full included, and a jam
+        was worth exactly the pot (found by scripts/sanity_sweep.py). They now take at most half the calls
+        and never the strongest hands."""
+        R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
+        pre = [R("UTG", "raise", 2.5), R("HJ", "fold"), R("CO", "call"), R("BTN", "call"), R("SB", "raise", 15),
+               R("BB", "fold"), R("UTG", "fold"), R("CO", "call"), R("BTN", "fold")]
+        st = {"players": 6, "hero": "SB", "hole": "KdAd", "board": "Qd6dQcAc", "stack": 100, "preflop": pre,
+              "flop": [R("SB", "check"), R("CO", "check")], "opponents": "pool"}
+        out = Advisor(time_budget=2.0, prior_budget=1.0).advise(st)
+        jam = next(a for a in out["actions"] if a["action"] == "all-in")
+        self.assertLess(jam["ev_bb"], out["pot_bb"] - 0.5, out["actions"])
+
+
 class TestPreflopSubgame(unittest.TestCase):
     def test_converges_and_is_sane(self):
         """The 3bet-pot subgame (pf_solve) converges, premiums never fold (AA and KK call the jam),
