@@ -732,7 +732,9 @@ class TestExploit(unittest.TestCase):
         reach = np.ones((1, n))
         big = lock(Node(15.0, 10.0), strat, reach)
         fold = float(big[0, 0].mean())
-        self.assertAlmostEqual(fold - 0.5, 0.15, places=2)       # a 1.5x-pot river overbet: 15% more of the range folds
+        self.assertAlmostEqual(fold - 0.5, 0.075, places=2)      # a 1.5x-pot river overbet: 7.5% more of the range folds
+        # a third-pot river bet: 20% more folds (the pool over-folds small river bets most)
+        self.assertAlmostEqual(float(lock(Node(3.3, 10.0), strat, reach)[0, 0].mean()) - 0.5, 0.20, places=2)
         pct = lock.pct(board)
         self.assertGreater(big[0, 0][pct < 0.2].mean(), big[0, 0][pct > 0.8].mean())   # ...the weakest calls
         flop = tuple(cards("Qs7c3d"))
