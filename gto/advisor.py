@@ -461,6 +461,22 @@ class PreflopRanges(dict):
     rebuilt: List[str] = []
 
 
+def _post_floor(before: np.ndarray, after: np.ndarray, board, pos: str, street: str, notes: List[str]) -> np.ndarray:
+    """A player's range after an earlier street's actions, filled out when the line leaves fewer than
+    preflop.MIN_LINE_COMBOS live combos (counting the cards dealt since): the next street's solve would
+    otherwise play against a face-up hand (a 4bet pot's ~12-combo range checking back the flop left 2 for
+    the turn). The filler is the rest of the range the player started the street with, weighted as
+    preflop (pf.thin_line: 1 - combos / MIN_LINE_COMBOS); the hands that took the line are kept."""
+    live = np.ones(N_COMBOS)
+    for c in board:
+        live = live * (1.0 - MEMBER_FULL[c])
+    r, _ = pf.thin_line(after * live, before * live)
+    if r.sum() > (after * live).sum() + 1e-9:
+        notes.append(f"{street}: {pos}'s line left {float((after * live).sum()):.1f} combos, so their range "
+                     f"is filled out with the rest of their {street} range")
+    return r
+
+
 def pool_strategy(strat: Dict[str, np.ndarray], p: str, before: List[dict], ranges: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
     """p's preflop strategy `strat` (after the actions `before`) as a player-pool player would play it:
     exploit.pool_preflop, with p's equity against the raiser to pick the extra flats facing an open.
@@ -883,7 +899,8 @@ class Advisor:
                 node, c0, c1 = self._walk(sol, st.actions, oop, ip, st.pot_start, eff, notes, st.name, self.prior_smoothing,
                                           board=sub_board, rules=(0, 1),
                                           lock=PoolLock(sol.ctx, 1 - hero_p) if pool else None)
-                r0, r1 = expand(sol.ctx, c0), expand(sol.ctx, c1)
+                r0 = _post_floor(r0, expand(sol.ctx, c0), board, oop, st.name, notes)
+                r1 = _post_floor(r1, expand(sol.ctx, c1), board, ip, st.name, notes)
             eff = min(stack - cur.inv_start[oop], stack - cur.inv_start[ip])
             cfg = self._cfg_with_real_sizes(cur, oop, ip, eff)
             r0, r1 = self._with_hero(r0, r1, hero_p, hole, notes)

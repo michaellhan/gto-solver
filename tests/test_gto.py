@@ -385,6 +385,23 @@ class TestAdvisor(unittest.TestCase):
             self.assertAlmostEqual(float(s["call"][ix(h)]), r["actions"][0]["freq"], delta=0.02, msg=h)
         self.assertEqual(float(s["call"][ix("QsQd")]), 0.0)
 
+    def test_postflop_floor_for_thin_ranges(self):
+        """A 4bet pot's ~12-combo range checking back the flop left HJ 1.8 combos for the turn, so the turn
+        solve faced a near face-up hand; ranges entering a later street are filled out below
+        preflop.MIN_LINE_COMBOS. A wide single-raised pot is untouched."""
+        R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
+        adv = Advisor(time_budget=1.0, prior_budget=0.5)
+        pre = [R("UTG", "raise", 2.5), R("HJ", "raise", 7.5)] + [R(p, "fold") for p in ("CO", "BTN", "SB", "BB")] + \
+              [R("UTG", "raise", 18.8), R("HJ", "call")]
+        out = adv.advise({"players": 6, "hero": "UTG", "hole": "KhAs", "board": "JsQs2hAh", "stack": 100, "preflop": pre,
+                          "flop": [R("UTG", "check"), R("HJ", "check")]})
+        self.assertGreater(out["villain_range_combos"], 4.0, out)
+        self.assertTrue(any("filled out with the rest of their flop range" in n for n in out["notes"]), out["notes"])
+        srp = [R("UTG", "fold"), R("HJ", "fold"), R("CO", "fold"), R("BTN", "raise", 2.5), R("SB", "fold"), R("BB", "call")]
+        out = adv.advise({"players": 6, "hero": "BB", "hole": "9h8h", "board": "Kd7c2s5h", "stack": 100, "preflop": srp,
+                          "flop": [R("BB", "check"), R("BTN", "check")]})
+        self.assertFalse(any("filled out" in n for n in out["notes"]), out["notes"])
+
     def test_off_chart_line_not_face_up(self):
         """BTN flats CO (the chart's flats never 4bet), then 4bets BB's squeeze: hero's range would be
         empty and KK solved face-up, so BB folds everything to a jam (all-in EV = the pot, +49).
