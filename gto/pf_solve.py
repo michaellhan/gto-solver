@@ -64,11 +64,12 @@ class Spot:
 # How a call that sees a flop is paid:
 #   "param": the parametric model above (fitted to the charts' continue rates)
 #   "table": the excess pot shares measured with the postflop solver (gto/pf_realize.py, from
-#            scripts/build_realization.py) per class against each opponent strength bucket. Too noisy
+#            scripts/build_realization.py) per class against each opponent strength bucket, by pot
+#            type, role (caller, or the aggressor whose bet was called) and position. Too noisy
 #            alone for close calls: the tables from the two halves of the flops put the opener's calls
 #            against a 3bet 10-22 points apart in four of six spots (tests TestRealizationTable).
 #   "model": a smooth model of those measurements (gto/pf_realize_model.py, from
-#            scripts/fit_realization.py): a few coefficients per pot type and position on the hand's
+#            scripts/fit_realization.py): a few coefficients per pot type, role and position on the hand's
 #            equity against the bucket and its shape (pair, suited, connected), which averages the noise.
 MODE = "param"
 TABLE_OVERRIDE = None   # a table to use instead of gto/pf_realize.py's (tests: the two halves of the flops)
@@ -95,7 +96,7 @@ def bucket_of() -> np.ndarray:
 
 def _table(pot_type: str, pos: str):
     """Per class and opponent strength bucket, the measured excess pot share and the weight it rests on
-    (0 where unmeasured), or None."""
+    (0 where unmeasured), or None. `pos`: role and position, e.g. "caller_ip"."""
     table = TABLE_OVERRIDE
     if table is None:
         try:
@@ -166,7 +167,9 @@ def _shares(eq: np.ndarray, r_o: float, r_t: float, pot_type: str, opener_ip: bo
     strength bucket, the two combined so the shares add to 1 (the table's thin entries blended with the
     parametric model by the weight behind them)."""
     param = _param_shares(eq, r_o, r_t, pot_type)
-    po, pt = ("ip", "oop") if opener_ip else ("oop", "ip")
+    # the opener called the 3bet, or had its 4bet called; the 3bettor the other way round
+    ro_, rt_ = ("caller", "aggr") if pot_type == "3bet" else ("aggr", "caller")
+    po, pt = (f"{ro_}_ip", f"{rt_}_oop") if opener_ip else (f"{ro_}_oop", f"{rt_}_ip")
     b = bucket_of()
     if MODE == "model":
         mo, mt = _model(pot_type, po), _model(pot_type, pt)
