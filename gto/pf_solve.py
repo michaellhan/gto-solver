@@ -61,13 +61,18 @@ class Spot:
         return tuple(round(x, 2) for x in (self.pot, self.open_in, self.three, self.four, self.stack)) + (self.opener_ip,)
 
 
-# Pot shares measured with the postflop solver (gto/pf_realize.py, scripts/build_realization.py): per
-# class against each opponent strength bucket, so KK's postflop edge counts against weaker hands and
-# not against AA. Off by default: measured on 96 flops a spot it is still too noisy for close calls
-# (the tables from the two halves of the flops put the opener's calls against a 3bet 10-22 points
-# apart in four of six spots; see tests TestRealizationTable).
-USE_TABLE = False
+# How a call that sees a flop is paid:
+#   "param": the parametric model above (fitted to the charts' continue rates)
+#   "table": the excess pot shares measured with the postflop solver (gto/pf_realize.py, from
+#            scripts/build_realization.py) per class against each opponent strength bucket. Too noisy
+#            alone for close calls: the tables from the two halves of the flops put the opener's calls
+#            against a 3bet 10-22 points apart in four of six spots (tests TestRealizationTable).
+#   "model": a smooth model of those measurements (gto/pf_realize_model.py, from
+#            scripts/fit_realization.py): a few coefficients per pot type and position on the hand's
+#            equity against the bucket and its shape (pair, suited, connected), which averages the noise.
+MODE = "param"
 TABLE_OVERRIDE = None   # a table to use instead of gto/pf_realize.py's (tests: the two halves of the flops)
+MODEL_OVERRIDE = None   # coefficients to use instead of gto/pf_realize_model.py's
 
 
 TABLE_PRIOR = 0.5  # the parametric model counts as this much of a typical entry's measurement
@@ -91,8 +96,6 @@ def bucket_of() -> np.ndarray:
 def _table(pot_type: str, pos: str):
     """Per class and opponent strength bucket, the measured excess pot share and the weight it rests on
     (0 where unmeasured), or None."""
-    if not USE_TABLE:
-        return None
     table = TABLE_OVERRIDE
     if table is None:
         try:
@@ -105,6 +108,49 @@ def _table(pot_type: str, pos: str):
     return d, w
 
 
+@lru_cache(maxsize=1)
+def _bucket_equity() -> np.ndarray:
+    """(K, buckets): each class's all-in equity against all the combos of each strength bucket."""
+    from .pf_classes import N_IN
+    b = bucket_of()
+    W = PAIR_COMPAT * N_IN[None, :]
+    return np.stack([(equity_matrix() * W * (b == k)).sum(1) / (W * (b == k)).sum(1)
+                     for k in range(int(b.max()) + 1)], 1)
+
+
+@lru_cache(maxsize=1)
+def _shape() -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Per class: pair, suited, connected (ranks at most two apart; not pairs)."""
+    rk = "23456789TJQKA"
+    pair = np.array([len(c) == 2 for c in CLASSES], float)
+    suited = np.array([len(c) == 3 and c[2] == "s" for c in CLASSES], float)
+    conn = np.array([len(c) == 3 and abs(rk.index(c[0]) - rk.index(c[1])) <= 2 for c in CLASSES], float)
+    return pair, suited, conn
+
+
+MODEL_FEATURES = ("1", "x", "x|x|", "pair", "suited", "connected", "pair*x", "suited*x")
+
+
+def model_features(e: np.ndarray) -> np.ndarray:
+    """(K, buckets, features) for the excess-share model, from equity e (K, buckets) against each bucket;
+    x = e - 0.5."""
+    pair, suited, conn = (v[:, None] for v in _shape())
+    x = e - 0.5
+    one = np.ones_like(x)
+    return np.stack([one, x, x * np.abs(x), pair * one, suited * one, conn * one, pair * x, suited * x], -1)
+
+
+def _model(pot_type: str, pos: str):
+    """(K, buckets): the smooth model's excess pot share per class against each bucket, or None."""
+    coef = MODEL_OVERRIDE
+    if coef is None:
+        try:
+            from .pf_realize_model import COEF as coef
+        except ImportError:
+            return None
+    return np.clip(model_features(_bucket_equity()) @ np.array(coef[pot_type][pos]), -2.0, 2.0)
+
+
 def _param_shares(eq: np.ndarray, r_o: float, r_t: float, pot_type: str) -> np.ndarray:
     """The parametric model: the opener's share from all-in equity and each side's realization,
     normalised so the two shares add to 1."""
@@ -115,16 +161,21 @@ def _param_shares(eq: np.ndarray, r_o: float, r_t: float, pot_type: str) -> np.n
 
 
 def _shares(eq: np.ndarray, r_o: float, r_t: float, pot_type: str, opener_ip: bool) -> np.ndarray:
-    """The opener's pot share after a call that sees a flop (EV over the pot, later bets included).
-    From the measured table where it has weight: each side's excess share over its equity against the
-    other's strength bucket, the two combined so the shares add to 1; blended per matchup with the
-    parametric model by the weight behind the measurement."""
+    """The opener's pot share after a call that sees a flop (EV over the pot, later bets included), by
+    MODE. With the table or the model: each side's excess share over its equity against the other's
+    strength bucket, the two combined so the shares add to 1 (the table's thin entries blended with the
+    parametric model by the weight behind them)."""
     param = _param_shares(eq, r_o, r_t, pot_type)
     po, pt = ("ip", "oop") if opener_ip else ("oop", "ip")
-    to, tt = _table(pot_type, po), _table(pot_type, pt)
+    b = bucket_of()
+    if MODE == "model":
+        mo, mt = _model(pot_type, po), _model(pot_type, pt)
+        if mo is None or mt is None:
+            return param
+        return eq + (mo[:, b] - mt[:, b].T) / 2
+    to, tt = (_table(pot_type, po), _table(pot_type, pt)) if MODE == "table" else (None, None)
     if to is None or tt is None:
         return param
-    b = bucket_of()
     pd = param - eq                                   # the parametric model's excess, opener's view
     d_o, w_o = to[0][:, b], to[1][:, b]               # opener class i against 3bettor j's bucket
     d_t, w_t = tt[0][:, b].T, tt[1][:, b].T           # 3bettor class j against opener i's bucket

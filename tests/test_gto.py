@@ -860,14 +860,14 @@ class TestRealizationTable(unittest.TestCase):
     def setUpClass(cls):
         from gto import pf_solve as P
         cls.P = P
-        cls._use = P.USE_TABLE
-        P.USE_TABLE = True
+        cls._mode = P.MODE
+        P.MODE = "table"
         cls.cases = _subgame_cases()
         cls.sols = {name: P.solve(wo, wt, spot, iters=1500) for name, wo, wt, spot, _ in cls.cases}
 
     @classmethod
     def tearDownClass(cls):
-        cls.P.USE_TABLE = cls._use
+        cls.P.MODE = cls._mode
 
     def test_table_shape_and_bounds(self):
         from gto.pf_realize import TABLE
@@ -970,3 +970,83 @@ class TestRealizationTable(unittest.TestCase):
             sh = lambda k, w: float((w * S[k]).sum() / w.sum())
             self.assertLess(abs(sh("o_call", wo) - target[0]), 0.12, (name, sh("o_call", wo), target[0]))
             self.assertLess(abs(sh("o_4bet", wo) - target[1]), 0.08, (name, sh("o_4bet", wo), target[1]))
+
+
+def _half_model(name):
+    import os
+    ns = {}
+    with open(os.path.join(os.path.dirname(__file__), "data", f"pf_realize_model_{name}.py")) as f:
+        exec(f.read(), ns)
+    return ns["COEF"]
+
+
+class TestRealizationModel(unittest.TestCase):
+    """gto/pf_realize_model.py: the smooth model of the measured excess pot shares
+    (scripts/fit_realization.py), and the preflop subgame solved with it."""
+
+    @classmethod
+    def setUpClass(cls):
+        from gto import pf_solve as P
+        cls.P = P
+        cls._mode = P.MODE
+        P.MODE = "model"
+        cls.cases = _subgame_cases()
+        cls.sols = {name: P.solve(wo, wt, spot, iters=1500) for name, wo, wt, spot, _ in cls.cases}
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.P.MODE = cls._mode
+
+    def test_model_shape_and_sense(self):
+        """Every class gets a finite excess against every bucket; big favourites gain (AA against KK)
+        and big underdogs lose (KK against AA), in every pot type and position."""
+        from gto.pf_classes import CLASS_INDEX as C
+        for pt in ("3bet", "4bet"):
+            for pos in ("oop", "ip"):
+                m = self.P._model(pt, pos)
+                self.assertEqual(m.shape, (len(C), int(self.P.bucket_of().max()) + 1))
+                self.assertTrue(np.isfinite(m).all())
+                self.assertGreater(m[C["AA"], 1], 0.0, (pt, pos))
+                self.assertLess(m[C["KK"], 0], 0.0, (pt, pos))
+
+    def test_every_spot_converges_and_plays_sanely(self):
+        from gto.pf_classes import CLASS_INDEX as C, equity_matrix, PAIR_COMPAT
+        for name, wo, wt, spot, _ in self.cases:
+            S = self.sols[name]
+            self.assertLess(S["exploitability"], 0.05, name)
+            for h in ("AA", "KK"):
+                self.assertLess(S["o_fold"][C[h]], 0.01, (name, h))
+                self.assertLess(S["t_fold"][C[h]], 0.01, (name, h))
+            self.assertGreater(S["o_vs_jam"][C["AA"]], 0.99, name)
+            e = (equity_matrix() * PAIR_COMPAT * wt).sum(1) / (PAIR_COMPAT * wt).sum(1)
+            weak = [i for i in np.argsort(e) if wo[i] > 0.5][:5]
+            self.assertGreater(min(S["o_fold"][i] for i in weak), 0.95, name)
+
+    # Known failure: the 3bettor traps KK against the 4bet in UTG vs CO and HJ vs BTN, so its jams are
+    # AA plus bluffs and the opener's KK folds to them (calls 0% and 9%).
+    @unittest.expectedFailure
+    def test_kk_calls_the_jam(self):
+        from gto.pf_classes import CLASS_INDEX as C
+        for name, *_ in self.cases:
+            self.assertGreater(self.sols[name]["o_vs_jam"][C["KK"]], 0.9, name)
+
+    # Known failure: fitted on each half of the flops, the opener's call share against the 3bet still
+    # moves up to 15 points (BTN vs BB 0.17/0.32, UTG vs CO 0.12/0.26, BTN vs SB 0.26/0.37), down from
+    # 22 with the raw table. The noise is now mostly in the overall level (the model's constant), which
+    # moves every hand's call at once.
+    @unittest.expectedFailure
+    def test_stable_across_flop_halves(self):
+        P = self.P
+        res = {}
+        try:
+            for half in ("a", "b"):
+                P.MODEL_OVERRIDE = _half_model(half)
+                res[half] = {name: P.solve(wo, wt, spot, iters=1500) for name, wo, wt, spot, _ in self.cases}
+        finally:
+            P.MODEL_OVERRIDE = None
+        for name, wo, wt, spot, _ in self.cases:
+            a, b = res["a"][name], res["b"][name]
+            sh = lambda S, k, w: float((w * S[k]).sum() / w.sum())
+            for k, w in (("o_call", wo), ("o_4bet", wo), ("t_call", wt), ("t_jam", wt)):
+                self.assertLess(abs(sh(a, k, w) - sh(b, k, w)), 0.08, (name, k, sh(a, k, w), sh(b, k, w)))
+
