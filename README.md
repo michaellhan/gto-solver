@@ -211,7 +211,9 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   (all of them for an empty line), keeping the hands that got there (a flat then a 4bet
   is QQ+/AK with a few A5s/A4s over a late open, KK+/AKs over an early one), and a jam
   from such a line is faced with that range. Otherwise the solve plays against a face-up hand: BB would fold
-  everything to a jam with KK and pay off nothing smaller.
+  everything to a jam with KK and pay off nothing smaller. Where the action's own chart is too narrow
+  to reach 8 combos even from scratch (an opener calling a cold 4bet calls 6.8), the strongest hands
+  of the range before the action top it up to 8, by equity against a random hand.
 
 ### Deploy to the website
 

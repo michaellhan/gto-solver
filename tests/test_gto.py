@@ -385,6 +385,19 @@ class TestAdvisor(unittest.TestCase):
             self.assertAlmostEqual(float(s["call"][ix(h)]), r["actions"][0]["freq"], delta=0.02, msg=h)
         self.assertEqual(float(s["call"][ix("QsQd")]), 0.0)
 
+    def test_thin_line_tops_up_from_prior_range(self):
+        """An opener calling a cold 4bet: the chart calls only 6.8 combos even from scratch, so filling with
+        the action's own hands couldn't reach MIN_LINE_COMBOS; the strongest hands of the range before
+        the call top it up (the sanity sweep found 85 such lines under 8 combos)."""
+        from gto.advisor import preflop_ranges
+        R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
+        T = pf.Table(pf.SEATS[6])
+        pre = [R("UTG", "raise", 2.5), R("HJ", "fold"), R("CO", "raise", 7.5), R("BTN", "fold"), R("SB", "fold"),
+               R("BB", "raise", 18.8), R("UTG", "call")]
+        for rng in (preflop_ranges(pre, T, 100)["UTG"], pf.replay_ranges(pre, T)["UTG"]):
+            self.assertGreaterEqual(float(rng.sum()), pf.MIN_LINE_COMBOS - 1e-6)
+            self.assertLessEqual(float(rng.max()), 1.0)
+
     def test_postflop_floor_for_thin_ranges(self):
         """A 4bet pot's ~12-combo range checking back the flop left HJ 1.8 combos for the turn, so the turn
         solve faced a near face-up hand; ranges entering a later street are filled out below

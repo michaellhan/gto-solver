@@ -443,7 +443,7 @@ def preflop_ranges(actions: List[dict], positions, stack: float, pool_except: Op
             if key in strat:
                 # an off-chart or very narrow line: filled out with the hands that take this action, so
                 # the solve doesn't face a face-up hand (pf.thin_line)
-                r, mostly_filler = pf.thin_line(ranges[pos] * strat[key], strat[key])
+                r, mostly_filler = pf.thin_line(ranges[pos] * strat[key], strat[key], ranges[pos])
                 if mostly_filler:
                     rebuilt.append(pos)
                 ranges[pos] = r

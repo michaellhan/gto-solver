@@ -416,19 +416,48 @@ _STRAT_CACHE: Dict[tuple, Dict[str, np.ndarray]] = {}
 MIN_LINE_COMBOS = 8.0   # a line leaving fewer combos than this is filled out (see thin_line)
 
 
-def thin_line(r: np.ndarray, scratch: np.ndarray) -> Tuple[np.ndarray, bool]:
+def thin_line(r: np.ndarray, scratch: np.ndarray, prior: Optional[np.ndarray] = None) -> Tuple[np.ndarray, bool]:
     """A player's range after an action (`r`, their range so far times the action's frequencies), filled
     out with the hands that take the action from scratch (`scratch`, the action's frequencies alone)
     when the line leaves fewer than MIN_LINE_COMBOS: a near-empty range has the postflop solve play
     against a face-up hand (a flat that then 4bets left none; a cold call of a 3bet that then calls a
     4bet a handful). The filler weighs 1 - combos / MIN_LINE_COMBOS: all of it for an empty line,
-    none at the threshold. The hands that did reach the spot are kept. Returns the range and whether
-    it is mostly the filler."""
+    none at the threshold. The hands that did reach the spot are kept. When even that falls short
+    (the action's own chart is that narrow: an opener calling a cold 4bet calls 6.8 combos from
+    scratch) and `prior` (the range before the action) is given, the strongest hands of it not yet in
+    top the range up to MIN_LINE_COMBOS, by all-in equity against a random hand. Returns the range and
+    whether it is mostly filler."""
     tot, add = float(r.sum()), float(scratch.sum())
-    if tot >= MIN_LINE_COMBOS or add <= tot:
+    if tot >= MIN_LINE_COMBOS:
         return r, False
-    lam = 1.0 - tot / MIN_LINE_COMBOS
-    return np.minimum(r + lam * scratch, 1.0), lam * add > tot
+    out = r
+    if add > tot:
+        lam = 1.0 - tot / MIN_LINE_COMBOS
+        out = np.minimum(r + lam * scratch, 1.0)
+    need = MIN_LINE_COMBOS - float(out.sum())
+    if prior is not None and need > 1e-9:
+        room = np.clip(prior - out, 0.0, None)
+        order = np.argsort(-_strength())
+        cum = np.cumsum(room[order])
+        k = int(np.searchsorted(cum, need))
+        add_ = np.zeros_like(out)
+        add_[order[:k]] = room[order[:k]]
+        if k < len(order):
+            add_[order[k]] = need - (cum[k - 1] if k > 0 else 0.0)
+        out = np.minimum(out + np.clip(add_, 0.0, None), 1.0)
+    return out, float(out.sum()) - tot > tot
+
+
+_STRENGTH = None
+
+
+def _strength() -> np.ndarray:
+    """Per combo, all-in equity against a random hand (the order thin_line tops a range up in)."""
+    global _STRENGTH
+    if _STRENGTH is None:
+        from .pf_classes import equity_vs
+        _STRENGTH = np.nan_to_num(equity_vs(np.ones(N_COMBOS)), nan=0.0)
+    return _STRENGTH
 # A player who called a raise and now faces the next one continues with at least this share of the
 # range they called with, by the raises in now: a flat facing a squeeze, a cold call of a 3bet facing
 # the 4bet, a call of a 4bet facing the jam. The charts for those spots are written for a player who
@@ -662,7 +691,7 @@ def replay_ranges(actions: List[dict], positions: Optional[List[str]] = None) ->
         else:
             key = "raise" if act == "all-in" else ("call" if act == "check" and "check" not in strat else act)
             if key in strat:
-                ranges[pos] = thin_line(ranges[pos] * strat[key], strat[key])[0]
+                ranges[pos] = thin_line(ranges[pos] * strat[key], strat[key], ranges[pos])[0]
             elif act == "call" and not any(h["action"] in ("raise", "all-in") for h in history):
                 ranges[pos] = ranges[pos] * LIMP     # open-limp
             # other off-chart actions leave the range unchanged
