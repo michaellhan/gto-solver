@@ -61,12 +61,49 @@ class Spot:
         return tuple(round(x, 2) for x in (self.pot, self.open_in, self.three, self.four, self.stack)) + (self.opener_ip,)
 
 
-def _shares(eq: np.ndarray, r_o: float, r_t: float, pot_type: str) -> np.ndarray:
-    """The opener's realized share of the pot after a call, from all-in equity and each side's base
-    realization (normalised, so the two shares add to 1)."""
+# Realization measured with the postflop solver (gto/pf_realize.py). Off for now: the table has one
+# number per class against the whole range, and applying it to every matchup lets a strong hand's
+# realization (KK 1.4 in a 4bet pot, from beating weaker hands) count against AA too, so KK traps
+# instead of jamming and then folds to the AA-heavy jams that leaves. Needs realization by opponent
+# strength bucket first.
+USE_TABLE = False
+
+
+TABLE_PRIOR = 0.5  # the parametric model counts as this much of a typical class's measurement
+
+
+def _table(pot_type: str, pos: str):
+    """The measured realization per class for this pot type and position and the weight it rests on
+    (0 where unmeasured), or None."""
+    if not USE_TABLE:
+        return None
+    try:
+        from .pf_realize import TABLE
+    except ImportError:
+        return None
+    rows = TABLE[pot_type][pos]
+    return (np.array([0.0 if v is None else v[0] for v in rows]),
+            np.array([0.0 if v is None else v[1] for v in rows]))
+
+
+def _r_matrix(eq: np.ndarray, base: float, pot_type: str, pos: str) -> np.ndarray:
+    """(K, K) realization of the row hand against the column hand: the measured table blended with the
+    parametric model by how much weight the row class's measurement rests on."""
     slope, play = REALIZE_SLOPE[pot_type], 1.0 if pot_type == "3bet" else 0.5
-    a = eq * _realize(eq, r_o, slope, play)
-    b = (1.0 - eq) * _realize(1.0 - eq.T, r_t, slope, play).T
+    param = _realize(eq, base, slope, play)
+    tab = _table(pot_type, pos)
+    if tab is None:
+        return param
+    r, w = tab[0][:, None], tab[1][:, None]
+    return (w * r + TABLE_PRIOR * param) / (w + TABLE_PRIOR)
+
+
+def _shares(eq: np.ndarray, r_o: float, r_t: float, pot_type: str, opener_ip: bool) -> np.ndarray:
+    """The opener's realized share of the pot after a call, from all-in equity and each side's
+    realization (normalised, so the two shares add to 1)."""
+    po, pt = ("ip", "oop") if opener_ip else ("oop", "ip")
+    a = eq * _r_matrix(eq, r_o, pot_type, po)
+    b = (1.0 - eq) * _r_matrix(1.0 - eq.T, r_t, pot_type, pt).T
     return a / np.maximum(a + b, 1e-12)
 
 
@@ -79,9 +116,9 @@ def _payoffs(spot: Spot) -> Dict[str, np.ndarray]:
     ro4, rt4 = (REALIZE["4bet"]["ip"], REALIZE["4bet"]["oop"]) if s.opener_ip else (REALIZE["4bet"]["oop"], REALIZE["4bet"]["ip"])
     call3, add4 = s.three - s.open_in, s.four - s.open_in
     return {
-        "call3": _shares(eq, ro3, rt3, "3bet") * (s.pot + call3) - call3,
+        "call3": _shares(eq, ro3, rt3, "3bet", s.opener_ip) * (s.pot + call3) - call3,
         "t_fold": np.full((K, K), s.pot),
-        "t_call": _shares(eq, ro4, rt4, "4bet") * (s.pot + add4 + s.four - s.three) - add4,
+        "t_call": _shares(eq, ro4, rt4, "4bet", s.opener_ip) * (s.pot + add4 + s.four - s.three) - add4,
         "o_fold_jam": np.full((K, K), -add4),
         "o_call_jam": eq * (s.pot + (s.stack - s.open_in) + (s.stack - s.three)) - (s.stack - s.open_in),
     }
