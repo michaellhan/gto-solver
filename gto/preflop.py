@@ -171,14 +171,43 @@ def vs_rfi_chart(hero_key: str, opener_key: str) -> Dict[str, np.ndarray]:
 
 # ---------- opener facing a 3bet ----------
 def vs_3bet(opener: str, threebettor: str) -> Dict[str, np.ndarray]:
-    """The UTG/HJ/CO charts are for a 3bet from a later seat (opener out of position postflop); against
-    a blind's 3bet the opener has position and calls wider."""
+    """The opener facing a 3bet. Out of position postflop (a later seat's 3bet, or the small blind
+    against the big blind's) it plays VS_3BET_OOP; against a blind's 3bet it has position and plays
+    the _vs_3bet base with calls widened."""
     if opener == "HU_SB":
         return HU_SB_VS_3BET
-    c = _vs_3bet(_norm(opener))
-    if _norm(opener) in ("UTG", "HJ", "CO", "BTN") and _norm(threebettor) in ("SB", "BB"):
-        c = {"4bet": c["4bet"], "call": np.minimum(1.0, c["call"] * 1.25 + IP_VS_3BET_EXTRA)}
-    return c
+    o = _norm(opener)
+    if o in ("UTG", "HJ", "CO", "BTN") and _norm(threebettor) in ("SB", "BB"):
+        c = _vs_3bet(o)
+        return {"4bet": c["4bet"], "call": np.minimum(1.0, c["call"] * 1.25 + IP_VS_3BET_EXTRA)}
+    if o in VS_3BET_OOP:
+        return dict(VS_3BET_OOP[o])
+    return _vs_3bet(o)
+
+
+# The opener out of position facing a 3bet, matched to published solver frequencies: CO against a
+# BTN 3bet (2.5bb open, 7.5bb 3bet, 100bb cash) folds 63.7%, calls 17.2% and 4bets 19.1% of its opening
+# range (Poker Academy); openers respond in similar proportions from every seat (GTO Wizard), UTG
+# 4betting about half its continues against a BTN 3bet (888poker); the small blind against the big
+# blind's 3bet folds about half and 4bets a third of its continues (888poker). Here: UTG 61/18/21, HJ
+# 66/15/18, CO 63/18/19, SB 53/30/16 (fold/call/4bet). The earlier charts called about twice that and
+# 4bet half as often (CO 58/33/9).
+_UTG_VS_3BET_OOP = {
+    "4bet": R("AA, KK, QQ:0.8, AKs, AKo, JJ:0.2, AQs:0.3, A5s, A4s:0.6, A3s:0.2, KQs:0.2, KJs:0.2, AJo:0.1, KQo:0.15"),
+    "call": R("QQ:0.2, JJ:0.8, TT, 99:0.9, 88:0.5, 77:0.25, AQs:0.7, AJs:0.7, ATs:0.3, KQs:0.6, KJs:0.4, QJs:0.3, JTs:0.3, AQo:0.35"),
+}
+VS_3BET_OOP = {
+    "UTG": _UTG_VS_3BET_OOP,
+    "HJ": _UTG_VS_3BET_OOP,
+    "CO": {
+        "4bet": R("AA, KK, QQ, AKs, AKo, JJ:0.3, AQs:0.4, A5s, A4s, A3s, A2s:0.5, KJs:0.4, KTs:0.4, K9s:0.4, QJs:0.2, AJo:0.3, KQo:0.4, ATo:0.2"),
+        "call": R("JJ:0.7, TT, 99, 88:0.9, 77:0.7, 66:0.5, 55:0.3, AQs:0.6, AJs, ATs:0.7, A9s:0.3, KQs, KJs:0.6, QJs:0.8, JTs:0.8, T9s:0.6, 98s:0.4, 87s:0.3, AQo:0.5"),
+    },
+    "SB": {
+        "4bet": R("JJ+, TT:0.5, AKs, AKo, AQs:0.6, AQo:0.5, A5s, A4s, A3s, A2s, KQs:0.4, KJs:0.4, KTs:0.4, K9s:0.5, K8s:0.5, K7s:0.5, K6s:0.4, Q9s:0.4, Q8s:0.3, J9s:0.3, AJo:0.4, ATo:0.4, KQo:0.5, KJo:0.4, QJo:0.3"),
+        "call": R("TT:0.5, 99, 88, 77, 66, 55, 44, 33:0.8, 22:0.8, AQs:0.4, AJs, ATs, A9s, A8s, A7s, A6s, AQo:0.5, AJo:0.6, ATo:0.6, A9o:0.5, A8o:0.3, KQs:0.6, KJs:0.6, KTs:0.6, K9s:0.5, K8s:0.5, K7s:0.3, KQo:0.5, KJo:0.6, KTo:0.4, QJs, QTs, Q9s:0.6, Q8s:0.4, QJo:0.5, QTo:0.3, JTs, J9s:0.7, J8s:0.4, JTo:0.4, T9s, T8s:0.7, 98s, 97s:0.5, 87s, 86s:0.4, 76s, 75s:0.3, 65s, 54s, 43s:0.3"),
+    },
+}
 
 
 IP_VS_3BET_EXTRA = R("88:0.3, 77:0.4, 66:0.4, 55:0.3, A9s:0.4, KTs:0.4, QTs:0.4, J9s:0.3, 98s:0.4, 87s:0.3")

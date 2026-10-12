@@ -145,10 +145,10 @@ class TestAdvisor(unittest.TestCase):
         r = adv.advise(dict(st, preflop=multi))
         self.assertEqual(r["recommended"], "call")
         self.assertTrue(any("price" in n for n in r["notes"]))
-        # a huge 3bet: a chart call (88 mixes vs a standard 3bet) folds at the worse price
+        # a huge 3bet: a chart call (99 calls 90% vs a standard 3bet) folds at the worse price
         big = [R("UTG", "raise", 2.5), R("HJ", "fold"), R("CO", "raise", 20)] + [R(p, "fold") for p in ("BTN", "SB", "BB")]
-        self.assertGreater(adv.advise(dict(st, hole="8s8d", preflop=std))["actions"][1]["freq"], 0.5)
-        self.assertEqual(adv.advise(dict(st, hole="8s8d", preflop=big))["recommended"], "fold")
+        self.assertGreater(adv.advise(dict(st, hole="9s9d", preflop=std))["actions"][1]["freq"], 0.5)
+        self.assertEqual(adv.advise(dict(st, hole="9s9d", preflop=big))["recommended"], "fold")
 
     def test_preflop_squeeze(self):
         adv = Advisor()
@@ -253,7 +253,8 @@ class TestAdvisor(unittest.TestCase):
             ("HJ", utg, 0.08, 0.14),
             ("UTG", utg + [R("HJ", "raise", 7.5)] + F("CO", "BTN", "SB", "BB"), 0.35, 0.50),
             ("BTN", btn + [R("SB", "raise", 10), R("BB", "fold")], 0.38, 0.55),
-            ("CO", co + [R("BTN", "raise", 7.5)] + F("SB", "BB"), 0.38, 0.52),
+            # published solver: CO continues 36.3% (calls 17.2%, 4bets 19.1%) vs a BTN 3bet to 7.5bb
+            ("CO", co + [R("BTN", "raise", 7.5)] + F("SB", "BB"), 0.32, 0.45),
         ]
         # a hand never continues less often than one it dominates (JJ vs TT facing a 4bet used to flip on
         # board-sampling noise; AKo folded where AQo called)
@@ -1089,4 +1090,31 @@ class TestRealizationModel(unittest.TestCase):
             sh = lambda k, w: float((w * S[k]).sum() / w.sum())
             self.assertLess(abs(sh("o_call", wo) - target[0]), 0.12, (name, sh("o_call", wo), target[0]))
             self.assertLess(abs(sh("o_4bet", wo) - target[1]), 0.08, (name, sh("o_4bet", wo), target[1]))
+
+
+class TestOpenerVs3bet(unittest.TestCase):
+    def test_oop_openers_match_published_solver_shares(self):
+        """Openers out of position facing a 3bet: fold/call/4bet shares of the opening range near published
+        solver output (CO vs BTN 3bet to 7.5bb, 100bb cash: 63.7/17.2/19.1; the SB vs a BB 3bet folds about
+        half and 4bets a third of its continues), and the in-position charts against a blind's 3bet keep
+        calling widely."""
+        R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
+        F = lambda *ps: [R(p, "fold") for p in ps]
+        T = pf.Table(pf.SEATS[6])
+        def shares(hero, pre):
+            w = pf.replay_ranges(pre, T)[hero]
+            s = pf.strategy_for(hero, pre, T)
+            return [float((w * s.get(k, 0)).sum() / w.sum()) for k in ("fold", "call", "raise")]
+        co = shares("CO", F("UTG", "HJ") + [R("CO", "raise", 2.5), R("BTN", "raise", 7.5)] + F("SB", "BB"))
+        for got, want in zip(co, (0.637, 0.172, 0.191)):
+            self.assertAlmostEqual(got, want, delta=0.03)
+        for hero, pre in (("UTG", [R("UTG", "raise", 2.5)] + F("HJ", "CO") + [R("BTN", "raise", 7.5)] + F("SB", "BB")),
+                          ("HJ", F("UTG") + [R("HJ", "raise", 2.5), R("CO", "raise", 7.5)] + F("BTN", "SB", "BB"))):
+            f, c, r = shares(hero, pre)
+            self.assertTrue(0.55 <= f <= 0.70 and 0.12 <= c <= 0.22 and 0.15 <= r <= 0.24, (hero, f, c, r))
+            self.assertTrue(0.4 <= r / (1 - f) <= 0.65, (hero, r / (1 - f)))   # about half the continues 4bet
+        f, c, r = shares("SB", F("UTG", "HJ", "CO", "BTN") + [R("SB", "raise", 3), R("BB", "raise", 9)])
+        self.assertTrue(0.45 <= f <= 0.58 and 0.28 <= r / (1 - f) <= 0.40, (f, c, r))
+        f, c, r = shares("BTN", F("UTG", "HJ", "CO") + [R("BTN", "raise", 2.5)] + F("SB") + [R("BB", "raise", 10)])
+        self.assertGreater(c, 0.3)
 
