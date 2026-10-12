@@ -807,8 +807,8 @@ if __name__ == "__main__":
 
 class TestPreflopSubgame(unittest.TestCase):
     def test_converges_and_is_sane(self):
-        """The 3bet-pot subgame (pf_solve) converges, premiums never fold, trash never continues, and
-        there are bluffs: blocker 4bets and suited-ace jams."""
+        """The 3bet-pot subgame (pf_solve) converges, premiums never fold (AA and KK call the jam),
+        trash never continues, and there are bluffs: blocker 4bets and non-premium jams."""
         from gto.pf_solve import solve, Spot
         from gto.pf_classes import to_classes, CLASS_INDEX as C
         R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
@@ -828,5 +828,8 @@ class TestPreflopSubgame(unittest.TestCase):
         weak = [i for i in np.argsort(eq) if wo[i] > 0.5][:5]
         self.assertGreater(min(S["o_fold"][i] for i in weak), 0.99)
         self.assertGreater(S["o_4bet"][C["KQs"]] + S["o_4bet"][C["KJs"]], 0.5)
-        self.assertGreater(S["t_jam"][C["A4s"]] + S["t_jam"][C["A5s"]], 0.5)
+        # some jams aren't premiums (which hands bluff depends on the realization model)
+        prem = [C[h] for h in ("AA", "KK", "QQ", "AKs", "AKo")]
+        jam = wt_ = to_classes(rng["BTN"]) * S["t_jam"]
+        self.assertGreater(float(jam.sum() - jam[prem].sum()), 0.5)
 

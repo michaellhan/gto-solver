@@ -61,19 +61,32 @@ class Spot:
         return tuple(round(x, 2) for x in (self.pot, self.open_in, self.three, self.four, self.stack)) + (self.opener_ip,)
 
 
-# Realization measured with the postflop solver (gto/pf_realize.py). Off for now: the table has one
-# number per class against the whole range, and applying it to every matchup lets a strong hand's
-# realization (KK 1.4 in a 4bet pot, from beating weaker hands) count against AA too, so KK traps
-# instead of jamming and then folds to the AA-heavy jams that leaves. Needs realization by opponent
-# strength bucket first.
-USE_TABLE = False
+# Pot shares measured with the postflop solver (gto/pf_realize.py, scripts/build_realization.py): per
+# class against each opponent strength bucket, so KK's postflop edge counts against weaker hands and
+# not against AA.
+USE_TABLE = True
 
 
-TABLE_PRIOR = 0.5  # the parametric model counts as this much of a typical class's measurement
+TABLE_PRIOR = 0.5  # the parametric model counts as this much of a typical entry's measurement
+# Opponent strength buckets for the table: hands ranked by all-in equity against a random hand, cut at
+# these shares of all combos (finer at the top, where 3bet and 4bet ranges live: AA, KK, QQ-JJ, ...)
+BUCKET_EDGES = (0.005, 0.01, 0.02, 0.035, 0.06, 0.10, 0.18, 0.35)
+
+
+@lru_cache(maxsize=1)
+def bucket_of() -> np.ndarray:
+    """The strength bucket (0 = strongest) of each of the 169 classes."""
+    from .pf_classes import N_IN, PAIR_COMPAT
+    strength = (equity_matrix() * PAIR_COMPAT * N_IN[None, :]).sum(1) / (PAIR_COMPAT * N_IN[None, :]).sum(1)
+    order = np.argsort(-strength)
+    cum = np.cumsum(N_IN[order]) / N_IN.sum()
+    out = np.empty(K, dtype=int)
+    out[order] = np.searchsorted(np.array(BUCKET_EDGES), cum - N_IN[order] / N_IN.sum() / 2)   # by each class's midpoint
+    return out
 
 
 def _table(pot_type: str, pos: str):
-    """The measured realization per class for this pot type and position and the weight it rests on
+    """Per class and opponent strength bucket, the measured excess pot share and the weight it rests on
     (0 where unmeasured), or None."""
     if not USE_TABLE:
         return None
@@ -82,29 +95,37 @@ def _table(pot_type: str, pos: str):
     except ImportError:
         return None
     rows = TABLE[pot_type][pos]
-    return (np.array([0.0 if v is None else v[0] for v in rows]),
-            np.array([0.0 if v is None else v[1] for v in rows]))
+    d = np.array([[0.0 if v is None else v[0] for v in row] for row in rows])
+    w = np.array([[0.0 if v is None else v[1] for v in row] for row in rows])
+    return d, w
 
 
-def _r_matrix(eq: np.ndarray, base: float, pot_type: str, pos: str) -> np.ndarray:
-    """(K, K) realization of the row hand against the column hand: the measured table blended with the
-    parametric model by how much weight the row class's measurement rests on."""
+def _param_shares(eq: np.ndarray, r_o: float, r_t: float, pot_type: str) -> np.ndarray:
+    """The parametric model: the opener's share from all-in equity and each side's realization,
+    normalised so the two shares add to 1."""
     slope, play = REALIZE_SLOPE[pot_type], 1.0 if pot_type == "3bet" else 0.5
-    param = _realize(eq, base, slope, play)
-    tab = _table(pot_type, pos)
-    if tab is None:
-        return param
-    r, w = tab[0][:, None], tab[1][:, None]
-    return (w * r + TABLE_PRIOR * param) / (w + TABLE_PRIOR)
+    a = eq * _realize(eq, r_o, slope, play)
+    b = (1.0 - eq) * _realize(1.0 - eq.T, r_t, slope, play).T
+    return a / np.maximum(a + b, 1e-12)
 
 
 def _shares(eq: np.ndarray, r_o: float, r_t: float, pot_type: str, opener_ip: bool) -> np.ndarray:
-    """The opener's realized share of the pot after a call, from all-in equity and each side's
-    realization (normalised, so the two shares add to 1)."""
+    """The opener's pot share after a call that sees a flop (EV over the pot, later bets included).
+    From the measured table where it has weight: each side's excess share over its equity against the
+    other's strength bucket, the two combined so the shares add to 1; blended per matchup with the
+    parametric model by the weight behind the measurement."""
+    param = _param_shares(eq, r_o, r_t, pot_type)
     po, pt = ("ip", "oop") if opener_ip else ("oop", "ip")
-    a = eq * _r_matrix(eq, r_o, pot_type, po)
-    b = (1.0 - eq) * _r_matrix(1.0 - eq.T, r_t, pot_type, pt).T
-    return a / np.maximum(a + b, 1e-12)
+    to, tt = _table(pot_type, po), _table(pot_type, pt)
+    if to is None or tt is None:
+        return param
+    b = bucket_of()
+    pd = param - eq                                   # the parametric model's excess, opener's view
+    d_o, w_o = to[0][:, b], to[1][:, b]               # opener class i against 3bettor j's bucket
+    d_t, w_t = tt[0][:, b].T, tt[1][:, b].T           # 3bettor class j against opener i's bucket
+    d_o = (w_o * d_o + TABLE_PRIOR * pd) / (w_o + TABLE_PRIOR)
+    d_t = (w_t * d_t - TABLE_PRIOR * pd) / (w_t + TABLE_PRIOR)
+    return eq + (d_o - d_t) / 2
 
 
 def _payoffs(spot: Spot) -> Dict[str, np.ndarray]:
