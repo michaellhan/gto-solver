@@ -803,3 +803,30 @@ class TestExploit(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPreflopSubgame(unittest.TestCase):
+    def test_converges_and_is_sane(self):
+        """The 3bet-pot subgame (pf_solve) converges, premiums never fold, trash never continues, and
+        there are bluffs: blocker 4bets and suited-ace jams."""
+        from gto.pf_solve import solve, Spot
+        from gto.pf_classes import to_classes, CLASS_INDEX as C
+        R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
+        T = pf.Table(pf.SEATS[6])
+        pre = [R("UTG", "fold"), R("HJ", "fold"), R("CO", "raise", 2.5), R("BTN", "raise", 7.5), R("SB", "fold"), R("BB", "fold")]
+        rng = pf.replay_ranges(pre, T)
+        S = solve(to_classes(rng["CO"]), to_classes(rng["BTN"]), Spot(11.5, 2.5, 7.5, 18.0, 100.0, False), iters=1000)
+        self.assertLess(S["exploitability"], 0.05)
+        for h in ("AA", "KK"):
+            self.assertLess(S["o_fold"][C[h]], 0.01)
+            self.assertLess(S["t_fold"][C[h]], 0.01)
+            self.assertGreater(S["o_vs_jam"][C[h]], 0.99)
+        # the weakest hands the opener opened with fold to the 3bet
+        from gto.pf_classes import equity_matrix, PAIR_COMPAT
+        wo, wt = to_classes(rng["CO"]), to_classes(rng["BTN"])
+        eq = (equity_matrix() * PAIR_COMPAT * wt).sum(1) / (PAIR_COMPAT * wt).sum(1)
+        weak = [i for i in np.argsort(eq) if wo[i] > 0.5][:5]
+        self.assertGreater(min(S["o_fold"][i] for i in weak), 0.99)
+        self.assertGreater(S["o_4bet"][C["KQs"]] + S["o_4bet"][C["KJs"]], 0.5)
+        self.assertGreater(S["t_jam"][C["A4s"]] + S["t_jam"][C["A5s"]], 0.5)
+
