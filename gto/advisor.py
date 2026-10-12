@@ -441,11 +441,10 @@ def preflop_ranges(actions: List[dict], positions, stack: float, pool_except: Op
                 strat = pool_strategy(strat, pos, actions[:i], ranges)
             key = "raise" if act == "all-in" else ("call" if act == "check" and "check" not in strat else act)
             if key in strat:
-                r = ranges[pos] * strat[key]
-                if r.sum() < pf.MIN_LINE_COMBOS and strat[key].sum() > r.sum():
-                    # off-chart line (a flat the chart never 4bets from): the hands that take this
-                    # action, rather than an empty range that would leave the solve facing a face-up hand
-                    r = strat[key].copy()
+                # an off-chart or very narrow line: filled out with the hands that take this action, so
+                # the solve doesn't face a face-up hand (pf.thin_line)
+                r, mostly_filler = pf.thin_line(ranges[pos] * strat[key], strat[key])
+                if mostly_filler:
                     rebuilt.append(pos)
                 ranges[pos] = r
             elif act == "call" and not any(h["action"] in ("raise", "all-in") for h in actions[:i]):
@@ -457,8 +456,8 @@ def preflop_ranges(actions: List[dict], positions, stack: float, pool_except: Op
 
 
 class PreflopRanges(dict):
-    """preflop_ranges' result; `rebuilt`: seats whose line left their range empty, so it was rebuilt
-    from their last such action alone."""
+    """preflop_ranges' result; `rebuilt`: seats whose line left their range nearly empty, so it is mostly
+    the hands that take their last such action (pf.thin_line)."""
     rebuilt: List[str] = []
 
 

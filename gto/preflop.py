@@ -413,7 +413,22 @@ def strategy_for(hero: str, actions: List[dict], positions: Optional[List[str]] 
 
 
 _STRAT_CACHE: Dict[tuple, Dict[str, np.ndarray]] = {}
-MIN_LINE_COMBOS = 3.0   # a line leaving fewer combos than this is off-chart; the range is rebuilt
+MIN_LINE_COMBOS = 8.0   # a line leaving fewer combos than this is filled out (see thin_line)
+
+
+def thin_line(r: np.ndarray, scratch: np.ndarray) -> Tuple[np.ndarray, bool]:
+    """A player's range after an action (`r`, their range so far times the action's frequencies), filled
+    out with the hands that take the action from scratch (`scratch`, the action's frequencies alone)
+    when the line leaves fewer than MIN_LINE_COMBOS: a near-empty range has the postflop solve play
+    against a face-up hand (a flat that then 4bets left none; a cold call of a 3bet that then calls a
+    4bet a handful). The filler weighs 1 - combos / MIN_LINE_COMBOS: all of it for an empty line,
+    none at the threshold. The hands that did reach the spot are kept. Returns the range and whether
+    it is mostly the filler."""
+    tot, add = float(r.sum()), float(scratch.sum())
+    if tot >= MIN_LINE_COMBOS or add <= tot:
+        return r, False
+    lam = 1.0 - tot / MIN_LINE_COMBOS
+    return np.minimum(r + lam * scratch, 1.0), lam * add > tot
 # A player who called a raise and now faces the next one continues with at least this share of the
 # range they called with, by the raises in now: a flat facing a squeeze, a cold call of a 3bet facing
 # the 4bet, a call of a 4bet facing the jam. The charts for those spots are written for a player who
@@ -647,9 +662,7 @@ def replay_ranges(actions: List[dict], positions: Optional[List[str]] = None) ->
         else:
             key = "raise" if act == "all-in" else ("call" if act == "check" and "check" not in strat else act)
             if key in strat:
-                r = ranges[pos] * strat[key]
-                # an off-chart line (a flat, then a 4bet): the hands that take this action alone
-                ranges[pos] = r if r.sum() >= MIN_LINE_COMBOS or strat[key].sum() <= r.sum() else strat[key].copy()
+                ranges[pos] = thin_line(ranges[pos] * strat[key], strat[key])[0]
             elif act == "call" and not any(h["action"] in ("raise", "all-in") for h in history):
                 ranges[pos] = ranges[pos] * LIMP     # open-limp
             # other off-chart actions leave the range unchanged

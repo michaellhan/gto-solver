@@ -1120,3 +1120,28 @@ class TestOpenerVs3bet(unittest.TestCase):
         f, c, r = shares("BTN", F("UTG", "HJ", "CO") + [R("BTN", "raise", 2.5)] + F("SB") + [R("BB", "raise", 10)])
         self.assertGreater(c, 0.3)
 
+    def test_thin_lines_filled_out(self):
+        """A line that leaves fewer than MIN_LINE_COMBOS gets the hands that take its last action mixed in,
+        weighing 1 - combos / threshold: all of them for an empty line, none at the threshold; the hands
+        that got there are kept."""
+        n = pf.N_COMBOS
+        scratch = np.zeros(n); scratch[:40] = 1.0
+        empty, mostly = pf.thin_line(np.zeros(n), scratch)
+        self.assertAlmostEqual(empty.sum(), 40.0); self.assertTrue(mostly)
+        r = np.zeros(n); r[100:104] = 1.0                       # 4 combos, half the threshold
+        out, mostly = pf.thin_line(r, scratch)
+        self.assertTrue((out[100:104] == 1.0).all())
+        self.assertAlmostEqual(out[:40].sum(), 40.0 * (1 - 4.0 / pf.MIN_LINE_COMBOS)); self.assertTrue(mostly)
+        wide = np.zeros(n); wide[:10] = 1.0
+        self.assertIs(pf.thin_line(wide, scratch)[0], wide)    # at or above the threshold: unchanged
+        # BB cold-calls a 3bet, then calls HJ's 4bet: 6.7 combos, filled out to ~13 with a few trapped premiums
+        R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
+        from gto.advisor import preflop_ranges
+        from gto.cards import COMBO_INDEX, cards
+        T = pf.Table(pf.SEATS[6])
+        pre = [R("UTG", "fold"), R("HJ", "raise", 2.5), R("CO", "raise", 7.5), R("BTN", "fold"), R("SB", "fold"),
+               R("BB", "call"), R("HJ", "raise", 18.8), R("CO", "fold"), R("BB", "call")]
+        bb = preflop_ranges(pre, T, 100)["BB"]
+        self.assertGreater(bb.sum(), pf.MIN_LINE_COMBOS)
+        self.assertGreater(bb[COMBO_INDEX[tuple(sorted(cards("KsKd")))]], 0.0)
+
