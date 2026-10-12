@@ -1113,7 +1113,7 @@ class TestOpenerVs3bet(unittest.TestCase):
         for hero, pre in (("UTG", [R("UTG", "raise", 2.5)] + F("HJ", "CO") + [R("BTN", "raise", 7.5)] + F("SB", "BB")),
                           ("HJ", F("UTG") + [R("HJ", "raise", 2.5), R("CO", "raise", 7.5)] + F("BTN", "SB", "BB"))):
             f, c, r = shares(hero, pre)
-            self.assertTrue(0.55 <= f <= 0.70 and 0.12 <= c <= 0.22 and 0.15 <= r <= 0.24, (hero, f, c, r))
+            self.assertTrue(0.58 <= f <= 0.68 and 0.14 <= c <= 0.21 and 0.16 <= r <= 0.23, (hero, f, c, r))
             self.assertTrue(0.4 <= r / (1 - f) <= 0.65, (hero, r / (1 - f)))   # about half the continues 4bet
         f, c, r = shares("SB", F("UTG", "HJ", "CO", "BTN") + [R("SB", "raise", 3), R("BB", "raise", 9)])
         self.assertTrue(0.45 <= f <= 0.58 and 0.28 <= r / (1 - f) <= 0.40, (f, c, r))

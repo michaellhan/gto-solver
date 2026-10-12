@@ -190,7 +190,7 @@ def vs_3bet(opener: str, threebettor: str) -> Dict[str, np.ndarray]:
 # range (Poker Academy); openers respond in similar proportions from every seat (GTO Wizard), UTG
 # 4betting about half its continues against a BTN 3bet (888poker); the small blind against the big
 # blind's 3bet folds about half and 4bets a third of its continues (888poker). Here: UTG 61/18/21, HJ
-# 66/15/18, CO 63/18/19, SB 53/30/16 (fold/call/4bet). The earlier charts called about twice that and
+# 63/17/19, CO 63/18/19, SB 53/30/16 (fold/call/4bet). The earlier charts called about twice that and
 # 4bet half as often (CO 58/33/9).
 _UTG_VS_3BET_OOP = {
     "4bet": R("AA, KK, QQ:0.8, AKs, AKo, JJ:0.2, AQs:0.3, A5s, A4s:0.6, A3s:0.2, KQs:0.2, KJs:0.2, AJo:0.1, KQo:0.15"),
@@ -198,7 +198,10 @@ _UTG_VS_3BET_OOP = {
 }
 VS_3BET_OOP = {
     "UTG": _UTG_VS_3BET_OOP,
-    "HJ": _UTG_VS_3BET_OOP,
+    "HJ": {   # opens wider than UTG: a few more calls and 4bet bluffs
+        "4bet": R("AA, KK, QQ:0.8, AKs, AKo, JJ:0.2, AQs:0.3, A5s, A4s:0.7, A3s:0.3, KQs:0.2, KJs:0.3, AJo:0.15, KQo:0.2"),
+        "call": R("QQ:0.2, JJ:0.8, TT, 99:0.9, 88:0.6, 77:0.4, 66:0.2, AQs:0.7, AJs:0.8, ATs:0.4, KQs:0.7, KJs:0.4, QJs:0.4, JTs:0.4, T9s:0.2, AQo:0.35"),
+    },
     "CO": {
         "4bet": R("AA, KK, QQ, AKs, AKo, JJ:0.3, AQs:0.4, A5s, A4s, A3s, A2s:0.5, KJs:0.4, KTs:0.4, K9s:0.4, QJs:0.2, AJo:0.3, KQo:0.4, ATo:0.2"),
         "call": R("JJ:0.7, TT, 99, 88:0.9, 77:0.7, 66:0.5, 55:0.3, AQs:0.6, AJs, ATs:0.7, A9s:0.3, KQs, KJs:0.6, QJs:0.8, JTs:0.8, T9s:0.6, 98s:0.4, 87s:0.3, AQo:0.5"),
