@@ -108,12 +108,15 @@ def measure(job):
     equity and the pair weight, for the out-of-position (0) and in-position (1) players."""
     board, r_oop, r_ip, pot, stack, budget = job[:6]
     depth = job[6] if len(job) > 6 else None      # streets with full decisions (None: the solver's default)
+    sizes = job[7] if len(job) > 7 else None      # bet sizes per street (None: the solver's default)
     from gto.solver import solve, Config
     from gto.pf_classes import CLASS_OF, equity_vs, to_classes
     from gto.pf_solve import bucket_of, K
     cfg = Config()
     if depth is not None:
         cfg.depth = depth
+    if sizes is not None:
+        cfg.bet_sizes = {k: list(v) for k, v in sizes.items()}
     sol = solve(board, r_oop, r_ip, pot, stack, cfg=cfg, time_budget=budget)
     s, r0, r1, act = sol.solver, sol.r0, sol.r1, sol.ctx.active
     bfull = bucket_of()[CLASS_OF]
