@@ -404,8 +404,7 @@ async function cancelSolve() {
   } else for (const k in pending) worker.postMessage({ cancel: +k });   // still loading: skip it once loaded
 }
 
-let S = load() || fresh();
-if (!S.players) S.players = 6;
+let S = cleanState(load()) || fresh();
 setPositions(S.players);
 let selSlot = null;       // board/hand slot the user picked by hand
 let showDeck = false;     // deck opened manually while no card is needed
@@ -421,7 +420,25 @@ const cache = new Map();  // payload -> result, so undo/redo doesn't re-solve
 function fresh(n) { n = n || 6; return { players: n, hero: n === 2 ? "SB" : "BTN", stack: 100, cards: [null, null, null, null, null, null, null], actions: { preflop: [], flop: [], turn: [], river: [] } }; }
 function save() { try { localStorage.setItem("handreview", JSON.stringify(S)); } catch (e) {} }
 function load() { try { const s = localStorage.getItem("handreview"); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
-function boardCards() { return S.cards.slice(2).filter(Boolean); }
+// the board up to its first empty slot: with an earlier card removed, later ones wait for it rather than slide down
+function boardCards() { const b = []; for (let i = 2; i < 7 && S.cards[i]; i++) b.push(S.cards[i]); return b; }
+// A hand from a share link or this browser's storage, repaired so a bad one can't break the page (unknown
+// seats, actions and cards, or a card twice, are dropped); null if it isn't a hand at all.
+function cleanState(st) {
+  if (!st || typeof st !== "object" || !SEATS[st.players] || !Array.isArray(st.cards) || !st.actions || typeof st.actions !== "object") return null;
+  const n = +st.players, seats = SEATS[n], seen = new Set();
+  const cards = [0, 1, 2, 3, 4, 5, 6].map(i => {
+    const c = st.cards[i];
+    if (typeof c !== "string" || !/^[AKQJT98765432][shdc]$/.test(c) || seen.has(c)) return null;
+    seen.add(c); return c;
+  });
+  const ok = (a) => a && seats.includes(a.pos) && ["fold", "check", "call", "bet", "raise", "all-in"].includes(a.action)
+    && (a.action !== "bet" && a.action !== "raise" || +a.to > 0);
+  const actions = Object.fromEntries(STREETS.map(s => [s, Array.isArray(st.actions[s]) ? st.actions[s].filter(ok) : []]));
+  return { ...st, players: n, hero: seats.includes(st.hero) ? st.hero : fresh(n).hero, stack: +st.stack > 0 ? +st.stack : 100, cards, actions };
+}
+const encodeState = (st) => btoa(unescape(encodeURIComponent(JSON.stringify(st))));
+const decodeState = (b64) => JSON.parse(decodeURIComponent(escape(atob(b64))));
 function fmt(x) { return (Math.round(x * 100) / 100).toString(); }
 function cardHtml(c) { return `<span class="${c[1]}">${c[0]}${SUIT_SYM[c[1]]}</span>`; }
 function cardText(c) { return c[0] + SUIT_SYM[c[1]]; }
@@ -531,23 +548,26 @@ const sgn = (x) => (x > 0 ? "+" : x < 0 ? "−" : "") + Math.abs(x).toFixed(2);
 const evLossHtml = (g) => g.e == null ? `<span class="muted">no EV (preflop chart)</span>` : `EV ${sgn(g.e)} vs GTO ${sgn(g.o)} · ${g.l > 0.005 ? `<span class="num neg">−${g.l.toFixed(2)} bb</span>` : `<span class="num pos">0.00 bb</span>`}`;
 const gradeTip = (g) => `Solver: ${g.b} ${(g.bf * 100).toFixed(0)}%. Your line (${g.m}) ${(g.f * 100).toFixed(0)}%${g.e != null ? `, EV ${sgn(g.e)} bb vs GTO ${sgn(g.o)} bb (${g.l > 0.005 ? "−" + g.l.toFixed(2) : "0.00"} bb)` : g.l ? `, ${g.l.toFixed(2)} bb below the best EV` : ""}.${g.r ? " Rough solve: treat this as a hint, not a verdict." : ""}`;
 
+// Everyone before pos folds (checks when there's nothing to call), but never you: it stops at your turn.
 function advanceTo(pos) {
   for (let i = 0; i < 9; i++) {
     const sim = simulate();
     if (!sim.cur) return "Deal the next card first.";
     if (sim.toAct === pos) return null;
     if (!sim.active.has(pos)) return `${pos} already folded.`;
+    if (sim.toAct === S.hero) return "It's your turn first.";
     const facing = sim.cur.curBet - sim.cur.bets[sim.toAct] > 1e-9;
     act({ action: facing || sim.current === "preflop" ? "fold" : "check" });
   }
   return null;
 }
-// Everyone (but never you) folds/checks until the street ends or it's your turn.
+// Everyone (but never you) folds/checks until the street ends or it's your turn. Nobody folds who can check.
 function autoRest(street, action) {
   for (let i = 0; i < 9; i++) {
     const s2 = simulate();
     if (!s2.cur || s2.current !== street || s2.toAct === S.hero) return null;
-    const e = act({ action }); if (e) return e;
+    const facing = s2.cur.curBet - s2.cur.bets[s2.toAct] > 1e-9;
+    const e = act({ action: action === "fold" && !facing ? "check" : action }); if (e) return e;
   }
   return null;
 }
@@ -756,7 +776,7 @@ function renderTimeline() {
 // ------------------------------------------------------------------ advice
 function payload() {
   const conv = (arr) => arr.map(a => a.action === "bet" ? { pos: a.pos, action: "bet", amount: a.to } : a.action === "raise" ? { pos: a.pos, action: "raise", to: a.to } : { pos: a.pos, action: a.action });
-  return { players: S.players, hero: S.hero, hole: S.cards[0] + S.cards[1], board: boardCards().join(""), stack: S.stack,
+  return { players: S.players, hero: S.hero, hole: (S.cards[0] || "") + (S.cards[1] || ""), board: boardCards().join(""), stack: S.stack,
            ...(ANTE() ? { ante: ANTE() } : {}), ...(STRADDLER() ? { straddle: true } : {}),
            preflop: conv(S.actions.preflop), flop: conv(S.actions.flop), turn: conv(S.actions.turn), river: conv(S.actions.river), budget: BUDGET, prior_budget: PRIOR, speed: SPEED,
            ...(OPP === "pool" ? { opponents: "pool" } : {}) };
@@ -967,7 +987,7 @@ function handText() {
     if (r.solver) lines.push(`  solver: ${r.solver.iterations} iterations, ${r.solver.solve_seconds}s, ${r.solver.active_combos} combos, sizes ${r.solver.tree_actions.join(", ")}`);
     if (r.notes && r.notes.length) lines.push("  notes: " + r.notes.join("; "));
   }
-  const link = location.origin + location.pathname + "#h=" + btoa(unescape(encodeURIComponent(JSON.stringify(S))));
+  const link = location.origin + location.pathname + "#h=" + encodeState(S);
   lines.push("Open this spot: " + link);
   lines.push("State JSON: " + JSON.stringify(payload()));
   return lines.join("\n");
@@ -982,13 +1002,13 @@ document.getElementById("copyhand").onclick = async () => {
   const m = location.hash.match(/#h=([A-Za-z0-9+/=]+)/);
   if (!m) return;
   try {
-    const st = JSON.parse(decodeURIComponent(escape(atob(m[1]))));
-    if (st && st.cards && st.actions && SEATS[st.players]) { S = st; setPositions(S.players); save(); }
+    const st = cleanState(decodeState(m[1]));
+    if (st) { S = st; setPositions(S.players); save(); }
   } catch (e) {}
   history.replaceState(null, "", location.pathname);
 })();
 document.getElementById("stack").value = S.stack;
-document.getElementById("stack").onchange = (e) => { S.stack = parseFloat(e.target.value) || 100; save(); renderAll(); };
+document.getElementById("stack").onchange = (e) => { S.stack = parseFloat(e.target.value) > 0 ? parseFloat(e.target.value) : 100; e.target.value = S.stack; save(); renderAll(); };
 document.getElementById("ante").value = ANTE();
 document.getElementById("ante").onchange = (e) => { S.ante = Math.max(0, parseFloat(e.target.value) || 0); save(); resetAdvice(); renderAll(); };
 document.getElementById("straddle").checked = !!S.straddle;

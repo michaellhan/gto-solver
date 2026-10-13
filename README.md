@@ -17,7 +17,18 @@ real-money site is against every site's terms.
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 python -m unittest -v
+node --test 'tests/js/*.test.js'
 ```
+
+The Node tests (Node 22+, no npm packages) cover the page's JavaScript: `tests/js/page.js` loads the
+inline script of `gto/static/index.html` into a `vm` context with a minimal fake DOM and drives it
+like a user (buttons, keys, the setup inputs): the hand engine (acting order for 2 to 9 players,
+blinds, antes, straddle, pot and bet sizes, validation, undo and rewind), share links (`#h=`) and the
+copied hand text, and the state sent to the solver (its keys are checked against what
+`Advisor._advise` reads). They also write `tests/data/page_states.json`, random hands played through
+the page; `tests/test_page_states.py` replays each spot with the advisor's own `replay_hand` (same
+player to act, pot, bet and players in) and asks the advisor about a sample of them. After a change to
+the page's engine, regenerate it with `UPDATE_FIXTURES=1 node --test 'tests/js/*.test.js'`.
 
 ## Review UI
 
@@ -39,8 +50,9 @@ while a card is needed ("Show deck" opens it otherwise). Enter the action seat
 by seat with the buttons or keys: F fold, C check or call, 1 to 3 preset sizes,
 R custom size, A all-in, S the context shortcut, U undo. A table view shows who
 has folded, who is to act, the board and the pot; clicking a seat folds
-everyone before it, and a single context shortcut ("Fold to me", "Everyone
-checks", "Everyone else folds") skips the boring bits.
+everyone before it (checking where there's nothing to call, and stopping at your own turn),
+and a single context shortcut ("Fold to me", "Everyone checks", "Everyone else folds",
+which checks a player who has nothing to call) skips the boring bits.
 
 Whenever it becomes your turn the advice panel solves the spot. The **Fast /
 Accurate** toggle in the header (remembered between visits) picks the solve
