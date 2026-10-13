@@ -93,11 +93,14 @@ RFI: Dict[str, np.ndarray] = {
     # heads-up button/SB open (~85%)
     "HU_SB": R("22+, A2s+, A2o+, K2s+, K2o+, Q2s+, Q2o+, J2s+, J4o+, J3o:0.5, J2o:0.5, T2s+, T5o+, T4o:0.5, 92s+, 96o+, 95o:0.5, 82s+, 86o+, 85o:0.5, 72s+, 76o, 75o:0.5, 62s+, 65o:0.5, 52s+, 42s+, 32s:0.5"),
 }
-# heads-up big blind facing the button open
+# heads-up big blind facing the button open (calls capped at 1 - 3bet below, so the mixed 3bets are
+# played as written)
 HU_BB_VS_SB = {
     "3bet": R("77+, 66:0.5, A8s+, A5s-A2s:0.5, ATo+, A9o:0.5, K9s+, KJo+, QTs+, JTs, T9s:0.5"),
     "call": R("22-66, A7s-A2s, A9o-A2o, K8s-K2s, KTo-K3o, Q5s+, Q4s:0.5, QTo-Q6o, J6s+, J5s:0.5, JTo-J7o, T6s+, T9o-T7o, 96s+, 98o, 97o, 85s+, 87o, 86o:0.5, 74s+, 76o, 75o:0.5, 64s+, 65o, 53s+, 43s, 42s:0.5"),
 }
+
+HU_BB_VS_SB["call"] = np.minimum(HU_BB_VS_SB["call"], 1.0 - HU_BB_VS_SB["3bet"])
 
 # ---------- facing a single raise ----------
 # key: (hero_pos, opener_pos) -> {"3bet": vec, "call": vec}
@@ -201,11 +204,11 @@ VS_RFI[("BB", "HJ")] = {
 }
 VS_RFI[("BB", "BTN")] = {
     "3bet": R("TT+, 99:0.8, AJs+, ATs:0.8, A9s:0.6, A8s:0.3, AQo+, AJo:0.8, ATo:0.2, A5s-A2s, KJs+, KTs:0.8, K9s:0.5, K5s-K2s:0.2, KQo:0.8, KJo:0.2, QJs:0.8, QTs:0.3, Q9s:0.2, JTs:0.6, T9s:0.6, 98s:0.3, 87s:0.3, 76s:0.5, 65s:0.5, 54s:0.5"),
-    "call": R("22-88, 99:0.5, ATs:0.5, A9s-A6s, AJo:0.5, ATo-A2o, K2s+, KQo:0.5, KJo-K7o, K6o:0.5, Q2s+, QJo-Q8o, Q7o:0.5, J2s+, JTo-J8o, J7o:0.5, T3s+, T9o-T7o, 95s+, 98o, 97o, 84s+, 87o, 86o:0.5, 74s+, 76o:0.5, 63s+, 65o:0.5, 53s+, 43s, 42s:0.5, 32s:0.5, K6o-K4o, Q7o, Q6o-Q5o:0.5, J7o, J6o:0.5, T6o:0.5, 96o:0.5, 86o, 85o:0.3, 75o:0.5, 64o:0.3, 54o:0.3, 52s, 42s, 32s"),
+    "call": R("22-88, 99:0.5, ATs:0.5, A9s-A6s, AJo:0.5, ATo-A2o, K2s+, KQo:0.5, KJo-K7o, Q2s+, QJo-Q8o, J2s+, JTo-J8o, T3s+, T9o-T7o, 95s+, 98o, 97o, 84s+, 87o, 74s+, 76o:0.5, 63s+, 65o:0.5, 53s+, 43s, K6o-K4o, Q7o, Q6o-Q5o:0.5, J7o, J6o:0.5, T6o:0.5, 96o:0.5, 86o, 85o:0.3, 75o:0.5, 64o:0.3, 54o:0.3, 52s, 42s, 32s"),
 }
 VS_RFI[("BB", "SB")] = {
     "3bet": R("88+, 77:0.3, A9s+, A8s:0.6, A7s-A6s:0.3, ATo+, A9o:0.2, A5s-A2s, K9s+, K8s:0.6, KQo, KJo, KTo:0.3, QTs+, Q9s:0.7, JTs, J9s:0.7, T9s, T8s:0.4, 98s:0.8, 87s:0.8, 76s:0.6, 65s:0.6, 54s:0.4"),
-    "call": R("22-77, 88:0.5, A9s:0.5, A8s-A6s, ATo:0.5, A9o-A2o, K9s:0.5, K2s+, KJo:0.5, KTo-K5o, Q9s+, Q8s-Q2s, QJo-Q7o, J9s+, J8s-J2s, JTo-J7o, T2s+, T9o-T6o, 92s+, 98o-96o, 82s+, 87o-85o, 72s+, 76o-74o, 62s+, 65o, 64o, 52s+, 54o, 53o, 42s+, 43o, 32s"),
+    "call": R("22-77, 88:0.5, A9s:0.5, A8s-A6s, ATo:0.5, A9o-A2o, K2s+, KJo:0.5, KTo-K5o, Q9s+, Q8s-Q2s, QJo-Q7o, J9s+, J8s-J2s, JTo-J7o, T2s+, T9o-T6o, 92s+, 98o-96o, 82s+, 87o-85o, 72s+, 76o-74o, 62s+, 65o, 64o, 52s+, 54o, 53o, 42s+, 43o, 32s"),
 }
 
 # The big blind's 3bets against the button and the small blind, matched to published solver
@@ -345,6 +348,13 @@ IP_VS_3BET_EXTRA = R("88:0.3, 77:0.4, 66:0.4, 55:0.3, A9s:0.4, KTs:0.4, QTs:0.4,
 
 
 def _vs_3bet(opener: str) -> Dict[str, np.ndarray]:
+    """The opener's base chart facing a 3bet, calls capped at 1 - 4bet (a hand listed in both 4bets
+    at its written frequency and calls the rest)."""
+    c = _vs_3bet_lists(opener)
+    return {"4bet": c["4bet"], "call": np.minimum(c["call"], 1.0 - c["4bet"])}
+
+
+def _vs_3bet_lists(opener: str) -> Dict[str, np.ndarray]:
     if opener in ("UTG", "HJ"):
         return {
             "4bet": R("KK+, QQ:0.7, AKs, AKo:0.6, A5s:0.4, A4s:0.3, JJ:0.2"),
@@ -353,12 +363,12 @@ def _vs_3bet(opener: str) -> Dict[str, np.ndarray]:
     if opener == "CO":
         return {
             "4bet": R("KK+, QQ:0.6, AKs, AKo:0.7, A5s:0.5, A4s:0.4, A3s:0.2, JJ:0.2, KQs:0.2"),
-            "call": R("QQ:0.4, JJ:0.8, TT, 99, 88, 77:0.6, 66:0.4, 55:0.3, AKo:0.3, AQs, AJs, ATs, A9s:0.4, AQo:0.6, AJo:0.3, KQs, KJs, KTs:0.6, QJs, QTs:0.5, JTs, T9s, 98s:0.6, 87s:0.5, 76s:0.6, 65s:0.5, 54s:0.3, 66:0.6, 55:0.5, 44:0.3, A8s:0.4, AJo:0.5, KQo:0.5, KJo:0.3, K9s:0.4, Q9s:0.3, J9s:0.5, T8s:0.4, 97s:0.3"),
+            "call": R("QQ:0.4, JJ:0.8, TT, 99, 88, 77:0.6, AKo:0.3, AQs, AJs, ATs, A9s:0.4, AQo:0.6, KQs, KJs, KTs:0.6, QJs, QTs:0.5, JTs, T9s, 98s:0.6, 87s:0.5, 76s:0.6, 65s:0.5, 54s:0.3, 66:0.6, 55:0.5, 44:0.3, A8s:0.4, AJo:0.5, KQo:0.5, KJo:0.3, K9s:0.4, Q9s:0.3, J9s:0.5, T8s:0.4, 97s:0.3"),
         }
     if opener == "BTN":
         return {
             "4bet": R("KK+, QQ:0.5, AKs, AKo:0.7, A5s:0.6, A4s:0.5, A3s:0.3, JJ:0.2, KQs:0.2, AQo:0.2"),
-            "call": R("QQ:0.5, JJ:0.8, TT, 99, 88, 77, 66:0.6, 55:0.5, 44:0.4, 33:0.3, 22:0.3, AKo:0.3, AQs, AJs, ATs, A9s:0.6, A8s:0.4, AQo:0.6, AJo:0.5, ATo:0.3, KQs, KJs, KTs, K9s:0.5, KQo:0.5, QJs, QTs, Q9s:0.8, JTs, J9s:0.6, T9s, T8s:0.5, 98s, 87s, 76s, 65s, 54s:0.7, A7s-A6s:0.5, ATo:0.6, A9o:0.3, KJo:0.5, KTo:0.3, QJo:0.4, J8s:0.4, 97s:0.6, 86s:0.5, 75s:0.5, 64s:0.4, 53s:0.3, 44:0.7, 33:0.6, 22:0.6"),
+            "call": R("QQ:0.5, JJ:0.8, TT, 99, 88, 77, 66:0.6, 55:0.5, AKo:0.3, AQs, AJs, ATs, A9s:0.6, A8s:0.4, AQo:0.6, AJo:0.5, KQs, KJs, KTs, K9s:0.5, KQo:0.5, QJs, QTs, Q9s:0.8, JTs, J9s:0.6, T9s, T8s:0.5, 98s, 87s, 76s, 65s, 54s:0.7, A7s-A6s:0.5, ATo:0.6, A9o:0.3, KJo:0.5, KTo:0.3, QJo:0.4, J8s:0.4, 97s:0.6, 86s:0.5, 75s:0.5, 64s:0.4, 53s:0.3, 44:0.7, 33:0.6, 22:0.6"),
         }
     # SB opener facing BB 3bet
     return {
@@ -376,9 +386,15 @@ def _vs_3bet(opener: str) -> Dict[str, np.ndarray]:
 # calls (and the button's below) are re-priced by the rake they go on to pay (advisor._call_rake),
 # which brings CO vs BB to 23.8% and UTG vs SB to 24.5% at 5% capped at 4bb. The button has its own charts
 # below.
+def _ip_calls(o: str) -> np.ndarray:
+    """The _vs_3bet calls widened for position (before capping at 1 - 4bet: charts with 4bets of their
+    own cap at those)."""
+    return np.minimum(1.0, _vs_3bet_lists(o)["call"] * 1.25 + IP_VS_3BET_EXTRA)
+
+
 def _ip_vs_blind_3bet(o: str) -> Dict[str, np.ndarray]:
     c = _vs_3bet(o)
-    return {"4bet": c["4bet"], "call": np.minimum(1.0, c["call"] * 1.25 + IP_VS_3BET_EXTRA)}
+    return {"4bet": c["4bet"], "call": np.minimum(1.0 - c["4bet"], _ip_calls(o))}
 
 
 # The button facing the big blind's 3bet (2.5bb open, 11bb 3bet): fold ~54.6%, call ~33.9%, 4bet
@@ -390,8 +406,8 @@ def _ip_vs_blind_3bet(o: str) -> Dict[str, np.ndarray]:
 # K9o).
 _extra_value = R("QQ:0.3, AKo:0.3, JJ:0.2, AQs:0.3")
 _extra_bluff = R("A5s:0.4, A4s:0.5, A3s:0.5, A2s:0.6, K8s:0.4, K7s:0.4, K6s:0.3, K5s:0.3, Q8s:0.3, A8o:0.2, A7o:0.2, A5o:0.3, A4o:0.2, K9o:0.2")
-BTN_VS_BB_3BET = {"4bet": np.minimum(1.0, _ip_vs_blind_3bet("BTN")["4bet"] + _extra_value + _extra_bluff),
-                  "call": np.maximum(0.0, _ip_vs_blind_3bet("BTN")["call"] - _extra_value)}
+BTN_VS_BB_3BET = {"4bet": np.minimum(1.0, _ip_vs_blind_3bet("BTN")["4bet"] + _extra_value + _extra_bluff)}
+BTN_VS_BB_3BET["call"] = np.clip(_ip_vs_blind_3bet("BTN")["call"] - _extra_value, 0.0, 1.0 - BTN_VS_BB_3BET["4bet"])
 
 # The button facing the small blind's 3bet (2.5bb open, 10-12bb 3bet). gtopreflop.com's solve (8-max
 # 100bb, 5% rake capped at 4bb, 12bb 3bets from either blind; it says 6-max lands within a point,
@@ -410,7 +426,7 @@ _sb_4bet = R("KK+, QQ:0.9, AKo:0.8, AKs:0.6, A9s:0.75, KTs:0.75, A4s:0.45, K9s:0
              "J9s:0.2, KJo:0.2, A8o:0.15, A5o:0.2, K9o:0.15")
 BTN_VS_SB_3BET = {
     "4bet": _sb_4bet,
-    "call": np.clip(np.minimum(_ip_vs_blind_3bet("BTN")["call"], 1.0 - _sb_4bet)
+    "call": np.clip(np.minimum(_ip_calls("BTN"), 1.0 - _sb_4bet)
                     - R("AJo, KQo, K9s, AQo:0.3, ATo:0.4, KJo:0.4") + R("AKs:0.4, A5s:0.72"), 0.0, 1.0 - _sb_4bet),
 }
 
@@ -455,6 +471,7 @@ HU_SB_VS_3BET = {
     "4bet": R("QQ+, JJ:0.5, AKs, AKo, AQs:0.5, A5s-A2s:0.4, K9s:0.2, Q9s:0.2, J9s:0.2"),
     "call": R("22-TT, JJ:0.5, A2s-AJs, AQs:0.5, A8o-AQo, A7o-A5o, A4o-A2o:0.5, K2s+, K9o+, K8o:0.5, Q5s+, QTo+, Q9o:0.6, J6s+, JTo, J9o:0.6, T6s+, T9o, T8o:0.4, 96s+, 98o:0.4, 85s+, 87o:0.3, 74s+, 64s+, 63s:0.3, 53s+, 43s:0.5"),
 }
+HU_SB_VS_3BET["call"] = np.minimum(HU_SB_VS_3BET["call"], 1.0 - HU_SB_VS_3BET["4bet"])   # 4bets as written
 
 # heads-up big blind facing the button's 4bet (its 3bets are wide, so it continues wider than 6-max)
 HU_BB_VS_4BET = {
@@ -610,7 +627,7 @@ def strategy_for(hero: str, actions: List[dict], positions: Optional[List[str]] 
     """Full mixed strategy (including fold) per combo for hero at this point."""
     key = (hero, tuple((a["pos"], a["action"], a.get("to"), a.get("amount")) for a in actions),
            tuple(positions or POSITIONS), getattr(positions, "ante", 0.0), getattr(positions, "straddle", False),
-           chart_depth(positions))
+           chart_depth(positions), _depth(positions))
     if key not in _STRAT_CACHE:
         if len(_STRAT_CACHE) > 4096:
             _STRAT_CACHE.clear()
@@ -701,15 +718,22 @@ VS_4BET_BLEND = 0.04   # equity over which a 3bettor's continue frequency ramps 
 VS_4BET_REALIZE = 0.8  # ...and the share of its equity a call of a 4bet realizes (sets the value bar)
 
 
-def _bets(actions: List[dict]) -> Dict[str, float]:
-    """Each seat's chips in after the preflop actions (blinds posted; default sizes where none given)."""
+def _bets(actions: List[dict], depth: float = 100.0) -> Dict[str, float]:
+    """Each seat's chips in after the preflop actions (blinds posted; default sizes where none given).
+    An all-in goes to its `to` (or `amount`) when given, else to `depth` (the effective stack, as
+    Table.depth); no bet goes past `depth`."""
     bets = {"SB": 0.5, "BB": 1.0}
     cur = 1.0
     for a in actions:
         if a["action"] == "call":
             bets[a["pos"]] = cur
         elif a["action"] in ("raise", "all-in"):
-            cur = 100.0 if a["action"] == "all-in" else float(a.get("to") or a.get("amount") or cur * 3)
+            size = a.get("to") or a.get("amount")
+            if a["action"] == "all-in":
+                cur = float(size or depth)
+            else:
+                cur = float(size or cur * 3)
+            cur = min(cur, float(depth))
             bets[a["pos"]] = cur
         else:
             bets.setdefault(a["pos"], 0.0)
@@ -742,7 +766,7 @@ def _vs_4bet_range(hero: str, actions: List[dict], positions, acts: Dict[str, np
         return acts
     # the bar a value hand is held to: the price of calling the 4bet, over the share of its equity a
     # call realizes (the same in every spot, however wide the 3bet range the chart is applied to)
-    bets = _bets(actions)
+    bets = _bets(actions, _depth(positions))
     owe = bets[four] - bets[hero]
     bar = owe / max(sum(bets.values()) + owe, 1e-9) / VS_4BET_REALIZE
     eq, eq_std = np.nan_to_num(eq, nan=0.0), np.nan_to_num(eq_std, nan=0.0)
@@ -757,7 +781,7 @@ def _vs_4bet_range(hero: str, actions: List[dict], positions, acts: Dict[str, np
         # which depend on this)
         def folds(line, p4, ranges):
             jams = line + [{"pos": hero, "action": "all-in"}]
-            call = _jam_calls(ranges[hero] * acts["raise"], jams, p4)
+            call = _jam_calls(ranges[hero] * acts["raise"], jams, p4, _depth(positions))
             return float((ranges[p4] * (1.0 - call)).sum() / max(ranges[p4].sum(), 1e-12))
         f_s = folds(std, opener, std_r)
         scale = min(1.0, folds(actions, four, act_r) / max(f_s, 1e-9)) if f_s > 1e-6 else 1.0
@@ -790,17 +814,22 @@ def _vs_5bet_jam(hero: str, actions: List[dict], positions, acts: Dict[str, np.n
     r = replay_ranges(actions, positions).get(aggr[-1]["pos"])
     if r is None or r.sum() < 1e-9:
         return acts
-    call = _jam_calls(r, actions, hero)
+    call = _jam_calls(r, actions, hero, _depth(positions))
     return {"call": call, "fold": 1.0 - call}
 
 
-def _jam_calls(jam_range: np.ndarray, actions: List[dict], caller: str) -> np.ndarray:
+def _depth(positions) -> float:
+    """The table's effective stack in bb (Table.depth; 100bb for a plain seat list)."""
+    return float(getattr(positions, "depth", 100.0))
+
+
+def _jam_calls(jam_range: np.ndarray, actions: List[dict], caller: str, depth: float = 100.0) -> np.ndarray:
     """Per combo, how often `caller` calls the all-in that ends `actions` from `jam_range`: by equity
-    against it versus the pot odds."""
+    against it versus the pot odds (an all-in without a size goes to `depth`, the effective stack)."""
     from .pf_classes import equity_vs
     if jam_range.sum() < 1e-9:
         return np.zeros(N_COMBOS)
-    bets = _bets(actions)
+    bets = _bets(actions, depth)
     owe = bets[actions[-1]["pos"]] - bets.get(caller, 0.0)
     need = owe / max(sum(bets.values()) + owe, 1e-9)
     return np.clip(0.5 + (np.nan_to_num(equity_vs(jam_range), nan=0.0) - need) / JAM_CALL_BLEND, 0.0, 1.0)

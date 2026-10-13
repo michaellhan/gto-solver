@@ -111,7 +111,7 @@ class Ctx:
         self._M: Dict[tuple, np.ndarray] = {}
         self._leaf: Dict[tuple, np.ndarray] = {}
         self._stacks: Dict[tuple, np.ndarray] = {}
-        self._turn_picks: Dict[tuple, list] = {}
+        self._turn_picks: Dict[tuple, tuple] = {}   # flop -> (picks in draw order, order random)
         self.active_list = [int(i) for i in active]
         self.root_len = 5
 
@@ -163,17 +163,22 @@ class Ctx:
         return self._card_rows
 
     def turn_picks(self, flop: tuple, dead: set, k: int) -> list:
+        """k turn cards for `flop`, sorted, the same for every caller: picks are cached per flop in
+        the order they were drawn, so a call for fewer than are cached gets the first k drawn (a
+        random subset), not the lowest cards."""
         key = tuple(sorted(flop))
-        picks = self._turn_picks.get(key)
+        cached = self._turn_picks.get(key)
         avail = [c for c in range(52) if c not in dead and c not in flop]
-        if picks is None:
-            picks = avail if k >= len(avail) else sorted(self.rng.sample(avail, k))
-            self._turn_picks[key] = picks
-        elif len(picks) < k:
-            extra = [c for c in avail if c not in picks]
-            picks = sorted(picks + self.rng.sample(extra, min(k - len(picks), len(extra))))
-            self._turn_picks[key] = picks
-        return picks[:k] if len(picks) > k else picks
+        if cached is None:
+            # every card when k covers them (no draw: the order is not random yet)
+            cached = (list(avail), False) if k >= len(avail) else (self.rng.sample(avail, k), True)
+        elif len(cached[0]) < k:
+            extra = [c for c in avail if c not in cached[0]]
+            cached = (cached[0] + self.rng.sample(extra, min(k - len(cached[0]), len(extra))), True)
+        elif len(cached[0]) > k and not cached[1]:
+            cached = (self.rng.sample(cached[0], len(cached[0])), True)
+        self._turn_picks[key] = cached
+        return sorted(cached[0][:k])
 
     def leaf_matrix(self, board: tuple, dead: set) -> np.ndarray:
         """Average showdown matrix over the remaining runout(s) from `board`."""

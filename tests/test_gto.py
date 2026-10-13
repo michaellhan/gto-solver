@@ -62,6 +62,30 @@ class TestSolverMath(unittest.TestCase):
         # frequencies sum to one
         self.assertTrue(np.allclose(sol.strategy[:, sol.ctx.active].sum(axis=0), 1.0))
 
+    def test_turn_picks_subset_is_random(self):
+        """Turn picks are cached per flop; a call for fewer than are cached gets a random subset of them
+        (the first drawn), not the lowest cards."""
+        flop = tuple(cards("Ks7d2c"))
+        active = np.array([i for i, (a, b) in enumerate(ALL_COMBOS) if a not in flop and b not in flop])
+        ctx = Ctx(active, Config(seed=3))
+        dead = set(flop)
+        many = ctx.turn_picks(flop, dead, 20)
+        few = ctx.turn_picks(flop, dead, 8)
+        self.assertEqual(len(many), 20)
+        self.assertEqual(few, sorted(few))
+        self.assertTrue(set(few) <= set(many))
+        self.assertNotEqual(few, many[:8])
+        self.assertEqual(ctx.turn_picks(flop, dead, 8), few)   # the same picks every time
+        self.assertEqual(ctx.turn_picks(flop, dead, 20), many)
+        # every card cached first, then fewer asked for: a random subset too
+        ctx = Ctx(active, Config(seed=3))
+        all_ = ctx.turn_picks(flop, dead, 52)
+        self.assertEqual(len(all_), 49)
+        few = ctx.turn_picks(flop, dead, 8)
+        self.assertNotEqual(few, all_[:8])
+        self.assertEqual(ctx.turn_picks(flop, dead, 8), few)
+        self.assertEqual(ctx.turn_picks(flop, dead, 52), all_)
+
     def test_warm_start_copies_matching_nodes(self):
         # a turn solve over 8 rivers seeds one over every river: same rivers copied, new ones start at zero
         board = cards("Ks7d2cTh")
@@ -185,6 +209,101 @@ class TestPreflop(unittest.TestCase):
         self.assertTrue(0.12 <= one_bb <= 0.18, one_bb)
         self.assertLess(two_bb, one_bb)
         self.assertGreater(sb_bb, one_bb)
+
+    @staticmethod
+    def _all_charts():
+        """Every preflop chart: name -> {action: per-combo frequency}."""
+        out = {f"VS_RFI{k}": v for k, v in pf.VS_RFI.items()}
+        out.update({f"SHORT_CHARTS{k}": v for k, v in pf.SHORT_CHARTS.items()})
+        out.update({f"VS_3BET_OOP[{k}]": v for k, v in pf.VS_3BET_OOP.items()})
+        for n in dir(pf):
+            v = getattr(pf, n)
+            if (n.isupper() and isinstance(v, dict) and v and set(v) <= {"raise", "3bet", "4bet", "jam", "call", "check"}
+                    and all(isinstance(x, np.ndarray) and x.shape == (pf.N_COMBOS,) for x in v.values())):
+                out[n] = v
+        for k in pf.ISO:
+            out[f"ISO[{k}]"] = {"raise": pf.ISO[k], "call": pf.OVERLIMP[k]}
+            out[f"ISO_MULTI[{k}]"] = {"raise": pf.ISO_MULTI[k], "call": pf.OVERLIMP_MULTI[k]}
+        for o in ("UTG", "HJ", "CO", "BTN", "SB", "EP", "HU_SB"):
+            for b in ("SB", "BB", "BTN", "CO", "HJ"):
+                out[f"vs_3bet({o},{b})"] = pf.vs_3bet(o, b)
+        for o in ("UTG", "HJ", "CO", "BTN", "SB"):
+            out[f"_vs_3bet({o})"] = pf._vs_3bet(o)
+            out[f"_ip_vs_blind_3bet({o})"] = pf._ip_vs_blind_3bet(o)
+        return out
+
+    def test_chart_frequencies_sum_to_at_most_one(self):
+        """A hand's actions in a chart sum to at most 1: strategy_for rescales a sum above 1, so a hand
+        listed in both raises and calls at 1.0 would raise less often than written."""
+        for name, chart in self._all_charts().items():
+            vals = [v for k, v in chart.items() if k not in ("check", "fold")]
+            for v in vals:
+                self.assertTrue(np.all(v >= -1e-12) and np.all(v <= 1 + 1e-9), name)
+            tot = sum(vals)
+            bad = sorted({hand_class(ALL_COMBOS[i]) for i in np.nonzero(tot > 1 + 1e-9)[0]})
+            self.assertEqual(bad, [], name)
+
+    def test_chart_strings_list_each_hand_once(self):
+        """No range string in the charts lists a hand twice with different weights (parse_range keeps
+        the larger, so the other entry is dead and misleading)."""
+        import ast, inspect
+        from gto.ranges import _expand_token
+        tree = ast.parse(inspect.getsource(pf))
+        n_strings = 0
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) in ("R", "parse_range")
+                    and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
+                continue
+            n_strings += 1
+            seen = {}
+            for part in node.args[0].value.replace("\n", ",").split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                tok, w = (part.split(":")[0], float(part.split(":")[1])) if ":" in part else (part, 1.0)
+                for cb in _expand_token(tok):
+                    seen.setdefault(hand_class(cb), set()).add(w)
+            dups = {c: sorted(ws) for c, ws in seen.items() if len(ws) > 1}
+            self.assertEqual(dups, {}, f"line {node.lineno}")
+        self.assertGreater(n_strings, 50)
+
+    def test_heads_up_mixed_raises_played_as_written(self):
+        """Heads-up the big blind 3bets QTs and JTs always and 66 / A5s half the time (as the chart
+        writes them), and the button 4bets A5s 40% against the 3bet."""
+        T = pf.Table(pf.SEATS[2])
+        s = pf.strategy_for("BB", [{"pos": "SB", "action": "raise", "to": 2.5}], T)
+        for h, r in (("QTs", 1.0), ("JTs", 1.0), ("66", 0.5), ("A5s", 0.5), ("A9o", 0.5)):
+            m = parse_range(h) > 0
+            self.assertAlmostEqual(float(s["raise"][m].mean()), r, places=6, msg=h)
+        s = pf.strategy_for("SB", [{"pos": "SB", "action": "raise", "to": 2.5},
+                                   {"pos": "BB", "action": "raise", "to": 9}], T)
+        self.assertAlmostEqual(float(s["raise"][parse_range("A5s") > 0].mean()), 0.4, places=6)
+
+    def test_bets_all_in_sizes(self):
+        """An all-in goes to its `to` when given, else to the effective stack (the table depth)."""
+        acts = [{"pos": "BTN", "action": "raise", "to": 2.5}, {"pos": "BB", "action": "all-in"}]
+        self.assertEqual(pf._bets(acts)["BB"], 100.0)
+        self.assertEqual(pf._bets(acts, 40.0)["BB"], 40.0)
+        acts[1]["to"] = 25.0
+        self.assertEqual(pf._bets(acts, 40.0)["BB"], 25.0)
+        acts[1]["to"] = 60.0
+        self.assertEqual(pf._bets(acts, 40.0)["BB"], 40.0)
+
+    def test_5bet_jam_priced_at_table_depth(self):
+        """Facing a 5bet jam at 40bb deep the 4bettor calls QQ, JJ and AKo (it needs ~27% equity, not
+        the 41% a 100bb jam would ask); at 100bb it folds them."""
+        R_ = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
+        pre = [R_("UTG", "raise", 2.5), R_("HJ", "fold"), R_("CO", "fold"), R_("BTN", "raise", 7.5),
+               R_("SB", "fold"), R_("BB", "fold"), R_("UTG", "raise", 18), R_("BTN", "all-in")]
+        for depth, lo, hi in ((40, 0.9, 1.0), (100, 0.0, 0.1)):
+            s = pf.strategy_for("UTG", pre, pf.Table(pf.SEATS[6], depth=depth))
+            for h in ("QQ", "JJ", "AKo"):
+                c = float(s["call"][parse_range(h) > 0].mean())
+                self.assertTrue(lo <= c <= hi, (depth, h, c))
+        # an all-in with its size given is priced at that size whatever the table depth
+        pre[-1]["to"] = 40.0
+        s = pf.strategy_for("UTG", pre, pf.Table(pf.SEATS[6]))
+        self.assertGreater(float(s["call"][parse_range("QQ") > 0].mean()), 0.9)
 
 
 class TestAdvisor(unittest.TestCase):
