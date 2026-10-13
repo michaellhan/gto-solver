@@ -7,6 +7,8 @@ from gto import preflop as pf
 from gto.solver import solve, Config, Ctx, Solver, TreeBuilder, MEMBER_FULL, N_FULL, match_action
 from gto.advisor import Advisor, preflop_investments
 
+MW_TRIALS = 1200   # multiway tests: trials per call, no time caps (see Advisor.mw_trials)
+
 
 class TestCardsRanges(unittest.TestCase):
     def test_parse(self):
@@ -631,6 +633,7 @@ class TestTableSizes(unittest.TestCase):
 
     def test_multiway_and_mid_street_hu(self):
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        adv.mw_trials = MW_TRIALS   # fixed trials: the same result however loaded the machine is
         pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
                {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
         r = adv.advise({"players": 6, "hero": "CO", "hole": "AhAd", "board": "Kh7c2d", "preflop": pre, "flop": [{"pos": "BB", "action": "check"}]})
@@ -653,6 +656,7 @@ class TestTableSizes(unittest.TestCase):
 
     def test_multiway_players_behind_and_bluffs(self):
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        adv.mw_trials = MW_TRIALS   # fixed trials: the same result however loaded the machine is
         pre = [{"pos": "UTG", "action": "raise", "to": 2.5}, {"pos": "HJ", "action": "call"}, {"pos": "CO", "action": "call"},
                {"pos": "BTN", "action": "fold"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
         st = {"players": 6, "hero": "HJ", "hole": "2c3d", "board": "Kc8h4h", "preflop": pre,
@@ -671,6 +675,7 @@ class TestTableSizes(unittest.TestCase):
         # from the weak range.
         from gto.advisor import _joint_top, _top
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        adv.mw_trials = MW_TRIALS   # fixed trials: the same result however loaded the machine is
         pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
                {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
         r = adv.advise({"players": 6, "hero": "BTN", "hole": "Qc9c", "board": "Qd8s3h2c7d", "preflop": pre,
@@ -680,7 +685,9 @@ class TestTableSizes(unittest.TestCase):
                         "river": [{"pos": "BB", "action": "bet", "amount": 8}, {"pos": "CO", "action": "call"}]})
         self.assertTrue(r.get("multiway"))
         self.assertNotEqual(r["recommended"], "raise to 37.5")
-        self.assertLess(r["actions"][2]["ev_bb"], 0.0)
+        # (CO's small flop bet is now a wide, merged range and its turn check the weaker part, so Q9 is
+        # often best and a raise isn't the disaster it was; it still makes less than a call)
+        self.assertLess(r["actions"][2]["ev_bb"], r["actions"][1]["ev_bb"])
         note = next(n for n in r["notes"] if n.startswith("vs raise"))
         bb, co = (int(note.split(f"{p} continues with ")[1].split("%")[0]) for p in ("BB", "CO"))
         self.assertLess(bb, co)
@@ -720,15 +727,17 @@ class TestTableSizes(unittest.TestCase):
         # our call had grown and keep 81% of its range (junk included), paying off our call with dead
         # money: K5s showed +19 bb for an 8 bb call it wins 52% of the time against CO.
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        adv.mw_trials = MW_TRIALS   # fixed trials: the same result however loaded the machine is
         pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
                {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
         r = adv.advise({"players": 6, "hero": "BTN", "hole": "Kc5c", "board": "Kh7c2d", "preflop": pre,
                         "flop": [{"pos": "BB", "action": "check"}, {"pos": "CO", "action": "bet", "amount": 8}]})
         note = next(n for n in r["notes"] if n.startswith("after a call, BB still to act"))
         self.assertLess(int(note.split("BB continues with ")[1].split("%")[0]), 45)   # _keep(8, 8, 2): 39%
-        # (about 10 bb; the later streets now let CO and BB bet into us first, and us raise, so a bit more
-        # than the 7 bb of a model where we always acted first after the flop)
-        self.assertLess(r["actions"][1]["ev_bb"], 15.0)
+        # (about 16 bb; the later streets now let CO and BB bet into us first, and us raise, so more than
+        # the 7 bb of a model where we always acted first after the flop; and BB's check now rules out the
+        # wider range that would have bet small, so BB is weaker; the dead-money bug gave +19 bb)
+        self.assertLess(r["actions"][1]["ev_bb"], 18.0)
 
     def test_multiway_overcall_narrows_like_the_first_call(self):
         # HJ bets 3-way, BTN calls, BB overcalls. Both faced the same bet; the overcall used to be priced
@@ -754,6 +763,7 @@ class TestTableSizes(unittest.TestCase):
         # call or raise it, and we fold, call or check-raise knowing what the players between did: a set
         # continues against everything, middle pair only some of it (not raises), a gutshot nothing.
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        adv.mw_trials = MW_TRIALS   # fixed trials: the same result however loaded the machine is
         pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
                {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
         share = {}
@@ -775,6 +785,7 @@ class TestTableSizes(unittest.TestCase):
         # Checked to CO 3-way: it chooses between checking, a third of the pot and two thirds by EV, and
         # the field continues wider against the small bet (each folds less, the joint fold rule).
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        adv.mw_trials = MW_TRIALS   # fixed trials: the same result however loaded the machine is
         pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
                {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
         r = adv.advise({"players": 6, "hero": "BB", "hole": "Ts9s", "board": "Kh7c2d", "preflop": pre, "flop": []})
@@ -802,6 +813,7 @@ class TestTableSizes(unittest.TestCase):
         # check counts that line), air never does.
         from gto.advisor import _raise_to
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        adv.mw_trials = MW_TRIALS   # fixed trials: the same result however loaded the machine is
         pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
                {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
         line = {}
@@ -815,13 +827,48 @@ class TestTableSizes(unittest.TestCase):
         self.assertGreater(line["4s3d"]["fold"], 0.9)
         self.assertEqual(_raise_to(5.5, 5.5), 22.0)     # 3x a 5.5 bet plus one 5.5 call
 
+    def test_multiway_check_raise_frequencies(self):
+        # A check-raise has to beat calling (or folding) by two standard errors over the trials of its
+        # situation. On the bare means the choice followed the noise: middle pair 7s6s on K72 check-raised
+        # about 37% of the bets and the gutshot T9 on 863 anywhere from 15% to 64% depending on when the
+        # trials stopped. Now they rarely do, while a set and two pair still check-raise often.
+        adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        adv.mw_trials = MW_TRIALS
+        pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
+               {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
+        xr = {}
+        for hole, board in (("7s6s", "Kh7c2d"), ("Ts9s", "8d6h3c"), ("7s7d", "Kh7c2d"), ("Kd7d", "Kh7c2d")):
+            r = adv.advise({"players": 6, "hero": "BB", "hole": hole, "board": board, "preflop": pre, "flop": []})
+            xr[hole] = r["check_line"]["raise"]
+        self.assertLessEqual(xr["7s6s"], 0.15)
+        self.assertLessEqual(xr["Ts9s"], 0.15)
+        self.assertGreater(xr["7s7d"], 0.6)
+        self.assertGreater(xr["Kd7d"], 0.25)
+
+    def test_multiway_speed(self):
+        # A warm 3-way flop spot (ranges and board cached, a new hand) plays 1200 trials in well under a
+        # few CPU-seconds (about 0.5 s on an idle laptop; 1.5 s before the evaluator and equity rework).
+        # CPU time, not wall time, and a generous bound, so a loaded machine doesn't fail it.
+        import time
+        adv = Advisor(Config(depth=1), time_budget=4.0, prior_budget=2.0)
+        adv.mw_trials = MW_TRIALS
+        pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
+               {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
+        st = {"players": 6, "hero": "BB", "hole": "AsKd", "board": "Kh7c2d", "preflop": pre, "flop": []}
+        adv.advise(st)
+        c = time.process_time()
+        adv.advise(dict(st, hole="7s6s"))
+        self.assertLess(time.process_time() - c, 6.0)
+
     def test_multiway_top_pair_continues_like_draws(self):
         # 8-6-3 checked to the BB 3-way. The bettor's bluffs used to come from the bottom of its range
         # (air) and its value only from what beat what would call as if everyone held its range, so an
         # 8x top pair continued 45% against a bet while 7c5c (an open-ender) continued 100%. Bluffs are now
         # the hands that most often get there (draws first), the value is set against the ranges it is
-        # bet into, and a bet our equity alone pays for is called: top pair continues at least as often
-        # as the open-enders and more than a gutshot.
+        # bet into, and a bet our equity alone pays for is called: against the small bets top pair continues
+        # at least as often as the open-enders and the gutshot. (The big bet is now the nut-advantage range,
+        # sets and overpairs plus draws: top pair folds to it and the draws' price keeps them in, as it
+        # should; against the wide small bet a gutshot with two overcards has the price too.)
         from gto.advisor import _street_info
         from gto.cards import COMBO_INDEX
         board = cards("8d6h3c")
@@ -831,19 +878,21 @@ class TestTableSizes(unittest.TestCase):
         self.assertLess(pos[combo("7s5s")], pos[combo("Qs2d")])     # an open-ender bluffs before queen-high
         self.assertLess(pos[combo("Qs2d")], pos[combo("9s6s")])     # middle pair has showdown value: last
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        adv.mw_trials = MW_TRIALS   # fixed trials: the same result however loaded the machine is
         pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
                {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
         cont = {}
         for hole in ("Ad8s", "7c5c", "5c4c", "Ts9s"):
             r = adv.advise({"players": 6, "hero": "BB", "hole": hole, "board": "8d6h3c", "preflop": pre, "flop": []})
-            cont[hole] = r["check_line"]["continue_unraised"]
-        self.assertGreaterEqual(cont["Ad8s"], max(cont["7c5c"], cont["5c4c"]))
-        self.assertGreater(cont["Ad8s"], cont["Ts9s"])
+            cont[hole] = (r["check_line"]["continue_small"], r["check_line"]["continue_unraised"])
+        self.assertGreaterEqual(cont["Ad8s"][0], max(cont["7c5c"][0], cont["5c4c"][0], cont["Ts9s"][0]))
+        self.assertGreater(cont["Ad8s"][0], 0.95)
 
     def test_multiway_later_streets(self):
         # Later streets inside the trials: bets at either size (33% and 66%), the players behind a bet
         # still act (bets get more than one caller), and raises are sized over the calls in front.
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        adv.mw_trials = MW_TRIALS   # fixed trials: the same result however loaded the machine is
         pre = [{"pos": "UTG", "action": "raise", "to": 2.5}, {"pos": "HJ", "action": "call"}, {"pos": "CO", "action": "call"},
                {"pos": "BTN", "action": "fold"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
         r = adv.advise({"players": 6, "hero": "BB", "hole": "Qh9h", "board": "Kc8h4h", "preflop": pre, "flop": []})
@@ -2020,23 +2069,24 @@ class TestRake(unittest.TestCase):
         self.assertLess(call(b), call(a) - 0.1)
 
     def test_multiway_with_rake(self):
-        # the multiway heuristic pays every pot hero wins less the rake on it (to the cap). The trials are
-        # stopped after a fixed number of passes, so each run plays the same hands and runouts.
+        # the multiway heuristic pays every pot hero wins less the rake on it (to the cap). A fixed number
+        # of trials (no time caps), so each run plays the same hands and runouts however loaded the machine.
         import time
         from gto.advisor import replay_hand
         R = self.R
         pre = [R("UTG", "fold"), R("HJ", "fold"), R("CO", "raise", 2.5), R("BTN", "call"), R("SB", "fold"), R("BB", "call")]
         ranges = pf.replay_ranges(pre, pf.SEATS[6])
 
-        def run(cfg, hole, flop):
+        def run(cfg, hole, flop, rules=False, stats=False):
             adv = Advisor(cfg, time_budget=0.5, prior_budget=0.3)
-            passes = iter(range(3))
-            adv.should_stop = lambda: next(passes, None) is None   # two passes over the runouts
+            adv.mw_trials = 376   # two passes over the runouts
+            adv.mw_rake_rules = rules
             st = replay_hand(pf.SEATS[6], 100.0, {"preflop": pre, "flop": flop}, 2)[1]
             out = adv._multiway("BB" if not flop else "CO", tuple(cards(hole)), cards("Kh7c2d"), ranges,
                                 ["BB", "CO", "BTN"], st, 100.0, time.time(), [])
-            return {a["action"]: a["ev_bb"] for a in out["actions"]}
+            return out if stats else {a["action"]: a["ev_bb"] for a in out["actions"]}
 
+        # The payouts alone (our in-trial rules unraked, as they were): raked EVs are lower, by at most the cap.
         for hole, flop in (("AhKd", []), ("Qs7s", [R("BB", "bet", 3)])):
             off = run(Config(), hole, flop)
             self.assertEqual(off, run(Config(rake_rate=0.0, rake_cap=3.0), hole, flop))     # zero rake: identical
@@ -2052,6 +2102,21 @@ class TestRake(unittest.TestCase):
                 self.assertGreater(off[k] - capped[k], 0.0, (hole, k))
             if flop:   # calling a bet: the pots the call goes on to win are raked
                 self.assertLess(on["call"], off["call"] - 0.05)
+
+        # Our in-trial calls, leads and raises count the rake too: zero rake is bit-identical to no rake at
+        # all, and with rake we lead later streets less often and fold to bets more (the same trials, so the
+        # counts compare directly), where the payout-only rules decide exactly as without rake.
+        for hole, flop in (("AhKd", []), ("Qs7s", [R("BB", "bet", 3)])):
+            base = run(Config(), hole, flop, rules=True, stats=True)
+            zero = run(Config(rake_rate=0.0, rake_cap=3.0), hole, flop, rules=True, stats=True)
+            self.assertEqual((base["actions"], base["later_streets"], base.get("check_line")),
+                             (zero["actions"], zero["later_streets"], zero.get("check_line")))
+            raked = run(Config(rake_rate=0.10), hole, flop, rules=True, stats=True)["later_streets"]
+            payout_only = run(Config(rake_rate=0.10), hole, flop, stats=True)["later_streets"]
+            ls = base["later_streets"]
+            self.assertLess(raked["ours"], ls["ours"], hole)
+            self.assertGreater(raked["our_folds"], ls["our_folds"], hole)
+            self.assertEqual(payout_only["ours"], ls["ours"], hole)
 
     def test_postflop_advice_with_rake(self):
         # the advisor's postflop solve is raked: a checked-down river pays the pot less 5%

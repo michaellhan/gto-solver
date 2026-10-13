@@ -98,6 +98,7 @@ def heuristic(args):
     A._narrow_street(ranges, board, cur, 100.0, hero, hole)
     remaining = [p for p in cur.order if p in cur.active]
     adv = A.Advisor(time_budget=8)
+    adv.mw_trials = 1200   # a fixed number of trials: the same score however loaded the machine is
     r = adv._multiway(hero, hole, board, ranges, remaining, cur, 100.0, time.time(), [])
     return {kind(a["action"]): a["ev_bb"] for a in r["actions"]}
 

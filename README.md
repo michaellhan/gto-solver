@@ -247,44 +247,61 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   one strength bar, so a weak range (a lead after checking twice) folds more of itself
   than a strong one (a call of that lead), and the strongest part of what continues
   raises. Raises inside the trials go to 3x the bet plus the calls in front of them
-  (a standard raise: 22 bb over a 5.5 bet and one call). When they bet it's 66% with value
-  from the top of their range plus balanced bluffs, or 33% with the next, thinner value
-  and its own balanced bluffs (SMALL_BET: GTO Wizard's 3-way flop study, 100bb, LJ
-  opens and both blinds call, has the opener checking 34%, betting a third of the pot
-  56%, two thirds 8% and pot 1%, against 23/38/21/18 heads-up with the big blind, so 85%
-  of its 3-way bets are the small size; bigger multiway bets come where the bettor holds
-  the nut advantage. These rules don't reproduce that mix: the 6-max UTG opener into
-  both blinds checks 67%, bets 66% 26% and 33% 7% over 60 random flops, as the big bet
-  takes the top of the range and the small one the thin layer below; hero's size is
-  chosen by EV). The value is what beats most of what
-  the players it's bet into would call with, from their actual ranges (an opener betting
-  into two flatters values thinner than a flatter betting into the opener), and the
-  bluffs are the hands without showdown value that most often end up strong (draws and
-  overcards first; on the river the weakest hands). Bluffs from the bottom of the range
-  and value as if everyone held the bettor's range made a 66% bet nearly all sets and
-  overpairs plus air, which a draw out-continued top pair against. Players still to act
+  (a standard raise: 22 bb over a 5.5 bet and one call). When they bet it's mostly a
+  third of the pot (SMALL_BET) with a merged range: value from the top 70% of what one
+  player would call it with, compounding with more players (1 - 0.3^n of what the field
+  calls), plus balanced bluffs; 66% takes the top of that value (what beats most of
+  what would call it) in proportion to the bettor's nut advantage, its share of the
+  top 10% of everyone's ranges pooled: from 40% of the nuts it starts betting big, from
+  60% everything that would. Fitted to GTO Wizard's 3-way flop study (100bb, LJ opens
+  and both blinds call: the opener checks 34%, bets a third of the pot 56%, two thirds
+  8% and pot 1%, against 23/38/21/18 heads-up with the big blind; bigger multiway bets
+  come where the bettor holds the nut advantage): over 200 random flops the 6-max UTG
+  opener into both blinds now checks 43%, bets 33% 51% and 66% 6% (heads-up with the
+  big blind 24/36/40), where the old rules (66% the top of the range, 33% the thin
+  layer below) checked 67% and bet 66% 26%, 33% 7%. Hero's size is chosen by EV. The
+  value is set against what the players it's bet into would call with, from their
+  actual ranges (an opener betting into two flatters values thinner than a flatter
+  betting into the opener), and the bluffs are the hands without showdown value that
+  most often end up strong (draws and overcards first; on the river the weakest hands).
+  Bluffs from the bottom of the range and value as if everyone held the bettor's range
+  made a 66% bet nearly all sets and overpairs plus air, which a draw out-continued top
+  pair against. A check rules out the big bet, the small bet's bluffs and its strong
+  value; the merged middle (thin value, protection) checks as well, as in the solves,
+  whose checks keep medium hands and traps (ruling out every hand that would bet small
+  left the checkers so weak that top pair raised a river lead for +47 bb). Narrowing a
+  small bet keeps the small and big ranges both (players mix). Players still to act
   behind you can call or raise after you call; they faced the bet with you, so each folds
   as often as when everyone it was made into faces it together (39% of the range continues
   against a pot-sized bet with two of you facing it; pricing it as a fresh bet into
   the pot your call had grown kept 81%, junk included, and that dead money paid for
-  your calls: K5s on K72 called a pot bet at +19 bb, about +10 now). Each bet size gets
+  your calls: K5s on K72 called a pot bet at +19 bb, about +16 now, the checking big blind behind being weaker). Each bet size gets
   its own continuing ranges, so a third of the pot keeps more of the field in (3-way,
   each keeps about 57% of their range against 33% and 45% against 66%) and gets
   raised more often. When you check, the first player behind you whose betting range
-  at either size holds their hand bets it, and the others face that bet the same way as
+  at either size holds their hand bets it (a player behind you who checked first holds
+  the check range: with the full range, its folds to your check-raise came out a third of
+  the time where its actual checking hands folded twice as often), and the others face that bet the same way as
   players behind a call (call, raise with the strongest part, fold the rest): those
   between the bettor and you act first, and you fold, call or check-raise knowing what
   they did (per bettor, size and what the players between did, whichever pays over the
   trials; a call your equity against the bettor and the callers already pays for is made
-  even where those noisy splits came out slightly negative), those after you act once
+  even where those noisy splits came out slightly negative; a check-raise only when it
+  beats calling or folding by two standard errors of the paired difference over at least
+  30 trials of that situation: on the bare means middle pair 7s6s on K72 check-raised
+  about 37% of the bets and the gutshot T9s on 863 15-64% depending on when the trials
+  stopped, now about 0% each, while a set of sevens check-raises about 93% and two pair
+  K7 35-87%), those after you act once
   you've called. A check-raise is faced by everyone still in (the bettor, the callers
   between, the players behind) by the same joint fold rule, the strongest part of what
   continues re-raises 3x and you call that by equity. The notes and `check_line` say how
   often someone bets after your check and how often you'd call, check-raise or fold. On
   8d6h3c checked to the big blind 3-way (CO opens, BTN and BB call), top pair Ad8s used
   to continue against 46% of those bets while the open-enders 7c5c and 5c4c continued
-  against all of them and the gutshot T9s 44%; now top pair continues about 96%, the
-  open-enders 96-100%, the gutshot about 30%; a set of sevens on K72 check-raises most
+  against all of them and the gutshot T9s 44%; now everyone continues against the small
+  bets (top pair check-raises 43% of all bets) and against the big, nut-advantage bet
+  top pair folds where the draws' price keeps them in (top pair 78% of unraised bets,
+  the draws 100%); a set of sevens on K72 check-raises most
   bets and air never does. A raise can be re-raised, and every line plays to the river
   by the same rules: on each later street players act in seat order, an opponent bets
   66% or 33% by the betting ranges above, you lead 66% when you're ahead of every range
@@ -294,9 +311,18 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   pair), you raise when ahead of each range that would continue, otherwise call or fold
   by your equity against the bettor and the callers (on the turn, also counting the river
   bet that may follow). One raise per later street, which everyone still in then calls or
-  folds. Trials continue until the gap between the two best actions is clear of the
-  sampling noise or under 2% of the pot (or a time cap), and the notes give that gap with
-  its error.
+  folds. With rake, every pot you win is paid less its rake, and your in-trial calls,
+  leads and raises count it too: a call pays when your equity times the raked pot beats
+  its price, and the lead and raise equity bars rise by what the rake takes of the chips
+  they add (zero rake leaves every decision exactly as before). Trials continue until the
+  gap between the two best actions is clear of the sampling noise or under 2% of the pot
+  (or a time cap), and the notes give that gap with its error. The trials run about 1.4x
+  as many per CPU-second as before, with the busier betting above (1.75x with the old
+  betting rules): the hand evaluator works per hole-rank pair instead of per combo (9x
+  faster, identical ranks, which also speeds the heads-up solves), equities are matrix
+  products over the runouts, and later-street decisions are cached per runout. A warm
+  3-way flop spot (a new hand on a board already seen) took about 2 s and hit the time
+  cap; now 0.4-1.3 s, mostly stopping on the noise rule.
 * Streets that started multiway narrow every player's range by the same rules
   (a check drops most hands that would have bet, a bet keeps its value + bluff
   range, a call drops what would have folded or raised, with a first call and an
@@ -309,9 +335,15 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   wider range, so actions the solver mixes can show different EVs).
 * The rule constants (value share of a bet, share of continuing hands that raise,
   lead threshold, narrowing softness) are fitted to the heads-up solver with
-  `scripts/calibrate_multiway.py`: on ~200 heads-up flop spots the heuristic's pick
-  gives up 0.10 bb on average against the solver's best action, and its EVs are
-  off by 1.0 bb on average (1.35 bb before fitting). The "players call too much"
+  `scripts/calibrate_multiway.py`: on ~240 heads-up flop spots the heuristic's pick
+  gives up 0.14 bb on average against the solver's best action, and its EVs are
+  off by 1.38 bb on average. (Fitted at 0.10 bb and 1.0 bb; the later rules, played
+  to the river with both sizes, check-raises and the old betting ranges, had drifted
+  to 0.21 bb and 1.40 bb. Refit after the betting ranges above: OFF_RULE_MAX 0.25 to
+  0.4, the rest unchanged; score 0.488, then 0.437 with the new betting and check-raise
+  rules, 0.415 refit. The script now plays a fixed 1200 trials per spot, so its score
+  doesn't depend on machine load.) The betting mix (SMALL_SHARE, NUT_TOP, ADV0,
+  ADV_SPAN) is fitted to GTO Wizard's frequencies instead. The "players call too much"
   shade is deliberate and not fitted. The multiway interactions themselves, which
   the solver can't play, were sanity-checked on ~190 3-way spots (single-raised and
   squeezed pots, flop first to act, facing a bet, facing a bet and a call, turn and

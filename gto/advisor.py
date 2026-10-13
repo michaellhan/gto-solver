@@ -31,21 +31,28 @@ FOLD_SHADE = 0.75   # multiway: opponents fold this share of what a balanced def
 # The next four are fitted to the heads-up solver by scripts/calibrate_multiway.py (RAISE_EQ barely
 # mattered there, so it stays a judgment call).
 NARROW_SOFT = 0.3   # multiway narrowing: weight kept by hands the rules say would have played differently
-OFF_RULE_MAX = 0.25  # ...but those hands are at most this share of the narrowed range (a big bet's rule range is small)
+OFF_RULE_MAX = 0.4   # ...but those hands are at most this share of the narrowed range (a big bet's rule range is small)
 # multiway: the small bet (share of the pot), beside 66%, for us and the opponents on every street.
 # Solver data backs a third of the pot: GTO Wizard's 3-way flop study ("Playing In Position Against Two
 # Callers", 100bb 8-max cEV, LJ opens, SB and BB call, 20 weighted flops, sizes 33/66/100%) has the opener
 # checking 34.1%, betting 33% 56.2%, 66% 8.4% and pot 1.3% (heads-up vs the BB: 23.0/38.1/20.9/18.0), so
 # 85% of its 3-way bets are the small size, where heads-up it was 49%. Larger multiway bets show up
 # where the bettor has the nut advantage (GTO Wizard's 3-way launch post: BTN vs SB + BB on QsTs7h bets
-# 75% when checked to). The field's betting rules below (_bet_ranges) don't reproduce that mix: the
-# 6-max UTG opener into SB + BB checks 67%, bets 66% 26% and 33% 7% over 60 random flops (heads-up vs
-# the BB 47/45/8), since the big bet takes the top of the range and the small one only the thin layer
-# next to it; hero's own size is picked by EV.
+# 75% when checked to). The field's betting rules (_bet_ranges) are fitted to that mix: the 6-max UTG
+# opener into SB + BB checks 43%, bets 33% 51% and 66% 6% over 200 random flops (heads-up vs the BB
+# 24/36/40); the old rules (the big bet the top of the range, the small one a thin layer next to it)
+# checked 67% and bet 66% 26%, 33% 7% (heads-up 47/8/45). Hero's own size is picked by EV.
 SMALL_BET = 0.33
+XR_Z = 2.0          # multiway: a check-raise beats calling/folding by this many standard errors (see chk_plan)
+XR_MIN = 30         # ...over at least this many trials of that situation
+LATER_CACHE = 40000  # multiway: most later-street decisions stored per call (memory bound, ~25 KB each at most)
 HIT_TOP = 0.15      # multiway bluffs: a hand "gets there" on a runout ending in this top share of combos (judgment)
 SHOWDOWN_Q = 0.6    # ...and has showdown value (bluffs last) when it usually ends above this share (judgment)
 VALUE_SHARE = 0.35  # multiway: a bet's value range is this share of what would call it
+SMALL_SHARE = 0.7   # multiway: the small bet's value range is this share of what one player would call it with,
+                    # compounding with more players (1 - 0.3^n of what the field calls); fitted, see _bet_ranges
+NUT_TOP = 0.1       # multiway: the nuts, for the big bet: this top share of the players' ranges pooled
+ADV0, ADV_SPAN = 0.4, 0.2  # ...the big bet starts at this share of the nuts and takes all the value over this much more
 RAISE_SHARE = 0.2   # multiway: facing a bet, this share of what continues (the strongest) raises
 LEAD_EQ = 0.5       # multiway, later streets: we lead when our equity beats this vs every calling range
 RAISE_EQ = 0.55     # multiway, later streets: we raise their bet when our equity beats this vs what continues
@@ -220,37 +227,100 @@ def _aggro(r, v, b, p, rank, bluff=None) -> np.ndarray:
     return val | (_top(rest, bf * tot / left, bluff) if left > 1e-12 else val)
 
 
-def _value_share(r, n, b, p, rank, others=None) -> float:
+def _value_share(r, n, b, p, rank, others=None, joint=None, share=None) -> float:
     """Share of range r that bets b into p for value, with n players facing it: the hands above the
     top VALUE_SHARE of what would call (balanced, unshaded, by the joint rule of _joint_top). With the
     others' ranges, what they would call with; without, as if each held r (VALUE_SHARE of what r keeps,
     the same number when they do). A strong range betting into capped ones values thinner (top pair
-    from the opener into two flatters), a capped one into a strong one tighter."""
-    if not others:
-        return _keep(b, p, n, 1.0) * VALUE_SHARE
-    others = [o for o in others if o.sum() > 0]
-    if not others:
-        return _keep(b, p, n, 1.0) * VALUE_SHARE
-    fold = (1.0 - _keep(b, p, len(others), 1.0)) ** len(others)
-    comb = sum(o * c / o.sum() for o, c in zip(others, _joint_top(others, fold, rank)))
-    return _share(r, _top(comb, VALUE_SHARE, rank))
+    from the opener into two flatters), a capped one into a strong one tighter. joint: _Joint(others,
+    rank), when the caller has it (the same for both bet sizes). share: in place of VALUE_SHARE."""
+    share = VALUE_SHARE if share is None else share
+    if joint is None:
+        others = [o for o in others if o.sum() > 0] if others else []
+        if not others:
+            return _keep(b, p, n, 1.0) * share
+        joint = _Joint(others, rank)
+    if not joint.n:
+        return _keep(b, p, n, 1.0) * share
+    fold = (1.0 - _keep(b, p, joint.n, 1.0)) ** joint.n
+    return _share(r, joint.value_mask(fold, share))
 
 
-def _bet_ranges(r, n, p, big, small, rank, bluff=None, others=None):
+class _Joint:
+    """The joint fold rule's pieces for a fixed set of ranges in one rank order (see _joint_top),
+    computed once and used for any fold share: below[m] is the chance every hand is outside the top
+    m combos; norm the ranges' sum, each normalised (what they'd call with, combined)."""
+    __slots__ = ("n", "rank", "below", "cum_norm")
+
+    def __init__(self, rs, rank):
+        rs = [r for r in rs if r.sum() > 0]
+        self.n, self.rank = len(rs), rank
+        self.below = _joint_below(rs, rank)
+        self.cum_norm = np.cumsum(sum(r / r.sum() for r in rs)[rank]) if rs else None
+
+    def cut(self, fold) -> int:
+        """How many of the strongest combos continue when they fold together with probability fold."""
+        return int(np.argmax(self.below <= fold + 1e-9)) if fold < 1.0 else 0
+
+    def value_mask(self, fold, share) -> np.ndarray:
+        """_top(what they continue with, combined, share): the strongest combos holding `share` of it."""
+        m = np.zeros(N_COMBOS, dtype=bool)
+        k = self.cut(fold)
+        if k > 0 and share > 1e-9 and self.cum_norm[k - 1] > 0:
+            cum = self.cum_norm[:k]
+            m[self.rank[:int(np.searchsorted(cum, share * cum[-1] - 1e-9)) + 1]] = True
+        return m
+
+
+def _nut_weight(r, others, rank) -> float:
+    """How much of its value range r bets big against the ranges others (0..1): by r's share of the
+    nuts, the top NUT_TOP of every player's range pooled (each normalised), against the field's: r's
+    part of the pooled nuts above ADV0 over ADV_SPAN. Equal ranges give 1 / players, so heads-up a
+    range that holds more of the nuts bets big and into two players only one that dominates them."""
+    rs = [x / x.sum() for x in [r] + list(others) if x.sum() > 0]
+    if len(rs) < 2:
+        return 0.0
+    nuts = _top(sum(rs), NUT_TOP, rank)
+    held = [float(x[nuts].sum()) for x in rs]
+    if sum(held) <= 0:
+        return 0.0
+    return float(np.clip((held[0] / sum(held) - ADV0) / ADV_SPAN, 0.0, 1.0))
+
+
+def _bet_ranges(r, n, p, big, small, rank, bluff=None, others=None, drop=False):
     """(big, small) masks: what range r bets at each size into p with n players facing it (others:
-    their ranges, see _value_share). The big bet is _aggro's value + bluffs; the small one takes the
-    thinner value (the rest of what the small size's value share covers) with its own balanced bluffs,
-    next in bluff order. small None: no small bet (an empty mask)."""
-    bg = _aggro(r, _value_share(r, n, big, p, rank, others), big, p, rank, bluff)
+    their ranges, see _value_share; without them, as if each held r). The small bet is the default:
+    value from the top SMALL_SHARE of what would call it (a merged range: medium hands bet for
+    protection) plus balanced bluffs. The big bet takes the top of that value, the hands above the
+    top VALUE_SHARE of what would call it, by r's nut advantage (_nut_weight), with its own balanced
+    bluffs first in bluff order. GTO Wizard's 3-way flop study (100bb, LJ opens, both blinds call) has
+    the opener check 34%, bet 33% 56% and bigger 10%; heads-up against the big blind 23%, 38% and 39%.
+    The old rule (big bet the top, small a thin layer below it) checked 67% 3-way and bet small 7%.
+    small None: no small bet (an empty mask) and the big bet takes the value share whole.
+    drop: also return what a check rules out: the big bet, the small bet's bluffs and its value above
+    the top VALUE_SHARE of what would call it; the merged middle (thin value, protection) checks too,
+    as in the solves, whose checking ranges keep medium hands and some traps (ruling out every hand that
+    would bet small left the checkers so weak that top pair raised a river lead for +47 bb)."""
+    others = [o for o in others if o.sum() > 0] if others else []
+    joint = _Joint(others, rank) if others else None
+    empty = np.zeros(N_COMBOS, dtype=bool)
+    v_big = _value_share(r, n, big, p, rank, others, joint)
     if small is None:
-        return bg, np.zeros(N_COMBOS, dtype=bool)
-    val = _top(r, _value_share(r, n, small, p, rank, others), rank) & ~bg
+        bg = _aggro(r, v_big, big, p, rank, bluff)
+        return (bg, empty, bg) if drop else (bg, empty)
+    f = _nut_weight(r, others if others else [r] * max(n, 1), rank)
+    bg = _aggro(r, v_big * f, big, p, rank, bluff) if f > 0 else empty
+    s_share = 1.0 - (1.0 - SMALL_SHARE) ** (len(others) if others else max(n, 1))
+    val = _top(r, _value_share(r, n, small, p, rank, others, joint, s_share), rank) & ~bg
     rest = r * ~(bg | val)
     left, tot = float(rest.sum()), float(r.sum())
     bf = _share(r, val) * small / (p + small)
     order = rank[::-1] if bluff is None else bluff
     sm = val | (_top(rest, min(bf * tot / left, 1.0), order) if left > 1e-12 and bf > 0 else val)
-    return bg, sm & ~bg
+    if not drop:
+        return bg, sm & ~bg
+    strong = _top(r, _value_share(r, n, small, p, rank, others, joint), rank)
+    return bg, sm & ~bg, bg | (sm & ~val) | (val & strong)
 
 
 def _bluff_order(sts, rank, sc) -> np.ndarray:
@@ -285,24 +355,29 @@ def _keep(b, p, n, shade=None) -> float:
     return 1.0 - (shade * b / (p + b)) ** (1.0 / max(n, 1))
 
 
+def _joint_below(rs, rank) -> np.ndarray:
+    """below[m]: the chance that every one of the ranges rs holds a hand outside the top m combos (in
+    `rank` order), m = 0..N_COMBOS (empty ranges left out)."""
+    rs = [r for r in rs if r.sum() > 0]
+    below = np.ones(N_COMBOS + 1)
+    if rs:
+        c = np.cumsum(np.stack(rs)[:, rank], axis=1)
+        below[1:] = np.prod(1.0 - c / c[:, -1:], axis=0)
+    return below
+
+
 def _joint_top(rs: List[np.ndarray], fold: float, rank: np.ndarray) -> List[np.ndarray]:
     """What each of the ranges rs continues with against a bet they fold to together with
     probability `fold`: everyone keeps the hands above one strength bar (in `rank` order), set so
     the chance that every player's hand is below it is `fold`. A range of weak hands gives up more
     of itself than a strong one: after a lead and a call, the caller (who called with what beats
     the lead) keeps most of their range and the leader's bluffs fold. One range: _top(r, 1 - fold)."""
-    below = np.ones(N_COMBOS + 1)      # below[m]: chance all hands are outside the top m combos
-    for r in rs:
-        c = np.cumsum(r[rank])
-        if c[-1] > 0:
-            below *= 1.0 - np.concatenate(([0.0], c)) / c[-1]
-    m = int(np.argmax(below <= fold + 1e-9)) if fold < 1.0 else 0
-    out = []
-    for _ in rs:
-        mask = np.zeros(N_COMBOS, dtype=bool)
-        mask[rank[:m]] = True
-        out.append(mask)
-    return out
+    if not len(rs):
+        return []
+    m = int(np.argmax(_joint_below(rs, rank) <= fold + 1e-9)) if fold < 1.0 else 0
+    mask = np.zeros(N_COMBOS, dtype=bool)
+    mask[rank[:m]] = True
+    return [mask] + [mask.copy() for _ in rs[1:]]
 
 
 def _share(r, mask) -> float:
@@ -430,7 +505,8 @@ def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack:
         # for a first caller and an overcaller (pricing the bet into the pot it had grown to left
         # overcallers wider than the first caller).
         call_k = _keep(faced[1], faced[0], faced[2]) if faced and to_call > 1e-9 and to <= cur + 1e-9 else None
-        keep_m = _rule_mask(r, to, cur, to_call, pot, n, rank, call_k, bluff)
+        others = [ranges[q] * (sc >= 0) for q in active if q != p and q in ranges]
+        keep_m = _rule_mask(r, to, cur, to_call, pot, n, rank, call_k, bluff, others)
         if to > cur + 1e-9:
             faced = (pot, min(to, bets[p] + remaining) - bets[p], max(n, 1))
         cur = max(cur, to)
@@ -448,19 +524,23 @@ def _soften(r, keep_m) -> np.ndarray:
     return np.where(keep_m, 1.0, soft)
 
 
-def _rule_mask(r, to, cur, to_call, pot, n, rank, call_k=None, bluff=None) -> np.ndarray:
+def _rule_mask(r, to, cur, to_call, pot, n, rank, call_k=None, bluff=None, others=None) -> np.ndarray:
     """The part of range r the multiway rules play this way, with n opponents and `pot` in the
     middle: a bet or raise to `to` over the current bet `cur`, else a call of to_call (or a check).
     call_k: for a call, the share of the range that continues (default: facing to_call into pot).
-    bluff: the order bluffs are picked in (see _bluff_order; default the weakest hands). The value
-    share stays the fitted one (as if the others held r), not _value_share's against their ranges."""
+    bluff: the order bluffs are picked in (see _bluff_order; default the weakest hands). others: the
+    other players' ranges, for the betting ranges (see _bet_ranges). A big bet's value share stays the
+    fitted one (as if the others held r), not _value_share's against their ranges."""
     if to > cur + 1e-9:                       # bet or raise: value + balanced bluffs
         if to_call <= 1e-9:
+            if to - cur < 0.5 * pot:          # a small bet: the small betting range (merged), see _bet_ranges
+                big, small = _bet_ranges(r, n, pot, max(0.66 * pot, to - cur), to - cur, rank, bluff, others)
+                if r[small].sum() > 0:
+                    return small | big       # (strong hands bet small too: players mix)
             return _aggro(r, _value_share(r, n, to - cur, pot, rank), to - cur, pot, rank, bluff)
         return _aggro(r, _keep(to_call, pot, n) * RAISE_SHARE, to - cur, pot + to_call, rank, bluff)
     if to_call <= 1e-9:                       # check: not what would have bet at either size
-        big, small = _bet_ranges(r, n, pot, 0.66 * pot, SMALL_BET * pot, rank, bluff)
-        return ~(big | small)
+        return ~_bet_ranges(r, n, pot, 0.66 * pot, SMALL_BET * pot, rank, bluff, others, drop=True)[2]
     k = _keep(to_call, pot, n) if call_k is None else call_k   # call: continues, but wouldn't raise
     return _top(r, k, rank) & ~_top(r, k * RAISE_SHARE, rank)
 
@@ -659,6 +739,8 @@ class Advisor:
         self.prior_smoothing = prior_smoothing
         self._cache: Dict[tuple, Solution] = {}
         self.should_stop = None   # callable; when it returns true the running solve raises solver.Cancelled
+        self.mw_rake_rules = True   # multiway: our in-trial calls, leads and raises count the rake (off: payouts only)
+        self.mw_trials: Optional[int] = None   # multiway: play at least this many trials (whole passes), no time caps or early stop (tests)
         self.warm_from: Optional["Advisor"] = None   # another advisor (e.g. a faster config) whose solves seed ours
         self._by_spot: Dict[tuple, Solution] = {}    # latest solve per spot, whatever the ranges
         self.rng = random.Random()
@@ -1210,14 +1292,17 @@ class Advisor:
           the strongest part of what each continues with raises instead. Players still to act behind
           a bet we call faced that bet with us, so they fold as often as each would with everyone it
           was made into facing it together (not as if it were a fresh bet into the pot our call grew).
-        - Betting: 66% of the pot with value from the hands above the top VALUE_SHARE of what the
-          players it's made into would call with (balanced, unshaded, their actual ranges: see
-          _value_share) plus bluffs at the balanced ratio, bluffs = value * b / (p + b); SMALL_BET
-          (33%) with the next, thinner value and its own balanced bluffs. Bluffs are the hands
-          without showdown value that most often end up strong (draws and overcards first; see
-          _bluff_order), on the river the weakest hands. Bluffing from the bottom with value as if
-          everyone held the bettor's range made a bet sets and overpairs plus air, and a draw then
-          continued more often than top pair. (Narrowing past streets keeps the fitted rule.)
+        - Betting (_bet_ranges): mostly SMALL_BET (33%), a merged range: value from the top SMALL_SHARE
+          of what the players it's made into would call with (compounding with more players; their
+          actual ranges, balanced and unshaded, see _value_share) plus bluffs at the balanced ratio,
+          bluffs = value * b / (p + b). 66% takes the top of that value (above the top VALUE_SHARE of
+          what would call it) in proportion to the bettor's nut advantage (_nut_weight), with its own
+          balanced bluffs. Fitted to GTO Wizard's 3-way flop study (the opener checks 34%, bets a
+          third 56%, bigger 10%; heads-up 23/38/39); the old rule (66% the top, 33% a thin layer)
+          checked 67% 3-way. Bluffs are the hands without showdown value that most often end up strong
+          (draws and overcards first; see _bluff_order), on the river the weakest hands. A check rules
+          out the big bet, the small bet's bluffs and its strong value; the merged middle checks too.
+          A player who checked behind us before the bettor holds that check range.
         - Raises go to 3x the bet plus the calls in front (_raise_to); our raise option facing a bet
           is the page's default size, the bet plus 75% of the pot after calling.
         - We choose between checking and betting SMALL_BET (33%) or 66% of the pot (facing a bet:
@@ -1246,13 +1331,28 @@ class Advisor:
         river bet that may follow). One raise per later street; everyone still in then calls or
         folds it.
         With rake, every pot hero wins is short min(rate x pot, cap) (the pot without an uncalled bet; a
-        split pot costs hero its share), as at the solver's terminals; the opponents' rules and hero's
-        call/lead/raise rules within a trial stay unraked."""
+        split pot costs hero its share), as at the solver's terminals, and hero's calls, leads and raises
+        within a trial count it (a call pays when equity x the raked pot beats its price; the lead and
+        raise equity bars rise by what the rake takes of the chips they add); the opponents' rules stay
+        unraked. Our check-raise after a bet has to beat calling or folding by XR_Z standard errors over
+        that situation's trials (see chk_plan)."""
         from .evaluator import eval_board
         cfg = self.cfg
         def won(pot_):
             """What the winner collects of a pot of pot_ bb that saw the flop (pot_ itself without rake)."""
             return pot_ - cfg.rake(pot_)
+        # what our in-trial rules (calls, leads, raises) count a pot as paying: raked, unless mw_rake_rules is
+        # off (the old rules, which left rake to the payouts alone)
+        dwon = won if self.mw_rake_rules else (lambda pot_: pot_)
+
+        def rake_bar(add, pot_):
+            """How much higher an equity bar set for an unraked pot has to be when each of two players adds
+            `add` to a pot of pot_ (the winner pays rake on the chips added, up to the cap): the extra the
+            winner collects is short of 2 x add. 1 without rake (the bars then stay exactly as fitted)."""
+            if cfg.rake_rate <= 0 or not self.mw_rake_rules:
+                return 1.0
+            gain = won(pot_ + 2 * add) - won(pot_)
+            return 2 * add / gain if gain > 1e-12 else float("inf")
         rng = random.Random(1)
         opps = [p for p in remaining if p != hero]
         n_opp = len(opps)
@@ -1293,14 +1393,22 @@ class Advisor:
                     runs.append((tuple(board) + (t, c), eval_board(list(board) + [t, c])))
 
         def strength(sts):
-            """(average strength, combos strongest first, the samples, bluff order) over these runouts."""
+            """(average strength, combos strongest first, the samples, bluff order, (win, live)) over these
+            runouts; win and live are (runouts, combos) matrices: our share of the pot against each combo
+            (1 win, 0.5 tie, 0 blocked) and whether it is live, so equities are matrix products."""
             tot = np.zeros(N_COMBOS); cnt = np.zeros(N_COMBOS)
             for s in sts:
                 ok = s >= 0
                 tot[ok] += s[ok]; cnt[ok] += 1
             sc = np.where(cnt > 0, tot / np.maximum(cnt, 1), -1.0)
             rank = np.argsort(-sc)
-            return sc, rank, sts, _bluff_order(sts, rank, sc)
+            return sc, rank, sts, _bluff_order(sts, rank, sc), mats(sts)
+
+        def mats(sts):
+            S = np.array(sts)
+            h = S[:, idx:idx + 1]
+            live = (S >= 0).astype(float)
+            return ((S < h) + 0.5 * (S == h)) * live, live
 
         now = strength([s for _, s in runs])
         turns = {}
@@ -1317,78 +1425,76 @@ class Advisor:
                 return turns[run[3]]
             if run not in rivers:
                 rk = np.argsort(-st)
-                rivers[run] = (st, rk, [st], rk[::-1])
+                rivers[run] = (st, rk, [st], rk[::-1], mats([st]))
             return rivers[run]
 
         aggro, keep = _aggro, _keep
 
-        def equity(w, sts):
-            num = den = 0.0
-            for s in sts:
-                ww = w * (s >= 0)
-                num += ww[s < s[idx]].sum() + 0.5 * ww[s == s[idx]].sum()
-                den += ww.sum()
+        def equity(w, mt):
+            """Our equity against range w over the runouts of mt (strength()'s matrices), pooled."""
+            win, live = mt
+            num, den = float((win @ w).sum()), float((live @ w).sum())
             return num / den if den > 0 else 0.5
 
-        def equity_all(ws, sts):
+        def equity_all(ws, mt):
             """Our chance of beating every one of the ranges ws (the product per runout)."""
             if len(ws) == 1:
-                return equity(ws[0], sts)
-            tot = n = 0
-            for s in sts:
-                win = (s < s[idx]) + 0.5 * (s == s[idx])
-                e = 1.0
-                for w in ws:
-                    ww = w * (s >= 0)
-                    d = ww.sum()
-                    e *= (ww * win).sum() / d if d > 0 else 0.5
-                tot += e; n += 1
-            return tot / n if n else 0.5
+                return equity(ws[0], mt)
+            win, live = mt
+            W = np.array(ws).T
+            num, den = win @ W, live @ W
+            e = np.where(den > 0, num / np.where(den > 0, den, 1.0), 0.5)
+            return float(e.prod(axis=1).mean()) if len(e) else 0.5
 
-        def calls(w, sts, cost, p):
+        def calls(w, mt, cost, p):
             """Do we call `cost` more into a pot of p (their chips included) against range w (or a list
-            of ranges, all of which we have to beat)?"""
-            return (equity_all(w, sts) if isinstance(w, list) else equity(w, sts)) * (p + cost) > cost
+            of ranges, all of which we have to beat)? Raked: we win what the final pot pays its winner."""
+            return (equity_all(w, mt) if isinstance(w, list) else equity(w, mt)) * dwon(p + cost) > cost
 
         ranks = {}
-        def calls_turn(ws, sts, b, p, left):
+        def calls_turn(ws, sts, mt, b, p, left):
             """Turn version of calls(): average over the river samples of calling b, then facing
             the bettor's (ws[0]) river bet (value + balanced bluffs from what they bet the turn with)
             and calling or folding it, so a call that a river bet will push us off isn't counted at
             full equity. Other ranges in ws (callers) only have to be beaten at showdown."""
             P = p + b
             b2 = min(round(0.66 * P * 2) / 2, left - b)
+            won_P, won_2 = dwon(P), dwon(P + 2 * b2)
+            win_m, live_m = mt
             tot = 0.0
-            for s in sts:
-                w = ws[0] * (s >= 0)
-                if w.sum() <= 0:
+            for k, s in enumerate(sts):
+                win, live = win_m[k], live_m[k]
+                w = ws[0] * live
+                w_sum = w.sum()
+                if w_sum <= 0:
                     continue
-                win = (s < s[idx]) + 0.5 * (s == s[idx])
                 f = 1.0
                 for o in ws[1:]:
-                    oo = o * (s >= 0)
-                    f *= (oo * win).sum() / oo.sum() if oo.sum() > 0 else 0.5
+                    d = o @ live
+                    f *= (o @ win) / d if d > 0 else 0.5
+                w_win = w @ win
                 if b2 <= 1e-9:
-                    tot += (w * win).sum() / w.sum() * f * P
+                    tot += w_win / w_sum * f * won_P
                     continue
                 if id(s) not in ranks:
                     ranks[id(s)] = np.argsort(-s)
                 m = aggro(w, keep(b2, P, 1, 1.0) * VALUE_SHARE, b2, P, ranks[id(s)])
                 wm = w * m
-                ev_bet = (wm * win).sum() * f * (P + 2 * b2) - wm.sum() * b2
-                tot += (max(ev_bet, 0.0) + (w * ~m * win).sum() * f * P) / w.sum()
+                wm_win = wm @ win
+                ev_bet = wm_win * f * won_2 - wm.sum() * b2
+                tot += (max(ev_bet, 0.0) + (w_win - wm_win) * f * won_P) / w_sum
             return tot / max(len(sts), 1) > b
 
         cache = {}
         # what the later streets did over the trials (bets by size, bets that drew more than one call,
         # raises and how many came over a call, so their size counted the calls)
-        ls_stats = dict.fromkeys(("bets", "small", "multi_called", "raises", "raises_over_calls"), 0)
+        ls_stats = dict.fromkeys(("bets", "small", "multi_called", "raises", "raises_over_calls", "ours", "our_folds"), 0)
 
         def later_street(n, run, st, hands, alive, rs, left, p, put):
             """One later street by the rules (see the docstring). Returns (result, pot, our chips in,
             opponents still in, their ranges); result is None unless the hand ended here (we folded:
             -put; everyone else folded: the pot less our chips)."""
-            sc, rank, sts, bluff = info(run, n, st)
+            sc, rank, sts, bluff, mt = info(run, n, st)
             eff = min([left["hero"]] + [left[i] for i in alive])
             big = min(round(0.66 * p * 2) / 2, eff)
             if big <= 1e-9 or not alive:
@@ -1396,22 +1502,24 @@ class Advisor:
             small = min(round(SMALL_BET * p * 2) / 2, eff)
             small = small if 1e-9 < small < big - 1e-9 else None
             liv = sc >= 0
-            # Decisions are cached on the first later street (key: its card and the ranges going in, which
-            # are arrays that live for the whole call, plus the actions so far); after that they are
-            # specific to one trial's runout and ranges.
-            key0 = ((n, run[n - 1], tuple(alive), tuple(id(rs[i]) for i in alive), round(p, 2),
-                     tuple(round(left[x], 2) for x in ["hero"] + alive)) if n == len(board) + 1 else None)
+            # Decisions are cached (key: the cards dealt since and the ranges going in by id, plus the actions
+            # so far), so a runout revisited with the same action replays without recomputing the ranges. The
+            # "in" entry holds the ranges going in, so no id in a stored key can be reused by a new array; once
+            # the cache holds LATER_CACHE entries, new decisions are computed without being stored.
+            key0 = (run[len(board):n], tuple(alive), tuple(id(rs[i]) for i in alive), round(p, 2),
+                    tuple(round(left[x], 2) for x in ["hero"] + alive))
 
             def C(path, fn):
-                if key0 is None:
-                    return fn()
                 k = key0 + path
                 v = cache.get(k)
                 if v is None:
-                    v = cache[k] = fn()
+                    v = fn()
+                    if len(cache) < LATER_CACHE:
+                        cache[k] = v
                 return v
 
-            rs = dict(C(("in",), lambda: tuple((i, rs[i] * liv) for i in alive)))   # drop combos holding a card dealt since
+            # drop combos holding a card dealt since (the ranges going in kept alongside, see above)
+            rs = dict(C(("in",), lambda: (tuple((i, rs[i] * liv) for i in alive), tuple(rs[i] for i in alive)))[0])
             alive = list(alive)
             actors = sorted(alive + ["hero"], key=seat.get)
             inv = dict.fromkeys(actors, 0.0)
@@ -1431,7 +1539,8 @@ class Advisor:
                             if b is None:
                                 continue
                             cs = _joint_top([rs[i] for i in al], _fold_together([b] * len(al), p), rank)
-                            if all(equity(rs[i] * c, sts) > LEAD_EQ for i, c in zip(al, cs)):
+                            bar = LEAD_EQ * rake_bar(b, p)
+                            if all(equity(rs[i] * c, mt) > bar for i, c in zip(al, cs)):
                                 return (b,)
                         return (None,)
                     (b,) = C(path + ("lead",), lead_fn)
@@ -1442,10 +1551,10 @@ class Advisor:
                 else:
                     def bet_fn(r=rs[a]):
                         into = [rs[o] for o in alive if o != a] + [hero_range * liv]
-                        bg, sm = _bet_ranges(r, len(alive), p, big, small, rank, bluff, into)
+                        bg, sm, dr = _bet_ranges(r, len(alive), p, big, small, rank, bluff, into, drop=True)
                         # a check keeps the hands that would have bet at NARROW_SOFT, as narrowing does (see
                         # _soften): cut to nothing, the checker was a capped range paying our value bets off
-                        return bg, sm, r * bg, r * sm, r * _soften(r, ~(bg | sm))
+                        return bg, sm, r * bg, r * sm, r * _soften(r, ~dr)
                     bg, sm, r_bg, r_sm, r_x = C(path + (("bm", a),), bet_fn)
                     if bg[hands[a]] or sm[hands[a]]:
                         bet = (a, big) if bg[hands[a]] else (a, small)
@@ -1460,6 +1569,7 @@ class Advisor:
             X, b = bet
             ls_stats["bets"] += 1
             ls_stats["small"] += b == small
+            ls_stats["ours"] += X == "hero"
             p0 = p
             d = put_in(X, b); p += d
             if X == "hero":
@@ -1493,12 +1603,14 @@ class Advisor:
                             others = [X] + list(cl) + list(yet)
                             rr = [rs[o] for o in others]
                             fold = (1.0 - keep(to, pc, len(others))) ** len(others)
-                            if all(equity(r * c, sts) > RAISE_EQ for r, c in zip(rr, _joint_top(rr, fold, rank))):
+                            bar = RAISE_EQ * rake_bar(to - b, pc + b)
+                            if all(equity(r * c, mt) > bar for r, c in zip(rr, _joint_top(rr, fold, rank))):
                                 return ("raise", to)
-                        ok = calls_turn(ws, sts, b, pc, left["hero"]) if n == 4 else calls(ws, sts, b, pc)
+                        ok = calls_turn(ws, sts, mt, b, pc, left["hero"]) if n == 4 else calls(ws, mt, b, pc)
                         return ("call" if ok else "fold", b)
                     dec, to = C(path + ("hero",), hero_fn)
                     if dec == "fold":
+                        ls_stats["our_folds"] += 1
                         return -put, p, put, alive, rs
                     if dec == "raise":
                         raiser, R = "hero", to
@@ -1550,7 +1662,7 @@ class Advisor:
             for a in resp:
                 if a == "hero":
                     def call_fn(inr=tuple(inr), pc=p):
-                        return (calls([rs[o] for o in inr], sts, R - inv["hero"], pc),)
+                        return (calls([rs[o] for o in inr], mt, R - inv["hero"], pc),)
                     if not C(path + ("hr", tuple(inr)), call_fn)[0]:
                         return -put, p, put, alive, rs
                     d = put_in("hero", R); p += d; put += d
@@ -1577,7 +1689,7 @@ class Advisor:
                     return res
             return _showdown_share(st, idx, [hands[i] for i in alive]) * won(p) - put
 
-        sc0, rank0, sts0, bluff0 = now
+        sc0, rank0, sts0, bluff0, mt0 = now
         trials = 0
         share_all = 0.0
 
@@ -1603,7 +1715,7 @@ class Advisor:
                 raise_m = aggro(opp_ranges[i], k * RAISE_SHARE, rto - cur.cur_bet, p_call + cost, rank0, bluff0) if extra > 1e-9 else None
                 p_r = p_call + rto - cur.bets[opps[i]]
                 beh[i] = (cost, cont, raise_m, rto, hero_to, extra, p_r,
-                          raise_m is not None and calls(opp_ranges[i] * raise_m, sts0, extra, p_r))
+                          raise_m is not None and calls(opp_ranges[i] * raise_m, mt0, extra, p_r))
             cont_r = {i: opp_ranges[i] * beh[i][1] for i in behind}
             raise_r = {i: opp_ranges[i] * beh[i][2] for i in behind if beh[i][2] is not None}
 
@@ -1631,7 +1743,7 @@ class Advisor:
                     m = aggro(opp_ranges[i], k_agg[i] * RAISE_SHARE, rto - agg_to, pot + hero_add + opp_add[i], rank0, bluff0)
                     p_r = pot + hero_add + rto - cur.bets[opps[i]]
                     rr[i] = (m, opp_ranges[i] * m, hero_to, extra, p_r,
-                             calls(opp_ranges[i] * m, sts0, extra, p_r))
+                             calls(opp_ranges[i] * m, mt0, extra, p_r))
             return {"to": agg_to, "add": hero_add, "opp_add": opp_add, "conts": conts, "k": k_agg,
                     "cont_r": [opp_ranges[i] * conts[i] for i in range(n_opp)], "rr": rr}
 
@@ -1655,9 +1767,12 @@ class Advisor:
         # continues raising. Those between the bettor and us act first, so we fold, call or check-raise
         # knowing what they did (per bettor, size and what they did, whichever pays over the trials);
         # those after us act once we've called.
-        bets, bet_masks = {}, {}
+        bets, bet_masks, chk_r = {}, {}, {}
         if to_call <= 1e-9:
             pos_of = {i: seq.index(opps[i]) for i in range(n_opp)}
+            # A player who checks behind us before the bettor holds the check range (what a check rules out
+            # keeps NARROW_SOFT, as narrowing does): with the full range, its folds to our check-raise came
+            # out a third of the time where its actual checking hands folded twice as often.
             for j in after:
                 if opps[j] in cur.acted or opps[j] in cur.allin:
                     continue
@@ -1668,30 +1783,35 @@ class Advisor:
                 b_small = min(round(SMALL_BET * pot * 2) / 2, room)
                 b_small = b_small if 1e-9 < b_small < b_big - 1e-9 else None
                 into = [opp_ranges[i] for i in range(n_opp) if i != j] + [hero_range]
-                bet_masks[j] = (b_big, b_small) + _bet_ranges(opp_ranges[j], n_opp, pot, b_big, b_small, rank0, bluff0, into)
+                bg_j, sm_j, drop_j = _bet_ranges(opp_ranges[j], n_opp, pot, b_big, b_small, rank0, bluff0, into, drop=True)
+                bet_masks[j] = (b_big, b_small, bg_j, sm_j)
+                chk_r[j] = opp_ranges[j] * _soften(opp_ranges[j], ~drop_j)
                 others = [i for i in range(n_opp) if i != j and opps[i] not in cur.allin
                           and cap[i] - cur.bets[opps[i]] > 1e-9]
                 for b, m in ((b_big, bet_masks[j][2]), (b_small, bet_masks[j][3])):
                     if b is None:
                         continue
                     fold_each = 1.0 - keep(b, pot, n_opp)
-                    conts = _joint_top([opp_ranges[i] for i in others], fold_each ** len(others), rank0) if others else []
+                    # their ranges facing the bet: the check range for those who checked before the bettor
+                    base = {i: chk_r[i] if i in chk_r and pos_of[i] < pos_of[j] else opp_ranges[i] for i in others}
+                    conts = _joint_top([base[i] for i in others], fold_each ** len(others), rank0) if others else []
                     face = {}
                     for i, cont in zip(others, conts):
+                        ri = base[i]
                         cost = min(b, cap[i] - cur.bets[opps[i]])
                         before_us = pos_of[i] > pos_of[j]
                         p_i = pot + b + (0.0 if before_us else b)   # the pot they face (callers before them aside)
                         rto = min(round(_raise_to(b, 0.0 if before_us else b) * 2) / 2, cap[i])
                         hero_to = min(rto, hero_rem)
                         extra = hero_to - (0.0 if before_us else b)
-                        raise_m = (aggro(opp_ranges[i], _share(opp_ranges[i], cont) * RAISE_SHARE, rto - b, p_i + cost, rank0, bluff0)
+                        raise_m = (aggro(ri, _share(ri, cont) * RAISE_SHARE, rto - b, p_i + cost, rank0, bluff0)
                                    if rto > b + 1e-9 and extra > 1e-9 else None)
-                        face[i] = {"first": before_us, "cost": cost, "cont": cont, "cont_r": opp_ranges[i] * cont,
-                                   "raise_m": raise_m, "raise_r": opp_ranges[i] * raise_m if raise_m is not None else None,
+                        face[i] = {"first": before_us, "cost": cost, "cont": cont, "cont_r": ri * cont, "range": ri,
+                                   "raise_m": raise_m, "raise_r": ri * raise_m if raise_m is not None else None,
                                    "rto": rto, "hero_to": hero_to, "extra": extra,
                                    # after our call we face their raise: call by equity against it (as behind a call)
                                    "we_call": (raise_m is not None and not before_us
-                                               and calls(opp_ranges[i] * raise_m, sts0, extra, p_i + rto))}
+                                               and calls(ri * raise_m, mt0, extra, p_i + rto))}
                     bets[(j, b)] = {"b": b, "m": m, "r": opp_ranges[j] * m, "face": face,
                                     "before": sorted((i for i in others if face[i]["first"]), key=pos_of.get),
                                     "after": sorted((i for i in others if not face[i]["first"]), key=pos_of.get)}
@@ -1714,7 +1834,7 @@ class Advisor:
             out = None
             if R > b + 1e-9:
                 facing = sorted([j] + list(seen) + list(bt["after"]), key=pos_of.get)
-                rng_of = {j: bt["r"], **{i: face[i]["cont_r"] for i in seen}, **{i: opp_ranges[i] for i in bt["after"]}}
+                rng_of = {j: bt["r"], **{i: face[i]["cont_r"] for i in seen}, **{i: face[i]["range"] for i in bt["after"]}}
                 in_of = {j: b, **{i: face[i]["cost"] for i in seen}}
                 p0 = pot + b + calls_in
                 fold = (1.0 - keep(R, p0, len(facing))) ** len(facing)
@@ -1728,7 +1848,7 @@ class Advisor:
                           if hero_to > R + 1e-9 else None)
                     p_rr = p0 + R + rr_to - have      # the pot we face their re-raise in (other callers aside)
                     resp[i] = (c, r * c, rm, r * rm if rm is not None else None, cost, rr_to - have, hero_to,
-                               rm is not None and calls(r * rm, sts0, hero_to - R, p_rr))
+                               rm is not None and calls(r * rm, mt0, hero_to - R, p_rr))
                 out = {"to": R, "p0": p0, "facing": facing, "resp": resp}
             xr_cache[key] = out
             return out
@@ -1737,7 +1857,7 @@ class Advisor:
         # Trials reuse the runouts, each pass with fresh opponent hands, and every action is scored on
         # the same trials. Stop once the gap between the two best actions is clear of the noise.
         min_trials, max_seconds = (1200, 5.0) if accurate else (400, 1.5)
-        everyone = list(enumerate(opp_ranges))
+        everyone = [(i, chk_r.get(i, opp_ranges[i])) for i in range(n_opp)]   # nobody bet: the check ranges
         # per trial; "chk" holds (what we face after checking, value if we call, value if we check-raise):
         # None (nobody bets), (bettor, size, players between who called) or (bettor, size, "raise", the
         # raiser between; no check-raise then)
@@ -1745,14 +1865,25 @@ class Advisor:
         t_mc = time.time()
 
         def chk_plan():
-            """{check-line situation: "call" / "raise" / "fold"}, whichever pays over the trials."""
+            """{check-line situation: "call" / "raise" / "fold"}, whichever pays over the trials. A
+            check-raise has to beat the better of calling and folding by XR_Z standard errors of the paired
+            difference (the same trials scored both ways), over at least XR_MIN trials: the situations
+            split the trials finely and the raise's edge is often small, so on the bare means middle pair
+            check-raised a third of the bets and a gutshot most of them, whichever way the noise fell."""
             tot = {}
             for k, v, x in vals["chk"]:
                 if k is not None:
-                    t = tot.setdefault(k, [0.0, 0.0, x is not None])
-                    t[0] += v; t[1] += x if x is not None else 0.0
-            return {k: ("raise" if can and t_x > max(t_c, 0.0) else "call" if t_c > 0 or priced(k) else "fold")
-                    for k, (t_c, t_x, can) in tot.items()}
+                    tot.setdefault(k, []).append((v, x))
+            plan = {}
+            for k, vx in tot.items():
+                v = np.array([a for a, _ in vx])
+                alt = "call" if v.sum() > 0 or priced(k) else "fold"
+                if vx[0][1] is not None and len(vx) >= XR_MIN:
+                    d = np.array([b for _, b in vx]) - (v if alt == "call" else 0.0)
+                    if d.mean() > XR_Z * d.std() / np.sqrt(len(d)):
+                        alt = "raise"
+                plan[k] = alt
+            return plan
 
         priced_cache = {}
 
@@ -1772,7 +1903,7 @@ class Advisor:
                 else:
                     ws, cost = [bt["r"]] + [face[i]["cont_r"] for i in key[2]], bt["b"]
                     p_ = pot + bt["b"] + sum(face[i]["cost"] for i in key[2])
-                priced_cache[key] = calls(ws, sts0, cost, p_)
+                priced_cache[key] = calls(ws, mt0, cost, p_)
             return priced_cache[key]
 
         def summary():
@@ -1897,7 +2028,10 @@ class Advisor:
                             final = pot + a["add"] + sum(a["opp_add"][i] for i in callers)
                             res = play_out(run, st, hands, [(i, a["cont_r"][i]) for i in callers], final, a["add"], a["to"])
                     vals[name].append(res)
-            if trials >= min_trials:
+            if self.mw_trials is not None:
+                if trials >= self.mw_trials:
+                    break
+            elif trials >= min_trials:
                 d, se = gap()
                 # (or within 2% of the pot: two lines that close are a tie for advice, and chasing the noise
                 # between them ran into the time cap every time, so the same spot gave different numbers)
@@ -1935,7 +2069,10 @@ class Advisor:
                               "call": n_call / len(faced), "raise": n_xr / len(faced),
                               "fold": 1.0 - (n_call + n_xr) / len(faced),
                               # continuing against a bet nobody between raised
-                              "continue_unraised": sum(1 for k in plain if plan[k] != "fold") / max(len(plain), 1)}
+                              "continue_unraised": sum(1 for k in plain if plan[k] != "fold") / max(len(plain), 1),
+                              # ...and against the small ones (the big bet is the nut-advantage range: see _bet_ranges)
+                              "continue_small": (sum(1 for k in plain if k[1] < 0.5 * pot and plan[k] != "fold")
+                                                 / max(sum(1 for k in plain if k[1] < 0.5 * pot), 1))}
                 between = (f"; a player between the bettor and you calls it {n_called / len(faced) * 100:.0f}% of the time"
                            f" and raises {n_raised / len(faced) * 100:.0f}%") if n_raised + n_called else ""
                 notes.append(f"if you check, someone bets {len(faced) / trials * 100:.0f}% of the time"
@@ -1960,7 +2097,9 @@ class Advisor:
             out["later_streets"] = {"bets": n_b, "small": round(ls_stats["small"] / n_b, 3),
                                     "multi_called": round(ls_stats["multi_called"] / n_b, 3),
                                     "raised": round(ls_stats["raises"] / n_b, 3),
-                                    "raises_over_calls": ls_stats["raises_over_calls"]}
+                                    "raises_over_calls": ls_stats["raises_over_calls"],
+                                    # our bets and our folds to a bet (counts), for checking our in-trial rules
+                                    "ours": ls_stats["ours"], "our_folds": ls_stats["our_folds"]}
         if check_line is not None:
             out["check_line"] = {k: round(v, 3) for k, v in check_line.items()}   # after a check: how often someone bets, and our plan
         return out
@@ -2092,7 +2231,9 @@ class Advisor:
                       else node.children[k].bets[p] if act_ in ("bet", "raise") and isinstance(node.children[k], Decision)
                       else cur_bet)
                 full = expand(sol.ctx, rp) * (sc >= 0)
-                m = _rule_mask(full, to, cur_bet, max(0.0, cur_bet - bets[p]), pot_total, 1, rank, bluff=bluff)
+                other = expand(sol.ctx, r1 if p == 0 else r0) * (sc >= 0)
+                m = _rule_mask(full, to, cur_bet, max(0.0, cur_bet - bets[p]), pot_total, 1, rank, bluff=bluff,
+                               others=[other])
                 s = _soften(full, m)[sol.ctx.active]
             elif smoothing > 0 and only is None:
                 s = (1.0 - smoothing) * s + smoothing / len(node.names)
