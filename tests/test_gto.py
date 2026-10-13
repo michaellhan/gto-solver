@@ -989,11 +989,21 @@ class TestPoolOverfold(unittest.TestCase):
                R("BB", "fold"), R("UTG", "fold"), R("CO", "call"), R("BTN", "fold")]
         st = {"players": 6, "hero": "SB", "hole": "KdAd", "board": "Qd6dQcAc", "stack": 100, "preflop": pre,
               "flop": [R("SB", "check"), R("CO", "check")], "opponents": "pool"}
-        out = Advisor(time_budget=2.0, prior_budget=1.0).advise(st)
-        jam = next(a for a in out["actions"] if a["action"] == "all-in")
-        # without the cap the jam is worth exactly the pot (36.0); with it 35.7 (the pool's wide preflop
-        # flats leave CO a weak range here, so every option is worth close to the pot)
-        self.assertLess(jam["ev_bb"], out["pot_bb"] - 0.15, out["actions"])
+        from gto import exploit
+        jam_ev = lambda: next(a["ev_bb"] for a in Advisor(time_budget=2.0, prior_budget=1.0).advise(st)["actions"]
+                              if a["action"] == "all-in")
+        capped = jam_ev()
+        cap, protect = exploit.OVERFOLD_CAP, exploit.OVERFOLD_PROTECT
+        try:   # the old rule: extra folds as a flat share of the range, strong hands included
+            exploit.OVERFOLD_CAP, exploit.OVERFOLD_PROTECT = 1e9, 2.0
+            uncapped = jam_ev()
+        finally:
+            exploit.OVERFOLD_CAP, exploit.OVERFOLD_PROTECT = cap, protect
+        # uncapped, nobody calls the jam (worth exactly the pot); capped, the pool's strong hands call it.
+        # Compared rather than held to a margin: CO's range here (and so how close every option is to the
+        # pot) moves with the preflop pool model
+        self.assertAlmostEqual(uncapped, 36.0, delta=0.02)
+        self.assertLess(capped, uncapped - 0.05)
 
 
 class TestQuickSweep(unittest.TestCase):
