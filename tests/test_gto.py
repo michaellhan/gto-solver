@@ -398,8 +398,9 @@ class TestAdvisor(unittest.TestCase):
         self.assertGreater(out["villain_range_combos"], 1.0, out)
 
     def test_caller_continues_vs_next_raise(self):
-        """A flat facing a squeeze continues with ~30% of the flatting range (the cold-vs-3bet chart alone
-        continued 2%), the playable part first; once the opener 4bets too, the flatter folds nearly all."""
+        """A flat facing a squeeze continues with 30% of the flatting range or more (the cold-vs-3bet chart
+        alone continued 2%), the playable part first, more the wider the squeeze; once the opener 4bets
+        too, the flatter folds nearly all."""
         from gto.advisor import preflop_strategy, preflop_ranges
         from gto.cards import COMBO_INDEX, cards
         R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
@@ -408,18 +409,55 @@ class TestAdvisor(unittest.TestCase):
                R("BB", "raise", 10)]
         w, s = preflop_ranges(pre, T, 100)["BTN"], preflop_strategy("BTN", pre, T, 100)
         cont = float((w * (1 - s["fold"])).sum() / w.sum())
-        self.assertTrue(0.28 <= cont <= 0.45, cont)
+        # 44% against the BB's published 8% 3bet (39% against its old 5.6% one; 30%, the floor, between)
+        self.assertTrue(0.36 <= cont <= 0.52, cont)
         ix = lambda h: COMBO_INDEX[tuple(sorted(cards(h)))]
         self.assertGreater(1 - s["fold"][ix("8s8d")], 0.9)
         # (JTs used to be here too; against the published BTN vs CO chart the flat is mostly pairs and
-        # AJs/ATs, ~3% of hands, and its 30% are 88-JJ and AJs/ATs/KJs. 77 was in too, on a near-tie with
-        # 88 in equity against the BB's old 5.6% 3bet range; against the published 8% one 88 ranks above
-        # it and fills the 30%, so 77 is the next class in)
-        self.assertLessEqual(1 - s["fold"][ix("7s7d")], 1 - s["fold"][ix("8s8d")])
+        # AJs/ATs, ~3% of hands, and it continues 77-JJ and AJs, some ATs and KJs. With a fixed 30% the
+        # wider published squeeze pushed 77 out: 88 ranked above it and filled the share)
+        self.assertGreater(1 - s["fold"][ix("7s7d")], 0.9)
         after = preflop_ranges(pre + [R("CO", "fold"), R("BTN", "call")], T, 100)["BTN"]
-        self.assertGreater(after.sum(), 10)   # of ~38 flatting combos (was 30 of ~125 before the published BTN vs CO chart)
+        self.assertGreater(after.sum(), 15)   # of ~38 flatting combos (was 30 of ~125 before the published BTN vs CO chart)
         s4 = preflop_strategy("BTN", pre + [R("CO", "raise", 23)], T, 100)
         self.assertLess(float((w * (1 - s4["fold"])).sum() / w.sum()), 0.12)   # the flat now holds JJ-TT more (it was 125 combos of mostly weaker hands)
+
+    def test_caller_continue_grows_with_raise_width(self):
+        """The share a caller continues against the next raise never shrinks as that raise's range widens:
+        the BB's squeeze over CO + BTN, from value only to the chart's range with ever more bluffs added;
+        against a raise tighter than the reference the floor holds."""
+        R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
+        T = pf.Table(pf.SEATS[6])
+        pre = [R("UTG", "fold"), R("HJ", "fold"), R("CO", "raise", 2.5), R("BTN", "call"), R("SB", "fold"),
+               R("BB", "raise", 10)]
+        chart = pf.VS_RFI[("BB", "CO")]
+        orig = chart["3bet"]
+        w = pf.replay_ranges(pre[:4], T)["BTN"]
+        bluffs = pf.R("K9s, Q9s, J9s, T8s, 97s, 86s, 75s, 64s, 53s, K8s, Q8s, A9o, KTo, QJo")
+        shares = []
+        try:
+            for r in [pf.R("QQ+, AKs, AKo"), orig] + [np.minimum(1.0, orig + k * bluffs) for k in (0.25, 0.5, 1.0)]:
+                chart["3bet"] = r
+                pf._STRAT_CACHE.clear()
+                s = pf.strategy_for("BTN", pre, T)
+                shares.append(float((w * (1 - s["fold"])).sum() / w.sum()))
+        finally:
+            chart["3bet"] = orig
+            pf._STRAT_CACHE.clear()
+        # against value only the target is the floor (40% continue: the chart's own calls plus the
+        # top-up, with 88 padded up to 77, which edges it against QQ+/AK)
+        self.assertGreaterEqual(shares[0], pf.CALLER_CONTINUE[2] - 1e-6)
+        for a, b in zip(shares, shares[1:]):
+            self.assertGreaterEqual(b, a - 1e-6, shares)
+        self.assertGreater(shares[-1], shares[1] + 0.03, shares)
+        # the target itself: a range stronger against the raise than against the reference adds to the
+        # floor, a weaker one keeps it
+        from gto.pf_classes import equity_vs
+        self.assertAlmostEqual(pf.caller_target(2, w, equity_vs(pf.R("QQ+, AKs, AKo"))), pf.CALLER_CONTINUE[2])
+        ref_eq = pf._CALLER_REF_EQ[2]
+        self.assertAlmostEqual(pf.caller_target(2, w, ref_eq), pf.CALLER_CONTINUE[2])
+        self.assertAlmostEqual(pf.caller_target(2, w, ref_eq - 0.05), pf.CALLER_CONTINUE[2])
+        self.assertAlmostEqual(pf.caller_target(2, w, ref_eq + 0.04), pf.CALLER_CONTINUE[2] + 0.04 * pf.CALLER_EQ_SLOPE)
 
     def test_sb_flat_vs_early_open_keeps_traps(self):
         """SB flats UTG, BB squeezes, SB calls: the flat held only 66-99 and suited broadways below KQs,
@@ -1587,7 +1625,9 @@ class TestOpenerVs3bet(unittest.TestCase):
         self.assertAlmostEqual(out[:40].sum(), 40.0 * (1 - 4.0 / pf.MIN_LINE_COMBOS)); self.assertTrue(mostly)
         wide = np.zeros(n); wide[:10] = 1.0
         self.assertIs(pf.thin_line(wide, scratch)[0], wide)    # at or above the threshold: unchanged
-        # BB cold-calls a 3bet, then calls HJ's 4bet: 6.7 combos, filled out to ~13 with a few trapped premiums
+        # BB cold-calls a 3bet, then calls HJ's 4bet: 6.7 combos, filled out to ~13 with a few trapped
+        # premiums; now that the cold caller defends more against a 4bet wider than UTG's (caller_target)
+        # it is ~10 combos of JJ-TT, AK, AQs and QQ without filling
         R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
         from gto.advisor import preflop_ranges
         from gto.cards import COMBO_INDEX, cards
@@ -1596,7 +1636,7 @@ class TestOpenerVs3bet(unittest.TestCase):
                R("BB", "call"), R("HJ", "raise", 18.8), R("CO", "fold"), R("BB", "call")]
         bb = preflop_ranges(pre, T, 100)["BB"]
         self.assertGreater(bb.sum(), pf.MIN_LINE_COMBOS)
-        self.assertGreater(bb[COMBO_INDEX[tuple(sorted(cards("KsKd")))]], 0.0)
+        self.assertGreater(bb[COMBO_INDEX[tuple(sorted(cards("QsQd")))]], 0.0)
 
 
 class TestPublishedBlindFrequencies(unittest.TestCase):

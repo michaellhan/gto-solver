@@ -610,6 +610,20 @@ def _strength() -> np.ndarray:
 # they leave a caller's range nearly empty. For scale, openers continue ~40% against a 3bet and
 # 3bettors ~50% against a 4bet.
 CALLER_CONTINUE = {2: 0.30, 3: 0.35, 4: 0.55}
+# The shares above are floors, set against tight raises: the next raise's range as tight as the charts
+# make it (CALLER_REF: the big blind's old 3.6% 3bet over a UTG open, UTG's 4bet against a 3bet, the
+# 3bettor's jam over a 4bet). A wider, more bluff-heavy raise is defended more: each point of equity
+# the caller's range gains against the actual raise over the reference (its average, weighted by the
+# range) adds CALLER_EQ_SLOPE points to the share that continues; a tighter raise keeps the floor.
+# Moving the bar instead (the floor share's weakest hand's equity against the reference, then the share
+# clearing it against the actual raise) swings too far: flat ranges are bunched, mostly pairs and
+# suited broadways a few points apart, so 30% became 70% against the BB's 8% squeeze over CO + BTN.
+CALLER_REF = {
+    2: R("QQ+, JJ:0.4, AKs, AKo, AQs:0.5, A5s, A4s:0.7, KQs:0.3, 65s:0.3, 54s:0.3"),
+    3: _UTG_VS_3BET_OOP["4bet"],
+    4: VS_4BET["jam"],
+}
+CALLER_EQ_SLOPE = 2.5
 
 
 VS_4BET_BLEND = 0.04   # equity over which a 3bettor's continue frequency ramps against an unusual 4bet range
@@ -721,8 +735,30 @@ def _jam_calls(jam_range: np.ndarray, actions: List[dict], caller: str) -> np.nd
     return np.clip(0.5 + (np.nan_to_num(equity_vs(jam_range), nan=0.0) - need) / JAM_CALL_BLEND, 0.0, 1.0)
 
 
+_CALLER_REF_EQ: Dict[int, np.ndarray] = {}
+
+
+def caller_target(level: int, w: np.ndarray, eq_raise: np.ndarray) -> float:
+    """The share of a caller's range `w` that continues against the next raise (`level` raises in now),
+    given each combo's equity against the raise's range: the floor (CALLER_CONTINUE), plus
+    CALLER_EQ_SLOPE times how much more equity the range has against it than against the reference
+    raise (CALLER_REF). A raise wider than the reference only adds to it."""
+    from .pf_classes import equity_vs
+    floor = CALLER_CONTINUE[level]
+    if level not in _CALLER_REF_EQ:
+        _CALLER_REF_EQ[level] = np.nan_to_num(equity_vs(CALLER_REF[level]), nan=0.0)
+    tot = float(w.sum())
+    ok = ~np.isnan(eq_raise)
+    if tot < 1e-9 or not ok.any():
+        return floor
+    wo = w * ok
+    gain = float((wo * (np.where(ok, eq_raise, 0.0) - _CALLER_REF_EQ[level])).sum() / max(wo.sum(), 1e-12))
+    return min(1.0, floor + CALLER_EQ_SLOPE * max(gain, 0.0))
+
+
 def _caller_continues(hero: str, actions: List[dict], positions, acts: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
-    """Top up a caller's continuing range (see CALLER_CONTINUE) with calls by its strongest folds:
+    """Top up a caller's continuing range (to caller_target: CALLER_CONTINUE, more against a wide raise)
+    with calls by its strongest folds:
     ranked by how readily the button continues against a 3bet (the charts' sense of what plays well
     in a reraised pot: TT-77 and suited broadways over 22-55), then equity against the raiser's
     range. Only for the raise right after hero's call; once another raise is in too (hero
@@ -736,18 +772,20 @@ def _caller_continues(hero: str, actions: List[dict], positions, acts: Dict[str,
     n_now = sum(map(is_raise, actions))
     if n_then == 0 or n_now - n_then != 1:
         return acts        # a limp (LIMP_VS_RAISE is written for it), or sandwiched
-    target = CALLER_CONTINUE[min(n_now, max(CALLER_CONTINUE))]
+    level = min(n_now, max(CALLER_CONTINUE))
     ranges = replay_ranges(actions, positions)
     w = ranges.get(hero)
     raiser = next(a["pos"] for a in reversed(actions) if is_raise(a))
     if w is None or w.sum() < 1e-9 or raiser not in ranges:
         return acts
+    eq_r = equity_vs(ranges[raiser])
+    target = caller_target(level, w, eq_r)
     fold = acts["fold"]
     need = (target - float((w * (1.0 - fold)).sum() / w.sum())) * w.sum()
     if need <= 1e-9:
         return acts
     ref = _vs_3bet("BTN")
-    eq = np.minimum(ref["4bet"] + ref["call"], 1.0) + 0.01 * np.nan_to_num(equity_vs(ranges[raiser]), nan=-1.0)
+    eq = np.minimum(ref["4bet"] + ref["call"], 1.0) + 0.01 * np.nan_to_num(eq_r, nan=-1.0)
     # strongest folds first: whole classes above the bar, a share of the class at it
     levels = np.unique(eq)[::-1]
     add = np.zeros(N_COMBOS)
