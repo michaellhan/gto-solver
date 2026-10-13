@@ -141,6 +141,17 @@ def model_features(e: np.ndarray) -> np.ndarray:
     return np.stack([one, x, x * np.abs(x), pair * one, suited * one, conn * one, pair * x, suited * x], -1)
 
 
+# Added to the model's realization (pot share over equity) per pot type, role and position: the excess
+# gains shift x equity. Public EQR figures (solver reports: the in-position aggressor of a single-raised
+# pot realizes 1.14-1.17, the out-of-position caller 0.78-0.87; one 3bet-pot flop, BTN 3bet vs CO, 1.17
+# / 0.83) match what the postflop solver measures for those roles (3bet pots: aggressor in position
+# 1.15, caller out of position 0.80). None is published for an in-position caller of a 3bet; the
+# measured 0.97 sits below the 1.05-1.15 rules of thumb for in-position flats, and shifting it to 1.15
+# brings the in-position openers' calls to the charts (published solves): BTN vs BB 41% against 34%,
+# CO vs BB 31% against 41%, BTN vs SB 38% against 36% (unshifted 28%, 25%, 26%).
+MODEL_SHIFT = {"3bet": {"caller_ip": 0.18}}
+
+
 def _model(pot_type: str, pos: str):
     """(K, buckets): the smooth model's excess pot share per class against each bucket, or None."""
     coef = MODEL_OVERRIDE
@@ -149,7 +160,9 @@ def _model(pot_type: str, pos: str):
             from .pf_realize_model import COEF as coef
         except ImportError:
             return None
-    return np.clip(model_features(_bucket_equity()) @ np.array(coef[pot_type][pos]), -2.0, 2.0)
+    e = _bucket_equity()
+    shift = MODEL_SHIFT.get(pot_type, {}).get(pos, 0.0)
+    return np.clip(model_features(e) @ np.array(coef[pot_type][pos]) + shift * e, -2.0, 2.0)
 
 
 def _param_shares(eq: np.ndarray, r_o: float, r_t: float, pot_type: str) -> np.ndarray:

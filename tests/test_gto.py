@@ -1487,11 +1487,11 @@ class TestRealizationModel(unittest.TestCase):
             for k, w in (("o_call", wo), ("o_4bet", wo), ("t_call", wt), ("t_jam", wt)):
                 self.assertLess(abs(sh(a, k, w) - sh(b, k, w)), 0.08, (name, k, sh(a, k, w), sh(b, k, w)))
 
-    # Known failure: openers call 3bets far less than the charts (BTN vs BB 16% against 36%, UTG vs CO 9%
-    # against 26%, CO vs BB 25% against 41%) and 4bet more: measured, callers realize much less than the
-    # aggressor (3bet pots: caller 0.79 out of position, 0.97 in position, against 1.02 / 1.15; 4bet pots:
-    # caller ~0.6 against ~1.25). Not the postflop solver's depth (playing the river moves these about a
-    # point); possibly its bet-size abstraction favouring the player with the betting lead.
+    # Known failure: with the in-position caller shifted to the public rules of thumb (pf_solve.MODEL_SHIFT)
+    # in-position openers call about as often as the charts (BTN vs BB 41% against 34%, CO vs BB 31%
+    # against 41%), but out-of-position openers call 2-2.5 times as often (CO vs BTN 47% against 18%,
+    # UTG vs CO 39% against 18%, HJ vs BTN 30% against 17%), though the measured out-of-position caller
+    # (0.80) matches public EQR for that role (0.78-0.87); fitting the charts would take it to ~0.64.
     @unittest.expectedFailure
     def test_close_to_charts(self):
         for name, wo, wt, spot, target in self.cases:
