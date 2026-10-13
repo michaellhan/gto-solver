@@ -49,8 +49,10 @@ class TestSolverMath(unittest.TestCase):
         board = cards("Ks7d2cTh4s")
         r_oop = parse_range("22+, A2s+, KTs+, QTs+, JTs, T9s, 98s, ATo+, KQo")
         r_ip = parse_range("22+, A2s+, K5s+, Q8s+, J8s+, T8s+, 97s+, A8o+, KTo+, QTo+, JTo")
-        sol = solve(board, r_oop, r_ip, pot=6.5, stack=97.5, time_budget=1.0)
-        self.assertGreaterEqual(sol.iters, 100)
+        # a fixed iteration count, not a time budget: on a loaded machine (the pre-deploy checks run beside
+        # other work) a budget gets fewer iterations; speed has its own benchmark (scripts/bench_solver.py)
+        sol = solve(board, r_oop, r_ip, pot=6.5, stack=97.5, time_budget=1e9, max_iters=150)
+        self.assertEqual(sol.iters, 150)
         # nuts-ish (KK top set) should never be folding / mostly betting; EVs all positive
         kk = sol.for_combo(tuple(cards("KhKc")))
         self.assertGreater(kk["bet 100%"][0] + kk["bet 50%"][0], 0.5)
@@ -680,7 +682,8 @@ class TestTableSizes(unittest.TestCase):
         self.assertEqual(r["recommended"], "fold")
 
     def test_hand_outside_range_still_gets_a_strategy(self):
-        adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        # 3s rather than 0.5s: under load a short budget left K2o at 0.87 fold (fewer iterations)
+        adv = Advisor(Config(depth=1), time_budget=3.0, prior_budget=0.3)
         pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
                {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "fold"}]
         r = adv.advise({"players": 6, "hero": "BTN", "hole": "Ks2c", "board": "6dQh4h", "preflop": pre,
