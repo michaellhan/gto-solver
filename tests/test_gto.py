@@ -726,7 +726,9 @@ class TestTableSizes(unittest.TestCase):
                         "flop": [{"pos": "BB", "action": "check"}, {"pos": "CO", "action": "bet", "amount": 8}]})
         note = next(n for n in r["notes"] if n.startswith("after a call, BB still to act"))
         self.assertLess(int(note.split("BB continues with ")[1].split("%")[0]), 45)   # _keep(8, 8, 2): 39%
-        self.assertLess(r["actions"][1]["ev_bb"], 12.0)
+        # (about 10 bb; the later streets now let CO and BB bet into us first, and us raise, so a bit more
+        # than the 7 bb of a model where we always acted first after the flop)
+        self.assertLess(r["actions"][1]["ev_bb"], 15.0)
 
     def test_multiway_overcall_narrows_like_the_first_call(self):
         # HJ bets 3-way, BTN calls, BB overcalls. Both faced the same bet; the overcall used to be priced
@@ -749,8 +751,8 @@ class TestTableSizes(unittest.TestCase):
     def test_multiway_players_behind_a_bettor_act_after_we_check(self):
         # BB checks 3-way: CO may bet with BTN between it and us, or BTN may bet with CO behind us. The
         # first bettor used to end the action, so a check-call faced the bettor alone; now the others
-        # call or raise it, and we call or fold knowing what the players between did: a set calls
-        # everything, middle pair only some of it (not raises), a gutshot nothing.
+        # call or raise it, and we fold, call or check-raise knowing what the players between did: a set
+        # continues against everything, middle pair only some of it (not raises), a gutshot nothing.
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
         pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
                {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
@@ -762,9 +764,10 @@ class TestTableSizes(unittest.TestCase):
             raised = int(note.split(" and raises ")[1].split("%")[0])
             self.assertGreater(called, 5)
             self.assertGreater(raised, 0)
-            share[hole] = int(note.split("you'd call ")[1].split("%")[0])
-        self.assertEqual(share["7s7d"], 100)
-        self.assertLess(share["7s6s"], 80)
+            share[hole] = (int(note.split("you'd call ")[1].split("%")[0])
+                           + int(note.split("check-raise ")[1].split("%")[0]))
+        self.assertGreaterEqual(share["7s7d"], 99)
+        self.assertLess(share["7s6s"], share["7s7d"])
         self.assertGreater(share["7s6s"], 0)
         self.assertEqual(share["8s6s"], 0)
 
@@ -792,6 +795,69 @@ class TestTableSizes(unittest.TestCase):
         out = adv._multiway("BB", tuple(cards("Ts9s")), cards("Kh7c2d"), pf.replay_ranges(pre, pf.SEATS[6]),
                             ["BB", "CO", "BTN"], st, 100.0, time.time(), [])
         self.assertEqual([a["action"] for a in out["actions"]], ["check", "bet 66%"])
+
+    def test_multiway_check_raise(self):
+        # Checked to 3-way: after a bet we can check-raise (to 3x the bet plus the calls between), and
+        # everyone still in faces it by the joint fold rule. A set check-raises some of the bets (its
+        # check counts that line), air never does.
+        from gto.advisor import _raise_to
+        adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
+               {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
+        line = {}
+        for hole in ("7s7d", "4s3d"):
+            r = adv.advise({"players": 6, "hero": "BB", "hole": hole, "board": "Kh7c2d", "preflop": pre, "flop": []})
+            line[hole] = r["check_line"]
+            self.assertTrue(any("check-raise" in n for n in r["notes"]))
+            self.assertAlmostEqual(sum(line[hole][k] for k in ("call", "raise", "fold")), 1.0, places=2)
+        self.assertGreater(line["7s7d"]["raise"], 0.2)
+        self.assertEqual(line["4s3d"]["raise"], 0.0)
+        self.assertGreater(line["4s3d"]["fold"], 0.9)
+        self.assertEqual(_raise_to(5.5, 5.5), 22.0)     # 3x a 5.5 bet plus one 5.5 call
+
+    def test_multiway_top_pair_continues_like_draws(self):
+        # 8-6-3 checked to the BB 3-way. The bettor's bluffs used to come from the bottom of its range
+        # (air) and its value only from what beat what would call as if everyone held its range, so an
+        # 8x top pair continued 45% against a bet while 7c5c (an open-ender) continued 100%. Bluffs are now
+        # the hands that most often get there (draws first), the value is set against the ranges it is
+        # bet into, and a bet our equity alone pays for is called: top pair continues at least as often
+        # as the open-enders and more than a gutshot.
+        from gto.advisor import _street_info
+        from gto.cards import COMBO_INDEX
+        board = cards("8d6h3c")
+        sc, rank, bluff = _street_info(tuple(board))
+        pos = {int(c): i for i, c in enumerate(bluff)}
+        combo = lambda h: COMBO_INDEX[tuple(sorted(cards(h)))]
+        self.assertLess(pos[combo("7s5s")], pos[combo("Qs2d")])     # an open-ender bluffs before queen-high
+        self.assertLess(pos[combo("Qs2d")], pos[combo("9s6s")])     # middle pair has showdown value: last
+        adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
+               {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
+        cont = {}
+        for hole in ("Ad8s", "7c5c", "5c4c", "Ts9s"):
+            r = adv.advise({"players": 6, "hero": "BB", "hole": hole, "board": "8d6h3c", "preflop": pre, "flop": []})
+            cont[hole] = r["check_line"]["continue_unraised"]
+        self.assertGreaterEqual(cont["Ad8s"], max(cont["7c5c"], cont["5c4c"]))
+        self.assertGreater(cont["Ad8s"], cont["Ts9s"])
+
+    def test_multiway_later_streets(self):
+        # Later streets inside the trials: bets at either size (33% and 66%), the players behind a bet
+        # still act (bets get more than one caller), and raises are sized over the calls in front.
+        adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        pre = [{"pos": "UTG", "action": "raise", "to": 2.5}, {"pos": "HJ", "action": "call"}, {"pos": "CO", "action": "call"},
+               {"pos": "BTN", "action": "fold"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
+        r = adv.advise({"players": 6, "hero": "BB", "hole": "Qh9h", "board": "Kc8h4h", "preflop": pre, "flop": []})
+        ls = r["later_streets"]
+        self.assertGreater(ls["bets"], 100)
+        self.assertGreater(ls["small"], 0.05)
+        self.assertLess(ls["small"], 0.95)
+        self.assertGreater(ls["multi_called"], 0.02)
+        self.assertGreater(ls["raises_over_calls"], 0)
+        # from the turn, every river: the same rules on the last street
+        r = adv.advise({"players": 6, "hero": "BB", "hole": "Qh9h", "board": "Kc8h4h2s", "preflop": pre,
+                        "flop": [{"pos": p, "action": "check"} for p in ("BB", "UTG", "HJ", "CO")], "turn": []})
+        self.assertTrue(r.get("multiway"))
+        self.assertGreater(r["later_streets"]["small"], 0.0)
 
     def test_big_bet_range_is_mostly_by_the_rules(self):
         # BB checks a three-diamond flop 3-way, then overbets the fourth diamond: the rule's range is

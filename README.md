@@ -227,30 +227,56 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   than 15%, that street's tree uses the real size so narrowing is exact.
 * Multiway pots (3+ players live at your decision) are not solved. Instead a Monte
   Carlo heuristic picks the highest-EV action among fold / call / raise to 75% pot
-  (or check / bet 33% / bet 66% pot), with opponents following simple range rules:
-  facing a bet they fold together a quarter less often than a balanced defence
-  (people call too much), with everyone keeping the hands above one strength bar, so a
-  weak range (a lead after checking twice) folds more of itself than a strong one (a
-  call of that lead), the strongest part of what continues raises, and when
-  they bet it's value plus balanced bluffs. Players still to act behind you can
-  call or raise after you call; they faced the bet with you, so each folds as often
-  as when everyone it was made into faces it together (39% of the range continues
+  (the page's default raise size), or check / bet 33% / bet 66% pot, with opponents
+  following simple range rules: facing a bet they fold together a quarter less often
+  than a balanced defence (people call too much), with everyone keeping the hands above
+  one strength bar, so a weak range (a lead after checking twice) folds more of itself
+  than a strong one (a call of that lead), and the strongest part of what continues
+  raises. Raises inside the trials go to 3x the bet plus the calls in front of them
+  (a standard raise: 22 bb over a 5.5 bet and one call). When they bet it's 66% with value
+  from the top of their range plus balanced bluffs, or 33% with the next, thinner value
+  and its own balanced bluffs (SMALL_BET; a third of the pot is a judgment value, no
+  published data on multiway sizing was found). The value is what beats most of what
+  the players it's bet into would call with, from their actual ranges (an opener betting
+  into two flatters values thinner than a flatter betting into the opener), and the
+  bluffs are the hands without showdown value that most often end up strong (draws and
+  overcards first; on the river the weakest hands). Bluffs from the bottom of the range
+  and value as if everyone held the bettor's range made a 66% bet nearly all sets and
+  overpairs plus air, which a draw out-continued top pair against. Players still to act
+  behind you can call or raise after you call; they faced the bet with you, so each folds
+  as often as when everyone it was made into faces it together (39% of the range continues
   against a pot-sized bet with two of you facing it; pricing it as a fresh bet into
   the pot your call had grown kept 81%, junk included, and that dead money paid for
-  your calls: K5s on K72 called a pot bet at +19 bb, now +7). Each bet size gets
+  your calls: K5s on K72 called a pot bet at +19 bb, about +10 now). Each bet size gets
   its own continuing ranges, so a third of the pot keeps more of the field in (3-way,
   each keeps about 57% of their range against 33% and 45% against 66%) and gets
-  raised more often. When you check, the first player behind you whose betting
-  range holds their hand bets 66%, and the others face that bet the same way as
+  raised more often. When you check, the first player behind you whose betting range
+  at either size holds their hand bets it, and the others face that bet the same way as
   players behind a call (call, raise with the strongest part, fold the rest): those
-  between the bettor and you act first and you call or fold knowing what they did,
-  those after you act once you've called. A raise can be re-raised, and every line plays to
-  the river: on each later street you lead for value when you're ahead of what
-  would call, otherwise an opponent may bet and you raise, call or fold by your
-  equity against their range (on the turn, also counting the river bet that may
-  follow); on those later streets one bettor still ends the action for the others,
-  and there's one 66% size. Trials continue until the gap between the two best actions is clear of
-  the sampling noise (or a time cap), and the notes give that gap with its error.
+  between the bettor and you act first, and you fold, call or check-raise knowing what
+  they did (per bettor, size and what the players between did, whichever pays over the
+  trials; a call your equity against the bettor and the callers already pays for is made
+  even where those noisy splits came out slightly negative), those after you act once
+  you've called. A check-raise is faced by everyone still in (the bettor, the callers
+  between, the players behind) by the same joint fold rule, the strongest part of what
+  continues re-raises 3x and you call that by equity. The notes and `check_line` say how
+  often someone bets after your check and how often you'd call, check-raise or fold. On
+  8d6h3c checked to the big blind 3-way (CO opens, BTN and BB call), top pair Ad8s used
+  to continue against 46% of those bets while the open-enders 7c5c and 5c4c continued
+  against all of them and the gutshot T9s 44%; now top pair continues about 96%, the
+  open-enders 96-100%, the gutshot about 30%; a set of sevens on K72 check-raises most
+  bets and air never does. A raise can be re-raised, and every line plays to the river
+  by the same rules: on each later street players act in seat order, an opponent bets
+  66% or 33% by the betting ranges above, you lead 66% when you're ahead of every range
+  that would call it, else 33% when ahead of what calls that, and everyone still in faces
+  a bet (opponents call, raise or fold by the joint rule; against your bet they call or
+  fold: a range capped by checks raising its best weak hands stacked off 77 against top
+  pair), you raise when ahead of each range that would continue, otherwise call or fold
+  by your equity against the bettor and the callers (on the turn, also counting the river
+  bet that may follow). One raise per later street, which everyone still in then calls or
+  folds. Trials continue until the gap between the two best actions is clear of the
+  sampling noise or under 2% of the pot (or a time cap), and the notes give that gap with
+  its error.
 * Streets that started multiway narrow every player's range by the same rules
   (a check drops most hands that would have bet, a bet keeps its value + bluff
   range, a call drops what would have folded or raised, with a first call and an

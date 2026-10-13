@@ -32,7 +32,12 @@ FOLD_SHADE = 0.75   # multiway: opponents fold this share of what a balanced def
 # mattered there, so it stays a judgment call).
 NARROW_SOFT = 0.3   # multiway narrowing: weight kept by hands the rules say would have played differently
 OFF_RULE_MAX = 0.25  # ...but those hands are at most this share of the narrowed range (a big bet's rule range is small)
-SMALL_BET = 0.33    # multiway: our small bet (share of the pot), beside 66%
+# multiway: the small bet (share of the pot), beside 66%, for us and the opponents on every street. A
+# judgment value, not fitted: no published data found on multiway sizing; a third of the pot is the
+# common small size in solver outputs and in the heads-up trees here.
+SMALL_BET = 0.33
+HIT_TOP = 0.15      # multiway bluffs: a hand "gets there" on a runout ending in this top share of combos (judgment)
+SHOWDOWN_Q = 0.6    # ...and has showdown value (bluffs last) when it usually ends above this share (judgment)
 VALUE_SHARE = 0.35  # multiway: a bet's value range is this share of what would call it
 RAISE_SHARE = 0.2   # multiway: facing a bet, this share of what continues (the strongest) raises
 LEAD_EQ = 0.5       # multiway, later streets: we lead when our equity beats this vs every calling range
@@ -195,10 +200,75 @@ def _top(r: np.ndarray, frac: float, rank: np.ndarray) -> np.ndarray:
     return m
 
 
-def _aggro(r, v, b, p, rank) -> np.ndarray:
-    """A bet or raise of b into p: value with the top v of r plus balanced bluffs from the bottom,
-    bluffs = value * b / (p + b)."""
-    return _top(r, v, rank) | _top(r, min(v * b / (p + b), 1.0 - v), rank[::-1])
+def _aggro(r, v, b, p, rank, bluff=None) -> np.ndarray:
+    """A bet or raise of b into p: value with the top v of r plus balanced bluffs,
+    bluffs = value * b / (p + b), taken in `bluff` order (see _bluff_order: draws first) from the
+    hands outside the value range; without one, from the bottom."""
+    val = _top(r, v, rank)
+    bf = min(v * b / (p + b), 1.0 - v)
+    if bluff is None:
+        return val | _top(r, bf, rank[::-1])
+    rest = r * ~val
+    left, tot = float(rest.sum()), float(r.sum())
+    return val | (_top(rest, bf * tot / left, bluff) if left > 1e-12 else val)
+
+
+def _value_share(r, n, b, p, rank, others=None) -> float:
+    """Share of range r that bets b into p for value, with n players facing it: the hands above the
+    top VALUE_SHARE of what would call (balanced, unshaded, by the joint rule of _joint_top). With the
+    others' ranges, what they would call with; without, as if each held r (VALUE_SHARE of what r keeps,
+    the same number when they do). A strong range betting into capped ones values thinner (top pair
+    from the opener into two flatters), a capped one into a strong one tighter."""
+    if not others:
+        return _keep(b, p, n, 1.0) * VALUE_SHARE
+    others = [o for o in others if o.sum() > 0]
+    if not others:
+        return _keep(b, p, n, 1.0) * VALUE_SHARE
+    fold = (1.0 - _keep(b, p, len(others), 1.0)) ** len(others)
+    comb = sum(o * c / o.sum() for o, c in zip(others, _joint_top(others, fold, rank)))
+    return _share(r, _top(comb, VALUE_SHARE, rank))
+
+
+def _bet_ranges(r, n, p, big, small, rank, bluff=None, others=None):
+    """(big, small) masks: what range r bets at each size into p with n players facing it (others:
+    their ranges, see _value_share). The big bet is _aggro's value + bluffs; the small one takes the
+    thinner value (the rest of what the small size's value share covers) with its own balanced bluffs,
+    next in bluff order. small None: no small bet (an empty mask)."""
+    bg = _aggro(r, _value_share(r, n, big, p, rank, others), big, p, rank, bluff)
+    if small is None:
+        return bg, np.zeros(N_COMBOS, dtype=bool)
+    val = _top(r, _value_share(r, n, small, p, rank, others), rank) & ~bg
+    rest = r * ~(bg | val)
+    left, tot = float(rest.sum()), float(r.sum())
+    bf = _share(r, val) * small / (p + small)
+    order = rank[::-1] if bluff is None else bluff
+    sm = val | (_top(rest, min(bf * tot / left, 1.0), order) if left > 1e-12 and bf > 0 else val)
+    return bg, sm & ~bg
+
+
+def _bluff_order(sts, rank, sc) -> np.ndarray:
+    """Combos in the order a range picks its bluffs, over the runouts sts (strength arrays, -1 =
+    blocked): first the hands without showdown value (in under half the runouts do they end above
+    SHOWDOWN_Q of the live combos), the ones that most often end in the top HIT_TOP first (draws,
+    overcards), weakest first among equals; then the rest, weakest first. With one runout (the
+    river) it is simply weakest first. Betting ranges bluffed from the bottom before, so on the flop
+    their bluffs were air and a draw out-continued top pair against them."""
+    if len(sts) <= 1:
+        return rank[::-1]
+    hit = np.zeros(N_COMBOS); sd = np.zeros(N_COMBOS); cnt = np.zeros(N_COMBOS)
+    for s in sts:
+        live = s >= 0
+        if not live.any():
+            continue
+        hi, mid = np.quantile(s[live], [1.0 - HIT_TOP, SHOWDOWN_Q])
+        hit += live & (s >= hi); sd += live & (s >= mid); cnt += live
+    cnt = np.maximum(cnt, 1)
+    return np.lexsort((sc, -hit / cnt, sd / cnt >= 0.5))
+
+
+def _raise_to(bet, calls) -> float:
+    """A raise over a bet (to-level `bet`) that `calls` chips have called: 3x the bet plus the calls."""
+    return 3.0 * bet + calls
 
 
 def _keep(b, p, n, shade=None) -> float:
@@ -239,19 +309,28 @@ def _fold_together(costs, p, shade=None) -> float:
     return float(np.prod([1.0 - _keep(c, p, len(costs), shade) for c in costs]))
 
 
-@lru_cache(maxsize=64)
 def _street_rank(board: tuple):
     """(strength averaged over runouts, combos strongest first) on this board; -1 = blocked."""
+    return _street_info(board)[:2]
+
+
+@lru_cache(maxsize=64)
+def _street_info(board: tuple):
+    """(strength averaged over runouts, combos strongest first, bluff order) on this board (see
+    _bluff_order); -1 = blocked."""
     from .evaluator import eval_board
     rng = random.Random(sum(c * 53 ** i for i, c in enumerate(board)))
     avail = [c for c in range(52) if c not in board]
     tot = np.zeros(N_COMBOS); cnt = np.zeros(N_COMBOS)
+    sts = []
     for _ in range(1 if len(board) == 5 else 24):
         s = eval_board(list(board) + rng.sample(avail, 5 - len(board)))
         ok = s >= 0
         tot[ok] += s[ok]; cnt[ok] += 1
+        sts.append(s)
     sc = np.where(cnt > 0, tot / np.maximum(cnt, 1), -1.0)
-    return sc, np.argsort(-sc)
+    rank = np.argsort(-sc)
+    return sc, rank, _bluff_order(sts, rank, sc)
 
 
 @lru_cache(maxsize=1)
@@ -311,7 +390,7 @@ def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack:
     with the multiway rules: a check drops most of the hands that would have bet, a bet or raise
     keeps its value + bluff range, a call keeps what continues minus what would have raised.
     Hands a rule rules out keep some weight (players don't follow our rules), see _soften."""
-    sc, rank = _street_rank(tuple(board))
+    sc, rank, bluff = _street_info(tuple(board))
     dead = [MEMBER_FULL[c] for c in hole]
     bets = {p: 0.0 for p in st.inv_start}
     cur = 0.0
@@ -344,7 +423,7 @@ def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack:
         # for a first caller and an overcaller (pricing the bet into the pot it had grown to left
         # overcallers wider than the first caller).
         call_k = _keep(faced[1], faced[0], faced[2]) if faced and to_call > 1e-9 and to <= cur + 1e-9 else None
-        keep_m = _rule_mask(r, to, cur, to_call, pot, n, rank, call_k)
+        keep_m = _rule_mask(r, to, cur, to_call, pot, n, rank, call_k, bluff)
         if to > cur + 1e-9:
             faced = (pot, min(to, bets[p] + remaining) - bets[p], max(n, 1))
         cur = max(cur, to)
@@ -362,17 +441,19 @@ def _soften(r, keep_m) -> np.ndarray:
     return np.where(keep_m, 1.0, soft)
 
 
-def _rule_mask(r, to, cur, to_call, pot, n, rank, call_k=None) -> np.ndarray:
+def _rule_mask(r, to, cur, to_call, pot, n, rank, call_k=None, bluff=None) -> np.ndarray:
     """The part of range r the multiway rules play this way, with n opponents and `pot` in the
     middle: a bet or raise to `to` over the current bet `cur`, else a call of to_call (or a check).
-    call_k: for a call, the share of the range that continues (default: facing to_call into pot)."""
+    call_k: for a call, the share of the range that continues (default: facing to_call into pot).
+    bluff: the order bluffs are picked in (see _bluff_order; default the weakest hands). The value
+    share stays the fitted one (as if the others held r), not _value_share's against their ranges."""
     if to > cur + 1e-9:                       # bet or raise: value + balanced bluffs
         if to_call <= 1e-9:
-            return _aggro(r, _keep(to - cur, pot, n, 1.0) * VALUE_SHARE, to - cur, pot, rank)
-        return _aggro(r, _keep(to_call, pot, n) * RAISE_SHARE, to - cur, pot + to_call, rank)
-    if to_call <= 1e-9:                       # check: not what would have bet
-        b = 0.66 * pot
-        return ~_aggro(r, _keep(b, pot, n, 1.0) * VALUE_SHARE, b, pot, rank)
+            return _aggro(r, _value_share(r, n, to - cur, pot, rank), to - cur, pot, rank, bluff)
+        return _aggro(r, _keep(to_call, pot, n) * RAISE_SHARE, to - cur, pot + to_call, rank, bluff)
+    if to_call <= 1e-9:                       # check: not what would have bet at either size
+        big, small = _bet_ranges(r, n, pot, 0.66 * pot, SMALL_BET * pot, rank, bluff)
+        return ~(big | small)
     k = _keep(to_call, pot, n) if call_k is None else call_k   # call: continues, but wouldn't raise
     return _top(r, k, rank) & ~_top(r, k * RAISE_SHARE, rank)
 
@@ -1092,25 +1173,41 @@ class Advisor:
           the strongest part of what each continues with raises instead. Players still to act behind
           a bet we call faced that bet with us, so they fold as often as each would with everyone it
           was made into facing it together (not as if it were a fresh bet into the pot our call grew).
-        - Betting into us: value with the top VALUE_SHARE of what would call that bet (balanced, unshaded),
-          plus bluffs from the bottom of the range at the balanced ratio, bluffs = value * b / (p + b).
+        - Betting: 66% of the pot with value from the hands above the top VALUE_SHARE of what the
+          players it's made into would call with (balanced, unshaded, their actual ranges: see
+          _value_share) plus bluffs at the balanced ratio, bluffs = value * b / (p + b); SMALL_BET
+          (33%) with the next, thinner value and its own balanced bluffs. Bluffs are the hands
+          without showdown value that most often end up strong (draws and overcards first; see
+          _bluff_order), on the river the weakest hands. Bluffing from the bottom with value as if
+          everyone held the bettor's range made a bet sets and overpairs plus air, and a draw then
+          continued more often than top pair. (Narrowing past streets keeps the fitted rule.)
+        - Raises go to 3x the bet plus the calls in front (_raise_to); our raise option facing a bet
+          is the page's default size, the bet plus 75% of the pot after calling.
         - We choose between checking and betting SMALL_BET (33%) or 66% of the pot (facing a bet:
-          folding, calling, or raising to 75% of the pot after calling) by EV. Each size has its own
-          continuing ranges by the rule above, so a small bet keeps more of the field in (3-way,
-          each keeps 57% against 33% and 45% against 66%) and gets raised more often.
-        - After we check, the first opponent behind us whose 66% betting range holds their hand bets.
-          The others face that bet like players behind a call: one strength bar, each folding as often
-          as with everyone it was made into facing it together, the strongest part raising. Players
-          between the bettor and us act first, and we call or fold knowing what they did (for each
-          bettor and what the players between did, we call where calling pays over the trials);
-          players after us act once we've called, and we call their raise by equity against it.
-        - Once someone raises, the players not involved (the first bettor and earlier callers too) fold.
-        Every line plays on to the river with one 66%-pot bet per later street: we lead it when we're
-        ahead of every range that would call (LEAD_EQ), else an opponent may bet and we raise
-        (RAISE_EQ), call or fold by our equity against their range on the board as it stands (no
-        peeking at later cards; on the turn, counting the river bet that may follow). On those later
-        streets an opponent's bet still ends the action for the others (only this street's decision
-        models the players behind a bettor, to keep the trials cheap).
+          folding, calling, or raising) by EV. Each size has its own continuing ranges by the rule
+          above, so a small bet keeps more of the field in (3-way, each keeps 57% against 33% and
+          45% against 66%) and gets raised more often.
+        - After we check, the first opponent behind us whose betting range at either size holds their
+          hand bets it. The others face that bet like players behind a call: one strength bar, each
+          folding as often as with everyone it was made into facing it together, the strongest part
+          raising. Players between the bettor and us act first, and we fold, call or check-raise
+          knowing what they did (for each bettor, size and what the players between did, whichever
+          pays over the trials, and a call our equity against the bettor and callers pays for by
+          itself, see priced); players after us act once we've called, and we call their raise by
+          equity against it. Our check-raise is faced by everyone still in (the bettor, the callers
+          between, the players behind) with the same joint fold rule; the strongest part of what
+          continues re-raises and we call that by equity.
+        - Once someone raises on this street, the players not involved (the first bettor and earlier
+          callers too) fold, except against our check-raise.
+        Every line plays on to the river by the same rules (later_street): players act in seat order,
+        an opponent bets 66% or 33% by the betting ranges above, we lead 66% when we're ahead of every
+        range that would call it, else 33% when ahead of what calls that (LEAD_EQ), and everyone
+        still in faces a bet: opponents call, raise or fold by the joint rule (against our bet only
+        call or fold), we raise (RAISE_EQ,
+        against each range that would continue), call or fold by our equity against the bettor and
+        the callers on the board as it stands (no peeking at later cards; on the turn, counting the
+        river bet that may follow). One raise per later street; everyone still in then calls or
+        folds it.
         With rake, every pot hero wins is short min(rate x pot, cap) (the pot without an uncalled bet; a
         split pot costs hero its share), as at the solver's terminals; the opponents' rules and hero's
         call/lead/raise rules within a trial stay unraked."""
@@ -1131,6 +1228,10 @@ class Advisor:
             for c in dead:
                 r *= 1.0 - MEMBER_FULL[c]
             opp_ranges.append(r if r.sum() > 0 else np.ones(N_COMBOS))
+        # our range as the opponents see it (what their bets are made into)
+        hero_range = ranges.get(hero, np.ones(N_COMBOS)).copy()
+        for c in board:
+            hero_range *= 1.0 - MEMBER_FULL[c]
         pot = cur.pot_start + sum(cur.bets.values())
         to_call = cur.cur_bet - cur.bets[hero]
         hero_rem = stack - cur.inv_start[hero] - cur.bets[hero]
@@ -1138,6 +1239,8 @@ class Advisor:
         seq = cur.order[cur.order.index(hero) + 1:] + cur.order[:cur.order.index(hero)]
         after = sorted(range(n_opp), key=lambda i: seq.index(opps[i]))   # opponents in acting order after us
         cap = [stack - cur.inv_start[p] for p in opps]                   # most each opponent can have in this street
+        seat = {i: cur.order.index(opps[i]) for i in range(n_opp)}       # acting order on later streets
+        seat["hero"] = cur.order.index(hero)
         accurate = self.time_budget >= 20
 
         # Runouts, shared by the strength rankings and the trials: from the flop every turn with a few
@@ -1153,13 +1256,14 @@ class Advisor:
                     runs.append((tuple(board) + (t, c), eval_board(list(board) + [t, c])))
 
         def strength(sts):
-            """(average strength, combos strongest first, the samples) over these runouts."""
+            """(average strength, combos strongest first, the samples, bluff order) over these runouts."""
             tot = np.zeros(N_COMBOS); cnt = np.zeros(N_COMBOS)
             for s in sts:
                 ok = s >= 0
                 tot[ok] += s[ok]; cnt[ok] += 1
             sc = np.where(cnt > 0, tot / np.maximum(cnt, 1), -1.0)
-            return sc, np.argsort(-sc), sts
+            rank = np.argsort(-sc)
+            return sc, rank, sts, _bluff_order(sts, rank, sc)
 
         now = strength([s for _, s in runs])
         turns = {}
@@ -1175,10 +1279,11 @@ class Advisor:
             if n == 4:
                 return turns[run[3]]
             if run not in rivers:
-                rivers[run] = (st, np.argsort(-st), [st])
+                rk = np.argsort(-st)
+                rivers[run] = (st, rk, [st], rk[::-1])
             return rivers[run]
 
-        top, aggro, keep = _top, _aggro, _keep
+        aggro, keep = _aggro, _keep
 
         def equity(w, sts):
             num = den = 0.0
@@ -1188,35 +1293,239 @@ class Advisor:
                 den += ww.sum()
             return num / den if den > 0 else 0.5
 
+        def equity_all(ws, sts):
+            """Our chance of beating every one of the ranges ws (the product per runout)."""
+            if len(ws) == 1:
+                return equity(ws[0], sts)
+            tot = n = 0
+            for s in sts:
+                win = (s < s[idx]) + 0.5 * (s == s[idx])
+                e = 1.0
+                for w in ws:
+                    ww = w * (s >= 0)
+                    d = ww.sum()
+                    e *= (ww * win).sum() / d if d > 0 else 0.5
+                tot += e; n += 1
+            return tot / n if n else 0.5
+
         def calls(w, sts, cost, p):
-            """Do we call `cost` more into a pot of p (their chips included) against range w?"""
-            return equity(w, sts) * (p + cost) > cost
+            """Do we call `cost` more into a pot of p (their chips included) against range w (or a list
+            of ranges, all of which we have to beat)?"""
+            return (equity_all(w, sts) if isinstance(w, list) else equity(w, sts)) * (p + cost) > cost
 
         ranks = {}
-        def calls_turn(w, sts, b, p, left):
+        def calls_turn(ws, sts, b, p, left):
             """Turn version of calls(): average over the river samples of calling b, then facing
-            their river bet (value + balanced bluffs from what they bet the turn with) and calling
-            or folding it, so a call that a river bet will push us off isn't counted at full equity."""
+            the bettor's (ws[0]) river bet (value + balanced bluffs from what they bet the turn with)
+            and calling or folding it, so a call that a river bet will push us off isn't counted at
+            full equity. Other ranges in ws (callers) only have to be beaten at showdown."""
             P = p + b
             b2 = min(round(0.66 * P * 2) / 2, left - b)
             tot = 0.0
             for s in sts:
-                ws = w * (s >= 0)
-                if ws.sum() <= 0:
+                w = ws[0] * (s >= 0)
+                if w.sum() <= 0:
                     continue
                 win = (s < s[idx]) + 0.5 * (s == s[idx])
+                f = 1.0
+                for o in ws[1:]:
+                    oo = o * (s >= 0)
+                    f *= (oo * win).sum() / oo.sum() if oo.sum() > 0 else 0.5
                 if b2 <= 1e-9:
-                    tot += (ws * win).sum() / ws.sum() * P
+                    tot += (w * win).sum() / w.sum() * f * P
                     continue
                 if id(s) not in ranks:
                     ranks[id(s)] = np.argsort(-s)
-                m = aggro(ws, keep(b2, P, 1, 1.0) * VALUE_SHARE, b2, P, ranks[id(s)])
-                wm = ws * m
-                ev_bet = (wm * win).sum() * (P + 2 * b2) - wm.sum() * b2
-                tot += (max(ev_bet, 0.0) + (ws * ~m * win).sum() * P) / ws.sum()
+                m = aggro(w, keep(b2, P, 1, 1.0) * VALUE_SHARE, b2, P, ranks[id(s)])
+                wm = w * m
+                ev_bet = (wm * win).sum() * f * (P + 2 * b2) - wm.sum() * b2
+                tot += (max(ev_bet, 0.0) + (w * ~m * win).sum() * f * P) / w.sum()
             return tot / max(len(sts), 1) > b
 
         cache = {}
+        # what the later streets did over the trials (bets by size, bets that drew more than one call,
+        # raises and how many came over a call, so their size counted the calls)
+        ls_stats = dict.fromkeys(("bets", "small", "multi_called", "raises", "raises_over_calls"), 0)
+
+        def later_street(n, run, st, hands, alive, rs, left, p, put):
+            """One later street by the rules (see the docstring). Returns (result, pot, our chips in,
+            opponents still in, their ranges); result is None unless the hand ended here (we folded:
+            -put; everyone else folded: the pot less our chips)."""
+            sc, rank, sts, bluff = info(run, n, st)
+            eff = min([left["hero"]] + [left[i] for i in alive])
+            big = min(round(0.66 * p * 2) / 2, eff)
+            if big <= 1e-9 or not alive:
+                return None, p, put, alive, rs
+            small = min(round(SMALL_BET * p * 2) / 2, eff)
+            small = small if 1e-9 < small < big - 1e-9 else None
+            liv = sc >= 0
+            # Decisions are cached on the first later street (key: its card and the ranges going in, which
+            # are arrays that live for the whole call, plus the actions so far); after that they are
+            # specific to one trial's runout and ranges.
+            key0 = ((n, run[n - 1], tuple(alive), tuple(id(rs[i]) for i in alive), round(p, 2),
+                     tuple(round(left[x], 2) for x in ["hero"] + alive)) if n == len(board) + 1 else None)
+
+            def C(path, fn):
+                if key0 is None:
+                    return fn()
+                k = key0 + path
+                v = cache.get(k)
+                if v is None:
+                    v = cache[k] = fn()
+                return v
+
+            rs = dict(C(("in",), lambda: tuple((i, rs[i] * liv) for i in alive)))   # drop combos holding a card dealt since
+            alive = list(alive)
+            actors = sorted(alive + ["hero"], key=seat.get)
+            inv = dict.fromkeys(actors, 0.0)
+
+            def put_in(a, to):
+                d = max(0.0, min(to - inv[a], left[a]))
+                inv[a] += d; left[a] -= d
+                return d
+
+            # Checked to the first bet: an opponent bets the size whose range holds their hand; we lead
+            # 66% when ahead of every range that would call it, else 33% when ahead of what calls that.
+            path, bet = (), None
+            for a in actors:
+                if a == "hero":
+                    def lead_fn(rs=rs, al=tuple(alive)):
+                        for b in (big, small):
+                            if b is None:
+                                continue
+                            cs = _joint_top([rs[i] for i in al], _fold_together([b] * len(al), p), rank)
+                            if all(equity(rs[i] * c, sts) > LEAD_EQ for i, c in zip(al, cs)):
+                                return (b,)
+                        return (None,)
+                    (b,) = C(path + ("lead",), lead_fn)
+                    if b is not None:
+                        bet = ("hero", b)
+                        break
+                    path += ("x",)
+                else:
+                    def bet_fn(r=rs[a]):
+                        into = [rs[o] for o in alive if o != a] + [hero_range * liv]
+                        bg, sm = _bet_ranges(r, len(alive), p, big, small, rank, bluff, into)
+                        # a check keeps the hands that would have bet at NARROW_SOFT, as narrowing does (see
+                        # _soften): cut to nothing, the checker was a capped range paying our value bets off
+                        return bg, sm, r * bg, r * sm, r * _soften(r, ~(bg | sm))
+                    bg, sm, r_bg, r_sm, r_x = C(path + (("bm", a),), bet_fn)
+                    if bg[hands[a]] or sm[hands[a]]:
+                        bet = (a, big) if bg[hands[a]] else (a, small)
+                        rs[a] = r_bg if bg[hands[a]] else r_sm
+                        break
+                    rs[a] = r_x
+                    path += (("x", a),)
+            if bet is None:
+                return None, p, put, alive, rs
+
+            # The bet: everyone else faces it once, in order after the bettor.
+            X, b = bet
+            ls_stats["bets"] += 1
+            ls_stats["small"] += b == small
+            p0 = p
+            d = put_in(X, b); p += d
+            if X == "hero":
+                put += d
+            path += (("b", X, b),)
+            k = actors.index(X)
+            order = actors[k + 1:] + actors[:k]
+            facing = [a for a in order if a != "hero"]
+
+            def face_fn(fa=tuple(facing), rr=tuple(rs[a] for a in facing)):
+                fold_each = 1.0 - keep(b, p0, len(alive))     # it was made into everyone else
+                out = {}
+                for a, r, c in zip(fa, rr, _joint_top(list(rr), fold_each ** len(fa), rank)):
+                    # against our bet they call or fold: the strongest share of a range capped by checks and
+                    # calls isn't a raise against a bet we only make when ahead (it stacked off 77 against
+                    # top pair); another opponent's bet they raise with the strongest part of what continues
+                    rm = (np.zeros(N_COMBOS, dtype=bool) if X == "hero"
+                          else aggro(r, _share(r, c) * RAISE_SHARE, 2 * b, p0 + b, rank, bluff))
+                    out[a] = (c, rm, r * (c & ~rm), r * rm)
+                return (out,)
+            (fc,) = C(path + ("face",), face_fn)
+            called, raiser, R = [], None, 0.0
+            for j, a in enumerate(order):
+                if a == "hero":
+                    yet = tuple(o for o in order[j + 1:])
+
+                    def hero_fn(cl=tuple(called), yet=yet, pc=p):
+                        ws = [rs[X]] + [rs[c] for c in cl]
+                        to = min(round(_raise_to(b, sum(inv[c] for c in cl)) * 2) / 2, left["hero"])
+                        if to > b + 1e-9:
+                            others = [X] + list(cl) + list(yet)
+                            rr = [rs[o] for o in others]
+                            fold = (1.0 - keep(to, pc, len(others))) ** len(others)
+                            if all(equity(r * c, sts) > RAISE_EQ for r, c in zip(rr, _joint_top(rr, fold, rank))):
+                                return ("raise", to)
+                        ok = calls_turn(ws, sts, b, pc, left["hero"]) if n == 4 else calls(ws, sts, b, pc)
+                        return ("call" if ok else "fold", b)
+                    dec, to = C(path + ("hero",), hero_fn)
+                    if dec == "fold":
+                        return -put, p, put, alive, rs
+                    if dec == "raise":
+                        raiser, R = "hero", to
+                        break
+                    d = put_in("hero", b); p += d; put += d
+                    called.append("hero"); path += ("c",)
+                    continue
+                c, rm, r_call, r_raise = fc[a]
+                if rm[hands[a]]:
+                    to = min(round(_raise_to(b, sum(inv[o] for o in called)) * 2) / 2, inv[a] + left[a])
+                    if to > b + 1e-9:
+                        raiser, R = a, to
+                        rs[a] = r_raise
+                        break
+                if c[hands[a]]:
+                    p += put_in(a, b); rs[a] = r_call; called.append(a)
+                    path += (("c", a),)
+                else:
+                    alive.remove(a)
+                    path += (("f", a),)
+            def folded_to():
+                """Everyone else folded to our bet or raise: the pot less its rake (our uncalled chips come back)."""
+                unc = inv["hero"] - max(inv[a] for a in actors if a != "hero")
+                return won(p - unc) + unc - put
+            ls_stats["multi_called"] += len(called) >= 2
+            if raiser is not None:
+                ls_stats["raises"] += 1
+                ls_stats["raises_over_calls"] += bool(called)
+            if raiser is None:
+                if X == "hero" and not called:
+                    return folded_to(), p, put, alive, rs
+                return None, p, put, alive, rs
+
+            # A raise: everyone still in calls or folds it, in order after the raiser (one strength bar).
+            path += (("r", raiser),)
+            p1, add = p, R - inv[raiser]
+            d = put_in(raiser, R); p += d
+            if raiser == "hero":
+                put += d
+            k = actors.index(raiser)
+            resp = [a for a in actors[k + 1:] + actors[:k] if a == "hero" or a in alive]
+            ro = [a for a in resp if a != "hero"]
+
+            def rface_fn(ro=tuple(ro), rr=tuple(rs[a] for a in ro)):
+                fold_each = 1.0 - keep(add, p1, len(resp))
+                return tuple((a, c, r * c) for a, r, c in zip(ro, rr, _joint_top(list(rr), fold_each ** len(ro), rank)))
+            rf = {a: (c, r) for a, c, r in C(path + ("rface",), rface_fn)}
+            inr = [raiser]
+            for a in resp:
+                if a == "hero":
+                    def call_fn(inr=tuple(inr), pc=p):
+                        return (calls([rs[o] for o in inr], sts, R - inv["hero"], pc),)
+                    if not C(path + ("hr", tuple(inr)), call_fn)[0]:
+                        return -put, p, put, alive, rs
+                    d = put_in("hero", R); p += d; put += d
+                    continue
+                c, r_c = rf[a]
+                if c[hands[a]]:
+                    p += put_in(a, R); rs[a] = r_c; inr.append(a)
+                else:
+                    alive.remove(a)
+            if raiser == "hero" and len(inr) == 1:
+                return folded_to(), p, put, alive, rs
+            return None, p, put, alive, rs
 
         def play_out(run, st, hands, live, p, put, matched):
             """Our result (relative to folding now) once this street's betting is over. live:
@@ -1226,69 +1535,12 @@ class Advisor:
             rs = dict(live)
             left = {"hero": hero_rem - put, **{i: cap[i] - matched for i in alive}}
             for n in range(len(board) + 1, 6):
-                sc, rank, sts = info(run, n, st)
-                b = min(round(0.66 * p * 2) / 2, left["hero"], *(left[i] for i in alive))
-                if b <= 1e-9:
-                    continue
-                # Decisions are cached on the turn (key: turn card and the ranges going in, which are
-                # arrays that live for the whole call); river ones are cheap and run-specific.
-                def cached(key, fn):
-                    if key is None:
-                        return fn()
-                    if key not in cache:
-                        cache[key] = fn()
-                    return cache[key]
-                ids = tuple(id(rs[i]) for i in alive)
-                tkey = (run[3], tuple(alive), ids, round(p, 2)) if n == 4 else None
-                # We lead for value when we're ahead of every range that would call it.
-                def lead_fn():
-                    ws = [rs[i] * (sc >= 0) for i in alive]
-                    cs = dict(zip(alive, _joint_top(ws, _fold_together([b] * len(alive), p), rank)))
-                    return all(equity(rs[i] * (sc >= 0) * cs[i], sts) > LEAD_EQ for i in alive), cs
-                lead, cs = cached(tkey and ("lead",) + tkey, lead_fn)
-                if lead:
-                    callers = [i for i in alive if cs[i][hands[i]]]
-                    if not callers:
-                        return won(p) - put
-                    p += b * (1 + len(callers)); put += b; left["hero"] -= b
-                    for i in callers:
-                        left[i] -= b; rs[i] = rs[i] * (sc >= 0) * cs[i]
-                    alive = callers
-                    continue
-                v = keep(b, p, len(alive), 1.0) * VALUE_SHARE
-                for i in alive:
-                    r = rs[i] * (sc >= 0)          # drop combos holding a card dealt since
-                    key = tkey and (i,) + tkey
-                    m = cached(key and ("bet",) + key, lambda: aggro(r, v, b, p, rank))
-                    if m[hands[i]]:
-                        w = r * m
-                        # Raise to b + 75% of the pot after calling when we're ahead of what continues,
-                        # else call or fold.
-                        rto = min(round((b + 0.75 * (p + 2 * b)) * 2) / 2, left["hero"], left[i])
-                        def raise_fn():
-                            if rto <= b + 1e-9:
-                                return False, None
-                            c = top(w, keep(rto - b, p + 2 * b, 1), rank)
-                            return equity(w * c, sts) > RAISE_EQ, c
-                        ok, c = cached(key and ("raise",) + key, raise_fn)
-                        if ok:
-                            if not c[hands[i]]:
-                                # raked on their b and our matching b (the rest of our raise comes back)
-                                return p + b - put - cfg.rake(p + 2 * b)
-                            p += 2 * rto; put += rto; left["hero"] -= rto; left[i] -= rto
-                            alive = [i]; rs[i] = w * c
-                            break
-                        we_call = cached(key and ("call",) + key,
-                                         lambda: calls_turn(w, sts, b, p + b, min(left["hero"], left[i])) if n == 4
-                                         else calls(w, sts, b, p + b))
-                        if not we_call:
-                            return -put
-                        p += 2 * b; put += b; left["hero"] -= b; left[i] -= b
-                        alive = [i]; rs[i] = w
-                        break
+                res, p, put, alive, rs = later_street(n, run, st, hands, alive, rs, left, p, put)
+                if res is not None:
+                    return res
             return _showdown_share(st, idx, [hands[i] for i in alive]) * won(p) - put
 
-        sc0, rank0, sts0 = now
+        sc0, rank0, sts0, bluff0 = now
         trials = 0
         share_all = 0.0
 
@@ -1297,6 +1549,8 @@ class Advisor:
             p_call = pot + call_amt
             behind = [i for i in after if cur.bets[opps[i]] < cur.cur_bet - 1e-9 and opps[i] not in cur.allin]
             matched = [i for i in range(n_opp) if i not in behind]
+            # chips that called the bet before them (ours included; the bettor's own aside)
+            calls_in = max(0.0, sum(min(cur.bets[opps[i]], cur.cur_bet) for i in matched) - cur.cur_bet) + cur.bets[hero] + call_amt
             beh = {}
             costs = [min(cur.cur_bet, cap[i]) - cur.bets[opps[i]] for i in behind]
             # They face the bet we call, which has to get past everyone it was made into: each folds as
@@ -1306,18 +1560,18 @@ class Advisor:
             beh_conts = _joint_top([opp_ranges[i] for i in behind], fold_each ** len(behind), rank0)
             for i, cost, cont in zip(behind, costs, beh_conts):
                 k = _share(opp_ranges[i], cont)
-                rto = min(round((cur.cur_bet + 0.75 * (p_call + cost)) * 2) / 2, cap[i])
+                rto = min(round(_raise_to(cur.cur_bet, calls_in) * 2) / 2, cap[i])
                 hero_to = min(rto, cur.bets[hero] + hero_rem)
                 extra = hero_to - cur.cur_bet
-                raise_m = aggro(opp_ranges[i], k * RAISE_SHARE, rto - cur.cur_bet, p_call + cost, rank0) if extra > 1e-9 else None
+                raise_m = aggro(opp_ranges[i], k * RAISE_SHARE, rto - cur.cur_bet, p_call + cost, rank0, bluff0) if extra > 1e-9 else None
                 p_r = p_call + rto - cur.bets[opps[i]]
                 beh[i] = (cost, cont, raise_m, rto, hero_to, extra, p_r,
                           raise_m is not None and calls(opp_ranges[i] * raise_m, sts0, extra, p_r))
             cont_r = {i: opp_ranges[i] * beh[i][1] for i in behind}
             raise_r = {i: opp_ranges[i] * beh[i][2] for i in behind if beh[i][2] is not None}
 
-        # Betting or raising: to 75% pot after calling, or 33% / 66% pot, to the nearest 0.5bb. Each size
-        # gets its own continuing ranges (a smaller bet keeps more of everyone's range) and raises.
+        # Betting or raising: to 75% of the pot after calling, or 33% / 66% pot, to the nearest 0.5bb. Each
+        # size gets its own continuing ranges (a smaller bet keeps more of everyone's range) and raises.
         def agg_line(agg_to):
             hero_add = agg_to - cur.bets[hero] if agg_to > cur.cur_bet + 1e-9 else 0.0   # no raise once a call is all-in
             if hero_add <= 1e-9:
@@ -1333,11 +1587,11 @@ class Advisor:
             k_agg = [_share(opp_ranges[i], conts[i]) for i in range(n_opp)]
             rr = {}
             for i in range(n_opp):
-                rto = min(round((agg_to + 0.75 * (pot + hero_add + opp_add[i])) * 2) / 2, cap[i])
+                rto = min(round(_raise_to(agg_to, 0.0) * 2) / 2, cap[i])
                 hero_to = min(rto, cur.bets[hero] + hero_rem)
                 extra = hero_to - agg_to
                 if extra > 1e-9:
-                    m = aggro(opp_ranges[i], k_agg[i] * RAISE_SHARE, rto - agg_to, pot + hero_add + opp_add[i], rank0)
+                    m = aggro(opp_ranges[i], k_agg[i] * RAISE_SHARE, rto - agg_to, pot + hero_add + opp_add[i], rank0, bluff0)
                     p_r = pot + hero_add + rto - cur.bets[opps[i]]
                     rr[i] = (m, opp_ranges[i] * m, hero_to, extra, p_r,
                              calls(opp_ranges[i] * m, sts0, extra, p_r))
@@ -1345,6 +1599,8 @@ class Advisor:
                     "cont_r": [opp_ranges[i] * conts[i] for i in range(n_opp)], "rr": rr}
 
         if to_call > 1e-9:
+            # our raise option keeps the page's default size (the bet plus 75% of the pot after calling,
+            # callers' chips included); raises inside the trials go 3x plus the calls
             agg_to = min(round((cur.cur_bet + 0.75 * (pot + call_amt)) * 2) / 2, cur.bets[hero] + hero_rem)
             sizes = [(f"raise to {agg_to:g}", agg_to)]
         else:
@@ -1356,73 +1612,142 @@ class Advisor:
             if a is not None:
                 aggs[name] = a
 
-        # Checking: an opponent behind may bet (the first whose betting range holds their hand). The
-        # others face that bet like players behind a call: one strength bar, each folding as often as
-        # with everyone it was made into facing it together, the strongest part of what continues
-        # raising. Those between the bettor and us act first, so we call or fold knowing what they
-        # did (per bettor and what they did, whichever pays over the trials); those after us act once
-        # we've called.
-        bets = {}
+        # Checking: an opponent behind may bet (the first whose betting range at either size holds their
+        # hand). The others face that bet like players behind a call: one strength bar, each folding as
+        # often as with everyone it was made into facing it together, the strongest part of what
+        # continues raising. Those between the bettor and us act first, so we fold, call or check-raise
+        # knowing what they did (per bettor, size and what they did, whichever pays over the trials);
+        # those after us act once we've called.
+        bets, bet_masks = {}, {}
         if to_call <= 1e-9:
             pos_of = {i: seq.index(opps[i]) for i in range(n_opp)}
             for j in after:
                 if opps[j] in cur.acted or opps[j] in cur.allin:
                     continue
-                b = min(round(0.66 * pot * 2) / 2, cap[j] - cur.bets[opps[j]], hero_rem)
-                if b <= 1e-9:
+                room = min(cap[j] - cur.bets[opps[j]], hero_rem)
+                b_big = min(round(0.66 * pot * 2) / 2, room)
+                if b_big <= 1e-9:
                     continue
-                m = aggro(opp_ranges[j], keep(b, pot, n_opp, 1.0) * VALUE_SHARE, b, pot, rank0)
+                b_small = min(round(SMALL_BET * pot * 2) / 2, room)
+                b_small = b_small if 1e-9 < b_small < b_big - 1e-9 else None
+                into = [opp_ranges[i] for i in range(n_opp) if i != j] + [hero_range]
+                bet_masks[j] = (b_big, b_small) + _bet_ranges(opp_ranges[j], n_opp, pot, b_big, b_small, rank0, bluff0, into)
                 others = [i for i in range(n_opp) if i != j and opps[i] not in cur.allin
                           and cap[i] - cur.bets[opps[i]] > 1e-9]
-                fold_each = 1.0 - keep(b, pot, n_opp)
-                conts = _joint_top([opp_ranges[i] for i in others], fold_each ** len(others), rank0) if others else []
-                face = {}
-                for i, cont in zip(others, conts):
-                    cost = min(b, cap[i] - cur.bets[opps[i]])
-                    before_us = pos_of[i] > pos_of[j]
-                    p_i = pot + b + (0.0 if before_us else b)   # the pot they face (callers before them aside)
-                    rto = min(round((b + 0.75 * (p_i + cost)) * 2) / 2, cap[i])
-                    hero_to = min(rto, hero_rem)
-                    extra = hero_to - (0.0 if before_us else b)
-                    raise_m = (aggro(opp_ranges[i], _share(opp_ranges[i], cont) * RAISE_SHARE, rto - b, p_i + cost, rank0)
-                               if rto > b + 1e-9 and extra > 1e-9 else None)
-                    face[i] = {"first": before_us, "cost": cost, "cont": cont, "cont_r": opp_ranges[i] * cont,
-                               "raise_m": raise_m, "raise_r": opp_ranges[i] * raise_m if raise_m is not None else None,
-                               "rto": rto, "hero_to": hero_to, "extra": extra,
-                               # after our call we face their raise: call by equity against it (as behind a call)
-                               "we_call": (raise_m is not None and not before_us
-                                           and calls(opp_ranges[i] * raise_m, sts0, extra, p_i + rto))}
-                bets[j] = {"b": b, "m": m, "r": opp_ranges[j] * m, "face": face,
-                           "before": sorted((i for i in others if face[i]["first"]), key=pos_of.get),
-                           "after": sorted((i for i in others if not face[i]["first"]), key=pos_of.get)}
+                for b, m in ((b_big, bet_masks[j][2]), (b_small, bet_masks[j][3])):
+                    if b is None:
+                        continue
+                    fold_each = 1.0 - keep(b, pot, n_opp)
+                    conts = _joint_top([opp_ranges[i] for i in others], fold_each ** len(others), rank0) if others else []
+                    face = {}
+                    for i, cont in zip(others, conts):
+                        cost = min(b, cap[i] - cur.bets[opps[i]])
+                        before_us = pos_of[i] > pos_of[j]
+                        p_i = pot + b + (0.0 if before_us else b)   # the pot they face (callers before them aside)
+                        rto = min(round(_raise_to(b, 0.0 if before_us else b) * 2) / 2, cap[i])
+                        hero_to = min(rto, hero_rem)
+                        extra = hero_to - (0.0 if before_us else b)
+                        raise_m = (aggro(opp_ranges[i], _share(opp_ranges[i], cont) * RAISE_SHARE, rto - b, p_i + cost, rank0, bluff0)
+                                   if rto > b + 1e-9 and extra > 1e-9 else None)
+                        face[i] = {"first": before_us, "cost": cost, "cont": cont, "cont_r": opp_ranges[i] * cont,
+                                   "raise_m": raise_m, "raise_r": opp_ranges[i] * raise_m if raise_m is not None else None,
+                                   "rto": rto, "hero_to": hero_to, "extra": extra,
+                                   # after our call we face their raise: call by equity against it (as behind a call)
+                                   "we_call": (raise_m is not None and not before_us
+                                               and calls(opp_ranges[i] * raise_m, sts0, extra, p_i + rto))}
+                    bets[(j, b)] = {"b": b, "m": m, "r": opp_ranges[j] * m, "face": face,
+                                    "before": sorted((i for i in others if face[i]["first"]), key=pos_of.get),
+                                    "after": sorted((i for i in others if not face[i]["first"]), key=pos_of.get)}
             stuck = [(i, opp_ranges[i]) for i in range(n_opp) if opps[i] in cur.allin]   # all-in: can't act, still in
+
+        xr_cache = {}
+
+        def check_raise(key):
+            """Our check-raise after the bet in `key` (bettor, size, players between who called), to 3x
+            the bet plus their calls: everyone still in faces it (the bettor, the callers, the players
+            behind us), folding together by the joint rule; the strongest part of what continues
+            re-raises 3x and we call that by equity against it. None when we can't raise."""
+            if key in xr_cache:
+                return xr_cache[key]
+            j, b, seen = key
+            bt = bets[(j, b)]
+            face = bt["face"]
+            calls_in = sum(face[i]["cost"] for i in seen)
+            R = min(round(_raise_to(b, calls_in) * 2) / 2, hero_rem)
+            out = None
+            if R > b + 1e-9:
+                facing = sorted([j] + list(seen) + list(bt["after"]), key=pos_of.get)
+                rng_of = {j: bt["r"], **{i: face[i]["cont_r"] for i in seen}, **{i: opp_ranges[i] for i in bt["after"]}}
+                in_of = {j: b, **{i: face[i]["cost"] for i in seen}}
+                p0 = pot + b + calls_in
+                fold = (1.0 - keep(R, p0, len(facing))) ** len(facing)
+                resp = {}
+                for i, c in zip(facing, _joint_top([rng_of[i] for i in facing], fold, rank0)):
+                    r, have = rng_of[i], in_of.get(i, 0.0)
+                    cost = max(0.0, min(R, cap[i] - cur.bets[opps[i]]) - have)
+                    rr_to = min(round(_raise_to(R, 0.0) * 2) / 2, cap[i] - cur.bets[opps[i]])
+                    hero_to = min(rr_to, hero_rem)
+                    rm = (aggro(r, _share(r, c) * RAISE_SHARE, rr_to - R, p0 + R + cost, rank0, bluff0)
+                          if hero_to > R + 1e-9 else None)
+                    p_rr = p0 + R + rr_to - have      # the pot we face their re-raise in (other callers aside)
+                    resp[i] = (c, r * c, rm, r * rm if rm is not None else None, cost, rr_to - have, hero_to,
+                               rm is not None and calls(r * rm, sts0, hero_to - R, p_rr))
+                out = {"to": R, "p0": p0, "facing": facing, "resp": resp}
+            xr_cache[key] = out
+            return out
 
         cums = [np.cumsum(r) for r in opp_ranges]
         # Trials reuse the runouts, each pass with fresh opponent hands, and every action is scored on
         # the same trials. Stop once the gap between the two best actions is clear of the noise.
         min_trials, max_seconds = (1200, 5.0) if accurate else (400, 1.5)
         everyone = list(enumerate(opp_ranges))
-        # per trial; "chk" holds (what we face after checking, value if we call): None (nobody bets),
-        # (bettor, players between who called) or (bettor, "raise", the raiser between)
+        # per trial; "chk" holds (what we face after checking, value if we call, value if we check-raise):
+        # None (nobody bets), (bettor, size, players between who called) or (bettor, size, "raise", the
+        # raiser between; no check-raise then)
         vals = {"call": [], "chk": [], **{name: [] for name in aggs}}
         t_mc = time.time()
 
-        def chk_calls():
-            """The check-line situations we call (over the trials, calling pays)."""
+        def chk_plan():
+            """{check-line situation: "call" / "raise" / "fold"}, whichever pays over the trials."""
             tot = {}
-            for k, v in vals["chk"]:
+            for k, v, x in vals["chk"]:
                 if k is not None:
-                    tot[k] = tot.get(k, 0.0) + v
-            return {k for k, t in tot.items() if t > 0}
+                    t = tot.setdefault(k, [0.0, 0.0, x is not None])
+                    t[0] += v; t[1] += x if x is not None else 0.0
+            return {k: ("raise" if can and t_x > max(t_c, 0.0) else "call" if t_c > 0 or priced(k) else "fold")
+                    for k, (t_c, t_x, can) in tot.items()}
+
+        priced_cache = {}
+
+        def priced(key):
+            """Does our equity against the bettor and the callers between (or the raiser between) pay the
+            price of calling by itself, as our calls on later streets are decided? Such a call is made
+            even where the trials, split by bettor, size and what the players between did, came out
+            slightly negative: their noise (and the later streets' rules) folded top pair against a bet
+            that a draw with less equity called."""
+            if key not in priced_cache:
+                bt = bets[key[:2]]
+                face = bt["face"]
+                if key[2] == "raise":
+                    f = face[key[3]]
+                    ws, cost = [f["raise_r"]], f["hero_to"]
+                    p_ = pot + bt["b"] + f["rto"]
+                else:
+                    ws, cost = [bt["r"]] + [face[i]["cont_r"] for i in key[2]], bt["b"]
+                    p_ = pot + bt["b"] + sum(face[i]["cost"] for i in key[2])
+                priced_cache[key] = calls(ws, sts0, cost, p_)
+            return priced_cache[key]
 
         def summary():
-            """{action: per-trial values} with each check-line bet called only where that pays."""
+            """{action: per-trial values} with each check-line bet called, check-raised or folded,
+            whichever pays."""
             out = {}
             if to_call > 1e-9:
                 out["fold"] = np.zeros(len(vals["call"])); out["call"] = np.array(vals["call"])
             else:
-                ok = chk_calls()
-                out["check"] = np.array([v if k is None or k in ok else 0.0 for k, v in vals["chk"]])
+                plan = chk_plan()
+                out["check"] = np.array([v if k is None else v if plan[k] == "call" else x if plan[k] == "raise" else 0.0
+                                         for k, v, x in vals["chk"]])
             for name in aggs:
                 out[name] = np.array(vals[name])
             return out
@@ -1467,24 +1792,46 @@ class Advisor:
                             p += cost; live.append((i, cont_r[i]))
                     vals["call"].append(res if res is not None else play_out(run, st, hands, live, p, call_amt, cur.cur_bet))
                 else:
-                    first = next((j for j in bets if bets[j]["m"][hands[j]]), None)
+                    first = None
+                    for j in after:
+                        if j in bet_masks:
+                            b_big, b_small, bg, sm = bet_masks[j]
+                            if bg[hands[j]] or sm[hands[j]]:
+                                first = (j, b_big if bg[hands[j]] else b_small)
+                                break
                     if first is None:
-                        vals["chk"].append((None, play_out(run, st, hands, everyone, pot, 0.0, cur.cur_bet)))
+                        vals["chk"].append((None, play_out(run, st, hands, everyone, pot, 0.0, cur.cur_bet), None))
                     else:
                         bt = bets[first]
                         b, face = bt["b"], bt["face"]
-                        p, live, seen, key, res = pot + b, [(first, bt["r"])] + stuck, [], None, None
+                        p, live, seen, key, res, res_x = pot + b, [(first[0], bt["r"])] + stuck, [], None, None, None
                         for i in bt["before"]:          # between the bettor and us
                             f = face[i]
                             if f["raise_m"] is not None and f["raise_m"][hands[i]]:
-                                key = (first, "raise", i)
+                                key = first + ("raise", i)
                                 res = play_out(run, st, hands, [(i, f["raise_r"])] + stuck, p + f["rto"] + f["hero_to"],
                                                f["hero_to"], f["hero_to"])
                                 break
                             if f["cont"][hands[i]]:
                                 p += f["cost"]; live.append((i, f["cont_r"])); seen.append(i)
                         if key is None:
-                            key = (first, tuple(seen))
+                            key = first + (tuple(seen),)
+                            xr = check_raise(key)
+                            if xr is not None:          # we check-raise
+                                R = xr["to"]
+                                px, livex = xr["p0"] + R, list(stuck)
+                                for i in xr["facing"]:
+                                    c, r_c, rm, r_rm, cost, rr_add, hero_to, we_call = xr["resp"][i]
+                                    if rm is not None and rm[hands[i]]:
+                                        res_x = (play_out(run, st, hands, [(i, r_rm)] + stuck, px + rr_add + hero_to - R,
+                                                          hero_to, hero_to) if we_call else -R)
+                                        break
+                                    if c[hands[i]]:
+                                        px += cost; livex.append((i, r_c))
+                                if res_x is None:
+                                    # everyone folded to it: the pot with their bet and our call of it, raked
+                                    res_x = (won(xr["p0"] + b) - b if len(livex) == len(stuck) == 0
+                                             else play_out(run, st, hands, livex, px, R, R))
                             p += b
                             for i in bt["after"]:       # after us, once we've called
                                 f = face[i]
@@ -1496,7 +1843,7 @@ class Advisor:
                                     p += f["cost"]; live.append((i, f["cont_r"]))
                             if res is None:
                                 res = play_out(run, st, hands, live, p, b, b)
-                        vals["chk"].append((key, res))
+                        vals["chk"].append((key, res, res_x))
                 for name, a in aggs.items():
                     res = None
                     for i in after:
@@ -1515,7 +1862,9 @@ class Advisor:
                     vals[name].append(res)
             if trials >= min_trials:
                 d, se = gap()
-                if se < max(0.25, abs(d) / 3) or time.time() - t_mc > max_seconds or trials >= 20000:
+                # (or within 2% of the pot: two lines that close are a tie for advice, and chasing the noise
+                # between them ran into the time cap every time, so the same spot gave different numbers)
+                if se < max(0.25, abs(d) / 3, 0.02 * pot) or time.time() - t_mc > max_seconds or trials >= 20000:
                     break
             elif time.time() - t_mc > 3 * max_seconds:
                 break
@@ -1524,6 +1873,7 @@ class Advisor:
         ev = {k: float(v.mean()) if len(v) else 0.0 for k, v in summary().items()}
         d, se = gap()
         acts = []
+        check_line = None
         if to_call > 1e-9:
             need = call_amt / (pot + call_amt)
             acts.append({"action": "fold", "freq": 0.0, "ev_bb": 0.0})
@@ -1535,15 +1885,26 @@ class Advisor:
                                          for i in behind) + " of their range")
         else:
             acts.append({"action": "check", "freq": 0.0, "ev_bb": round(ev["check"], 2)})
-            faced = [k for k, _ in vals["chk"] if k is not None]
+            faced = [k for k, _, _ in vals["chk"] if k is not None]
             if faced:
-                ok = chk_calls()
-                n_raised = sum(1 for k in faced if k[1] == "raise")
-                n_called = sum(1 for k in faced if k[1] != "raise" and k[1])
+                plan = chk_plan()
+                n_raised = sum(1 for k in faced if k[2] == "raise")
+                n_called = sum(1 for k in faced if k[2] != "raise" and k[2])
+                n_small = sum(1 for k in faced if k[1] < 0.5 * pot)
+                n_call = sum(1 for k in faced if plan[k] == "call")
+                n_xr = sum(1 for k in faced if plan[k] == "raise")
+                plain = [k for k in faced if k[2] != "raise"]
+                check_line = {"bet": len(faced) / trials, "small": n_small / len(faced),
+                              "call": n_call / len(faced), "raise": n_xr / len(faced),
+                              "fold": 1.0 - (n_call + n_xr) / len(faced),
+                              # continuing against a bet nobody between raised
+                              "continue_unraised": sum(1 for k in plain if plan[k] != "fold") / max(len(plain), 1)}
                 between = (f"; a player between the bettor and you calls it {n_called / len(faced) * 100:.0f}% of the time"
                            f" and raises {n_raised / len(faced) * 100:.0f}%") if n_raised + n_called else ""
-                notes.append(f"if you check, someone bets {len(faced) / trials * 100:.0f}% of the time{between}"
-                             f"; you'd call {sum(1 for k in faced if k in ok) / len(faced) * 100:.0f}% of those")
+                notes.append(f"if you check, someone bets {len(faced) / trials * 100:.0f}% of the time"
+                             f" (a third of the pot in {n_small / len(faced) * 100:.0f}% of those){between}"
+                             f"; you'd call {n_call / len(faced) * 100:.0f}% of those"
+                             f" and check-raise {n_xr / len(faced) * 100:.0f}%")
         for name, a in aggs.items():
             acts.append({"action": name, "freq": 0.0, "ev_bb": round(ev[name], 2), "amount_bb": round(a["to"], 2)})
             notes.append(f"vs {name}: " + ", ".join(f"{opps[i]} continues with {a['k'][i]*100:.0f}%"
@@ -1551,12 +1912,21 @@ class Advisor:
         pick = max(range(len(acts)), key=lambda i: acts[i]["ev_bb"])
         acts[pick]["freq"] = 1.0
         notes.append(f"{trials} trials; the best action leads the next by {d:.2f} ± {se:.2f} bb")
-        return {"street": cur.name, "hero": hero, "hand": hand_class(hole), "board": cards_str(board),
-                "players": len(remaining), "multiway": True, "opponents": opps,
-                "equity_vs_field": round(eq, 3), "pot_bb": round(pot, 2), "to_call_bb": round(call_amt, 2),
-                "actions": acts, "recommended": acts[pick]["action"], "sampled": acts[pick]["action"],
-                "notes": notes + [f"{len(remaining)} players in the pot: the solver is heads-up only, this is a Monte Carlo heuristic"],
-                "seconds": round(time.time() - t0, 2)}
+        out = {"street": cur.name, "hero": hero, "hand": hand_class(hole), "board": cards_str(board),
+               "players": len(remaining), "multiway": True, "opponents": opps,
+               "equity_vs_field": round(eq, 3), "pot_bb": round(pot, 2), "to_call_bb": round(call_amt, 2),
+               "actions": acts, "recommended": acts[pick]["action"], "sampled": acts[pick]["action"],
+               "notes": notes + [f"{len(remaining)} players in the pot: the solver is heads-up only, this is a Monte Carlo heuristic"],
+               "seconds": round(time.time() - t0, 2)}
+        if ls_stats["bets"]:
+            n_b = ls_stats["bets"]
+            out["later_streets"] = {"bets": n_b, "small": round(ls_stats["small"] / n_b, 3),
+                                    "multi_called": round(ls_stats["multi_called"] / n_b, 3),
+                                    "raised": round(ls_stats["raises"] / n_b, 3),
+                                    "raises_over_calls": ls_stats["raises_over_calls"]}
+        if check_line is not None:
+            out["check_line"] = {k: round(v, 3) for k, v in check_line.items()}   # after a check: how often someone bets, and our plan
+        return out
 
     # ------------------------------------------------------------ helpers
     @staticmethod
@@ -1677,7 +2047,7 @@ class Advisor:
                 notes.append(f"{street}: the solve rarely has {a['pos']} {a['action']} here "
                              f"({(rp * s).sum() / max(rp.sum(), 1e-12) * 100:.0f}% of their range), so their range "
                              "comes from simple betting rules instead")
-                sc, rank = _street_rank(tuple(board))
+                sc, rank, bluff = _street_info(tuple(board))
                 cur_bet, pot_total = max(bets), pot + bets[0] + bets[1]
                 act_ = a["action"]
                 amt = a.get("to") if a.get("to") is not None else a.get("amount")
@@ -1685,7 +2055,7 @@ class Advisor:
                       else node.children[k].bets[p] if act_ in ("bet", "raise") and isinstance(node.children[k], Decision)
                       else cur_bet)
                 full = expand(sol.ctx, rp) * (sc >= 0)
-                m = _rule_mask(full, to, cur_bet, max(0.0, cur_bet - bets[p]), pot_total, 1, rank)
+                m = _rule_mask(full, to, cur_bet, max(0.0, cur_bet - bets[p]), pot_total, 1, rank, bluff=bluff)
                 s = _soften(full, m)[sol.ctx.active]
             elif smoothing > 0 and only is None:
                 s = (1.0 - smoothing) * s + smoothing / len(node.names)
