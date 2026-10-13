@@ -206,7 +206,12 @@ VS_RFI[("BB", "SB")] = {
 # heads-up 3bet, which the charts now give (7.3% against 8.0%). GTO Wizard's 13% and 7.9% over CO/UTG
 # + BTN + SB ("Responding to BB squeezes") are MTT solves with 2.3bb opens and two callers: not matched.
 # SB and BTN squeezes follow their 3bet charts the same way (SB over CO + BTN 12.2%, over UTG + HJ
-# 5.2%; BTN over UTG + HJ 4.9%); no cash numbers for those were found.
+# 5.2%; BTN over UTG + HJ 4.9%); no cash numbers for those were found. A later search (GTO Wizard's
+# blog, gtopreflop.com, Poker Academy, pokalab, BeyondGTO, Preflop Wizard) found none either:
+# gtopreflop.com's database has no node facing two players in the pot, BeyondGTO publishes no
+# multiway ranges, GTO Wizard's NL500 cash articles cover the button's flats (calls 5% / 3bets 12% vs
+# a CO open, 8.2% / 7.5% vs UTG) but not the squeezes over them, and the squeeze tables that turn up
+# (BB over BTN + SB 9-13%, SB over BTN + CO 6-11%) are labelled approximations, not solves.
 for _o in ("UTG", "HJ", "CO", "BTN", "SB"):
     VS_RFI[("BB", _o)]["call"] = np.minimum(VS_RFI[("BB", _o)]["call"], 1.0 - VS_RFI[("BB", _o)]["3bet"])
 
@@ -423,7 +428,10 @@ LIMP = R("22-99, TT+:0.2, A2s-AJs, AQs+:0.2, A2o-ATo, AJo+:0.3, K2s+, K9o+, Q6s+
 # grindlab.gg/en/blog/iso-raise-vs-limper-poker); a common default is the open range of the seat
 # before (BTN raises the CO's opens). Here UTG (7+ handed, a seat behind an early limp) 14%, HJ 18%,
 # CO 24%, BTN 36%, SB 19% (out of position, the big blind behind), against opens of 17/19/27/46/50%.
-# The old charts raised 10/10/13/16/10%: well under half the button's opens.
+# The old charts raised 10/10/13/16/10%: well under half the button's opens. No solver frequencies for
+# cash iso-raises were found: GTO Wizard's multiway preflop solver (2026) allows only iso-raise or fold
+# facing a limp outside the blinds, and its published limper study is live MTT (sizes 4-6bb at 100bb,
+# iso frequencies only in charts); solved 6-max 100bb packs are mostly no-limp trees.
 ISO = {
     "UTG": R("55+, A8s+, A5s-A4s, KTs+, QTs+, JTs, T9s:0.5, ATo+, KJo+"),
     "HJ": R("44+, 33:0.5, A2s+, K9s+, QTs+, Q9s:0.5, JTs, J9s:0.5, T9s, 98s:0.5, ATo+, KJo+, QJo:0.5"),

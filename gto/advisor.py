@@ -32,9 +32,16 @@ FOLD_SHADE = 0.75   # multiway: opponents fold this share of what a balanced def
 # mattered there, so it stays a judgment call).
 NARROW_SOFT = 0.3   # multiway narrowing: weight kept by hands the rules say would have played differently
 OFF_RULE_MAX = 0.25  # ...but those hands are at most this share of the narrowed range (a big bet's rule range is small)
-# multiway: the small bet (share of the pot), beside 66%, for us and the opponents on every street. A
-# judgment value, not fitted: no published data found on multiway sizing; a third of the pot is the
-# common small size in solver outputs and in the heads-up trees here.
+# multiway: the small bet (share of the pot), beside 66%, for us and the opponents on every street.
+# Solver data backs a third of the pot: GTO Wizard's 3-way flop study ("Playing In Position Against Two
+# Callers", 100bb 8-max cEV, LJ opens, SB and BB call, 20 weighted flops, sizes 33/66/100%) has the opener
+# checking 34.1%, betting 33% 56.2%, 66% 8.4% and pot 1.3% (heads-up vs the BB: 23.0/38.1/20.9/18.0), so
+# 85% of its 3-way bets are the small size, where heads-up it was 49%. Larger multiway bets show up
+# where the bettor has the nut advantage (GTO Wizard's 3-way launch post: BTN vs SB + BB on QsTs7h bets
+# 75% when checked to). The field's betting rules below (_bet_ranges) don't reproduce that mix: the
+# 6-max UTG opener into SB + BB checks 67%, bets 66% 26% and 33% 7% over 60 random flops (heads-up vs
+# the BB 47/45/8), since the big bet takes the top of the range and the small one only the thin layer
+# next to it; hero's own size is picked by EV.
 SMALL_BET = 0.33
 HIT_TOP = 0.15      # multiway bluffs: a hand "gets there" on a runout ending in this top share of combos (judgment)
 SHOWDOWN_Q = 0.6    # ...and has showdown value (bluffs last) when it usually ends above this share (judgment)
