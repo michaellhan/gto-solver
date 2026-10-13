@@ -189,10 +189,12 @@ class TestAdvisor(unittest.TestCase):
         r = adv.advise(dict(st, preflop=std))
         self.assertEqual(r["recommended"], "fold")
         self.assertEqual(r["notes"], ["preflop: chart approximation"])
-        # a min-3bet with two callers: 2.5bb into 16bb, 66 calls
+        # a min-3bet with two callers: 2.5bb into 16bb, 66 calls (from a fold at the standard price)
         multi = [R("UTG", "raise", 2.5), R("HJ", "call"), R("CO", "raise", 5), R("BTN", "fold"), R("SB", "call"), R("BB", "fold")]
         r = adv.advise(dict(st, preflop=multi))
-        self.assertEqual(r["recommended"], "call")
+        # (66 called 100% here when HJ's flat was 8% of hands; the published HJ vs UTG chart flats 2.5%,
+        # mostly pairs, and against them 66 mixes)
+        self.assertGreater(r["actions"][1]["freq"], 0.3)
         self.assertTrue(any("price" in n for n in r["notes"]))
         # a huge 3bet: a chart call (99 calls 90% vs a standard 3bet) folds at the worse price
         big = [R("UTG", "raise", 2.5), R("HJ", "fold"), R("CO", "raise", 20)] + [R(p, "fold") for p in ("BTN", "SB", "BB")]
@@ -264,9 +266,11 @@ class TestAdvisor(unittest.TestCase):
         lrr = [R("UTG", "call")] + F("HJ", "CO") + [R("BTN", "raise", 4)] + F("SB", "BB") + [R("UTG", "raise", 14)]
         self.assertEqual(go("BTN", "TsTd", lrr)[0]["recommended"], "fold")
         self.assertEqual(go("BTN", "KsKd", lrr)[0]["recommended"], "all-in")
-        # 9-handed early opens are tighter, so KJs calls less than against a 6-max UTG
-        self.assertLess(go("UTG1", "KhJh", [R("UTG", "raise", 2.5)], players=9)[1]["call"]["freq"],
-                        go("HJ", "KhJh", [R("UTG", "raise", 2.5)])[1]["call"]["freq"])
+        # 9-handed early opens are tighter, so KJs continues less than against a 6-max UTG (where it now
+        # mostly 3bets: the 6-max chart is 3bet-or-fold, matched to published solver output)
+        cont = lambda a: a["call"]["freq"] + a["raise"]["freq"]
+        self.assertLess(cont(go("UTG1", "KhJh", [R("UTG", "raise", 2.5)], players=9)[1]),
+                        cont(go("HJ", "KhJh", [R("UTG", "raise", 2.5)])[1]))
         # facing a 3bet cold: in position calls more than the big blind out of position, whose premiums 4bet
         early3 = [R("UTG", "raise", 2.5), R("HJ", "raise", 7.5)]
         btn = go("BTN", "QsQd", early3 + [R("CO", "fold")])[1]
@@ -298,10 +302,13 @@ class TestAdvisor(unittest.TestCase):
             ("BB", co + F("BTN", "SB"), 0.42, 0.55),
             ("BB", btn + F("SB"), 0.60, 0.72),
             ("BB", F("UTG", "HJ", "CO", "BTN") + [R("SB", "raise", 3)], 0.65, 0.80),
-            ("BTN", co, 0.15, 0.24),
+            # published solver: BTN vs a 2.5bb CO open folds 84.5% (calls 3.0%, 3bets 12.5%; Poker Academy)
+            ("BTN", co, 0.12, 0.20),
             ("HJ", utg, 0.08, 0.14),
             ("UTG", utg + [R("HJ", "raise", 7.5)] + F("CO", "BTN", "SB", "BB"), 0.35, 0.50),
             ("BTN", btn + [R("SB", "raise", 10), R("BB", "fold")], 0.38, 0.55),
+            # published: BTN continues ~45.4% (calls 33.9%, 4bets 11.5%) vs a BB 3bet to 11bb (888poker)
+            ("BTN", btn + [R("SB", "fold"), R("BB", "raise", 11)], 0.40, 0.52),
             # published solver: CO continues 36.3% (calls 17.2%, 4bets 19.1%) vs a BTN 3bet to 7.5bb
             ("CO", co + [R("BTN", "raise", 7.5)] + F("SB", "BB"), 0.32, 0.45),
         ]
@@ -367,11 +374,13 @@ class TestAdvisor(unittest.TestCase):
         self.assertTrue(0.28 <= cont <= 0.45, cont)
         ix = lambda h: COMBO_INDEX[tuple(sorted(cards(h)))]
         self.assertGreater(1 - s["fold"][ix("8s8d")], 0.9)
-        self.assertGreater(1 - s["fold"][ix("JhTh")], 0.9)
+        # (JTs used to be here too; against the published BTN vs CO chart the flat is mostly pairs and
+        # AJs/ATs, ~3% of hands, and its 30% are 77-JJ)
+        self.assertGreater(1 - s["fold"][ix("7s7d")], 0.9)
         after = preflop_ranges(pre + [R("CO", "fold"), R("BTN", "call")], T, 100)["BTN"]
-        self.assertGreater(after.sum(), 30)
+        self.assertGreater(after.sum(), 15)   # of ~39 flatting combos (was 30 of ~125 before the published BTN vs CO chart)
         s4 = preflop_strategy("BTN", pre + [R("CO", "raise", 23)], T, 100)
-        self.assertLess(float((w * (1 - s4["fold"])).sum() / w.sum()), 0.05)
+        self.assertLess(float((w * (1 - s4["fold"])).sum() / w.sum()), 0.12)   # the flat now holds JJ-TT more (it was 125 combos of mostly weaker hands)
 
     def test_sb_flat_vs_early_open_keeps_traps(self):
         """SB flats UTG, BB squeezes, SB calls: the flat held only 66-99 and suited broadways below KQs,
@@ -905,7 +914,9 @@ class TestExploit(unittest.TestCase):
         line = lambda act: F("UTG", "HJ") + [{"pos": "CO", "action": "raise", "to": 2.5}, {"pos": "BTN", "action": act}]
         gto_call, pool_call = preflop_ranges(line("call"), T, 100)["BTN"], preflop_ranges(line("call"), T, 100, "BB")["BTN"]
         gto_3b, pool_3b = preflop_ranges(line("raise"), T, 100)["BTN"], preflop_ranges(line("raise"), T, 100, "BB")["BTN"]
-        self.assertAlmostEqual(pool_3b.sum() / gto_3b.sum(), exploit.POOL_3BET_SCALE, places=2)
+        # up to POOL_3BET_SCALE: the extra comes from calls, and the published BTN vs CO chart calls 2.9% of
+        # hands against 12.2% 3bets, so they run out at ~1.23x
+        self.assertTrue(1.15 <= pool_3b.sum() / gto_3b.sum() <= exploit.POOL_3BET_SCALE + 0.005, pool_3b.sum() / gto_3b.sum())
         self.assertGreater(pool_call.sum(), 2 * gto_call.sum())
         # the extra 3bets are the strongest calls: the pool's 3bet range is the chart's plus better hands
         self.assertTrue(np.all(pool_3b >= gto_3b - 1e-9))
@@ -992,16 +1003,27 @@ class TestPoolOverfold(unittest.TestCase):
                R("BB", "fold"), R("UTG", "fold"), R("CO", "call"), R("BTN", "fold")]
         st = {"players": 6, "hero": "SB", "hole": "KdAd", "board": "Qd6dQcAc", "stack": 100, "preflop": pre,
               "flop": [R("SB", "check"), R("CO", "check")], "opponents": "pool"}
-        from gto import exploit
+        from gto import exploit, advisor
+        from unittest import mock
         jam_ev = lambda: next(a["ev_bb"] for a in Advisor(time_budget=2.0, prior_budget=1.0).advise(st)["actions"]
                               if a["action"] == "all-in")
-        capped = jam_ev()
+        # the case as found: CO's flat against the UTG open from the chart of the time (8% of hands, mostly
+        # broadways and suited hands). The published chart flats 2.5%, mostly pairs, whose trips and full
+        # houses call the jam under either rule, so the bug doesn't show in this spot with it
+        old_co = {"3bet": pf.R("QQ+, JJ:0.5, AKs, AKo:0.7, AQs, A5s, A4s:0.5, KQs:0.3"),
+                  "call": pf.R("22-TT, JJ:0.5, AKo:0.3, AQo, AJs, ATs, KQs:0.7, KJs, KTs:0.5, QJs, QTs:0.5, JTs, T9s, 98s, 87s:0.5")}
+        clear = lambda: (pf._STRAT_CACHE.clear(), advisor._PF_CACHE.clear())
         cap, protect = exploit.OVERFOLD_CAP, exploit.OVERFOLD_PROTECT
-        try:   # the old rule: extra folds as a flat share of the range, strong hands included
-            exploit.OVERFOLD_CAP, exploit.OVERFOLD_PROTECT = 1e9, 2.0
-            uncapped = jam_ev()
-        finally:
-            exploit.OVERFOLD_CAP, exploit.OVERFOLD_PROTECT = cap, protect
+        with mock.patch.dict(pf.VS_RFI, {("CO", "UTG"): old_co}):
+            clear()
+            try:
+                capped = jam_ev()
+                # the old rule: extra folds as a flat share of the range, strong hands included
+                exploit.OVERFOLD_CAP, exploit.OVERFOLD_PROTECT = 1e9, 2.0
+                uncapped = jam_ev()
+            finally:
+                exploit.OVERFOLD_CAP, exploit.OVERFOLD_PROTECT = cap, protect
+                clear()
         # uncapped, nobody calls the jam (worth exactly the pot); capped, the pool's strong hands call it.
         # Compared rather than held to a margin: CO's range here (and so how close every option is to the
         # pot) moves with the preflop pool model
@@ -1053,7 +1075,7 @@ class TestQuickSweep(unittest.TestCase):
 class TestPreflopSubgame(unittest.TestCase):
     def test_converges_and_is_sane(self):
         """The 3bet-pot subgame (pf_solve) converges, premiums never fold (AA and KK call the jam),
-        trash never continues, and there are bluffs: blocker 4bets and non-premium jams."""
+        trash never continues, and there are 4bets beyond the value core and non-premium jams."""
         from gto.pf_solve import solve, Spot
         from gto.pf_classes import to_classes, CLASS_INDEX as C
         R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
@@ -1070,14 +1092,28 @@ class TestPreflopSubgame(unittest.TestCase):
         from gto.pf_classes import equity_matrix, PAIR_COMPAT
         wo, wt = to_classes(rng["CO"]), to_classes(rng["BTN"])
         eq = (equity_matrix() * PAIR_COMPAT * wt).sum(1) / (PAIR_COMPAT * wt).sum(1)
-        weak = [i for i in np.argsort(eq) if wo[i] > 0.5][:5]
+        weak = _weakest_offsuit(eq, wo)
         self.assertGreater(min(S["o_fold"][i] for i in weak), 0.99)
-        self.assertGreater(S["o_4bet"][C["KQs"]] + S["o_4bet"][C["KJs"]], 0.5)
+        # 4bets beyond the value core (KQs/KJs blocker bluffs against the old, narrower BTN 3bet; against
+        # the published 12.5% one, AQo, KQo, TT-99 and small pairs)
+        core = [C[h] for h in ("AA", "KK", "QQ", "JJ", "AKs", "AKo")]
+        w4 = wo * S["o_4bet"]
+        self.assertGreater(float(w4.sum() - w4[core].sum()), 0.5)
         # some jams aren't premiums (which hands bluff depends on the realization model)
         prem = [C[h] for h in ("AA", "KK", "QQ", "AKs", "AKo")]
         jam = wt_ = to_classes(rng["BTN"]) * S["t_jam"]
         self.assertGreater(float(jam.sum() - jam[prem].sum()), 0.5)
 
+
+
+def _weakest_offsuit(e, wo):
+    """The opener's five lowest-equity unpaired offsuit hands against the 3bet range (classes it opens
+    more than half the time). Suited connectors and small pairs are left out: against the published,
+    wider 3bet ranges (BTN 3betting 65s/54s against a CO open, CO 3betting 7% against UTG) 54s-76s and
+    22-33 rank among the lowest-equity opens, and their playability makes calling them sound, so they
+    aren't trash that must fold."""
+    from gto.pf_classes import CLASSES
+    return [i for i in np.argsort(e) if wo[i] > 0.5 and CLASSES[i].endswith("o")][:5]
 
 
 def _subgame_cases():
@@ -1185,10 +1221,11 @@ class TestRealizationTable(unittest.TestCase):
                 self.assertLess(S["t_fold"][C[h]], 0.01, (name, h))
             self.assertGreater(S["o_vs_jam"][C["AA"]], 0.99, name)
             # (KK facing the jam: see TestRealizationModel.test_kk_calls_the_jam)
-            # the weakest hands the opener opened fold to the 3bet
+            # the weakest hands the opener opened don't call the 3bet
             e = (equity_matrix() * PAIR_COMPAT * wt).sum(1) / (PAIR_COMPAT * wt).sum(1)
-            weak = [i for i in np.argsort(e) if wo[i] > 0.5][:5]
-            self.assertGreater(min(S["o_fold"][i] for i in weak), 0.95, name)
+            weak = _weakest_offsuit(e, wo)
+            # never call (a blocker 4bet bluff, KTo against BTN's wider published 3bet, is fine here)
+            self.assertLess(max(S["o_call"][i] for i in weak), 0.05, name)
 
 
     # Known failure: the raw table is noisy per class, so pair EVs can come out of order (CO vs BTN: 99
@@ -1287,8 +1324,9 @@ class TestRealizationModel(unittest.TestCase):
                 self.assertLess(S["t_fold"][C[h]], 0.01, (name, h))
             self.assertGreater(S["o_vs_jam"][C["AA"]], 0.99, name)
             e = (equity_matrix() * PAIR_COMPAT * wt).sum(1) / (PAIR_COMPAT * wt).sum(1)
-            weak = [i for i in np.argsort(e) if wo[i] > 0.5][:5]
-            self.assertGreater(min(S["o_fold"][i] for i in weak), 0.95, name)
+            weak = _weakest_offsuit(e, wo)
+            # never call (a blocker 4bet bluff, KTo against BTN's wider published 3bet, is fine here)
+            self.assertLess(max(S["o_call"][i] for i in weak), 0.05, name)
             ev = _continue_evs(S, wo, wt, spot)
             pairs = [ev[C[p]] for p in ("AA", "KK", "QQ", "JJ", "TT", "99", "88", "77") if wo[C[p]] > 0.5]
             for hi, lo in zip(pairs, pairs[1:]):
