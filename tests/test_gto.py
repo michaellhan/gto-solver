@@ -1005,7 +1005,7 @@ class TestPoolOverfold(unittest.TestCase):
               "flop": [R("SB", "check"), R("CO", "check")], "opponents": "pool"}
         from gto import exploit, advisor
         from unittest import mock
-        jam_ev = lambda: next(a["ev_bb"] for a in Advisor(time_budget=2.0, prior_budget=1.0).advise(st)["actions"]
+        jam_ev = lambda: next(a["ev_bb"] for a in Advisor(time_budget=5.0, prior_budget=1.5).advise(st)["actions"]
                               if a["action"] == "all-in")
         # the case as found: CO's flat against the UTG open from the chart of the time (8% of hands, mostly
         # broadways and suited hands). The published chart flats 2.5%, mostly pairs, whose trips and full

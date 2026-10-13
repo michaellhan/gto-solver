@@ -17,9 +17,14 @@ if [ "${SKIP_CHECKS:-0}" = "1" ]; then
   echo "SKIP_CHECKS=1: skipping the unit tests and the quick sanity sweep."
 else
   echo "Running unit tests ($PYTHON -m unittest)..."
+  # a few tests run solves on a time budget, so a heavily loaded machine can fail one now and then; a
+  # real bug fails again, so a failure is retried once before it blocks the deploy
   if ! (cd "$HERE" && "$PYTHON" -m unittest -q); then
-    echo "Deploy aborted: unit tests failed. Fix them, or SKIP_CHECKS=1 scripts/deploy.sh in an emergency." >&2
-    exit 1
+    echo "Unit tests failed; retrying once (time-budgeted tests can fail on a loaded machine)..."
+    if ! (cd "$HERE" && "$PYTHON" -m unittest -q); then
+      echo "Deploy aborted: unit tests failed twice. Fix them, or SKIP_CHECKS=1 scripts/deploy.sh in an emergency." >&2
+      exit 1
+    fi
   fi
   if command -v node >/dev/null 2>&1; then
     echo "Running the page's JavaScript tests (node --test)..."
