@@ -14,13 +14,26 @@ Speed tricks (pure Python + numpy):
 """
 from __future__ import annotations
 import random
+import sys
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
-np.seterr(divide="ignore", over="ignore", invalid="ignore")
 from .cards import ALL_COMBOS, COMBO_INDEX
 from .evaluator import eval_board
+np.seterr(divide="ignore", over="ignore", invalid="ignore")
+# The browser's Pyodide numpy has no BLAS and its matmul is a plain loop, so a browser flop solve is
+# ~95% equity-leaf matvecs (arithmetic, not call overhead); einsum's dot-product loops run them and the
+# compat sums ~3x faster there. Natively BLAS matmul is far faster than einsum and is kept.
+NO_BLAS = sys.platform == "emscripten"
+
+
+def _matvec(M, x):
+    """M: (B, R, C) matrices, x: (..., B, C) vectors -> (..., B, R), each vector times its row's matrix."""
+    if NO_BLAS:
+        return np.einsum("bij,...bj->...bi", M, x)
+    return np.matmul(M, x[..., None])[..., 0]
+
 
 N_FULL = 1326
 MEMBER_FULL = np.zeros((52, N_FULL))
@@ -78,6 +91,7 @@ class Ctx:
         self.member32 = self.member.astype(np.float32)
         self.ca = CA_FULL[active]
         self.cb = CB_FULL[active]
+        self.cab = np.concatenate([self.ca, self.cb])     # both cards' columns, gathered in one call
         self.compat = 1.0 - np.clip(self.member.T @ self.member, 0, 1)
         self.cfg = cfg
         self.rng = random.Random(cfg.seed)
@@ -263,11 +277,14 @@ class Ranking:
 
 # ----------------------------------------------------------------- tree nodes
 class Terminal:
-    __slots__ = ("boards", "kind", "folder", "inv", "M")
+    """`inv`: each player's chips in, floats, or (B, 1) float32 columns for a merged terminal (one
+    value per batch row). `tile`: set on a merged equity leaf whose rows repeat the same `tile` boards."""
+    __slots__ = ("boards", "kind", "folder", "inv", "M", "tile")
 
     def __init__(self, boards, kind, inv, folder=None):
         self.boards, self.kind, self.inv, self.folder = boards, kind, inv, folder
         self.M = None
+        self.tile = None
 
 
 class Chance:
@@ -311,13 +328,15 @@ class Decision:
         return self.boards[0]
 
     def strategy(self, sel=None) -> np.ndarray:
-        # regret matching in as few numpy calls as possible (the solve is call-overhead bound, most of all
-        # in the browser's Pyodide): one in-place divide where the positive regrets sum above 0
+        # regret matching in as few numpy calls as possible (a native solve is call-overhead bound): one
+        # in-place divide, then uniform wherever no regret is positive (rare once a solve is under way)
         pos = np.maximum(self.regret if sel is None else self.regret[sel], 0.0)
         tot = pos.sum(axis=1, keepdims=True)
-        out = np.full_like(pos, 1.0 / len(self.names))
-        np.divide(pos, tot, out=out, where=tot > 0)
-        return out
+        np.divide(pos, tot, out=pos)
+        zero = tot == 0
+        if zero.any():
+            np.copyto(pos, np.float32(1.0 / len(self.names)), where=zero)
+        return pos
 
     def avg_strategy(self, sel=None) -> np.ndarray:
         """(B, A, N) average strategy (rows `sel` only if given)."""
@@ -468,8 +487,59 @@ class TreeBuilder:
         return Decision(boards, p, names, kids, pot_total, bets, self.ctx.n)
 
 
+# ----------------------------------------------------------------- merged subtrees
+def _shape(node) -> tuple:
+    """A subtree's structure without pots, bet amounts or cards: subtrees with the same shape can
+    be traversed as one batch."""
+    if isinstance(node, Decision):
+        return ("D", node.player, len(node.boards), tuple(_shape(c) for c in node.children))
+    if isinstance(node, Chance):
+        return ("C", node.K, node.sample, node.avail, len(node.boards), _shape(node.child))
+    return ("T", node.kind, node.folder, len(node.boards))
+
+
+def _merge(nodes, pairs: list):
+    """One node standing for same-shaped subtrees `nodes`, their batch rows stacked in order.
+    Appends (merged decision, originals) to `pairs` so the originals' arrays can become views."""
+    first = nodes[0]
+    boards = [b for n in nodes for b in n.boards]
+    if isinstance(first, Decision):
+        m = Decision.__new__(Decision)
+        m.boards, m.player, m.names, m.pot_now, m.bets, m.B = boards, first.player, first.names, None, None, len(boards)
+        m.children = [_merge([n.children[a] for n in nodes], pairs) for a in range(len(first.children))]
+        m.regret = np.concatenate([n.regret for n in nodes])
+        m.ssum = np.concatenate([n.ssum for n in nodes])
+        pairs.append((m, nodes))
+        return m
+    if isinstance(first, Chance):
+        return Chance(boards, first.K, np.concatenate([n.masks for n in nodes]), _merge([n.child for n in nodes], pairs),
+                      first.avail, first.sample)
+    # chips in differ between the merged lines (different pots): one float32 per row, which is what a
+    # Python float becomes when it multiplies a float32 array, so the results don't change
+    inv = tuple(np.concatenate([np.full((len(n.boards), 1), n.inv[q], dtype=np.float32) for n in nodes]) for q in (0, 1))
+    t = Terminal(boards, first.kind, inv, first.folder)
+    if first.kind == "leaf" and all(n.boards == first.boards for n in nodes):
+        t.tile = len(first.boards)
+    return t
+
+
+def _has_sampling(node) -> bool:
+    if isinstance(node, Chance):
+        return node.sample is not None or _has_sampling(node.child)
+    return isinstance(node, Decision) and any(_has_sampling(c) for c in node.children)
+
+
 # ----------------------------------------------------------------- solver
 class Solver:
+    """Speed (natively the solve is bound by Python and numpy per-call overhead, besides the leaf matvecs):
+    * the subtrees below the root street's chance nodes mostly share one shape (pots differ, actions
+      don't), so same-shaped ones are merged into one batch at setup and traversed once: a flop solve
+      walks ~30 decision nodes per pass instead of ~90. The root street is walked down to collect the
+      reaches arriving at each chance node, the merged subtrees run, and the root street is walked back up.
+    * every node's regrets and strategy sums are views into two flat buffers, discounted in one call
+    * a player's strategies computed in the other player's pass are reused in their own (unchanged regrets)
+    All of it gives the same numbers as walking the tree node by node. The original nodes' arrays are views of the merged ones, so reading and EV code sees current values."""
+
     def __init__(self, ctx: Ctx, root: Decision, dead: set):
         self.ctx, self.root, self.dead = ctx, root, dead
         self.iters = 0
@@ -478,6 +548,13 @@ class Solver:
         self.sampling = True          # chance sampling while training; off for EVs and reports
         self._nodes: List[Decision] = []
         self._collect(root)
+        self._groups: List[Tuple[Chance, List[Chance]]] = []
+        self._merge_subtrees()
+        # training on a numpy without BLAS (see NO_BLAS) skips the leaf-matrix rows and columns of combos
+        # outside each player's range (always 0 reach): ~1/3 less arithmetic on a typical flop
+        self.trim_leaves = NO_BLAS
+        self._live = None
+        self._trimmed: Dict[tuple, np.ndarray] = {}
 
     def _collect(self, node):
         if isinstance(node, Decision):
@@ -487,36 +564,107 @@ class Solver:
         elif isinstance(node, Chance):
             self._collect(node.child)
 
+    def _merge_subtrees(self):
+        # the root street's chance nodes, minus sampled ones (they draw their cards in traversal order)
+        points, stack = [], [self.root]
+        while stack:
+            n = stack.pop()
+            if isinstance(n, Chance):
+                if not _has_sampling(n):
+                    points.append(n)
+            elif isinstance(n, Decision):
+                stack.extend(n.children)
+        by_shape: Dict[tuple, List[Chance]] = {}
+        for c in points:
+            by_shape.setdefault(_shape(c), []).append(c)
+        pairs: list = []
+        for members in by_shape.values():
+            self._groups.append((_merge(members, pairs), members))
+        replaced = {id(n) for _, nodes in pairs for n in nodes}
+        owners = [n for n in self._nodes if id(n) not in replaced] + [m for m, _ in pairs]
+        for f in ("regret", "ssum"):
+            flat = np.empty(sum(getattr(n, f).size for n in owners), dtype=np.float32)
+            off = 0
+            for n in owners:
+                a = getattr(n, f)
+                v = flat[off:off + a.size].reshape(a.shape)
+                v[...] = a
+                setattr(n, f, v)
+                off += a.size
+            setattr(self, "_" + f, flat)
+        for m, nodes in pairs:
+            off = 0
+            for n in nodes:
+                n.regret, n.ssum = m.regret[off:off + n.B], m.ssum[off:off + n.B]
+                off += n.B
+
     def compat_sum(self, ro):
         """ro: (B, N) -> (B, N) mass of opponent combos sharing no card with each combo."""
-        cs = ro @ (self.ctx.member32 if ro.dtype == np.float32 else self.ctx.member).T   # (B, 52)
-        return ro.sum(axis=1, keepdims=True) - cs[:, self.ctx.ca] - cs[:, self.ctx.cb] + ro
+        member = self.ctx.member32 if ro.dtype == np.float32 else self.ctx.member
+        cs = (np.einsum("bn,cn->bc", ro, member) if NO_BLAS else ro @ member.T)[:, self.ctx.cab]   # (B, 2N)
+        n = ro.shape[1]
+        return ro.sum(axis=1, keepdims=True) - cs[:, :n] - cs[:, n:] + ro
 
     def _terminal_M(self, node: Terminal):
         if node.M is None:
-            node.M = self.ctx.stacked(node.kind, node.boards, self.dead)
+            node.M = self.ctx.stacked(node.kind, node.boards if node.tile is None else node.boards[:node.tile], self.dead)
         return node.M
 
-    def _cfr(self, node, p, r0, r1, update, use_avg, sel=None):
+    def _trim(self, M, p):
+        """M's rows for p's live combos and columns for the opponent's (built once per matrix). The reach
+        side is gathered with np.take: a fancy-indexed array comes out strided, which einsum runs ~2x slower."""
+        key = (id(M), p)
+        T = self._trimmed.get(key)
+        if T is None:
+            T = self._trimmed[key] = np.ascontiguousarray(M[:, self._live[p]][:, :, self._live[1 - p]])
+        return T
+
+    def _terminal(self, node: Terminal, p, ro, sel=None, train=False):
+        """(B, N) utility for p at a terminal, ro: the opponent's reach. `train`: a training pass, where
+        combos outside p's range may get 0 (their regrets never matter: their reach is 0)."""
+        if node.kind == "fold":
+            return (-node.inv[p] if node.folder == p else node.inv[1 - p]) * self.compat_sum(ro)
+        if len(node.boards[0]) == 5:
+            if node.M is None:
+                node.M = self.ctx.ranking(node.boards)
+            return node.inv[p] * node.M.utility(ro, sel)
+        if node.tile is not None:
+            # rows repeat the same boards: matmul broadcasts the one (tile, N, N) stack over the repeats
+            # (the same matvecs as unmerged, in one call; merged terminals only see full batches, never `sel`)
+            M = self._terminal_M(node)
+            n = ro.shape[1]
+            ro = ro.astype(np.float32, copy=False).reshape(-1, node.tile, n)
+            if train and self._live is not None:
+                u = np.zeros(ro.shape, dtype=np.float32)
+                u[:, :, self._live[p]] = _matvec(self._trim(M, p), np.take(ro, self._live[1 - p], axis=2))
+            else:
+                u = _matvec(M, ro)
+            return node.inv[p] * u.reshape(-1, n)
+        M = self._terminal_M(node)
+        ro = ro.astype(np.float32)
+        if train and self._live is not None:
+            T = self._trim(M, p)
+            u = np.zeros(ro.shape, dtype=np.float32)
+            u[:, self._live[p]] = _matvec(T if sel is None else T[sel], np.take(ro, self._live[1 - p], axis=1))
+            return np.float32(node.inv[p]) * u
+        if sel is not None:
+            M = M[sel]
+        u = _matvec(M, ro)
+        return np.float32(node.inv[p]) * u
+
+    def _cfr(self, node, p, r0, r1, update, use_avg, sel=None, strats=None, done=None):
         """r0, r1: (B, N) reaches. Returns (B, N) utility for player p.
-        `sel`: which of the node's batch rows r0/r1 are for (None = all of them)."""
+        `sel`: which of the node's batch rows r0/r1 are for (None = all of them).
+        `strats`, `done`: training passes only (see _traverse): each player's current strategies by node,
+        filled as they are computed and reused while that player's regrets are unchanged, and the
+        merged chance nodes' utilities for the root street's walk back up."""
         # no reach pruning: a subtree the opponent almost never enters must still be trained,
         # because the real hand can go there (a donk bet, an overbet) and we read its strategy
-        ro = r1 if p == 0 else r0
         if isinstance(node, Terminal):
-            if node.kind == "fold":
-                if node.folder == p:
-                    return -node.inv[p] * self.compat_sum(ro)
-                return node.inv[1 - p] * self.compat_sum(ro)
-            if len(node.boards[0]) == 5:
-                if node.M is None:
-                    node.M = self.ctx.ranking(node.boards)
-                return node.inv[p] * node.M.utility(ro, sel)
-            M = self._terminal_M(node)
-            if sel is not None:
-                M = M[sel]
-            return np.float32(node.inv[p]) * np.matmul(M, ro[:, :, None].astype(np.float32))[:, :, 0]
+            return self._terminal(node, p, r1 if p == 0 else r0, sel, strats is not None)
         if isinstance(node, Chance):
+            if done is not None and id(node) in done:
+                return done[id(node)]
             B, K, n = r0.shape[0], node.K, self.ctx.n
             rows = np.arange(B) if sel is None else np.asarray(sel)
             if node.sample is not None and self.sampling:
@@ -532,17 +680,27 @@ class Solver:
             u = self._cfr(node.child, p, r0c, r1c, update, use_avg, None if full else csel)
             norm = node.norm_for(m3) if k < K else node.norm[rows]
             return (u.reshape(B, k, n) * m3).sum(axis=1) / norm
-        strat = node.avg_strategy(sel) if use_avg else node.strategy(sel)     # (B, A, N)
+        if strats is None or sel is not None:
+            strat = node.avg_strategy(sel) if use_avg else node.strategy(sel)     # (B, A, N)
+        else:
+            cache = strats[node.player]
+            strat = cache.get(id(node))
+            if strat is None:
+                strat = cache[id(node)] = node.strategy()
         if node.player == p:
+            ro = r1 if p == 0 else r0
             utils = np.empty_like(strat)
             cs = None      # the opponent's reach is the same under each of p's actions: one compat_sum for all folds
             for a, child in enumerate(node.children):
-                if isinstance(child, Terminal) and child.kind == "fold":
-                    if cs is None:
-                        cs = self.compat_sum(ro)
-                    utils[:, a, :] = (-child.inv[p] if child.folder == p else child.inv[1 - p]) * cs
+                if isinstance(child, Terminal):
+                    if child.kind == "fold":
+                        if cs is None:
+                            cs = self.compat_sum(ro)
+                        utils[:, a, :] = (-child.inv[p] if child.folder == p else child.inv[1 - p]) * cs
+                    else:
+                        utils[:, a, :] = self._terminal(child, p, ro, sel, strats is not None)
                 else:
-                    utils[:, a, :] = self._cfr(child, p, r0, r1, update, use_avg, sel)
+                    utils[:, a, :] = self._cfr(child, p, r0, r1, update, use_avg, sel, strats, done)
             node_util = (strat * utils).sum(axis=1)                     # (B, N)
             if update:
                 rp = r0 if p == 0 else r1
@@ -553,35 +711,81 @@ class Solver:
                     node.regret[sel] += utils - node_util[:, None, :]
                     node.ssum[sel] += rp[:, None, :] * strat
             return node_util
-        util = np.zeros_like(r0)
+        # the opponent acts: every child's reach in one product
+        reach = (r1 if p == 0 else r0)[:, None, :] * strat
+        util = None
         for a, child in enumerate(node.children):
-            if p == 0:
-                util += self._cfr(child, p, r0, r1 * strat[:, a, :], update, use_avg, sel)
+            if isinstance(child, Terminal):
+                u = self._terminal(child, p, reach[:, a, :], sel, strats is not None)
+            elif p == 0:
+                u = self._cfr(child, p, r0, reach[:, a, :], update, use_avg, sel, strats, done)
             else:
-                util += self._cfr(child, p, r0 * strat[:, a, :], r1, update, use_avg, sel)
+                u = self._cfr(child, p, reach[:, a, :], r1, update, use_avg, sel, strats, done)
+            util = u if util is None else util + u
         return util
+
+    def _down(self, node, p, r0, r1, strats, arrive):
+        """The root street's walk down: strategies, and the reaches arriving at each chance node."""
+        if isinstance(node, Chance):
+            arrive[id(node)] = (r0, r1)
+        elif isinstance(node, Decision):
+            cache = strats[node.player]
+            strat = cache.get(id(node))
+            if strat is None:
+                strat = cache[id(node)] = node.strategy()
+            for a, child in enumerate(node.children):
+                if isinstance(child, Terminal):
+                    continue
+                if node.player == p:
+                    self._down(child, p, r0, r1, strats, arrive)
+                elif p == 0:
+                    self._down(child, p, r0, r1 * strat[:, a, :], strats, arrive)
+                else:
+                    self._down(child, p, r0 * strat[:, a, :], r1, strats, arrive)
+
+    def _traverse(self, p, r0, r1, strats):
+        """One training pass for p. Same result as _cfr on the root; the merged subtrees run in one batch.
+        strats: (player 0's, player 1's) current strategies by node; p's are stale once this pass updates them."""
+        if not self._groups:
+            return self._cfr(self.root, p, r0, r1, update=True, use_avg=False, strats=strats)
+        arrive, done = {}, {}
+        self._down(self.root, p, r0, r1, strats, arrive)
+        for chance, members in self._groups:
+            u = self._cfr(chance, p, np.concatenate([arrive[id(c)][0] for c in members]),
+                          np.concatenate([arrive[id(c)][1] for c in members]), update=True, use_avg=False)
+            off = 0
+            for c in members:
+                done[id(c)] = u[off:off + len(c.boards)]
+                off += len(c.boards)
+        return self._cfr(self.root, p, r0, r1, update=True, use_avg=False, strats=strats, done=done)
 
     def _discount(self):
         t = float(self.iters)
         pos_f = (t ** self.alpha) / (t ** self.alpha + 1)
         neg_f = 0.5 if self.beta == 0 else (t ** self.beta) / (t ** self.beta + 1)
         s_f = (t / (t + 1)) ** self.gamma
-        for n in self._nodes:
-            r = n.regret
-            r *= np.where(r > 0, pos_f, neg_f)
-            n.ssum *= s_f
+        r = self._regret
+        r *= np.where(r > 0, pos_f, neg_f)
+        self._ssum *= s_f
 
     def run(self, r0, r1, time_budget=3.0, max_iters=1000, min_iters=10, should_stop=None):
         """r0, r1: (N,) root reaches. Adds iterations until the budget is spent.
         Raises Cancelled as soon as should_stop() is true."""
         r0b, r1b = r0[None, :].astype(np.float32), r1[None, :].astype(np.float32)
+        if self.trim_leaves:
+            live = (np.flatnonzero(r0 > 0), np.flatnonzero(r1 > 0))
+            if self._live is None or any(not np.array_equal(a, b) for a, b in zip(live, self._live)):
+                self._live, self._trimmed = live, {}
         t0 = time.time()
         start = self.iters
         while self.iters < max_iters:
             if should_stop is not None and should_stop():
                 raise Cancelled()
+            # the opponent's strategies computed in player 0's pass are still current in player 1's
+            strats = ({}, {})
             for p in (0, 1):
-                self._cfr(self.root, p, r0b, r1b, update=True, use_avg=False)
+                self._traverse(p, r0b, r1b, strats)
+                strats[p].clear()
             self.iters += 1
             self._discount()
             if self.iters - start >= min_iters and time.time() - t0 > time_budget:

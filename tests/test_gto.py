@@ -78,6 +78,53 @@ class TestSolverMath(unittest.TestCase):
             else:
                 self.assertTrue(np.array_equal(d_river.ssum[i], s_river.ssum[j]))
 
+    def _plain_iterations(self, sol, n):
+        """n iterations walking the original tree node by node (no merged subtrees, no strategy reuse)."""
+        s = sol.solver
+        a, b = sol.r0[None, :].astype(np.float32), sol.r1[None, :].astype(np.float32)
+        for _ in range(n):
+            for p in (0, 1):
+                s._cfr(s.root, p, a, b, update=True, use_avg=False)
+            s.iters += 1
+            s._discount()
+
+    def test_merged_subtrees_match_plain_traversal(self):
+        # same-shaped subtrees below the root street are batched together; the result must be the same
+        # numbers as walking every node on its own (flop: repeated turn boards; turn: different rivers)
+        r_oop = parse_range("22+, A2s+, KTs+, QTs+, JTs, T9s, ATo+, KQo")
+        r_ip = parse_range("22+, A2s+, K5s+, Q8s+, J8s+, T8s+, A8o+, KTo+, QTo+")
+        small = {"flop": [0.33, 0.75], "turn": [0.75], "river": [0.75]}
+        for board, cfg in ((cards("Ks7d2c"), Config(n_turns=2, leaf_turns=2, leaf_rivers_flop=2, n_rivers_from_flop=2,
+                                                     bet_sizes=small, raise_sizes=small)),
+                           (cards("Ks7d2cTh"), Config(n_rivers=4, bet_sizes=small, raise_sizes=small))):
+            fast = solve(board, r_oop, r_ip, pot=5.5, stack=97.5, cfg=cfg, max_iters=0)
+            plain = solve(board, r_oop, r_ip, pot=5.5, stack=97.5, cfg=cfg, max_iters=0)
+            self.assertTrue(any(len(m) > 1 for _, m in fast.solver._groups))
+            fast.solver.run(fast.r0, fast.r1, time_budget=1e9, max_iters=12)
+            self._plain_iterations(plain, 12)
+            for x, y in zip(fast.solver._nodes, plain.solver._nodes):
+                self.assertTrue(np.array_equal(x.ssum, y.ssum))
+                self.assertTrue(np.array_equal(x.regret, y.regret))
+
+    def test_no_blas_kernels(self):
+        # the browser's path (einsum matvecs, leaf matrices trimmed to each range) solves the same game
+        import gto.solver as S
+        board = cards("Ks7d2c")
+        r_oop = parse_range("22+, A2s+, KTs+, QTs+, JTs, T9s, ATo+, KQo")
+        r_ip = parse_range("22+, A2s+, K5s+, Q8s+, J8s+, T8s+, A8o+, KTo+, QTo+")
+        small = {"flop": [0.33, 0.75], "turn": [0.75], "river": [0.75]}
+        cfg = Config(n_turns=2, leaf_turns=2, leaf_rivers_flop=2, n_rivers_from_flop=2, bet_sizes=small, raise_sizes=small)
+        ref = solve(board, r_oop, r_ip, pot=5.5, stack=97.5, cfg=cfg, max_iters=60, time_budget=1e9)
+        S.NO_BLAS = True
+        try:
+            sol = solve(board, r_oop, r_ip, pot=5.5, stack=97.5, cfg=cfg, max_iters=60, time_budget=1e9)
+            self.assertIsNotNone(sol.solver._live)
+            self.assertLess(abs(sol.exploitability() - ref.exploitability()), 0.05)
+            live = sol.r0 > 0
+            self.assertLess(np.abs(sol.evs[:, sol.ctx.active][:, live] - ref.evs[:, ref.ctx.active][:, live]).max(), 0.2)
+        finally:
+            S.NO_BLAS = False
+
     def test_match_action(self):
         names = ["check", "bet 33%", "bet 75%"]
         self.assertEqual(match_action(names, "bet 40%"), 1)
