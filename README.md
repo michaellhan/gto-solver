@@ -47,7 +47,8 @@ hand and the board (click a placed card in its slot to remove it; cards already
 on the table can't be picked again), or type them as rank then suit (`Ah`, `Tc`).
 The setup folds into one line once the hand starts, and the deck only shows
 while a card is needed ("Show deck" opens it otherwise). Enter the action seat
-by seat with the buttons or keys: F fold, C check or call, 1 to 3 preset sizes,
+by seat with the buttons or keys: F fold, C check or call, 1 to 3 preset sizes
+(preflop the advisor's default raise, limpers and callers included),
 R custom size, A all-in, S the context shortcut, U undo. A table view shows who
 has folded, who is to act, the board and the pot; clicking a seat folds
 everyone before it (checking where there's nothing to call, and stopping at your own turn),
@@ -61,7 +62,8 @@ is about 60 s in the browser and 30 s locally, with more time for the earlier
 streets used to narrow ranges. River spots are solid either way; turn spots need
 Accurate to get close to a full solver (see Accuracy vs speed below).
 The panel shows the recommended action with its size (preflop: 2.5bb
-opens, 3bb from the small blind, 3x or 4x 3-bets, 2.3x 4-bets, then all-in;
+opens, 3bb from the small blind, 3x or 4x 3-bets, 2.3x 4-bets, then all-in; over limpers
+3x (4x from the blinds) plus 1bb a limper, and a squeeze adds one bet per caller;
 postflop: the solver's bet and raise sizes in big blinds), the mixed strategy for your exact
 hand with EVs, your whole range's totals at that spot (the percentage and number of
 combos that fold, call, check, bet or raise each size, with a bar), and a 13x13 grid of

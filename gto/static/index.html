@@ -333,7 +333,7 @@ const SLOT_WHERE = ["in your hand", "in your hand", "on the flop", "on the flop"
 const BUDGETS = { server: { fast: [2.5, 1.2], accurate: [30, 6] }, wasm: { fast: [8, 3], accurate: [60, 12] } };
 let SPEED = "fast";
 try { if (localStorage.getItem("gto-speed") === "accurate") SPEED = "accurate"; } catch (e) {}
-let BUDGET = 4, PRIOR = 2;
+let BUDGET = null, PRIOR = null;   // set from BUDGETS once the backend (MODE) is known
 // opponents: "gto" (equilibrium) or "pool" (a typical player pool, exploited); a preference like the speed
 let OPP = "gto";
 try { if (localStorage.getItem("gto-opponents") === "pool") OPP = "pool"; } catch (e) {}
@@ -728,7 +728,7 @@ function renderAction(sim) {
     }
   } else if (canRaise) {
     let sizes;
-    if (street === "preflop") sizes = info.nRaises === 0 ? [[(p === "SB" ? 3 : 2.5) * info.curBet, "open"]] : [[info.curBet * (IS_BLIND(p) ? 4 : 3), IS_BLIND(p) ? "4x" : "3x"]];
+    if (street === "preflop") { const v = preflopSize(sim, p); sizes = [[v, info.nRaises === 0 ? (v > OPEN_X(p) * info.curBet + 1e-9 ? "iso" : "open") : fmt(v / info.curBet) + "x"]]; }
     else if (!facing) sizes = [[info.pot / 3, "⅓ pot"], [info.pot * 2 / 3, "⅔ pot"], [info.pot, "pot"]];
     else sizes = [[info.curBet * 2.5, "2.5x"], [info.curBet + info.pot + toCall, "pot"]];
     let k = 0;
@@ -755,6 +755,19 @@ function renderAction(sim) {
   else if (!isHero && facing) sc = ["Everyone else folds", () => autoRest(street, "fold")];
   else if (!isHero && !facing && street !== "preflop") sc = ["Everyone checks", () => autoRest(street, "check")];
   if (sc) { const b = document.createElement("button"); b.className = "small shortcut"; b.innerHTML = sc[0] + "<kbd>S</kbd>"; b.dataset.key = "s"; b.onclick = () => { showErr(sc[1]()); renderAll(); }; el.appendChild(b); }
+}
+
+// The default preflop raise, as the advisor's _default_size: an open is 2.5x (3x from the SB); over limpers,
+// or as a 3bet, 3x (4x from the blinds) plus the chips the other live players put in beyond their blinds
+// (1bb a limper, one bet a caller of the open); later raises 2.3x plus those chips.
+const OPEN_X = (p) => p === "SB" ? 3 : 2.5;
+function preflopSize(sim, p) {
+  const info = sim.cur, posted = { SB: 0.5, BB: 1, ...(STRADDLER() ? { [STRADDLER()]: 2 } : {}) };
+  const last = [...S.actions.preflop].reverse().find(a => ["raise", "all-in", "bet"].includes(a.action));
+  const extra = [...sim.active].filter(q => q !== p && q !== (last && last.pos)).reduce((t, q) => t + Math.max(0, info.bets[q] - (posted[q] || 0)), 0);
+  if (info.nRaises === 0 && extra <= 0) return OPEN_X(p) * info.curBet;
+  if (info.nRaises <= 1) return info.curBet * (p in posted ? 4 : 3) + extra;
+  return info.curBet * 2.3 + extra;
 }
 
 function renderTimeline() {
@@ -993,7 +1006,9 @@ function handText() {
   return lines.join("\n");
 }
 document.getElementById("copyhand").onclick = async () => {
-  const b = document.getElementById("copyhand"), text = handText();
+  const b = document.getElementById("copyhand");
+  if (!MODE) await modeReady;   // the copied state carries the budgets, which depend on the backend
+  const text = handText();
   try { await navigator.clipboard.writeText(text); b.textContent = "Copied"; }
   catch (e) { window.prompt("Copy this:", text); b.textContent = "Copy hand"; return; }
   setTimeout(() => b.textContent = "Copy hand", 1500);

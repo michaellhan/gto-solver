@@ -126,6 +126,21 @@ test("action buttons: preflop sizes, postflop sizes, raises and pot odds", () =>
   assert.match(p.byId("actionArea").children[0].innerHTML, /pot 9.5 bb · 4 to call · .*need 30%/);   // 4 / 13.5
 });
 
+// Bug: the default raise ignored limpers and callers (2.5bb over two limpers). The sizes match the
+// advisor's _default_size: 3x (4x from the blinds) plus 1bb a limper / one bet a caller of the open.
+test("preflop raise sizes over limpers and callers match the advisor", () => {
+  const sizes = (p) => p.buttons().filter(b => b.className.startsWith("agg")).map(b => `${label(b)} (${sub(b)})`);
+  const first = (pre, extra) => sizes(page(state({ cards: ["Ah", "Kh"], preflop: acts(pre), ...extra })))[0];
+  assert.equal(first("UTG c"), "Raise to 4 (iso)");                            // 3 + 1 limper
+  assert.equal(first("UTG c, HJ c"), "Raise to 5 (iso)");                      // 3 + 2 limpers
+  assert.equal(first("UTG c, HJ f, CO f, BTN f"), "Raise to 5 (iso)");        // SB: 4x + 1
+  assert.equal(first("UTG c, HJ f, CO f, BTN f, SB c"), "Raise to 5.5 (iso)"); // BB: 4x + 1 + SB's 0.5
+  assert.equal(first("HJ c", { straddle: true }), "Raise to 8 (iso)");         // 3x the straddle + 2
+  assert.equal(first("UTG r2.5, HJ c"), "Raise to 10 (4x)");                   // squeeze: 3x + the caller's 2.5
+  assert.equal(first("UTG r2.5, HJ c, CO f, BTN f"), "Raise to 12.5 (5x)");    // from the SB: 4x + 2.5
+  assert.equal(first("UTG r2.5, HJ r7.5, CO f, BTN f, SB f, BB f"), "Raise to 17.5 (2.3x)");   // 4bet: 2.3x (17.25, rounded to 0.5)
+});
+
 test("undo removes the last action, across streets", () => {
   const p = page(state({ cards: ["Ah", "Kh", "Kd", "7s", "2c"], preflop: acts("UTG f, HJ f, CO f, BTN r2.5, SB f, BB c"), flop: acts("BB x") }));
   p.run("undo()");
@@ -243,7 +258,7 @@ test("typing cards: rank then suit, 10 for T, Esc and Backspace cancel", () => {
 test("keyboard actions: F, C, X, A, digits, U", () => {
   const p = page(state({ hero: "BB", cards: ["Ah", "Kh"] }));
   p.key("f"); p.key("c"); p.key("1");
-  assert.deepEqual(p.S.actions.preflop, acts("UTG f, HJ c, CO r2.5"));   // over a limper the open size is still 2.5x
+  assert.deepEqual(p.S.actions.preflop, acts("UTG f, HJ c, CO r4"));   // over a limper: 3x plus 1bb (the advisor's iso size)
   p.key("u");
   assert.deepEqual(p.S.actions.preflop, acts("UTG f, HJ c"));
   p.key("Backspace");

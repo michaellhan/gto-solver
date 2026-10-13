@@ -173,3 +173,14 @@ test("copy hand puts the hand text on the clipboard", async () => {
   assert.equal(p.byId("copyhand").textContent, "Copied");
   await flush();
 });
+
+// Bug: a hand copied before the backend was known carried placeholder budgets (4/2) in its State JSON.
+test("a hand copied right after load carries the real budgets for the backend", async () => {
+  for (const [opts, want] of [[{}, [8, 3]], [{ server: true }, [2.5, 1.2]], [{ storage: { "gto-speed": "accurate" } }, [60, 12]]]) {
+    const p = loadPage(opts);
+    await p.byId("copyhand").onclick();   // straight away: no await p.ready() first
+    const st = JSON.parse(p.clipboard.text.match(/^State JSON: (.*)$/m)[1]);
+    assert.deepEqual([st.budget, st.prior_budget], want);
+    await flush();
+  }
+});
