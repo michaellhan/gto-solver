@@ -517,6 +517,30 @@ def _rake(positions, pot: float) -> float:
     return rk[0] * pot if rk[1] is None else min(rk[0] * pot, rk[1])
 
 
+# Rake on preflop calls (see Advisor._priced): a call that sees the flop pays rake on the pot it goes on
+# to win, which later streets grow. Its expected rake is taken on RAKE_GROWTH times the pot the call
+# takes to the flop, to the cap. Charts fit to published raked solves (CHART_RAKE: gtopreflop.com's 5%
+# capped at 4bb) are only charged the rake beyond that structure's. 2.5 is fit to that solve's calls at
+# 5%/4bb (CO vs a BB 3bet 23.8% of its opens against 22.4%, BTN vs a BB 3bet 20.3% against 20.0%, the
+# BB vs a CO open 22.9% of hands against 23.8%; the flop pot alone, 1.0, left the BB calling 48% vs BTN).
+RAKE_GROWTH = 2.5
+CHART_RAKE = (0.05, 4.0)
+
+
+def _call_rake(positions, pot: float, behind: float = float("inf"), raked_chart: bool = False) -> float:
+    """Expected rake in bb a preflop call pays on a pot of `pot` bb at the flop: the table's rate on
+    RAKE_GROWTH x pot (no more than the pot with `behind` bb called by each of two players), to its cap
+    (0 without rake). For a chart already fit to a raked solve (`raked_chart`), only what this takes
+    beyond CHART_RAKE's."""
+    rk = getattr(positions, "rake", None)
+    if not rk:
+        return 0.0
+    final = min(RAKE_GROWTH * pot, pot + 2.0 * max(behind, 0.0))
+    cost = lambda rate, cap: rate * final if cap is None else min(rate * final, cap)
+    r = cost(*rk)
+    return max(0.0, r - cost(*CHART_RAKE)) if raked_chart else r
+
+
 def _pf_cached(key, fn):
     if key not in _PF_CACHE:
         if len(_PF_CACHE) > 512:
@@ -792,15 +816,15 @@ class Advisor:
         player pool's (exploit.pool_preflop), so this runs even in the chart's own spot: calls follow
         equity against what the pool actually plays, and bluff raises grow (up to 1.5x) when the pool
         folds more often."""
-        def priced(s, stk, table=None):
+        def priced(s, stk, table=None, raked_chart=False):
             opp = [p for p in s.order if p in s.active and p != hero and
                    (p in s.acted or s.bets[p] > s.posted.get(p, 0.0) + 1e-9)]
             call = min(s.cur_bet - s.bets[hero], stk - s.inv_start[hero] - s.bets[hero])
             pot = s.pot_start + sum(s.bets.values())
-            # with rake, the pot hero wins is short the rake on the pot the call takes to the flop (at least:
-            # later bets add to it, up to the cap)
-            rk = _rake(table, pot + call)
-            return opp, call / (pot + call - rk), call, pot, stk - s.inv_start[hero] - s.bets[hero] - call
+            # with rake, the pot hero wins is short the rake it goes on to pay (_call_rake)
+            behind = stk - s.inv_start[hero] - s.bets[hero] - call
+            rk = _call_rake(table, pot + call, behind, raked_chart)
+            return opp, call / (pot + call - rk), call, pot, behind
 
         def facing_raise(line, opp, arr, positions, as_pool=False):
             # each player facing hero's raise, by their chart (or as the pool plays it): the chance
@@ -836,12 +860,17 @@ class Advisor:
         std = replay_hand(table, CHART_STACK, {"preflop": std_line}, 1)[0]
         if std.closed or std.to_act != hero:
             return full
-        # Rake re-prices only the big blind's calls of an open: its defence is the one chart kept rake-free
-        # (the cold calls, 3bets and calls of 3bets follow published raked solves, so re-pricing those would
-        # count the rake twice)
-        raked = (getattr(positions, "rake", None) is not None and st.n_raises == 1
-                 and pf.chart_key(hero, positions) in ("BB", "HU_BB"))
-        opp, need, call, pot, behind = priced(st, stack, positions if raked else None)
+        # Rake re-prices every call that sees the flop. The big blind's defence of an open and the opener's
+        # calls of a blind's 3bet in position are charts written without rake and pay all of it; the rest
+        # were fit to published raked solves and pay only rake beyond theirs (_call_rake)
+        rk_on = getattr(positions, "rake", None) is not None
+        key_h = pf._norm(pf.chart_key(hero, positions))
+        raisers = [a["pos"] for a in preflop if a["action"] in ("raise", "all-in")]
+        unraked = ((st.n_raises == 1 and key_h == "BB") or
+                   (st.n_raises == 2 and raisers[0] == hero and key_h in ("UTG", "HJ", "CO", "BTN")
+                    and pf._norm(pf.chart_key(raisers[1], positions)) in ("SB", "BB")))
+        opp, need, call, pot, behind = priced(st, stack, positions if rk_on else None, not unraked)
+        raked = rk_on and need > call / max(pot + call, 1e-9) + 1e-12
         opp_std, need_std, _, _, behind_std = priced(std, CHART_STACK)
         # implied odds: pairs and suited hands win more when they hit, by the stack behind. Deeper or
         # shallower than the charts moves their price by how their odds with those winnings change at

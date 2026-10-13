@@ -1885,32 +1885,82 @@ class TestRake(unittest.TestCase):
               "preflop": [R("UTG", "fold"), R("HJ", "fold"), R("CO", "fold"), R("BTN", "raise", 2.5), R("SB", "fold")]}
         self.assertEqual(adv.advise(st)["grid"], adv.advise(dict(st, rake=0, rake_cap=3))["grid"])
 
-    def test_big_blind_defends_less_with_rake(self):
-        # the big blind's calls are priced by the pot it wins less the rake on the flop pot; its 3bets and
-        # the other charts (fit to raked published solves) stay
+    def _rake_shares(self, hero, pre, rake):
+        # fold/call/raise shares of hero's range at a preflop decision, by the adjusted strategy
         from gto.advisor import preflop_strategy, preflop_ranges
+        T = pf.Table(pf.SEATS[6], rake=rake)
+        w = preflop_ranges(pre, T, 100)[hero]
+        s = preflop_strategy(hero, pre, T, 100)
+        return {k: float((w * v).sum() / w.sum()) for k, v in s.items()}
+
+    def _rake_spots(self):
         R = self.R
-        pre = [R("UTG", "fold"), R("HJ", "fold"), R("CO", "fold"), R("BTN", "raise", 2.5), R("SB", "fold")]
-        share = {}
-        for rake in (None, (0.05, 3.0)):
-            T = pf.Table(pf.SEATS[6], rake=rake)
-            w = preflop_ranges(pre, T, 100)["BB"]
-            s = preflop_strategy("BB", pre, T, 100)
-            share[rake] = {k: float((w * v).sum() / w.sum()) for k, v in s.items()}
-        off, on = share[None], share[(0.05, 3.0)]
-        self.assertLess(on["call"], off["call"] - 0.02)
-        self.assertGreater(on["call"], off["call"] - 0.10)
+        F = lambda *ps: [R(p, "fold") for p in ps]
+        return {
+            "BB vs BTN": ("BB", F("UTG", "HJ", "CO") + [R("BTN", "raise", 2.5), R("SB", "fold")]),
+            "BB vs CO": ("BB", F("UTG", "HJ") + [R("CO", "raise", 2.5)] + F("BTN", "SB")),
+            "UTG vs SB": ("UTG", [R("UTG", "raise", 2.5)] + F("HJ", "CO", "BTN") + [R("SB", "raise", 11), R("BB", "fold")]),
+            "CO vs BB": ("CO", F("UTG", "HJ") + [R("CO", "raise", 2.5)] + F("BTN", "SB") + [R("BB", "raise", 11)]),
+            "BTN vs BB": ("BTN", F("UTG", "HJ", "CO") + [R("BTN", "raise", 2.5), R("SB", "fold"), R("BB", "raise", 11)]),
+            "CO vs BTN": ("CO", F("UTG", "HJ") + [R("CO", "raise", 2.5), R("BTN", "raise", 7.5)] + F("SB", "BB")),
+            "BTN cold vs CO": ("BTN", F("UTG", "HJ") + [R("CO", "raise", 2.5)]),
+        }
+
+    def test_big_blind_defends_less_with_rake(self):
+        # the big blind's calls are priced by the pot it wins less the rake it goes on to pay; its 3bets stay
+        pre = self._rake_spots()["BB vs BTN"][1]
+        off, on = self._rake_shares("BB", pre, None), self._rake_shares("BB", pre, (0.05, 3.0))
+        self.assertLess(on["call"], off["call"] - 0.10)
         self.assertAlmostEqual(on["raise"], off["raise"], places=3)
-        # calls by the other charts are unchanged: the button facing the big blind's 3bet
-        line = pre[:4] + [R("SB", "fold"), R("BB", "raise", 11)]
-        a = preflop_strategy("BTN", line, pf.Table(pf.SEATS[6]), 100)
-        b = preflop_strategy("BTN", line, pf.Table(pf.SEATS[6], rake=(0.05, 3.0)), 100)
-        self.assertTrue(np.array_equal(a["call"], b["call"]))
         # the advisor reads the state's rake (cap in chips, scaled by the big blind) and says why
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
         st = {"players": 6, "hero": "BB", "hole": "Kd4c", "board": "", "stack": 200, "bb": 2, "preflop": [
             dict(a, to=5.0) if a.get("to") else a for a in pre], "rake": 0.05, "rake_cap": 6}
         self.assertIn("after rake", " ".join(adv.advise(st)["notes"]))
+
+    def test_preflop_calls_with_rake_match_raked_solves(self):
+        # gtopreflop.com's raked solve (8-max 100bb, 5% capped at 4bb, 12bb blind 3bets): UTG vs SB
+        # 71.4/14.1/14.5, CO vs BB 68.0/22.4/9.6, BTN vs BB 69.7/20.0/10.3 fold/call/4bet; the big blind
+        # calls 23.8% against a CO open, 29.8% against the button. The unraked charts call 36/41/34 and
+        # 37/53: with rake they drop toward those, the 4bets and 3bets unchanged
+        spots = self._rake_spots()
+        target = {"UTG vs SB": 0.141, "CO vs BB": 0.224, "BTN vs BB": 0.200, "BB vs CO": 0.238, "BB vs BTN": 0.298}
+        for name, pub in target.items():
+            hero, pre = spots[name]
+            off, on = self._rake_shares(hero, pre, None), self._rake_shares(hero, pre, (0.05, 4.0))
+            self.assertLess(abs(on["call"] - pub), abs(off["call"] - pub) - 0.08, (name, off, on))
+            self.assertLess(abs(on["call"] - pub), 0.11, (name, on))
+            self.assertAlmostEqual(on["raise"], off["raise"], places=3)
+        for name in ("CO vs BB", "BTN vs BB"):   # within 3 points
+            hero, pre = spots[name]
+            self.assertLess(abs(self._rake_shares(hero, pre, (0.05, 4.0))["call"] - target[name]), 0.03, name)
+
+    def test_preflop_rake_is_monotonic(self):
+        # more rake (a higher rate, a higher cap) never adds calls; charts fit to raked solves (the opener
+        # out of position facing a 3bet, cold calls) change only with more rake than theirs (5%, 4bb cap)
+        for name, (hero, pre) in self._rake_spots().items():
+            call = lambda rk: self._rake_shares(hero, pre, rk)["call"]
+            off = call(None)
+            by_rate = [off] + [call((r, None)) for r in (0.02, 0.05, 0.07, 0.10)]
+            by_cap = [off] + [call((0.05, c)) for c in (0.5, 1.0, 3.0, 4.0, None)]
+            for calls in (by_rate, by_cap):
+                for x, y in zip(calls, calls[1:]):
+                    self.assertLessEqual(y, x + 1e-9, (name, calls))
+            if name in ("CO vs BTN", "BTN cold vs CO"):
+                self.assertAlmostEqual(by_cap[4], off, places=9)
+                self.assertLess(by_rate[4], off)
+            else:
+                self.assertLess(by_cap[4], off - 0.05, (name, by_cap))
+
+    def test_preflop_zero_rake_is_identical(self):
+        from gto.advisor import _call_rake
+        self.assertEqual(_call_rake(pf.Table(pf.SEATS[6], rake=(0.0, 3.0)), 20.0), 0.0)
+        adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        for hero, pre in self._rake_spots().values():
+            for hole in ("9h8h", "AdJc", "5s5c"):
+                st = {"players": 6, "hero": hero, "hole": hole, "board": "", "stack": 100, "preflop": pre}
+                a, z = adv.advise(st), adv.advise(dict(st, rake=0, rake_cap=4))
+                self.assertEqual((a["actions"], a["grid"], a["notes"]), (z["actions"], z["grid"], z["notes"]))
 
     def test_push_fold_with_rake(self):
         # a called jam runs out a board, so its pot is raked; an uncalled one ends preflop and isn't

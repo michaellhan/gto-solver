@@ -154,15 +154,29 @@ that ends preflop isn't raked, so opens, steals and folds to them are unchanged.
   the leaf never pays out. The exploitability shown counts what each best response
   gains over its own raked payoff (a raked game isn't zero-sum). With no rake the numbers are
   bit-identical to the unraked solver.
-* Preflop, the charts are fixed. The big blind's calls of an open are re-priced through the
-  off-chart re-pricing (see Preflop): the pot it would win is short the rake on the pot its call
-  takes to the flop (a lower bound: later bets add to it, up to the cap). Its defence is the one chart
-  kept rake-free; the cold calls, 3bets and calls of 3bets were fit to published raked solves, so
-  they stay as they are (re-pricing them would count the rake twice). A called preflop all-in sees
-  the flop, so its price counts the rake too. 6-max 100bb, 5% capped at 3bb: the big blind against a
-  2.5bb button open calls 48.4% of hands instead of 53.1% (3bets 11.5% either way, so it defends
-  59.9% instead of 64.6%), against a 3bb small-blind open 49.3% instead of 55.6%, against a CO open
-  35.9% instead of 39.3%. The replayed ranges going to the flop use the same calls.
+* Preflop, the charts are fixed and calls that see a flop are re-priced through the off-chart
+  re-pricing (see Preflop): the pot a call would win is short the rake it goes on to pay, taken on
+  2.5x the pot the call takes to the flop (later streets grow it; no more than the stacks allow), to
+  the cap. 3bets and 4bets aren't re-priced (they often win the pot preflop, where nothing is raked).
+  The big blind's defence of an open and the opener's calls of a blind's 3bet in position (UTG, HJ, CO
+  and the button) are charts written without rake and pay all of it. The other calls (the opener out
+  of position facing a 3bet, cold calls of an open or a 3bet, calls of a 4bet) were fit to published
+  raked solves, so they pay only the rake beyond gtopreflop.com's 5% capped at 4bb (they change with
+  a higher rate or no cap; re-pricing them at that rake would count it twice: CO against a button 3bet
+  already folds/calls/4bets 63/18/19 against gtopreflop.com's raked 64.0/16.9/19.2). The 2.5x is fit
+  to gtopreflop.com's raked solve (8-max 100bb, 2.5bb opens, 12bb blind 3bets, 5% capped at 4bb;
+  https://gtopreflop.com/posts/4-bet-ranges-guide and /posts/big-blind-defense), as calls (share of
+  the opening range, or of hands for the big blind), unraked chart / 5% capped at 3bb or 4bb (the
+  same here: the cap doesn't bind) / gtopreflop.com: CO against a BB 3bet 40.7 / 23.8 / 22.4, the
+  button against a BB 3bet 34.4 / 20.3 / 20.0, against an SB 3bet 28.9 / 17.1 / 13.9, UTG against an SB
+  3bet 35.5 / 24.5 / 14.1 (an 8-max UTG); the big blind against a CO open 37.0 / 22.9 / 23.8, the
+  button 53.1 / 36.3 / 29.8 (defending 47.8% instead of 64.6%), a 3bb small-blind open 55.6 / 35.8 /
+  33.8 (to 10bb there), UTG 28.2 / 18.2 / 14.6 (against the LJ). The old flop-pot rake had the big
+  blind calling 48.4% against the button. Lower rake does less: 3% capped at 1bb has the big blind
+  calling 44.3% against the button and CO calling 30.4% against a BB 3bet; 7% uncapped 28.4% and
+  21.7%. More rake (a higher rate or cap) never adds a call; with no rake the advice is bit-identical.
+  A called preflop all-in sees the flop, so its price counts the rake on its pot. The replayed ranges
+  going to the flop use the same calls.
 * Push/fold: the equilibrium behind short-stacked jams (hero's own shove, and the jam range hero
   faces) rakes a called jam's pot, since it runs out a board and so sees the flop, as the call of a
   preflop all-in is priced; a jam that takes the blinds uncalled isn't raked. Rake costs the caller
@@ -374,8 +388,9 @@ the tree traversal to C or Rust or a GPU, which makes full flop trees feasible.
   exports if you have them; the format is a range string.
 * Limps, antes, straddles and stack depth are handled by adjusting the 100bb
   no-ante charts (see Preflop above), not by charts built for those games.
-* Rake (optional) re-prices only the big blind's preflop calls (and push/fold), raking on the flop
-  pot; equity leaves where the tree stops early are raked on the pot as it stands, and the multiway
+* Rake (optional) re-prices preflop calls (and push/fold) by one expected-rake rule (2.5x the flop
+  pot, fit to one published raked solve), the charts fit to raked solves only past its 5%/4bb; 3bet
+  and 4bet ranges aren't re-priced; equity leaves where the tree stops early are raked on the pot as it stands, and the multiway
   heuristic rakes its payouts but not the betting rules inside its trials (see Rake above).
 * Exploit mode's pool is fitted to public population data where any was found (flop and river
   folds, turn folds and river bluffs from 500nl+ regulars, preflop frequencies, and one flop spot's raise

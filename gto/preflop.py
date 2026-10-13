@@ -189,7 +189,9 @@ VS_RFI[("BB", "SB")] = {
 # raked solves defend less in all (BTN 40-41%, SB 43-52%; vs UTG 21% where the chart defends 33%), but
 # the big blind's flats are where rake bites hardest (no flop, no drop) and the solver here plays
 # without rake, so the totals aren't matched (a solver-based guide puts BB vs BTN at 52-58% with
-# NL50-NL200 rake, 3bet 11-13%, and 3-5 points wider at higher stakes: vip-grinders.com).
+# NL50-NL200 rake, 3bet 11-13%, and 3-5 points wider at higher stakes: vip-grinders.com). With rake
+# on, the advisor re-prices these calls by the rake they pay (advisor._call_rake: BB vs BTN defends
+# 47.8% at 5% capped at 3-4bb).
 # Against UTG, HJ and CO the big blind 3bet 3.6%, 3.6% (HJ played the UTG chart) and 5.6%, under every
 # published number: gtopreflop.com's raked solve (8-max 100bb, 2.5bb opens, 5% rake capped at 4bb; it
 # says 6-max is within a point; https://gtopreflop.com/posts/big-blind-defense) 3bets 4.5% against
@@ -312,7 +314,9 @@ def _vs_3bet(opener: str) -> Dict[str, np.ndarray]:
 # 74-82/10-15/8-11, CO 59-68/22-28/10-13) isn't split by who 3bets; gtopreflop.com's raked 8-max solve
 # (5% rake capped at 4bb, 12bb blind 3bets, https://gtopreflop.com/posts/4-bet-ranges-guide) has UTG
 # vs SB 71.4/14.1/14.5 and CO vs BB 68.0/22.4/9.6: the 4bets match, the calls are about 20 points
-# lower there (rake, as with the big blind's defence). Left derived. The button has its own charts
+# lower there (rake, as with the big blind's defence). Left derived and unraked: with rake on, these
+# calls (and the button's below) are re-priced by the rake they go on to pay (advisor._call_rake),
+# which brings CO vs BB to 23.8% and UTG vs SB to 24.5% at 5% capped at 4bb. The button has its own charts
 # below.
 def _ip_vs_blind_3bet(o: str) -> Dict[str, np.ndarray]:
     c = _vs_3bet(o)
