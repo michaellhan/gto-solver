@@ -118,12 +118,19 @@ VS_RFI[("BTN", "CO")] = {
     "3bet": R("TT+, 99:0.4, AJs+, ATs:0.6, A5s-A2s:0.8, AQo+, AJo:0.6, KQs, KJs:0.6, KTs:0.3, QJs:0.4, JTs:0.3, T9s:0.3, 98s:0.3, 76s:0.4, 65s:0.4, 54s:0.3, KQo:0.4"),
     "call": R("22-88, 99:0.6, ATs:0.4, A9s-A6s:0.7, AJo:0.4, ATo:0.5, KJs:0.4, KTs:0.7, K9s:0.6, KQo:0.6, KJo:0.4, QJs:0.6, QTs, Q9s:0.6, JTs:0.7, J9s:0.8, T9s:0.7, T8s:0.6, 98s:0.7, 97s:0.4, 87s, 86s:0.4, 76s:0.6, 65s:0.6, 54s:0.5"),
 }
-# SB: 3bet or fold, small calling range vs late opens
+# SB: mostly 3bet or fold, small calling range. Against an early open the flat is low frequency
+# (~2-3% of hands) but not only middling hands: published solver summaries have the SB "sometimes"
+# calling JJ and TT against early-position opens and its 3bets there mostly value (Preflop Wizard,
+# poker-small-blind-strategy), and a flat without its traps is face-up once the big blind squeezes.
+# The old chart 3bet every TT+, AJs+ and KQs, so the flat was 66-99 plus JTs-type hands and the
+# continue against a BB squeeze (the playability top-up, see CALLER_CONTINUE) was 13 combos of
+# 77-99: on an A-K-x flop the squeezer's QQ won the pot every time. Now JJ/TT/AQs/AJs/KQs flat
+# a share, and that continue holds them too.
 for opener in ["UTG", "HJ", "CO", "BTN"]:
     if opener in ("UTG", "HJ"):
         VS_RFI[("SB", opener)] = {
-            "3bet": R("TT+, 99:0.5, AJs+, ATs:0.5, A5s:0.7, A4s:0.5, AQo+, KQs, KJs:0.5, QJs:0.3"),
-            "call": R("99:0.5, 77-88, 66:0.5, ATs:0.5, KJs:0.5, QJs:0.5, JTs:0.7"),
+            "3bet": R("QQ+, JJ:0.75, TT:0.5, 99:0.4, AKs, AQs:0.7, AJs:0.6, ATs:0.5, A5s:0.7, A4s:0.5, AQo+, KQs:0.6, KJs:0.5, QJs:0.3"),
+            "call": R("JJ:0.25, TT:0.5, 99:0.6, 77-88, 66:0.5, AQs:0.3, AJs:0.4, ATs:0.5, KQs:0.4, KJs:0.5, QJs:0.5, JTs:0.7"),
         }
     else:
         VS_RFI[("SB", opener)] = {

@@ -324,6 +324,22 @@ class TestAdvisor(unittest.TestCase):
         s4 = preflop_strategy("BTN", pre + [R("CO", "raise", 23)], T, 100)
         self.assertLess(float((w * (1 - s4["fold"])).sum() / w.sum()), 0.05)
 
+    def test_sb_flat_vs_early_open_keeps_traps(self):
+        """SB flats UTG, BB squeezes, SB calls: the flat held only 66-99 and suited broadways below KQs,
+        so the call was 77-99 alone and the squeezer's QQ won every A-K-x flop. The flat now traps a
+        share of JJ, TT, AQs, AJs and KQs, and some of them call the squeeze."""
+        from gto.advisor import preflop_ranges
+        from gto.pf_classes import to_classes, CLASSES
+        R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
+        T = pf.Table(pf.SEATS[6])
+        flat = [R("UTG", "raise", 2.5), R("HJ", "fold"), R("CO", "fold"), R("BTN", "fold"), R("SB", "call")]
+        line = flat + [R("BB", "raise", 12.5), R("UTG", "fold"), R("SB", "call")]
+        c = dict(zip(CLASSES, to_classes(preflop_ranges(line, T, 100)["SB"])))
+        for h in ("JJ", "TT", "AQs", "KQs"):
+            self.assertGreater(c[h], 0.05, h)
+        w = preflop_ranges(flat, T, 100)["SB"]
+        self.assertTrue(25 <= w.sum() <= 50, w.sum())   # still a small flat (~3% of hands)
+
     def test_jam_after_flat_has_a_range(self):
         """CO flats, BB squeezes, HJ 4bets, CO jams: the jam range was CO's flats times the jam chart,
         empty, so equity was NaN and HJ folded AA. It is now the jam chart's range, rebuilt."""
