@@ -382,8 +382,12 @@ def check_postflop(job):
     pot = res.get("pot_bb", 0.0)
     evs_ = [a["ev_bb"] for a in res.get("actions", []) if a.get("ev_bb") is not None]
     spread = max(evs_) - min(evs_) if evs_ else 0.0
-    # (every option worth the pot is hero holding the nuts against the range: not the signature)
-    for a in (res.get("actions", []) if spread > 0.05 else []):
+    check_ev = next((a["ev_bb"] for a in res.get("actions", []) if a["action"] == "check" and a.get("ev_bb") is not None), None)
+    # (every option worth the pot, or checking worth it too, is hero beating the villain's whole range: a bet
+    # winning exactly the pot is then no sign of a face-up solve; a short solve under load left one option
+    # a little below the pot and flagged it)
+    nuts = spread <= 0.05 or (check_ev is not None and abs(check_ev - pot) < 0.02)
+    for a in (res.get("actions", []) if not nuts else []):
         if (a["action"].startswith("bet") or a["action"].startswith("raise") or a["action"] == "all-in") \
                 and a.get("ev_bb") is not None and abs(a["ev_bb"] - pot) < 0.02 and a.get("freq", 0) > 0.5:
             flags.append(("ev_is_pot", info))
