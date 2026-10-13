@@ -192,7 +192,12 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   weak range (a lead after checking twice) folds more of itself than a strong one (a
   call of that lead), the strongest part of what continues raises, and when
   they bet it's value plus balanced bluffs. Players still to act behind you can
-  call or raise after you call, a raise can be re-raised, and every line plays to
+  call or raise after you call; they faced the bet with you, so each folds as often
+  as when everyone it was made into faces it together (39% of the range continues
+  against a pot-sized bet with two of you facing it; pricing it as a fresh bet into
+  the pot your call had grown kept 81%, junk included, and that dead money paid for
+  your calls: K5s on K72 called a pot bet at +19 bb, now +7). A raise can be
+  re-raised, and every line plays to
   the river: on each later street you lead for value when you're ahead of what
   would call, otherwise an opponent may bet and you raise, call or fold by your
   equity against their range (on the turn, also counting the river bet that may
@@ -200,7 +205,8 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   the sampling noise (or a time cap), and the notes give that gap with its error.
 * Streets that started multiway narrow every player's range by the same rules
   (a check drops most hands that would have bet, a bet keeps its value + bluff
-  range, a call drops what would have folded or raised); hands a rule rules out
+  range, a call drops what would have folded or raised, with a first call and an
+  overcall of the same bet keeping the same share); hands a rule rules out
   keep 30% of their weight. That covers multiway spots and heads-up pots that
   were multiway earlier, including a pot that became heads-up on this street.
 * In heads-up spots the villain's actions this street narrow their range exactly,
@@ -212,8 +218,15 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   `scripts/calibrate_multiway.py`: on ~200 heads-up flop spots the heuristic's pick
   gives up 0.10 bb on average against the solver's best action, and its EVs are
   off by 1.0 bb on average (1.35 bb before fitting). The "players call too much"
-  shade is deliberate and not fitted, and nothing here checks the multiway
-  interactions themselves, which the solver can't play.
+  shade is deliberate and not fitted. The multiway interactions themselves, which
+  the solver can't play, were sanity-checked on ~190 3-way spots (single-raised and
+  squeezed pots, flop first to act, facing a bet, facing a bet and a call, turn and
+  river after checks, hands from sets to air): no errors, no strong hand folding
+  where a weaker one continues, its equity against the field within MC noise of an
+  exact count, and against two players it bluffs far less than the heads-up solve
+  (air checks where heads-up bets 80-100%). It still bets top pair weak kicker and
+  second pair at 66% into two players where heads-up bets them half the time and
+  small (it has one size), and a bettor behind you ends the action for the others.
 * If your hand isn't in your range for the line you took (a preflop call the charts
   never make, say), it is added to the solve as a near-zero-weight combo so it
   still gets a strategy and EVs without changing anyone else's play.

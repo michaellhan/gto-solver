@@ -570,7 +570,7 @@ class TestTableSizes(unittest.TestCase):
         st = {"players": 6, "hero": "HJ", "hole": "2c3d", "board": "Kc8h4h", "preflop": pre,
               "flop": [{"pos": "BB", "action": "check"}, {"pos": "UTG", "action": "bet", "amount": 5}]}
         r = adv.advise(st)
-        self.assertIn("after a call, CO, BB still to act", r["notes"])
+        self.assertTrue(any(n.startswith("after a call, CO, BB still to act") for n in r["notes"]))
         self.assertEqual(r["recommended"], "fold")
         self.assertLess(r["actions"][2]["ev_bb"], -1.0)        # opponents call too much for a pure bluff raise
         self.assertGreater(r["actions"][1]["ev_bb"], -5.5)     # later streets never cost more than the call
@@ -625,6 +625,38 @@ class TestTableSizes(unittest.TestCase):
         self.assertGreater(ranges["HJ"][sets] / before["HJ"][sets], 0.9)   # a set bets
         from gto.advisor import NARROW_SOFT
         self.assertLessEqual(ranges["BB"][sets] / before["BB"][sets], NARROW_SOFT + 1e-9)   # and doesn't check
+
+    def test_multiway_players_behind_a_call_fold_like_the_field(self):
+        # CO pots it 3-way on K72, BTN (hero) calls with BB behind. BB faced the bet with us, so it
+        # folds as often as when both of us face it together; it used to price the bet into the pot
+        # our call had grown and keep 81% of its range (junk included), paying off our call with dead
+        # money: K5s showed +19 bb for an 8 bb call it wins 52% of the time against CO.
+        adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
+               {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
+        r = adv.advise({"players": 6, "hero": "BTN", "hole": "Kc5c", "board": "Kh7c2d", "preflop": pre,
+                        "flop": [{"pos": "BB", "action": "check"}, {"pos": "CO", "action": "bet", "amount": 8}]})
+        note = next(n for n in r["notes"] if n.startswith("after a call, BB still to act"))
+        self.assertLess(int(note.split("BB continues with ")[1].split("%")[0]), 45)   # _keep(8, 8, 2): 39%
+        self.assertLess(r["actions"][1]["ev_bb"], 12.0)
+
+    def test_multiway_overcall_narrows_like_the_first_call(self):
+        # HJ bets 3-way, BTN calls, BB overcalls. Both faced the same bet; the overcall used to be priced
+        # against the pot the first call had grown, so with equal ranges BB kept more than BTN.
+        from gto.advisor import replay_hand, _narrow_street
+        pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "raise", "to": 2.5}, {"pos": "CO", "action": "fold"},
+               {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
+        flop = [{"pos": "BB", "action": "check"}, {"pos": "HJ", "action": "bet", "amount": 4},
+                {"pos": "BTN", "action": "call"}, {"pos": "BB", "action": "call"}]
+        pos = pf.SEATS[6]
+        base = pf.replay_ranges(pre, pos)["BTN"]
+        st = replay_hand(pos, 100.0, {"preflop": pre, "flop": flop}, 2)[1]
+        self.assertEqual((st.bet_pot, st.bet_risk, st.bet_faced), (8.0, 4.0, 2))
+        ranges = {"HJ": base.copy(), "BTN": base.copy(), "BB": base.copy()}
+        # BB's check narrows its range first; compare the call step alone by checking from equal ranges
+        st.actions = flop[1:]
+        _narrow_street(ranges, cards("Jc7h2s"), st, 100.0)
+        self.assertAlmostEqual(ranges["BB"].sum(), ranges["BTN"].sum(), delta=0.01 * ranges["BTN"].sum())
 
     def test_big_bet_range_is_mostly_by_the_rules(self):
         # BB checks a three-diamond flop 3-way, then overbets the fourth diamond: the rule's range is

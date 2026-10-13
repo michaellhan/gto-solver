@@ -89,6 +89,11 @@ class StreetState:
     closed: bool = False
     actions: List[dict] = field(default_factory=list)
     posted: Dict[str, float] = field(default_factory=dict)   # blinds (and straddle) posted this street
+    # the last bet or raise: the pot just before it, the chips its maker added, and how many players
+    # (live and not all-in, the maker aside) faced it
+    bet_pot: float = 0.0
+    bet_risk: float = 0.0
+    bet_faced: int = 0
 
 
 def _showdown_share(st, idx, hands) -> float:
@@ -143,6 +148,10 @@ def replay_hand(positions: List[str], stack: float, streets: Dict[str, List[dict
                 else:
                     to = _default_size(st, p, pre)
                 to = min(to, st.bets[p] + remaining)
+                if to > st.cur_bet + 1e-9:
+                    st.bet_pot = st.pot_start + sum(st.bets.values())
+                    st.bet_risk = to - st.bets[p]
+                    st.bet_faced = sum(1 for q in st.active if q != p and q not in st.allin)
                 st.bets[p] = to
                 if to > st.cur_bet + 1e-9:
                     st.cur_bet = to
@@ -306,6 +315,7 @@ def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack:
     bets = {p: 0.0 for p in st.inv_start}
     cur = 0.0
     active = set(st.players_start)
+    faced = None    # the last bet or raise: (pot before it, chips its maker added, players facing it)
     for a in st.actions:
         p, act = a["pos"], a["action"]
         if p not in active or p not in ranges:
@@ -329,7 +339,13 @@ def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack:
             to = min(float(to) if to is not None else _default_size_post(pot, cur, bets[p]), bets[p] + remaining)
         else:
             to = cur
-        keep_m = _rule_mask(r, to, cur, to_call, pot, n, rank)
+        # A call continues against the bet as everyone it was made into would together, the same share
+        # for a first caller and an overcaller (pricing the bet into the pot it had grown to left
+        # overcallers wider than the first caller).
+        call_k = _keep(faced[1], faced[0], faced[2]) if faced and to_call > 1e-9 and to <= cur + 1e-9 else None
+        keep_m = _rule_mask(r, to, cur, to_call, pot, n, rank, call_k)
+        if to > cur + 1e-9:
+            faced = (pot, min(to, bets[p] + remaining) - bets[p], max(n, 1))
         cur = max(cur, to)
         bets[p] = max(bets[p], min(to, bets[p] + remaining))
         ranges[p] = r * _soften(r, keep_m)
@@ -345,9 +361,10 @@ def _soften(r, keep_m) -> np.ndarray:
     return np.where(keep_m, 1.0, soft)
 
 
-def _rule_mask(r, to, cur, to_call, pot, n, rank) -> np.ndarray:
+def _rule_mask(r, to, cur, to_call, pot, n, rank, call_k=None) -> np.ndarray:
     """The part of range r the multiway rules play this way, with n opponents and `pot` in the
-    middle: a bet or raise to `to` over the current bet `cur`, else a call of to_call (or a check)."""
+    middle: a bet or raise to `to` over the current bet `cur`, else a call of to_call (or a check).
+    call_k: for a call, the share of the range that continues (default: facing to_call into pot)."""
     if to > cur + 1e-9:                       # bet or raise: value + balanced bluffs
         if to_call <= 1e-9:
             return _aggro(r, _keep(to - cur, pot, n, 1.0) * VALUE_SHARE, to - cur, pot, rank)
@@ -355,7 +372,7 @@ def _rule_mask(r, to, cur, to_call, pot, n, rank) -> np.ndarray:
     if to_call <= 1e-9:                       # check: not what would have bet
         b = 0.66 * pot
         return ~_aggro(r, _keep(b, pot, n, 1.0) * VALUE_SHARE, b, pot, rank)
-    k = _keep(to_call, pot, n)                # call: continues, but wouldn't raise
+    k = _keep(to_call, pot, n) if call_k is None else call_k   # call: continues, but wouldn't raise
     return _top(r, k, rank) & ~_top(r, k * RAISE_SHARE, rank)
 
 
@@ -1015,13 +1032,16 @@ class Advisor:
           (which would let a pure bluff break even), since real players call too much. They all
           keep the hands above one strength bar, so a range of weak hands (a lead into the field
           after checking twice) folds more of itself than a strong one (a call of that lead), and
-          the strongest part of what each continues with raises instead.
-        - Betting into us: value with the top half of what would call that bet (balanced, unshaded), plus bluffs from
-          the bottom of the range at the balanced ratio, bluffs = value * b / (p + b).
+          the strongest part of what each continues with raises instead. Players still to act behind
+          a bet we call faced that bet with us, so they fold as often as each would with everyone it
+          was made into facing it together (not as if it were a fresh bet into the pot our call grew).
+        - Betting into us: value with the top VALUE_SHARE of what would call that bet (balanced, unshaded),
+          plus bluffs from the bottom of the range at the balanced ratio, bluffs = value * b / (p + b).
         - Once someone bets or raises, the players not involved fold.
-        We call or fold by our equity against the aggressor's range on the board as it stands (no
-        peeking at later cards). Every line plays on to the river with one 66%-pot bet per later
-        street, and we never bet or raise after this decision."""
+        Every line plays on to the river with one 66%-pot bet per later street: we lead it when we're
+        ahead of every range that would call (LEAD_EQ), else an opponent may bet and we raise
+        (RAISE_EQ), call or fold by our equity against their range on the board as it stands (no
+        peeking at later cards; on the turn, counting the river bet that may follow)."""
         from .evaluator import eval_board
         rng = random.Random(1)
         opps = [p for p in remaining if p != hero]
@@ -1202,7 +1222,11 @@ class Advisor:
             matched = [i for i in range(n_opp) if i not in behind]
             beh = {}
             costs = [min(cur.cur_bet, cap[i]) - cur.bets[opps[i]] for i in behind]
-            beh_conts = _joint_top([opp_ranges[i] for i in behind], _fold_together(costs, p_call), rank0)
+            # They face the bet we call, which has to get past everyone it was made into: each folds as
+            # often as when all of them face it together (see _keep), not as if it were a fresh bet into
+            # the pot it has already grown with our call (that kept 80-90% of their range, junk included).
+            fold_each = 1.0 - _keep(cur.bet_risk, cur.bet_pot, max(cur.bet_faced, 1))
+            beh_conts = _joint_top([opp_ranges[i] for i in behind], fold_each ** len(behind), rank0)
             for i, cost, cont in zip(behind, costs, beh_conts):
                 k = _share(opp_ranges[i], cont)
                 rto = min(round((cur.cur_bet + 0.75 * (p_call + cost)) * 2) / 2, cap[i])
@@ -1357,7 +1381,9 @@ class Advisor:
             acts.append({"action": "call", "freq": 0.0, "ev_bb": round(ev["call"], 2), "amount_bb": round(call_amt, 2)})
             notes.append(f"pot odds need {need*100:.0f}% equity, you have {eq*100:.0f}% against everyone's whole range")
             if behind:
-                notes.append(f"after a call, {', '.join(opps[i] for i in behind)} still to act")
+                notes.append(f"after a call, {', '.join(opps[i] for i in behind)} still to act: "
+                             + ", ".join(f"{opps[i]} continues with {_share(opp_ranges[i], beh[i][1]) * 100:.0f}%"
+                                         for i in behind) + " of their range")
         else:
             acts.append({"action": "check", "freq": 0.0, "ev_bb": round(ev["check"], 2)})
             if bets:
