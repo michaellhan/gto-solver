@@ -5,7 +5,8 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="$(mktemp -d)"
 
-# Checks before anything is published: the unit tests and the quick sanity sweep (~2 min; exits non-zero
+# Checks before anything is published: the unit tests, the page's JavaScript tests (when node is
+# installed) and the quick sanity sweep (~2 min; exits non-zero
 # when a bug flag other than the info ones reproduces). SKIP_CHECKS=1 skips them (emergencies only);
 # DRY_RUN=1 runs them and stops before cloning or pushing. PYTHON overrides the interpreter (default:
 # the repo's .venv, else python3).
@@ -19,6 +20,15 @@ else
   if ! (cd "$HERE" && "$PYTHON" -m unittest -q); then
     echo "Deploy aborted: unit tests failed. Fix them, or SKIP_CHECKS=1 scripts/deploy.sh in an emergency." >&2
     exit 1
+  fi
+  if command -v node >/dev/null 2>&1; then
+    echo "Running the page's JavaScript tests (node --test)..."
+    if ! (cd "$HERE" && node --test 'tests/js/*.test.js' >/dev/null); then
+      echo "Deploy aborted: the page's JavaScript tests failed (node --test 'tests/js/*.test.js'). Fix them, or SKIP_CHECKS=1 scripts/deploy.sh in an emergency." >&2
+      exit 1
+    fi
+  else
+    echo "node not found: skipping the page's JavaScript tests."
   fi
   echo "Running the quick sanity sweep..."
   if ! (cd "$HERE" && "$PYTHON" scripts/sanity_sweep.py --quick --out "$WORK/sanity_report.md"); then
