@@ -215,7 +215,7 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   than 15%, that street's tree uses the real size so narrowing is exact.
 * Multiway pots (3+ players live at your decision) are not solved. Instead a Monte
   Carlo heuristic picks the highest-EV action among fold / call / raise to 75% pot
-  (or check / bet 66% pot), with opponents following simple range rules:
+  (or check / bet 33% / bet 66% pot), with opponents following simple range rules:
   facing a bet they fold together a quarter less often than a balanced defence
   (people call too much), with everyone keeping the hands above one strength bar, so a
   weak range (a lead after checking twice) folds more of itself than a strong one (a
@@ -225,12 +225,19 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   as when everyone it was made into faces it together (39% of the range continues
   against a pot-sized bet with two of you facing it; pricing it as a fresh bet into
   the pot your call had grown kept 81%, junk included, and that dead money paid for
-  your calls: K5s on K72 called a pot bet at +19 bb, now +7). A raise can be
-  re-raised, and every line plays to
+  your calls: K5s on K72 called a pot bet at +19 bb, now +7). Each bet size gets
+  its own continuing ranges, so a third of the pot keeps more of the field in (3-way,
+  each keeps about 57% of their range against 33% and 45% against 66%) and gets
+  raised more often. When you check, the first player behind you whose betting
+  range holds their hand bets 66%, and the others face that bet the same way as
+  players behind a call (call, raise with the strongest part, fold the rest): those
+  between the bettor and you act first and you call or fold knowing what they did,
+  those after you act once you've called. A raise can be re-raised, and every line plays to
   the river: on each later street you lead for value when you're ahead of what
   would call, otherwise an opponent may bet and you raise, call or fold by your
   equity against their range (on the turn, also counting the river bet that may
-  follow). Trials continue until the gap between the two best actions is clear of
+  follow); on those later streets one bettor still ends the action for the others,
+  and there's one 66% size. Trials continue until the gap between the two best actions is clear of
   the sampling noise (or a time cap), and the notes give that gap with its error.
 * Streets that started multiway narrow every player's range by the same rules
   (a check drops most hands that would have bet, a bet keeps its value + bluff
@@ -253,9 +260,25 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   river after checks, hands from sets to air): no errors, no strong hand folding
   where a weaker one continues, its equity against the field within MC noise of an
   exact count, and against two players it bluffs far less than the heads-up solve
-  (air checks where heads-up bets 80-100%). It still bets top pair weak kicker and
-  second pair at 66% into two players where heads-up bets them half the time and
-  small (it has one size), and a bettor behind you ends the action for the others.
+  (air checks where heads-up bets 80-100%). The small bet and the players behind a
+  bettor were checked on ~570 3-way spots (open, cold call and big blind; open and two
+  calls; a squeeze called twice; flop, turn and river; sets to air): a third of the
+  pot is picked in 15% of them, mostly with hands between a fifth and four fifths
+  of the field's equity (top pair weak kicker, second pair, draws: 79 of 296), never
+  with air (0 of 141) and rarely with strong hands (9 of 130, sets among them,
+  in squeezed pots, where the stacks are short of the pot and top pair also bets
+  small: J8s on J94 bets 33% for 30.3 bb against 24.6 at 66%). Checking is worth
+  about the same with weak hands, less with middling ones in big pots (players
+  between call or raise the bet you'd call: QJs on 863QK in a squeezed pot 26.6 to
+  17.6 bb) and more with strong ones (their calls add money: a set of nines on J94,
+  76.7 to 83.0). Strong hands still call everything except a raise from a player
+  between when the raiser's range is mostly better (a set of nines against a flatter
+  whose top is jacks); the nuts call every time. On the heads-up calibration spots
+  nothing changes with one size (score 0.351 before, 0.348 after: MC noise); with the
+  solver also betting 33%, the pick loss stays 0.18 bb and the EV error is 1.12 bb
+  against 1.08 (the solver is nearly indifferent between its sizes there, so picking
+  among more actions barely moves the loss). The trials take about 1.3x as long
+  (more actions to separate; the time caps are unchanged).
 * If your hand isn't in your range for the line you took (a preflop call the charts
   never make, say), it is added to the solve as a near-zero-weight combo so it
   still gets a strategy and EVs without changing anyone else's play.

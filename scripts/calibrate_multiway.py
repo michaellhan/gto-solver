@@ -3,7 +3,8 @@
 The heuristic (Advisor._multiway) can play a heads-up spot too, where the solver gives the right
 answer. For heads-up flop spots (CO opens, BB calls; a few boards and lines; hands across hero's
 range) we compare the heuristic's EVs and pick with the solver's, both using the same sizes (bet
-66%, raise 75% of the pot after calling). FOLD_SHADE is set to 1 here: the solver's opponent
+66%, raise 75% of the pot after calling; with --small also bet 33%, else the heuristic's 33% bet
+isn't scored). FOLD_SHADE is set to 1 here: the solver's opponent
 defends in balance, and the 0.75 is a deliberate adjustment for real players, not a fit.
 
 Score: the solver-EV the heuristic's pick gives up against the solver's best action (bb), plus
@@ -12,7 +13,10 @@ Score: the solver-EV the heuristic's pick gives up against the solver's best act
   python scripts/calibrate_multiway.py           # score the current constants
   python scripts/calibrate_multiway.py --tune    # coordinate search over the constants
 
-Solver results are cached (--cache), so only the first run pays for the solves (~5 min).
+  python scripts/calibrate_multiway.py --small   # the solver also bets 33% pot, as the heuristic can
+
+Solver results are cached (--cache), so only the first run pays for the solves (one at a time,
+--budget seconds each).
 """
 import argparse
 import json
@@ -41,11 +45,17 @@ HANDS = ["AsAd", "KsKd", "QsQh", "JsJc", "TsTd", "9s9d", "7s7d", "5s5d", "3s3h",
 PARAMS = {"VALUE_SHARE": [0.35, 0.5, 0.65], "RAISE_SHARE": [0.2, 1 / 3, 0.5], "LEAD_EQ": [0.45, 0.5, 0.6],
           "RAISE_EQ": [0.5, 0.55, 0.65], "NARROW_SOFT": [0.05, 0.15, 0.3],
           "OFF_RULE_MAX": [0.15, 0.25, 0.4, 1.0]}
-SIZES = dict(bet_sizes={s: [0.66] for s in ("flop", "turn", "river")},
-             raise_sizes={s: [0.75] for s in ("flop", "turn", "river")})
+def sizes(small):
+    """The heuristic's sizes: bet 66% (and 33% with --small), raise 75% of the pot after calling."""
+    return dict(bet_sizes={s: [0.33, 0.66] if small else [0.66] for s in ("flop", "turn", "river")},
+                raise_sizes={s: [0.75] for s in ("flop", "turn", "river")})
 
 
 def kind(name):
+    """Action names matched across the two: bets by size (small under half pot, big above), the
+    rest by their first word (the heuristic's raise sizes are rounded)."""
+    if name.startswith("bet"):
+        return "bet small" if float(name.split()[1].rstrip("%")) < 50 else "bet big"
     return name.split()[0]
 
 
@@ -59,9 +69,9 @@ def spots():
                            "preflop": PRE, "flop": flop}, line
 
 
-def solve_all(cache_path, budget):
+def solve_all(cache_path, budget, small):
     cache = json.load(open(cache_path)) if os.path.exists(cache_path) else {}
-    adv = A.Advisor(Config(**SIZES), time_budget=budget, prior_budget=1)
+    adv = A.Advisor(Config(**sizes(small)), time_budget=budget, prior_budget=1)
     adv._with_hero = lambda r0, r1, *a: (r0, r1)   # skip hands outside the range instead of re-solving for them
     for st, line in spots():
         key = f"{st['board']}|{line}|{st['hole']}"
@@ -114,9 +124,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tune", action="store_true")
     ap.add_argument("--budget", type=float, default=25.0, help="seconds per heads-up solve")
-    ap.add_argument("--cache", default=os.path.join(tempfile.gettempdir(), "gto_calibration.json"))
+    ap.add_argument("--small", action="store_true", help="the solver also bets 33%% (scores the heuristic's size choice)")
+    ap.add_argument("--cache", default=None)
     a = ap.parse_args()
-    cache = solve_all(a.cache, a.budget)
+    a.cache = a.cache or os.path.join(tempfile.gettempdir(), "gto_calibration%s.json" % ("_small" if a.small else ""))
+    cache = solve_all(a.cache, a.budget, a.small)
     params = {k: getattr(A, k) for k in PARAMS}
     with Pool() as pool:
         best = score(cache, params, pool)

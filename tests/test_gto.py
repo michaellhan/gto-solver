@@ -669,6 +669,53 @@ class TestTableSizes(unittest.TestCase):
         _narrow_street(ranges, cards("Jc7h2s"), st, 100.0)
         self.assertAlmostEqual(ranges["BB"].sum(), ranges["BTN"].sum(), delta=0.01 * ranges["BTN"].sum())
 
+    def test_multiway_players_behind_a_bettor_act_after_we_check(self):
+        # BB checks 3-way: CO may bet with BTN between it and us, or BTN may bet with CO behind us. The
+        # first bettor used to end the action, so a check-call faced the bettor alone; now the others
+        # call or raise it, and we call or fold knowing what the players between did: a set calls
+        # everything, middle pair only some of it (not raises), a gutshot nothing.
+        adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
+               {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
+        share = {}
+        for hole in ("7s7d", "7s6s", "8s6s"):
+            r = adv.advise({"players": 6, "hero": "BB", "hole": hole, "board": "Kh7c2d", "preflop": pre, "flop": []})
+            note = next(n for n in r["notes"] if n.startswith("if you check, someone bets"))
+            called = int(note.split("between the bettor and you calls it ")[1].split("%")[0])
+            raised = int(note.split(" and raises ")[1].split("%")[0])
+            self.assertGreater(called, 5)
+            self.assertGreater(raised, 0)
+            share[hole] = int(note.split("you'd call ")[1].split("%")[0])
+        self.assertEqual(share["7s7d"], 100)
+        self.assertLess(share["7s6s"], 80)
+        self.assertGreater(share["7s6s"], 0)
+        self.assertEqual(share["8s6s"], 0)
+
+    def test_multiway_small_bet(self):
+        # Checked to CO 3-way: it chooses between checking, a third of the pot and two thirds by EV, and
+        # the field continues wider against the small bet (each folds less, the joint fold rule).
+        adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
+               {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
+        r = adv.advise({"players": 6, "hero": "BB", "hole": "Ts9s", "board": "Kh7c2d", "preflop": pre, "flop": []})
+        self.assertEqual([(a["action"], a.get("amount_bb")) for a in r["actions"]],
+                         [("check", None), ("bet 33%", 2.5), ("bet 66%", 5.5)])
+        self.assertEqual(r["recommended"], max(r["actions"], key=lambda a: a["ev_bb"])["action"])
+        cont = {}
+        for size in ("33%", "66%"):
+            note = next(n for n in r["notes"] if n.startswith(f"vs bet {size}"))
+            cont[size] = [int(note.split(f"{p} continues with ")[1].split("%")[0]) for p in ("CO", "BTN")]
+        for small, big in zip(cont["33%"], cont["66%"]):
+            self.assertGreater(small, big + 4)
+        # Too small a pot for two sizes a 0.5bb step apart: only the 66% bet.
+        import time
+        from gto.advisor import replay_hand
+        st = replay_hand(pf.SEATS[6], 100.0, {"preflop": pre, "flop": []}, 2)[1]
+        st.pot_start = 1.0
+        out = adv._multiway("BB", tuple(cards("Ts9s")), cards("Kh7c2d"), pf.replay_ranges(pre, pf.SEATS[6]),
+                            ["BB", "CO", "BTN"], st, 100.0, time.time(), [])
+        self.assertEqual([a["action"] for a in out["actions"]], ["check", "bet 66%"])
+
     def test_big_bet_range_is_mostly_by_the_rules(self):
         # BB checks a three-diamond flop 3-way, then overbets the fourth diamond: the rule's range is
         # small, and hands off it mustn't swamp it (they used to be ~2/3 of the range).
