@@ -1056,7 +1056,54 @@ class TestQuickSweep(unittest.TestCase):
         self.assertGreaterEqual({j[2] for j in self.post if j[3]}, {"vs_bet", "turn", "river_vs_bet"})
         streets = {len(j[1]["board"]) // 2 for j in self.post}
         self.assertEqual(streets, {3, 4, 5})
-        self.assertLess(len(self.pre) + len(self.post), 300)
+        self.assertLess(len(self.pre) + len(self.post), 340)
+
+    def test_rare_lines_covered(self):
+        """The hand-picked rare lines (outside the quick preflop trees' reach cut) are all in the quick set:
+        every kind, every setup, each line on the charts and built in full, closed pots with flop and
+        turn spots (heads-up) or 3-way spots, and the lines ending at a decision checked there."""
+        import json
+        from collections import defaultdict
+        sw = self.sw
+        self.assertEqual({k for _, k, _ in sw.RARE_LINES}, set(sw.RARE_KINDS))
+        self.assertEqual({t for t, _, _ in sw.RARE_LINES}, {s[0] for s in sw.SETUPS})
+        by_tag = {s[0]: s for s in sw.SETUPS}
+        rare_pre, rare_post = sw.rare_jobs(7)
+        self.assertEqual((rare_pre, rare_post), sw.rare_jobs(7))
+        self.assertEqual(self.pre[-len(rare_pre):], rare_pre)
+        self.assertEqual(self.post[-len(rare_post):], rare_post)
+        pre_lines = {(j[0][0], json.dumps(j[1])) for j in rare_pre}
+        post_lines = defaultdict(set)
+        for j in rare_post:
+            post_lines[(j[0][0], json.dumps(j[1]["preflop"]))].add(j[2])
+        closed_kinds, threeway = set(), 0
+        for tag, kind, steps in sw.RARE_LINES:
+            acts, prefixes, reach, closed = sw.build_line(by_tag[tag], steps)
+            self.assertGreater(reach, 0, (tag, kind))
+            self.assertEqual(len([a for a in acts if a["action"] != "fold"]),
+                             len([s for s in steps if s[1] != "f"]), (tag, kind))
+            self.assertIn((tag, json.dumps(acts)), pre_lines, (tag, kind))
+            for node in prefixes[-sw.RARE_PRE_NODES:]:
+                self.assertIn((tag, json.dumps(node)), pre_lines, (tag, kind))
+            if closed:
+                closed_kinds.add(kind)
+                kinds = post_lines[(tag, json.dumps(acts))]
+                self.assertTrue(kinds == set(sw.RARE_POST_KINDS) or kinds == set(sw.MULTIWAY_KINDS), (tag, kind, kinds))
+                threeway += kinds == set(sw.MULTIWAY_KINDS)
+        self.assertGreaterEqual(closed_kinds, {"3bet pot", "4bet pot", "cold 4bet", "squeeze called", "straddled 3bet pot"})
+        self.assertGreaterEqual(threeway, 2)
+
+    def test_rare_line_range_check(self):
+        """A closed rare line's range job (no hands) runs the preflop range checks: the flat-then-4bet
+        range is filled out, not left thin."""
+        sw = self.sw
+        setup = sw.SETUPS[0]
+        steps = next(s for t, k, s in sw.RARE_LINES if t == setup[0] and k == "flat then 4bet")
+        acts = sw.build_line(setup, steps)[0]
+        names = {n for n, _ in sw.check_preflop((setup, acts, None, [], False))}
+        self.assertNotIn("error", names)
+        self.assertNotIn("thin_range", names)
+        self.assertIn("filled_range", names)
 
     def _multiway(self, job):
         from gto.advisor import replay_hand

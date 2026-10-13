@@ -6,7 +6,7 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="$(mktemp -d)"
 
 # Checks before anything is published: the unit tests, the page's JavaScript tests (when node is
-# installed) and the quick sanity sweep (~2 min; exits non-zero
+# installed) and the quick sanity sweep (~3 min, rare preflop lines included; exits non-zero
 # when a bug flag other than the info ones reproduces). SKIP_CHECKS=1 skips them (emergencies only);
 # DRY_RUN=1 runs them and stops before cloning or pushing. PYTHON overrides the interpreter (default:
 # the repo's .venv, else python3).

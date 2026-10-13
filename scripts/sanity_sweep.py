@@ -34,18 +34,27 @@ Postflop flags are confirmed: each flagged spot is solved again with a longer bu
 the cores, and only flags that reproduce are reported (short solves sharing the machine can be far from
 equilibrium, which looks like a face-up range or a bet worth exactly the pot).
 
-Quick mode (--quick) is what scripts/deploy.sh runs before every deploy (~2 min on 10 cores): a fixed
+Quick mode (--quick) is what scripts/deploy.sh runs before every deploy (~3 min on 10 cores): a fixed
 set, deterministic for --seed (quick_jobs), of 10 preflop decision nodes per setup (5 hands each; 6 more in
 exploit mode in the default setup) and 10 postflop spots per setup rotating through the heads-up kinds,
 with the default setup getting each heads-up kind 4 times, 3-way pots and exploit-mode spots. Its preflop
 trees keep lines that happen at least 1e-4 of the time with at most three voluntary players (the full
-6-max tree takes over a minute to walk). The confirm pass re-solves only spots with a flag other than the
-info ones, and the run exits 1 when any such flag remains (--strict does the same for other runs).
+6-max tree takes over a minute to walk), so on top it checks the rare lines (RARE_LINES, rare_jobs): ~30
+hand-picked lines over the setups where earlier bugs hid (3bet and 4bet pots, cold 4bets, flat then 4bet,
+a squeeze called twice or 4bet, 4bet and 5bet jams faced, limp-reraises, straddled 3bet pots), built
+directly from their steps (build_line) rather than by walking the tree. Per line: its last two decision
+nodes and the decision it ends at (5 hands each), the ranges a closed line reaches the flop with
+(thin_range / filled_range), and in its pot a flop spot facing a bet and a turn spot heads-up (face_up,
+ev_is_pot) or both 3-way kinds. The confirm pass re-solves only spots with a flag other than the info
+ones, and the run exits 1 when any such flag remains (--strict does the same for other runs).
 
   python scripts/sanity_sweep.py                       # full sweep (~40 min on 8 cores)
   python scripts/sanity_sweep.py --pre 300 --post 200  # quicker
-  python scripts/sanity_sweep.py --quick               # the pre-deploy check (~2 min, exit 1 on bug flags)
+  python scripts/sanity_sweep.py --quick               # the pre-deploy check (~3 min, exit 1 on bug flags)
   python scripts/sanity_sweep.py --out report.md       # where to write the report (default sanity_report.md)
+  python scripts/sanity_sweep.py --rare                # a full sweep plus the rare lines
+  python scripts/sanity_sweep.py --full-report         # the same, report in reports/sanity_YYYY-MM-DD.md
+                                                       # (for an occasional or nightly run; not scheduled)
 """
 import argparse
 import json
@@ -423,10 +432,135 @@ def quick_jobs(seed=7):
         else:
             k = [POST_KINDS[(si * QUICK_POST + j) % len(POST_KINDS)] for j in range(QUICK_POST)]
             post_jobs += postflop_jobs(setup, closed, QUICK_POST, s, kinds=k)
+    rare_pre, rare_post = rare_jobs(seed)
+    return pre_jobs + rare_pre, post_jobs + rare_post
+
+
+# Rare lines: hand-picked preflop lines, rarer than QUICK_MIN_REACH or with more than three voluntary
+# players, of the kinds where earlier bugs hid (thin or empty ranges, face-up solves, KK folding to a
+# jam). Each is (setup tag, kind, steps); a step is (seat, verb) with verb "r" (raise to the sweep's
+# default size, all-in from the 5bet on or when it covers the stack), "j" (all-in), "c" (call; an
+# open-limp when nobody raised) or "f" (fold). Seats not named fold when it's their turn. A line ends
+# closed (its pot goes to the flop) or at a decision.
+RARE_LINES = [
+    ("6p 100bb", "3bet pot", [("CO", "r"), ("BTN", "r"), ("CO", "c")]),
+    ("6p 100bb", "4bet pot", [("CO", "r"), ("BTN", "r"), ("CO", "r"), ("BTN", "c")]),
+    ("6p 100bb", "4bet pot", [("BTN", "r"), ("BB", "r"), ("BTN", "r"), ("BB", "c")]),
+    ("6p 100bb", "5bet jam faced", [("CO", "r"), ("BTN", "r"), ("CO", "r"), ("BTN", "j")]),
+    ("6p 100bb", "5bet jam faced", [("BTN", "r"), ("BB", "r"), ("BTN", "r"), ("BB", "j")]),
+    ("6p 100bb", "cold 4bet", [("UTG", "r"), ("CO", "r"), ("BTN", "r"), ("UTG", "f"), ("CO", "c")]),
+    ("6p 100bb", "cold 4bet", [("BTN", "r"), ("SB", "r"), ("BB", "r")]),
+    ("6p 100bb", "flat then 4bet", [("CO", "r"), ("BTN", "c"), ("BB", "r"), ("CO", "f"), ("BTN", "r")]),
+    ("6p 100bb", "squeeze called", [("CO", "r"), ("BTN", "c"), ("BB", "r"), ("CO", "c"), ("BTN", "c")]),
+    ("6p 100bb", "squeeze 4bet", [("CO", "r"), ("BTN", "c"), ("BB", "r"), ("CO", "r")]),
+    ("6p 100bb", "limp-reraise", [("HJ", "c"), ("BTN", "r"), ("HJ", "r")]),
+    ("HU 100bb", "limp-reraise", [("SB", "c"), ("BB", "r"), ("SB", "r")]),
+    ("HU 100bb", "4bet pot", [("SB", "r"), ("BB", "r"), ("SB", "r"), ("BB", "c")]),
+    ("HU 100bb", "5bet jam faced", [("SB", "r"), ("BB", "r"), ("SB", "r"), ("BB", "j")]),
+    ("6p straddle", "straddled 3bet pot", [("HJ", "r"), ("UTG", "r"), ("HJ", "c")]),
+    ("6p straddle", "straddled 3bet pot", [("HJ", "r"), ("BTN", "r"), ("HJ", "c")]),
+    ("6p straddle", "4bet pot", [("CO", "r"), ("BTN", "r"), ("CO", "r"), ("BTN", "c")]),
+    ("6p straddle", "limp-reraise", [("HJ", "c"), ("UTG", "r"), ("HJ", "r")]),
+    ("6p 20bb", "4bet jam faced", [("CO", "r"), ("BTN", "r"), ("CO", "j")]),
+    ("6p 40bb", "4bet jam faced", [("CO", "r"), ("BTN", "r"), ("CO", "j")]),
+    ("6p 40bb", "flat then 4bet", [("CO", "r"), ("BTN", "c"), ("BB", "r"), ("CO", "f"), ("BTN", "j")]),
+    ("6p 200bb", "4bet pot", [("CO", "r"), ("BTN", "r"), ("CO", "r"), ("BTN", "c")]),
+    ("6p 200bb", "5bet jam faced", [("CO", "r"), ("BTN", "r"), ("CO", "r"), ("BTN", "j")]),
+    ("6p 200bb", "cold 4bet", [("UTG", "r"), ("HJ", "r"), ("CO", "r"), ("UTG", "f"), ("HJ", "c")]),
+    ("3p 100bb", "cold 4bet", [("BTN", "r"), ("SB", "r"), ("BB", "r")]),
+    ("3p 100bb", "4bet pot", [("BTN", "r"), ("SB", "r"), ("BTN", "r"), ("SB", "c")]),
+    ("9p 100bb ante", "cold 4bet", [("UTG", "r"), ("LJ", "r"), ("BTN", "r")]),
+    ("9p 100bb ante", "4bet pot", [("UTG", "r"), ("CO", "r"), ("UTG", "r"), ("CO", "c")]),
+    ("9p 100bb ante", "squeeze called", [("HJ", "r"), ("CO", "c"), ("BB", "r"), ("HJ", "c"), ("CO", "c")]),
+]
+RARE_KINDS = ["3bet pot", "4bet pot", "cold 4bet", "flat then 4bet", "squeeze called", "squeeze 4bet",
+              "5bet jam faced", "4bet jam faced", "limp-reraise", "straddled 3bet pot"]
+RARE_POST_KINDS = ["vs_bet", "turn"]        # postflop spots per heads-up rare pot (3-way: MULTIWAY_KINDS)
+RARE_PRE_NODES = 2                          # decision nodes checked before a line's last steps
+
+
+def build_line(setup, steps):
+    """The preflop actions of a RARE_LINES template in this setup, as (actions, decision prefixes, reach,
+    closed): the prefixes are the action lists at which each named seat acts, `reach` how often the
+    charts play the line (an open-limp, off the charts, counts its share of preflop.LIMP) and `closed`
+    whether the line goes to the flop. Raises a ValueError when a named seat doesn't get to act."""
+    from gto import preflop as pf
+    from gto.advisor import replay_hand
+    T = _table(setup)
+    stack = setup[2]
+    acts, prefixes, ranges, reach = [], [], {}, 1.0
+
+    def take(p, a, key, strat):
+        nonlocal acts, reach
+        v = strat.get(key)
+        if v is None and key == "call" and not any(h["action"] in ("raise", "all-in") for h in acts):
+            v = pf.LIMP
+        if v is None:
+            v = np.zeros_like(next(iter(strat.values())))
+        w = ranges.get(p, np.ones_like(v))
+        reach *= float((w * v).sum() / max(w.sum(), 1e-12))
+        ranges[p] = w * v
+        acts = acts + [a]
+
+    for pos, verb in steps:
+        while True:
+            st = replay_hand(T, stack, {"preflop": acts}, 1)[0]
+            if st.closed or st.to_act is None:
+                raise ValueError(f"{setup[0]}: {pos} never acts in {describe(acts)}")
+            if st.to_act == pos:
+                break
+            take(st.to_act, {"pos": st.to_act, "action": "fold"}, "fold", pf.strategy_for(st.to_act, acts, T))
+        prefixes.append(list(acts))
+        if verb == "r":
+            to = _size(st, pos, st.n_raises, T, stack)
+            a = ({"pos": pos, "action": "all-in"} if to >= stack - st.inv_start[pos] - 1e-9 or st.n_raises >= 3
+                 else {"pos": pos, "action": "raise", "to": to})
+        elif verb == "j":
+            a = {"pos": pos, "action": "all-in"}
+        else:
+            a = {"pos": pos, "action": {"c": "call", "f": "fold"}[verb]}
+        key = "raise" if a["action"] in ("raise", "all-in") else a["action"]
+        take(pos, a, key, pf.strategy_for(pos, acts, T))
+    st = replay_hand(T, stack, {"preflop": acts}, 1)[0]
+    return acts, prefixes, reach, bool(st.closed or st.to_act is None)
+
+
+def rare_jobs(seed=7, setups=None):
+    """(preflop jobs, postflop jobs) for RARE_LINES (deterministic for a seed): per line its last
+    RARE_PRE_NODES decision nodes (hero holding AA, KK, QQ, AKs and a random hand) and, if it ends at
+    a decision, that node too; a closed line's ranges are checked (a job with no hands) and its pot gets
+    postflop spots, RARE_POST_KINDS heads-up (flop facing a bet, turn) or MULTIWAY_KINDS 3-way. Jobs
+    match check_preflop and check_postflop."""
+    from gto.cards import card_str
+    from gto.advisor import replay_hand
+    by_tag = {s[0]: s for s in SETUPS}
+    rng = random.Random(seed + 1)
+    pre_jobs, post_jobs, seen = [], [], set()
+    for li, (tag, kind, steps) in enumerate(RARE_LINES):
+        setup = by_tag[tag]
+        if setups is not None and setup not in setups:
+            continue
+        acts, prefixes, _, closed = build_line(setup, steps)
+        nodes = prefixes[-RARE_PRE_NODES:] + ([] if closed else [acts])
+        for node in nodes:
+            key = (tag, json.dumps(node))
+            if key in seen:
+                continue
+            seen.add(key)
+            hero = replay_hand(_table(setup), setup[2], {"preflop": node}, 1)[0].to_act
+            a, b = rng.sample(range(52), 2)
+            pre_jobs.append((setup, node, hero, ["AsAd", "KsKd", "QsQd", "AhKh", card_str(a) + card_str(b)], False))
+        if closed:
+            pre_jobs.append((setup, acts, None, [], False))      # the ranges the pot reaches the flop with
+            n_in = len(replay_hand(_table(setup), setup[2], {"preflop": acts}, 1)[0].active)
+            if n_in in (2, 3):
+                kinds = MULTIWAY_KINDS if n_in == 3 else RARE_POST_KINDS
+                post_jobs += postflop_jobs(setup, [(acts, 1.0)], len(kinds), seed + 1000 + li,
+                                           multiway=n_in == 3, kinds=kinds)
     return pre_jobs, post_jobs
 
 
-def report(flags_pre, flags_post, n_pre, n_post, seconds, out, quick=False):
+def report(flags_pre, flags_post, n_pre, n_post, seconds, out, quick=False, rare=False):
     counts = defaultdict(lambda: [0, 0])
     by_tag = defaultdict(lambda: defaultdict(int))
     examples = defaultdict(list)
@@ -443,8 +577,11 @@ def report(flags_pre, flags_post, n_pre, n_post, seconds, out, quick=False):
             if len(examples[name]) < 8:
                 examples[name].append(ex)
     lines = ["# Sanity sweep" + (" (quick)" if quick else ""), "",
-             f"{n_pre} preflop decision nodes (x {5 if quick else 6} hands) and {n_post} postflop spots, {seconds:.0f}s.", "",
-             "| flag | preflop | postflop | by setup |", "|---|---|---|---|"]
+             f"{n_pre} preflop decision nodes (x {5 if quick else 6} hands) and {n_post} postflop spots, {seconds:.0f}s.", ""]
+    if rare:
+        lines += [f"Includes the {len(RARE_LINES)} rare lines (RARE_LINES: {', '.join(RARE_KINDS)}); "
+                  "their closed lines are range checks with no hands.", ""]
+    lines += ["| flag | preflop | postflop | by setup |", "|---|---|---|---|"]
     for name in sorted(counts, key=lambda k: (k in INFO, -sum(counts[k]))):
         tags = ", ".join(f"{t}: {c}" for t, c in sorted(by_tag[name].items(), key=lambda kv: -kv[1]))
         lines.append(f"| {name}{' (info)' if name in INFO else ''} | {counts[name][0]} | {counts[name][1]} | {tags} |")
@@ -476,16 +613,30 @@ def main():
     ap.add_argument("--confirm", type=float, default=10.0,
                     help="re-run flagged postflop spots with this budget per street (0: skip)")
     ap.add_argument("--quick", action="store_true",
-                    help="the small fixed set run before each deploy (~2-4 min); implies --strict")
+                    help="the small fixed set run before each deploy (~3 min), rare lines included; implies --strict")
     ap.add_argument("--strict", action="store_true",
                     help="exit with status 1 when any flag other than the info ones remains")
+    ap.add_argument("--rare", action="store_true",
+                    help="add the RARE_LINES checks to a full run (quick mode always has them)")
+    ap.add_argument("--full-report", nargs="?", const="reports", metavar="DIR",
+                    help="full sweep plus the rare lines, report written to DIR/sanity_YYYY-MM-DD.md "
+                         "(default DIR: reports); for an occasional or nightly run, nothing schedules it")
     args = ap.parse_args()
+    if args.full_report:
+        if args.quick:
+            ap.error("--full-report runs the full sweep: drop --quick")
+        os.makedirs(args.full_report, exist_ok=True)
+        args.out = os.path.join(args.full_report, f"sanity_{time.strftime('%Y-%m-%d')}.md")
+        args.rare = True
     strict = args.strict or args.quick
     t0 = time.time()
     if args.quick:
         pre_jobs, post_jobs = quick_jobs(args.seed)
     else:
         pre_jobs, post_jobs = full_jobs(args)
+        if args.rare:
+            rp, rq = rare_jobs(args.seed)
+            pre_jobs, post_jobs = pre_jobs + rp, post_jobs + rq
     print(f"{len(pre_jobs)} preflop nodes, {len(post_jobs)} postflop spots", flush=True)
     with Pool(args.procs) as pool:
         fpre = [f for fl in pool.imap_unordered(check_preflop, pre_jobs, chunksize=1 if args.quick else 8) for f in fl]
@@ -515,7 +666,8 @@ def main():
                  or (json.dumps(ex["state"], sort_keys=True), name) in confirmed]
         print(f"confirm pass ({args.confirm:g}s solves, {len(jobs)} spots): {len(fpost)} of {before} "
               f"postflop flags reproduce", flush=True)
-    counts = report(fpre, fpost, len(pre_jobs), len(post_jobs), time.time() - t0, args.out, quick=args.quick)
+    counts = report(fpre, fpost, len(pre_jobs), len(post_jobs), time.time() - t0, args.out, quick=args.quick,
+                    rare=args.quick or args.rare)
     print(f"done in {time.time() - t0:.0f}s; report in {args.out}")
     for name, (a, b) in sorted(counts.items(), key=lambda kv: -sum(kv[1])):
         print(f"  {name}{' (info)' if name in INFO else ''}: preflop {a}, postflop {b}")

@@ -251,11 +251,17 @@ scripts/deploy.sh
 copies the page, the worker and the `gto` sources into the `gto-solver/` folder
 of the michaellhan.github.io repo and pushes. First it runs the checks and aborts
 the deploy if either fails: `python -m unittest`, then the quick sanity sweep
-(`scripts/sanity_sweep.py --quick`, about 2 minutes on 10 cores: a fixed, seeded set
+(`scripts/sanity_sweep.py --quick`, about 3 minutes on 10 cores: a fixed, seeded set
 of ~80 preflop nodes and ~110 postflop spots covering every setup, every heads-up
-spot kind on flop, turn and river, 3-way pots and exploit mode; postflop flags are
-re-solved at a longer budget and it exits non-zero when any flag but the info ones,
-`filled_range` and `unsettled`, reproduces). It uses `.venv/bin/python` if present,
+spot kind on flop, turn and river, 3-way pots and exploit mode, plus ~30 hand-picked
+rare lines over the setups that the quick preflop trees leave out (`RARE_LINES`:
+3bet and 4bet pots, cold 4bets, flat then 4bet, a squeeze called twice or 4bet, 4bet
+and 5bet jams faced, limp-reraises, straddled 3bet pots), with their decision nodes,
+the ranges they reach the flop with and flop and turn spots in their pots; postflop
+flags are re-solved at a longer budget and it exits non-zero when any flag but the
+info ones, `filled_range` and `unsettled`, reproduces). The full sweep (~40 min) is
+not part of the deploy; `scripts/sanity_sweep.py --full-report` runs it with the rare
+lines and writes `reports/sanity_YYYY-MM-DD.md` (nothing schedules it). It uses `.venv/bin/python` if present,
 else `python3` (`PYTHON=...` overrides). `DRY_RUN=1 scripts/deploy.sh` runs the
 checks and stops before cloning or pushing; `SKIP_CHECKS=1 scripts/deploy.sh`
 skips them, for emergencies only.
