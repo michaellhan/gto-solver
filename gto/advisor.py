@@ -511,10 +511,24 @@ def pool_strategy(strat: Dict[str, np.ndarray], p: str, before: List[dict], rang
     range at that point."""
     raisers = [h["pos"] for h in before if h["action"] in ("raise", "all-in")]
     opener = len(raisers) == 2 and raisers[0] == p
+    first_in = not raisers and not any(h["action"] == "call" for h in before)
     eq = None
     if (len(raisers) == 1 or opener) and raisers[-1] in ranges:
         eq = _preflop_equity(ranges[raisers[-1]])
-    return pool_preflop(strat, len(raisers), p, ranges.get(p, np.ones(N_COMBOS)), eq, opener)
+    elif first_in:
+        eq = _equity_vs_any()
+    return pool_preflop(strat, len(raisers), p, ranges.get(p, np.ones(N_COMBOS)), eq, opener, first_in)
+
+
+_EQ_ANY = None
+
+
+def _equity_vs_any() -> np.ndarray:
+    """Each combo's preflop equity against a random hand (how a pool player ranks hands to limp)."""
+    global _EQ_ANY
+    if _EQ_ANY is None:
+        _EQ_ANY = _preflop_equity(np.ones(N_COMBOS))
+    return _EQ_ANY
 
 
 def _range_key(v: np.ndarray) -> str:

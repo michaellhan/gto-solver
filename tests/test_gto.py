@@ -905,8 +905,8 @@ class TestExploit(unittest.TestCase):
 
     def test_pool_preflop_flats_and_3bets_more(self):
         """Population HUD stats (GGPoker 6-max NL50-500: 3bet 8.9% against the charts' 8.3%, VPIP 28.75
-        against 24.5; scripts/calibrate_pool.py): facing an open the pool 3bets 1.08x the chart's share
-        (from its strongest calls) and flats 2.6x more (from its strongest folds)."""
+        against 24.5; scripts/calibrate_pool.py): facing an open the pool 3bets 1.18x the chart's share
+        (from its strongest calls) and flats POOL_EXTRA_ENTER of its folds more (its strongest)."""
         from gto.advisor import preflop_ranges
         from gto import exploit
         T = pf.Table(pf.SEATS[6])
@@ -915,7 +915,7 @@ class TestExploit(unittest.TestCase):
         gto_call, pool_call = preflop_ranges(line("call"), T, 100)["BTN"], preflop_ranges(line("call"), T, 100, "BB")["BTN"]
         gto_3b, pool_3b = preflop_ranges(line("raise"), T, 100)["BTN"], preflop_ranges(line("raise"), T, 100, "BB")["BTN"]
         # POOL_3BET_SCALE: the extra comes from calls (the published BTN vs CO chart calls 2.9% of hands
-        # against 12.2% 3bets, enough for 8% more 3bets)
+        # against 12.2% 3bets, enough for 18% more 3bets)
         self.assertAlmostEqual(pool_3b.sum() / gto_3b.sum(), exploit.POOL_3BET_SCALE, delta=0.01)
         self.assertGreater(pool_call.sum(), 2 * gto_call.sum())
         # the extra 3bets are the strongest calls: the pool's 3bet range is the chart's plus better hands
@@ -923,9 +923,45 @@ class TestExploit(unittest.TestCase):
         # hero's own range is the chart's
         self.assertAlmostEqual(preflop_ranges(line("call"), T, 100, "BTN")["BTN"].sum(), gto_call.sum())
 
+    def test_pool_preflop_extra_vpip_is_spread_over_limps_and_flats(self):
+        """The pool's extra VPIP (28.75 against the charts' 24.5) isn't split by line in any data found, so
+        it is spread evenly: first in it open-limps, and facing an open it flats, with the same share
+        (POOL_EXTRA_ENTER) of what the chart folds, strongest first; the big blind's defence is the chart's."""
+        from gto.advisor import preflop_ranges, preflop_strategy, pool_strategy
+        from gto.cards import COMBO_INDEX
+        from gto.ranges import N_COMBOS
+        from gto import exploit
+        T = pf.Table(pf.SEATS[6])
+        q = exploit.POOL_EXTRA_ENTER
+        F = lambda *ps: [{"pos": p, "action": "fold"} for p in ps]
+        ones = {p: np.ones(N_COMBOS) for p in T}
+        chart = preflop_strategy("HJ", F("UTG"), T, 100)
+        pool = pool_strategy(chart, "HJ", F("UTG"), ones)
+        self.assertAlmostEqual(pool["call"].mean(), q * chart["fold"].mean(), places=4)
+        np.testing.assert_allclose(pool["raise"], chart["raise"])
+        # the limps are the strongest folds: A9o (by equity against any hand) limps before 72o
+        idx = lambda h: COMBO_INDEX[tuple(sorted(cards(h)))]
+        self.assertGreater(pool["call"][idx("Ah9d")], pool["call"][idx("7h2d")])
+        # a pool limper's range is its limps, not the chart's LIMP range
+        limp = preflop_ranges(F("UTG") + [{"pos": "HJ", "action": "call"}], T, 100, "BB")["HJ"]
+        np.testing.assert_allclose(limp, pool["call"])
+        # behind a limper the chart's over-limps stand
+        behind = preflop_strategy("CO", F("UTG") + [{"pos": "HJ", "action": "call"}], T, 100)
+        self.assertIs(pool_strategy(behind, "CO", F("UTG") + [{"pos": "HJ", "action": "call"}], ones), behind)
+        # facing an open: the extra flats are the same share of the folds; the big blind is the chart's
+        line = F("UTG", "HJ") + [{"pos": "CO", "action": "raise", "to": 2.5}]
+        ranges = dict(ones, CO=preflop_ranges(line, T, 100)["CO"])
+        btn = preflop_strategy("BTN", line, T, 100)
+        pb = pool_strategy(btn, "BTN", line, ranges)
+        self.assertAlmostEqual(pb["fold"].mean(), (1 - q) * btn["fold"].mean(), places=4)
+        bb_line = line + F("BTN", "SB")
+        bb = preflop_strategy("BB", bb_line, T, 100)
+        self.assertAlmostEqual(pool_strategy(bb, "BB", bb_line, ranges)["fold"].mean(), bb["fold"].mean(), places=6)
+
     def test_pool_preflop_opener_defends_3bets_more(self):
-        """Population fold to 3bet 48.25% against the charts' 54.1%: the opener facing a 3bet calls with 5.85%
-        more of its range (its strongest folds); its 4bets stay the chart's (12.75% against 13.9%)."""
+        """Population fold to 3bet 48.25% against the charts' 54.1%: the opener facing a 3bet calls with
+        POOL_3BET_DEFEND (4.8%) more of its range (its strongest folds); its 4bets stay the chart's (12.75%
+        against 13.9%)."""
         from gto.advisor import preflop_ranges
         from gto import exploit
         T = pf.Table(pf.SEATS[6])
@@ -997,40 +1033,35 @@ class TestPoolOverfold(unittest.TestCase):
         """The pool's extra folds to a big bet were a flat share of the range: against a turn jam that
         equilibrium calls with a few percent of the range, every call went, queens full included, and a jam
         was worth exactly the pot (found by scripts/sanity_sweep.py). They now take at most half the calls
-        and never the strongest hands."""
-        R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
-        pre = [R("UTG", "raise", 2.5), R("HJ", "fold"), R("CO", "call"), R("BTN", "call"), R("SB", "raise", 15),
-               R("BB", "fold"), R("UTG", "fold"), R("CO", "call"), R("BTN", "fold")]
-        st = {"players": 6, "hero": "SB", "hole": "KdAd", "board": "Qd6dQcAc", "stack": 100, "preflop": pre,
-              "flop": [R("SB", "check"), R("CO", "check")], "opponents": "pool"}
-        from gto import exploit, advisor
-        from unittest import mock
-        jam_ev = lambda: next(a["ev_bb"] for a in Advisor(time_budget=5.0, prior_budget=1.5).advise(st)["actions"]
-                              if a["action"] == "all-in")
-        # the case as found: CO's flat against the UTG open from the chart of the time (8% of hands, mostly
-        # broadways and suited hands). The published chart flats 2.5%, mostly pairs, whose trips and full
-        # houses call the jam under either rule, so the bug doesn't show in this spot with it
-        old_co = {"3bet": pf.R("QQ+, JJ:0.5, AKs, AKo:0.7, AQs, A5s, A4s:0.5, KQs:0.3"),
-                  "call": pf.R("22-TT, JJ:0.5, AKo:0.3, AQo, AJs, ATs, KQs:0.7, KJs, KTs:0.5, QJs, QTs:0.5, JTs, T9s, 98s, 87s:0.5")}
-        clear = lambda: (pf._STRAT_CACHE.clear(), advisor._PF_CACHE.clear())
+        and never the strongest hands. Checked on the lock itself: the spot as found (SB jamming the turn
+        of Qd6dQcAc against CO's flat of a UTG open) stopped showing it once the pool's flats changed, since
+        how many calls CO has there moves with the preflop pool model."""
+        from gto.exploit import PoolLock
+        from gto import exploit
+        board = tuple(cards("Qd6dQcAc"))
+        lock = PoolLock(Ctx(np.array([i for i, (a, b) in enumerate(ALL_COMBOS) if a not in board and b not in board]),
+                            Config()), 1)
+        n = len(lock.ctx.active)
+        pct = lock.pct(board)
+        class Node:   # player 1 faces a 2x-pot jam: 7.5% more of the range folds than at equilibrium
+            boards, names, player, bets, pot_now = [board], ["fold", "call"], 1, (60.0, 0.0), 90.0
+        call = (pct >= 0.96).astype(np.float32)        # equilibrium calls with its top 4% (full houses and up)
+        strat = np.stack([1.0 - call, call])[None]
+        reach = np.ones((1, n))
         cap, protect = exploit.OVERFOLD_CAP, exploit.OVERFOLD_PROTECT
-        with mock.patch.dict(pf.VS_RFI, {("CO", "UTG"): old_co}):
-            clear()
-            try:
-                capped = jam_ev()
-                # the old rule: extra folds as a flat share of the range, strong hands included
-                exploit.OVERFOLD_CAP, exploit.OVERFOLD_PROTECT = 1e9, 2.0
-                uncapped = jam_ev()
-            finally:
-                exploit.OVERFOLD_CAP, exploit.OVERFOLD_PROTECT = cap, protect
-                clear()
-        # uncapped, nobody calls the jam (worth exactly the pot); capped, the pool's strong hands call it.
-        # Compared rather than held to a margin: CO's range here (and so how close every option is to the
-        # pot) moves with the preflop pool model
-        # (the capped jam's EV can land a little either side of the pot with a short solve under load:
-        # the bug's signature is exactly the pot, nobody calling)
-        self.assertAlmostEqual(uncapped, 36.0, delta=0.02)
-        self.assertGreater(abs(capped - uncapped), 0.05)
+        try:
+            capped = lock(Node(), strat, reach)[0, 1]
+            exploit.OVERFOLD_CAP, exploit.OVERFOLD_PROTECT = 1e9, 2.0   # the old rule: a flat share of the range
+            uncapped = lock(Node(), strat, reach)[0, 1]
+        finally:
+            exploit.OVERFOLD_CAP, exploit.OVERFOLD_PROTECT = cap, protect
+        self.assertLess(uncapped.sum(), 1e-6)                        # the old rule: every call folds
+        self.assertAlmostEqual(capped.sum(), call.sum(), places=3)   # now: the top 10% never folds, so all stay
+        # equilibrium calling its top 20%: at most half of the calls fold, never the top 10%
+        call = (pct >= 0.8).astype(np.float32)
+        out = lock(Node(), np.stack([1.0 - call, call])[None], reach)[0, 1]
+        self.assertGreaterEqual(out.sum(), 0.5 * call.sum() - 1e-3)
+        self.assertTrue(np.all(out[pct >= exploit.OVERFOLD_PROTECT] > 0.999))
 
 
 class TestQuickSweep(unittest.TestCase):
