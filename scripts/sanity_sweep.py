@@ -34,8 +34,17 @@ Postflop flags are confirmed: each flagged spot is solved again with a longer bu
 the cores, and only flags that reproduce are reported (short solves sharing the machine can be far from
 equilibrium, which looks like a face-up range or a bet worth exactly the pot).
 
+Quick mode (--quick) is what scripts/deploy.sh runs before every deploy (~2 min on 10 cores): a fixed
+set, deterministic for --seed (quick_jobs), of 10 preflop decision nodes per setup (5 hands each; 6 more in
+exploit mode in the default setup) and 10 postflop spots per setup rotating through the heads-up kinds,
+with the default setup getting each heads-up kind 4 times, 3-way pots and exploit-mode spots. Its preflop
+trees keep lines that happen at least 1e-4 of the time with at most three voluntary players (the full
+6-max tree takes over a minute to walk). The confirm pass re-solves only spots with a flag other than the
+info ones, and the run exits 1 when any such flag remains (--strict does the same for other runs).
+
   python scripts/sanity_sweep.py                       # full sweep (~40 min on 8 cores)
   python scripts/sanity_sweep.py --pre 300 --post 200  # quicker
+  python scripts/sanity_sweep.py --quick               # the pre-deploy check (~2 min, exit 1 on bug flags)
   python scripts/sanity_sweep.py --out report.md       # where to write the report (default sanity_report.md)
 """
 import argparse
@@ -89,11 +98,12 @@ def _size(st, p, nr, T, stack):
     return stack
 
 
-def preflop_lines(setup, max_in=None):
+def preflop_lines(setup, max_in=None, min_reach=0.0):
     """(decision nodes, closed lines): every node of the setup's charts preflop tree as (actions, player
     to act, reach), and the lines that close with two or three players in and nobody all-in as (actions,
     reach); reach is how often the line happens (the product of each player's share of their range
-    taking their action). `max_in` caps how many players put chips in voluntarily."""
+    taking their action). `max_in` caps how many players put chips in voluntarily; `min_reach` drops
+    lines rarer than that (quick mode: the full 6-max tree takes over a minute to walk)."""
     from gto import preflop as pf
     from gto.advisor import replay_hand
     T = _table(setup)
@@ -135,6 +145,8 @@ def preflop_lines(setup, max_in=None):
                      else {"pos": p, "action": "raise", "to": to})
             w = ranges.get(p, np.ones_like(v))
             share = float((w * v).sum() / max(w.sum(), 1e-12))
+            if reach * share < min_reach:
+                continue
             dfs(acts + [a], dict(ranges, **{p: w * v}), reach * share)
 
     dfs([], {}, 1.0)
@@ -232,9 +244,10 @@ def check_preflop(job):
     return flags
 
 
-def postflop_jobs(setup, closed, n, seed, multiway=False, pool_share=0.0):
+def postflop_jobs(setup, closed, n, seed, multiway=False, pool_share=0.0, kinds=None):
     """n postflop spots of this setup from its closed lines (heads-up, or 3-way with `multiway`):
-    (setup, state, kind, pool)."""
+    (setup, state, kind, pool). `kinds` fixes the spot kinds, cycled in order (default: drawn at random,
+    facing a flop bet twice as often)."""
     from gto.advisor import preflop_ranges, replay_hand
     from gto.cards import ALL_COMBOS, card_str
     from gto import preflop as pf
@@ -252,15 +265,15 @@ def postflop_jobs(setup, closed, n, seed, multiway=False, pool_share=0.0):
     pools = [by_type[k] for k in sorted(by_type) if by_type[k]]
     if not pools:
         return []
-    kinds = (["first", "vs_bet"] if multiway else
-             ["first", "vs_check", "vs_bet", "vs_bet", "turn", "river", "river_vs_bet"])
+    draw = (["first", "vs_bet"] if multiway else
+            ["first", "vs_check", "vs_bet", "vs_bet", "turn", "river", "river_vs_bet"])
     while len(jobs) < n:
         pool_ = rng.choice(pools)
         l = rng.choices([x[0] for x in pool_], weights=[x[1] ** 0.5 for x in pool_])[0]
         st = replay_hand(T, stack, {"preflop": l}, 1)[0]
         players = sorted(st.active, key=post.index)
         ranges = preflop_ranges(l, T, stack)
-        kind = rng.choice(kinds)
+        kind = kinds[len(jobs) % len(kinds)] if kinds else rng.choice(draw)
         oop, ip = players[0], players[-1]
         n_board = {"turn": 4, "river": 5, "river_vs_bet": 5}.get(kind, 3)
         board = rng.sample(range(52), n_board)
@@ -372,9 +385,48 @@ def check_postflop(job):
 
 
 INFO = {"filled_range", "unsettled"}
+POST_KINDS = ["first", "vs_check", "vs_bet", "turn", "river", "river_vs_bet"]
+MULTIWAY_KINDS = ["first", "vs_bet"]
+
+# quick mode (--quick): per setup, preflop decision nodes and postflop spots (with their kinds); the default
+# setup also gets 3-way spots and exploit-mode (pool) nodes and spots. Lines rarer than QUICK_MIN_REACH are
+# skipped and at most three players put chips in voluntarily, so the preflop trees take seconds to walk.
+QUICK_MIN_REACH = 1e-4
+QUICK_PRE, QUICK_PRE_POOL = 10, 6           # per setup; pool nodes in the default setup on top
+QUICK_POST = 10                             # per non-default setup, kinds rotating through POST_KINDS
+QUICK_POOL_KINDS = ["first", "vs_bet", "turn", "river_vs_bet"]
+QUICK_REPEAT = 4                            # default setup: each heads-up and 3-way kind this many times, pool kinds twice
 
 
-def report(flags_pre, flags_post, n_pre, n_post, seconds, out):
+def quick_jobs(seed=7):
+    """(preflop jobs, postflop jobs) of the quick sweep: a small fixed set (deterministic for a seed) that
+    covers every setup, every heads-up postflop spot kind, 3-way pots and exploit mode, preflop and
+    postflop."""
+    from gto.cards import card_str
+    rng = random.Random(seed)
+    pre_jobs, post_jobs = [], []
+    for si, setup in enumerate(SETUPS):
+        default = setup[0] == "6p 100bb"
+        nodes, closed = preflop_lines(setup, max_in=3, min_reach=QUICK_MIN_REACH)
+        sample = weighted_sample(nodes, [r for _, _, r in nodes], QUICK_PRE + (QUICK_PRE_POOL if default else 0), rng)
+        for i, (acts, hero, _) in enumerate(sample):
+            a, b = rng.sample(range(52), 2)
+            pre_jobs.append((setup, acts, hero, ["AsAd", "KsKd", "QsQd", "AhKh", card_str(a) + card_str(b)],
+                             default and i >= QUICK_PRE))
+        s = seed + 100 * si
+        if default:
+            post_jobs += postflop_jobs(setup, closed, len(POST_KINDS) * QUICK_REPEAT, s, kinds=POST_KINDS)
+            post_jobs += postflop_jobs(setup, closed, len(MULTIWAY_KINDS) * QUICK_REPEAT, s + 1, multiway=True,
+                                       kinds=MULTIWAY_KINDS)
+            post_jobs += postflop_jobs(setup, closed, len(QUICK_POOL_KINDS) * 2, s + 2, pool_share=1.0,
+                                       kinds=QUICK_POOL_KINDS)
+        else:
+            k = [POST_KINDS[(si * QUICK_POST + j) % len(POST_KINDS)] for j in range(QUICK_POST)]
+            post_jobs += postflop_jobs(setup, closed, QUICK_POST, s, kinds=k)
+    return pre_jobs, post_jobs
+
+
+def report(flags_pre, flags_post, n_pre, n_post, seconds, out, quick=False):
     counts = defaultdict(lambda: [0, 0])
     by_tag = defaultdict(lambda: defaultdict(int))
     examples = defaultdict(list)
@@ -390,8 +442,8 @@ def report(flags_pre, flags_post, n_pre, n_post, seconds, out):
             by_tag[name][ex.get("tag", "")] += 1
             if len(examples[name]) < 8:
                 examples[name].append(ex)
-    lines = ["# Sanity sweep", "",
-             f"{n_pre} preflop decision nodes (x 6 hands) and {n_post} postflop spots, {seconds:.0f}s.", "",
+    lines = ["# Sanity sweep" + (" (quick)" if quick else ""), "",
+             f"{n_pre} preflop decision nodes (x {5 if quick else 6} hands) and {n_post} postflop spots, {seconds:.0f}s.", "",
              "| flag | preflop | postflop | by setup |", "|---|---|---|---|"]
     for name in sorted(counts, key=lambda k: (k in INFO, -sum(counts[k]))):
         tags = ", ".join(f"{t}: {c}" for t, c in sorted(by_tag[name].items(), key=lambda kv: -kv[1]))
@@ -423,8 +475,64 @@ def main():
     ap.add_argument("--out", default="sanity_report.md")
     ap.add_argument("--confirm", type=float, default=10.0,
                     help="re-run flagged postflop spots with this budget per street (0: skip)")
+    ap.add_argument("--quick", action="store_true",
+                    help="the small fixed set run before each deploy (~2-4 min); implies --strict")
+    ap.add_argument("--strict", action="store_true",
+                    help="exit with status 1 when any flag other than the info ones remains")
     args = ap.parse_args()
+    strict = args.strict or args.quick
     t0 = time.time()
+    if args.quick:
+        pre_jobs, post_jobs = quick_jobs(args.seed)
+    else:
+        pre_jobs, post_jobs = full_jobs(args)
+    print(f"{len(pre_jobs)} preflop nodes, {len(post_jobs)} postflop spots", flush=True)
+    with Pool(args.procs) as pool:
+        fpre = [f for fl in pool.imap_unordered(check_preflop, pre_jobs, chunksize=1 if args.quick else 8) for f in fl]
+        print(f"preflop done in {time.time() - t0:.0f}s", flush=True)
+        fpost = [f for fl in pool.imap_unordered(check_postflop, post_jobs, chunksize=1 if args.quick else 2) for f in fl]
+    print(f"postflop done in {time.time() - t0:.0f}s: {len(fpost)} flags", flush=True)
+    if args.confirm > 0:
+        # short solves sharing the machine can be far from equilibrium, which looks like a bug (a bet
+        # worth exactly the pot, a range near empty): re-run each flagged spot with a longer budget on
+        # half the cores and keep only the flags that reproduce. Quick mode re-runs only spots with a
+        # flag other than the info ones (an unsettled flop is common and blocks nothing); info flags of
+        # spots not re-run are kept as they came
+        jobs = {}
+        for name, ex in fpost:
+            if "state" in ex and name not in ("error", "nan") and not (args.quick and name in INFO):
+                st = dict(ex["state"]); pool_ = st.pop("opponents", None) == "pool"
+                setup = next(s for s in SETUPS if ex["tag"].startswith(s[0]))
+                jobs[json.dumps(ex["state"], sort_keys=True)] = (setup, st, "confirm", pool_, args.confirm)
+        again = []
+        if jobs:
+            with Pool(max(1, args.procs // 2)) as pool:
+                again = pool.map(check_postflop, list(jobs.values()), chunksize=1)
+        confirmed = {(k, name) for k, fl in zip(jobs, again) for name, _ in fl}
+        before = len(fpost)
+        fpost = [(name, ex) for name, ex in fpost if name in ("error", "nan") or "state" not in ex
+                 or json.dumps(ex["state"], sort_keys=True) not in jobs
+                 or (json.dumps(ex["state"], sort_keys=True), name) in confirmed]
+        print(f"confirm pass ({args.confirm:g}s solves, {len(jobs)} spots): {len(fpost)} of {before} "
+              f"postflop flags reproduce", flush=True)
+    counts = report(fpre, fpost, len(pre_jobs), len(post_jobs), time.time() - t0, args.out, quick=args.quick)
+    print(f"done in {time.time() - t0:.0f}s; report in {args.out}")
+    for name, (a, b) in sorted(counts.items(), key=lambda kv: -sum(kv[1])):
+        print(f"  {name}{' (info)' if name in INFO else ''}: preflop {a}, postflop {b}")
+    bugs = blocking(counts)
+    if strict:
+        if bugs:
+            print(f"FAIL: {', '.join(bugs)} (see {args.out})")
+            sys.exit(1)
+        print("OK: no flags other than info ones")
+
+
+def blocking(counts):
+    """The flags (by name) that fail a strict run: any but the info ones."""
+    return sorted(name for name, c in counts.items() if name not in INFO and sum(c) > 0)
+
+
+def full_jobs(args):
     rng = random.Random(args.seed)
     from gto.cards import card_str
     pre_jobs, post_jobs = [], []
@@ -446,33 +554,7 @@ def main():
         else:
             post_jobs += postflop_jobs(setup, closed, n_post, args.seed)
         print(f"{setup[0]}: {len(nodes)} nodes, {len(closed)} closed lines; {n_pre} preflop, {n_post} postflop", flush=True)
-    print(f"{len(pre_jobs)} preflop nodes, {len(post_jobs)} postflop spots", flush=True)
-    with Pool(args.procs) as pool:
-        fpre = [f for fl in pool.imap_unordered(check_preflop, pre_jobs, chunksize=8) for f in fl]
-        print(f"preflop done in {time.time() - t0:.0f}s", flush=True)
-        fpost = [f for fl in pool.imap_unordered(check_postflop, post_jobs, chunksize=2) for f in fl]
-    print(f"postflop done in {time.time() - t0:.0f}s: {len(fpost)} flags", flush=True)
-    if args.confirm > 0:
-        # short solves sharing the machine can be far from equilibrium, which looks like a bug (a bet
-        # worth exactly the pot, a range near empty): re-run each flagged spot with a longer budget on
-        # half the cores and keep only the flags that reproduce
-        jobs = {}
-        for name, ex in fpost:
-            if "state" in ex and name not in ("error", "nan"):
-                st = dict(ex["state"]); pool_ = st.pop("opponents", None) == "pool"
-                setup = next(s for s in SETUPS if ex["tag"].startswith(s[0]))
-                jobs[json.dumps(ex["state"], sort_keys=True)] = (setup, st, "confirm", pool_, args.confirm)
-        with Pool(max(1, args.procs // 2)) as pool:
-            again = pool.map(check_postflop, list(jobs.values()), chunksize=1)
-        confirmed = {(k, name) for k, fl in zip(jobs, again) for name, _ in fl}
-        before = len(fpost)
-        fpost = [(name, ex) for name, ex in fpost if name in ("error", "nan") or "state" not in ex
-                 or (json.dumps(ex["state"], sort_keys=True), name) in confirmed]
-        print(f"confirm pass ({args.confirm:g}s solves): {len(fpost)} of {before} postflop flags reproduce", flush=True)
-    counts = report(fpre, fpost, len(pre_jobs), len(post_jobs), time.time() - t0, args.out)
-    print(f"done in {time.time() - t0:.0f}s; report in {args.out}")
-    for name, (a, b) in sorted(counts.items(), key=lambda kv: -sum(kv[1])):
-        print(f"  {name}: preflop {a}, postflop {b}")
+    return pre_jobs, post_jobs
 
 
 if __name__ == "__main__":

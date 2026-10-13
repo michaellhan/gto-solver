@@ -942,6 +942,47 @@ class TestPoolOverfold(unittest.TestCase):
         self.assertLess(jam["ev_bb"], out["pot_bb"] - 0.5, out["actions"])
 
 
+class TestQuickSweep(unittest.TestCase):
+    """scripts/sanity_sweep.py --quick runs before each deploy: its spot set (not the sweep itself)."""
+
+    @classmethod
+    def setUpClass(cls):
+        import os, sys
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+        import sanity_sweep
+        cls.sw = sanity_sweep
+        cls.pre, cls.post = sanity_sweep.quick_jobs(7)
+
+    def test_covers_every_setup_and_kind(self):
+        sw = self.sw
+        tags = {s[0] for s in sw.SETUPS}
+        self.assertEqual({j[0][0] for j in self.pre}, tags)
+        self.assertEqual({j[0][0] for j in self.post}, tags)
+        self.assertTrue(any(j[4] for j in self.pre), "no exploit-mode preflop nodes")
+        hu = {j[2] for j in self.post if not self._multiway(j)}
+        self.assertEqual(hu, set(sw.POST_KINDS))
+        self.assertEqual({j[2] for j in self.post if self._multiway(j)}, set(sw.MULTIWAY_KINDS))
+        self.assertGreaterEqual({j[2] for j in self.post if j[3]}, {"vs_bet", "turn", "river_vs_bet"})
+        streets = {len(j[1]["board"]) // 2 for j in self.post}
+        self.assertEqual(streets, {3, 4, 5})
+        self.assertLess(len(self.pre) + len(self.post), 300)
+
+    def _multiway(self, job):
+        from gto.advisor import replay_hand
+        setup, state = job[0], job[1]
+        return len(replay_hand(self.sw._table(setup), setup[2], {"preflop": state["preflop"]}, 1)[0].active) == 3
+
+    def test_deterministic(self):
+        pre, post = self.sw.quick_jobs(7)
+        self.assertEqual(pre, self.pre)
+        self.assertEqual(post, self.post)
+
+    def test_blocking_flags(self):
+        self.assertEqual(self.sw.blocking({"unsettled": [0, 3], "filled_range": [2, 0]}), [])
+        self.assertEqual(self.sw.blocking({"unsettled": [0, 3], "ev_is_pot": [0, 1], "error": [0, 0]}),
+                         ["ev_is_pot"])
+
+
 class TestPreflopSubgame(unittest.TestCase):
     def test_converges_and_is_sane(self):
         """The 3bet-pot subgame (pf_solve) converges, premiums never fold (AA and KK call the jam),
