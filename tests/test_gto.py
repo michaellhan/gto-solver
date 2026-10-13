@@ -1095,7 +1095,7 @@ class TestExploit(unittest.TestCase):
 
     def test_pool_preflop_flats_and_3bets_more(self):
         """Population HUD stats (GGPoker 6-max NL50-500: 3bet 8.9% against the charts' 8.7%, VPIP 28.75
-        against 24.7; scripts/calibrate_pool.py): facing an open the pool 3bets POOL_3BET_SCALE (1.12) x the chart's share
+        against 24.7; scripts/calibrate_pool.py): facing an open the pool 3bets POOL_3BET_SCALE (1.13) x the chart's share
         (from its strongest calls) and flats POOL_EXTRA_ENTER of its folds more (its strongest)."""
         from gto.advisor import preflop_ranges
         from gto import exploit
@@ -1117,7 +1117,8 @@ class TestExploit(unittest.TestCase):
         """The pool's extra VPIP (28.75 against the charts' 24.7) isn't split by line in any data found, so
         it is spread evenly: first in it enters (POOL_EXTRA_OPEN of them open-raising, the strongest, the
         rest open-limping), and facing an open it flats, with the same share (POOL_EXTRA_ENTER) of what the
-        chart folds, strongest first; the big blind's defence is the chart's."""
+        chart folds, strongest first; the big blind's defence is the chart's (the small blind's extra limps:
+        the next test)."""
         from gto.advisor import preflop_ranges, preflop_strategy, pool_strategy
         from gto.cards import COMBO_INDEX
         from gto.ranges import N_COMBOS
@@ -1153,10 +1154,41 @@ class TestExploit(unittest.TestCase):
         bb = preflop_strategy("BB", bb_line, T, 100)
         self.assertAlmostEqual(pool_strategy(bb, "BB", bb_line, ranges)["fold"].mean(), bb["fold"].mean(), places=6)
 
+    def test_pool_preflop_small_blind_limps_its_weakest_opens(self):
+        """First in from the small blind the pool open-limps POOL_SB_LIMP of its range out of the chart's
+        weakest opens (whole-sample CoinPoker NL50-NL100 2025: SB open-limps 8.5-9.7%, other seats 1.5-1.6%),
+        on top of its extra limps; heads-up (the small blind is the button) it keeps the chart's opens."""
+        from gto.advisor import preflop_strategy, pool_strategy
+        from gto.cards import COMBO_INDEX
+        from gto.ranges import N_COMBOS
+        from gto import exploit
+        F = lambda *ps: [{"pos": p, "action": "fold"} for p in ps]
+        T = pf.Table(pf.SEATS[6])
+        ones = {p: np.ones(N_COMBOS) for p in T}
+        chart = preflop_strategy("SB", F("UTG", "HJ", "CO", "BTN"), T, 100)
+        pool = pool_strategy(chart, "SB", F("UTG", "HJ", "CO", "BTN"), ones)
+        q, o = exploit.POOL_EXTRA_ENTER, exploit.POOL_EXTRA_OPEN
+        extra = q * chart["fold"].mean()
+        self.assertAlmostEqual(pool["call"].mean(), exploit.POOL_SB_LIMP + (1 - o) * extra, places=4)
+        self.assertAlmostEqual(pool["raise"].mean(), chart["raise"].mean() + o * extra - exploit.POOL_SB_LIMP, places=4)
+        self.assertGreater(pool["call"].mean(), 0.08)
+        # the limps that were opens are the chart's weakest opens: aces still raise
+        idx = lambda h: COMBO_INDEX[tuple(sorted(cards(h)))]
+        self.assertAlmostEqual(pool["raise"][idx("AhAd")], chart["raise"][idx("AhAd")], places=6)
+        # other seats limp only their extra hands
+        hj = pool_strategy(preflop_strategy("HJ", F("UTG"), T, 100), "HJ", F("UTG"), ones)
+        self.assertLess(hj["call"].mean(), 0.04)
+        # heads-up the small blind keeps the chart's opens
+        T2 = pf.Table(pf.SEATS[2])
+        hu = preflop_strategy("SB", [], T2, 100)
+        if "call" not in hu and "fold" in hu and "raise" in hu:
+            phu = pool_strategy(hu, "SB", [], {p: np.ones(N_COMBOS) for p in T2})
+            self.assertGreaterEqual(phu["raise"].mean(), hu["raise"].mean() - 1e-9)
+
     def test_pool_preflop_opener_defends_3bets_more(self):
         """Population fold to 3bet 48.25% against the charts' 54.2%: the opener facing a 3bet calls with
         POOL_3BET_DEFEND more of its range (its strongest folds); its 4bets stay the chart's (the pool's
-        tree then 4bets 12.8% against the population's 12.75%)."""
+        tree then 4bets 12.5% against the population's 12.75%)."""
         from gto.advisor import preflop_ranges, preflop_strategy, pool_strategy
         from gto import exploit
         T = pf.Table(pf.SEATS[6])

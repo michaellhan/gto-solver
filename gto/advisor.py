@@ -630,7 +630,8 @@ def pool_strategy(strat: Dict[str, np.ndarray], p: str, before: List[dict], rang
         eq = _preflop_equity(ranges[raisers[-1]])
     elif first_in:
         eq = _equity_vs_any()
-    return pool_preflop(strat, len(raisers), p, ranges.get(p, np.ones(N_COMBOS)), eq, opener, first_in)
+    return pool_preflop(strat, len(raisers), p, ranges.get(p, np.ones(N_COMBOS)), eq, opener, first_in,
+                        heads_up=len(ranges) == 2)
 
 
 _EQ_ANY = None
