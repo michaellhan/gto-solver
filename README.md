@@ -79,8 +79,15 @@ the mix, ~ rarely played, ✗ outside it, with the EV given up), and when the
 hand ends the advice panel lists them as a hand review with the EV given up per street.
 Click any of your decisions (in the review or the timeline) to replay the hand from that
 point; later actions and board cards are cleared, with Undo. While others act, the
-last advice stays visible but dimmed and labelled. **4-colour** switches
-diamonds to blue and clubs to green.
+last advice stays visible but dimmed and labelled. The **⋯** menu has a four-colour
+deck (diamonds blue, clubs green), a switch that puts the advice on the left, and Reset layout.
+
+The layout fits the window at any zoom. On a wide window each column scrolls on its own and
+the action buttons stay pinned to the bottom of theirs; drag the divider between the columns
+to resize them, drag the bar under the table to resize it, and click the Table or Hand title
+to fold that panel (all remembered in the browser). On a narrow window (a phone, or a zoomed-in
+page) it's one column with the action buttons pinned to the bottom of the screen. While a card
+is needed the deck moves up under the setup; otherwise it's hidden behind **Edit cards**.
 **Copy hand** puts a plain-text summary on the clipboard: the full action, the
 advice with frequencies, EVs and sizes, the villain range, solver stats, a link
 that reopens the exact spot, and the raw state JSON for the API or CLI.

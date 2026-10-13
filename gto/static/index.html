@@ -6,56 +6,85 @@
 <title>GTO Solver</title>
 <style>
   :root {
-    --bg: #0f1216; --panel: #171b21; --panel2: #1e242c; --line: #2a313b;
-    --text: #e6e9ee; --muted: #8b94a3; --accent: #f5b942;
+    --bg: #0d0f12; --panel: #14171b; --panel2: #1b1f25; --line: #252a32; --line2: #323944;
+    --text: #e7e9ec; --muted: #8a919c; --faint: #5c636e; --accent: #f2b544;
     --fold: #4a7bd0; --passive: #3fae6a; --allin: #8b5cc9;
     /* bet/raise sizes, smallest to largest: light to dark so neighbours stay distinct */
     --agg0: #f4a261; --agg1: #e0603a; --agg2: #b3302a; --agg3: #7a1a3a;
     --good: #6bd394; --meh: #f5b942; --bad: #f28b82;
     --red: #d3232a; --blue: #1f5fd1; --green: #1c8a3c;
+    --felt-h: clamp(190px, 32vh, 270px);
+    --left: 500px;
+    --r: 10px;
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
+  html { -webkit-text-size-adjust: 100%; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif; }
-  header { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  kbd { font: 10px ui-monospace, Menlo, monospace; border: 1px solid var(--line2); border-radius: 4px; padding: 0 4px; margin-left: 6px; color: var(--muted); }
+
+  /* ---- top bar */
+  header { display: flex; align-items: center; gap: 10px; padding: 8px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; background: var(--bg); }
+  header h1 { font-size: 14px; margin: 0 6px 0 0; font-weight: 650; letter-spacing: .01em; }
   header .spacer { flex: 1; }
-  header .ctl { display: inline-flex; align-items: center; gap: 8px; }
-  kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; margin-left: 6px; color: var(--muted); }
-  main { display: grid; grid-template-columns: minmax(440px, 540px) minmax(0, 1fr); gap: 18px; padding: 18px 20px; max-width: 1400px; margin: 0 auto; }
-  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
-  .panel h2 { margin: 0 0 10px; font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); font-weight: 600; display: flex; align-items: center; gap: 8px; }
-  .panel h2 .right { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 500; }
-  button { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 13px; font: inherit; cursor: pointer; }
-  button:hover { border-color: #3c4653; background: #242b34; }
+  header .ctl { display: inline-flex; align-items: center; gap: 6px; }
+  header .ctl > .lbl { font-size: 11px; color: var(--faint); }
+  .menuwrap { position: relative; }
+  .menu { position: absolute; right: 0; top: calc(100% + 6px); background: var(--panel2); border: 1px solid var(--line2); border-radius: var(--r); padding: 6px; min-width: 200px; z-index: 60; box-shadow: 0 10px 30px rgba(0,0,0,.5); display: flex; flex-direction: column; gap: 2px; }
+  .menu button { background: none; border: 0; text-align: left; padding: 7px 10px; border-radius: 6px; width: 100%; display: flex; justify-content: space-between; gap: 12px; }
+  .menu button:hover { background: var(--line); }
+  .menu button.active { background: none; color: var(--accent); font-weight: 500; }
+  .menu button.active::after { content: "✓"; }
+  .menu .sep { height: 1px; background: var(--line); margin: 4px 2px; }
+  .menu .hint { font-size: 11px; color: var(--faint); padding: 4px 10px 2px; line-height: 1.5; }
+
+  /* ---- controls */
+  button { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 6px 11px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--line2); background: #21262d; }
   button.active { background: var(--accent); color: #1a1200; border-color: var(--accent); font-weight: 600; }
-  button.small { padding: 4px 9px; font-size: 12px; }
+  button.small { padding: 3px 8px; font-size: 12px; }
+  button.ghost { background: none; border-color: transparent; color: var(--muted); }
+  button.ghost:hover { color: var(--text); background: var(--panel2); }
   button.link { background: none; border: 0; padding: 0; color: var(--accent); font-size: 12px; }
   button.link:hover { text-decoration: underline; background: none; }
   button:disabled { opacity: .35; cursor: default; }
-  input[type=number] { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font: inherit; width: 80px; }
-  #rake { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font: inherit; }
-  #rakeCustom input { width: 64px; }
-  input:focus { outline: none; border-color: var(--accent); }
+  input[type=number], select { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; font: inherit; }
+  input[type=number] { width: 72px; }
+  #rakeCustom input { width: 60px; }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
   .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .muted { color: var(--muted); }
-  .seats button { min-width: 50px; padding: 7px 10px; }
-  .segment { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-  .segment button { border: 0; border-radius: 0; min-width: 32px; }
+  .seats button { min-width: 46px; padding: 5px 8px; }
+  .segment { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: var(--panel2); }
+  .segment button { border: 0; border-radius: 0; min-width: 30px; padding: 5px 10px; background: none; }
   .segment button + button { border-left: 1px solid var(--line); }
+  .segment button.active { background: var(--accent); }
+
+  /* ---- sections */
+  .panel { background: var(--panel); border-radius: var(--r); padding: 12px 14px; margin-bottom: 10px; }
+  .panel h2 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .09em; color: var(--faint); font-weight: 600; display: flex; align-items: center; gap: 8px; user-select: none; }
+  .panel h2 .right { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--muted); }
+  .panel h2[data-fold] { cursor: pointer; }
+  .panel h2[data-fold]::before { content: ""; width: 0; height: 0; border-left: 4px solid currentColor; border-top: 4px solid transparent; border-bottom: 4px solid transparent; transform: rotate(90deg); transition: transform .12s; }
+  .panel.collapsed h2[data-fold]::before { transform: none; }
+  .panel.collapsed > :not(h2) { display: none !important; }
+  .panel.collapsed h2 { margin-bottom: 0; }
+  .setuprow { margin-bottom: 8px; }
+  .setuprow > .muted:first-child { width: 58px; font-size: 12px; }
 
   /* setup summary (collapsed once the hand starts) */
-  .setupsum { display: flex; align-items: center; gap: 10px; }
-  .setupsum b { font-weight: 600; }
+  #pSetup.slim { background: none; padding: 2px 4px 8px; margin-bottom: 4px; }
+  .setupsum { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
+  .setupsum b { font-weight: 600; color: var(--text); }
 
-  /* cards */
+  /* ---- cards */
   .slots { display: flex; gap: 14px; flex-wrap: wrap; }
-  .slots + .picker { margin-top: 12px; }
+  .slots + .picker { margin-top: 10px; }
   .slotgroup { display: flex; flex-direction: column; gap: 4px; }
-  .slotgroup label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .slotgroup label { font-size: 10px; color: var(--faint); text-transform: uppercase; letter-spacing: .08em; }
   .slotrow { display: flex; gap: 5px; }
-  .slot { width: 40px; height: 56px; border-radius: 6px; border: 1px dashed var(--line); background: var(--panel2); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 17px; cursor: pointer; }
-  .slot.filled { border-style: solid; background: #f7f7f2; color: #111; }
+  .slot { width: 36px; height: 50px; border-radius: 6px; border: 1px dashed var(--line2); background: var(--panel2); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 16px; cursor: pointer; }
+  .slot.filled { border-style: solid; border-color: transparent; background: #f5f5f0; color: #111; }
   .slot.filled:hover { opacity: .55; }
   .slot.sel, .slot.need { outline: 2px solid var(--accent); border-color: var(--accent); }
   .slot.need { animation: pulse 1.2s ease-in-out infinite; }
@@ -63,111 +92,119 @@
   @keyframes pulse { 50% { outline-color: transparent; } }
   @keyframes flash { 50% { outline: 3px solid var(--accent); transform: translateY(-3px); } }
   .picker { display: grid; grid-template-columns: repeat(13, 1fr); gap: 3px; }
-  .pc { height: 34px; border-radius: 5px; background: #f7f7f2; color: #111; font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center; cursor: pointer; border: 1px solid #ddd; user-select: none; }
+  .pc { height: 32px; border-radius: 5px; background: #f5f5f0; color: #111; font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center; cursor: pointer; user-select: none; }
   .pc:hover { transform: translateY(-1px); box-shadow: 0 2px 6px rgba(0,0,0,.4); }
-  .pc.used { opacity: .18; cursor: not-allowed; }
+  .pc.used { opacity: .15; cursor: not-allowed; }
   .pc.used:hover { transform: none; box-shadow: none; }
   .pc.pend { outline: 2px solid var(--accent); }
   .h, .d { color: var(--red) !important; }
   .four .d { color: var(--blue) !important; }
   .four .c { color: var(--green) !important; }
-  .typehint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .typehint { font-size: 12px; color: var(--faint); margin-top: 8px; }
   .typehint b { color: var(--accent); font-family: ui-monospace, Menlo, monospace; }
 
-  /* table */
-  .felt { position: relative; height: 236px; margin: 4px 0 10px; }
-  .felt::before { content: ""; position: absolute; inset: 30px 46px; border-radius: 999px; background: radial-gradient(ellipse at center, #1f5a40 0%, #173f2e 70%, #12311f 100%); border: 7px solid #2b2119; box-shadow: inset 0 0 30px rgba(0,0,0,.45), 0 0 0 1px #3a2c20; }
-  .felt .center { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center; }
+  /* ---- table */
+  #pTable { padding-bottom: 4px; }
+  .felt { position: relative; height: var(--felt-h); margin: 0 0 2px; }
+  .felt::before { content: ""; position: absolute; inset: 13% 9%; border-radius: 999px; background: radial-gradient(ellipse at center, #1d533b 0%, #163c2b 70%, #112f20 100%); border: 6px solid #241c16; box-shadow: inset 0 0 30px rgba(0,0,0,.45); }
+  .felt .center { position: absolute; left: 50%; top: 45%; transform: translate(-50%, -50%); text-align: center; }
   .board { display: flex; gap: 4px; justify-content: center; }
-  .bc { width: 30px; height: 42px; border-radius: 4px; background: #f7f7f2; color: #111; font-weight: 700; font-size: 13px; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.05; }
-  .bc.empty { background: rgba(0,0,0,.18); border: 1px dashed rgba(255,255,255,.18); }
-  .felt .pot { margin-top: 6px; font-size: 12px; color: #d8e6dc; font-variant-numeric: tabular-nums; }
-  .seat { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 5px 4px; text-align: center; position: absolute; width: 74px; transform: translate(-50%, -50%); z-index: 2; }
-  .seat .pos { font-weight: 700; font-size: 13px; }
+  .bc { width: 30px; height: 42px; border-radius: 4px; background: #f5f5f0; color: #111; font-weight: 700; font-size: 13px; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.05; }
+  .bc.empty { background: rgba(0,0,0,.18); border: 1px dashed rgba(255,255,255,.16); }
+  .felt .pot { margin-top: 5px; font-size: 12px; color: #d2e2d7; font-variant-numeric: tabular-nums; }
+  .seat { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 4px 4px; text-align: center; position: absolute; width: 70px; transform: translate(-50%, -50%); z-index: 2; line-height: 1.3; }
+  .seat .pos { font-weight: 700; font-size: 12px; }
   .seat .you { display: block; font-size: 9px; letter-spacing: .1em; color: var(--accent); text-transform: uppercase; }
   .seat .hc { display: block; font-weight: 700; font-size: 12px; }
-  .seat .amt { display: block; font-size: 11px; color: var(--muted); margin-top: 1px; font-variant-numeric: tabular-nums; min-height: 15px; }
-  .seat.folded { opacity: .35; }
+  .seat .amt { display: block; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; min-height: 14px; }
+  .seat.folded { opacity: .3; }
   .seat.folded .pos { text-decoration: line-through; }
-  .seat.hero { border-color: #5a4a26; }
-  .seat.toact { border-color: var(--accent); background: #2a2413; box-shadow: 0 0 0 1px var(--accent) inset, 0 0 14px rgba(245,185,66,.35); }
+  .seat.hero { border-color: #574622; }
+  .seat.toact { border-color: var(--accent); background: #29230f; box-shadow: 0 0 12px rgba(242,181,68,.3); }
   .seat .ta { color: var(--accent); display: block; }
   .seat.allin .amt { color: var(--agg1); }
   .seat.clickable { cursor: pointer; }
   .seat.clickable:hover { border-color: #4a5566; }
+  .grip { height: 12px; margin: 0 -14px; cursor: ns-resize; display: flex; align-items: center; justify-content: center; touch-action: none; }
+  .grip::before { content: ""; width: 34px; height: 3px; border-radius: 2px; background: var(--line2); }
+  .grip:hover::before { background: var(--muted); }
 
-  /* action */
-  .prompt { display: flex; align-items: baseline; gap: 10px; margin: 0 0 10px; flex-wrap: wrap; }
-  .prompt .who { font-size: 17px; font-weight: 700; }
+  /* ---- history */
+  .tl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 10px; align-items: baseline; font-size: 13px; margin-bottom: 5px; }
+  .tl .st { color: var(--faint); text-transform: uppercase; font-size: 10px; letter-spacing: .08em; white-space: nowrap; min-width: 56px; }
+  .tl .line { display: flex; gap: 4px; flex-wrap: wrap; }
+  .chip { background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; white-space: nowrap; font-size: 12px; }
+  .chip.hero { border-color: var(--accent); }
+  .chip.agg { border-color: #7a3a29; }
+  .chip.fold { opacity: .55; }
+  .chip.rewind, .review li.rewind { cursor: pointer; }
+  .chip.rewind:hover { background: var(--line); }
+  .g { font-weight: 800; margin-left: 5px; }
+  .g.ok { color: var(--good); } .g.meh { color: var(--meh); } .g.bad { color: var(--bad); }
+  #timeline:empty { display: none; }
+
+  /* ---- action dock */
+  #pAction { padding: 10px 14px 12px; }
+  .prompt { display: flex; align-items: baseline; gap: 4px 10px; margin: 0 0 8px; flex-wrap: wrap; }
+  .prompt .who { font-size: 15px; font-weight: 700; }
   .prompt .who.hero { color: var(--accent); }
-  .prompt .pot { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .prompt .ask { width: 100%; color: var(--muted); font-size: 13px; }
-  .acts { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
-  .acts button { padding: 10px 22px 10px 14px; font-weight: 600; position: relative; }
-  .acts button.fold { border-color: #3a5a97; }
-  .acts button.pass { border-color: #2f7a4d; }
-  .acts button.agg { border-color: #9a4a34; }
+  .prompt .pot { margin-left: auto; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .prompt .ask { width: 100%; color: var(--faint); font-size: 12px; }
+  .acts { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+  .acts button { flex: 1 1 auto; min-width: 62px; max-width: 170px; padding: 7px 18px 7px 10px; font-weight: 600; position: relative; text-align: left; line-height: 1.25; white-space: nowrap; }
+  .acts button.fold { background: rgba(74,123,208,.10); border-color: rgba(74,123,208,.45); }
+  .acts button.pass { background: rgba(63,174,106,.10); border-color: rgba(63,174,106,.45); }
+  .acts button.agg { background: rgba(224,96,58,.09); border-color: rgba(224,96,58,.40); }
+  .acts button:hover { filter: brightness(1.25); }
   .acts button small { display: block; font-weight: 400; font-size: 11px; color: var(--muted); }
   .acts button small .fq { color: var(--text); font-weight: 600; }
   .acts button.best { box-shadow: 0 0 0 2px var(--accent); }
-  .acts.solver::before { content: "Solver sizes"; width: 100%; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  .acts.solver::before { content: "Solver sizes"; width: 100%; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); }
+  .acts button kbd, .shortcut kbd { position: absolute; top: 3px; right: 3px; margin: 0; font-size: 9px; padding: 0 3px; line-height: 13px; border-color: transparent; color: var(--faint); }
+  .shortcut { position: relative; padding-right: 24px !important; }
+  .custom { display: none; gap: 6px; align-items: center; margin-bottom: 8px; }
+  .custom.open { display: flex; }
+  .err { color: var(--bad); font-size: 12px; }
+  .err:empty { display: none; }
+
+  /* ---- advice */
   .conv { font-size: 11px; font-weight: 600; border-radius: 999px; padding: 1px 8px; border: 1px solid currentColor; white-space: nowrap; }
   .conv.ok { color: var(--good); } .conv.meh { color: var(--meh); } .conv.bad { color: var(--bad); }
-  .chip.rewind, .review li.rewind { cursor: pointer; }
-  .chip.rewind:hover { background: #2a313b; }
-  .review li.rewind:hover b { text-decoration: underline; }
-  .review .streetsum { margin-top: 6px; color: var(--muted); }
-  .review .streetsum.total { color: inherit; border-top: 1px solid var(--line); padding-top: 6px; }
-  .acts button kbd, .shortcut kbd { position: absolute; top: 3px; right: 3px; margin: 0; font-size: 9px; padding: 0 3px; line-height: 13px; }
-  .shortcut { position: relative; padding-right: 26px !important; }
-  .custom { display: none; gap: 6px; align-items: center; margin-bottom: 10px; }
-  .custom.open { display: flex; }
-  .err { color: var(--bad); font-size: 12px; min-height: 16px; }
-  .timeline { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
-  .tl { display: grid; grid-template-columns: 96px 1fr; gap: 6px 10px; align-items: baseline; font-size: 13px; margin-bottom: 5px; }
-  .tl .st { color: var(--muted); text-transform: uppercase; font-size: 10px; letter-spacing: .08em; }
-  .tl .line { display: flex; gap: 5px; flex-wrap: wrap; }
-  .chip { background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; white-space: nowrap; font-size: 12px; }
-  .chip.hero { border-color: var(--accent); }
-  .chip.agg { border-color: var(--agg1); }
-  .chip.fold { opacity: .6; }
-  .g { font-weight: 800; margin-left: 5px; }
-  .g.ok { color: var(--good); } .g.meh { color: var(--meh); } .g.bad { color: var(--bad); }
-  .keys { font-size: 11px; color: var(--muted); margin-top: 8px; }
-
-  /* advice */
-  .note { font-size: 12px; color: var(--muted); background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; line-height: 1.6; }
+  .note { font-size: 12px; color: var(--muted); background: var(--panel2); border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; line-height: 1.6; }
   .note b { color: var(--text); }
   .review { list-style: none; margin: 6px 0 0; padding: 0; }
   .review li { display: flex; gap: 8px; align-items: baseline; }
+  .review li.rewind:hover b { text-decoration: underline; }
   .review .st { text-transform: uppercase; font-size: 10px; letter-spacing: .08em; width: 52px; flex: none; }
+  .review .streetsum { margin-top: 6px; color: var(--muted); }
+  .review .streetsum.total { color: inherit; border-top: 1px solid var(--line); padding-top: 6px; }
   #result.stale { opacity: .45; }
   #result.stale #goAccurate { display: none; }
-  .verdict { display: flex; gap: 14px; align-items: baseline; margin: 4px 0 12px; flex-wrap: wrap; }
-  .verdict .big { font-size: 24px; font-weight: 700; }
+  .verdict { display: flex; gap: 12px; align-items: baseline; margin: 2px 0 12px; flex-wrap: wrap; }
+  .verdict .big { font-size: 24px; font-weight: 700; letter-spacing: -.01em; }
   .verdict .mix { color: var(--muted); font-size: 13px; }
-  .arows { display: flex; flex-direction: column; gap: 8px; }
-  .arow { display: grid; grid-template-columns: minmax(0, 140px) minmax(40px, 1fr) 62px 76px; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 8px; background: var(--panel2); border: 1px solid transparent; cursor: pointer; }
+  .arows { display: flex; flex-direction: column; gap: 4px; }
+  .arow { display: grid; grid-template-columns: minmax(0, 140px) minmax(40px, 1fr) 62px 76px; gap: 10px; align-items: center; padding: 7px 10px; border-radius: 8px; background: var(--panel2); border: 1px solid transparent; cursor: pointer; }
   .arows.noev .arow { grid-template-columns: minmax(0, 140px) minmax(40px, 1fr) 62px; }
-  .arow:hover { border-color: #3c4653; }
+  .arow:hover { border-color: var(--line2); }
   .arow.best { border-color: var(--accent); }
-  .arow.head { white-space: nowrap; background: none; cursor: default; padding: 0 10px; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  .arow.head { white-space: nowrap; background: none; cursor: default; padding: 0 10px; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); }
   .arow.head:hover { border-color: transparent; }
   .arow .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .arow .name small { color: var(--muted); font-weight: 400; margin-left: 6px; }
-  .bar { height: 12px; background: #0f1216; border-radius: 4px; overflow: hidden; }
+  .bar { height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; }
   .bar > div { height: 100%; border-radius: 4px; }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
   .num.pos { color: var(--good); } .num.neg { color: var(--bad); }
   .meta { color: var(--muted); font-size: 12px; margin-top: 10px; line-height: 1.6; }
   .grid { display: grid; grid-template-columns: repeat(13, 1fr); gap: 2px; margin-top: 6px; }
-  .cell { aspect-ratio: 1; border-radius: 3px; position: relative; background: #12161b; font-size: 10px; overflow: hidden; cursor: crosshair; }
+  .cell { aspect-ratio: 1; border-radius: 3px; position: relative; background: #111418; font-size: 10px; overflow: hidden; cursor: crosshair; }
   .cell .lbl { position: absolute; left: 3px; top: 2px; color: #fff; text-shadow: 0 0 3px #000; font-weight: 600; z-index: 2; pointer-events: none; }
   .cell .stack { position: absolute; inset: 0; display: flex; pointer-events: none; }
   .cell .stack div { height: 100%; }
   .cell.pair .lbl { color: #ffe9b0; }
   .cell.hov { outline: 2px solid #fff; outline-offset: -1px; z-index: 3; }
-  .cell.me { outline: 3px solid var(--accent); outline-offset: -1px; z-index: 3; opacity: 1 !important; transform: scale(1.18); box-shadow: 0 0 0 3px #0f1216, 0 0 14px 2px rgba(245,185,66,.8); overflow: visible; border-radius: 4px; }
+  .cell.me { outline: 3px solid var(--accent); outline-offset: -1px; z-index: 3; opacity: 1 !important; transform: scale(1.18); box-shadow: 0 0 0 3px var(--bg), 0 0 14px 2px rgba(242,181,68,.8); overflow: visible; border-radius: 4px; }
   .cell.me .lbl { font-weight: 800; }
   .cell.me .you { position: absolute; right: -2px; bottom: -2px; background: var(--accent); color: #1a1200; font-size: 8px; font-weight: 800; letter-spacing: .08em; padding: 1px 4px; border-radius: 3px; z-index: 4; pointer-events: none; }
   .readout { margin-top: 0; font-size: 13px; min-height: 20px; font-variant-numeric: tabular-nums; }
@@ -187,7 +224,7 @@
   .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; background: var(--c); }
   .legend .mehint::before { background: transparent; outline: 2px solid var(--accent); }
   /* whole-range totals above the grid */
-  .rangebar { display: flex; height: 16px; border-radius: 4px; overflow: hidden; margin-top: 6px; background: #12161b; }
+  .rangebar { display: flex; height: 10px; border-radius: 4px; overflow: hidden; margin-top: 6px; background: #111418; }
   .rangebar div { height: 100%; }
   .rangetot { display: flex; gap: 6px 14px; flex-wrap: wrap; margin-top: 6px; font-size: 13px; font-variant-numeric: tabular-nums; }
   .rangetot span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; background: var(--c); }
@@ -195,7 +232,7 @@
   .rangetot small { color: var(--muted); }
   .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -3px; margin-right: 8px; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .prog { height: 4px; background: var(--panel2); border-radius: 2px; overflow: hidden; margin-top: 10px; }
+  .prog { height: 3px; background: var(--panel2); border-radius: 2px; overflow: hidden; margin-top: 10px; }
   .prog > div { height: 100%; width: 0; background: var(--accent); transition: width .1s linear; }
   .solvehead { display: flex; align-items: center; }
   .solvehead .num { margin-left: auto; color: var(--muted); font-size: 12px; }
@@ -204,32 +241,58 @@
   summary { color: var(--muted); font-size: 12px; cursor: pointer; }
   .villain { font-size: 12px; color: var(--muted); word-break: break-word; margin-top: 6px; }
 
-  .toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); background: #262d37; border: 1px solid #3c4653; border-radius: 10px; padding: 10px 14px; display: flex; gap: 14px; align-items: center; box-shadow: 0 8px 30px rgba(0,0,0,.5); z-index: 50; max-width: calc(100% - 32px); font-size: 13px; }
+  .toast { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); background: #232932; border: 1px solid var(--line2); border-radius: var(--r); padding: 9px 14px; display: flex; gap: 14px; align-items: center; box-shadow: 0 8px 30px rgba(0,0,0,.5); z-index: 70; max-width: calc(100% - 32px); font-size: 13px; }
 
-  /* two columns: the action panel sits under the table, except while a card is needed, when the deck does */
-  @media (min-width: 1001px) {
-    .col { display: flex; flex-direction: column; }
-    #pAction { order: 2; } #pCards { order: 3; }
-    body.needcard #pCards { order: 1; }
+  /* ---- layout
+     Wide screens: the page fills the window; each column scrolls on its own and the action dock stays pinned
+     to the bottom of its column, so it's on screen at any zoom. Drag the divider to resize the columns,
+     the bar under the table to resize the table; the menu swaps the columns. */
+  .dock { position: sticky; bottom: 0; z-index: 5; margin-top: auto; margin-bottom: 0; box-shadow: 0 -10px 18px -6px var(--bg); border: 1px solid var(--line); }
+  .split { display: none; }
+  /* while a card is needed the deck is the input: it moves up under the setup and the dock stops floating */
+  body.needcard .dock { position: static; box-shadow: none; }
+  #pSetup { order: -2; } body.needcard #pCards { order: -1; }
+  @media (min-width: 901px) {
+    body { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+    main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(340px, var(--left)) 9px minmax(320px, 1fr); padding: 0 6px 0 12px; }
+    .col { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding: 10px 4px 10px 0; scrollbar-width: thin; scrollbar-color: var(--line2) transparent; }
+    #colR { padding: 10px 6px 10px 2px; }
+    .split { display: block; cursor: col-resize; position: relative; touch-action: none; }
+    .split::before { content: ""; position: absolute; top: 10px; bottom: 10px; left: 4px; width: 1px; background: var(--line); }
+    .split:hover::before, .split.drag::before { background: var(--accent); width: 2px; left: 3.5px; }
+    body.swap #colL { order: 3; } body.swap .split { order: 2; } body.swap #colR { order: 1; padding: 10px 4px 10px 0; }
+    body.swap main { grid-template-columns: minmax(320px, 1fr) 9px minmax(340px, var(--left)); }
+    body.dragging { cursor: col-resize; user-select: none; }
+    body.dragging-v { cursor: ns-resize; user-select: none; }
+    #pAdvice { margin-bottom: 0; min-height: 100%; }
   }
-  /* one column: table first; on your turn the action buttons (which carry the solver's mix) and then the advice come next */
-  @media (max-width: 1000px) {
-    main { display: flex; flex-direction: column; gap: 0; padding: 16px; }
+  /* Narrow screens (phones, or a zoomed-in window): one column that scrolls; the action dock sticks to the
+     bottom of the window. On your turn the advice comes straight after the table. */
+  @media (max-width: 900px) {
+    main { display: flex; flex-direction: column; padding: 10px 10px 0; }
     .col { display: contents; }
-    #pSetup { order: 10; } #pTable { order: 20; } #pCards { order: 30; } #pAction { order: 40; } #pAdvice { order: 50; }
-    body.heroturn #pAction { order: 25; } body.heroturn #pAdvice { order: 26; }
+    #pSetup { order: 10; } #pTable { order: 20; } #pCards { order: 30; } #pAdvice { order: 40; } #pHistory { order: 50; } #pAction { order: 90; }
+    body.heroturn #pAdvice { order: 25; }
+    body.needcard #pCards { order: 15; }
+    .dock { margin: 0 -10px; border-radius: var(--r) var(--r) 0 0; border-width: 1px 0 0; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+    .menu .wideonly { display: none; }
   }
+  /* short windows (a zoomed-in page): drop the dock's second line */
+  @media (max-height: 620px) { .prompt .ask { display: none; } .prompt { margin-bottom: 6px; } }
   @media (max-width: 560px) {
-    header { padding: 10px 16px; gap: 8px; }
-    .panel { padding: 12px; }
-    .felt { height: 230px; }
-    .felt::before { inset: 26px 26px; }
-    .seat { width: 58px; padding: 4px 2px; }
+    header { padding: 8px 12px; gap: 6px; }
+    header .ctl > .lbl { display: none; }
+    .panel { padding: 10px 12px; }
+    .felt::before { inset: 12% 5%; }
+    .seat { width: 56px; padding: 3px 2px; }
     .seat .pos { font-size: 11px; }
     .bc { width: 24px; height: 34px; font-size: 11px; }
     .pc { height: 30px; font-size: 11px; }
-    .slot { width: 34px; height: 48px; font-size: 15px; }
+    .slot { width: 32px; height: 46px; font-size: 15px; }
     .slots { gap: 10px; }
+    .acts button { padding: 6px 16px 6px 8px; min-width: 0; flex: 1 1 calc(33% - 6px); max-width: none; }
+    .prompt .ask, .acts.solver::before { display: none; }
+    .prompt { margin-bottom: 6px; }
     .arow { grid-template-columns: 104px 1fr 48px 62px; gap: 8px; }
     .arows.noev .arow { grid-template-columns: 104px 1fr 48px; }
     .cell { font-size: 7px; }
@@ -241,31 +304,40 @@
 <header>
   <h1>GTO Solver</h1>
   <span class="spacer"></span>
-  <span class="ctl" id="oppctl"><span class="muted" style="font-size:12px">Opponents</span>
-    <div class="segment"><button data-o="gto" class="active" title="Opponents play the equilibrium (GTO): advice that can't be exploited, whoever you face.">GTO</button><button data-o="pool" title="Opponents play like a typical player pool: they fold too often to bets of every size (most of all small ones), raise less (about half as often, as in the one spot with population data) and bluff less (a judgment call: no population data found). Preflop, from population stats, they play more hands (spread evenly over open-limps and flats: the data don't say where), 3bet more and fold less to 3bets. Your preflop calls and raises adjust to those ranges (opens follow the chart); after the flop, advice is the highest-EV play against them.">Pool</button></div></span>
-  <span class="ctl" id="solvectl"><span class="muted" style="font-size:12px">Solve</span>
+  <span class="ctl" id="oppctl"><span class="lbl">Opponents</span>
+    <div class="segment"><button data-o="gto" class="active" title="Opponents play the equilibrium (GTO): advice that can't be exploited, whoever you face.">GTO</button><button data-o="pool" title="Opponents play like a typical player pool: they fold too often to bets of every size (most of all small ones), raise less and bluff less, from population data where it exists. Preflop, from population stats, they play more hands, 3bet more and fold less to 3bets. Your preflop calls and raises adjust to those ranges (opens follow the chart); after the flop, advice is the highest-EV play against them.">Pool</button></div></span>
+  <span class="ctl" id="solvectl"><span class="lbl">Solve</span>
     <div class="segment"><button data-m="fast" class="active" title="A few seconds per spot. River answers are solid; turn and flop answers are rough.">Fast</button><button data-m="accurate" title="Much longer per spot (about 30 s with the local server, about a minute in the browser). Turn answers get close to a full solver.">Accurate</button></div></span>
-  <button id="fourcolor" class="small" title="Four-colour deck: diamonds blue, clubs green">4-colour</button>
-  <button id="copyhand" title="Copy the hand, the advice and a link that reopens this exact spot">Copy hand</button>
+  <button id="copyhand" class="ghost" title="Copy the hand, the advice and a link that reopens this exact spot">Copy hand</button>
   <button id="newhand" title="Shortcut: N">New hand <kbd>N</kbd></button>
+  <span class="menuwrap">
+    <button id="menuBtn" class="ghost" title="Display and layout" aria-haspopup="true" aria-expanded="false">⋯</button>
+    <div class="menu" id="menu" hidden>
+      <button id="fourcolor" title="Four-colour deck: diamonds blue, clubs green">Four-colour deck</button>
+      <button id="swapCols" class="wideonly" title="Put the advice on the left and the table on the right">Advice on the left</button>
+      <div class="sep"></div>
+      <button id="resetLayout" title="Default column widths, table size and panels">Reset layout</button>
+      <div class="hint wideonly">Drag the divider between the columns, or the bar under the table, to resize. Click a panel's title to fold it.</div>
+    </div>
+  </span>
 </header>
 
 <main>
-  <div class="col">
+  <div class="col" id="colL">
     <section class="panel" id="pSetup">
       <div id="setupFull">
-        <div class="row" style="margin-bottom:8px">
+        <div class="row setuprow">
           <span class="muted">Players</span>
           <div class="segment" id="players"></div>
-          <span class="muted" style="margin-left:auto">stacks</span>
-          <input type="number" id="stack" value="100" min="5" step="1"><span class="muted">bb</span>
         </div>
-        <div class="row" style="margin-bottom:8px">
-          <span class="muted">Ante</span>
-          <input type="number" id="ante" value="0" min="0" step="0.05" title="Ante per player, in big blinds"><span class="muted">bb each</span>
+        <div class="row setuprow">
+          <span class="muted">Stacks</span>
+          <input type="number" id="stack" value="100" min="5" step="1"><span class="muted">bb</span>
+          <span class="muted" style="margin-left:12px">Ante</span>
+          <input type="number" id="ante" value="0" min="0" step="0.05" title="Ante per player, in big blinds"><span class="muted">bb</span>
           <label class="muted" id="straddleBox" style="margin-left:auto" title="The first seat posts a 2bb straddle and acts last preflop"><input type="checkbox" id="straddle"> straddle</label>
         </div>
-        <div class="row" style="margin-bottom:8px">
+        <div class="row setuprow">
           <span class="muted">Rake</span>
           <select id="rake" title="Rake taken from pots that see a flop (none when the hand ends preflop)">
             <option value="off">off</option><option value="5-3">5%, cap 3bb</option><option value="custom">custom</option>
@@ -276,7 +348,7 @@
           </span>
         </div>
         <div class="row">
-          <span class="muted">You are</span>
+          <span class="muted" style="width:58px;font-size:12px">You are</span>
           <div class="row seats" id="seats"></div>
           <button class="link" id="setupDone" style="margin-left:auto" hidden>Done</button>
         </div>
@@ -285,19 +357,13 @@
     </section>
 
     <section class="panel" id="pTable">
-      <h2>Table <span class="right muted" id="tableHint"></span></h2>
+      <h2 data-fold>Table <span class="right" id="tableHint"></span><button class="link" id="editCards" title="Change your hand or the board">Cards</button></h2>
       <div id="felt" class="felt"></div>
-    </section>
-
-    <section class="panel" id="pAction">
-      <h2>Action <span class="right muted" id="stepLabel"></span></h2>
-      <div id="actionArea"></div>
-      <div class="err" id="err"></div>
-      <div class="timeline" id="timeline"></div>
+      <div class="grip" id="feltGrip" title="Drag to resize the table · double-click to reset"></div>
     </section>
 
     <section class="panel" id="pCards">
-      <h2>Cards <span class="right muted" id="cardsHint"></span></h2>
+      <h2>Cards <span class="right" id="cardsHint"></span></h2>
       <div class="slots">
         <div class="slotgroup"><label>Your hand</label><div class="slotrow" id="holeSlots"></div></div>
         <div class="slotgroup"><label>Flop</label><div class="slotrow" id="flopSlots"></div></div>
@@ -307,9 +373,21 @@
       <div class="picker" id="picker"></div>
       <div class="typehint" id="typeHint"></div>
     </section>
+
+    <section class="panel" id="pHistory">
+      <h2 data-fold>Hand <span class="right" id="stepLabel"></span></h2>
+      <div id="timeline"></div>
+    </section>
+
+    <section class="panel dock" id="pAction">
+      <div class="err" id="err"></div>
+      <div id="actionArea"></div>
+    </section>
   </div>
 
-  <div class="col">
+  <div class="split" id="split" title="Drag to resize · double-click to reset"></div>
+
+  <div class="col" id="colR">
     <section class="panel" id="pAdvice">
       <h2>Advice</h2>
       <div id="adviceNote" class="note" hidden></div>
@@ -626,6 +704,7 @@ function renderSetup() {
   const started = (S.cards[0] && S.cards[1]) || STREETS.some(s => S.actions[s].length);
   const full = !started || editSetup;
   document.getElementById("setupFull").hidden = !full;
+  document.getElementById("pSetup").classList.toggle("slim", !full);
   document.getElementById("setupDone").hidden = !started;
   const sum = document.getElementById("setupSum"); sum.hidden = full;
   sum.innerHTML = `<span><b>${S.players}-handed</b> <span class="muted">·</span> you are <b>${SEAT_LABEL(S.hero, S.players)}</b> <span class="muted">·</span> <b>${fmt(S.stack)}bb</b> stacks${ANTE() ? ` <span class="muted">·</span> ${fmt(ANTE())}bb ante` : ""}${STRADDLER() ? ` <span class="muted">·</span> ${SEAT_LABEL(STRADDLER(), S.players)} straddles` : ""}${RAKE() ? ` <span class="muted">·</span> ${RAKE_TEXT()}` : ""}</span>`;
@@ -704,7 +783,9 @@ function renderTable(sim) {
   const b = S.cards.slice(2).map(c => c ? `<div class="bc ${c[1]}">${c[0]}<span>${SUIT_SYM[c[1]]}</span></div>` : `<div class="bc empty"></div>`).join("");
   center.innerHTML = `<div class="board">${b}</div><div class="pot">pot ${fmt(sim.pot)} bb</div>`;
   el.appendChild(center);
-  document.getElementById("tableHint").textContent = sim.cur ? "click a seat to fold everyone before it" : "";
+  document.getElementById("tableHint").textContent = sim.cur ? "click a seat to fold to it" : "";
+  const ec = document.getElementById("editCards"), auto = !S.cards[0] || !S.cards[1] || !!sim.waiting;
+  ec.hidden = auto; ec.textContent = needCard(sim) ? "Hide cards" : "Edit cards";
 }
 
 function renderAction(sim) {
@@ -805,6 +886,7 @@ function renderTimeline() {
     line.querySelectorAll(".rewind").forEach(c => c.onclick = () => rewindTo(c.dataset.s, +c.dataset.i));
     el.appendChild(line);
   }
+  document.getElementById("pHistory").hidden = !any;
   const u = document.createElement("button"); u.className = "small"; u.innerHTML = "Undo<kbd>U</kbd>"; u.disabled = !any; u.onclick = undo; u.style.marginTop = "6px";
   el.appendChild(u);
 }
@@ -991,6 +1073,7 @@ function renderAll() {
   const sim = simulate();
   if (!needCard(sim)) pendingRank = null;
   document.body.classList.toggle("needcard", needCard(sim));
+  document.getElementById("pCards").hidden = !needCard(sim);   // the deck shows while a card is needed, or on request
   renderSetup(); renderSlots(sim); renderPicker(sim); renderTable(sim); renderAction(sim); renderTimeline();
   if (sim.toAct === S.hero && S.cards[0] && S.cards[1] && !sim.handOver) analyze(sim);
   else if (!S.cards[0] || !S.cards[1]) resetAdvice();
@@ -1109,6 +1192,7 @@ document.getElementById("rakePct").onchange = (e) => setRake(Math.min(25, Math.m
 document.getElementById("rakeCap").onchange = (e) => setRake(RAKE(), Math.max(0, parseFloat(e.target.value) || 0));
 syncRake();
 document.getElementById("setupDone").onclick = () => { editSetup = false; renderAll(); };
+document.getElementById("editCards").onclick = () => { if (needCard(simulate())) { showDeck = false; selSlot = null; pendingRank = null; } else showDeck = true; renderAll(); };
 
 // ---- four-colour deck (per browser)
 function applyFour(on) { document.body.classList.toggle("four", on); document.getElementById("fourcolor").classList.toggle("active", on); }
@@ -1142,6 +1226,60 @@ document.addEventListener("keydown", (e) => {
 document.getElementById("newhand").onclick = () => {
   S = { ...fresh(S.players), hero: S.hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap }; selSlot = null; showDeck = false; editSetup = false; pendingRank = null; save(); resetAdvice(); renderAll();
 };
+// ---- layout (per browser): column divider, table height, folded panels, columns swapped. Only in a real
+// browser (the tests' fake DOM has no window events), and never allowed to break the page.
+(function layout() {
+  if (typeof window.addEventListener !== "function" || typeof document.documentElement === "undefined") return;
+  try {
+    const root = document.documentElement, KEY = "gto-layout";
+    let L = {}; try { L = JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) {}
+    const store = () => { try { localStorage.setItem(KEY, JSON.stringify(L)); } catch (e) {} };
+    const apply = () => {
+      if (L.left) root.style.setProperty("--left", L.left + "px"); else root.style.removeProperty("--left");
+      if (L.felt) root.style.setProperty("--felt-h", L.felt + "px"); else root.style.removeProperty("--felt-h");
+      document.body.classList.toggle("swap", !!L.swap);
+      document.getElementById("swapCols").classList.toggle("active", !!L.swap);
+      for (const id of ["pTable", "pHistory"]) document.getElementById(id).classList.toggle("collapsed", !!(L.folded || {})[id]);
+    };
+    apply();
+    // drag with the pointer; onMove gets the pointer event, done() saves
+    const drag = (el, cls, onMove) => {
+      el.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault(); el.setPointerCapture(e.pointerId); el.classList.add("drag"); document.body.classList.add(cls);
+        const move = (ev) => onMove(ev, e);
+        const up = () => { el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up); el.removeEventListener("pointercancel", up);
+          el.classList.remove("drag"); document.body.classList.remove(cls); store(); };
+        el.addEventListener("pointermove", move); el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up);
+      });
+    };
+    const main = document.querySelector("main"), split = document.getElementById("split");
+    drag(split, "dragging", (ev) => {
+      const r = main.getBoundingClientRect();
+      const x = L.swap ? r.right - ev.clientX - 6 : ev.clientX - r.left - 12;
+      L.left = Math.round(Math.max(340, Math.min(r.width - 340, x))); apply();
+    });
+    split.addEventListener("dblclick", () => { delete L.left; apply(); store(); });
+    const grip = document.getElementById("feltGrip"), felt = document.getElementById("felt");
+    drag(grip, "dragging-v", (ev) => {
+      const top = felt.getBoundingClientRect().top;
+      L.felt = Math.round(Math.max(140, Math.min(560, ev.clientY - top))); apply();
+    });
+    grip.addEventListener("dblclick", () => { delete L.felt; apply(); store(); });
+    for (const h of document.querySelectorAll("h2[data-fold]")) h.addEventListener("click", (e) => {
+      if (e.target.closest("button")) return;
+      const id = h.parentElement.id; L.folded = L.folded || {}; L.folded[id] = !L.folded[id]; apply(); store();
+    });
+    // the ⋯ menu
+    const btn = document.getElementById("menuBtn"), menu = document.getElementById("menu");
+    const show = (on) => { menu.hidden = !on; btn.setAttribute("aria-expanded", on ? "true" : "false"); };
+    btn.addEventListener("click", (e) => { e.stopPropagation(); show(menu.hidden); });
+    document.addEventListener("click", (e) => { if (!menu.hidden && !e.target.closest(".menuwrap")) show(false); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") show(false); });
+    document.getElementById("swapCols").addEventListener("click", () => { L.swap = !L.swap; apply(); store(); });
+    document.getElementById("resetLayout").addEventListener("click", () => { L = {}; apply(); store(); show(false); });
+  } catch (e) {}
+})();
 renderAll();
 </script>
 </body>
