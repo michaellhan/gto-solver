@@ -6,6 +6,14 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 
+// Node 24.14's V8 sometimes segfaults (about 1 run in 70 with the suite run 16 times in parallel; the test
+// file's process dies with SIGSEGV and node --test reports "fail 1") in a GC that starts at the stack
+// check of a function's Sparkplug (baseline) code: ClearStaleLeftTrimmedPointerVisitor reads a bad slot in
+// BaselineOutOfLinePrologue's frame. Each loadPage() compiles the page afresh in a new context, so its
+// functions are baseline-compiled over and over. Without Sparkplug (interpreter, then the optimizing
+// tiers) the crash is gone (0 in 1900 parallel runs, against about 28 before); the suite is no slower.
+require("node:v8").setFlagsFromString("--no-sparkplug");
+
 // GTO_PAGE=<file> tests another copy of the page (e.g. an older version, to see a test catch its bug)
 const HTML_PATH = process.env.GTO_PAGE || path.join(__dirname, "..", "..", "gto", "static", "index.html");
 
