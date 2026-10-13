@@ -698,7 +698,8 @@ class Advisor:
           by equity when called, as many hands as it raises) and bluffs. A value raise stays only while its
           equity when called (against each continuing range, weighted by how often it continues) clears
           break-even by as much as the chart's weakest value raise heads-up does (more dead money,
-          thinner value); bluffs shrink by how much less often everyone folds.
+          thinner value); bluffs shrink by how much less often everyone folds, against how often a
+          bluff of that size into that pot needs them to.
         With `pool` (exploit mode) the other players' ranges and their responses to hero's raise are the
         player pool's (exploit.pool_preflop), so this runs even in the chart's own spot: calls follow
         equity against what the pool actually plays, and bluff raises grow (up to 1.5x) when the pool
@@ -796,12 +797,25 @@ class Advisor:
             # only ever tighter than the chart: the charts' continuing ranges don't see the bigger
             # squeeze size, and capped callers would otherwise make value raises look wider
             value_n = np.minimum(value_c, keep)
-            scale = min(1.5 if pool else 1.0, f / max(f_std, 1e-9))
+            # bluffs: by how often everyone folds over how often they must for a pure bluff to break even
+            # (the raise over the pot before it). The callers' dead money lowers that bar, so a squeeze
+            # bluff needs fewer folds than its heads-up 3bet (BB over CO + BTN: 64% against 69%). Fold
+            # rates alone had the big blind's squeezes at 0.87-0.90x its heads-up 3bets; published solves
+            # have 0.95x (GTO Wizard NL500 40bb, CO open + BTN call: 9.8% against 10.3%,
+            # https://blog.gtowizard.com/how-to-construct-a-squeezing-range/) to 1.10x (Poker Academy
+            # NL200 100bb, BTN open + SB call: 12.7% against 11.5%). Now 0.88-0.94x.
+            def fold_need(s, stk):
+                to = min(_default_size(s, hero, True), stk - s.inv_start[hero])
+                add = to - s.bets[hero]
+                return add / max(s.pot_start + sum(s.bets.values()) + add, 1e-9)
+            scale = min(1.5 if pool else 1.0,
+                        (f / fold_need(st, stack)) / max(f_std / fold_need(std, CHART_STACK), 1e-9))
             bluff_n = bluff_c * scale
             out["raise"] = np.minimum(1.0, value_n + bluff_n)
             msg.append(f"raises re-drawn for {'the player pool' if pool and not more else f'{len(opp)} players in'}: value raises keep the equity over break-even "
                        f"against what continues that the chart's weakest value raise has heads-up ({v_bar:.0%}); bluffs x{scale:.2f} "
-                       f"(everyone folds {f:.0%} vs {f_std:.0%})")
+                       f"(everyone folds {f:.0%} vs {f_std:.0%}, needing {fold_need(st, stack):.0%} vs "
+                       f"{fold_need(std, CHART_STACK):.0%})")
         raise_n = out.get("raise", raise_c)
         # continuing before the price: the chart's calls and value raises, kept bluffs, new value raises
         base = np.minimum(1.0, np.maximum(call_c + value_c + (raise_n - value_n if more or pool else raise_c - value_c), raise_n))

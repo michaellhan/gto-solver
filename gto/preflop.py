@@ -159,13 +159,18 @@ for opener in ["UTG", "HJ", "CO", "BTN"]:
         }
 # BB
 VS_RFI[("BB", "UTG")] = {
-    "3bet": R("QQ+, JJ:0.4, AKs, AKo, AQs:0.5, A5s, A4s:0.7, KQs:0.3, 65s:0.3, 54s:0.3"),
+    "3bet": R("QQ+, JJ:0.6, AKs, AKo, AQs:0.7, AQo:0.25, AJs:0.3, A5s, A4s, A3s:0.4, A2s:0.3, KQs:0.5, KJs:0.2, QJs:0.2, T9s:0.2, 76s:0.3, 65s:0.4, 54s:0.4"),
     "call": R("22-TT, JJ:0.6, AQs:0.5, AJs-A6s, A3s, A2s, AQo, AJo, ATo, A9o:0.5, K8s+, K7s-K2s:0.7, KQo, KJo, KTo:0.6, Q8s+, Q7s-Q6s:0.7, QJo, QTo:0.5, J8s+, J7s:0.7, JTo:0.5, T7s+, T6s:0.5, 96s+, 95s:0.5, 85s+, 84s:0.5, 74s+, 73s:0.3, 63s+, 53s+, 52s:0.3, 43s:0.6, 42s:0.3, A8o-A7o:0.5, K9o:0.5, Q9o:0.4, J9o:0.4, T9o:0.5, 98o:0.3, Q5s-Q2s:0.5, J6s-J5s:0.5"),
 }
-VS_RFI[("BB", "HJ")] = VS_RFI[("BB", "UTG")]
 VS_RFI[("BB", "CO")] = {
-    "3bet": R("JJ+, TT:0.5, AKs, AKo, AQs, AQo:0.5, AJs:0.5, A5s, A4s, A3s:0.5, KQs:0.5, KJs:0.3, 76s:0.3, 65s:0.3, 54s:0.3, KQo:0.3"),
+    "3bet": R("JJ+, TT:0.7, 99:0.2, AKs, AKo, AQs, AQo:0.7, AJs:0.7, ATs:0.4, A9s:0.2, A5s, A4s, A3s:0.8, A2s:0.6, KQs:0.8, KJs:0.5, KTs:0.3, K9s:0.3, QJs:0.4, QTs:0.2, JTs:0.4, J9s:0.2, T9s:0.4, 98s:0.3, 87s:0.3, 76s:0.5, 65s:0.5, 54s:0.5, AJo:0.2, KQo:0.4"),
     "call": R("22-99, TT:0.5, AJs:0.5, ATs-A6s, A5s:0, A2s, AQo:0.5, AJo, ATo, A9o, A8o:0.7, A7o-A2o:0.5, K2s+, KQo:0.7, KJo, KTo, K9o, K8o:0.5, Q2s+, QJo, QTo, Q9o, Q8o:0.5, J5s+, JTo, J9o, J8o:0.5, T6s+, T9o, T8o, 95s+, 98o, 97o:0.3, 84s+, 87o:0.6, 74s+, 63s+, 53s+, 43s, 42s:0.5"),
+}
+# the big blind against a HJ open (it used the UTG chart): 3bets between the UTG and CO charts', and
+# calls halfway between theirs
+VS_RFI[("BB", "HJ")] = {
+    "3bet": R("QQ+, JJ:0.7, TT:0.3, AKs, AKo, AQs:0.8, AQo:0.4, AJs:0.5, ATs:0.3, A5s, A4s, A3s:0.6, A2s:0.4, KQs:0.6, KJs:0.4, KTs:0.2, K9s:0.2, QJs:0.3, JTs:0.2, T9s:0.3, 98s:0.2, 87s:0.3, 76s:0.4, 65s:0.5, 54s:0.5, KQo:0.15, AJo:0.1"),
+    "call": 0.5 * (VS_RFI[("BB", "UTG")]["call"] + VS_RFI[("BB", "CO")]["call"]),
 }
 VS_RFI[("BB", "BTN")] = {
     "3bet": R("TT+, 99:0.8, AJs+, ATs:0.8, A9s:0.6, A8s:0.3, AQo+, AJo:0.8, ATo:0.2, A5s-A2s, KJs+, KTs:0.8, K9s:0.5, K5s-K2s:0.2, KQo:0.8, KJo:0.2, QJs:0.8, QTs:0.3, Q9s:0.2, JTs:0.6, T9s:0.6, 98s:0.3, 87s:0.3, 76s:0.5, 65s:0.5, 54s:0.5"),
@@ -184,15 +189,25 @@ VS_RFI[("BB", "SB")] = {
 # raked solves defend less in all (BTN 40-41%, SB 43-52%; vs UTG 21% where the chart defends 33%), but
 # the big blind's flats are where rake bites hardest (no flop, no drop) and the solver here plays
 # without rake, so the totals aren't matched (a solver-based guide puts BB vs BTN at 52-58% with
-# NL50-NL200 rake, 3bet 11-13%, and 3-5 points wider at higher stakes: vip-grinders.com). BB against
-# UTG/CO 3bets 3.6%/5.6% against published 4.5-5.1%/7.7%: left. Also under 5 points, though every
-# source sits above the charts: BB vs LJ 4.5% (Poker Academy NL200), 5.1% (pokalab.com, NL50 rake),
-# 6% (BeyondGTO NL500); BB vs HJ (the UTG chart, 3.6%) 6.7% (pokalab.com) and 8% (BeyondGTO); BB vs
-# CO 10% (BeyondGTO). Squeezes (the advisor re-draws the chart for the caller): BB over a BTN open and
-# an SB call 30/60/10 against Poker Academy's 71.2/16.1/12.7 (NL200, to 12.2bb; the calls are rake);
-# over CO + BTN 4.9% and UTG + HJ 3.4% against GTO Wizard's 13% and 7.9% ("Responding to BB
-# squeezes"), which are MTT solves with 2.3bb opens, so not matched.
-for _o in ("BTN", "SB"):
+# NL50-NL200 rake, 3bet 11-13%, and 3-5 points wider at higher stakes: vip-grinders.com).
+# Against UTG, HJ and CO the big blind 3bet 3.6%, 3.6% (HJ played the UTG chart) and 5.6%, under every
+# published number: gtopreflop.com's raked solve (8-max 100bb, 2.5bb opens, 5% rake capped at 4bb; it
+# says 6-max is within a point; https://gtopreflop.com/posts/big-blind-defense) 3bets 4.5% against
+# the LJ (the 6-max UTG seat), 5.9% against the HJ and 7.7% against the CO; Poker Academy NL200 4.5%
+# against the LJ; pokalab.com (NL50 rake) 5.1% LJ and 6.7% HJ; BeyondGTO (NL500) 6%, 8%, 10%. Now
+# 4.8%, 6.2% (a chart of its own, calls halfway between the UTG and CO charts') and 8.0%, the new 3bets
+# (more JJ-TT, AQ, suited broadways and wheel aces, a few suited connectors) taken from calls so the
+# defence totals stay (33%, 39%, 45%).
+# Squeezes (the advisor re-draws the chart for the callers, see Advisor._priced): BB over a BTN open
+# and an SB call 30/60/10 against Poker Academy's 71.2/16.1/12.7 (NL200, to 12.2bb; the calls are
+# rake); over CO + BTN 7.3% (was 4.9%) and UTG + a caller 4.5% (was 3.4%). The only cash squeeze solve
+# found, GTO Wizard's NL500 at 40bb (CO min-open, BTN call: 9.8% against 10.3% heads-up,
+# https://blog.gtowizard.com/how-to-construct-a-squeezing-range/), puts the squeeze at 0.95x the
+# heads-up 3bet, which the charts now give (7.3% against 8.0%). GTO Wizard's 13% and 7.9% over CO/UTG
+# + BTN + SB ("Responding to BB squeezes") are MTT solves with 2.3bb opens and two callers: not matched.
+# SB and BTN squeezes follow their 3bet charts the same way (SB over CO + BTN 12.2%, over UTG + HJ
+# 5.2%; BTN over UTG + HJ 4.9%); no cash numbers for those were found.
+for _o in ("UTG", "HJ", "CO", "BTN", "SB"):
     VS_RFI[("BB", _o)]["call"] = np.minimum(VS_RFI[("BB", _o)]["call"], 1.0 - VS_RFI[("BB", _o)]["3bet"])
 
 
@@ -225,8 +240,8 @@ def vs_3bet(opener: str, threebettor: str) -> Dict[str, np.ndarray]:
         return HU_SB_VS_3BET
     o = _norm(opener)
     if o in ("UTG", "HJ", "CO", "BTN") and _norm(threebettor) in ("SB", "BB"):
-        if o == "BTN" and _norm(threebettor) == "BB":
-            return dict(BTN_VS_BB_3BET)
+        if o == "BTN":
+            return dict(BTN_VS_BB_3BET if _norm(threebettor) == "BB" else BTN_VS_SB_3BET)
         return _ip_vs_blind_3bet(o)
     if o in VS_3BET_OOP:
         return dict(VS_3BET_OOP[o])
@@ -288,10 +303,12 @@ def _vs_3bet(opener: str) -> Dict[str, np.ndarray]:
 
 
 # The opener in position facing a blind's 3bet (to 11bb), as shares of its opening range
-# (fold/call/4bet): UTG 51/36/14, HJ 57/31/12, CO 50/41/9, BTN vs SB 58/36/6. No published numbers
-# for these spots: Preflop Wizard's per-seat table (UTG 74-82/10-15/8-11, CO 59-68/22-28/10-13) isn't
-# split by who 3bets, and 888poker says only that 4betting is more attractive against SB 3bets than
-# against BB 3bets (here BTN 4bets 6% against the SB and 11.6% against the BB). Left derived.
+# (fold/call/4bet): UTG 51/36/14, HJ 57/31/12, CO 50/41/9. Preflop Wizard's per-seat table (UTG
+# 74-82/10-15/8-11, CO 59-68/22-28/10-13) isn't split by who 3bets; gtopreflop.com's raked 8-max solve
+# (5% rake capped at 4bb, 12bb blind 3bets, https://gtopreflop.com/posts/4-bet-ranges-guide) has UTG
+# vs SB 71.4/14.1/14.5 and CO vs BB 68.0/22.4/9.6: the 4bets match, the calls are about 20 points
+# lower there (rake, as with the big blind's defence). Left derived. The button has its own charts
+# below.
 def _ip_vs_blind_3bet(o: str) -> Dict[str, np.ndarray]:
     c = _vs_3bet(o)
     return {"4bet": c["4bet"], "call": np.minimum(1.0, c["call"] * 1.25 + IP_VS_3BET_EXTRA)}
@@ -303,11 +320,32 @@ def _ip_vs_blind_3bet(o: str) -> Dict[str, np.ndarray]:
 # BTN at 50-55/30-35/12-15 fold/call/4bet, Preflop Wizard). The derived chart folded 58.7%, called
 # 35.3% and 4bet 6.0%: a 4bet range of nearly all value. Here 54/34/12: more value (QQ, AKo, JJ, AQs)
 # from the calls and 4bet bluffs from the folds (the rest of A5s-A2s, K8s-K5s, Q8s, A8o/A7o/A5o/A4o,
-# K9o). Against the small blind's 3bet no matching data was found, so it keeps the derived chart.
+# K9o).
 _extra_value = R("QQ:0.3, AKo:0.3, JJ:0.2, AQs:0.3")
 _extra_bluff = R("A5s:0.4, A4s:0.5, A3s:0.5, A2s:0.6, K8s:0.4, K7s:0.4, K6s:0.3, K5s:0.3, Q8s:0.3, A8o:0.2, A7o:0.2, A5o:0.3, A4o:0.2, K9o:0.2")
 BTN_VS_BB_3BET = {"4bet": np.minimum(1.0, _ip_vs_blind_3bet("BTN")["4bet"] + _extra_value + _extra_bluff),
                   "call": np.maximum(0.0, _ip_vs_blind_3bet("BTN")["call"] - _extra_value)}
+
+# The button facing the small blind's 3bet (2.5bb open, 10-12bb 3bet). gtopreflop.com's solve (8-max
+# 100bb, 5% rake capped at 4bb, 12bb 3bets from either blind; it says 6-max lands within a point,
+# https://gtopreflop.com/posts/4-bet-ranges-guide) has the button 4betting as often against either
+# blind (10.4% of its opens against the SB, 10.3% against the BB) and calling less against the SB
+# (13.9% against 20.0%, folding 75.7% against 69.7%). Its hand mix against the SB: QQ 89.5% 4bet,
+# AKo 80%, A9s 77.5%, KTs 75.8%, AKs 59.4% (calls 41%), A4s 42.8%, K9s 33.9%, KQo 32.6%, JJ 23.6%
+# (calls 76%), AJo 23.4%, A5s 21.9% (calls 72%), TT 19.5% (calls 81%); AQs and KQs call 100%; the
+# offsuit hands that don't 4bet (AJo, KQo) and K9s fold rather than call. 888poker's remark that
+# 4betting is more attractive against SB 3bets is about the regular's tendencies (wider SB 3bets than
+# theory, tighter BB 3bets), not the equilibrium. The derived chart (the BB one with calls widened)
+# folded 58.4%, called 35.6% and 4bet 6.0%; here the 4bets match the BB chart's 11.6% and the calls
+# are its 34% less gtopreflop's 6-point gap: about 59/29/11.6.
+_sb_4bet = R("KK+, QQ:0.9, AKo:0.8, AKs:0.6, A9s:0.75, KTs:0.75, A4s:0.45, K9s:0.35, KQo:0.35, JJ:0.25, "
+             "AJo:0.35, A5s:0.2, TT:0.2, A3s:0.4, A2s:0.4, K8s:0.3, K7s:0.3, K6s:0.3, K5s:0.3, Q9s:0.3, Q8s:0.2, "
+             "J9s:0.2, KJo:0.2, A8o:0.15, A5o:0.2, K9o:0.15")
+BTN_VS_SB_3BET = {
+    "4bet": _sb_4bet,
+    "call": np.clip(np.minimum(_ip_vs_blind_3bet("BTN")["call"], 1.0 - _sb_4bet)
+                    - R("AJo, KQo, K9s, AQo:0.3, ATo:0.4, KJo:0.4") + R("AKs:0.4, A5s:0.72"), 0.0, 1.0 - _sb_4bet),
+}
 
 
 # ---------- 3bettor facing a 4bet ----------

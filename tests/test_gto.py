@@ -375,10 +375,12 @@ class TestAdvisor(unittest.TestCase):
         ix = lambda h: COMBO_INDEX[tuple(sorted(cards(h)))]
         self.assertGreater(1 - s["fold"][ix("8s8d")], 0.9)
         # (JTs used to be here too; against the published BTN vs CO chart the flat is mostly pairs and
-        # AJs/ATs, ~3% of hands, and its 30% are 77-JJ)
-        self.assertGreater(1 - s["fold"][ix("7s7d")], 0.9)
+        # AJs/ATs, ~3% of hands, and its 30% are 88-JJ and AJs/ATs/KJs. 77 was in too, on a near-tie with
+        # 88 in equity against the BB's old 5.6% 3bet range; against the published 8% one 88 ranks above
+        # it and fills the 30%, so 77 is the next class in)
+        self.assertLessEqual(1 - s["fold"][ix("7s7d")], 1 - s["fold"][ix("8s8d")])
         after = preflop_ranges(pre + [R("CO", "fold"), R("BTN", "call")], T, 100)["BTN"]
-        self.assertGreater(after.sum(), 15)   # of ~39 flatting combos (was 30 of ~125 before the published BTN vs CO chart)
+        self.assertGreater(after.sum(), 10)   # of ~38 flatting combos (was 30 of ~125 before the published BTN vs CO chart)
         s4 = preflop_strategy("BTN", pre + [R("CO", "raise", 23)], T, 100)
         self.assertLess(float((w * (1 - s4["fold"])).sum() / w.sum()), 0.12)   # the flat now holds JJ-TT more (it was 125 combos of mostly weaker hands)
 
@@ -1551,6 +1553,75 @@ class TestOpenerVs3bet(unittest.TestCase):
         bb = preflop_ranges(pre, T, 100)["BB"]
         self.assertGreater(bb.sum(), pf.MIN_LINE_COMBOS)
         self.assertGreater(bb[COMBO_INDEX[tuple(sorted(cards("KsKd")))]], 0.0)
+
+
+class TestPublishedBlindFrequencies(unittest.TestCase):
+    """Charts matched to published solver frequencies (see the comments in gto/preflop.py): the button
+    facing either blind's 3bet, the big blind's 3bets against UTG/HJ/CO opens, and squeezes."""
+
+    R = staticmethod(lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {})))
+    F = staticmethod(lambda *ps: [{"pos": p, "action": "fold"} for p in ps])
+
+    def _shares(self, hero, pre, of_range=True):
+        from gto.advisor import preflop_strategy, preflop_ranges
+        T = pf.Table(pf.SEATS[6])
+        s = preflop_strategy(hero, pre, T, 100)
+        w = preflop_ranges(pre, T, 100)[hero] if of_range else np.ones(pf.N_COMBOS)
+        return [float((w * s.get(k, 0)).sum() / w.sum()) for k in ("fold", "call", "raise")]
+
+    def test_button_vs_blind_3bets(self):
+        # gtopreflop.com: the button 4bets 10.4% of its opens against the SB and 10.3% against the BB, and
+        # calls 6 points less against the SB; 888poker has BTN vs BB at 54.6/33.9/11.5
+        R, F = self.R, self.F
+        btn = F("UTG", "HJ", "CO") + [R("BTN", "raise", 2.5)]
+        f_sb, c_sb, r_sb = self._shares("BTN", btn + [R("SB", "raise", 11), R("BB", "fold")])
+        f_bb, c_bb, r_bb = self._shares("BTN", btn + F("SB") + [R("BB", "raise", 11)])
+        self.assertTrue(0.10 <= r_sb <= 0.14 and 0.25 <= c_sb <= 0.32 and 0.56 <= f_sb <= 0.64, (f_sb, c_sb, r_sb))
+        self.assertTrue(0.10 <= r_bb <= 0.14 and 0.31 <= c_bb <= 0.37, (f_bb, c_bb, r_bb))
+        self.assertGreater(r_sb, r_bb - 0.01)          # at least as many 4bets against the SB
+        self.assertLess(c_sb, c_bb - 0.03)             # fewer calls
+        # the SB chart's hand mix: QQ and AKo mostly 4bet, AQs and KQs call, offsuit non-4bets fold
+        from gto.cards import COMBO_INDEX
+        sb = pf.vs_3bet("BTN", "SB")
+        ix =lambda h: COMBO_INDEX[tuple(sorted(cards(h)))]
+        self.assertGreater(sb["4bet"][ix("QsQh")], 0.8)
+        self.assertGreater(sb["4bet"][ix("AsKd")], 0.7)
+        self.assertEqual(sb["4bet"][ix("AsQs")], 0.0)
+        self.assertGreater(sb["call"][ix("AsQs")], 0.9)
+        self.assertEqual(sb["call"][ix("KsQd")], 0.0)
+
+    def test_big_blind_3bets_vs_early_and_middle_opens(self):
+        # published (gtopreflop.com raked 8-max/6-max, Poker Academy, pokalab, BeyondGTO): vs LJ/UTG 4.5-6%,
+        # vs HJ 5.9-8%, vs CO 7.7-10%; total defence kept
+        R, F = self.R, self.F
+        lines = {"UTG": [R("UTG", "raise", 2.5)] + F("HJ", "CO", "BTN", "SB"),
+                 "HJ": F("UTG") + [R("HJ", "raise", 2.5)] + F("CO", "BTN", "SB"),
+                 "CO": F("UTG", "HJ") + [R("CO", "raise", 2.5)] + F("BTN", "SB")}
+        want = {"UTG": (0.045, 0.055, 0.30, 0.36), "HJ": (0.058, 0.07, 0.36, 0.42), "CO": (0.075, 0.09, 0.42, 0.48)}
+        got = {}
+        for o, pre in lines.items():
+            f, c, r = self._shares("BB", pre, of_range=False)
+            lo, hi, dlo, dhi = want[o]
+            self.assertTrue(lo <= r <= hi and dlo <= c + r <= dhi, (o, f, c, r))
+            got[o] = r
+        self.assertTrue(got["UTG"] < got["HJ"] < got["CO"], got)
+        self.assertIsNot(pf.vs_rfi_chart("BB", "HJ"), pf.vs_rfi_chart("BB", "UTG"))
+
+    def test_squeezes_near_heads_up_3bets(self):
+        # cash solves squeeze about as often as they 3bet heads-up (GTO Wizard NL500 40bb: 9.8% vs 10.3%
+        # over CO + BTN; Poker Academy NL200: 12.7% vs 11.5% over BTN + SB)
+        R, F = self.R, self.F
+        co = F("UTG", "HJ") + [R("CO", "raise", 2.5)]
+        hu = self._shares("BB", co + F("BTN", "SB"), of_range=False)[2]
+        sq = self._shares("BB", co + [R("BTN", "call"), R("SB", "fold")], of_range=False)[2]
+        self.assertTrue(0.065 <= sq <= 0.09 and sq >= 0.85 * hu, (sq, hu))
+        utg = [R("UTG", "raise", 2.5)]
+        hu = self._shares("BB", utg + F("HJ", "CO", "BTN", "SB"), of_range=False)[2]
+        sq = self._shares("BB", utg + F("HJ", "CO") + [R("BTN", "call"), R("SB", "fold")], of_range=False)[2]
+        self.assertTrue(0.04 <= sq <= 0.055 and sq >= 0.85 * hu, (sq, hu))
+        btn = F("UTG", "HJ", "CO") + [R("BTN", "raise", 2.5)]
+        sq = self._shares("BB", btn + [R("SB", "call")], of_range=False)[2]
+        self.assertTrue(0.09 <= sq <= 0.14, sq)
 
 
 class TestRake(unittest.TestCase):
