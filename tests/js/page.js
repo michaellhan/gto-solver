@@ -52,11 +52,16 @@ class El {
   append(...xs) { for (const x of xs) if (typeof x === "string") this._html += x; else this.children.push(x); }
   insertAdjacentHTML(_, h) { this._html += h; }
   addEventListener(t, f) { (this.listeners[t] = this.listeners[t] || []).push(f); }
-  querySelector() { return null; }
+  // the fold titles ("h2[data-fold]") are the only appended descendants the page looks up by selector
+  querySelector(sel) { return sel === "h2[data-fold]" ? [...this.walk()].find(e => e.tagName === "H2" && "fold" in e.dataset) || null : null; }
   querySelectorAll(sel) { return sel === "button" ? [...this.walk()].filter(e => e.tagName === "BUTTON") : []; }
   focus() {} blur() {} click() { if (this.onclick) this.onclick({ target: this }); }
   setAttribute(k, v) { this[k] = String(v); }
-  select() { El.selected = this; }
+  getAttribute(k) { return k in this ? this[k] : null; }
+  closest() { return null; }
+  // iOS Safari ignores select() on a textarea; only a selection range selects its text (El.iosSelect)
+  select() { if (!El.iosSelect) El.selected = this; }
+  setSelectionRange() { El.selected = this; }
   remove() { this.removed = true; }
   get offsetWidth() { return 0; }
   // all descendants (appended elements only; innerHTML is not parsed)
@@ -116,7 +121,23 @@ function loadPage(opts = {}) {
       clipboard.text = El.selected.value; clipboard.via = "execCommand"; return true;
     },
   };
-  El.selected = null;
+  El.selected = null; El.iosSelect = !!opts.iosSelect;
+  // opts.layout: run the page's layout code (it only runs where window has events): the fold titles of the
+  // Table and Hand panels, the root element's style properties and a visualViewport whose events the test fires
+  const rootProps = {}, winListeners = {}, vvListeners = {};
+  const viewport = { height: 800, offsetTop: 0, scale: 1, addEventListener: (t, f) => (vvListeners[t] = vvListeners[t] || []).push(f) };
+  if (opts.layout) {
+    for (const id of ["pTable", "pHistory"]) {
+      const h = new El("h2"); h.dataset.fold = ""; h.parentElement = byId(id); byId(id).appendChild(h);
+    }
+    document.documentElement = {
+      clientHeight: 800,
+      style: { setProperty: (k, v) => { rootProps[k] = v; }, removeProperty: (k) => { delete rootProps[k]; } },
+    };
+    document.querySelectorAll = (sel) => sel === "h2[data-fold]" ? ["pTable", "pHistory"].map(id => byId(id).querySelector(sel)) : [];
+    const addEv = document.addEventListener;
+    document.addEventListener = (t, f) => { if (t === "keydown") addEv(t, f); };
+  }
   const ctx = {
     document, location, console,
     history: { replaceState: (_s, _t, url) => { replaced.push(url); location.hash = ""; } },
@@ -143,6 +164,10 @@ function loadPage(opts = {}) {
     prompt: (msg, text) => { clipboard.prompts.push(text); return null; },
   };
   ctx.window = ctx;
+  if (opts.layout) {
+    ctx.addEventListener = (t, f) => (winListeners[t] = winListeners[t] || []).push(f);
+    ctx.visualViewport = viewport;
+  }
   vm.createContext(ctx);
   vm.runInContext(pageScript(), ctx, { filename: "index.html" });
   // run code in the page's global scope (its top-level let/const are visible here)
@@ -150,7 +175,9 @@ function loadPage(opts = {}) {
   // the value of an expression as a plain Node object (the page's own objects come from another realm)
   const val = (code) => { const t = run(`JSON.stringify(${code})`); return t === undefined ? undefined : JSON.parse(t); };
   const page = {
-    ctx, run, val, els, byId, storage, posted, workers, clipboard, location, replaced,
+    ctx, run, val, els, byId, storage, posted, workers, clipboard, location, replaced, rootProps, viewport,
+    // change the visual viewport (e.g. the on-screen keyboard opening) and fire its events
+    setViewport(v) { Object.assign(viewport, v); for (const t of ["resize", "scroll"]) for (const f of vvListeners[t] || []) f({}); },
     get S() { return val("S"); },
     set S(v) { ctx.__tmp = JSON.stringify(v); run("S = JSON.parse(__tmp); setPositions(S.players); save(); renderAll();"); },
     ready: () => run("modeReady"),

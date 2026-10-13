@@ -2,7 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d0f12">
+<meta name="color-scheme" content="dark">
 <title>GTO Solver</title>
 <style>
   :root {
@@ -16,15 +18,18 @@
     --felt-h: clamp(190px, 32vh, 270px);
     --left: 500px;
     --r: 10px;
+    --kb: 0px;   /* how far the on-screen keyboard covers the layout viewport (set from visualViewport) */
+    color-scheme: dark;   /* dark scrollbars, number spinners, selects and checkboxes in every browser */
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
-  html { -webkit-text-size-adjust: 100%; }
-  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif; }
+  /* manipulation: no double-tap zoom (picking cards quickly zoomed the page on iOS); pinch zoom still works */
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; touch-action: manipulation; }
+  body { margin: 0; padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left); background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif; }
   kbd { font: 10px ui-monospace, Menlo, monospace; border: 1px solid var(--line2); border-radius: 4px; padding: 0 4px; margin-left: 6px; color: var(--muted); }
 
   /* ---- top bar */
-  header { display: flex; align-items: center; gap: 10px; padding: 8px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; background: var(--bg); }
+  header { display: flex; align-items: center; gap: 10px; padding: max(8px, env(safe-area-inset-top)) 16px 8px; border-bottom: 1px solid var(--line); flex-wrap: wrap; background: var(--bg); }
   header h1 { font-size: 14px; margin: 0 6px 0 0; font-weight: 650; letter-spacing: .01em; }
   header .spacer { flex: 1; }
   header .ctl { display: inline-flex; align-items: center; gap: 6px; }
@@ -52,6 +57,9 @@
   input[type=number] { width: 72px; }
   #rakeCustom input { width: 60px; }
   input:focus, select:focus { outline: none; border-color: var(--accent); }
+  /* keyboard focus (Tab); a click or tap shows none */
+  button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .segment button:focus-visible, .menu button:focus-visible { outline-offset: -2px; }
   .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .muted { color: var(--muted); }
   .seats button { min-width: 46px; padding: 5px 8px; }
@@ -62,7 +70,7 @@
 
   /* ---- sections */
   .panel { background: var(--panel); border-radius: var(--r); padding: 12px 14px; margin-bottom: 10px; }
-  .panel h2 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .09em; color: var(--faint); font-weight: 600; display: flex; align-items: center; gap: 8px; user-select: none; }
+  .panel h2 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .09em; color: var(--faint); font-weight: 600; display: flex; align-items: center; gap: 8px; -webkit-user-select: none; user-select: none; }
   .panel h2 .right { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--muted); }
   .panel h2[data-fold] { cursor: pointer; }
   .panel h2[data-fold]::before { content: ""; width: 0; height: 0; border-left: 4px solid currentColor; border-top: 4px solid transparent; border-bottom: 4px solid transparent; transform: rotate(90deg); transition: transform .12s; }
@@ -92,7 +100,7 @@
   @keyframes pulse { 50% { outline-color: transparent; } }
   @keyframes flash { 50% { outline: 3px solid var(--accent); transform: translateY(-3px); } }
   .picker { display: grid; grid-template-columns: repeat(13, 1fr); gap: 3px; }
-  .pc { height: 32px; border-radius: 5px; background: #f5f5f0; color: #111; font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center; cursor: pointer; user-select: none; }
+  .pc { height: 32px; border-radius: 5px; background: #f5f5f0; color: #111; font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center; cursor: pointer; -webkit-user-select: none; user-select: none; }
   .pc:hover { transform: translateY(-1px); box-shadow: 0 2px 6px rgba(0,0,0,.4); }
   .pc.used { opacity: .15; cursor: not-allowed; }
   .pc.used:hover { transform: none; box-shadow: none; }
@@ -125,7 +133,8 @@
   .seat.allin .amt { color: var(--agg1); }
   .seat.clickable { cursor: pointer; }
   .seat.clickable:hover { border-color: #4a5566; }
-  .grip { height: 12px; margin: 0 -14px; cursor: ns-resize; display: flex; align-items: center; justify-content: center; touch-action: none; }
+  .grip { height: 12px; margin: 0 -14px; cursor: ns-resize; display: flex; align-items: center; justify-content: center; touch-action: none; position: relative; }
+  .grip::after { content: ""; position: absolute; inset: -6px 0; }   /* a taller target than the bar it draws */
   .grip::before { content: ""; width: 34px; height: 3px; border-radius: 2px; background: var(--line2); }
   .grip:hover::before { background: var(--muted); }
 
@@ -247,23 +256,23 @@
      Wide screens: the page fills the window; each column scrolls on its own and the action dock stays pinned
      to the bottom of its column, so it's on screen at any zoom. Drag the divider to resize the columns,
      the bar under the table to resize the table; the menu swaps the columns. */
-  .dock { position: sticky; bottom: 0; z-index: 5; margin-top: auto; margin-bottom: 0; box-shadow: 0 -10px 18px -6px var(--bg); border: 1px solid var(--line); }
+  .dock { position: -webkit-sticky; position: sticky; bottom: var(--kb); z-index: 5; margin-top: auto; margin-bottom: 0; box-shadow: 0 -10px 18px -6px var(--bg); border: 1px solid var(--line); }
   .split { display: none; }
   /* while a card is needed the deck is the input: it moves up under the setup and the dock stops floating */
   body.needcard .dock { position: static; box-shadow: none; }
   #pSetup { order: -2; } body.needcard #pCards { order: -1; }
   @media (min-width: 901px) {
     body { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
-    main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(340px, var(--left)) 9px minmax(320px, 1fr); padding: 0 6px 0 12px; }
-    .col { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding: 10px 4px 10px 0; scrollbar-width: thin; scrollbar-color: var(--line2) transparent; }
+    main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(340px, var(--left)) 9px minmax(320px, 1fr); padding: 0 6px env(safe-area-inset-bottom) 12px; }
+    .col { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding: 10px 4px 10px 0; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line2) transparent; }
     #colR { padding: 10px 6px 10px 2px; }
     .split { display: block; cursor: col-resize; position: relative; touch-action: none; }
     .split::before { content: ""; position: absolute; top: 10px; bottom: 10px; left: 4px; width: 1px; background: var(--line); }
     .split:hover::before, .split.drag::before { background: var(--accent); width: 2px; left: 3.5px; }
     body.swap #colL { order: 3; } body.swap .split { order: 2; } body.swap #colR { order: 1; padding: 10px 4px 10px 0; }
     body.swap main { grid-template-columns: minmax(320px, 1fr) 9px minmax(340px, var(--left)); }
-    body.dragging { cursor: col-resize; user-select: none; }
-    body.dragging-v { cursor: ns-resize; user-select: none; }
+    body.dragging { cursor: col-resize; -webkit-user-select: none; user-select: none; }
+    body.dragging-v { cursor: ns-resize; -webkit-user-select: none; user-select: none; }
     #pAdvice { margin-bottom: 0; min-height: 100%; }
   }
   /* Narrow screens (phones, or a zoomed-in window): one column that scrolls; the action dock sticks to the
@@ -280,7 +289,7 @@
   /* short windows (a zoomed-in page): drop the dock's second line */
   @media (max-height: 620px) { .prompt .ask { display: none; } .prompt { margin-bottom: 6px; } }
   @media (max-width: 560px) {
-    header { padding: 8px 12px; gap: 6px; }
+    header { padding: max(8px, env(safe-area-inset-top)) 12px 8px; gap: 6px; }
     header .ctl > .lbl { display: none; }
     .panel { padding: 10px 12px; }
     .felt::before { inset: 12% 5%; }
@@ -297,6 +306,36 @@
     .arows.noev .arow { grid-template-columns: 104px 1fr 48px; }
     .cell { font-size: 7px; }
     .cell .lbl { left: 1px; top: 1px; }
+  }
+  /* touch screens: no hover, so hover effects would stick after a tap; targets at least 40px tall; 16px
+     inputs, or iOS zooms the page in when one is focused */
+  .touchonly { display: none; }
+  @media (hover: none) {
+    .hoveronly { display: none; } .touchonly { display: inline; }
+    .slot.filled:hover { opacity: 1; }
+    .pc:hover { transform: none; box-shadow: none; }
+    .acts button:hover { filter: none; }
+  }
+  /* a touch screen without a mouse has no keyboard to speak of: the shortcut keys only crowded the labels
+     (on a 320px phone "Raise to 2.5" ran into its "1") */
+  @media (hover: none) and (pointer: coarse) {
+    kbd { display: none; }
+    .acts button { padding-right: 8px; }
+    .shortcut { padding-right: 11px !important; }
+  }
+  @media (pointer: coarse) {
+    button:not(.link), select, input[type=number] { min-height: 40px; }
+    input[type=number], select { font-size: 16px; }
+    .acts button { min-height: 44px; }
+    .pc { height: 38px; }
+    .panel h2[data-fold] { min-height: 40px; margin-top: -10px; }
+    .panel.collapsed h2[data-fold] { margin-bottom: -10px; }
+    .grip { height: 20px; }
+    .chip.rewind { padding: 4px 10px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .slot.need, .slot.flash { animation: none; }
+    .panel h2[data-fold]::before, .prog > div { transition: none; }
   }
 </style>
 </head>
@@ -357,7 +396,7 @@
     </section>
 
     <section class="panel" id="pTable">
-      <h2 data-fold>Table <span class="right" id="tableHint"></span><button class="link" id="editCards" title="Change your hand or the board">Cards</button></h2>
+      <h2 data-fold tabindex="0" role="button" aria-expanded="true">Table <span class="right" id="tableHint"></span><button class="link" id="editCards" title="Change your hand or the board">Cards</button></h2>
       <div id="felt" class="felt"></div>
       <div class="grip" id="feltGrip" title="Drag to resize the table · double-click to reset"></div>
     </section>
@@ -375,7 +414,7 @@
     </section>
 
     <section class="panel" id="pHistory">
-      <h2 data-fold>Hand <span class="right" id="stepLabel"></span></h2>
+      <h2 data-fold tabindex="0" role="button" aria-expanded="true">Hand <span class="right" id="stepLabel"></span></h2>
       <div id="timeline"></div>
     </section>
 
@@ -1010,7 +1049,7 @@ function renderGrid(grid, heroHand) {
     h += `<div class="rangebar" title="How your whole range plays this spot">${names.map((n, a) => `<div style="width:${(tot[a] / combos * 100).toFixed(2)}%;background:${COLORS(n)}" title="${n} ${(tot[a] / combos * 100).toFixed(1)}%"></div>`).join("")}</div>`;
     h += `<div class="rangetot">${names.map((n, a) => `<span style="--c:${COLORS(n)}">${n} <b>${(tot[a] / combos * 100).toFixed(0)}%</b> <small>${fmt(Math.round(tot[a] * 10) / 10)} combos</small></span>`).join("")}</div>`;
   }
-  h += `<div class="meta" style="margin-top:10px">By hand <span class="muted">· hover a hand for its mix</span></div><div class="rangewrap"><div class="grid">`;
+  h += `<div class="meta" style="margin-top:10px">By hand <span class="muted">· <span class="hoveronly">hover</span><span class="touchonly">tap</span> a hand for its mix</span></div><div class="rangewrap"><div class="grid">`;
   for (let i = 0; i < 13; i++) for (let j = 0; j < 13; j++) {
     const cls = gridClass(i, j);
     const c = grid.cells[cls] || { w: 0, f: [] }, me = cls === heroHand;
@@ -1120,7 +1159,10 @@ function handText() {
 function copyByCommand(text) {
   const ta = document.createElement("textarea");
   ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.top = "0"; ta.style.opacity = "0";
+  ta.style.fontSize = "16px";   // iOS zooms into a focused field under 16px
   document.body.appendChild(ta); ta.select();
+  // iOS Safari ignores select() on a textarea; a selection range is what it copies
+  if (typeof ta.setSelectionRange === "function") ta.setSelectionRange(0, text.length);
   let ok = false;
   try { ok = document.execCommand("copy"); } catch (e) {}
   ta.remove();
@@ -1239,14 +1281,18 @@ document.getElementById("newhand").onclick = () => {
       if (L.felt) root.style.setProperty("--felt-h", L.felt + "px"); else root.style.removeProperty("--felt-h");
       document.body.classList.toggle("swap", !!L.swap);
       document.getElementById("swapCols").classList.toggle("active", !!L.swap);
-      for (const id of ["pTable", "pHistory"]) document.getElementById(id).classList.toggle("collapsed", !!(L.folded || {})[id]);
+      for (const id of ["pTable", "pHistory"]) {
+        const p = document.getElementById(id), folded = !!(L.folded || {})[id];
+        p.classList.toggle("collapsed", folded);
+        p.querySelector("h2[data-fold]").setAttribute("aria-expanded", folded ? "false" : "true");
+      }
     };
     apply();
     // drag with the pointer; onMove gets the pointer event, done() saves
     const drag = (el, cls, onMove) => {
       el.addEventListener("pointerdown", (e) => {
         if (e.button !== 0) return;
-        e.preventDefault(); el.setPointerCapture(e.pointerId); el.classList.add("drag"); document.body.classList.add(cls);
+        e.preventDefault(); try { el.setPointerCapture(e.pointerId); } catch (err) {} el.classList.add("drag"); document.body.classList.add(cls);
         const move = (ev) => onMove(ev, e);
         const up = () => { el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up); el.removeEventListener("pointercancel", up);
           el.classList.remove("drag"); document.body.classList.remove(cls); store(); };
@@ -1266,10 +1312,23 @@ document.getElementById("newhand").onclick = () => {
       L.felt = Math.round(Math.max(140, Math.min(560, ev.clientY - top))); apply();
     });
     grip.addEventListener("dblclick", () => { delete L.felt; apply(); store(); });
-    for (const h of document.querySelectorAll("h2[data-fold]")) h.addEventListener("click", (e) => {
-      if (e.target.closest("button")) return;
-      const id = h.parentElement.id; L.folded = L.folded || {}; L.folded[id] = !L.folded[id]; apply(); store();
-    });
+    for (const h of document.querySelectorAll("h2[data-fold]")) {
+      const fold = () => { const id = h.parentElement.id; L.folded = L.folded || {}; L.folded[id] = !L.folded[id]; apply(); store(); };
+      h.addEventListener("click", (e) => { if (!e.target.closest("button")) fold(); });
+      // a focused title folds with Enter or Space, like a button (the page's own shortcuts don't see these keys)
+      h.addEventListener("keydown", (e) => { if (e.target === h && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); e.stopPropagation(); fold(); } });
+    }
+    // The on-screen keyboard: iOS Safari (and Chrome on Android) shrink only the visual viewport, so the dock,
+    // stuck to the bottom of the layout viewport, sat under the keyboard while a custom size was typed. --kb
+    // lifts it by the part of the layout viewport the keyboard covers (0 without a keyboard, or when zoomed).
+    const vv = window.visualViewport;
+    if (vv) {
+      const kb = () => {
+        const o = root.clientHeight - vv.height - vv.offsetTop;
+        root.style.setProperty("--kb", (vv.scale > 1.01 || !(o > 40) ? 0 : Math.round(o)) + "px");
+      };
+      vv.addEventListener("resize", kb); vv.addEventListener("scroll", kb);
+    }
     // the ⋯ menu
     const btn = document.getElementById("menuBtn"), menu = document.getElementById("menu");
     const show = (on) => { menu.hidden = !on; btn.setAttribute("aria-expanded", on ? "true" : "false"); };
