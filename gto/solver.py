@@ -311,9 +311,13 @@ class Decision:
         return self.boards[0]
 
     def strategy(self, sel=None) -> np.ndarray:
+        # regret matching in as few numpy calls as possible (the solve is call-overhead bound, most of all
+        # in the browser's Pyodide): one in-place divide where the positive regrets sum above 0
         pos = np.maximum(self.regret if sel is None else self.regret[sel], 0.0)
         tot = pos.sum(axis=1, keepdims=True)
-        return np.where(tot > 0, pos / np.where(tot > 0, tot, 1.0), 1.0 / len(self.names))
+        out = np.full_like(pos, 1.0 / len(self.names))
+        np.divide(pos, tot, out=out, where=tot > 0)
+        return out
 
     def avg_strategy(self, sel=None) -> np.ndarray:
         """(B, A, N) average strategy (rows `sel` only if given)."""
@@ -531,8 +535,14 @@ class Solver:
         strat = node.avg_strategy(sel) if use_avg else node.strategy(sel)     # (B, A, N)
         if node.player == p:
             utils = np.empty_like(strat)
+            cs = None      # the opponent's reach is the same under each of p's actions: one compat_sum for all folds
             for a, child in enumerate(node.children):
-                utils[:, a, :] = self._cfr(child, p, r0, r1, update, use_avg, sel)
+                if isinstance(child, Terminal) and child.kind == "fold":
+                    if cs is None:
+                        cs = self.compat_sum(ro)
+                    utils[:, a, :] = (-child.inv[p] if child.folder == p else child.inv[1 - p]) * cs
+                else:
+                    utils[:, a, :] = self._cfr(child, p, r0, r1, update, use_avg, sel)
             node_util = (strat * utils).sum(axis=1)                     # (B, N)
             if update:
                 rp = r0 if p == 0 else r1

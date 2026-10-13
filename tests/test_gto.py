@@ -781,6 +781,21 @@ class TestExploit(unittest.TestCase):
         raised = Node(10.0, 10.0); raised.bets = (20.0, 10.0)    # facing a raise of its own bet: no shift
         self.assertAlmostEqual(float(lock(raised, strat, reach)[0, 0].mean()), 0.5, places=5)
 
+    def test_pool_best_response_ties_within_noise(self):
+        """Exploit mode: a short solve's best-response EVs that sit within its noise of the best are tied and
+        follow the equilibrium mix (AQo checked 100% at 6.45 over bets at 6.40 in a solve 3.1% of the pot
+        from settled); a settled solve still picks the clear best."""
+        R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
+        pre = [R("UTG", "fold"), R("HJ", "fold"), R("CO", "fold"), R("BTN", "raise", 2.5), R("SB", "fold"), R("BB", "call")]
+        st = {"players": 6, "hero": "BTN", "hole": "AhQd", "board": "Qs8d3c", "stack": 100, "preflop": pre,
+              "flop": [R("BB", "check")], "opponents": "pool"}
+        rough = Advisor(time_budget=0.2, prior_budget=0.2).advise(st)
+        tol = max(0.005, rough["solver"]["exploitability_pct"] / 100) * rough["pot_bb"]
+        best = max(a["ev_bb"] for a in rough["actions"])
+        for a in rough["actions"]:
+            if a["ev_bb"] >= best - tol and a["gto_freq"] > 0.05:
+                self.assertGreater(a["freq"], 0.0, rough["actions"])       # a tied action keeps its GTO share
+
     def test_pool_preflop_flats_more_and_3bets_less(self):
         from gto.advisor import preflop_ranges
         T = pf.Table(pf.SEATS[6])
@@ -804,9 +819,13 @@ class TestExploit(unittest.TestCase):
         gto, pool = adv.advise(st), adv.advise(dict(st, opponents="pool"))
         self.assertNotIn("gto_freq", gto["actions"][0])
         self.assertTrue(all("gto_freq" in a for a in pool["actions"]))
-        best = max(pool["actions"], key=lambda a: a["ev_bb"])
-        self.assertEqual(pool["recommended"], best["action"])
-        self.assertEqual(sorted(a["freq"] for a in pool["actions"])[-1], 1.0)
+        # the recommendation is the best EV, or an action within the solve's noise of it (tied actions
+        # follow the equilibrium mix)
+        best = max(a["ev_bb"] for a in pool["actions"])
+        tol = max(0.005, pool["solver"]["exploitability_pct"] / 100) * pool["pot_bb"]
+        rec = next(a for a in pool["actions"] if a["action"] == pool["recommended"])
+        self.assertGreaterEqual(rec["ev_bb"], best - tol - 1e-6, pool["actions"])
+        self.assertAlmostEqual(sum(a["freq"] for a in pool["actions"]), 1.0, places=2)
         # the pool under-bluffs river bets: the best response folds more of the range than GTO
         self.assertGreater(pool["range_action_freq"]["fold"], gto["range_action_freq"]["fold"] + 0.1)
 

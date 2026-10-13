@@ -51,6 +51,7 @@ DEPTH_TOL = 20.0   # ...a spot this many bb deeper or shallower than the charts 
 PRICE_TOL = 0.02    # ...and a spot within this much of the chart's pot odds, against the raisers only, is the chart's own
 CUT_FLOOR = 0.05    # ...a worse price holds the chart's continuing hands to the equity of its weakest this share of them
 EV_GAP = 1.0        # heads-up, unsettled solve: recommend the highest EV when it beats the top of the mix by this % of pot
+BR_TIE_MIN = 0.005  # exploit mode: best-response EVs this close (share of pot; more when the solve is unsettled) count as tied
 STREET_OF = {0: "preflop", 3: "flop", 4: "turn", 5: "river"}
 STREETS = ["preflop", "flop", "turn", "river"]
 
@@ -922,12 +923,19 @@ class Advisor:
             return {"error": "no decision pending at this point in the tree", "notes": notes}
         if node.player != hero_p:
             notes.append("warning: tree expected the other player to act; reporting that node")
+        expl = max(0.0, sol.exploitability())   # how far this street's solve is from equilibrium, % of its pot
         if pool:
             # the best response to the pool (their equilibrium with its leaks), on later streets too:
             # each hand takes its highest-EV action
             evs = sol.solver.node_action_br_evs(node, n_r0, n_r1, PoolLock(sol.ctx, 1 - hero_p))
-            strat = np.zeros_like(evs)
-            strat[np.argmax(evs, axis=0), np.arange(evs.shape[1])] = 1.0
+            # each hand takes its highest-EV action, but actions within the solve's noise of it (its
+            # distance from equilibrium, at least BR_TIE_MIN of the pot) are tied, and a tied hand plays the
+            # equilibrium mix among them: a short solve otherwise picks one at 100% on noise (AQo checked
+            # at 6.45 over bets at 6.40 in a solve 3.1% of the pot from settled)
+            tol = max(BR_TIE_MIN, expl / 100.0) * node.pot_now
+            tied = evs >= evs.max(axis=0, keepdims=True) - tol
+            g = node.avg_strategy0() * tied
+            strat = np.where(g.sum(axis=0) > 1e-9, g / np.maximum(g.sum(axis=0), 1e-12), tied / tied.sum(axis=0))
             notes.append(f"exploit mode: {villain} plays like a typical player pool (folds too often to bets of every size, "
                          "most of all small ones, and raises and bluffs less); EVs assume you keep best-responding on later streets")
         else:
@@ -956,7 +964,6 @@ class Advisor:
                 notes.append(f"recommending {ev_best}, the highest EV against {', '.join(widened)}'s rule-based range; "
                              f"the solve's mix ({best}) assumes they almost never play this way")
             best = sampled = ev_best
-        expl = max(0.0, sol.exploitability())
         if pool and expl >= UNSETTLED:
             notes.append(f"the solve is {expl:.1f}% of the pot from equilibrium, so the pool model built on it "
                          "is rough: Accurate mode gives steadier exploits")
