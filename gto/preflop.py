@@ -414,13 +414,33 @@ VS_EP = {
 # ---------- limped pots ----------
 # open-limp range (players who limp first in: rarely the premiums, which raise)
 LIMP = R("22-99, TT+:0.2, A2s-AJs, AQs+:0.2, A2o-ATo, AJo+:0.3, K2s+, K9o+, Q6s+, Q9o+, J7s+, J9o+, T7s+, T9o, 96s+, 86s+, 75s+, 64s+, 54s")
-# raising over limpers (tighter than an open: the limpers are in the pot) and over-limping
+# Raising over limpers (iso-raising). Against one limper the range is a little tighter than the seat's
+# open (the limper is in the pot, and a limping range calls a raise a lot: LIMP_VS_RAISE) and mostly
+# linear: every hand that opens strongly raises, with suited wheel aces and suited connectors as the
+# lighter raises in position. Published widths against one limper (6-max, 100bb): BTN ~30-40% of hands,
+# CO ~22-28%, HJ ~15-20%, SB ~18-25%, BB ~15% (Preflop Wizard, preflopwizard.app/blog/
+# poker-iso-raise-strategy); BTN 35-45%, CO 28-35%, HJ and earlier 18-22%, SB 20-25% (Grindlab,
+# grindlab.gg/en/blog/iso-raise-vs-limper-poker); a common default is the open range of the seat
+# before (BTN raises the CO's opens). Here UTG (7+ handed, a seat behind an early limp) 14%, HJ 18%,
+# CO 24%, BTN 36%, SB 19% (out of position, the big blind behind), against opens of 17/19/27/46/50%.
+# The old charts raised 10/10/13/16/10%: well under half the button's opens.
 ISO = {
-    "UTG": R("77+, ATs+, A5s:0.5, KTs+, QJs, AJo+, KQo"),
-    "HJ": R("77+, ATs+, A5s:0.5, KTs+, QJs, AJo+, KQo"),
-    "CO": R("66+, A8s+, A5s-A4s:0.5, KTs+, QTs+, JTs, ATo+, KJo+"),
-    "BTN": R("55+, A7s+, A5s-A2s:0.7, K9s+, QTs+, JTs, T9s:0.5, ATo+, KJo+, QJo:0.5"),
-    "SB": R("77+, A9s+, A5s:0.5, KTs+, QJs, AJo+, KQo"),
+    "UTG": R("55+, A8s+, A5s-A4s, KTs+, QTs+, JTs, T9s:0.5, ATo+, KJo+"),
+    "HJ": R("44+, 33:0.5, A2s+, K9s+, QTs+, Q9s:0.5, JTs, J9s:0.5, T9s, 98s:0.5, ATo+, KJo+, QJo:0.5"),
+    "CO": R("22+, A2s+, K8s+, Q9s+, J9s+, T8s+, 98s, 87s, 76s:0.5, 65s:0.5, A9o+, A8o:0.5, KTo+, QTo+, JTo:0.5"),
+    "BTN": R("22+, A2s+, K5s+, Q7s+, J7s+, T7s+, 96s+, 86s+, 75s+, 65s, 54s, A5o+, A4o-A2o:0.5, K9o+, K8o:0.5, QTo+, Q9o:0.5, JTo, J9o:0.5, T9o:0.5"),
+    "SB": R("55+, 44:0.5, A2s+, K9s+, QTs+, Q9s:0.5, JTs, J9s:0.5, T9s, 98s:0.5, 87s:0.5, ATo+, A9o:0.5, A8o:0.5, KJo+, KTo:0.5, QJo"),
+}
+# Against two or more limpers: value-heavy, the weak suited connectors and offsuit hands dropped
+# (Preflop Wizard: "tighten each range by roughly one tier"; two limpers drop weak suited connectors
+# and offsuit bluffs, three are value-heavy), about 0.6x the one-limper range: UTG 9%, HJ 11%, CO 14%,
+# BTN 19%, SB 11%. The pairs and suited hands this drops over-limp instead (in OVERLIMP_MULTI).
+ISO_MULTI = {
+    "UTG": R("88+, 77:0.5, ATs+, A5s:0.5, KJs+, QJs:0.5, AJo+, KQo:0.5"),
+    "HJ": R("77+, 66:0.5, A9s+, A5s-A4s:0.5, KTs+, QJs, JTs:0.5, AJo+, KQo"),
+    "CO": R("66+, 55:0.5, A7s+, A5s-A2s:0.5, KTs+, QTs+, JTs, T9s:0.5, ATo+, KJo+"),
+    "BTN": R("44+, 33:0.5, 22:0.5, A2s+, K9s+, QTs+, Q9s:0.5, JTs, J9s:0.5, T9s, 98s:0.5, ATo+, A9o:0.5, KJo+, KTo:0.5, QJo:0.5"),
+    "SB": R("77+, 66:0.5, A9s+, A5s-A4s:0.5, KTs+, QJs, JTs:0.5, AJo+, KQo"),
 }
 OVERLIMP = {
     "UTG": R("22-66, A2s-A9s:0.5, KTs:0.5, QTs:0.5, JTs:0.5, T9s:0.5, 98s:0.5, 87s:0.3, 76s:0.3"),
@@ -436,9 +456,19 @@ LIMP_VS_RAISE = {
     "raise": R("QQ+, AKs, AKo:0.7"),
     "call": R("22-JJ, A2s-AQs, ATo-AQo, A9o:0.5, K9s+, KJo+, KTo:0.5, Q9s+, QJo, J9s+, T8s+, 97s+, 86s+, 75s+, 64s+, 54s"),
 }
-# big blind raising over limps (the rest checks): only the small blind limped / several limpers
+# an over-limp never takes a hand the iso chart raises; with two or more limpers the pairs and suited
+# hands that the one-limper chart raises and ISO_MULTI doesn't over-limp (set-mining and suited hands
+# play well multiway), the rest of the dropped hands fold
+_PAIRS_SUITED = R("22+, A2s+, K2s+, Q2s+, J2s+, T2s+, 92s+, 82s+, 72s+, 62s+, 52s+, 42s+, 32s")
+OVERLIMP_MULTI = {k: np.minimum(1.0 - ISO_MULTI[k], OVERLIMP[k] + np.maximum(ISO[k] - ISO_MULTI[k], 0.0) * _PAIRS_SUITED)
+                  for k in ISO}
+OVERLIMP = {k: np.minimum(OVERLIMP[k], 1.0 - ISO[k]) for k in ISO}
+# Big blind raising over limps (the rest checks): only the small blind limped (24%) / one other limper
+# (15%: Preflop Wizard has the big blind raising ~15% to isolate; the old chart raised 8% over any
+# limpers) / several limpers (9%, value only)
 BB_VS_SB_LIMP = R("55+, A2s+, A7o+, K7s+, KTo+, Q9s+, QJo, J9s+, T9s, 98s:0.5, 87s:0.5, 65s:0.5, 54s:0.5, K6o-K2o:0.3, Q5s-Q2s:0.3")
-BB_VS_LIMPS = R("88+, ATs+, A5s:0.5, KJs+, AJo+, KQo:0.5")
+BB_VS_LIMP = R("66+, 55:0.5, A8s+, A5s-A2s:0.6, KTs+, K9s:0.5, QTs+, JTs, T9s:0.5, ATo+, KJo+, QJo:0.5")
+BB_VS_LIMPS = R("88+, 77:0.5, ATs+, A5s:0.5, KJs+, QJs:0.5, AJo+, KQo")
 
 # antes: the dead money makes opens wider, played as the chart this many seats later (UTG -> HJ ...)
 RFI_LADDER = ["EP", "UTG", "HJ", "CO", "BTN"]
@@ -464,10 +494,15 @@ def _actions_at(hero: str, actions: List[dict], positions: Optional[List[str]] =
         limpers = [a["pos"] for a in actions if a["action"] == "call"]
         role = _norm(key(hero))
         if role == "BB":   # the big blind (or straddler) checks or raises the limpers
-            r = BB_VS_SB_LIMP if limpers == ["SB"] or (len(positions) == 2 and limpers) else BB_VS_LIMPS
+            if limpers == ["SB"] or (len(positions) == 2 and limpers):
+                r = BB_VS_SB_LIMP
+            else:
+                r = BB_VS_LIMP if len(limpers) == 1 else BB_VS_LIMPS
             return {"raise": r, "check": 1.0 - r}
         if limpers:
             k = role if role in ISO else "UTG"
+            if len(limpers) >= 2:
+                return {"raise": ISO_MULTI[k], "call": OVERLIMP_MULTI[k]}
             return {"raise": ISO[k], "call": OVERLIMP[k]}
         k = key(hero)
         if k in RFI_LADDER:

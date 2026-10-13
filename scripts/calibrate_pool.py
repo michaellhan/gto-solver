@@ -16,10 +16,12 @@ range taking their action), and reports the HUD stats of the charts and of the p
 
 The targets (exploit.py) are Hand2Note mass data of GGPoker 6-max, all players, NL50-NL500 (Bluffaces
 MDA): VPIP 28.75, PFR 18.7, 3bet 8.9, fold to 3bet 48.25, 4bet 12.75. POOL_3BET_SCALE sets the 3bet,
-POOL_EXTRA_ENTER the VPIP and POOL_3BET_DEFEND the fold to 3bet; the 4bet is left at the chart's.
+POOL_EXTRA_ENTER the VPIP, POOL_3BET_DEFEND the fold to 3bet, POOL_EXTRA_OPEN (the share of the extra
+first-in hands that open-raise rather than limp) the PFR; the 4bet is left at the chart's.
 
   python scripts/calibrate_pool.py                          # charts and the current pool
   python scripts/calibrate_pool.py 1.1,0.1,0.03 1.1,0.15,0.03  # pool at scale,enter,defend (parallel)
+  python scripts/calibrate_pool.py 1.1,0.1,0.03,0.4         # ... and open
   python scripts/calibrate_pool.py --no-charts 1.1,0.1,0.03
 
 Each tree takes a few minutes (the pool's longer: it computes equities against the raiser).
@@ -40,13 +42,16 @@ N = 1326
 
 def hud(pool, params=None, prune=1e-5):
     """The tree's HUD stats (percent), the charts' or (pool) the player pool's with params
-    (POOL_3BET_SCALE, POOL_EXTRA_ENTER, POOL_3BET_DEFEND; None: exploit.py's)."""
+    (POOL_3BET_SCALE, POOL_EXTRA_ENTER, POOL_3BET_DEFEND[, POOL_EXTRA_OPEN]; None:
+    exploit.py's; parameters left out keep exploit.py's values)."""
     from gto import preflop as pf, exploit as ex
     from gto import advisor as adv
     from gto.advisor import replay_hand, preflop_strategy, pool_strategy
     from sanity_sweep import _size
     if params is not None:
-        ex.POOL_3BET_SCALE, ex.POOL_EXTRA_ENTER, ex.POOL_3BET_DEFEND = params
+        names = ("POOL_3BET_SCALE", "POOL_EXTRA_ENTER", "POOL_3BET_DEFEND", "POOL_EXTRA_OPEN")
+        for name, v in zip(names, params):
+            setattr(ex, name, v)
     adv._PF_CACHE.clear()
     T = pf.Table(pf.SEATS[6], 0.0, False)
     stack = 100.0
@@ -115,13 +120,14 @@ def _job(job):
         label = "charts"
     else:
         from gto import exploit as ex
-        label = f"pool scale={ex.POOL_3BET_SCALE:g} enter={ex.POOL_EXTRA_ENTER:g} defend={ex.POOL_3BET_DEFEND:g}"
+        label = (f"pool scale={ex.POOL_3BET_SCALE:g} enter={ex.POOL_EXTRA_ENTER:g} defend={ex.POOL_3BET_DEFEND:g} "
+                 f"open={ex.POOL_EXTRA_OPEN:g}")
     return f"{label}: " + " ".join(f"{k} {v:.1f}" for k, v in out.items()) + f"  ({time.time() - t:.0f}s)"
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("params", nargs="*", help="pool parameters to try, as scale,enter,defend")
+    ap.add_argument("params", nargs="*", help="pool parameters to try, as scale,enter,defend[,open]")
     ap.add_argument("--no-charts", action="store_true", help="skip the charts' own stats")
     args = ap.parse_args()
     jobs = [] if args.no_charts else [(False, None)]

@@ -150,6 +150,41 @@ class TestPreflop(unittest.TestCase):
         self.assertAlmostEqual(sum(inv.values()), 5.5)
 
 
+    def test_iso_raise_ranges(self):
+        """Iso-raising over one limper is a little tighter than the seat's open (published: BTN ~30-45% of
+        hands, CO ~22-35%, HJ ~15-22%, SB ~18-25%, BB ~15%; Preflop Wizard, Grindlab), tighter again over
+        two or more limpers, and never overlaps the over-limps; the old charts raised under half the
+        button's opens."""
+        F = lambda *ps: [{"pos": p, "action": "fold"} for p in ps]
+        C = lambda *ps: [{"pos": p, "action": "call"} for p in ps]
+        w = lambda v: float(np.sum(v)) / 1326
+        bands = {"HJ": (0.15, 0.22), "CO": (0.22, 0.32), "BTN": (0.30, 0.42), "SB": (0.17, 0.25)}
+        seats = ["UTG", "HJ", "CO", "BTN", "SB", "BB"]
+        for hero, (lo, hi) in bands.items():
+            before = seats[:seats.index(hero)]
+            one = pf.strategy_for(hero, C("UTG") + F(*before[1:]))
+            two = pf.strategy_for(hero, C("UTG", "HJ") + F(*before[2:])) if hero != "HJ" else None
+            opened = w(pf.strategy_for(hero, F(*before))["raise"])
+            iso = w(one["raise"])
+            self.assertTrue(lo <= iso <= hi, (hero, iso))
+            self.assertLess(iso, opened, hero)
+            if hero != "SB":   # in position: at least 70% of the open
+                self.assertGreater(iso, 0.7 * opened, hero)
+            self.assertTrue(np.all(one["raise"] + one["call"] <= 1 + 1e-9), hero)
+            if two is not None:
+                self.assertLess(w(two["raise"]), 0.75 * iso, hero)
+                self.assertTrue(np.all(two["raise"] + two["call"] <= 1 + 1e-9), hero)
+            # linear: every hand that iso-raises over two limpers raises over one
+            if two is not None:
+                self.assertTrue(np.all(one["raise"] >= two["raise"] - 1e-9), hero)
+        # the big blind raises one limper ~15%, several limpers less, the small blind's limp most
+        bb = lambda acts: w(pf.strategy_for("BB", acts)["raise"])
+        one_bb, two_bb, sb_bb = bb(F("UTG", "HJ") + C("CO") + F("BTN", "SB")), bb(F("UTG", "HJ") + C("CO", "BTN") + F("SB")), bb(F("UTG", "HJ", "CO", "BTN") + C("SB"))
+        self.assertTrue(0.12 <= one_bb <= 0.18, one_bb)
+        self.assertLess(two_bb, one_bb)
+        self.assertGreater(sb_bb, one_bb)
+
+
 class TestAdvisor(unittest.TestCase):
     def test_end_to_end(self):
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
@@ -225,13 +260,15 @@ class TestAdvisor(unittest.TestCase):
         def go(hero, hole, pre, **kw):
             r = adv.advise(dict({"players": 6, "hero": hero, "hole": hole, "board": "", "stack": 100, "preflop": pre}, **kw))
             return r, {a["action"]: a for a in r.get("actions", [])}
-        # limps: the big blind raises AA (checks 72o), the button isolates to 3x + 1 per limper or over-limps 33
+        # limps: the big blind raises AA (checks 72o), the button isolates to 3x + 1 per limper, and
+        # over-limps 65s behind two limpers (it iso-raises it over one)
         limps = [R("UTG", "call"), R("HJ", "call")] + F("CO", "BTN") + [R("SB", "call")]
         self.assertEqual(go("BB", "AhAd", limps)[0]["recommended"], "raise")
         self.assertEqual(go("BB", "7h2d", limps)[0]["recommended"], "check")
         r, a = go("BTN", "AhAd", [R("UTG", "call")] + F("HJ", "CO"))
         self.assertEqual((r["recommended"], a["raise"]["amount_bb"]), ("raise", 4.0))
-        self.assertEqual(go("BTN", "3h3d", [R("UTG", "call")] + F("HJ", "CO"))[0]["recommended"], "call")
+        self.assertEqual(go("BTN", "6h5h", [R("UTG", "call"), R("HJ", "call"), R("CO", "fold")])[0]["recommended"], "call")
+        self.assertEqual(go("BTN", "6h5h", [R("UTG", "call")] + F("HJ", "CO"))[0]["recommended"], "raise")
         self.assertEqual(go("BB", "KhKd", [R("SB", "call")], players=2)[0]["recommended"], "raise")
         # short stacks: a 3bet at 25bb is all-in; QQ never folds to a 3bet at 40bb
         r, a = go("CO", "AhKd", [R("UTG", "raise", 2.2), R("HJ", "fold")], stack=25)
@@ -953,8 +990,8 @@ class TestExploit(unittest.TestCase):
                 self.assertGreater(a["freq"], 0.0, rough["actions"])       # a tied action keeps its GTO share
 
     def test_pool_preflop_flats_and_3bets_more(self):
-        """Population HUD stats (GGPoker 6-max NL50-500: 3bet 8.9% against the charts' 8.3%, VPIP 28.75
-        against 24.5; scripts/calibrate_pool.py): facing an open the pool 3bets 1.18x the chart's share
+        """Population HUD stats (GGPoker 6-max NL50-500: 3bet 8.9% against the charts' 8.7%, VPIP 28.75
+        against 24.7; scripts/calibrate_pool.py): facing an open the pool 3bets POOL_3BET_SCALE (1.12) x the chart's share
         (from its strongest calls) and flats POOL_EXTRA_ENTER of its folds more (its strongest)."""
         from gto.advisor import preflop_ranges
         from gto import exploit
@@ -964,7 +1001,7 @@ class TestExploit(unittest.TestCase):
         gto_call, pool_call = preflop_ranges(line("call"), T, 100)["BTN"], preflop_ranges(line("call"), T, 100, "BB")["BTN"]
         gto_3b, pool_3b = preflop_ranges(line("raise"), T, 100)["BTN"], preflop_ranges(line("raise"), T, 100, "BB")["BTN"]
         # POOL_3BET_SCALE: the extra comes from calls (the published BTN vs CO chart calls 2.9% of hands
-        # against 12.2% 3bets, enough for 18% more 3bets)
+        # against 12.2% 3bets, enough for the extra 3bets)
         self.assertAlmostEqual(pool_3b.sum() / gto_3b.sum(), exploit.POOL_3BET_SCALE, delta=0.01)
         self.assertGreater(pool_call.sum(), 2 * gto_call.sum())
         # the extra 3bets are the strongest calls: the pool's 3bet range is the chart's plus better hands
@@ -973,24 +1010,29 @@ class TestExploit(unittest.TestCase):
         self.assertAlmostEqual(preflop_ranges(line("call"), T, 100, "BTN")["BTN"].sum(), gto_call.sum())
 
     def test_pool_preflop_extra_vpip_is_spread_over_limps_and_flats(self):
-        """The pool's extra VPIP (28.75 against the charts' 24.5) isn't split by line in any data found, so
-        it is spread evenly: first in it open-limps, and facing an open it flats, with the same share
-        (POOL_EXTRA_ENTER) of what the chart folds, strongest first; the big blind's defence is the chart's."""
+        """The pool's extra VPIP (28.75 against the charts' 24.7) isn't split by line in any data found, so
+        it is spread evenly: first in it enters (POOL_EXTRA_OPEN of them open-raising, the strongest, the
+        rest open-limping), and facing an open it flats, with the same share (POOL_EXTRA_ENTER) of what the
+        chart folds, strongest first; the big blind's defence is the chart's."""
         from gto.advisor import preflop_ranges, preflop_strategy, pool_strategy
         from gto.cards import COMBO_INDEX
         from gto.ranges import N_COMBOS
         from gto import exploit
         T = pf.Table(pf.SEATS[6])
-        q = exploit.POOL_EXTRA_ENTER
+        q, o = exploit.POOL_EXTRA_ENTER, exploit.POOL_EXTRA_OPEN
         F = lambda *ps: [{"pos": p, "action": "fold"} for p in ps]
         ones = {p: np.ones(N_COMBOS) for p in T}
         chart = preflop_strategy("HJ", F("UTG"), T, 100)
         pool = pool_strategy(chart, "HJ", F("UTG"), ones)
-        self.assertAlmostEqual(pool["call"].mean(), q * chart["fold"].mean(), places=4)
-        np.testing.assert_allclose(pool["raise"], chart["raise"])
-        # the limps are the strongest folds: A9o (by equity against any hand) limps before 72o
+        self.assertAlmostEqual(pool["call"].mean(), q * (1 - o) * chart["fold"].mean(), places=4)
+        self.assertAlmostEqual((pool["raise"] - chart["raise"]).mean(), q * o * chart["fold"].mean(), places=4)
+        self.assertTrue(np.all(pool["raise"] >= chart["raise"] - 1e-9))
+        # the extra hands are the strongest folds: A9o (by equity against any hand) enters before 72o,
+        # and the extra opens are stronger than the limps (A9o raises before K8o limps)
         idx = lambda h: COMBO_INDEX[tuple(sorted(cards(h)))]
-        self.assertGreater(pool["call"][idx("Ah9d")], pool["call"][idx("7h2d")])
+        extra = pool["call"] + pool["raise"] - chart["raise"]
+        self.assertGreater(extra[idx("Ah9d")], extra[idx("7h2d")])
+        self.assertGreaterEqual(pool["raise"][idx("Ah9d")] - chart["raise"][idx("Ah9d")], pool["raise"][idx("Kh8d")] - chart["raise"][idx("Kh8d")])
         # a pool limper's range is its limps, not the chart's LIMP range
         limp = preflop_ranges(F("UTG") + [{"pos": "HJ", "action": "call"}], T, 100, "BB")["HJ"]
         np.testing.assert_allclose(limp, pool["call"])
@@ -1008,19 +1050,21 @@ class TestExploit(unittest.TestCase):
         self.assertAlmostEqual(pool_strategy(bb, "BB", bb_line, ranges)["fold"].mean(), bb["fold"].mean(), places=6)
 
     def test_pool_preflop_opener_defends_3bets_more(self):
-        """Population fold to 3bet 48.25% against the charts' 54.1%: the opener facing a 3bet calls with
-        POOL_3BET_DEFEND (4.8%) more of its range (its strongest folds); its 4bets stay the chart's (12.75%
-        against 13.9%)."""
-        from gto.advisor import preflop_ranges
+        """Population fold to 3bet 48.25% against the charts' 54.2%: the opener facing a 3bet calls with
+        POOL_3BET_DEFEND more of its range (its strongest folds); its 4bets stay the chart's (the pool's
+        tree then 4bets 12.8% against the population's 12.75%)."""
+        from gto.advisor import preflop_ranges, preflop_strategy, pool_strategy
         from gto import exploit
         T = pf.Table(pf.SEATS[6])
         F = lambda *ps: [{"pos": p, "action": "fold"} for p in ps]
         three = F("UTG", "HJ") + [{"pos": "CO", "action": "raise", "to": 2.5}, {"pos": "BTN", "action": "raise", "to": 7.5}] + F("SB", "BB")
-        opened = preflop_ranges(F("UTG", "HJ") + [{"pos": "CO", "action": "raise", "to": 2.5}], T, 100)["CO"].sum()
-        call = lambda pool: preflop_ranges(three + [{"pos": "CO", "action": "call"}], T, 100, "BTN" if pool else None)["CO"].sum()
-        four = lambda pool: preflop_ranges(three + [{"pos": "CO", "action": "raise", "to": 22}], T, 100, "BTN" if pool else None)["CO"].sum()
-        self.assertAlmostEqual((call(True) - call(False)) / opened, exploit.POOL_3BET_DEFEND, places=3)
-        self.assertAlmostEqual(four(True), four(False))
+        ranges = preflop_ranges(three, T, 100)
+        co = ranges["CO"]
+        chart = preflop_strategy("CO", three, T, 100)
+        pool = pool_strategy(chart, "CO", three, ranges)
+        share = lambda v: float((co * v).sum() / co.sum())
+        np.testing.assert_allclose(pool["raise"], chart["raise"])
+        self.assertAlmostEqual(share(pool["call"]) - share(chart["call"]), exploit.POOL_3BET_DEFEND, places=3)
 
     def test_pool_advice_best_responds(self):
         adv = Advisor(time_budget=1.0, prior_budget=0.5)
