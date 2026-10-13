@@ -904,9 +904,9 @@ class TestExploit(unittest.TestCase):
                 self.assertGreater(a["freq"], 0.0, rough["actions"])       # a tied action keeps its GTO share
 
     def test_pool_preflop_flats_and_3bets_more(self):
-        """Population HUD stats (GGPoker 6-max NL50-500: 3bet 8.9% against the charts' 7.0%, VPIP 28.75
-        against 24.9): facing an open the pool 3bets 1.27x the chart's share (from its strongest calls) and
-        flats 2.3x more (from its strongest folds)."""
+        """Population HUD stats (GGPoker 6-max NL50-500: 3bet 8.9% against the charts' 8.3%, VPIP 28.75
+        against 24.5; scripts/calibrate_pool.py): facing an open the pool 3bets 1.08x the chart's share
+        (from its strongest calls) and flats 2.6x more (from its strongest folds)."""
         from gto.advisor import preflop_ranges
         from gto import exploit
         T = pf.Table(pf.SEATS[6])
@@ -914,9 +914,9 @@ class TestExploit(unittest.TestCase):
         line = lambda act: F("UTG", "HJ") + [{"pos": "CO", "action": "raise", "to": 2.5}, {"pos": "BTN", "action": act}]
         gto_call, pool_call = preflop_ranges(line("call"), T, 100)["BTN"], preflop_ranges(line("call"), T, 100, "BB")["BTN"]
         gto_3b, pool_3b = preflop_ranges(line("raise"), T, 100)["BTN"], preflop_ranges(line("raise"), T, 100, "BB")["BTN"]
-        # up to POOL_3BET_SCALE: the extra comes from calls, and the published BTN vs CO chart calls 2.9% of
-        # hands against 12.2% 3bets, so they run out at ~1.23x
-        self.assertTrue(1.15 <= pool_3b.sum() / gto_3b.sum() <= exploit.POOL_3BET_SCALE + 0.005, pool_3b.sum() / gto_3b.sum())
+        # POOL_3BET_SCALE: the extra comes from calls (the published BTN vs CO chart calls 2.9% of hands
+        # against 12.2% 3bets, enough for 8% more 3bets)
+        self.assertAlmostEqual(pool_3b.sum() / gto_3b.sum(), exploit.POOL_3BET_SCALE, delta=0.01)
         self.assertGreater(pool_call.sum(), 2 * gto_call.sum())
         # the extra 3bets are the strongest calls: the pool's 3bet range is the chart's plus better hands
         self.assertTrue(np.all(pool_3b >= gto_3b - 1e-9))
@@ -924,8 +924,8 @@ class TestExploit(unittest.TestCase):
         self.assertAlmostEqual(preflop_ranges(line("call"), T, 100, "BTN")["BTN"].sum(), gto_call.sum())
 
     def test_pool_preflop_opener_defends_3bets_more(self):
-        """Population fold to 3bet 48.25% against the charts' 53.6%: the opener facing a 3bet calls with 5.4%
-        more of its range (its strongest folds); its 4bets stay the chart's (12.75% against 12.6%)."""
+        """Population fold to 3bet 48.25% against the charts' 54.1%: the opener facing a 3bet calls with 5.85%
+        more of its range (its strongest folds); its 4bets stay the chart's (12.75% against 13.9%)."""
         from gto.advisor import preflop_ranges
         from gto import exploit
         T = pf.Table(pf.SEATS[6])
