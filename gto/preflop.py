@@ -108,6 +108,10 @@ def _vs_rfi_ip(early: bool) -> Dict[str, np.ndarray]:
             "3bet": R("QQ+, JJ:0.7, TT:0.4, 99:0.4, 88:0.2, AKs, AKo, AQs, AJs:0.7, ATs:0.6, AQo:0.55, AJo:0.4, A5s, A4s, A3s:0.7, A2s:0.3, KQs, KJs:0.4, KTs:0.3, K9s:0.2, KQo:0.4, QJs:0.4, JTs:0.3, T9s:0.3, 98s:0.3, 87s:0.2, 76s:0.2"),
             "call": R("JJ:0.3, TT:0.6, 99:0.6, 88:0.6, 77:0.5, 66:0.4, 55:0.3, 44:0.2, 33:0.2, 22:0.2, AJs:0.3, ATs:0.4, KJs:0.4, QJs:0.4, JTs:0.4, T9s:0.3"),
         }
+    # BTN facing UTG/HJ, CO facing HJ: 85.7/9.1/5.2 fold/call/3bet. Published: BTN vs UTG 84.3/8.2/7.5
+    # (GTO Wizard, NL500 6-max 100bb, "Playing calls from the button"; open size not stated); BeyondGTO
+    # (NL500, 2.5bb open, unnamed solver) CO vs HJ ~87/5/8, BTN vs HJ ~84/8/8, BTN vs LJ 14% defend.
+    # All within 5 points: left.
     return {  # BTN facing UTG/HJ/CO, or CO facing HJ-ish
         "3bet": R("JJ+, TT:0.4, AKs, AKo, AQs, AQo:0.4, AJs:0.5, A5s, A4s, A3s:0.5, KQs:0.5, KJs:0.3, 76s:0.3, 65s:0.3"),
         "call": R("22-99, TT:0.6, AJs:0.5, ATs, A9s:0.5, AQo:0.6, AJo:0.5, KQs:0.5, KJs:0.7, KTs, KQo:0.5, QJs, QTs, JTs, J9s:0.5, T9s, 98s, 87s, 76s:0.7, 65s:0.7, 54s:0.5"),
@@ -135,6 +139,11 @@ VS_RFI[("BTN", "CO")] = {
 # continue against a BB squeeze (the playability top-up, see CALLER_CONTINUE) was 13 combos of
 # 77-99: on an A-K-x flop the squeezer's QQ won the pot every time. Now JJ/TT/AQs/AJs/KQs flat
 # a share, and that continue holds them too.
+# Shares of hands (fold/call/3bet): vs UTG/HJ 91.7/2.7/5.5, vs CO/BTN 80.4/6.4/13.2. Published, all
+# within 5 points: SB vs BTN 82/5/13 (BeyondGTO, NL500, 2.5bb open); SB vs CO 86/5/9 (BeyondGTO, an
+# unnamed solver whose BTN vs CO 81/9/10 is 6 points off Poker Academy's and GTO Wizard's calls),
+# 3bet 10-13% (Preflop Wizard), blinds vs late opens 12-16% (GTO Gecko); SB vs HJ 13% and vs LJ 11%
+# defend (BeyondGTO). Left.
 for opener in ["UTG", "HJ", "CO", "BTN"]:
     if opener in ("UTG", "HJ"):
         VS_RFI[("SB", opener)] = {
@@ -174,7 +183,13 @@ VS_RFI[("BB", "SB")] = {
 # the big blind's flats are where rake bites hardest (no flop, no drop) and the solver here plays
 # without rake, so the totals aren't matched (a solver-based guide puts BB vs BTN at 52-58% with
 # NL50-NL200 rake, 3bet 11-13%, and 3-5 points wider at higher stakes: vip-grinders.com). BB against
-# UTG/CO 3bets 3.6%/5.6% against published 4.5-5.1%/7.7%: left.
+# UTG/CO 3bets 3.6%/5.6% against published 4.5-5.1%/7.7%: left. Also under 5 points, though every
+# source sits above the charts: BB vs LJ 4.5% (Poker Academy NL200), 5.1% (pokalab.com, NL50 rake),
+# 6% (BeyondGTO NL500); BB vs HJ (the UTG chart, 3.6%) 6.7% (pokalab.com) and 8% (BeyondGTO); BB vs
+# CO 10% (BeyondGTO). Squeezes (the advisor re-draws the chart for the caller): BB over a BTN open and
+# an SB call 30/60/10 against Poker Academy's 71.2/16.1/12.7 (NL200, to 12.2bb; the calls are rake);
+# over CO + BTN 4.9% and UTG + HJ 3.4% against GTO Wizard's 13% and 7.9% ("Responding to BB
+# squeezes"), which are MTT solves with 2.3bb opens, so not matched.
 for _o in ("BTN", "SB"):
     VS_RFI[("BB", _o)]["call"] = np.minimum(VS_RFI[("BB", _o)]["call"], 1.0 - VS_RFI[("BB", _o)]["3bet"])
 
@@ -270,6 +285,11 @@ def _vs_3bet(opener: str) -> Dict[str, np.ndarray]:
     }
 
 
+# The opener in position facing a blind's 3bet (to 11bb), as shares of its opening range
+# (fold/call/4bet): UTG 51/36/14, HJ 57/31/12, CO 50/41/9, BTN vs SB 58/36/6. No published numbers
+# for these spots: Preflop Wizard's per-seat table (UTG 74-82/10-15/8-11, CO 59-68/22-28/10-13) isn't
+# split by who 3bets, and 888poker says only that 4betting is more attractive against SB 3bets than
+# against BB 3bets (here BTN 4bets 6% against the SB and 11.6% against the BB). Left derived.
 def _ip_vs_blind_3bet(o: str) -> Dict[str, np.ndarray]:
     c = _vs_3bet(o)
     return {"4bet": c["4bet"], "call": np.minimum(1.0, c["call"] * 1.25 + IP_VS_3BET_EXTRA)}
