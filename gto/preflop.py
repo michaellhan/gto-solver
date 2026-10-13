@@ -29,12 +29,14 @@ SEATS = {
 class Table(list):
     """Seats in seating order (SEATS), plus the game's ante (bb per player, dead money) and whether the
     first seat straddles 2bb (it then acts last preflop and plays the big blind's charts). `rake`: the
-    game's (rate, cap in bb or None), taken from pots that see a flop; None = no rake."""
-    def __init__(self, seats, ante: float = 0.0, straddle: bool = False, rake=None):
+    game's (rate, cap in bb or None), taken from pots that see a flop; None = no rake. `depth`: the
+    effective stack in bb, which picks the short-stack charts where there are any (chart_depth)."""
+    def __init__(self, seats, ante: float = 0.0, straddle: bool = False, rake=None, depth: float = 100.0):
         super().__init__(seats)
         self.ante = float(ante or 0.0)
         self.straddle = bool(straddle) and len(seats) >= 3
         self.rake = tuple(rake) if rake and rake[0] > 0 else None
+        self.depth = float(depth)
 
     def preflop_order(self) -> List[str]:
         return list(self[1:]) + [self[0]] if self.straddle else list(self)
@@ -157,6 +159,31 @@ for opener in ["UTG", "HJ", "CO", "BTN"]:
             "3bet": R("88+, 77:0.5, ATs+, A9s:0.5, A5s-A2s, AJo+, ATo:0.5, KTs+, K9s:0.5, KQo, KJo:0.5, QTs+, JTs, T9s, 98s:0.5, 87s:0.5, 76s:0.5"),
             "call": R("77:0.5, 22-66, A9s:0.5, A8s-A6s, ATo:0.5, K9s:0.5, K8s, Q9s, J9s, T8s, 98s:0.5, 87s:0.5, 76s:0.5, 65s, 54s"),
         }
+# Short stacks (SHORT_DEPTH, used at SHORT_MAX bb or less; see chart_depth): the small blind against a
+# CO or BTN open. The 100bb chart 3bets every suited broadway, AJo+, KQo and 88+ and flats small pairs,
+# A6s-A9s and suited connectors, which the advisor's implied-odds re-pricing then thins at 40bb (to
+# 44-66, A6s-A8s and a few others, ~45 combos), so a flat held no broadways and A9o won almost every
+# Q-high flop. Shallow, the SB's 3bet commits much of the stack and the hands just under its value
+# core flat (or jam) instead: in Poker Academy's 40bb MTT solves (9-handed, 2.3bb opens,
+# https://poker.academy/blog/post/40bb-is-it-too-big-to-3bet-all-in) the SB against a CO open folds
+# 72.6%, calls 14.4%, 3bets to 8bb 11.3% and jams 1.8% (chip EV, 1bb big-blind ante; against the BTN
+# 71.4/11.6/13.0/4.1); its jams are middling hands (JTs 100%, AQo 71%, 88 44%, KTs 42%, KJs 32%, QJs,
+# AJo, KQo, QTs), AA-QQ 3bet small, and where the tree has no jam (ICM, 20 left) JTs, KJs and KTs call
+# 100%, 88 93% and AQo 75% against the CO, and JTs, QTs, KTs, 88, 77 and 44 always against the BTN,
+# with AQo, AJo and KQo split between calling and 3betting. No cash (no-ante) 40bb solve was found;
+# the ante's dead money widens those solves' defence, so the totals here stay near the 100bb chart's
+# (fold/call/3bet 80.4/6.4/13.2 of hands), and the flats are the published ones: suited broadways,
+# 77-99, AQo/AJo/KQo, fewer small pairs and suited aces and few suited connectors. Here 81.0/6.3/12.7
+# (84 flatting combos, the 40bb re-priced 100bb chart flatted ~45); the hands that leave the 3bet go
+# to calls, and wheel aces, suited kings and offsuit aces jam more often in their place (hero's 3bet at
+# this depth is a jam from the push/fold equilibrium: Advisor._push).
+SHORT_DEPTH = 40.0
+SHORT_MAX = 70.0
+SB_VS_LATE_40 = {
+    "3bet": R("TT+, 99:0.5, 88:0.2, AKs, AQs, AJs:0.6, ATs:0.4, A9s:0.6, A8s:0.6, A7s-A6s:0.5, A5s-A2s:0.9, AKo, AQo:0.4, AJo:0.6, ATo:0.5, A9o:0.3, A8o:0.3, A5o:0.3, KQs:0.5, KJs:0.2, KTs:0.2, K9s:0.6, K8s:0.4, K7s-K5s:0.3, KQo:0.6, KJo:0.6, KTo:0.4, QJs:0.2, QTs:0.2, Q9s:0.4, Q8s:0.3, QJo:0.3, QTo:0.2, J9s:0.4, T9s:0.5, T8s:0.3, 98s:0.5, 97s:0.2, 87s:0.5, 86s:0.2, 76s:0.6, 75s:0.2, 65s:0.6, 54s:0.5"),
+    "call": R("99:0.5, 88:0.8, 77:0.8, 66:0.7, 55:0.6, 44:0.6, 33:0.3, 22:0.3, AJs:0.4, ATs:0.6, A9s:0.4, A8s:0.4, A7s:0.3, A6s:0.2, KQs:0.5, KJs:0.8, KTs:0.8, K9s:0.3, QJs:0.8, QTs:0.8, JTs:1.0, J9s:0.3, T9s:0.5, 98s:0.3, 87s:0.2, AQo:0.6, AJo:0.4, ATo:0.2, KQo:0.4, KJo:0.2"),
+}
+SHORT_CHARTS: Dict[Tuple[str, str], Dict[str, np.ndarray]] = {("SB", "CO"): SB_VS_LATE_40, ("SB", "BTN"): SB_VS_LATE_40}
 # BB
 VS_RFI[("BB", "UTG")] = {
     "3bet": R("QQ+, JJ:0.6, AKs, AKo, AQs:0.7, AQo:0.25, AJs:0.3, A5s, A4s, A3s:0.4, A2s:0.3, KQs:0.5, KJs:0.2, QJs:0.2, T9s:0.2, 76s:0.3, 65s:0.4, 54s:0.4"),
@@ -222,7 +249,38 @@ def _norm(key: str) -> str:
     return {"EP": "UTG", "HU_SB": "SB", "HU_BB": "BB"}.get(key, key)
 
 
-def vs_rfi_chart(hero_key: str, opener_key: str) -> Dict[str, np.ndarray]:
+def chart_depth(positions) -> float:
+    """The depth of the charts a table plays where a short-stack chart exists (SHORT_CHARTS): SHORT_DEPTH
+    at or below SHORT_MAX bb, else 100bb. Off a chart's depth the advisor re-prices calls with implied
+    odds (Advisor._priced)."""
+    return SHORT_DEPTH if getattr(positions, "depth", 100.0) <= SHORT_MAX else 100.0
+
+
+def at_depth(positions, stack: float):
+    """`positions` as a Table whose depth is `stack` bb (the same table when it already is)."""
+    if getattr(positions, "depth", None) == float(stack):
+        return positions
+    return Table(list(positions), getattr(positions, "ante", 0.0), getattr(positions, "straddle", False),
+                 getattr(positions, "rake", None), stack)
+
+
+def spot_depth(hero: str, actions: List[dict], positions) -> float:
+    """The depth of the chart `hero` plays after `actions`: SHORT_DEPTH when it is a short-stack chart
+    (facing a single open, at a short table depth, with one in SHORT_CHARTS), else 100bb."""
+    if chart_depth(positions) > SHORT_DEPTH or len(positions) == 2:
+        return 100.0
+    raisers = [a for a in actions if a["action"] in ("raise", "all-in")]
+    if len(raisers) != 1 or any(a["pos"] == hero and a["action"] == "call" for a in actions):
+        return 100.0
+    pair = (_norm(chart_key(hero, positions)), _norm(chart_key(raisers[0]["pos"], positions)))
+    return SHORT_DEPTH if pair in SHORT_CHARTS else 100.0
+
+
+def vs_rfi_chart(hero_key: str, opener_key: str, depth: float = 100.0) -> Dict[str, np.ndarray]:
+    if depth <= SHORT_DEPTH and hero_key not in ("HU_SB", "HU_BB"):
+        short = SHORT_CHARTS.get((_norm(hero_key), _norm(opener_key)))
+        if short is not None:
+            return short
     if hero_key == "HU_BB":
         return HU_BB_VS_SB
     if opener_key == "EP":
@@ -524,7 +582,7 @@ def _actions_at(hero: str, actions: List[dict], positions: Optional[List[str]] =
         first = next(i for i, a in enumerate(actions) if a["action"] in ("raise", "all-in"))
         if any(a["pos"] == hero and a["action"] == "call" for a in actions[:first]):
             return dict(LIMP_VS_RAISE)      # hero limped, then someone raised
-        chart = vs_rfi_chart(key(hero), key(raisers[0]))
+        chart = vs_rfi_chart(key(hero), key(raisers[0]), chart_depth(positions))
         return {"raise": chart["3bet"], "call": chart["call"]}
     if n_raises == 2:
         opener, threebettor = raisers
@@ -551,7 +609,8 @@ def _actions_at(hero: str, actions: List[dict], positions: Optional[List[str]] =
 def strategy_for(hero: str, actions: List[dict], positions: Optional[List[str]] = None) -> Dict[str, np.ndarray]:
     """Full mixed strategy (including fold) per combo for hero at this point."""
     key = (hero, tuple((a["pos"], a["action"], a.get("to"), a.get("amount")) for a in actions),
-           tuple(positions or POSITIONS), getattr(positions, "ante", 0.0), getattr(positions, "straddle", False))
+           tuple(positions or POSITIONS), getattr(positions, "ante", 0.0), getattr(positions, "straddle", False),
+           chart_depth(positions))
     if key not in _STRAT_CACHE:
         if len(_STRAT_CACHE) > 4096:
             _STRAT_CACHE.clear()

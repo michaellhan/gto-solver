@@ -631,6 +631,8 @@ def _pf_cached(key, fn):
 
 def preflop_strategy(p: str, before: List[dict], positions, stack: float) -> Dict[str, np.ndarray]:
     """p's preflop strategy per combo after the actions `before`: the chart, adjusted like hero's."""
+    positions = pf.at_depth(positions, stack)
+
     def work():
         full = pf.strategy_for(p, before, positions)
         if "call" in full:
@@ -645,6 +647,8 @@ def preflop_ranges(actions: List[dict], positions, stack: float, pool_except: Op
     """Each still-active player's range after the preflop actions (pf.replay_ranges with the adjusted
     strategies). With `pool_except` (hero's seat), everyone else plays like a typical player pool
     (exploit.pool_preflop)."""
+    positions = pf.at_depth(positions, stack)
+
     def work():
         ranges = {p: np.ones(N_COMBOS) for p in positions}
         active = set(positions)
@@ -777,7 +781,8 @@ class Advisor:
             stack = min(float(v) for v in state["stacks"].values()) / bb
         else:
             stack = float(state.get("stack", 100.0)) / bb
-        streets = {s: _norm_actions(state.get(s), bb) for s in STREETS}
+        positions = pf.at_depth(positions, stack)
+        streets ={s: _norm_actions(state.get(s), bb) for s in STREETS}
         if not board:
             return self._preflop(hero, hole, streets["preflop"], positions, stack, t0,
                                  pool=state.get("opponents") == "pool")
@@ -938,9 +943,10 @@ class Advisor:
 
         std_line = [{"pos": a["pos"], "action": "fold"} if a["action"] == "call" and a["pos"] != hero
                     else {"pos": a["pos"], "action": a["action"]} for a in preflop]
-        # the chart's own spot: its depth, no antes
-        table = pf.Table(positions, 0.0, getattr(positions, "straddle", False))
-        std = replay_hand(table, CHART_STACK, {"preflop": std_line}, 1)[0]
+        # the chart's own spot: its depth (100bb, or a short-stack chart's: pf.spot_depth), no antes
+        cs = pf.spot_depth(hero, preflop, positions)
+        table = pf.Table(positions, 0.0, getattr(positions, "straddle", False), depth=cs)
+        std = replay_hand(table, cs, {"preflop": std_line}, 1)[0]
         if std.closed or std.to_act != hero:
             return full
         # Rake re-prices every call that sees the flop. The big blind's defence of an open and the opener's
@@ -954,7 +960,7 @@ class Advisor:
                     and pf._norm(pf.chart_key(raisers[1], positions)) in ("SB", "BB")))
         opp, need, call, pot, behind = priced(st, stack, positions if rk_on else None, not unraked)
         raked = rk_on and need > call / max(pot + call, 1e-9) + 1e-12
-        opp_std, need_std, _, _, behind_std = priced(std, CHART_STACK)
+        opp_std, need_std, _, _, behind_std = priced(std, cs)
         # implied odds: pairs and suited hands win more when they hit, by the stack behind. Deeper or
         # shallower than the charts moves their price by how their odds with those winnings change at
         # this price, so 20bb shallower costs a small pair a little of the implied odds it had at chart
@@ -991,7 +997,7 @@ class Advisor:
                 to = min(_default_size(s, hero, True), stk - s.inv_start[hero])
                 add = to - s.bets[hero]
                 return add / max(s.pot_start + sum(s.bets.values()) + add + to - s.cur_bet, 1e-9)
-            keep = np.clip(0.5 + (eq_c - breakeven(st, stack) - v_bar + breakeven(std, CHART_STACK)) / RAISE_BLEND,
+            keep = np.clip(0.5 + (eq_c - breakeven(st, stack) - v_bar + breakeven(std, cs)) / RAISE_BLEND,
                            0.0, 1.0)
             keep[np.isnan(keep)] = 0.0
             # only ever tighter than the chart: the charts' continuing ranges don't see the bigger
@@ -1009,13 +1015,13 @@ class Advisor:
                 add = to - s.bets[hero]
                 return add / max(s.pot_start + sum(s.bets.values()) + add, 1e-9)
             scale = min(1.5 if pool else 1.0,
-                        (f / fold_need(st, stack)) / max(f_std / fold_need(std, CHART_STACK), 1e-9))
+                        (f / fold_need(st, stack)) / max(f_std / fold_need(std, cs), 1e-9))
             bluff_n = bluff_c * scale
             out["raise"] = np.minimum(1.0, value_n + bluff_n)
             msg.append(f"raises re-drawn for {'the player pool' if pool and not more else f'{len(opp)} players in'}: value raises keep the equity over break-even "
                        f"against what continues that the chart's weakest value raise has heads-up ({v_bar:.0%}); bluffs x{scale:.2f} "
                        f"(everyone folds {f:.0%} vs {f_std:.0%}, needing {fold_need(st, stack):.0%} vs "
-                       f"{fold_need(std, CHART_STACK):.0%})")
+                       f"{fold_need(std, cs):.0%})")
         raise_n = out.get("raise", raise_c)
         # continuing before the price: the chart's calls and value raises, kept bluffs, new value raises
         base = np.minimum(1.0, np.maximum(call_c + value_c + (raise_n - value_n if more or pool else raise_c - value_c), raise_n))

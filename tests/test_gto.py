@@ -1854,6 +1854,30 @@ class TestPublishedBlindFrequencies(unittest.TestCase):
         sq = self._shares("BB", btn + [R("SB", "call")], of_range=False)[2]
         self.assertTrue(0.09 <= sq <= 0.14, sq)
 
+    def test_sb_short_stack_flats(self):
+        # at 40bb the small blind's flat of a CO open holds suited broadways, 77-99 and AQo (Poker Academy's
+        # 40bb solves: JTs, KJs, KTs, 88, AQo call or jam), not only small pairs and A6s-A8s (~45 combos,
+        # the 100bb chart re-priced), at about the 100bb chart's totals
+        from gto.advisor import preflop_strategy, preflop_ranges
+        from gto.cards import COMBO_INDEX
+        R, F = self.R, self.F
+        T = pf.Table(pf.SEATS[6])
+        pre = F("UTG", "HJ") + [R("CO", "raise", 2.5)] + F("BTN")
+        s = preflop_strategy("SB", pre, T, 40)
+        call = s["call"]
+        cls = lambda h: float(np.mean([call[i] for c, i in COMBO_INDEX.items() if hand_class(c) == h]))
+        for h in ("JTs", "QJs", "KJs", "KTs", "88", "AQo"):
+            self.assertGreater(cls(h), 0.4, h)
+        self.assertTrue(70 <= call.sum() <= 110, call.sum())
+        f, c, r = (float(s[k].sum()) / len(call) for k in ("fold", "call", "raise"))
+        self.assertTrue(0.77 <= f <= 0.84 and 0.11 <= r <= 0.15, (f, c, r))
+        # the flatting range that reaches the flop (BB folds) is the same at a table built at 40bb
+        rng = preflop_ranges(pre + [R("SB", "call"), R("BB", "fold")], T, 40)["SB"]
+        self.assertTrue(70 <= rng.sum() <= 110, rng.sum())
+        # 100bb keeps the 100bb chart
+        self.assertIs(pf.vs_rfi_chart("SB", "CO"), pf.VS_RFI[("SB", "CO")])
+        self.assertIs(pf.vs_rfi_chart("SB", "CO", 40.0), pf.SB_VS_LATE_40)
+
 
 class TestRake(unittest.TestCase):
     """Optional rake: the winner of a postflop pot pays a share of it, to a cap; pots that end preflop
