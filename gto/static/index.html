@@ -261,7 +261,7 @@
   /* while a card is needed the deck is the input: it moves up under the setup and the dock stops floating */
   body.needcard .dock { position: static; box-shadow: none; }
   #pSetup { order: -2; } body.needcard #pCards { order: -1; }
-  @media (min-width: 901px) {
+  @media (min-width: 901px) and (min-height: 560px) {
     body { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
     main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(340px, var(--left)) 9px minmax(320px, 1fr); padding: 0 6px env(safe-area-inset-bottom) 12px; }
     .col { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding: 10px 4px 10px 0; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line2) transparent; }
@@ -277,7 +277,7 @@
   }
   /* Narrow screens (phones, or a zoomed-in window): one column that scrolls; the action dock sticks to the
      bottom of the window. On your turn the advice comes straight after the table. */
-  @media (max-width: 900px) {
+  @media (max-width: 900px), (max-height: 559px) {
     main { display: flex; flex-direction: column; padding: 10px 10px 0; }
     .col { display: contents; }
     #pSetup { order: 10; } #pTable { order: 20; } #pCards { order: 30; } #pAdvice { order: 40; } #pHistory { order: 50; } #pAction { order: 90; }
