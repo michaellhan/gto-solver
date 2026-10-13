@@ -416,7 +416,16 @@ _PF_CACHE: Dict[tuple, object] = {}
 
 def _pf_key(kind, p, actions, positions, stack) -> tuple:
     acts = tuple((a["pos"], a["action"], a.get("to"), a.get("amount")) for a in actions)
-    return (kind, p, acts, tuple(positions), getattr(positions, "ante", 0.0), getattr(positions, "straddle", False), stack)
+    return (kind, p, acts, tuple(positions), getattr(positions, "ante", 0.0), getattr(positions, "straddle", False), stack,
+            getattr(positions, "rake", None))
+
+
+def _rake(positions, pot: float) -> float:
+    """Rake in bb on a pot of `pot` bb that sees the flop (the table's rate, to its cap; 0 without rake)."""
+    rk = getattr(positions, "rake", None)
+    if not rk:
+        return 0.0
+    return rk[0] * pot if rk[1] is None else min(rk[0] * pot, rk[1])
 
 
 def _pf_cached(key, fn):
@@ -539,7 +548,12 @@ class Advisor:
             return {"error": f"players must be 2..9, got {n}"}
         ante = float(state.get("ante") or 0.0) / bb
         straddle = bool(state.get("straddle")) and n >= 3
-        positions = pf.Table(pf.SEATS[n], ante, straddle)
+        # rake: a share of the pot (0.05 = 5%) up to a cap (in chips, like the other amounts), taken from
+        # pots that see a flop
+        rate = max(0.0, min(0.25, float(state.get("rake") or 0.0)))
+        cap = state.get("rake_cap")
+        cap = float(cap) / bb if cap not in (None, "") and float(cap) > 0 else None
+        positions = pf.Table(pf.SEATS[n], ante, straddle, (rate, cap) if rate > 0 else None)
         hero = str(state["hero"]).upper()
         if hero not in positions:
             return {"error": f"hero seat {hero} is not one of {positions}"}
@@ -557,7 +571,10 @@ class Advisor:
         if not board:
             return self._preflop(hero, hole, streets["preflop"], positions, stack, t0,
                                  pool=state.get("opponents") == "pool")
-        saved = self.time_budget, self.prior_budget
+        saved = self.time_budget, self.prior_budget, self.cfg
+        if positions.rake:
+            self.cfg = self.cfg.copy()
+            self.cfg.rake_rate, self.cfg.rake_cap = positions.rake
         if state.get("budget"):
             self.time_budget = max(0.5, min(120.0, float(state["budget"])))
         if state.get("prior_budget"):
@@ -566,7 +583,7 @@ class Advisor:
             return self._postflop(hero, hole, board, stack, streets, positions, t0,
                                   pool=state.get("opponents") == "pool")
         finally:
-            self.time_budget, self.prior_budget = saved
+            self.time_budget, self.prior_budget, self.cfg = saved
 
     # ------------------------------------------------------------ preflop
     def _preflop(self, hero, hole, preflop, positions, stack, t0, pool=False):
@@ -671,12 +688,15 @@ class Advisor:
         player pool's (exploit.pool_preflop), so this runs even in the chart's own spot: calls follow
         equity against what the pool actually plays, and bluff raises grow (up to 1.5x) when the pool
         folds more often."""
-        def priced(s, stk):
+        def priced(s, stk, table=None):
             opp = [p for p in s.order if p in s.active and p != hero and
                    (p in s.acted or s.bets[p] > s.posted.get(p, 0.0) + 1e-9)]
             call = min(s.cur_bet - s.bets[hero], stk - s.inv_start[hero] - s.bets[hero])
             pot = s.pot_start + sum(s.bets.values())
-            return opp, call / (pot + call), call, pot, stk - s.inv_start[hero] - s.bets[hero] - call
+            # with rake, the pot hero wins is short the rake on the pot the call takes to the flop (at least:
+            # later bets add to it, up to the cap)
+            rk = _rake(table, pot + call)
+            return opp, call / (pot + call - rk), call, pot, stk - s.inv_start[hero] - s.bets[hero] - call
 
         def facing_raise(line, opp, arr, positions, as_pool=False):
             # each player facing hero's raise, by their chart (or as the pool plays it): the chance
@@ -712,7 +732,12 @@ class Advisor:
         std = replay_hand(table, CHART_STACK, {"preflop": std_line}, 1)[0]
         if std.closed or std.to_act != hero:
             return full
-        opp, need, call, pot, behind = priced(st, stack)
+        # Rake re-prices only the big blind's calls of an open: its defence is the one chart kept rake-free
+        # (the cold calls, 3bets and calls of 3bets follow published raked solves, so re-pricing those would
+        # count the rake twice)
+        raked = (getattr(positions, "rake", None) is not None and st.n_raises == 1
+                 and pf.chart_key(hero, positions) in ("BB", "HU_BB"))
+        opp, need, call, pot, behind = priced(st, stack, positions if raked else None)
         opp_std, need_std, _, _, behind_std = priced(std, CHART_STACK)
         # implied odds: pairs and suited hands win more when they hit, by the stack behind. Deeper or
         # shallower than the charts moves their price by how their odds with those winnings change at
@@ -722,7 +747,7 @@ class Advisor:
         implied = lambda b: call / np.maximum(pot + call + _IMPLIED_W * max(b, 0.0), call + 1e-9)
         need_v = need + implied(behind) - implied(behind_std)
         more = sorted(opp) != sorted(opp_std)
-        reprice = abs(need - need_std) >= PRICE_TOL or abs(depth) >= DEPTH_TOL or pool
+        reprice = abs(need - need_std) >= PRICE_TOL or abs(depth) >= DEPTH_TOL or pool or raked
         if not (more or reprice):
             return full
         raise_c = full.get("raise", np.zeros(N_COMBOS))
@@ -787,7 +812,8 @@ class Advisor:
                 new = np.where(better, np.maximum(base, add), np.minimum(base, np.maximum(cut, raise_n)))
                 deep = (f", {abs(depth):g}bb {'deeper' if depth > 0 else 'shallower'} than the charts "
                         f"(implied odds for pairs and suited hands)" if abs(depth) >= DEPTH_TOL else "")
-                msg.insert(0, f"price {need:.0%} of the pot against {', '.join(opp)} (the chart assumes "
+                rk = " after rake" if raked else ""
+                msg.insert(0, f"price {need:.0%} of the pot{rk} against {', '.join(opp)} (the chart assumes "
                               f"{need_std:.0%} against {', '.join(opp_std)}{deep}): calls re-drawn by equity "
                               f"against the pot odds" + (", against the player pool's ranges" if pool else ""))
         if "raise" in full:
@@ -836,7 +862,8 @@ class Advisor:
         pot = st.pot_start + sum(st.bets.values())
         # hero's call only wins what the jammer can match
         win = pot - max(0.0, st.bets[jammer] - (st.bets[hero] + to_call))
-        need = to_call / (win + to_call)
+        # a called all-in sees the flop, so the pot is raked
+        need = to_call / (win + to_call - _rake(positions, win + to_call))
         # everyone who already called the jam is in the pot too: equity against all of them
         after = preflop_ranges(preflop, positions, stack, pool_except)
         callers = [a["pos"] for a in preflop[ji + 1:] if a["action"] in ("call", "all-in") and a["pos"] in st.active]

@@ -97,7 +97,7 @@ python -m gto.cli --hero BB --hole 9h8h --board Ks7d2cTh \
 
 Action tokens are `POS:act` with `f` fold, `x` check, `c` call, `r<to>` raise to,
 `b<amount>` bet, `ai` all-in. Amounts are in big blinds. `--ante 0.2` adds an ante
-per player, `--straddle` has the first seat straddle 2bb.
+per player, `--straddle` has the first seat straddle 2bb, `--rake 0.05 --rake-cap 3` sets a 5% rake capped at 3bb (see Rake).
 
 Server for your sandbox table:
 
@@ -121,7 +121,9 @@ Request body (see `examples/`):
 
 Set `bb` to your blind size and pass amounts in chips, or leave it at 1 and pass
 big blinds. Optional `"ante"` (per player, same units) and `"straddle": true` (the
-first seat posts 2bb and acts last preflop). Positions are the 6-max names `UTG HJ CO BTN SB BB`.
+first seat posts 2bb and acts last preflop). Optional `"rake"` (a share of the pot, `0.05` for 5%)
+and `"rake_cap"` (the most rake per pot, same units as the amounts; leave it out for no cap): off
+unless given (see Rake below). Positions are the 6-max names `UTG HJ CO BTN SB BB`.
 
 Response: per-action `freq` (the mixed strategy for hero's exact hand), `ev_bb`
 (relative to folding now), `amount_bb`, a `recommended` action (highest
@@ -134,6 +136,31 @@ range, and solver stats.
 typical player pool instead of GTO. Preflop, hero's calls and raises are re-drawn against the pool's
 ranges and responses; after the flop the advice is the best response (each hand's highest-EV action,
 `freq` 0 or 1, with `gto_freq` alongside). See Exploit mode below.
+
+### Rake
+
+Off by default (the page's Rake select: off, 5% capped at 3bb, or a custom percent and cap; the
+setting is saved with the hand and carried by share links). Rake is taken "no flop, no drop": a pot
+that ends preflop isn't raked, so opens, steals and folds to them are unchanged.
+
+* Postflop, the solver's terminal payoffs are raked: the winner pays rake = min(rate x pot, cap) out
+  of the pot it collects, at showdowns, equity leaves and folds (the pot without an uncalled bet,
+  which goes back to the bettor; a split pot costs each player half). An equity leaf (a street the
+  tree doesn't play out) is raked on the pot as it stands, so where later bets would grow the pot
+  toward the cap the rake is a little low. The exploitability shown counts what each best response
+  gains over its own raked payoff (a raked game isn't zero-sum). With no rake the numbers are
+  bit-identical to the unraked solver.
+* Preflop, the charts are fixed. The big blind's calls of an open are re-priced through the
+  off-chart re-pricing (see Preflop): the pot it would win is short the rake on the pot its call
+  takes to the flop (a lower bound: later bets add to it, up to the cap). Its defence is the one chart
+  kept rake-free; the cold calls, 3bets and calls of 3bets were fit to published raked solves, so
+  they stay as they are (re-pricing them would count the rake twice). A called preflop all-in sees
+  the flop, so its price counts the rake too. 6-max 100bb, 5% capped at 3bb: the big blind against a
+  2.5bb button open calls 48.4% of hands instead of 53.1% (3bets 11.5% either way, so it defends
+  59.9% instead of 64.6%), against a 3bb small-blind open 49.3% instead of 55.6%, against a CO open
+  35.9% instead of 39.3%. The replayed ranges going to the flop use the same calls.
+* Not raked: the multiway heuristic (three or more players see the flop) and the push/fold
+  equilibrium behind short-stacked jams.
 
 ## How it works
 
@@ -280,6 +307,8 @@ the tree traversal to C or Rust or a GPU, which makes full flop trees feasible.
   exports if you have them; the format is a range string.
 * Limps, antes, straddles and stack depth are handled by adjusting the 100bb
   no-ante charts (see Preflop above), not by charts built for those games.
+* Rake (optional) re-prices only the big blind's preflop calls, raking on the flop pot, and equity
+  leaves are raked on the pot as it stands; multiway spots aren't raked (see Rake above).
 * Exploit mode's pool is fitted to public population data where any was found (flop and river
   folds, preflop frequencies); the turn folds, folds to big flop bets, and how much less the pool
   raises and bluffs after the flop are still judgment calls. On a rough (Fast, flop or turn)

@@ -28,11 +28,13 @@ SEATS = {
 
 class Table(list):
     """Seats in seating order (SEATS), plus the game's ante (bb per player, dead money) and whether the
-    first seat straddles 2bb (it then acts last preflop and plays the big blind's charts)."""
-    def __init__(self, seats, ante: float = 0.0, straddle: bool = False):
+    first seat straddles 2bb (it then acts last preflop and plays the big blind's charts). `rake`: the
+    game's (rate, cap in bb or None), taken from pots that see a flop; None = no rake."""
+    def __init__(self, seats, ante: float = 0.0, straddle: bool = False, rake=None):
         super().__init__(seats)
         self.ante = float(ante or 0.0)
         self.straddle = bool(straddle) and len(seats) >= 3
+        self.rake = tuple(rake) if rake and rake[0] > 0 else None
 
     def preflop_order(self) -> List[str]:
         return list(self[1:]) + [self[0]] if self.straddle else list(self)

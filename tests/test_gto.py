@@ -1474,3 +1474,157 @@ class TestOpenerVs3bet(unittest.TestCase):
         self.assertGreater(bb.sum(), pf.MIN_LINE_COMBOS)
         self.assertGreater(bb[COMBO_INDEX[tuple(sorted(cards("KsKd")))]], 0.0)
 
+
+class TestRake(unittest.TestCase):
+    """Optional rake: the winner of a postflop pot pays a share of it, to a cap; pots that end preflop
+    aren't raked ("no flop, no drop"). Off by default."""
+
+    NO_BETS = {s: [] for s in ("flop", "turn", "river")}
+    R = staticmethod(lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {})))
+
+    def test_zero_rake_is_identical(self):
+        r0 = parse_range("22+, A2s+, K9s+, QTs+, JTs, ATo+, KJo+")
+        r1 = parse_range("33+, A5s+, KTs+, QJs, AJo+, KQo")
+        small = dict(n_turns=2, leaf_turns=2, leaf_rivers_flop=2, n_rivers_from_flop=2)
+        for board, kw in (("Ks7d2c", small), ("Ks7d2cTh", dict(n_rivers=4)), ("Ks7d2cTh3s", {})):
+            a = solve(cards(board), r0, r1, pot=10, stack=90, cfg=Config(**kw), max_iters=8, time_budget=100)
+            b = solve(cards(board), r0, r1, pot=10, stack=90, cfg=Config(rake_cap=3.0, **kw), max_iters=8, time_budget=100)
+            self.assertTrue(np.array_equal(a.evs, b.evs) and np.array_equal(a.strategy, b.strategy), board)
+            self.assertEqual(a.exploitability(), b.exploitability())
+        self.assertEqual(Config(rake_cap=3.0).sizes_key(), Config().sizes_key())
+        self.assertNotEqual(Config(rake_rate=0.05).sizes_key(), Config().sizes_key())
+
+    def test_showdown_pays_the_pot_less_rake(self):
+        # checked down, a hand wins (pot - rake) * equity: through every river (a merged chance node),
+        # an equity leaf, and turn decisions over every turn with equity leaves below (tiled leaves)
+        hero, vr = cards("AhAs"), parse_range("KK, 88, QQ, JTs, 76s")
+        for board, depth, rate, cap in (("Kh8d5c3s", 2, 0.05, None), ("Kh8d5c", 1, 0.05, 0.3), ("Kh8d5c", 2, 0.1, 3.0),
+                                        ("Kh8d5c3s2h", 1, 0.05, 3.0)):
+            cfg = Config(bet_sizes=self.NO_BETS, raise_sizes=self.NO_BETS, allin_spr=0, depth=depth,
+                         n_turns=49, leaf_turns=49, leaf_rivers_flop=48, rake_rate=rate, rake_cap=cap)
+            b = cards(board)
+            sol = solve(b, parse_range("AA"), vr, pot=10, stack=100, time_budget=100, max_iters=2, cfg=cfg)
+            ev = sol.for_combo(tuple(hero))["check"][1]
+            rake = min(rate * 10, cap or 1e9)
+            self.assertAlmostEqual(ev, (10 - rake) * _exact_equity(b, hero, vr), places=3, msg=board)
+
+    def test_fold_pays_rake_on_the_called_pot(self):
+        # the winner of a fold pays rake on the pot without its own uncalled bet
+        cfg = Config(bet_sizes={s: [1.0] for s in ("flop", "turn", "river")}, raise_sizes=self.NO_BETS, allin_spr=0,
+                     rake_rate=0.05, rake_cap=3.0)
+        sol = solve(cards("Kh8d5c3s2h"), parse_range("QQ"), parse_range("88, T9o"), pot=10, stack=100,
+                    time_budget=100, max_iters=2, cfg=cfg)
+        vs_bet = sol.root.children[0].children[1]           # OOP checks, IP bets 10, OOP to act
+        fold = vs_bet.children[vs_bet.names.index("fold")]
+        self.assertAlmostEqual(fold.rake, 0.5)                # 5% of the 10bb pot, not of 20
+        self.assertAlmostEqual(fold.fold_pay(1), 5 - 0.5)
+        self.assertAlmostEqual(fold.fold_pay(0), -5)
+        call = vs_bet.children[vs_bet.names.index("call")]
+        self.assertAlmostEqual(call.rake, 1.5)                # 5% of 30
+        big = solve(cards("Kh8d5c3s2h"), parse_range("QQ"), parse_range("88, T9o"), pot=50, stack=100,
+                    time_budget=100, max_iters=2, cfg=cfg)
+        vs_big = big.root.children[0].children[1]
+        self.assertAlmostEqual(vs_big.children[vs_big.names.index("fold")].rake, 2.5)
+        self.assertAlmostEqual(vs_big.children[vs_big.names.index("call")].rake, 3.0)   # capped
+
+    def test_raked_polarized_river_game(self):
+        # nuts-or-air vs a bluff-catcher, raked 10% (no cap), pot P = 10, bet b = 10: the bluff wins P less
+        # rake on P when called off, so the catcher calls (P - R_P) / (P - R_P + b) = 9/19 (unraked 1/2); the
+        # catcher wins P + b less rake on P + 2b, so bets are b / (P + 2b - R_c) = 10/27 bluffs (unraked 1/3)
+        board = cards("Kh8d5c3s2h")
+        cfg = Config(bet_sizes={s: [1.0] for s in ("flop", "turn", "river")}, raise_sizes=self.NO_BETS, allin_spr=0,
+                     rake_rate=0.1)
+        sol = solve(board, parse_range("QQ"), parse_range("88, T9o"), pot=10, stack=100, time_budget=5,
+                    max_iters=2000, cfg=cfg)
+        ipn = sol.root.children[0]
+        air = parse_range("T9o")[sol.ctx.active] > 0
+        x = 10 / 27
+        self.assertAlmostEqual(float(ipn.avg_strategy0()[1][air].mean()), 3 * x / (1 - x) / 12, places=2)
+        qq = parse_range("QQ")[sol.ctx.active] > 0
+        self.assertAlmostEqual(float(ipn.children[1].avg_strategy0()[1][qq].mean()), 9 / 19, places=2)
+        # the exploitability counts what each best response gains over its player's raked payoff
+        self.assertLess(sol.exploitability(), 0.1)
+
+    def test_no_blas_path_matches(self):
+        # the browser's einsum path, with leaf rows trimmed to the live combos, gives the same raked utilities
+        import gto.solver as S
+        r0 = parse_range("22+, A2s+, K9s+, QTs+, JTs, ATo+, KJo+")
+        r1 = parse_range("33+, A5s+, KTs+, QJs, AJo+, KQo")
+        cfg = Config(n_turns=2, leaf_turns=2, leaf_rivers_flop=2, n_rivers_from_flop=2, rake_rate=0.05, rake_cap=3.0)
+        sol = solve(cards("Ks7d2c"), r0, r1, pot=10, stack=90, cfg=cfg, max_iters=6, time_budget=100)
+        s = sol.solver
+        a, b = sol.r0[None, :].astype(np.float32), sol.r1[None, :].astype(np.float32)
+        live = (np.flatnonzero(sol.r0 > 0), np.flatnonzero(sol.r1 > 0))
+        # the root and the merged subtrees (tiled equity leaves), each player, current strategies
+        spots = [(s.root, a, b)] + [(m, np.repeat(a, len(m.boards), axis=0), np.repeat(b, len(m.boards), axis=0))
+                                    for m, _ in s._groups]
+        self.assertTrue(any(m.child.children[0].children[0].tile for m, _ in s._groups if hasattr(m, "child")))
+        saved = S.NO_BLAS
+        try:
+            for node, x0, x1 in spots:
+                for p in (0, 1):
+                    S.NO_BLAS, s._live, s._trimmed = False, None, {}
+                    ref = s._cfr(node, p, x0, x1, update=False, use_avg=False)
+                    S.NO_BLAS, s._live = True, live
+                    got = s._cfr(node, p, x0, x1, update=False, use_avg=False, strats=({}, {}))   # a training pass
+                    self.assertLess(np.abs(ref - got)[:, live[p]].max(), 1e-5 * np.abs(ref).max())
+        finally:
+            S.NO_BLAS, s._live, s._trimmed = saved, None, {}
+
+    def test_preflop_fold_has_no_rake(self):
+        # pots that end preflop aren't raked: opens, and the steal's folds, are the chart's with rake on
+        adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        R = self.R
+        for hero, hole, pre in (("BTN", "Kd9c", [R("UTG", "fold"), R("HJ", "fold"), R("CO", "fold")]),
+                                ("SB", "Qc5d", [R("UTG", "fold"), R("HJ", "fold"), R("CO", "fold"), R("BTN", "raise", 2.5)])):
+            st = {"players": 6, "hero": hero, "hole": hole, "board": "", "stack": 100, "preflop": pre}
+            a, b = adv.advise(st), adv.advise(dict(st, rake=0.05, rake_cap=3))
+            self.assertEqual(a["actions"], b["actions"])
+            self.assertEqual(a["grid"], b["grid"])
+        # a zero rate is no rake
+        st = {"players": 6, "hero": "BB", "hole": "Kd9c", "board": "", "stack": 100,
+              "preflop": [R("UTG", "fold"), R("HJ", "fold"), R("CO", "fold"), R("BTN", "raise", 2.5), R("SB", "fold")]}
+        self.assertEqual(adv.advise(st)["grid"], adv.advise(dict(st, rake=0, rake_cap=3))["grid"])
+
+    def test_big_blind_defends_less_with_rake(self):
+        # the big blind's calls are priced by the pot it wins less the rake on the flop pot; its 3bets and
+        # the other charts (fit to raked published solves) stay
+        from gto.advisor import preflop_strategy, preflop_ranges
+        R = self.R
+        pre = [R("UTG", "fold"), R("HJ", "fold"), R("CO", "fold"), R("BTN", "raise", 2.5), R("SB", "fold")]
+        share = {}
+        for rake in (None, (0.05, 3.0)):
+            T = pf.Table(pf.SEATS[6], rake=rake)
+            w = preflop_ranges(pre, T, 100)["BB"]
+            s = preflop_strategy("BB", pre, T, 100)
+            share[rake] = {k: float((w * v).sum() / w.sum()) for k, v in s.items()}
+        off, on = share[None], share[(0.05, 3.0)]
+        self.assertLess(on["call"], off["call"] - 0.02)
+        self.assertGreater(on["call"], off["call"] - 0.10)
+        self.assertAlmostEqual(on["raise"], off["raise"], places=3)
+        # calls by the other charts are unchanged: the button facing the big blind's 3bet
+        line = pre[:4] + [R("SB", "fold"), R("BB", "raise", 11)]
+        a = preflop_strategy("BTN", line, pf.Table(pf.SEATS[6]), 100)
+        b = preflop_strategy("BTN", line, pf.Table(pf.SEATS[6], rake=(0.05, 3.0)), 100)
+        self.assertTrue(np.array_equal(a["call"], b["call"]))
+        # the advisor reads the state's rake (cap in chips, scaled by the big blind) and says why
+        adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        st = {"players": 6, "hero": "BB", "hole": "Kd4c", "board": "", "stack": 200, "bb": 2, "preflop": [
+            dict(a, to=5.0) if a.get("to") else a for a in pre], "rake": 0.05, "rake_cap": 6}
+        self.assertIn("after rake", " ".join(adv.advise(st)["notes"]))
+
+    def test_postflop_advice_with_rake(self):
+        # the advisor's postflop solve is raked: a checked-down river pays the pot less 5%
+        adv = Advisor(Config(depth=1, bet_sizes=self.NO_BETS, raise_sizes=self.NO_BETS, allin_spr=0),
+                      time_budget=0.3, prior_budget=0.2)
+        R = self.R
+        st = {"players": 6, "hero": "BB", "hole": "AhAs", "board": "Kh8d5c3s2h", "stack": 100,
+              "preflop": [R("UTG", "fold"), R("HJ", "fold"), R("CO", "fold"), R("BTN", "raise", 2.5), R("SB", "fold"),
+                          R("BB", "call")], "flop": [R("BB", "check"), R("BTN", "check")],
+              "turn": [R("BB", "check"), R("BTN", "check")]}
+        a = adv.advise(st)
+        b = adv.advise(dict(st, rake=0.05, rake_cap=3))
+        ev = lambda r: next(x["ev_bb"] for x in r["actions"] if x["action"] == "check")
+        # the ranges differ a little (the big blind defends less preflop), the pot the same: 5.5bb less 5%
+        self.assertAlmostEqual(ev(b) / ev(a), 0.95, places=2)
+

@@ -62,6 +62,18 @@ class Config:
     leaf_rivers: Optional[int] = None # rivers for equity leaves when solving from the turn (None = all)
     leaf_rivers_flop: int = 16        # rivers per turn card for equity leaves when solving from the flop
     seed: int = 7
+    # rake: the winner of a postflop pot (showdown or fold) pays rake_rate of the final pot (without an
+    # uncalled bet, which goes back), at most
+    # rake_cap bb (None = no cap). 0 = no rake. Preflop pots aren't raked ("no flop, no drop").
+    rake_rate: float = 0.0
+    rake_cap: Optional[float] = None
+
+    def rake(self, pot: float) -> float:
+        """Rake in bb taken from a final pot of `pot` bb."""
+        if self.rake_rate <= 0:
+            return 0.0
+        r = self.rake_rate * pot
+        return r if self.rake_cap is None else min(r, self.rake_cap)
 
     def copy(self) -> "Config":
         return Config(bet_sizes={k: list(v) for k, v in self.bet_sizes.items()},
@@ -70,11 +82,12 @@ class Config:
                       n_turns=self.n_turns, n_rivers=self.n_rivers, river_sample=self.river_sample,
                       n_rivers_from_flop=self.n_rivers_from_flop,
                       leaf_turns=self.leaf_turns, leaf_rivers=self.leaf_rivers, leaf_rivers_flop=self.leaf_rivers_flop,
-                      seed=self.seed)
+                      seed=self.seed, rake_rate=self.rake_rate, rake_cap=self.rake_cap)
 
     def sizes_key(self) -> tuple:
         return (tuple((k, tuple(v)) for k, v in sorted(self.bet_sizes.items())),
-                tuple((k, tuple(v)) for k, v in sorted(self.raise_sizes.items())), self.depth, self.max_raises)
+                tuple((k, tuple(v)) for k, v in sorted(self.raise_sizes.items())), self.depth, self.max_raises) + \
+            ((("rake", self.rake_rate, self.rake_cap),) if self.rake_rate > 0 else ())
 
 
 def street_of(board_len: int) -> str:
@@ -278,13 +291,21 @@ class Ranking:
 # ----------------------------------------------------------------- tree nodes
 class Terminal:
     """`inv`: each player's chips in, floats, or (B, 1) float32 columns for a merged terminal (one
-    value per batch row). `tile`: set on a merged equity leaf whose rows repeat the same `tile` boards."""
-    __slots__ = ("boards", "kind", "folder", "inv", "M", "tile")
+    value per batch row). `tile`: set on a merged equity leaf whose rows repeat the same `tile` boards.
+    `rake`: what the winner pays out of the pot (a float, or a (B, 1) column when merged); None = no rake."""
+    __slots__ = ("boards", "kind", "folder", "inv", "M", "tile", "rake")
 
-    def __init__(self, boards, kind, inv, folder=None):
+    def __init__(self, boards, kind, inv, folder=None, rake=None):
         self.boards, self.kind, self.inv, self.folder = boards, kind, inv, folder
         self.M = None
         self.tile = None
+        self.rake = rake if rake is None or np.any(rake > 0) else None
+
+    def fold_pay(self, p):
+        """p's chips won (lost when negative) per opponent combo at a fold."""
+        if self.folder == p:
+            return -self.inv[p]
+        return self.inv[1 - p] if self.rake is None else self.inv[1 - p] - self.rake
 
 
 class Chance:
@@ -371,13 +392,19 @@ class TreeBuilder:
         new_pot = pot + bets[0] + bets[1]
         new_stack = stack - max(bets)
         if len(boards[0]) == 5:
-            return Terminal(boards, "showdown", inv)
+            return Terminal(boards, "showdown", inv, rake=self._rake(inv))
         if allin or new_stack <= 1e-9:
-            return Terminal(boards, "leaf", inv)
+            return Terminal(boards, "leaf", inv, rake=self._rake(inv))
         streets_used = len(boards[0]) - self.root_street_len + 1
         if streets_used >= self.cfg.depth:
-            return Terminal(boards, "leaf", inv)
+            # an equity leaf: raked on the pot as it stands (later streets' bets would add some, to the cap)
+            return Terminal(boards, "leaf", inv, rake=self._rake(inv))
         return self._chance(boards, new_pot, new_stack, inv)
+
+    def _rake(self, inv):
+        # an uncalled bet goes back to the bettor before the pot is raked: the pot is twice the smaller stake
+        r = self.cfg.rake(2 * min(inv[0], inv[1]))
+        return r if r > 0 else None
 
     def _next_cards(self, board, k: Optional[int]):
         if len(board) == 3:
@@ -456,7 +483,7 @@ class TreeBuilder:
                 kids.append(self._decision(boards, pot, stack, nb, o, n_raises + 1, ninv, False))
         else:  # facing a bet
             names.append("fold")
-            kids.append(Terminal(boards, "fold", inv, folder=p))
+            kids.append(Terminal(boards, "fold", inv, folder=p, rake=self._rake(inv)))
             call_amt = min(b_op - b_me, remaining)
             nb, ninv = with_bet(b_me + call_amt)
             names.append("call")
@@ -517,7 +544,10 @@ def _merge(nodes, pairs: list):
     # chips in differ between the merged lines (different pots): one float32 per row, which is what a
     # Python float becomes when it multiplies a float32 array, so the results don't change
     inv = tuple(np.concatenate([np.full((len(n.boards), 1), n.inv[q], dtype=np.float32) for n in nodes]) for q in (0, 1))
-    t = Terminal(boards, first.kind, inv, first.folder)
+    rake = None
+    if any(n.rake is not None for n in nodes):
+        rake = np.concatenate([np.full((len(n.boards), 1), n.rake or 0.0, dtype=np.float32) for n in nodes])
+    t = Terminal(boards, first.kind, inv, first.folder, rake)
     if first.kind == "leaf" and all(n.boards == first.boards for n in nodes):
         t.tile = len(first.boards)
     return t
@@ -623,11 +653,27 @@ class Solver:
         """(B, N) utility for p at a terminal, ro: the opponent's reach. `train`: a training pass, where
         combos outside p's range may get 0 (their regrets never matter: their reach is 0)."""
         if node.kind == "fold":
-            return (-node.inv[p] if node.folder == p else node.inv[1 - p]) * self.compat_sum(ro)
+            return node.fold_pay(p) * self.compat_sum(ro)
+        u, f32 = self._showdown(node, p, ro, sel, train)
+        inv = np.float32(node.inv[p]) if f32 else node.inv[p]
+        if node.rake is None:
+            return inv * u
+        # with rake R, p wins the opponent's chips minus R, loses its own, and a tie costs each R/2. With
+        # u = sum over opponent combos of reach * (P(win) - P(lose)) and C their compatible reach, that
+        # is (inv - R/2) * u - R/2 * C, since P(win) + P(tie)/2 = (1 + P(win) - P(lose)) / 2
+        R = node.rake
+        if sel is not None and not np.isscalar(R):
+            R = R[sel]
+        half = R / 2
+        return (inv - half) * u - half * self.compat_sum(ro)
+
+    def _showdown(self, node: Terminal, p, ro, sel=None, train=False):
+        """(sum over opponent combos of reach * (P(win) - P(lose)), whether p's chips in multiply it as
+        float32) at a showdown or equity leaf."""
         if len(node.boards[0]) == 5:
             if node.M is None:
                 node.M = self.ctx.ranking(node.boards)
-            return node.inv[p] * node.M.utility(ro, sel)
+            return node.M.utility(ro, sel), False
         if node.tile is not None:
             # rows repeat the same boards: matmul broadcasts the one (tile, N, N) stack over the repeats
             # (the same matvecs as unmerged, in one call; merged terminals only see full batches, never `sel`)
@@ -639,18 +685,17 @@ class Solver:
                 u[:, :, self._live[p]] = _matvec(self._trim(M, p), np.take(ro, self._live[1 - p], axis=2))
             else:
                 u = _matvec(M, ro)
-            return node.inv[p] * u.reshape(-1, n)
+            return u.reshape(-1, n), False
         M = self._terminal_M(node)
         ro = ro.astype(np.float32)
         if train and self._live is not None:
             T = self._trim(M, p)
             u = np.zeros(ro.shape, dtype=np.float32)
             u[:, self._live[p]] = _matvec(T if sel is None else T[sel], np.take(ro, self._live[1 - p], axis=1))
-            return np.float32(node.inv[p]) * u
+            return u, True
         if sel is not None:
             M = M[sel]
-        u = _matvec(M, ro)
-        return np.float32(node.inv[p]) * u
+        return _matvec(M, ro), True
 
     def _cfr(self, node, p, r0, r1, update, use_avg, sel=None, strats=None, done=None):
         """r0, r1: (B, N) reaches. Returns (B, N) utility for player p.
@@ -696,7 +741,7 @@ class Solver:
                     if child.kind == "fold":
                         if cs is None:
                             cs = self.compat_sum(ro)
-                        utils[:, a, :] = (-child.inv[p] if child.folder == p else child.inv[1 - p]) * cs
+                        utils[:, a, :] = child.fold_pay(p) * cs
                     else:
                         utils[:, a, :] = self._terminal(child, p, ro, sel, strats is not None)
                 else:
@@ -824,6 +869,16 @@ class Solver:
         v0 = float((self._best_response(self.root, 0, a, b)[0] * r0).sum())
         v1 = float((self._best_response(self.root, 1, a, b)[0] * r1).sum())
         pairs = float((self.compat_sum(r1[None, :])[0] * r0).sum())
+        if self.ctx.cfg.rake_rate > 0:
+            # raked, the game isn't zero-sum: each best response gains over what its player gets now,
+            # and the two now sum to minus the rake the average strategies pay (0 without rake)
+            self.sampling = False
+            try:
+                for p in (0, 1):
+                    u = self._cfr(self.root, p, a, b, update=False, use_avg=True)[0]
+                    v0 -= float((u * (r0 if p == 0 else r1)).sum())
+            finally:
+                self.sampling = True
         return (v0 + v1) / 2 / max(pairs, 1e-12) / self.root.pot_now * 100
 
     def node_action_evs(self, node: Decision, r0, r1):

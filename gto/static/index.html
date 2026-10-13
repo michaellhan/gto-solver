@@ -34,6 +34,8 @@
   button.link:hover { text-decoration: underline; background: none; }
   button:disabled { opacity: .35; cursor: default; }
   input[type=number] { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font: inherit; width: 80px; }
+  #rake { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font: inherit; }
+  #rakeCustom input { width: 64px; }
   input:focus { outline: none; border-color: var(--accent); }
   .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .muted { color: var(--muted); }
@@ -263,6 +265,16 @@
           <input type="number" id="ante" value="0" min="0" step="0.05" title="Ante per player, in big blinds"><span class="muted">bb each</span>
           <label class="muted" id="straddleBox" style="margin-left:auto" title="The first seat posts a 2bb straddle and acts last preflop"><input type="checkbox" id="straddle"> straddle</label>
         </div>
+        <div class="row" style="margin-bottom:8px">
+          <span class="muted">Rake</span>
+          <select id="rake" title="Rake taken from pots that see a flop (none when the hand ends preflop)">
+            <option value="off">off</option><option value="5-3">5%, cap 3bb</option><option value="custom">custom</option>
+          </select>
+          <span class="row" id="rakeCustom" hidden>
+            <input type="number" id="rakePct" min="0" max="25" step="0.5" title="Rake, percent of the pot"><span class="muted">%, cap</span>
+            <input type="number" id="rakeCap" min="0" step="0.5" title="Most rake per pot, in big blinds (0 = no cap)"><span class="muted">bb</span>
+          </span>
+        </div>
         <div class="row">
           <span class="muted">You are</span>
           <div class="row seats" id="seats"></div>
@@ -320,6 +332,10 @@ let POS = SEATS[6], ORDER_PRE = POS, ORDER_POST = ["SB", "BB", "UTG", "HJ", "CO"
 // antes (bb per player) and a straddle by the first seat (2bb, acts last preflop)
 const ANTE = () => Math.max(0, +S.ante || 0);
 const STRADDLER = () => S.straddle && S.players >= 3 ? POS[0] : null;
+// rake: percent of the pot (S.rake, 0-25) up to a cap in bb (S.rakeCap, 0 or none = no cap); pots that end preflop aren't raked
+const RAKE = () => { const r = +S.rake; return r > 0 && r <= 25 ? r : 0; };
+const RAKE_CAP = () => RAKE() && +S.rakeCap > 0 ? +S.rakeCap : 0;
+const RAKE_TEXT = () => RAKE() ? `${fmt(RAKE())}% rake${RAKE_CAP() ? ` (cap ${fmt(RAKE_CAP())}bb)` : " (no cap)"}` : "";
 const IS_BLIND = (p) => p === "SB" || p === "BB" || p === STRADDLER();
 function setPositions(n) {
   POS = SEATS[n]; ORDER_PRE = POS;
@@ -435,7 +451,11 @@ function cleanState(st) {
   const ok = (a) => a && seats.includes(a.pos) && ["fold", "check", "call", "bet", "raise", "all-in"].includes(a.action)
     && (a.action !== "bet" && a.action !== "raise" || +a.to > 0);
   const actions = Object.fromEntries(STREETS.map(s => [s, Array.isArray(st.actions[s]) ? st.actions[s].filter(ok) : []]));
-  return { ...st, players: n, hero: seats.includes(st.hero) ? st.hero : fresh(n).hero, stack: +st.stack > 0 ? +st.stack : 100, cards, actions };
+  const out = { ...st, players: n, hero: seats.includes(st.hero) ? st.hero : fresh(n).hero, stack: +st.stack > 0 ? +st.stack : 100, cards, actions };
+  // rake: a percent in (0, 25] and a positive cap (none = no cap), or no rake at all
+  if (!(+st.rake > 0 && +st.rake <= 25)) { delete out.rake; delete out.rakeCap; }
+  else { out.rake = +st.rake; if (+st.rakeCap > 0) out.rakeCap = +st.rakeCap; else delete out.rakeCap; }
+  return out;
 }
 const encodeState = (st) => btoa(unescape(encodeURIComponent(JSON.stringify(st))));
 const decodeState = (b64) => JSON.parse(decodeURIComponent(escape(atob(b64))));
@@ -608,7 +628,7 @@ function renderSetup() {
   document.getElementById("setupFull").hidden = !full;
   document.getElementById("setupDone").hidden = !started;
   const sum = document.getElementById("setupSum"); sum.hidden = full;
-  sum.innerHTML = `<span><b>${S.players}-handed</b> <span class="muted">·</span> you are <b>${SEAT_LABEL(S.hero, S.players)}</b> <span class="muted">·</span> <b>${fmt(S.stack)}bb</b> stacks${ANTE() ? ` <span class="muted">·</span> ${fmt(ANTE())}bb ante` : ""}${STRADDLER() ? ` <span class="muted">·</span> ${SEAT_LABEL(STRADDLER(), S.players)} straddles` : ""}</span>`;
+  sum.innerHTML = `<span><b>${S.players}-handed</b> <span class="muted">·</span> you are <b>${SEAT_LABEL(S.hero, S.players)}</b> <span class="muted">·</span> <b>${fmt(S.stack)}bb</b> stacks${ANTE() ? ` <span class="muted">·</span> ${fmt(ANTE())}bb ante` : ""}${STRADDLER() ? ` <span class="muted">·</span> ${SEAT_LABEL(STRADDLER(), S.players)} straddles` : ""}${RAKE() ? ` <span class="muted">·</span> ${RAKE_TEXT()}` : ""}</span>`;
   const e = document.createElement("button"); e.className = "link"; e.style.marginLeft = "auto"; e.textContent = "Edit"; e.onclick = () => { editSetup = true; renderAll(); };
   sum.appendChild(e);
 
@@ -618,7 +638,7 @@ function renderSetup() {
     b.onclick = () => { S.hero = p; save(); renderAll(); }; el.appendChild(b); }
   const pl = document.getElementById("players"); pl.innerHTML = "";
   for (let n = 2; n <= 9; n++) { const b = document.createElement("button"); b.className = "small"; b.textContent = n; if (n === S.players) b.classList.add("active");
-    b.onclick = () => { if (n === S.players) return; S = { ...fresh(n), stack: S.stack, ante: S.ante, straddle: S.straddle, cards: S.cards }; setPositions(n); selSlot = null; save(); resetAdvice(); renderAll(); }; pl.appendChild(b); }
+    b.onclick = () => { if (n === S.players) return; S = { ...fresh(n), stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, cards: S.cards }; setPositions(n); selSlot = null; save(); resetAdvice(); renderAll(); }; pl.appendChild(b); }
 }
 function renderSlots(sim) {
   const needIdx = sim.waiting ? S.cards.findIndex((c, i) => !c && i >= 2 && i < 2 + NEED[sim.waiting]) : (!S.cards[0] ? 0 : !S.cards[1] ? 1 : -1);
@@ -791,6 +811,7 @@ function payload() {
   const conv = (arr) => arr.map(a => a.action === "bet" ? { pos: a.pos, action: "bet", amount: a.to } : a.action === "raise" ? { pos: a.pos, action: "raise", to: a.to } : { pos: a.pos, action: a.action });
   return { players: S.players, hero: S.hero, hole: (S.cards[0] || "") + (S.cards[1] || ""), board: boardCards().join(""), stack: S.stack,
            ...(ANTE() ? { ante: ANTE() } : {}), ...(STRADDLER() ? { straddle: true } : {}),
+           ...(RAKE() ? { rake: RAKE() / 100, ...(RAKE_CAP() ? { rake_cap: RAKE_CAP() } : {}) } : {}),
            preflop: conv(S.actions.preflop), flop: conv(S.actions.flop), turn: conv(S.actions.turn), river: conv(S.actions.river), budget: BUDGET, prior_budget: PRIOR, speed: SPEED,
            ...(OPP === "pool" ? { opponents: "pool" } : {}) };
 }
@@ -980,7 +1001,7 @@ function resetAdvice() {
 // ---- share: plain-text summary + link that reopens the spot
 function handText() {
   const n = S.players, seat = SEAT_LABEL(S.hero, n);
-  const lines = [`GTO Solver hand: ${n}-handed, ${S.stack}bb effective${ANTE() ? `, ${fmt(ANTE())}bb ante` : ""}${STRADDLER() ? `, ${SEAT_LABEL(STRADDLER(), n)} straddles 2bb` : ""}, I am ${seat} with ${S.cards[0] || "?"}${S.cards[1] || "?"}`];
+  const lines = [`GTO Solver hand: ${n}-handed, ${S.stack}bb effective${ANTE() ? `, ${fmt(ANTE())}bb ante` : ""}${STRADDLER() ? `, ${SEAT_LABEL(STRADDLER(), n)} straddles 2bb` : ""}${RAKE() ? `, ${RAKE_TEXT()}` : ""}, I am ${seat} with ${S.cards[0] || "?"}${S.cards[1] || "?"}`];
   const act = (a) => `${SEAT_LABEL(a.pos, n)} ${a.action === "bet" ? "bets " + fmt(a.to) : a.action === "raise" ? "raises to " + fmt(a.to) : a.action === "all-in" ? "all-in" : a.action + "s"}${a.g ? ` [${gradeMark(a.g)} solver ${(a.g.f * 100).toFixed(0)}%${a.g.l ? `, -${a.g.l.toFixed(2)}bb` : ""}]` : ""}`;
   const bd = (s) => s === "preflop" ? "" : " (" + boardCards().slice(NEED[s] - (s === "flop" ? 3 : 1), NEED[s]).join(" ") + ")";
   const sim = simulate();
@@ -1028,6 +1049,33 @@ document.getElementById("ante").value = ANTE();
 document.getElementById("ante").onchange = (e) => { S.ante = Math.max(0, parseFloat(e.target.value) || 0); save(); resetAdvice(); renderAll(); };
 document.getElementById("straddle").checked = !!S.straddle;
 document.getElementById("straddle").onchange = (e) => { S.straddle = e.target.checked; save(); resetAdvice(); renderAll(); };
+// rake: a preset, or a custom percent and cap
+let rakeCustom = false;
+const RAKE_PRESETS = { "5-3": [5, 3] };
+function syncRake() {
+  const preset = Object.keys(RAKE_PRESETS).find(k => RAKE_PRESETS[k][0] === RAKE() && RAKE_PRESETS[k][1] === RAKE_CAP());
+  const mode = !RAKE() && !rakeCustom ? "off" : preset && !rakeCustom ? preset : "custom";
+  document.getElementById("rake").value = mode;
+  document.getElementById("rakeCustom").hidden = mode !== "custom";
+  document.getElementById("rakePct").value = RAKE() ? fmt(RAKE()) : "";
+  document.getElementById("rakeCap").value = RAKE_CAP() ? fmt(RAKE_CAP()) : "";
+}
+function setRake(pct, cap) {
+  S.rake = pct; S.rakeCap = cap;
+  if (!RAKE()) delete S.rake;
+  if (!RAKE_CAP()) delete S.rakeCap;
+  syncRake(); save(); resetAdvice(); renderAll();
+}
+document.getElementById("rake").onchange = (e) => {
+  const v = e.target.value;
+  rakeCustom = v === "custom";
+  if (v === "off") setRake(0, 0);
+  else if (RAKE_PRESETS[v]) setRake(...RAKE_PRESETS[v]);
+  else setRake(RAKE() || 5, RAKE() ? RAKE_CAP() : 3);   // custom: starts from the current rake, or 5% cap 3bb
+};
+document.getElementById("rakePct").onchange = (e) => setRake(Math.min(25, Math.max(0, parseFloat(e.target.value) || 0)), RAKE_CAP() || +S.rakeCap || 0);
+document.getElementById("rakeCap").onchange = (e) => setRake(RAKE(), Math.max(0, parseFloat(e.target.value) || 0));
+syncRake();
 document.getElementById("setupDone").onclick = () => { editSetup = false; renderAll(); };
 
 // ---- four-colour deck (per browser)
@@ -1060,7 +1108,7 @@ document.addEventListener("keydown", (e) => {
   if (b) { e.preventDefault(); b.click(); }
 });
 document.getElementById("newhand").onclick = () => {
-  S = { ...fresh(S.players), hero: S.hero, stack: S.stack, ante: S.ante, straddle: S.straddle }; selSlot = null; showDeck = false; editSetup = false; pendingRank = null; save(); resetAdvice(); renderAll();
+  S = { ...fresh(S.players), hero: S.hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap }; selSlot = null; showDeck = false; editSetup = false; pendingRank = null; save(); resetAdvice(); renderAll();
 };
 renderAll();
 </script>
