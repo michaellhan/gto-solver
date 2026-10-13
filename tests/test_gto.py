@@ -931,7 +931,7 @@ class TestExploit(unittest.TestCase):
         tl = PoolLock(Ctx(np.array([i for i, (a, b) in enumerate(ALL_COMBOS) if a not in turn and b not in turn]), Config()), 1)
         n3 = len(tl.ctx.active)
         out = tl(Node(2.0, 6.0, turn), np.full((1, 2, n3), 0.5, dtype=np.float32), np.ones((1, n3)))
-        self.assertAlmostEqual(float(out[0, 0].mean()) - 0.5, 0.14, places=2)   # the turn, between flop and river
+        self.assertAlmostEqual(float(out[0, 0].mean()) - 0.5, 0.105, places=2)   # the turn: regulars over-fold a third-pot bet ~10.5 points
         raised = Node(10.0, 10.0); raised.bets = (20.0, 10.0)    # facing a raise of its own bet: no shift
         self.assertAlmostEqual(float(lock(raised, strat, reach)[0, 0].mean()), 0.5, places=5)
 
