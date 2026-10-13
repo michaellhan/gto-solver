@@ -480,11 +480,15 @@ def _post_floor(before: np.ndarray, after: np.ndarray, board, pos: str, street: 
 
 def pool_strategy(strat: Dict[str, np.ndarray], p: str, before: List[dict], ranges: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
     """p's preflop strategy `strat` (after the actions `before`) as a player-pool player would play it:
-    exploit.pool_preflop, with p's equity against the raiser to pick the extra flats facing an open.
-    `ranges`: everyone's range at that point."""
+    exploit.pool_preflop, with p's equity against the last raiser to pick the hands that move (facing an
+    open: its extra 3bets and flats; the opener facing a 3bet: its extra calls). `ranges`: everyone's
+    range at that point."""
     raisers = [h["pos"] for h in before if h["action"] in ("raise", "all-in")]
-    eq = _preflop_equity(ranges[raisers[0]]) if len(raisers) == 1 and raisers[0] in ranges else None
-    return pool_preflop(strat, len(raisers), p, ranges.get(p, np.ones(N_COMBOS)), eq)
+    opener = len(raisers) == 2 and raisers[0] == p
+    eq = None
+    if (len(raisers) == 1 or opener) and raisers[-1] in ranges:
+        eq = _preflop_equity(ranges[raisers[-1]])
+    return pool_preflop(strat, len(raisers), p, ranges.get(p, np.ones(N_COMBOS)), eq, opener)
 
 
 def _range_key(v: np.ndarray) -> str:
@@ -562,8 +566,8 @@ class Advisor:
         if "call" in full:
             full = self._priced(hero, preflop, positions, stack, st, full, notes, pool)
         elif pool:
-            notes.append("exploit mode: opens follow the chart (the pool 3bets less but flats more, "
-                         "so there's no clear edge in opening wider or tighter)")
+            notes.append("exploit mode: opens follow the chart (the pool 3bets more and flats more, and "
+                         "folds less to 3bets, so there's no clear edge in opening wider or tighter)")
         idx = COMBO_INDEX[(min(hole), max(hole))]
         strat = {k: float(v[idx]) for k, v in full.items()}
         remaining = stack - st.inv_start[hero] - st.bets[hero]
