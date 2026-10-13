@@ -1691,6 +1691,65 @@ class TestRake(unittest.TestCase):
             dict(a, to=5.0) if a.get("to") else a for a in pre], "rake": 0.05, "rake_cap": 6}
         self.assertIn("after rake", " ".join(adv.advise(st)["notes"]))
 
+    def test_push_fold_with_rake(self):
+        # a called jam runs out a board, so its pot is raked; an uncalled one ends preflop and isn't
+        from gto.pf_classes import push_fold
+        one = np.ones(1326)
+        base = push_fold(one, one, 10, 0.5, 1.0, 1.5)
+        self.assertTrue(np.array_equal(base, push_fold(one, one, 10, 0.5, 1.0, 1.5, rake=None)))
+        self.assertTrue(np.array_equal(base, push_fold(one, one, 10, 0.5, 1.0, 1.5, rake=(0.0, 3.0))))
+        # the cap holds: the called pot is 20bb, so 10% capped at 1bb is the same rake as 5% uncapped
+        self.assertTrue(np.array_equal(push_fold(one, one, 10, 0.5, 1.0, 1.5, rake=(0.10, 1.0)),
+                                       push_fold(one, one, 10, 0.5, 1.0, 1.5, rake=(0.05, None))))
+        self.assertFalse(np.array_equal(push_fold(one, one, 10, 0.5, 1.0, 1.5, rake=(0.10, 1.0)),
+                                        push_fold(one, one, 10, 0.5, 1.0, 1.5, rake=(0.10, None))))
+        # the big blind facing a 10bb small-blind jam: rake costs the caller (the pot it wins is short the
+        # rake), so the jam range widens on the extra folds and K5s, a marginal call, calls less
+        adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        pre = [self.R(p, "fold") for p in ("UTG", "HJ", "CO", "BTN")] + [self.R("SB", "all-in")]
+        st = {"players": 6, "hero": "BB", "hole": "Kh5h", "board": "", "stack": 10, "preflop": pre}
+        a, b = adv.advise(st), adv.advise(dict(st, rake=0.05, rake_cap=3))
+        z = adv.advise(dict(st, rake=0, rake_cap=3))
+        self.assertEqual((a["actions"], a["grid"], a["notes"]), (z["actions"], z["grid"], z["notes"]))
+        share = lambda r: int(next(n for n in r["notes"] if "jam range" in n).split("(")[1].split("%")[0])
+        call = lambda r: next(x["freq"] for x in r["actions"] if x["action"] == "call")
+        self.assertGreater(share(b), share(a))
+        self.assertLess(call(b), call(a) - 0.1)
+
+    def test_multiway_with_rake(self):
+        # the multiway heuristic pays every pot hero wins less the rake on it (to the cap). The trials are
+        # stopped after a fixed number of passes, so each run plays the same hands and runouts.
+        import time
+        from gto.advisor import replay_hand
+        R = self.R
+        pre = [R("UTG", "fold"), R("HJ", "fold"), R("CO", "raise", 2.5), R("BTN", "call"), R("SB", "fold"), R("BB", "call")]
+        ranges = pf.replay_ranges(pre, pf.SEATS[6])
+
+        def run(cfg, hole, flop):
+            adv = Advisor(cfg, time_budget=0.5, prior_budget=0.3)
+            passes = iter(range(3))
+            adv.should_stop = lambda: next(passes, None) is None   # two passes over the runouts
+            st = replay_hand(pf.SEATS[6], 100.0, {"preflop": pre, "flop": flop}, 2)[1]
+            out = adv._multiway("BB" if not flop else "CO", tuple(cards(hole)), cards("Kh7c2d"), ranges,
+                                ["BB", "CO", "BTN"], st, 100.0, time.time(), [])
+            return {a["action"]: a["ev_bb"] for a in out["actions"]}
+
+        for hole, flop in (("AhKd", []), ("Qs7s", [R("BB", "bet", 3)])):
+            off = run(Config(), hole, flop)
+            self.assertEqual(off, run(Config(rake_rate=0.0, rake_cap=3.0), hole, flop))     # zero rake: identical
+            on, capped = run(Config(rake_rate=0.05), hole, flop), run(Config(rake_rate=0.05, rake_cap=0.25), hole, flop)
+            for k in off:
+                if k == "fold":
+                    self.assertEqual(on[k], 0.0)
+                    continue
+                # raked EVs are lower; the cap limits it to 0.25bb per pot hero wins (EVs are rounded)
+                self.assertLess(on[k], off[k], (hole, k))
+                self.assertLessEqual(on[k], capped[k] + 0.011, (hole, k))
+                self.assertLessEqual(off[k] - capped[k], 0.25 + 0.011, (hole, k))
+                self.assertGreater(off[k] - capped[k], 0.0, (hole, k))
+            if flop:   # calling a bet: the pots the call goes on to win are raked
+                self.assertLess(on["call"], off["call"] - 0.05)
+
     def test_postflop_advice_with_rake(self):
         # the advisor's postflop solve is raked: a checked-down river pays the pot less 5%
         adv = Advisor(Config(depth=1, bet_sizes=self.NO_BETS, raise_sizes=self.NO_BETS, allin_spr=0),

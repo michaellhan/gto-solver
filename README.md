@@ -145,9 +145,13 @@ that ends preflop isn't raked, so opens, steals and folds to them are unchanged.
 
 * Postflop, the solver's terminal payoffs are raked: the winner pays rake = min(rate x pot, cap) out
   of the pot it collects, at showdowns, equity leaves and folds (the pot without an uncalled bet,
-  which goes back to the bettor; a split pot costs each player half). An equity leaf (a street the
-  tree doesn't play out) is raked on the pot as it stands, so where later bets would grow the pot
-  toward the cap the rake is a little low. The exploitability shown counts what each best response
+  which goes back to the bettor; a split pot costs each player half). An equity leaf where the
+  stacks are in is raked on its final pot. One where the tree stops early (a street it doesn't play
+  out) is raked on the pot as it stands: the leaf pays equity times that pot, leaving out the bets
+  later streets would add, so raking the same pot keeps the rake the right share of what it pays
+  (exact without a cap; with one, a bigger final pot would pay a smaller share, so it's a little
+  high there, while in bb it's a little low). Raking a guessed final pot would charge rake on chips
+  the leaf never pays out. The exploitability shown counts what each best response
   gains over its own raked payoff (a raked game isn't zero-sum). With no rake the numbers are
   bit-identical to the unraked solver.
 * Preflop, the charts are fixed. The big blind's calls of an open are re-priced through the
@@ -159,8 +163,16 @@ that ends preflop isn't raked, so opens, steals and folds to them are unchanged.
   2.5bb button open calls 48.4% of hands instead of 53.1% (3bets 11.5% either way, so it defends
   59.9% instead of 64.6%), against a 3bb small-blind open 49.3% instead of 55.6%, against a CO open
   35.9% instead of 39.3%. The replayed ranges going to the flop use the same calls.
-* Not raked: the multiway heuristic (three or more players see the flop) and the push/fold
-  equilibrium behind short-stacked jams.
+* Push/fold: the equilibrium behind short-stacked jams (hero's own shove, and the jam range hero
+  faces) rakes a called jam's pot, since it runs out a board and so sees the flop, as the call of a
+  preflop all-in is priced; a jam that takes the blinds uncalled isn't raked. Rake costs the caller
+  (the pot it wins is short the rake) while the jam's fold equity is untouched, so callers tighten
+  and the jam range widens: 10bb deep, 5% capped at 3bb, the small blind jams 60% of hands instead of
+  58% and the big blind's K5s calls 74% instead of always.
+* Multiway (three or more players see the flop): the Monte Carlo heuristic pays every pot hero wins
+  less its rake (the pot without an uncalled bet; a split costs hero its share), so the EVs it ranks
+  actions by are raked. The opponents' betting rules and hero's own call/lead/raise rules within each
+  trial stay unraked.
 
 ## How it works
 
@@ -330,8 +342,9 @@ the tree traversal to C or Rust or a GPU, which makes full flop trees feasible.
   exports if you have them; the format is a range string.
 * Limps, antes, straddles and stack depth are handled by adjusting the 100bb
   no-ante charts (see Preflop above), not by charts built for those games.
-* Rake (optional) re-prices only the big blind's preflop calls, raking on the flop pot, and equity
-  leaves are raked on the pot as it stands; multiway spots aren't raked (see Rake above).
+* Rake (optional) re-prices only the big blind's preflop calls (and push/fold), raking on the flop
+  pot; equity leaves where the tree stops early are raked on the pot as it stands, and the multiway
+  heuristic rakes its payouts but not the betting rules inside its trials (see Rake above).
 * Exploit mode's pool is fitted to public population data where any was found (flop and river
   folds, preflop frequencies, and one flop spot's raise frequency); the turn folds, folds to big
   flop bets, how much less the pool bluffs after the flop, and how its extra preflop hands split

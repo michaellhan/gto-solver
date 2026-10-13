@@ -669,7 +669,7 @@ class Advisor:
         caller_in = st.bets[last] if last else float(np.mean([st.bets[p] for p in opp]))
         pot = st.pot_start + sum(st.bets.values())
         push = push_fold(arr.get(hero, np.ones(N_COMBOS)), call_rng, jam, st.bets[hero], caller_in, pot,
-                         max(1, len(opp)))
+                         max(1, len(opp)), rake=getattr(positions, "rake", None))
         out = dict(full)
         out["raise"] = push
         if "call" in full:   # what the chart continued with and doesn't shove calls
@@ -857,7 +857,8 @@ class Advisor:
             call_rng = arr.get(caller, np.ones(N_COMBOS)) if caller else np.ones(N_COMBOS)
             caller_in = prev.bets[caller] if caller else float(np.mean([prev.bets[p] for p in opp]))
             pot_before = prev.pot_start + sum(prev.bets.values())
-            push = push_fold(rng, call_rng, jam, prev.bets[jammer], caller_in, pot_before, len(opp))
+            push = push_fold(rng, call_rng, jam, prev.bets[jammer], caller_in, pot_before, len(opp),
+                             rake=getattr(positions, "rake", None))
             share = float((rng * push).sum() / max(rng.sum(), 1e-12))
             rng = rng * push
             notes.append(f"{jammer}'s {jam:g}bb jam range: push/fold equilibrium against {len(opp)} "
@@ -1095,8 +1096,15 @@ class Advisor:
         (RAISE_EQ), call or fold by our equity against their range on the board as it stands (no
         peeking at later cards; on the turn, counting the river bet that may follow). On those later
         streets an opponent's bet still ends the action for the others (only this street's decision
-        models the players behind a bettor, to keep the trials cheap)."""
+        models the players behind a bettor, to keep the trials cheap).
+        With rake, every pot hero wins is short min(rate x pot, cap) (the pot without an uncalled bet; a
+        split pot costs hero its share), as at the solver's terminals; the opponents' rules and hero's
+        call/lead/raise rules within a trial stay unraked."""
         from .evaluator import eval_board
+        cfg = self.cfg
+        def won(pot_):
+            """What the winner collects of a pot of pot_ bb that saw the flop (pot_ itself without rake)."""
+            return pot_ - cfg.rake(pot_)
         rng = random.Random(1)
         opps = [p for p in remaining if p != hero]
         n_opp = len(opps)
@@ -1227,7 +1235,7 @@ class Advisor:
                 if lead:
                     callers = [i for i in alive if cs[i][hands[i]]]
                     if not callers:
-                        return p - put
+                        return won(p) - put
                     p += b * (1 + len(callers)); put += b; left["hero"] -= b
                     for i in callers:
                         left[i] -= b; rs[i] = rs[i] * (sc >= 0) * cs[i]
@@ -1251,7 +1259,8 @@ class Advisor:
                         ok, c = cached(key and ("raise",) + key, raise_fn)
                         if ok:
                             if not c[hands[i]]:
-                                return p + b - put
+                                # raked on their b and our matching b (the rest of our raise comes back)
+                                return p + b - put - cfg.rake(p + 2 * b)
                             p += 2 * rto; put += rto; left["hero"] -= rto; left[i] -= rto
                             alive = [i]; rs[i] = w * c
                             break
@@ -1263,7 +1272,7 @@ class Advisor:
                         p += 2 * b; put += b; left["hero"] -= b; left[i] -= b
                         alive = [i]; rs[i] = w
                         break
-            return _showdown_share(st, idx, [hands[i] for i in alive]) * p - put
+            return _showdown_share(st, idx, [hands[i] for i in alive]) * won(p) - put
 
         sc0, rank0, sts0 = now
         trials = 0
@@ -1485,7 +1494,7 @@ class Advisor:
                     if res is None:
                         callers = [i for i in range(n_opp) if a["conts"][i][hands[i]]]
                         if not callers:
-                            res = pot
+                            res = won(pot)
                         else:
                             final = pot + a["add"] + sum(a["opp_add"][i] for i in callers)
                             res = play_out(run, st, hands, [(i, a["cont_r"][i]) for i in callers], final, a["add"], a["to"])

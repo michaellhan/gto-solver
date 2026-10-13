@@ -53,16 +53,21 @@ def equity_vs(villain: np.ndarray) -> np.ndarray:
 
 
 def push_fold(jam_range: np.ndarray, call_range: np.ndarray, jam: float, jammer_in: float, caller_in: float,
-              pot: float, n_callers: int = 1, iters: int = 400) -> np.ndarray:
+              pot: float, n_callers: int = 1, iters: int = 400, rake=None) -> np.ndarray:
     """Push/fold equilibrium by fictitious play, in hand classes.
 
     The jammer (range jam_range, combos) has jammer_in in the pot of `pot` and shoves to `jam`; each of
     n_callers opponents (range call_range, caller_in already in) calls or folds. Callers are treated
     alike and independently; only one of them is assumed to call. Returns the jammer's push frequency
-    per combo."""
+    per combo. `rake`: (rate, cap in bb or None), or None for no rake. A called jam runs out a board, so
+    it sees the flop and its pot is raked (as Advisor._vs_jam prices a call of an all-in); a jam that
+    takes the pot uncalled ends preflop and isn't ("no flop, no drop")."""
     eq = equity_matrix()
     wj, wc = to_classes(jam_range), to_classes(call_range)
     final = 2 * jam + pot - jammer_in - caller_in
+    if rake and rake[0] > 0:
+        r = rake[0] * final
+        final -= r if rake[1] is None else min(r, rake[1])   # what the winner collects
     push = np.ones(len(CLASSES)); call = np.zeros(len(CLASSES))
     avg_p = np.zeros(len(CLASSES)); avg_c = np.zeros(len(CLASSES))
     for t in range(1, iters + 1):

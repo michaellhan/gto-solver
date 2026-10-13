@@ -397,7 +397,10 @@ class TreeBuilder:
             return Terminal(boards, "leaf", inv, rake=self._rake(inv))
         streets_used = len(boards[0]) - self.root_street_len + 1
         if streets_used >= self.cfg.depth:
-            # an equity leaf: raked on the pot as it stands (later streets' bets would add some, to the cap)
+            # an equity leaf: raked on the pot as it stands. The leaf pays equity x this pot (later bets
+            # aren't modelled, neither the chips they'd add nor their rake), so raking this pot keeps the
+            # rake's share of what the leaf pays right uncapped; with a cap, the bigger final pot's share
+            # would be lower, so it's slightly high there (in absolute bb, slightly low)
             return Terminal(boards, "leaf", inv, rake=self._rake(inv))
         return self._chance(boards, new_pot, new_stack, inv)
 
