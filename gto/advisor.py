@@ -928,9 +928,8 @@ class Advisor:
             evs = sol.solver.node_action_br_evs(node, n_r0, n_r1, PoolLock(sol.ctx, 1 - hero_p))
             strat = np.zeros_like(evs)
             strat[np.argmax(evs, axis=0), np.arange(evs.shape[1])] = 1.0
-            notes.append(f"exploit mode: {villain} plays like a typical player pool (calls small flop and turn bets "
-                         "too often, folds too often to big turn bets and to river bets of any size, raises and bluffs less); EVs assume you "
-                         "keep best-responding on later streets")
+            notes.append(f"exploit mode: {villain} plays like a typical player pool (folds too often to bets of every size, "
+                         "most of all small ones, and raises and bluffs less); EVs assume you keep best-responding on later streets")
         else:
             evs = sol.solver.node_action_evs(node, n_r0, n_r1)
             strat = node.avg_strategy0()
