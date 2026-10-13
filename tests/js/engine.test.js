@@ -121,7 +121,7 @@ test("action buttons: preflop sizes, postflop sizes, raises and pot odds", () =>
   assert.deepEqual(sizes(p).slice(0, 3), ["Bet 2 (⅓ pot)", "Bet 3.5 (⅔ pot)", "Bet 5.5 (pot)"]);
   assert.match(p.byId("actionArea").children[0].innerHTML, /pot 5.5 bb<\/span>/);
   p.act({ action: "bet", to: 4 });
-  assert.deepEqual(sizes(p).slice(0, 2), ["Raise to 10 (2.5x)", "Raise to 17.5 (pot)"]);   // 4 + (9.5 + 4)
+  assert.deepEqual(sizes(p).slice(0, 2), ["Raise to 14 (¾ pot)", "Raise to 17.5 (pot)"]);   // 4 + ¾(9.5 + 4) = 14.125; 4 + (9.5 + 4)
   assert.equal(sub(p.button("Call")), "4 bb");
   assert.match(p.byId("actionArea").children[0].innerHTML, /pot 9.5 bb · 4 to call · .*need 30%/);   // 4 / 13.5
 });
@@ -138,7 +138,40 @@ test("preflop raise sizes over limpers and callers match the advisor", () => {
   assert.equal(first("HJ c", { straddle: true }), "Raise to 8 (iso)");         // 3x the straddle + 2
   assert.equal(first("UTG r2.5, HJ c"), "Raise to 10 (4x)");                   // squeeze: 3x + the caller's 2.5
   assert.equal(first("UTG r2.5, HJ c, CO f, BTN f"), "Raise to 12.5 (5x)");    // from the SB: 4x + 2.5
-  assert.equal(first("UTG r2.5, HJ r7.5, CO f, BTN f, SB f, BB f"), "Raise to 17.5 (2.3x)");   // 4bet: 2.3x (17.25, rounded to 0.5)
+  assert.equal(first("UTG r2.5, HJ r7.5, CO f, BTN f, SB f, BB f"), "Raise to 17.5 (2.33x)");  // 4bet: 2.3x (17.25, rounded to 0.5)
+});
+
+// Bug: the preflop label was worked out from the size before it was rounded to 0.5bb, so a 4bet of
+// 2.3 x 7.5 = 17.25 showed "2.3x" on a button that raised to 17.5 (2.33x).
+test("raise-size labels describe the rounded size the button uses", () => {
+  const sizes = (p) => p.buttons().filter(b => b.className.startsWith("agg")).map(b => [label(b), sub(b)]);
+  for (const pre of ["UTG r2.5, HJ r7.5, CO f, BTN f, SB f, BB f", "UTG r2.5, HJ r8, CO f, BTN f, SB f, BB f", "UTG r3, HJ c"]) {
+    const p = page(state({ cards: ["Ah", "Kh"], preflop: acts(pre) }));
+    const [lab, tag] = sizes(p)[0];
+    const to = parseFloat(lab.replace("Raise to ", "")), cur = p.sim().streets.preflop.curBet;
+    assert.equal(to * 2 % 1, 0, lab);
+    assert.equal(tag, (Math.round(to / cur * 100) / 100) + "x", `${pre}: ${lab} (${tag})`);
+  }
+});
+
+// Bug: facing a postflop bet, the page offered 2.5x the bet while the advisor's default raise (used when a
+// raise is recorded without a size) is the bet plus 75% of the pot after calling it (_default_size).
+test("postflop default bet and raise sizes match the advisor", () => {
+  const sizes = (p) => p.buttons().filter(b => b.className.startsWith("agg")).map(b => `${label(b)} (${sub(b)})`);
+  const pre = acts("UTG f, HJ f, CO r2.5, BTN c, SB f, BB c");   // pot 8
+  // heads-up: BB bets 6 into 8; the advisor raises to 6 + 0.75 * (14 + 6) = 21
+  let p = page(state({ hero: "CO", cards: ["Ah", "Kh", "Kd", "7s", "2c"], preflop: pre, flop: acts("BB b6") }));
+  assert.deepEqual(sizes(p).slice(0, 2), ["Raise to 21 (¾ pot)", "Raise to 26 (pot)"]);
+  // a caller in between: pot 20 after BB's bet and CO's call, BTN raises to 6 + 0.75 * (20 + 6) = 25.5
+  p = page(state({ hero: "BTN", cards: ["Ah", "Kh", "Kd", "7s", "2c"], preflop: pre, flop: acts("BB b6, CO c") }));
+  assert.deepEqual(sizes(p).slice(0, 2), ["Raise to 25.5 (¾ pot)", "Raise to 32 (pot)"]);
+  // facing a raise after our bet: we put in 4, BB raised to 12 (pot 5.5 + 16 = 21.5, 8 to call);
+  // 12 + 0.75 * (21.5 + 8) = 34.125, rounded to 34
+  p = page(state({ hero: "CO", cards: ["Ah", "Kh", "Kd", "7s", "2c"], preflop: acts("UTG f, HJ f, CO r2.5, BTN f, SB f, BB c"), flop: acts("BB x, CO b4, BB r12") }));
+  assert.deepEqual(sizes(p).slice(0, 2), ["Raise to 34 (¾ pot)", "Raise to 41.5 (pot)"]);
+  // unopened: the advisor's default bet is 66% of the pot, the page's ⅔ button
+  p = page(state({ hero: "BB", cards: ["Ah", "Kh", "Kd", "7s", "2c"], preflop: pre }));
+  assert.deepEqual(sizes(p).slice(0, 3), ["Bet 2.5 (⅓ pot)", "Bet 5.5 (⅔ pot)", "Bet 8 (pot)"]);
 });
 
 test("undo removes the last action, across streets", () => {

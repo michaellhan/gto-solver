@@ -747,12 +747,15 @@ function renderAction(sim) {
       mk(`${verb} ${fmt(v)}`, "agg", { action: "bet", to: v }, tag + pct(x), String(++k), x);
     }
   } else if (canRaise) {
+    // sizes are rounded to 0.5bb before a label is worked out from them, so a label describes the size used
+    const half = (x) => Math.round(x * 2) / 2;
     let sizes;
-    if (street === "preflop") { const v = preflopSize(sim, p); sizes = [[v, info.nRaises === 0 ? (v > OPEN_X(p) * info.curBet + 1e-9 ? "iso" : "open") : fmt(v / info.curBet) + "x"]]; }
-    else if (!facing) sizes = [[info.pot / 3, "⅓ pot"], [info.pot * 2 / 3, "⅔ pot"], [info.pot, "pot"]];
-    else sizes = [[info.curBet * 2.5, "2.5x"], [info.curBet + info.pot + toCall, "pot"]];
+    if (street === "preflop") { const v = half(preflopSize(sim, p)); sizes = [[v, info.nRaises === 0 ? (v > OPEN_X(p) * info.curBet + 1e-9 ? "iso" : "open") : fmt(v / info.curBet) + "x"]]; }
+    // as the advisor's _default_size: a bet is 66% of the pot; a raise is the bet plus 75% of the pot after calling it
+    else if (!facing) sizes = [[half(info.pot / 3), "⅓ pot"], [half(info.pot * 0.66), "⅔ pot"], [half(info.pot), "pot"]];
+    else sizes = [[half(info.curBet + 0.75 * (info.pot + toCall)), "¾ pot"], [half(info.curBet + info.pot + toCall), "pot"]];
     let k = 0;
-    for (let [v, l] of sizes) { v = Math.round(v * 2) / 2; if (v < myBet + remaining - 1e-9 && v > info.curBet + 1e-9) mk(`${verb} ${fmt(v)}`, "agg", { action: "bet", to: v }, l, String(++k)); }
+    for (const [v, l] of sizes) if (v < myBet + remaining - 1e-9 && v > info.curBet + 1e-9) mk(`${verb} ${fmt(v)}`, "agg", { action: "bet", to: v }, l, String(++k));
   }
   if (canRaise) {
     const custom = document.createElement("button"); custom.className = "agg"; custom.innerHTML = `${verb} …<kbd>R</kbd>`; custom.dataset.key = "r";
@@ -1026,13 +1029,42 @@ function handText() {
   lines.push("State JSON: " + JSON.stringify(payload()));
   return lines.join("\n");
 }
-document.getElementById("copyhand").onclick = async () => {
+// Copying keeps the click: Safari lets a page write to the clipboard only during the user's gesture, and an
+// await before the write could end it, so the first copy after load (still waiting on the backend) failed.
+// The clipboard call is made synchronously in the click; while the backend (whose budgets the copied state
+// carries) isn't known yet, a ClipboardItem takes the text as a promise. If the clipboard API refuses, a
+// selected hidden textarea and execCommand("copy") is tried, then a prompt to copy by hand.
+function copyByCommand(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.top = "0"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (e) {}
+  ta.remove();
+  return ok;
+}
+function copyText(textOrPromise) {
+  const cb = navigator.clipboard;
+  let write;
+  try {
+    if (typeof textOrPromise === "string") write = cb && cb.writeText ? cb.writeText(textOrPromise) : Promise.reject();
+    else if (cb && cb.write && typeof ClipboardItem !== "undefined")
+      write = cb.write([new ClipboardItem({ "text/plain": textOrPromise.then(t => new Blob([t], { type: "text/plain" })) })]);
+    else write = textOrPromise.then(t => cb && cb.writeText ? cb.writeText(t) : Promise.reject());
+  } catch (e) { write = Promise.reject(e); }
+  return Promise.resolve(write).then(() => true, async () => {
+    const text = await textOrPromise;
+    if (copyByCommand(text)) return true;
+    window.prompt("Copy this:", text);
+    return false;
+  });
+}
+document.getElementById("copyhand").onclick = () => {
   const b = document.getElementById("copyhand");
-  if (!MODE) await modeReady;   // the copied state carries the budgets, which depend on the backend
-  const text = handText();
-  try { await navigator.clipboard.writeText(text); b.textContent = "Copied"; }
-  catch (e) { window.prompt("Copy this:", text); b.textContent = "Copy hand"; return; }
-  setTimeout(() => b.textContent = "Copy hand", 1500);
+  return copyText(MODE ? handText() : modeReady.then(() => handText())).then((ok) => {
+    b.textContent = ok ? "Copied" : "Copy hand";
+    if (ok) setTimeout(() => b.textContent = "Copy hand", 1500);
+  });
 };
 (function loadFromLink() {
   const m = location.hash.match(/#h=([A-Za-z0-9+/=]+)/);

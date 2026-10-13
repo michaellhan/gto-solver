@@ -174,6 +174,45 @@ test("copy hand puts the hand text on the clipboard", async () => {
   await flush();
 });
 
+// Bug: Safari allows clipboard writes only during the click, and the handler awaited the backend check
+// before writing, so the first copy after load fell through to the "Copy this:" prompt.
+test("the first copy after load works where the clipboard needs the user's gesture (Safari)", async () => {
+  // backend not known yet: the write is made in the click with a ClipboardItem holding the text's promise
+  let p = loadPage({ gesture: true, clipboard: "item" });
+  await p.click("copyhand");
+  assert.equal(p.clipboard.via, "write");
+  assert.equal(p.clipboard.text, p.run("handText()"));
+  assert.deepEqual(JSON.parse(p.clipboard.text.match(/^State JSON: (.*)$/m)[1]).budget, 8);   // the wasm budgets
+  assert.deepEqual(p.clipboard.prompts, []);
+  assert.equal(p.byId("copyhand").textContent, "Copied");
+  // backend known: the text is ready and writeText is called in the click
+  p = loadPage({ gesture: true });
+  p.S = state({ cards: ["Ah", "Kh"] });
+  await p.ready();
+  await p.click("copyhand");
+  assert.equal(p.clipboard.via, "writeText");
+  assert.equal(p.clipboard.text, p.run("handText()"));
+  assert.deepEqual(p.clipboard.prompts, []);
+  await flush();
+});
+
+test("copy falls back to execCommand, then a prompt, when the clipboard API refuses", async () => {
+  let p = loadPage({ clipboard: "denied" });
+  await p.ready();
+  await p.click("copyhand");
+  assert.equal(p.clipboard.via, "execCommand");
+  assert.equal(p.clipboard.text, p.run("handText()"));
+  assert.equal(p.byId("copyhand").textContent, "Copied");
+  // nothing works: the text is offered in a prompt to copy by hand
+  p = loadPage({ clipboard: "denied", gesture: true });
+  await p.ready();
+  await p.click("copyhand");
+  assert.equal(p.clipboard.text, null);
+  assert.deepEqual(p.clipboard.prompts, [p.run("handText()")]);
+  assert.equal(p.byId("copyhand").textContent, "Copy hand");
+  await flush();
+});
+
 // Bug: a hand copied before the backend was known carried placeholder budgets (4/2) in its State JSON.
 test("a hand copied right after load carries the real budgets for the backend", async () => {
   for (const [opts, want] of [[{}, [8, 3]], [{ server: true }, [2.5, 1.2]], [{ storage: { "gto-speed": "accurate" } }, [60, 12]]]) {

@@ -47,6 +47,9 @@ class El {
   querySelector() { return null; }
   querySelectorAll(sel) { return sel === "button" ? [...this.walk()].filter(e => e.tagName === "BUTTON") : []; }
   focus() {} blur() {} click() { if (this.onclick) this.onclick({ target: this }); }
+  setAttribute(k, v) { this[k] = String(v); }
+  select() { El.selected = this; }
+  remove() { this.removed = true; }
   get offsetWidth() { return 0; }
   // all descendants (appended elements only; innerHTML is not parsed)
   *walk() { for (const c of this.children) { yield c; yield* c.walk(); } }
@@ -61,7 +64,21 @@ function loadPage(opts = {}) {
   const storage = new Map(Object.entries(opts.storage || {}));
   const posted = [];      // messages the page sent to the solver worker / server
   const workers = [];
-  const clipboard = { text: null };
+  // The clipboard. opts.clipboard: "text" (default: navigator.clipboard.writeText only), "item" (also
+  // write() with ClipboardItem, whose data may be a promise, as Safari and recent Chrome), "denied" (the
+  // clipboard API always refuses). opts.gesture: like Safari, clipboard writes and execCommand("copy") work
+  // only while a user gesture is being handled (page.click() runs a click handler as one, synchronously).
+  const clipboard = { text: null, gesture: false, prompts: [], via: null };
+  const cbMode = opts.clipboard || "text";
+  const allowed = () => cbMode !== "denied" && (!opts.gesture || clipboard.gesture);
+  const fakeClipboard = {
+    writeText: async (t) => { if (!allowed()) throw new Error("NotAllowedError"); clipboard.text = t; clipboard.via = "writeText"; },
+  };
+  class ClipboardItem { constructor(items) { this.items = items; } }
+  if (cbMode === "item") fakeClipboard.write = (items) => {
+    if (!allowed()) return Promise.reject(new Error("NotAllowedError"));
+    return (async () => { clipboard.text = await (await items[0].items["text/plain"]).text(); clipboard.via = "write"; })();
+  };
   const location = { hash: opts.hash || "", origin: "https://www.michael-han.com", pathname: "/gto-solver/", search: "" };
   const replaced = [];
 
@@ -86,11 +103,18 @@ function loadPage(opts = {}) {
       return null;
     },
     addEventListener: (t, f) => { if (t === "keydown") keydown.push(f); },
+    execCommand(cmd) {
+      if (cmd !== "copy" || !El.selected || (opts.gesture && !clipboard.gesture)) return false;
+      clipboard.text = El.selected.value; clipboard.via = "execCommand"; return true;
+    },
   };
+  El.selected = null;
   const ctx = {
     document, location, console,
     history: { replaceState: (_s, _t, url) => { replaced.push(url); location.hash = ""; } },
-    navigator: { clipboard: { writeText: async (t) => { clipboard.text = t; } } },
+    navigator: { clipboard: fakeClipboard },
+    ...(cbMode === "item" ? { ClipboardItem } : {}),
+    Blob,
     localStorage: {
       getItem: (k) => storage.has(k) ? storage.get(k) : null,
       setItem: (k, v) => storage.set(k, String(v)),
@@ -108,7 +132,7 @@ function loadPage(opts = {}) {
     Worker: FakeWorker,
     CSS: { escape: (s) => String(s).replace(/["\\]/g, "\\$&") },
     btoa, atob,
-    prompt: () => null,
+    prompt: (msg, text) => { clipboard.prompts.push(text); return null; },
   };
   ctx.window = ctx;
   vm.createContext(ctx);
@@ -137,6 +161,12 @@ function loadPage(opts = {}) {
     // record an action for whoever is to act (as the page's buttons do); returns the page's error, if any
     act(a) { ctx.__tmp = JSON.stringify(a); return run("(() => { const e = act(JSON.parse(__tmp)); renderAll(); return e; })()"); },
     err: () => byId("err").textContent,
+    // click an element as the user would: its handler runs inside a user gesture, which ends when the
+    // handler returns (anything it awaits runs after the gesture); returns what the handler returned
+    click(id) {
+      clipboard.gesture = true;
+      try { return byId(id).onclick({ target: byId(id) }); } finally { clipboard.gesture = false; }
+    },
   };
   return page;
 }
