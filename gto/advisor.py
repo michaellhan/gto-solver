@@ -779,7 +779,11 @@ def pool_strategy(strat: Dict[str, np.ndarray], p: str, before: List[dict], rang
     open: its extra 3bets and flats; the opener facing a 3bet: its extra calls). `ranges`: everyone's
     range at that point."""
     raisers = [h["pos"] for h in before if h["action"] in ("raise", "all-in")]
-    opener = len(raisers) == 2 and raisers[0] == p
+    # (not an iso-raiser facing the limper's re-raise: that's QQ+/AK, and the pool's extra 3bet defence
+    # had the button calling it with 87 combos, 22-QQ, where the chart calls 22)
+    limped = len(raisers) == 2 and any(h["pos"] == raisers[1] and h["action"] == "call"
+                                       for h in before[:next(i for i, h in enumerate(before) if h["action"] in ("raise", "all-in"))])
+    opener = len(raisers) == 2 and raisers[0] == p and not limped
     first_in = not raisers and not any(h["action"] == "call" for h in before)
     eq = None
     if (len(raisers) == 1 or opener) and raisers[-1] in ranges:

@@ -1270,6 +1270,10 @@ class TestExploit(unittest.TestCase):
         self.assertEqual(r["BB"][idx("AhAd")], 1.0)
         self.assertEqual(r["BB"][idx("Qh2h")], 0.0)
         self.assertLess(r["BB"].sum(), 60)
+        # an iso-raiser facing the limper's re-raise defends as the chart does, not as an opener facing a 3bet
+        lrr = [C("UTG", "fold"), C("HJ", "fold"), C("CO", "call"), C("BTN", "raise", 4), C("SB", "fold"),
+               C("BB", "fold"), C("CO", "raise", 14), C("BTN", "call")]
+        np.testing.assert_allclose(preflop_ranges(lrr, T6, 100, "SB")["BTN"], preflop_ranges(lrr, T6, 100)["BTN"])
         call3 = preflop_ranges([C("UTG", "fold"), C("HJ", "fold"), C("CO", "raise", 2.5), C("BTN", "all-in"),
                                 C("SB", "fold"), C("BB", "fold"), C("CO", "call")], T6, 100)["CO"]
         self.assertEqual(call3[idx("AhAd")], 1.0)
