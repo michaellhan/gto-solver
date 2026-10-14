@@ -55,6 +55,7 @@ NUT_TOP = 0.1       # multiway: the nuts, for the big bet: this top share of the
 ADV0, ADV_SPAN = 0.4, 0.2  # ...the big bet starts at this share of the nuts and takes all the value over this much more
 RAISE_SHARE = 0.2   # multiway: facing a bet, this share of what continues (the strongest) raises
 SLOWPLAY = 0.5      # multiway narrowing: weight a call keeps on the hands RAISE_SHARE has raising (judgment)
+SLOWPLAY_AGAIN = 0.85  # ...and on a later street's call, for a hand that already slowplayed one (judgment)
 LEAD_EQ = 0.5       # multiway, later streets: we lead when our equity beats this vs every calling range
 RAISE_EQ = 0.55     # multiway, later streets: we raise their bet when our equity beats this vs what continues
 RARE_LINE = 0.10    # heads-up: widen the villain's range when the solve takes their line less often than this
@@ -484,11 +485,13 @@ def _preflop_equity_multi(villains: List[np.ndarray]) -> np.ndarray:
     return np.where(den > 0, num / np.maximum(den, 1), np.nan)
 
 
-def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack: float, hero=None, hole=()) -> None:
+def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack: float, hero=None, hole=(),
+                   slow: Optional[Dict[str, np.ndarray]] = None) -> None:
     """Narrow each player's range (in place) by what they did on a street that started multiway,
     with the multiway rules: a check drops most of the hands that would have bet, a bet or raise
     keeps its value + bluff range, a call keeps what continues minus what would have raised.
-    Hands a rule rules out keep some weight (players don't follow our rules), see _soften."""
+    Hands a rule rules out keep some weight (players don't follow our rules), see _soften. `slow`
+    (carried from street to street): per player, the combos a call has already slowplayed."""
     sc, rank, bluff = _street_info(tuple(board))
     dead = [MEMBER_FULL[c] for c in hole]
     bets = {p: 0.0 for p in st.inv_start}
@@ -546,7 +549,14 @@ def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack:
             # overcaller's range after three streets of calls was underpairs (TT-55 on K72-5-9, no Kx left)
             # and KQ overcalled a pot-sized river bet
             k = _keep(to_call, pot, n) if call_k is None else call_k
-            ranges[p] = np.where(_top(r, k * RAISE_SHARE, rank), np.maximum(ranges[p], SLOWPLAY * r), ranges[p])
+            band = _top(r, k * RAISE_SHARE, rank)
+            # a hand that already slowplayed an earlier call mostly keeps on (halved again each street, an
+            # overcaller after three calls was TT-55 with KJs at 0.07)
+            again = slow.get(p, np.zeros(N_COMBOS, dtype=bool)) if slow is not None else np.zeros(N_COMBOS, dtype=bool)
+            w = np.where(again, SLOWPLAY_AGAIN, SLOWPLAY)
+            ranges[p] = np.where(band, np.maximum(ranges[p], w * r), ranges[p])
+            if slow is not None:
+                slow[p] = again | band
 
 
 def _soften(r, keep_m) -> np.ndarray:
@@ -741,7 +751,8 @@ def preflop_ranges(actions: List[dict], positions, stack: float, pool_except: Op
             elif key in strat:
                 # an off-chart or very narrow line: filled out with the hands that take this action, so
                 # the solve doesn't face a face-up hand (pf.thin_line)
-                r, mostly_filler = pf.thin_line(ranges[pos] * strat[key], strat[key], ranges[pos])
+                r, mostly_filler = pf.thin_line(ranges[pos] * strat[key], strat[key], ranges[pos],
+                                                passive=key in ("call", "check"))
                 if mostly_filler:
                     rebuilt.append(pos)
                 ranges[pos] = r
@@ -1266,8 +1277,9 @@ class Advisor:
                          f"{'your' if p == hero else 'their'} range is the hands that take its last action")
         # Streets that started with 3+ players can't be solved; narrow ranges there by rule.
         mw_streets = [st for st in rep[1:] if len(st.players_start) > 2]
+        slow: Dict[str, np.ndarray] = {}
         for st in mw_streets:
-            _narrow_street(ranges, board[:{"flop": 3, "turn": 4, "river": 5}[st.name]], st, stack, hero, hole)
+            _narrow_street(ranges, board[:{"flop": 3, "turn": 4, "river": 5}[st.name]], st, stack, hero, hole, slow)
         if mw_streets:
             notes.append(f"{', '.join(st.name for st in mw_streets)}: multiway, ranges narrowed by "
                          "simple betting rules rather than a solve")

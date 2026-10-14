@@ -649,7 +649,8 @@ _STRAT_CACHE: Dict[tuple, Dict[str, np.ndarray]] = {}
 MIN_LINE_COMBOS = 8.0   # a line leaving fewer combos than this is filled out (see thin_line)
 
 
-def thin_line(r: np.ndarray, scratch: np.ndarray, prior: Optional[np.ndarray] = None) -> Tuple[np.ndarray, bool]:
+def thin_line(r: np.ndarray, scratch: np.ndarray, prior: Optional[np.ndarray] = None,
+              passive: bool = False) -> Tuple[np.ndarray, bool]:
     """A player's range after an action (`r`, their range so far times the action's frequencies), filled
     out with the hands that take the action from scratch (`scratch`, the action's frequencies alone)
     when the line leaves fewer than MIN_LINE_COMBOS: a near-empty range has the postflop solve play
@@ -659,7 +660,8 @@ def thin_line(r: np.ndarray, scratch: np.ndarray, prior: Optional[np.ndarray] = 
     (the action's own chart is that narrow: an opener calling a cold 4bet calls 6.8 combos from
     scratch) and `prior` (the range before the action) is given, the strongest hands of it not yet in
     top the range up to MIN_LINE_COMBOS, by all-in equity against a random hand. Returns the range and
-    whether it is mostly filler."""
+    whether it is mostly filler. `passive` (a call or a limp): the top-up is the hands nearest in strength
+    to the line's own, not the strongest (a CO over-limp was topped up with AA)."""
     tot, add = float(r.sum()), float(scratch.sum())
     if tot >= MIN_LINE_COMBOS:
         return r, False
@@ -670,7 +672,13 @@ def thin_line(r: np.ndarray, scratch: np.ndarray, prior: Optional[np.ndarray] = 
     need = MIN_LINE_COMBOS - float(out.sum())
     if prior is not None and need > 1e-9:
         room = np.clip(prior - out, 0.0, None)
-        order = np.argsort(-_strength())
+        st_ = _strength()
+        if passive:
+            w = out if out.sum() > 1e-9 else scratch
+            mid = float((w * st_).sum() / max(w.sum(), 1e-12))
+            order = np.argsort(np.abs(st_ - mid), kind="stable")
+        else:
+            order = np.argsort(-st_)
         cum = np.cumsum(room[order])
         k = int(np.searchsorted(cum, need))
         add_ = np.zeros_like(out)
@@ -974,7 +982,7 @@ def replay_ranges(actions: List[dict], positions: Optional[List[str]] = None) ->
         else:
             key = "raise" if act == "all-in" else ("call" if act == "check" and "check" not in strat else act)
             if key in strat:
-                ranges[pos] = thin_line(ranges[pos] * strat[key], strat[key], ranges[pos])[0]
+                ranges[pos] = thin_line(ranges[pos] * strat[key], strat[key], ranges[pos], passive=key in ("call", "check"))[0]
             elif act == "call" and not any(h["action"] in ("raise", "all-in") for h in history):
                 ranges[pos] = ranges[pos] * LIMP     # open-limp
             # other off-chart actions leave the range unchanged

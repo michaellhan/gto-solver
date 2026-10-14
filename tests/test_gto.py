@@ -1351,6 +1351,32 @@ class TestExploit(unittest.TestCase):
             self.assertAlmostEqual(a["gto_freq"], gto[k])
         self.assertGreater(acts["call"]["freq"], acts["call"]["gto_freq"])
 
+    def test_slowplay_carries_and_passive_top_up(self):
+        """A hand a call slowplayed keeps SLOWPLAY_AGAIN on the next street's call, not another SLOWPLAY
+        (three calls left an overcaller TT-55, KJs at 0.07); a thin passive line is topped up with hands
+        like its own, not the strongest (an over-limp got AA)."""
+        from gto.advisor import _narrow_street, replay_hand, preflop_ranges, SLOWPLAY, SLOWPLAY_AGAIN
+        from gto.cards import COMBO_INDEX
+        idx = lambda h: COMBO_INDEX[tuple(sorted(cards(h)))]
+        R = lambda p, a, x=None: dict({"pos": p, "action": a}, **({"to": x} if a == "raise" else {"amount": x} if x else {}))
+        T = pf.Table(pf.SEATS[6])
+        pre = [R("UTG", "fold"), R("HJ", "fold"), R("CO", "raise", 2.5), R("BTN", "call"), R("SB", "fold"), R("BB", "call")]
+        streets = {"preflop": pre, "flop": [R("BB", "check"), R("CO", "bet", 2.8), R("BTN", "call"), R("BB", "fold")],
+                   "turn": [R("CO", "bet", 6), R("BTN", "call")]}
+        rep = replay_hand(T, 100, streets, 3)
+        ranges, slow = dict(preflop_ranges(pre, T, 100)), {}
+        _narrow_street(ranges, cards("Kd7c2h"), rep[1], 100, slow=slow)
+        flop = ranges["BTN"].copy()
+        rep[2].players_start = ["CO", "BTN", "BB"]   # (narrowed as if multiway, to reach the rule)
+        _narrow_street(ranges, cards("Kd7c2h5s"), rep[2], 100, slow=slow)
+        j = idx("7h7s")
+        self.assertTrue(slow["BTN"][j])          # (set of sevens: in the raise band, slowplayed on the flop)
+        self.assertGreaterEqual(ranges["BTN"][j], SLOWPLAY_AGAIN * flop[j] - 1e-9)
+        lean = np.zeros(1326); lean[idx("7h6h")] = 1.0
+        out, _ = pf.thin_line(lean, lean, np.ones(1326), passive=True)
+        self.assertEqual(out[idx("AhAd")], 0.0)
+        self.assertGreater(pf.thin_line(lean, lean, np.ones(1326))[0][idx("AhAd")], 0.0)
+
     def test_rare_turn_reraise_keeps_solved_range(self):
         """BTN 3bets AQ, HJ calls; Qs9dKc checks through; on the Td turn HJ bets 1, BTN raises to 12 and HJ
         min-reraises to 23. The solve rarely has HJ raise there: its range stays the solve's (straights,
