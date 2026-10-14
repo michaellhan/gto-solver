@@ -462,6 +462,9 @@ def cold_vs_3bet(hero: str, opener_key: str, threebettor: str, positions) -> Dic
 
 
 COLD_PREMIUM = R("QQ+, AKs, AKo")
+# facing a 4bet without having 3bet it (the opener after a 3bet and a cold 4bet, or a cold 5bet): with two
+# raisers' ranges ahead, premiums only. Half the cold-vs-3bet chart before had AA and KK folding 50%.
+COLD_VS_4BET = {"raise": R("AA, KK, AKs:0.6, QQ:0.4"), "call": R("QQ:0.5, AKs:0.4, AKo:0.6, JJ:0.4")}
 # facing a 5bet: call or fold when it is all-in, and deep enough to have chips behind, jam the top
 VS_5BET = {"call": R("KK+, QQ:0.7, AKs, AKo:0.7, JJ:0.3")}
 VS_5BET_DEEP = {"raise": R("AA, KK:0.6, AKs:0.4"), "call": R("KK:0.4, QQ:0.8, AKs:0.6, AKo:0.6, JJ:0.3")}
@@ -616,8 +619,7 @@ def _actions_at(hero: str, actions: List[dict], positions: Optional[List[str]] =
         if hero == raisers[1]:
             c = HU_BB_VS_4BET if len(positions) == 2 else VS_4BET
             return {"raise": c["jam"], "call": c["call"]}
-        c = cold_vs_3bet(hero, key(raisers[0]), raisers[1], positions)
-        return {"raise": c["4bet"] * 0.5, "call": c["call"] * 0.5}
+        return dict(COLD_VS_4BET)      # facing a 4bet without having 3bet (the opener squeezed by a cold 4bet)
     if [a["action"] for a in actions if a["action"] in ("raise", "all-in")][-1] == "raise":
         return dict(VS_5BET_DEEP)       # a 5bet that leaves chips behind (an all-in goes to the jam logic)
     return {"call": VS_5BET["call"]}

@@ -1377,6 +1377,26 @@ class TestExploit(unittest.TestCase):
         self.assertEqual(out[idx("AhAd")], 0.0)
         self.assertGreater(pf.thin_line(lean, lean, np.ones(1326))[0][idx("AhAd")], 0.0)
 
+    def test_sweep_regressions_2(self):
+        """Second sweep: AA facing a 3bet and a cold 4bet folded half the time (half the cold-vs-3bet chart),
+        now COLD_VS_4BET; behind two checks the button's small-bet value took nearly its whole range (bet
+        93%) until SMALL_VALUE_MAX; a 96%-pot bet marks its maker committed (COMMIT_BET)."""
+        from gto.advisor import _bet_ranges, _street_info, preflop_ranges, _share, _committed, replay_hand
+        R = lambda p, a, x=None: dict({"pos": p, "action": a}, **({"to": x} if a == "raise" else {"amount": x} if x else {}))
+        pre = [R("UTG", "raise", 2.5), R("HJ", "fold"), R("CO", "raise", 8), R("BTN", "raise", 20), R("SB", "fold"), R("BB", "fold")]
+        for hole in ("AhAs", "KhKs"):
+            out = Advisor().advise({"players": 6, "hero": "UTG", "hole": hole, "board": "", "stack": 100, "preflop": pre})
+            self.assertEqual(next(a["freq"] for a in out["actions"] if a["action"] == "fold"), 0.0, out["actions"])
+        T = pf.Table(pf.SEATS[6])
+        srp = [R("UTG", "fold"), R("HJ", "raise", 2.5), R("CO", "fold"), R("BTN", "call"), R("SB", "fold"), R("BB", "call")]
+        rng = preflop_ranges(srp, T, 100)
+        sc, rank, bluff = _street_info(tuple(cards("9s5d2h")))
+        live = lambda r: r * (sc >= 0)
+        bg, sm = _bet_ranges(live(rng["BTN"]), 2, 8.0, 5.3, 2.6, rank, bluff, [live(rng["BB"]), live(rng["HJ"])])
+        self.assertLess(_share(live(rng["BTN"]), bg | sm), 0.8)
+        sts = replay_hand(T, 100, {"preflop": srp, "flop": [R("BB", "bet", 7.7)]}, 2)[1:]
+        self.assertTrue(_committed("BB", sts))
+
     def test_rare_turn_reraise_keeps_solved_range(self):
         """BTN 3bets AQ, HJ calls; Qs9dKc checks through; on the Td turn HJ bets 1, BTN raises to 12 and HJ
         min-reraises to 23. The solve rarely has HJ raise there: its range stays the solve's (straights,

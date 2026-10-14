@@ -51,6 +51,10 @@ SHOWDOWN_Q = 0.6    # ...and has showdown value (bluffs last) when it usually en
 VALUE_SHARE = 0.35  # multiway: a bet's value range is this share of what would call it
 SMALL_SHARE = 0.7   # multiway: the small bet's value range is this share of what one player would call it with,
                     # compounding with more players (1 - 0.3^n of what the field calls); fitted, see _bet_ranges
+SMALL_VALUE_MAX = 0.55  # ...but at most this share of the bettor's range: behind two checks (capped ranges) the
+                        # compounding made nearly all of it value and the button bet 93-100%, so AA checked to
+                        # check-raise it (check +18.8 bb over a bet's +15.3; now 13.5 / 13.4, the button betting 66%);
+                        # the fitted UTG-into-both-blinds mix over 200 flops moves from 42 / 44 / 14 to 45 / 41 / 14
 NUT_TOP = 0.1       # multiway: the nuts, for the big bet: this top share of the players' ranges pooled
 ADV0, ADV_SPAN = 0.4, 0.2  # ...the big bet starts at this share of the nuts and takes all the value over this much more
 RAISE_SHARE = 0.2   # multiway: facing a bet, this share of what continues (the strongest) raises
@@ -75,6 +79,8 @@ PRICE_TOL = 0.02    # ...and a spot within this much of the chart's pot odds, ag
 CUT_FLOOR = 0.05    # ...a worse price holds the chart's continuing hands to the equity of its weakest this share of them
 EV_GAP = 1.0        # heads-up, unsettled solve: recommend the highest EV when it beats the top of the mix by this % of pot
 BR_TIE_MIN = 0.005  # exploit mode: best-response EVs this close (share of pot; more when the solve is unsettled) count as tied
+COMMIT_BET = 0.75   # exploit mode: a postflop bet this big (share of the pot) marks its maker committed: no extra folds
+                    # (a 96%-pot donk on AKQ left 4-high calling for its river bluffs, +1.4 bb)
 BR_TIE_MAX = 0.05   # ...and at most this: a 10-iteration solve 41% of the pot from settled tied every action, so
                     # its unsettled mix folded 55 to a turn check-raise where calling was +6.7 bb
 STREET_OF = {0: "preflop", 3: "flop", 4: "turn", 5: "river"}
@@ -316,7 +322,7 @@ def _bet_ranges(r, n, p, big, small, rank, bluff=None, others=None, drop=False):
     f = _nut_weight(r, others if others else [r] * max(n, 1), rank)
     bg = _aggro(r, v_big * f, big, p, rank, bluff) if f > 0 else empty
     s_share = 1.0 - (1.0 - SMALL_SHARE) ** (len(others) if others else max(n, 1))
-    val = _top(r, _value_share(r, n, small, p, rank, others, joint, s_share), rank) & ~bg
+    val = _top(r, min(_value_share(r, n, small, p, rank, others, joint, s_share), SMALL_VALUE_MAX), rank) & ~bg
     rest = r * ~(bg | val)
     left, tot = float(rest.sum()), float(r.sum())
     bf = _share(r, val) * small / (p + small)
@@ -798,7 +804,7 @@ def _jam_range(actions: List[dict], ji: int, positions, stack: float, pool_excep
 
 
 def _committed(p: str, streets) -> bool:
-    """Whether p raised a bet, or bet at least the pot, on these postflop streets (StreetStates)."""
+    """Whether p raised a bet, or bet COMMIT_BET of the pot or more, on these postflop streets (StreetStates)."""
     for st in streets:
         bets = dict.fromkeys(st.inv_start, 0.0)
         cur = 0.0
@@ -810,7 +816,7 @@ def _committed(p: str, streets) -> bool:
             if act in ("bet", "raise", "all-in"):
                 to = float(amt) if amt is not None and act != "all-in" else float("inf")
                 pot = st.pot_start + sum(bets.values())
-                if q == p and (cur > 1e-9 or to - bets[q] >= pot - 1e-9):
+                if q == p and (cur > 1e-9 or to - bets[q] >= COMMIT_BET * pot - 1e-9):
                     return True
                 if to != float("inf"):
                     cur = max(cur, to); bets[q] = to
@@ -2385,7 +2391,10 @@ class Advisor:
             if rare and rare_lines is not None and p == only and a["action"] != "fold":
                 rare_lines.append(a["pos"])
             # (a raise or big bet the solve never makes keeps nothing: then it's the rules' range, all value)
-            never = (rp * s).sum() < NEVER_LINE * max(rp.sum(), 1e-12)
+            # (or keeps too little to read: a river overbet kept as 0.7 combos of 65s, and AQ-high flipped
+            # between calling and folding run to run)
+            never = ((rp * s).sum() < NEVER_LINE * max(rp.sum(), 1e-12)
+                     or (rp * s).sum() < pf.MIN_LINE_COMBOS)
             if p in rules and rare and board is not None and a["action"] != "fold" and (never or not reraise):
                 if widened is not None and p == only:
                     widened.append(a["pos"])
@@ -2406,7 +2415,7 @@ class Advisor:
                 if reraise:
                     # no bluffs: as many combos as the rule's range, from the top (a 99bb river jam into 2bb kept
                     # 0 combos as solved, and as the rules' about half bluffs a hand playing the board called it)
-                    s = _top(full, _share(full, m), rank)[sol.ctx.active].astype(float)
+                    s = np.maximum(s, _top(full, _share(full, m), rank)[sol.ctx.active])   # with the solve's own
                 else:
                     s = _soften(full, m)[sol.ctx.active]
             elif smoothing > 0 and only is None:
