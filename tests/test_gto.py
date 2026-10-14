@@ -809,7 +809,10 @@ class TestTableSizes(unittest.TestCase):
         self.assertLess(r["actions"][2]["ev_bb"], r["actions"][1]["ev_bb"])
         note = next(n for n in r["notes"] if n.startswith("vs raise"))
         bb, co = (int(note.split(f"{p} continues with ")[1].split("%")[0]) for p in ("BB", "CO"))
-        self.assertLess(bb, co)
+        # (BB's flop call keeps the hands that would have raised at SLOWPLAY, so its river lead is no longer
+        # mostly air: the two continue about equally, 45% and 43%, against 64% each before the joint bar)
+        self.assertLess(max(bb, co), 55)
+        self.assertLess(abs(bb - co), 6)
         # One range: the same as keeping its top share.
         rng = np.random.default_rng(1)
         w, sc = rng.random(1326), rng.random(1326)
@@ -1278,6 +1281,63 @@ class TestExploit(unittest.TestCase):
                                 C("SB", "fold"), C("BB", "fold"), C("CO", "call")], T6, 100)["CO"]
         self.assertEqual(call3[idx("AhAd")], 1.0)
         self.assertEqual(call3[idx("9h8h")], 0.0)
+
+    def test_multiway_narrowing_rules(self):
+        """Street ranking by percentile over every turn card (24 random runouts of raw strength put K5s
+        and K9o above AA on K72); a call of an all-in keeps the hands that would raise (top set was 0.1);
+        a check-raise is read from the street's starting range (the check had cut 88 and 44 to 0.3); a
+        call keeps its raising hands at SLOWPLAY; a villain who raised postflop or bet the pot is
+        'committed' for the pool's over-folds."""
+        from gto.advisor import _street_info, _narrow_street, replay_hand, preflop_ranges, _committed, SLOWPLAY
+        from gto.cards import COMBO_INDEX
+        idx = lambda h: COMBO_INDEX[tuple(sorted(cards(h)))]
+        _, rank, _ = _street_info(tuple(cards("Kd7c2h")))
+        pos = {int(j): i for i, j in enumerate(rank)}
+        self.assertLess(pos[idx("AhAs")], pos[idx("Ks5s")])
+        self.assertLess(pos[idx("AhAs")], pos[idx("Kh9c")])
+        R = lambda p, a, x=None: dict({"pos": p, "action": a}, **({"to": x} if a == "raise" else {"amount": x} if x else {}))
+        T = pf.Table(pf.SEATS[6])
+        pre = [R("UTG", "fold"), R("HJ", "fold"), R("CO", "raise", 2.5), R("BTN", "call"), R("SB", "fold"), R("BB", "call")]
+        def narrowed(board, flop):
+            ranges = dict(preflop_ranges(pre, T, 100))
+            st = replay_hand(T, 100, {"preflop": pre, "flop": flop}, 2)[1]
+            _narrow_street(ranges, cards(board), st, 100)
+            return ranges
+        r = narrowed("Ks9d4c", [R("BB", "all-in"), R("CO", "call")])
+        self.assertGreater(r["CO"][idx("KhKd")], 0.9 * preflop_ranges(pre, T, 100)["CO"][idx("KhKd")])
+        r = narrowed("Kd8c4h", [R("BB", "check"), R("CO", "bet", 2.8), R("BTN", "call"), R("BB", "raise", 13)])
+        before = preflop_ranges(pre, T, 100)["BB"]
+        self.assertGreater(r["BB"][idx("8h8s")], 0.9 * before[idx("8h8s")])
+        r = narrowed("Kd7c2h", [R("BB", "check"), R("CO", "bet", 2.8), R("BTN", "call")])
+        btn = preflop_ranges(pre, T, 100)["BTN"]
+        self.assertGreaterEqual(r["BTN"][idx("7h7s")], SLOWPLAY * btn[idx("7h7s")] - 1e-9)
+        sts = replay_hand(T, 100, {"preflop": pre, "flop": [R("BB", "check"), R("CO", "bet", 2.8), R("BTN", "raise", 10)]}, 2)[1:]
+        self.assertTrue(_committed("BTN", sts))
+        self.assertFalse(_committed("CO", sts))
+        sts = replay_hand(T, 100, {"preflop": pre, "flop": [R("BB", "check"), R("CO", "bet", 9)]}, 2)[1:]
+        self.assertTrue(_committed("CO", sts))
+
+    def test_sweep_regressions(self):
+        """From a sweep of obvious spots: (1) multiway, a raise's folds priced on what each opponent must
+        add: CO's 85bb turn bet folded to a 12.5bb jam as if it cost 97.5, so 98s air jammed for +2.9;
+        (2) heads-up, a river jam the solve never makes is its strongest hands (kept as solved it was 0
+        combos; as the rules' range, half bluffs, and a hand playing the board called 99 into 2)."""
+        R = lambda p, a, x=None: dict({"pos": p, "action": a}, **({"to": x} if a == "raise" else {"amount": x} if x else {}))
+        F = lambda *ps: [R(p, "fold") for p in ps]
+        adv = Advisor(time_budget=1, prior_budget=1)
+        adv.mw_trials = MW_TRIALS
+        srp = F("UTG", "HJ") + [R("CO", "raise", 2.5), R("BTN", "call"), R("SB", "fold"), R("BB", "call")]
+        out = adv.advise({"players": 6, "hero": "BTN", "hole": "8s9s", "board": "Tc2h7hAc", "stack": 100, "preflop": srp,
+                          "flop": [R("BB", "check"), R("CO", "check"), R("BTN", "check")],
+                          "turn": [R("BB", "check"), R("CO", "bet", 85)]})
+        self.assertEqual(out["recommended"], "fold", out["actions"])
+        out = Advisor(time_budget=2, prior_budget=1).advise(
+            {"players": 6, "hero": "BB", "hole": "TdQh", "board": "7sJd4s4h4d", "stack": 100,
+             "preflop": F("UTG", "HJ", "CO", "BTN") + [R("SB", "call"), R("BB", "check")],
+             "flop": [R("SB", "check"), R("BB", "check")], "turn": [R("SB", "check"), R("BB", "check")],
+             "river": [R("SB", "all-in")]})
+        self.assertEqual(out["recommended"], "fold", out["actions"])
+        self.assertGreater(out["villain_range_combos"], 0.5)
 
     def test_rare_turn_reraise_keeps_solved_range(self):
         """BTN 3bets AQ, HJ calls; Qs9dKc checks through; on the Td turn HJ bets 1, BTN raises to 12 and HJ

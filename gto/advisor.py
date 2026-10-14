@@ -54,9 +54,11 @@ SMALL_SHARE = 0.7   # multiway: the small bet's value range is this share of wha
 NUT_TOP = 0.1       # multiway: the nuts, for the big bet: this top share of the players' ranges pooled
 ADV0, ADV_SPAN = 0.4, 0.2  # ...the big bet starts at this share of the nuts and takes all the value over this much more
 RAISE_SHARE = 0.2   # multiway: facing a bet, this share of what continues (the strongest) raises
+SLOWPLAY = 0.5      # multiway narrowing: weight a call keeps on the hands RAISE_SHARE has raising (judgment)
 LEAD_EQ = 0.5       # multiway, later streets: we lead when our equity beats this vs every calling range
 RAISE_EQ = 0.55     # multiway, later streets: we raise their bet when our equity beats this vs what continues
 RARE_LINE = 0.10    # heads-up: widen the villain's range when the solve takes their line less often than this
+NEVER_LINE = 0.005  # heads-up: ...and a raise or pot-sized bet the solve takes less often than this is read as the rules' value only
 UNSETTLED = 3.0     # heads-up: a solve this far from equilibrium (% pot) hasn't settled (the page's "converged" cutoff)
 JAM_BLEND = 0.04    # preflop vs a jam: call frequency ramps from 0 to 1 over this much equity around the pot odds
 PREFLOP_BOARDS = 400  # boards sampled for preflop all-in equity
@@ -72,6 +74,8 @@ PRICE_TOL = 0.02    # ...and a spot within this much of the chart's pot odds, ag
 CUT_FLOOR = 0.05    # ...a worse price holds the chart's continuing hands to the equity of its weakest this share of them
 EV_GAP = 1.0        # heads-up, unsettled solve: recommend the highest EV when it beats the top of the mix by this % of pot
 BR_TIE_MIN = 0.005  # exploit mode: best-response EVs this close (share of pot; more when the solve is unsettled) count as tied
+BR_TIE_MAX = 0.05   # ...and at most this: a 10-iteration solve 41% of the pot from settled tied every action, so
+                    # its unsettled mix folded 55 to a turn check-raise where calling was +6.7 bb
 STREET_OF = {0: "preflop", 3: "flop", 4: "turn", 5: "river"}
 STREETS = ["preflop", "flop", "turn", "river"]
 
@@ -405,10 +409,23 @@ def _street_info(board: tuple):
     avail = [c for c in range(52) if c not in board]
     tot = np.zeros(N_COMBOS); cnt = np.zeros(N_COMBOS)
     sts = []
-    for _ in range(1 if len(board) == 5 else 24):
-        s = eval_board(list(board) + rng.sample(avail, 5 - len(board)))
+    # Every turn card twice from the flop (a random river each), every river from the turn; strength as a
+    # percentile of the live combos on each runout, averaged. 24 random runouts of raw strength ranked
+    # K5s and K9o above AA on K72 (two-pair runouts weigh more in raw strength than an overpair holding).
+    if len(board) == 5:
+        runs = [()]
+    elif len(board) == 4:
+        runs = [(c,) for c in avail]
+    else:
+        runs = [(t, rng.choice([c for c in avail if c != t])) for t in avail for _ in range(2)]
+    for run in runs:
+        s = eval_board(list(board) + list(run))
         ok = s >= 0
-        tot[ok] += s[ok]; cnt[ok] += 1
+        pct = np.zeros(N_COMBOS)
+        srt = np.sort(s[ok])
+        mid = (np.searchsorted(srt, s[ok], "left") + np.searchsorted(srt, s[ok], "right") - 1) / 2.0   # ties share a rank
+        pct[ok] = mid / max(ok.sum() - 1, 1)
+        tot[ok] += pct[ok]; cnt[ok] += 1
         sts.append(s)
     sc = np.where(cnt > 0, tot / np.maximum(cnt, 1), -1.0)
     rank = np.argsort(-sc)
@@ -478,6 +495,9 @@ def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack:
     cur = 0.0
     active = set(st.players_start)
     faced = None    # the last bet or raise: (pot before it, chips its maker added, players facing it)
+    allin = False   # the bet to call is an all-in: nobody can raise it
+    start = {p: ranges[p] for p in ranges}   # the ranges the street began with
+    checked = set()
     for a in st.actions:
         p, act = a["pos"], a["action"]
         if p not in active or p not in ranges:
@@ -485,7 +505,11 @@ def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack:
         if act == "fold":
             active.discard(p)
             continue
-        r = ranges[p] * (sc >= 0)
+        # A check-raise (or a bet after checking) is read from the range the street began with: the check
+        # dropped what would have bet, sets and two pair among it (88, 44 and K8s at 0.3 in a check-raise
+        # on K84 where T8o and A8o were whole).
+        src = start[p] if p in checked and act in ("bet", "raise", "all-in") else ranges[p]
+        r = src * (sc >= 0)
         for d in dead if p != hero else ():   # opponents can't hold our cards
             r = r * (1.0 - d)
         if r.sum() <= 0:
@@ -506,12 +530,23 @@ def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack:
         # overcallers wider than the first caller).
         call_k = _keep(faced[1], faced[0], faced[2]) if faced and to_call > 1e-9 and to <= cur + 1e-9 else None
         others = [ranges[q] * (sc >= 0) for q in active if q != p and q in ranges]
-        keep_m = _rule_mask(r, to, cur, to_call, pot, n, rank, call_k, bluff, others)
+        # calling an all-in (or calling all-in) keeps the hands that would have raised: there's no raise
+        raise_ok = not (allin or to_call >= remaining - 1e-9)
+        keep_m = _rule_mask(r, to, cur, to_call, pot, n, rank, call_k, bluff, others, raise_ok=raise_ok)
         if to > cur + 1e-9:
             faced = (pot, min(to, bets[p] + remaining) - bets[p], max(n, 1))
+            allin = to >= bets[p] + remaining - 1e-9
+        if act == "check":
+            checked.add(p)
         cur = max(cur, to)
         bets[p] = max(bets[p], min(to, bets[p] + remaining))
         ranges[p] = r * _soften(r, keep_m)
+        if act == "call" and to_call > 1e-9 and raise_ok:
+            # the hands the rules have raising instead are slowplayed some of the time: cut whole, an
+            # overcaller's range after three streets of calls was underpairs (TT-55 on K72-5-9, no Kx left)
+            # and KQ overcalled a pot-sized river bet
+            k = _keep(to_call, pot, n) if call_k is None else call_k
+            ranges[p] = np.where(_top(r, k * RAISE_SHARE, rank), np.maximum(ranges[p], SLOWPLAY * r), ranges[p])
 
 
 def _soften(r, keep_m) -> np.ndarray:
@@ -524,7 +559,7 @@ def _soften(r, keep_m) -> np.ndarray:
     return np.where(keep_m, 1.0, soft)
 
 
-def _rule_mask(r, to, cur, to_call, pot, n, rank, call_k=None, bluff=None, others=None) -> np.ndarray:
+def _rule_mask(r, to, cur, to_call, pot, n, rank, call_k=None, bluff=None, others=None, raise_ok=True) -> np.ndarray:
     """The part of range r the multiway rules play this way, with n opponents and `pot` in the
     middle: a bet or raise to `to` over the current bet `cur`, else a call of to_call (or a check).
     call_k: for a call, the share of the range that continues (default: facing to_call into pot).
@@ -542,7 +577,7 @@ def _rule_mask(r, to, cur, to_call, pot, n, rank, call_k=None, bluff=None, other
     if to_call <= 1e-9:                       # check: not what would have bet at either size
         return ~_bet_ranges(r, n, pot, 0.66 * pot, SMALL_BET * pot, rank, bluff, others, drop=True)[2]
     k = _keep(to_call, pot, n) if call_k is None else call_k   # call: continues, but wouldn't raise
-    return _top(r, k, rank) & ~_top(r, k * RAISE_SHARE, rank)
+    return _top(r, k, rank) & ~_top(r, k * RAISE_SHARE if raise_ok else 0.0, rank)
 
 
 def _default_size_post(pot, cur, mine) -> float:
@@ -749,6 +784,28 @@ def _jam_range(actions: List[dict], ji: int, positions, stack: float, pool_excep
             notes.append(f"{jammer}'s line isn't in the chart, so their jam range is the hands that jam "
                          "there from scratch")
     return rng, notes
+
+
+def _committed(p: str, streets) -> bool:
+    """Whether p raised a bet, or bet at least the pot, on these postflop streets (StreetStates)."""
+    for st in streets:
+        bets = dict.fromkeys(st.inv_start, 0.0)
+        cur = 0.0
+        for a in st.actions:
+            q, act = a["pos"], a["action"]
+            if q not in bets:
+                continue
+            amt = a.get("to") if a.get("to") is not None else a.get("amount")
+            if act in ("bet", "raise", "all-in"):
+                to = float(amt) if amt is not None and act != "all-in" else float("inf")
+                pot = st.pot_start + sum(bets.values())
+                if q == p and (cur > 1e-9 or to - bets[q] >= pot - 1e-9):
+                    return True
+                if to != float("inf"):
+                    cur = max(cur, to); bets[q] = to
+            elif act == "call":
+                bets[q] = cur
+    return False
 
 
 class PreflopRanges(dict):
@@ -1221,6 +1278,7 @@ class Advisor:
                 r0 = r0 * (1.0 - MEMBER_FULL[c])
 
         hu_from_start = cur.players_start == remaining
+        committed = _committed(villain, rep[1:])
         widened: List[str] = []
         rare_lines: List[str] = []
         if hu_from_start:
@@ -1234,7 +1292,7 @@ class Advisor:
                 sol = self._solve_cached(sub_board, r0, r1, st.pot_start, eff, self.prior_budget, cfg=cfg)
                 node, c0, c1 = self._walk(sol, st.actions, oop, ip, st.pot_start, eff, notes, st.name, self.prior_smoothing,
                                           board=sub_board, rules=(0, 1),
-                                          lock=PoolLock(sol.ctx, 1 - hero_p) if pool else None)
+                                          lock=PoolLock(sol.ctx, 1 - hero_p, committed) if pool else None)
                 r0 = _post_floor(r0, expand(sol.ctx, c0), board, oop, st.name, notes)
                 r1 = _post_floor(r1, expand(sol.ctx, c1), board, ip, st.name, notes)
             eff = min(stack - cur.inv_start[oop], stack - cur.inv_start[ip])
@@ -1245,7 +1303,7 @@ class Advisor:
             # smooth as on earlier streets, so we aren't advised against a sliver of a range.
             node, n_r0, n_r1 = self._walk(sol, cur.actions, oop, ip, cur.pot_start, eff, notes, cur.name,
                                           self.prior_smoothing, only=1 - hero_p, widened=widened, board=board,
-                                          lock=PoolLock(sol.ctx, 1 - hero_p) if pool else None, rare_lines=rare_lines)
+                                          lock=PoolLock(sol.ctx, 1 - hero_p, committed) if pool else None, rare_lines=rare_lines)
             if rare_lines and isinstance(node, Decision) and node.player == hero_p:
                 # Their line was rare in the solve, so everything below it barely converged: answered from
                 # there, a min-reraise on KQT9 read by the rules had AQ jamming for +31.8 bb. Solve again
@@ -1272,12 +1330,12 @@ class Advisor:
         if pool:
             # the best response to the pool (their equilibrium with its leaks), on later streets too:
             # each hand takes its highest-EV action
-            evs = sol.solver.node_action_br_evs(node, n_r0, n_r1, PoolLock(sol.ctx, 1 - hero_p))
+            evs = sol.solver.node_action_br_evs(node, n_r0, n_r1, PoolLock(sol.ctx, 1 - hero_p, committed))
             # each hand takes its highest-EV action, but actions within the solve's noise of it (its
             # distance from equilibrium, at least BR_TIE_MIN of the pot) are tied, and a tied hand plays the
             # equilibrium mix among them: a short solve otherwise picks one at 100% on noise (AQo checked
             # at 6.45 over bets at 6.40 in a solve 3.1% of the pot from settled)
-            tol = max(BR_TIE_MIN, expl / 100.0) * node.pot_now
+            tol = min(max(BR_TIE_MIN, expl / 100.0), BR_TIE_MAX) * node.pot_now
             tied = evs >= evs.max(axis=0, keepdims=True) - tol
             g = node.avg_strategy0() * tied
             strat = np.where(g.sum(axis=0) > 1e-9, g / np.maximum(g.sum(axis=0), 1e-12), tied / tied.sum(axis=0))
@@ -1797,7 +1855,10 @@ class Advisor:
             can_fold = [i for i in range(n_opp) if opp_add[i] > 1e-9]
             conts = [np.ones(N_COMBOS, dtype=bool) for _ in range(n_opp)]
             if can_fold:
-                fold = _fold_together([hero_add] * n_opp, pot)
+                # each prices what they must add against the pot our bet makes (the same as before for a first
+                # bet): priced on our whole raise, CO's 85bb turn bet folded to a 12.5bb jam and air jammed for +2.9
+                n_f = len(can_fold)
+                fold = float(np.prod([1.0 - _keep(opp_add[i], pot + hero_add - opp_add[i], n_f) for i in can_fold]))
                 for i, m in zip(can_fold, _joint_top([opp_ranges[i] for i in can_fold], fold, rank0)):
                     conts[i] = m
             k_agg = [_share(opp_ranges[i], conts[i]) for i in range(n_opp)]
@@ -2289,15 +2350,23 @@ class Advisor:
             # A raise over a bet that the solve rarely makes is its strongest hands: the rules' raising range
             # (bluffs, and off-rule hands up to OFF_RULE_MAX) read a turn min-reraise on KQT9 as 99, 66 and
             # air where the solve had straights, sets and two pair, and AQ called it. Kept as solved.
-            reraise = a["action"] in ("raise", "all-in") and max(bets) > bets[p] + 1e-9
+            # So is a bet of the pot or more: the rules balance it with bluffs at b / (p + b), about one
+            # per value hand for a jam, and a 99bb river jam into 2bb read as 53s, J4s, 43s was called by
+            # a hand playing the board.
+            amt0 = a.get("to") if a.get("to") is not None else a.get("amount")
+            add0 = (stack - bets[p] if a["action"] == "all-in" else float(amt0) - bets[p] if amt0 is not None else 0.0)
+            reraise = a["action"] in ("raise", "all-in", "bet") and (
+                max(bets) > bets[p] + 1e-9 or add0 >= pot + bets[0] + bets[1] - 1e-9)
             if rare and rare_lines is not None and p == only and a["action"] != "fold":
                 rare_lines.append(a["pos"])
-            if p in rules and rare and board is not None and a["action"] != "fold" and not reraise:
+            # (a raise or big bet the solve never makes keeps nothing: then it's the rules' range, all value)
+            never = (rp * s).sum() < NEVER_LINE * max(rp.sum(), 1e-12)
+            if p in rules and rare and board is not None and a["action"] != "fold" and (never or not reraise):
                 if widened is not None and p == only:
                     widened.append(a["pos"])
                 notes.append(f"{street}: the solve rarely has {a['pos']} {a['action']} here "
                              f"({(rp * s).sum() / max(rp.sum(), 1e-12) * 100:.0f}% of their range), so their range "
-                             "comes from simple betting rules instead")
+                             "comes from simple betting rules instead" + (", its strongest hands" if reraise else ""))
                 sc, rank, bluff = _street_info(tuple(board))
                 cur_bet, pot_total = max(bets), pot + bets[0] + bets[1]
                 act_ = a["action"]
@@ -2309,7 +2378,12 @@ class Advisor:
                 other = expand(sol.ctx, r1 if p == 0 else r0) * (sc >= 0)
                 m = _rule_mask(full, to, cur_bet, max(0.0, cur_bet - bets[p]), pot_total, 1, rank, bluff=bluff,
                                others=[other])
-                s = _soften(full, m)[sol.ctx.active]
+                if reraise:
+                    # no bluffs: as many combos as the rule's range, from the top (a 99bb river jam into 2bb kept
+                    # 0 combos as solved, and as the rules' about half bluffs a hand playing the board called it)
+                    s = _top(full, _share(full, m), rank)[sol.ctx.active].astype(float)
+                else:
+                    s = _soften(full, m)[sol.ctx.active]
             elif smoothing > 0 and only is None:
                 s = (1.0 - smoothing) * s + smoothing / len(node.names)
             if p == 0:
