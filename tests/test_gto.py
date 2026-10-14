@@ -1387,6 +1387,12 @@ class TestExploit(unittest.TestCase):
         for hole in ("AhAs", "KhKs"):
             out = Advisor().advise({"players": 6, "hero": "UTG", "hole": hole, "board": "", "stack": 100, "preflop": pre})
             self.assertEqual(next(a["freq"] for a in out["actions"] if a["action"] == "fold"), 0.0, out["actions"])
+        # at 20bb the same line (to 11) jams the continuing hands: a push/fold equilibrium had KK jamming 25%,
+        # and a call of 9 with 9 behind is committed anyway
+        short = [R("UTG", "raise", 2.2), R("HJ", "fold"), R("CO", "raise", 5), R("BTN", "raise", 11), R("SB", "fold"), R("BB", "fold")]
+        for hole in ("KhKs", "QhQs", "AhKd"):
+            out = Advisor().advise({"players": 6, "hero": "UTG", "hole": hole, "board": "", "stack": 20, "preflop": short})
+            self.assertEqual(out["recommended"], "all-in", out["actions"])
         T = pf.Table(pf.SEATS[6])
         srp = [R("UTG", "fold"), R("HJ", "raise", 2.5), R("CO", "fold"), R("BTN", "call"), R("SB", "fold"), R("BB", "call")]
         rng = preflop_ranges(srp, T, 100)

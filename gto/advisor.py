@@ -998,6 +998,11 @@ class Advisor:
                     full = self._push(hero, preflop, positions, stack, st, size, full, notes, pool)
                 else:
                     notes.append("the raise would commit the stack, so it goes all-in")
+                if "call" in full and st.n_raises >= 2 and remaining - to_call < JAM_SPR * (pot + to_call):
+                    # a call that leaves under JAM_SPR pots behind is committed too: it jams instead, for the
+                    # fold equity (QQ, AK and JJ called 9 of 18bb behind a 3bet and a cold 4bet at 20bb)
+                    full = dict(full, **{"raise": np.minimum(full["raise"] + full["call"], 1.0), "call": np.zeros(N_COMBOS)})
+                    notes.append("a call would commit the stack too, so the hands that continue go all-in")
                 strat = {k: float(v[idx]) for k, v in full.items()}
         acts = []
         for k, v in strat.items():
@@ -1024,7 +1029,12 @@ class Advisor:
     def _push(hero, preflop, positions, stack, st, jam, full, notes, pool=False):
         """A raise that would commit much of the stack is an all-in: hero's range for it is the push/fold
         equilibrium against the players still in (the last raiser's range calls, if there is one); hands
-        the chart continued with that don't shove call."""
+        the chart continued with that don't shove call. Facing a 3bet or more, the chart's raise is a value
+        range already and simply goes all-in: a push/fold equilibrium there (both players left given the
+        4bettor's premiums, and no option to call) settled on KK jamming 25% at 20bb."""
+        if st.n_raises >= 2:
+            notes.append(f"a raise here commits too much of a {jam + st.inv_start[hero]:g}bb stack: the chart's raises go all-in")
+            return full
         arr = preflop_ranges(preflop, positions, stack, hero if pool else None)
         last = next((a["pos"] for a in reversed(preflop) if a["action"] in ("raise", "all-in")), None)
         opp = [p for p in st.order if p in st.active and p != hero and p not in st.allin]
