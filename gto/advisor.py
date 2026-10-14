@@ -63,7 +63,6 @@ SLOWPLAY_AGAIN = 0.85  # ...and on a later street's call, for a hand that alread
 LEAD_EQ = 0.5       # multiway, later streets: we lead when our equity beats this vs every calling range
 RAISE_EQ = 0.55     # multiway, later streets: we raise their bet when our equity beats this vs what continues
 RARE_LINE = 0.10    # heads-up: widen the villain's range when the solve takes their line less often than this
-NEVER_LINE = 0.005  # heads-up: ...and a raise or pot-sized bet the solve takes less often than this is read as the rules' value only
 UNSETTLED = 3.0     # heads-up: a solve this far from equilibrium (% pot) hasn't settled (the page's "converged" cutoff)
 SETTLE_EXPL = 10.0  # heads-up: the street being advised on gets one more time budget when this far (% pot) from settled
 JAM_BLEND = 0.04    # preflop vs a jam: call frequency ramps from 0 to 1 over this much equity around the pot odds
@@ -1342,12 +1341,19 @@ class Advisor:
             eff = min(stack - cur.inv_start[oop], stack - cur.inv_start[ip])
             cfg = self._cfg_with_real_sizes(cur, oop, ip, eff)
             r0, r1 = self._with_hero(r0, r1, hero_p, hole, notes)
-            sol = self._solve_cached(board, r0, r1, cur.pot_start, eff, self.time_budget, cfg=cfg, settle=True)
+            sol = self._solve_cached(board, r0, r1, cur.pot_start, eff, self.time_budget, cfg=cfg)
             # The villain's actions this street are exact unless the solve rarely takes them: then
             # smooth as on earlier streets, so we aren't advised against a sliver of a range.
+            walk = lambda: self._walk(sol, cur.actions, oop, ip, cur.pot_start, eff, list(notes), cur.name,
+                                      self.prior_smoothing, only=1 - hero_p, widened=[], board=board,
+                                      lock=PoolLock(sol.ctx, 1 - hero_p, committed) if pool else None, rare_lines=[])
             node, n_r0, n_r1 = self._walk(sol, cur.actions, oop, ip, cur.pot_start, eff, notes, cur.name,
                                           self.prior_smoothing, only=1 - hero_p, widened=widened, board=board,
                                           lock=PoolLock(sol.ctx, 1 - hero_p, committed) if pool else None, rare_lines=rare_lines)
+            if not rare_lines and self._settle(sol):
+                # (far from settled: one more budget, then walk the line again; when the line is rare the
+                # solve from the node below gets it instead, so a spot doesn't pay for both)
+                node, n_r0, n_r1 = walk()
             if rare_lines and isinstance(node, Decision) and node.player == hero_p:
                 # Their line was rare in the solve, so everything below it barely converged: answered from
                 # there, a min-reraise on KQT9 read by the rules had AQ jamming for +31.8 bb. Solve again
@@ -2310,13 +2316,19 @@ class Advisor:
             self._by_spot[spot] = sol
         elif sol.seconds < budget * 0.8 and sol.iters < 1000:
             sol.extend(budget - sol.seconds, should_stop=self.should_stop)        # keep going from the stored regrets instead of restarting
-        if settle and not getattr(sol, "settled_once", False) and sol.iters < 1000 and sol.exploitability() >= SETTLE_EXPL:
-            # (the street being advised on) far from settled after its budget: one more budget. Limped pots,
-            # turn probes and short-stack check-raises stopped at 10 iterations 27-55% of the pot from
-            # settled, showing confident mixes (an all-in 75% at +15 beside a call at +22)
-            sol.settled_once = True
-            sol.extend(budget, should_stop=self.should_stop)
+        if settle:
+            self._settle(sol, budget)
         return sol
+
+    def _settle(self, sol: Solution, budget: Optional[float] = None) -> bool:
+        """The street being advised on, far from settled after its budget (SETTLE_EXPL): one more budget,
+        once. Limped pots, turn probes and short-stack check-raises stopped at 10 iterations 27-55% of the
+        pot from settled, showing confident mixes (an all-in 75% at +15 beside a call at +22). Whether it ran."""
+        if getattr(sol, "settled_once", False) or sol.iters >= 1000 or sol.exploitability() < SETTLE_EXPL:
+            return False
+        sol.settled_once = True
+        sol.extend(self.time_budget if budget is None else budget, should_stop=self.should_stop)
+        return True
 
     def _cfg_with_real_sizes(self, st: StreetState, oop: str, ip: str, stack: float) -> Config:
         """Tree config for this street where the bet/raise sizes actually taken replace the
@@ -2411,17 +2423,16 @@ class Advisor:
                 max(bets) > bets[p] + 1e-9 or add0 >= pot + bets[0] + bets[1] - 1e-9)
             if rare and rare_lines is not None and p == only and a["action"] != "fold":
                 rare_lines.append(a["pos"])
-            # (a raise or big bet the solve never makes keeps nothing: then it's the rules' range, all value)
-            # (or keeps too little to read: a river overbet kept as 0.7 combos of 65s, and AQ-high flipped
-            # between calling and folding run to run)
-            never = ((rp * s).sum() < NEVER_LINE * max(rp.sum(), 1e-12)
-                     or (rp * s).sum() < pf.MIN_LINE_COMBOS)
-            if p in rules and rare and board is not None and a["action"] != "fold" and (never or not reraise):
+            # (a rare raise or big bet keeps the solve's hands and adds the rules' value: kept alone, a sliver
+            # from a short solve decided the answer, 0.7 combos of 65s for a river overbet, and a flop jam's
+            # range just above a combo threshold had AK calling it at +48 bb one run in four)
+            if p in rules and rare and board is not None and a["action"] != "fold":
                 if widened is not None and p == only:
                     widened.append(a["pos"])
                 notes.append(f"{street}: the solve rarely has {a['pos']} {a['action']} here "
                              f"({(rp * s).sum() / max(rp.sum(), 1e-12) * 100:.0f}% of their range), so their range "
-                             "comes from simple betting rules instead" + (", its strongest hands" if reraise else ""))
+                             + ("comes from simple betting rules instead" if not reraise else
+                                "is the solve's with the rules' value hands added"))
                 sc, rank, bluff = _street_info(tuple(board))
                 cur_bet, pot_total = max(bets), pot + bets[0] + bets[1]
                 act_ = a["action"]

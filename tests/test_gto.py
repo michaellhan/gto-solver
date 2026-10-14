@@ -1408,6 +1408,17 @@ class TestExploit(unittest.TestCase):
         one, two = _aggro(r, 0.1, 20, 10, rank, bluff, 1), _aggro(r, 0.1, 20, 10, rank, bluff, 2)
         self.assertAlmostEqual(_share(r, two) - 0.1, (_share(r, one) - 0.1) / 2, delta=0.01)
 
+    def test_rare_jam_is_stable(self):
+        """A flop jam the solve rarely makes keeps the solve's hands with the rules' value added, every run:
+        kept alone when its combos sat just above a threshold, AK called it at +48 bb one run in four."""
+        R = lambda p, a, x=None: dict({"pos": p, "action": a}, **({"to": x} if a == "raise" else {"amount": x} if x else {}))
+        F = lambda *ps: [R(p, "fold") for p in ps]
+        st = {"players": 6, "hero": "BB", "hole": "AsKd", "board": "Kc7d2s", "stack": 100,
+              "preflop": F("UTG", "HJ", "CO") + [R("BTN", "raise", 2.5)] + F("SB") + [R("BB", "call")],
+              "flop": [R("BB", "check"), R("BTN", "all-in")]}
+        for _ in range(2):
+            self.assertEqual(Advisor(time_budget=1, prior_budget=0.5).advise(st)["recommended"], "fold")
+
     def test_rare_turn_reraise_keeps_solved_range(self):
         """BTN 3bets AQ, HJ calls; Qs9dKc checks through; on the Td turn HJ bets 1, BTN raises to 12 and HJ
         min-reraises to 23. The solve rarely has HJ raise there: its range stays the solve's (straights,
