@@ -935,6 +935,19 @@ class Advisor:
 
     # ------------------------------------------------------------ preflop
     def _preflop(self, hero, hole, preflop, positions, stack, t0, pool=False):
+        res = self._preflop_play(hero, hole, preflop, positions, stack, t0, pool)
+        if pool and "actions" in res:
+            # Against the pool a hand takes its best price, so a chart mix (44 flatting a CO open 30%) plays
+            # 100% one way: show the chart's share beside it, as postflop shows the equilibrium's.
+            g = {a["action"]: a["freq"] for a in self._preflop_play(hero, hole, preflop, positions, stack, t0)["actions"]}
+            for a in res["actions"]:
+                a["gto_freq"] = g.get(a["action"], 0.0)
+            if any(abs(a["freq"] - a["gto_freq"]) > 0.05 for a in res["actions"]):
+                res["notes"].append("exploit mode: against the pool each hand takes its best-paying action, so the "
+                                    "chart's mix (GTO %) plays one way")
+        return res
+
+    def _preflop_play(self, hero, hole, preflop, positions, stack, t0, pool=False):
         st = replay_hand(positions, stack, {"preflop": preflop}, 1)[0]
         if st.closed:
             return {"error": "preflop betting is already closed (deal the flop)"}

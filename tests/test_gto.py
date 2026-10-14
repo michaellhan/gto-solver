@@ -1339,6 +1339,18 @@ class TestExploit(unittest.TestCase):
         self.assertEqual(out["recommended"], "fold", out["actions"])
         self.assertGreater(out["villain_range_combos"], 0.5)
 
+    def test_pool_preflop_shows_chart_share(self):
+        """Exploit mode preflop plays a chart mix one way (55 flats a CO open 100%, the chart 40%): each
+        action carries the chart's share as gto_freq, as postflop shows the equilibrium's."""
+        R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
+        st = {"players": 6, "hero": "BTN", "hole": "5h5d", "board": "", "stack": 100, "opponents": "pool",
+              "preflop": [R("UTG", "fold"), R("HJ", "fold"), R("CO", "raise", 2.5)]}
+        acts = {a["action"]: a for a in Advisor().advise(st)["actions"]}
+        gto = {a["action"]: a["freq"] for a in Advisor().advise(dict(st, opponents="gto"))["actions"]}
+        for k, a in acts.items():
+            self.assertAlmostEqual(a["gto_freq"], gto[k])
+        self.assertGreater(acts["call"]["freq"], acts["call"]["gto_freq"])
+
     def test_rare_turn_reraise_keeps_solved_range(self):
         """BTN 3bets AQ, HJ calls; Qs9dKc checks through; on the Td turn HJ bets 1, BTN raises to 12 and HJ
         min-reraises to 23. The solve rarely has HJ raise there: its range stays the solve's (straights,
@@ -1524,7 +1536,8 @@ class TestExploit(unittest.TestCase):
         fold = lambda r: next(a["freq"] for a in r["actions"] if a["action"] == "fold")
         self.assertLess(fold(adv.advise(dict(st, opponents="pool"))), 0.01)
         opens = dict(st, hero="CO", hole="As9h", preflop=F("UTG", "HJ"))
-        self.assertEqual(adv.advise(dict(opens, opponents="pool"))["actions"], adv.advise(opens)["actions"])
+        strip = lambda acts: [{k: v for k, v in a.items() if k != "gto_freq"} for a in acts]   # (pool shows the chart's share too)
+        self.assertEqual(strip(adv.advise(dict(opens, opponents="pool"))["actions"]), adv.advise(opens)["actions"])
 
     def test_multiway_narrowing_leaves_cached_ranges_alone(self):
         """Multiway narrowing used to write into the cached preflop ranges, so the same request twice gave
