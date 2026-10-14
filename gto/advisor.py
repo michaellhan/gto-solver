@@ -65,6 +65,7 @@ RAISE_EQ = 0.55     # multiway, later streets: we raise their bet when our equit
 RARE_LINE = 0.10    # heads-up: widen the villain's range when the solve takes their line less often than this
 NEVER_LINE = 0.005  # heads-up: ...and a raise or pot-sized bet the solve takes less often than this is read as the rules' value only
 UNSETTLED = 3.0     # heads-up: a solve this far from equilibrium (% pot) hasn't settled (the page's "converged" cutoff)
+SETTLE_EXPL = 10.0  # heads-up: the street being advised on gets one more time budget when this far (% pot) from settled
 JAM_BLEND = 0.04    # preflop vs a jam: call frequency ramps from 0 to 1 over this much equity around the pot odds
 PREFLOP_BOARDS = 400  # boards sampled for preflop all-in equity
 PRICE_BLEND = 0.02  # preflop, off-chart price: continue frequency ramps over this much (scaled) equity around the pot odds
@@ -1341,7 +1342,7 @@ class Advisor:
             eff = min(stack - cur.inv_start[oop], stack - cur.inv_start[ip])
             cfg = self._cfg_with_real_sizes(cur, oop, ip, eff)
             r0, r1 = self._with_hero(r0, r1, hero_p, hole, notes)
-            sol = self._solve_cached(board, r0, r1, cur.pot_start, eff, self.time_budget, cfg=cfg)
+            sol = self._solve_cached(board, r0, r1, cur.pot_start, eff, self.time_budget, cfg=cfg, settle=True)
             # The villain's actions this street are exact unless the solve rarely takes them: then
             # smooth as on earlier streets, so we aren't advised against a sliver of a range.
             node, n_r0, n_r1 = self._walk(sol, cur.actions, oop, ip, cur.pot_start, eff, notes, cur.name,
@@ -1353,7 +1354,7 @@ class Advisor:
                 # from here, against the range they showed.
                 sol = self._solve_cached(board, expand(sol.ctx, n_r0), expand(sol.ctx, n_r1), cur.pot_start, eff,
                                          self.time_budget, bets=(cur.bets[oop], cur.bets[ip]), to_act=hero_p,
-                                         n_raises=cur.n_raises)
+                                         n_raises=cur.n_raises, settle=True)
                 node, n_r0, n_r1 = sol.root, sol.r0.copy(), sol.r1.copy()
                 notes.append(f"{cur.name}: {', '.join(rare_lines)}'s line is rare in the solve, so solved again from here"
                              + (" against their rule-based range" if widened else ""))
@@ -1362,7 +1363,8 @@ class Advisor:
             eff = min(stack - cur.inv_start[oop], stack - cur.inv_start[ip])
             r0, r1 = self._with_hero(r0, r1, hero_p, hole, notes)
             sol = self._solve_cached(board, r0, r1, cur.pot_start, eff, self.time_budget,
-                                     bets=(cur.bets[oop], cur.bets[ip]), to_act=hero_p, n_raises=cur.n_raises)
+                                     bets=(cur.bets[oop], cur.bets[ip]), to_act=hero_p, n_raises=cur.n_raises,
+                                     settle=True)
             node, n_r0, n_r1 = sol.root, sol.r0.copy(), sol.r1.copy()
             notes.append(f"{cur.name}: pot became heads-up this street; solved from here")
         if not isinstance(node, Decision):
@@ -2288,7 +2290,8 @@ class Advisor:
         notes.append("your hand isn't in your range for this line, so it was solved as a near-zero-weight combo")
         return (r, r1) if hero_p == 0 else (r0, r)
 
-    def _solve_cached(self, board, r0, r1, pot, stack, budget, bets=(0.0, 0.0), to_act=0, n_raises=0, cfg=None):
+    def _solve_cached(self, board, r0, r1, pot, stack, budget, bets=(0.0, 0.0), to_act=0, n_raises=0, cfg=None,
+                      settle=False):
         cfg = cfg or self.cfg
         spot = (tuple(board), round(pot, 2), round(stack, 2), tuple(round(b, 2) for b in bets), to_act, n_raises,
                 cfg.sizes_key())
@@ -2307,6 +2310,12 @@ class Advisor:
             self._by_spot[spot] = sol
         elif sol.seconds < budget * 0.8 and sol.iters < 1000:
             sol.extend(budget - sol.seconds, should_stop=self.should_stop)        # keep going from the stored regrets instead of restarting
+        if settle and not getattr(sol, "settled_once", False) and sol.iters < 1000 and sol.exploitability() >= SETTLE_EXPL:
+            # (the street being advised on) far from settled after its budget: one more budget. Limped pots,
+            # turn probes and short-stack check-raises stopped at 10 iterations 27-55% of the pot from
+            # settled, showing confident mixes (an all-in 75% at +15 beside a call at +22)
+            sol.settled_once = True
+            sol.extend(budget, should_stop=self.should_stop)
         return sol
 
     def _cfg_with_real_sizes(self, st: StreetState, oop: str, ip: str, stack: float) -> Config:
