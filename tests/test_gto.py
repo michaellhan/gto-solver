@@ -1246,6 +1246,21 @@ class TestExploit(unittest.TestCase):
         raised = Node(10.0, 10.0); raised.bets = (20.0, 10.0)    # facing a raise of its own bet: no shift
         self.assertAlmostEqual(float(lock(raised, strat, reach)[0, 0].mean()), 0.5, places=5)
 
+    def test_rare_turn_reraise_keeps_solved_range(self):
+        """BTN 3bets AQ, HJ calls; Qs9dKc checks through; on the Td turn HJ bets 1, BTN raises to 12 and HJ
+        min-reraises to 23. The solve rarely has HJ raise there: its range stays the solve's (straights,
+        sets), not the rules' (99, 66 and air), and the spot is solved again from there, so AQ folds. Read
+        by the rules off the barely-converged tree it jammed for +31.8 bb on some runs and folded on others."""
+        R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
+        pre = [R("UTG", "fold"), R("HJ", "raise", 2), R("CO", "fold"), R("BTN", "raise", 6), R("SB", "fold"),
+               R("BB", "fold"), R("HJ", "call")]
+        st = {"players": 6, "hero": "BTN", "hole": "QhAd", "board": "Qs9dKcTd", "stack": 100, "preflop": pre,
+              "flop": [R("HJ", "check"), R("BTN", "check")],
+              "turn": [R("HJ", "bet", 1), R("BTN", "raise", 12), R("HJ", "raise", 23)]}
+        out = Advisor(time_budget=3, prior_budget=2).advise(st)
+        self.assertEqual(out["recommended"], "fold", out["actions"])
+        self.assertTrue(all(a["ev_bb"] < 0.5 for a in out["actions"] if a["action"] != "fold"), out["actions"])
+
     def test_pool_limper_overbet_and_call_folds_bottom_pair(self):
         """Exploit mode, CO limps, SB completes, and on Q43 CO bets 23.5 into 3bb and SB calls: the big
         blind's K3o folds. The pool's limps alone (K7o, K8o, Q9o, K5s, Q8s) made CO's bet Q8/Q9 or

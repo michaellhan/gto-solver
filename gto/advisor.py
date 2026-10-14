@@ -1181,6 +1181,7 @@ class Advisor:
 
         hu_from_start = cur.players_start == remaining
         widened: List[str] = []
+        rare_lines: List[str] = []
         if hu_from_start:
             # narrow through earlier streets that were also heads-up between these two
             for st in rep[1:-1]:
@@ -1203,7 +1204,17 @@ class Advisor:
             # smooth as on earlier streets, so we aren't advised against a sliver of a range.
             node, n_r0, n_r1 = self._walk(sol, cur.actions, oop, ip, cur.pot_start, eff, notes, cur.name,
                                           self.prior_smoothing, only=1 - hero_p, widened=widened, board=board,
-                                          lock=PoolLock(sol.ctx, 1 - hero_p) if pool else None)
+                                          lock=PoolLock(sol.ctx, 1 - hero_p) if pool else None, rare_lines=rare_lines)
+            if rare_lines and isinstance(node, Decision) and node.player == hero_p:
+                # Their line was rare in the solve, so everything below it barely converged: answered from
+                # there, a min-reraise on KQT9 read by the rules had AQ jamming for +31.8 bb. Solve again
+                # from here, against the range they showed.
+                sol = self._solve_cached(board, expand(sol.ctx, n_r0), expand(sol.ctx, n_r1), cur.pot_start, eff,
+                                         self.time_budget, bets=(cur.bets[oop], cur.bets[ip]), to_act=hero_p,
+                                         n_raises=cur.n_raises)
+                node, n_r0, n_r1 = sol.root, sol.r0.copy(), sol.r1.copy()
+                notes.append(f"{cur.name}: {', '.join(rare_lines)}'s line is rare in the solve, so solved again from here"
+                             + (" against their rule-based range" if widened else ""))
         else:
             # pot became heads-up during this street: solve from the current node
             eff = min(stack - cur.inv_start[oop], stack - cur.inv_start[ip])
@@ -1249,9 +1260,9 @@ class Advisor:
             notes.append("hero's hand was not solved; frequencies are uniform")
         best = max(acts_out, key=lambda a: a["freq"])["action"]
         sampled = self._sample(acts_out)
-        if widened and ci is not None and not pool:
-            # The solve's mix assumes the villain almost never plays this way; against the range they
-            # actually showed, go with the EVs.
+        if widened and ci is not None and not pool and node is not sol.root:
+            # (only when the spot wasn't solved again: our decision came before the rare line) The solve's
+            # mix assumes the villain almost never plays this way; against the range they showed, go with the EVs.
             ev_best = max(acts_out, key=lambda a: a["ev_bb"])["action"]
             if ev_best != best:
                 notes.append(f"recommending {ev_best}, the highest EV against {', '.join(widened)}'s rule-based range; "
@@ -2201,12 +2212,14 @@ class Advisor:
         return cfg
 
     def _walk(self, sol: Solution, acts: List[dict], oop, ip, pot, stack, notes, street, smoothing=0.0, only=None,
-              widened=None, board=None, rules=None, lock=None):
+              widened=None, board=None, rules=None, lock=None, rare_lines=None):
         """Follow real actions through the solved tree, narrowing ranges. Smoothing mixes each
         strategy with uniform so a line the solve rarely takes doesn't shrink a range to nothing.
         With `only` (0 = OOP, 1 = IP) and `board`, that player's actions are exact unless the solve
         takes one with less than RARE_LINE of their range: then their range for it comes from the
-        multiway betting rules instead (see _rule_mask), and their seat is appended to `widened`.
+        multiway betting rules instead (see _rule_mask), and their seat is appended to `widened`; a raise
+        over a bet keeps the solve's range (its strongest hands). Every such rare line of `only`'s is
+        appended to `rare_lines`.
         `rules` (players, with `board`) gives the same fallback on an earlier street, where the other
         actions stay smoothed: a short prior solve can be far from equilibrium, and a line it rarely
         takes (a turn call it folds two pair to) would leave the range a sliver.
@@ -2232,7 +2245,13 @@ class Advisor:
             else:
                 s = node.avg_strategy0()[k]
             rare = (rp * s).sum() < RARE_LINE * max(rp.sum(), 1e-12)
-            if p in rules and rare and board is not None and a["action"] != "fold":
+            # A raise over a bet that the solve rarely makes is its strongest hands: the rules' raising range
+            # (bluffs, and off-rule hands up to OFF_RULE_MAX) read a turn min-reraise on KQT9 as 99, 66 and
+            # air where the solve had straights, sets and two pair, and AQ called it. Kept as solved.
+            reraise = a["action"] in ("raise", "all-in") and max(bets) > bets[p] + 1e-9
+            if rare and rare_lines is not None and p == only and a["action"] != "fold":
+                rare_lines.append(a["pos"])
+            if p in rules and rare and board is not None and a["action"] != "fold" and not reraise:
                 if widened is not None and p == only:
                     widened.append(a["pos"])
                 notes.append(f"{street}: the solve rarely has {a['pos']} {a['action']} here "
