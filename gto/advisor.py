@@ -665,14 +665,44 @@ def preflop_ranges(actions: List[dict], positions, stack: float, pool_except: Op
             if pool_except is not None and pos != pool_except:
                 strat = pool_strategy(strat, pos, actions[:i], ranges)
             key = "raise" if act == "all-in" else ("call" if act == "check" and "check" not in strat else act)
-            if limp and pos != "SB":
+            jam = next((h for h in reversed(actions[:i]) if h["action"] in ("raise", "all-in")), None)
+            if limp:
                 # An open-limp off the chart reads as the limp range, the pool's too: its own open-limps are the
-                # band of hands just below its opens (CO: K7o, K8o, Q9o, K5s, Q8s, 28 combos), which sets the
-                # pool's limp rate but as a range is face-up, with no pairs or suited connectors (a CO limp that
-                # overbet 8x a Q43 flop was Q8/Q9 or K-high, so bottom pair overcalled it). Real limpers are
-                # mostly recreational players limping a wide range. The small blind's limps stay its own (its
-                # weakest opens and extra hands, 9% of hands).
+                # band of hands just below its opens (CO: K7o, K8o, Q9o, K5s, Q8s, 28 combos; the small blind
+                # 6-max no aces or broadways, heads-up T3o and T4o), which sets the pool's limp rate but as a
+                # range is face-up (a CO limp that overbet 8x a Q43 flop was Q8/Q9 or K-high, so bottom pair
+                # overcalled it). Real limpers are mostly recreational players limping a wide range.
                 ranges[pos] = ranges[pos] * pf.LIMP
+            elif act == "call" and jam is None and "call" in strat and pos != "BB":
+                # An over-limp (or the small blind completing): at least the limp range less what would
+                # raise. The chart's over-limps are what its iso-raises leave (BTN behind one limper 64s and
+                # A2o-A4o, 15 combos), a face-up range where an over-limper is mostly a recreational player.
+                base = preflop_strategy(pos, actions[:i], positions, stack)
+                ranges[pos] = ranges[pos] * np.maximum(strat["call"], pf.LIMP * (1.0 - base.get("raise", 0.0)))
+            elif act == "call" and jam is not None and jam["action"] == "all-in" and jam["pos"] != pos:
+                # Calling an all-in: by equity against the jam (and anyone who called it first) versus the
+                # price, as our own call is (_vs_jam). The charts' calls there are flats (the big blind
+                # called a 100bb open-jam with Q2s and 43s) and lose the hands the chart raises (calling a
+                # 3bet jam without QQ+ or AK).
+                ji = max(j for j in range(i) if actions[j] is jam)
+                jr, _ = _jam_range(actions, ji, positions, stack, pool_except)
+                st = replay_hand(positions, stack, {"preflop": actions[:i]}, 1)[0]
+                callers = [h["pos"] for h in actions[ji + 1:i] if h["action"] in ("call", "all-in") and h["pos"] in ranges]
+                eq = _preflop_equity_multi([jr] + [ranges[c] for c in callers])
+                rem = stack - st.inv_start[pos] - st.bets[pos]
+                to_call = min(st.cur_bet - st.bets[pos], rem)
+                pot = st.pot_start + sum(st.bets.values())
+                win = pot - max(0.0, st.bets[jam["pos"]] - (st.bets[pos] + to_call))
+                need = to_call / max(win + to_call - _rake(positions, win + to_call), 1e-9)
+                call = np.nan_to_num(np.clip(0.5 + (eq - need) / JAM_BLEND, 0.0, 1.0), nan=0.0)
+                r, mostly_filler = pf.thin_line(ranges[pos] * call, call, ranges[pos])
+                if mostly_filler:
+                    rebuilt.append(pos)
+                ranges[pos] = r
+            elif act == "all-in" and sum(h["action"] in ("raise", "all-in") for h in actions[:i]) <= 1:
+                # an open- or 3bet-jam: the push/fold range, as our call of it reads it (_jam_range), not the
+                # chart's open or 3bet (a 100bb open-jam read as CO's whole 27% open)
+                ranges[pos] = _jam_range(actions, i, positions, stack, pool_except)[0]
             elif key in strat:
                 # an off-chart or very narrow line: filled out with the hands that take this action, so
                 # the solve doesn't face a face-up hand (pf.thin_line)
@@ -680,12 +710,45 @@ def preflop_ranges(actions: List[dict], positions, stack: float, pool_except: Op
                 if mostly_filler:
                     rebuilt.append(pos)
                 ranges[pos] = r
-            elif limp:
-                ranges[pos] = ranges[pos] * pf.LIMP
         out = PreflopRanges({p: ranges[p] for p in active})
         out.rebuilt = [p for p in dict.fromkeys(rebuilt) if p in active]
         return out
     return _pf_cached(_pf_key("r", pool_except, actions, positions, stack), work)
+
+
+def _jam_range(actions: List[dict], ji: int, positions, stack: float, pool_except: Optional[str] = None):
+    """(the range of the player whose all-in is actions[ji], notes). An open- or 3bet-jam: push/fold
+    equilibrium against the players left to act (the opener, if any, is the one who calls); later, the
+    replayed (or the pool's) raising range through the jam."""
+    jammer, before = actions[ji]["pos"], actions[:ji]
+    prev = replay_hand(positions, stack, {"preflop": before}, 1)[0]
+    arr = preflop_ranges(before, positions, stack, pool_except)
+    rng = arr.get(jammer, np.ones(N_COMBOS))
+    notes = []
+    if prev.n_raises <= 1:
+        jam = replay_hand(positions, stack, {"preflop": actions[:ji + 1]}, 1)[0].bets[jammer]
+        opp = [p for p in prev.order if p in prev.active and p != jammer]
+        caller = next((p for p in opp if prev.bets[p] >= prev.cur_bet - 1e-9 and prev.n_raises), None)
+        call_rng = arr.get(caller, np.ones(N_COMBOS)) if caller else np.ones(N_COMBOS)
+        caller_in = prev.bets[caller] if caller else float(np.mean([prev.bets[p] for p in opp]))
+        pot_before = prev.pot_start + sum(prev.bets.values())
+        push = push_fold(rng, call_rng, jam, prev.bets[jammer], caller_in, pot_before, len(opp),
+                         rake=getattr(positions, "rake", None))
+        share = float((rng * push).sum() / max(rng.sum(), 1e-12))
+        rng = rng * push
+        notes.append(f"{jammer}'s {jam:g}bb jam range: push/fold equilibrium against {len(opp)} "
+                     f"player{'s' * (len(opp) > 1)} left ({share:.0%} of their hands)")
+    else:
+        # the replayed range through the jam: the chart's (or the pool's) raising range, rebuilt
+        # from it alone when the jammer's line is off-chart (a flat, then a jam over the 4bet)
+        jr = preflop_ranges(actions[:ji + 1], positions, stack, pool_except)
+        rng = jr.get(jammer, rng)
+        if pool_except is not None:
+            notes.append(f"exploit mode: {jammer}'s jam is the player pool's raising range")
+        if jammer in getattr(jr, "rebuilt", []):
+            notes.append(f"{jammer}'s line isn't in the chart, so their jam range is the hands that jam "
+                         "there from scratch")
+    return rng, notes
 
 
 class PreflopRanges(dict):
@@ -1071,37 +1134,11 @@ class Advisor:
         """Facing a preflop all-in: call when equity against the jammer's range beats the pot odds.
         With `pool`, a jam over a raise comes from the player pool's raising range (premiums, mostly)."""
         ji = max(i for i, a in enumerate(preflop) if a["action"] in ("raise", "all-in", "bet"))
-        jammer, before = preflop[ji]["pos"], preflop[:ji]
-        prev = replay_hand(positions, stack, {"preflop": before}, 1)[0]
+        jammer = preflop[ji]["pos"]
         pool_except = hero if pool else None
-        arr = preflop_ranges(before, positions, stack, pool_except)
-        rng = arr.get(jammer, np.ones(N_COMBOS))
-        jam = st.bets[jammer]
         notes = ["preflop: facing an all-in, call when equity beats the pot odds"]
-        if prev.n_raises <= 1:
-            # open- or 3bet-jam: push/fold equilibrium against the players left to act (the opener, if
-            # any, is the one who calls)
-            opp = [p for p in prev.order if p in prev.active and p != jammer]
-            caller = next((p for p in opp if prev.bets[p] >= prev.cur_bet - 1e-9 and prev.n_raises), None)
-            call_rng = arr.get(caller, np.ones(N_COMBOS)) if caller else np.ones(N_COMBOS)
-            caller_in = prev.bets[caller] if caller else float(np.mean([prev.bets[p] for p in opp]))
-            pot_before = prev.pot_start + sum(prev.bets.values())
-            push = push_fold(rng, call_rng, jam, prev.bets[jammer], caller_in, pot_before, len(opp),
-                             rake=getattr(positions, "rake", None))
-            share = float((rng * push).sum() / max(rng.sum(), 1e-12))
-            rng = rng * push
-            notes.append(f"{jammer}'s {jam:g}bb jam range: push/fold equilibrium against {len(opp)} "
-                         f"player{'s' * (len(opp) > 1)} left ({share:.0%} of their hands)")
-        else:
-            # the replayed range through the jam: the chart's (or the pool's) raising range, rebuilt
-            # from it alone when the jammer's line is off-chart (a flat, then a jam over the 4bet)
-            jr = preflop_ranges(preflop[:ji + 1], positions, stack, pool_except)
-            rng = jr.get(jammer, rng)
-            if pool:
-                notes.append(f"exploit mode: {jammer}'s jam is the player pool's raising range")
-            if jammer in getattr(jr, "rebuilt", []):
-                notes.append(f"{jammer}'s line isn't in the chart, so their jam range is the hands that jam "
-                             "there from scratch")
+        rng, more = _jam_range(preflop, ji, positions, stack, pool_except)
+        notes += more
         remaining = stack - st.inv_start[hero] - st.bets[hero]
         to_call = min(st.cur_bet - st.bets[hero], remaining)
         pot = st.pot_start + sum(st.bets.values())

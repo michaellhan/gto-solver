@@ -1246,6 +1246,35 @@ class TestExploit(unittest.TestCase):
         raised = Node(10.0, 10.0); raised.bets = (20.0, 10.0)    # facing a raise of its own bet: no shift
         self.assertAlmostEqual(float(lock(raised, strat, reach)[0, 0].mean()), 0.5, places=5)
 
+    def test_preflop_lines_read_as_real_ranges(self):
+        """Lines whose chart or pool range was face-up: every open-limp (the small blind too, in both modes;
+        heads-up the pool's was T3o and T4o) reads as LIMP; an over-limp keeps at least the limp range less
+        what would iso-raise (the button's chart over-limp was 15 combos); an open-jam is the push/fold range,
+        not the whole open; a call of an all-in is by equity against it (the big blind called a 100bb jam
+        with its flats, Q2s and 43s, and a 3bet jam was called without AA or KK)."""
+        from gto.advisor import preflop_ranges
+        from gto.cards import COMBO_INDEX
+        idx = lambda h: COMBO_INDEX[tuple(sorted(cards(h)))]
+        C = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
+        T6 = pf.Table(pf.SEATS[6])
+        for line, T in (([C("SB", "call")], pf.Table(pf.SEATS[2])),
+                        ([C("UTG", "fold"), C("HJ", "fold"), C("CO", "fold"), C("BTN", "fold"), C("SB", "call")], T6)):
+            for pe in (None, "BB"):
+                np.testing.assert_allclose(preflop_ranges(line, T, 100, pe)["SB"], pf.LIMP)
+        over = preflop_ranges([C("UTG", "call"), C("HJ", "fold"), C("CO", "fold"), C("BTN", "call")], T6, 100, "BB")["BTN"]
+        self.assertGreater(over.sum(), 40)
+        self.assertEqual(over[idx("AhAd")], 0.0)
+        jam = [C("UTG", "fold"), C("HJ", "fold"), C("CO", "all-in"), C("BTN", "fold"), C("SB", "fold"), C("BB", "call")]
+        r = preflop_ranges(jam, T6, 100)
+        self.assertLess(r["CO"].sum(), 0.25 * preflop_ranges(jam[:2] + [C("CO", "raise", 2.5)], T6, 100)["CO"].sum())
+        self.assertEqual(r["BB"][idx("AhAd")], 1.0)
+        self.assertEqual(r["BB"][idx("Qh2h")], 0.0)
+        self.assertLess(r["BB"].sum(), 60)
+        call3 = preflop_ranges([C("UTG", "fold"), C("HJ", "fold"), C("CO", "raise", 2.5), C("BTN", "all-in"),
+                                C("SB", "fold"), C("BB", "fold"), C("CO", "call")], T6, 100)["CO"]
+        self.assertEqual(call3[idx("AhAd")], 1.0)
+        self.assertEqual(call3[idx("9h8h")], 0.0)
+
     def test_rare_turn_reraise_keeps_solved_range(self):
         """BTN 3bets AQ, HJ calls; Qs9dKc checks through; on the Td turn HJ bets 1, BTN raises to 12 and HJ
         min-reraises to 23. The solve rarely has HJ raise there: its range stays the solve's (straights,
