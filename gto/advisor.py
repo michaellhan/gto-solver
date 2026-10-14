@@ -661,17 +661,26 @@ def preflop_ranges(actions: List[dict], positions, stack: float, pool_except: Op
                 active.discard(pos)
                 continue
             strat = preflop_strategy(pos, actions[:i], positions, stack)
+            limp = act == "call" and "call" not in strat and not any(h["action"] in ("raise", "all-in") for h in actions[:i])
             if pool_except is not None and pos != pool_except:
                 strat = pool_strategy(strat, pos, actions[:i], ranges)
             key = "raise" if act == "all-in" else ("call" if act == "check" and "check" not in strat else act)
-            if key in strat:
+            if limp and pos != "SB":
+                # An open-limp off the chart reads as the limp range, the pool's too: its own open-limps are the
+                # band of hands just below its opens (CO: K7o, K8o, Q9o, K5s, Q8s, 28 combos), which sets the
+                # pool's limp rate but as a range is face-up, with no pairs or suited connectors (a CO limp that
+                # overbet 8x a Q43 flop was Q8/Q9 or K-high, so bottom pair overcalled it). Real limpers are
+                # mostly recreational players limping a wide range. The small blind's limps stay its own (its
+                # weakest opens and extra hands, 9% of hands).
+                ranges[pos] = ranges[pos] * pf.LIMP
+            elif key in strat:
                 # an off-chart or very narrow line: filled out with the hands that take this action, so
                 # the solve doesn't face a face-up hand (pf.thin_line)
                 r, mostly_filler = pf.thin_line(ranges[pos] * strat[key], strat[key], ranges[pos])
                 if mostly_filler:
                     rebuilt.append(pos)
                 ranges[pos] = r
-            elif act == "call" and not any(h["action"] in ("raise", "all-in") for h in actions[:i]):
+            elif limp:
                 ranges[pos] = ranges[pos] * pf.LIMP
         out = PreflopRanges({p: ranges[p] for p in active})
         out.rebuilt = [p for p in dict.fromkeys(rebuilt) if p in active]

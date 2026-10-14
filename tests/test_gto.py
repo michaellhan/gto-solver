@@ -1246,6 +1246,20 @@ class TestExploit(unittest.TestCase):
         raised = Node(10.0, 10.0); raised.bets = (20.0, 10.0)    # facing a raise of its own bet: no shift
         self.assertAlmostEqual(float(lock(raised, strat, reach)[0, 0].mean()), 0.5, places=5)
 
+    def test_pool_limper_overbet_and_call_folds_bottom_pair(self):
+        """Exploit mode, CO limps, SB completes, and on Q43 CO bets 23.5 into 3bb and SB calls: the big
+        blind's K3o folds. The pool's limps alone (K7o, K8o, Q9o, K5s, Q8s) made CO's bet Q8/Q9 or
+        K-high, so bottom pair overcalled with "33%" equity; the limp is read as the LIMP range now."""
+        R = lambda p, a, amt=None: dict({"pos": p, "action": a}, **({"amount": amt} if amt else {}))
+        pre = [R("UTG", "fold"), R("HJ", "fold"), R("CO", "call"), R("BTN", "fold"), R("SB", "call"), R("BB", "check")]
+        st = {"players": 6, "hero": "BB", "hole": "3dKh", "board": "3s4cQh", "stack": 100, "preflop": pre,
+              "flop": [R("SB", "check"), R("BB", "check"), R("CO", "bet", 23.5), R("SB", "call")], "opponents": "pool"}
+        adv = Advisor(time_budget=1, prior_budget=1)
+        adv.mw_trials = 1000
+        out = adv.advise(st)
+        self.assertEqual(out["recommended"], "fold", out["actions"])
+        self.assertLess(out["equity_vs_field"], 0.25)
+
     def test_pool_best_response_ties_within_noise(self):
         """Exploit mode: a short solve's best-response EVs that sit within its noise of the best are tied and
         follow the equilibrium mix (AQo checked 100% at 6.45 over bets at 6.40 in a solve 3.1% of the pot
@@ -1306,9 +1320,9 @@ class TestExploit(unittest.TestCase):
         extra = pool["call"] + pool["raise"] - chart["raise"]
         self.assertGreater(extra[idx("Ah9d")], extra[idx("7h2d")])
         self.assertGreaterEqual(pool["raise"][idx("Ah9d")] - chart["raise"][idx("Ah9d")], pool["raise"][idx("Kh8d")] - chart["raise"][idx("Kh8d")])
-        # a pool limper's range is its limps, not the chart's LIMP range
+        # but an observed limp reads as the chart's LIMP range: the pool's limps alone are a face-up band
         limp = preflop_ranges(F("UTG") + [{"pos": "HJ", "action": "call"}], T, 100, "BB")["HJ"]
-        np.testing.assert_allclose(limp, pool["call"])
+        np.testing.assert_allclose(limp, pf.LIMP)
         # behind a limper the chart's over-limps stand
         behind = preflop_strategy("CO", F("UTG") + [{"pos": "HJ", "action": "call"}], T, 100)
         self.assertIs(pool_strategy(behind, "CO", F("UTG") + [{"pos": "HJ", "action": "call"}], ones), behind)
