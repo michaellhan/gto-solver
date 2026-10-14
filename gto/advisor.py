@@ -225,12 +225,14 @@ def _top(r: np.ndarray, frac: float, rank: np.ndarray) -> np.ndarray:
     return m
 
 
-def _aggro(r, v, b, p, rank, bluff=None) -> np.ndarray:
+def _aggro(r, v, b, p, rank, bluff=None, n=1) -> np.ndarray:
     """A bet or raise of b into p: value with the top v of r plus balanced bluffs,
     bluffs = value * b / (p + b), taken in `bluff` order (see _bluff_order: draws first) from the
-    hands outside the value range; without one, from the bottom."""
+    hands outside the value range; without one, from the bottom. Into n players, a bluff has to get past
+    all of them: 1/n of those bluffs (a check-raise jam into two players was half bluffs, AQs and KQs on
+    J72 beside JJ, and QQ called it with AA and KK still behind)."""
     val = _top(r, v, rank)
-    bf = min(v * b / (p + b), 1.0 - v)
+    bf = min(v * b / (p + b) / max(n, 1), 1.0 - v)
     if bluff is None:
         return val | _top(r, bf, rank[::-1])
     rest = r * ~val
@@ -588,8 +590,8 @@ def _rule_mask(r, to, cur, to_call, pot, n, rank, call_k=None, bluff=None, other
                 big, small = _bet_ranges(r, n, pot, max(0.66 * pot, to - cur), to - cur, rank, bluff, others)
                 if r[small].sum() > 0:
                     return small | big       # (strong hands bet small too: players mix)
-            return _aggro(r, _value_share(r, n, to - cur, pot, rank), to - cur, pot, rank, bluff)
-        return _aggro(r, _keep(to_call, pot, n) * RAISE_SHARE, to - cur, pot + to_call, rank, bluff)
+            return _aggro(r, _value_share(r, n, to - cur, pot, rank), to - cur, pot, rank, bluff, n)
+        return _aggro(r, _keep(to_call, pot, n) * RAISE_SHARE, to - cur, pot + to_call, rank, bluff, n)
     if to_call <= 1e-9:                       # check: not what would have bet at either size
         return ~_bet_ranges(r, n, pot, 0.66 * pot, SMALL_BET * pot, rank, bluff, others, drop=True)[2]
     k = _keep(to_call, pot, n) if call_k is None else call_k   # call: continues, but wouldn't raise

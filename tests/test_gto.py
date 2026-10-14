@@ -1402,6 +1402,11 @@ class TestExploit(unittest.TestCase):
         self.assertLess(_share(live(rng["BTN"]), bg | sm), 0.8)
         sts = replay_hand(T, 100, {"preflop": srp, "flop": [R("BB", "bet", 7.7)]}, 2)[1:]
         self.assertTrue(_committed("BB", sts))
+        # a raise into two players carries half the heads-up bluffs
+        from gto.advisor import _aggro
+        r = live(rng["BTN"])
+        one, two = _aggro(r, 0.1, 20, 10, rank, bluff, 1), _aggro(r, 0.1, 20, 10, rank, bluff, 2)
+        self.assertAlmostEqual(_share(r, two) - 0.1, (_share(r, one) - 0.1) / 2, delta=0.01)
 
     def test_rare_turn_reraise_keeps_solved_range(self):
         """BTN 3bets AQ, HJ calls; Qs9dKc checks through; on the Td turn HJ bets 1, BTN raises to 12 and HJ
