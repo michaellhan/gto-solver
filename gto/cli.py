@@ -8,8 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
-from .advisor import Advisor
-from .solver import Config
+from .native import advisor   # (first: it holds BLAS to one thread before numpy loads)
 
 _ACT = re.compile(r"^(f|x|c|ai|r([\d.]+)?|b([\d.]+)?)$", re.I)
 
@@ -54,7 +53,10 @@ def main(argv=None):
     ap.add_argument("--straddle", action="store_true", help="the first seat straddles 2bb")
     ap.add_argument("--rake", type=float, default=0.0, help="rake, share of the pot (0.05 = 5%%); 0 = none")
     ap.add_argument("--rake-cap", type=float, default=None, help="most rake per pot in bb (default: no cap)")
-    ap.add_argument("--budget", type=float, default=4.0, help="seconds for the current street solve")
+    ap.add_argument("--speed", choices=("fast", "accurate"), default="fast",
+                    help="tree and budgets: fast 2.5 s a street, accurate 30 s (12 s per earlier street)")
+    ap.add_argument("--budget", type=float, default=None, help="seconds for the current street solve")
+    ap.add_argument("--prior-budget", type=float, default=None, help="seconds per earlier street (range narrowing)")
     ap.add_argument("--depth", type=int, default=2)
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
@@ -64,7 +66,7 @@ def main(argv=None):
         "preflop": parse_actions(args.preflop), "flop": parse_actions(args.flop),
         "turn": parse_actions(args.turn), "river": parse_actions(args.river),
     }
-    adv = Advisor(Config(depth=args.depth), time_budget=args.budget)
+    adv = advisor(args.speed, args.depth, args.budget, args.prior_budget)
     res = adv.advise(state)
     if args.json:
         print(json.dumps(res, indent=2))

@@ -41,7 +41,8 @@ website; there it detects that no server is present and runs the identical
 Python code in a web worker with Pyodide. Pyodide's numpy is 10 to 30 times slower
 per iteration than native, so the browser solves a smaller game: two flop bet sizes and one
 turn and river bet and raise size. Fast uses 8 fixed rivers under each turn; Accurate uses
-every river. The local server keeps the full size menu and gives better postflop accuracy.) Pick the number of players (2 to 9), your seat
+every river. The local server (`gto/native.py`) runs Fast with the same sizes and every river, and
+Accurate with two turn and river bet sizes.) Pick the number of players (2 to 9), your seat
 and stack, click cards into your
 hand and the board (click a placed card in its slot to remove it; cards already
 on the table can't be picked again), or type them as rank then suit (`Ah`, `Tc`).
@@ -57,8 +58,8 @@ which checks a player who has nothing to call) skips the boring bits.
 
 Whenever it becomes your turn the advice panel solves the spot. The **Fast /
 Accurate** toggle in the header (remembered between visits) picks the solve
-time: Fast is 8 s in the browser and 2.5 s against the local server; Accurate
-is about 60 s in the browser and 30 s locally, with more time for the earlier
+time: Fast is 8 s in the browser and 2.5 s against the local server (2.5 s per earlier street too); Accurate
+is about 60 s in the browser and 30 s locally (12 s per earlier street), with more time for the earlier
 streets used to narrow ranges. River spots are solid either way; turn spots need
 Accurate to get close to a full solver (see Accuracy vs speed below).
 The panel shows the recommended action with its size (preflop: 2.5bb
@@ -130,6 +131,7 @@ python -m gto.cli --hero BB --hole 9h8h --board Ks7d2cTh \
 Action tokens are `POS:act` with `f` fold, `x` check, `c` call, `r<to>` raise to,
 `b<amount>` bet, `ai` all-in. Amounts are in big blinds. `--ante 0.2` adds an ante
 per player, `--straddle` has the first seat straddle 2bb, `--rake 0.05 --rake-cap 3` sets a 5% rake capped at 3bb (see Rake).
+`--speed accurate` uses the server's Accurate tree and budgets (default `fast`; `--budget` / `--prior-budget` override).
 
 Server for your sandbox table:
 
@@ -307,7 +309,14 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   (Ks7d2cTh, every river) runs 6.3 -> 11.6 it/s, 1.76% -> 0.31% of the pot after 8 s.
   Natively Fast and Accurate flops run 150 -> 210 and 105 -> 170 it/s, and the server's
   default config 8 -> 35 it/s (Qs8d3c after 4 s: 8% -> 0.6%).
-* **Earlier streets** used for range narrowing get 2 s each, and a solve that is
+* **Native trees** (`gto/native.py`, server and CLI): `Config()`'s full menu (two bet and two raise
+  sizes a street) ran 10 turn iterations in the server's 2.5 s, 60-70% of the pot from equilibrium,
+  and narrowing on it left BB 7 combos checking a K72T5 river where a long solve keeps 81. Fast now
+  plays the browser's sizes with every river: the turn is 1.5-2.5% of the pot from equilibrium after
+  2.5 s and that range keeps 79 (fixed 8-river sets settle sooner but narrow to 63 even converged).
+  Accurate adds a second turn and river bet size: 0.2-0.7% after 30 s, 1.7-2% after an earlier
+  street's 12 s, 89 combos. BLAS is held to one thread there.
+* **Earlier streets** used for range narrowing get their own budget each, and a solve that is
   reused later in the same hand keeps iterating from its stored regrets instead of
   restarting. When a real bet or raise size differs from the abstraction by more
   than 15%, that street's tree uses the real size so narrowing is exact.

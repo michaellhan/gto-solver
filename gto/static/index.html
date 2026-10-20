@@ -509,7 +509,7 @@ const NEED = { preflop: 0, flop: 3, turn: 4, river: 5 };
 const SLOT_NAMES = ["your first card", "your second card", "flop card 1", "flop card 2", "flop card 3", "the turn", "the river"];
 const SLOT_WHERE = ["in your hand", "in your hand", "on the flop", "on the flop", "on the flop", "on the turn", "on the river"];
 // seconds per solve for each speed setting: [current street, each earlier street used for range narrowing]
-const BUDGETS = { server: { fast: [2.5, 1.2], accurate: [30, 6] }, wasm: { fast: [8, 3], accurate: [60, 12] } };
+const BUDGETS = { server: { fast: [2.5, 2.5], accurate: [30, 12] }, wasm: { fast: [8, 3], accurate: [60, 12] } };
 let SPEED = "fast";
 try { if (localStorage.getItem("gto-speed") === "accurate") SPEED = "accurate"; } catch (e) {}
 let BUDGET = null, PRIOR = null;   // set from BUDGETS once the backend (MODE) is known

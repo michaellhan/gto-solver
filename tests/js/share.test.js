@@ -215,7 +215,7 @@ test("copy falls back to execCommand, then a prompt, when the clipboard API refu
 
 // Bug: a hand copied before the backend was known carried placeholder budgets (4/2) in its State JSON.
 test("a hand copied right after load carries the real budgets for the backend", async () => {
-  for (const [opts, want] of [[{}, [8, 3]], [{ server: true }, [2.5, 1.2]], [{ storage: { "gto-speed": "accurate" } }, [60, 12]]]) {
+  for (const [opts, want] of [[{}, [8, 3]], [{ server: true }, [2.5, 2.5]], [{ storage: { "gto-speed": "accurate" } }, [60, 12]]]) {
     const p = loadPage(opts);
     await p.byId("copyhand").onclick();   // straight away: no await p.ready() first
     const st = JSON.parse(p.clipboard.text.match(/^State JSON: (.*)$/m)[1]);

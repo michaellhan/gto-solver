@@ -106,7 +106,7 @@ test("with the local server the state is POSTed at the server's budgets", async 
   p.S = state(FLOP);
   await flush();
   const pl = p.payload();
-  assert.deepEqual([pl.budget, pl.prior_budget], [2.5, 1.2]);
+  assert.deepEqual([pl.budget, pl.prior_budget], [2.5, 2.5]);
   assert.deepEqual(p.posted.at(-1).state, pl);
   assert.equal(p.workers.length, 0);
 });
