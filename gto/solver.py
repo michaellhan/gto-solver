@@ -586,7 +586,10 @@ class Solver:
     def __init__(self, ctx: Ctx, root: Decision, dead: set):
         self.ctx, self.root, self.dead = ctx, root, dead
         self.iters = 0
-        self.alpha, self.beta, self.gamma = 1.5, 0.0, 2.0   # DCFR parameters
+        # DCFR parameters. gamma 4 (the paper: 2) weights recent iterations more in the average strategy: the same
+        # exploitability in 25-35% fewer iterations on flop, turn and 3bet spots (gamma 3-8 alike; alpha 1-1.25 spiky,
+        # 2+ slower; negative regrets reset each iteration (beta -inf) or predictive regret matching no better)
+        self.alpha, self.beta, self.gamma = 1.5, 0.0, 4.0
         self.rng = random.Random(ctx.cfg.seed + 2)
         self.sampling = True          # chance sampling while training; off for EVs and reports
         self._nodes: List[Decision] = []
