@@ -30,6 +30,28 @@ class TestCardsRanges(unittest.TestCase):
 
 
 class TestSolverMath(unittest.TestCase):
+    def test_flop_allin_equity_near_exact(self):
+        """A flop all-in's equity matrix covers every turn card (4 sampled turns x 4 rivers, the browser's Fast
+        tree, had flush draws off by up to 24% equity: JsTs called a flop jam at +19.5 bb, exactly -34)."""
+        import itertools
+        board = tuple(cards("Ks7s2d"))
+        r = parse_range("JsTs, AsQs, Qs9s, AhKd, AcKc, 77, 22, K7s, 8s8d, 9h9d, QhJh, 6s5s, AhQd")
+        bm = np.ones(N_FULL)
+        for c in board:
+            bm *= 1 - MEMBER_FULL[c]
+        active = np.nonzero(r * bm > 0)[0]
+        for cfg in (Config(leaf_turns=4, leaf_rivers_flop=4), Config()):
+            ctx = Ctx(active, cfg)
+            L = ctx.leaf_matrix(board, set())
+            E = np.zeros_like(L, dtype=np.float64); C = np.zeros_like(E)
+            for t, rv in itertools.combinations([c for c in range(52) if c not in board], 2):
+                s = ctx.strength(board + (t, rv)).astype(float)
+                ok = (s >= 0).astype(float)
+                E += np.sign(s[:, None] - s[None, :]) * np.outer(ok, ok); C += np.outer(ok, ok)
+            E = E / np.maximum(C, 1) * ctx.compat
+            eq = lambda M: 0.5 + 0.5 * M.sum(1) / np.maximum(ctx.compat.sum(1), 1)   # each vs the rest, evenly
+            self.assertLess(np.abs(eq(L) - eq(E)).max(), 0.04)
+
     def test_showdown_matrix_matches_bruteforce(self):
         board = cards("AhKd7c2s9h")
         r = parse_range("22+, A2s+, KTs+, ATo+")
@@ -1501,7 +1523,8 @@ class TestExploit(unittest.TestCase):
         st = {"players": 6, "hero": "BTN", "hole": "AhQd", "board": "Qs8d3c", "stack": 100, "preflop": pre,
               "flop": [R("BB", "check")], "opponents": "pool"}
         rough = Advisor(time_budget=0.2, prior_budget=0.2).advise(st)
-        tol = max(0.005, rough["solver"]["exploitability_pct"] / 100) * rough["pot_bb"]
+        from gto.advisor import BR_TIE_MAX   # (ties are capped at BR_TIE_MAX of the pot, as the advisor does)
+        tol = min(max(0.005, rough["solver"]["exploitability_pct"] / 100), BR_TIE_MAX) * rough["pot_bb"]
         best = max(a["ev_bb"] for a in rough["actions"])
         for a in rough["actions"]:
             if a["ev_bb"] >= best - tol and a["gto_freq"] > 0.05:

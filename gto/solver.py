@@ -36,6 +36,7 @@ def _matvec(M, x):
 
 
 N_FULL = 1326
+FLOP_LEAF_RIVERS = 4   # a flop all-in's equity: at least this many rivers under every turn card (Ctx._flop_leaf)
 MEMBER_FULL = np.zeros((52, N_FULL))
 for _i, (_a, _b) in enumerate(ALL_COMBOS):
     MEMBER_FULL[_a, _i] = 1.0
@@ -188,6 +189,8 @@ class Ctx:
             return L
         if len(board) == 5:
             L = self.showdown_matrix(board)
+        elif len(board) == 3:
+            L = self._flop_leaf(board, dead)
         else:
             avail = [c for c in range(52) if c not in dead and c not in board]
             if len(board) == 3:
@@ -205,6 +208,34 @@ class Ctx:
             L /= np.maximum(len(picks) - h[:, None] - h[None, :], 1.0).astype(np.float32)
         self._leaf[key] = L
         return L
+
+    def _flop_leaf(self, board: tuple, dead: set) -> np.ndarray:
+        """The flop's equity matrix (a flop all-in): every turn card, each with FLOP_LEAF_RIVERS or more
+        rivers (leaf_turns x leaf_rivers_flop runouts in all, spread over the turns). Sampled turns gave a
+        draw a share of its outs set by which few turns came: with 4 turns x 4 rivers, JsTs called a flop jam
+        on Ks7s2d at +19.5 bb where the default tree's 6 x 16 runouts had it at -18.6. The river boards'
+        matrices aren't kept (a few hundred of them)."""
+        avail = [c for c in range(52) if c not in dead and c not in board]
+        per = max(FLOP_LEAF_RIVERS, -(-self.cfg.leaf_turns * self.cfg.leaf_rivers_flop // max(len(avail), 1)))
+        m = len(avail)
+        step = max(1, (m - 1) // per)
+        L = np.zeros((self.n, self.n), dtype=np.float32)
+        oks = []
+        for ti, t in enumerate(avail):
+            # rivers spread evenly so every card is a river about equally often over all the turns (random
+            # picks left a flush draw's river outs over- or under-drawn: a 5-6% equity error at 2 per turn)
+            rivers = [avail[(ti + 1 + j * step) % m] for j in range(min(per, m - 1))]
+            for r in dict.fromkeys(rivers):
+                s = self.strength(board + (t, r)).astype(np.float32)
+                d = np.sign(s[:, None] - s[None, :])
+                bl = s < 0                       # combos holding the turn or river card
+                d[bl, :] = 0.0
+                d[:, bl] = 0.0
+                L += d
+                oks.append(~bl)
+        ok = np.array(oks, dtype=np.float32)        # (boards, n): the boards each pair is counted on
+        cnt = np.einsum("bi,bj->ij", ok, ok) if NO_BLAS else ok.T @ ok
+        return (L / np.maximum(cnt, 1.0) * self.compat).astype(np.float32)
 
 
 class Ranking:
