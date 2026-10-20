@@ -23,10 +23,11 @@ node --test 'tests/js/*.test.js'
 The Node tests (Node 22+, no npm packages) cover the page's JavaScript: `tests/js/page.js` loads the
 inline script of `gto/static/index.html` into a `vm` context with a minimal fake DOM and drives it
 like a user (buttons, keys, the setup inputs): the hand engine (acting order for 2 to 9 players,
-blinds, antes, straddle, pot and bet sizes, validation, undo and rewind), share links (`#h=`) and the
+blinds, antes, straddle, pot and bet sizes, validation, undo and rewind, per-seat stacks with side pots and
+incomplete raises), share links (`#h=`) and the
 copied hand text, and the state sent to the solver (its keys are checked against what
 `Advisor._advise` reads). They also write `tests/data/page_states.json`, random hands played through
-the page; `tests/test_page_states.py` replays each spot with the advisor's own `replay_hand` (same
+the page (some with per-seat stacks); `tests/test_page_states.py` replays each spot with the advisor's own `replay_hand` (same
 player to act, pot, bet and players in) and asks the advisor about a sample of them. After a change to
 the page's engine, regenerate it with `UPDATE_FIXTURES=1 node --test 'tests/js/*.test.js'`.
 
@@ -43,7 +44,8 @@ per iteration than native, so the browser solves a smaller game: two flop bet si
 turn and river bet and raise size. Fast uses 8 fixed rivers under each turn; Accurate uses
 every river. The local server (`gto/native.py`) runs Fast with the same sizes and every river, and
 Accurate with two turn and river bet sizes.) Pick the number of players (2 to 9), your seat
-and stack, click cards into your
+and the stacks (one for the table; **per seat…** gives any seat its own, shown beside its name on
+the table), click cards into your
 hand and the board (click a placed card in its slot to remove it; cards already
 on the table can't be picked again), or type them as rank then suit (`Ah`, `Tc`).
 The setup folds into one line once the hand starts, and the deck only shows
@@ -55,6 +57,11 @@ has folded, who is to act, the board and the pot; clicking a seat folds
 everyone before it (checking where there's nothing to call, and stopping at your own turn),
 and a single context shortcut ("Fold to me", "Everyone checks", "Everyone else folds",
 which checks a player who has nothing to call) skips the boring bits.
+The engine plays no-limit rules with each seat's chips: a call or all-in for less puts in what the
+player has, a raise is at least the last full raise, an all-in raise for less than that doesn't reopen
+the betting to players who already acted, a bet nobody can match in full comes back down to the most
+anyone else put in, the action ends once at most one player with chips is left, and the table shows
+the main pot and side pots.
 
 Whenever it becomes your turn the advice panel solves the spot. The **Fast /
 Accurate** toggle in the header (remembered between visits) picks the solve
@@ -87,9 +94,9 @@ deck (diamonds blue, clubs green), a switch that puts the advice on the left, an
 (other sites in the same "Seat N: name (stack)" / "name: raises 2 to 3" shape mostly parse too),
 2 to 9 players, cash or tournament. Seats map onto the page's positions from the big blind, amounts
 become big blinds, antes are averaged per player, a 2bb straddle from the first seat is kept, sitting-out
-seats are dropped and returned bets are ignored; the history needs your hole cards. The page plays equal
-stacks: yours, capped by the deepest opponent who stayed in, so a shorter player's all-in is a raise to
-its size and they check or call through later streets (a note says so). The parser is `gto/static/hh.js`,
+seats are dropped and returned bets are ignored; the history needs your hole cards. Every seat keeps its
+own stack (after the antes, as the history has it), so a short all-in, its side pot and an uncalled bet play
+out as they did. The parser is `gto/static/hh.js`,
 loaded only when the dialog opens. **Review whole hand** (offered after an import, and at the end of any
 hand with ungraded decisions) solves each of your decisions in order at the current Fast/Accurate setting,
 grades it as if it had been entered live and ends on the hand review; it shows "decision 2 of 5" while it
@@ -107,7 +114,8 @@ that reopens the exact spot, and the raw state JSON for the API or CLI.
 The hand is kept in the browser between reloads; **New hand** clears it.
 
 **Practice** in the header plays random hands against GTO opponents, with the player count,
-stacks, antes, straddle and rake of the setup. Your seat and cards are random; every other seat's
+stacks (each seat's own, if set), antes, straddle and rake of the setup; a showdown pays each side pot
+to the best hand among the players in it. Your seat and cards are random; every other seat's
 hand and the board are dealt up front, and the other seats move by themselves (a short "thinking"
 status while they do): preflop from the chart for their actual hand, after the flop drawn from the
 solve's mix for it (heads-up, the same solve that answers your own spot, so a reply to your move is
@@ -150,7 +158,7 @@ Request body (see `examples/`):
 {
   "hero": "BTN", "hole": "AhQd", "board": "Qs8d3c",
   "bb": 1.0,
-  "stacks": {"BTN": 100, "BB": 100},
+  "stack": 100, "stacks": {"BB": 40},
   "preflop": [{"pos": "CO", "action": "fold"}, {"pos": "BTN", "action": "raise", "to": 2.5},
               {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}],
   "flop": [{"pos": "BB", "action": "check"}], "turn": [], "river": []
@@ -158,7 +166,12 @@ Request body (see `examples/`):
 ```
 
 Set `bb` to your blind size and pass amounts in chips, or leave it at 1 and pass
-big blinds. Optional `"ante"` (per player, same units) and `"straddle": true` (the
+big blinds. `stack` is everyone's stack; the optional `stacks` gives seats their own (seats left out
+have `stack`, or without one the smallest of `stacks`). Each player's chips cap what they can put in
+(all-ins for less, side pots, incomplete raises, as on the page); hero plays preflop at the effective
+stack against the deepest opponent who hasn't folded (the push/fold and chart depth, implied odds and
+commitment rules), each opponent's replayed range at theirs, and heads-up postflop at the smaller of
+the two stacks. Optional `"ante"` (per player, same units) and `"straddle": true` (the
 first seat posts 2bb and acts last preflop). Optional `"rake"` (a share of the pot, `0.05` for 5%)
 and `"rake_cap"` (the most rake per pot, same units as the amounts; leave it out for no cap): off
 unless given (see Rake below). Positions are the 6-max names `UTG HJ CO BTN SB BB`.
@@ -534,7 +547,9 @@ the tree traversal to C or Rust or a GPU, which makes full flop trees feasible.
   pool bluffs on the flop and turn, and how its extra preflop hands split between opens, open-limps, flats
   and the big blind outside the small blind, are still judgment calls. On a rough (Fast, flop or turn)
   solve the best response also picks up the solve's own noise.
-* One effective stack for the table.
+* Multiway with an all-in player for less, the heuristic pays each side pot to the best hand among the
+  players in it, but the betting rules inside its trials don't play for the side pot (an opponent bets
+  and calls as if the whole pot were at stake).
 * Practice opponents heads-up after the flop read their move off your own solve, whose ranges leave out
   your cards (as your advice does): an edge the size of a blocker. A line of yours the solve rarely
   takes, or a pot that became heads-up mid-street, gets a solve from their seat instead (a few seconds,

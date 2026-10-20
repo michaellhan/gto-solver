@@ -219,3 +219,34 @@ test("practice deals keep the Advanced setup (sizes, ranges, size optimization),
     p.run("Practice.next()"); await flush();
   }
 });
+
+test("per-seat stacks: practice deals keep them, and a short all-in's side pot is paid to the best hand among the players in it", async () => {
+  const p = await practicePage(9);
+  p.run(`S.stacks = { BTN: 10 }; save(); Practice.next();`); await flush();
+  assert.deepEqual(p.S.stacks, { BTN: 10 });
+  // 3-handed: the button (10bb) jams, both blinds call and bet the flop: a 30bb main pot for the button's aces,
+  // the 40bb side pot between the blinds for your kings (you put in 30)
+  p.run(`S = { ...fresh(3), hero: "SB", stack: 100, stacks: { BTN: 10 }, cards: ["Kh", "Kd", "2c", "7d", "9h", "Js", "3s"],
+    actions: { preflop: [{ pos: "BTN", action: "all-in" }, { pos: "SB", action: "call" }, { pos: "BB", action: "call" }],
+               flop: [{ pos: "SB", action: "bet", to: 20 }, { pos: "BB", action: "call" }],
+               turn: [{ pos: "SB", action: "check" }, { pos: "BB", action: "check" }], river: [{ pos: "SB", action: "check" }, { pos: "BB", action: "check" }] } };
+    setPositions(3);
+    Practice.state.hand = { hero: "SB", players: 3, hole: ["Kh", "Kd"], hands: { BTN: ["Ah", "Ad"], BB: ["Qh", "Qd"] }, board: ["2c", "7d", "9h", "Js", "3s"], result: null };
+    Practice.state.busy = false; Practice.state.error = "";`);
+  const sim = p.sim();
+  assert.equal(sim.handOver, true);
+  assert.equal(sim.pot, 70);
+  assert.deepEqual(p.val("potsNow(simulate())"), [{ amount: 30, eligible: ["BTN", "SB", "BB"] }, { amount: 40, eligible: ["SB", "BB"] }]);
+  p.run("Practice.tick(simulate())");
+  const r = p.val("Practice.state.hand.result");
+  assert.equal(r.net, 10);
+  assert.deepEqual(r.pots, [{ amount: 30, eligible: ["BTN", "SB", "BB"], winners: ["BTN"] }, { amount: 40, eligible: ["SB", "BB"], winners: ["SB"] }]);
+  assert.match(p.byId("practiceBar").innerHTML, /You win a side pot/);
+  assert.match(p.byId("practiceBar").innerHTML, /main pot 30: BTN · side pot 40: you/);
+  // the button's aces against your kings alone: you lose the main pot and win nothing else
+  p.run(`Practice.state.hand = { ...Practice.state.hand, hands: { BTN: ["Ah", "Ad"], BB: ["As", "Ac"] }, result: null }; Practice.tick(simulate())`);
+  const r2 = p.val("Practice.state.hand.result");
+  assert.equal(r2.net, -30);
+  assert.deepEqual(r2.pots.map(x => x.winners), [["BTN", "BB"], ["BB"]]);
+  assert.match(p.byId("practiceBar").innerHTML, /You lose/);
+});

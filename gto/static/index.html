@@ -83,6 +83,9 @@
   .panel.collapsed h2 { margin-bottom: 0; }
   .setuprow { margin-bottom: 8px; }
   .setuprow > .muted:first-child { width: 58px; font-size: 12px; }
+  #seatStackIns { flex-wrap: wrap; gap: 4px 8px; flex: 1; } #seatStackIns label { font-size: 12px; white-space: nowrap; } #seatStackIns input { width: 62px; padding-left: 6px; padding-right: 4px; }
+  .seat .stk { font-weight: 400; font-size: 10px; color: var(--muted); margin-left: 3px; }
+  .felt .side { font-size: 11px; color: #b7c9bc; font-variant-numeric: tabular-nums; }
 
   /* setup summary (collapsed once the hand starts) */
   #pSetup.slim { background: none; padding: 2px 4px 8px; margin-bottom: 4px; }
@@ -387,9 +390,14 @@
         <div class="row setuprow">
           <span class="muted">Stacks</span>
           <input type="number" id="stack" value="100" min="5" step="1"><span class="muted">bb</span>
+          <button class="link" id="stacksEdit" title="Give some seats a different stack">per seat…</button>
           <span class="muted" style="margin-left:12px">Ante</span>
           <input type="number" id="ante" value="0" min="0" step="0.05" title="Ante per player, in big blinds"><span class="muted">bb</span>
           <label class="muted" id="straddleBox" style="margin-left:auto" title="The first seat posts a 2bb straddle and acts last preflop"><input type="checkbox" id="straddle"> straddle</label>
+        </div>
+        <div class="row setuprow seatstacks" id="seatStacks" hidden title="Each seat's stack in big blinds (the others have the table's stack)">
+          <span class="muted">Seat stacks</span><span class="row" id="seatStackIns"></span>
+          <button class="link" id="stacksSame">all equal</button>
         </div>
         <div class="row setuprow">
           <span class="muted">Rake</span>
@@ -592,6 +600,7 @@ setPositions(S.players);
 let selSlot = null;       // board/hand slot the user picked by hand
 let showDeck = false;     // deck opened manually while no card is needed
 let editSetup = false;    // setup panel expanded mid-hand
+let seatStacksOpen = false;  // the per-seat stack boxes shown (they always are while the stacks differ)
 let pendingRank = null;   // first half of a typed card ("A" of "Ah")
 let lastKey = null;       // payload of the solve in flight or last shown
 let resultKey = null;     // payload the shown advice belongs to
@@ -622,8 +631,8 @@ function cleanState(st) {
   // rake: a percent in (0, 25] and a positive cap (none = no cap), or no rake at all
   if (!(+st.rake > 0 && +st.rake <= 25)) { delete out.rake; delete out.rakeCap; }
   else { out.rake = +st.rake; if (+st.rakeCap > 0) out.rakeCap = +st.rakeCap; else delete out.rakeCap; }
-  delete out.sizes; delete out.ranges; delete out.optSizes;
-  return Object.assign(out, cleanAdv(st, seats));
+  delete out.sizes; delete out.ranges; delete out.optSizes; delete out.stacks;
+  return Object.assign(out, cleanAdv(st, seats), cleanStacks({ ...st, stack: out.stack }, seats));
 }
 const encodeState = (st) => btoa(unescape(encodeURIComponent(JSON.stringify(st))));
 const decodeState = (b64) => JSON.parse(decodeURIComponent(escape(atob(b64))));
@@ -640,45 +649,71 @@ function toast(msg, undoFn, ms = 4000) {
 }
 
 // ------------------------------------------------------------------ engine
+// Each seat's chips: every stack is S.stack unless S.stacks gives that seat its own.
+const STACK = (p) => S.stacks && +S.stacks[p] > 0 ? +S.stacks[p] : S.stack;
+const UNEQUAL = () => POS.some(p => STACK(p) !== S.stack);
+// Seats whose stack differs from S.stack, valid at a table of these seats (a share link or storage can't break it)
+function cleanStacks(st, seats) {
+  const o = {};
+  for (const [p, v] of Object.entries(st.stacks && typeof st.stacks === "object" ? st.stacks : {}))
+    if (seats.includes(p) && +v > 0 && +v !== +st.stack) o[p] = +v;
+  return Object.keys(o).length ? { stacks: o } : {};
+}
+const STACKS_TEXT = (sep = ", ") => UNEQUAL() ? POS.filter(p => STACK(p) !== S.stack).map(p => `${SEAT_LABEL(p, S.players)} ${fmt(STACK(p))}`).join(sep) : "";
+// No-limit rules: a call or all-in for less puts in what the player has; a raise adds at least the last full
+// raise (minRaise); an all-in raise for less than that doesn't reopen the betting to players who already acted
+// (locked); a bet nobody can match in full is cut back to the most anyone else put in once the street closes.
 function simulate() {
   const active = new Set(POS), allin = new Set();
-  const inv = Object.fromEntries(POS.map(p => [p, Math.min(ANTE(), S.stack)]));
+  const inv = Object.fromEntries(POS.map(p => [p, Math.min(ANTE(), STACK(p))]));
   const out = { streets: {}, current: null, toAct: null, waiting: null, handOver: false, runout: false, invested: inv, active, allin };
   const nb = boardCards().length;
   for (const street of STREETS) {
     if (nb < NEED[street]) { out.waiting = street; break; }
     const pre = street === "preflop", order = pre ? (STRADDLER() ? [...POS.slice(1), POS[0]] : ORDER_PRE) : ORDER_POST;
     const bets = Object.fromEntries(POS.map(p => [p, 0]));
-    if (pre) { bets.SB = 0.5; bets.BB = 1; if (STRADDLER()) bets[STRADDLER()] = 2; }
+    if (pre) { bets.SB = 0.5; bets.BB = 1; if (STRADDLER()) bets[STRADDLER()] = 2; for (const p of POS) bets[p] = Math.min(bets[p], STACK(p) - inv[p]); }
     let curBet = pre ? (STRADDLER() ? 2 : 1) : 0, nRaises = 0, acted = new Set(), lastActor = null;
+    let minRaise = pre ? curBet : 1, locked = new Set(), returned = null;
     const potBefore = Object.values(inv).reduce((a, b) => a + b, 0);
     for (const a of S.actions[street]) {
       const p = a.pos; if (!active.has(p)) continue;
-      const remaining = S.stack - inv[p] - bets[p];
+      const remaining = STACK(p) - inv[p] - bets[p];
       if (a.action === "fold") active.delete(p);
       else if (a.action === "check" || a.action === "call") {
         bets[p] = Math.min(curBet, bets[p] + remaining);
-        if (bets[p] + inv[p] >= S.stack - 1e-9) allin.add(p);
-        acted.add(p);
-      } else if (a.action === "bet" || a.action === "raise") {
-        bets[p] = Math.min(a.to, bets[p] + remaining);
-        if (bets[p] > curBet) { curBet = bets[p]; nRaises++; acted = new Set([p]); } else acted.add(p);
-        if (bets[p] + inv[p] >= S.stack - 1e-9) allin.add(p);
-      } else if (a.action === "all-in") {
-        bets[p] += remaining; allin.add(p);
-        if (bets[p] > curBet) { curBet = bets[p]; nRaises++; acted = new Set([p]); } else acted.add(p);
+        if (bets[p] + inv[p] >= STACK(p) - 1e-9) allin.add(p);
+        acted.add(p); locked.add(p);
+      } else if (a.action === "bet" || a.action === "raise" || a.action === "all-in") {
+        const to = a.action === "all-in" ? bets[p] + remaining : Math.min(a.to, bets[p] + remaining);
+        bets[p] = to;
+        if (to > curBet + 1e-9) {
+          if (to - curBet >= minRaise - 1e-9) { minRaise = to - curBet; locked = new Set([p]); } else locked.add(p);
+          curBet = to; nRaises++; acted = new Set([p]);
+        } else { acted.add(p); locked.add(p); }
+        if (bets[p] + inv[p] >= STACK(p) - 1e-9) allin.add(p);
       }
       lastActor = p;
     }
-    const actors = [...active].filter(p => !allin.has(p));
-    const closed = active.size <= 1 || actors.every(p => acted.has(p));
+    let actors = [...active].filter(p => !allin.has(p));
+    // (one player left with chips who has matched the bet has nobody to bet against)
+    const closed = active.size <= 1 || actors.every(p => acted.has(p)) || (actors.length <= 1 && actors.every(p => bets[p] >= curBet - 1e-9));
+    if (closed && active.size > 1) {
+      const top = POS.reduce((t, p) => bets[p] > bets[t] ? p : t, POS[0]);
+      const second = Math.max(0, ...POS.filter(p => p !== top).map(p => bets[p]));
+      if (bets[top] > second + 1e-9) {
+        returned = { [top]: bets[top] - second }; bets[top] = second; curBet = second;
+        if (inv[top] + second < STACK(top) - 1e-9) allin.delete(top);
+        actors = [...active].filter(p => !allin.has(p));
+      }
+    }
     let toAct = null;
     if (!closed) {
       const N = order.length, start = lastActor ? (order.indexOf(lastActor) + 1) % N : 0;
       for (let k = 0; k < N; k++) { const p = order[(start + k) % N]; if (active.has(p) && !allin.has(p) && !acted.has(p)) { toAct = p; break; } }
     }
     const pot = potBefore + Object.values(bets).reduce((a, b) => a + b, 0);
-    out.streets[street] = { bets, curBet, nRaises, closed, toAct, pot, order };
+    out.streets[street] = { bets, curBet, nRaises, closed, toAct, pot, order, minRaise, locked, ...(returned ? { returned } : {}) };
     if (!closed) { out.current = street; out.toAct = toAct; break; }
     for (const p of POS) inv[p] += bets[p];
     if (active.size <= 1) { out.handOver = true; out.current = street; break; }
@@ -691,23 +726,50 @@ function simulate() {
   if ((out.cur || out.waiting) && !active.has(S.hero) && practicing()) { out.handOver = true; out.cur = null; out.toAct = null; out.waiting = null; out.current = out.current || STREETS.filter(s => out.streets[s]).pop(); }
   return out;
 }
+// Whether p (to act) may bet or raise: not shut out by an all-in for less than a full raise, and someone else
+// still has chips to face it. The smallest raise is to minRaiseTo (all-in for less is always allowed).
+const canRaise = (sim, p) => !sim.cur.locked.has(p) && [...sim.active].some(q => q !== p && !sim.allin.has(q));
+const minRaiseTo = (info) => info.curBet + info.minRaise;
+// Main pot and side pots from each seat's chips in (tot) and the players still in: each all-in player's stake
+// caps what they can win from everyone. [{amount, eligible}], main pot first; one entry without side pots.
+function sidePots(tot, live, allin) {
+  const top = Math.max(...live.map(p => tot[p]));
+  const caps = [...new Set(live.filter(p => allin.has(p) && tot[p] < top - 1e-9).map(p => tot[p]))].sort((a, b) => a - b);
+  const pots = []; let prev = 0;
+  for (const lev of [...caps, Infinity]) {
+    const amount = POS.reduce((t, p) => t + Math.min(tot[p], lev) - Math.min(tot[p], prev), 0);
+    const eligible = live.filter(p => lev === Infinity ? !(allin.has(p) && tot[p] <= prev + 1e-9) : tot[p] >= lev - 1e-9);
+    if (amount > 1e-9) pots.push({ amount, eligible });
+    prev = lev;
+  }
+  return pots;
+}
+// the pots of the hand on the table now (bets of the street in progress included)
+const potsNow = (sim) => sidePots(Object.fromEntries(POS.map(p => [p, sim.invested[p] + (sim.cur ? sim.cur.bets[p] : 0)])), POS.filter(p => sim.active.has(p)), sim.allin);
 
 function act(a) {
   const sim = simulate();
   if (!sim.cur) return sim.waiting ? "Deal the next card first." : "The hand is over.";
   const p = sim.toAct, info = sim.cur;
-  const toCall = info.curBet - info.bets[p], remaining = S.stack - sim.invested[p] - info.bets[p], facing = toCall > 1e-9;
+  const toCall = info.curBet - info.bets[p], remaining = STACK(p) - sim.invested[p] - info.bets[p], facing = toCall > 1e-9;
+  const raiseOk = canRaise(sim, p), allInTo = info.bets[p] + remaining;
+  const noRaise = () => info.locked.has(p) ? `${p} can't raise: the all-in for less than a full raise doesn't reopen the betting.` : `${p} can't raise: nobody left has chips to call it.`;
   let rec;
   if (a.action === "fold") rec = { action: "fold" };
   else if (a.action === "check") { if (facing) return `${p} can't check, there's ${fmt(toCall)}bb to call.`; rec = { action: "check" }; }
   else if (a.action === "call") rec = facing ? { action: "call" } : { action: "check" };
-  else if (a.action === "all-in") rec = { action: "all-in" };
+  else if (a.action === "all-in") rec = raiseOk || remaining <= toCall + 1e-9 ? { action: "all-in" } : facing ? { action: "call" } : { action: "check" };
   else {
-    const to = Math.round(a.to * 2) / 2;
+    let to = Math.round(a.to * 2) / 2;
     if (!(to > 0)) return "Enter an amount.";
-    if (to >= info.bets[p] + remaining - 1e-9) rec = { action: "all-in" };
-    else if (to <= info.curBet + 1e-9) return `${fmt(to)}bb isn't a raise, the bet is ${fmt(info.curBet)}bb.`;
-    else rec = { action: facing || info.curBet > 0 ? "raise" : "bet", to };
+    if (to <= info.curBet + 1e-9 && to < allInTo - 1e-9) return `${fmt(to)}bb isn't a raise, the bet is ${fmt(info.curBet)}bb.`;
+    if (!raiseOk) { if (!a.clamp) return noRaise(); rec = facing ? { action: "call" } : { action: "check" }; }
+    else {
+      // (a practice opponent's size is lifted to the minimum; a typed one is refused)
+      if (to < minRaiseTo(info) - 1e-9 && to < allInTo - 1e-9) { if (!a.clamp) return `The smallest ${facing || info.curBet > 0 ? "raise is to" : "bet is"} ${fmt(Math.min(minRaiseTo(info), allInTo))}bb.`; to = minRaiseTo(info); }
+      if (to >= allInTo - 1e-9) rec = { action: "all-in" };
+      else rec = { action: facing || info.curBet > 0 ? "raise" : "bet", to };
+    }
   }
   if (p === S.hero && practicing() && resultKey !== JSON.stringify(payload())) return "One moment: the spot is being solved, so your move can be graded.";
   if (p === S.hero) { const g = gradeFor(rec); if (g) rec.g = g; }
@@ -800,18 +862,18 @@ function renderSetup() {
   document.getElementById("pSetup").classList.toggle("slim", !full);
   document.getElementById("setupDone").hidden = !started;
   const sum = document.getElementById("setupSum"); sum.hidden = full;
-  sum.innerHTML = `<span><b>${S.players}-handed</b> <span class="muted">·</span> you are <b>${SEAT_LABEL(S.hero, S.players)}</b> <span class="muted">·</span> <b>${fmt(S.stack)}bb</b> stacks${ANTE() ? ` <span class="muted">·</span> ${fmt(ANTE())}bb ante` : ""}${STRADDLER() ? ` <span class="muted">·</span> ${SEAT_LABEL(STRADDLER(), S.players)} straddles` : ""}${RAKE() ? ` <span class="muted">·</span> ${RAKE_TEXT()}` : ""}${ADV_TEXT() ? ` <span class="muted">·</span> ${ADV_TEXT()}` : ""}</span>`;
+  sum.innerHTML = `<span><b>${S.players}-handed</b> <span class="muted">·</span> you are <b>${SEAT_LABEL(S.hero, S.players)}</b> <span class="muted">·</span> <b>${fmt(S.stack)}bb</b> stacks${UNEQUAL() ? ` (${STACKS_TEXT()})` : ""}${ANTE() ? ` <span class="muted">·</span> ${fmt(ANTE())}bb ante` : ""}${STRADDLER() ? ` <span class="muted">·</span> ${SEAT_LABEL(STRADDLER(), S.players)} straddles` : ""}${RAKE() ? ` <span class="muted">·</span> ${RAKE_TEXT()}` : ""}${ADV_TEXT() ? ` <span class="muted">·</span> ${ADV_TEXT()}` : ""}</span>`;
   const e = document.createElement("button"); e.className = "link"; e.style.marginLeft = "auto"; e.textContent = "Edit"; e.onclick = () => { editSetup = true; renderAll(); };
   sum.appendChild(e);
 
   document.getElementById("straddleBox").hidden = S.players < 3;
-  syncAdv();
+  syncAdv(); renderSeatStacks();
   const el = document.getElementById("seats"); el.innerHTML = "";
   for (const p of POS) { const b = document.createElement("button"); b.textContent = SEAT_LABEL(p, POS.length); if (p === S.hero) b.classList.add("active");
     b.onclick = () => { S.hero = p; save(); renderAll(); }; el.appendChild(b); }
   const pl = document.getElementById("players"); pl.innerHTML = "";
   for (let n = 2; n <= 9; n++) { const b = document.createElement("button"); b.className = "small"; b.textContent = n; if (n === S.players) b.classList.add("active");
-    b.onclick = () => { if (n === S.players) return; S = { ...fresh(n), stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanAdv(S, SEATS[n]), cards: S.cards }; setPositions(n); selSlot = null; save(); resetAdvice(); renderAll(); }; pl.appendChild(b); }
+    b.onclick = () => { if (n === S.players) return; S = { ...fresh(n), stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanAdv(S, SEATS[n]), ...cleanStacks(S, SEATS[n]), cards: S.cards }; setPositions(n); selSlot = null; save(); resetAdvice(); renderAll(); }; pl.appendChild(b); }
 }
 function renderSlots(sim) {
   const needIdx = sim.waiting ? S.cards.findIndex((c, i) => !c && i >= 2 && i < 2 + NEED[sim.waiting]) : (!S.cards[0] ? 0 : !S.cards[1] ? 1 : -1);
@@ -870,13 +932,17 @@ function renderTable(sim) {
     const shown = p === S.hero ? (S.cards[0] && S.cards[1] ? S.cards.slice(0, 2) : null) : window.Practice && window.Practice.shown(p);
     const hc = shown ? `<span class="hc">${cardHtml(shown[0])}${cardHtml(shown[1])}</span>` : p === S.hero ? '<span class="you">you</span>' : "";
     const ta = sim.toAct === p ? `<span class="ta">to act</span>` : "";
-    d.innerHTML = `<span class="pos">${SEAT_LABEL(p, n)}</span>${hc}<span class="amt">${amt}${ta}</span>`;
+    // (stacks that differ: each seat's chips behind beside its name)
+    const stk = UNEQUAL() && !folded ? `<span class="stk" title="${SEAT_LABEL(p, n)}'s stack behind">${fmt(Math.max(0, STACK(p) - total))}</span>` : "";
+    d.innerHTML = `<span class="pos">${SEAT_LABEL(p, n)}${stk}</span>${hc}<span class="amt">${amt}${ta}</span>`;
     if (clickable) { d.title = `Everyone before ${p} folds`; d.onclick = () => { showErr(advanceTo(p)); renderAll(); }; }
     el.appendChild(d);
   });
   const center = document.createElement("div"); center.className = "center";
   const b = S.cards.slice(2).map(c => c ? `<div class="bc ${c[1]}">${c[0]}<span>${SUIT_SYM[c[1]]}</span></div>` : `<div class="bc empty"></div>`).join("");
-  center.innerHTML = `<div class="board">${b}</div><div class="pot">pot ${fmt(sim.pot)} bb</div>`;
+  const pots = sim.active.size > 1 ? potsNow(sim) : [];
+  const side = pots.length > 1 ? `<div class="side">${pots.map((x, i) => `${i ? "side" : "main"} ${fmt(x.amount)}`).join(" · ")}</div>` : "";
+  center.innerHTML = `<div class="board">${b}</div><div class="pot">pot ${fmt(sim.pot)} bb</div>${side}`;
   el.appendChild(center);
   document.getElementById("tableHint").textContent = sim.cur ? "click a seat to fold to it" : "";
   const ec = document.getElementById("editCards"), auto = !S.cards[0] || !S.cards[1] || !!sim.waiting;
@@ -895,7 +961,7 @@ function renderAction(sim) {
     el.appendChild(prompt); return;
   }
   const street = sim.current, info = sim.cur, p = sim.toAct, isHero = p === S.hero;
-  const myBet = info.bets[p], toCall = info.curBet - myBet, remaining = S.stack - sim.invested[p] - myBet, facing = toCall > 1e-9;
+  const myBet = info.bets[p], toCall = info.curBet - myBet, remaining = STACK(p) - sim.invested[p] - myBet, facing = toCall > 1e-9;
   step.textContent = street;
   const callAmt = Math.min(toCall, remaining), need = callAmt / (info.pot + callAmt);
   prompt.innerHTML = `<span class="who ${isHero ? "hero" : ""}">${isHero ? "Your turn" : p + " to act"}</span><span class="pot">pot ${fmt(info.pot)} bb${facing ? ` · ${fmt(callAmt)} to call · <span title="Pot odds: the equity a call needs to break even">need ${(need * 100).toFixed(0)}%</span>` : ""}</span><span class="ask">${practicing() ? (isHero ? "Your move." : p + " is thinking…") : isHero ? "Check the advice, then record what you did." : "What did " + p + " do?"}</span>`;
@@ -912,18 +978,19 @@ function renderAction(sim) {
     b.onclick = () => { showErr(act(a)); renderAll(); }; acts.appendChild(b); return b; };
   if (facing) { mk("Fold", "fold", { action: "fold" }, res ? pct(solverAct("fold")).replace("> · ", ">") : "", "F", solverAct("fold")); mk("Call", "pass", { action: "call" }, fmt(callAmt) + " bb" + pct(solverAct("call")), "C", solverAct("call")); }
   else mk("Check", "pass", { action: "check" }, res ? pct(solverAct("check")).replace("> · ", ">") : "", "C", solverAct("check"));
-  const canRaise = remaining > toCall + 1e-9;
+  // (no raise once an all-in for less than a full raise has closed the betting to you, or nobody has chips to call)
+  const raiseOk = canRaise(sim, p), canRaiseNow = remaining > toCall + 1e-9 && raiseOk, minTo = minRaiseTo(info);
   const verb = facing || info.curBet > 0 ? "Raise to" : "Bet";
-  if (canRaise && res) {
+  if (canRaiseNow && res) {
     let k = 0;
     for (const x of res.actions) {
       if (!/^(bet|raise)/.test(x.action) || x.amount_bb == null) continue;
       const v = Math.round(x.amount_bb * 2) / 2;
-      if (!(v > info.curBet + 1e-9 && v < myBet + remaining - 1e-9)) continue;
+      if (!(v >= minTo - 1e-9 && v < myBet + remaining - 1e-9)) continue;
       const tag = /%$/.test(x.action) ? x.action.replace(/^bet /, "") + " pot" : street === "preflop" ? (info.nRaises === 0 ? "open" : (v / info.curBet).toFixed(1) + "x") : (v / info.curBet).toFixed(1) + "x";
       mk(`${verb} ${fmt(v)}`, "agg", { action: "bet", to: v }, tag + pct(x), String(++k), x);
     }
-  } else if (canRaise) {
+  } else if (canRaiseNow) {
     // sizes are rounded to 0.5bb before a label is worked out from them, so a label describes the size used
     const half = (x) => Math.round(x * 2) / 2;
     let sizes;
@@ -932,14 +999,14 @@ function renderAction(sim) {
     else if (!facing) sizes = [[half(info.pot / 3), "⅓ pot"], [half(info.pot * 0.66), "⅔ pot"], [half(info.pot), "pot"]];
     else sizes = [[half(info.curBet + 0.75 * (info.pot + toCall)), "¾ pot"], [half(info.curBet + info.pot + toCall), "pot"]];
     let k = 0;
-    for (const [v, l] of sizes) if (v < myBet + remaining - 1e-9 && v > info.curBet + 1e-9) mk(`${verb} ${fmt(v)}`, "agg", { action: "bet", to: v }, l, String(++k));
+    for (const [v, l] of sizes) if (v < myBet + remaining - 1e-9 && v >= minTo - 1e-9) mk(`${verb} ${fmt(v)}`, "agg", { action: "bet", to: v }, l, String(++k));
   }
-  if (canRaise) {
+  if (canRaiseNow) {
     const custom = document.createElement("button"); custom.className = "agg"; custom.innerHTML = `${verb} …<kbd>R</kbd>`; custom.dataset.key = "r";
     custom.onclick = () => { document.getElementById("customBox").classList.toggle("open"); document.getElementById("customAmt").focus(); };
     acts.appendChild(custom);
   }
-  if (remaining > 0) mk("All-in", "agg", { action: "all-in" }, fmt(myBet + remaining) + " bb" + pct(solverAct("all-in")), "A", solverAct("all-in"));
+  if (remaining > 0 && (raiseOk || remaining <= toCall + 1e-9)) mk("All-in", "agg", { action: "all-in" }, fmt(myBet + remaining) + " bb" + pct(solverAct("all-in")), "A", solverAct("all-in"));
   el.appendChild(acts);
 
   const cb = document.createElement("div"); cb.className = "custom"; cb.id = "customBox";
@@ -993,6 +1060,7 @@ function payload() {
   // the Advanced fields change postflop solves only: sent from the flop on, so preflop advice (and its cache) is the same
   const post = boardCards().length >= 3, adv = post ? { ...(S.sizes ? { sizes: S.sizes } : {}), ...(OPP_RANGES() ? { ranges: OPP_RANGES() } : {}), ...(S.optSizes ? { optimize_sizes: true } : {}) } : {};
   return { players: S.players, hero: S.hero, hole: (S.cards[0] || "") + (S.cards[1] || ""), board: boardCards().join(""), stack: S.stack,
+           ...(UNEQUAL() ? { stacks: Object.fromEntries(POS.map(p => [p, STACK(p)])) } : {}),
            ...(ANTE() ? { ante: ANTE() } : {}), ...(STRADDLER() ? { straddle: true } : {}),
            ...(RAKE() ? { rake: RAKE() / 100, ...(RAKE_CAP() ? { rake_cap: RAKE_CAP() } : {}) } : {}),
            preflop: conv(S.actions.preflop), flop: conv(S.actions.flop), turn: conv(S.actions.turn), river: conv(S.actions.river), budget: BUDGET, prior_budget: PRIOR, speed: SPEED,
@@ -1240,7 +1308,7 @@ function resetAdvice() {
 // ---- share: plain-text summary + link that reopens the spot
 function handText() {
   const n = S.players, seat = SEAT_LABEL(S.hero, n);
-  const lines = [`GTO Solver hand: ${n}-handed, ${S.stack}bb effective${ANTE() ? `, ${fmt(ANTE())}bb ante` : ""}${STRADDLER() ? `, ${SEAT_LABEL(STRADDLER(), n)} straddles 2bb` : ""}${RAKE() ? `, ${RAKE_TEXT()}` : ""}${ADV_TEXT() ? `, ${ADV_TEXT()}` : ""}, I am ${seat} with ${S.cards[0] || "?"}${S.cards[1] || "?"}`];
+  const lines = [`GTO Solver hand: ${n}-handed, ${UNEQUAL() ? `${S.stack}bb stacks (${STACKS_TEXT()})` : `${S.stack}bb effective`}${ANTE() ? `, ${fmt(ANTE())}bb ante` : ""}${STRADDLER() ? `, ${SEAT_LABEL(STRADDLER(), n)} straddles 2bb` : ""}${RAKE() ? `, ${RAKE_TEXT()}` : ""}${ADV_TEXT() ? `, ${ADV_TEXT()}` : ""}, I am ${seat} with ${S.cards[0] || "?"}${S.cards[1] || "?"}`];
   const act = (a) => `${SEAT_LABEL(a.pos, n)} ${a.action === "bet" ? "bets " + fmt(a.to) : a.action === "raise" ? "raises to " + fmt(a.to) : a.action === "all-in" ? "all-in" : a.action + "s"}${a.g ? ` [${gradeMark(a.g)} solver ${(a.g.f * 100).toFixed(0)}%${a.g.l ? `, -${a.g.l.toFixed(2)}bb` : ""}]` : ""}`;
   const bd = (s) => s === "preflop" ? "" : " (" + boardCards().slice(NEED[s] - (s === "flop" ? 3 : 1), NEED[s]).join(" ") + ")";
   const sim = simulate();
@@ -1316,7 +1384,32 @@ document.getElementById("copyhand").onclick = () => {
   history.replaceState(null, "", location.pathname);
 })();
 document.getElementById("stack").value = S.stack;
-document.getElementById("stack").onchange = (e) => { S.stack = parseFloat(e.target.value) > 0 ? parseFloat(e.target.value) : 100; e.target.value = S.stack; save(); renderAll(); };
+document.getElementById("stack").onchange = (e) => { S.stack = parseFloat(e.target.value) > 0 ? parseFloat(e.target.value) : 100; e.target.value = S.stack; const o = S.stacks; delete S.stacks; Object.assign(S, cleanStacks({ ...S, stacks: o }, POS)); save(); renderAll(); };
+// The seats' own stacks (Stacks: "per seat"): a row of boxes, one per seat; a seat left at the table's stack has none.
+// Changing the table's stack keeps the seats given their own.
+function setSeatStack(p, v) {
+  const x = parseFloat(v);
+  const o = { ...(S.stacks || {}) };
+  if (x > 0 && x !== S.stack) o[p] = x; else delete o[p];
+  delete S.stacks; Object.assign(S, cleanStacks({ ...S, stacks: o }, POS)); save(); resetAdvice(); renderAll();
+}
+document.getElementById("stacksEdit").onclick = () => { seatStacksOpen = true; renderAll(); };
+document.getElementById("stacksSame").onclick = () => { seatStacksOpen = false; if (S.stacks) { delete S.stacks; save(); resetAdvice(); } renderAll(); };
+function renderSeatStacks() {
+  const open = seatStacksOpen || UNEQUAL(), box = document.getElementById("seatStackIns");
+  document.getElementById("seatStacks").hidden = !open; document.getElementById("stacksEdit").hidden = open;
+  document.getElementById("stacksSame").textContent = UNEQUAL() ? "all equal" : "close";
+  if (!open) { box.innerHTML = ""; delete box.dataset.seats; return; }
+  if (box.dataset.seats === POS.join() && box.dataset.vals === POS.map(STACK).join()) return;   // (keep a box being typed in)
+  box.innerHTML = ""; box.dataset.seats = POS.join(); box.dataset.vals = POS.map(STACK).join();
+  for (const p of POS) {
+    const l = document.createElement("label"); l.className = "muted"; l.textContent = SEAT_LABEL(p, S.players) + " ";
+    const i = document.createElement("input"); i.type = "number"; i.min = "1"; i.step = "1"; i.value = fmt(STACK(p)); i.dataset.p = p;
+    i.title = `${SEAT_LABEL(p, S.players)}'s stack in big blinds`;
+    i.onchange = (e) => setSeatStack(p, e.target.value);
+    l.appendChild(i); box.appendChild(l);
+  }
+}
 document.getElementById("ante").value = ANTE();
 document.getElementById("ante").onchange = (e) => { S.ante = Math.max(0, parseFloat(e.target.value) || 0); save(); resetAdvice(); renderAll(); };
 document.getElementById("straddle").checked = !!S.straddle;
@@ -1401,7 +1494,7 @@ document.addEventListener("keydown", (e) => {
 document.getElementById("newhand").onclick = () => {
   if (practicing()) return window.Practice.next();
   if (review) { review.cancel = "drop"; cancelSolve(); }
-  S = { ...fresh(S.players), hero: S.hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanAdv(S, POS) }; selSlot = null; showDeck = false; editSetup = false; pendingRank = null; save(); resetAdvice(); renderAll();
+  S = { ...fresh(S.players), hero: S.hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanAdv(S, POS), ...cleanStacks(S, POS) }; selSlot = null; showDeck = false; editSetup = false; pendingRank = null; save(); resetAdvice(); renderAll();
 };
 // ---- hand-history import (hh.js, loaded the first time the dialog opens)
 let hhLoad = null;
@@ -1426,7 +1519,7 @@ document.getElementById("hhGo").onclick = async () => {
   document.getElementById("stack").value = S.stack; document.getElementById("ante").value = ANTE(); document.getElementById("straddle").checked = !!S.straddle;
   save(); resetAdvice(); renderAll(); hhBox.hidden = true; hhText.value = "";
   const h = r.hand;
-  toast(`Imported ${h.site === "generic" ? "a" : h.site} hand: ${h.players}-handed, you are ${SEAT_LABEL(h.hero, h.players)} with ${h.hole.join("")}, ${fmt(h.stack)}bb deep.${r.warnings.length ? " " + r.warnings.join(" ") : ""}`, null, 15000);
+  toast(`Imported ${h.site === "generic" ? "a" : h.site} hand: ${h.players}-handed, you are ${SEAT_LABEL(h.hero, h.players)} with ${h.hole.join("")}, ${fmt(h.effective)}bb effective${S.stacks ? ` (you have ${fmt(S.stack)}bb; every seat plays its own stack)` : ""}.${r.warnings.length ? " " + r.warnings.join(" ") : ""}`, null, 15000);
   const b = document.createElement("button"); b.className = "link"; b.textContent = "Review whole hand";
   b.onclick = () => { document.getElementById("toast").hidden = true; reviewHand(); }; document.getElementById("toast").appendChild(b);
 };
