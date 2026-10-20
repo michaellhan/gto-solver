@@ -1801,7 +1801,7 @@ class TestExploit(unittest.TestCase):
 
     def test_pool_preflop_flats_and_3bets_more(self):
         """Population HUD stats (GGPoker 6-max NL50-500: 3bet 8.9% against the charts' 8.7%, VPIP 28.75
-        against 24.7; scripts/calibrate_pool.py): facing an open the pool 3bets POOL_3BET_SCALE (1.13) x the chart's share
+        against 24.7; scripts/calibrate_pool.py): facing an open the pool 3bets POOL_3BET_SCALE (1.23) x the chart's share
         (from its strongest calls) and flats POOL_EXTRA_ENTER of its folds more (its strongest)."""
         from gto.advisor import preflop_ranges
         from gto import exploit
