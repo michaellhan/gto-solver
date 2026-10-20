@@ -206,3 +206,16 @@ test("rake is taken from the called pot: a bet nobody calls goes back unraked", 
   assert.deepEqual(p.S.actions.flop.map(a => a.action), p.S.hero === "BB" ? ["bet", "fold"] : ["check", "bet", "fold"]);
   assert.equal(h.result.net, 0.9);   // 4bb pot less 0.1 rake on the 2 called, less your 3
 });
+
+test("practice deals keep the Advanced setup (sizes, ranges, size optimization), as New hand does", async () => {
+  const p = loadPage();
+  await p.ready();
+  p.run(`S.sizes = { flop: [50] }; S.ranges = { BTN: "QQ+", BB: "22+" }; S.optSizes = true; save();`);
+  vm.runInContext(PRACTICE, p.ctx, { filename: "practice.js" });
+  p.run("Practice.set(true)");
+  for (let k = 0; k < 2; k++) {
+    const S = p.S;
+    assert.deepEqual([S.sizes, S.ranges, S.optSizes], [{ flop: [50] }, { BTN: "QQ+", BB: "22+" }, true]);
+    p.run("Practice.next()"); await flush();
+  }
+});

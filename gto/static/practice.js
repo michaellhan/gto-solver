@@ -41,7 +41,7 @@
     for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
     const hero = POS[Math.floor(Math.random() * POS.length)], hands = {};
     for (const p of POS) hands[p] = [deck.pop(), deck.pop()];
-    S = { ...fresh(S.players), hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap };
+    S = { ...fresh(S.players), hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanAdv(S, POS) };   // (as New hand)
     S.cards[0] = hands[hero][0]; S.cards[1] = hands[hero][1];
     const hole = hands[hero]; delete hands[hero];
     P.hand = { hero, players: S.players, hole, hands, board: deck.slice(0, 5), result: null };
