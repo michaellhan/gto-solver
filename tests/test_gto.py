@@ -454,6 +454,12 @@ class TestAdvisor(unittest.TestCase):
         self.assertEqual(go("BB", "Kh5d", lim, stack=12)[0]["recommended"], "check")
         self.assertEqual(go("BB", "Jh5h", lim, stack=12)[0]["recommended"], "check")
         self.assertEqual(go("BB", "AhTd", lim, stack=12)[0]["recommended"], "all-in")
+        # closing a five-way pot at 10:1 the big blind calls suited connectors (multiway equity per combo from
+        # 60-75 boards had 76s at 5% where a dealt-out simulation has 14%, and they folded 70-77%); 72o folds
+        mw5 = [R("UTG", "raise", 2.5), R("HJ", "call"), R("CO", "call"), R("BTN", "call"), R("SB", "call")]
+        for h in ("7h6h", "6h5h", "5h4h"):
+            self.assertEqual(go("BB", h, mw5)[0]["recommended"], "call", h)
+        self.assertEqual(go("BB", "7h2d", mw5)[0]["recommended"], "fold")
         # facing a 5bet with chips behind, AA can shove
         r, a = go("UTG", "AhAd", [R("UTG", "raise", 2.5), R("HJ", "raise", 8)] + F("CO", "BTN", "SB", "BB")
                   + [R("UTG", "raise", 20), R("HJ", "raise", 45)], stack=200)
@@ -859,7 +865,7 @@ class TestTableSizes(unittest.TestCase):
         # (BB's flop call keeps the hands that would have raised at SLOWPLAY, so its river lead is no longer
         # mostly air: the two continue about equally, 45% and 43%, against 64% each before the joint bar)
         self.assertLess(max(bb, co), 55)
-        self.assertLess(abs(bb - co), 6)
+        self.assertLessEqual(abs(bb - co), 7)   # (47 / 41 with the dealt-out multiway preflop equity)
         # One range: the same as keeping its top share.
         rng = np.random.default_rng(1)
         w, sc = rng.random(1326), rng.random(1326)
@@ -948,7 +954,7 @@ class TestTableSizes(unittest.TestCase):
         self.assertGreaterEqual(share["7s7d"], 99)
         self.assertLess(share["7s6s"], share["7s7d"])
         self.assertGreater(share["7s6s"], 0)
-        self.assertEqual(share["8s6s"], 0)
+        self.assertLessEqual(share["8s6s"], 3)   # (2%: the preflop ranges' small shifts move it a point or two)
 
     def test_multiway_small_bet(self):
         # Checked to CO 3-way: it chooses between checking, a third of the pot and two thirds by EV, and

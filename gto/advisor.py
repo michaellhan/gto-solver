@@ -67,6 +67,7 @@ UNSETTLED = 3.0     # heads-up: a solve this far from equilibrium (% pot) hasn't
 SETTLE_EXPL = 10.0  # heads-up: the street being advised on gets one more time budget when this far (% pot) from settled
 JAM_BLEND = 0.04    # preflop vs a jam: call frequency ramps from 0 to 1 over this much equity around the pot odds
 PREFLOP_BOARDS = 400  # boards sampled for preflop all-in equity
+MULTI_BOARDS = 400    # ...of which preflop equity against several ranges uses this many
 PRICE_BLEND = 0.02  # preflop, off-chart price: continue frequency ramps over this much (scaled) equity around the pot odds
 RAISE_BLEND = 0.03  # preflop, more players in: value-raise frequency ramps over this much equity when called
 COMMIT = 0.4       # preflop: a raise that would put in this share of the stack goes all-in instead
@@ -472,28 +473,81 @@ def _preflop_equity(villain: np.ndarray) -> np.ndarray:
     return equity_vs(villain)
 
 
+_CA = np.array([a for a, b in ALL_COMBOS])
+_CB = np.array([b for a, b in ALL_COMBOS])
+
+
+@lru_cache(maxsize=1)
+def _board_index():
+    """Per preflop board, the orders and lookups _beat_share needs that don't depend on the range: every
+    combo by strength, every (card, strength) entry of a combo holding that card, and where each combo's own
+    strength falls in both."""
+    out = []
+    for s in _preflop_boards():
+        o = np.argsort(s, kind="stable")
+        ss = s[o]
+        keys = np.concatenate([_CA, _CB]) * 8192 + np.concatenate([s, s])
+        o2 = np.argsort(keys, kind="stable")
+        k2 = keys[o2]
+        q = np.maximum(s, -1)
+        ix = [np.searchsorted(ss, s, "left"), np.searchsorted(ss, s, "right")]
+        for c in (_CA, _CB):
+            ix += [np.searchsorted(k2, c * 8192, "left"), np.searchsorted(k2, c * 8192 + q, "left"),
+                   np.searchsorted(k2, c * 8192 + q, "right"), np.searchsorted(k2, c * 8192 + 8191, "right")]
+        out.append((o.astype(np.int32), o2.astype(np.int32), [i.astype(np.int32) for i in ix]))
+    return out
+
+
+def _beat_share(bi: int, w: np.ndarray) -> np.ndarray:
+    """On preflop board bi, every combo's chance of beating a hand drawn from the range w (1326 weights,
+    zero on combos the board blocks), ties half, counting only villain combos sharing no card with it:
+    sorted cumulative weights, and per card the same for the villain combos holding it (inclusion-exclusion;
+    the only combo holding both of ours is ours). Also returns that compatible weight, per combo."""
+    o, o2, ix = _board_index()[bi]
+    cw = np.concatenate([[0.0], np.cumsum(w[o])])
+    c2 = np.concatenate([[0.0], np.cumsum(np.concatenate([w, w])[o2])])
+    lt, le = cw[ix[0]], cw[ix[1]]
+    lt_ab = le_ab = tot_ab = 0.0
+    for j in (2, 6):
+        base = c2[ix[j]]
+        lt_ab = lt_ab + c2[ix[j + 1]] - base
+        le_ab = le_ab + c2[ix[j + 2]] - base
+        tot_ab = tot_ab + c2[ix[j + 3]] - base
+    tot = w.sum() - tot_ab + w
+    win = (lt - lt_ab) + 0.5 * ((le - le_ab + w) - (lt - lt_ab))
+    return np.where(tot > 1e-12, win / np.maximum(tot, 1e-12), 0.0), tot
+
+
 def _preflop_equity_multi(villains: List[np.ndarray]) -> np.ndarray:
     """Preflop equity of every combo against several weighted ranges at once: on each board, the product
-    of the chances of beating each (ties count half; card removal between the villains is ignored)."""
+    of the chances of beating each (ties count half; card removal between the villains is ignored), over
+    the first MULTI_BOARDS boards (each class pools its combos below)."""
     if len(villains) == 1:
         return _preflop_equity(villains[0])
     sts = _preflop_boards()
-    vs = []
-    for r in villains:
-        v = np.nonzero(r > 1e-9)[0]
-        vs.append((v, r[v], (_CARD_MASK[:, None] & _CARD_MASK[None, v]) == 0))
-    n = sum(len(v) for v, _, _ in vs)
     num = np.zeros(N_COMBOS); den = np.zeros(N_COMBOS)
-    for s in sts[: max(60, min(len(sts), int(6e7 / (N_COMBOS * max(n, 1)))))]:
-        p = (s >= 0).astype(float)
-        for v, w, ok in vs:
-            sv = s[v]
-            wl = (ok & (sv >= 0)[None, :]) * w
-            d = wl.sum(1)
-            win = (wl * ((s[:, None] > sv[None, :]) + 0.5 * (s[:, None] == sv[None, :]))).sum(1)
-            p = p * np.where(d > 0, win / np.maximum(d, 1e-12), 0.0)
-        num += p; den += s >= 0
-    return np.where(den > 0, num / np.maximum(den, 1), np.nan)
+    tw = [max(float(r.sum()), 1e-12) for r in villains]
+    for bi, s in enumerate(sts[:MULTI_BOARDS]):
+        live = s >= 0
+        p = live.astype(float)
+        bw = live.astype(float)
+        for r, t in zip(villains, tw):
+            sh, tot = _beat_share(bi, np.where(live, r, 0.0))
+            p = p * sh
+            # boards are as likely as the players' hands leave them: a board of the cards their ranges hold
+            # comes less often (high cards, against ranges of broadways), which the uniform boards missed: 76s
+            # and 22 read 2-3 points under a dealt-out simulation against five players, Q9o 2 over
+            bw = bw * tot / t
+        num += p * bw; den += bw
+    # Every combo of a hand class is the same hand up to suits, and the (chart) ranges are suit-symmetric,
+    # so the class's combos share one estimate: each combo alone saw only its 60-75 boards, and 76s came out at
+    # 5.1% against five players where 65s had 9.5% and Q9o 14.7%, so BB folded 76s, 65s and 54s 70-77% of the
+    # time getting 10:1. Pooled, each class sees 4-12x the boards.
+    from .pf_classes import CLASS_OF
+    k = int(CLASS_OF.max()) + 1
+    num_c = np.bincount(CLASS_OF, weights=num, minlength=k)
+    den_c = np.bincount(CLASS_OF, weights=den, minlength=k)
+    return np.where(den_c[CLASS_OF] > 0, num_c[CLASS_OF] / np.maximum(den_c[CLASS_OF], 1), np.nan)
 
 
 def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack: float, hero=None, hole=(),
@@ -1199,9 +1253,12 @@ class Advisor:
         # shallower than the charts moves their price by how their odds with those winnings change at
         # this price, so 20bb shallower costs a small pair a little of the implied odds it had at chart
         # depth, not all of them.
+        # More players in pay off more often too, by the square root of how many (judgment: a hit is paid by
+        # one or two of them, not all), so a suited connector or small pair closing a pot five ways expects
+        # 2.2x the chart's heads-up winnings.
         depth = behind - behind_std
-        implied = lambda b: call / np.maximum(pot + call + _IMPLIED_W * max(b, 0.0), call + 1e-9)
-        need_v = need + implied(behind) - implied(behind_std)
+        implied = lambda b, n=1: call / np.maximum(pot + call + _IMPLIED_W * max(b, 0.0) * np.sqrt(n), call + 1e-9)
+        need_v = need + implied(behind, max(len(opp), 1)) - implied(behind_std, max(len(opp_std), 1))
         more = sorted(opp) != sorted(opp_std)
         reprice = abs(need - need_std) >= PRICE_TOL or abs(depth) >= DEPTH_TOL or pool or raked
         if not (more or reprice):
