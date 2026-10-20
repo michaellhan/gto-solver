@@ -28,7 +28,7 @@ const ready = (async () => {
   //   From the flop: 3 random turns, the river checked down (river_play and turn_classes off), ~150
   //   iterations; its c-bets run 10-30 points low on dry and paired flops (README, Accuracy vs speed).
   // Accurate (60 s): every river, so the turn is unbiased (donk 1-4%). From the flop, one turn per rank class
-  //   with the river still bet on (Config's defaults): 50-65 iterations on a rainbow flop, ~30 on a two-tone
+  //   with the river still bet on (Config's defaults): 60-75 iterations on a rainbow flop, ~30 on a two-tone
   //   or monotone one; c-bets within ~8 points of a solve over every turn there, against 12 for 4 random
   //   turns with the river checked down. A Fast flop solve plays another game there, so it seeds only turn
   //   and river solves. Its earlier-street solves (12 s, for range narrowing) keep Fast's flop model, which

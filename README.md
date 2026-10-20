@@ -317,7 +317,7 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   Pyodide, and a solve needs ~100: 30 iterations were 12 points of c-bet and 15 of BB's check from
   the reference, 60 were 8 and 8, 100 were 5 and 4. So the server's Accurate settles, while Fast
   (2.5 s) and the browser's Fast keep random turns and the river checked down (their c-bets 10-30
-  points low on dry and paired flops), and the browser's Accurate gets 50-65 iterations in 60 s,
+  points low on dry and paired flops), and the browser's Accurate gets 60-75 iterations in 60 s,
   about 8 points of c-bet from the reference (12 before) with BB's check a little noisier (7.5
   points, 6 before). Tests TestFlopStrategy hold the published table.
   A flop all-in pays its equity over every turn card with 4 evenly spread rivers each
