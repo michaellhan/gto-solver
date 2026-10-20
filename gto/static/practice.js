@@ -41,7 +41,7 @@
     for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
     const hero = POS[Math.floor(Math.random() * POS.length)], hands = {};
     for (const p of POS) hands[p] = [deck.pop(), deck.pop()];
-    S = { ...fresh(S.players), hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap };
+    S = { ...fresh(S.players), hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanAdv(S, POS) };   // (as New hand)
     S.cards[0] = hands[hero][0]; S.cards[1] = hands[hero][1];
     const hole = hands[hero]; delete hands[hero];
     P.hand = { hero, players: S.players, hole, hands, board: deck.slice(0, 5), result: null };
@@ -80,7 +80,9 @@
     const inv = (p) => sim.invested[p] + (open ? sim.streets[sim.current].bets[p] : 0);
     const board = boardCards(), live = POS.filter(p => sim.active.has(p));
     let pot = POS.reduce((t, p) => t + inv(p), 0);
-    if (board.length >= 3 && RAKE()) pot -= Math.min(pot * RAKE() / 100, RAKE_CAP() || Infinity);
+    // rake (pots that saw a flop) is on the called pot: a bet or raise nobody matched goes back untouched
+    const most = POS.map(inv).sort((a, b) => b - a), uncalled = most[0] - (most[1] || 0);
+    if (board.length >= 3 && RAKE()) pot -= Math.min((pot - uncalled) * RAKE() / 100, RAKE_CAP() || Infinity);
     const cards = (p) => p === S.hero ? h.hole : h.hands[p];
     let winners = live, shown = [], best = null;
     if (!sim.active.has(S.hero)) winners = [];

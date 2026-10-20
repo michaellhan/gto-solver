@@ -1,0 +1,36 @@
+PokerStars Hand #252000000001:  Hold'em No Limit ($0.50/$1.00 USD) - 2024/10/02 12:00:00 ET
+Table 'Ariel' 6-max Seat #2 is the button
+Seat 1: Villain ($100 in chips)
+Seat 2: Hero ($100 in chips)
+Seat 3: sb_guy ($100 in chips)
+Seat 4: bb_guy ($100 in chips)
+sb_guy: posts small blind $0.50
+bb_guy: posts big blind $1
+*** HOLE CARDS ***
+Dealt to Hero [As Ks]
+Villain: raises $1.50 to $2.50
+Hero: raises $5 to $7.50
+sb_guy: folds
+bb_guy: folds
+Villain: calls $5
+*** FLOP *** [Kd 8s 3s]
+Villain: checks
+Hero: bets $5
+Villain: raises $87.50 to $92.50 and is all-in
+Hero: calls $87.50 and is all-in
+*** FIRST TURN *** [Kd 8s 3s] [2h]
+*** FIRST RIVER *** [Kd 8s 3s 2h] [9c]
+*** SECOND TURN *** [Kd 8s 3s] [Qs]
+*** SECOND RIVER *** [Kd 8s 3s Qs] [4d]
+*** FIRST SHOW DOWN ***
+Villain: shows [8h 8d] (three of a kind, Eights)
+Hero: shows [As Ks] (a pair of Kings)
+Villain collected $99.25 from pot
+*** SECOND SHOW DOWN ***
+Hero collected $99.25 from pot
+*** SUMMARY ***
+Total pot $201.50 | Rake $3
+Hand was run twice
+FIRST Board [Kd 8s 3s 2h 9c]
+SECOND Board [Kd 8s 3s Qs 4d]
+Seat 1: Villain showed [8h 8d] and won ($99.25)

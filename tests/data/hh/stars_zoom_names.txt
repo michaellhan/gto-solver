@@ -1,0 +1,33 @@
+PokerStars Zoom Hand #251234567890:  Hold'em No Limit ($0.02/$0.05) - 2024/10/01 12:00:00 ET
+Table 'Halley' 6-max Seat #1 is the button
+Seat 1: Jérôme_ø ($5.12 in chips)
+Seat 2: 王小明 ($4.80 in chips)
+Seat 3: raises 2 to 4 ($5 in chips)
+Seat 4: Hero: The Man ($6.40 in chips)
+Seat 5: x (2) ($5 in chips)
+Seat 6: 🦈shark ($3.35 in chips)
+王小明: posts small blind $0.02
+raises 2 to 4: posts big blind $0.05
+*** HOLE CARDS ***
+Dealt to Hero: The Man [Td Tc]
+Hero: The Man: raises $0.08 to $0.13
+x (2): folds
+🦈shark: raises $0.32 to $0.45
+Jérôme_ø: folds
+王小明: folds
+raises 2 to 4: folds
+Hero: The Man: calls $0.32
+*** FLOP *** [9s 4c 2d]
+Hero: The Man: checks
+🦈shark: bets $0.30
+Hero: The Man: calls $0.30
+*** TURN *** [9s 4c 2d] [Kh]
+Hero: The Man: checks
+🦈shark: bets $2.60 and is all-in
+Hero: The Man: folds
+Uncalled bet ($2.60) returned to 🦈shark
+🦈shark collected $1.53 from pot
+🦈shark: doesn't show hand
+*** SUMMARY ***
+Total pot $1.57 | Rake $0.04
+Board [9s 4c 2d Kh]

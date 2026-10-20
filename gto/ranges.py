@@ -4,6 +4,7 @@ Syntax (comma separated): AA, KK+, AKs, AKo, AK, A5s+, T9s-65s, 22-77, 'AhKh',
 optional weight suffix ':0.5' e.g. 'A5s:0.5'. 'random'/'100%' = all combos.
 """
 from __future__ import annotations
+import re
 import numpy as np
 from typing import Dict, Iterable, Tuple
 from .cards import RANKS, ALL_COMBOS, COMBO_INDEX, rank, suit, card, hand_class
@@ -11,8 +12,13 @@ from .cards import RANKS, ALL_COMBOS, COMBO_INDEX, rank, suit, card, hand_class
 N_COMBOS = 1326
 
 
+_CLASS = re.compile(r"([2-9TJQKA])\1|(?!(.)\2)[2-9TJQKA]{2}[so]?")
+
+
 def _class_combos(cls: str):
     """Combos for a class like 'AKs', 'AKo', 'QQ'."""
+    if not _CLASS.fullmatch(cls):   # 'AKS' / 'AKx' read as offsuit and 'AAs' as AA
+        raise ValueError(f"bad hand class {cls!r}")
     r1, r2 = RANKS.index(cls[0]), RANKS.index(cls[1])
     out = []
     for cb in ALL_COMBOS:
@@ -37,6 +43,8 @@ def _expand_token(tok: str):
         return []
     if tok.lower() in ("random", "100%", "any"):
         return list(ALL_COMBOS)
+    # ranks in capitals, the suitedness letter small, whatever the case typed ('aks', 'AKS')
+    tok = re.sub(r"([2-9TJQKA])([2-9TJQKA])([SO]?)", lambda m: m[1] + m[2] + m[3].lower(), tok.upper())
     # specific combo like AhKh
     if len(tok) == 4 and tok[1].lower() in "cdhs" and tok[3].lower() in "cdhs":
         a, b = card(tok[:2]), card(tok[2:])
@@ -82,7 +90,8 @@ def _expand_token(tok: str):
 
 def parse_range(text: str) -> np.ndarray:
     w = np.zeros(N_COMBOS)
-    for part in text.replace("\n", ",").split(","):
+    # commas, or just spaces / new lines, between hands; spaces around a weight's ':' are fine
+    for part in re.split(r"[,\s]+", re.sub(r"\s*:\s*", ":", text)):
         part = part.strip()
         if not part:
             continue

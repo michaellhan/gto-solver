@@ -166,3 +166,56 @@ test("hand strength: categories and kickers", async () => {
   assert.deepEqual(r("9s 9d 5c 7h Jd Kc 2s"), [1, 9, 13, 11, 7]);
   assert.deepEqual(r("Ah Ad Ac As 2h 3h 4h"), [7, 14, 4]);
 });
+
+test("your fold that closes the street ends the hand, with others still in", async () => {
+  // the big blind folds to an open and a call: no flop is dealt and the opponents don't play on
+  let p, seed = 1;
+  do p = await practicePage(seed++); while (p.S.hero !== "BB");
+  const done = new Set();
+  let opened = false;
+  const villain = (m) => {
+    if (!opened) { opened = true; return { pos: m.play.seat, action: "raise", to: 3, name: "raise 3" }; }
+    return { pos: m.play.seat, action: "call" };
+  };
+  for (let i = 0; i < 50 && p.sim().toAct !== "BB"; i++) { await flush(); answer(p, done, villain); await flush(); }
+  for (let i = 0; i < 5 && !p.val("resultKey === JSON.stringify(payload())"); i++) { await flush(); answer(p, done, villain); await flush(); }
+  assert.equal(p.act({ action: "fold" }), null);
+  p.run("renderAll()"); await flush();
+  const sim = p.sim();
+  assert.equal(sim.handOver, true);
+  assert.equal(sim.waiting, null);
+  assert.deepEqual(p.S.cards.slice(2), [null, null, null, null, null]);
+  const h = p.val("Practice.state.hand");
+  assert.deepEqual([h.result.folded, h.result.net], [true, -1]);
+  const n = p.posted.length; await flush(); answer(p, done, villain); await flush();
+  assert.equal(p.posted.length, n);
+  assert.equal(p.val("Practice.state.score.hands"), 1);
+});
+
+test("rake is taken from the called pot: a bet nobody calls goes back unraked", async () => {
+  const p = loadPage();
+  await p.ready();
+  p.run(`Math.random = (() => { let s = 3; return () => (s = (s * 16807) % 2147483647) / 2147483647; })();`);
+  p.run("S.players = 2; S.rake = 5; S.rakeCap = 3; setPositions(2); save();");
+  vm.runInContext(PRACTICE, p.ctx, { filename: "practice.js" });
+  p.run("Practice.set(true)");
+  // limp-check to the flop, you bet 2bb there and the opponent folds: 2bb called pot, 5% rake
+  const villain = (m) => ({ pos: m.play.seat, action: (m.state.flop || []).some(a => a.action === "bet") ? "fold" : "call" });
+  await playHand(p, villain, (sim) => p.S.cards[2] && !(sim.cur.curBet > 0) ? { action: "bet", to: 2 } : { action: "call" });
+  const h = p.val("Practice.state.hand");
+  assert.deepEqual(p.S.actions.flop.map(a => a.action), p.S.hero === "BB" ? ["bet", "fold"] : ["check", "bet", "fold"]);
+  assert.equal(h.result.net, 0.9);   // 4bb pot less 0.1 rake on the 2 called, less your 3
+});
+
+test("practice deals keep the Advanced setup (sizes, ranges, size optimization), as New hand does", async () => {
+  const p = loadPage();
+  await p.ready();
+  p.run(`S.sizes = { flop: [50] }; S.ranges = { BTN: "QQ+", BB: "22+" }; S.optSizes = true; save();`);
+  vm.runInContext(PRACTICE, p.ctx, { filename: "practice.js" });
+  p.run("Practice.set(true)");
+  for (let k = 0; k < 2; k++) {
+    const S = p.S;
+    assert.deepEqual([S.sizes, S.ranges, S.optSizes], [{ flop: [50] }, { BTN: "QQ+", BB: "22+" }, true]);
+    p.run("Practice.next()"); await flush();
+  }
+});

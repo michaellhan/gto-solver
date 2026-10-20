@@ -42,6 +42,19 @@ const CASES = {
     preflop: "SB r2.5, BB r9, SB c", flop: "BB x, SB b6, BB c", turn: "BB x, SB x", river: "BB b20, SB f", pot: 50 },
   gg_straddle: { players: 6, hero: "BB", stack: 100, straddle: true, cards: ["Jc", "Jd", "8c", "4d", "2s", "Ah", null],
     preflop: "HJ f, CO r7, BTN f, SB f, BB r26, UTG f, CO c", flop: "BB b17.5, CO c", turn: "BB x, CO b39, BB f", river: "", pot: 26 + 26 + 0.5 + 2 + 35 + 39 },
+  // names with brackets ("x (2)"), a colon, "raises", unicode; 2c/5c blinds (a 0.4bb small blind)
+  stars_zoom_names: { players: 6, hero: "UTG", stack: 67, cards: ["Td", "Tc", "9s", "4c", "2d", "Kh", null],
+    preflop: "UTG r2.6, HJ f, CO r9, BTN f, SB f, BB f, UTG c", flop: "UTG x, CO b6, UTG c", turn: "UTG x, CO a, UTG f", river: "", pot: 19.5 + 12 + 52 },
+  // run twice (the first board is the hand's), all-in insurance and cash-drop lines
+  gg_run_twice_cashout: { players: 6, hero: "HJ", stack: 100, cards: ["Ah", "Ad", "2c", "7d", "9s", "Jh", "Kd"],
+    preflop: "UTG f, HJ r2.5, CO f, BTN r8.5, SB f, BB r45, HJ a, BTN c, BB c", flop: "", turn: "", river: "", pot: 300.5 },
+  stars_run_twice: { players: 4, hero: "BTN", stack: 100, cards: ["As", "Ks", "Kd", "8s", "3s", "2h", "9c"],
+    preflop: "CO r2.5, BTN r7.5, SB f, BB f, CO c", flop: "CO x, BTN b5, CO a, BTN c", turn: "", river: "", pot: 201.5 },
+  // every player's cards in "Dealt to" lines: the hero is "Hero"
+  gg_all_cards_shown: { players: 4, hero: "SB", stack: 100, cards: ["Ks", "Kh", "Jd", "5c", "2h", null, null],
+    preflop: "CO f, BTN f, SB r3, BB c", flop: "SB b2, BB f", turn: "", river: "", pot: 8 },
+  stars_bounty_allin: { players: 5, hero: "BB", stack: 25, ante: 0.12, cards: ["Jh", "Js", "3d", "5h", "9c", "Td", "Ad"],
+    preflop: "HJ f, CO a, BTN f, SB f, BB c", flop: "", turn: "", river: "", pot: 50.86 },
 };
 
 for (const [name, c] of Object.entries(CASES)) {
@@ -77,6 +90,20 @@ test("parsed details: sites, seats, names and amounts in big blinds", () => {
   assert.equal(two.players, 2);
   assert.deepEqual(two.warnings, ["2 hands pasted: imported the first."]);
   assert.deepEqual(parseHandHistory(HH("stars_heads_up").replace("[9c 9d]", "[10c 9d]")).hole, ["Tc", "9d"]);
+});
+
+test("odd histories: no button line, mixed games, short deck, a hero without a seat line", () => {
+  // a paste that starts at the seat lines: the button is the seat before the blinds, no dead-button warning
+  const part = parseHandHistory(HH("stars_6max_srp").split("\n").slice(2).join("\n"));
+  assert.deepEqual(part.warnings, []);
+  assert.equal(part.hero, "BTN");
+  assert.deepEqual(part.seats.map(s => s.pos), parseHandHistory(HH("stars_6max_srp")).seats.map(s => s.pos));
+  const mixed = HH("stars_6max_srp").replace("Hold'em No Limit ($0.50/$1.00 USD)", "Mixed NLH/PLO (Hold'em No Limit, $0.50/$1.00 USD)");
+  assert.equal(parseHandHistory(mixed).hero, "BTN");
+  assert.throws(() => parseHandHistory(mixed.replace("(Hold'em No Limit,", "(Omaha Pot Limit,")), /Only Hold'em/);
+  assert.throws(() => parseHandHistory(HH("stars_6max_srp").replace("Hold'em No Limit", "6+ Hold'em No Limit")), /Only Hold'em/);
+  assert.match(parseHandHistory(HH("stars_zoom_names")).warnings[0], /small blind is 0.4bb/);
+  assert.throws(() => parseHandHistory(HH("stars_6max_srp").replace("Dealt to HeroName", "Dealt to Hero Name")), /no "Seat N: Hero Name/);
 });
 
 test("the page's seat names are the importer's", () => {

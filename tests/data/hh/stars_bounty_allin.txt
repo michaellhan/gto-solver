@@ -1,0 +1,29 @@
+PokerStars Hand #252000000005: Tournament #3800000000, $4.40+$4.40+$1.20 USD Hold'em No Limit - Level IV (50/100) - 2024/10/02 12:00:00 ET
+Table '3800000000 3' 8-max Seat #2 is the button
+Seat 1: alpha (2500 in chips, $4.40 bounty)
+Seat 2: beta (10,250 in chips, $8.80 bounty)
+Seat 3: gamma (4000 in chips, $4.40 bounty)
+Seat 4: Hero (5000 in chips, $4.40 bounty)
+Seat 5: delta (6000 in chips, $4.40 bounty) is sitting out
+alpha: posts the ante 12
+beta: posts the ante 12
+gamma: posts the ante 12
+Hero: posts the ante 12
+delta: posts the ante 12
+gamma: posts small blind 50
+Hero: posts big blind 100
+*** HOLE CARDS ***
+Dealt to Hero [Jh Js]
+delta: folds
+alpha: raises 2,388 to 2,488 and is all-in
+beta: folds
+gamma: folds
+Hero: calls 2,388
+*** FLOP *** [3d 5h 9c]
+*** TURN *** [3d 5h 9c] [Td]
+*** RIVER *** [3d 5h 9c Td] [Ad]
+*** SHOW DOWN ***
+alpha: shows [Ac Kd]
+Hero: shows [Jh Js]
+alpha collected 5,086 from pot
+*** SUMMARY ***
