@@ -134,6 +134,23 @@ class TestSolverMath(unittest.TestCase):
                 self.assertTrue(np.array_equal(x.ssum, y.ssum))
                 self.assertTrue(np.array_equal(x.regret, y.regret))
 
+    def test_compat_sum_kernels(self):
+        # the opponent mass sharing no card with each combo: per-card sums (NO_BLAS) = the member product = brute force
+        import gto.solver as S
+        board = cards("Ks7d2c")
+        r = parse_range("22+, A2s+, K9s+, QTs+, JTs, T9s, ATo+, KQo") * np.prod([1 - MEMBER_FULL[c] for c in board], axis=0)
+        sol = solve(board, r, r, pot=5.5, stack=97.5, max_iters=0)
+        ro = np.random.default_rng(1).random((3, sol.ctx.n)).astype(np.float32)
+        brute = ro @ sol.ctx.compat.T.astype(np.float32)
+        dense = sol.solver.compat_sum(ro)
+        S.NO_BLAS = True
+        try:
+            sums = sol.solver.compat_sum(ro)
+        finally:
+            S.NO_BLAS = False
+        self.assertLess(np.abs(dense - brute).max(), 1e-3)
+        self.assertLess(np.abs(sums - brute).max(), 1e-3)
+
     def test_no_blas_kernels(self):
         # the browser's path (einsum matvecs, leaf matrices trimmed to each range) solves the same game
         import gto.solver as S

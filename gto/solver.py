@@ -105,6 +105,12 @@ class Ctx:
         self.ca = CA_FULL[active]
         self.cb = CB_FULL[active]
         self.cab = np.concatenate([self.ca, self.cb])     # both cards' columns, gathered in one call
+        # the (card, combo) pairs grouped by card, for per-card sums: combos in pair order, where each held
+        # card's group starts, and each combo's two cards as indices into the held cards
+        held, counts = np.unique(self.cab, return_counts=True)
+        self.card_perm = np.concatenate([np.arange(self.n), np.arange(self.n)])[np.argsort(self.cab, kind="stable")]
+        self.card_starts = np.concatenate([[0], np.cumsum(counts)[:-1]]).astype(np.intp)
+        self.cab_held = np.searchsorted(held, self.cab).astype(np.intp)
         self.compat = 1.0 - np.clip(self.member.T @ self.member, 0, 1)
         self.cfg = cfg
         self.rng = random.Random(cfg.seed)
@@ -635,8 +641,14 @@ class Solver:
 
     def compat_sum(self, ro):
         """ro: (B, N) -> (B, N) mass of opponent combos sharing no card with each combo."""
-        member = self.ctx.member32 if ro.dtype == np.float32 else self.ctx.member
-        cs = (np.einsum("bn,cn->bc", ro, member) if NO_BLAS else ro @ member.T)[:, self.ctx.cab]   # (B, 2N)
+        ctx = self.ctx
+        if NO_BLAS and ctx.n:
+            # each card's reach as a sum over its combos (2N adds), not a (B, N) x (N, 52) product: ~4x faster
+            # in Pyodide, where the product has no BLAS
+            cs = np.add.reduceat(ro[:, ctx.card_perm], ctx.card_starts, axis=1)[:, ctx.cab_held]
+        else:
+            member = ctx.member32 if ro.dtype == np.float32 else ctx.member
+            cs = (ro @ member.T)[:, ctx.cab]   # (B, 2N)
         n = ro.shape[1]
         return ro.sum(axis=1, keepdims=True) - cs[:, :n] - cs[:, n:] + ro
 
