@@ -346,10 +346,13 @@ def check_postflop(job):
     setup, state, kind, pool = job[:4]
     budget = job[4] if len(job) > 4 else 3.0
     from gto.advisor import Advisor
+    from gto.solver import Config
     tag = setup[0] + (" pool" if pool else "")
     # 3s per street: the sweep runs a solve per core, so this is about what 1s gets on its own; the
     # confirm pass re-runs flagged spots with more
-    adv = Advisor(time_budget=budget, prior_budget=budget / 3)
+    # Config()'s flop model (river betting, a turn per rank class) needs ~100 iterations, far more than 3s of a
+    # loaded core gives, so the sweep keeps the cheaper one it was tuned on: flags then mean the rules, not budget
+    adv = Advisor(Config(river_play=False, turn_classes=False), time_budget=budget, prior_budget=budget / 3)
     st = dict(state, **({"opponents": "pool"} if pool else {}))
     flags = []
     try:
