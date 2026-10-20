@@ -36,14 +36,17 @@ from gto.solver import Config, solve
 
 LS = dict(bet_sizes={"flop": [0.33, 0.75], "turn": [0.75], "river": [0.75]},
           raise_sizes={"flop": [0.5], "turn": [0.75], "river": [0.75]})
-FAST = dict(n_turns=3, n_rivers=8, leaf_turns=4, leaf_rivers_flop=4, n_rivers_from_flop=4, river_play=False,
-            turn_classes=False, **LS)
+BUCKETS = dict(river_buckets=32, turn_buckets=True, bucket_river_step=3)    # Fast's flop model (native and browser)
+FAST = dict(n_turns=3, n_rivers=8, leaf_turns=4, leaf_rivers_flop=4, n_rivers_from_flop=4, **BUCKETS, **LS)
 ACCURATE = dict(n_turns=4, leaf_turns=4, leaf_rivers_flop=8, n_rivers_from_flop=8, **LS)
 # the browser's configs (static/worker.js) and Config()'s defaults; "every-turn" plays every turn card from the
 # flop (the reference the turn classes are measured against: slow), "accurate-old" is Accurate before river_play
-# and turn_classes (4 random turns, the river checked down)
+# and turn_classes (4 random turns, the river checked down), "fast-old" Fast before the bucketed turn and river (3
+# random turns, the river checked down), "native-fast" and "native-fast-old" gto/native.py's fast tree now and before
 CONFIGS = {"fast": FAST, "accurate": ACCURATE, "native": {}, "every-turn": dict(ACCURATE, turn_classes=False, n_turns=49),
-           "accurate-old": dict(ACCURATE, river_play=False, turn_classes=False)}
+           "accurate-old": dict(ACCURATE, river_play=False, turn_classes=False),
+           "fast-old": dict(FAST, river_play=False, turn_classes=False, river_buckets=None, turn_buckets=False),
+           "native-fast": dict(BUCKETS, **LS), "native-fast-old": dict(river_play=False, turn_classes=False, **LS)}
 BOARDS = ["Qs8d3c", "Kd7c2h", "9h8h6c"]
 ITERS = 150
 
