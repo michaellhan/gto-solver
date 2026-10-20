@@ -4,6 +4,8 @@
     curl -X POST localhost:8765/advise -d @examples/flop.json
 
 POST /advise  body: game state JSON (see advisor.py)  -> recommendation JSON
+POST /play    body: {"state": game state, "seat": "BB", "hole": "QcQd", "seed": 7 (optional)}
+              -> a GTO move for that seat holding those cards (practice opponents; see Advisor.play)
 POST /cancel  stops the solve in progress (its /advise answers {"cancelled": true})
 GET  /health
 """
@@ -44,7 +46,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/health"):
             return self._send(200, {"ok": True})
         p = self.path.split("?")[0]
-        if p in ("/", "/index.html", "/worker.js", "/hh.js"):
+        if p in ("/", "/index.html", "/worker.js", "/hh.js", "/practice.js"):
             name = p[1:] if p.endswith(".js") else "index.html"
             path = os.path.join(os.path.dirname(__file__), "static", name)
             with open(path, "rb") as f:
@@ -62,7 +64,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/cancel"):
             self.cancel.set()
             return self._send(200, {"ok": True})
-        if not self.path.startswith("/advise"):
+        play = self.path.startswith("/play")
+        if not self.path.startswith("/advise") and not play:
             return self._send(404, {"error": "not found"})
         n = int(self.headers.get("Content-Length", 0))
         try:
@@ -73,7 +76,8 @@ class Handler(BaseHTTPRequestHandler):
             with self.lock:   # one solve at a time; the solver is CPU bound
                 self.cancel.clear()
                 self.advisor.should_stop = self.cancel.is_set
-                res = self.advisor.advise(state)
+                res = (self.advisor.play(state["state"], state["seat"], state["hole"], state.get("seed")) if play
+                       else self.advisor.advise(state))
         except Cancelled:
             return self._send(200, {"cancelled": True})
         except Exception as e:  # noqa: BLE001

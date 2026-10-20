@@ -105,6 +105,19 @@ advice with frequencies, EVs and sizes, the villain range, solver stats, a link
 that reopens the exact spot, and the raw state JSON for the API or CLI.
 The hand is kept in the browser between reloads; **New hand** clears it.
 
+**Practice** in the header plays random hands against GTO opponents, with the player count,
+stacks, antes, straddle and rake of the setup. Your seat and cards are random; every other seat's
+hand and the board are dealt up front, and the other seats move by themselves (a short "thinking"
+status while they do): preflop from the chart for their actual hand, after the flop drawn from the
+solve's mix for it (heads-up, the same solve that answers your own spot, so a reply to your move is
+nearly instant; multiway the advisor's heuristic from their seat). On your turn the advice stays
+hidden (the spot is solved in the background so your move can be graded) and shows once you've
+acted; each decision is graded as in a review. At the end the opponents' cards are shown at
+showdown with your result, the hand review lists the EV given up, and **Next hand** (N) deals again.
+The running score (hands, average EV given up per decision, how often you took the solver's top
+action, chips won) is kept in the browser. Folding ends the hand for you; Undo and replaying a
+decision are off while practising. The page loads `practice.js` the first time Practice is turned on.
+
 ## Use from the shell
 
 Manual entry:
@@ -124,6 +137,10 @@ Server for your sandbox table:
 python -m gto.server --port 8765
 curl -s -X POST localhost:8765/advise -d @examples/flop.json | python -m json.tool
 ```
+
+`POST /play` with `{"state": <request body>, "seat": "BB", "hole": "8c8d", "seed": 7}` answers a GTO
+move for that seat holding those cards (practice opponents: `Advisor.play`), drawn from its mix, as
+`{"pos", "action", "to" (bets and raises), "name", "freq", "actions"}`; `seed` is optional.
 
 Request body (see `examples/`):
 
@@ -407,7 +424,7 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
 scripts/deploy.sh
 ```
 
-copies the page, the worker and the `gto` sources into the `gto-solver/` folder
+copies the page, the worker, `practice.js` and the `gto` sources into the `gto-solver/` folder
 of the michaellhan.github.io repo and pushes. First it runs the checks and aborts
 the deploy if either fails: `python -m unittest`, then the quick sanity sweep
 (`scripts/sanity_sweep.py --quick`, about 3 minutes on 10 cores: a fixed, seeded set
@@ -451,4 +468,8 @@ the tree traversal to C or Rust or a GPU, which makes full flop trees feasible.
   and the big blind outside the small blind, are still judgment calls. On a rough (Fast, flop or turn)
   solve the best response also picks up the solve's own noise.
 * One effective stack for the table.
+* Practice opponents heads-up after the flop read their move off your own solve, whose ranges leave out
+  your cards (as your advice does): an edge the size of a blocker. A line of yours the solve rarely
+  takes, or a pot that became heads-up mid-street, gets a solve from their seat instead (a few seconds,
+  more in the browser).
 * The bet-size abstraction is coarse; real actions are mapped to the nearest size.

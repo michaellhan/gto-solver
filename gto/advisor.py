@@ -906,7 +906,7 @@ class Advisor:
         with np.errstate(all="ignore"):
             return self._advise(state)
 
-    def _advise(self, state: dict) -> dict:
+    def _advise(self, state: dict, actor=None) -> dict:
         t0 = time.time()
         bb = float(state.get("bb", 1.0))
         n = int(state.get("players", 6))
@@ -948,7 +948,7 @@ class Advisor:
             self.prior_budget = max(0.3, min(30.0, float(state["prior_budget"])))
         try:
             return self._postflop(hero, hole, board, stack, streets, positions, t0,
-                                  pool=state.get("opponents") == "pool")
+                                  pool=state.get("opponents") == "pool", actor=actor)
         finally:
             self.time_budget, self.prior_budget, self.cfg = saved
 
@@ -1274,7 +1274,8 @@ class Advisor:
         }
 
     # ------------------------------------------------------------ postflop
-    def _postflop(self, hero, hole, board, stack, streets, positions, t0, pool=False):
+    def _postflop(self, hero, hole, board, stack, streets, positions, t0, pool=False, actor=None):
+        """`actor` (seat, hole): the opponent to act instead, heads-up, read off hero's solve (see play)."""
         notes: List[str] = []
         n_streets = {3: 2, 4: 3, 5: 4}[len(board)]
         rep = replay_hand(positions, stack, streets, n_streets)
@@ -1285,8 +1286,8 @@ class Advisor:
             return {"error": "hero has folded"}
         if cur.closed:
             return {"error": "this street's betting is already closed (deal the next card)"}
-        if cur.to_act != hero:
-            return {"error": f"it is {cur.to_act}'s turn, not {hero}'s"}
+        if cur.to_act != (actor[0] if actor else hero):
+            return {"error": f"it is {cur.to_act}'s turn, not {actor[0] if actor else hero}'s"}
         # a copy: narrowing below replaces entries, and the cached dict is shared with later requests
         pf_r = preflop_ranges(streets["preflop"], positions, stack, hero if pool else None)
         ranges = dict(pf_r)
@@ -1308,6 +1309,8 @@ class Advisor:
 
         live_opps = [p for p in remaining if p != hero]
         if len(live_opps) != 1 or cur.allin & set(remaining) - {hero} and len(remaining) > 2:
+            if actor:
+                return {"error": "multiway"}
             return self._multiway(hero, hole, board, ranges, remaining, cur, stack, t0, notes)
         villain = live_opps[0]
         post = cur.order
@@ -1364,6 +1367,8 @@ class Advisor:
                 node, n_r0, n_r1 = sol.root, sol.r0.copy(), sol.r1.copy()
                 notes.append(f"{cur.name}: {', '.join(rare_lines)}'s line is rare in the solve, so solved again from here"
                              + (" against their rule-based range" if widened else ""))
+        elif actor:
+            return {"error": "the pot became heads-up this street"}   # a solve from the actor's own node
         else:
             # pot became heads-up during this street: solve from the current node
             eff = min(stack - cur.inv_start[oop], stack - cur.inv_start[ip])
@@ -1375,6 +1380,8 @@ class Advisor:
             notes.append(f"{cur.name}: pot became heads-up this street; solved from here")
         if not isinstance(node, Decision):
             return {"error": "no decision pending at this point in the tree", "notes": notes}
+        if actor:
+            return self._actor_move(sol, node, n_r0, n_r1, actor[1], 1 - hero_p, cur.name)
         if node.player != hero_p:
             notes.append("warning: tree expected the other player to act; reporting that node")
         expl = max(0.0, sol.exploitability())   # how far this street's solve is from equilibrium, % of its pot
@@ -2282,6 +2289,64 @@ class Advisor:
         if check_line is not None:
             out["check_line"] = {k: round(v, 3) for k, v in check_line.items()}   # after a check: how often someone bets, and our plan
         return out
+
+    # ------------------------------------------------------------ practice opponents
+    def play(self, state: dict, seat: str, hole, seed: Optional[int] = None) -> dict:
+        """Practice opponents: a move for `seat` holding `hole`, drawn from the GTO mix for that hand (preflop
+        the chart's, after the flop the solve's). `state` is the hand as the page sends it, from the player
+        practising (its "hero" and "hole"; GTO opponents whatever its "opponents" says). Heads-up after the
+        flop the move is read off that player's own solve of the street, so one solve serves the villain's
+        move and the hero's advice (the villain's range there leaves out the hero's cards, as in the hero's
+        advice: an edge the size of a blocker). Otherwise (preflop, multiway, a pot that became heads-up this
+        street, a line of the hero's the solve rarely takes, a hand it gives no weight) it's the advice for
+        `seat` holding `hole`. `seed` makes the draw repeatable.
+        Returns the move in the page's format: {"pos", "action", "to" (bets and raises, chips), "name" (the
+        advisor's), "freq", "street", "actions" (the mix it was drawn from)}, or {"error"}."""
+        rng = random.Random(seed) if seed is not None else self.rng
+        st = {k: v for k, v in state.items() if k != "opponents"}
+        seat = str(seat).upper()
+        hole = tuple(parse_cards(hole)) if isinstance(hole, str) else tuple(hole)
+        res = None
+        with np.errstate(all="ignore"):
+            if st.get("board") and st.get("hole") and str(st.get("hero", "")).upper() != seat:
+                res = self._advise(st, actor=(seat, hole))
+            if res is None or "error" in res:
+                res = self._advise(dict(st, hero=seat, hole=cards_str(hole)))
+        if "error" in res:
+            return {"error": res["error"]}
+        acts = [a for a in res["actions"] if a["freq"] > 0] or res["actions"]
+        r = rng.random() * sum(a["freq"] for a in acts)
+        pick = acts[-1]
+        for a in acts:
+            r -= a["freq"]
+            if r <= 0:
+                pick = a
+                break
+        name = pick["action"]
+        out = {"pos": seat, "action": name, "name": name, "freq": pick["freq"], "street": res.get("street"),
+               "actions": res["actions"]}
+        if name.startswith(("bet", "raise")):
+            out["action"] = name.split()[0]
+            out["to"] = round(float(pick["amount_bb"]) * float(state.get("bb", 1.0)), 2)
+        return out
+
+    def _actor_move(self, sol: Solution, node: Decision, n_r0, n_r1, hole, p: int, street: str) -> dict:
+        """The mix of player p (to act at `node`) for `hole`, from hero's solve; an error (play then asks
+        from p's own seat) when hero's line this street is rare in the solve (its subtree barely converged:
+        hero's advice solves again from there) or the hand has no weight."""
+        if node.player != p:
+            return {"error": "the tree expected the other player to act"}
+        h0, h1 = (sol.r0, n_r0) if p == 1 else (sol.r1, n_r1)
+        if h1.sum() < RARE_LINE * max(h0.sum(), 1e-12):
+            return {"error": "the hero's line is rare in the solve"}
+        idx = np.nonzero(sol.ctx.active == COMBO_INDEX[(min(hole), max(hole))])[0]
+        reach = n_r0 if p == 0 else n_r1
+        if not len(idx) or reach[idx[0]] <= 1e-9:
+            return {"error": "the hand has no weight in the solve"}
+        strat = node.avg_strategy0()[:, int(idx[0])]
+        return {"street": street, "actions": [{"action": name, "freq": round(float(strat[a]), 3),
+                                               "amount_bb": self._amount(name, node, p)}
+                                              for a, name in enumerate(node.names)]}
 
     # ------------------------------------------------------------ helpers
     @staticmethod

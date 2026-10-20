@@ -42,12 +42,14 @@ const ready = (async () => {
 const cancelled = new Set();
 onmessage = async (e) => {
   if (e.data.cancel != null) { cancelled.add(e.data.cancel); return; }
-  const { id, state } = e.data;
+  const { id, state, play } = e.data;   // play: {seat, hole}, a practice opponent's move (Advisor.play)
   try {
     const py = await ready;
     if (cancelled.delete(id)) return postMessage({ id, result: { cancelled: true } });
     py.globals.set("state_json", JSON.stringify(state));
-    const out = py.runPython("st = json.loads(state_json); json.dumps(advs.get(st.get('speed'), advs['fast']).advise(st))");
+    py.globals.set("play_json", JSON.stringify(play || null));
+    const out = py.runPython("st = json.loads(state_json); pl = json.loads(play_json); adv = advs.get(st.get('speed'), advs['fast']); "
+                           + "json.dumps(adv.play(st, pl['seat'], pl['hole'], pl.get('seed')) if pl else adv.advise(st))");
     postMessage({ id, result: JSON.parse(out) });
   } catch (err) {
     postMessage({ id, error: String(err).split("\n").slice(-3).join(" ") });

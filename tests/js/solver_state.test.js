@@ -74,7 +74,7 @@ test("on your turn the worker gets the state as built, at the Fast budget", asyn
   p.workers[0].onmessage({ data: { id: m.id, result: { street: "flop", hero: "BTN", hand: "AKs", recommended: "check", actions: [{ action: "check", freq: 0.7 }, { action: "bet 33%", amount_bb: 1.8, freq: 0.3 }] } } });
   await flush();
   assert.match(p.byId("result").innerHTML, /<span class="big">check<\/span>/);
-  assert.ok(p.buttons().some(b => b.innerHTML.startsWith('Bet 2<small>33% pot · <span class="fq">30%</span>')));
+  assert.ok(p.buttons().some(b => b.innerHTML.startsWith('Bet 2<small>33% pot<span class="fq"> · 30%</span>')));
 });
 
 test("Accurate and Pool toggles change the state sent, and are remembered", async () => {

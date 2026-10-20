@@ -2479,3 +2479,93 @@ class TestRake(unittest.TestCase):
         # the ranges differ a little (the big blind defends less preflop), the pot the same: 5.5bb less 5%
         self.assertAlmostEqual(ev(b) / ev(a), 0.95, places=2)
 
+
+class TestPractice(unittest.TestCase):
+    """Advisor.play: practice opponents' moves, drawn from the GTO mix for their hand."""
+    PRE = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "fold"},
+           {"pos": "BTN", "action": "raise", "to": 2.5}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
+    FLOP = {"players": 6, "hero": "BTN", "hole": "AhKh", "board": "Kd7s2c", "stack": 100, "preflop": PRE, "flop": []}
+    LEGAL = {"fold", "check", "call", "bet", "raise", "all-in"}
+
+    @staticmethod
+    def counts(adv, st, seat, hole, n):
+        c = {}
+        for s in range(n):
+            m = adv.play(st, seat, hole, seed=s)
+            c[m["name"]] = c.get(m["name"], 0) + 1
+        return c
+
+    def test_preflop_follows_the_chart(self):
+        adv = Advisor()
+        st = {"players": 6, "hero": "UTG", "hole": "2c2d", "stack": 100, "preflop": self.PRE[:4]}
+        for h in ["As5s", "KsJd", "Ts8s", "Qs9s", "As9d", "9s9d", "Ks9s", "Js9s", "6s5s", "Kc8c"]:
+            mix = {a["action"]: a["freq"] for a in adv.advise(dict(st, hero="SB", hole=h))["actions"]}
+            if sum(0.15 < f < 0.85 for f in mix.values()) >= 2:
+                break
+        else:
+            self.skipTest("no mixed hand found for the small blind")
+        n = 2000
+        c = self.counts(adv, st, "SB", h, n)
+        for a, f in mix.items():
+            self.assertAlmostEqual(c.get(a, 0) / n, f, delta=0.04, msg=(h, mix, c))
+        m = adv.play(st, "SB", h, seed=3)
+        self.assertEqual(m, adv.play(st, "SB", h, seed=3))   # repeatable with a seed
+        self.assertIn(m["action"], self.LEGAL)
+        if m["action"] == "raise":
+            self.assertGreater(m["to"], 2.5)
+
+    def test_postflop_reads_the_heroes_solve(self):
+        adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        st = dict(self.FLOP, flop=[{"pos": "BB", "action": "check"}])
+        r = adv.advise(st)                                      # the hero's advice: BTN's solve of the flop
+        # the bet BTN's range makes most (a line the solve rarely takes is answered from BB's own seat)
+        name = max((a for a in r["range_action_freq"] if a.startswith("bet")), key=r["range_action_freq"].get)
+        size = next(a["amount_bb"] for a in r["actions"] if a["action"] == name)
+        bet = dict(self.FLOP, flop=st["flop"] + [{"pos": "BTN", "action": "bet", "amount": size}])
+        n_cached = len(adv._cache)
+        m = adv.play(bet, "BB", "8c8d", seed=1)
+        self.assertEqual(len(adv._cache), n_cached)             # no new solve: read off the hero's
+        self.assertNotIn("ev_bb", m["actions"][0])
+        self.assertIn(m["action"], {"fold", "call", "raise", "all-in"})
+        mix = {a["action"]: a["freq"] for a in m["actions"]}
+        n = 1500
+        c = self.counts(adv, bet, "BB", "8c8d", n)
+        for a, f in mix.items():
+            self.assertAlmostEqual(c.get(a, 0) / n, f, delta=0.045, msg=(mix, c))
+        self.assertEqual(adv.play(bet, "BB", "8c8d", seed=9), adv.play(bet, "BB", "8c8d", seed=9))
+        # each move is one the page records and the advisor replays for the hero's next decision
+        for s in range(6):
+            m = adv.play(bet, "BB", "8c8d", seed=s)
+            if m["action"] == "fold":
+                continue
+            nxt = dict(bet, flop=bet["flop"] + [{"pos": "BB", "action": m["action"], **({"to": m["to"]} if "to" in m else {})}])
+            if m["action"] == "call":   # the turn: the big blind acts first
+                self.assertIn(adv.play(dict(nxt, board="Kd7s2c9h", turn=[]), "BB", "8c8d", seed=s)["action"],
+                              {"check", "bet", "all-in"})
+            else:
+                out = adv.advise(nxt)
+                self.assertNotIn("error", out)
+
+    def test_villain_to_act_first_and_fallbacks(self):
+        adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        m = adv.play(self.FLOP, "BB", "8c8d", seed=2)            # first to act: one solve serves both
+        self.assertIn(m["action"], {"check", "bet", "all-in"})
+        n_cached = len(adv._cache)
+        self.assertNotIn("error", adv.advise(dict(self.FLOP, flop=[{"pos": "BB", "action": "check"}])))
+        self.assertEqual(len(adv._cache), n_cached)
+        # a hand the big blind 3bets (not in its calling range): answered from its own seat
+        m = adv.play(self.FLOP, "BB", "QcQd", seed=2)
+        self.assertIn(m["action"], {"check", "bet", "all-in"})
+        self.assertIn("ev_bb", m["actions"][0])
+        # no hero hand in the state (an API caller): from the seat's own view
+        m = adv.play(dict(self.FLOP, hero="BB", hole=""), "BB", "8c8d", seed=2)
+        self.assertIn(m["action"], self.LEGAL)
+        # the wrong seat to act is an error, not a move
+        self.assertIn("error", adv.play(self.FLOP, "BTN", "QsJs"))
+        # multiway: the seat's own Monte Carlo
+        adv.mw_trials = 300
+        pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
+               {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
+        st = {"players": 6, "hero": "BTN", "hole": "AhKh", "board": "Kd7s2c", "stack": 100, "preflop": pre, "flop": []}
+        self.assertIn(adv.play(st, "BB", "8c8d", seed=1)["action"], {"check", "bet", "all-in"})
+
