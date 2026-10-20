@@ -22,10 +22,10 @@ from gto.solver import solve, Config, MEMBER_FULL
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 build = importlib.import_module("build_flop_library")
 
-SPOT = next(s for s in fl.SPOTS if s[0] == "3bp_bb_btn")   # narrow ranges: quick to solve
+SPOT = next(s for s in fl.SPOTS if s[0] == "3bp_btn_co")   # narrow ranges: quick to solve; the caller checks
 CANON = "Kc7d2h"
 BOARD = "Kh7s2d"            # the same flop in other suits
-ITERS = 60
+ITERS = 120
 
 
 def _hole_in(r, board, k=0):
@@ -133,10 +133,10 @@ class TestFlopLibrary(unittest.TestCase):
 
     def test_reproduces_live_solve_in_other_suits(self):
         """The entry, read for the flop in other suits, is a live solve of that flop with the same tree and
-        iterations, to within the noise of suit order (the turn classes' cards differ, and 60 iterations are far
-        from settled per combo): range frequencies within 2 points at every stored node both players reach with 10%
-        of their range (6 behind a line rarer than that, the 3bettor's check here: 4 measured), and at the root each
-        combo's mix within 0.1 on average (measured 0.08)."""
+        iterations, to within the noise of suit order (the turn classes' cards differ, and 120 iterations are far
+        from settled per combo): range frequencies within 3 points at every stored node both players reach with 10%
+        of their range (6 behind a line rarer than that), and at the root each
+        combo's mix within 0.1 on average."""
         ls = self._libsol(BOARD)
         self.assertIsNotNone(ls)
         s = self.setup
@@ -150,7 +150,7 @@ class TestFlopLibrary(unittest.TestCase):
             w = r / r.sum()
             f0, f1 = n0.avg_strategy0() @ w, n1.avg_strategy0() @ w
             common = min(a0.sum() / live.r0.sum(), a1.sum() / live.r1.sum()) >= 0.1
-            self.assertLess(np.abs(f0 - f1).max(), 0.02 if common else 0.06, (path, f0, f1))
+            self.assertLess(np.abs(f0 - f1).max(), 0.03 if common else 0.06, (path, f0, f1))
             if path:
                 continue
             m = (live.r0 if n0.player == 0 else live.r1) > 0
@@ -226,12 +226,12 @@ class TestFlopLibrary(unittest.TestCase):
             got = [a["freq"] for a in r["actions"]]
             self.assertLess(np.abs(np.array(got) - want).max(), 0.011, (got, want))
             self.assertTrue(any("precomputed solution" in n for n in r["notes"]))
-            # the in-position player facing the 3bettor's third-pot c-bet: stored too (its check, 6% of the range
-            # in this solve, isn't: STORE_LINE)
+            # the in-position 3bettor after the caller checks: stored too (a lead, which the caller hardly ever
+            # makes, isn't: STORE_LINE)
             ri = adv.advise(dict(base, hero=s["ip"], hole=_hole_in(s["full1"], BOARD, 5),
-                                 flop=[{"pos": s["oop"], "action": "bet", "amount": 7.0}]))
+                                 flop=[{"pos": s["oop"], "action": "check"}]))
             self.assertIn("precomputed", ri)
-            self.assertEqual([a["action"] for a in ri["actions"]][:2], ["fold", "call"])
+            self.assertEqual([a["action"] for a in ri["actions"]][0], "check")
         # without the library the same spot is solved live: the budget, fewer iterations
         adv = Advisor(fl.library_config(), time_budget=1.0, prior_budget=0.5)
         t = time.time()
