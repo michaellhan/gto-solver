@@ -407,6 +407,16 @@ class TestAdvisor(unittest.TestCase):
         # heads-up the button defends a 3bet wide (in position postflop)
         r = go("SB", "Qh8h", [R("SB", "raise", 2.5), R("BB", "raise", 8)], players=2)[0]
         self.assertEqual(r["recommended"], "call")
+        # 100bb: the button 4bets the big blind's 11bb 3bet to 25, not all-in (A5s jammed 100bb under JAM_SPR),
+        # and the big blind calls that 4bet with JJ (every call had become a jam); at 40bb the 3bet still jams
+        bb3 = F("UTG", "HJ", "CO") + [R("BTN", "raise", 2.5)] + F("SB") + [R("BB", "raise", 11)]
+        r, a = go("BTN", "As5s", bb3)
+        self.assertEqual(a["raise"]["amount_bb"], 25.5)
+        self.assertNotIn("all-in", a)
+        r, a = go("BB", "JsJd", bb3 + [R("BTN", "raise", 25)])
+        self.assertEqual(r["recommended"], "call")
+        r, a = go("BB", "AhKd", F("UTG", "HJ", "CO") + [R("BTN", "raise", 2.5)] + F("SB"), stack=40)
+        self.assertIn("all-in", a)
         # facing a 5bet with chips behind, AA can shove
         r, a = go("UTG", "AhAd", [R("UTG", "raise", 2.5), R("HJ", "raise", 8)] + F("CO", "BTN", "SB", "BB")
                   + [R("UTG", "raise", 20), R("HJ", "raise", 45)], stack=200)

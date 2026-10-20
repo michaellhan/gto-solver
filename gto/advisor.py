@@ -71,6 +71,8 @@ PRICE_BLEND = 0.02  # preflop, off-chart price: continue frequency ramps over th
 RAISE_BLEND = 0.03  # preflop, more players in: value-raise frequency ramps over this much equity when called
 COMMIT = 0.4       # preflop: a raise that would put in this share of the stack goes all-in instead
 JAM_SPR = 1.5      # ...as does one leaving less than this many pots behind once called
+JAM_SPR_DEEP = 1.25 # ...this many at the charts' own depth (within DEPTH_TOL of CHART_STACK), where a 4bet to 2.3x
+                    # leaves ~1.45 pots behind and is called, as in 100bb solves
 PUSH_FOLD_STACK = 12.0  # preflop: at or below this many bb, raising first in is all-in (push/fold)
 CHART_STACK = 100.0  # the depth the preflop charts are written for
 IMPLIED = {"pair": 0.06, "suited": 0.03}  # preflop calls: share of the stack behind (beyond the chart's) small pairs / suited hands expect to win later
@@ -993,14 +995,18 @@ class Advisor:
             pot = st.pot_start + sum(st.bets.values())
             pot_called = pot + 2 * size - st.bets[hero] - st.cur_bet
             short_open = st.n_raises == 0 and stack <= PUSH_FOLD_STACK
+            # (at the charts' depth their lines play as written: a 100bb 4bet to 25 over an 11bb 3bet leaves
+            # 1.45 pots behind, and under JAM_SPR it went all-in with the chart's bluffs, A5s and K5s jamming
+            # 100bb, while the 3bettor's calls of it all became jams; solves 4bet small and call 4bets there)
+            spr_bar = JAM_SPR_DEEP if stack >= CHART_STACK - DEPTH_TOL else JAM_SPR
             if (size >= st.bets[hero] + remaining - 1e-9 or st.inv_start[hero] + size >= COMMIT * stack
-                    or (stack - st.inv_start[hero] - size) < JAM_SPR * pot_called or short_open):
+                    or (stack - st.inv_start[hero] - size) < spr_bar * pot_called or short_open):
                 size = st.bets[hero] + remaining
                 if short_open or stack < CHART_STACK - DEPTH_TOL:
                     full = self._push(hero, preflop, positions, stack, st, size, full, notes, pool)
                 else:
                     notes.append("the raise would commit the stack, so it goes all-in")
-                if "call" in full and st.n_raises >= 2 and remaining - to_call < JAM_SPR * (pot + to_call):
+                if "call" in full and st.n_raises >= 2 and remaining - to_call < spr_bar * (pot + to_call):
                     # a call that leaves under JAM_SPR pots behind is committed too: it jams instead, for the
                     # fold equity (QQ, AK and JJ called 9 of 18bb behind a 3bet and a cold 4bet at 20bb)
                     full = dict(full, **{"raise": np.minimum(full["raise"] + full["call"], 1.0), "call": np.zeros(N_COMBOS)})
