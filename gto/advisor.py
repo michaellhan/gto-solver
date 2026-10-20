@@ -32,6 +32,7 @@ from .exploit import PoolLock, TendencyLock, describe_lock, parse_locks, pool_pr
 from .solver import solve, Config, Solution, Decision, Terminal, Chance, match_action, expand, MEMBER_FULL, _inv_of
 
 DEFAULT_OPEN = {"SB": 3.0}
+BVB_3BET = 10.0 / 3.0   # the big blind's default 3bet over a small-blind open, x the open (_default_size)
 FOLD_SHADE = 0.75   # multiway: opponents fold this share of what a balanced defence would
 # The next four are fitted to the heads-up solver by scripts/calibrate_multiway.py (RAISE_EQ barely
 # mattered there, so it stays a judgment call).
@@ -828,6 +829,10 @@ def _default_size(st: StreetState, p: str, pre: bool) -> float:
                 return st.cur_bet * (4.0 if p in st.posted else 3.0) + extra
             return DEFAULT_OPEN.get(p, 2.5) * st.cur_bet
         if st.n_raises == 1:
+            if p == "BB" and last == "SB" and extra == 0:
+                # blind vs blind the big blind has position: 10bb over a 3bb open, as gtopreflop.com's solve
+                # (pokalab and GTO Ranges+ 9bb), which the small blind's chart against it is matched to
+                return st.cur_bet * BVB_3BET
             return st.cur_bet * (4.0 if p in st.posted else 3.0) + extra
         return st.cur_bet * 2.3 + extra
     pot = st.pot_start + sum(st.bets.values())
