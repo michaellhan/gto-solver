@@ -56,6 +56,10 @@
   input[type=number], select { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; font: inherit; }
   input[type=number] { width: 72px; }
   #rakeCustom input { width: 60px; }
+  /* Advanced: custom sizes, ranges, size optimization (the global details margin is for the advice's) */
+  #adv { margin: 0 0 8px; } #adv .row { margin-top: 6px; }
+  #adv input[type=text] { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 4px 6px; font: inherit; font-size: 12px; width: 64px; }
+  #rangeIns label { display: flex; gap: 8px; align-items: center; width: 100%; font-size: 12px; } #rangeIns input[type=text] { flex: 1; min-width: 0; }
   input:focus, select:focus { outline: none; border-color: var(--accent); }
   /* keyboard focus (Tab); a click or tap shows none */
   button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -325,7 +329,7 @@
   }
   @media (pointer: coarse) {
     button:not(.link), select, input[type=number] { min-height: 40px; }
-    input[type=number], select { font-size: 16px; }
+    input[type=number], select, #adv input[type=text] { font-size: 16px; }
     .acts button { min-height: 44px; }
     .pc { height: 38px; }
     .panel h2[data-fold] { min-height: 40px; margin-top: -10px; }
@@ -386,6 +390,13 @@
             <input type="number" id="rakeCap" min="0" step="0.5" title="Most rake per pot, in big blinds (0 = no cap)"><span class="muted">bb</span>
           </span>
         </div>
+        <details id="adv"><summary>Advanced</summary>
+          <div class="row muted" title="Postflop bet sizes in % of the pot, up to 3 a street (e.g. 33 75); raises are % of the pot after calling. Empty: the solver's own. Fewer sizes solve faster.">Sizes %
+            <label>flop <input type="text" id="sz_flop" placeholder="auto"></label><label>turn <input type="text" id="sz_turn" placeholder="auto"></label>
+            <label>river <input type="text" id="sz_river" placeholder="auto"></label><label>raise <input type="text" id="sz_raise" placeholder="auto"></label></div>
+          <label class="row muted" title="Heads-up, when you can bet: a first solve over 25-200% of the pot (a third of the time) keeps the sizes the equilibrium uses, and the advice is solved with those. Best on Accurate."><input type="checkbox" id="optSizes"> Optimize bet sizes</label>
+          <div class="row" id="rangeIns" title="Ranges entering the flop, PIO style (22+, A2s+, KTo+, QJo:0.5). Empty: the preflop charts' range for the action."></div>
+        </details>
         <div class="row">
           <span class="muted" style="width:58px;font-size:12px">You are</span>
           <div class="row seats" id="seats"></div>
@@ -453,6 +464,22 @@ const STRADDLER = () => S.straddle && S.players >= 3 ? POS[0] : null;
 const RAKE = () => { const r = +S.rake; return r > 0 && r <= 25 ? r : 0; };
 const RAKE_CAP = () => RAKE() && +S.rakeCap > 0 ? +S.rakeCap : 0;
 const RAKE_TEXT = () => RAKE() ? `${fmt(RAKE())}% rake${RAKE_CAP() ? ` (cap ${fmt(RAKE_CAP())}bb)` : " (no cap)"}` : "";
+// Advanced: postflop bet sizes (S.sizes: flop/turn/river/raise -> up to 3 % of the pot), ranges entering the
+// flop by seat (S.ranges: PIO strings) and size optimization (S.optSizes); unset = the default game
+const SIZE_KEYS = ["flop", "turn", "river", "raise"];
+const parseSizes = (v) => [...new Set((Array.isArray(v) ? v : String(v ?? "").split(/[\s,%]+/)).map(parseFloat).filter(x => x > 0 && x <= 500))].slice(0, 3);
+function cleanAdv(st, seats) {   // st's Advanced fields that are valid at a table of these seats
+  const o = {}, sz = {}, rg = {};
+  for (const k of SIZE_KEYS) { const v = parseSizes(st.sizes && typeof st.sizes === "object" && st.sizes[k] || []); if (v.length) sz[k] = v; }
+  for (const [p, r] of Object.entries(st.ranges && typeof st.ranges === "object" ? st.ranges : {}))
+    if (seats.includes(p) && typeof r === "string" && r.trim()) rg[p] = r.trim().slice(0, 2000);
+  if (Object.keys(sz).length) o.sizes = sz;
+  if (Object.keys(rg).length) o.ranges = rg;
+  if (st.optSizes === true) o.optSizes = true;
+  return o;
+}
+const OPP_RANGES = () => { const r = { ...S.ranges }; delete r[S.hero]; return Object.keys(r).length ? r : null; };   // (a seat's box hides while it's yours)
+const ADV_TEXT = () => [S.sizes && "custom sizes", OPP_RANGES() && `custom ${Object.keys(OPP_RANGES()).join("/")} range`, S.optSizes && "optimized sizes"].filter(Boolean).join(", ");
 const IS_BLIND = (p) => p === "SB" || p === "BB" || p === STRADDLER();
 function setPositions(n) {
   POS = SEATS[n]; ORDER_PRE = POS;
@@ -572,7 +599,8 @@ function cleanState(st) {
   // rake: a percent in (0, 25] and a positive cap (none = no cap), or no rake at all
   if (!(+st.rake > 0 && +st.rake <= 25)) { delete out.rake; delete out.rakeCap; }
   else { out.rake = +st.rake; if (+st.rakeCap > 0) out.rakeCap = +st.rakeCap; else delete out.rakeCap; }
-  return out;
+  delete out.sizes; delete out.ranges; delete out.optSizes;
+  return Object.assign(out, cleanAdv(st, seats));
 }
 const encodeState = (st) => btoa(unescape(encodeURIComponent(JSON.stringify(st))));
 const decodeState = (b64) => JSON.parse(decodeURIComponent(escape(atob(b64))));
@@ -746,17 +774,18 @@ function renderSetup() {
   document.getElementById("pSetup").classList.toggle("slim", !full);
   document.getElementById("setupDone").hidden = !started;
   const sum = document.getElementById("setupSum"); sum.hidden = full;
-  sum.innerHTML = `<span><b>${S.players}-handed</b> <span class="muted">·</span> you are <b>${SEAT_LABEL(S.hero, S.players)}</b> <span class="muted">·</span> <b>${fmt(S.stack)}bb</b> stacks${ANTE() ? ` <span class="muted">·</span> ${fmt(ANTE())}bb ante` : ""}${STRADDLER() ? ` <span class="muted">·</span> ${SEAT_LABEL(STRADDLER(), S.players)} straddles` : ""}${RAKE() ? ` <span class="muted">·</span> ${RAKE_TEXT()}` : ""}</span>`;
+  sum.innerHTML = `<span><b>${S.players}-handed</b> <span class="muted">·</span> you are <b>${SEAT_LABEL(S.hero, S.players)}</b> <span class="muted">·</span> <b>${fmt(S.stack)}bb</b> stacks${ANTE() ? ` <span class="muted">·</span> ${fmt(ANTE())}bb ante` : ""}${STRADDLER() ? ` <span class="muted">·</span> ${SEAT_LABEL(STRADDLER(), S.players)} straddles` : ""}${RAKE() ? ` <span class="muted">·</span> ${RAKE_TEXT()}` : ""}${ADV_TEXT() ? ` <span class="muted">·</span> ${ADV_TEXT()}` : ""}</span>`;
   const e = document.createElement("button"); e.className = "link"; e.style.marginLeft = "auto"; e.textContent = "Edit"; e.onclick = () => { editSetup = true; renderAll(); };
   sum.appendChild(e);
 
   document.getElementById("straddleBox").hidden = S.players < 3;
+  syncAdv();
   const el = document.getElementById("seats"); el.innerHTML = "";
   for (const p of POS) { const b = document.createElement("button"); b.textContent = SEAT_LABEL(p, POS.length); if (p === S.hero) b.classList.add("active");
     b.onclick = () => { S.hero = p; save(); renderAll(); }; el.appendChild(b); }
   const pl = document.getElementById("players"); pl.innerHTML = "";
   for (let n = 2; n <= 9; n++) { const b = document.createElement("button"); b.className = "small"; b.textContent = n; if (n === S.players) b.classList.add("active");
-    b.onclick = () => { if (n === S.players) return; S = { ...fresh(n), stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, cards: S.cards }; setPositions(n); selSlot = null; save(); resetAdvice(); renderAll(); }; pl.appendChild(b); }
+    b.onclick = () => { if (n === S.players) return; S = { ...fresh(n), stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanAdv(S, SEATS[n]), cards: S.cards }; setPositions(n); selSlot = null; save(); resetAdvice(); renderAll(); }; pl.appendChild(b); }
 }
 function renderSlots(sim) {
   const needIdx = sim.waiting ? S.cards.findIndex((c, i) => !c && i >= 2 && i < 2 + NEED[sim.waiting]) : (!S.cards[0] ? 0 : !S.cards[1] ? 1 : -1);
@@ -933,11 +962,13 @@ function renderTimeline() {
 // ------------------------------------------------------------------ advice
 function payload() {
   const conv = (arr) => arr.map(a => a.action === "bet" ? { pos: a.pos, action: "bet", amount: a.to } : a.action === "raise" ? { pos: a.pos, action: "raise", to: a.to } : { pos: a.pos, action: a.action });
+  // the Advanced fields change postflop solves only: sent from the flop on, so preflop advice (and its cache) is the same
+  const post = boardCards().length >= 3, adv = post ? { ...(S.sizes ? { sizes: S.sizes } : {}), ...(OPP_RANGES() ? { ranges: OPP_RANGES() } : {}), ...(S.optSizes ? { optimize_sizes: true } : {}) } : {};
   return { players: S.players, hero: S.hero, hole: (S.cards[0] || "") + (S.cards[1] || ""), board: boardCards().join(""), stack: S.stack,
            ...(ANTE() ? { ante: ANTE() } : {}), ...(STRADDLER() ? { straddle: true } : {}),
            ...(RAKE() ? { rake: RAKE() / 100, ...(RAKE_CAP() ? { rake_cap: RAKE_CAP() } : {}) } : {}),
            preflop: conv(S.actions.preflop), flop: conv(S.actions.flop), turn: conv(S.actions.turn), river: conv(S.actions.river), budget: BUDGET, prior_budget: PRIOR, speed: SPEED,
-           ...(OPP === "pool" ? { opponents: "pool" } : {}) };
+           ...(OPP === "pool" ? { opponents: "pool" } : {}), ...adv };
 }
 // the payload key of the same spot at another speed
 function keyFor(key, speed) {
@@ -991,13 +1022,15 @@ function setColors(names) {
   const shades = agg.length === 1 ? [1] : agg.length === 2 ? [0, 2] : agg.length === 3 ? [0, 1, 2] : [0, 1, 2, 3];
   CMAP = {}; agg.forEach((n, i) => CMAP[n] = `var(--agg${shades[Math.min(i, shades.length - 1)]})`);
 }
-const COLORS = (n) => n === "fold" ? "var(--fold)" : n === "check" || n === "call" ? "var(--passive)" : n === "all-in" ? "var(--allin)" : CMAP[n] || "var(--agg1)";
+const COLORS = (n) => n === "fold" ? "var(--fold)" : n === "in range" ? "var(--accent)" : n === "check" || n === "call" ? "var(--passive)" : n === "all-in" ? "var(--allin)" : CMAP[n] || "var(--agg1)";
 // Convergence of the solve, from exploitability in % of the pot (0 = exact equilibrium of the tree).
 function convergence(res) {
   const x = res && res.solver && res.solver.exploitability_pct;
   if (x == null) return null;
   return x < 3 ? { cls: "ok", label: "converged", x } : x < 10 ? { cls: "meh", label: "fair", x } : { cls: "bad", label: "rough", x };
 }
+// optimize_sizes: hero's mix over the wide menu of the first solve, and the sizes the advice was solved with
+const SIZE_USAGE = (r) => Object.entries(r.size_usage).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(" · ") + (r.sizes_kept ? `; kept ${r.sizes_kept.join(", ")}` : "");
 const convTip = (c) => `Exploitability ${c.x.toFixed(1)}% of the pot: a perfect counter-strategy would win that much from this solve. Under 3% is close to a full solver.`;
 
 function renderResult(res, key) {
@@ -1020,6 +1053,8 @@ function renderResult(res, key) {
   if (res.grid) h += renderGrid(res.grid, res.hand);
   h += `<details><summary>Details</summary>`;
   if (res.villain_range) h += `<div class="meta">${res.villain} range (${res.villain_range_combos} combos):</div><div class="villain">${res.villain_range}</div>`;
+  if (res.villain_grid) h += `<div class="vgrid">${renderGrid(res.villain_grid, null, res.villain)}</div>`;
+  if (res.size_usage) h += `<div class="meta">Size optimization, your mix over the wide menu: ${SIZE_USAGE(res)}</div>`;
   if (res.solver) h += `<div class="meta">${res.solver.iterations} iterations · ${res.solver.solve_seconds}s · ${res.solver.active_combos} combos · sizes: ${res.solver.tree_actions.join(", ")}${res.solver.exploitability_pct != null ? ` · exploitability ${res.solver.exploitability_pct}% pot` : ""}</div>`;
   if (res.notes && res.notes.length) h += `<div class="meta">${res.notes.join("<br>")}</div>`;
   if (!res.multiway) h += `<div class="meta">Want to play a mixed strategy? <button class="link" id="randomise">Randomise</button> <span id="drawn"></span></div>`;
@@ -1031,11 +1066,14 @@ function renderResult(res, key) {
   if (ga) ga.onclick = () => document.querySelector('#solvectl button[data-m="accurate"]').click();
   el.querySelectorAll(".arow:not(.head)").forEach(r => r.onclick = () => applyAction(JSON.parse(r.dataset.act)));
   if (res.grid) wireGrid(el, res.grid, res.hand);
+  const vg = el.querySelector(".vgrid");
+  if (vg) wireGrid(vg, res.villain_grid, null, res.villain);
   updateAdviceState();
   renderAction(simulate());   // on your turn the buttons carry the solver's sizes and frequencies
 }
 function gridClass(i, j) { return i === j ? RANKS[i] + RANKS[i] : i < j ? RANKS[i] + RANKS[j] + "s" : RANKS[j] + RANKS[i] + "o"; }
-function renderGrid(grid, heroHand) {
+// who: a villain's range (one "in range" action; cells shaded by weight), without the whole-range totals
+function renderGrid(grid, heroHand, who) {
   const names = grid.actions;
   // Whole-range totals: each cell's w is its average combo weight, so combos = w x (6 pairs, 4 suited, 12 offsuit).
   const tot = names.map(() => 0); let combos = 0;
@@ -1044,12 +1082,18 @@ function renderGrid(grid, heroHand) {
     const n = c.w * (cls.length === 2 ? 6 : cls[2] === "s" ? 4 : 12);
     combos += n; c.f.forEach((f, a) => tot[a] += f * n);
   }
+  if (who) return `<div class="meta" style="margin-top:10px">${who}'s range by hand <span class="muted">· ${fmt(Math.round(combos * 10) / 10)} combos, darker = more of the class</span></div>` + gridCells(grid, null, "");
   let h = `<div class="meta" style="margin-top:14px">Your whole range here <span class="muted">· ${fmt(Math.round(combos * 10) / 10)} combos</span></div>`;
   if (combos > 0) {
     h += `<div class="rangebar" title="How your whole range plays this spot">${names.map((n, a) => `<div style="width:${(tot[a] / combos * 100).toFixed(2)}%;background:${COLORS(n)}" title="${n} ${(tot[a] / combos * 100).toFixed(1)}%"></div>`).join("")}</div>`;
     h += `<div class="rangetot">${names.map((n, a) => `<span style="--c:${COLORS(n)}">${n} <b>${(tot[a] / combos * 100).toFixed(0)}%</b> <small>${fmt(Math.round(tot[a] * 10) / 10)} combos</small></span>`).join("")}</div>`;
   }
-  h += `<div class="meta" style="margin-top:10px">By hand <span class="muted">· <span class="hoveronly">hover</span><span class="touchonly">tap</span> a hand for its mix</span></div><div class="rangewrap"><div class="grid">`;
+  h += `<div class="meta" style="margin-top:10px">By hand <span class="muted">· <span class="hoveronly">hover</span><span class="touchonly">tap</span> a hand for its mix</span></div>`;
+  return h + gridCells(grid, heroHand, '<span class="mehint">your hand</span>');
+}
+function gridCells(grid, heroHand, legend) {
+  const names = grid.actions;
+  let h = `<div class="rangewrap"><div class="grid">`;
   for (let i = 0; i < 13; i++) for (let j = 0; j < 13; j++) {
     const cls = gridClass(i, j);
     const c = grid.cells[cls] || { w: 0, f: [] }, me = cls === heroHand;
@@ -1058,15 +1102,17 @@ function renderGrid(grid, heroHand) {
     if (c.w > 0) for (let a = 0; a < names.length; a++) stack += `<div style="width:${(c.f[a] * 100).toFixed(1)}%;background:${COLORS(names[a])}"></div>`;
     h += `<div class="cell${i === j ? " pair" : ""}${me ? " me" : ""}" data-h="${cls}" style="opacity:${op}"><div class="stack">${stack}</div><span class="lbl">${cls}</span>${me ? '<span class="you">YOU</span>' : ""}</div>`;
   }
-  return h + `</div><div class="rangeside"><div class="readout" id="readout"></div><div class="legend"><span class="mehint">your hand</span></div></div></div>`;
+  return h + `</div><div class="rangeside"><div class="readout"></div><div class="legend">${legend}</div></div></div>`;
 }
-function wireGrid(root, grid, heroHand) {
-  const out = root.querySelector("#readout"), g = root.querySelector(".grid");
+function wireGrid(root, grid, heroHand, who) {
+  const out = root.querySelector(".readout"), g = root.querySelector(".grid");
   const show = (cls) => {
     const c = grid.cells[cls];
+    if (!cls) { out.innerHTML = ""; return; }
     out.innerHTML = `<b>${cls}${cls === heroHand ? " (you)" : ""}</b>` + (c && c.w > 0
-      ? grid.actions.map((n, a) => c.f[a] >= 0.005 ? `<span class="a" style="--c:${COLORS(n)}">${n} ${(c.f[a] * 100).toFixed(0)}%</span>` : "").join("")
-      : `<span class="muted">not in your range here</span>`);
+      ? (who ? `<span class="a" style="--c:${COLORS(grid.actions[0])}">${(c.w * 100).toFixed(0)}% of its combos</span>`
+        : grid.actions.map((n, a) => c.f[a] >= 0.005 ? `<span class="a" style="--c:${COLORS(n)}">${n} ${(c.f[a] * 100).toFixed(0)}%</span>` : "").join(""))
+      : `<span class="muted">not in ${who ? who + "'s" : "your"} range here</span>`);
   };
   let hov = null;
   const over = (e) => { const cell = e.target.closest(".cell"); if (!cell || cell === hov) return; if (hov) hov.classList.remove("hov"); hov = cell; cell.classList.add("hov"); show(cell.dataset.h); };
@@ -1126,7 +1172,7 @@ function resetAdvice() {
 // ---- share: plain-text summary + link that reopens the spot
 function handText() {
   const n = S.players, seat = SEAT_LABEL(S.hero, n);
-  const lines = [`GTO Solver hand: ${n}-handed, ${S.stack}bb effective${ANTE() ? `, ${fmt(ANTE())}bb ante` : ""}${STRADDLER() ? `, ${SEAT_LABEL(STRADDLER(), n)} straddles 2bb` : ""}${RAKE() ? `, ${RAKE_TEXT()}` : ""}, I am ${seat} with ${S.cards[0] || "?"}${S.cards[1] || "?"}`];
+  const lines = [`GTO Solver hand: ${n}-handed, ${S.stack}bb effective${ANTE() ? `, ${fmt(ANTE())}bb ante` : ""}${STRADDLER() ? `, ${SEAT_LABEL(STRADDLER(), n)} straddles 2bb` : ""}${RAKE() ? `, ${RAKE_TEXT()}` : ""}${ADV_TEXT() ? `, ${ADV_TEXT()}` : ""}, I am ${seat} with ${S.cards[0] || "?"}${S.cards[1] || "?"}`];
   const act = (a) => `${SEAT_LABEL(a.pos, n)} ${a.action === "bet" ? "bets " + fmt(a.to) : a.action === "raise" ? "raises to " + fmt(a.to) : a.action === "all-in" ? "all-in" : a.action + "s"}${a.g ? ` [${gradeMark(a.g)} solver ${(a.g.f * 100).toFixed(0)}%${a.g.l ? `, -${a.g.l.toFixed(2)}bb` : ""}]` : ""}`;
   const bd = (s) => s === "preflop" ? "" : " (" + boardCards().slice(NEED[s] - (s === "flop" ? 3 : 1), NEED[s]).join(" ") + ")";
   const sim = simulate();
@@ -1142,6 +1188,7 @@ function handText() {
     lines.push("  " + r.actions.map(a => `${a.action}${a.amount_bb != null ? " " + a.amount_bb + "bb" : ""} ${(a.freq * 100).toFixed(1)}%${a.gto_freq !== undefined ? ` (GTO ${(a.gto_freq * 100).toFixed(0)}%)` : ""}${a.ev_bb !== undefined ? " EV " + (a.ev_bb > 0 ? "+" : "") + a.ev_bb.toFixed(2) : ""}`).join(" | "));
     if (r.range_action_freq) lines.push("  whole range: " + Object.entries(r.range_action_freq).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(", "));
     if (r.villain_range) lines.push(`  ${r.villain} range (${r.villain_range_combos} combos): ${r.villain_range}`);
+    if (r.size_usage) lines.push(`  size optimization: ${SIZE_USAGE(r)}`);
     if (r.multiway) lines.push(`  equity vs field ${(r.equity_vs_field * 100).toFixed(0)}% (heuristic, ${r.opponents.length + 1} players)`);
     if (r.solver) lines.push(`  solver: ${r.solver.iterations} iterations, ${r.solver.solve_seconds}s, ${r.solver.active_combos} combos, sizes ${r.solver.tree_actions.join(", ")}`);
     if (r.notes && r.notes.length) lines.push("  notes: " + r.notes.join("; "));
@@ -1233,6 +1280,24 @@ document.getElementById("rake").onchange = (e) => {
 document.getElementById("rakePct").onchange = (e) => setRake(Math.min(25, Math.max(0, parseFloat(e.target.value) || 0)), RAKE_CAP() || +S.rakeCap || 0);
 document.getElementById("rakeCap").onchange = (e) => setRake(RAKE(), Math.max(0, parseFloat(e.target.value) || 0));
 syncRake();
+// Advanced: the inputs show S (renderSetup calls syncAdv); a change is cleaned like a share link's
+function setAdv(f) { f(); const a = cleanAdv(S, POS); delete S.sizes; delete S.ranges; delete S.optSizes; Object.assign(S, a); save(); resetAdvice(); renderAll(); }
+function syncAdv() {
+  for (const k of SIZE_KEYS) { const el = document.getElementById("sz_" + k); if (document.activeElement !== el) el.value = (S.sizes && S.sizes[k] || []).join(" "); }
+  document.getElementById("optSizes").checked = !!S.optSizes;
+  const box = document.getElementById("rangeIns"), key = POS.join() + S.hero + JSON.stringify(S.ranges || {});
+  if (box.dataset.k === key) return;   // rebuilt only when it changes, so a box being typed in keeps its focus
+  box.dataset.k = key; box.innerHTML = "";
+  for (const p of POS) if (p !== S.hero) {
+    const l = document.createElement("label"), i = document.createElement("input");
+    i.type = "text"; i.placeholder = "preflop chart"; i.value = S.ranges && S.ranges[p] || ""; i.dataset.p = p;
+    i.onchange = (e) => setAdv(() => { S.ranges = { ...S.ranges, [p]: e.target.value }; });
+    l.append(`${SEAT_LABEL(p, POS.length)} range`, i); box.appendChild(l);
+  }
+}
+for (const k of SIZE_KEYS) document.getElementById("sz_" + k).onchange = (e) => setAdv(() => { S.sizes = { ...S.sizes, [k]: parseSizes(e.target.value) }; });
+document.getElementById("optSizes").onchange = (e) => setAdv(() => { S.optSizes = e.target.checked; });
+document.getElementById("adv").open = !!(S.sizes || S.ranges || S.optSizes);
 document.getElementById("setupDone").onclick = () => { editSetup = false; renderAll(); };
 document.getElementById("editCards").onclick = () => { if (needCard(simulate())) { showDeck = false; selSlot = null; pendingRank = null; } else showDeck = true; renderAll(); };
 
@@ -1266,7 +1331,7 @@ document.addEventListener("keydown", (e) => {
   if (b) { e.preventDefault(); b.click(); }
 });
 document.getElementById("newhand").onclick = () => {
-  S = { ...fresh(S.players), hero: S.hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap }; selSlot = null; showDeck = false; editSetup = false; pendingRank = null; save(); resetAdvice(); renderAll();
+  S = { ...fresh(S.players), hero: S.hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanAdv(S, POS) }; selSlot = null; showDeck = false; editSetup = false; pendingRank = null; save(); resetAdvice(); renderAll();
 };
 // ---- layout (per browser): column divider, table height, folded panels, columns swapped. Only in a real
 // browser (the tests' fake DOM has no window events), and never allowed to break the page.

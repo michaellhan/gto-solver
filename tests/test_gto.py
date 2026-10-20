@@ -2479,3 +2479,88 @@ class TestRake(unittest.TestCase):
         # the ranges differ a little (the big blind defends less preflop), the pot the same: 5.5bb less 5%
         self.assertAlmostEqual(ev(b) / ev(a), 0.95, places=2)
 
+
+class TestAdvanced(unittest.TestCase):
+    """Optional state keys: custom postflop sizes ("sizes", % of the pot), custom ranges entering the flop
+    ("ranges"), and bet-size optimization ("optimize_sizes"); plus the villain's range by hand class."""
+
+    R = staticmethod(lambda p, a, to=None, amount=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}),
+                                                             **({"amount": amount} if amount else {})))
+    PRE = [("UTG", "fold"), ("HJ", "fold"), ("CO", "fold"), ("BTN", "raise", 2.5), ("SB", "fold"), ("BB", "call")]
+
+    def river(self, **kw):
+        R = self.R
+        return dict({"players": 6, "hero": "BB", "hole": "AhQd", "board": "Kh8d5c3s2h", "stack": 100,
+                     "preflop": [R(*a) for a in self.PRE], "flop": [R("BB", "check"), R("BTN", "check")],
+                     "turn": [R("BB", "check"), R("BTN", "check")], "river": []}, **kw)
+
+    def adv(self, budget=0.5):
+        return Advisor(Config(depth=1), time_budget=budget, prior_budget=0.3)
+
+    def test_custom_sizes(self):
+        adv = self.adv()
+        out = adv.advise(self.river(sizes={"river": [40, 150], "raise": [50]}))
+        self.assertEqual([a["action"] for a in out["actions"]], ["check", "bet 40%", "bet 150%"])
+        self.assertEqual(out["actions"][1]["amount_bb"], 2.0)   # 40% of 5.5, to the half bb
+        # facing a bet the custom raise menu is one size (and all-in); the villain's off-menu bet keeps its real size
+        out = adv.advise(self.river(river=[self.R("BB", "check"), self.R("BTN", "bet", amount=4)],
+                                    sizes={"river": [33], "raise": [50]}))
+        names = [a["action"] for a in out["actions"]]
+        self.assertEqual(names[:2], ["fold", "call"])
+        self.assertEqual(len([n for n in names if n.startswith("raise")]), 1, names)
+        self.assertEqual(out["to_call_bb"], 4.0)
+        # the default menu is untouched by a request that set sizes
+        self.assertEqual([a["action"] for a in adv.advise(self.river())["actions"]], ["check", "bet 50%", "bet 100%"])
+
+    def test_custom_range(self):
+        adv = self.adv()
+        base = adv.advise(self.river())
+        out = adv.advise(self.river(ranges={"BTN": "AA, QQ, 76s"}))
+        self.assertLess(out["villain_range_combos"], 13)   # AA and QQ less our blockers, 76s
+        self.assertGreater(base["villain_range_combos"], 50)
+        cells = {c for c, v in out["villain_grid"]["cells"].items() if v["w"] > 0}
+        self.assertLessEqual(cells, {"AA", "QQ", "76s"})
+        self.assertIn("AA", cells)
+        self.assertEqual(out["villain_grid"]["actions"], ["in range"])
+        self.assertTrue(any("custom" in n for n in out["notes"]))
+        # multiway: the opener's custom range (aces only) is what the field's equity is computed against
+        R = self.R
+        mw = {"players": 6, "hero": "BB", "hole": "KsQs", "board": "Kd7c2h", "stack": 100,
+              "preflop": [R("UTG", "fold"), R("HJ", "fold"), R("CO", "raise", 2.5), R("BTN", "call"), R("SB", "fold"),
+                          R("BB", "call")], "flop": []}
+        adv.mw_trials = MW_TRIALS
+        a = adv.advise(mw)
+        b = adv.advise(dict(mw, ranges={"CO": "AA"}))
+        self.assertTrue(a.get("multiway") and b.get("multiway"))
+        self.assertLess(b["equity_vs_field"], a["equity_vs_field"] - 0.1)
+
+    def test_optimize_sizes(self):
+        adv = self.adv(1.0)
+        out = adv.advise(self.river(optimize_sizes=True))
+        use, kept = out["size_usage"], out["sizes_kept"]
+        self.assertAlmostEqual(sum(use.values()), 1.0, delta=0.01)   # hero's whole mix at the node
+        self.assertIn("check", use)
+        self.assertEqual(set(use) - {"check", "all-in"}, {"25%", "33%", "50%", "75%", "100%", "150%", "200%"})
+        self.assertTrue(1 <= len(kept) <= 3 and set(kept) <= set(use) - {"check"})
+        # the advice is solved with the kept sizes only
+        bets = [a["action"] for a in out["actions"] if a["action"] != "check"]
+        self.assertEqual(sorted(b.replace("bet ", "") for b in bets), sorted(kept))
+        # facing a bet there's nothing to choose: noted, no usage
+        out = adv.advise(self.river(river=[self.R("BB", "check"), self.R("BTN", "bet", amount=4)], optimize_sizes=True))
+        self.assertNotIn("size_usage", out)
+        self.assertTrue(any("optimized only" in n for n in out["notes"]))
+
+    def test_bad_input(self):
+        adv = self.adv()
+        for kw, msg in ((dict(sizes={"flop": ["x"]}), "positive numbers"), (dict(sizes={"flop": [-10]}), "positive numbers"),
+                        (dict(sizes={"river": [10, 20, 30, 40]}), "at most 3"), (dict(sizes={"preflop": [50]}), "unknown street"),
+                        (dict(sizes=[33]), "must be an object"), (dict(ranges={"BTN": "ZZ+"}), "can't read BTN's range"),
+                        (dict(ranges={"LJ": "AA"}), "not a seat"), (dict(ranges={"BTN": "KhKd"}), "no combos left on this board"),
+                        (dict(ranges="AA"), "must be an object")):
+            out = adv.advise(self.river(**kw))
+            self.assertIn("error", out, kw)
+            self.assertIn(msg, out["error"], kw)
+        # sizes are held to 5-500% of the pot; an empty range box is the chart's range
+        out = adv.advise(self.river(sizes={"river": [1, 900]}, ranges={"BTN": " "}))
+        self.assertEqual([a["action"] for a in out["actions"]][:2], ["check", "bet 5%"])
+

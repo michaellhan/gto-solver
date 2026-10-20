@@ -7,7 +7,10 @@ Game state (all money in big blinds unless `bb` is given, then chips / bb):
   "stack": 100,                                 # effective stack (or "stacks": {pos: chips})
   "preflop": [{"pos": "CO", "action": "raise", "to": 2.5}, {"pos": "BTN", "action": "call"}, ...],
   "flop": [{"pos": "BB", "action": "check"}, {"pos": "CO", "action": "bet", "amount": 2.0}],
-  "turn": [], "river": []
+  "turn": [], "river": [],
+  "sizes": {"flop": [33, 75], "raise": [60]},   # optional: postflop bet sizes per street, % of the pot
+  "ranges": {"BB": "22+,A2s+,KTo+"},            # optional: a player's range entering the flop
+  "optimize_sizes": true                        # optional: pick this street's bet sizes from a wide menu
 }
 Actions: fold, check, call, bet (amount), raise (to), all-in.
 """
@@ -20,7 +23,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 import numpy as np
 from .cards import cards as parse_cards, COMBO_INDEX, hand_class, ALL_COMBOS, cards_str
-from .ranges import N_COMBOS, range_to_text
+from .ranges import N_COMBOS, range_to_text, parse_range
 from . import preflop as pf
 from .pf_classes import push_fold
 from .exploit import PoolLock, pool_preflop
@@ -83,8 +86,56 @@ COMMIT_BET = 0.75   # exploit mode: a postflop bet this big (share of the pot) m
                     # (a 96%-pot donk on AKQ left 4-high calling for its river bluffs, +1.4 bb)
 BR_TIE_MAX = 0.05   # ...and at most this: a 10-iteration solve 41% of the pot from settled tied every action, so
                     # its unsettled mix folded 55 to a turn check-raise where calling was +6.7 bb
+MAX_SIZES = 3       # custom/optimized sizes: at most this many per street (each multiplies the tree; the browser's is small)
+SIZE_PCT = (5.0, 500.0)  # custom sizes are held to this range, % of the pot
+OPT_SIZES = [0.25, 0.33, 0.5, 0.75, 1.0, 1.5, 2.0]  # optimize_sizes: the wide menu the first solve picks from
+OPT_KEEP = 0.03     # ...a size stays when either player's first bet uses it with this share of their range
+OPT_SHARE = 0.35    # ...that solve's share of the time budget (the advice's solve gets the rest: same total)
 STREET_OF = {0: "preflop", 3: "flop", 4: "turn", 5: "river"}
 STREETS = ["preflop", "flop", "turn", "river"]
+
+
+def _custom_sizes(raw) -> Dict[str, List[float]]:
+    """state["sizes"]: {"flop"|"turn"|"river"|"raise": [% of pot, ...]} -> fractions, sorted, held to
+    SIZE_PCT. Raises ValueError with a message for the user."""
+    if not isinstance(raw, dict):
+        raise ValueError('sizes must be an object like {"flop": [33, 75], "raise": [60]} (percent of the pot)')
+    out = {}
+    for k, v in raw.items():
+        if k not in ("flop", "turn", "river", "raise"):
+            raise ValueError(f"sizes: unknown street {k!r} (use flop, turn, river or raise)")
+        try:
+            vals = [float(x) for x in (v if isinstance(v, list) else [v])]
+        except (TypeError, ValueError):
+            vals = [-1.0]
+        if any(not x > 0 for x in vals):   # (not x > 0 also catches nan)
+            raise ValueError(f"sizes: {k} needs positive numbers (percent of the pot), got {v!r}")
+        if len(set(vals)) > MAX_SIZES:
+            raise ValueError(f"sizes: at most {MAX_SIZES} {k} sizes (each one multiplies the game tree), got {len(set(vals))}")
+        if vals:
+            out[k] = sorted({round(min(max(x, SIZE_PCT[0]), SIZE_PCT[1]) / 100, 3) for x in vals})
+    return out
+
+
+def _custom_ranges(raw, positions) -> Dict[str, np.ndarray]:
+    """state["ranges"]: {seat: PIO-style range} -> weight vectors. Raises ValueError for the user."""
+    if not isinstance(raw, dict):
+        raise ValueError('ranges must be an object like {"BB": "22+,A2s+,KTo+"}')
+    out = {}
+    for p, text in raw.items():
+        if not str(text or "").strip():
+            continue   # an empty box: the chart's range
+        if str(p).upper() not in positions:
+            raise ValueError(f"ranges: {p} is not a seat at this table ({', '.join(positions)})")
+        try:
+            r = parse_range(str(text))
+        except (ValueError, IndexError, KeyError, TypeError, AttributeError):
+            r = None
+        if r is None or not (r > 0).any() or (r < 0).any():
+            # (the text isn't echoed: the page shows errors as HTML, and a share link carries ranges)
+            raise ValueError(f"ranges: can't read {p}'s range (PIO style: AA, KK+, AKs, A5s+, T9s-65s, 22-77, AhKh, QJo:0.5)")
+        out[str(p).upper()] = np.minimum(r, 1.0)
+    return out
 
 
 def _norm_actions(acts: List[dict], bb: float) -> List[dict]:
@@ -923,6 +974,11 @@ class Advisor:
         hero = str(state["hero"]).upper()
         if hero not in positions:
             return {"error": f"hero seat {hero} is not one of {positions}"}
+        try:
+            sizes = _custom_sizes(state["sizes"]) if state.get("sizes") else {}
+            custom = _custom_ranges(state["ranges"], positions) if state.get("ranges") else {}
+        except ValueError as e:
+            return {"error": str(e)}
         hole = tuple(parse_cards(str(state["hole"])))
         board = parse_cards(str(state.get("board") or ""))
         if len(hole) != 2 or len(board) not in (0, 3, 4, 5):
@@ -939,16 +995,23 @@ class Advisor:
             return self._preflop(hero, hole, streets["preflop"], positions, stack, t0,
                                  pool=state.get("opponents") == "pool")
         saved = self.time_budget, self.prior_budget, self.cfg
-        if positions.rake:
+        if positions.rake or sizes:
             self.cfg = self.cfg.copy()
+        if positions.rake:
             self.cfg.rake_rate, self.cfg.rake_cap = positions.rake
+        for k, v in sizes.items():   # (_cfg_with_real_sizes maps the sizes actually taken onto these)
+            if k == "raise":
+                self.cfg.raise_sizes = {st: list(v) for st in ("flop", "turn", "river")}
+            else:
+                self.cfg.bet_sizes[k] = list(v)
         if state.get("budget"):
             self.time_budget = max(0.5, min(120.0, float(state["budget"])))
         if state.get("prior_budget"):
             self.prior_budget = max(0.3, min(30.0, float(state["prior_budget"])))
         try:
             return self._postflop(hero, hole, board, stack, streets, positions, t0,
-                                  pool=state.get("opponents") == "pool")
+                                  pool=state.get("opponents") == "pool", custom=custom,
+                                  optimize=bool(state.get("optimize_sizes")))
         finally:
             self.time_budget, self.prior_budget, self.cfg = saved
 
@@ -1274,7 +1337,7 @@ class Advisor:
         }
 
     # ------------------------------------------------------------ postflop
-    def _postflop(self, hero, hole, board, stack, streets, positions, t0, pool=False):
+    def _postflop(self, hero, hole, board, stack, streets, positions, t0, pool=False, custom=None, optimize=False):
         notes: List[str] = []
         n_streets = {3: 2, 4: 3, 5: 4}[len(board)]
         rep = replay_hand(positions, stack, streets, n_streets)
@@ -1290,7 +1353,16 @@ class Advisor:
         # a copy: narrowing below replaces entries, and the cached dict is shared with later requests
         pf_r = preflop_ranges(streets["preflop"], positions, stack, hero if pool else None)
         ranges = dict(pf_r)
-        for p in getattr(pf_r, "rebuilt", []):
+        bm = np.prod([1.0 - MEMBER_FULL[c] for c in board], axis=0)
+        for p, r in (custom or {}).items():
+            if p not in rep[0].active:
+                continue   # folded preflop: nothing to override
+            if (r * bm).sum() <= 0:
+                return {"error": f"ranges: {p}'s range has no combos left on this board"}
+            ranges[p] = r
+            notes.append(f"{'your' if p == hero else p + chr(39) + 's'} range entering the flop is the custom one "
+                         f"({(r * bm).sum():.0f} combos), not the preflop chart's")
+        for p in [q for q in getattr(pf_r, "rebuilt", []) if q not in (custom or {})]:
             notes.append(f"{'your' if p == hero else p + chr(39) + 's'} preflop line isn't in the chart, so "
                          f"{'your' if p == hero else 'their'} range is the hands that take its last action")
         # Streets that started with 3+ players can't be solved; narrow ranges there by rule.
@@ -1308,6 +1380,8 @@ class Advisor:
 
         live_opps = [p for p in remaining if p != hero]
         if len(live_opps) != 1 or cur.allin & set(remaining) - {hero} and len(remaining) > 2:
+            if optimize:
+                notes.append("bet sizes are optimized only heads-up (multiway is a heuristic, not a solve)")
             return self._multiway(hero, hole, board, ranges, remaining, cur, stack, t0, notes)
         villain = live_opps[0]
         post = cur.order
@@ -1321,6 +1395,9 @@ class Advisor:
                 r0 = r0 * (1.0 - MEMBER_FULL[c])
 
         hu_from_start = cur.players_start == remaining
+        opt = {}
+        if optimize and not (hu_from_start and to_call <= 1e-9):
+            notes.append("bet sizes are optimized only where you can bet (nothing to call) on a street that began heads-up")
         committed = _committed(villain, rep[1:])
         widened: List[str] = []
         rare_lines: List[str] = []
@@ -1341,6 +1418,8 @@ class Advisor:
             eff = min(stack - cur.inv_start[oop], stack - cur.inv_start[ip])
             cfg = self._cfg_with_real_sizes(cur, oop, ip, eff)
             r0, r1 = self._with_hero(r0, r1, hero_p, hole, notes)
+            if optimize and to_call <= 1e-9:
+                cfg, opt = self._optimize_sizes(board, r0, r1, cur, eff, cfg, hero_p, notes)
             sol = self._solve_cached(board, r0, r1, cur.pot_start, eff, self.time_budget, cfg=cfg)
             # The villain's actions this street are exact unless the solve rarely takes them: then
             # smooth as on earlier streets, so we aren't advised against a sliver of a range.
@@ -1446,6 +1525,9 @@ class Advisor:
             "hero_range_combos": round(float(hero_r.sum()), 1),
             "villain_range_combos": round(float(vill_r.sum()), 1),
             "villain_range": range_to_text(vill_r, 0.05)[:400],
+            # the same range by hand class for the page's grid (the text above is cut short)
+            "villain_grid": strategy_grid([np.ones(N_COMBOS)], ["in range"], vill_r),
+            **opt,
             "solver": {"iterations": sol.iters, "solve_seconds": round(sol.seconds, 2), "nodes": sol.n_nodes,
                        "active_combos": sol.ctx.n, "tree_actions": node.names,
                        # how far this street's solve is from equilibrium, % of the street's starting pot
@@ -2329,6 +2411,38 @@ class Advisor:
         sol.settled_once = True
         sol.extend(self.time_budget if budget is None else budget, should_stop=self.should_stop)
         return True
+
+    def _optimize_sizes(self, board, r0, r1, st: StreetState, eff, cfg: Config, hero_p, notes):
+        """optimize_sizes: solve this street once with OPT_SIZES (one street deep and one raise: the size is
+        chosen here, and the smaller tree buys iterations), keep the sizes either player's first bet uses
+        with OPT_KEEP of their range (the MAX_SIZES most used), and return the advice's config with them and
+        hero's mix there by size. The two solves split the time budget, so the total stays the same."""
+        wide = cfg.copy()
+        wide.bet_sizes[st.name] = list(OPT_SIZES)
+        wide.depth, wide.max_raises = 1, 1
+        sol = self._solve_cached(board, r0, r1, st.pot_start, eff, OPT_SHARE * self.time_budget, cfg=wide)
+        self.time_budget *= 1 - OPT_SHARE   # (restored by _advise)
+        root = sol.root
+        chk = root.children[root.names.index("check")]
+        firsts = [(root, sol.r0)] + ([(chk, sol.r1)] if isinstance(chk, Decision) else [])
+        mixes = [dict(zip(n.names, n.avg_strategy0() @ (r / max(r.sum(), 1e-12)))) for n, r in firsts]
+        frac = {f"bet {int(round(f * 100))}%": f for f in OPT_SIZES}
+        frac["all-in"] = round(eff / max(st.pot_start, 1e-9) + 0.01, 3)   # a bet that reaches the stack
+        use: Dict[str, float] = {}
+        for m in mixes:
+            for n, f in m.items():
+                if n != "check":
+                    use[n] = max(use.get(n, 0.0), float(f))
+        top = sorted(use, key=use.get, reverse=True)[:MAX_SIZES]
+        keep = sorted([n for n in top if use[n] >= OPT_KEEP] or top[:1], key=frac.get)
+        out = cfg.copy()
+        out.bet_sizes[st.name] = sorted(frac[n] for n in keep)
+        label = lambda n: n[4:] if n.startswith("bet ") else n   # "bet 33%" -> "33%"
+        mine = mixes[min(hero_p, len(mixes) - 1)]
+        notes.append(f"{st.name}: bet sizes chosen by a first solve over {', '.join(label(n) for n in root.names[1:])}: "
+                     f"kept {', '.join(label(n) for n in keep)} (used by {OPT_KEEP:.0%}+ of a range)")
+        return out, {"size_usage": {label(n): round(float(f), 3) for n, f in mine.items()},
+                     "sizes_kept": [label(n) for n in keep]}
 
     def _cfg_with_real_sizes(self, st: StreetState, oop: str, ip: str, stack: float) -> Config:
         """Tree config for this street where the bet/raise sizes actually taken replace the
