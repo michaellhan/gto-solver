@@ -80,7 +80,9 @@
     const inv = (p) => sim.invested[p] + (open ? sim.streets[sim.current].bets[p] : 0);
     const board = boardCards(), live = POS.filter(p => sim.active.has(p));
     let pot = POS.reduce((t, p) => t + inv(p), 0);
-    if (board.length >= 3 && RAKE()) pot -= Math.min(pot * RAKE() / 100, RAKE_CAP() || Infinity);
+    // rake (pots that saw a flop) is on the called pot: a bet or raise nobody matched goes back untouched
+    const most = POS.map(inv).sort((a, b) => b - a), uncalled = most[0] - (most[1] || 0);
+    if (board.length >= 3 && RAKE()) pot -= Math.min((pot - uncalled) * RAKE() / 100, RAKE_CAP() || Infinity);
     const cards = (p) => p === S.hero ? h.hole : h.hands[p];
     let winners = live, shown = [], best = null;
     if (!sim.active.has(S.hero)) winners = [];

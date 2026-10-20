@@ -191,3 +191,18 @@ test("your fold that closes the street ends the hand, with others still in", asy
   assert.equal(p.posted.length, n);
   assert.equal(p.val("Practice.state.score.hands"), 1);
 });
+
+test("rake is taken from the called pot: a bet nobody calls goes back unraked", async () => {
+  const p = loadPage();
+  await p.ready();
+  p.run(`Math.random = (() => { let s = 3; return () => (s = (s * 16807) % 2147483647) / 2147483647; })();`);
+  p.run("S.players = 2; S.rake = 5; S.rakeCap = 3; setPositions(2); save();");
+  vm.runInContext(PRACTICE, p.ctx, { filename: "practice.js" });
+  p.run("Practice.set(true)");
+  // limp-check to the flop, you bet 2bb there and the opponent folds: 2bb called pot, 5% rake
+  const villain = (m) => ({ pos: m.play.seat, action: (m.state.flop || []).some(a => a.action === "bet") ? "fold" : "call" });
+  await playHand(p, villain, (sim) => p.S.cards[2] && !(sim.cur.curBet > 0) ? { action: "bet", to: 2 } : { action: "call" });
+  const h = p.val("Practice.state.hand");
+  assert.deepEqual(p.S.actions.flop.map(a => a.action), p.S.hero === "BB" ? ["bet", "fold"] : ["check", "bet", "fold"]);
+  assert.equal(h.result.net, 0.9);   // 4bb pot less 0.1 rake on the 2 called, less your 3
+});
