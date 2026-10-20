@@ -522,11 +522,12 @@ class BucketEntry:
 
 
 class Decision:
-    __slots__ =("boards", "player", "names", "children", "regret", "ssum", "pot_now", "bets", "B", "blind")
+    __slots__ = ("boards", "player", "names", "children", "regret", "ssum", "pot_now", "bets", "B", "blind", "bucketed")
 
-    def __init__(self, boards, player, names, children, pot_now, bets, n, blind=False):
+    def __init__(self, boards, player, names, children, pot_now, bets, n, blind=False, bucketed=False):
         self.boards, self.player, self.names, self.children = boards, player, names, children
         self.blind = blind        # a river decision played on the turn's boards (river_play)
+        self.bucketed = bucketed  # its last axis is hand buckets, not combos (river_buckets)
         self.pot_now, self.bets = pot_now, bets
         self.B = len(boards)
         A = len(names)
@@ -757,7 +758,7 @@ class TreeBuilder:
                     names.append("all-in")
                     kids.append(self._decision(boards, pot, stack, nb, o, n_raises + 1, ninv, False))
         self.n_nodes += 1
-        return Decision(boards, p, names, kids, pot_total, bets, self._width or self.ctx.n, self._blind)
+        return Decision(boards, p, names, kids, pot_total, bets, self._width or self.ctx.n, self._blind, bool(self._width))
 
 
 # ----------------------------------------------------------------- merged subtrees
@@ -781,7 +782,7 @@ def _merge(nodes, pairs: list):
     if isinstance(first, Decision):
         m = Decision.__new__(Decision)
         m.boards, m.player, m.names, m.pot_now, m.bets, m.B = boards, first.player, first.names, None, None, len(boards)
-        m.blind = first.blind
+        m.blind, m.bucketed = first.blind, first.bucketed
         m.children = [_merge([n.children[a] for n in nodes], pairs) for a in range(len(first.children))]
         m.regret = np.concatenate([n.regret for n in nodes])
         m.ssum = np.concatenate([n.ssum for n in nodes])
@@ -1276,10 +1277,9 @@ class Solver:
         if isinstance(node, Terminal):
             return self._cfr(node, p, r0, r1, update=False, use_avg=True)
         if isinstance(node, BucketEntry):
-            # (p best-responds by bucket, the bucket game's best response; a pool lock works on combos and
-            # isn't applied there)
+            # (p best-responds by bucket, the bucket game's best response)
             (m0, m1), flat = self._bucket_in(node, (r0, r1), None)
-            return self._bucket_out(self._best_response(node.child, p, m0, m1), flat[p])
+            return self._bucket_out(self._best_response(node.child, p, m0, m1, lock), flat[p])
         if isinstance(node, Chance):
             B, K, n = r0.shape[0], node.K, self.ctx.n
             m3 = node.masks.reshape(B, K, n)

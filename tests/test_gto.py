@@ -1498,6 +1498,17 @@ class TestFlopStrategy(unittest.TestCase):
         pairs = float((s.compat_sum(b)[0] * sol.r0).sum())
         self.assertLess(abs(v0 + v1) / pairs, 1e-4)
         self.assertGreater(sol.exploitability(), 0)
+        # exploit mode's pool lock reaches the bucket nodes too (a bucket's percentile is its place in the range)
+        from gto.exploit import PoolLock
+        lock, seen = PoolLock(sol.ctx, 1), []
+
+        def spy(node, strat, reach, sel=None):
+            seen.append(node.bucketed)
+            out = lock(node, strat, reach, sel)
+            self.assertEqual(out.shape, strat.shape)
+            return out
+        evs = s.node_action_br_evs(sol.root, sol.r0, sol.r1, lock=spy)
+        self.assertTrue(np.isfinite(evs).all() and any(seen) and not all(seen))
 
     def test_turn_classes_cover_every_turn(self):
         ctx = Ctx(np.arange(N_FULL), Config())
