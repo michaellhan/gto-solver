@@ -70,10 +70,14 @@ UNSETTLED = 3.0     # heads-up: a solve this far from equilibrium (% pot) hasn't
 SETTLE_EXPL = 10.0  # heads-up: the street being advised on gets one more time budget when this far (% pot) from settled
 JAM_BLEND = 0.04    # preflop vs a jam: call frequency ramps from 0 to 1 over this much equity around the pot odds
 PREFLOP_BOARDS = 400  # boards sampled for preflop all-in equity
+MULTI_BOARDS = 400    # ...of which preflop equity against several ranges uses this many
 PRICE_BLEND = 0.02  # preflop, off-chart price: continue frequency ramps over this much (scaled) equity around the pot odds
 RAISE_BLEND = 0.03  # preflop, more players in: value-raise frequency ramps over this much equity when called
 COMMIT = 0.4       # preflop: a raise that would put in this share of the stack goes all-in instead
 JAM_SPR = 1.5      # ...as does one leaving less than this many pots behind once called
+CHECK_REALIZE = 0.8  # preflop, short stacks: the share of its equity the big blind's free check over limpers realizes
+JAM_SPR_DEEP = 1.25 # ...this many at the charts' own depth (within DEPTH_TOL of CHART_STACK), where a 4bet to 2.3x
+                    # leaves ~1.45 pots behind and is called, as in 100bb solves
 PUSH_FOLD_STACK = 12.0  # preflop: at or below this many bb, raising first in is all-in (push/fold)
 CHART_STACK = 100.0  # the depth the preflop charts are written for
 IMPLIED = {"pair": 0.06, "suited": 0.03}  # preflop calls: share of the stack behind (beyond the chart's) small pairs / suited hands expect to win later
@@ -520,28 +524,81 @@ def _preflop_equity(villain: np.ndarray) -> np.ndarray:
     return equity_vs(villain)
 
 
+_CA = np.array([a for a, b in ALL_COMBOS])
+_CB = np.array([b for a, b in ALL_COMBOS])
+
+
+@lru_cache(maxsize=1)
+def _board_index():
+    """Per preflop board, the orders and lookups _beat_share needs that don't depend on the range: every
+    combo by strength, every (card, strength) entry of a combo holding that card, and where each combo's own
+    strength falls in both."""
+    out = []
+    for s in _preflop_boards():
+        o = np.argsort(s, kind="stable")
+        ss = s[o]
+        keys = np.concatenate([_CA, _CB]) * 8192 + np.concatenate([s, s])
+        o2 = np.argsort(keys, kind="stable")
+        k2 = keys[o2]
+        q = np.maximum(s, -1)
+        ix = [np.searchsorted(ss, s, "left"), np.searchsorted(ss, s, "right")]
+        for c in (_CA, _CB):
+            ix += [np.searchsorted(k2, c * 8192, "left"), np.searchsorted(k2, c * 8192 + q, "left"),
+                   np.searchsorted(k2, c * 8192 + q, "right"), np.searchsorted(k2, c * 8192 + 8191, "right")]
+        out.append((o.astype(np.int16), o2.astype(np.int16), [i.astype(np.int16) for i in ix]))   # (< 2653: 14 MB)
+    return out
+
+
+def _beat_share(bi: int, w: np.ndarray) -> np.ndarray:
+    """On preflop board bi, every combo's chance of beating a hand drawn from the range w (1326 weights,
+    zero on combos the board blocks), ties half, counting only villain combos sharing no card with it:
+    sorted cumulative weights, and per card the same for the villain combos holding it (inclusion-exclusion;
+    the only combo holding both of ours is ours). Also returns that compatible weight, per combo."""
+    o, o2, ix = _board_index()[bi]
+    cw = np.concatenate([[0.0], np.cumsum(w[o])])
+    c2 = np.concatenate([[0.0], np.cumsum(np.concatenate([w, w])[o2])])
+    lt, le = cw[ix[0]], cw[ix[1]]
+    lt_ab = le_ab = tot_ab = 0.0
+    for j in (2, 6):
+        base = c2[ix[j]]
+        lt_ab = lt_ab + c2[ix[j + 1]] - base
+        le_ab = le_ab + c2[ix[j + 2]] - base
+        tot_ab = tot_ab + c2[ix[j + 3]] - base
+    tot = w.sum() - tot_ab + w
+    win = (lt - lt_ab) + 0.5 * ((le - le_ab + w) - (lt - lt_ab))
+    return np.where(tot > 1e-12, win / np.maximum(tot, 1e-12), 0.0), tot
+
+
 def _preflop_equity_multi(villains: List[np.ndarray]) -> np.ndarray:
     """Preflop equity of every combo against several weighted ranges at once: on each board, the product
-    of the chances of beating each (ties count half; card removal between the villains is ignored)."""
+    of the chances of beating each (ties count half; card removal between the villains is ignored), over
+    the first MULTI_BOARDS boards (each class pools its combos below)."""
     if len(villains) == 1:
         return _preflop_equity(villains[0])
     sts = _preflop_boards()
-    vs = []
-    for r in villains:
-        v = np.nonzero(r > 1e-9)[0]
-        vs.append((v, r[v], (_CARD_MASK[:, None] & _CARD_MASK[None, v]) == 0))
-    n = sum(len(v) for v, _, _ in vs)
     num = np.zeros(N_COMBOS); den = np.zeros(N_COMBOS)
-    for s in sts[: max(60, min(len(sts), int(6e7 / (N_COMBOS * max(n, 1)))))]:
-        p = (s >= 0).astype(float)
-        for v, w, ok in vs:
-            sv = s[v]
-            wl = (ok & (sv >= 0)[None, :]) * w
-            d = wl.sum(1)
-            win = (wl * ((s[:, None] > sv[None, :]) + 0.5 * (s[:, None] == sv[None, :]))).sum(1)
-            p = p * np.where(d > 0, win / np.maximum(d, 1e-12), 0.0)
-        num += p; den += s >= 0
-    return np.where(den > 0, num / np.maximum(den, 1), np.nan)
+    tw = [max(float(r.sum()), 1e-12) for r in villains]
+    for bi, s in enumerate(sts[:MULTI_BOARDS]):
+        live = s >= 0
+        p = live.astype(float)
+        bw = live.astype(float)
+        for r, t in zip(villains, tw):
+            sh, tot = _beat_share(bi, np.where(live, r, 0.0))
+            p = p * sh
+            # boards are as likely as the players' hands leave them: a board of the cards their ranges hold
+            # comes less often (high cards, against ranges of broadways), which the uniform boards missed: 76s
+            # and 22 read 2-3 points under a dealt-out simulation against five players, Q9o 2 over
+            bw = bw * tot / t
+        num += p * bw; den += bw
+    # Every combo of a hand class is the same hand up to suits, and the (chart) ranges are suit-symmetric,
+    # so the class's combos share one estimate: each combo alone saw only its 60-75 boards, and 76s came out at
+    # 5.1% against five players where 65s had 9.5% and Q9o 14.7%, so BB folded 76s, 65s and 54s 70-77% of the
+    # time getting 10:1. Pooled, each class sees 4-12x the boards.
+    from .pf_classes import CLASS_OF
+    k = int(CLASS_OF.max()) + 1
+    num_c = np.bincount(CLASS_OF, weights=num, minlength=k)
+    den_c = np.bincount(CLASS_OF, weights=den, minlength=k)
+    return np.where(den_c[CLASS_OF] > 0, num_c[CLASS_OF] / np.maximum(den_c[CLASS_OF], 1), np.nan)
 
 
 def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack: float, hero=None, hole=(),
@@ -622,6 +679,11 @@ def _soften(r, keep_m) -> np.ndarray:
     """Per-combo weights for range r after a line the rules play with keep_m: 1 on the rule's hands,
     NARROW_SOFT off them, lowered so the off-rule hands make up at most OFF_RULE_MAX of the result."""
     on, off = float(r[keep_m].sum()), float(r[~keep_m].sum())
+    if on <= 1e-9:
+        # the rules play none of the range this way (a 3bet-pot flop overbet's value range, JJ+ and sets,
+        # checking the turn): nothing to narrow by, so the range stays as it was rather than emptying (0 combos
+        # left, and the solve against it put every hand of ours at exactly half the pot)
+        return np.ones_like(r)
     soft = NARROW_SOFT
     if off * soft > 0 and OFF_RULE_MAX < 1.0:
         soft = min(soft, OFF_RULE_MAX / (1.0 - OFF_RULE_MAX) * on / off)
@@ -821,6 +883,28 @@ def preflop_ranges(actions: List[dict], positions, stack: float, pool_except: Op
     return _pf_cached(_pf_key("r", pool_except, actions, positions, stack), work)
 
 
+def _flat_ev(full: Dict[str, np.ndarray], w: np.ndarray, raiser: np.ndarray, pot: float, to_call: float,
+             behind: float = 0.0) -> np.ndarray:
+    """Per combo, the EV (over folding) of flatting a raise instead of jamming over it: its equity against the
+    raiser's range, realized at the rate that makes the chart's weakest flats (CUT_FLOOR of them) break even,
+    over the pot after the call, less the call, plus the implied odds small pairs and suited hands have on the
+    stack `behind` (IMPLIED, as the priced calls); 0 for hands the chart doesn't continue with. A short-stack
+    rejam competes with this, not just with folding (see push_fold's `alt`)."""
+    from .pf_classes import equity_vs
+    eq = np.nan_to_num(equity_vs(raiser), nan=0.0)
+    cont = full.get("call", 0.0) + full.get("raise", 0.0)
+    c = w * full["call"]
+    if c.sum() < 1e-9:
+        return np.zeros(N_COMBOS)
+    order = np.argsort(eq)                              # weakest first
+    cum = np.cumsum(c[order])
+    marg = float(eq[order][min(int(np.searchsorted(cum, CUT_FLOOR * cum[-1])), len(cum) - 1)])
+    price = to_call / max(pot + to_call, 1e-9)
+    realize = float(np.clip(price / max(marg, 1e-6), 0.5, 1.2))
+    ev = realize * eq * (pot + to_call) - to_call + _IMPLIED_W * max(behind, 0.0)
+    return np.where(cont > 1e-9, np.maximum(ev, 0.0), 0.0)
+
+
 def _jam_range(actions: List[dict], ji: int, positions, stack: float, pool_except: Optional[str] = None):
     """(the range of the player whose all-in is actions[ji], notes). An open- or 3bet-jam: push/fold
     equilibrium against the players left to act (the opener, if any, is the one who calls); later, the
@@ -837,8 +921,16 @@ def _jam_range(actions: List[dict], ji: int, positions, stack: float, pool_excep
         call_rng = arr.get(caller, np.ones(N_COMBOS)) if caller else np.ones(N_COMBOS)
         caller_in = prev.bets[caller] if caller else float(np.mean([prev.bets[p] for p in opp]))
         pot_before = prev.pot_start + sum(prev.bets.values())
+        # a jam over a raise competes with flatting it, as our own (Advisor._push)
+        alt = None
+        if prev.n_raises == 1 and caller:
+            full_j = pf.strategy_for(jammer, before, positions)
+            to_call = min(prev.cur_bet - prev.bets[jammer], jam - prev.bets[jammer])
+            if "call" in full_j and to_call > 1e-9:
+                alt = _flat_ev(full_j, rng, call_rng, pot_before, to_call,
+                               stack - prev.inv_start[jammer] - prev.bets[jammer] - to_call)
         push = push_fold(rng, call_rng, jam, prev.bets[jammer], caller_in, pot_before, len(opp),
-                         rake=getattr(positions, "rake", None))
+                         rake=getattr(positions, "rake", None), alt=alt)
         share = float((rng * push).sum() / max(rng.sum(), 1e-12))
         rng = rng * push
         notes.append(f"{jammer}'s {jam:g}bb jam range: push/fold equilibrium against {len(opp)} "
@@ -1056,14 +1148,18 @@ class Advisor:
             pot = st.pot_start + sum(st.bets.values())
             pot_called = pot + 2 * size - st.bets[hero] - st.cur_bet
             short_open = st.n_raises == 0 and stack <= PUSH_FOLD_STACK
+            # (at the charts' depth their lines play as written: a 100bb 4bet to 25 over an 11bb 3bet leaves
+            # 1.45 pots behind, and under JAM_SPR it went all-in with the chart's bluffs, A5s and K5s jamming
+            # 100bb, while the 3bettor's calls of it all became jams; solves 4bet small and call 4bets there)
+            spr_bar = JAM_SPR_DEEP if stack >= CHART_STACK - DEPTH_TOL else JAM_SPR
             if (size >= st.bets[hero] + remaining - 1e-9 or st.inv_start[hero] + size >= COMMIT * stack
-                    or (stack - st.inv_start[hero] - size) < JAM_SPR * pot_called or short_open):
+                    or (stack - st.inv_start[hero] - size) < spr_bar * pot_called or short_open):
                 size = st.bets[hero] + remaining
                 if short_open or stack < CHART_STACK - DEPTH_TOL:
                     full = self._push(hero, preflop, positions, stack, st, size, full, notes, pool)
                 else:
                     notes.append("the raise would commit the stack, so it goes all-in")
-                if "call" in full and st.n_raises >= 2 and remaining - to_call < JAM_SPR * (pot + to_call):
+                if "call" in full and st.n_raises >= 2 and remaining - to_call < spr_bar * (pot + to_call):
                     # a call that leaves under JAM_SPR pots behind is committed too: it jams instead, for the
                     # fold equity (QQ, AK and JJ called 9 of 18bb behind a 3bet and a cold 4bet at 20bb)
                     full = dict(full, **{"raise": np.minimum(full["raise"] + full["call"], 1.0), "call": np.zeros(N_COMBOS)})
@@ -1103,11 +1199,28 @@ class Advisor:
         arr = preflop_ranges(preflop, positions, stack, hero if pool else None)
         last = next((a["pos"] for a in reversed(preflop) if a["action"] in ("raise", "all-in")), None)
         opp = [p for p in st.order if p in st.active and p != hero and p not in st.allin]
-        call_rng = arr.get(last, np.ones(N_COMBOS)) if last else np.ones(N_COMBOS)
+        if last:
+            call_rng = arr.get(last, np.ones(N_COMBOS))
+        else:
+            # first in or over limpers: whoever calls is one of the players left, each from their own range
+            # (a limper's, not any two cards: the big blind jammed over two limpers with 55% of hands at 12bb)
+            rs = [arr.get(p, np.ones(N_COMBOS)) for p in opp] or [np.ones(N_COMBOS)]
+            call_rng = sum(r / max(r.sum(), 1e-12) for r in rs) / len(rs) * N_COMBOS
         caller_in = st.bets[last] if last else float(np.mean([st.bets[p] for p in opp]))
         pot = st.pot_start + sum(st.bets.values())
+        to_call = min(st.cur_bet - st.bets[hero], jam - st.bets[hero])
+        alt = None
+        if "call" in full and to_call > 1e-9:
+            alt = _flat_ev(full, arr.get(hero, np.ones(N_COMBOS)), call_rng, pot, to_call,
+                           stack - st.inv_start[hero] - st.bets[hero] - to_call)
+        elif "check" in full:
+            # the big blind's free check over limpers: its share of the pot, realized at CHECK_REALIZE
+            limpers = [p for p in opp if st.bets[p] > 0] or opp
+            eq = _preflop_equity_multi([arr.get(p, np.ones(N_COMBOS)) for p in limpers]) if limpers else None
+            if eq is not None:
+                alt = CHECK_REALIZE * np.nan_to_num(eq, nan=0.0) * pot
         push = push_fold(arr.get(hero, np.ones(N_COMBOS)), call_rng, jam, st.bets[hero], caller_in, pot,
-                         max(1, len(opp)), rake=getattr(positions, "rake", None))
+                         max(1, len(opp)), rake=getattr(positions, "rake", None), alt=alt)
         out = dict(full)
         out["raise"] = push
         if "call" in full:   # what the chart continued with and doesn't shove calls
@@ -1203,9 +1316,12 @@ class Advisor:
         # shallower than the charts moves their price by how their odds with those winnings change at
         # this price, so 20bb shallower costs a small pair a little of the implied odds it had at chart
         # depth, not all of them.
+        # More players in pay off more often too, by the square root of how many (judgment: a hit is paid by
+        # one or two of them, not all), so a suited connector or small pair closing a pot five ways expects
+        # 2.2x the chart's heads-up winnings.
         depth = behind - behind_std
-        implied = lambda b: call / np.maximum(pot + call + _IMPLIED_W * max(b, 0.0), call + 1e-9)
-        need_v = need + implied(behind) - implied(behind_std)
+        implied = lambda b, n=1: call / np.maximum(pot + call + _IMPLIED_W * max(b, 0.0) * np.sqrt(n), call + 1e-9)
+        need_v = need + implied(behind, max(len(opp), 1)) - implied(behind_std, max(len(opp_std), 1))
         more = sorted(opp) != sorted(opp_std)
         reprice = abs(need - need_std) >= PRICE_TOL or abs(depth) >= DEPTH_TOL or pool or raked
         if not (more or reprice):
@@ -1371,7 +1487,14 @@ class Advisor:
         mw_streets = [st for st in rep[1:] if len(st.players_start) > 2]
         slow: Dict[str, np.ndarray] = {}
         for st in mw_streets:
+            before = dict(ranges)
             _narrow_street(ranges, board[:{"flop": 3, "turn": 4, "river": 5}[st.name]], st, stack, hero, hole, slow)
+            # (a line the rules leave nearly face-up is filled out as heads-up streets are: a 3bet pot's turn
+            # pot-sized bet into two kept 1.9 combos, and heads-up on the river the check left 0.5, where
+            # checking and jamming tied for every hand)
+            for p in st.players_start:
+                if p in ranges and p in before and p != hero:
+                    ranges[p] = _post_floor(before[p], ranges[p], board, p, st.name, notes)
         if mw_streets:
             notes.append(f"{', '.join(st.name for st in mw_streets)}: multiway, ranges narrowed by "
                          "simple betting rules rather than a solve")
@@ -2627,6 +2750,13 @@ class Advisor:
                 if reraise:
                     # no bluffs: as many combos as the rule's range, from the top (a 99bb river jam into 2bb kept
                     # 0 combos as solved, and as the rules' about half bluffs a hand playing the board called it)
+                    # The solve's own hands are those it still plays this way now (its current strategy) as well
+                    # as on average: an average from a short solve keeps the uniform start of its first
+                    # iterations, which for a line it rarely takes is most of it (14 iterations in, K8o and
+                    # KQo jammed a K72 flop 18% on average and 0% currently, so AK called the jam at +6 to +19 bb
+                    # on short budgets and folded at -67 on long ones).
+                    if lock is None or p != lock.player:
+                        s = np.minimum(s, node.strategy()[0][k])
                     s = np.maximum(s, _top(full, _share(full, m), rank)[sol.ctx.active])   # with the solve's own
                 else:
                     s = _soften(full, m)[sol.ctx.active]

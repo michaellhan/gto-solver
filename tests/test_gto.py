@@ -30,6 +30,47 @@ class TestCardsRanges(unittest.TestCase):
 
 
 class TestSolverMath(unittest.TestCase):
+    def test_flop_allin_equity_near_exact(self):
+        """A flop all-in's equity matrix covers every turn card (4 sampled turns x 4 rivers, the browser's Fast
+        tree, had flush draws off by up to 24% equity: JsTs called a flop jam at +19.5 bb, exactly -34)."""
+        import itertools
+        board = tuple(cards("Ks7s2d"))
+        r = parse_range("JsTs, AsQs, Qs9s, AhKd, AcKc, 77, 22, K7s, 8s8d, 9h9d, QhJh, 6s5s, AhQd")
+        bm = np.ones(N_FULL)
+        for c in board:
+            bm *= 1 - MEMBER_FULL[c]
+        active = np.nonzero(r * bm > 0)[0]
+        for cfg in (Config(leaf_turns=4, leaf_rivers_flop=4), Config()):
+            ctx = Ctx(active, cfg)
+            L = ctx.leaf_matrix(board, set())
+            E = np.zeros_like(L, dtype=np.float64); C = np.zeros_like(E)
+            for t, rv in itertools.combinations([c for c in range(52) if c not in board], 2):
+                s = ctx.strength(board + (t, rv)).astype(float)
+                ok = (s >= 0).astype(float)
+                E += np.sign(s[:, None] - s[None, :]) * np.outer(ok, ok); C += np.outer(ok, ok)
+            E = E / np.maximum(C, 1) * ctx.compat
+            eq = lambda M: 0.5 + 0.5 * M.sum(1) / np.maximum(ctx.compat.sum(1), 1)   # each vs the rest, evenly
+            self.assertLess(np.abs(eq(L) - eq(E)).max(), 0.04)
+
+    def test_turn_leaf_in_flop_solve_uses_every_river(self):
+        """A turn leaf inside a flop solve (an all-in or check-down on the turn) averages every river, not
+        leaf_rivers_flop random ones (4 in the browser's Fast tree moved a flush draw's equity by tens of points)."""
+        board = tuple(cards("Ks7s2d4h"))
+        r = parse_range("JsTs, AsQs, AhKd, 77, 8s8d, QhJh, 6s5s")
+        bm = np.ones(N_FULL)
+        for c in board:
+            bm *= 1 - MEMBER_FULL[c]
+        active = np.nonzero(r * bm > 0)[0]
+        ctx = Ctx(active, Config(leaf_rivers_flop=4))
+        ctx.root_len = 3
+        L = ctx.leaf_matrix(board, set())
+        E = np.zeros_like(L, dtype=np.float64); C = np.zeros_like(E)
+        for rv in [c for c in range(52) if c not in board]:
+            s = ctx.strength(board + (rv,)).astype(float)
+            ok = (s >= 0).astype(float)
+            E += np.sign(s[:, None] - s[None, :]) * np.outer(ok, ok); C += np.outer(ok, ok)
+        self.assertLess(np.abs(L - E / np.maximum(C, 1) * ctx.compat).max(), 1e-5)
+
     def test_showdown_matrix_matches_bruteforce(self):
         board = cards("AhKd7c2s9h")
         r = parse_range("22+, A2s+, KTs+, ATo+")
@@ -451,6 +492,37 @@ class TestAdvisor(unittest.TestCase):
         # heads-up the button defends a 3bet wide (in position postflop)
         r = go("SB", "Qh8h", [R("SB", "raise", 2.5), R("BB", "raise", 8)], players=2)[0]
         self.assertEqual(r["recommended"], "call")
+        # 100bb: the button 4bets the big blind's 11bb 3bet to 25, not all-in (A5s jammed 100bb under JAM_SPR),
+        # and the big blind calls that 4bet with JJ (every call had become a jam); at 40bb the 3bet still jams
+        bb3 = F("UTG", "HJ", "CO") + [R("BTN", "raise", 2.5)] + F("SB") + [R("BB", "raise", 11)]
+        r, a = go("BTN", "As5s", bb3)
+        self.assertEqual(a["raise"]["amount_bb"], 25.5)
+        self.assertNotIn("all-in", a)
+        r, a = go("BB", "JsJd", bb3 + [R("BTN", "raise", 25)])
+        self.assertEqual(r["recommended"], "call")
+        r, a = go("BB", "AhKd", F("UTG", "HJ", "CO") + [R("BTN", "raise", 2.5)] + F("SB"), stack=40)
+        self.assertIn("all-in", a)
+        # a short-stack rejam over an open competes with flatting it, not just folding: suited connectors and
+        # small pairs flat (push/fold against folding alone jammed 76s at 25bb and 55 at 40bb, 30% and 23% of
+        # hands); AQo and KK still jam
+        bo = F("UTG", "HJ", "CO") + [R("BTN", "raise", 2.3)] + F("SB")
+        self.assertEqual(go("BB", "7h6h", bo, stack=25)[0]["recommended"], "call")
+        self.assertEqual(go("BB", "AhQd", bo, stack=25)[0]["recommended"], "all-in")
+        bo = F("UTG", "HJ", "CO") + [R("BTN", "raise", 2.5)] + F("SB")
+        self.assertEqual(go("BB", "5h5d", bo, stack=40)[0]["recommended"], "call")
+        self.assertEqual(go("BB", "KhKd", bo, stack=40)[0]["recommended"], "all-in")
+        # ...and the big blind's iso-jam over limpers competes with its free check, against the limpers' ranges
+        # (not any two cards): at 12bb K5o and J5s checked behind two limpers only after this (55% jammed)
+        lim = [R("UTG", "call")] + F("HJ", "CO") + [R("BTN", "call")] + F("SB")
+        self.assertEqual(go("BB", "Kh5d", lim, stack=12)[0]["recommended"], "check")
+        self.assertEqual(go("BB", "Jh5h", lim, stack=12)[0]["recommended"], "check")
+        self.assertEqual(go("BB", "AhTd", lim, stack=12)[0]["recommended"], "all-in")
+        # closing a five-way pot at 10:1 the big blind calls suited connectors (multiway equity per combo from
+        # 60-75 boards had 76s at 5% where a dealt-out simulation has 14%, and they folded 70-77%); 72o folds
+        mw5 = [R("UTG", "raise", 2.5), R("HJ", "call"), R("CO", "call"), R("BTN", "call"), R("SB", "call")]
+        for h in ("7h6h", "6h5h", "5h4h"):
+            self.assertEqual(go("BB", h, mw5)[0]["recommended"], "call", h)
+        self.assertEqual(go("BB", "7h2d", mw5)[0]["recommended"], "fold")
         # facing a 5bet with chips behind, AA can shove
         r, a = go("UTG", "AhAd", [R("UTG", "raise", 2.5), R("HJ", "raise", 8)] + F("CO", "BTN", "SB", "BB")
                   + [R("UTG", "raise", 20), R("HJ", "raise", 45)], stack=200)
@@ -856,7 +928,7 @@ class TestTableSizes(unittest.TestCase):
         # (BB's flop call keeps the hands that would have raised at SLOWPLAY, so its river lead is no longer
         # mostly air: the two continue about equally, 45% and 43%, against 64% each before the joint bar)
         self.assertLess(max(bb, co), 55)
-        self.assertLess(abs(bb - co), 6)
+        self.assertLessEqual(abs(bb - co), 7)   # (47 / 41 with the dealt-out multiway preflop equity)
         # One range: the same as keeping its top share.
         rng = np.random.default_rng(1)
         w, sc = rng.random(1326), rng.random(1326)
@@ -945,7 +1017,7 @@ class TestTableSizes(unittest.TestCase):
         self.assertGreaterEqual(share["7s7d"], 99)
         self.assertLess(share["7s6s"], share["7s7d"])
         self.assertGreater(share["7s6s"], 0)
-        self.assertEqual(share["8s6s"], 0)
+        self.assertLessEqual(share["8s6s"], 3)   # (2%: the preflop ranges' small shifts move it a point or two)
 
     def test_multiway_small_bet(self):
         # Checked to CO 3-way: it chooses between checking, a third of the pot and two thirds by EV, and
@@ -1460,8 +1532,47 @@ class TestExploit(unittest.TestCase):
         st = {"players": 6, "hero": "BB", "hole": "AsKd", "board": "Kc7d2s", "stack": 100,
               "preflop": F("UTG", "HJ", "CO") + [R("BTN", "raise", 2.5)] + F("SB") + [R("BB", "call")],
               "flop": [R("BB", "check"), R("BTN", "all-in")]}
-        for _ in range(2):
-            self.assertEqual(Advisor(time_budget=1, prior_budget=0.5).advise(st)["recommended"], "fold")
+        # (and at every budget: the solve's own jamming hands are the ones it still jams now, not an average
+        # that keeps its uniform start: K8o-KQo jammed 18-45% on average at 1-2.5 s, and AK called at +6 to +19)
+        for tb in (0.5, 1, 1, 2.5):
+            res = Advisor(time_budget=tb, prior_budget=0.5).advise(st)
+            self.assertEqual(res["recommended"], "fold")
+            self.assertLess(next(a["ev_bb"] for a in res["actions"] if a["action"] == "call"), -5)
+
+    def test_rare_check_by_value_range_keeps_range(self):
+        """BB 3bets, overbets the flop 150% (rare: the rules' value, JJ+ and sets) and checks the turn, which the
+        rules have none of that range doing: the range stays as it was, not 0 combos (where every hand of ours
+        was worth exactly half the pot, check and jam tied)."""
+        from gto.advisor import _soften
+        r = np.zeros(1326); r[:10] = 1.0
+        self.assertTrue(np.all(_soften(r, np.zeros(1326, dtype=bool)) == 1.0))
+        R = lambda p, a, x=None: dict({"pos": p, "action": a}, **({"to": x} if a == "raise" else {"amount": x} if x else {}))
+        F = lambda *ps: [R(p, "fold") for p in ps]
+        st = {"players": 6, "hero": "BTN", "hole": "Qd5c", "board": "9sJd3d6c", "stack": 100,
+              "preflop": F("UTG", "HJ", "CO") + [R("BTN", "raise", 2.5)] + F("SB") + [R("BB", "raise", 11), R("BTN", "call")],
+              "flop": [R("BB", "bet", 33.8), R("BTN", "call")], "turn": [R("BB", "check")]}
+        # (the page's Fast tree, one turn size: there the overbet is rare)
+        fast = Config(n_turns=3, n_rivers=8, leaf_turns=4, leaf_rivers_flop=4, n_rivers_from_flop=4,
+                      bet_sizes={"flop": [0.33, 0.75], "turn": [0.75], "river": [0.75]},
+                      raise_sizes={"flop": [0.5], "turn": [0.75], "river": [0.75]})
+        res = Advisor(fast, time_budget=1, prior_budget=0.5).advise(st)
+        self.assertGreater(res["villain_range_combos"], 10)
+        ev = {a["action"]: a["ev_bb"] for a in res["actions"]}
+        self.assertGreater(ev["check"], ev["all-in"] + 5)
+
+    def test_multiway_line_filled_out(self):
+        """A line the multiway rules leave nearly face-up is filled out (as heads-up streets are): HJ's pot-sized
+        turn bet into two players in a 60bb 3bet pot kept 1.9 combos, and its river check 0.5."""
+        R = lambda p, a, x=None: dict({"pos": p, "action": a}, **({"to": x} if a == "raise" else {"amount": x} if x else {}))
+        F = lambda *ps: [R(p, "fold") for p in ps]
+        st = {"players": 6, "hero": "BTN", "hole": "3h8c", "board": "Qc2dTc9c2c", "stack": 60,
+              "preflop": F("UTG") + [R("HJ", "raise", 2.5), R("CO", "call"), R("BTN", "raise", 10)] + F("SB", "BB")
+              + [R("HJ", "call"), R("CO", "call")],
+              "flop": [R("HJ", "check"), R("CO", "check"), R("BTN", "check")],
+              "turn": [R("HJ", "bet", 31.5), R("CO", "fold"), R("BTN", "call")], "river": [R("HJ", "check")]}
+        res = Advisor(time_budget=1, prior_budget=0.5).advise(st)
+        self.assertGreater(res["villain_range_combos"], 3)
+        self.assertTrue(any("filled out" in n for n in res["notes"]))
 
     def test_rare_turn_reraise_keeps_solved_range(self):
         """BTN 3bets AQ, HJ calls; Qs9dKc checks through; on the Td turn HJ bets 1, BTN raises to 12 and HJ
@@ -1501,7 +1612,8 @@ class TestExploit(unittest.TestCase):
         st = {"players": 6, "hero": "BTN", "hole": "AhQd", "board": "Qs8d3c", "stack": 100, "preflop": pre,
               "flop": [R("BB", "check")], "opponents": "pool"}
         rough = Advisor(time_budget=0.2, prior_budget=0.2).advise(st)
-        tol = max(0.005, rough["solver"]["exploitability_pct"] / 100) * rough["pot_bb"]
+        from gto.advisor import BR_TIE_MAX   # (ties are capped at BR_TIE_MAX of the pot, as the advisor does)
+        tol = min(max(0.005, rough["solver"]["exploitability_pct"] / 100), BR_TIE_MAX) * rough["pot_bb"]
         best = max(a["ev_bb"] for a in rough["actions"])
         for a in rough["actions"]:
             if a["ev_bb"] >= best - tol and a["gto_freq"] > 0.05:

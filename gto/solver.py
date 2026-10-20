@@ -36,6 +36,7 @@ def _matvec(M, x):
 
 
 N_FULL = 1326
+FLOP_LEAF_RIVERS = 4   # a flop all-in's equity: at least this many rivers under every turn card (Ctx._flop_leaf)
 MEMBER_FULL = np.zeros((52, N_FULL))
 for _i, (_a, _b) in enumerate(ALL_COMBOS):
     MEMBER_FULL[_a, _i] = 1.0
@@ -183,6 +184,15 @@ class Ctx:
             return L
         if len(board) == 5:
             L = self.showdown_matrix(board)
+        elif len(board) == 3:
+            L = self._flop_leaf(board, dead)
+        elif self.root_len == 3:
+            # a turn leaf inside a flop solve (an all-in or a check-down on the turn): every river, uncached.
+            # leaf_rivers_flop random rivers (4 in the browser's Fast tree) moved a flush draw's turn equity by
+            # tens of points, and a 4bet pot's flop with it: JsTs jammed Ks7s2d at +28.1 over a third-pot bet's
+            # +26.4, against +27.2 and +31.4 with every river
+            avail = [c for c in range(52) if c not in dead and c not in board]
+            L = self._avg_showdown([board + (r,) for r in avail])
         else:
             avail = [c for c in range(52) if c not in dead and c not in board]
             if len(board) == 3:
@@ -200,6 +210,41 @@ class Ctx:
             L /= np.maximum(len(picks) - h[:, None] - h[None, :], 1.0).astype(np.float32)
         self._leaf[key] = L
         return L
+
+    def _flop_leaf(self, board: tuple, dead: set) -> np.ndarray:
+        """The flop's equity matrix (a flop all-in): every turn card, each with FLOP_LEAF_RIVERS or more
+        rivers (leaf_turns x leaf_rivers_flop runouts in all, spread over the turns). Sampled turns gave a
+        draw a share of its outs set by which few turns came: with 4 turns x 4 rivers, JsTs called a flop jam
+        on Ks7s2d at +19.5 bb where the default tree's 6 x 16 runouts had it at -18.6. The river boards'
+        matrices aren't kept (a few hundred of them)."""
+        avail = [c for c in range(52) if c not in dead and c not in board]
+        per = max(FLOP_LEAF_RIVERS, -(-self.cfg.leaf_turns * self.cfg.leaf_rivers_flop // max(len(avail), 1)))
+        m = len(avail)
+        step = max(1, (m - 1) // per)
+        boards = []
+        for ti, t in enumerate(avail):
+            # rivers spread evenly so every card is a river about equally often over all the turns (random
+            # picks left a flush draw's river outs over- or under-drawn: a 5-6% equity error at 2 per turn)
+            rivers = [avail[(ti + 1 + j * step) % m] for j in range(min(per, m - 1))]
+            boards += [board + (t, r) for r in dict.fromkeys(rivers)]
+        return self._avg_showdown(boards)
+
+    def _avg_showdown(self, boards) -> np.ndarray:
+        """The showdown matrix averaged over 5-card boards, per pair over the boards neither hand blocks;
+        the boards' own matrices aren't kept."""
+        L = np.zeros((self.n, self.n), dtype=np.float32)
+        oks = []
+        for b in boards:
+            s = self.strength(b).astype(np.float32)
+            d = np.sign(s[:, None] - s[None, :])
+            bl = s < 0                       # combos holding a card of the board
+            d[bl, :] = 0.0
+            d[:, bl] = 0.0
+            L += d
+            oks.append(~bl)
+        ok = np.array(oks, dtype=np.float32)        # (boards, n): the boards each pair is counted on
+        cnt = np.einsum("bi,bj->ij", ok, ok) if NO_BLAS else ok.T @ ok
+        return (L / np.maximum(cnt, 1.0) * self.compat).astype(np.float32)
 
 
 class Ranking:
