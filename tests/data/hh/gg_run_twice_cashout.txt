@@ -1,0 +1,47 @@
+Poker Hand #RC1234567890: Hold'em No Limit ($1/$2) - 2024/09/01 10:00:00
+Table 'RushAndCash12' 6-max Seat #3 is the button
+Seat 1: Hero ($200 in chips)
+Seat 2: a1b2c3 ($180 in chips)
+Seat 3: d4e5f6 ($250 in chips)
+Seat 4: 778899 ($200 in chips)
+Seat 5: aabbcc ($90 in chips)
+Seat 6: ddeeff ($200 in chips)
+778899: posts small blind $1
+aabbcc: posts big blind $2
+Cash Drop to Pot : total $1
+*** HOLE CARDS ***
+Dealt to Hero [Ah Ad]
+Dealt to a1b2c3
+Dealt to d4e5f6
+Dealt to 778899
+Dealt to aabbcc
+Dealt to ddeeff
+ddeeff: folds
+Hero: raises $3 to $5
+a1b2c3: folds
+d4e5f6: raises $12 to $17
+778899: folds
+aabbcc: raises $73 to $90 and is all-in
+Hero: raises $110 to $200 and is all-in
+d4e5f6: calls $183
+Hero: shows [Ah Ad]
+d4e5f6: shows [Kc Ks]
+aabbcc: shows [Qh Qd]
+Hero: Chooses to EV Cashout
+Hero: Pays Cashout Risk ($20.5)
+*** FIRST FLOP *** [2c 7d 9s]
+*** FIRST TURN *** [2c 7d 9s] [Jh]
+*** FIRST RIVER *** [2c 7d 9s Jh] [Kd]
+*** SECOND FLOP *** [3c 4d 5s]
+*** SECOND TURN *** [3c 4d 5s] [6h]
+*** SECOND RIVER *** [3c 4d 5s 6h] [8d]
+*** FIRST SHOWDOWN ***
+d4e5f6 collected $135 from pot
+*** SECOND SHOWDOWN ***
+Hero collected $135 from pot
+*** SUMMARY ***
+Total pot $493 | Rake $5 | Jackpot $1 | Bingo $0 | Fortune $0 | Tax $0
+Hand was run two times
+FIRST Board [2c 7d 9s Jh Kd]
+SECOND Board [3c 4d 5s 6h 8d]
+Seat 1: Hero showed [Ah Ad] and won ($135) with ...

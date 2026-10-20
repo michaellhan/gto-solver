@@ -1,0 +1,21 @@
+Poker Hand #HD2051234999: Hold'em No Limit ($0.25/$0.5) - 2024/08/03 23:11:52
+Table 'NLHGold3' 6-max Seat #2 is the button
+Seat 1: 3c9d1e2f ($50 in chips)
+Seat 2: 77ab01cd ($50 in chips)
+Seat 3: Hero ($50 in chips)
+Seat 4: 9a8b7c6d ($50 in chips)
+Hero: posts small blind $0.25
+9a8b7c6d: posts big blind $0.5
+*** HOLE CARDS ***
+Dealt to 3c9d1e2f [2c 3c]
+Dealt to 77ab01cd [4d 5d]
+Dealt to Hero [Ks Kh]
+Dealt to 9a8b7c6d [7h 7s]
+3c9d1e2f: folds
+77ab01cd: folds
+Hero: raises $1.25 to $1.5
+9a8b7c6d: calls $1
+*** FLOP *** [Jd 5c 2h]
+Hero: bets $1
+9a8b7c6d: folds
+*** SUMMARY ***

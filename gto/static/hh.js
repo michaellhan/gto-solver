@@ -21,15 +21,19 @@
     const starts = lines.map((l, i) => /^(PokerStars\b.*Hand #|Poker Hand #)/i.test(l) ? i : -1).filter(i => i >= 0);
     if (starts.length > 1) { lines = lines.slice(starts[0], starts[1]); warnings.push(`${starts.length} hands pasted: imported the first.`); }
     const head = lines.find(l => /Hold'?em|Omaha|Hand #/i.test(l)) || lines[0] || "";
-    if (/Omaha|PLO|Stud|Razz|Draw|Courchevel/i.test(head)) throw new Error("Only Hold'em hands can be imported.");
-    if (/\bLimit\b/i.test(head) && !/No ?Limit/i.test(head)) warnings.push("Not a no-limit hand: it's solved as no-limit.");
+    // a mixed game names this hand's game in brackets: "Mixed NLH/PLO (Hold'em No Limit, $0.10/$0.25)"
+    const game = (head.match(/\bMixed\b[^(]*\(([^)]*)\)/i) || [, head])[1];
+    if (/Omaha|PLO|Stud|Razz|Badugi|Courchevel|6\+|Short ?Deck/i.test(game) || /\bDraw\b/i.test(game) && !/Hold'?em/i.test(game))
+      throw new Error("Only Hold'em hands can be imported.");
+    if (/\bLimit\b/i.test(game) && !/No ?Limit/i.test(game)) warnings.push("Not a no-limit hand: it's solved as no-limit.");
     const site = /PokerStars/i.test(head) ? "PokerStars" : /^Poker Hand #/i.test(head) ? "GGPoker" : "generic";
 
     const seats = [];
     for (const l of lines) {
       if (/^\*\*\*/.test(l)) break;   // seat lines in the summary say who won, not their stacks
-      const m = l.match(new RegExp(String.raw`^Seat (\d+): (.+?) \(\s*${AMT}(?: in chips)?[^)]*\)`, "i"));
-      if (m && !seats.some(s => s.seat === +m[1])) seats.push({ seat: +m[1], name: m[2], chips: num(m[3]) });
+      // the stack is the last "(…)" opening with an amount, so a name with brackets ("x (2)") keeps them
+      const m = l.match(new RegExp(String.raw`^Seat (\d+): (.+) \(\s*${AMT}(?: in chips)?[^)]*\)`, "i"));
+      if (m && !seats.some(s => s.seat === +m[1])) seats.push({ seat: +m[1], name: m[2].trim(), chips: num(m[3]) });
     }
     if (seats.length < 2) throw new Error("No players found. Paste a whole hand history, from its first line (\"PokerStars Hand #…\" or \"Poker Hand #…\") down; it needs the \"Seat 1: name ($100 in chips)\" lines.");
     const names = seats.map(s => s.name).sort((a, b) => b.length - a.length);
@@ -50,7 +54,8 @@
         dealt.add(m[1]);
         const cs = m[2] ? cardsIn(m[2]) : [];
         if (cs.length > 2) throw new Error("Only Hold'em hands can be imported.");
-        if (cs.length === 2 && cs.every(Boolean) && !hole) { hero = m[1]; hole = cs; }
+        // GGPoker's own exports can show every player's cards; its hero is always "Hero"
+        if (cs.length === 2 && cs.every(Boolean) && (!hole || m[1] === "Hero" && hero !== "Hero")) { hero = m[1]; hole = cs; }
         continue;
       }
       if (!board.length && (m = l.match(/^Board\s*(\[.*\])/i))) { board = cardsIn(m[1]); continue; }
@@ -68,6 +73,7 @@
       else if ((m = rest.match(new RegExp(String.raw`^raises\s+(?:${AMT}\s+)?to\s+${AMT}`, "i")))) acts.push({ street, name, act: "raise", to: num(m[2]), allIn });
     }
     if (!hole) throw new Error("Your hole cards aren't in this history (no \"Dealt to you [Ah Kd]\" line). Import a hand you played, as your poker client saved it.");
+    if (!seats.some(s => s.name === hero)) throw new Error(`"${hero}" has hole cards but no "Seat N: ${hero} (…)" line: paste the whole hand history.`);
     if (!board.every(Boolean)) board = [];
 
     // who was dealt in: anyone who posted, acted or (GG) has a "Dealt to" line; sitting-out seats did none of these
@@ -80,16 +86,25 @@
       return m && num(m[2]) > 0 ? num(m[2]) : p ? p.amt : 0;
     })();
     if (!(bb > 0)) throw new Error("Couldn't find the big blind (neither in the first line's \"(0.50/1)\" nor a \"posts big blind\" line).");
+    const sbPost = posts.find(p => p.kind === "sb");
+    if (sbPost && Math.abs(sbPost.amt / bb - 0.5) > 0.01) warnings.push(`The small blind is ${r2(sbPost.amt / bb)}bb: the page plays a half-big-blind small blind.`);
 
     // seats: clockwise from the button, the big blind is the first player after it who posted one (a new player
     // can post a big blind elsewhere); the page's names run from the first seat after the big blind round to it
     const bm = lines.join("\n").match(/Seat #(\d+) is the button/i);
-    const btnSeat = bm ? +bm[1] : order[0].seat;
-    let bi = order.findIndex(s => s.seat >= btnSeat); if (bi < 0) bi = 0;
-    if (order[bi].seat !== btnSeat) bi = (bi + n - 1) % n;   // the button seat is empty or sat out: the last one before it
-    const bbPost = new Set(posts.filter(p => p.kind === "bb").map(p => p.name));
-    let bbi = (bi + (n === 2 ? 1 : 2)) % n;
-    for (let k = 1; k <= n; k++) if (bbPost.has(order[(bi + k) % n].name)) { bbi = (bi + k) % n; break; }
+    const bbPost = new Set(posts.filter(p => p.kind === "bb").map(p => p.name)), toBB = n === 2 ? 1 : 2;
+    let bi, bbi;
+    if (bm) {
+      bi = order.findIndex(s => s.seat >= +bm[1]); if (bi < 0) bi = 0;
+      if (order[bi].seat !== +bm[1]) bi = (bi + n - 1) % n;   // the button seat is empty or sat out: the last one before it
+      bbi = (bi + toBB) % n;
+      for (let k = 1; k <= n; k++) if (bbPost.has(order[(bi + k) % n].name)) { bbi = (bi + k) % n; break; }
+    } else {   // no button line (a partial paste): the big blind's poster, else the seat after the small blind's
+      const sb = order.findIndex(s => posts.some(p => p.kind === "sb" && p.name === s.name));
+      bbi = order.findIndex(s => bbPost.has(s.name));
+      if (bbi < 0) bbi = sb >= 0 ? (sb + 1) % n : toBB % n;
+      bi = (bbi - toBB + n) % n;
+    }
     const pos = {};
     for (let k = 0; k < n; k++) pos[order[(bbi + 1 + k) % n].name] = SEATS[n][k];
     if (n > 2 && pos[order[bi].name] !== "BTN") warnings.push("The button isn't next to the blinds (a dead button?): positions are counted from the big blind.");
