@@ -350,11 +350,29 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   A74 folds 36 / calls 45 / raises 18 (34.6 / 50.0 / 15.4). An iteration costs ~7x the old tree's
   natively (~15 it/s on a rainbow flop, half that on a two-tone or monotone one) and ~15x in
   Pyodide, and a solve needs ~100: 30 iterations were 12 points of c-bet and 15 of BB's check from
-  the reference, 60 were 8 and 8, 100 were 5 and 4. So the server's Accurate settles, while Fast
-  (2.5 s) and the browser's Fast keep random turns and the river checked down (their c-bets 10-30
-  points low on dry and paired flops), and the browser's Accurate gets 60-75 iterations in 60 s,
-  about 8 points of c-bet from the reference (12 before) with BB's check a little noisier (7.5
-  points, 6 before). Tests TestFlopStrategy hold the published table.
+  the reference, 60 were 8 and 8, 100 were 5 and 4. So the server's Accurate settles, and the
+  browser's Accurate gets 60-75 iterations in 60 s, about 8 points of c-bet from the reference (12
+  before) with BB's check a little noisier (7.5 points, 6 before).
+  * Fast (2.5 s natively, 8 s in the browser) plays the same flop model with the turn and river by
+    hand buckets (`river_buckets=32, turn_buckets=True`): each player's range on each turn card is split
+    into 32 equal shares ordered by equity against the other's flop range, and the turn and river below
+    a flop solve are played per bucket against a 32 x 32 bucket-pair equity matrix (the turn's every-river
+    equity averaged over the pairs with the flop ranges' weights, card removal as each pair's compatible
+    share; `bucket_river_step=3` averages every third river, no worse). The flop stays per combo. The two
+    players' tables are each other's negated transpose, so the game stays zero-sum. Per combo the river
+    beyond depth was ~95% of the arithmetic (N x N leaf products); by buckets an iteration costs what the
+    old Fast tree's did natively (12-18 ms on a single-raised pot) and 2.4x less in Pyodide (30-42 ms
+    against 74), so Fast gets 140-210 iterations natively and 190-260 in the browser, where it had ~200 and
+    ~100 (setup, before the budget: 0.6-1.0 s natively, 1.1-1.6 s in Pyodide, against 0.6 and 0.7; the turn
+    leaves' showdown sums now take one comparison and a byte add per board, and every board's hand
+    strengths one batched evaluator call). Against every turn played (12 flops above), at the iterations each gets: c-bet 3.6 points off
+    on average (native Fast was 12.2, the browser's 14.5), size split 7.6 (32.6, 35.5), BB's check 2.1
+    (6.1, 13.0), its response to the small bet 1.6 (5.0, 6.2). Settled (400 iterations), 32 buckets are 3.0
+    off in c-bet where per combo is ~1.4; QQ6 stays near 80% (88%), A74 near 61% (51%). Exploitability in
+    the bucket game is 0.2-0.4% of the pot at 200 iterations (the old trees, not zero-sum with their
+    sampled turns, read -0.35 to 1.15%). Exploit mode's pool lock reads a bucket's percentile as its place in
+    the range.
+  Tests TestFlopStrategy hold the published table, for both models.
   A flop all-in pays its equity over every turn card with 4 evenly spread rivers each
   (within 4% of exact; 4 sampled turns had flush draws up to 24% off).
 * `Solution.exploitability()` reports how far a solve is from equilibrium in

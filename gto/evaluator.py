@@ -84,3 +84,30 @@ def eval_board(board: Sequence[int], combos: Sequence[int] = None) -> np.ndarray
     blocked = np.isin(a, board) | np.isin(b, board)
     out[blocked] = -1
     return out
+
+
+def eval_boards(boards: Sequence[Sequence[int]], combos: Sequence[int] = None) -> np.ndarray:
+    """eval_board for many 5-card boards at once: (boards, combos) strengths, the same numbers. One call does
+    every board's lookups together (in Pyodide a board's ~20 small numpy calls cost more than their arithmetic)."""
+    B = np.sort(np.asarray(boards, dtype=np.int64).reshape(-1, 5), axis=1)
+    nb = len(B)
+    idx = np.arange(1326) if combos is None else np.asarray(list(combos), dtype=np.int64)
+    br, bs = _RANK[B], _SUIT_I[B]                                               # (nb, 5)
+    seven = np.concatenate([np.broadcast_to(_PAIRS, (nb, 169, 2)), np.broadcast_to(br[:, None, :], (nb, 169, 5))], axis=2)
+    prod = np.prod(_RANK_PRIME[seven[:, :, _SUBSETS]], axis=-1)                # (nb, 169, 21)
+    plain = _uv[np.minimum(np.searchsorted(_uk, prod), len(_uk) - 1)].min(axis=-1).reshape(nb, 169)
+    ra, rb = _CRA[idx], _CRB[idx]
+    ranks = plain[:, ra * 13 + rb]                                              # (nb, n)
+    for s in range(4):
+        on = bs == s
+        has = on.sum(axis=1) >= 3
+        if not has.any():
+            continue
+        suited = np.bitwise_or.reduce(np.where(on, 1 << br, 0), axis=1)[has]
+        bits = suited[:, None] | np.where(_CSA[idx] == s, 1 << ra, 0)[None, :] | np.where(_CSB[idx] == s, 1 << rb, 0)[None, :]
+        ranks[has] = np.minimum(ranks[has], _FLUSH[bits])
+    out = (7463 - ranks).astype(np.int32)
+    a, b = _CA[idx], _CB[idx]
+    blocked = (a[None, :, None] == B[:, None, :]).any(axis=2) | (b[None, :, None] == B[:, None, :]).any(axis=2)
+    out[blocked] = -1
+    return out
