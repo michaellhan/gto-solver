@@ -151,17 +151,6 @@ class Ctx:
             self._stacks[key] = R
         return R
 
-    def card_rows(self):
-        """(52, m) combo indices holding each card, padded with n (a dummy combo)."""
-        if not hasattr(self, "_card_rows"):
-            rows = [np.nonzero(self.member[c])[0] for c in range(52)]
-            m = max(1, max(len(r) for r in rows))
-            G = np.full((52, m), self.n, dtype=np.int64)
-            for c, r in enumerate(rows):
-                G[c, :len(r)] = r
-            self._card_rows = G
-        return self._card_rows
-
     def turn_picks(self, flop: tuple, dead: set, k: int) -> list:
         """k turn cards for `flop`, sorted, the same for every caller: picks are cached per flop in
         the order they were drawn, so a call for fewer than are cached gets the first k drawn (a
@@ -211,85 +200,92 @@ class Ranking:
     """Showdown utilities in O(N) per board instead of an N x N matrix product.
 
     For combo i, wins = reach of all weaker opponent combos minus the weaker ones that share
-    a card with i, and likewise for losses. The card-sharing part is computed per card from
-    each card's combos in strength order; only i itself holds both of i's cards and it is
-    neither weaker nor stronger than itself, so no inclusion-exclusion term is needed."""
+    a card with i, and likewise for losses. The card-sharing part comes from the (card, combo)
+    pairs sorted by card, then strength: one running sum over them gives every card's combos
+    weaker or stronger than i. Only i itself holds both of i's cards and it is neither weaker
+    nor stronger than itself, so no inclusion-exclusion term is needed."""
 
     def __init__(self, ctx: "Ctx", strengths):
         n = ctx.n
-        G = ctx.card_rows()                                   # (52, m)
-        B, m = len(strengths), G.shape[1]
+        B = len(strengths)
         S = np.stack(strengths).astype(np.float64)            # (B, n); -1 = holds a board card
+        rows = np.arange(B)[:, None]
+        # every board's rows at once: each board's keys are offset by the row's index times a span
+        # wider than any key, so one searchsorted serves them all
         self.order = np.argsort(S, axis=1, kind="stable")
         ss = np.take_along_axis(S, self.order, axis=1)
-        self.lo = np.empty((B, n), dtype=np.int64); self.hi = np.empty((B, n), dtype=np.int64)
-        Sp = np.concatenate([S, np.full((B, 1), np.inf)], axis=1)
-        self.G = np.empty((B, 52, m), dtype=np.int64)
-        self.klo = np.zeros((B, 2, n), dtype=np.int64); self.khi = np.zeros((B, 2, n), dtype=np.int64)
-        for b in range(B):
-            self.lo[b] = np.searchsorted(ss[b], S[b], "left")
-            self.hi[b] = np.searchsorted(ss[b], S[b], "right")
-            sg = Sp[b][G]                                     # (52, m)
-            o = np.argsort(sg, axis=1, kind="stable")
-            self.G[b] = np.take_along_axis(G, o, axis=1)
-            sg = np.take_along_axis(sg, o, axis=1)
-            for slot, cards in enumerate((ctx.ca, ctx.cb)):
-                for c in np.unique(cards):
-                    idx = np.nonzero(cards == c)[0]
-                    self.klo[b, slot, idx] = np.searchsorted(sg[c], S[b, idx], "left")
-                    self.khi[b, slot, idx] = np.searchsorted(sg[c], S[b, idx], "right")
+        flat = (ss + rows * 1e4).ravel()
+        q = (S + rows * 1e4).ravel()
+        self.lo = np.searchsorted(flat, q, "left").reshape(B, n) - rows * n      # weaker combos
+        self.hi = np.searchsorted(flat, q, "right").reshape(B, n) - rows * n     # weaker or tied
+        # (card, combo) pairs, two per combo, sorted by card then strength; strengths are under 1e4
+        pc = np.concatenate([ctx.ca, ctx.cb])
+        pi = np.concatenate([np.arange(n), np.arange(n)])
+        key = pc[None, :] * 1e4 + S[:, pi]                    # (B, 2n)
+        po = np.argsort(key, axis=1, kind="stable")
+        self.pcombo = pi[po]
+        skey = (np.take_along_axis(key, po, axis=1) + rows * 1e6).ravel()
+        self.plo = np.empty((B, 2, n), dtype=np.intp); self.phi = np.empty((B, 2, n), dtype=np.intp)
+        for slot, cards in enumerate((ctx.ca, ctx.cb)):
+            q = (cards[None, :] * 1e4 + S + rows * 1e6).ravel()
+            self.plo[:, slot] = np.searchsorted(skey, q, "left").reshape(B, n) - rows * 2 * n
+            self.phi[:, slot] = np.searchsorted(skey, q, "right").reshape(B, n) - rows * 2 * n
+        counts = np.bincount(pc, minlength=52)
+        self.cstart = np.concatenate([[0], np.cumsum(counts)[:-1]])
+        self.cend = self.cstart + counts
+        self.ca, self.cb = ctx.ca, ctx.cb
         self.blocked = S < 0
-        # every lookup below is a flat index into a raveled (B, ...) array
-        rowc = np.arange(B)[:, None] * (52 * (m + 1))
-        cw = [rowc + cards[None, :] * (m + 1) for cards in (ctx.ca, ctx.cb)]
-        self.flo = np.concatenate([(cw[k] + self.klo[:, k]).ravel() for k in range(2)])
-        self.fhi = np.concatenate([(cw[k] + self.khi[:, k]).ravel() for k in range(2)])
-        self.fend = np.concatenate([(cw[k] + m).ravel() for k in range(2)])
-        rown = np.arange(B)[:, None] * (n + 1)
-        self.fsort = (np.arange(B)[:, None] * n + self.order).ravel()
-        self.fwin = (rown + self.lo).ravel()
-        self.flose = (rown + self.hi).ravel()
-        self.ftop = np.broadcast_to(rown + n, (B, n)).ravel()
-        self.Gflat = (np.arange(B)[:, None, None] * (n + 1) + self.G).ravel()
-        self.n, self.m, self.B = n, m, B
+        self.n = n
+        self._flat()
+
+    def _flat(self):
+        """Flat indices into raveled (B, ...) arrays for every lookup in utility()."""
+        B, n = self.order.shape
+        r = np.arange(B)[:, None]
+        self.B = B
+        self.fsort = (r * n + self.order).ravel()
+        self.fwin = (r * (n + 1) + self.lo).ravel()
+        self.flose = (r * (n + 1) + self.hi).ravel()
+        self.pgather = (r * n + self.pcombo).ravel()
+        self.f4 = np.concatenate([(r * (2 * n + 1) + a[:, s]).ravel() for s in (0, 1) for a in (self.plo, self.phi)])
+        self.fK = np.concatenate([(r * 52 + c[None, :]).ravel() for c in (self.ca, self.cb)])
+        self.live = (~self.blocked).astype(np.float32)
 
     def utility(self, ro: np.ndarray, sel=None) -> np.ndarray:
         """ro: (B, n) opponent reach -> (B, n) sum over compatible opponent combos of
         +reach (weaker) / -reach (stronger). With `sel`, ro holds only those boards' rows."""
         if sel is not None:
             return self._sub(sel).utility(ro)
-        B, n, m = self.B, self.n, self.m
-        cum = np.zeros((B, n + 1), dtype=ro.dtype); np.cumsum(ro.ravel()[self.fsort].reshape(B, n), axis=1, out=cum[:, 1:])
-        cum = cum.ravel()
-        u = cum[self.fwin] - (cum[self.ftop] - cum[self.flose])             # wins - losses
-        rp = np.concatenate([ro, np.zeros((B, 1), dtype=ro.dtype)], axis=1).ravel()
-        cg = np.zeros((B, 52, m + 1), dtype=ro.dtype); np.cumsum(rp[self.Gflat].reshape(B, 52, m), axis=2, out=cg[:, :, 1:])
-        cg = cg.ravel()
-        # card-sharing corrections: -weaker + stronger, for each of the two cards
-        corr = cg[self.fend] - cg[self.fhi] - cg[self.flo]
-        u += corr[:B * n] + corr[B * n:]
+        B, n = self.B, self.n
+        # (fancy indexing with intp indices: np.take, and int64 indices on 32-bit Pyodide, are several times slower)
+        cum = np.empty((B, n + 1), dtype=ro.dtype); cum[:, 0] = 0
+        ro = ro.ravel()
+        np.cumsum(ro[self.fsort].reshape(B, n), axis=1, out=cum[:, 1:])
+        cs = np.empty((B, 2 * n + 1), dtype=ro.dtype); cs[:, 0] = 0
+        np.cumsum(ro[self.pgather].reshape(B, 2 * n), axis=1, out=cs[:, 1:])
+        cum, total = cum.ravel(), cum[:, n:]
+        # wins - losses: weaker reach + (weaker or tied) reach - all of it
+        u = cum[self.fwin]
+        u += cum[self.flose]
+        # card-sharing corrections, per card c of i: -weaker + stronger among c's combos,
+        # = (c's total + 2 * the sum before c's pairs) - sum to i's weaker - sum to i's weaker or tied
+        k = (cs[:, self.cend] + cs[:, self.cstart]).ravel()[self.fK]        # (2 B n,)
+        u += k[:B * n]; u += k[B * n:]
+        q = cs.ravel()[self.f4]
+        for j in range(4):
+            u -= q[j * B * n:(j + 1) * B * n]
         u = u.reshape(B, n)
-        u[self.blocked] = 0.0
+        u -= total
+        u *= self.live
         return u
 
     def _sub(self, sel) -> "Ranking":
         """The same index restricted to boards `sel` (flat offsets rebuilt for fewer rows)."""
-        B, n, m = len(sel), self.n, self.m
         r = Ranking.__new__(Ranking)
-        r.B, r.n, r.m = B, n, m
-        r.blocked = self.blocked[sel]
-        rows = np.arange(B)[:, None]
-        r.fsort = (rows * n + self.order[sel]).ravel()
-        r.fwin = (rows * (n + 1) + self.lo[sel]).ravel()
-        r.flose = (rows * (n + 1) + self.hi[sel]).ravel()
-        r.ftop = np.broadcast_to(rows * (n + 1) + n, (B, n)).ravel()
-        r.Gflat = (rows[:, :, None] * (n + 1) + self.G[sel]).ravel()
-        shift = (np.asarray(sel)[:, None] - rows) * (52 * (m + 1))
-        full = self.B * n
-        for name in ("flo", "fhi", "fend"):
-            flat = getattr(self, name)
-            setattr(r, name, np.concatenate([(flat[k * full:(k + 1) * full].reshape(self.B, n)[sel] - shift).ravel()
-                                             for k in range(2)]))
+        for f in ("order", "lo", "hi", "pcombo", "plo", "phi", "blocked"):
+            setattr(r, f, getattr(self, f)[sel])
+        r.cstart, r.cend, r.ca, r.cb, r.n = self.cstart, self.cend, self.ca, self.cb, self.n
+        r._flat()
         return r
 
 
