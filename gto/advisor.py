@@ -27,7 +27,7 @@ from .cards import cards as parse_cards, COMBO_INDEX, hand_class, ALL_COMBOS, ca
 from .ranges import N_COMBOS, range_to_text, parse_range
 from . import preflop as pf
 from .pf_classes import push_fold
-from .exploit import PoolLock, pool_preflop
+from .exploit import PoolLock, TendencyLock, describe_lock, parse_locks, pool_preflop
 from .solver import solve, Config, Solution, Decision, Terminal, Chance, match_action, expand, MEMBER_FULL, _inv_of
 
 DEFAULT_OPEN = {"SB": 3.0}
@@ -964,6 +964,33 @@ def _jam_range(actions: List[dict], ji: int, positions, stack: float, pool_excep
     return rng, notes
 
 
+def _next_lock_notes(node, nxt, lock, vr, villain: str, adj: dict) -> List[str]:
+    """For each of hero's actions leading to a decision of the villain's that a next_* lock sets: what share of
+    their range takes the locked actions there, locked and at equilibrium."""
+    out = []
+    tot = max(float(vr.sum()), 1e-12)
+    for a, c in enumerate(node.children):
+        if not any(c is x for x in nxt):
+            continue
+        facing = c.names[0] == "fold"
+        keys = [k for k in (("next_fold", "next_raise") if facing else ("next_bet",)) if k in adj]
+        if not keys:
+            continue
+        g = c.avg_strategy()
+        lk = lock(c, g, vr[None, :])
+        parts = []
+        for key in keys:
+            acts = [0] if key == "next_fold" else list(range(2 if facing else 1, len(c.names)))
+            if not acts:
+                continue
+            word = {"next_fold": "folds", "next_raise": "raises", "next_bet": "bets"}[key]
+            share = lambda s: float((vr * s[0, acts, :].sum(axis=0)).sum()) / tot * 100
+            parts.append(f"{word} {share(lk):.0f}% (GTO {share(g):.0f}%)")
+        if parts:
+            out.append(f"locked: after your {node.names[a]}, {villain} {' and '.join(parts)}")
+    return out
+
+
 def _committed(p: str, streets) -> bool:
     """Whether p raised a bet, or bet COMMIT_BET of the pot or more, on these postflop streets (StreetStates)."""
     for st in streets:
@@ -1088,6 +1115,7 @@ class Advisor:
         try:
             sizes = _custom_sizes(state["sizes"]) if state.get("sizes") else {}
             custom = _custom_ranges(state["ranges"], positions) if state.get("ranges") else {}
+            locks = parse_locks(state["locks"], positions, hero) if state.get("locks") else {}
         except ValueError as e:
             return {"error": str(e)}
         hole = tuple(parse_cards(str(state["hole"])))
@@ -1103,8 +1131,11 @@ class Advisor:
         positions = pf.at_depth(positions, stack)
         streets ={s: _norm_actions(state.get(s), bb) for s in STREETS}
         if not board:
-            return self._preflop(hero, hole, streets["preflop"], positions, stack, t0,
-                                 pool=state.get("opponents") == "pool")
+            res = self._preflop(hero, hole, streets["preflop"], positions, stack, t0,
+                                pool=state.get("opponents") == "pool")
+            if locks and "notes" in res:
+                res["notes"].append("locks apply after the flop (preflop follows the charts)")
+            return res
         saved = self.time_budget, self.prior_budget, self.cfg
         if positions.rake or sizes:
             self.cfg = self.cfg.copy()
@@ -1122,7 +1153,7 @@ class Advisor:
         try:
             return self._postflop(hero, hole, board, stack, streets, positions, t0,
                                   pool=state.get("opponents") == "pool", actor=actor, custom=custom,
-                                  optimize=bool(state.get("optimize_sizes")))
+                                  optimize=bool(state.get("optimize_sizes")), locks=locks)
         finally:
             self.time_budget, self.prior_budget, self.cfg = saved
 
@@ -1473,8 +1504,9 @@ class Advisor:
 
     # ------------------------------------------------------------ postflop
     def _postflop(self, hero, hole, board, stack, streets, positions, t0, pool=False, actor=None, custom=None,
-                  optimize=False):
-        """`actor` (seat, hole): the opponent to act instead, heads-up, read off hero's solve (see play)."""
+                  optimize=False, locks=None):
+        """`actor` (seat, hole): the opponent to act instead, heads-up, read off hero's solve (see play).
+        `locks` (exploit.parse_locks): the opponents' strategies as you read them (heads-up; the advice best-responds)."""
         notes: List[str] = []
         n_streets = {3: 2, 4: 3, 5: 4}[len(board)]
         rep = replay_hand(positions, stack, streets, n_streets)
@@ -1528,6 +1560,9 @@ class Advisor:
                 return {"error": "multiway"}
             if optimize:
                 notes.append("bet sizes are optimized only heads-up (multiway is a heuristic, not a solve)")
+            if locks and any(p in locks for p in live_opps):
+                notes.append(f"locks ({', '.join(p for p in live_opps if p in locks)}) apply heads-up only: "
+                             "this multiway pot uses the betting rules")
             return self._multiway(hero, hole, board, ranges, remaining, cur, stack, t0, notes)
         villain = live_opps[0]
         post = cur.order
@@ -1545,6 +1580,12 @@ class Advisor:
         if optimize and not (hu_from_start and to_call <= 1e-9):
             notes.append("bet sizes are optimized only where you can bet (nothing to call) on a street that began heads-up")
         committed = _committed(villain, rep[1:])
+        adj = (locks or {}).get(villain)
+
+        def mk_lock(sol, next_nodes=()):
+            # the opponent as hero plays against them: the pool (exploit mode) and/or your locks, else None (GTO)
+            base = PoolLock(sol.ctx, 1 - hero_p, committed) if pool else None
+            return TendencyLock(sol.ctx, 1 - hero_p, adj, base, next_nodes) if adj else base
         widened: List[str] = []
         rare_lines: List[str] = []
         if hu_from_start:
@@ -1560,7 +1601,7 @@ class Advisor:
                 sol = self._solve_cached(sub_board, r0, r1, st.pot_start, eff, self.prior_budget, cfg=cfg)
                 node, c0, c1 = self._walk(sol, st.actions, oop, ip, st.pot_start, eff, notes, st.name, self.prior_smoothing,
                                           board=sub_board, rules=(0, 1),
-                                          lock=PoolLock(sol.ctx, 1 - hero_p, committed) if pool else None)
+                                          lock=mk_lock(sol))
                 r0 = _post_floor(r0, expand(sol.ctx, c0), board, oop, st.name, notes)
                 r1 = _post_floor(r1, expand(sol.ctx, c1), board, ip, st.name, notes)
             eff = min(stack - cur.inv_start[oop], stack - cur.inv_start[ip])
@@ -1573,10 +1614,10 @@ class Advisor:
             # smooth as on earlier streets, so we aren't advised against a sliver of a range.
             walk = lambda: self._walk(sol, cur.actions, oop, ip, cur.pot_start, eff, list(notes), cur.name,
                                       self.prior_smoothing, only=1 - hero_p, widened=[], board=board,
-                                      lock=PoolLock(sol.ctx, 1 - hero_p, committed) if pool else None, rare_lines=[])
+                                      lock=mk_lock(sol), rare_lines=[])
             node, n_r0, n_r1 = self._walk(sol, cur.actions, oop, ip, cur.pot_start, eff, notes, cur.name,
                                           self.prior_smoothing, only=1 - hero_p, widened=widened, board=board,
-                                          lock=PoolLock(sol.ctx, 1 - hero_p, committed) if pool else None, rare_lines=rare_lines)
+                                          lock=mk_lock(sol), rare_lines=rare_lines)
             if not rare_lines and self._settle(sol):
                 # (far from settled: one more budget, then walk the line again; when the line is rare the
                 # solve from the node below gets it instead, so a spot doesn't pay for both)
@@ -1609,10 +1650,13 @@ class Advisor:
         if node.player != hero_p:
             notes.append("warning: tree expected the other player to act; reporting that node")
         expl = max(0.0, sol.exploitability())   # how far this street's solve is from equilibrium, % of its pot
-        if pool:
-            # the best response to the pool (their equilibrium with its leaks), on later streets too:
-            # each hand takes its highest-EV action
-            evs = sol.solver.node_action_br_evs(node, n_r0, n_r1, PoolLock(sol.ctx, 1 - hero_p, committed))
+        exploit = pool or bool(adj)
+        if exploit:
+            # the best response to the pool (their equilibrium with its leaks) or to your locks, on later streets
+            # too: each hand takes its highest-EV action
+            nxt = [c for c in node.children if isinstance(c, Decision) and c.player != hero_p]
+            lock = mk_lock(sol, nxt)
+            evs = sol.solver.node_action_br_evs(node, n_r0, n_r1, lock)
             # each hand takes its highest-EV action, but actions within the solve's noise of it (its
             # distance from equilibrium, at least BR_TIE_MIN of the pot) are tied, and a tied hand plays the
             # equilibrium mix among them: a short solve otherwise picks one at 100% on noise (AQo checked
@@ -1621,8 +1665,13 @@ class Advisor:
             tied = evs >= evs.max(axis=0, keepdims=True) - tol
             g = node.avg_strategy0() * tied
             strat = np.where(g.sum(axis=0) > 1e-9, g / np.maximum(g.sum(axis=0), 1e-12), tied / tied.sum(axis=0))
-            notes.append(f"exploit mode: {villain} plays like a typical player pool (folds too often to bets of every size, "
-                         "most of all small ones, and raises and bluffs less); EVs assume you keep best-responding on later streets")
+            if pool:
+                notes.append(f"exploit mode: {villain} plays like a typical player pool (folds too often to bets of every size, "
+                             "most of all small ones, and raises and bluffs less); EVs assume you keep best-responding on later streets")
+            if adj:
+                notes.append(f"locked: {villain} {describe_lock(adj)} (on {'the pool' if pool else 'GTO'}); the advice is "
+                             "your best response to that, and EVs assume you keep best-responding on later streets")
+                notes.extend(_next_lock_notes(node, nxt, lock, n_r1 if hero_p == 0 else n_r0, villain, adj))
         else:
             evs = sol.solver.node_action_evs(node, n_r0, n_r1)
             strat = node.avg_strategy0()
@@ -1635,13 +1684,13 @@ class Advisor:
             ev = float(evs[a, ci]) if ci is not None else 0.0
             acts_out.append({"action": name, "freq": round(f, 3), "ev_bb": round(ev, 2),
                              "amount_bb": self._amount(name, node, hero_p)})
-            if pool and ci is not None:
+            if exploit and ci is not None:
                 acts_out[-1]["gto_freq"] = round(float(node.avg_strategy0()[a, ci]), 3)
         if ci is None:
             notes.append("hero's hand was not solved; frequencies are uniform")
         best = max(acts_out, key=lambda a: a["freq"])["action"]
         sampled = self._sample(acts_out)
-        if widened and ci is not None and not pool and node is not sol.root:
+        if widened and ci is not None and not exploit and node is not sol.root:
             # (only when the spot wasn't solved again: our decision came before the rare line) The solve's
             # mix assumes the villain almost never plays this way; against the range they showed, go with the EVs.
             ev_best = max(acts_out, key=lambda a: a["ev_bb"])["action"]
@@ -1649,10 +1698,10 @@ class Advisor:
                 notes.append(f"recommending {ev_best}, the highest EV against {', '.join(widened)}'s rule-based range; "
                              f"the solve's mix ({best}) assumes they almost never play this way")
             best = sampled = ev_best
-        if pool and expl >= UNSETTLED:
-            notes.append(f"the solve is {expl:.1f}% of the pot from equilibrium, so the pool model built on it "
+        if exploit and expl >= UNSETTLED:
+            notes.append(f"the solve is {expl:.1f}% of the pot from equilibrium, so the {'pool' if pool else 'locked'} model built on it "
                          "is rough: Accurate mode gives steadier exploits")
-        if not pool and not widened and ci is not None and expl >= UNSETTLED:
+        if not exploit and not widened and ci is not None and expl >= UNSETTLED:
             # Mixed actions have equal EVs only at equilibrium; short of it the mix lags behind, so
             # a clear EV gap says where the solve is heading.
             top = max(acts_out, key=lambda a: a["ev_bb"])
@@ -1685,6 +1734,7 @@ class Advisor:
                        # how far this street's solve is from equilibrium, % of the street's starting pot
                        "exploitability_pct": round(expl, 2)},
             "widened": widened,
+            **({"locked": {villain: adj}} if adj else {}),
             "notes": notes, "seconds": round(time.time() - t0, 2),
         }
 

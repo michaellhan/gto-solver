@@ -2989,3 +2989,128 @@ class TestAdvanced(unittest.TestCase):
         out = adv.advise(self.river(sizes={"river": [1, 900]}, ranges={"BTN": " "}))
         self.assertEqual([a["action"] for a in out["actions"]][:2], ["check", "bet 5%"])
 
+
+class TestLocks(unittest.TestCase):
+    """Nodelocking ("locks"): an opponent's tendencies set by hand (exploit.TendencyLock), and hero best-responds."""
+
+    R = staticmethod(TestAdvanced.R)
+    PRE = TestAdvanced.PRE
+
+    def river(self, hole, **kw):
+        # BTN vs BB, checked to the river, BB checks: hero BTN to bet or check
+        R = self.R
+        return dict({"players": 6, "hero": "BTN", "hole": hole, "board": "Ks8d3c7s2d", "stack": 100,
+                     "preflop": [R(*a) for a in self.PRE], "flop": [R("BB", "check"), R("BTN", "check")],
+                     "turn": [R("BB", "check"), R("BTN", "check")], "river": [R("BB", "check")]}, **kw)
+
+    @classmethod
+    def setUpClass(cls):
+        cls.adv = Advisor(time_budget=0.5, prior_budget=0.2)
+
+    @staticmethod
+    def node(board, names, bets=(4.0, 0.0), pot=14.0):
+        class Node:
+            pass
+        n = Node()
+        n.boards, n.names, n.player, n.bets, n.pot_now = [board], names, 1, bets, pot
+        return n
+
+    def test_lock_moves(self):
+        from gto.exploit import TendencyLock
+        board = tuple(cards("Ks8d3c7s2d"))
+        live = np.array([i for i, (a, b) in enumerate(ALL_COMBOS) if a not in board and b not in board])
+        ctx = Ctx(live, Config())
+        n = len(live)
+        reach = np.ones((1, n))
+        share = lambda s, k: float((reach[0] * s[0, k]).sum() / n)
+        third = np.full((1, 3, n), 1 / 3, dtype=np.float32)
+        face = self.node(board, ["fold", "call", "raise 3x"])
+        L = lambda **adj: TendencyLock(ctx, 1, adj, next_nodes=[face])
+        pct = L().__dict__["_pct"].pct(board)
+        # folds: weakest calls first, never more than every call; raises stay
+        s = L(fold=20)(face, third, reach)
+        self.assertAlmostEqual(share(s, 0), 1 / 3 + 0.2, places=3)
+        self.assertAlmostEqual(share(s, 2), 1 / 3, places=3)
+        self.assertGreater(s[0, 0][pct < 0.2].mean(), s[0, 0][pct > 0.8].mean())
+        self.assertAlmostEqual(share(L(fold=100)(face, third, reach), 0), 2 / 3, places=3)
+        self.assertAlmostEqual(share(L(fold=-100)(face, third, reach), 0), 0.0, places=3)
+        self.assertAlmostEqual(share(L(**{"raise": -100})(face, third, reach), 2), 0.0, places=3)
+        self.assertAlmostEqual(share(L(**{"raise": 100})(face, third, reach), 2), 2 / 3, places=3)
+        # facing a raise of their own bet: no extra folds
+        raised = self.node(board, ["fold", "call"], bets=(12.0, 4.0))
+        half = np.full((1, 2, n), 0.5, dtype=np.float32)
+        self.assertAlmostEqual(share(TendencyLock(ctx, 1, {"fold": 50})(raised, half, reach), 0), 0.5, places=4)
+        # the next decision is set exactly, at the bounds too; other nodes aren't
+        for f in (0, 60, 100):
+            s = L(next_fold=f)(face, third, reach)
+            self.assertAlmostEqual(share(s, 0), f / 100, places=3)
+            self.assertTrue(np.allclose(s.sum(axis=1), 1.0, atol=1e-5))
+        self.assertAlmostEqual(share(L(next_raise=100)(face, third, reach), 2), 1.0, places=3)
+        other = self.node(board, ["fold", "call", "raise 3x"])
+        self.assertAlmostEqual(share(L(next_fold=90)(other, third, reach), 0), 1 / 3, places=4)
+        # checked to: bluff shifts move only the weak hands' bets, bet shifts every hand's
+        chk = self.node(board, ["check", "bet 50%", "bet 100%"], bets=(0.0, 0.0), pot=10.0)
+        lk = lambda **adj: TendencyLock(ctx, 1, adj, next_nodes=[chk])
+        s = lk(bluff=-100)(chk, third, reach)
+        self.assertAlmostEqual(float(s[0, 1:, pct < 0.5].sum()), 0.0, places=4)          # no bluffs left
+        self.assertTrue(np.allclose(s[0, 1:, pct > 0.65], 1 / 3, atol=1e-5))            # value kept
+        s = lk(bluff=100)(chk, third, reach)
+        self.assertTrue(np.allclose(s[0, 0, pct < 0.5], 0.0, atol=1e-5))                  # every weak hand bets
+        self.assertAlmostEqual(share(lk(bet=-100)(chk, third, reach), 0), 1.0, places=4)
+        self.assertAlmostEqual(share(lk(bet=100)(chk, third, reach), 0), 0.0, places=4)
+        s = lk(next_bet=75)(chk, third, reach)
+        self.assertAlmostEqual(share(s, 0), 0.25, places=3)
+        self.assertAlmostEqual(share(s, 1), share(s, 2), places=3)                         # the sizes keep their split
+
+    def test_overfolder_bluffs_more_station_gets_value(self):
+        gto = self.adv.advise(self.river("5h4h"))
+        bets = lambda r: sum(v for k, v in r["range_action_freq"].items() if k != "check")
+        # a locked overfolder: more of the range bets, and air bets at a higher EV than against GTO
+        over = self.adv.advise(self.river("5h4h", locks={"BB": {"fold": 30}}))
+        self.assertGreater(bets(over), bets(gto) + 0.05)
+        best = lambda r: max(a["ev_bb"] for a in r["actions"] if a["action"] != "check")
+        self.assertGreater(best(over), best(gto) + 0.5)
+        self.assertEqual(over["locked"], {"BB": {"fold": 30.0}})
+        self.assertTrue(all("gto_freq" in a for a in over["actions"]))
+        self.assertTrue(any(n.startswith("locked: BB folds +30 pts to bets (on GTO)") for n in over["notes"]))
+        # a calling station: the air GTO bets now checks, and third pair GTO checks now bets for value
+        st = self.adv.advise(self.river("5h4h", locks={"BB": {"fold": -60}}))
+        self.assertGreater(sum(a["gto_freq"] for a in st["actions"] if a["action"] != "check"), 0.5)
+        self.assertEqual(st["recommended"], "check")
+        st = self.adv.advise(self.river("7c6c", locks={"BB": {"fold": -60, "bluff": -50}}))
+        self.assertGreater(next(a["gto_freq"] for a in st["actions"] if a["action"] == "check"), 0.5)
+        self.assertNotEqual(st["recommended"], "check")
+        # the classic nodelock: they fold everything to a bet / call everything; noted with GTO's share
+        r = self.adv.advise(self.river("5h4h", locks={"BB": {"next_fold": 100}}))
+        self.assertAlmostEqual(max(a["ev_bb"] for a in r["actions"]), r["pot_bb"], delta=0.05)
+        self.assertTrue(any(n.startswith("locked: after your bet") and "folds 100% (GTO" in n for n in r["notes"]), r["notes"])
+        r = self.adv.advise(self.river("5h4h", locks={"BB": {"next_fold": 0}}))
+        self.assertEqual(r["recommended"], "check")
+        # on top of the pool
+        r = self.adv.advise(self.river("5h4h", locks={"BB": {"bluff": -20}}, opponents="pool"))
+        self.assertTrue(any("(on the pool)" in n for n in r["notes"]))
+        # another seat's lock, or none: the GTO advice
+        r = self.adv.advise(self.river("5h4h", locks={"SB": {"fold": 30}}))
+        self.assertNotIn("locked", r)
+        self.assertNotIn("gto_freq", r["actions"][0])
+
+    def test_bad_input_and_where_locks_dont_apply(self):
+        for locks, msg in (({"LJ": {"fold": 10}}, "not a seat"), ({"BTN": {"fold": 10}}, "your own seat"),
+                           ({"BB": {"folds": 10}}, "unknown adjustment"), ({"BB": {"fold": "x"}}, "must be a number"),
+                           ({"BB": {"fold": True}}, "must be a number"), ({"BB": {"fold": 101}}, "between -100 and 100"),
+                           ({"BB": {"next_fold": -1}}, "between 0 and 100"), ({"BB": 10}, "must be {name: number}"),
+                           (["BB"], "expected")):
+            out = self.adv.advise(self.river("5h4h", locks=locks))
+            self.assertIn("error", out, locks)
+            self.assertIn(msg, out["error"], locks)
+        # preflop: noted, the charts' advice
+        R = self.R
+        out = self.adv.advise({"players": 6, "hero": "BTN", "hole": "AhKh", "board": "", "stack": 100,
+                               "preflop": [R(*a) for a in self.PRE[:3]], "locks": {"BB": {"fold": 20}}})
+        self.assertTrue(any("after the flop" in n for n in out["notes"]))
+        # multiway: noted, the betting rules
+        pre = [R("UTG", "fold"), R("HJ", "fold"), R("CO", "fold"), R("BTN", "raise", 2.5), R("SB", "call"), R("BB", "call")]
+        out = self.adv.advise({"players": 6, "hero": "BTN", "hole": "AhKh", "board": "Ks8d3c", "stack": 100, "preflop": pre,
+                               "flop": [R("SB", "check"), R("BB", "check")], "locks": {"BB": {"fold": 20}}})
+        self.assertTrue(any("apply heads-up only" in n for n in out["notes"]), out["notes"])
+

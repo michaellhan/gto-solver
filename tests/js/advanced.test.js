@@ -120,3 +120,86 @@ test("the advisor reads the Advanced keys the page sends", () => {
   const body = src.slice(src.indexOf("def _advise("), src.indexOf("def _preflop("));
   for (const k of ["sizes", "ranges", "optimize_sizes"]) assert.ok(body.includes(`state.get("${k}")`), k);
 });
+
+// Locks (S.locks, sent as "locks"): an opponent's tendencies, best-responded to after the flop (gto/exploit.py)
+const lockRow = (p, seat) => [...p.byId("lockIns").children].find(r => r.children[0].dataset.p === seat);
+const lockSel = (p, seat) => lockRow(p, seat).children[0];
+const lockBox = (p, seat, k) => [...lockRow(p, seat).walk()].find(e => e.tagName === "INPUT" && e.dataset.k === k);
+
+test("locks: a profile per opponent, sent from the flop on, and its numbers editable", async () => {
+  const p = loadPage();
+  await p.ready();
+  p.S = state(FLOP);
+  p.run("renderAll()");
+  assert.equal("locks" in p.payload(), false);
+  assert.deepEqual([...p.byId("lockIns").children].map(r => r.children[0].dataset.p), ["UTG", "HJ", "CO", "SB", "BB"]);
+  assert.equal(lockSel(p, "BB").value, "");
+  assert.equal(lockBox(p, "BB", "fold"), undefined);       // GTO: no inputs
+  lockSel(p, "BB").onchange({ target: { value: "station" } });
+  assert.deepEqual(j(p.S.locks), { BB: { fold: -20, bluff: -50, raise: -50 } });
+  assert.deepEqual(j(p.payload().locks), { BB: { fold: -20, bluff: -50, raise: -50 } });
+  assert.equal(lockSel(p, "BB").value, "station");
+  assert.match(p.run("ADV_TEXT()"), /BB locked \(calling station\)/);
+  // a number edited: Custom, the rest kept; out of bounds clamped, a cleared box dropped
+  lockBox(p, "BB", "next_fold").onchange({ target: { value: "160" } });
+  lockBox(p, "BB", "raise").onchange({ target: { value: "" } });
+  assert.deepEqual(j(p.S.locks), { BB: { fold: -20, bluff: -50, next_fold: 100 } });
+  assert.equal(lockSel(p, "BB").value, "custom");
+  assert.match(p.run("ADV_TEXT()"), /BB locked \(fold -20, bluff -50, next fold 100%\)/);
+  // Custom from GTO shows the inputs without locking anything yet
+  lockSel(p, "SB").onchange({ target: { value: "custom" } });
+  assert.equal("SB" in p.S.locks, false);
+  lockBox(p, "SB", "bet").onchange({ target: { value: "40" } });
+  assert.deepEqual(j(p.S.locks.SB), { bet: 40 });
+  // back to GTO: unlocked
+  lockSel(p, "SB").onchange({ target: { value: "" } });
+  assert.deepEqual(Object.keys(p.S.locks), ["BB"]);
+  // preflop nothing is sent; your own seat's lock never is
+  p.S = { ...state({ cards: ["Ah", "Kh"] }), locks: { BB: { fold: 10 } } };
+  assert.equal("locks" in p.payload(), false);
+  p.S = { ...state(FLOP), locks: { BTN: { fold: 10 }, BB: { bet: -20 } } };
+  assert.deepEqual(j(p.payload().locks), { BB: { bet: -20 } });
+});
+
+test("locks: share link round trip, the summary, the copied hand and the advice say so", async () => {
+  const a = loadPage();
+  a.S = { ...state(FLOP), locks: { BB: { fold: 15 }, SB: { fold: 5, next_bet: 0 } } };
+  const text = a.run("handText()");
+  const b = loadPage({ hash: linkOf(text).replace(/^[^#]*/, "") });
+  assert.deepEqual(j(b.S), j(a.S));
+  await a.ready(); await b.ready();
+  assert.deepEqual(b.payload(), a.payload());
+  assert.equal(b.byId("adv").open, true);
+  assert.match(text.split("\n")[0], /BB locked \(overfolds to bets\), SB locked \(fold \+5, next bet 0%\)/);
+  b.run("editSetup = false; renderAll()");
+  assert.match(b.byId("setupSum").innerHTML, /BB locked \(overfolds to bets\)/);
+  b.ctx.__res = JSON.stringify({ street: "flop", hero: "BTN", villain: "BB", hand: "AKs", recommended: "bet 75%", locked: { BB: { fold: 15 } },
+    actions: [{ action: "check", freq: 0, gto_freq: 0.4, ev_bb: 1 }, { action: "bet 75%", freq: 1, gto_freq: 0.6, ev_bb: 2 }], notes: [] });
+  b.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
+  assert.match(b.byId("result").innerHTML, /Against your lock on BB \(overfolds to bets\): the best response/);
+  assert.match(b.byId("result").innerHTML, /GTO 40%/);
+  assert.match(b.run("handText()"), /Advice \(flop, vs BB locked \(overfolds to bets\)\): bet 75%/);
+});
+
+test("locks: bad fields in a link are dropped or clamped", () => {
+  const st = { ...state(FLOP), locks: { BB: { fold: "x", bluff: 300, bogus: 5, bet: 0, next_fold: 50 }, XX: { fold: 10 }, SB: { fold: true }, CO: 7 } };
+  const p = loadPage({ hash: "#h=" + Buffer.from(JSON.stringify(st)).toString("base64") });
+  assert.deepEqual(j(p.S.locks), { BB: { bluff: 100, next_fold: 50 } });
+  const p2 = loadPage({ storage: { handreview: JSON.stringify({ ...st, locks: "BB" }) } });
+  assert.equal("locks" in p2.S, false);
+});
+
+test("locks: the page's keys, bounds and presets are the advisor's", () => {
+  const src = fs.readFileSync(path.join(__dirname, "..", "..", "gto", "exploit.py"), "utf8");
+  const block = src.slice(src.indexOf("LOCK_KEYS = {"), src.indexOf("\n}", src.indexOf("LOCK_KEYS = {")));
+  const py = Object.fromEntries([...block.matchAll(/"(\w+)": \((-?\d+), (-?\d+)\)/g)].map(m => [m[1], [+m[2], +m[3]]]));
+  const p = loadPage();
+  assert.deepEqual(j(p.run("LOCK_KEYS")), py);
+  for (const [k] of p.run("LOCK_INPUTS")) assert.ok(k in py, k);
+  const pre = src.slice(src.indexOf("LOCK_PRESETS = {"), src.indexOf("LOCK_WORDS"));
+  for (const [k, [, v]] of Object.entries(p.run("LOCK_PRESETS")))
+    assert.ok(pre.includes(`"${k}": ${JSON.stringify(v).replace(/"(\w+)":/g, '"$1": ').replace(/,/g, ", ")}`), k);
+  const adv = fs.readFileSync(path.join(__dirname, "..", "..", "gto", "advisor.py"), "utf8");
+  const body = adv.slice(adv.indexOf("def _advise("), adv.indexOf("def _preflop("));
+  assert.ok(body.includes('state.get("locks")'));
+});

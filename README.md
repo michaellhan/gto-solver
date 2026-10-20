@@ -162,7 +162,7 @@ big blinds. Optional `"ante"` (per player, same units) and `"straddle": true` (t
 first seat posts 2bb and acts last preflop). Optional `"rake"` (a share of the pot, `0.05` for 5%)
 and `"rake_cap"` (the most rake per pot, same units as the amounts; leave it out for no cap): off
 unless given (see Rake below). Positions are the 6-max names `UTG HJ CO BTN SB BB`.
-Optional `"sizes"`, `"ranges"` and `"optimize_sizes"` change the postflop game (see Custom sizes and ranges below).
+Optional `"sizes"`, `"ranges"`, `"optimize_sizes"` and `"locks"` change the postflop game (see Custom sizes and ranges below).
 
 Response: per-action `freq` (the mixed strategy for hero's exact hand), `ev_bb`
 (relative to folding now), `amount_bb`, a `recommended` action (highest
@@ -230,7 +230,7 @@ that ends preflop isn't raked, so opens, steals and folds to them are unchanged.
 ### Custom sizes and ranges
 
 The page's **Advanced** disclosure in the setup (saved with the hand and carried by share links, like rake;
-sent from the flop on, so preflop advice is unchanged). All three are off unless given.
+sent from the flop on, so preflop advice is unchanged). All are off unless given.
 
 * `"sizes": {"flop": [33, 75], "turn": [...], "river": [...], "raise": [60]}`: the postflop bet sizes per
   street in % of the pot, and the raise sizes (all streets) in % of the pot after calling, replacing the
@@ -248,6 +248,28 @@ sent from the flop on, so preflop advice is unchanged). All three are off unless
   the time budget (35% / 65%), so a spot takes as long as without it. The response adds `size_usage`
   (hero's mix at that node over the wide menu, `{"check": 0.13, "25%": 0.47, ...}`, summing to 1) and
   `sizes_kept`. A kept overbet makes the second tree bigger, so it settles slower: use Accurate.
+
+* `"locks": {"BB": {"fold": 15, "bluff": -50, "next_fold": 60}}`: nodelocking, your read of an opponent
+  (the page: a profile per opponent, GTO, Calling station, Nit, Maniac, Overfolds to bets or Custom, whose
+  numbers can be edited). Heads-up after the flop the advice is then the best response to their locked
+  strategy, as in exploit mode (`freq` 0 or 1 with `gto_freq` alongside, ties within the solve's noise
+  mixed), with `"locked": {"BB": {...}}` and a note; on top of GTO, or of the pool with `"opponents": "pool"`.
+  Every key is optional (`gto/exploit.py` LOCK_KEYS, TendencyLock):
+  * `fold` (-100..100, also `fold_flop` / `fold_turn` / `fold_river`, added): facing a first bet (not a raise
+    of their own bet), this many points more of their range folds, their weakest calls first (at most every
+    call; raises stay); negative, their strongest folds call.
+  * `bluff` (-100..100): their weak hands' bets (below the 50th percentile of strength on the board, tapering
+    to the 65th, as the pool's bluffs): -100 never bluff (value kept), +100 every weak hand bets.
+  * `bet`, `raise` (-100..100): every hand's betting when they can bet, and raising facing a bet: -50 halves
+    it (into checks and calls), +50 moves half of their checks or calls into it, split over the sizes as they
+    use them now.
+  * `next_fold`, `next_raise` (0..100): their fold and raise % at their next decision after each of your bets
+    or raises this street (folds by strength, raises scaled); `next_bet` (0..100): their bet % when you check.
+    The classic nodelock: "they fold 60% to my bet here". Notes give each, locked and at equilibrium.
+
+  The profile keys apply wherever they act, on later streets too, and narrow their range through what they did
+  earlier in the hand. Preflop and multiway pots (the betting rules) ignore them, with a note; an unknown seat
+  or key, your own seat, a non-number or a value out of bounds is an error.
 
 Errors come back as `{"error": "..."}` (e.g. `sizes: at most 3 flop sizes ...`, `ranges: can't read BB's
 range ...`). Heads-up responses also carry `villain_grid` (the villain's range by hand class: `cells` with
