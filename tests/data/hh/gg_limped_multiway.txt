@@ -1,0 +1,48 @@
+Poker Hand #HD2049123456: Hold'em No Limit ($0.05/$0.1) - 2024/05/11 19:42:03
+Table 'NLHWhite7' 6-max Seat #1 is the button
+Seat 1: d4e8b2a1 ($11.20 in chips)
+Seat 2: f09c33aa ($10 in chips)
+Seat 3: Hero ($10 in chips)
+Seat 4: 2b7e9f10 ($14.85 in chips)
+Seat 5: a81c6d4e ($10 in chips)
+Seat 6: 5e5e0b77 ($9.10 in chips)
+f09c33aa: posts small blind $0.05
+Hero: posts big blind $0.1
+*** HOLE CARDS ***
+Dealt to d4e8b2a1
+Dealt to f09c33aa
+Dealt to Hero [7s 6s]
+Dealt to 2b7e9f10
+Dealt to a81c6d4e
+Dealt to 5e5e0b77
+2b7e9f10: calls $0.1
+a81c6d4e: folds
+5e5e0b77: calls $0.1
+d4e8b2a1: folds
+f09c33aa: calls $0.05
+Hero: checks
+*** FLOP *** [Ts 8h 2s]
+f09c33aa: checks
+Hero: checks
+2b7e9f10: bets $0.2
+5e5e0b77: folds
+f09c33aa: calls $0.2
+Hero: raises $0.85 to $1.05
+2b7e9f10: folds
+f09c33aa: calls $0.85
+*** TURN *** [Ts 8h 2s] [Kd]
+f09c33aa: checks
+Hero: bets $1.6
+f09c33aa: folds
+Uncalled bet ($1.6) returned to Hero
+*** SHOWDOWN ***
+Hero collected $2.48 from pot
+*** SUMMARY ***
+Total pot $2.6 | Rake $0.12 | Jackpot $0 | Bingo $0 | Fortune $0 | Tax $0
+Board [Ts 8h 2s Kd]
+Seat 1: d4e8b2a1 (button) folded before Flop
+Seat 2: f09c33aa (small blind) folded on the Turn
+Seat 3: Hero (big blind) won ($2.48)
+Seat 4: 2b7e9f10 folded on the Flop
+Seat 5: a81c6d4e folded before Flop
+Seat 6: 5e5e0b77 folded on the Flop

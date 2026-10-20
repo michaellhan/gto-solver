@@ -44,8 +44,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/health"):
             return self._send(200, {"ok": True})
         p = self.path.split("?")[0]
-        if p in ("/", "/index.html", "/worker.js"):
-            name = "worker.js" if p == "/worker.js" else "index.html"
+        if p in ("/", "/index.html", "/worker.js", "/hh.js"):
+            name = p[1:] if p.endswith(".js") else "index.html"
             path = os.path.join(os.path.dirname(__file__), "static", name)
             with open(path, "rb") as f:
                 body = f.read()

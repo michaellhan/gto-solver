@@ -1,0 +1,61 @@
+PokerStars Hand #250123456789: Tournament #3712345678, $10+$1 USD Hold'em No Limit - Level VII (150/300) - 2024/06/15 20:31:44 ET
+Table '3712345678 14' 9-max Seat #5 is the button
+Seat 1: Dragon_Ace (18250 in chips)
+Seat 2: maple_fish (30000 in chips)
+Seat 3: afk_andy (9400 in chips) is sitting out
+Seat 4: HeroName (24000 in chips)
+Seat 5: RiverRat (41020 in chips)
+Seat 6: tightNtidy (12500 in chips)
+Seat 7: BB_defender (25100 in chips)
+Seat 8: shoveguy (33300 in chips)
+Seat 9: qwerty123 (15000 in chips)
+Dragon_Ace: posts the ante 30
+maple_fish: posts the ante 30
+afk_andy: posts the ante 30
+HeroName: posts the ante 30
+RiverRat: posts the ante 30
+tightNtidy: posts the ante 30
+BB_defender: posts the ante 30
+shoveguy: posts the ante 30
+qwerty123: posts the ante 30
+tightNtidy: posts small blind 150
+BB_defender: posts big blind 300
+*** HOLE CARDS ***
+Dealt to HeroName [Ah Td]
+shoveguy: folds
+qwerty123: folds
+Dragon_Ace: folds
+maple_fish: raises 360 to 660
+afk_andy: folds
+HeroName: calls 660
+RiverRat: folds
+tightNtidy: folds
+BB_defender: calls 360
+*** FLOP *** [Ac 9h 9d]
+BB_defender: checks
+maple_fish: bets 600
+HeroName: calls 600
+BB_defender: folds
+*** TURN *** [Ac 9h 9d] [5s]
+maple_fish: checks
+HeroName: bets 1500
+maple_fish: calls 1500
+*** RIVER *** [Ac 9h 9d 5s] [Qh]
+maple_fish: checks
+HeroName: checks
+*** SHOW DOWN ***
+maple_fish: shows [Kc Qc] (two pair, Queens and Nines)
+HeroName: shows [Ah Td] (two pair, Aces and Nines)
+HeroName collected 6600 from pot
+*** SUMMARY ***
+Total pot 6600 | Rake 0
+Board [Ac 9h 9d 5s Qh]
+Seat 1: Dragon_Ace folded before Flop (didn't bet)
+Seat 2: maple_fish showed [Kc Qc] and lost with two pair, Queens and Nines
+Seat 3: afk_andy folded before Flop (didn't bet)
+Seat 4: HeroName showed [Ah Td] and won (6600) with two pair, Aces and Nines
+Seat 5: RiverRat (button) folded before Flop (didn't bet)
+Seat 6: tightNtidy (small blind) folded before Flop
+Seat 7: BB_defender (big blind) folded on the Flop
+Seat 8: shoveguy folded before Flop (didn't bet)
+Seat 9: qwerty123 folded before Flop (didn't bet)

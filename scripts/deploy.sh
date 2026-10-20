@@ -50,7 +50,7 @@ fi
 gh repo clone michaellhan/michaellhan.github.io "$WORK/site" -- -q --depth 1
 rm -rf "$WORK/site/gto-solver"
 mkdir -p "$WORK/site/gto-solver/gto"
-cp "$HERE/gto/static/index.html" "$HERE/gto/static/worker.js" "$WORK/site/gto-solver/"
+cp "$HERE/gto/static/index.html" "$HERE/gto/static/worker.js" "$HERE/gto/static/hh.js" "$WORK/site/gto-solver/"
 cp "$HERE"/gto/*.py "$WORK/site/gto-solver/gto/"
 # Stamp the worker's cache-busting version with its content hash, so a changed worker.js is never
 # served from a browser's 4h-cached copy (which would load an outdated list of solver files).
@@ -58,6 +58,11 @@ WV="$(shasum "$HERE/gto/static/worker.js" | cut -c1-10)"
 sed -i.bak -E "s/^const WORKER_VERSION = \"[^\"]*\";/const WORKER_VERSION = \"$WV\";/" "$WORK/site/gto-solver/index.html"
 rm "$WORK/site/gto-solver/index.html.bak"
 grep -q "const WORKER_VERSION = \"$WV\";" "$WORK/site/gto-solver/index.html"
+# the same for the hand-history importer, which the page loads on demand
+HV="$(shasum "$HERE/gto/static/hh.js" | cut -c1-10)"
+sed -i.bak -E "s/^const HH_VERSION = \"[^\"]*\";/const HH_VERSION = \"$HV\";/" "$WORK/site/gto-solver/index.html"
+rm "$WORK/site/gto-solver/index.html.bak"
+grep -q "const HH_VERSION = \"$HV\";" "$WORK/site/gto-solver/index.html"
 cd "$WORK/site"
 git add -A
 if git diff --cached --quiet; then echo "Site already up to date."; exit 0; fi

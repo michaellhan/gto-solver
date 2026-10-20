@@ -250,6 +250,8 @@
   summary { color: var(--muted); font-size: 12px; cursor: pointer; }
   .villain { font-size: 12px; color: var(--muted); word-break: break-word; margin-top: 6px; }
 
+  .importbox { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); width: min(620px, calc(100% - 32px)); z-index: 80; background: var(--panel2); border: 1px solid var(--line2); border-radius: var(--r); padding: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.5); display: flex; flex-direction: column; gap: 8px; }
+  .importbox textarea { width: 100%; height: 40vh; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 8px; font: 12px/1.4 ui-monospace, Menlo, monospace; resize: vertical; }
   .toast { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); background: #232932; border: 1px solid var(--line2); border-radius: var(--r); padding: 9px 14px; display: flex; gap: 14px; align-items: center; box-shadow: 0 8px 30px rgba(0,0,0,.5); z-index: 70; max-width: calc(100% - 32px); font-size: 13px; }
 
   /* ---- layout
@@ -325,7 +327,7 @@
   }
   @media (pointer: coarse) {
     button:not(.link), select, input[type=number] { min-height: 40px; }
-    input[type=number], select { font-size: 16px; }
+    input[type=number], select, .importbox textarea { font-size: 16px; }
     .acts button { min-height: 44px; }
     .pc { height: 38px; }
     .panel h2[data-fold] { min-height: 40px; margin-top: -10px; }
@@ -353,6 +355,7 @@
     <button id="menuBtn" class="ghost" title="Display and layout" aria-haspopup="true" aria-expanded="false">⋯</button>
     <div class="menu" id="menu" hidden>
       <button id="fourcolor" title="Four-colour deck: diamonds blue, clubs green">Four-colour deck</button>
+      <button id="importHand" title="Paste a PokerStars or GGPoker hand history to replay and review it">Import hand…</button>
       <button id="swapCols" class="wideonly" title="Put the advice on the left and the table on the right">Advice on the left</button>
       <div class="sep"></div>
       <button id="resetLayout" title="Default column widths, table size and panels">Reset layout</button>
@@ -435,6 +438,13 @@
   </div>
 </main>
 <div id="toast" class="toast" hidden></div>
+<div id="importBox" class="importbox" role="dialog" aria-label="Import a hand history" hidden>
+  <b>Import a hand history</b>
+  <span class="muted" style="font-size:12px">Paste one hand as your poker client saved it (PokerStars, GGPoker or Natural8). It's read here in the page; nothing is uploaded.</span>
+  <textarea id="hhText" spellcheck="false" placeholder="PokerStars Hand #… or Poker Hand #…"></textarea>
+  <div class="err" id="hhErr"></div>
+  <div class="row"><button id="hhGo" class="active">Import</button><button id="hhCancel" class="ghost">Cancel</button></div>
+</div>
 
 <script>
 const RANKS = "AKQJT98765432";
@@ -471,6 +481,7 @@ let BUDGET = null, PRIOR = null;   // set from BUDGETS once the backend (MODE) i
 let OPP = "gto";
 try { if (localStorage.getItem("gto-opponents") === "pool") OPP = "pool"; } catch (e) {}
 const WORKER_VERSION = "14";   // scripts/deploy.sh replaces this with a hash of worker.js
+const HH_VERSION = "1";        // and this with a hash of hh.js (the hand-history importer, loaded on first use)
 
 // ---- backend: the local Python server if present, otherwise the solver runs in the browser (Pyodide worker)
 let MODE = null, worker = null, reqId = 0;
@@ -1093,15 +1104,22 @@ function updateAdviceState() {
   const totalSum = withEv.length ? `<li class="streetsum total"><b>EV loss vs GTO: ${totalLost > 0.005 ? `<span class="num neg">−${totalLost.toFixed(2)} bb</span>` : `<span class="num pos">0.00 bb</span>`}</b>${withEv.length < mine.length ? ` <span class="muted">(${withEv.length} of ${mine.length} decisions have EVs)</span>` : ""}</li>` : "";
   const list = mine.length ? `<ul class="review">${mine.map(([s, a]) => `<li class="rewind" data-s="${s}" data-i="${S.actions[s].indexOf(a)}" title="Replay from here. ${gradeTip(a.g)}"><span class="st">${s}</span><span class="g ${gradeClass(a.g)}" style="margin:0">${gradeMark(a.g)}</span><span><b>${a.action === "bet" ? "bet " + fmt(a.to) : a.action === "raise" ? "raise to " + fmt(a.to) : a.action}</b> · solver ${(a.g.f * 100).toFixed(0)}% · ${a.g.e != null || !a.g.l ? evLossHtml(a.g) : `<span class="num neg">−${a.g.l.toFixed(2)} bb</span>`}${a.g.r ? ` <span class="muted">(rough solve)</span>` : ""}</span></li>`).join("")}${streetSum}${totalSum}</ul>` : "";
   let msg = "";
-  if (sim.handOver && S.cards[0] && S.cards[1]) {
+  if (review) msg = `<b>Reviewing decision ${review.k} of ${review.n}</b> · ${review.what} <button class="link" id="reviewStop">Cancel</button>${list}`;
+  else if (sim.handOver && S.cards[0] && S.cards[1]) {
     const lost = mine.reduce((t, [, a]) => t + (a.g.l || 0), 0), good = mine.filter(([, a]) => gradeClass(a.g) === "ok").length;
-    msg = mine.length ? `<b>Hand review</b> · ${good} of ${mine.length} decisions in the solver's mix${withEv.length ? ` · ${lost > 0.005 ? `<span class="num neg">−${lost.toFixed(2)} bb</span>` : "0.00 bb"} EV vs GTO` : ""}${list}` : `<b>Hand over.</b> No solved decisions to review.`;
+    msg = mine.length ? `<b>Hand review</b> · ${good} of ${mine.length} decisions in the solver's mix${withEv.length ? ` · ${lost > 0.005 ? `<span class="num neg">−${lost.toFixed(2)} bb</span>` : "0.00 bb"} EV vs GTO` : ""}${list}` : `<b>Hand over.</b>`;
   } else if (lastResult && !live && !solving) {
     msg = `<b>Advice from your last decision (${lastResult.street || "earlier"}).</b> New advice appears when it's your turn again.${list}`;
   } else if (!heroTurn && mine.length) msg = `<b>Your decisions so far</b>${list}`;
+  // decisions recorded before their advice came in (or imported) can be solved and graded in one go
+  if (!review && sim.handOver && S.cards[0] && S.cards[1] && STREETS.some(s => S.actions[s].some(a => a.pos === S.hero && !("g" in a))))
+    msg += `<div style="margin-top:4px"><button class="link" id="reviewAll">Review whole hand</button> <span class="muted">solves each of your decisions in turn and grades it</span></div>`;
   note.hidden = !msg; note.innerHTML = msg;
+  const ra = note.querySelector("#reviewAll"), rs = note.querySelector("#reviewStop");
+  if (ra) ra.onclick = reviewHand;
+  if (rs) rs.onclick = () => { review.cancel = "restore"; cancelSolve(); };
   note.querySelectorAll("li.rewind").forEach(li => li.onclick = () => rewindTo(li.dataset.s, +li.dataset.i));
-  if (sim.handOver && mine.length) note.insertAdjacentHTML("beforeend", `<div class="muted" style="margin-top:4px">Click a decision to replay the hand from there.</div>`);
+  if (sim.handOver && mine.length && !review) note.insertAdjacentHTML("beforeend", `<div class="muted" style="margin-top:4px">Click a decision to replay the hand from there.</div>`);
   if (el.classList.contains("empty")) el.innerHTML = S.cards[0] && S.cards[1]
     ? (sim.handOver ? "Hand over." : "Waiting for your turn.<br>Enter what the others do; advice appears when the action reaches you.")
     : EMPTY_ADVICE;
@@ -1117,6 +1135,38 @@ function renderAll() {
   if (sim.toAct === S.hero && S.cards[0] && S.cards[1] && !sim.handOver) analyze(sim);
   else if (!S.cards[0] || !S.cards[1]) resetAdvice();
   updateAdviceState();
+}
+// ---- review the whole hand: each of your recorded decisions is solved in turn (at the current speed) and graded
+let review = null;   // { n, k, what, cancel } while a review runs; cancel "restore" (its Cancel) or "drop" (a new hand)
+async function reviewHand() {
+  if (review || !S.cards[0] || !S.cards[1]) return;
+  document.getElementById("toast").hidden = true;
+  await cancelSolve(); await modeReady;
+  const full = JSON.parse(JSON.stringify(S)), spots = [];
+  for (const s of STREETS) full.actions[s].forEach((a, i) => { if (a.pos === full.hero) spots.push([s, i]); });
+  const rv = review = { n: spots.length, k: 0, what: "", cancel: null };
+  let spot = null;
+  for (const [s, i] of spots) {
+    const a = full.actions[s][i];
+    rv.k++; rv.what = `${s}, you ${a.action === "bet" ? "bet " + fmt(a.to) : a.action === "raise" ? "raised to " + fmt(a.to) : a.action === "all-in" ? "went all-in" : a.action + "ed"}`;
+    S = JSON.parse(JSON.stringify(full)); S.actions[s] = S.actions[s].slice(0, i);
+    for (const t of STREETS.slice(STREETS.indexOf(s) + 1)) S.actions[t] = [];
+    for (let c = 2 + NEED[s]; c < 7; c++) S.cards[c] = null;
+    spot = JSON.stringify(S); lastKey = null; selSlot = null; showDeck = false;
+    const sim = simulate();
+    if (!sim.cur || sim.toAct !== S.hero) continue;
+    let done = analyze(sim); renderAll();
+    for (;;) {   // a solve the speed or opponents toggle restarted has to finish first
+      await done;
+      if (rv.cancel || resultKey === JSON.stringify(payload())) break;
+      await new Promise(r => setTimeout(r, 300)); done = solving ? null : analyze(simulate());
+    }
+    if (rv.cancel || JSON.stringify(S) !== spot) break;   // cancelled, or you went on from this spot yourself
+    a.g = gradeFor(a);   // null (multiway, failed solve): reviewed, no grade
+  }
+  review = null;
+  if (rv.cancel !== "drop" && (!spot || JSON.stringify(S) === spot)) { S = full; save(); }
+  renderAll();
 }
 const EMPTY_ADVICE = "Pick your seat and cards, then enter the action seat by seat.<br>Advice appears here whenever it's your turn.";
 function resetAdvice() {
@@ -1266,7 +1316,34 @@ document.addEventListener("keydown", (e) => {
   if (b) { e.preventDefault(); b.click(); }
 });
 document.getElementById("newhand").onclick = () => {
+  if (review) { review.cancel = "drop"; cancelSolve(); }
   S = { ...fresh(S.players), hero: S.hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap }; selSlot = null; showDeck = false; editSetup = false; pendingRank = null; save(); resetAdvice(); renderAll();
+};
+// ---- hand-history import (hh.js, loaded the first time the dialog opens)
+let hhLoad = null;
+const loadHH = () => typeof importHand === "function" ? Promise.resolve() : hhLoad = hhLoad || new Promise((res, rej) => {
+  const s = document.createElement("script"); s.src = "hh.js?v=" + HH_VERSION; s.onload = res;
+  s.onerror = () => { hhLoad = null; rej(new Error("Couldn't load the importer (hh.js).")); }; document.head.appendChild(s);
+});
+const hhBox = document.getElementById("importBox"), hhErr = document.getElementById("hhErr"), hhText = document.getElementById("hhText");
+document.getElementById("importHand").onclick = () => {
+  document.getElementById("menu").hidden = true; hhBox.hidden = false; hhErr.textContent = "";
+  loadHH().catch(e => hhErr.textContent = e.message); hhText.focus();
+};
+document.getElementById("hhCancel").onclick = () => { hhBox.hidden = true; };
+hhText.addEventListener("keydown", (e) => { if (e.key === "Escape") hhBox.hidden = true; if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) document.getElementById("hhGo").click(); });
+document.getElementById("hhGo").onclick = async () => {
+  let r;
+  try { await loadHH(); r = importHand(hhText.value); } catch (e) { hhErr.textContent = e.message || String(e); return; }
+  if (review) review.cancel = "drop";
+  await cancelSolve();
+  S = cleanState(r.state); setPositions(S.players); selSlot = null; showDeck = false; editSetup = false; pendingRank = null;
+  document.getElementById("stack").value = S.stack; document.getElementById("ante").value = ANTE(); document.getElementById("straddle").checked = !!S.straddle;
+  save(); resetAdvice(); renderAll(); hhBox.hidden = true; hhText.value = "";
+  const h = r.hand;
+  toast(`Imported ${h.site === "generic" ? "a" : h.site} hand: ${h.players}-handed, you are ${SEAT_LABEL(h.hero, h.players)} with ${h.hole.join("")}, ${fmt(h.stack)}bb deep.${r.warnings.length ? " " + r.warnings.join(" ") : ""}`, null, 15000);
+  const b = document.createElement("button"); b.className = "link"; b.textContent = "Review whole hand";
+  b.onclick = () => { document.getElementById("toast").hidden = true; reviewHand(); }; document.getElementById("toast").appendChild(b);
 };
 // ---- layout (per browser): column divider, table height, folded panels, columns swapped. Only in a real
 // browser (the tests' fake DOM has no window events), and never allowed to break the page.

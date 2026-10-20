@@ -82,6 +82,18 @@ point; later actions and board cards are cleared, with Undo. While others act, t
 last advice stays visible but dimmed and labelled. The **⋯** menu has a four-colour
 deck (diamonds blue, clubs green), a switch that puts the advice on the left, and Reset layout.
 
+**Import hand** (in the ⋯ menu) takes a pasted hand history: PokerStars and GGPoker/Natural8
+(other sites in the same "Seat N: name (stack)" / "name: raises 2 to 3" shape mostly parse too),
+2 to 9 players, cash or tournament. Seats map onto the page's positions from the big blind, amounts
+become big blinds, antes are averaged per player, a 2bb straddle from the first seat is kept, sitting-out
+seats are dropped and returned bets are ignored; the history needs your hole cards. The page plays equal
+stacks: yours, capped by the deepest opponent who stayed in, so a shorter player's all-in is a raise to
+its size and they check or call through later streets (a note says so). The parser is `gto/static/hh.js`,
+loaded only when the dialog opens. **Review whole hand** (offered after an import, and at the end of any
+hand with ungraded decisions) solves each of your decisions in order at the current Fast/Accurate setting,
+grades it as if it had been entered live and ends on the hand review; it shows "decision 2 of 5" while it
+runs and can be cancelled, keeping the grades so far.
+
 The layout fits the window at any zoom. On a wide window each column scrolls on its own and
 the action buttons stay pinned to the bottom of theirs; drag the divider between the columns
 to resize them, drag the bar under the table to resize it, and click the Table or Hand title

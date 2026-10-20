@@ -1,0 +1,42 @@
+Poker Hand #HD2051234567: Hold'em No Limit ($0.25/$0.5) - 2024/08/03 23:11:52
+Table 'NLHGold3' 6-max Seat #4 is the button
+Seat 1: 3c9d1e2f ($80 in chips)
+Seat 2: 77ab01cd ($50 in chips)
+Seat 3: e1f2a3b4 ($48.75 in chips)
+Seat 4: 9a8b7c6d ($50 in chips)
+Seat 5: Hero ($62 in chips)
+Seat 6: 0f1e2d3c ($50 in chips)
+Hero: posts small blind $0.25
+0f1e2d3c: posts big blind $0.5
+*** HOLE CARDS ***
+Dealt to 3c9d1e2f
+Dealt to 77ab01cd
+Dealt to e1f2a3b4
+Dealt to 9a8b7c6d
+Dealt to Hero [Ks Kh]
+Dealt to 0f1e2d3c
+3c9d1e2f: folds
+77ab01cd: raises $0.75 to $1.25
+e1f2a3b4: folds
+9a8b7c6d: raises $2.5 to $3.75
+Hero: raises $5.25 to $9
+0f1e2d3c: folds
+77ab01cd: folds
+9a8b7c6d: raises $41 to $50 and is all-in
+Hero: calls $41
+9a8b7c6d: shows [Ad Ah]
+Hero: shows [Ks Kh]
+*** FLOP *** [Jd 5c 2h]
+*** TURN *** [Jd 5c 2h] [9s]
+*** RIVER *** [Jd 5c 2h 9s] [Kc]
+*** SHOWDOWN ***
+Hero collected $100.25 from pot
+*** SUMMARY ***
+Total pot $102 | Rake $1.75 | Jackpot $0 | Bingo $0 | Fortune $0 | Tax $0
+Board [Jd 5c 2h 9s Kc]
+Seat 1: 3c9d1e2f folded before Flop
+Seat 2: 77ab01cd folded before Flop
+Seat 3: e1f2a3b4 folded before Flop
+Seat 4: 9a8b7c6d (button) showed [Ad Ah] and lost with a pair of Aces
+Seat 5: Hero (small blind) showed [Ks Kh] and won ($100.25) with three of a kind, Kings
+Seat 6: 0f1e2d3c (big blind) folded before Flop
