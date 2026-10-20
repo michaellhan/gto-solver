@@ -1433,6 +1433,27 @@ class TestExploit(unittest.TestCase):
             self.assertEqual(res["recommended"], "fold")
             self.assertLess(next(a["ev_bb"] for a in res["actions"] if a["action"] == "call"), -5)
 
+    def test_rare_check_by_value_range_keeps_range(self):
+        """BB 3bets, overbets the flop 150% (rare: the rules' value, JJ+ and sets) and checks the turn, which the
+        rules have none of that range doing: the range stays as it was, not 0 combos (where every hand of ours
+        was worth exactly half the pot, check and jam tied)."""
+        from gto.advisor import _soften
+        r = np.zeros(1326); r[:10] = 1.0
+        self.assertTrue(np.all(_soften(r, np.zeros(1326, dtype=bool)) == 1.0))
+        R = lambda p, a, x=None: dict({"pos": p, "action": a}, **({"to": x} if a == "raise" else {"amount": x} if x else {}))
+        F = lambda *ps: [R(p, "fold") for p in ps]
+        st = {"players": 6, "hero": "BTN", "hole": "Qd5c", "board": "9sJd3d6c", "stack": 100,
+              "preflop": F("UTG", "HJ", "CO") + [R("BTN", "raise", 2.5)] + F("SB") + [R("BB", "raise", 11), R("BTN", "call")],
+              "flop": [R("BB", "bet", 33.8), R("BTN", "call")], "turn": [R("BB", "check")]}
+        # (the page's Fast tree, one turn size: there the overbet is rare)
+        fast = Config(n_turns=3, n_rivers=8, leaf_turns=4, leaf_rivers_flop=4, n_rivers_from_flop=4,
+                      bet_sizes={"flop": [0.33, 0.75], "turn": [0.75], "river": [0.75]},
+                      raise_sizes={"flop": [0.5], "turn": [0.75], "river": [0.75]})
+        res = Advisor(fast, time_budget=1, prior_budget=0.5).advise(st)
+        self.assertGreater(res["villain_range_combos"], 10)
+        ev = {a["action"]: a["ev_bb"] for a in res["actions"]}
+        self.assertGreater(ev["check"], ev["all-in"] + 5)
+
     def test_rare_turn_reraise_keeps_solved_range(self):
         """BTN 3bets AQ, HJ calls; Qs9dKc checks through; on the Td turn HJ bets 1, BTN raises to 12 and HJ
         min-reraises to 23. The solve rarely has HJ raise there: its range stays the solve's (straights,

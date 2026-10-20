@@ -573,6 +573,11 @@ def _soften(r, keep_m) -> np.ndarray:
     """Per-combo weights for range r after a line the rules play with keep_m: 1 on the rule's hands,
     NARROW_SOFT off them, lowered so the off-rule hands make up at most OFF_RULE_MAX of the result."""
     on, off = float(r[keep_m].sum()), float(r[~keep_m].sum())
+    if on <= 1e-9:
+        # the rules play none of the range this way (a 3bet-pot flop overbet's value range, JJ+ and sets,
+        # checking the turn): nothing to narrow by, so the range stays as it was rather than emptying (0 combos
+        # left, and the solve against it put every hand of ours at exactly half the pot)
+        return np.ones_like(r)
     soft = NARROW_SOFT
     if off * soft > 0 and OFF_RULE_MAX < 1.0:
         soft = min(soft, OFF_RULE_MAX / (1.0 - OFF_RULE_MAX) * on / off)
