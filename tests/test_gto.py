@@ -942,7 +942,8 @@ class TestTableSizes(unittest.TestCase):
         # (BB's flop call keeps the hands that would have raised at SLOWPLAY, so its river lead is no longer
         # mostly air: the two continue about equally, 45% and 43%, against 64% each before the joint bar)
         self.assertLess(max(bb, co), 55)
-        self.assertLessEqual(abs(bb - co), 7)   # (47 / 41 with the dealt-out multiway preflop equity)
+        self.assertLessEqual(abs(bb - co), 8)   # (47 / 41 with the dealt-out multiway preflop equity, 48 / 40 with
+                                                # ties kept together in the check ranges)
         # One range: the same as keeping its top share.
         rng = np.random.default_rng(1)
         w, sc = rng.random(1326), rng.random(1326)
@@ -1537,6 +1538,27 @@ class TestExploit(unittest.TestCase):
         r = live(rng["BTN"])
         one, two = _aggro(r, 0.1, 20, 10, rank, bluff, 1), _aggro(r, 0.1, 20, 10, rank, bluff, 2)
         self.assertAlmostEqual(_share(r, two) - 0.1, (_share(r, one) - 0.1) / 2, delta=0.01)
+
+    def test_check_range_not_split_ties(self):
+        """A range that is mostly one nut hand (57% KQ on AhJdTc5s4h, 99 and 88 the rest) checks with little of
+        it: the value a check rules out was cut by rank order, which splits hands of equal strength, and with
+        the small bet's value capped (SMALL_VALUE_MAX) 53% of the check range was KQ; the cut now takes every
+        hand as strong as its weakest, so KQ is only the off-rule share (NARROW_SOFT, at most OFF_RULE_MAX)."""
+        from gto.advisor import _bet_ranges, _street_info, _soften, OFF_RULE_MAX
+        from gto.ranges import remove_blockers
+        board = tuple(cards("AhJdTc5s4h"))
+        sc, rank, bluff = _street_info(board)
+        opp = remove_blockers(parse_range("KQ,99,88"), board)
+        hero = remove_blockers(parse_range("AA,JJ,TT,55,44,AJ,AK,AQ,KK,QQ,KQ"), board)
+        kq = parse_range("KQ")
+        _, _, drop = _bet_ranges(opp, 2, 20.0, 13.2, 6.6, rank, bluff, [opp, hero], drop=True, sc=sc)
+        chk = opp * _soften(opp, ~drop)
+        self.assertLessEqual((chk * kq).sum() / chk.sum(), OFF_RULE_MAX + 1e-9)
+        self.assertTrue(drop[kq > 0].all())   # every KQ alike
+        # without strengths (sc) the old cut
+        _, _, drop0 = _bet_ranges(opp, 2, 20.0, 13.2, 6.6, rank, bluff, [opp, hero], drop=True)
+        chk0 = opp * _soften(opp, ~drop0)
+        self.assertGreater((chk0 * kq).sum() / chk0.sum(), 0.5)
 
     def test_rare_jam_is_stable(self):
         """A flop jam the solve rarely makes keeps the solve's hands with the rules' value added, every run:

@@ -355,7 +355,16 @@ def _nut_weight(r, others, rank) -> float:
     return float(np.clip((held[0] / sum(held) - ADV0) / ADV_SPAN, 0.0, 1.0))
 
 
-def _bet_ranges(r, n, p, big, small, rank, bluff=None, others=None, drop=False):
+def _with_ties(m, r, sc) -> np.ndarray:
+    """Mask m (the strongest hands of range r) and every hand of r as strong as its weakest: a cut by rank
+    order splits hands of equal strength (a straight's combos) arbitrarily."""
+    live = m & (r > 0)
+    if sc is None or not live.any():
+        return m
+    return m | ((sc >= sc[live].min() - 1e-12) & (r > 0))
+
+
+def _bet_ranges(r, n, p, big, small, rank, bluff=None, others=None, drop=False, sc=None):
     """(big, small) masks: what range r bets at each size into p with n players facing it (others:
     their ranges, see _value_share; without them, as if each held r). The small bet is the default:
     value from the top SMALL_SHARE of what would call it (a merged range: medium hands bet for
@@ -368,7 +377,9 @@ def _bet_ranges(r, n, p, big, small, rank, bluff=None, others=None, drop=False):
     drop: also return what a check rules out: the big bet, the small bet's bluffs and its value above
     the top VALUE_SHARE of what would call it; the merged middle (thin value, protection) checks too,
     as in the solves, whose checking ranges keep medium hands and some traps (ruling out every hand that
-    would bet small left the checkers so weak that top pair raised a river lead for +47 bb)."""
+    would bet small left the checkers so weak that top pair raised a river lead for +47 bb). sc (strength,
+    rank's order): the value a check rules out takes every hand as strong as its weakest (_with_ties), so
+    a range of mostly one nut hand doesn't check the part of it the cut happened to leave out."""
     others = [o for o in others if o.sum() > 0] if others else []
     joint = _Joint(others, rank) if others else None
     empty = np.zeros(N_COMBOS, dtype=bool)
@@ -388,6 +399,9 @@ def _bet_ranges(r, n, p, big, small, rank, bluff=None, others=None, drop=False):
     if not drop:
         return bg, sm & ~bg
     strong = _top(r, _value_share(r, n, small, p, rank, others, joint), rank)
+    if strong.any() and sc is not None:
+        strong = _with_ties(strong, r, sc)
+        return bg, sm & ~bg, bg | (sm & ~val) | strong
     return bg, sm & ~bg, bg | (sm & ~val) | (val & strong)
 
 
@@ -651,7 +665,7 @@ def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack:
         others = [ranges[q] * (sc >= 0) for q in active if q != p and q in ranges]
         # calling an all-in (or calling all-in) keeps the hands that would have raised: there's no raise
         raise_ok = not (allin or to_call >= remaining - 1e-9)
-        keep_m = _rule_mask(r, to, cur, to_call, pot, n, rank, call_k, bluff, others, raise_ok=raise_ok)
+        keep_m = _rule_mask(r, to, cur, to_call, pot, n, rank, call_k, bluff, others, raise_ok=raise_ok, sc=sc)
         if to > cur + 1e-9:
             faced = (pot, min(to, bets[p] + remaining) - bets[p], max(n, 1))
             allin = to >= bets[p] + remaining - 1e-9
@@ -690,7 +704,8 @@ def _soften(r, keep_m) -> np.ndarray:
     return np.where(keep_m, 1.0, soft)
 
 
-def _rule_mask(r, to, cur, to_call, pot, n, rank, call_k=None, bluff=None, others=None, raise_ok=True) -> np.ndarray:
+def _rule_mask(r, to, cur, to_call, pot, n, rank, call_k=None, bluff=None, others=None, raise_ok=True,
+               sc=None) -> np.ndarray:
     """The part of range r the multiway rules play this way, with n opponents and `pot` in the
     middle: a bet or raise to `to` over the current bet `cur`, else a call of to_call (or a check).
     call_k: for a call, the share of the range that continues (default: facing to_call into pot).
@@ -706,7 +721,7 @@ def _rule_mask(r, to, cur, to_call, pot, n, rank, call_k=None, bluff=None, other
             return _aggro(r, _value_share(r, n, to - cur, pot, rank), to - cur, pot, rank, bluff, n)
         return _aggro(r, _keep(to_call, pot, n) * RAISE_SHARE, to - cur, pot + to_call, rank, bluff, n)
     if to_call <= 1e-9:                       # check: not what would have bet at either size
-        return ~_bet_ranges(r, n, pot, 0.66 * pot, SMALL_BET * pot, rank, bluff, others, drop=True)[2]
+        return ~_bet_ranges(r, n, pot, 0.66 * pot, SMALL_BET * pot, rank, bluff, others, drop=True, sc=sc)[2]
     k = _keep(to_call, pot, n) if call_k is None else call_k   # call: continues, but wouldn't raise
     return _top(r, k, rank) & ~_top(r, k * RAISE_SHARE if raise_ok else 0.0, rank)
 
@@ -1940,7 +1955,7 @@ class Advisor:
                 else:
                     def bet_fn(r=rs[a]):
                         into = [rs[o] for o in alive if o != a] + [hero_range * liv]
-                        bg, sm, dr = _bet_ranges(r, len(alive), p, big, small, rank, bluff, into, drop=True)
+                        bg, sm, dr = _bet_ranges(r, len(alive), p, big, small, rank, bluff, into, drop=True, sc=sc)
                         # a check keeps the hands that would have bet at NARROW_SOFT, as narrowing does (see
                         # _soften): cut to nothing, the checker was a capped range paying our value bets off
                         return bg, sm, r * bg, r * sm, r * _soften(r, ~dr)
@@ -2175,7 +2190,8 @@ class Advisor:
                 b_small = min(round(SMALL_BET * pot * 2) / 2, room)
                 b_small = b_small if 1e-9 < b_small < b_big - 1e-9 else None
                 into = [opp_ranges[i] for i in range(n_opp) if i != j] + [hero_range]
-                bg_j, sm_j, drop_j = _bet_ranges(opp_ranges[j], n_opp, pot, b_big, b_small, rank0, bluff0, into, drop=True)
+                bg_j, sm_j, drop_j = _bet_ranges(opp_ranges[j], n_opp, pot, b_big, b_small, rank0, bluff0, into, drop=True,
+                                                 sc=sc0)
                 bet_masks[j] = (b_big, b_small, bg_j, sm_j)
                 chk_r[j] = opp_ranges[j] * _soften(opp_ranges[j], ~drop_j)
                 others = [i for i in range(n_opp) if i != j and opps[i] not in cur.allin
@@ -2746,7 +2762,7 @@ class Advisor:
                 full = expand(sol.ctx, rp) * (sc >= 0)
                 other = expand(sol.ctx, r1 if p == 0 else r0) * (sc >= 0)
                 m = _rule_mask(full, to, cur_bet, max(0.0, cur_bet - bets[p]), pot_total, 1, rank, bluff=bluff,
-                               others=[other])
+                               others=[other], sc=sc)
                 if reraise:
                     # no bluffs: as many combos as the rule's range, from the top (a 99bb river jam into 2bb kept
                     # 0 combos as solved, and as the rules' about half bluffs a hand playing the board called it)
