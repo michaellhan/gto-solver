@@ -494,7 +494,7 @@ def _board_index():
         for c in (_CA, _CB):
             ix += [np.searchsorted(k2, c * 8192, "left"), np.searchsorted(k2, c * 8192 + q, "left"),
                    np.searchsorted(k2, c * 8192 + q, "right"), np.searchsorted(k2, c * 8192 + 8191, "right")]
-        out.append((o.astype(np.int32), o2.astype(np.int32), [i.astype(np.int32) for i in ix]))
+        out.append((o.astype(np.int16), o2.astype(np.int16), [i.astype(np.int16) for i in ix]))   # (< 2653: 14 MB)
     return out
 
 
