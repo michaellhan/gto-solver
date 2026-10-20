@@ -73,7 +73,7 @@ so what you record is exactly what was solved. Postflop, a badge shows how well 
 converged (exploitability in % of the pot: converged under 3%, fair under 10%, rough
 above) with a one-click re-solve on Accurate; a rough solve never grades a line ✗.
 When you're facing a bet the prompt shows the pot odds a call needs.
-Solver stats and the villain's inferred range sit behind a "Details" toggle.
+Solver stats and the villain's inferred range (as text and as a 13x13 grid shaded by weight) sit behind a "Details" toggle.
 Each decision you record is marked against the advice that was showing (✓ in
 the mix, ~ rarely played, ✗ outside it, with the EV given up), and when the
 hand ends the advice panel lists them as a hand review with the EV given up per street.
@@ -160,6 +160,7 @@ big blinds. Optional `"ante"` (per player, same units) and `"straddle": true` (t
 first seat posts 2bb and acts last preflop). Optional `"rake"` (a share of the pot, `0.05` for 5%)
 and `"rake_cap"` (the most rake per pot, same units as the amounts; leave it out for no cap): off
 unless given (see Rake below). Positions are the 6-max names `UTG HJ CO BTN SB BB`.
+Optional `"sizes"`, `"ranges"` and `"optimize_sizes"` change the postflop game (see Custom sizes and ranges below).
 
 Response: per-action `freq` (the mixed strategy for hero's exact hand), `ev_bb`
 (relative to folding now), `amount_bb`, a `recommended` action (highest
@@ -223,6 +224,32 @@ that ends preflop isn't raked, so opens, steals and folds to them are unchanged.
   less its rake (the pot without an uncalled bet; a split costs hero its share), so the EVs it ranks
   actions by are raked. The opponents' betting rules and hero's own call/lead/raise rules within each
   trial stay unraked.
+
+### Custom sizes and ranges
+
+The page's **Advanced** disclosure in the setup (saved with the hand and carried by share links, like rake;
+sent from the flop on, so preflop advice is unchanged). All three are off unless given.
+
+* `"sizes": {"flop": [33, 75], "turn": [...], "river": [...], "raise": [60]}`: the postflop bet sizes per
+  street in % of the pot, and the raise sizes (all streets) in % of the pot after calling, replacing the
+  solver's menu for that request. At most 3 a street (each one multiplies the game tree; the browser's
+  default is 2 flop sizes and 1 turn and river size), held to 5-500%. A size actually taken still replaces the
+  nearest one in the tree (more than 15% off), so a villain's off-menu bet is solved at its real size.
+* `"ranges": {"BB": "22+, A2s+, KTo+, QJo:0.5"}`: a player's range entering the flop (PIO style, as
+  `gto/ranges.py` reads it), instead of replaying the preflop action through the charts; heads-up (later
+  streets narrow it by the solve as usual) and multiway (the betting rules narrow it). A range that can't be
+  read, an unknown seat, or one with no combos left on the board is an error; an empty one is the chart's.
+* `"optimize_sizes": true`: where hero can bet (nothing to call) on a street that began heads-up, a first
+  solve of the street with a wide menu (25, 33, 50, 75, 100, 150, 200% and all-in where the stacks allow;
+  one street deep and one raise, so the size choice converges fast) keeps the sizes either player's first bet
+  uses with 3%+ of their range, the 3 most used, and the advice is solved with those. The two solves split
+  the time budget (35% / 65%), so a spot takes as long as without it. The response adds `size_usage`
+  (hero's mix at that node over the wide menu, `{"check": 0.13, "25%": 0.47, ...}`, summing to 1) and
+  `sizes_kept`. A kept overbet makes the second tree bigger, so it settles slower: use Accurate.
+
+Errors come back as `{"error": "..."}` (e.g. `sizes: at most 3 flop sizes ...`, `ranges: can't read BB's
+range ...`). Heads-up responses also carry `villain_grid` (the villain's range by hand class: `cells` with
+`w` the average combo weight), which the page draws under Details.
 
 ## How it works
 
