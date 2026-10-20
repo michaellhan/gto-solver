@@ -105,6 +105,12 @@ class Ctx:
         self.ca = CA_FULL[active]
         self.cb = CB_FULL[active]
         self.cab = np.concatenate([self.ca, self.cb])     # both cards' columns, gathered in one call
+        # the (card, combo) pairs grouped by card, for per-card sums: combos in pair order, where each held
+        # card's group starts, and each combo's two cards as indices into the held cards
+        held, counts = np.unique(self.cab, return_counts=True)
+        self.card_perm = np.concatenate([np.arange(self.n), np.arange(self.n)])[np.argsort(self.cab, kind="stable")]
+        self.card_starts = np.concatenate([[0], np.cumsum(counts)[:-1]]).astype(np.intp)
+        self.cab_held = np.searchsorted(held, self.cab).astype(np.intp)
         self.compat = 1.0 - np.clip(self.member.T @ self.member, 0, 1)
         self.cfg = cfg
         self.rng = random.Random(cfg.seed)
@@ -150,17 +156,6 @@ class Ctx:
             R = Ranking(self, [self.strength(b) for b in boards])
             self._stacks[key] = R
         return R
-
-    def card_rows(self):
-        """(52, m) combo indices holding each card, padded with n (a dummy combo)."""
-        if not hasattr(self, "_card_rows"):
-            rows = [np.nonzero(self.member[c])[0] for c in range(52)]
-            m = max(1, max(len(r) for r in rows))
-            G = np.full((52, m), self.n, dtype=np.int64)
-            for c, r in enumerate(rows):
-                G[c, :len(r)] = r
-            self._card_rows = G
-        return self._card_rows
 
     def turn_picks(self, flop: tuple, dead: set, k: int) -> list:
         """k turn cards for `flop`, sorted, the same for every caller: picks are cached per flop in
@@ -211,85 +206,92 @@ class Ranking:
     """Showdown utilities in O(N) per board instead of an N x N matrix product.
 
     For combo i, wins = reach of all weaker opponent combos minus the weaker ones that share
-    a card with i, and likewise for losses. The card-sharing part is computed per card from
-    each card's combos in strength order; only i itself holds both of i's cards and it is
-    neither weaker nor stronger than itself, so no inclusion-exclusion term is needed."""
+    a card with i, and likewise for losses. The card-sharing part comes from the (card, combo)
+    pairs sorted by card, then strength: one running sum over them gives every card's combos
+    weaker or stronger than i. Only i itself holds both of i's cards and it is neither weaker
+    nor stronger than itself, so no inclusion-exclusion term is needed."""
 
     def __init__(self, ctx: "Ctx", strengths):
         n = ctx.n
-        G = ctx.card_rows()                                   # (52, m)
-        B, m = len(strengths), G.shape[1]
+        B = len(strengths)
         S = np.stack(strengths).astype(np.float64)            # (B, n); -1 = holds a board card
+        rows = np.arange(B)[:, None]
+        # every board's rows at once: each board's keys are offset by the row's index times a span
+        # wider than any key, so one searchsorted serves them all
         self.order = np.argsort(S, axis=1, kind="stable")
         ss = np.take_along_axis(S, self.order, axis=1)
-        self.lo = np.empty((B, n), dtype=np.int64); self.hi = np.empty((B, n), dtype=np.int64)
-        Sp = np.concatenate([S, np.full((B, 1), np.inf)], axis=1)
-        self.G = np.empty((B, 52, m), dtype=np.int64)
-        self.klo = np.zeros((B, 2, n), dtype=np.int64); self.khi = np.zeros((B, 2, n), dtype=np.int64)
-        for b in range(B):
-            self.lo[b] = np.searchsorted(ss[b], S[b], "left")
-            self.hi[b] = np.searchsorted(ss[b], S[b], "right")
-            sg = Sp[b][G]                                     # (52, m)
-            o = np.argsort(sg, axis=1, kind="stable")
-            self.G[b] = np.take_along_axis(G, o, axis=1)
-            sg = np.take_along_axis(sg, o, axis=1)
-            for slot, cards in enumerate((ctx.ca, ctx.cb)):
-                for c in np.unique(cards):
-                    idx = np.nonzero(cards == c)[0]
-                    self.klo[b, slot, idx] = np.searchsorted(sg[c], S[b, idx], "left")
-                    self.khi[b, slot, idx] = np.searchsorted(sg[c], S[b, idx], "right")
+        flat = (ss + rows * 1e4).ravel()
+        q = (S + rows * 1e4).ravel()
+        self.lo = np.searchsorted(flat, q, "left").reshape(B, n) - rows * n      # weaker combos
+        self.hi = np.searchsorted(flat, q, "right").reshape(B, n) - rows * n     # weaker or tied
+        # (card, combo) pairs, two per combo, sorted by card then strength; strengths are under 1e4
+        pc = np.concatenate([ctx.ca, ctx.cb])
+        pi = np.concatenate([np.arange(n), np.arange(n)])
+        key = pc[None, :] * 1e4 + S[:, pi]                    # (B, 2n)
+        po = np.argsort(key, axis=1, kind="stable")
+        self.pcombo = pi[po]
+        skey = (np.take_along_axis(key, po, axis=1) + rows * 1e6).ravel()
+        self.plo = np.empty((B, 2, n), dtype=np.intp); self.phi = np.empty((B, 2, n), dtype=np.intp)
+        for slot, cards in enumerate((ctx.ca, ctx.cb)):
+            q = (cards[None, :] * 1e4 + S + rows * 1e6).ravel()
+            self.plo[:, slot] = np.searchsorted(skey, q, "left").reshape(B, n) - rows * 2 * n
+            self.phi[:, slot] = np.searchsorted(skey, q, "right").reshape(B, n) - rows * 2 * n
+        counts = np.bincount(pc, minlength=52)
+        self.cstart = np.concatenate([[0], np.cumsum(counts)[:-1]])
+        self.cend = self.cstart + counts
+        self.ca, self.cb = ctx.ca, ctx.cb
         self.blocked = S < 0
-        # every lookup below is a flat index into a raveled (B, ...) array
-        rowc = np.arange(B)[:, None] * (52 * (m + 1))
-        cw = [rowc + cards[None, :] * (m + 1) for cards in (ctx.ca, ctx.cb)]
-        self.flo = np.concatenate([(cw[k] + self.klo[:, k]).ravel() for k in range(2)])
-        self.fhi = np.concatenate([(cw[k] + self.khi[:, k]).ravel() for k in range(2)])
-        self.fend = np.concatenate([(cw[k] + m).ravel() for k in range(2)])
-        rown = np.arange(B)[:, None] * (n + 1)
-        self.fsort = (np.arange(B)[:, None] * n + self.order).ravel()
-        self.fwin = (rown + self.lo).ravel()
-        self.flose = (rown + self.hi).ravel()
-        self.ftop = np.broadcast_to(rown + n, (B, n)).ravel()
-        self.Gflat = (np.arange(B)[:, None, None] * (n + 1) + self.G).ravel()
-        self.n, self.m, self.B = n, m, B
+        self.n = n
+        self._flat()
+
+    def _flat(self):
+        """Flat indices into raveled (B, ...) arrays for every lookup in utility()."""
+        B, n = self.order.shape
+        r = np.arange(B)[:, None]
+        self.B = B
+        self.fsort = (r * n + self.order).ravel()
+        self.fwin = (r * (n + 1) + self.lo).ravel()
+        self.flose = (r * (n + 1) + self.hi).ravel()
+        self.pgather = (r * n + self.pcombo).ravel()
+        self.f4 = np.concatenate([(r * (2 * n + 1) + a[:, s]).ravel() for s in (0, 1) for a in (self.plo, self.phi)])
+        self.fK = np.concatenate([(r * 52 + c[None, :]).ravel() for c in (self.ca, self.cb)])
+        self.live = (~self.blocked).astype(np.float32)
 
     def utility(self, ro: np.ndarray, sel=None) -> np.ndarray:
         """ro: (B, n) opponent reach -> (B, n) sum over compatible opponent combos of
         +reach (weaker) / -reach (stronger). With `sel`, ro holds only those boards' rows."""
         if sel is not None:
             return self._sub(sel).utility(ro)
-        B, n, m = self.B, self.n, self.m
-        cum = np.zeros((B, n + 1), dtype=ro.dtype); np.cumsum(ro.ravel()[self.fsort].reshape(B, n), axis=1, out=cum[:, 1:])
-        cum = cum.ravel()
-        u = cum[self.fwin] - (cum[self.ftop] - cum[self.flose])             # wins - losses
-        rp = np.concatenate([ro, np.zeros((B, 1), dtype=ro.dtype)], axis=1).ravel()
-        cg = np.zeros((B, 52, m + 1), dtype=ro.dtype); np.cumsum(rp[self.Gflat].reshape(B, 52, m), axis=2, out=cg[:, :, 1:])
-        cg = cg.ravel()
-        # card-sharing corrections: -weaker + stronger, for each of the two cards
-        corr = cg[self.fend] - cg[self.fhi] - cg[self.flo]
-        u += corr[:B * n] + corr[B * n:]
+        B, n = self.B, self.n
+        # (fancy indexing with intp indices: np.take, and int64 indices on 32-bit Pyodide, are several times slower)
+        cum = np.empty((B, n + 1), dtype=ro.dtype); cum[:, 0] = 0
+        ro = ro.ravel()
+        np.cumsum(ro[self.fsort].reshape(B, n), axis=1, out=cum[:, 1:])
+        cs = np.empty((B, 2 * n + 1), dtype=ro.dtype); cs[:, 0] = 0
+        np.cumsum(ro[self.pgather].reshape(B, 2 * n), axis=1, out=cs[:, 1:])
+        cum, total = cum.ravel(), cum[:, n:]
+        # wins - losses: weaker reach + (weaker or tied) reach - all of it
+        u = cum[self.fwin]
+        u += cum[self.flose]
+        # card-sharing corrections, per card c of i: -weaker + stronger among c's combos,
+        # = (c's total + 2 * the sum before c's pairs) - sum to i's weaker - sum to i's weaker or tied
+        k = (cs[:, self.cend] + cs[:, self.cstart]).ravel()[self.fK]        # (2 B n,)
+        u += k[:B * n]; u += k[B * n:]
+        q = cs.ravel()[self.f4]
+        for j in range(4):
+            u -= q[j * B * n:(j + 1) * B * n]
         u = u.reshape(B, n)
-        u[self.blocked] = 0.0
+        u -= total
+        u *= self.live
         return u
 
     def _sub(self, sel) -> "Ranking":
         """The same index restricted to boards `sel` (flat offsets rebuilt for fewer rows)."""
-        B, n, m = len(sel), self.n, self.m
         r = Ranking.__new__(Ranking)
-        r.B, r.n, r.m = B, n, m
-        r.blocked = self.blocked[sel]
-        rows = np.arange(B)[:, None]
-        r.fsort = (rows * n + self.order[sel]).ravel()
-        r.fwin = (rows * (n + 1) + self.lo[sel]).ravel()
-        r.flose = (rows * (n + 1) + self.hi[sel]).ravel()
-        r.ftop = np.broadcast_to(rows * (n + 1) + n, (B, n)).ravel()
-        r.Gflat = (rows[:, :, None] * (n + 1) + self.G[sel]).ravel()
-        shift = (np.asarray(sel)[:, None] - rows) * (52 * (m + 1))
-        full = self.B * n
-        for name in ("flo", "fhi", "fend"):
-            flat = getattr(self, name)
-            setattr(r, name, np.concatenate([(flat[k * full:(k + 1) * full].reshape(self.B, n)[sel] - shift).ravel()
-                                             for k in range(2)]))
+        for f in ("order", "lo", "hi", "pcombo", "plo", "phi", "blocked"):
+            setattr(r, f, getattr(self, f)[sel])
+        r.cstart, r.cend, r.ca, r.cb, r.n = self.cstart, self.cend, self.ca, self.cb, self.n
+        r._flat()
         return r
 
 
@@ -575,13 +577,19 @@ class Solver:
       walks ~30 decision nodes per pass instead of ~90. The root street is walked down to collect the
       reaches arriving at each chance node, the merged subtrees run, and the root street is walked back up.
     * every node's regrets and strategy sums are views into two flat buffers, discounted in one call
-    * a player's strategies computed in the other player's pass are reused in their own (unchanged regrets)
-    All of it gives the same numbers as walking the tree node by node. The original nodes' arrays are views of the merged ones, so reading and EV code sees current values."""
+    * a player's strategies computed in the other player's pass are reused in their own (unchanged regrets),
+      below the root street too; there the NO_BLAS kernels also trim the leaf matrices to each range
+    * with BLAS, a pass first walks down collecting the opponent's reach at every equity leaf, and each leaf
+      matrix stack multiplies all of its reaches at once (one matrix-matrix product, see _leaf_batch)
+    All of it gives the same numbers as walking the tree node by node (the batched leaves up to float32 rounding). The original nodes' arrays are views of the merged ones, so reading and EV code sees current values."""
 
     def __init__(self, ctx: Ctx, root: Decision, dead: set):
         self.ctx, self.root, self.dead = ctx, root, dead
         self.iters = 0
-        self.alpha, self.beta, self.gamma = 1.5, 0.0, 2.0   # DCFR parameters
+        # DCFR parameters. gamma 4 (the paper: 2) weights recent iterations more in the average strategy: the same
+        # exploitability in 25-35% fewer iterations on flop, turn and 3bet spots (gamma 3-8 alike; alpha 1-1.25 spiky,
+        # 2+ slower; negative regrets reset each iteration (beta -inf) or predictive regret matching no better)
+        self.alpha, self.beta, self.gamma = 1.5, 0.0, 4.0
         self.rng = random.Random(ctx.cfg.seed + 2)
         self.sampling = True          # chance sampling while training; off for EVs and reports
         self._nodes: List[Decision] = []
@@ -591,6 +599,9 @@ class Solver:
         # training on a numpy without BLAS (see NO_BLAS) skips the leaf-matrix rows and columns of combos
         # outside each player's range (always 0 reach): ~1/3 less arithmetic on a typical flop
         self.trim_leaves = NO_BLAS
+        # with BLAS, each pass's equity leaves are computed together up front (see _leaf_batch)
+        self.batch_leaves = not NO_BLAS
+        self._pre: Dict[int, np.ndarray] = {}
         self._live = None
         self._trimmed: Dict[tuple, np.ndarray] = {}
 
@@ -638,8 +649,14 @@ class Solver:
 
     def compat_sum(self, ro):
         """ro: (B, N) -> (B, N) mass of opponent combos sharing no card with each combo."""
-        member = self.ctx.member32 if ro.dtype == np.float32 else self.ctx.member
-        cs = (np.einsum("bn,cn->bc", ro, member) if NO_BLAS else ro @ member.T)[:, self.ctx.cab]   # (B, 2N)
+        ctx = self.ctx
+        if NO_BLAS and ctx.n:
+            # each card's reach as a sum over its combos (2N adds), not a (B, N) x (N, 52) product: ~4x faster
+            # in Pyodide, where the product has no BLAS
+            cs = np.add.reduceat(ro[:, ctx.card_perm], ctx.card_starts, axis=1)[:, ctx.cab_held]
+        else:
+            member = ctx.member32 if ro.dtype == np.float32 else ctx.member
+            cs = (ro @ member.T)[:, ctx.cab]   # (B, 2N)
         n = ro.shape[1]
         return ro.sum(axis=1, keepdims=True) - cs[:, :n] - cs[:, n:] + ro
 
@@ -682,6 +699,9 @@ class Solver:
             if node.M is None:
                 node.M = self.ctx.ranking(node.boards)
             return node.M.utility(ro, sel), False
+        pre = self._pre.pop(id(node), None) if self._pre else None
+        if pre is not None:
+            return pre, node.tile is None
         if node.tile is not None:
             # rows repeat the same boards: matmul broadcasts the one (tile, N, N) stack over the repeats
             # (the same matvecs as unmerged, in one call; merged terminals only see full batches, never `sel`)
@@ -730,7 +750,7 @@ class Solver:
             r0c = (r0[:, None, :] * m3).reshape(B * k, n)
             r1c = (r1[:, None, :] * m3).reshape(B * k, n)
             full = sel is None and k == K
-            u = self._cfr(node.child, p, r0c, r1c, update, use_avg, None if full else csel)
+            u = self._cfr(node.child, p, r0c, r1c, update, use_avg, None if full else csel, strats)
             norm = node.norm_for(m3) if k < K else node.norm[rows]
             return (u.reshape(B, k, n) * m3).sum(axis=1) / norm
         if strats is None or sel is not None:
@@ -777,24 +797,54 @@ class Solver:
             util = u if util is None else util + u
         return util
 
-    def _down(self, node, p, r0, r1, strats, arrive):
-        """The root street's walk down: strategies, and the reaches arriving at each chance node."""
-        if isinstance(node, Chance):
-            arrive[id(node)] = (r0, r1)
-        elif isinstance(node, Decision):
+    def _down(self, node, p, r0, r1, strats, arrive, want=None, into=None):
+        """A training pass's walk down: strategies, and the reaches arriving at each chance node in `arrive`
+        (the root street's: the walk stops there), or with `into`, through chance nodes too (into the merged
+        subtrees; sampled ones are left to _cfr). With `want`, the opponent's reach at every equity leaf
+        is appended to it, for _leaf_batch. The reaches are the ones _cfr computes."""
+        if isinstance(node, Terminal):
+            if want is not None and node.kind != "fold" and len(node.boards[0]) < 5:
+                want.append((node, r1 if p == 0 else r0))
+        elif isinstance(node, Chance):
+            if not into:
+                arrive[id(node)] = (r0, r1)
+            elif node.sample is None:
+                B, K, n = r0.shape[0], node.K, self.ctx.n
+                m3 = node.masks.reshape(B, K, n)
+                self._down(node.child, p, (r0[:, None, :] * m3).reshape(B * K, n), (r1[:, None, :] * m3).reshape(B * K, n),
+                           strats, arrive, want, into)
+        else:
             cache = strats[node.player]
             strat = cache.get(id(node))
             if strat is None:
                 strat = cache[id(node)] = node.strategy()
             for a, child in enumerate(node.children):
-                if isinstance(child, Terminal):
+                if isinstance(child, Terminal) and want is None:
                     continue
                 if node.player == p:
-                    self._down(child, p, r0, r1, strats, arrive)
+                    self._down(child, p, r0, r1, strats, arrive, want, into)
                 elif p == 0:
-                    self._down(child, p, r0, r1 * strat[:, a, :], strats, arrive)
+                    self._down(child, p, r0, r1 * strat[:, a, :], strats, arrive, want, into)
                 else:
-                    self._down(child, p, r0 * strat[:, a, :], r1, strats, arrive)
+                    self._down(child, p, r0 * strat[:, a, :], r1, strats, arrive, want, into)
+
+    def _leaf_batch(self, want):
+        """Every equity leaf's matrix products for a pass, as one matrix-matrix product per matrix stack
+        (natively the leaves are memory-bound: one product per leaf read each stack again, ~3/4 of a flop
+        solve). Results wait in self._pre for _showdown."""
+        n = self.ctx.n
+        by_stack: Dict[int, tuple] = {}
+        for node, ro in want:
+            M = self._terminal_M(node)
+            x = ro.astype(np.float32, copy=False).reshape(-1, M.shape[0], n)    # (repeats, matrices, N)
+            by_stack.setdefault(id(M), (M, []))[1].append((node, x))
+        for M, items in by_stack.values():
+            X = items[0][1] if len(items) == 1 else np.concatenate([x for _, x in items])
+            U = np.matmul(X.transpose(1, 0, 2), M.transpose(0, 2, 1)).transpose(1, 0, 2)
+            off = 0
+            for node, x in items:
+                self._pre[id(node)] = U[off:off + len(x)].reshape(-1, n)
+                off += len(x)
 
     def _traverse(self, p, r0, r1, strats):
         """One training pass for p. Same result as _cfr on the root; the merged subtrees run in one batch.
@@ -802,15 +852,23 @@ class Solver:
         if not self._groups:
             return self._cfr(self.root, p, r0, r1, update=True, use_avg=False, strats=strats)
         arrive, done = {}, {}
-        self._down(self.root, p, r0, r1, strats, arrive)
-        for chance, members in self._groups:
-            u = self._cfr(chance, p, np.concatenate([arrive[id(c)][0] for c in members]),
-                          np.concatenate([arrive[id(c)][1] for c in members]), update=True, use_avg=False)
+        want = [] if self.batch_leaves else None
+        self._down(self.root, p, r0, r1, strats, arrive, want)
+        reach = [(np.concatenate([arrive[id(c)][0] for c in members]), np.concatenate([arrive[id(c)][1] for c in members]))
+                 for _, members in self._groups]
+        if want is not None:
+            for (chance, _), (g0, g1) in zip(self._groups, reach):
+                self._down(chance, p, g0, g1, strats, arrive, want, into=True)
+            self._leaf_batch(want)
+        for (chance, members), (g0, g1) in zip(self._groups, reach):
+            u = self._cfr(chance, p, g0, g1, update=True, use_avg=False, strats=strats)
             off = 0
             for c in members:
                 done[id(c)] = u[off:off + len(c.boards)]
                 off += len(c.boards)
-        return self._cfr(self.root, p, r0, r1, update=True, use_avg=False, strats=strats, done=done)
+        u = self._cfr(self.root, p, r0, r1, update=True, use_avg=False, strats=strats, done=done)
+        self._pre.clear()
+        return u
 
     def _discount(self):
         t = float(self.iters)
