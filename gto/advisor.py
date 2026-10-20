@@ -1356,7 +1356,14 @@ class Advisor:
         mw_streets = [st for st in rep[1:] if len(st.players_start) > 2]
         slow: Dict[str, np.ndarray] = {}
         for st in mw_streets:
+            before = dict(ranges)
             _narrow_street(ranges, board[:{"flop": 3, "turn": 4, "river": 5}[st.name]], st, stack, hero, hole, slow)
+            # (a line the rules leave nearly face-up is filled out as heads-up streets are: a 3bet pot's turn
+            # pot-sized bet into two kept 1.9 combos, and heads-up on the river the check left 0.5, where
+            # checking and jamming tied for every hand)
+            for p in st.players_start:
+                if p in ranges and p in before and p != hero:
+                    ranges[p] = _post_floor(before[p], ranges[p], board, p, st.name, notes)
         if mw_streets:
             notes.append(f"{', '.join(st.name for st in mw_streets)}: multiway, ranges narrowed by "
                          "simple betting rules rather than a solve")

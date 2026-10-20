@@ -1491,6 +1491,20 @@ class TestExploit(unittest.TestCase):
         ev = {a["action"]: a["ev_bb"] for a in res["actions"]}
         self.assertGreater(ev["check"], ev["all-in"] + 5)
 
+    def test_multiway_line_filled_out(self):
+        """A line the multiway rules leave nearly face-up is filled out (as heads-up streets are): HJ's pot-sized
+        turn bet into two players in a 60bb 3bet pot kept 1.9 combos, and its river check 0.5."""
+        R = lambda p, a, x=None: dict({"pos": p, "action": a}, **({"to": x} if a == "raise" else {"amount": x} if x else {}))
+        F = lambda *ps: [R(p, "fold") for p in ps]
+        st = {"players": 6, "hero": "BTN", "hole": "3h8c", "board": "Qc2dTc9c2c", "stack": 60,
+              "preflop": F("UTG") + [R("HJ", "raise", 2.5), R("CO", "call"), R("BTN", "raise", 10)] + F("SB", "BB")
+              + [R("HJ", "call"), R("CO", "call")],
+              "flop": [R("HJ", "check"), R("CO", "check"), R("BTN", "check")],
+              "turn": [R("HJ", "bet", 31.5), R("CO", "fold"), R("BTN", "call")], "river": [R("HJ", "check")]}
+        res = Advisor(time_budget=1, prior_budget=0.5).advise(st)
+        self.assertGreater(res["villain_range_combos"], 3)
+        self.assertTrue(any("filled out" in n for n in res["notes"]))
+
     def test_rare_turn_reraise_keeps_solved_range(self):
         """BTN 3bets AQ, HJ calls; Qs9dKc checks through; on the Td turn HJ bets 1, BTN raises to 12 and HJ
         min-reraises to 23. The solve rarely has HJ raise there: its range stays the solve's (straights,
