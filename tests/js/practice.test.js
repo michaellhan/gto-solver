@@ -166,3 +166,28 @@ test("hand strength: categories and kickers", async () => {
   assert.deepEqual(r("9s 9d 5c 7h Jd Kc 2s"), [1, 9, 13, 11, 7]);
   assert.deepEqual(r("Ah Ad Ac As 2h 3h 4h"), [7, 14, 4]);
 });
+
+test("your fold that closes the street ends the hand, with others still in", async () => {
+  // the big blind folds to an open and a call: no flop is dealt and the opponents don't play on
+  let p, seed = 1;
+  do p = await practicePage(seed++); while (p.S.hero !== "BB");
+  const done = new Set();
+  let opened = false;
+  const villain = (m) => {
+    if (!opened) { opened = true; return { pos: m.play.seat, action: "raise", to: 3, name: "raise 3" }; }
+    return { pos: m.play.seat, action: "call" };
+  };
+  for (let i = 0; i < 50 && p.sim().toAct !== "BB"; i++) { await flush(); answer(p, done, villain); await flush(); }
+  for (let i = 0; i < 5 && !p.val("resultKey === JSON.stringify(payload())"); i++) { await flush(); answer(p, done, villain); await flush(); }
+  assert.equal(p.act({ action: "fold" }), null);
+  p.run("renderAll()"); await flush();
+  const sim = p.sim();
+  assert.equal(sim.handOver, true);
+  assert.equal(sim.waiting, null);
+  assert.deepEqual(p.S.cards.slice(2), [null, null, null, null, null]);
+  const h = p.val("Practice.state.hand");
+  assert.deepEqual([h.result.folded, h.result.net], [true, -1]);
+  const n = p.posted.length; await flush(); answer(p, done, villain); await flush();
+  assert.equal(p.posted.length, n);
+  assert.equal(p.val("Practice.state.score.hands"), 1);
+});

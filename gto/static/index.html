@@ -687,7 +687,8 @@ function simulate() {
   }
   out.cur = out.current && !out.streets[out.current].closed ? out.streets[out.current] : null;
   out.pot = Object.values(inv).reduce((a, b) => a + b, 0) + (out.cur ? Object.values(out.cur.bets).reduce((a, b) => a + b, 0) : 0);
-  if (out.cur && !active.has(S.hero) && practicing()) { out.handOver = true; out.cur = null; out.toAct = null; }   // practice: your fold ends it
+  // practice: your fold ends it, also when it closes the street with others still in
+  if ((out.cur || out.waiting) && !active.has(S.hero) && practicing()) { out.handOver = true; out.cur = null; out.toAct = null; out.waiting = null; out.current = out.current || STREETS.filter(s => out.streets[s]).pop(); }
   return out;
 }
 
