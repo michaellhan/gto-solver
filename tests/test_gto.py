@@ -596,7 +596,8 @@ class TestAdvisor(unittest.TestCase):
         bands = [
             ("BB", utg + F("HJ", "CO", "BTN", "SB"), 0.30, 0.42),
             ("BB", co + F("BTN", "SB"), 0.42, 0.55),
-            ("BB", btn + F("SB"), 0.60, 0.72),
+            # unraked; at gtopreflop.com's 5%/4bb rake the advice defends 41.8% against its 41.3% (preflop_refs)
+            ("BB", btn + F("SB"), 0.52, 0.62),
             ("BB", F("UTG", "HJ", "CO", "BTN") + [R("SB", "raise", 3)], 0.65, 0.80),
             # published solver: BTN vs a 2.5bb CO open folds 84.5% (calls 3.0%, 3bets 12.5%; Poker Academy)
             ("BTN", co, 0.12, 0.20),
@@ -641,7 +642,8 @@ class TestAdvisor(unittest.TestCase):
         small = np.array([hand_class(c) in ("22", "33", "44", "54s", "65s") for c in ALL_COMBOS])
         self.assertGreater(short.sum(), 0.5 * chart.sum())
         self.assertGreater((short * small).sum(), 0.3 * (chart * small).sum())
-        self.assertLess(preflop_ranges(pre(2.5), T, 200)["SB"].sum(), 2 * preflop_ranges(pre(2.5), T, 100)["SB"].sum())
+        # (the chart flats 57 combos against a BTN open, published 4.7% of hands = 62; deep it doubles at most)
+        self.assertLess(preflop_ranges(pre(2.5), T, 200)["SB"].sum(), 130)
 
     def test_called_barrels_keep_a_range(self):
         """SB flats a 3bb open, then check-calls flop and turn: a short turn prior solve that folds most
@@ -1344,8 +1346,9 @@ class TestAccuracy(unittest.TestCase):
         self.assertTrue(np.allclose(sol.strategy[:, sol.ctx.active].sum(axis=0), 1.0, atol=1e-5))
 
     def test_rfi_widths_match_published_charts(self):
-        # 6-max 100bb solver charts: UTG 15-18%, HJ 19-22%, CO 26-29%, BTN 40-48%
-        for pos, lo, hi in (("UTG", 15, 18), ("HJ", 19, 22), ("CO", 26, 29), ("BTN", 40, 48)):
+        # 6-max 100bb raked solves (pokalab, Poker Academy, GTO Ranges+, gtopreflop.com; tests/preflop_refs.py):
+        # UTG 17.6-18.7%, HJ 22.3-23.3%, CO 29.1-30.6%, BTN 43.3-46.5%, SB 43.5-45.7%
+        for pos, lo, hi in (("UTG", 17, 19.5), ("HJ", 21.5, 24), ("CO", 28.5, 31.5), ("BTN", 42.5, 47), ("SB", 42.5, 46.5)):
             pct = pf.RFI[pos].sum() / 1326 * 100
             self.assertTrue(lo <= pct <= hi, f"{pos} opens {pct:.1f}%")
 
@@ -1361,12 +1364,15 @@ FLOP_REFERENCES = [
     # Upswing (Ace-high flops podcast): K83 from MP vs BB ~100% at a third pot; GTO Wizard's C-betting heuristics: 8- to
     # K-high flops are bet more than A-high
     ("srp", "Kd7c2h", "cbet", 65, 100, "BeyondGTO 98% *, Upswing K83 ~100%"),
-    ("srp", "Kd7c2h", "small", 50, 100, "RangeConverter 6max 100bb aggregate: 1/3 pot the most common size"),
+    # (the BB's flats against the button follow published solves since: KQs and KJs a third flat, offsuit
+    # trash folds; the small bet fell from 56 to 46% of the range, two thirds of the c-bets)
+    ("srp", "Kd7c2h", "small", 40, 100, "RangeConverter 6max 100bb aggregate: 1/3 pot the most common size"),
     ("srp", "Kd7c2h", "vs small: raise", 6, 22, "RangeConverter aggregate x/r 14%; ThinkGTO A74 15.4%"),
     # high paired: range bet small. GTO Wizard (The mechanics of c-bet sizing) QQ6: high frequency, mostly 33%, BB checks
     # 100% and against the 33% bet folds 37 / calls 39 / raises 24; ThinkGTO 25/80 tree QQ6 98.8%; RangeConverter "high
     # paired boards are bet nearly 100%"
-    ("srp", "QsQd6c", "cbet", 80, 100, "GTO Wizard QQ6, ThinkGTO 98.8%, RangeConverter ~100%"),
+    # (78% since the BB's flats follow published solves: KQs, QJs and QTs flat a third to a half)
+    ("srp", "QsQd6c", "cbet", 74, 100, "GTO Wizard QQ6, ThinkGTO 98.8%, RangeConverter ~100%"),
     ("srp", "QsQd6c", "small", 75, 100, "GTO Wizard QQ6 mostly 33%"),
     ("srp", "QsQd6c", "check", 95, 100, "GTO Wizard QQ6 BB checks 100%"),
     # (*: the big blind here flats more hands preflop, so it folds more and calls less: 47 / 30 / 23)
@@ -2387,8 +2393,8 @@ class TestRealizationModel(unittest.TestCase):
 class TestOpenerVs3bet(unittest.TestCase):
     def test_oop_openers_match_published_solver_shares(self):
         """Openers out of position facing a 3bet: fold/call/4bet shares of the opening range near published
-        solver output (CO vs BTN 3bet to 7.5bb, 100bb cash: 63.7/17.2/19.1; the SB vs a BB 3bet folds about
-        half and 4bets a third of its continues), and the in-position charts against a blind's 3bet keep
+        solver output (CO vs BTN 3bet to 7.5bb, 100bb cash: 63.7/17.2/19.1; gtopreflop.com's raked solve for
+        the rest), and the in-position charts against a blind's 3bet keep
         calling widely."""
         R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
         F = lambda *ps: [R(p, "fold") for p in ps]
@@ -2400,13 +2406,20 @@ class TestOpenerVs3bet(unittest.TestCase):
         co = shares("CO", F("UTG", "HJ") + [R("CO", "raise", 2.5), R("BTN", "raise", 7.5)] + F("SB", "BB"))
         for got, want in zip(co, (0.637, 0.172, 0.191)):
             self.assertAlmostEqual(got, want, delta=0.03)
-        for hero, pre in (("UTG", [R("UTG", "raise", 2.5)] + F("HJ", "CO") + [R("BTN", "raise", 7.5)] + F("SB", "BB")),
+        for hero, pre in (("UTG", [R("UTG", "raise", 2.5)] + F("HJ") + [R("CO", "raise", 7.5)] + F("BTN", "SB", "BB")),
                           ("HJ", F("UTG") + [R("HJ", "raise", 2.5), R("CO", "raise", 7.5)] + F("BTN", "SB", "BB"))):
-            f, c, r = shares(hero, pre)
-            self.assertTrue(0.58 <= f <= 0.68 and 0.14 <= c <= 0.21 and 0.16 <= r <= 0.23, (hero, f, c, r))
+            f, c, r = shares(hero, pre)   # gtopreflop.com: HJ vs CO 63.6/18.3/18.1, UTG vs the next seat 64.6/17.4/18.0
+            self.assertTrue(0.58 <= f <= 0.68 and 0.14 <= c <= 0.22 and 0.16 <= r <= 0.22, (hero, f, c, r))
             self.assertTrue(0.4 <= r / (1 - f) <= 0.65, (hero, r / (1 - f)))   # about half the continues 4bet
-        f, c, r = shares("SB", F("UTG", "HJ", "CO", "BTN") + [R("SB", "raise", 3), R("BB", "raise", 9)])
-        self.assertTrue(0.45 <= f <= 0.58 and 0.28 <= r / (1 - f) <= 0.40, (f, c, r))
+        # against the button's wider 3bet UTG calls more (gtopreflop.com 57.0/24.4/18.7), QQ mostly calling
+        utg = [R("UTG", "raise", 2.5)] + F("HJ", "CO") + [R("BTN", "raise", 7.5)] + F("SB", "BB")
+        f, c, r = shares("UTG", utg)
+        self.assertTrue(0.53 <= f <= 0.61 and 0.21 <= c <= 0.28 and 0.16 <= r <= 0.22, (f, c, r))
+        qq = parse_range("QQ") > 0
+        self.assertGreater(float(pf.strategy_for("UTG", utg, T)["call"][qq].mean()), 0.7)
+        # the SB against the BB's 3bet to 10bb: gtopreflop.com 63.6/21.4/15.0
+        f, c, r = shares("SB", F("UTG", "HJ", "CO", "BTN") + [R("SB", "raise", 3), R("BB", "raise", 10)])
+        self.assertTrue(0.60 <= f <= 0.68 and 0.17 <= c <= 0.25 and 0.12 <= r <= 0.18, (f, c, r))
         f, c, r = shares("BTN", F("UTG", "HJ", "CO") + [R("BTN", "raise", 2.5)] + F("SB") + [R("BB", "raise", 10)])
         self.assertGreater(c, 0.3)
 
@@ -2529,6 +2542,29 @@ class TestPublishedBlindFrequencies(unittest.TestCase):
         # 100bb keeps the 100bb chart
         self.assertIs(pf.vs_rfi_chart("SB", "CO"), pf.VS_RFI[("SB", "CO")])
         self.assertIs(pf.vs_rfi_chart("SB", "CO", 40.0), pf.SB_VS_LATE_40)
+
+
+class TestPublishedPreflopReferences(unittest.TestCase):
+    """The charts (with the advice's adjustments, and the rake the reference was solved with) against
+    published 6-max 100bb cash solver frequencies: tests/preflop_refs.py, scripts/preflop_reference.py."""
+
+    def test_within_tolerance(self):
+        from tests.preflop_refs import REFS, measure, misses
+        errs, bad = [], []
+        for r in REFS:
+            got = measure(r)
+            m = misses(r, got)
+            if not r["uncertain"]:
+                errs += [abs(got.get(k, 0.0) - v) for k, v in r["want"].items()]
+                if m:
+                    bad.append((r["name"], m))
+        self.assertEqual(bad, [])
+        self.assertLess(float(np.mean(errs)), 0.02)
+
+    def test_hand_facts(self):
+        from tests.preflop_refs import HANDS, measure_hand
+        bad = [(h[0], round(v, 3)) for h in HANDS if not h[5] - 1e-9 <= (v := measure_hand(h)) <= h[6] + 1e-9]
+        self.assertEqual(bad, [])
 
 
 class TestRake(unittest.TestCase):
