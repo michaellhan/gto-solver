@@ -579,7 +579,9 @@ class Solver:
     * every node's regrets and strategy sums are views into two flat buffers, discounted in one call
     * a player's strategies computed in the other player's pass are reused in their own (unchanged regrets),
       below the root street too; there the NO_BLAS kernels also trim the leaf matrices to each range
-    All of it gives the same numbers as walking the tree node by node. The original nodes' arrays are views of the merged ones, so reading and EV code sees current values."""
+    * with BLAS, a pass first walks down collecting the opponent's reach at every equity leaf, and each leaf
+      matrix stack multiplies all of its reaches at once (one matrix-matrix product, see _leaf_batch)
+    All of it gives the same numbers as walking the tree node by node (the batched leaves up to float32 rounding). The original nodes' arrays are views of the merged ones, so reading and EV code sees current values."""
 
     def __init__(self, ctx: Ctx, root: Decision, dead: set):
         self.ctx, self.root, self.dead = ctx, root, dead
@@ -594,6 +596,9 @@ class Solver:
         # training on a numpy without BLAS (see NO_BLAS) skips the leaf-matrix rows and columns of combos
         # outside each player's range (always 0 reach): ~1/3 less arithmetic on a typical flop
         self.trim_leaves = NO_BLAS
+        # with BLAS, each pass's equity leaves are computed together up front (see _leaf_batch)
+        self.batch_leaves = not NO_BLAS
+        self._pre: Dict[int, np.ndarray] = {}
         self._live = None
         self._trimmed: Dict[tuple, np.ndarray] = {}
 
@@ -691,6 +696,9 @@ class Solver:
             if node.M is None:
                 node.M = self.ctx.ranking(node.boards)
             return node.M.utility(ro, sel), False
+        pre = self._pre.pop(id(node), None) if self._pre else None
+        if pre is not None:
+            return pre, node.tile is None
         if node.tile is not None:
             # rows repeat the same boards: matmul broadcasts the one (tile, N, N) stack over the repeats
             # (the same matvecs as unmerged, in one call; merged terminals only see full batches, never `sel`)
@@ -786,24 +794,54 @@ class Solver:
             util = u if util is None else util + u
         return util
 
-    def _down(self, node, p, r0, r1, strats, arrive):
-        """The root street's walk down: strategies, and the reaches arriving at each chance node."""
-        if isinstance(node, Chance):
-            arrive[id(node)] = (r0, r1)
-        elif isinstance(node, Decision):
+    def _down(self, node, p, r0, r1, strats, arrive, want=None, into=None):
+        """A training pass's walk down: strategies, and the reaches arriving at each chance node in `arrive`
+        (the root street's: the walk stops there), or with `into`, through chance nodes too (into the merged
+        subtrees; sampled ones are left to _cfr). With `want`, the opponent's reach at every equity leaf
+        is appended to it, for _leaf_batch. The reaches are the ones _cfr computes."""
+        if isinstance(node, Terminal):
+            if want is not None and node.kind != "fold" and len(node.boards[0]) < 5:
+                want.append((node, r1 if p == 0 else r0))
+        elif isinstance(node, Chance):
+            if not into:
+                arrive[id(node)] = (r0, r1)
+            elif node.sample is None:
+                B, K, n = r0.shape[0], node.K, self.ctx.n
+                m3 = node.masks.reshape(B, K, n)
+                self._down(node.child, p, (r0[:, None, :] * m3).reshape(B * K, n), (r1[:, None, :] * m3).reshape(B * K, n),
+                           strats, arrive, want, into)
+        else:
             cache = strats[node.player]
             strat = cache.get(id(node))
             if strat is None:
                 strat = cache[id(node)] = node.strategy()
             for a, child in enumerate(node.children):
-                if isinstance(child, Terminal):
+                if isinstance(child, Terminal) and want is None:
                     continue
                 if node.player == p:
-                    self._down(child, p, r0, r1, strats, arrive)
+                    self._down(child, p, r0, r1, strats, arrive, want, into)
                 elif p == 0:
-                    self._down(child, p, r0, r1 * strat[:, a, :], strats, arrive)
+                    self._down(child, p, r0, r1 * strat[:, a, :], strats, arrive, want, into)
                 else:
-                    self._down(child, p, r0 * strat[:, a, :], r1, strats, arrive)
+                    self._down(child, p, r0 * strat[:, a, :], r1, strats, arrive, want, into)
+
+    def _leaf_batch(self, want):
+        """Every equity leaf's matrix products for a pass, as one matrix-matrix product per matrix stack
+        (natively the leaves are memory-bound: one product per leaf read each stack again, ~3/4 of a flop
+        solve). Results wait in self._pre for _showdown."""
+        n = self.ctx.n
+        by_stack: Dict[int, tuple] = {}
+        for node, ro in want:
+            M = self._terminal_M(node)
+            x = ro.astype(np.float32, copy=False).reshape(-1, M.shape[0], n)    # (repeats, matrices, N)
+            by_stack.setdefault(id(M), (M, []))[1].append((node, x))
+        for M, items in by_stack.values():
+            X = items[0][1] if len(items) == 1 else np.concatenate([x for _, x in items])
+            U = np.matmul(X.transpose(1, 0, 2), M.transpose(0, 2, 1)).transpose(1, 0, 2)
+            off = 0
+            for node, x in items:
+                self._pre[id(node)] = U[off:off + len(x)].reshape(-1, n)
+                off += len(x)
 
     def _traverse(self, p, r0, r1, strats):
         """One training pass for p. Same result as _cfr on the root; the merged subtrees run in one batch.
@@ -811,15 +849,23 @@ class Solver:
         if not self._groups:
             return self._cfr(self.root, p, r0, r1, update=True, use_avg=False, strats=strats)
         arrive, done = {}, {}
-        self._down(self.root, p, r0, r1, strats, arrive)
-        for chance, members in self._groups:
-            u = self._cfr(chance, p, np.concatenate([arrive[id(c)][0] for c in members]),
-                          np.concatenate([arrive[id(c)][1] for c in members]), update=True, use_avg=False, strats=strats)
+        want = [] if self.batch_leaves else None
+        self._down(self.root, p, r0, r1, strats, arrive, want)
+        reach = [(np.concatenate([arrive[id(c)][0] for c in members]), np.concatenate([arrive[id(c)][1] for c in members]))
+                 for _, members in self._groups]
+        if want is not None:
+            for (chance, _), (g0, g1) in zip(self._groups, reach):
+                self._down(chance, p, g0, g1, strats, arrive, want, into=True)
+            self._leaf_batch(want)
+        for (chance, members), (g0, g1) in zip(self._groups, reach):
+            u = self._cfr(chance, p, g0, g1, update=True, use_avg=False, strats=strats)
             off = 0
             for c in members:
                 done[id(c)] = u[off:off + len(c.boards)]
                 off += len(c.boards)
-        return self._cfr(self.root, p, r0, r1, update=True, use_avg=False, strats=strats, done=done)
+        u = self._cfr(self.root, p, r0, r1, update=True, use_avg=False, strats=strats, done=done)
+        self._pre.clear()
+        return u
 
     def _discount(self):
         t = float(self.iters)

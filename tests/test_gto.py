@@ -128,11 +128,37 @@ class TestSolverMath(unittest.TestCase):
             fast = solve(board, r_oop, r_ip, pot=5.5, stack=97.5, cfg=cfg, max_iters=0)
             plain = solve(board, r_oop, r_ip, pot=5.5, stack=97.5, cfg=cfg, max_iters=0)
             self.assertTrue(any(len(m) > 1 for _, m in fast.solver._groups))
+            fast.solver.batch_leaves = False      # matrix-matrix products round differently (see the next test)
             fast.solver.run(fast.r0, fast.r1, time_budget=1e9, max_iters=12)
             self._plain_iterations(plain, 12)
             for x, y in zip(fast.solver._nodes, plain.solver._nodes):
                 self.assertTrue(np.array_equal(x.ssum, y.ssum))
                 self.assertTrue(np.array_equal(x.regret, y.regret))
+
+    def test_batched_leaves_match_one_by_one(self):
+        # each pass's equity leaves computed together up front (one matrix-matrix product per matrix stack):
+        # the same updates as computing them leaf by leaf, up to float32 rounding. Regret matching amplifies
+        # rounding (an action tied to the last bit gets all of a combo's weight or none), so the regrets are
+        # compared after one iteration and the solves after many by exploitability
+        from gto.solver import Terminal
+        r_oop = parse_range("22+, A2s+, KTs+, QTs+, JTs, T9s, ATo+, KQo")
+        r_ip = parse_range("22+, A2s+, K5s+, Q8s+, J8s+, T8s+, A8o+, KTo+, QTo+")
+        small = {"flop": [0.33, 0.75], "turn": [0.75], "river": [0.75]}
+        for board, cfg in ((cards("Ks7d2c"), Config(n_turns=2, leaf_turns=2, leaf_rivers_flop=2, n_rivers_from_flop=2,
+                                                     bet_sizes=small, raise_sizes=small)),
+                           (cards("Ks7d2cTh"), Config(n_rivers=4, bet_sizes=small, raise_sizes=small, allin_spr=20))):
+            a = solve(board, r_oop, r_ip, pot=5.5, stack=97.5, cfg=cfg, max_iters=0)
+            b = solve(board, r_oop, r_ip, pot=5.5, stack=97.5, cfg=cfg, max_iters=0)
+            a.solver.batch_leaves, b.solver.batch_leaves = True, False
+            for s in (a, b):
+                s.solver.run(s.r0, s.r1, time_budget=1e9, max_iters=1)
+            self.assertTrue(any(isinstance(t, Terminal) and t.kind == "leaf" for n in a.solver._nodes for t in n.children))
+            for x, y in zip(a.solver._nodes, b.solver._nodes):
+                for u, v in ((x.ssum, y.ssum), (x.regret, y.regret)):
+                    self.assertLess(np.abs(u - v).max(), 1e-4 * max(np.abs(v).max(), 1.0))
+            for s in (a, b):
+                s.extend(1e9, max_iters=150)
+            self.assertLess(abs(a.exploitability() - b.exploitability()), 0.1 * b.exploitability())
 
     def test_compat_sum_kernels(self):
         # the opponent mass sharing no card with each combo: per-card sums (NO_BLAS) = the member product = brute force
