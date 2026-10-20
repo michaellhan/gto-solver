@@ -199,9 +199,13 @@ class TestSolverMath(unittest.TestCase):
         r_oop = parse_range("22+, A2s+, KTs+, QTs+, JTs, T9s, ATo+, KQo")
         r_ip = parse_range("22+, A2s+, K5s+, Q8s+, J8s+, T8s+, A8o+, KTo+, QTo+")
         small = {"flop": [0.33, 0.75], "turn": [0.75], "river": [0.75]}
-        for board, cfg in ((cards("Ks7d2c"), Config(n_turns=2, leaf_turns=2, leaf_rivers_flop=2, n_rivers_from_flop=2,
-                                                     bet_sizes=small, raise_sizes=small)),
-                           (cards("Ks7d2cTh"), Config(n_rivers=4, bet_sizes=small, raise_sizes=small, allin_spr=20))):
+        # (the flop with random turns and the river checked down, and with the default turn classes and river play,
+        # whose deeper trees sum more leaves: more rounding)
+        for board, cfg, tol in ((cards("Ks7d2c"), Config(n_turns=2, leaf_turns=2, leaf_rivers_flop=2, n_rivers_from_flop=2,
+                                                          bet_sizes=small, raise_sizes=small, river_play=False,
+                                                          turn_classes=False), 1e-4),
+                                (cards("Ks7d2c"), Config(bet_sizes=small, raise_sizes=small), 3e-4),
+                                (cards("Ks7d2cTh"), Config(n_rivers=4, bet_sizes=small, raise_sizes=small, allin_spr=20), 1e-4)):
             a = solve(board, r_oop, r_ip, pot=5.5, stack=97.5, cfg=cfg, max_iters=0)
             b = solve(board, r_oop, r_ip, pot=5.5, stack=97.5, cfg=cfg, max_iters=0)
             a.solver.batch_leaves, b.solver.batch_leaves = True, False
@@ -210,7 +214,7 @@ class TestSolverMath(unittest.TestCase):
             self.assertTrue(any(isinstance(t, Terminal) and t.kind == "leaf" for n in a.solver._nodes for t in n.children))
             for x, y in zip(a.solver._nodes, b.solver._nodes):
                 for u, v in ((x.ssum, y.ssum), (x.regret, y.regret)):
-                    self.assertLess(np.abs(u - v).max(), 1e-4 * max(np.abs(v).max(), 1.0))
+                    self.assertLess(np.abs(u - v).max(), tol * max(np.abs(v).max(), 1.0))
             for s in (a, b):
                 s.extend(1e9, max_iters=150)
             self.assertLess(abs(a.exploitability() - b.exploitability()), 0.1 * b.exploitability())
@@ -239,18 +243,22 @@ class TestSolverMath(unittest.TestCase):
         r_oop = parse_range("22+, A2s+, KTs+, QTs+, JTs, T9s, ATo+, KQo")
         r_ip = parse_range("22+, A2s+, K5s+, Q8s+, J8s+, T8s+, A8o+, KTo+, QTo+")
         small = {"flop": [0.33, 0.75], "turn": [0.75], "river": [0.75]}
-        cfg = Config(n_turns=2, leaf_turns=2, leaf_rivers_flop=2, n_rivers_from_flop=2, bet_sizes=small, raise_sizes=small)
-        # float32 sums in a different order drift apart early on (60 iterations: up to 0.08% of the pot), less so later
-        ref = solve(board, r_oop, r_ip, pot=5.5, stack=97.5, cfg=cfg, max_iters=150, time_budget=1e9)
-        S.NO_BLAS = True
-        try:
-            sol = solve(board, r_oop, r_ip, pot=5.5, stack=97.5, cfg=cfg, max_iters=150, time_budget=1e9)
-            self.assertIsNotNone(sol.solver._live)
-            self.assertLess(abs(sol.exploitability() - ref.exploitability()), 0.05)
-            live = sol.r0 > 0
-            self.assertLess(np.abs(sol.evs[:, sol.ctx.active][:, live] - ref.evs[:, ref.ctx.active][:, live]).max(), 0.2)
-        finally:
-            S.NO_BLAS = False
+        # (the browser's Accurate flop tree, the default, and its Fast one: random turns, the river checked down)
+        for kw in ({}, dict(river_play=False, turn_classes=False)):
+            cfg = Config(n_turns=2, leaf_turns=2, leaf_rivers_flop=2, n_rivers_from_flop=2, bet_sizes=small,
+                         raise_sizes=small, **kw)
+            # float32 sums in a different order drift apart early on (60 iterations: up to 0.08% of the pot), less
+            # so later; the default's deeper tree drifts more (150 iterations: 0.71% and 0.77% of the pot)
+            ref = solve(board, r_oop, r_ip, pot=5.5, stack=97.5, cfg=cfg, max_iters=150, time_budget=1e9)
+            S.NO_BLAS = True
+            try:
+                sol = solve(board, r_oop, r_ip, pot=5.5, stack=97.5, cfg=cfg, max_iters=150, time_budget=1e9)
+                self.assertIsNotNone(sol.solver._live)
+                self.assertLess(abs(sol.exploitability() - ref.exploitability()), max(0.05, 0.12 * ref.exploitability()))
+                live = sol.r0 > 0
+                self.assertLess(np.abs(sol.evs[:, sol.ctx.active][:, live] - ref.evs[:, ref.ctx.active][:, live]).max(), 0.2)
+            finally:
+                S.NO_BLAS = False
 
     def test_match_action(self):
         names = ["check", "bet 33%", "bet 75%"]
@@ -1342,6 +1350,136 @@ class TestAccuracy(unittest.TestCase):
             self.assertTrue(lo <= pct <= hi, f"{pos} opens {pct:.1f}%")
 
 
+# Published flop strategies, 6-max cash 100bb, BTN opens 2.5x and BB calls (SRP) or CO opens, BTN 3bets and CO calls
+# (3bet). (spot, board, statistic, low, high, source). Statistics: "cbet" (the in-position player's bets when checked
+# to, % of its range), "small" (its smallest size), "check" (the out-of-position player's checks), "vs small: fold /
+# call / raise" (the checker's response to the smallest bet). Bounds are wide where the sources differ in bet sizes
+# (a 25% minimum bet raises frequencies: GTO Wizard's all-flop BTN c-bet is 53% with a 33% minimum and 64% with 27%)
+# or come from undisclosed engines. "*" marks the less certain ones.
+FLOP_REFERENCES = [
+    # K-high dry: among the most c-bet flops, mostly small. BeyondGTO's spot table K72r 98% (*: undisclosed tree);
+    # Upswing (Ace-high flops podcast): K83 from MP vs BB ~100% at a third pot; GTO Wizard's C-betting heuristics: 8- to
+    # K-high flops are bet more than A-high
+    ("srp", "Kd7c2h", "cbet", 65, 100, "BeyondGTO 98% *, Upswing K83 ~100%"),
+    ("srp", "Kd7c2h", "small", 50, 100, "RangeConverter 6max 100bb aggregate: 1/3 pot the most common size"),
+    ("srp", "Kd7c2h", "vs small: raise", 6, 22, "RangeConverter aggregate x/r 14%; ThinkGTO A74 15.4%"),
+    # high paired: range bet small. GTO Wizard (The mechanics of c-bet sizing) QQ6: high frequency, mostly 33%, BB checks
+    # 100% and against the 33% bet folds 37 / calls 39 / raises 24; ThinkGTO 25/80 tree QQ6 98.8%; RangeConverter "high
+    # paired boards are bet nearly 100%"
+    ("srp", "QsQd6c", "cbet", 80, 100, "GTO Wizard QQ6, ThinkGTO 98.8%, RangeConverter ~100%"),
+    ("srp", "QsQd6c", "small", 75, 100, "GTO Wizard QQ6 mostly 33%"),
+    ("srp", "QsQd6c", "check", 95, 100, "GTO Wizard QQ6 BB checks 100%"),
+    # (*: the big blind here flats more hands preflop, so it folds more and calls less: 47 / 30 / 23)
+    ("srp", "QsQd6c", "vs small: fold", 27, 52, "GTO Wizard QQ6 37% *"),
+    ("srp", "QsQd6c", "vs small: call", 25, 49, "GTO Wizard QQ6 39% *"),
+    ("srp", "QsQd6c", "vs small: raise", 14, 34, "GTO Wizard QQ6 24%"),
+    # A-high: bet less than K-high. ThinkGTO 25/80 As7h4d 67.3% (62.2 small), BB vs 25%: 34.6 / 50.0 / 15.4;
+    # PeakGTO via PokerCoaching As7c2h ~43%, As9h3c 57% (*: trees not given); Upswing A87/A86/A76 55-60%
+    ("srp", "As7h4d", "cbet", 40, 80, "ThinkGTO 67%, PeakGTO 43-57% *, Upswing 55-60%"),
+    ("srp", "As7h4d", "vs small: raise", 6, 24, "ThinkGTO 15.4% (25% bet)"),
+    # low connected: RangeConverter low boards 40-60%; BeyondGTO 543r 49%, 942r 58% *; GTO Wizard 40bb: BB donks ~7% on
+    # connected flops (2% over all flops; 100bb cash trees often leave the donk out)
+    ("srp", "7h6d5c", "cbet", 30, 60, "RangeConverter low boards 40-60%, BeyondGTO 543 49% *"),
+    ("srp", "7h6d5c", "check", 80, 100, "GTO Wizard BB checks 98% of flops, ~93% on connected ones *"),
+    # monotone: bet much less than rainbow (GTO Wizard heuristics); QdJdTd ~50/50 (GTO Wizard), T98 monotone 55% *
+    ("srp", "Kh7h2h", "cbet", 30, 65, "GTO Wizard QJT monotone ~50%, BeyondGTO T98 monotone 55% *"),
+    # 3bet pots: the in-position 3-bettor (BTN vs CO) checks 19.7% of all flops (GTO Wizard, Crush 3-bet pots OOP),
+    # c-bets "more than 80%" (GTO Wizard, turn probing); dry K-high near 100%
+    ("3bet", "Kd7c2h", "cbet", 85, 100, "GTO Wizard IP 3-bettor c-bets ~80% of all flops; dry K-high higher"),
+    ("3bet", "Ah8c3d", "cbet", 65, 100, "GTO Wizard ~80% of all flops"),
+]
+
+
+class TestFlopStrategy(unittest.TestCase):
+    """Flop solves against published solver frequencies (FLOP_REFERENCES), and the tree pieces behind them: the river
+    beyond `depth` played with its betting (river_play) and one turn per rank class (turn_classes)."""
+
+    ITERS = 150
+    _sols = {}
+
+    @classmethod
+    def solve_spot(cls, kind, board):
+        key = (kind, board)
+        if key not in cls._sols:
+            from gto.advisor import preflop_ranges
+            pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}]
+            if kind == "srp":
+                pre += [{"pos": "CO", "action": "fold"}, {"pos": "BTN", "action": "raise", "to": 2.5},
+                        {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
+                oop, ip, pot, stack = "BB", "BTN", 5.5, 97.5
+            else:
+                pre += [{"pos": "CO", "action": "raise", "to": 2.5}, {"pos": "BTN", "action": "raise", "to": 7.5},
+                        {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "fold"}, {"pos": "CO", "action": "call"}]
+                oop, ip, pot, stack = "CO", "BTN", 16.5, 92.5
+            rng = preflop_ranges(pre, pf.Table(pf.SEATS[6]), 100)
+            cls._sols[key] = solve(cards(board), rng[oop], rng[ip], pot, stack, cfg=Config(),
+                                   time_budget=1e9, max_iters=cls.ITERS)
+        return cls._sols[key]
+
+    @staticmethod
+    def stats(sol) -> dict:
+        root, r0, r1 = sol.root, sol.r0, sol.r1
+        st0 = root.avg_strategy0()
+        ipn = root.children[0]
+        st1 = ipn.avg_strategy0()
+        bets = [a for a, n in enumerate(ipn.names) if n != "check"]
+        out = {"check": (st0[0] * r0).sum() / r0.sum() * 100,
+               "cbet": sum((st1[a] * r1).sum() for a in bets) / r1.sum() * 100,
+               "small": (st1[bets[0]] * r1).sum() / r1.sum() * 100}
+        node, reach = ipn.children[bets[0]], r0 * st0[0]
+        s = node.avg_strategy0()
+        for b, m in enumerate(node.names):
+            k = "vs small: " + ("raise" if m.startswith("raise") or m == "all-in" else m)
+            out[k] = out.get(k, 0.0) + (s[b] * reach).sum() / reach.sum() * 100
+        return out
+
+    def test_published_frequencies(self):
+        for kind, board, stat, lo, hi, src in FLOP_REFERENCES:
+            v = self.stats(self.solve_spot(kind, board))[stat]
+            self.assertTrue(lo <= v <= hi, f"{kind} {board} {stat} {v:.1f} not in [{lo}, {hi}] ({src})")
+
+    def test_texture_ordering(self):
+        # GTO Wizard's c-betting heuristics: A-high flops are bet less than K-high, monotone and low connected ones much less
+        c = {b: self.stats(self.solve_spot("srp", b))["cbet"] for b in ("Kd7c2h", "As7h4d", "7h6d5c", "Kh7h2h")}
+        self.assertGreater(c["Kd7c2h"], c["As7h4d"])
+        self.assertGreater(c["Kd7c2h"], c["7h6d5c"] + 15)
+        self.assertGreater(c["Kd7c2h"], c["Kh7h2h"] + 15)
+
+    def test_turn_classes_cover_every_turn(self):
+        ctx = Ctx(np.arange(N_FULL), Config())
+        for flop, n_cls in (("Kd7c2h", 13), ("9h8h6c", 13 + 11), ("Kh7h2h", 13 + 10)):
+            f = tuple(cards(flop))
+            cls = ctx.turn_classes(f, set(f))
+            self.assertEqual(len(cls), n_cls, flop)
+            every = sorted(c for _, cs in cls for c in cs)
+            self.assertEqual(every, [c for c in range(52) if c not in f])
+            for played, cs in cls:
+                self.assertIn(played, cs)
+                self.assertEqual(len({c // 4 for c in cs}), 1)          # one rank
+                suits = [c % 4 for c in cs]
+                flushy = {x for x in range(4) if [c % 4 for c in f].count(x) >= 2}
+                self.assertTrue(len(cs) == 1 or not flushy & set(suits))  # a flush suit's cards stand alone
+
+    def test_river_play_without_bets_is_the_checked_down_leaf(self):
+        # with no river bets the river played on the turn's boards is a check-down: the same EVs as the equity leaf
+        hero, vr = cards("AhAs"), parse_range("KK, 88, QQ, JTs, 76s, A5s")
+        turn_only = {"flop": [], "turn": [0.75], "river": []}
+        for tc in (False, True):
+            evs = []
+            for rp in (False, True):
+                cfg = Config(bet_sizes=turn_only, raise_sizes={s: [] for s in ("flop", "turn", "river")}, allin_spr=0,
+                             river_play=rp, turn_classes=tc, later_sizes=None, n_turns=49)
+                sol = solve(cards("Kh8d5c"), parse_range("AA, KQs"), vr, pot=10, stack=100, time_budget=1e9,
+                            max_iters=30, cfg=cfg)
+                evs.append(sol.evs[:, sol.ctx.active])
+            self.assertTrue(np.allclose(evs[0], evs[1], atol=1e-3))
+        # and checked down from the flop with every turn, a turn class each is close to the exact pot x equity
+        cfg = Config(bet_sizes={s: [] for s in ("flop", "turn", "river")}, raise_sizes={s: [] for s in ("flop", "turn", "river")},
+                     allin_spr=0, later_sizes=None)
+        sol = solve(cards("Kh8d5c"), parse_range("AA"), vr, pot=10, stack=100, time_budget=1e9, max_iters=3, cfg=cfg)
+        self.assertAlmostEqual(sol.for_combo(tuple(hero))["check"][1], 10 * _exact_equity(cards("Kh8d5c"), hero, vr), delta=0.15)
+
+
 class TestExploit(unittest.TestCase):
     """Exploit mode: opponents play like a typical player pool (gto/exploit.py) and hero best-responds."""
 
@@ -1590,7 +1728,7 @@ class TestExploit(unittest.TestCase):
         # (the page's Fast tree, one turn size: there the overbet is rare)
         fast = Config(n_turns=3, n_rivers=8, leaf_turns=4, leaf_rivers_flop=4, n_rivers_from_flop=4,
                       bet_sizes={"flop": [0.33, 0.75], "turn": [0.75], "river": [0.75]},
-                      raise_sizes={"flop": [0.5], "turn": [0.75], "river": [0.75]})
+                      raise_sizes={"flop": [0.5], "turn": [0.75], "river": [0.75]}, river_play=False, turn_classes=False)
         res = Advisor(fast, time_budget=1, prior_budget=0.5).advise(st)
         self.assertGreater(res["villain_range_combos"], 10)
         ev = {a["action"]: a["ev_bb"] for a in res["actions"]}
@@ -2419,7 +2557,8 @@ class TestRake(unittest.TestCase):
         for board, depth, rate, cap in (("Kh8d5c3s", 2, 0.05, None), ("Kh8d5c", 1, 0.05, 0.3), ("Kh8d5c", 2, 0.1, 3.0),
                                         ("Kh8d5c3s2h", 1, 0.05, 3.0)):
             cfg = Config(bet_sizes=self.NO_BETS, raise_sizes=self.NO_BETS, allin_spr=0, depth=depth,
-                         n_turns=49, leaf_turns=49, leaf_rivers_flop=48, rake_rate=rate, rake_cap=cap)
+                         n_turns=49, leaf_turns=49, leaf_rivers_flop=48, rake_rate=rate, rake_cap=cap,
+                         turn_classes=False, later_sizes=None)
             b = cards(board)
             sol = solve(b, parse_range("AA"), vr, pot=10, stack=100, time_budget=100, max_iters=2, cfg=cfg)
             ev = sol.for_combo(tuple(hero))["check"][1]
@@ -2468,26 +2607,30 @@ class TestRake(unittest.TestCase):
         import gto.solver as S
         r0 = parse_range("22+, A2s+, K9s+, QTs+, JTs, ATo+, KJo+")
         r1 = parse_range("33+, A5s+, KTs+, QJs, AJo+, KQo")
-        cfg = Config(n_turns=2, leaf_turns=2, leaf_rivers_flop=2, n_rivers_from_flop=2, rake_rate=0.05, rake_cap=3.0)
-        sol = solve(cards("Ks7d2c"), r0, r1, pot=10, stack=90, cfg=cfg, max_iters=6, time_budget=100)
-        s = sol.solver
-        a, b = sol.r0[None, :].astype(np.float32), sol.r1[None, :].astype(np.float32)
-        live = (np.flatnonzero(sol.r0 > 0), np.flatnonzero(sol.r1 > 0))
-        # the root and the merged subtrees (tiled equity leaves), each player, current strategies
-        spots = [(s.root, a, b)] + [(m, np.repeat(a, len(m.boards), axis=0), np.repeat(b, len(m.boards), axis=0))
-                                    for m, _ in s._groups]
-        self.assertTrue(any(m.child.children[0].children[0].tile for m, _ in s._groups if hasattr(m, "child")))
-        saved = S.NO_BLAS
-        try:
-            for node, x0, x1 in spots:
-                for p in (0, 1):
-                    S.NO_BLAS, s._live, s._trimmed = False, None, {}
-                    ref = s._cfr(node, p, x0, x1, update=False, use_avg=False)
-                    S.NO_BLAS, s._live = True, live
-                    got = s._cfr(node, p, x0, x1, update=False, use_avg=False, strats=({}, {}))   # a training pass
-                    self.assertLess(np.abs(ref - got)[:, live[p]].max(), 1e-5 * np.abs(ref).max())
-        finally:
-            S.NO_BLAS, s._live, s._trimmed = saved, None, {}
+        # (the browser's Fast flop tree: random turns, the river checked down; and the default: turn classes, the
+        # river played on the turn's boards)
+        for cfg in (Config(n_turns=2, leaf_turns=2, leaf_rivers_flop=2, n_rivers_from_flop=2, rake_rate=0.05, rake_cap=3.0,
+                           river_play=False, turn_classes=False), Config(rake_rate=0.05, rake_cap=3.0)):
+            sol = solve(cards("Ks7d2c"), r0, r1, pot=10, stack=90, cfg=cfg, max_iters=6, time_budget=100)
+            s = sol.solver
+            a, b = sol.r0[None, :].astype(np.float32), sol.r1[None, :].astype(np.float32)
+            live = (np.flatnonzero(sol.r0 > 0), np.flatnonzero(sol.r1 > 0))
+            # the root and the merged subtrees (tiled equity leaves), each player, current strategies
+            spots = [(s.root, a, b)] + [(m, np.repeat(a, len(m.boards), axis=0), np.repeat(b, len(m.boards), axis=0))
+                                        for m, _ in s._groups]
+            leaf = lambda n: n if not hasattr(n, "children") else leaf(n.children[0])
+            self.assertTrue(any(leaf(m.child).tile for m, _ in s._groups if hasattr(m, "child")))
+            saved = S.NO_BLAS
+            try:
+                for node, x0, x1 in spots:
+                    for p in (0, 1):
+                        S.NO_BLAS, s._live, s._trimmed = False, None, {}
+                        ref = s._cfr(node, p, x0, x1, update=False, use_avg=False)
+                        S.NO_BLAS, s._live = True, live
+                        got = s._cfr(node, p, x0, x1, update=False, use_avg=False, strats=({}, {}))   # a training pass
+                        self.assertLess(np.abs(ref - got)[:, live[p]].max(), 1e-5 * np.abs(ref).max())
+            finally:
+                S.NO_BLAS, s._live, s._trimmed = saved, None, {}
 
     def test_preflop_fold_has_no_rake(self):
         # pots that end preflop aren't raked: opens, and the steal's folds, are the chart's with rake on

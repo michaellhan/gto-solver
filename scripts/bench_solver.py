@@ -8,6 +8,11 @@ fixed 150 iterations. Prints iterations/second and the exploitability reached.
 --save writes each board's root average strategy to an .npz; --compare checks a run against one
 (speedups must leave the results unchanged).
 
+Flop strategies (--flop): c-bet frequency and sizes, the defender's check and its response to each bet, per board
+and config, solved for --budget seconds (wall clock).
+
+    python scripts/bench_solver.py --flop [--spots K72,QQ6] [--configs fast,accurate,native] [--budget 8] [--noblas]
+
 Curves (--curve): exploitability (% of the pot) against solving time for a set of spots (single-raised and
 3bet pots; dry, wet, monotone and paired flops, a turn, a river) with the browser's Fast and Accurate
 configs and the native default. Exploitability is measured at fixed iteration counts (deterministic) and
@@ -31,9 +36,14 @@ from gto.solver import Config, solve
 
 LS = dict(bet_sizes={"flop": [0.33, 0.75], "turn": [0.75], "river": [0.75]},
           raise_sizes={"flop": [0.5], "turn": [0.75], "river": [0.75]})
-FAST = dict(n_turns=3, n_rivers=8, leaf_turns=4, leaf_rivers_flop=4, n_rivers_from_flop=4, **LS)
+FAST = dict(n_turns=3, n_rivers=8, leaf_turns=4, leaf_rivers_flop=4, n_rivers_from_flop=4, river_play=False,
+            turn_classes=False, **LS)
 ACCURATE = dict(n_turns=4, leaf_turns=4, leaf_rivers_flop=8, n_rivers_from_flop=8, **LS)
-CONFIGS = {"fast": FAST, "accurate": ACCURATE, "native": {}}
+# the browser's configs (static/worker.js) and Config()'s defaults; "every-turn" plays every turn card from the
+# flop (the reference the turn classes are measured against: slow), "accurate-old" is Accurate before river_play
+# and turn_classes (4 random turns, the river checked down)
+CONFIGS = {"fast": FAST, "accurate": ACCURATE, "native": {}, "every-turn": dict(ACCURATE, turn_classes=False, n_turns=49),
+           "accurate-old": dict(ACCURATE, river_play=False, turn_classes=False)}
 BOARDS = ["Qs8d3c", "Kd7c2h", "9h8h6c"]
 ITERS = 150
 
@@ -120,10 +130,67 @@ def run_curves(args):
             json.dump(rows, f)
 
 
+# --flop: BTN vs BB single-raised pots and CO vs BTN 3bet pots on a spread of textures (see tests TestFlopStrategy)
+FLOP_BOARDS = {"K72": "Kd7c2h", "QQ6": "QsQd6c", "A74": "As7h4d", "883": "8s8d3c", "765": "7h6d5c", "J95": "Jc9d5h",
+               "Kh7h2h": "Kh7h2h", "986": "9h8h6c", "T98": "Th9c8d", "3b-K72": "Kd7c2h", "3b-A83": "Ah8c3d",
+               "3b-765": "7h6d5c"}
+
+
+def flop_stats(sol) -> dict:
+    """The flop root's aggregate frequencies: the out-of-position player's check, the in-position player's
+    actions after it, and the out-of-position player's response to each of those bets."""
+    root, r0, r1 = sol.root, sol.r0, sol.r1
+    st0 = root.avg_strategy0()
+    out = {"oop check": float((st0[0] * r0).sum() / r0.sum())}
+    ipn = root.children[0]
+    st1 = ipn.avg_strategy0()
+    for a, name in enumerate(ipn.names):
+        out[name] = float((st1[a] * r1).sum() / r1.sum())
+        if name != "check":
+            reach = r0 * st0[0]
+            s = ipn.children[a].avg_strategy0()
+            resp = {}
+            for b, m in enumerate(ipn.children[a].names):
+                k = "raise" if m.startswith("raise") or m == "all-in" else m
+                resp[k] = resp.get(k, 0.0) + float((s[b] * reach).sum() / reach.sum())
+            out["vs " + name] = resp
+    return out
+
+
+def run_flop(args):
+    """Flop strategies per board and config under a wall-clock budget (Pyodide has no process clock)."""
+    if args.noblas:
+        S.NO_BLAS = True
+    rng = {"srp": ranges(SRP), "3b": ranges(THREEBET)}
+    rows = {}
+    for name in (args.spots.split(",") if args.spots else list(FLOP_BOARDS)):
+        board = FLOP_BOARDS[name]
+        if name.startswith("3b-"):
+            r0, r1, pot, stack = rng["3b"]["CO"], rng["3b"]["BTN"], 16.5, 92.5
+        else:
+            r0, r1, pot, stack = rng["srp"]["BB"], rng["srp"]["BTN"], 5.5, 97.5
+        for c in args.configs.split(","):
+            t0 = time.time()
+            sol = solve(cards(board), r0, r1, pot, stack, cfg=Config(**CONFIGS[c]), time_budget=args.budget, max_iters=10000)
+            st = flop_stats(sol)
+            st["iters"], st["seconds"] = sol.iters, time.time() - t0
+            rows[f"{name}/{c}"] = st
+            bets = {k: v for k, v in st.items() if k.startswith(("bet", "all-in"))}
+            resp = " ".join(f"{k[3:]}: " + "/".join(f"{a[0]}{v * 100:.0f}" for a, v in r.items())
+                            for k, r in st.items() if k.startswith("vs "))
+            print(f"{name:7s} {c:9s} check {st['oop check'] * 100:3.0f} | c-bet {sum(bets.values()) * 100:5.1f} = "
+                  + " ".join(f"{k}: {v * 100:.0f}" for k, v in bets.items()) + f" | {resp} | {sol.iters} it {st['seconds']:.1f}s",
+                  flush=True)
+    if args.out:
+        with open(args.out, "w") as f:
+            json.dump(rows, f)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--save"); ap.add_argument("--compare")
     ap.add_argument("--curve", action="store_true")
+    ap.add_argument("--flop", action="store_true")
     ap.add_argument("--noblas", action="store_true")
     ap.add_argument("--spots"); ap.add_argument("--configs", default="fast,accurate")
     ap.add_argument("--budget", type=float, default=8.0)
@@ -131,6 +198,8 @@ def main():
     args = ap.parse_args()
     if args.curve:
         return run_curves(args)
+    if args.flop:
+        return run_flop(args)
     if args.noblas:
         S.NO_BLAS = True
     rng = ranges(SRP)

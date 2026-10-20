@@ -10,7 +10,9 @@ Speed tricks (pure Python + numpy):
   regret/strategy array is (B, actions, combos). That makes enumerating every
   river from the turn cheap.
 * streets beyond `depth` are replaced by equity leaves that average the
-  showdown matrices over the remaining runouts
+  showdown matrices over the remaining runouts; from the flop, the river beyond
+  `depth` is still bet on (river_play), and the turns are one per rank class
+  (turn_classes)
 """
 from __future__ import annotations
 import random
@@ -62,6 +64,19 @@ class Config:
     leaf_turns: int = 6               # sampled turns for equity leaves reached from the flop
     leaf_rivers: Optional[int] = None # rivers for equity leaves when solving from the turn (None = all)
     leaf_rivers_flop: int = 16        # rivers per turn card for equity leaves when solving from the flop
+    # From the flop (see README, Accuracy vs speed):
+    # river_play: the river beyond `depth` keeps its betting, played without seeing the river card (its showdowns
+    # are the turn's equity leaves), instead of being checked down. A checked-down river gave position and
+    # betting no value there: BTN c-bet a third pot on QQ6 under 60% where every turn with river betting has 88%.
+    river_play: bool = True
+    # turn_classes: one turn card per rank (a flush suit's cards apart), weighted by the turns it stands for,
+    # instead of n_turns random turns. A few fixed turns let the flop's ranges fit the cards that come (BB's calls
+    # the hands that pair them): with river betting 8 random turns had K72's c-bet at 68-94% by seed, every turn 97%.
+    turn_classes: bool = True
+    # later_sizes: bet and raise sizes for the turn and river inside a flop solve ({"bet": {...}, "raise": {...}};
+    # None = bet_sizes and raise_sizes). One size there moved the flop's c-bet by about a point on K72 and 765.
+    later_sizes: Optional[dict] = field(default_factory=lambda: {
+        "bet": {"turn": [0.75], "river": [0.75]}, "raise": {"turn": [0.75], "river": [0.75]}})
     seed: int = 7
     # rake: the winner of a postflop pot (showdown or fold) pays rake_rate of the final pot (without an
     # uncalled bet, which goes back), at most
@@ -83,11 +98,16 @@ class Config:
                       n_turns=self.n_turns, n_rivers=self.n_rivers, river_sample=self.river_sample,
                       n_rivers_from_flop=self.n_rivers_from_flop,
                       leaf_turns=self.leaf_turns, leaf_rivers=self.leaf_rivers, leaf_rivers_flop=self.leaf_rivers_flop,
+                      river_play=self.river_play, turn_classes=self.turn_classes,
+                      later_sizes=None if self.later_sizes is None else
+                      {k: {st: list(v) for st, v in d.items()} for k, d in self.later_sizes.items()},
                       seed=self.seed, rake_rate=self.rake_rate, rake_cap=self.rake_cap)
 
     def sizes_key(self) -> tuple:
         return (tuple((k, tuple(v)) for k, v in sorted(self.bet_sizes.items())),
-                tuple((k, tuple(v)) for k, v in sorted(self.raise_sizes.items())), self.depth, self.max_raises) + \
+                tuple((k, tuple(v)) for k, v in sorted(self.raise_sizes.items())), self.depth, self.max_raises,
+                None if self.later_sizes is None else
+                tuple((k, tuple((st, tuple(v)) for st, v in sorted(d.items()))) for k, d in sorted(self.later_sizes.items()))) + \
             ((("rake", self.rake_rate, self.rake_cap),) if self.rake_rate > 0 else ())
 
 
@@ -175,6 +195,25 @@ class Ctx:
             cached = (self.rng.sample(cached[0], len(cached[0])), True)
         self._turn_picks[key] = cached
         return sorted(cached[0][:k])
+
+    def turn_classes(self, flop: tuple, dead: set) -> list:
+        """Every turn card in a class: [(the card played, the class's cards)], sorted. A class is one rank's cards,
+        except that a suit with two or more cards on the flop has its own class per rank (its flush draws); the
+        rest of the rank is played as one of its suits, rotating over the flop's suits rank by rank."""
+        avail = [c for c in range(52) if c not in dead and c not in flop]
+        fs = [c % 4 for c in flop]
+        flushy = {x for x in range(4) if fs.count(x) >= 2}
+        order = [x for x in sorted(set(fs), key=lambda x: -fs.count(x)) + [x for x in range(4) if x not in fs]
+                 if x not in flushy]
+        out = []
+        for r in range(13):
+            cs = [c for c in avail if c // 4 == r]
+            out += [(c, (c,)) for c in cs if c % 4 in flushy]
+            rest = [c for c in cs if c % 4 not in flushy]
+            if rest:
+                pref = order[r % len(order):] + order[:r % len(order)]
+                out.append((next(c for x in pref for c in rest if c % 4 == x), tuple(rest)))
+        return sorted(out)
 
     def leaf_matrix(self, board: tuple, dead: set) -> np.ndarray:
         """Average showdown matrix over the remaining runout(s) from `board`."""
@@ -371,25 +410,38 @@ class Chance:
     With `sample` set, each traversal visits a fresh random subset of `sample` of the K
     cards (public chance sampling). Every card keeps its own strategy, so the solver still
     solves the real game rather than one where only a few fixed cards can come."""
-    __slots__ = ("boards", "K", "masks", "child", "norm", "avail", "sample")
+    __slots__ = ("boards", "K", "masks", "child", "norm", "avail", "sample", "umasks")
 
-    def __init__(self, boards, K, masks, child, avail, sample=None):
+    def __init__(self, boards, K, masks, child, avail, sample=None, umasks=None):
         self.boards, self.K, self.masks, self.child = boards, K, masks, child
         self.avail = avail
         self.sample = sample if sample is not None and sample < K else None
+        # a child standing for several cards (turn_classes): masks are the share of its cards a combo leaves live
+        # (its reach there), umasks how many (its utility's weight); a pair's weight is then symmetric, and with
+        # every combo's utility over the same divisor (as with every card enumerated) the game stays zero-sum
+        self.umasks = umasks
         B = len(boards)
-        self.norm = self.norm_for(masks.reshape(B, K, -1))
+        if umasks is None:
+            self.norm = self.norm_for(masks.reshape(B, K, -1))
+        else:
+            self.norm = np.full((B, masks.shape[1]), float(avail - 4), dtype=np.float32)
 
     def norm_for(self, m3: np.ndarray) -> np.ndarray:
         """m3: (B, k, N) masks of the traversed cards -> (B, N) divisor."""
         return np.maximum(m3.sum(axis=1) * ((self.avail - 4) / (self.avail - 2)), 1e-9)
 
+    def weights(self, rows=None) -> np.ndarray:
+        """(B, K, N) weights of each child's utility, for batch rows `rows` (None = all)."""
+        m = (self.masks if self.umasks is None else self.umasks).reshape(-1, self.K, self.masks.shape[1])
+        return m if rows is None else m[rows]
+
 
 class Decision:
-    __slots__ = ("boards", "player", "names", "children", "regret", "ssum", "pot_now", "bets", "B")
+    __slots__ = ("boards", "player", "names", "children", "regret", "ssum", "pot_now", "bets", "B", "blind")
 
-    def __init__(self, boards, player, names, children, pot_now, bets, n):
+    def __init__(self, boards, player, names, children, pot_now, bets, n, blind=False):
         self.boards, self.player, self.names, self.children = boards, player, names, children
+        self.blind = blind        # a river decision played on the turn's boards (river_play)
         self.pot_now, self.bets = pot_now, bets
         self.B = len(boards)
         A = len(names)
@@ -431,6 +483,7 @@ class TreeBuilder:
         self.dead = set(dead)
         self.n_nodes = 0
         self.root_street_len = 0
+        self._blind = False       # building a river played without its card (river_play)
 
     def build(self, board, pot, stack, bets=(0.0, 0.0), to_act=0, n_raises=0, inv=None):
         board = tuple(board)
@@ -445,10 +498,17 @@ class TreeBuilder:
         new_stack = stack - max(bets)
         if len(boards[0]) == 5:
             return Terminal(boards, "showdown", inv, rake=self._rake(inv))
-        if allin or new_stack <= 1e-9:
+        if allin or new_stack <= 1e-9 or self._blind:
             return Terminal(boards, "leaf", inv, rake=self._rake(inv))
         streets_used = len(boards[0]) - self.root_street_len + 1
         if streets_used >= self.cfg.depth:
+            if self.cfg.river_play and self.root_street_len == 3 and len(boards[0]) == 4:
+                # the river's betting on the turn's boards; its showdowns are the turn's equity leaves (every river)
+                self._blind = True
+                try:
+                    return self._decision(boards, new_pot, new_stack, (0.0, 0.0), 0, 0, inv, False)
+                finally:
+                    self._blind = False
             # an equity leaf: raked on the pot as it stands. The leaf pays equity x this pot (later bets
             # aren't modelled, neither the chips they'd add nor their rake), so raking this pot keeps the
             # rake's share of what the leaf pays right uncapped; with a cap, the bigger final pot's share
@@ -471,6 +531,8 @@ class TreeBuilder:
 
     def _chance(self, boards, pot, stack, inv):
         cfg = self.cfg
+        if len(boards[0]) == 3 and cfg.turn_classes:
+            return self._turn_classes(boards, pot, stack, inv)
         sample = None
         if len(boards[0]) == 3:
             k = cfg.n_turns
@@ -496,9 +558,37 @@ class TreeBuilder:
         avail = sum(1 for c in range(52) if c not in self.dead and c not in boards[0])
         return Chance(boards, K, masks, child, avail, sample)
 
+    def _turn_classes(self, boards, pot, stack, inv):
+        """The turn as one card per class (Ctx.turn_classes). A pair of combos plays each class with the weight of
+        its cards both leave live, approximated as size x (share live for one) x (share live for the other), and
+        not at all when either holds the card played (a few percent of the turns for those combos)."""
+        ctx = self.ctx
+        cls = [ctx.turn_classes(b, self.dead) for b in boards]
+        K = len(cls[0])
+        child_boards = []
+        masks = np.ones((len(boards) * K, ctx.n), dtype=np.float32)
+        umasks = np.ones_like(masks)
+        for bi, b in enumerate(boards):
+            for ki, (c, cards_) in enumerate(cls[bi]):
+                child_boards.append(b + (c,))
+                live = (len(cards_) - ctx.member[list(cards_)].sum(axis=0)) * (1.0 - ctx.member[c])
+                masks[bi * K + ki] = live / len(cards_)
+                umasks[bi * K + ki] = live
+        child = self._decision(child_boards, pot, stack, (0.0, 0.0), 0, 0, inv, False)
+        self.n_nodes += 1
+        avail = sum(1 for c in range(52) if c not in self.dead and c not in boards[0])
+        return Chance(boards, K, masks, child, avail, umasks=umasks)
+
+    def _sizes(self, kind: str, street: str) -> list:
+        """Bet ("bet") or raise ("raise") sizes on `street`; the turn and river inside a flop solve take later_sizes."""
+        cfg = self.cfg
+        if self.root_street_len == 3 and street != "flop" and cfg.later_sizes and street in cfg.later_sizes.get(kind, {}):
+            return cfg.later_sizes[kind][street]
+        return (cfg.bet_sizes if kind == "bet" else cfg.raise_sizes)[street]
+
     def _decision(self, boards, pot, stack, bets, p, n_raises, inv, checked):
         cfg = self.cfg
-        street = street_of(len(boards[0]))
+        street = "river" if self._blind else street_of(len(boards[0]))
         o = 1 - p
         b_me, b_op = bets[p], bets[o]
         pot_total = pot + bets[0] + bets[1]
@@ -517,7 +607,7 @@ class TreeBuilder:
             else:
                 kids.append(self._decision(boards, pot, stack, bets, o, n_raises, inv, checked=True))
             offered_allin = False
-            for frac in cfg.bet_sizes[street]:
+            for frac in self._sizes("bet", street):
                 amt = max(round(frac * pot_total * 2) / 2, 1.0)
                 if amt >= remaining - 1e-9:
                     if not offered_allin and remaining > 0:
@@ -549,7 +639,7 @@ class TreeBuilder:
                 offered = set()
                 capped = False
                 if n_raises < cfg.max_raises:
-                    for frac in cfg.raise_sizes[street]:
+                    for frac in self._sizes("raise", street):
                         raise_to = b_op + round(frac * pot_after_call * 2) / 2
                         raise_to = max(raise_to, 2 * b_op - b_me)
                         if raise_to >= stack - 1e-9:
@@ -566,7 +656,7 @@ class TreeBuilder:
                     names.append("all-in")
                     kids.append(self._decision(boards, pot, stack, nb, o, n_raises + 1, ninv, False))
         self.n_nodes += 1
-        return Decision(boards, p, names, kids, pot_total, bets, self.ctx.n)
+        return Decision(boards, p, names, kids, pot_total, bets, self.ctx.n, self._blind)
 
 
 # ----------------------------------------------------------------- merged subtrees
@@ -576,7 +666,7 @@ def _shape(node) -> tuple:
     if isinstance(node, Decision):
         return ("D", node.player, len(node.boards), tuple(_shape(c) for c in node.children))
     if isinstance(node, Chance):
-        return ("C", node.K, node.sample, node.avail, len(node.boards), _shape(node.child))
+        return ("C", node.K, node.sample, node.avail, len(node.boards), node.umasks is None, _shape(node.child))
     return ("T", node.kind, node.folder, len(node.boards))
 
 
@@ -588,6 +678,7 @@ def _merge(nodes, pairs: list):
     if isinstance(first, Decision):
         m = Decision.__new__(Decision)
         m.boards, m.player, m.names, m.pot_now, m.bets, m.B = boards, first.player, first.names, None, None, len(boards)
+        m.blind = first.blind
         m.children = [_merge([n.children[a] for n in nodes], pairs) for a in range(len(first.children))]
         m.regret = np.concatenate([n.regret for n in nodes])
         m.ssum = np.concatenate([n.ssum for n in nodes])
@@ -595,7 +686,7 @@ def _merge(nodes, pairs: list):
         return m
     if isinstance(first, Chance):
         return Chance(boards, first.K, np.concatenate([n.masks for n in nodes]), _merge([n.child for n in nodes], pairs),
-                      first.avail, first.sample)
+                      first.avail, first.sample, None if first.umasks is None else np.concatenate([n.umasks for n in nodes]))
     # chips in differ between the merged lines (different pots): one float32 per row, which is what a
     # Python float becomes when it multiplies a float32 array, so the results don't change
     inv = tuple(np.concatenate([np.full((len(n.boards), 1), n.inv[q], dtype=np.float32) for n in nodes]) for q in (0, 1))
@@ -797,7 +888,8 @@ class Solver:
             full = sel is None and k == K
             u = self._cfr(node.child, p, r0c, r1c, update, use_avg, None if full else csel, strats)
             norm = node.norm_for(m3) if k < K else node.norm[rows]
-            return (u.reshape(B, k, n) * m3).sum(axis=1) / norm
+            w = m3 if node.umasks is None else node.weights(None if sel is None else rows)
+            return (u.reshape(B, k, n) * w).sum(axis=1) / norm
         if strats is None or sel is not None:
             strat = node.avg_strategy(sel) if use_avg else node.strategy(sel)     # (B, A, N)
         else:
@@ -921,7 +1013,7 @@ class Solver:
         neg_f = 0.5 if self.beta == 0 else (t ** self.beta) / (t ** self.beta + 1)
         s_f = (t / (t + 1)) ** self.gamma
         r = self._regret
-        r *= np.where(r > 0, pos_f, neg_f)
+        r *= np.where(r > 0, np.float32(pos_f), np.float32(neg_f))     # (a float64 factor array: twice the traffic)
         self._ssum *= s_f
 
     def run(self, r0, r1, time_budget=3.0, max_iters=1000, min_iters=10, should_stop=None):
@@ -959,7 +1051,7 @@ class Solver:
             m3 = node.masks.reshape(B, K, n)
             u = self._best_response(node.child, p, (r0[:, None, :] * m3).reshape(B * K, n),
                                     (r1[:, None, :] * m3).reshape(B * K, n), lock)
-            return (u.reshape(B, K, n) * m3).sum(axis=1) / node.norm
+            return (u.reshape(B, K, n) * node.weights()).sum(axis=1) / node.norm
         if node.player == p:
             return np.max([self._best_response(c, p, r0, r1, lock) for c in node.children], axis=0)
         strat = node.avg_strategy()

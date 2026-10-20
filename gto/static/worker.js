@@ -25,13 +25,20 @@ const ready = (async () => {
   // Fast (8 s): 8 fixed rivers under each turn. Sampling fresh rivers each iteration is unbiased but
   //   too noisy in the ~50 iterations 8 s affords (BB donked 20-37% where the answer is 0-2%); the
   //   fixed set was closest (10-15%). Its bias only dominates once a solve runs to convergence.
-  // Accurate (60 s): every river, so the turn is unbiased (donk 1-4%), and 4 turns x 8 rivers from the flop,
-  //   which matched the reference flop mix to within 3 points.
+  //   From the flop: 3 random turns, the river checked down (river_play and turn_classes off), ~150
+  //   iterations; its c-bets run 10-30 points low on dry and paired flops (README, Accuracy vs speed).
+  // Accurate (60 s): every river, so the turn is unbiased (donk 1-4%). From the flop, one turn per rank class
+  //   with the river still bet on (Config's defaults): 50-65 iterations on a rainbow flop, ~30 on a two-tone
+  //   or monotone one; c-bets within ~8 points of a solve over every turn there, against 12 for 4 random
+  //   turns with the river checked down. A Fast flop solve plays another game there, so it seeds only turn
+  //   and river solves. Its earlier-street solves (12 s, for range narrowing) keep Fast's flop model, which
+  //   settles there (~180 iterations; ~10 with the river bet on).
   const LS = "bet_sizes={'flop': [0.33, 0.75], 'turn': [0.75], 'river': [0.75]}, raise_sizes={'flop': [0.5], 'turn': [0.75], 'river': [0.75]}";
   py.runPython("import sys, json; sys.path.insert(0, '/app'); from gto.advisor import Advisor; from gto.solver import Config; "
-             + `advs = {'fast': Advisor(Config(n_turns=3, n_rivers=8, leaf_turns=4, leaf_rivers_flop=4, n_rivers_from_flop=4, ${LS})), `
+             + `advs = {'fast': Advisor(Config(n_turns=3, n_rivers=8, leaf_turns=4, leaf_rivers_flop=4, n_rivers_from_flop=4, `
+             + `river_play=False, turn_classes=False, ${LS})), `
              + `'accurate': Advisor(Config(n_turns=4, leaf_turns=4, leaf_rivers_flop=8, n_rivers_from_flop=8, ${LS}))}; `
-             + "advs['accurate'].warm_from = advs['fast']");   // Accurate picks up from a Fast solve of the same spot
+             + "advs['accurate'].warm_from = advs['fast']; advs['accurate'].prior_model = {'river_play': False, 'turn_classes': False}");   // Accurate picks up from a Fast solve of the same spot
   // (not the reverse: Fast's few seconds can't re-fit an Accurate solve to its own tree; the page shows Accurate's answer instead)
   postMessage({ status: "Solving…" });
   return py;

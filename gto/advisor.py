@@ -15,6 +15,7 @@ Game state (all money in big blinds unless `bb` is given, then chips / bb):
 Actions: fold, check, call, bet (amount), raise (to), all-in.
 """
 from __future__ import annotations
+import dataclasses
 import hashlib
 import random
 import time
@@ -1056,6 +1057,9 @@ class Advisor:
         self.mw_rake_rules = True   # multiway: our in-trial calls, leads and raises count the rake (off: payouts only)
         self.mw_trials: Optional[int] = None   # multiway: play at least this many trials (whole passes), no time caps or early stop (tests)
         self.warm_from: Optional["Advisor"] = None   # another advisor (e.g. a faster config) whose solves seed ours
+        # Config fields for the earlier streets' solves that narrow ranges (prior_budget each), e.g. the browser's
+        # Accurate keeps their flop's river checked down: 12 s there is ~10 iterations with river_play
+        self.prior_model: Optional[dict] = None
         self._by_spot: Dict[tuple, Solution] = {}    # latest solve per spot, whatever the ranges
         self.rng = random.Random()
 
@@ -1551,6 +1555,8 @@ class Advisor:
                     continue   # multiway: narrowed above
                 eff = min(stack - st.inv_start[oop], stack - st.inv_start[ip])
                 cfg = self._cfg_with_real_sizes(st, oop, ip, eff)
+                if self.prior_model:
+                    cfg = dataclasses.replace(cfg, **self.prior_model)
                 sol = self._solve_cached(sub_board, r0, r1, st.pot_start, eff, self.prior_budget, cfg=cfg)
                 node, c0, c1 = self._walk(sol, st.actions, oop, ip, st.pot_start, eff, notes, st.name, self.prior_smoothing,
                                           board=sub_board, rules=(0, 1),
@@ -2587,7 +2593,9 @@ class Advisor:
                       settle=False):
         cfg = cfg or self.cfg
         spot = (tuple(board), round(pot, 2), round(stack, 2), tuple(round(b, 2) for b in bets), to_act, n_raises,
-                cfg.sizes_key())
+                cfg.sizes_key()) + (((cfg.river_play, cfg.turn_classes),) if len(board) == 3 else ())
+        # (a flop solve's river_play and turn_classes are part of the spot: a Fast flop solve, river checked down,
+        # seeded an Accurate one at its lower c-bet frequencies and did worse in the same time than a cold start)
         key = (_range_key(r0), _range_key(r1)) + spot
         sol = self._cache.get(key)
         if sol is None:

@@ -26,10 +26,17 @@ from .solver import Config          # noqa: E402
 # - accurate: two turn and river bet sizes: the turn at 30 s is 0.3-0.7%; an earlier turn at 12 s is
 #   1.7-2% and leaves 89 combos (at 6 s, 9-10%). Its sizes differ from fast's, so it can't warm-start
 #   from a fast solve of the spot.
+# From the flop, accurate plays the river with its betting and one turn per rank class (Config's river_play
+# and turn_classes, with one turn and river size inside the flop solve): ~15 iterations a second on a rainbow
+# flop, half that on a two-tone or monotone one, and from ~100 iterations its c-bet frequencies are within a
+# few points of a solve over every turn (README, Accuracy vs speed). Fast's 2.5 s affords ~30, where BB's
+# check and response frequencies were still 15-20 points off, so fast keeps 6 random turns and the river
+# checked down: settled, but its c-bets run 10-30 points low on dry and paired flops (QQ6 56% for 88%).
 _FLOP = {"bet": [0.33, 0.75], "raise": [0.5]}
 SPEEDS = {
     "fast": (dict(bet_sizes={"flop": _FLOP["bet"], "turn": [0.75], "river": [0.75]},
-                  raise_sizes={"flop": _FLOP["raise"], "turn": [0.75], "river": [0.75]}), 2.5, 2.5),
+                  raise_sizes={"flop": _FLOP["raise"], "turn": [0.75], "river": [0.75]},
+                  flop_model=dict(river_play=False, turn_classes=False)), 2.5, 2.5),
     "accurate": (dict(bet_sizes={"flop": _FLOP["bet"], "turn": [0.5, 1.0], "river": [0.5, 1.0]},
                       raise_sizes={"flop": _FLOP["raise"], "turn": [0.75], "river": [0.75]}), 30.0, 12.0),
 }
@@ -39,7 +46,8 @@ def advisor(speed: str = "fast", depth: int = 2, budget: Optional[float] = None,
             prior_budget: Optional[float] = None) -> Advisor:
     sizes, b, pb = SPEEDS[speed]
     cfg = Config(bet_sizes={k: list(v) for k, v in sizes["bet_sizes"].items()},
-                 raise_sizes={k: list(v) for k, v in sizes["raise_sizes"].items()}, depth=depth)
+                 raise_sizes={k: list(v) for k, v in sizes["raise_sizes"].items()}, depth=depth,
+                 **sizes.get("flop_model", {}))
     return Advisor(cfg, time_budget=b if budget is None else budget,
                    prior_budget=pb if prior_budget is None else prior_budget)
 
