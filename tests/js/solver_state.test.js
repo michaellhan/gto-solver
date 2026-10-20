@@ -115,7 +115,7 @@ test("with the local server the state is POSTed at the server's budgets", async 
 function rng(seed) {   // mulberry32
   return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
 }
-function playHands(nHands, seed) {
+function playHands(nHands, seed, unequal = false) {
   const R = rng(seed), pick = (a) => a[Math.floor(R() * a.length)];
   const deck0 = [];
   for (const r of "AKQJT98765432") for (const s of "shdc") deck0.push(r + s);
@@ -127,6 +127,8 @@ function playHands(nHands, seed) {
     const deck = [...deck0].sort(() => R() - 0.5);
     const st = state({ players, hero: pick(seats), stack: pick([15, 40, 100, 100, 250]), cards: deck.slice(0, 2),
       ante: R() < 0.25 ? pick([0.1, 0.125, 1]) : undefined, straddle: players >= 3 && R() < 0.25 ? true : undefined });
+    // per-seat stacks: some seats short or deep (side pots, all-ins for less, incomplete raises)
+    if (unequal) st.stacks = Object.fromEntries(seats.filter(() => R() < 0.6).map(q => [q, pick([3, 8, 15, 22.5, 40, 60, 150, 300])]));
     p.S = st;
     let next = 2;
     for (let step = 0; step < 80; step++) {
@@ -134,12 +136,13 @@ function playHands(nHands, seed) {
       if (sim.handOver) break;
       if (sim.waiting) { p.run(`placeCard("${deck[next++]}")`); continue; }
       const info = sim.cur, who = sim.toAct;
-      if (who === p.S.hero || R() < 0.2) out.push({ hand: h, state: (({ budget, prior_budget, speed, ...rest }) => rest)(p.payload()), page: { street: sim.current, to_act: who, pot: sim.pot, cur_bet: info.curBet, active: sim.active, allin: sim.allin } });
+      if (who === p.S.hero || R() < 0.2) out.push({ hand: h + (unequal ? 1000 : 0), state: (({ budget, prior_budget, speed, ...rest }) => rest)(p.payload()), page: { street: sim.current, to_act: who, pot: sim.pot, cur_bet: info.curBet, active: sim.active, allin: sim.allin } });
       const facing = info.curBet - info.bets[who] > 1e-9, x = R();
       let a;
       if (facing) a = x < 0.35 ? { action: "fold" } : x < 0.75 ? { action: "call" } : x < 0.95 ? { action: "bet", to: info.curBet * (2 + 2 * R()) } : { action: "all-in" };
       else a = x < 0.55 ? { action: "check" } : x < 0.95 ? { action: "bet", to: info.curBet + Math.max(1, info.pot * (0.25 + R())) } : { action: "all-in" };
-      const err = p.act(a);
+      let err = p.act(a);
+      if (err && /can't raise|smallest raise/.test(err)) err = p.act({ action: "call" });   // (a raise the rules don't allow)
       assert.equal(err, null, JSON.stringify({ a, sim }));
     }
   }
@@ -147,7 +150,7 @@ function playHands(nHands, seed) {
 }
 
 test("hands played through the page: fixture for the Python advisor (tests/data/page_states.json)", () => {
-  const spots = playHands(70, 20261012);
+  const spots = [...playHands(70, 20261012), ...playHands(40, 20261020, true)];
   assert.ok(spots.length > 100);
   for (const s of spots) {   // basic invariants of the page's engine
     assert.ok(s.page.active.includes(s.page.to_act));

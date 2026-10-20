@@ -110,11 +110,11 @@
     if (n > 2 && pos[order[bi].name] !== "BTN") warnings.push("The button isn't next to the blinds (a dead button?): positions are counted from the big blind.");
 
     // amounts as each player's total on the street ("to"), in big blinds; all-in also when the chips run out
-    const left = Object.fromEntries(order.map(s => [s.name, s.chips]));
+    const left = Object.fromEntries(order.map(s => [s.name, s.chips])), anteOf = {};
     let put = {}, antes = 0, straddle = false;
     for (const p of posts) {
       if (!pos[p.name]) continue;
-      if (p.kind === "ante") { antes += p.amt; left[p.name] -= p.amt; continue; }
+      if (p.kind === "ante") { antes += p.amt; left[p.name] -= p.amt; anteOf[p.name] = (anteOf[p.name] || 0) + p.amt; continue; }
       const live = p.kind === "dead" ? bb : p.amt;
       left[p.name] -= p.amt; put[p.name] = Math.max(put[p.name] || 0, live);
       if (p.kind === "straddle") {
@@ -132,49 +132,47 @@
       left[a.name] -= to - before; put[a.name] = to;
       actions.push({ street: a.street, pos: pos[a.name], act: a.act, ...(a.act === "fold" || a.act === "check" ? {} : { to: r2(to / bb) }), ...(a.allIn || left[a.name] <= 1e-9 && to > before ? { allIn: true } : {}) });
     }
-    // the page plays equal stacks: yours, capped by the deepest opponent still in at the end (else by the deepest
-    // who put chips in, else by anyone), so the stacks that decided the hand are the ones played
-    const heroStack = seats.find(s => s.name === hero).chips;
+    // every seat plays its own stack. The page takes the same ante from everyone (the average), so a seat's stack
+    // is set for what it has behind after the antes to be the history's (a big-blind ante paid by one player).
+    const ante = Math.round(antes / n / bb * 1e4) / 1e4;
+    const stacks = Object.fromEntries(order.map(s => [pos[s.name], r2((s.chips - (anteOf[s.name] || 0)) / bb + ante)]));
+    // (effective: yours against the deepest opponent who didn't fold, for the summary)
     const opp = order.filter(s => s.name !== hero), folded = new Set(acts.filter(a => a.act === "fold").map(a => a.name));
-    const vol = new Set(acts.filter(a => a.act !== "fold" && a.act !== "check").map(a => a.name));
-    const deep = [opp.filter(s => !folded.has(s.name)), opp.filter(s => vol.has(s.name)), opp].find(x => x.length);
-    const stack = r2(Math.min(heroStack, Math.max(...deep.map(s => s.chips))) / bb);
-    return { site, bb, players: n, hero: pos[hero], heroName: hero, stack, ante: Math.round(antes / n / bb * 1e4) / 1e4, straddle,
+    const deep = [opp.filter(s => !folded.has(s.name)), opp].find(x => x.length);
+    const effective = Math.min(stacks[pos[hero]], Math.max(...deep.map(s => stacks[pos[s.name]])));
+    return { site, bb, players: n, hero: pos[hero], heroName: hero, stack: stacks[pos[hero]], stacks, effective, ante, straddle,
              hole, board: board.slice(0, 5), seats: order.map(s => ({ seat: s.seat, name: s.name, pos: pos[s.name], stack: r2(s.chips / bb) })), actions, warnings };
   }
 
-  // The page state for a parsed hand: its actions go through the page's engine one by one, as if entered at the
-  // table. A player the history has all-in for less than the page's equal stacks is still live on the page, so
-  // when the page asks them to act they check (or call). If the two still disagree the import stops there.
+  // The page state for a parsed hand: every seat with its own stack, and the actions through the page's engine one
+  // by one, as if entered at the table (a short all-in, its side pot and a bet nobody could call in full play out
+  // there as at the table). If the two disagree the import stops there.
   function importHand(text) {
     const h = parseHandHistory(text), warnings = [...h.warnings];
-    const st = { players: h.players, hero: h.hero, stack: h.stack, cards: [...h.hole, ...h.board, null, null, null, null, null].slice(0, 7),
+    const st = { players: h.players, hero: h.hero, stack: h.stack, stacks: { ...h.stacks },
+                 cards: [...h.hole, ...h.board, null, null, null, null, null].slice(0, 7),
                  actions: { preflop: [], flop: [], turn: [], river: [] }, ...(h.ante ? { ante: h.ante } : {}), ...(h.straddle ? { straddle: true } : {}),
                  ...(+S.rake > 0 ? { rake: S.rake, ...(+S.rakeCap > 0 ? { rakeCap: S.rakeCap } : {}) } : {}) };
-    const old = S, short = new Set(), filled = new Set();
+    const old = S;
     S = st; setPositions(st.players);
     try {
-      const fill = (sim) => {
-        const q = sim.toAct;
-        if (!short.has(q) || filled.size > 40) return false;
-        S.actions[sim.current].push({ pos: q, action: sim.cur.curBet - sim.cur.bets[q] > 1e-9 ? "call" : "check" }); filled.add(q); return true;
-      };
       for (const a of h.actions) {
-        let sim = simulate();
-        while (sim.cur && (STREETS.indexOf(sim.current) < STREETS.indexOf(a.street) || sim.current === a.street && sim.toAct !== a.pos) && fill(sim)) sim = simulate();
+        const sim = simulate();
         if (!sim.cur || sim.current !== a.street || sim.toAct !== a.pos) {
           warnings.push(`The page's betting and the history part ways at ${a.pos}'s ${a.street} action: the hand stops there.`); break;
         }
-        const info = sim.cur, toCall = info.curBet - info.bets[a.pos], cap = S.stack - sim.invested[a.pos];
-        const passive = { action: toCall > 1e-9 ? "call" : "check" };
+        const info = sim.cur, toCall = info.curBet - info.bets[a.pos];
+        // an all-in is the stack: one the page has a little off the site's (rounding, a blind it leaves out) is set to it
+        if (a.allIn && a.to > 0) st.stacks[a.pos] = r2(sim.invested[a.pos] + a.to);
+        const cap = STACK(a.pos) - sim.invested[a.pos], passive = { action: toCall > 1e-9 ? "call" : "check" };
         const rec = a.act === "fold" ? { action: "fold" } : a.act === "check" || a.act === "call" ? passive
           : a.to >= cap - 0.005 ? { action: "all-in" } : a.to <= info.curBet + 1e-9 ? passive : { action: info.curBet > 0 ? "raise" : "bet", to: a.to };
-        if (a.allIn && rec.action !== "all-in") short.add(a.pos);
         S.actions[a.street].push({ pos: a.pos, ...rec });
       }
-      for (let sim = simulate(); sim.cur && fill(sim); sim = simulate());
-      if (filled.size) warnings.push(`${[...filled].join(", ")} went all-in for less than the effective stack (the page plays equal stacks): their later turns are checks or calls.`);
     } finally { S = old; setPositions(old.players); }
+    st.stack = st.stacks[h.hero];
+    const own = Object.fromEntries(Object.entries(st.stacks).filter(([, v]) => v !== st.stack));
+    if (Object.keys(own).length) st.stacks = own; else delete st.stacks;
     return { state: st, hand: h, warnings };
   }
 

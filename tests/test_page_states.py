@@ -10,7 +10,7 @@ import os
 import unittest
 
 from gto import preflop as pf
-from gto.advisor import Advisor, replay_hand, _norm_actions, STREETS
+from gto.advisor import Advisor, replay_hand, _norm_actions, _state_stacks, STREETS
 from gto.solver import Config
 
 HERE = os.path.dirname(__file__)
@@ -30,9 +30,10 @@ class TestPageStates(unittest.TestCase):
             st, page = sp["state"], sp["page"]
             with self.subTest(spot=i, hand=sp["hand"]):
                 n = st["players"]
-                table = pf.Table(pf.SEATS[n], st.get("ante", 0.0), st.get("straddle", False))
+                stack, stacks = _state_stacks(st["stack"], st.get("stacks"), pf.SEATS[n], 1.0)
+                table = pf.Table(pf.SEATS[n], st.get("ante", 0.0), st.get("straddle", False), stacks=stacks)
                 streets = {s: _norm_actions(st[s], 1.0) for s in STREETS}
-                last = replay_hand(table, st["stack"], streets, N_STREETS[len(st["board"]) // 2])[-1]
+                last = replay_hand(table, stack, streets, N_STREETS[len(st["board"]) // 2])[-1]
                 self.assertEqual(last.name, page["street"])
                 self.assertFalse(last.closed)
                 self.assertEqual(last.to_act, page["to_act"])
@@ -56,7 +57,14 @@ class TestPageStates(unittest.TestCase):
         self.assertEqual(len(pre), 10)
         self.assertEqual(set(hu), {"flop", "turn", "river"})
         self.assertEqual(len(multi), 1)
-        for sp in pre + list(hu.values()) + multi:
+        # with per-seat stacks: a preflop spot, a heads-up and a multiway one after the flop
+        stk = [sp for sp in spots if "stacks" in sp["state"]]
+        stk = ([sp for sp in stk if not sp["state"]["board"] and sp["state"]["players"] <= 6][:1]
+               + [sp for sp in stk if sp["state"]["board"] and len(sp["page"]["active"]) == 2][:1]
+               + sorted((sp for sp in stk if sp["state"]["board"] and len(sp["page"]["active"]) > 2),
+                        key=lambda sp: (len(sp["page"]["active"]), sp["state"]["players"]))[:1])
+        self.assertEqual(len(stk), 3)
+        for sp in pre + list(hu.values()) + multi + stk:
             st = dict(sp["state"], budget=0.5, prior_budget=0.3)
             with self.subTest(hand=sp["hand"], street=sp["page"]["street"]):
                 r = adv.advise(st)

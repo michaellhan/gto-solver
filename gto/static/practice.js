@@ -41,7 +41,7 @@
     for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
     const hero = POS[Math.floor(Math.random() * POS.length)], hands = {};
     for (const p of POS) hands[p] = [deck.pop(), deck.pop()];
-    S = { ...fresh(S.players), hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanAdv(S, POS) };   // (as New hand)
+    S = { ...fresh(S.players), hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanAdv(S, POS), ...cleanStacks(S, POS) };   // (as New hand: seats keep their stacks)
     S.cards[0] = hands[hero][0]; S.cards[1] = hands[hero][1];
     const hole = hands[hero]; delete hands[hero];
     P.hand = { hero, players: S.players, hole, hands, board: deck.slice(0, 5), result: null };
@@ -68,7 +68,8 @@
     if (!P.on || before !== JSON.stringify([S.actions, S.cards])) return;   // the hand moved on while it thought
     if (res.cancelled) return;                                           // asked again on the next render
     if (res.error) { P.error = `${p}'s move failed: ${res.error}`; return; }
-    const e = act(res.action === "bet" || res.action === "raise" ? { action: "bet", to: res.to } : { action: res.action });
+    // (clamp: a size under the minimum raise is lifted to it, rather than refused)
+    const e = act(res.action === "bet" || res.action === "raise" ? { action: "bet", to: res.to, clamp: true } : { action: res.action });
     if (e) P.error = `${p}'s move (${res.name}) was rejected: ${e}`;
   }
 
@@ -84,17 +85,24 @@
     const most = POS.map(inv).sort((a, b) => b - a), uncalled = most[0] - (most[1] || 0);
     if (board.length >= 3 && RAKE()) pot -= Math.min((pot - uncalled) * RAKE() / 100, RAKE_CAP() || Infinity);
     const cards = (p) => p === S.hero ? h.hole : h.hands[p];
-    let winners = live, shown = [], best = null;
-    if (!sim.active.has(S.hero)) winners = [];
+    let winners = live, shown = [], best = null, won = pot / Math.max(1, live.length), pots = null;
+    if (!sim.active.has(S.hero)) { winners = []; won = 0; }
     else if (live.length > 1) {
       const val = Object.fromEntries(live.map(p => [p, rank7([...cards(p), ...board])]));
-      best = live.reduce((b, p) => cmp(val[p], val[b]) > 0 ? p : b);
-      winners = live.filter(p => cmp(val[p], val[best]) === 0);
+      const top = (ps) => { const b = ps.reduce((b, p) => cmp(val[p], val[b]) > 0 ? p : b); return ps.filter(p => cmp(val[p], val[b]) === 0); };
+      winners = top(live);
       shown = live.filter(p => p !== S.hero);
-      best = CATS[val[best][0]];
+      best = CATS[val[winners[0]][0]];
+      // side pots: each all-in player's stake caps what they win from everyone; each pot goes to the best hand
+      // among the players in it, all of them short the rake in proportion
+      const all = Object.fromEntries(POS.map(p => [p, inv(p)])), side = sidePots(all, live, sim.allin);
+      const total = side.reduce((t, x) => t + x.amount, 0), keep = total > 0 ? pot / total : 1;
+      won = 0;
+      pots = side.map(x => { const w = top(x.eligible); if (w.includes(S.hero)) won += x.amount * keep / w.length; return { amount: Math.round(x.amount * keep * 100) / 100, eligible: x.eligible, winners: w }; });
+      if (pots.length < 2) pots = null;
     }
-    const net = Math.round(((winners.includes(S.hero) ? pot / winners.length : 0) - inv(S.hero)) * 100) / 100;
-    h.result = { net, winners, shown, best, folded: !sim.active.has(S.hero) };
+    const net = Math.round((won - inv(S.hero)) * 100) / 100;
+    h.result = { net, winners, shown, best, folded: !sim.active.has(S.hero), ...(pots ? { pots } : {}) };
     const mine = []; for (const s of STREETS) for (const a of S.actions[s]) if (a.pos === S.hero && a.g) mine.push(a.g);
     const sc = P.score, ev = mine.filter(g => g.l != null);
     sc.hands++; sc.decisions += mine.length; sc.best += mine.filter(g => g.m === g.b).length;
@@ -104,13 +112,22 @@
 
   // ---- the practice bar (in the action dock)
   const money = (x) => (x > 0 ? "+" : x < 0 ? "−" : "") + fmt(Math.abs(x)) + " bb";
+  const names = (ps) => ps.map(p => p === S.hero ? "you" : SEAT_LABEL(p, S.players)).join(" and ");
+  // with side pots, which of the pots you were in you won
+  function headline(r) {
+    if (!r.pots) return r.winners.includes(S.hero) ? (r.winners.length > 1 ? "Split pot" : "You win") : "You lose";
+    const mine = r.pots.filter(x => x.eligible.includes(S.hero)), won = mine.filter(x => x.winners.includes(S.hero));
+    return !won.length ? "You lose" : won.length === mine.length ? (won.some(x => x.winners.length > 1) ? "Split pot" : "You win")
+      : won.includes(r.pots[0]) ? "You win the main pot" : "You win a side pot";
+  }
   function bar(sim) {
     const el = document.getElementById("practiceBar"); el.hidden = !P.on; if (!P.on) return;
     const h = P.hand, r = h && h.result, sc = P.score;
     let msg;
     if (P.error) msg = `<span class="err">${P.error}</span> <button class="link" id="pxRetry">Retry</button>`;
-    else if (r) msg = `<b>${r.folded ? "You folded" : r.winners.includes(S.hero) ? (r.winners.length > 1 ? "Split pot" : "You win") : "You lose"}</b> <span class="num ${r.net > 0 ? "pos" : r.net < 0 ? "neg" : ""}">${money(r.net)}</span>`
-      + (r.shown.length ? ` · ${r.shown.map(p => `${SEAT_LABEL(p, S.players)} ${h.hands[p].map(cardHtml).join("")}`).join(" · ")}${r.best ? ` · ${r.winners.map(p => p === S.hero ? "you" : SEAT_LABEL(p, S.players)).join(" and ")} with ${r.best}` : ""}` : "")
+    else if (r) msg = `<b>${r.folded ? "You folded" : headline(r)}</b> <span class="num ${r.net > 0 ? "pos" : r.net < 0 ? "neg" : ""}">${money(r.net)}</span>`
+      + (r.shown.length ? ` · ${r.shown.map(p => `${SEAT_LABEL(p, S.players)} ${h.hands[p].map(cardHtml).join("")}`).join(" · ")}${r.best ? ` · ${names(r.winners)} with ${r.best}` : ""}` : "")
+      + (r.pots ? ` · ${r.pots.map((x, i) => `${i ? "side" : "main"} pot ${fmt(x.amount)}: ${names(x.winners)}`).join(" · ")}` : "")
       + ` <button class="small" id="pxNext">Next hand <kbd>N</kbd></button>`;
     else if (P.status) msg = `<span class="spinner"></span>${P.status}`;
     else if (sim.toAct === S.hero) msg = resultKey !== JSON.stringify(payload()) ? `<span class="spinner"></span>Your move (solving the spot so it can be graded)` : "Your move. The advice shows once you've acted.";
