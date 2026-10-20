@@ -1390,16 +1390,21 @@ FLOP_REFERENCES = [
 ]
 
 
+BUCKET_LOW = {("srp", "QsQd6c", "cbet"): 75}
+
+
 class TestFlopStrategy(unittest.TestCase):
     """Flop solves against published solver frequencies (FLOP_REFERENCES), and the tree pieces behind them: the river
     beyond `depth` played with its betting (river_play) and one turn per rank class (turn_classes)."""
 
     ITERS = 150
     _sols = {}
+    # Fast's flop model (gto/native.py, static/worker.js): the turn and river by 32 hand buckets
+    BUCKETS = dict(river_buckets=32, turn_buckets=True, bucket_river_step=3)
 
     @classmethod
-    def solve_spot(cls, kind, board):
-        key = (kind, board)
+    def solve_spot(cls, kind, board, buckets=False):
+        key = (kind, board, buckets)
         if key not in cls._sols:
             from gto.advisor import preflop_ranges
             pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}]
@@ -1412,8 +1417,8 @@ class TestFlopStrategy(unittest.TestCase):
                         {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "fold"}, {"pos": "CO", "action": "call"}]
                 oop, ip, pot, stack = "CO", "BTN", 16.5, 92.5
             rng = preflop_ranges(pre, pf.Table(pf.SEATS[6]), 100)
-            cls._sols[key] = solve(cards(board), rng[oop], rng[ip], pot, stack, cfg=Config(),
-                                   time_budget=1e9, max_iters=cls.ITERS)
+            cls._sols[key] = solve(cards(board), rng[oop], rng[ip], pot, stack,
+                                   cfg=Config(**(cls.BUCKETS if buckets else {})), time_budget=1e9, max_iters=cls.ITERS)
         return cls._sols[key]
 
     @staticmethod
@@ -1434,16 +1439,65 @@ class TestFlopStrategy(unittest.TestCase):
         return out
 
     def test_published_frequencies(self):
-        for kind, board, stat, lo, hi, src in FLOP_REFERENCES:
-            v = self.stats(self.solve_spot(kind, board))[stat]
-            self.assertTrue(lo <= v <= hi, f"{kind} {board} {stat} {v:.1f} not in [{lo}, {hi}] ({src})")
+        for buckets in (False, True):
+            for kind, board, stat, lo, hi, src in FLOP_REFERENCES:
+                v = self.stats(self.solve_spot(kind, board, buckets))[stat]
+                if buckets:
+                    # the buckets' one miss: QQ6's c-bet settles near 80% where a solve over every turn has 88% (the
+                    # river checked down had 52-56%)
+                    lo = BUCKET_LOW.get((kind, board, stat), lo)
+                self.assertTrue(lo <= v <= hi, f"{kind} {board} {stat} {v:.1f} not in [{lo}, {hi}] ({src})"
+                                + (" with buckets" if buckets else ""))
 
     def test_texture_ordering(self):
         # GTO Wizard's c-betting heuristics: A-high flops are bet less than K-high, monotone and low connected ones much less
-        c = {b: self.stats(self.solve_spot("srp", b))["cbet"] for b in ("Kd7c2h", "As7h4d", "7h6d5c", "Kh7h2h")}
-        self.assertGreater(c["Kd7c2h"], c["As7h4d"])
-        self.assertGreater(c["Kd7c2h"], c["7h6d5c"] + 15)
-        self.assertGreater(c["Kd7c2h"], c["Kh7h2h"] + 15)
+        for buckets in (False, True):
+            c = {b: self.stats(self.solve_spot("srp", b, buckets))["cbet"] for b in ("Kd7c2h", "As7h4d", "7h6d5c", "Kh7h2h")}
+            self.assertGreater(c["Kd7c2h"], c["As7h4d"])
+            self.assertGreater(c["Kd7c2h"], c["7h6d5c"] + 15)
+            self.assertGreater(c["Kd7c2h"], c["Kh7h2h"] + 15)
+
+    def test_buckets_close_to_per_combo(self):
+        # the bucketed turn and river against the per-combo model at the same iterations: flop frequencies within a few points
+        for kind, board in (("srp", "Kd7c2h"), ("srp", "QsQd6c"), ("srp", "7h6d5c"), ("3bet", "Ah8c3d")):
+            a, b = self.stats(self.solve_spot(kind, board)), self.stats(self.solve_spot(kind, board, True))
+            for k in ("cbet", "check", "vs small: call"):
+                self.assertLess(abs(a[k] - b[k]), 8, f"{kind} {board} {k}: {a[k]:.1f} per combo, {b[k]:.1f} with buckets")
+
+    def test_bucket_tables(self):
+        # E[1] = -E[0].T and kappa[1] = kappa[0].T (a zero-sum bucket game), each live combo in one bucket, equal shares
+        from gto.advisor import preflop_ranges
+        rng = preflop_ranges([{"pos": p, "action": "fold"} for p in ("UTG", "HJ", "CO")]
+                             + [{"pos": "BTN", "action": "raise", "to": 2.5}, {"pos": "SB", "action": "fold"},
+                                {"pos": "BB", "action": "call"}], pf.Table(pf.SEATS[6]), 100)
+        board = tuple(cards("Kd7c2hTs"))
+        live = np.prod([1.0 - MEMBER_FULL[c] for c in board], axis=0)
+        r0, r1 = rng["BB"] * live, rng["BTN"] * live
+        active = np.nonzero((r0 > 0) | (r1 > 0))[0]
+        ctx = Ctx(active, Config(river_buckets=16))
+        ctx.root_len, ctx.root_reach = 3, (r0[active], r1[active])
+        ids, E, kap = ctx.bucket_table(board, set(board), 16)
+        self.assertTrue(np.allclose(E[1], -E[0].T) and np.allclose(kap[1], kap[0].T))
+        self.assertTrue((kap >= 0).all() and (kap <= 1 + 1e-6).all() and (np.abs(E[0]) <= kap[0] + 1e-6).all())
+        for q, r in ((0, r0[active]), (1, r1[active])):
+            self.assertTrue(((ids[q] < 16) == (r > 0)).all())
+            mass = np.bincount(ids[q][r > 0], weights=r[r > 0], minlength=16)
+            self.assertLess(mass.max() / mass.sum(), 2.5 / 16)
+        # stronger buckets win more: the top bucket beats the bottom one against every opponent bucket
+        self.assertTrue((E[0][-1] >= E[0][0]).all())
+
+    def test_bucket_game_zero_sum(self):
+        # both players' values under the average strategies sum to zero, and the best responses gain (exploitability > 0)
+        r_oop, r_ip = parse_range("22+, A2s+, K9s+, QTs+, JTs, ATo+, KJo+"), parse_range("44+, A5s+, KTs+, QJs, AJo+, KQo")
+        cfg = Config(river_buckets=8, turn_buckets=True, bucket_river_step=3)
+        sol = solve(cards("Kd7c2h"), r_oop, r_ip, pot=6, stack=60, cfg=cfg, time_budget=1e9, max_iters=30)
+        s = sol.solver
+        a, b = sol.r0[None, :].astype(np.float32), sol.r1[None, :].astype(np.float32)
+        v0 = float((s._cfr(sol.root, 0, a, b, update=False, use_avg=True)[0] * sol.r0).sum())
+        v1 = float((s._cfr(sol.root, 1, a, b, update=False, use_avg=True)[0] * sol.r1).sum())
+        pairs = float((s.compat_sum(b)[0] * sol.r0).sum())
+        self.assertLess(abs(v0 + v1) / pairs, 1e-4)
+        self.assertGreater(sol.exploitability(), 0)
 
     def test_turn_classes_cover_every_turn(self):
         ctx = Ctx(np.arange(N_FULL), Config())
