@@ -777,6 +777,28 @@ def preflop_ranges(actions: List[dict], positions, stack: float, pool_except: Op
     return _pf_cached(_pf_key("r", pool_except, actions, positions, stack), work)
 
 
+def _flat_ev(full: Dict[str, np.ndarray], w: np.ndarray, raiser: np.ndarray, pot: float, to_call: float,
+             behind: float = 0.0) -> np.ndarray:
+    """Per combo, the EV (over folding) of flatting a raise instead of jamming over it: its equity against the
+    raiser's range, realized at the rate that makes the chart's weakest flats (CUT_FLOOR of them) break even,
+    over the pot after the call, less the call, plus the implied odds small pairs and suited hands have on the
+    stack `behind` (IMPLIED, as the priced calls); 0 for hands the chart doesn't continue with. A short-stack
+    rejam competes with this, not just with folding (see push_fold's `alt`)."""
+    from .pf_classes import equity_vs
+    eq = np.nan_to_num(equity_vs(raiser), nan=0.0)
+    cont = full.get("call", 0.0) + full.get("raise", 0.0)
+    c = w * full["call"]
+    if c.sum() < 1e-9:
+        return np.zeros(N_COMBOS)
+    order = np.argsort(eq)                              # weakest first
+    cum = np.cumsum(c[order])
+    marg = float(eq[order][min(int(np.searchsorted(cum, CUT_FLOOR * cum[-1])), len(cum) - 1)])
+    price = to_call / max(pot + to_call, 1e-9)
+    realize = float(np.clip(price / max(marg, 1e-6), 0.5, 1.2))
+    ev = realize * eq * (pot + to_call) - to_call + _IMPLIED_W * max(behind, 0.0)
+    return np.where(cont > 1e-9, np.maximum(ev, 0.0), 0.0)
+
+
 def _jam_range(actions: List[dict], ji: int, positions, stack: float, pool_except: Optional[str] = None):
     """(the range of the player whose all-in is actions[ji], notes). An open- or 3bet-jam: push/fold
     equilibrium against the players left to act (the opener, if any, is the one who calls); later, the
@@ -793,8 +815,16 @@ def _jam_range(actions: List[dict], ji: int, positions, stack: float, pool_excep
         call_rng = arr.get(caller, np.ones(N_COMBOS)) if caller else np.ones(N_COMBOS)
         caller_in = prev.bets[caller] if caller else float(np.mean([prev.bets[p] for p in opp]))
         pot_before = prev.pot_start + sum(prev.bets.values())
+        # a jam over a raise competes with flatting it, as our own (Advisor._push)
+        alt = None
+        if prev.n_raises == 1 and caller:
+            full_j = pf.strategy_for(jammer, before, positions)
+            to_call = min(prev.cur_bet - prev.bets[jammer], jam - prev.bets[jammer])
+            if "call" in full_j and to_call > 1e-9:
+                alt = _flat_ev(full_j, rng, call_rng, pot_before, to_call,
+                               stack - prev.inv_start[jammer] - prev.bets[jammer] - to_call)
         push = push_fold(rng, call_rng, jam, prev.bets[jammer], caller_in, pot_before, len(opp),
-                         rake=getattr(positions, "rake", None))
+                         rake=getattr(positions, "rake", None), alt=alt)
         share = float((rng * push).sum() / max(rng.sum(), 1e-12))
         rng = rng * push
         notes.append(f"{jammer}'s {jam:g}bb jam range: push/fold equilibrium against {len(opp)} "
@@ -1054,8 +1084,12 @@ class Advisor:
         call_rng = arr.get(last, np.ones(N_COMBOS)) if last else np.ones(N_COMBOS)
         caller_in = st.bets[last] if last else float(np.mean([st.bets[p] for p in opp]))
         pot = st.pot_start + sum(st.bets.values())
+        to_call = min(st.cur_bet - st.bets[hero], jam - st.bets[hero])
+        alt = (_flat_ev(full, arr.get(hero, np.ones(N_COMBOS)), call_rng, pot, to_call,
+                        stack - st.inv_start[hero] - st.bets[hero] - to_call)
+               if last and "call" in full and to_call > 1e-9 else None)
         push = push_fold(arr.get(hero, np.ones(N_COMBOS)), call_rng, jam, st.bets[hero], caller_in, pot,
-                         max(1, len(opp)), rake=getattr(positions, "rake", None))
+                         max(1, len(opp)), rake=getattr(positions, "rake", None), alt=alt)
         out = dict(full)
         out["raise"] = push
         if "call" in full:   # what the chart continued with and doesn't shove calls

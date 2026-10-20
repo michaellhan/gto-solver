@@ -53,7 +53,7 @@ def equity_vs(villain: np.ndarray) -> np.ndarray:
 
 
 def push_fold(jam_range: np.ndarray, call_range: np.ndarray, jam: float, jammer_in: float, caller_in: float,
-              pot: float, n_callers: int = 1, iters: int = 400, rake=None) -> np.ndarray:
+              pot: float, n_callers: int = 1, iters: int = 400, rake=None, alt=None) -> np.ndarray:
     """Push/fold equilibrium by fictitious play, in hand classes.
 
     The jammer (range jam_range, combos) has jammer_in in the pot of `pot` and shoves to `jam`; each of
@@ -61,8 +61,12 @@ def push_fold(jam_range: np.ndarray, call_range: np.ndarray, jam: float, jammer_
     alike and independently; only one of them is assumed to call. Returns the jammer's push frequency
     per combo. `rake`: (rate, cap in bb or None), or None for no rake. A called jam runs out a board, so
     it sees the flop and its pot is raked (as Advisor._vs_jam prices a call of an all-in); a jam that
-    takes the pot uncalled ends preflop and isn't ("no flop, no drop")."""
+    takes the pot uncalled ends preflop and isn't ("no flop, no drop"). `alt`: per combo, the EV (over
+    folding) of the jammer's best other option, a flat call of the raise it faces: a hand jams only when the
+    jam beats it (push/fold against folding alone jammed a big blind's 25bb rejam over a button open with
+    30% of hands, where the solves flat most of them)."""
     eq = equity_matrix()
+    alt_c = np.zeros(len(CLASSES)) if alt is None else np.bincount(CLASS_OF, weights=alt, minlength=len(CLASSES)) / N_IN
     wj, wc = to_classes(jam_range), to_classes(call_range)
     final = 2 * jam + pot - jammer_in - caller_in
     if rake and rake[0] > 0:
@@ -83,6 +87,6 @@ def push_fold(jam_range: np.ndarray, call_range: np.ndarray, jam: float, jammer_
         p_nocall = (1 - p_call1) ** n_callers
         e_j = (eq * wq).sum(1) / np.maximum(wq.sum(1), 1e-12)
         ev = p_nocall * pot + (1 - p_nocall) * (e_j * final - (jam - jammer_in))
-        push = (ev > 0).astype(float)
+        push = (ev > alt_c).astype(float)
         avg_p += (push - avg_p) / t
     return avg_p[CLASS_OF]

@@ -417,6 +417,15 @@ class TestAdvisor(unittest.TestCase):
         self.assertEqual(r["recommended"], "call")
         r, a = go("BB", "AhKd", F("UTG", "HJ", "CO") + [R("BTN", "raise", 2.5)] + F("SB"), stack=40)
         self.assertIn("all-in", a)
+        # a short-stack rejam over an open competes with flatting it, not just folding: suited connectors and
+        # small pairs flat (push/fold against folding alone jammed 76s at 25bb and 55 at 40bb, 30% and 23% of
+        # hands); AQo and KK still jam
+        bo = F("UTG", "HJ", "CO") + [R("BTN", "raise", 2.3)] + F("SB")
+        self.assertEqual(go("BB", "7h6h", bo, stack=25)[0]["recommended"], "call")
+        self.assertEqual(go("BB", "AhQd", bo, stack=25)[0]["recommended"], "all-in")
+        bo = F("UTG", "HJ", "CO") + [R("BTN", "raise", 2.5)] + F("SB")
+        self.assertEqual(go("BB", "5h5d", bo, stack=40)[0]["recommended"], "call")
+        self.assertEqual(go("BB", "KhKd", bo, stack=40)[0]["recommended"], "all-in")
         # facing a 5bet with chips behind, AA can shove
         r, a = go("UTG", "AhAd", [R("UTG", "raise", 2.5), R("HJ", "raise", 8)] + F("CO", "BTN", "SB", "BB")
                   + [R("UTG", "raise", 20), R("HJ", "raise", 45)], stack=200)
