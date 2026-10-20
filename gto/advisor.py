@@ -71,6 +71,7 @@ PRICE_BLEND = 0.02  # preflop, off-chart price: continue frequency ramps over th
 RAISE_BLEND = 0.03  # preflop, more players in: value-raise frequency ramps over this much equity when called
 COMMIT = 0.4       # preflop: a raise that would put in this share of the stack goes all-in instead
 JAM_SPR = 1.5      # ...as does one leaving less than this many pots behind once called
+CHECK_REALIZE = 0.8  # preflop, short stacks: the share of its equity the big blind's free check over limpers realizes
 JAM_SPR_DEEP = 1.25 # ...this many at the charts' own depth (within DEPTH_TOL of CHART_STACK), where a 4bet to 2.3x
                     # leaves ~1.45 pots behind and is called, as in 100bb solves
 PUSH_FOLD_STACK = 12.0  # preflop: at or below this many bb, raising first in is all-in (push/fold)
@@ -1081,13 +1082,26 @@ class Advisor:
         arr = preflop_ranges(preflop, positions, stack, hero if pool else None)
         last = next((a["pos"] for a in reversed(preflop) if a["action"] in ("raise", "all-in")), None)
         opp = [p for p in st.order if p in st.active and p != hero and p not in st.allin]
-        call_rng = arr.get(last, np.ones(N_COMBOS)) if last else np.ones(N_COMBOS)
+        if last:
+            call_rng = arr.get(last, np.ones(N_COMBOS))
+        else:
+            # first in or over limpers: whoever calls is one of the players left, each from their own range
+            # (a limper's, not any two cards: the big blind jammed over two limpers with 55% of hands at 12bb)
+            rs = [arr.get(p, np.ones(N_COMBOS)) for p in opp] or [np.ones(N_COMBOS)]
+            call_rng = sum(r / max(r.sum(), 1e-12) for r in rs) / len(rs) * N_COMBOS
         caller_in = st.bets[last] if last else float(np.mean([st.bets[p] for p in opp]))
         pot = st.pot_start + sum(st.bets.values())
         to_call = min(st.cur_bet - st.bets[hero], jam - st.bets[hero])
-        alt = (_flat_ev(full, arr.get(hero, np.ones(N_COMBOS)), call_rng, pot, to_call,
-                        stack - st.inv_start[hero] - st.bets[hero] - to_call)
-               if last and "call" in full and to_call > 1e-9 else None)
+        alt = None
+        if "call" in full and to_call > 1e-9:
+            alt = _flat_ev(full, arr.get(hero, np.ones(N_COMBOS)), call_rng, pot, to_call,
+                           stack - st.inv_start[hero] - st.bets[hero] - to_call)
+        elif "check" in full:
+            # the big blind's free check over limpers: its share of the pot, realized at CHECK_REALIZE
+            limpers = [p for p in opp if st.bets[p] > 0] or opp
+            eq = _preflop_equity_multi([arr.get(p, np.ones(N_COMBOS)) for p in limpers]) if limpers else None
+            if eq is not None:
+                alt = CHECK_REALIZE * np.nan_to_num(eq, nan=0.0) * pot
         push = push_fold(arr.get(hero, np.ones(N_COMBOS)), call_rng, jam, st.bets[hero], caller_in, pot,
                          max(1, len(opp)), rake=getattr(positions, "rake", None), alt=alt)
         out = dict(full)

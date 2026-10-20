@@ -448,6 +448,12 @@ class TestAdvisor(unittest.TestCase):
         bo = F("UTG", "HJ", "CO") + [R("BTN", "raise", 2.5)] + F("SB")
         self.assertEqual(go("BB", "5h5d", bo, stack=40)[0]["recommended"], "call")
         self.assertEqual(go("BB", "KhKd", bo, stack=40)[0]["recommended"], "all-in")
+        # ...and the big blind's iso-jam over limpers competes with its free check, against the limpers' ranges
+        # (not any two cards): at 12bb K5o and J5s checked behind two limpers only after this (55% jammed)
+        lim = [R("UTG", "call")] + F("HJ", "CO") + [R("BTN", "call")] + F("SB")
+        self.assertEqual(go("BB", "Kh5d", lim, stack=12)[0]["recommended"], "check")
+        self.assertEqual(go("BB", "Jh5h", lim, stack=12)[0]["recommended"], "check")
+        self.assertEqual(go("BB", "AhTd", lim, stack=12)[0]["recommended"], "all-in")
         # facing a 5bet with chips behind, AA can shove
         r, a = go("UTG", "AhAd", [R("UTG", "raise", 2.5), R("HJ", "raise", 8)] + F("CO", "BTN", "SB", "BB")
                   + [R("UTG", "raise", 20), R("HJ", "raise", 45)], stack=200)
