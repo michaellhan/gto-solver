@@ -1416,8 +1416,12 @@ class TestExploit(unittest.TestCase):
         st = {"players": 6, "hero": "BB", "hole": "AsKd", "board": "Kc7d2s", "stack": 100,
               "preflop": F("UTG", "HJ", "CO") + [R("BTN", "raise", 2.5)] + F("SB") + [R("BB", "call")],
               "flop": [R("BB", "check"), R("BTN", "all-in")]}
-        for _ in range(2):
-            self.assertEqual(Advisor(time_budget=1, prior_budget=0.5).advise(st)["recommended"], "fold")
+        # (and at every budget: the solve's own jamming hands are the ones it still jams now, not an average
+        # that keeps its uniform start: K8o-KQo jammed 18-45% on average at 1-2.5 s, and AK called at +6 to +19)
+        for tb in (0.5, 1, 1, 2.5):
+            res = Advisor(time_budget=tb, prior_budget=0.5).advise(st)
+            self.assertEqual(res["recommended"], "fold")
+            self.assertLess(next(a["ev_bb"] for a in res["actions"] if a["action"] == "call"), -5)
 
     def test_rare_turn_reraise_keeps_solved_range(self):
         """BTN 3bets AQ, HJ calls; Qs9dKc checks through; on the Td turn HJ bets 1, BTN raises to 12 and HJ

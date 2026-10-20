@@ -2447,6 +2447,13 @@ class Advisor:
                 if reraise:
                     # no bluffs: as many combos as the rule's range, from the top (a 99bb river jam into 2bb kept
                     # 0 combos as solved, and as the rules' about half bluffs a hand playing the board called it)
+                    # The solve's own hands are those it still plays this way now (its current strategy) as well
+                    # as on average: an average from a short solve keeps the uniform start of its first
+                    # iterations, which for a line it rarely takes is most of it (14 iterations in, K8o and
+                    # KQo jammed a K72 flop 18% on average and 0% currently, so AK called the jam at +6 to +19 bb
+                    # on short budgets and folded at -67 on long ones).
+                    if lock is None or p != lock.player:
+                        s = np.minimum(s, node.strategy()[0][k])
                     s = np.maximum(s, _top(full, _share(full, m), rank)[sol.ctx.active])   # with the solve's own
                 else:
                     s = _soften(full, m)[sol.ctx.active]
