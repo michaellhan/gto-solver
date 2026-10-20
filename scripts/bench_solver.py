@@ -13,9 +13,8 @@ Curves (--curve): exploitability (% of the pot) against solving time for a set o
 configs and the native default. Exploitability is measured at fixed iteration counts (deterministic) and
 mapped to time by the setup time and the fastest per-iteration rate seen, in CPU seconds, so other work on
 the machine moves the numbers little. numpy's BLAS is held to one thread (the browser has one) unless
-BENCH_THREADS is set. --noblas runs the browser's kernels (einsum, trimmed leaves); to run it in Pyodide
-itself (Node, `npm install pyodide@0.26.4`), mount the repo and run this file with runpy: NO_BLAS is on
-there and times are wall-clock.
+BENCH_THREADS is set. --noblas runs the browser's kernels (einsum, trimmed leaves) natively; for Pyodide
+itself use scripts/pyodide_run.mjs (NO_BLAS is on there and times are wall-clock).
 
     python scripts/bench_solver.py --curve [--noblas] [--spots srp-dry,turn] [--configs fast] [--budget 8]
 """
