@@ -21,6 +21,20 @@ class TestCardsRanges(unittest.TestCase):
         self.assertEqual(parse_range("T9s-76s").sum(), 16)
         self.assertEqual(hand_class(tuple(cards("AhKh"))), "AKs")
 
+    def test_parse_case_spaces_and_bad_classes(self):
+        # any case: "AKS" was read as offsuit (12 combos), "aks" was an error
+        for t in ("AKS", "aks", "aKs"):
+            self.assertEqual(parse_range(t).sum(), 4, t)
+        self.assertEqual(parse_range("t9s-76S").sum(), 16)
+        self.assertEqual(parse_range("ahkh").sum(), 1)
+        # spaces between hands: "AA KK" was AA alone
+        self.assertEqual(parse_range("AA KK\nQQ  JJ").sum(), 24)
+        self.assertEqual(parse_range("AA : 0.5, KK").sum(), 9)
+        # a suffix other than s/o, or on a pair, is an error, not offsuit / the pair
+        for t in ("AKx", "AAs", "AKso"):
+            with self.assertRaises(ValueError, msg=t):
+                parse_range(t)
+
     def test_eval(self):
         st = eval_board(cards("AhKd7c2s9h"))
         i_aa = ALL_COMBOS.index(tuple(sorted(cards("AsAc"))))
