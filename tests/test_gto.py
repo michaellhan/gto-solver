@@ -52,6 +52,25 @@ class TestSolverMath(unittest.TestCase):
             eq = lambda M: 0.5 + 0.5 * M.sum(1) / np.maximum(ctx.compat.sum(1), 1)   # each vs the rest, evenly
             self.assertLess(np.abs(eq(L) - eq(E)).max(), 0.04)
 
+    def test_turn_leaf_in_flop_solve_uses_every_river(self):
+        """A turn leaf inside a flop solve (an all-in or check-down on the turn) averages every river, not
+        leaf_rivers_flop random ones (4 in the browser's Fast tree moved a flush draw's equity by tens of points)."""
+        board = tuple(cards("Ks7s2d4h"))
+        r = parse_range("JsTs, AsQs, AhKd, 77, 8s8d, QhJh, 6s5s")
+        bm = np.ones(N_FULL)
+        for c in board:
+            bm *= 1 - MEMBER_FULL[c]
+        active = np.nonzero(r * bm > 0)[0]
+        ctx = Ctx(active, Config(leaf_rivers_flop=4))
+        ctx.root_len = 3
+        L = ctx.leaf_matrix(board, set())
+        E = np.zeros_like(L, dtype=np.float64); C = np.zeros_like(E)
+        for rv in [c for c in range(52) if c not in board]:
+            s = ctx.strength(board + (rv,)).astype(float)
+            ok = (s >= 0).astype(float)
+            E += np.sign(s[:, None] - s[None, :]) * np.outer(ok, ok); C += np.outer(ok, ok)
+        self.assertLess(np.abs(L - E / np.maximum(C, 1) * ctx.compat).max(), 1e-5)
+
     def test_showdown_matrix_matches_bruteforce(self):
         board = cards("AhKd7c2s9h")
         r = parse_range("22+, A2s+, KTs+, ATo+")
