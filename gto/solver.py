@@ -575,7 +575,8 @@ class Solver:
       walks ~30 decision nodes per pass instead of ~90. The root street is walked down to collect the
       reaches arriving at each chance node, the merged subtrees run, and the root street is walked back up.
     * every node's regrets and strategy sums are views into two flat buffers, discounted in one call
-    * a player's strategies computed in the other player's pass are reused in their own (unchanged regrets)
+    * a player's strategies computed in the other player's pass are reused in their own (unchanged regrets),
+      below the root street too; there the NO_BLAS kernels also trim the leaf matrices to each range
     All of it gives the same numbers as walking the tree node by node. The original nodes' arrays are views of the merged ones, so reading and EV code sees current values."""
 
     def __init__(self, ctx: Ctx, root: Decision, dead: set):
@@ -730,7 +731,7 @@ class Solver:
             r0c = (r0[:, None, :] * m3).reshape(B * k, n)
             r1c = (r1[:, None, :] * m3).reshape(B * k, n)
             full = sel is None and k == K
-            u = self._cfr(node.child, p, r0c, r1c, update, use_avg, None if full else csel)
+            u = self._cfr(node.child, p, r0c, r1c, update, use_avg, None if full else csel, strats)
             norm = node.norm_for(m3) if k < K else node.norm[rows]
             return (u.reshape(B, k, n) * m3).sum(axis=1) / norm
         if strats is None or sel is not None:
@@ -805,7 +806,7 @@ class Solver:
         self._down(self.root, p, r0, r1, strats, arrive)
         for chance, members in self._groups:
             u = self._cfr(chance, p, np.concatenate([arrive[id(c)][0] for c in members]),
-                          np.concatenate([arrive[id(c)][1] for c in members]), update=True, use_avg=False)
+                          np.concatenate([arrive[id(c)][1] for c in members]), update=True, use_avg=False, strats=strats)
             off = 0
             for c in members:
                 done[id(c)] = u[off:off + len(c.boards)]

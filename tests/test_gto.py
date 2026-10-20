@@ -142,10 +142,11 @@ class TestSolverMath(unittest.TestCase):
         r_ip = parse_range("22+, A2s+, K5s+, Q8s+, J8s+, T8s+, A8o+, KTo+, QTo+")
         small = {"flop": [0.33, 0.75], "turn": [0.75], "river": [0.75]}
         cfg = Config(n_turns=2, leaf_turns=2, leaf_rivers_flop=2, n_rivers_from_flop=2, bet_sizes=small, raise_sizes=small)
-        ref = solve(board, r_oop, r_ip, pot=5.5, stack=97.5, cfg=cfg, max_iters=60, time_budget=1e9)
+        # float32 sums in a different order drift apart early on (60 iterations: up to 0.08% of the pot), less so later
+        ref = solve(board, r_oop, r_ip, pot=5.5, stack=97.5, cfg=cfg, max_iters=150, time_budget=1e9)
         S.NO_BLAS = True
         try:
-            sol = solve(board, r_oop, r_ip, pot=5.5, stack=97.5, cfg=cfg, max_iters=60, time_budget=1e9)
+            sol = solve(board, r_oop, r_ip, pot=5.5, stack=97.5, cfg=cfg, max_iters=150, time_budget=1e9)
             self.assertIsNotNone(sol.solver._live)
             self.assertLess(abs(sol.exploitability() - ref.exploitability()), 0.05)
             live = sol.r0 > 0
