@@ -1061,6 +1061,8 @@ class Advisor:
         # Accurate keeps their flop's river checked down: 12 s there is ~10 iterations with river_play
         self.prior_model: Optional[dict] = None
         self._by_spot: Dict[tuple, Solution] = {}    # latest solve per spot, whatever the ranges
+        # precomputed flop solves (gto/flop_library.py: FlopLibrary), used where they hold the spot; None = off
+        self.library = None
         self.rng = random.Random()
 
     # ------------------------------------------------------------ public
@@ -1534,6 +1536,9 @@ class Advisor:
         oop, ip = sorted([hero, villain], key=post.index)
         hero_p = 0 if hero == oop else 1
         r0, r1 = ranges[oop].copy(), ranges[ip].copy()
+        full = (ranges[oop], ranges[ip])   # the ranges entering the flop: they pick a precomputed spot (flop_library)
+        lib = self.library if self.library is not None and not pool and not optimize else None
+        lib_sol = None
         for c in hole:  # villain can't hold hero's cards
             if hero_p == 0:
                 r1 = r1 * (1.0 - MEMBER_FULL[c])
@@ -1555,12 +1560,19 @@ class Advisor:
                     continue   # multiway: narrowed above
                 eff = min(stack - st.inv_start[oop], stack - st.inv_start[ip])
                 cfg = self._cfg_with_real_sizes(st, oop, ip, eff)
-                if self.prior_model:
-                    cfg = dataclasses.replace(cfg, **self.prior_model)
-                sol = self._solve_cached(sub_board, r0, r1, st.pot_start, eff, self.prior_budget, cfg=cfg)
-                node, c0, c1 = self._walk(sol, st.actions, oop, ip, st.pot_start, eff, notes, st.name, self.prior_smoothing,
-                                          board=sub_board, rules=(0, 1),
-                                          lock=PoolLock(sol.ctx, 1 - hero_p, committed) if pool else None)
+                hit = self._from_library(lib, full, sub_board, r0, r1, st, eff, cfg, oop, ip, notes,
+                                         smoothing=self.prior_smoothing, board=sub_board, rules=(0, 1)) \
+                    if lib is not None and st.name == "flop" else None
+                if hit is not None:
+                    sol, node, c0, c1 = hit
+                    notes.append(sol.note())
+                else:
+                    if self.prior_model:
+                        cfg = dataclasses.replace(cfg, **self.prior_model)
+                    sol = self._solve_cached(sub_board, r0, r1, st.pot_start, eff, self.prior_budget, cfg=cfg)
+                    node, c0, c1 = self._walk(sol, st.actions, oop, ip, st.pot_start, eff, notes, st.name, self.prior_smoothing,
+                                              board=sub_board, rules=(0, 1),
+                                              lock=PoolLock(sol.ctx, 1 - hero_p, committed) if pool else None)
                 r0 = _post_floor(r0, expand(sol.ctx, c0), board, oop, st.name, notes)
                 r1 = _post_floor(r1, expand(sol.ctx, c1), board, ip, st.name, notes)
             eff = min(stack - cur.inv_start[oop], stack - cur.inv_start[ip])
@@ -1568,6 +1580,20 @@ class Advisor:
             r0, r1 = self._with_hero(r0, r1, hero_p, hole, notes)
             if optimize and to_call <= 1e-9:
                 cfg, opt = self._optimize_sizes(board, r0, r1, cur, eff, cfg, hero_p, notes)
+            if lib is not None and cur.name == "flop":
+                # a precomputed solve answers when it holds the spot and the line, the villain's line isn't rare in
+                # it and the node is one it stores (else the live solve below)
+                w2, rl2, n2 = [], [], []
+                hit = self._from_library(lib, full, board, r0, r1, cur, eff, cfg, oop, ip, n2,
+                                         smoothing=self.prior_smoothing, only=1 - hero_p, widened=w2, board=board,
+                                         rare_lines=rl2)
+                if hit is not None and not w2 and not rl2 and id(hit[1]) in hit[0].stored:
+                    lib_sol, node, n_r0, n_r1 = hit
+                    notes.extend(n2)
+                    notes.append(lib_sol.note())
+        if lib_sol is not None:
+            sol = lib_sol
+        elif hu_from_start:
             sol = self._solve_cached(board, r0, r1, cur.pot_start, eff, self.time_budget, cfg=cfg)
             # The villain's actions this street are exact unless the solve rarely takes them: then
             # smooth as on earlier streets, so we aren't advised against a sliver of a range.
@@ -1685,6 +1711,7 @@ class Advisor:
                        # how far this street's solve is from equilibrium, % of the street's starting pot
                        "exploitability_pct": round(expl, 2)},
             "widened": widened,
+            **({"precomputed": lib_sol.info()} if lib_sol is not None else {}),
             "notes": notes, "seconds": round(time.time() - t0, 2),
         }
 
@@ -2589,6 +2616,23 @@ class Advisor:
         notes.append("your hand isn't in your range for this line, so it was solved as a near-zero-weight combo")
         return (r, r1) if hero_p == 0 else (r0, r)
 
+    def _from_library(self, lib, full, flop, r0, r1, st: StreetState, eff, cfg: Config, oop, ip, notes, **walk_kw):
+        """(solution, node, r0, r1) walked from the library's solve of this flop (flop_library.LibrarySolution)
+        when it holds the spot (the ranges entering the flop, pot, stack and tree) and every node of the line
+        taken; else None. The walk's notes go to `notes` only when it is used."""
+        try:
+            sol = lib.solution(full[0], full[1], flop, r0, r1, st.pot_start, eff, cfg)
+        except Exception:   # a library that can't be read is no library
+            sol = None
+        if sol is None:
+            return None
+        visited, n2 = [], []
+        node, c0, c1 = self._walk(sol, st.actions, oop, ip, st.pot_start, eff, n2, st.name, visited=visited, **walk_kw)
+        if not sol.covers(visited):
+            return None
+        notes.extend(n2)
+        return sol, node, c0, c1
+
     def _solve_cached(self, board, r0, r1, pot, stack, budget, bets=(0.0, 0.0), to_act=0, n_raises=0, cfg=None,
                       settle=False):
         cfg = cfg or self.cfg
@@ -2705,7 +2749,7 @@ class Advisor:
         return cfg
 
     def _walk(self, sol: Solution, acts: List[dict], oop, ip, pot, stack, notes, street, smoothing=0.0, only=None,
-              widened=None, board=None, rules=None, lock=None, rare_lines=None):
+              widened=None, board=None, rules=None, lock=None, rare_lines=None, visited=None):
         """Follow real actions through the solved tree, narrowing ranges. Smoothing mixes each
         strategy with uniform so a line the solve rarely takes doesn't shrink a range to nothing.
         With `only` (0 = OOP, 1 = IP) and `board`, that player's actions are exact unless the solve
@@ -2716,7 +2760,8 @@ class Advisor:
         `rules` (players, with `board`) gives the same fallback on an earlier street, where the other
         actions stay smoothed: a short prior solve can be far from equilibrium, and a line it rarely
         takes (a turn call it folds two pair to) would leave the range a sliver.
-        `lock` (exploit mode) narrows its player's range by how the pool plays instead of the solve."""
+        `lock` (exploit mode) narrows its player's range by how the pool plays instead of the solve.
+        `visited` (a list) gets every node an action was taken at."""
         rules = (only,) if rules is None and only is not None else rules or ()
         node = sol.root
         r0, r1 = sol.r0.copy(), sol.r1.copy()
@@ -2730,6 +2775,8 @@ class Advisor:
             if p != node.player:
                 notes.append(f"{street}: action order mismatch at {a['pos']} {a['action']}; ignoring")
                 continue
+            if visited is not None:
+                visited.append(node)
             name = self._tree_action_name(node, a, p, bets, pot, stack)
             k = match_action(node.names, name)
             rp = r0 if p == 0 else r1

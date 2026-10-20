@@ -485,13 +485,64 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   to reach 8 combos even from scratch (an opener calling a cold 4bet calls 6.8), the strongest hands
   of the range before the action top it up to 8, by equity against a random hand.
 
+### Precomputed flop library
+
+The commonest flop decisions come from solves made offline (`gto/flop_library.py`, built by
+`scripts/build_flop_library.py`), so they are instant and settled at either speed, in the browser too.
+
+* **Spots** (`flop_library.SPOTS`, most common first): 6-max, 100bb, no ante or rake, the page's default sizes:
+  BTN, CO, HJ, UTG and SB vs BB single-raised pots, BB vs BTN and SB vs BTN 3bet pots, and BTN 3bets CO. A spot
+  is matched by the two ranges entering the flop (as the charts replay them: other table sizes, stacks or charts
+  simply don't match), the pot and the stack; heads-up from the flop only, not in exploit mode, with custom ranges
+  or with Optimize sizes.
+* **Flops**: 184 canonical flops per spot (`representative_flops`: the 1755 suit-isomorphic flops sorted by
+  texture and sampled by weight, so each suit pattern, pairing and height gets its share). A flop is matched up
+  to suits: the ranges are suit-symmetric, so a stored flop's solve is any suit permutation's, its combos
+  permuted. Other flops are solved live as before.
+* **What is stored**: the flop's first decisions (the root; the in-position player after a check or facing a
+  lead; the out-of-position player facing a bet after checking), only where the other player gets there with 5%
+  or more of their range (a lead the big blind never makes is the solve's noise, and the advisor solves live
+  behind a line under 10% anyway). Per combo: the average strategy in 1% steps and every action's EV (the best
+  to 0.02 bb, the others as a gap below it, 0.02 bb steps then 3%), plus range totals. 6-9 KB a flop for single
+  raised pots (zlib), smaller for 3bet pots, ~10 MB for all eight spots.
+* **Tree**: Accurate's flop model (one turn per rank class, the river bet on; the browser's Accurate config,
+  which plays the same flop game as the native one), two flop sizes, 300-500 iterations, to under 0.15% of the pot
+  from equilibrium (the live Accurate solve gets ~0.3-0.4% in the server's 30 s and 60-75 iterations in the
+  browser's 60 s). The answer's `precomputed` field (a badge on the page) says which spot and how many iterations;
+  `same_tree` is false in Fast mode, whose own flop model checks the river down on a few random turns: against the
+  library its BTN c-bet runs 5.6 points off on average over 20 flops even fully converged (up to 15 on dry
+  boards: J52 58% for 71%), BB's response to the small c-bet 8.6.
+* **Lines**: the advisor walks the actual flop action through the stored nodes (sizes taken more than 15% off the
+  tree's, more raises than it allows, or a line through a raise fall back to the live solve). Turn and river spots
+  narrow the flop's ranges through it as well, instead of the earlier street's short solve. The entry ignores the
+  hero's cards in the villain's range (the live solve drops them): an edge the size of a blocker.
+* **Invalidation**: `index.json` holds each spot's range fingerprints and the tree; an entry whose spot, tree or
+  `MODEL_VERSION` (bump it when the flop game changes in a way the tree key can't see) no longer matches the code
+  is ignored, and a rebuilt index leaves stale entries out (a test checks the shipped index against the charts).
+* **Browser**: the worker fetches `flop_library/index.json` the first time a flop comes up and one entry
+  (`<spot>/<flop>.bin`, cache-busted by its hash) when its spot does; `scripts/deploy.sh` copies the folder.
+
+Building (resumable: entries on disk for the current charts and tree are kept, so re-run the same command after
+a stop; progress lines go to stdout, the index is rewritten every 20 entries):
+
+```bash
+nohup python scripts/build_flop_library.py --jobs 5 > reports/flop_library_build.log &   # 8 spots x 184 flops, ~5 h
+python scripts/build_flop_library.py --spots srp_btn_bb --flops all                     # all 1755 flops of a spot
+python scripts/build_flop_library.py --spots srp_btn_bb --boards Ks7d2c,Qs8s3d          # given flops
+python scripts/build_flop_library.py --index-only
+```
+
+Each entry takes ~60 s natively on a rainbow flop and up to twice that two-tone. After changing the charts or
+the flop model, run it again (stale entries are re-solved). `--flops all` multiplies a spot's size by ~10 (60-70
+MB): within the ~15 MB budget only one spot's full set would fit.
+
 ### Deploy to the website
 
 ```bash
 scripts/deploy.sh
 ```
 
-copies the page, the worker, `practice.js` and the `gto` sources into the `gto-solver/` folder
+copies the page, the worker, `practice.js`, the `gto` sources and the flop library into the `gto-solver/` folder
 of the michaellhan.github.io repo and pushes. First it runs the checks and aborts
 the deploy if either fails: `python -m unittest`, then the quick sanity sweep
 (`scripts/sanity_sweep.py --quick`, about 3 minutes on 10 cores: a fixed, seeded set
