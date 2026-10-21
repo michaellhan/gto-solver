@@ -1146,8 +1146,11 @@ async function analyze(sim) {
   if (!S.cards[0] || !S.cards[1]) return;
   await modeReady;
   const key = JSON.stringify(payload());
-  if (key === lastKey || solving) return;
+  if (key === lastKey) return;
   lastKey = key;
+  // It's your turn at another spot (a new hand, an undo, an edit): the solve of the one you left mustn't hold this
+  // one up (in the browser a whole Accurate solve, with the panel still saying it waits for your turn).
+  if (solving) { await cancelSolve(); if (lastKey !== key) return; }
   if (cache.has(key)) { renderResult(cache.get(key), key); return; }
   const acc = SPEED === "fast" && cache.get(keyFor(key, "accurate"));
   if (acc) { cache.set(key, acc); renderResult(acc, key); return; }   // an Accurate answer for this spot beats a Fast re-solve

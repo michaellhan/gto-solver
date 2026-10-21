@@ -77,6 +77,32 @@ test("on your turn the worker gets the state as built, at the Fast budget", asyn
   assert.ok(p.buttons().some(b => b.innerHTML.startsWith('Bet 2<small>33% pot<span class="fq"> · 30%</span>')));
 });
 
+test("a solve of a spot you've left doesn't hold up your next turn: it's stopped and the new spot asked at once", async () => {
+  const p = loadPage();
+  await p.ready();
+  p.S = state(FLOP);
+  await flush();
+  const first = p.posted.at(-1);
+  p.workers[0].onmessage({ data: { status: "Solving…" } });   // the runtime is up and solving that spot
+  p.click("newhand");
+  p.S = state({ cards: ["9s", "9d", "Qc", "8h", "3d"], preflop: acts("UTG f, HJ f, CO f, BTN r2.5, SB f, BB c"), flop: acts("BB x") });
+  await flush(); await flush();
+  const asked = p.posted.at(-1);
+  assert.notEqual(asked.id, first.id);
+  assert.deepEqual(asked.state, p.payload());
+  assert.equal(p.workers[0].terminated, true);   // the old solve blocked the worker: it was restarted
+  assert.match(p.byId("result").innerHTML, /Solving the flop/);
+  // the old solve's answer, if it still came, is dropped
+  p.workers[0].onmessage && p.workers[0].onmessage({ data: { id: first.id, result: { street: "flop", recommended: "check", actions: [{ action: "check", freq: 1 }] } } });
+  await flush();
+  assert.match(p.byId("result").innerHTML, /Solving the flop/);
+  // with the same spot still in flight, more renders ask nothing more
+  const n = p.posted.length;
+  p.run("renderAll()");
+  await flush();
+  assert.equal(p.posted.length, n);
+});
+
 test("Accurate and Pool toggles change the state sent, and are remembered", async () => {
   const p = loadPage();
   await p.ready();
