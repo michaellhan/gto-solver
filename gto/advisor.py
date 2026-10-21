@@ -77,8 +77,11 @@ UNSETTLED = 3.0     # heads-up: a solve this far from equilibrium (% pot) hasn't
 # and calling the c-bet 21% where it settles at 95% and 47%) left 24, 20 iterations and a 26-iteration turn (6%)
 # 18 (a loaded machine's 2.5 s; 4% of its preflop range). Followed by how settled they are: 89 there, 55-65 with
 # 40-iteration flops (2.6%, but its BB still checks 75%, so the flop's ramp starts low; were 41-43), 63-72 at
-# 100-300. A settled solve (the accurate speed's, or fast's unloaded: flop ~0.4%, turn 1.5-2%) is followed fully.
-# The rules alone keep 129 (soft: hands off them keep 0.3), so short solves err wide, not thin.
+# 100-300. Fast's bucketed flop (river_buckets) is further off at a given count (20 iterations 27%, 40 7.7% with
+# BB checking 87% and calling 33% for 99% and 50%, 80 1.8%, 150 0.5%); long solves keep 87.7 there, short ones
+# kept 29 (20 flop, 26 turn iterations), 50 (40/26), 52 (40/45), 70-82 (80-150/45) and now keep 89, 89, 67,
+# 72-81. A settled solve (the accurate speed's, or fast's unloaded: flop 140-210 iterations, turn 1.5-2%) is
+# followed fully. The rules alone keep 129 (soft: hands off them keep 0.3), so short solves err wide, not thin.
 PRIOR_TRUST = {"flop": (0.5, 5.0), "turn": (2.0, 10.0), "river": (2.0, 10.0)}
 SETTLE_EXPL = 10.0  # heads-up: the street being advised on gets one more time budget when this far (% pot) from settled
 JAM_BLEND = 0.04    # preflop vs a jam: call frequency ramps from 0 to 1 over this much equity around the pot odds

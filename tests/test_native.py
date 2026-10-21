@@ -35,7 +35,7 @@ class TestNativeSpeeds(unittest.TestCase):
     def test_fast_turn_settles_and_river_range_holds(self):
         """BTN vs BB, K72 c-bet called, turn T. Config()'s full menu ran 10 turn iterations in the server's
         2.5 s, 60-70% of the pot from equilibrium, and BB's river check range narrowed on it to 7 combos
-        (long solves keep 69.5). Fast settles the turn (~2%, 40-45 iterations unloaded). Judged by iterations,
+        (long solves keep 87.7). Fast settles the turn (~2%, 40-45 iterations unloaded). Judged by iterations,
         not time: a loaded machine gets fewer in the budget (26 turn iterations at load 20), so a turn short
         of the unloaded count is run on to it."""
         adv = advisor("fast")
@@ -46,15 +46,15 @@ class TestNativeSpeeds(unittest.TestCase):
         if sol.iters < UNLOADED_TURN_ITERS:
             sol.extend(1e9, max_iters=UNLOADED_TURN_ITERS)
         self.assertLess(sol.exploitability(), 5.0, (sol.iters, r["solver"]))
-        # the river range, at the iterations an unloaded machine's budgets give (flop ~100, turn ~45)
-        combos, r = self.river_check_range({3: 100, 4: UNLOADED_TURN_ITERS, 5: 300})
-        self.assertGreater(combos, 55, r["villain_range"])
+        # the river range, at the iterations an unloaded machine's budgets give (bucketed flop 140-210, turn ~45): 80.7
+        combos, r = self.river_check_range({3: 150, 4: UNLOADED_TURN_ITERS, 5: 100})
+        self.assertGreater(combos, 65, r["villain_range"])
 
     def test_unsettled_earlier_streets_keep_the_range(self):
-        """A loaded machine's (or the browser's) earlier streets: a flop of 20 iterations (9% of the pot from
-        equilibrium, BB checking 61% and calling the c-bet 21% where it settles at 95% and 47%) and a turn of 26
-        (6%) left BB 18 combos checking the river where long solves keep 69.5. Narrowing follows a solve by how
-        settled it is (advisor.PRIOR_TRUST), the rest by the betting rules, so the range errs wide, not thin."""
+        """A loaded machine's (or the browser's) earlier streets: a flop of 20 iterations (27% of the pot from
+        equilibrium with Fast's buckets) and a turn of 26 (6%) left BB 29 combos checking the river where long solves
+        keep 87.7 (with the old fast flop, 9%: 18 for 69.5). Narrowing follows a solve by how settled it is
+        (advisor.PRIOR_TRUST), the rest by the betting rules, so the range errs wide, not thin (89)."""
         combos, r = self.river_check_range({3: 20, 4: 26, 5: 100})
         self.assertGreater(combos, 45, r["villain_range"])
         self.assertTrue(any("ranges follow it" in n for n in r["notes"]), r["notes"])

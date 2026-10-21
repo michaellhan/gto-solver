@@ -403,7 +403,10 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   called, BB's river check range is 69.5 combos after long solves, and a 20-iteration flop (9% of
   the pot; BB checking 61% and calling the c-bet 21% where it settles at 95% and 47%) with a
   26-iteration turn (6%) left 18-24. Now 89 there, 55-65 at 40-iteration flops (2.6%, BB still
-  checking 75%; were 41-43), 63-72 at 100-300 (tests.test_native judges by iterations, not time).
+  checking 75%; were 41-43), 63-72 at 100-300. With Fast's bucketed flop (long solves keep 87.7;
+  20 iterations are 27% of the pot from equilibrium, 40 7.7%, 80 1.8%, 150 0.5%): 29 -> 89 at a
+  20-iteration flop and 26-iteration turn, 50 -> 89 at 40/26, 52 -> 67 at 40/45, 70-82 -> 72-81 at
+  80-150/45 (tests.test_native judges by iterations, not time).
 * Multiway pots (3+ players live at your decision) are not solved. Instead a Monte
   Carlo heuristic picks the highest-EV action among fold / call / raise to 75% pot
   (the page's default raise size), or check / bet 33% / bet 66% pot, with opponents
