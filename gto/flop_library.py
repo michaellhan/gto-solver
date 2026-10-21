@@ -506,3 +506,91 @@ def default_library() -> Optional[FlopLibrary]:
     if _DEFAULT is None and os.path.exists(os.path.join(DIR, "index.json")):
         _DEFAULT = FlopLibrary.from_dir(DIR)
     return _DEFAULT
+
+
+# ----------------------------------------------------------------------------- aggregate reports
+# A spot's flop report (gto/static/reports.js, "Flop reports" in the page's menu): per stored flop, each stored
+# node's range frequencies, both players' EV and equity at the root, and a hand to load per node, so the page shows
+# the strategy across every flop without fetching the entries. <spot>/report.json, written with the index.
+REPORT_FORMAT = 1
+REPORT_RUNOUTS = 8          # equity over every 8th turn-river runout (~135 of 1081)
+
+
+def report_weights(names: Sequence[str]) -> Dict[str, float]:
+    """How many of the 22100 flops each stored flop stands for. The representative set (representative_flops(n))
+    is a systematic sample by weight, so each of its flops stands for 22100 / n (its own suit count would count the
+    weight twice); any other set (all 1755, given boards) stands for its own flops."""
+    counts = all_flops()
+    tot = sum(counts.values())
+    keys = [canonical(parse_cards(n))[0] for n in names]
+    if 0 < len(keys) < len(counts) and sorted(keys) == sorted(representative_flops(len(keys))):
+        return {n: tot / len(names) for n in names}
+    return {n: float(counts[k]) for n, k in zip(names, keys)}
+
+
+def range_equity(board: Sequence[int], w0: np.ndarray, w1: np.ndarray, step: int = REPORT_RUNOUTS) -> float:
+    """The first range's equity against the second on a flop (1326-combo weights), over every step-th runout."""
+    from .evaluator import eval_boards
+    rest = [c for c in range(52) if c not in set(board)]
+    runs = list(itertools.combinations(rest, 2))[::step]
+    i0, i1 = np.nonzero(w0 > 0)[0], np.nonzero(w1 > 0)[0]
+    share = MEMBER_FULL[:, i0].T @ MEMBER_FULL[:, i1]                    # cards the two combos share
+    W = w0[i0][:, None] * w1[i1][None, :] * (share == 0)
+    num = den = 0.0
+    for s in eval_boards([list(board) + list(r) for r in runs], np.concatenate([i0, i1])):
+        a, b = s[:len(i0)], s[len(i0):]
+        M = W * ((a >= 0)[:, None] & (b >= 0)[None, :])
+        num += float((M * ((a[:, None] > b[None, :]) + 0.5 * (a[:, None] == b[None, :]))).sum())
+        den += float(M.sum())
+    return num / max(den, 1e-12)
+
+
+def flop_report(e: dict, full0: np.ndarray, full1: np.ndarray, pot: float) -> dict:
+    """One flop's line in its spot's report, from its decoded entry and the spot's ranges entering the flop: f (the
+    canonical flop), n {path ('|'-joined): range frequencies in the node's action order}, ev [oop, ip] (bb, at the
+    root: out of position's range average, in position the pot less it, as there's no rake), eq [oop, ip] (range
+    equity), h {path: a hand of the acting player to load: its range's most mixed full-weight combo}."""
+    board = parse_cards(e["head"]["board"])
+    bm = np.prod([1.0 - MEMBER_FULL[c] for c in board], axis=0)
+    w = [full0 * bm, full1 * bm]
+    out = {"f": e["head"]["board"], "n": {}, "h": {}}
+    for nd in e["nodes"]:
+        key = "|".join(nd["path"])
+        fr = [nd["freqs"][nm] for nm in nd["names"]]
+        out["n"][key] = [round(x / sum(fr), 3) for x in fr]
+        m = e["masks"][nd["player"]]
+        wp, st = w[nd["player"]][m], nd["strat"]
+        ent = np.where(wp >= 0.999 * wp.max(), -(st * np.log(np.maximum(st, 1e-9))).sum(axis=0), -1.0)
+        out["h"][key] = cards_str(ALL_COMBOS[int(np.nonzero(m)[0][int(np.argmax(ent))])][::-1])
+    root, m0 = e["nodes"][0], e["masks"][0]
+    ev0 = float((w[0][m0] * (root["strat"] * root["evs"]).sum(axis=0)).sum() / w[0][m0].sum())
+    out["ev"] = [round(ev0, 2), round(pot - ev0, 2)]
+    q = range_equity(board, w[0], w[1])
+    out["eq"] = [round(q, 3), round(1 - q, 3)]
+    return out
+
+
+def build_report(spot: dict, full0: np.ndarray, full1: np.ndarray, read: Callable[[str], bytes],
+                 old: Optional[dict] = None) -> dict:
+    """A spot's report from its index entry (id, label, line, seats, pot, stack, flops {name: hash}); read(name)
+    gives an entry's bytes. A flop of `old` (the report on disk) whose entry hash is unchanged is kept as it was.
+    nodes {path: action names}: the stored nodes (a node's actions are the same on every flop)."""
+    ok = bool(old) and old.get("format") == REPORT_FORMAT
+    prev = {x["f"]: x for x in old["flops"]} if ok else {}
+    nodes: Dict[str, List[str]] = dict(old["nodes"]) if ok else {}
+    wts = report_weights(sorted(spot["flops"]))
+    flops = []
+    for nm in sorted(spot["flops"]):
+        h = spot["flops"][nm]
+        x = prev.get(nm)
+        if x is None or x.get("hash") != h:
+            e = decode(read(nm))
+            for nd in e["nodes"]:
+                k = "|".join(nd["path"])
+                if nodes.setdefault(k, nd["names"]) != nd["names"]:
+                    raise ValueError(f"{spot['id']} {nm}: node {k!r} has actions {nd['names']}, others {nodes[k]}")
+            x = dict(flop_report(e, full0, full1, spot["pot"]), hash=h)
+        x["w"] = round(wts[nm], 3)
+        flops.append(x)
+    return {"format": REPORT_FORMAT, "id": spot["id"], "label": spot.get("label", spot["id"]), "line": spot.get("line"),
+            "seats": spot.get("seats"), "pot": spot["pot"], "stack": spot["stack"], "nodes": nodes, "flops": flops}

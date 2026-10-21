@@ -393,6 +393,7 @@
     <div class="menu" id="menu" hidden>
       <button id="fourcolor" title="Four-colour deck: diamonds blue, clubs green">Four-colour deck</button>
       <button id="importHand" title="Paste a PokerStars or GGPoker hand history to replay and review it">Import hand…</button>
+      <button id="flopReports" title="The precomputed spots' flop strategy across every flop, by texture; click a flop to load it">Flop reports…</button>
       <button id="swapCols" class="wideonly" title="Put the advice on the left and the table on the right">Advice on the left</button>
       <div class="sep"></div>
       <button id="resetLayout" title="Default column widths, table size and panels">Reset layout</button>
@@ -579,6 +580,7 @@ try { if (localStorage.getItem("gto-opponents") === "pool") OPP = "pool"; } catc
 const practicing = () => !!(window.Practice && window.Practice.on);
 const WORKER_VERSION = "14";   // scripts/deploy.sh replaces this with a hash of worker.js
 const HH_VERSION = "1";        // and this with a hash of hh.js (the hand-history importer, loaded on first use)
+const RP_VERSION = "1";        // and this with a hash of reports.js (the flop reports, loaded on first use)
 
 // ---- backend: the local Python server if present, otherwise the solver runs in the browser (Pyodide worker)
 let MODE = null, worker = null, reqId = 0;
@@ -1608,16 +1610,28 @@ hhText.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey 
 document.getElementById("hhGo").onclick = async () => {
   let r;
   try { await loadHH(); r = importHand(hhText.value); } catch (e) { hhErr.textContent = e.message || String(e); return; }
-  if (review) review.cancel = "drop";
-  if (practicing()) window.Practice.set(false);   // an imported hand is for review, not a practice deal
-  await cancelSolve();
-  S = cleanState(r.state); setPositions(S.players); selSlot = null; showDeck = false; editSetup = false; pendingRank = null;
-  document.getElementById("stack").value = S.stack; document.getElementById("ante").value = ANTE(); document.getElementById("straddle").checked = !!S.straddle;
-  save(); resetAdvice(); renderAll(); hhBox.hidden = true; hhText.value = "";
+  await loadHandState(r.state); hhBox.hidden = true; hhText.value = "";
   const h = r.hand;
   toast(`Imported ${h.site === "generic" ? "a" : h.site} hand: ${h.players}-handed, you are ${SEAT_LABEL(h.hero, h.players)} with ${h.hole.join("")}, ${fmt(h.effective)}bb effective${S.stacks ? ` (you have ${fmt(S.stack)}bb; every seat plays its own stack)` : ""}.${r.warnings.length ? " " + r.warnings.join(" ") : ""}`, null, 15000);
   const b = document.createElement("button"); b.className = "link"; b.textContent = "Review whole hand";
   b.onclick = () => { document.getElementById("toast").hidden = true; reviewHand(); }; document.getElementById("toast").appendChild(b);
+};
+// A whole hand replaces the page's (an imported one, a flop from the reports): a review, not a practice deal.
+async function loadHandState(st, note) {
+  if (review) review.cancel = "drop";
+  if (practicing()) window.Practice.set(false);
+  await cancelSolve();
+  S = cleanState(st); setPositions(S.players); selSlot = null; showDeck = false; editSetup = false; pendingRank = null;
+  document.getElementById("stack").value = S.stack; document.getElementById("ante").value = ANTE(); document.getElementById("straddle").checked = !!S.straddle;
+  save(); resetAdvice(); renderAll();
+  if (note) toast(`Loaded ${note}: you are ${SEAT_LABEL(S.hero, S.players)} with ${S.cards[0]}${S.cards[1]}.`);
+}
+// ---- flop reports (reports.js, loaded the first time they're opened)
+document.getElementById("flopReports").onclick = () => {
+  document.getElementById("menu").hidden = true;
+  if (window.FlopReports) return window.FlopReports.open();
+  const s = document.createElement("script"); s.src = "reports.js?v=" + RP_VERSION;
+  s.onload = () => window.FlopReports.open(); s.onerror = () => showErr("Couldn't load the flop reports (reports.js)."); document.head.appendChild(s);
 };
 // ---- layout (per browser): column divider, table height, folded panels, columns swapped. Only in a real
 // browser (the tests' fake DOM has no window events), and never allowed to break the page.

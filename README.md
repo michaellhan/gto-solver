@@ -102,6 +102,17 @@ hand with ungraded decisions) solves each of your decisions in order at the curr
 grades it as if it had been entered live and ends on the hand review; it shows "decision 2 of 5" while it
 runs and can be cancelled, keeping the grades so far.
 
+**Flop reports** (in the ⋯ menu) are aggregate reports of the [precomputed flop library](#precomputed-flop-library):
+pick a spot (BTN vs BB, …) and a node (out of position first; in position after a check; out of position facing
+in position's most common bet after checking) for a table of its 184 flops: each flop's range frequencies as a
+stacked bar and numbers, both players' EV (bb, at the start of the flop) and range equity. Click a column to sort;
+filter by high card, suits (rainbow, two-tone, monotone), pairing and connectedness, or group by one of them for the
+groups' averages (each flop weighted by how many of the 22100 flops it stands for; a group row filters to it).
+Clicking a flop loads that hand: the spot's preflop action, the flop, the action up to the node, and you as the player
+to act with the hand that mixes most there, so the precomputed advice appears at once. The data is one small
+`flop_library/<spot>/report.json` per spot (~45 KB, ~12 KB gzipped), written with the library's index
+(`flop_library.build_report`, see Building below); the panel is `gto/static/reports.js`, loaded when first opened.
+
 The layout fits the window at any zoom. On a wide window each column scrolls on its own and
 the action buttons stay pinned to the bottom of theirs; drag the divider between the columns
 to resize them, drag the bar under the table to resize it, and click the Table or Hand title
@@ -707,7 +718,10 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   (`<spot>/<flop>.bin`, cache-busted by its hash) when its spot does; `scripts/deploy.sh` copies the folder.
 
 Building (resumable: entries on disk for the current charts and tree are kept, so re-run the same command after
-a stop; progress lines go to stdout, the index is rewritten every 20 entries):
+a stop; progress lines go to stdout, the index is rewritten every 20 entries, and with it each spot's
+`report.json` for the flop reports: per flop the stored nodes' range frequencies, the root's EVs, range equity over
+every 8th runout (within ~0.3 points of exact) and a hand to load; only changed entries are recomputed, ~0.15 s
+a flop, all eight spots from scratch ~3.5 min):
 
 ```bash
 nohup python scripts/build_flop_library.py --jobs 5 > reports/flop_library_build.log &   # 8 spots x 184 flops, ~5 h
@@ -728,7 +742,7 @@ MB): within the ~15 MB budget only one spot's full set would fit.
 scripts/deploy.sh
 ```
 
-copies the page, the worker, `practice.js`, the `gto` sources and the flop library into the `gto-solver/` folder
+copies the page, the worker, `practice.js`, `reports.js`, the `gto` sources and the flop library into the `gto-solver/` folder
 of the michaellhan.github.io repo and pushes. First it runs the checks and aborts
 the deploy if either fails: `python -m unittest`, then the quick sanity sweep
 (`scripts/sanity_sweep.py --quick`, about 3 minutes on 10 cores: a fixed, seeded set
