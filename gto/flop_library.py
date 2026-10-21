@@ -508,6 +508,16 @@ def default_library() -> Optional[FlopLibrary]:
     return _DEFAULT
 
 
+# ----------------------------------------------------------------------------- the drills' ranges
+# The page's drills (gto/static/drills.js) deal hands at a stored node by the acting player's range weight; an entry
+# holds only which combos are in each range. <spot>/ranges.json, written with the index: both ranges entering the
+# flop as 1326 integer weights in 1/10000 (combo order of cards.ALL_COMBOS), with their fingerprints (range_fp, of
+# the same rounding), which the page checks against the index's.
+def spot_ranges(spot_id: str, full0: np.ndarray, full1: np.ndarray) -> dict:
+    w = [np.round(np.asarray(r, dtype=np.float64) * 10000).astype(int).tolist() for r in (full0, full1)]
+    return {"format": 1, "id": spot_id, "fp": [range_fp(full0), range_fp(full1)], "w": w}
+
+
 # ----------------------------------------------------------------------------- aggregate reports
 # A spot's flop report (gto/static/reports.js, "Flop reports" in the page's menu): per stored flop, each stored
 # node's range frequencies, both players' EV and equity at the root, and a hand to load per node, so the page shows

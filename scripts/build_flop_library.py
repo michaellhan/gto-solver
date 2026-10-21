@@ -100,6 +100,14 @@ def write_report(out: str, sp: dict, s: dict) -> str:
     return hashlib.sha1(data).hexdigest()[:10]
 
 
+def write_ranges(out: str, sp: dict, s: dict) -> None:
+    """<spot>/ranges.json (flop_library.spot_ranges: the ranges entering the flop, for the page's drills)."""
+    path = os.path.join(out, sp["id"], "ranges.json")
+    with open(path + ".tmp", "w") as f:
+        json.dump(fl.spot_ranges(sp["id"], s["full0"], s["full1"]), f, separators=(",", ":"))
+    os.replace(path + ".tmp", path)
+
+
 def write_index(out: str, spots) -> dict:
     """index.json from the entries on disk that match the current charts and tree (and each spot's report.json)."""
     idx = {"format": fl.FORMAT, "tree": fl.tree_key(fl.library_config()), "spots": []}
@@ -126,6 +134,7 @@ def write_index(out: str, spots) -> dict:
             sp = {"id": sid, "label": label, "line": line, "seats": [s["oop"], s["ip"]],
                   "fp": meta["fp"], "pot": s["pot"], "stack": s["stack"], "flops": flops}
             sp["report"] = write_report(out, sp, s)
+            write_ranges(out, sp, s)
             idx["spots"].append(sp)
     tmp = os.path.join(out, "index.json.tmp")
     os.makedirs(out, exist_ok=True)

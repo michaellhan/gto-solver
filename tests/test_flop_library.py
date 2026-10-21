@@ -139,6 +139,25 @@ class TestFlopLibrary(unittest.TestCase):
             self.assertTrue(np.all(np.abs(e0 - e1) <= 0.011 + 0.016 * gap), path)
         self.assertEqual(ls.exploitability(), round(self.sol.exploitability(), 4))
 
+    def test_ranges(self):
+        """write_index writes the spot's ranges.json (the drills' hand weights): both ranges entering the flop in
+        1/10000, fingerprinted as the index's, holding every combo of the entry's ranges."""
+        with open(os.path.join(self.dir, SPOT[0], "ranges.json")) as f:
+            rg = json.load(f)
+        with open(os.path.join(self.dir, "index.json")) as f:
+            sp = json.load(f)["spots"][0]
+        s = self.setup
+        self.assertEqual(rg["fp"], sp["fp"])
+        for p, full in ((0, s["full0"]), (1, s["full1"])):
+            w = np.array(rg["w"][p]) / 10000
+            self.assertEqual(len(w), len(ALL_COMBOS))
+            self.assertLess(np.abs(w - full).max(), 0.5e-4 + 1e-9)
+            self.assertEqual(fl.range_fp(w), sp["fp"][p])
+        with open(os.path.join(self.dir, SPOT[0], CANON + ".bin"), "rb") as f:
+            e = fl.decode(f.read())
+        for p in (0, 1):
+            self.assertTrue(np.all(np.array(rg["w"][p])[e["masks"][p]] > 0))
+
     def test_report(self):
         """write_index writes the spot's report.json (hashed in the index): per flop, each stored node's range
         frequencies (the entry's, summing to 1), EVs summing to the pot, equities to 1, a hand in the acting player's
@@ -367,6 +386,20 @@ class TestShippedLibrary(unittest.TestCase):
                     self.assertEqual(len(fr), len(rep["nodes"][k]))
                     self.assertAlmostEqual(sum(fr), 1.0, delta=0.002, msg=(sp["id"], x["f"], k))
                 self.assertAlmostEqual(sum(x["ev"]), sp["pot"], delta=0.011)
+
+    def test_shipped_ranges_match_the_index(self):
+        """Each shipped spot has its ranges.json (the page's drills), with the index's fingerprints."""
+        path = os.path.join(fl.DIR, "index.json")
+        if not os.path.exists(path):
+            self.skipTest("no library built")
+        with open(path) as f:
+            idx = json.load(f)
+        for sp in idx["spots"]:
+            with open(os.path.join(fl.DIR, sp["id"], "ranges.json")) as f:
+                rg = json.load(f)
+            self.assertEqual(rg["fp"], sp["fp"], f"{sp['id']}: rebuild the index (scripts/build_flop_library.py --index-only)")
+            for p in (0, 1):
+                self.assertEqual(fl.range_fp(np.array(rg["w"][p]) / 10000), sp["fp"][p])
 
 
 if __name__ == "__main__":

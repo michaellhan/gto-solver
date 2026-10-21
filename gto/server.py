@@ -50,20 +50,20 @@ class Handler(BaseHTTPRequestHandler):
         p = self.path.split("?")[0]
         static = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
         lib = os.path.join(static, "flop_library")
-        if p.startswith("/flop_library/") and p.endswith(".json"):   # the library's index and reports (reports.js)
+        if p.startswith("/flop_library/") and p.endswith((".json", ".bin")):   # the library (reports.js, drills.js)
             path = os.path.realpath(os.path.join(lib, p[len("/flop_library/"):]))
             if not path.startswith(os.path.realpath(lib) + os.sep) or not os.path.isfile(path):
                 return self._send(404, {"error": "not found"})
             with open(path, "rb") as f:
                 body = f.read()
             self.send_response(200)
-            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Type", "application/json" if p.endswith(".json") else "application/octet-stream")
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
             return
-        if p in ("/", "/index.html", "/worker.js", "/hh.js", "/practice.js", "/reports.js"):
+        if p in ("/", "/index.html", "/worker.js", "/hh.js", "/practice.js", "/reports.js", "/drills.js"):
             name = p[1:] if p.endswith(".js") else "index.html"
             path = os.path.join(static, name)
             with open(path, "rb") as f:

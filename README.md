@@ -113,6 +113,20 @@ to act with the hand that mixes most there, so the precomputed advice appears at
 `flop_library/<spot>/report.json` per spot (~45 KB, ~12 KB gzipped), written with the library's index
 (`flop_library.build_report`, see Building below); the panel is `gto/static/reports.js`, loaded when first opened.
 
+**Drills** (in the ⋯ menu) drill one flop decision of the precomputed library, like GTO Wizard's trainer: pick a
+spot and a node (out of position first; in position after a check; out of position facing a bet after checking)
+and optionally a texture (the reports' high card, suits, pairing, connectedness). Each hand is a flop drawn by how
+often it comes (any stored bet size by how often in position makes it), a hand drawn from the acting player's range
+there (its weight entering the flop, off the board, times its own frequency of the line so far) in random suits.
+Pick an action (keys 1-4) and the hand's GTO mix and per-action EVs show at once with the grade: **Best** (the
+highest EV, within the library's 0.02 bb step), **Correct** (an action the hand plays 10% or more: "mixed"), or by
+the EV given up against the best, Inaccuracy (under 2% of the pot), Mistake (under 8%), Blunder. Space or Enter
+deals the next. The session's accuracy, average EV loss (bb and % of the pot) and streak show under the hand, and
+each drill's history (hands, accuracy, last 100, best streak) is kept in the browser; **Open in the solver** loads
+the hand into the page. `gto/static/drills.js` decodes the library's entries itself (no solver needed: answers are
+instant, also before the in-browser solver has loaded) and reads the hand weights from `flop_library/<spot>/ranges.json`
+(both ranges entering the flop, written with the index, fingerprinted as the index's).
+
 The layout fits the window at any zoom. On a wide window each column scrolls on its own and
 the action buttons stay pinned to the bottom of theirs; drag the divider between the columns
 to resize them, drag the bar under the table to resize it, and click the Table or Hand title
@@ -798,7 +812,7 @@ MB): within the ~15 MB budget only one spot's full set would fit.
 scripts/deploy.sh
 ```
 
-copies the page, the worker, `practice.js`, `reports.js`, the `gto` sources and the flop library into the `gto-solver/` folder
+copies the page, the worker, `practice.js`, `reports.js`, `drills.js`, the `gto` sources and the flop library into the `gto-solver/` folder
 of the michaellhan.github.io repo and pushes. First it runs the checks and aborts
 the deploy if either fails: `python -m unittest`, then the quick sanity sweep
 (`scripts/sanity_sweep.py --quick`, about 3 minutes on 10 cores: a fixed, seeded set

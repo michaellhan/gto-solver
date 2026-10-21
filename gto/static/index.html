@@ -393,6 +393,7 @@
     <div class="menu" id="menu" hidden>
       <button id="fourcolor" title="Four-colour deck: diamonds blue, clubs green">Four-colour deck</button>
       <button id="importHand" title="Paste a PokerStars or GGPoker hand history to replay and review it">Import hand…</button>
+      <button id="drills" title="Drill one flop spot: random flops and hands from the precomputed solutions, each answer graded at once (keys 1-4, Space for the next)">Drills…</button>
       <button id="flopReports" title="The precomputed spots' flop strategy across every flop, by texture; click a flop to load it">Flop reports…</button>
       <button id="swapCols" class="wideonly" title="Put the advice on the left and the table on the right">Advice on the left</button>
       <div class="sep"></div>
@@ -581,6 +582,7 @@ const practicing = () => !!(window.Practice && window.Practice.on);
 const WORKER_VERSION = "14";   // scripts/deploy.sh replaces this with a hash of worker.js
 const HH_VERSION = "1";        // and this with a hash of hh.js (the hand-history importer, loaded on first use)
 const RP_VERSION = "1";        // and this with a hash of reports.js (the flop reports, loaded on first use)
+const DR_VERSION = "1";        // and this with a hash of drills.js (the drills, loaded on first use, after reports.js)
 
 // ---- backend: the local Python server if present, otherwise the solver runs in the browser (Pyodide worker)
 let MODE = null, worker = null, reqId = 0;
@@ -1632,6 +1634,14 @@ document.getElementById("flopReports").onclick = () => {
   if (window.FlopReports) return window.FlopReports.open();
   const s = document.createElement("script"); s.src = "reports.js?v=" + RP_VERSION;
   s.onload = () => window.FlopReports.open(); s.onerror = () => showErr("Couldn't load the flop reports (reports.js)."); document.head.appendChild(s);
+};
+// ---- drills (drills.js, which uses reports.js's textures; both loaded the first time the drills open)
+const loadJs = (src, ok) => ok() ? Promise.resolve() : new Promise((res, rej) => { const s = document.createElement("script"); s.src = src;
+  s.onload = res; s.onerror = () => rej(new Error(`couldn't load ${src.split("?")[0]}`)); document.head.appendChild(s); });
+document.getElementById("drills").onclick = () => {
+  document.getElementById("menu").hidden = true;
+  loadJs("reports.js?v=" + RP_VERSION, () => window.FlopReports).then(() => loadJs("drills.js?v=" + DR_VERSION, () => window.Drills))
+    .then(() => window.Drills.open()).catch(e => showErr("Couldn't load the drills: " + e.message));
 };
 // ---- layout (per browser): column divider, table height, folded panels, columns swapped. Only in a real
 // browser (the tests' fake DOM has no window events), and never allowed to break the page.
