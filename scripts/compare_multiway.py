@@ -5,6 +5,7 @@ multiway play, on 3-way pots: CO opens, BTN and BB call (6-max, 100bb), earlier 
   python scripts/compare_multiway.py --facts          # range-level facts (3-way vs heads-up, bluffs, shared defence)
   python scripts/compare_multiway.py --flop-study     # the opener's flop c-bet into two callers (GTO Wizard's 3-way study)
   python scripts/compare_multiway.py --turn-reference # turn: the solve (river dealt out) and the rules against a solve betting the river
+  python scripts/compare_multiway.py --narrowing      # the turn's ranges after a 3-way flop: rules vs through the flop solve
 
 Every solve runs a fixed number of iterations (--iters), so the numbers don't depend on machine load.
 """
@@ -181,9 +182,10 @@ def STUDY_RANGES():
 
 def _cfg(args):
     from gto.multiway_solver import MWConfig
+    bet = {"flop": [float(x) / 100 for x in args.flop_sizes.split(",")], "turn": 0.5, "river": 0.5}
     if args.later == "deal":
-        return MWConfig()
-    return MWConfig(later="buckets", buckets=args.buckets, bucket_river_step=args.step)
+        return MWConfig(bet=bet)
+    return MWConfig(later="buckets", buckets=args.buckets, bucket_river_step=args.step, bet=bet)
 
 
 def flop_study(args):
@@ -205,21 +207,28 @@ def flop_study(args):
         f = tuple(int(x) for x in rng.choice(52, 3, replace=False))
         flops.append(f)
     cfg = _cfg(args)
-    tot3, tot2 = [], []
+    tot3, tot2, sz3, sz2 = [], [], [], []
     for f in flops:
         s3 = MultiwaySolver(f, [R["SB"], R["BB"], R["UTG"]], 7.5, 97.5, to_act=2, pending={2}, cfg=cfg).run(iters=args.iters)
-        b3 = 1 - s3.range_freqs()["check"]
+        fr3 = s3.range_freqs()
+        b3 = 1 - fr3["check"]
         tot3.append(b3)
+        sz3.append(fr3)
         line = f"{cards_str(f)}: opener bets {b3 * 100:.1f}% into two"
         if not args.three_only:
             s2 = MultiwaySolver(f, [R2["BB"], R2["UTG"]], 5.5, 97.5, to_act=1, pending={1}, cfg=cfg).run(iters=args.iters)
-            b2 = 1 - s2.range_freqs()["check"]
+            fr2 = s2.range_freqs()
+            b2 = 1 - fr2["check"]
             tot2.append(b2)
+            sz2.append(fr2)
             line += f" (heads-up {b2 * 100:.1f}%)"
         print(line + f", best-response gains {np.round(s3.br_gains() / s3.root_pot() * 100, 2)} % pot", flush=True)
     print(f"mean over {len(flops)} flops: 3-way bets {np.mean(tot3) * 100:.1f}%"
           + (f", heads-up {np.mean(tot2) * 100:.1f}%" if tot2 else "")
           + f" (GTO Wizard's study: {FLOP_STUDY['3-way'] * 100:.0f}% and {FLOP_STUDY['heads-up'] * 100:.0f}%, several sizes)")
+    for nm, sz in (("3-way", sz3), ("heads-up", sz2)):
+        if sz:
+            print(f"  {nm} by action: " + ", ".join(f"{k} {np.mean([d[k] for d in sz]) * 100:.1f}%" for k in sz[0]))
     return np.mean(tot3), (np.mean(tot2) if tot2 else None)
 
 
@@ -309,18 +318,25 @@ def _against(spots, ref_cfg, ref_iters, cands, rules):
             if ci is None or ref.reach0[hp, 0, ci] <= 0:
                 continue
             r = rules.advise(mk(board, hero, h, acts))
-            er = {kind(nm): float(ev_ref[a, ci]) for a, nm in enumerate(names)}
+            er = {nm: float(ev_ref[a, ci]) for a, nm in enumerate(names)}
             best = max(er, key=er.get)
             n += 1
-            picks = {k: kind(names[int(np.argmax(s_.hand_strategy(ci, hp)))]) for k, s_ in sols.items()}
-            picks["rules"] = kind(max(r["actions"], key=lambda x: x["freq"])["action"])
+
+            def to_ref(x):
+                # the rules' action as the reference tree's: its kind, the nearest size among several bets
+                same = [a for a, nm in enumerate(names) if kind(nm) == kind(x["action"])]
+                if not same:
+                    return None
+                amt = x.get("amount_bb")
+                return names[min(same, key=lambda a: abs((ref.root.amounts[a] or 0) - (amt or 0)))]
+            picks = {k: names[int(np.argmax(s_.hand_strategy(ci, hp)))] for k, s_ in sols.items()}
+            picks["rules"] = to_ref(max(r["actions"], key=lambda x: x["freq"]))
             for k, pk in picks.items():
                 tot[k]["pick"] += pk == best
                 tot[k]["loss"].append(er[best] - er.get(pk, er[best]))
             for k in sols:
-                tot[k]["evd"] += [abs(float(evs[k][a, ci]) - er[kind(nm)]) for a, nm in enumerate(names)]
-            rk = {kind(x["action"]): x for x in r["actions"]}
-            tot["rules"]["evd"] += [abs(rk[k]["ev_bb"] - er[k]) for k in er if k in rk]
+                tot[k]["evd"] += [abs(float(evs[k][a, ci]) - er[nm]) for a, nm in enumerate(names)]
+            tot["rules"]["evd"] += [abs(x["ev_bb"] - er[to_ref(x)]) for x in r["actions"] if to_ref(x) is not None]
     print(f"{n} hands against the reference:")
     for k, d in tot.items():
         print(f"  {k:10s}: picks its best action {d['pick'] / n * 100:.0f}%, gives up {np.mean(d['loss']):.3f} bb, "
@@ -361,10 +377,61 @@ def flop_reference(args):
     from gto.multiway_solver import MWConfig
     chk = [{"pos": "SB", "action": "check"}, {"pos": "BB", "action": "check"}]
     spots = [(b, h, a, flop_state) for b in FLOPS[:args.flops] for h, a in (("UTG", chk), ("SB", []))]
-    later = lambda k, **kw: MWConfig(later="buckets", buckets=k, **kw)
+    bet = _cfg(args).bet
+    later = lambda k, **kw: MWConfig(later="buckets", buckets=k, bet=bet, **kw)
     _against(spots, later(args.ref_buckets, classes=False), args.ref_iters,
              {f"buckets {args.buckets}": (later(args.buckets), args.iters), "buckets 12": (later(12), args.iters),
-              "dealt": (MWConfig(), args.iters)}, _rules(args))
+              "dealt": (MWConfig(bet=bet), args.iters)}, _rules(args))
+
+
+def narrowing(args):
+    """The turn's ranges after a 3-way flop (UTG opens, SB and BB call; the blinds check, UTG bets a third, both call),
+    narrowed by the betting rules alone and through UTG's flop advice solve (--iters, and 60) as the advisor does
+    (trust by settledness, smoothing), against the walk through a long solve (--ref-iters, followed fully, unsmoothed):
+    per player the total variation distance between the normalized ranges, and the combos."""
+    from gto.cards import cards_str
+    chk = [{"pos": "SB", "action": "check"}, {"pos": "BB", "action": "check"}]
+    line = chk + [{"pos": "UTG", "action": "bet", "amount": 2.5}, {"pos": "SB", "action": "call"},
+                  {"pos": "BB", "action": "call"}]
+    narrow = A._narrow_street
+    # (the turn's own checks left out: the ranges compared are the flop's)
+    A._narrow_street = lambda r, b, st_, *a, **k: None if st_.name == "turn" else narrow(r, b, st_, *a, **k)
+    trust = A.trust_of
+    tot = {}
+    for f in FLOPS[:args.flops]:
+        turn = next(c for c in ("9s", "2h", "5d") if c not in f)
+        st = dict(flop_state(f + turn, "UTG", "AsKs", line), turn=chk)
+
+        def turn_ranges(iters, full=False):
+            adv = A.Advisor(time_budget=1e9)
+            adv.mw_solve_streets = ("flop",) if iters else ()
+            adv.mw_max_iters = iters or 1
+            adv.mw_street_config["flop"]["buckets"] = args.buckets
+            if iters:
+                adv.advise(flop_state(f, "UTG", "AsKs", chk))
+                expl = next(iter(adv._mw_lines.values()))[2]
+            if full:
+                adv.prior_smoothing = 0.0
+                A.trust_of = lambda e, s_: 1.0
+            try:
+                rs = _spot_args(adv, st)[3]
+            finally:
+                A.trust_of = trust
+            return rs, (expl if iters else None)
+        ref, ref_e = turn_ranges(args.ref_iters, full=True)
+        out = f"{f}{turn}: reference {args.ref_iters} iterations ({ref_e:.2f}% pot)"
+        for name, it in (("rules", 0), ("advice 60", 60), (f"advice {args.iters}", args.iters)):
+            rs, e = turn_ranges(it)
+            d = {}
+            for p in ("SB", "BB", "UTG"):
+                a_, b_ = rs[p] / rs[p].sum(), ref[p] / ref[p].sum()
+                d[p] = 0.5 * np.abs(a_ - b_).sum()
+                tot.setdefault(name, []).append(d[p])
+            out += f"; {name}" + (f" ({e:.2f}%, trust {trust(e, 'flop'):.2f})" if e is not None else "") + ": " + \
+                ", ".join(f"{p} {d[p]:.3f} ({rs[p].sum():.0f} vs {ref[p].sum():.0f})" for p in d)
+        print(out, flush=True)
+    A._narrow_street = narrow
+    print("mean distance from the reference's turn ranges: " + ", ".join(f"{k} {np.mean(v):.3f}" for k, v in tot.items()))
 
 
 def main():
@@ -372,6 +439,7 @@ def main():
     ap.add_argument("--spots", action="store_true")
     ap.add_argument("--turn-reference", action="store_true")
     ap.add_argument("--flop-reference", action="store_true")
+    ap.add_argument("--narrowing", action="store_true")
     ap.add_argument("--ref-buckets", type=int, default=24)
     ap.add_argument("--ref-rivers", type=int, default=12)
     ap.add_argument("--ref-iters", type=int, default=60)
@@ -382,6 +450,7 @@ def main():
     ap.add_argument("--study-ranges", action="store_true")
     ap.add_argument("--later", default="buckets", choices=("deal", "buckets"))
     ap.add_argument("--buckets", type=int, default=16)
+    ap.add_argument("--flop-sizes", default="33", help="the flop's bet sizes, %% pot (comma separated)")
     ap.add_argument("--step", type=int, default=1)
     ap.add_argument("--iters", type=int, default=150)
     ap.add_argument("--trials", type=int, default=600)
@@ -401,6 +470,8 @@ def main():
         turn_reference(a)
     if a.flop_reference:
         flop_reference(a)
+    if a.narrowing:
+        narrowing(a)
 
 
 if __name__ == "__main__":

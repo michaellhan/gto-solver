@@ -48,10 +48,11 @@
   × ½, average strategy × (t/(t+1))²). Alternating converged about 10x faster than simultaneous updates per
   iteration (river, BB/CO/BTN: best-response gains 0.8% of the pot after 30 iterations against 5%, 0.1% after 100
   against 1%) at about the same cost, since each pass needs only the traverser's terminal values.
-* **Tree.** One bet size (flop ⅓ pot, turn and river ½), one raise (to the bet plus 75% of the pot after calling),
-  all-in where the stack behind is at most 1.5 pots, and at most a bet and one raise per street (then fold or call).
-  The solve starts from the node in front of hero: earlier actions this street narrow the ranges by the betting
-  rules, as before. Everyone plays the shortest stack behind.
+* **Tree.** Bets of ⅓ and ¾ of the pot on the flop (`MWConfig.bet` takes a list; the advisor's flop config), ½ on
+  the turn and river (also inside a flop solve), one raise (to the bet plus 75% of the pot after calling), all-in
+  where the stack behind is at most 1.5 pots, and at most a bet and one raise per street (then fold or call). The
+  solve starts from the node in front of hero; how earlier actions narrow the ranges is under "Narrowing" below.
+  Everyone plays the shortest stack behind.
 * **Exact card removal for three ranges.** For player p's hand h, the value at a terminal is a sum over the other
   two players' disjoint hands. For kernels A and B (all hands, weaker than h, tied with h):
 
@@ -111,6 +112,13 @@
     | 12 buckets (the browser) | 83% | 0.005 bb | 0.44 bb | 2.5 points |
     | turn and river dealt out | 67% | 0.033 bb | 1.56 bb | 18.3 points |
     | betting rules | 65% | 0.061 bb | 3.41 bb | |
+    | *flop bets of 33 and 75% (`--flop-sizes 33,75`; the reference too):* | | | | |
+    | 16 buckets | 75% | 0.011 bb | 0.33 bb | 0.6 points |
+    | 12 buckets | 70% | 0.011 bb | 0.45 bb | 2.4 points |
+    | turn and river dealt out | 55% | 0.055 bb | 1.45 bb | 14.6 points |
+    | betting rules | 56% | 0.076 bb | 3.49 bb | |
+
+    With two sizes the best action is more often a near tie between them (the EV given up stays at 0.01 bb).
 
     Checked to, the reference bets 84.9 / 40.1 / 99.6% on Kh7d2c / 8h7sJs / QdAd3s, the 16 buckets 82.5 / 39.4 /
     99.1% and dealing out 50.2 / 33.2 / 68.2%. First to act the SB leads 30.4 / 80.4 / 0.4%, the buckets 28.1 /
@@ -122,10 +130,30 @@
     and 48.2%. With ranges shaped like the study's (`--study-ranges`: its SB calls with low and middle pairs, suited
     connectors and suited Ax/Kx; its BB 3bets TT-JJ and suited broadways when the SB is in) it bets 47.1% and
     60.5%, where dealing out bet 39.3% and 48.3%. Its own flops are 20 weighted ones and its ranges aren't
-    published, so this is a band, not a match. Most of what remains looks like the one-size tree and the ranges
-    rather than the 3-way solve, since the heads-up number falls as short: played two-handed (`--hu-check`, UTG against the BB from the BB's first action, seven flops) the bucket model
-    bets 4.0 points more than the heads-up solver's per-combo flop model on the same tree (7.3 absolute; the BB
-    leads 5.2 more), which itself bets 58% there.
+    published, so this is a band, not a match. Played two-handed (`--hu-check`, UTG against the BB from the BB's
+    first action, seven flops) the bucket model bets 4.0 points more than the heads-up solver's per-combo flop model
+    on the same tree (7.3 absolute; the BB leads 5.2 more), which itself bets 58% there. What was tested for the
+    rest (same ten flops, 150 iterations; heads-up solver: UTG against the BB checked to, seven flops):
+
+    | | 3-way, charts | heads-up, charts | 3-way, study ranges | heads-up, study ranges |
+    |---|---|---|---|---|
+    | flop 33% | 40.9% | 61.6% | 47.1% | 60.5% |
+    | flop 33 / 75% | 39.8% (33: 32.8, 75: 7.0) | 53.7% | 46.6% (41.8, 4.8) | 53.7% |
+    | flop 33 / 66 / 100% (the study's) | 39.1% (29.4, 7.0, 2.7) | 53.2% | 45.9% (39.0, 4.9, 2.0) | 52.9% |
+    | GTO Wizard's study (33 / 66 / 100%) | 65.9% (56, 8, 1) | 77.0% (38, 21, 18) | | |
+
+    * More sizes don't raise the total: the bigger bets come out of the small one, and heads-up the total falls 8
+      points. The heads-up per-combo solver does the same (60.4 / 57.1 / 52.6% on one size, 33/75% and Accurate's
+      tree). The 3-way mix of sizes looks like the study's (mostly small, 7-8% big); the check share is what differs.
+    * The river played without its card (here and in the heads-up flop model): with it dealt and played per combo
+      (heads-up solver, depth 3, the one-size tree) the opener bets 63.6% against 60.4% (by flop -13 to +7 points).
+    * Raises (`max_raises` 3, a re-raise allowed: K72 32 -> 34%), smaller raises (50%: 37%) and 32 buckets (28%)
+      move one flop by a few points either way.
+    * The ranges: the charts' SB flats 36 combos (66-TT, a few suited broadways) against the study's wide pairs and
+      suited hands; the study-shaped ranges add 6 points 3-way.
+
+    So the tree is not what is missing; the river's card is worth about 3 points, the ranges about 6, and the rest
+    is the study's ranges and flops (not published).
 
   The old equity leaves (still `later="deal"`, and the all-in runouts there) use the pairwise shortcut, with two
   corrections:
@@ -133,6 +161,34 @@
      reused on every runout. A runout card moves that fraction very little.
   2. The live players' shares are scaled on each board so they sum to the pot, which keeps the game constant-sum.
      Without this, pairwise removal over-paid everyone by 2% of the pot.
+
+* **Narrowing.** A 3-way street before the one advised on (and this street's actions before the solve's root) used to
+  narrow the ranges by the betting rules alone. Now, where your advice on that street came from a 3-way solve
+  (`Advisor._mw_lines`: the solve indexed by its place in the hand), each action after its root multiplies its
+  player's range by the solve's average strategy for it, smoothed with 15% uniform as heads-up, and the result counts
+  by how settled the solve is (`trust_of`, the flop's 0.5-5% of the pot band); the rest stays the rules'.
+  `--narrowing` (UTG opens, SB and BB call; the blinds check, UTG bets a third and both call; four flops, a turn)
+  measures the turn's ranges against the walk through a 400-iteration solve, followed fully (total variation
+  between the normalized ranges, mean over the three players):
+
+  | | mean distance | the BB's call (combos; reference 29-48) |
+  |---|---|---|
+  | betting rules | 0.52 | 141-167 |
+  | through a 60-iteration solve (1.4-3.4% of the pot, followed 35-80%) | 0.43 | 62-116 |
+  | through a 150-iteration solve (0.3-0.9%, followed 91-100%) | 0.22 | 34-51 |
+
+  The rules let the BB call a third-pot bet with nearly its whole check range after the SB called; the solve has it
+  fold 70-80%. The heads-up walk's fallback to the rules for a line the solve takes with under 10% of the range
+  (RARE_LINE) made it worse here (0.46 at 60 iterations: the BB's call is such a line early on), so the 3-way walk
+  relies on the smoothing alone. With no such solve (a hand entered on the turn) the rules narrow the street: a
+  solve from its start (`Advisor.mw_prior_solve`) got 40-65 iterations in native Accurate's 12 s earlier-street
+  budget, 4-6% of the pot from equilibrium, which the walk would follow 0-20%, so it is off.
+* **Budget.** A solve's time budget covers its tree and bucket tables (`MultiwaySolver.build_seconds`) and the
+  best-response gains and EVs read off after it (`MW_RESERVE`, 2.5 iterations' time; an iteration doesn't start when
+  it would end past the rest). A 15 s 3-way flop answer took 16.4-16.9 s and takes 14.8-14.95 (the browser's
+  Accurate ran ~10 s past 60 s). The tables' per-card sums are a matmul instead of an einsum: 16 buckets 0.9-1.7 s
+  where they took 1.7-3.0, 12 buckets over every third river 0.3-0.5 s (0.5-0.9). A solve its budget ran out on is
+  not run again by a later request for the spot, so the answer repeats.
 
 ## The error accepted (pairwise removal)
 
