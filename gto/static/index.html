@@ -1192,6 +1192,8 @@ function setColors(names) {
   const shades = agg.length === 1 ? [1] : agg.length === 2 ? [0, 2] : agg.length === 3 ? [0, 1, 2] : [0, 1, 2, 3];
   CMAP = {}; agg.forEach((n, i) => CMAP[n] = `var(--agg${shades[Math.min(i, shades.length - 1)]})`);
 }
+// an advice row's amount, unless its name already says it ("raise to 24.5", not "raise to 24.5 24.5 bb")
+const amtOf = (a) => { if (a.amount_bb == null) return null; const m = /(\d+(?:\.\d+)?)(?:bb)?$/.exec(a.action); return m && Math.abs(+m[1] - a.amount_bb) < 0.01 ? null : a.amount_bb; };
 const COLORS = (n) => n === "fold" ? "var(--fold)" : n === "in range" ? "var(--accent)" : n === "check" || n === "call" ? "var(--passive)" : n === "all-in" ? "var(--allin)" : CMAP[n] || "var(--agg1)";
 // Convergence of the solve, from exploitability in % of the pot (0 = exact equilibrium of the tree).
 function convergence(res) {
@@ -1219,7 +1221,7 @@ function renderResult(res, key) {
   h += `<div class="arows${hasEv ? "" : " noev"}"><div class="arow head"><span>Action</span><span>${heuristic(res) ? "" : "Solver mix"}</span><span class="num">${heuristic(res) ? "" : "Freq"}</span>${hasEv ? '<span class="num" title="Expected value of taking this action, in big blinds">EV</span>' : ""}</div>`;
   for (const a of res.actions) {
     const ev = hasEv ? (a.ev_bb !== undefined ? `<span class="num ${a.ev_bb > 0.005 ? "pos" : a.ev_bb < -0.005 ? "neg" : ""}">${a.ev_bb > 0 ? "+" : ""}${a.ev_bb.toFixed(2)} bb</span>` : "<span></span>") : "";
-    h += `<div class="arow ${a.action === res.recommended ? "best" : ""}" data-act='${JSON.stringify(a)}' title="Click to record this as what you did"><span class="name">${a.action}${a.amount_bb != null ? `<small>${a.amount_bb} bb</small>` : ""}</span><div class="bar"><div style="width:${(a.freq * 100).toFixed(1)}%;background:${COLORS(a.action)}"></div></div><span class="num"${a.gto_freq !== undefined ? ` title="GTO plays this ${(a.gto_freq * 100).toFixed(1)}% of the time"` : ""}>${(a.freq * 100).toFixed(1)}%${a.gto_freq !== undefined ? `<small class="muted" style="display:block;font-size:10px">GTO ${(a.gto_freq * 100).toFixed(0)}%</small>` : ""}</span>${ev}</div>`;
+    h += `<div class="arow ${a.action === res.recommended ? "best" : ""}" data-act='${JSON.stringify(a)}' title="Click to record this as what you did"><span class="name">${a.action}${amtOf(a) != null ? `<small>${amtOf(a)} bb</small>` : ""}</span><div class="bar"><div style="width:${(a.freq * 100).toFixed(1)}%;background:${COLORS(a.action)}"></div></div><span class="num"${a.gto_freq !== undefined ? ` title="GTO plays this ${(a.gto_freq * 100).toFixed(1)}% of the time"` : ""}>${(a.freq * 100).toFixed(1)}%${a.gto_freq !== undefined ? `<small class="muted" style="display:block;font-size:10px">GTO ${(a.gto_freq * 100).toFixed(0)}%</small>` : ""}</span>${ev}</div>`;
   }
   if (res.locked) h += `</div><div class="meta">${Object.entries(res.locked).map(([p, l]) => `Against your lock on ${p} (${LOCK_TEXT(l)})`).join("; ")}: the best response, with GTO's frequency under each.`;
   h += `</div><div class="meta">${TAP} a row to record it as what you did.${hasEv ? " EV is in big blinds relative to folding now, so fold is 0: chips already in the pot are gone either way." : res.street === "preflop" ? " Preflop comes from charts, so there's no EV column." : ""}${res.widened && res.widened.length ? ` The solve rarely has ${res.widened.join(" and ")} play this way, so their range comes from simple betting rules instead; the EVs (and the pick) are against that range, so they can disagree with the solver's mix.` : conv && conv.cls !== "ok" ? " Actions the solver mixes should have near-equal EVs; gaps here mean the solve hasn't settled." : ""}</div>`;
@@ -1403,7 +1405,7 @@ function handText() {
   if (r && !r.error) {
     const vs = r.locked ? `, vs ${Object.entries(r.locked).map(([p, l]) => `${p} locked (${LOCK_TEXT(l)})`).join(", ")}${r.notes && r.notes.some(n => n.startsWith("exploit mode")) ? " on the pool" : ""}` : r.actions.some(a => a.gto_freq !== undefined) ? ", vs a typical player pool" : "";
     lines.push(`Advice (${r.street}${r.position ? ", " + r.position : ""}${vs}): ${r.recommended}`);
-    lines.push("  " + r.actions.map(a => `${a.action}${a.amount_bb != null ? " " + a.amount_bb + "bb" : ""} ${(a.freq * 100).toFixed(1)}%${a.gto_freq !== undefined ? ` (GTO ${(a.gto_freq * 100).toFixed(0)}%)` : ""}${a.ev_bb !== undefined ? " EV " + (a.ev_bb > 0 ? "+" : "") + a.ev_bb.toFixed(2) : ""}`).join(" | "));
+    lines.push("  " + r.actions.map(a => `${a.action}${amtOf(a) != null ? " " + amtOf(a) + "bb" : ""} ${(a.freq * 100).toFixed(1)}%${a.gto_freq !== undefined ? ` (GTO ${(a.gto_freq * 100).toFixed(0)}%)` : ""}${a.ev_bb !== undefined ? " EV " + (a.ev_bb > 0 ? "+" : "") + a.ev_bb.toFixed(2) : ""}`).join(" | "));
     if (r.range_action_freq) lines.push("  whole range: " + Object.entries(r.range_action_freq).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(", "));
     if (r.villain_range) lines.push(`  ${r.villain} range (${r.villain_range_combos} combos): ${r.villain_range}`);
     if (r.size_usage) lines.push(`  size optimization: ${SIZE_USAGE(r)}`);

@@ -183,6 +183,22 @@ test("hand text: the solver's advice", async () => {
   assert.equal(l2[4], "  check 100.0% (GTO 40%) | bet 75% 4.1bb 0.0% (GTO 60%)");
 });
 
+test("a raise's amount isn't repeated when its name already says it, in the advice rows and the hand text", async () => {
+  const p = loadPage();
+  p.S = state({ cards: ["Ah", "Kh", "Kd", "7s", "2c"], preflop: acts("UTG f, HJ f, CO f, BTN r2.5, SB f, BB c"), flop: acts("BB x, BTN b2, BB r7") });
+  await p.ready();
+  p.ctx.__res = JSON.stringify({ street: "flop", recommended: "raise to 24.5", actions: [{ action: "fold", freq: 0.2 }, { action: "call", amount_bb: 5, freq: 0.3 },
+    { action: "raise to 24.5", amount_bb: 24.5, freq: 0.4 }, { action: "raise to 30bb", amount_bb: 30, freq: 0.05 }, { action: "all-in", amount_bb: 97.5, freq: 0.05 }] });
+  p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
+  const html = p.byId("result").innerHTML;
+  assert.match(html, /<span class="name">raise to 24.5<\/span>/);
+  assert.match(html, /<span class="name">raise to 30bb<\/span>/);
+  assert.match(html, /<span class="name">call<small>5 bb<\/small><\/span>/);
+  assert.match(html, /<span class="name">all-in<small>97.5 bb<\/small><\/span>/);
+  const adv = p.run("handText()").split("\n").find(l => l.startsWith("  fold"));
+  assert.equal(adv, "  fold 20.0% | call 5bb 30.0% | raise to 24.5 40.0% | raise to 30bb 5.0% | all-in 97.5bb 5.0%");
+});
+
 test("copy hand puts the hand text on the clipboard", async () => {
   const p = loadPage();
   p.S = state({ cards: ["Ah", "Kh"] });
