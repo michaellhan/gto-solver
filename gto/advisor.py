@@ -27,9 +27,9 @@ import numpy as np
 from .cards import cards as parse_cards, COMBO_INDEX, hand_class, ALL_COMBOS, cards_str
 from .ranges import N_COMBOS, range_to_text, parse_range
 from . import preflop as pf
-from . import breakdown as BD
 from .pf_classes import push_fold
-from .exploit import PoolLock, TendencyLock, describe_lock, parse_locks, pool_preflop
+# imported where used (exploit, breakdown, like multiway_solver and pf_game): the browser's worker imports this module
+# before its first answer, and a preflop answer or a library flop needs none of them (tests/test_bundle.py)
 from .solver import solve, Config, Solution, Decision, Terminal, Chance, match_action, expand, MEMBER_FULL, _inv_of
 
 DEFAULT_OPEN = {"SB": 3.0}
@@ -1229,6 +1229,7 @@ def pool_strategy(strat: Dict[str, np.ndarray], p: str, before: List[dict], rang
         eq = _preflop_equity(ranges[raisers[-1]])
     elif first_in:
         eq = _equity_vs_any()
+    from .exploit import pool_preflop
     return pool_preflop(strat, len(raisers), p, ranges.get(p, np.ones(N_COMBOS)), eq, opener, first_in,
                         heads_up=len(ranges) == 2)
 
@@ -1356,7 +1357,11 @@ class Advisor:
         try:
             sizes = _custom_sizes(state["sizes"]) if state.get("sizes") else {}
             custom = _custom_ranges(state["ranges"], positions) if state.get("ranges") else {}
-            locks = parse_locks(state["locks"], positions, hero) if state.get("locks") else {}
+            if state.get("locks"):
+                from .exploit import parse_locks
+                locks = parse_locks(state["locks"], positions, hero)
+            else:
+                locks = {}
         except ValueError as e:
             return {"error": str(e)}
         hole = tuple(parse_cards(str(state["hole"])))
@@ -1887,6 +1892,7 @@ class Advisor:
 
         def mk_lock(sol, next_nodes=()):
             # the opponent as hero plays against them: the pool (exploit mode) and/or your locks, else None (GTO)
+            from .exploit import PoolLock, TendencyLock
             base = PoolLock(sol.ctx, 1 - hero_p, committed) if pool else None
             return TendencyLock(sol.ctx, 1 - hero_p, adj, base, next_nodes) if adj else base
         widened: List[str] = []
@@ -2008,6 +2014,7 @@ class Advisor:
                 notes.append(f"exploit mode: {villain} plays like a typical player pool (folds too often to bets of every size, "
                              "most of all small ones, and raises and bluffs less); EVs assume you keep best-responding on later streets")
             if adj:
+                from .exploit import describe_lock
                 notes.append(f"locked: {villain} {describe_lock(adj)} (on {'the pool' if pool else 'GTO'}); the advice is "
                              "your best response to that, and EVs assume you keep best-responding on later streets")
                 notes.extend(_next_lock_notes(node, nxt, lock, n_r1 if hero_p == 0 else n_r0, villain, adj))
@@ -2055,6 +2062,7 @@ class Advisor:
         sf = np.zeros((len(node.names), N_COMBOS)); sf[:, sol.ctx.active] = strat
         range_freq = {name: round(float((sf[a] * w).sum()), 3) for a, name in enumerate(node.names)}
         if self._breakdown:   # the page's Breakdown view (gto/breakdown.py): asked for, on a cached solve
+            from . import breakdown as BD
             ev_full = np.zeros(N_COMBOS); ev_full[sol.ctx.active] = (strat * evs).sum(axis=0)
             opt = {**opt, "breakdown": BD.breakdown(board, node.names, hero, hero_r, sf, ev_full, {villain: vill_r},
                                                     node.pot_now, villain_ev=not self.cfg.rake_rate, hole=hole)}
@@ -2163,6 +2171,7 @@ class Advisor:
         sf = np.zeros((len(root.names), N_COMBOS)); sf[:, sol.hands.active] = strat
         opps = [p for p in players if p != hero]
         if self._breakdown:   # hero's categories and the opponents' (no equity view 3-way)
+            from . import breakdown as BD
             ev_full = np.zeros(N_COMBOS); ev_full[sol.hands.active] = (strat * evs).sum(axis=0)
             bd = BD.breakdown(board, shown, hero, hero_r, sf, ev_full,
                               {p: sol.expand(sol.reach0[i][0]) for i, p in enumerate(players) if p != hero},

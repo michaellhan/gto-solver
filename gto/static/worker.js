@@ -1,8 +1,46 @@
 // Runs the Python solver in the browser with Pyodide. Used when no local server is present.
-importScripts("https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js");
+const PYODIDE = "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/";
+const T0 = performance.now();
 
-// no __init__ here: GitHub Pages (Jekyll) will not serve files starting with an underscore
-const FILES = ["cards", "ranges", "evaluator", "preflop", "pf_equity", "pf_classes", "pf_solve", "pf_game", "pf_game_data", "pf_eqr", "solver", "multiway_solver", "exploit", "advisor", "flop_library", "breakdown"];
+// The solver's Python code (every gto/*.py) and treys (the evaluator's lookup tables) in one zip, built by
+// scripts/build_bundle.py: no micropip, no PyPI, one request instead of 16 in a row. Its hash is in the worker's
+// version (?v=, scripts/deploy.sh), so a new bundle is a new URL; it's requested before Pyodide's script even loads and
+// kept in the Cache API under that URL, so a later visit reads it without a request (GitHub Pages' HTTP cache would
+// revalidate it after 10 minutes). Beside it the Cache API keeps the bytecode the first visit compiled (solver-pyc.zip,
+// made here, never requested): compiling the startup modules took ~0.15 s of their import.
+const VERSION = new URLSearchParams(self.location ? self.location.search : "").get("v") || "dev";
+const BUNDLE = `solver.zip?v=${VERSION}`, PYC = `solver-pyc.zip?v=${VERSION}`;
+// Only a deployed version (deploy.sh's 10-hex-digit hash) is cached: a copy served without one could change under it.
+const cacheP = (async () => {
+  if (!/^[0-9a-f]{10}$/.test(VERSION)) return null;
+  try { return await caches.open("gto-solver"); } catch (e) { return null; }   // none: insecure origins, some private modes
+})();
+async function fromCache(key) {
+  try { const c = await cacheP, hit = c && await c.match(key); return hit ? await hit.arrayBuffer() : null; } catch (e) { return null; }
+}
+async function toCache(key, buf) {   // replaces the versions before this one
+  try {
+    const c = await cacheP; if (!c) return;
+    const name = key.split("?")[0];
+    for (const k of await c.keys()) if (new URL(k.url).pathname.endsWith("/" + name)) await c.delete(k);
+    await c.put(key, new Response(buf, { headers: { "Content-Type": "application/zip" } }));
+  } catch (e) {}
+}
+const bundle = (async () => {
+  const [hit, pyc] = await Promise.all([fromCache(BUNDLE), fromCache(PYC)]);
+  if (hit) return { buf: hit, pyc, cached: true };
+  const r = await fetch(BUNDLE);
+  if (!r.ok) throw new Error(`could not load the solver code (${BUNDLE}: ${r.status})`);
+  const buf = await r.arrayBuffer();
+  toCache(BUNDLE, buf.slice(0));
+  return { buf, pyc: null, cached: false };
+})();
+bundle.catch(() => {});   // awaited (and reported) in the setup below
+// numpy's wheel (12 MB, the biggest download) is requested now, alongside the runtime, so that loadPackage finds it in
+// the HTTP cache (jsdelivr caches versioned files for a year) rather than starting it once the runtime is up. The name
+// is pyodide-lock.json's for 0.26.4; were it wrong, this request would just fail and loadPackage fetch numpy itself.
+fetch(PYODIDE + "numpy-1.26.4-cp312-cp312-pyodide_2024_0_wasm32.whl").then((r) => r.arrayBuffer()).catch(() => {});
+importScripts(PYODIDE + "pyodide.js");
 
 // The precomputed flop library (gto/flop_library.py): the Python side asks for its index once and for an entry
 // (<spot>/<flop>.bin, 1.5-6 KB) only when a flop spot it holds comes up. A synchronous request (allowed in a
@@ -19,21 +57,42 @@ self.libFetch = (path) => {
   }
 };
 
+// The setup, in the stages the page shows; their seconds come back with "Solving…" (setup: for
+// scripts/bench_browser.mjs and the console).
 const ready = (async () => {
-  postMessage({ status: "Loading the solver runtime (about 15 MB, cached after the first visit)…" });
-  const py = await loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/" });
-  postMessage({ status: "Loading numpy…" });
-  await py.loadPackage(["numpy", "micropip"]);
-  postMessage({ status: "Installing the hand evaluator…" });
-  await py.pyimport("micropip").install("treys");
-  postMessage({ status: "Loading solver code…" });
-  py.FS.mkdir("/app"); py.FS.mkdir("/app/gto");
-  py.FS.writeFile("/app/gto/__init__.py", "");
-  for (const f of FILES) {
-    const r = await fetch(`gto/${f}.py`, { cache: "no-store" });
-    if (!r.ok) throw new Error(`could not load gto/${f}.py (${r.status})`);
-    py.FS.writeFile(`/app/gto/${f}.py`, await r.text());
-  }
+  const setup = {}; let t = T0;
+  const lap = (k) => { const n = performance.now(); setup[k] = +((n - t) / 1000).toFixed(2); t = n; };
+  postMessage({ status: "Loading the solver runtime (1 of 3: Python and numpy, about 25 MB, cached after the first visit)…" });
+  const py = await loadPyodide({ indexURL: PYODIDE });
+  lap("runtime");
+  postMessage({ status: "Loading numpy (2 of 3)…" });
+  await py.loadPackage(["numpy"], { messageCallback: () => {} });
+  lap("numpy");
+  postMessage({ status: "Starting the solver (3 of 3)…" });
+  const { buf, pyc, cached } = await bundle;
+  Object.assign(setup, { bundle_cached: cached, pyc_cached: !!pyc });
+  py.unpackArchive(buf, "zip", { extractDir: "/app" });
+  if (pyc) py.unpackArchive(pyc, "zip", { extractDir: "/app" });
+  // the sources get a fixed mtime (a .pyc is valid while its source's mtime and size match) and the startup imports
+  // write their bytecode (Pyodide turns that off), which goes to the Cache API once the first request has its answer
+  py.runPython("import os, sys, json\n"
+             + "for d, _, fs in os.walk('/app'):\n"
+             + "    for f in fs:\n"
+             + "        if f.endswith('.py'): os.utime(os.path.join(d, f), (1577836800, 1577836800))\n"
+             + "sys.path.insert(0, '/app'); sys.dont_write_bytecode = False\n"
+             + "import gto.advisor, gto.solver, gto.flop_library\n"
+             + "sys.dont_write_bytecode = True");
+  if (!pyc) setTimeout(() => {   // after the requests waiting on the setup (they continue before any timer)
+    try {
+      py.runPython("import zipfile\n"
+                 + "with zipfile.ZipFile('/tmp/pyc.zip', 'w', zipfile.ZIP_DEFLATED) as z:\n"
+                 + "    for d, _, fs in os.walk('/app'):\n"
+                 + "        for f in fs:\n"
+                 + "            if f.endswith('.pyc'): z.write(os.path.join(d, f), os.path.relpath(os.path.join(d, f), '/app'))");
+      toCache(PYC, py.FS.readFile("/tmp/pyc.zip"));
+    } catch (e) {}
+  }, 0);
+  lap("imports");
   // Pyodide numpy is 10-30x slower per iteration than native on the flop (its leaf products have no BLAS), ~1.5x on the
   // turn (vectorised river showdowns), so the browser plays a smaller game. Two flop bet sizes; inside a flop solve one
   // turn and river size (Config.later_sizes).
@@ -86,7 +145,9 @@ const ready = (async () => {
              + "advs['fast'].mw_solve_streets = ('river',); advs['accurate'].mw_solve_streets = ('flop', 'turn', 'river'); "
              + "advs['accurate'].mw_street_config = {s: {'later': 'buckets', 'buckets': 12, 'bucket_river_step': 3} for s in ('flop', 'turn')}; "
              + "advs['accurate'].mw_street_config['flop']['bet'] = {'flop': [0.33, 0.75], 'turn': 0.5, 'river': 0.5}");
-  postMessage({ status: "Solving…" });
+  lap("advisors");
+  setup.total = +((performance.now() - T0) / 1000).toFixed(2);
+  postMessage({ status: "Solving…", setup });
   return py;
 })();
 

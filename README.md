@@ -536,7 +536,7 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   ran 3-way turns and rivers its whole 60 s. Fast's turn also gets the 3 s its narrowing flop didn't spend
   (`spare_prior`, as natively). Each cell: seconds, iterations, % of the pot from equilibrium. To run it:
   `npm install pyodide@0.26.4` in a directory of its own, then `node scripts/bench_browser.mjs --pyodide <that dir>
-  [--spots flop,turn] [--speeds fast,accurate] [--worker edited-copy.js] [--json out.json]` (`--list` shows the spots).
+  [--spots flop,turn] [--speeds fast,accurate] [--worker edited-copy.js] [--json out.json]` (`--list` shows the spots; it builds `solver.zip` as the deploy does, with the repo's `.venv` Python or `PYTHON=`).
 
   | request (6-max 100bb) | bar | before | after |
   |---|---|---|---|
@@ -561,10 +561,34 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
 
   Every request now ends within 6% of the bar (a raked Fast flop: the rake's exploitability costs two more passes).
   Fast's 3-way flops and turns are answered by the rules in 2.4-3.0 s. The worker's setup (Pyodide, numpy, treys,
-  the solver's files) took 3.3-9.9 s before the first request, outside every bar. The wasm heap peaks at 490 MB (an
+  the solver's files) took 3.3-9.9 s before the first request, outside every bar (now 1.2-1.4 s: Worker startup). The wasm heap peaks at 490 MB (an
   Accurate turn with its narrowing flop), was 588 MB (the two-tone Accurate flop). The deployed page in Chrome (the
   desktop app's browser, the code before these changes, the worker's own messages timed in the page) agreed: K72
   Accurate 63.4 s and 56 iterations, the two-tone flop 91.4 s and 36, Fast flop / turn / river 8.2 / 11.5 / 6.7 s.
+* **Worker startup** (time to the first answer: the worker's setup, then a preflop request or a library flop, each
+  ~0.02 s). The setup was the runtime, numpy and micropip, treys installed from PyPI, 16 `gto/*.py` fetched one after
+  another (`no-store`) and imported. Most of the import was `gto.preflop`'s charts: `ranges._class_combos` scanned all
+  1326 combos for each of ~3600 class lookups (1.4 s in Pyodide, 1.1 s natively; now a table: 0.06 s). Now the worker
+  fetches `solver.zip` (every `gto/*.py` and treys, 290 KB, `scripts/build_bundle.py`; no micropip or PyPI) and numpy's
+  wheel (12 MB, the largest download) at once, alongside the runtime; keeps the zip and the startup modules' bytecode
+  in the Cache API under the worker's version (a repeat visit makes no request for them and compiles nothing); and
+  imports only what a preflop or library answer needs (`exploit`, `breakdown`, `multiway_solver`, `pf_game` on first
+  use). Its status says which of 3 stages it is in, and "Solving…" carries each stage's seconds. On the static site
+  (https) the worker starts with the page instead of after the backend probe. Seconds, medians (Node: 4 runs a spot,
+  preflop / library flop; Chrome: 6 runs, both spots), a quiet 10-core machine:
+
+  | | runtime | numpy | treys | code | first answer |
+  |---|---|---|---|---|---|
+  | before, Node (`scripts/bench_browser.mjs`'s sandbox) | 0.76 | 0.13 | 0.91 | 1.90 | 3.68 / 3.78 |
+  | after, first visit | 0.73 | 0.13 | | 0.47 | 1.32 / 1.38 |
+  | after, repeat visit (bytecode cached) | 0.73 | 0.13 | | 0.40 | 1.24 / 1.31 |
+  | before, Chrome (the deploy layout served locally, HTTP cache warm) | 0.65 | 0.15 | 0.23 | 1.85 | 2.93 (2.78-3.44) |
+  | after, first visit (Cache API empty) | 0.69 | 0.15 | | 0.48 | 1.35 (1.27-1.79) |
+  | after, repeat visit | 0.69 | 0.14 | | 0.40 | 1.24 (1.15-1.41) |
+
+  On a loaded machine the gap grows: 8.0 s before, 4.2 s after; the deployed page took 10.9-12.3 s then, 7.4-8.3 s of
+  it loading the code (its 16 fetches alone 0.66 s in a row, 0.05 s in parallel). A first visit also downloads
+  ~25 MB (Pyodide 13.7, numpy 12.0; micropip and packaging's 0.3 MB are gone), which a slow connection pays once.
 * **Regret minimizer** (`docs/cfr_research.md`, `scripts/bench_solver.py --algos`, exploitability per
   iteration): predictive CFR+ and its discounted form (PCFR+, PDCFR+), the state of the art on many
   non-poker games, are 2-7x more exploitable than DCFR here at 100-200 iterations on every spot (the river,
@@ -878,7 +902,7 @@ entries are re-solved). A spot on every flop is 4-7 MB: the test holds the libra
 scripts/deploy.sh
 ```
 
-copies the page, the worker, `practice.js`, `reports.js`, `drills.js`, `breakdown.js`, `session.js`, the `gto` sources and the flop library into the `gto-solver/` folder
+copies the page, the worker, `practice.js`, `reports.js`, `drills.js`, `breakdown.js`, `session.js`, `solver.zip` (the worker's Python code: every `gto/*.py` and treys, `scripts/build_bundle.py`), the `gto` sources and the flop library into the `gto-solver/` folder
 of the michaellhan.github.io repo and pushes. First it runs the checks and aborts
 the deploy if either fails: `python -m unittest`, then the quick sanity sweep
 (`scripts/sanity_sweep.py --quick`, about 3 minutes on 10 cores: a fixed, seeded set

@@ -51,6 +51,9 @@ gh repo clone michaellhan/michaellhan.github.io "$WORK/site" -- -q --depth 1
 rm -rf "$WORK/site/gto-solver"
 mkdir -p "$WORK/site/gto-solver/gto"
 cp "$HERE/gto/static/index.html" "$HERE/gto/static/worker.js" "$HERE/gto/static/hh.js" "$HERE/gto/static/practice.js" "$HERE/gto/static/reports.js" "$HERE/gto/static/drills.js" "$HERE/gto/static/breakdown.js" "$HERE/gto/static/session.js" "$HERE/gto/static/health.json" "$WORK/site/gto-solver/"
+# the worker's Python code and treys in one zip (scripts/build_bundle.py); the separate gto/*.py files stay for pages
+# cached from before the bundle (index.html is cached up to 10 minutes, with the old worker's version)
+"$PYTHON" "$HERE/scripts/build_bundle.py" "$WORK/site/gto-solver/solver.zip" >/dev/null
 cp "$HERE"/gto/*.py "$WORK/site/gto-solver/gto/"
 # the precomputed flop library (gto/flop_library.py): index.json and one small file per spot and flop, fetched by the
 # worker only when its spot comes up
@@ -59,9 +62,9 @@ if [ -f "$HERE/gto/static/flop_library/index.json" ]; then
   find "$WORK/site/gto-solver/flop_library" -type f ! -name '*.json' ! -name '*.bin' -delete   # (a running build's .tmp files)
 fi
 # Stamp the worker's cache-busting version with its content hash (and practice.js's, loaded with the same
-# version), so a changed worker.js is never served from a browser's 4h-cached copy (which would load an
-# outdated list of solver files).
-WV="$(cat "$HERE/gto/static/worker.js" "$HERE/gto/static/practice.js" | shasum | cut -c1-10)"
+# version, and solver.zip's, which the worker fetches as solver.zip?v=<this> and keeps in the Cache API under that
+# URL), so a changed worker.js or solver code is never served from a browser's cached copy.
+WV="$(cat "$HERE/gto/static/worker.js" "$HERE/gto/static/practice.js" "$WORK/site/gto-solver/solver.zip" | shasum | cut -c1-10)"
 sed -i.bak -E "s/^const WORKER_VERSION = \"[^\"]*\";/const WORKER_VERSION = \"$WV\";/" "$WORK/site/gto-solver/index.html"
 rm "$WORK/site/gto-solver/index.html.bak"
 grep -q "const WORKER_VERSION = \"$WV\";" "$WORK/site/gto-solver/index.html"

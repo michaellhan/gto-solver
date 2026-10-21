@@ -24,8 +24,12 @@ def class_sums(m: np.ndarray) -> np.ndarray:
     return out
 
 
-# share of combo pairs between two classes that don't share a card
-PAIR_COMPAT = class_sums(COMPAT.astype(float)) / np.outer(N_IN, N_IN)
+# share of combo pairs between two classes that don't share a card (class_sums(COMPAT) exactly, integer counts: summed
+# over runs of the combos sorted by class, ~3x faster than add.at, which is time the browser's worker spends at startup)
+_ORDER = np.argsort(CLASS_OF, kind="stable")
+_STARTS = np.searchsorted(CLASS_OF[_ORDER], np.arange(len(CLASSES)))
+PAIR_COMPAT = (np.add.reduceat(np.add.reduceat(COMPAT[_ORDER][:, _ORDER].astype(np.int64), _STARTS, axis=0), _STARTS, axis=1)
+               .astype(float) / np.outer(N_IN, N_IN))
 
 
 @lru_cache(maxsize=1)

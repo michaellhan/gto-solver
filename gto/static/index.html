@@ -593,8 +593,11 @@ let MODE = null, worker = null, reqId = 0;
 const pending = {};
 // (health.json: the local server answers it {"ok": true}; the static site has the file, {"ok": false}, so the probe
 // never 404s there, which the browser would log as an error on every load)
+// Over https it's the static site (gto/server.py serves http only), so the worker starts without waiting for the probe.
+if (location.protocol === "https:") startWorker();
 const modeReady = (async () => {
   try { const r = await fetch("health.json", { cache: "no-store" }); if (r.ok && (await r.json()).ok) MODE = "server"; } catch (e) {}
+  if (MODE === "server" && worker) { worker.terminate(); worker = null; workerStatus = ""; }   // (a proxied local server)
   if (!MODE) { MODE = "wasm"; startWorker(); }   // start loading the in-browser solver while the hand is entered
   const ctl = document.getElementById("solvectl");
   const setSpeed = (m) => {

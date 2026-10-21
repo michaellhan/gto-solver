@@ -14,9 +14,12 @@
 // Each spot runs in a fresh worker (a child process: no solve cache carried between spots, like a page load);
 // --warm runs Fast then Accurate in the same worker, as when the page is switched to Accurate after a Fast answer
 // (Accurate starts from Fast's solve; the page's bar then counts the Accurate budget less Fast's seconds).
-// numpy and treys are fetched on first use (numpy from the pyodide package's directory, treys from PyPI).
+// numpy is read from the pyodide package's directory; the solver's code from solver.zip, built here as deploy.sh
+// builds it (scripts/build_bundle.py, with the repo's .venv Python or $PYTHON). Each spot's first line gives the
+// worker's setup by stage, the worker's own timings (runtime, numpy, imports, advisors).
 // Times are wall clock on this machine: a browser tab is single-threaded too, but other load moves them.
-import { spawnSync } from "child_process";
+import { spawnSync, execFileSync } from "child_process";
+import os from "os";
 import fs from "fs";
 import path from "path";
 import vm from "vm";
@@ -74,19 +77,29 @@ function pageBudget(state, speed, fastSeconds) {
 
 // worker.js in a sandbox with the browser APIs it uses, served from the repo (deploy.sh puts gto/*.py and the flop
 // library next to the page)
-async function startWorker(pyodideDir) {
+function buildBundle() {
+  const venv = path.join(ROOT, ".venv", "bin", "python");
+  const python = process.env.PYTHON || (fs.existsSync(venv) ? venv : "python3");
+  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "gto-bundle-")), "solver.zip");
+  execFileSync(python, [path.join(ROOT, "scripts", "build_bundle.py"), out]);
+  return out;
+}
+
+async function startWorker(pyodideDir, bundlePath) {
   const require = createRequire(path.join(path.resolve(pyodideDir), "noop.js"));
   const { loadPyodide } = require("pyodide");
   let py = null, onMsg = null;
   const ctx = {
-    console, setTimeout, clearTimeout, URL, TextDecoder, TextEncoder, Uint8Array, ArrayBuffer, JSON, Promise, Error,
-    importScripts: () => {},
+    console, setTimeout, clearTimeout, URL, URLSearchParams, TextDecoder, TextEncoder, Uint8Array, ArrayBuffer, JSON, Promise,
+    Error, performance, importScripts: () => {},
     loadPyodide: async () => (py = await loadPyodide()),   // the npm package's own files, not the CDN's
     fetch: async (url) => {
-      const f = path.join(ROOT, url.split("?")[0]);
+      if (/^https?:/.test(url)) return { ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0) };   // the numpy prefetch
+      const f = url.startsWith("solver.zip") ? bundlePath : path.join(ROOT, url.split("?")[0]);
       if (!fs.existsSync(f)) return { ok: false, status: 404 };
-      const text = fs.readFileSync(f, "utf8");
-      return { ok: true, status: 200, text: async () => text };
+      const buf = fs.readFileSync(f);
+      return { ok: true, status: 200, text: async () => buf.toString("utf8"),
+               arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.length) };
     },
     XMLHttpRequest: class {
       open(method, url) { this.url = url; }
@@ -106,8 +119,9 @@ async function startWorker(pyodideDir) {
   vm.runInContext(src, ctx, { filename: "worker.js" });
   globalThis.libFetch = ctx.libFetch;   // Python's `from js import ...` reads Node's global, not the sandbox's
   // the setup has run once the worker reports it is solving
+  let stages = null;
   await new Promise((res, rej) => {
-    onMsg = (m) => { if (m.status === "Solving…") res(); if (m.error) rej(new Error(m.error)); };
+    onMsg = (m) => { if (m.status === "Solving…") { stages = m.setup || null; res(); } if (m.error) rej(new Error(m.error)); };
   });
   const setup = (performance.now() - t0) / 1000;
   const heap = () => py._module.HEAPU8.buffer.byteLength / 2 ** 20;
@@ -117,13 +131,13 @@ async function startWorker(pyodideDir) {
     onMsg = (m) => { if (m.id === my) res(m); };
     ctx.onmessage({ data: { id: my, state } });
   });
-  return { setup, heap, request, ctx };
+  return { setup, stages, heap, request, ctx };
 }
 
 // one spot's requests in one worker; prints JSON lines
-async function runOne(spot, speeds, pyodideDir) {
-  const w = await startWorker(pyodideDir);
-  console.log(JSON.stringify({ spot, setup: +w.setup.toFixed(1), heap_mb: +w.heap().toFixed(0) }));
+async function runOne(spot, speeds, pyodideDir, bundlePath) {
+  const w = await startWorker(pyodideDir, bundlePath);
+  console.log(JSON.stringify({ spot, setup: +w.setup.toFixed(2), stages: w.stages, heap_mb: +w.heap().toFixed(0) }));
   let fastSeconds = null;
   for (const speed of speeds) {
     const [budget, prior_budget] = BUDGETS[speed];
@@ -146,7 +160,7 @@ async function runOne(spot, speeds, pyodideDir) {
 }
 
 if (flag("child")) {
-  await runOne(arg("spot"), arg("speeds").split(","), arg("pyodide"));
+  await runOne(arg("spot"), arg("speeds").split(","), arg("pyodide"), arg("bundle"));
   process.exit(0);
 }
 if (flag("list")) {
@@ -157,13 +171,14 @@ const pyodideDir = arg("pyodide", process.env.PYODIDE_DIR);
 if (!pyodideDir) { console.error("--pyodide DIR (where pyodide@0.26.4 is installed) is required"); process.exit(2); }
 const spots = arg("spots", Object.keys(SPOTS).join(",")).split(",");
 const speeds = arg("speeds", "fast,accurate").split(",");
+const bundlePath = buildBundle();
 const rows = [];
 for (const spot of spots) {
   if (!SPOTS[spot]) { console.error(`unknown spot ${spot} (--list)`); process.exit(2); }
   // a fresh worker per spot (and per speed unless --warm)
   for (const group of flag("warm") ? [speeds] : speeds.map((s) => [s])) {
     const p = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--child", "--spot", spot, "--speeds", group.join(","),
-                                           "--pyodide", pyodideDir, ...(arg("worker") ? ["--worker", arg("worker")] : [])], { encoding: "utf8", maxBuffer: 1 << 26 });
+                                           "--pyodide", pyodideDir, "--bundle", bundlePath, ...(arg("worker") ? ["--worker", arg("worker")] : [])], { encoding: "utf8", maxBuffer: 1 << 26 });
     for (const line of p.stdout.split("\n").filter((l) => l.startsWith("{"))) {
       const r = JSON.parse(line);
       if (r.speed) rows.push(r);
@@ -172,7 +187,7 @@ for (const spot of spots) {
                             `expl ${r.expl_pct ?? "-"}%  solve ${r.solve_s ?? "-"} s  outside ${r.outside_s ?? "-"} s  heap ${r.heap_mb} MB` +
                             `${r.precomputed ? "  library" : ""}${r.error ? "  ERROR " + r.error : ""}` +
                             (r.notes.length ? "\n             " + r.notes.join("\n             ") : "")
-                          : `${r.spot}: worker setup ${r.setup} s, heap ${r.heap_mb} MB`);
+                          : `${r.spot}: worker setup ${r.setup} s${r.stages ? " (" + Object.entries(r.stages).filter(([k]) => k !== "total").map(([k, v]) => `${k} ${v}`).join(", ") + ")" : ""}, heap ${r.heap_mb} MB`);
     }
     if (p.status !== 0) console.error(p.stderr.split("\n").slice(-15).join("\n"));
   }

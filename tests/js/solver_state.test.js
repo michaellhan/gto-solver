@@ -153,6 +153,24 @@ test("the backend probe finds a file on the static site (no 404 logged on every 
   assert.equal(q.run("MODE"), "server");
 });
 
+test("over https (the static site) the worker starts with the page, not after the backend probe; over http it waits for it", async () => {
+  const p = loadPage({ protocol: "https:" });
+  assert.equal(p.workers.length, 1);   // before the probe has answered
+  await p.ready();
+  assert.equal(p.run("MODE"), "wasm");
+  assert.equal(p.workers.length, 1);   // the same worker: not started twice
+  assert.equal(p.workers[0].terminated, false);
+  const q = loadPage();                // http: the local server's page
+  assert.equal(q.workers.length, 0);
+  await q.ready();
+  assert.equal(q.workers.length, 1);
+  const s = loadPage({ protocol: "https:", server: true });   // a local server behind an https proxy: the worker goes
+  await s.ready();
+  assert.equal(s.run("MODE"), "server");
+  assert.equal(s.workers[0].terminated, true);
+  assert.equal(s.run("worker"), null);
+});
+
 test("with the local server the state is POSTed at the server's budgets", async () => {
   const p = loadPage({ server: true });
   await p.ready();

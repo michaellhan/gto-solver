@@ -68,7 +68,7 @@ class El {
   *walk() { for (const c of this.children) { yield c; yield* c.walk(); } }
 }
 
-// Options: hash (location.hash), storage (initial localStorage entries), server (true: /health answers ok,
+// Options: hash (location.hash), protocol (location.protocol, default http:), storage (initial localStorage entries), server (true: /health answers ok,
 // so the page uses the local server's budgets and POSTs to /advise instead of the worker).
 function loadPage(opts = {}) {
   const els = new Map();
@@ -93,7 +93,7 @@ function loadPage(opts = {}) {
     if (!allowed()) return Promise.reject(new Error("NotAllowedError"));
     return (async () => { clipboard.text = await (await items[0].items["text/plain"]).text(); clipboard.via = "write"; })();
   };
-  const location = { hash: opts.hash || "", origin: "https://www.michael-han.com", pathname: "/gto-solver/", search: "" };
+  const location = { hash: opts.hash || "", origin: "https://www.michael-han.com", pathname: "/gto-solver/", search: "", protocol: opts.protocol || "http:" };
   const replaced = [];
 
   class FakeWorker {

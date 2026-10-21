@@ -20,21 +20,17 @@ def _class_combos(cls: str):
     if not _CLASS.fullmatch(cls):   # 'AKS' / 'AKx' read as offsuit and 'AAs' as AA
         raise ValueError(f"bad hand class {cls!r}")
     r1, r2 = RANKS.index(cls[0]), RANKS.index(cls[1])
-    out = []
-    for cb in ALL_COMBOS:
-        a, b = cb
-        ra, rb = rank(a), rank(b)
-        if {ra, rb} != {r1, r2}:
-            continue
-        if r1 == r2:
-            out.append(cb)
-        elif len(cls) == 3:
-            same = suit(a) == suit(b)
-            if (cls[2] == "s") == same:
-                out.append(cb)
-        else:
-            out.append(cb)
-    return out
+    return list(_BY_CLASS[(min(r1, r2), max(r1, r2), cls[2:] if r1 != r2 else "")])
+
+
+# the combos (in ALL_COMBOS order) of each rank pair, "" (both suitednesses), "s" or "o": a class is looked up instead
+# of scanning all 1326 combos (the charts' ~3600 class lookups at import took 1.1 s natively, 1.4 s in the browser)
+_BY_CLASS: Dict[Tuple[int, int, str], list] = {}
+for _cb in ALL_COMBOS:
+    _lo, _hi = sorted((rank(_cb[0]), rank(_cb[1])))
+    _BY_CLASS.setdefault((_lo, _hi, ""), []).append(_cb)
+    if _lo != _hi:
+        _BY_CLASS.setdefault((_lo, _hi, "s" if suit(_cb[0]) == suit(_cb[1]) else "o"), []).append(_cb)
 
 
 def _expand_token(tok: str):
@@ -99,8 +95,9 @@ def parse_range(text: str) -> np.ndarray:
         if ":" in part:
             part, ws = part.split(":")
             weight = float(ws)
-        for cb in _expand_token(part):
-            w[COMBO_INDEX[cb]] = max(w[COMBO_INDEX[cb]], weight)
+        idx = [COMBO_INDEX[cb] for cb in _expand_token(part)]
+        if idx:
+            w[idx] = np.fmax(w[idx], weight)   # max(w, weight) a combo at a time, as before (fmax: a NaN weight is skipped)
     return w
 
 
