@@ -183,6 +183,31 @@ test("hand text: the solver's advice", async () => {
   assert.equal(l2[4], "  check 100.0% (GTO 40%) | bet 75% 4.1bb 0.0% (GTO 60%)");
 });
 
+test("against the pool the GTO % says where it comes from: the chart preflop, the same solve on the pool's ranges after", async () => {
+  const p = loadPage({ storage: { "gto-opponents": "pool" } });
+  p.S = state({ cards: ["Ah", "Kh", "Kd", "7s", "2c"], preflop: acts("UTG f, HJ f, CO f, BTN r2.5, SB f, BB c"), flop: acts("BB x") });
+  await p.ready();
+  assert.equal(p.payload().opponents, "pool");
+  p.ctx.__res = JSON.stringify({ street: "flop", recommended: "bet 33%", actions: [{ action: "check", freq: 0, gto_freq: 0.6, ev_bb: 4 }, { action: "bet 33%", amount_bb: 1.8, freq: 1, gto_freq: 0.4, ev_bb: 4.4 }] });
+  p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
+  const h = p.byId("result").innerHTML;
+  assert.match(h, /Against a typical player pool: the best response, with GTO's frequency under each \(the equilibrium of this same solve, which starts from the pool's ranges into the flop: the GTO setting's advice, on the charts' ranges, can differ\)/);
+  assert.match(h, /title="GTO plays this 40.0% of the time \(this solve's equilibrium\)"/);
+  assert.match(p.run("handText()"), /\n  GTO %: the equilibrium of this same solve, which starts from the pool's ranges/);
+  // preflop: the chart
+  p.S = state({ cards: ["Ah", "Kh"], preflop: acts("UTG f, HJ f, CO r2.5") });
+  p.ctx.__res = JSON.stringify({ street: "preflop", recommended: "raise", actions: [{ action: "call", freq: 1, gto_freq: 0.3 }, { action: "raise", amount_bb: 8, freq: 0, gto_freq: 0.7 }] });
+  p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
+  assert.match(p.byId("result").innerHTML, /GTO's frequency under each \(the preflop chart's mix\)/);
+  // GTO opponents: no GTO column, no note
+  const q = loadPage();
+  q.S = state({ cards: ["Ah", "Kh", "Kd", "7s", "2c"], preflop: acts("UTG f, HJ f, CO f, BTN r2.5, SB f, BB c"), flop: acts("BB x") });
+  await q.ready();
+  q.ctx.__res = JSON.stringify({ street: "flop", recommended: "check", actions: [{ action: "check", freq: 1, ev_bb: 4 }] });
+  q.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
+  assert.doesNotMatch(q.byId("result").innerHTML + q.run("handText()"), /GTO's frequency|GTO %/);
+});
+
 test("a raise's amount isn't repeated when its name already says it, in the advice rows and the hand text", async () => {
   const p = loadPage();
   p.S = state({ cards: ["Ah", "Kh", "Kd", "7s", "2c"], preflop: acts("UTG f, HJ f, CO f, BTN r2.5, SB f, BB c"), flop: acts("BB x, BTN b2, BB r7") });

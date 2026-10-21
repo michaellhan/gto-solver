@@ -249,7 +249,9 @@ flop only from the precomputed library and returns `{"skipped": …}` for any ot
 `"opponents": "pool"` (the page's Opponents: Pool toggle) is exploit mode: opponents play like a
 typical player pool instead of GTO. Preflop, hero's calls and raises are re-drawn against the pool's
 ranges and responses; after the flop the advice is the best response (each hand's highest-EV action,
-`freq` 0 or 1, with `gto_freq` alongside). See Exploit mode below.
+`freq` 0 or 1, with `gto_freq` alongside). See Exploit mode below. `gto_freq` is the chart's mix preflop and
+after it the equilibrium of the same solve, which starts from the pool's ranges into the flop (and is never the
+precomputed library's), so it can differ from the GTO setting's answer for the same hand; the page says so.
 
 ### Rake
 
