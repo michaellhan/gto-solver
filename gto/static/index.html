@@ -847,8 +847,12 @@ function gradeFor(rec) {
 }
 function gradeWith(r, rec) {   // (also the session analyzer's, on its own answers)
   let m;
-  if (["fold", "check", "call", "all-in"].includes(rec.action)) m = r.actions.find(a => a.action === rec.action);
-  else {
+  if (["fold", "check", "call", "all-in"].includes(rec.action)) {
+    m = r.actions.find(a => a.action === rec.action);
+    // a preflop chart leaves out what it never does: an open-limp, the small blind (or a straddled big blind)
+    // completing. That is played 0%, not ungraded.
+    if (!m && rec.action !== "all-in" && r.street === "preflop") m = { action: rec.action, freq: 0 };
+  } else {
     const agg = r.actions.filter(a => /^(bet|raise)/.test(a.action) && a.amount_bb != null);
     if (agg.length) m = agg.reduce((b, a) => Math.abs(a.amount_bb - rec.to) < Math.abs(b.amount_bb - rec.to) ? a : b);
   }

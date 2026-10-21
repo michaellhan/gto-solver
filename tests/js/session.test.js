@@ -294,6 +294,21 @@ test("the page host: the request is the page's own for that decision (at Fast, G
   assert.equal(host.grade({ multiway: true, actions: res.actions }, { action: "check" }), null);   // the betting rules: no grade
 });
 
+test("a limp the preflop chart leaves out (open-limp, SB completes) is graded off the chart, not left ungraded", async () => {
+  const p = await page();
+  const host = p.ctx.Session.pageHost();
+  // the advisor's chart answer for the small blind folded to: raise or fold, no limp
+  const sb = { street: "preflop", actions: [{ action: "raise", freq: 0, amount_bb: 3 }, { action: "fold", freq: 1 }] };
+  assert.deepEqual(j(host.grade(sb, { action: "call" })), { m: "call", f: 0, b: "fold", bf: 1, l: null });
+  assert.deepEqual(j(p.ctx.gradeWith(sb, { action: "call" })), { m: "call", f: 0, b: "fold", bf: 1, l: null });
+  assert.equal(p.run(`gradeMark(${JSON.stringify(p.ctx.gradeWith(sb, { action: "call" }))})`), "✗");
+  // an answer listing the action grades it by its own frequency as before
+  const bb = { street: "preflop", actions: [{ action: "raise", freq: 0.2, amount_bb: 4 }, { action: "check", freq: 0.8 }] };
+  assert.deepEqual(j(host.grade(bb, { action: "check" })), { m: "check", f: 0.8, b: "check", bf: 0.8, l: null });
+  // postflop a missing passive action stays ungraded (the solver lists every legal one)
+  assert.equal(host.grade({ street: "flop", actions: [{ action: "check", freq: 1, ev_bb: 1 }] }, { action: "call" }), null);
+});
+
 test("a synthetic session end to end through the page: every decision asked once, in order, and graded", async () => {
   const p = await page({ server: true });
   const S = p.ctx.Session, prep = await S.prepare(synthSession(50, 11), (t) => p.ctx.importHand(t), null, 100, async () => {});
