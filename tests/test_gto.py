@@ -3041,6 +3041,19 @@ class TestPractice(unittest.TestCase):
                 out = adv.advise(nxt)
                 self.assertNotIn("error", out)
 
+    def test_locked_seat_still_moves(self):
+        # the page sends the locks the player practising set on their opponents with every move request; a locked
+        # seat's move (preflop, or any spot answered from its own seat) is GTO, not an error about locking yourself
+        adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        st = {"players": 6, "hero": "UTG", "hole": "2c2d", "stack": 100, "preflop": self.PRE[:3],
+              "locks": {"BTN": {"fold": 20}, "BB": {"bluff": -50}}}
+        m = adv.play(st, "BTN", "AsKs", seed=1)
+        self.assertNotIn("error", m)
+        self.assertEqual(m["action"], "raise")
+        m = adv.play(dict(self.FLOP, locks={"BB": {"fold": 20}}), "BB", "QcQd", seed=2)   # (a 3bet hand: its own seat)
+        self.assertNotIn("error", m)
+        self.assertIn(m["action"], {"check", "bet", "all-in"})
+
     def test_villain_to_act_first_and_fallbacks(self):
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
         m = adv.play(self.FLOP, "BB", "8c8d", seed=2)            # first to act: one solve serves both

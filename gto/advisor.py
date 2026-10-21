@@ -3028,7 +3028,10 @@ class Advisor:
             if st.get("board") and st.get("hole") and str(st.get("hero", "")).upper() != seat:
                 res = self._advise(st, actor=(seat, hole))
             if res is None or "error" in res:
-                res = self._advise(dict(st, hero=seat, hole=cards_str(hole)))
+                # from the seat's own view: a GTO player, so not best-responding to the locks the player practising
+                # set on their opponents (which can name this seat: "you can't lock your own seat" stalled practice)
+                res = self._advise({**{k: v for k, v in st.items() if k != "locks"}, "hero": seat,
+                                    "hole": cards_str(hole)})
         if "error" in res:
             return {"error": res["error"]}
         acts = [a for a in res["actions"] if a["freq"] > 0] or res["actions"]
