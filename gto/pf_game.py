@@ -14,7 +14,7 @@ Terminal values (chips won, net of what each put in):
 * a flop heads-up: the pot by each player's realized pot share, from a realization model (EQRModel) by pot
   type (single-raised, 3bet, 4bet), whether the aggressor (the last raiser) has position, and the two hands;
 * a flop three-way: all-in equity three ways (MW_CORR, see _multi) by a realization factor per postflop
-  seat (MW_REALIZE).
+  seat and where the opener sits (MW_REALIZE, measured).
 With `rake` (rate, cap) a pot that sees a flop is short the expected rake (advisor.RAKE_GROWTH times the pot
 at the flop, to the cap), as the advice prices calls.
 
@@ -45,7 +45,11 @@ class Sizes:
     blind_3bet: float = 4.8    # x the open, from a blind over a seat's open (2.5 -> 12)
     bvb_3bet: float = 10.0 / 3.0   # x the open, the big blind over a small-blind open (3 -> 10)
     four_x: float = 2.3        # 4bet, x the 3bet
+    four_x_ip: Optional[float] = None    # in position against the 3bettor (None: four_x)
+    four_x_oop: Optional[float] = None   # out of position against it (None: four_x)
     jam_frac: float = 0.4      # a raise putting in this share of the stack or more goes all-in
+    iso: float = 3.5           # the big blind's raise over a small-blind limp (sb_limp), bb
+    limp_3bet: float = 3.0     # the small blind's re-raise over that, x the raise
 
 
 @dataclass
@@ -65,17 +69,23 @@ class Node:
 
 
 def build(positions: Sequence[str] = SIX, stack: float = 100.0, sizes: Optional[Sizes] = None,
-          max_players: int = 3, max_players_raised: int = 2) -> Node:
-    """The preflop tree for `positions` in preflop order (the last two the blinds)."""
+          max_players: int = 3, max_players_raised: int = 2, sb_limp: bool = False) -> Node:
+    """The preflop tree for `positions` in preflop order (the last two the blinds). `sb_limp`: the small
+    blind first in may also complete (limp); the big blind then checks or raises (Sizes.iso), and the small
+    blind facing that folds, calls or re-raises (Sizes.limp_3bet)."""
     sizes = sizes or Sizes()
     n = len(positions)
     pos = list(positions)
     sb, bb = (n - 2, n - 1) if n > 2 else (0, 1)    # heads-up the button is the small blind
 
-    def raise_to(p, cur, n_raises, last, callers):
+    def raise_to(p, cur, n_raises, last, callers, bets):
         if n_raises == 0:
+            if p == bb:                          # over a small-blind limp
+                return sizes.iso
             return sizes.sb_open if p == sb else sizes.open
         if n_raises == 1:
+            if p == sb and last == bb and abs(bets[sb] - 1.0) < 1e-9:
+                return cur * sizes.limp_3bet
             if p == bb and last == sb:
                 x = sizes.bvb_3bet
             elif p in (sb, bb):
@@ -84,7 +94,9 @@ def build(positions: Sequence[str] = SIX, stack: float = 100.0, sizes: Optional[
                 x = sizes.ip_3bet
             return cur * x + callers * cur
         if n_raises == 2:
-            return cur * sizes.four_x + callers * cur
+            ip = (POST_ORDER.index(pos[p]) > POST_ORDER.index(pos[last])) if n > 2 else p == sb
+            x = (sizes.four_x_ip if ip else sizes.four_x_oop) or sizes.four_x
+            return cur * x + callers * cur
         return stack
 
     def rec(bets, folded, acted, n_raises, last, p, line):
@@ -106,6 +118,13 @@ def build(positions: Sequence[str] = SIX, stack: float = 100.0, sizes: Optional[
             if n_raises > 0 or q != bb:
                 names.append("fold")
                 kids.append(rec(bets, folded | {q}, acted | {q}, n_raises, last, q + 1, line + ((pos[q], "fold", 0.0),)))
+        if n_raises == 0 and sb_limp and q in (sb, bb) and all(x in folded for x in range(n) if x not in (sb, bb)) \
+                and bets[q] < cur + 1e-9:
+            # the small blind completes, or the big blind checks behind a limp (named "call": a flop at 1bb each)
+            if q == sb or sb in acted:
+                b2 = list(bets); b2[q] = cur
+                names.append("call")
+                kids.append(rec(b2, folded, acted | {q}, 0, last, q + 1, line + ((pos[q], "call", cur),)))
         if n_raises > 0:
             in_level = sum(1 for r in live if bets[r] >= cur - 1e-9)
             if in_level < (max_players if n_raises == 1 else max_players_raised):
@@ -114,7 +133,7 @@ def build(positions: Sequence[str] = SIX, stack: float = 100.0, sizes: Optional[
                 kids.append(rec(b2, folded, acted | {q}, n_raises, last, q + 1, line + ((pos[q], "call", b2[q]),)))
         if cur < stack - 1e-9 and n_raises < 4:
             callers = sum(1 for r in live if r != last and r != q and bets[r] >= cur - 1e-9) if n_raises > 0 else 0
-            to = raise_to(q, cur, n_raises, last, callers)
+            to = raise_to(q, cur, n_raises, last, callers, bets)
             if to >= sizes.jam_frac * stack or n_raises == 3:
                 to = stack
             b2 = list(bets); b2[q] = to
@@ -152,7 +171,11 @@ class EQRModel:
 
     from_tables = staticmethod(lambda ex, w: _from_tables(ex, w))
 
+    by_spot = False   # whether share() uses the seats of a detailed key (pot type, aggressor ip, its seat, caller's)
+
     def share(self, key: tuple) -> np.ndarray:
+        if not self.by_spot:
+            key = key[:2]
         s = self._cache.get(key)
         if s is None:
             if self.share_fn is not None:
@@ -164,6 +187,34 @@ class EQRModel:
                 s = eq + (xa - xc.T) / 2
             s = self._cache[key] = np.clip(s, -3.0, 4.0)
         return s
+
+
+class SpotModel(EQRModel):
+    """Pot shares by spot: `models` maps (pot type, aggressor in position, aggressor's seat, caller's seat) to the
+    model measured there; a flop between other seats uses the measured spot of the same pot type and position
+    with the same caller (else the same aggressor), else `fallback` (pooled over the spots)."""
+    by_spot = True
+
+    def __init__(self, models: Dict[tuple, EQRModel], fallback: EQRModel):
+        super().__init__(share_fn=self._pick)
+        self.models, self.fallback = models, fallback
+
+    def match(self, key: tuple):
+        if len(key) < 4:
+            return None
+        if key in self.models:
+            return key
+        for k in self.models:
+            if k[:2] == key[:2] and k[3] == key[3]:
+                return k
+        for k in self.models:
+            if k[:2] == key[:2] and k[2] == key[2]:
+                return k
+        return None
+
+    def _pick(self, key):
+        k = self.match(key)
+        return (self.models[k] if k else self.fallback).share(key[:2])
 
 
 def _from_tables(ex: Dict[tuple, np.ndarray], w: Dict[tuple, np.ndarray]) -> "EQRModel":
@@ -256,8 +307,14 @@ def flat_model() -> EQRModel:
 
 # Three-way pots. MW_CORR[i] scales the product of hero's heads-up equities against the two opponents into
 # its three-way equity (hands that beat one opponent tend to beat the other); see three_way_corr().
-# MW_REALIZE: pot share over equity by postflop seat among the three (first, middle, last to act).
-MW_REALIZE = (0.88, 0.97, 1.12)
+# MW_REALIZE: pot share over equity by postflop seat among the three (first, middle, last to act), by where the
+# aggressor (the opener) sits among them. Measured with the 3-player solver (scripts/pf_three_way.py: the charts'
+# ranges, 6 stratified flops a spot, flop and turn bet, the river dealt out; shares and equities each scaled to add
+# to 1): BTN opens and both blinds call 0.95 / 0.91 / 1.11; CO opens, BTN and BB call 0.88 / 1.05 / 1.05; UTG
+# opens, CO and BB call 0.87 / 0.97 / 1.14 (the two averaged for "middle"). It was a guess by seat alone, 0.88 /
+# 0.97 / 1.12, which the measurement mostly keeps.
+MW_REALIZE = {"last": (0.95, 0.91, 1.11), "middle": (0.875, 1.01, 1.095)}
+LIMP_KEY = (1, True)        # the realization model's key a limped heads-up pot is played with
 
 
 @lru_cache(maxsize=1)
@@ -350,14 +407,22 @@ class Game:
             if len(act) == 2:
                 if nd.allin:
                     key, (a, c) = ("allin",), act
+                elif nd.n_raises == 0:
+                    # a limped pot: played as a single-raised one with the player in position as the aggressor
+                    # (LIMP_KEY; nothing measured for it)
+                    a = max(act, key=lambda q: self.post_rank[q])
+                    c = act[0] if act[1] == a else act[1]
+                    key = LIMP_KEY + (self.positions[a], self.positions[c])
                 else:
                     a = nd.aggressor
                     c = act[0] if act[1] == a else act[1]
-                    key = (min(nd.n_raises, 3), self.post_rank[a] > self.post_rank[c])
+                    key = (min(nd.n_raises, 3), self.post_rank[a] > self.post_rank[c],
+                           self.positions[a], self.positions[c])
                 groups.setdefault(key, []).append((r, a, c, pe))
             else:
                 ranks = sorted(act, key=lambda q: self.post_rank[q])
-                fac = [1.0 if nd.allin else MW_REALIZE[0 if j == 0 else 2 if j == len(act) - 1 else 1]
+                place = "last" if nd.aggressor == ranks[-1] else "middle"
+                fac = [1.0 if nd.allin else MW_REALIZE[place][0 if j == 0 else 2 if j == len(act) - 1 else 1]
                        for j in range(len(act))]
                 three.append((r, ranks[:3], fac[:3], pe))
         self.hu = []
