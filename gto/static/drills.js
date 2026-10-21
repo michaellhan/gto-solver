@@ -16,8 +16,10 @@
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
   const FR = () => globalThis.FlopReports || require("./reports.js");
 
-  // ---- entries (flop_library.encode: MAGIC, then zlib of a u32 header length, the JSON header, the body)
-  const MAGIC = "GTOFL2", Q = 100, EV_STEP = 0.02, D_LIN = 64, D_BASE = 1.03;
+  // ---- entries (flop_library.pack, format 2: MAGIC, then zlib of a u32 header length, the JSON header, the body).
+  // A value per suit-isomorphic combo: the combos the canonical flop's suit stabilizer maps to each other share it
+  // (each class stored once, at its least combo index; per node in hand order: ranks high to low, suited first)
+  const MAGIC = "GTOFL3", FORMAT = 2;
   async function inflate(u8) {
     if (typeof DecompressionStream === "function") {
       const s = new Blob([u8]).stream().pipeThrough(new DecompressionStream("deflate"));
@@ -25,29 +27,55 @@
     }
     return new Uint8Array(require("node:zlib").inflateSync(u8));
   }
-  const dValue = (c) => c < D_LIN ? c * EV_STEP : D_LIN * EV_STEP * Math.pow(D_BASE, c - D_LIN);
+  const CIDX = new Map(COMBOS.map(([a, b], i) => [a * 52 + b, i]));
+  const PERMS = [];
+  (function perms(p, rest) { if (!rest.length) PERMS.push(p); rest.forEach((x, i) => perms([...p, x], rest.filter((_, j) => j !== i))); })([], [0, 1, 2, 3]);
+  // rep[i]: the least combo index of combo i's class under the board's suit stabilizer (flop_library.iso_reps)
+  function isoReps(board) {
+    const key = [...board].sort((x, y) => x - y).join(), rep = COMBOS.map((_, i) => i);
+    for (const p of PERMS) {
+      if (board.map(c => (c >> 2) * 4 + p[c & 3]).sort((x, y) => x - y).join() !== key) continue;
+      COMBOS.forEach(([a, b], i) => { const x = (a >> 2) * 4 + p[a & 3], y = (b >> 2) * 4 + p[b & 3], j = CIDX.get(Math.min(x, y) * 52 + Math.max(x, y)); if (j < rep[i]) rep[i] = j; });
+    }
+    return rep;
+  }
+  // combo indices in hand order (flop_library._hand_order): higher rank, lower rank (high to low), suited first, index
+  const handOrder = (idx) => idx.slice().sort((i, j) => {
+    const [a, b] = COMBOS[i], [c, d] = COMBOS[j];
+    return (d >> 2) - (b >> 2) || (c >> 2) - (a >> 2) || ((a & 3) !== (b & 3)) - ((c & 3) !== (d & 3)) || i - j;
+  });
   // the inflated body -> {head, combos: [oop, ip] (combo indices in each range, ascending), nodes: [{path, player,
-  // names, fold0, freqs, strat [A][k], evs [A][k]}]}: k the acting player's combos, in the order of combos[player]
+  // names, fold0, freqs {name: range frequency}, strat [A][k], evs [A][k]}]}: k the acting player's combos, in the
+  // order of combos[player]
   function parse(raw) {
     const dv = new DataView(raw.buffer, raw.byteOffset, raw.byteLength), hl = dv.getUint32(0, true);
     const head = JSON.parse(new TextDecoder().decode(raw.subarray(4, 4 + hl)));
+    if (head.format !== FORMAT) throw new Error(`flop library entry format ${head.format}`);
+    const Q = head.q, [step, lin, base] = head.ev, dValue = (c) => c < lin ? c * step : lin * step * Math.pow(base, c - lin);
+    const rep = isoReps(cardsOf(head.board).map(cardInt)), own = rep.flatMap((r, i) => r === i ? [i] : []);
     let o = 4 + hl;
-    const nb = Math.ceil(COMBOS.length / 8), combos = [[], []];
+    const nb = Math.ceil(own.length / 8), masks = [], combos = [[], []];
     for (const p of [0, 1]) {
-      for (let i = 0; i < COMBOS.length; i++) if ((raw[o + (i >> 3)] >> (7 - (i & 7))) & 1) combos[p].push(i);
+      const m = new Uint8Array(COMBOS.length);
+      own.forEach((c, k) => { m[c] = (raw[o + (k >> 3)] >> (7 - (k & 7))) & 1; });
       o += nb;
+      masks.push(m);
+      for (let i = 0; i < COMBOS.length; i++) if (m[rep[i]]) combos[p].push(i);
     }
     const nodes = head.nodes.map((nd) => {
-      const k = combos[nd.player].length, A = nd.names.length, strat = [], evs = [];
+      const stored = handOrder(own.filter(c => masks[nd.player][c])), pos = new Map(stored.map((c, k) => [c, k]));
+      const col = combos[nd.player].map(i => pos.get(rep[i]));
+      const k = stored.length, A = nd.names.length, strat = [], evs = [];
       for (let a = 0; a < A - 1; a++) { strat.push(Array.from(raw.subarray(o, o + k))); o += k; }
       strat.push(strat.length ? strat[0].map((_, j) => Math.max(Q - strat.reduce((s, r) => s + r[j], 0), 0)) : new Array(k).fill(Q));
       for (let j = 0; j < k; j++) { const t = strat.reduce((s, r) => s + r[j], 0) || 1; for (const r of strat) r[j] /= t; }
       const v = new Array(k);
-      for (let j = 0; j < k; j++) { const x = raw[o + j] | (raw[o + k + j] << 8); v[j] = (x > 32767 ? x - 65536 : x) * EV_STEP; }
+      for (let j = 0; j < k; j++) { const x = raw[o + j] | (raw[o + k + j] << 8); v[j] = (x > 32767 ? x - 65536 : x) * step; }
       o += 2 * k;
       if (nd.fold0) evs.push(new Array(k).fill(0));
       for (let r = nd.fold0 ? 1 : 0; r < A; r++) { evs.push(v.map((x, j) => x - dValue(raw[o + j]))); o += k; }
-      return { ...nd, strat, evs };
+      const freqs = Object.fromEntries(nd.names.map((n, a) => [n, nd.freqs[a]]));
+      return { ...nd, freqs, strat: strat.map(r => col.map(c => r[c])), evs: evs.map(r => col.map(c => r[c])) };
     });
     return { head, combos, nodes };
   }
@@ -351,6 +379,7 @@
     box.hidden = false; draw();
     try {
       index = index || await get("index.json");
+      if (index.format !== FORMAT) { index = null; throw new Error("the library changed: reload the page"); }
       const ids = (index.spots || []).filter(s => s.report).map(s => s.id);
       if (!ids.length) throw new Error("no precomputed spots");
       if (!rep) await pickSpot(ids.includes(ST.spot) ? ST.spot : ids[0]);

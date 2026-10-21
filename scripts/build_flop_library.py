@@ -6,6 +6,7 @@ the pot from equilibrium (checked every --check iterations from --min-iters, at 
     python scripts/build_flop_library.py --spots srp_btn_bb --flops all # one spot on all 1755 flops
     python scripts/build_flop_library.py --spots srp_btn_bb --boards Ks7d2c,Qs8s3d   # given flops
     python scripts/build_flop_library.py --index-only                   # rewrite index.json from the entries
+    python scripts/build_flop_library.py --recode                       # format-1 entries to format 2, unsolved
 
 Each index rewrite also writes <spot>/report.json (flop_library.build_report: per flop, the range frequencies at each
 stored node, both players' EV and equity; the page's flop reports), recomputing only the flops whose entries changed.
@@ -53,7 +54,7 @@ def current(path: str, meta: dict) -> bool:
     except (OSError, ValueError):
         return False
     return (head.get("format") == fl.FORMAT and head.get("fp") == meta["fp"]
-            and fl._key_str(head.get("tree")) == fl._key_str(meta["tree"]))
+            and head.get("tree") == fl.tree_hash(meta["tree"]))
 
 
 def solve_entry(job):
@@ -77,6 +78,32 @@ def solve_entry(job):
         f.write(data)
     os.replace(tmp, path)
     return f"{sid} {name} iters={sol.iters} expl={expl:.3f}% secs={time.time() - t0:.0f} bytes={len(data)}"
+
+
+def recode(out: str, spots) -> None:
+    """Re-encodes every format-1 entry on disk in the current format (flop_library.recode: from its stored values,
+    without solving again), in place; an entry for other ranges than the spot's now is left as it is (stale)."""
+    n = before = after = 0
+    for sid, label, line in spots:
+        s = _setup(line)
+        fp = [fl.range_fp(s["full0"]), fl.range_fp(s["full1"])]
+        d = os.path.join(out, sid)
+        if not os.path.isdir(d):
+            continue
+        for fn in sorted(os.listdir(d)):
+            if not fn.endswith(".bin"):
+                continue
+            p = os.path.join(d, fn)
+            with open(p, "rb") as f:
+                data = f.read()
+            if data[:len(fl.MAGIC_V1)] != fl.MAGIC_V1 or fl.decode(data)["head"].get("fp") != fp:
+                continue
+            new = fl.recode(data, s["full0"], s["full1"])
+            with open(p + ".tmp", "wb") as f:
+                f.write(new)
+            os.replace(p + ".tmp", p)
+            n, before, after = n + 1, before + len(data), after + len(new)
+    print(f"recoded {n} entries: {before / 1e6:.2f} MB -> {after / 1e6:.2f} MB", flush=True)
 
 
 def write_report(out: str, sp: dict, s: dict) -> str:
@@ -162,12 +189,15 @@ def main(argv=None):
     ap.add_argument("--limit", type=int, default=0, help="solve at most this many entries this run")
     ap.add_argument("--index-every", type=int, default=20)
     ap.add_argument("--index-only", action="store_true")
+    ap.add_argument("--recode", action="store_true", help="re-encode format-1 entries (no solving), then the index")
     a = ap.parse_args(argv)
     want = [x for x in a.spots.split(",") if x]
     spots = [s for s in fl.SPOTS if not want or s[0] in want]
     if want and len(spots) != len(want):
         ap.error(f"unknown spot in {want}; known: {[s[0] for s in fl.SPOTS]}")
-    if a.index_only:
+    if a.recode:
+        recode(a.out, spots)
+    if a.index_only or a.recode:
         write_index(a.out, fl.SPOTS)
         return
     def names_for(sid):

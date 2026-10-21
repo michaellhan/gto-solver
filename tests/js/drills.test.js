@@ -39,8 +39,9 @@ test("decoded entries: each stored node's strategy, weighted by the range there,
         assert.equal(nd.strat.length, nd.names.length);
         const w = D.handWeights(e, nd.path, rg), tot = w.reduce((a, b) => a + b, 0);
         // (facing a bet after checking, the weights carry the hand's stored check frequency, in 1% steps: where the
-        // range seldom checks, as a 3bettor, that rounding moves the facing range's frequencies a few points)
-        const tol = nd.path.length > 1 ? 0.06 : 0.01;
+        // range seldom checks, as a 3bettor, that rounding moves the facing range's frequencies a few points, and
+        // where it checks a combo or two in all, anything)
+        const tol = nd.path.length > 1 ? (nd.combos < 5 ? 1 : 0.06) : 0.01;
         nd.names.forEach((n, a) => {
           const fq = nd.strat[a].reduce((s, x, j) => s + x * w[j], 0) / tot;
           assert.ok(Math.abs(fq - nd.freqs[n]) < tol, `${sp.id} ${f} ${nd.path} ${n}: ${fq} vs ${nd.freqs[n]}`);
@@ -50,6 +51,33 @@ test("decoded entries: each stored node's strategy, weighted by the range there,
       }
     }
   }
+});
+
+test("format 2: a value per suit class (two-tone: the two suits off the flop swap), the ranges' combos, the EV step", async () => {
+  const sid = "srp_btn_bb", rg = ranges(sid), sp = INDEX.spots.find(s => s.id === sid);
+  assert.equal(INDEX.format, 2);
+  const f = Object.keys(sp.flops).find(x => x[1] === x[3] && x[3] !== x[5] && new Set([x[0], x[2], x[4]]).size === 3);
+  const e = await load(sid, f), board = new Set([f.slice(0, 2), f.slice(2, 4), f.slice(4, 6)].map(cardInt));
+  assert.deepEqual(e.head.ev, [Math.round(sp.pot * 0.01 * 1e4) / 1e4, 32, 1.04]);
+  // the flop's suits: one twice, one once; the two left swap
+  const fs = [f[1], f[3], f[5]].map(x => SUITS.indexOf(x)), off = [0, 1, 2, 3].filter(x => !fs.includes(x));
+  const swap = (c) => (c & 3) === off[0] ? c - off[0] + off[1] : (c & 3) === off[1] ? c - off[1] + off[0] : c;
+  for (const p of [0, 1]) {
+    const want = D.COMBOS.flatMap(([a, b], i) => rg.w[p][i] > 0 && !board.has(a) && !board.has(b) ? [i] : []);
+    assert.deepEqual(e.combos[p], want);
+  }
+  let pairs = 0;
+  for (const nd of e.nodes) {
+    const pos = new Map(e.combos[nd.player].map((c, j) => [c, j]));
+    e.combos[nd.player].forEach((ci, j) => {
+      const [a, b] = D.COMBOS[ci].map(swap), k = pos.get(D.COMBOS.findIndex(([x, y]) => x === Math.min(a, b) && y === Math.max(a, b)));
+      assert.ok(k !== undefined);
+      if (k !== j) pairs++;
+      nd.strat.forEach((r) => assert.equal(r[k], r[j]));
+      nd.evs.forEach((r) => assert.equal(r[k], r[j]));
+    });
+  }
+  assert.ok(pairs > 500, String(pairs));
 });
 
 test("each drill's (flop, node) draws: stored nodes only, the texture filter, bets by how often they're made", () => {

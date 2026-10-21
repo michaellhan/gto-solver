@@ -141,7 +141,7 @@ filter by high card, suits (rainbow, two-tone, monotone), pairing and connectedn
 groups' averages (each flop weighted by how many of the 22100 flops it stands for; a group row filters to it).
 Clicking a flop loads that hand: the spot's preflop action, the flop, the action up to the node, and you as the player
 to act with the hand that mixes most there, so the precomputed advice appears at once. The data is one small
-`flop_library/<spot>/report.json` per spot (~45 KB, ~12 KB gzipped; ~135 KB for the spots on 552 flops), written with the library's index
+`flop_library/<spot>/report.json` per spot (~45 KB, ~12 KB gzipped; ~135 KB on 552 flops, 430 KB / 80 KB gzipped for BTN vs BB's 1755), written with the library's index
 (`flop_library.build_report`, see Building below); the panel is `gto/static/reports.js`, loaded when first opened.
 
 **Drills** (in the ⋯ menu) drill one flop decision of the precomputed library, like GTO Wizard's trainer: pick a
@@ -150,7 +150,7 @@ and optionally a texture (the reports' high card, suits, pairing, connectedness)
 often it comes (any stored bet size by how often in position makes it), a hand drawn from the acting player's range
 there (its weight entering the flop, off the board, times its own frequency of the line so far) in random suits.
 Pick an action (keys 1-4) and the hand's GTO mix and per-action EVs show at once with the grade: **Best** (the
-highest EV, within the library's 0.02 bb step), **Correct** (an action the hand plays 10% or more: "mixed"), or by
+highest EV, to the library's step of 1% of the pot), **Correct** (an action the hand plays 10% or more: "mixed"), or by
 the EV given up against the best, Inaccuracy (under 2% of the pot), Mistake (under 8%), Blunder. Space or Enter
 deals the next. The session's accuracy, average EV loss (bb and % of the pot) and streak show under the hand, and
 each drill's history (hands, accuracy, last 100, best streak) is kept in the browser; **Open in the solver** loads
@@ -799,20 +799,32 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
 * **Flops**: canonical flops matched up to suits (the ranges are suit-symmetric, so a stored flop's solve is any
   suit permutation's, its combos permuted); other flops are solved live. Each spot stores a representative set
   (`representative_flops(n)`: the 1755 suit-isomorphic flops sorted by texture and sampled by weight, so each suit
-  pattern, pairing and height gets its share): 184 flops (12.7% of all flops), and 552 (38%; it holds the 184) for
-  BTN, CO and HJ vs BB (`SPOT_FLOPS`).
+  pattern, pairing and height gets its share): 184 flops (12.7% of all flops); 552 (38%; it holds the 184) for
+  CO, HJ and UTG vs BB; every flop for BTN vs BB (`SPOT_FLOPS`).
 * **Coverage** (`scripts/flop_library_coverage.py`: the 6-max 100bb preflop game played by the charts, the flop by
-  the stored strategies): 36% of hands go heads-up to the flop, and the library answers 21.3% of their flop
-  decisions (9.4% with 184 flops everywhere). Of the rest, a flop not stored is 53 points, a spot not in
-  the library 23 (HJ / UTG flatted by the BTN 6.3, CO vs the SB's 3bet 1.2, each other 3bet pot ~1, 4bet pots 1.5
-  together), a raise 2.7. A flop's entry is worth its spot's share times its suit count, so more flops of the
-  commonest spots beat new spots (184 flops of HJ vs BTN, ~1 MB: +0.5 points; 368 more of BTN vs BB, 2.5 MB: +5).
+  the stored strategies): 36% of hands go heads-up to the flop, and the library answers 36.1% of their flop
+  decisions (21.3% before format 2 made room, 9.4% with 184 flops everywhere). Of the rest, a flop not stored is
+  38 points (SB vs BB's 184 flops 13), a spot not in the library 23 (HJ / UTG flatted by the BTN 6.3, CO vs the
+  SB's 3bet 1.2, each other 3bet pot ~1, 4bet pots 1.5 together), a raise 2.7. A flop's entry is worth its spot's
+  share times its suit count, so more flops of the commonest spots beat new spots; by points per MB (`--assume`):
+  BTN vs BB on every flop +12.4 for 4.5 MB, CO vs BB on 1656 (90%) +7.6 for 2.8, UTG vs BB on 552 +2.4 for 1.05,
+  SB vs BB on 552 +3.5 for 2.1 (its wide ranges' entries are the biggest), HJ vs BTN on 184 +0.5 for ~0.75.
 * **What is stored**: the flop's first decisions (the root; the in-position player after a check or facing a
   lead; the out-of-position player facing a bet after checking), only where the other player gets there with 5%
   or more of their range (a lead the big blind never makes is the solve's noise, and the advisor solves live
   behind a line under 10% anyway). Per combo: the average strategy in 1% steps and every action's EV (the best
-  to 0.02 bb, the others as a gap below it, 0.02 bb steps then 3%), plus range totals. 5-9 KB a flop for single
-  raised pots (zlib), 2.5-4.5 KB for 3bet pots: 14.1 MB in all, each file well under 200 KB.
+  to 1% of the pot, the others as a gap below it, 1% steps then 4%), plus range totals.
+* **Format 2** (`flop_library.pack`, `FORMAT`; `drills.js` reads it too, and every reader ignores another format's
+  index): one value per suit class, the combos the flop's own suit permutations map to each other (AhKh and AsKs on
+  K♣7♣2♦; two-tone flops store 832 of 1326, monotone 416, rainbow all), their strategies averaged by reach and
+  their EVs plainly; per node in hand order (ranks high to low, suited first), zlib. The solve tells those combos
+  apart only by its sampled turn and river cards, by 4.7 points of mix per combo on average: averaged, 5 BTN vs BB
+  two-tone and monotone flops came 15-35% closer per combo (mix 8.5 -> 6.8 points, EV 3.0 -> 2.6% of the pot) to a
+  solve playing every turn card. EVs in 1% of the pot (was 0.02 bb) add 0.2-0.35% of the pot of error per combo,
+  against 2-5% between the library's model and every turn played (frequencies: 0.2 points). Recoded from format 1
+  without solving (`--recode`): 14.06 -> 8.77 MB (rainbow flops -22%, the rest ~-50%), 1.5-6 KB a flop. Pages
+  gzips `.bin` too (`application/octet-stream`, `content-encoding: gzip`), but zlib'd files gain nothing (+0.7%):
+  what's stored is what's downloaded, so the 15 MB cap is on both.
 * **Tree**: Accurate's flop model (one turn per rank class, the river bet on; the browser's Accurate config,
   which plays the same flop game as the native one), two flop sizes, 300-500 iterations, to under 0.15% of the pot
   from equilibrium (the live Accurate solve gets ~0.3-0.4% in the server's 30 s and 60-75 iterations in the
@@ -827,6 +839,14 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   tree's, more raises than it allows, or a line through a raise fall back to the live solve). Turn and river spots
   narrow the flop's ranges through it as well, instead of the earlier street's short solve. The entry ignores the
   hero's cards in the villain's range (the live solve drops them): an edge the size of a blocker.
+* **Flops not stored** are solved live from scratch, never answered from another flop. A warm start from the
+  spot's most similar stored flop (same pairing and suit pattern, nearest ranks; strategies carried over by card
+  substitution and seeded as regrets) was measured and left out (`scripts/bench_library_warm.py`, 12 unstored BTN vs
+  BB flops, geometric mean % of the pot, cold -> seeded): it helps early (Accurate at 10 / 40 / 80 iterations: 81 ->
+  53, 5.3 -> 3.9, 1.10 -> 0.98, the same with the browser's NO_BLAS kernels: 60 iterations 2.08 -> 1.60), is even by
+  100 (0.68 / 0.68) and then worse, its seeded regrets outlasting DCFR's discount: 200 iterations 0.19 -> 0.24, 400
+  0.07 -> 0.09, 10-12 of the 12 flops worse (the browser's bucketed Accurate the same, Fast at 120 0.50 -> 0.58).
+  Every budget runs past 100 (Fast 140-420, Accurate 250-450 natively, 520-870 in the browser).
 * **Invalidation**: `index.json` holds each spot's range fingerprints and the tree; an entry whose spot, tree or
   `MODEL_VERSION` (bump it when the flop game changes in a way the tree key can't see) no longer matches the code
   is ignored, and a rebuilt index leaves stale entries out (a test checks the shipped index against the charts).
@@ -844,12 +864,13 @@ nohup nice python scripts/build_flop_library.py --jobs 5 > reports/flop_library_
 python scripts/build_flop_library.py --spots srp_btn_bb --flops all                     # all 1755 flops of a spot
 python scripts/build_flop_library.py --spots srp_btn_bb --boards Ks7d2c,Qs8s3d          # given flops
 python scripts/build_flop_library.py --index-only
+python scripts/build_flop_library.py --recode        # format-1 entries to the current format, no solving (~5 min)
 ```
 
 Each entry takes ~40-60 s natively on a rainbow flop and up to twice that two-tone, on an idle core (several
-times that on a loaded machine): the whole library ~9 hours on 5 cores. After changing the charts or the flop model,
-run it again (stale entries are re-solved). `--flops all` multiplies a spot's size by ~10 (50-90 MB): the test
-holds the library under 15 MB.
+times that on a loaded machine; 3bet pots ~10-25 s): the whole library (4147 entries) ~12 hours on 5 cores (BTN vs
+BB's other 1203 flops and UTG's 368 took 4 hours). After changing the charts or the flop model, run it again (stale
+entries are re-solved). A spot on every flop is 4-7 MB: the test holds the library (14.27 MB) under 15 MB.
 
 ### Deploy to the website
 

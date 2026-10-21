@@ -118,8 +118,9 @@ class TestFlopLibrary(unittest.TestCase):
                                           cfg or fl.library_config())
 
     def test_entry_reads_back_as_solved(self):
-        """On the flop it was solved on, every stored node's strategy is the solve's to within a step (1/Q) and
-        its EVs to within the encoding's (0.01 bb near the best action, 1.5% of the gap below it)."""
+        """On the flop it was solved on (rainbow: each combo its own class), every stored node's strategy is the
+        solve's to within a step (1/Q) and its EVs to within the encoding's (a step, 1% of the pot, near the best
+        action, 2% of the gap below it)."""
         ls = self._libsol()
         self.assertIsNotNone(ls)
         self.assertTrue(ls.exact)
@@ -141,8 +142,66 @@ class TestFlopLibrary(unittest.TestCase):
             e0 = self.sol.solver.node_action_evs(n0, a0, a1)[:, cols][:, m]
             e1 = ls.solver.node_action_evs(n1)[:, m]
             gap = e0.max(axis=0, keepdims=True) - e0
-            self.assertTrue(np.all(np.abs(e0 - e1) <= 0.011 + 0.016 * gap), path)
+            step = fl.EV_STEP * self.setup["pot"]
+            self.assertTrue(np.all(np.abs(e0 - e1) <= 1.001 * step + 0.021 * gap), path)
         self.assertEqual(ls.exploitability(), round(self.sol.exploitability(), 4))
+
+    def test_suit_classes(self):
+        """On a two-tone flop the entry stores a value per suit class (combos the flop's suit permutations map to
+        each other): they read back equal, their strategy the class's reach-weighted average (so the node's range
+        frequencies are the solve's), their EVs its average; the class count. A format-1 entry (per combo) recodes
+        to the same within the two encodings' steps, its classes averaged."""
+        s = self.setup
+        board = cards("Qc9c2d")
+        rep = fl.iso_reps(board)
+        # (1326 + the 338 combos the swap of the two suits off the flop keeps) / 2 classes; monotone 1/3 of that
+        self.assertEqual(len(set(rep.tolist())), 832)
+        # Qc9c2d: hearts and spades swap; AhKh ~ AsKs, AhKs ~ AsKh, Ah5c ~ As5c
+        for a, b in (("AhKh", "AsKs"), ("AhKs", "AsKh"), ("Ah5c", "As5c"), ("QhQs", "QsQh")):
+            self.assertEqual(rep[COMBO_INDEX[tuple(sorted(cards(a)))]], rep[COMBO_INDEX[tuple(sorted(cards(b)))]], (a, b))
+        self.assertNotEqual(rep[COMBO_INDEX[tuple(sorted(cards("AhKh")))]], rep[COMBO_INDEX[tuple(sorted(cards("AcKc")))]])
+        self.assertEqual(int((rep == np.arange(1326)).sum()), len(set(rep.tolist())))
+        self.assertTrue(np.array_equal(fl.iso_reps(cards("Kc7d2h")), np.arange(1326)))       # rainbow: no classes
+        self.assertEqual(len(set(fl.iso_reps(cards("Tc9c8c")).tolist())), 416)
+        sol = solve(board, s["full0"], s["full1"], s["pot"], s["stack"], cfg=fl.library_config(), time_budget=1e9,
+                    max_iters=40)
+        e = fl.decode(fl.encode(sol, dict(build._meta(SPOT[0], s), board="Qc9c2d")))
+        for nd in e["nodes"]:
+            p, m = nd["player"], e["masks"][nd["player"]]
+            r = rep[np.nonzero(m)[0]]
+            for g in np.unique(r):
+                j = np.nonzero(r == g)[0]
+                self.assertTrue(np.all(nd["strat"][:, j] == nd["strat"][:, j[:1]]))
+                self.assertTrue(np.all(nd["evs"][:, j] == nd["evs"][:, j[:1]]))
+            n0 = fl.node_at(sol.root, nd["path"])
+            a0, a1 = fl._reaches(sol.root, nd["path"], sol.r0, sol.r1)
+            reach = (a0 if p == 0 else a1)[m[sol.ctx.active]]
+            f0 = n0.avg_strategy0()[:, m[sol.ctx.active]] @ reach / reach.sum()
+            self.assertLess(np.abs(f0 - nd["strat"] @ reach / reach.sum()).max(), 0.006, nd["path"])
+            self.assertEqual(list(nd["freqs"]), nd["names"])
+        # a format-1 entry, recoded
+        with open(os.path.join(os.path.dirname(__file__), "data", "flop_v1_3bp_btn_co_Qc9c2d.bin"), "rb") as f:
+            v1 = f.read()
+        self.assertEqual(v1[:6], fl.MAGIC_V1)
+        v2 = fl.recode(v1, s["full0"], s["full1"])
+        self.assertEqual(v2[:6], fl.MAGIC)
+        self.assertLess(len(v2), 0.75 * len(v1))
+        self.assertEqual(fl.recode(v2, s["full0"], s["full1"]), v2)
+        e1, e2 = fl.decode(v1), fl.decode(v2)
+        self.assertEqual(e2["head"]["tree"], fl.tree_hash(e1["head"]["tree"]))
+        self.assertEqual(e2["head"]["format"], fl.FORMAT)
+        step = fl.EV_STEP * s["pot"]
+        for n1, n2 in zip(e1["nodes"], e2["nodes"]):
+            self.assertEqual((n1["path"], n1["names"], n1["freqs"]), (n2["path"], n2["names"], n2["freqs"]))
+            m = e1["masks"][n1["player"]]
+            r = rep[np.nonzero(m)[0]]
+            for g in np.unique(r):
+                j = np.nonzero(r == g)[0]
+                ev = n1["evs"][:, j].mean(axis=1)
+                gap = ev.max() - ev
+                self.assertTrue(np.all(np.abs(n2["evs"][:, j[0]] - ev) <= step + 0.02 + 0.021 * gap))
+                if len(j) == 1:
+                    self.assertLess(np.abs(n2["strat"][:, j[0]] - n1["strat"][:, j[0]]).max(), 0.0101)
 
     def test_ranges(self):
         """write_index writes the spot's ranges.json (the drills' hand weights): both ranges entering the flop in
@@ -398,7 +457,7 @@ class TestShippedLibrary(unittest.TestCase):
             with open(os.path.join(fl.DIR, sp["id"], "report.json"), "rb") as f:
                 data = f.read()
             self.assertEqual(sp["report"], hashlib.sha1(data).hexdigest()[:10], sp["id"])
-            self.assertLess(len(data), 200_000)   # (~45 KB on 184 flops, ~135 KB on 552)
+            self.assertLess(len(data), 500_000)   # (~45 KB on 184 flops, ~135 KB on 552, ~430 KB (80 KB gzipped) on all 1755)
             rep = json.loads(data)
             self.assertEqual({x["f"]: x["hash"] for x in rep["flops"]}, sp["flops"])
             self.assertAlmostEqual(sum(x["w"] for x in rep["flops"]), 22100, delta=1)

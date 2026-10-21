@@ -92,7 +92,7 @@ def node_profile(lib, spot):
         e = lib.entry(spot, name)
         if e is None:
             continue
-        nodes = {tuple(n["path"]): n for n in e["head"]["nodes"]}
+        nodes = {tuple(n["path"]): n for n in e["nodes"]}
         w = weights[fl.canonical(fl.parse_cards(name))[0]]
         d = s = 0.0
 
