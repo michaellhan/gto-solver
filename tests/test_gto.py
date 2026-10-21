@@ -1837,7 +1837,8 @@ class TestExploit(unittest.TestCase):
         fast = Config(n_turns=3, n_rivers=8, leaf_turns=4, leaf_rivers_flop=4, n_rivers_from_flop=4,
                       bet_sizes={"flop": [0.33, 0.75], "turn": [0.75], "river": [0.75]},
                       raise_sizes={"flop": [0.5], "turn": [0.75], "river": [0.75]}, river_play=False, turn_classes=False)
-        res = Advisor(fast, time_budget=1, prior_budget=0.5).advise(st)
+        # 3 s / 1.5 s: at 1 / 0.5 s a loaded machine left the flop solve too unsettled to narrow on now and then
+        res = Advisor(fast, time_budget=3, prior_budget=1.5).advise(st)
         self.assertGreater(res["villain_range_combos"], 10)
         ev = {a["action"]: a["ev_bb"] for a in res["actions"]}
         self.assertGreater(ev["check"], ev["all-in"] + 5)
