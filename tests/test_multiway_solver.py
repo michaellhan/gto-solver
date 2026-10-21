@@ -156,6 +156,88 @@ class TestSolve(unittest.TestCase):
                 self.assertAlmostEqual(float(s.values().sum()), 8.0, delta=0.1)
 
 
+class TestLaterStreetsByBuckets(unittest.TestCase):
+    """MWConfig.later = "buckets": the streets after the root's bet on by hand buckets."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.rs = _ranges()
+        cls.turn = MultiwaySolver(cards("Kh7d2c9s"), cls.rs, 8.0, 97.5, cfg=MWConfig(later="buckets", buckets=8))
+        cls.turn.run(iters=6)
+        cls.g6 = cls.turn.br_gains()
+        cls.turn.run(iters=94)
+        cls.g100 = cls.turn.br_gains()
+
+    def test_tensors_are_constant_sum(self):
+        # every live set's shares add up to the deals' weight in every bucket triple and class, so any reaches pay
+        # out exactly the pot
+        tb = self.turn.tabs
+        rng = np.random.default_rng(1)
+        X = rng.random((3, tb.C * 2, tb.K))
+        for live in [(0, 1, 2), (0, 1), (0, 2), (1, 2)]:
+            with self.subTest(live=live):
+                tot = sum((X[p] * tb.contract(("S", live), p, X)).sum() for p in live)
+                mass = [(X[p] * tb.contract(("J",), p, X)).sum() for p in range(3)]
+                self.assertAlmostEqual(mass[0] / mass[1], 1.0, places=5)
+                self.assertAlmostEqual(mass[0] / mass[2], 1.0, places=5)
+                self.assertAlmostEqual(tot / mass[0], 1.0, places=5)
+
+    def test_values_add_up_to_the_pot(self):
+        # (exactly at the root's reaches, which the deals' weight below is scaled to; within 1% after play)
+        self.assertAlmostEqual(float(self.turn.values().sum()), 8.0, delta=0.08)
+
+    def test_best_response_gains_shrink(self):
+        pot = self.turn.root_pot()
+        self.assertTrue(np.all(self.g100 < self.g6))
+        self.assertLess(self.g100.max() / pot * 100, 1.0)
+
+    def test_folded_player_reduction_matches_the_full_contraction(self):
+        tb = self.turn.tabs
+        rng = np.random.default_rng(2)
+        X = rng.random((3, tb.C * 3, tb.K))
+        for p, f in [(0, 2), (1, 0), (2, 1)]:
+            q = 3 - p - f
+            for key in [("J",), ("S", tuple(sorted((p, q))))]:
+                full = tb.contract(key, p, X)
+                red = tb.apply(tb.reduce(key, p, f, X[f]), X[q])
+                self.assertLess(np.abs(full - red).max(), 1e-4 * np.abs(full).max())
+
+    def test_flop_builds_later_streets_and_stays_constant_sum(self):
+        s = MultiwaySolver(cards("Kh7d2c"), self.rs, 8.0, 97.5, to_act=2, pending={2},
+                           cfg=MWConfig(later="buckets", buckets=6, bucket_river_step=4))
+        self.assertEqual([len(lv) > 0 for lv in s.levels], [True, True])     # the turn, then the river
+        s.run(iters=4)
+        self.assertAlmostEqual(float(s.values().sum()), 8.0, delta=0.1)
+
+
+class TestFlopAgainstPublished(unittest.TestCase):
+    """GTO Wizard's 3-way flop study ("Playing In Position Against Two Callers", 100bb 8-max, LJ opens, SB and BB call,
+    33/66/100% sizes, 20 weighted flops): checked to, the opener bets 65.9% into two and 77.0% heads-up against the BB
+    (docs/multiway_research.md). Ranges shaped like the study's (scripts/compare_multiway.py STUDY_RANGES), our one
+    third-pot size, two flops, a small fast tree (8 buckets, every 4th river, 40 iterations): with the turn and river bet
+    on, the opener bets 56% into two and 64% heads-up here (16 buckets, 150 iterations, ten flops: 47% and 61%), where
+    with them dealt out it bet 39% and 49% (ten flops: 39% and 48%)."""
+
+    def test_opener_checked_to(self):
+        import os
+        import sys
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+        from compare_multiway import STUDY_RANGES
+        R3, R2 = STUDY_RANGES()
+        cfg = MWConfig(later="buckets", buckets=8, bucket_river_step=4)
+        b3, b2 = [], []
+        for f in ("QdAd3s", "4h7cKh"):
+            s3 = MultiwaySolver(cards(f), [R3["SB"], R3["BB"], R3["UTG"]], 7.5, 97.5, to_act=2, pending={2}, cfg=cfg)
+            s2 = MultiwaySolver(cards(f), [R2["BB"], R2["UTG"]], 5.5, 97.5, to_act=1, pending={1}, cfg=cfg)
+            b3.append(1 - s3.run(iters=40).range_freqs()["check"])
+            b2.append(1 - s2.run(iters=40).range_freqs()["check"])
+        self.assertGreater(np.mean(b3), 0.45)                    # published 0.66 (several sizes); dealt out 0.39
+        self.assertLess(np.mean(b3), 0.80)
+        self.assertGreater(np.mean(b2), 0.55)                    # published 0.77; dealt out 0.49
+        self.assertLess(np.mean(b2), 0.90)
+        self.assertGreater(np.mean(b2), np.mean(b3) + 0.04)      # bets less into two
+
+
 class TestAdvisor(unittest.TestCase):
     def _state(self, board, hero, hole, street_actions):
         st = {"players": 6, "hero": hero, "hole": hole, "board": board, "stack": 100, "preflop": PRE}
@@ -188,8 +270,43 @@ class TestAdvisor(unittest.TestCase):
         self.assertEqual(r["to_call_bb"], 4.0)
         self.assertNotEqual(r["recommended"], "fold")             # a set, with three of a kind of nothing left to fear
 
-    def test_flop_uses_the_betting_rules_by_default(self):
-        # (its equity leaves bet half as often as published solves: README, Known limits)
+    def test_practice_opponents_sample_the_cached_solve(self):
+        # the BB is advised (one 3-way solve), checks; the CO's move is drawn from that solve's mix for its hand at the
+        # node after the check, without another solve
+        adv = A.Advisor(time_budget=1e9)
+        adv.mw_max_iters = 30
+        st = self._state("Kh7d2c9s4h", "BB", "Kd9d", [])
+        r = adv.advise(st)
+        self.assertTrue(r.get("solved"))
+        n_solves = len(adv._mw_cache)
+        st2 = self._state("Kh7d2c9s4h", "BB", "Kd9d", [{"pos": "BB", "action": "check"}])
+        sol = next(iter(adv._mw_cache.values()))
+        node = sol.root.children[0]                                  # the BB checks: the CO to act
+        for hole in ("AsKs", "QcJc", "8c8s"):
+            with self.subTest(hole=hole):
+                mix = node.avg_strategy()[0][:, sol.combo_index(cards(hole))]
+                moves = [adv.play(st2, "CO", hole, seed=i) for i in range(300)]
+                self.assertEqual(len(adv._mw_cache), n_solves)        # no new solve
+                self.assertEqual([a["action"] for a in moves[0]["actions"]], node.names)
+                for a, nm in enumerate(node.names):
+                    self.assertAlmostEqual(moves[0]["actions"][a]["freq"], float(mix[a]), places=3)
+                    got = np.mean([m["name"] == nm for m in moves])
+                    self.assertLess(abs(got - mix[a]), 0.08)
+
+    def test_flop_is_solved_with_later_streets_by_buckets(self):
+        # (Accurate: native.MW_STREETS, the worker) checked to after two checks the opener bets AK on K72 nearly always
+        adv = A.Advisor(time_budget=1e9)
+        adv.mw_solve_streets = ("flop", "turn", "river")
+        adv.mw_street_config = {"flop": {"later": "buckets", "buckets": 8, "bucket_river_step": 4}}
+        adv.mw_max_iters = 60
+        r = adv.advise(self._state("Kh7d2c", "BTN", "AsKs", [{"pos": "BB", "action": "check"},
+                                                             {"pos": "CO", "action": "check"}]))
+        self.assertTrue(r["multiway"] and r["solved"])
+        self.assertEqual([a["action"] for a in r["actions"]], ["check", "bet 33%"])
+        self.assertIn("hand buckets", " ".join(r["notes"]))
+        self.assertGreater(r["actions"][1]["freq"], 0.6)
+
+    def test_flop_uses_the_betting_rules_where_not_enabled(self):
         adv = A.Advisor(time_budget=1e9)
         adv.mw_trials = 100
         r = adv.advise(self._state("Kh7d2c", "BB", "Kd9d", []))
