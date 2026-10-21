@@ -1365,7 +1365,15 @@ FLOP_REFERENCES = [
     # K-high flops are bet more than A-high
     ("srp", "Kd7c2h", "cbet", 65, 100, "BeyondGTO 98% *, Upswing K83 ~100%"),
     # (the BB's flats against the button follow published solves since: KQs and KJs a third flat, offsuit
-    # trash folds; the small bet fell from 56 to 46% of the range, two thirds of the c-bets)
+    # trash folds; the small bet fell from 56 to 46% of the range, two thirds of the c-bets). The c-bet's 79 -> 69,
+    # by piece (150 iterations): the button's new opens 79 -> 75 (old BB chart), the BB's polarised 3bets and part-time
+    # KQs/KJs/QJs flats 75 -> 73 (old defence width, 64.6% unraked), its unraked defence cut to 55% 73 -> 69; the small
+    # bet 56 -> 51 -> 47 -> 46. Even the old width keeps the small bet under 50, and the source only says a third pot is
+    # the most common size (46 against 23 here), so the floor stays 40. On a 25/80 tree as ThinkGTO's: 78% (84.6 with
+    # the old BB chart; published 98% *). Played at a raked table as the published NL500/NL50 solves are (5% capped
+    # at 0.6bb), the re-priced BB range c-bets 47% (QQ6 63%, BB checking 83%): the rake re-pricing cuts calls by
+    # all-in equity, so it folds 76s, 54s, T8o and 98o and keeps every offsuit king (K7o+), where raked solves keep
+    # suited connectors (see the README's Known limits)
     ("srp", "Kd7c2h", "small", 40, 100, "RangeConverter 6max 100bb aggregate: 1/3 pot the most common size"),
     ("srp", "Kd7c2h", "vs small: raise", 6, 22, "RangeConverter aggregate x/r 14%; ThinkGTO A74 15.4%"),
     # high paired: range bet small. GTO Wizard (The mechanics of c-bet sizing) QQ6: high frequency, mostly 33%, BB checks

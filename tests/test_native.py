@@ -54,7 +54,7 @@ class TestNativeSpeeds(unittest.TestCase):
         """A loaded machine's (or the browser's) earlier streets: a flop of 20 iterations (27% of the pot from
         equilibrium with Fast's buckets) and a turn of 26 (6%) left BB 29 combos checking the river where long solves
         keep 87.7 (with the old fast flop, 9%: 18 for 69.5). Narrowing follows a solve by how settled it is
-        (advisor.PRIOR_TRUST), the rest by the betting rules, so the range errs wide, not thin (89)."""
+        (advisor.PRIOR_TRUST), the rest by the betting rules, so the range errs wide, not thin (112)."""
         combos, r = self.river_check_range({3: 20, 4: 26, 5: 100})
         self.assertGreater(combos, 45, r["villain_range"])
         self.assertTrue(any("ranges follow it" in n for n in r["notes"]), r["notes"])

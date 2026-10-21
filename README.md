@@ -398,14 +398,15 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   than 15%, that street's tree uses the real size so narrowing is exact. Narrowing follows an
   earlier street's solve by how settled it is (`advisor.PRIOR_TRUST`: fully at 0.5% of the pot
   from equilibrium on the flop and 2% on the turn, not at all at 5% and 10%, linearly between),
-  the rest of each action's weights coming from the multiway betting rules' range for it. A loaded
+  the rest of each action's weights coming from the multiway betting rules' range for it (a check
+  keeps the rest of its range whole: the big blind checks nearly every flop to the raiser). A loaded
   machine's (or the browser's) short solves otherwise collapsed ranges: K72 c-bet called, T turn bet
   called, BB's river check range is 69.5 combos after long solves, and a 20-iteration flop (9% of
   the pot; BB checking 61% and calling the c-bet 21% where it settles at 95% and 47%) with a
-  26-iteration turn (6%) left 18-24. Now 89 there, 55-65 at 40-iteration flops (2.6%, BB still
-  checking 75%; were 41-43), 63-72 at 100-300. With Fast's bucketed flop (long solves keep 87.7;
-  20 iterations are 27% of the pot from equilibrium, 40 7.7%, 80 1.8%, 150 0.5%): 29 -> 89 at a
-  20-iteration flop and 26-iteration turn, 50 -> 89 at 40/26, 52 -> 67 at 40/45, 70-82 -> 72-81 at
+  26-iteration turn (6%) left 18-24 (with checks narrowed by the rules too, 89 there, 55-65 at
+  40-iteration flops, were 41-43). With Fast's bucketed flop (long solves keep 87.7;
+  20 iterations are 27% of the pot from equilibrium, 40 7.7%, 80 1.8%, 150 0.5%): 29 -> 112 at a
+  20-iteration flop and 26-iteration turn, 50 -> 112 at 40/26, 52 -> 87 at 40/45, 70-82 -> 78-81 at
   80-150/45 (tests.test_native judges by iterations, not time).
 * Multiway pots (3+ players live at your decision) are not solved. Instead a Monte
   Carlo heuristic picks the highest-EV action among fold / call / raise to 75% pot
@@ -595,6 +596,10 @@ the tree traversal to C or Rust or a GPU, which makes full flop trees feasible.
   pot, fit to one published raked solve), the charts fit to raked solves only past its 5%/4bb; 3bet
   and 4bet ranges aren't re-priced; equity leaves where the tree stops early are raked on the pot as it stands, and the multiway
   heuristic rakes its payouts but not the betting rules inside its trials (see Rake above).
+  The re-pricing keeps the big blind's calls by all-in equity, so its totals match raked solves but
+  not their shape: against a button open at 5% capped at 0.6bb it folds 76s, 54s, T8o and 98o and
+  keeps every offsuit king K7o+ (raked solves keep the suited connectors), and BTN vs BB on K72
+  then c-bets 47% (QQ6 63%, the BB checking 83%) against 69% unraked and published 90%+.
 * Exploit mode's pool is fitted to public population data where any was found (flop and river
   folds, turn folds and river bluffs from 500nl+ regulars, preflop frequencies, one flop spot's raise
   frequency, and the small blind's open-limps); folds to big flop bets and the turn's shape at small

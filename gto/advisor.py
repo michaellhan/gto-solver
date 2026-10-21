@@ -71,17 +71,18 @@ RAISE_EQ = 0.55     # multiway, later streets: we raise their bet when our equit
 RARE_LINE = 0.10    # heads-up: widen the villain's range when the solve takes their line less often than this
 UNSETTLED = 3.0     # heads-up: a solve this far from equilibrium (% pot) hasn't settled (the page's "converged" cutoff)
 # Heads-up, earlier streets: narrowing follows a solve fully this close (% pot) to equilibrium, not at all this far,
-# linearly between; the rest of each action's weights are the betting rules' range for it (softened, as multiway).
+# linearly between; the rest of each action's weights are the betting rules' range for it (softened, as multiway),
+# or for a check the whole range (no evidence: the big blind checks nearly every flop to the raiser).
 # An unsettled solve's lines are far from its equilibrium's: BTN vs BB K72 c-bet called, T turn bet called, BB's
 # river check range is 69.5 combos after long solves, and a flop at 20 iterations (9% of the pot, BB checking 61%
 # and calling the c-bet 21% where it settles at 95% and 47%) left 24, 20 iterations and a 26-iteration turn (6%)
-# 18 (a loaded machine's 2.5 s; 4% of its preflop range). Followed by how settled they are: 89 there, 55-65 with
-# 40-iteration flops (2.6%, but its BB still checks 75%, so the flop's ramp starts low; were 41-43), 63-72 at
-# 100-300. Fast's bucketed flop (river_buckets) is further off at a given count (20 iterations 27%, 40 7.7% with
+# 18 (a loaded machine's 2.5 s; 4% of its preflop range). Followed by how settled they are (checks then narrowed
+# by the rules too): 89 there, 55-65 with 40-iteration flops (2.6%, but its BB still checks 75%, so the flop's ramp
+# starts low; were 41-43), 63-72 at 100-300. Fast's bucketed flop (river_buckets) is further off at a given count (20 iterations 27%, 40 7.7% with
 # BB checking 87% and calling 33% for 99% and 50%, 80 1.8%, 150 0.5%); long solves keep 87.7 there, short ones
-# kept 29 (20 flop, 26 turn iterations), 50 (40/26), 52 (40/45), 70-82 (80-150/45) and now keep 89, 89, 67,
-# 72-81. A settled solve (the accurate speed's, or fast's unloaded: flop 140-210 iterations, turn 1.5-2%) is
-# followed fully. The rules alone keep 129 (soft: hands off them keep 0.3), so short solves err wide, not thin.
+# kept 29 (20 flop, 26 turn iterations), 50 (40/26), 52 (40/45), 70-82 (80-150/45) and now keep 112, 112, 87,
+# 78-81. A settled solve (the accurate speed's, or fast's unloaded: flop 140-210 iterations, turn 1.5-2%) is
+# followed fully. Short solves err wide, not thin.
 PRIOR_TRUST = {"flop": (0.5, 5.0), "turn": (2.0, 10.0), "river": (2.0, 10.0)}
 SETTLE_EXPL = 10.0  # heads-up: the street being advised on gets one more time budget when this far (% pot) from settled
 JAM_BLEND = 0.04    # preflop vs a jam: call frequency ramps from 0 to 1 over this much equity around the pot odds
@@ -3014,6 +3015,19 @@ class Advisor:
                 other = expand(sol.ctx, r1 if p == 0 else r0) * (sc >= 0)
                 return full, rank, _rule_mask(full, to, cur_bet, max(0.0, cur_bet - bets[p]), pot_total, 1, rank,
                                               bluff=bluff, others=[other], sc=sc)
+            def as_locked(t):
+                # weights t for this action as the locked player (exploit mode's pool, your locks) plays them: the
+                # node's other actions share the rest as the solve has them, and the lock moves hands between them
+                # (the rules' range for a rare river bet, balanced with bluffs, had the pool bluffing as often as
+                # equilibrium, and the best response called it as often)
+                if lock is None or p != lock.player:
+                    return t
+                base = node.avg_strategy0().astype(np.float64)
+                rest = base.sum(axis=0) - base[k]
+                n_act = len(node.names)
+                strat = np.where(rest > 1e-12, base / np.maximum(rest, 1e-12) * (1.0 - t), (1.0 - t) / max(n_act - 1, 1))
+                strat[k] = t
+                return lock(node, strat[None].astype(np.float32), rp[None, :])[0][k]
             if p in rules and rare and board is not None and a["action"] != "fold":
                 if widened is not None and p == only:
                     widened.append(a["pos"])
@@ -3034,13 +3048,20 @@ class Advisor:
                         s = np.minimum(s, node.strategy()[0][k])
                     s = np.maximum(s, _top(full, _share(full, m), rank)[sol.ctx.active])   # with the solve's own
                 else:
-                    s = _soften(full, m)[sol.ctx.active]
+                    s = as_locked(_soften(full, m)[sol.ctx.active])
             else:
                 if trust < 1.0 and p in rules and board is not None and a["action"] != "fold":
                     # an unsettled earlier-street solve: its strategy counts by how settled it is, the rest is
-                    # the betting rules' range for the line (see trust_of)
-                    full, _, m = rule_mask()
-                    s = trust * s + (1.0 - trust) * _soften(full, m)[sol.ctx.active]
+                    # the betting rules' range for the line (see trust_of). A check keeps the rest whole: heads-up
+                    # the big blind checks 95-99% of flops to the raiser, where the rules' check (everything but
+                    # what would bet) took its value out, and after a 10-iteration flop and turn (88% and 51% of
+                    # the pot from equilibrium, trust 0) a K8372 river checked through had the button betting
+                    # 7c6c, third pair, for value at 100% where it checks
+                    if a["action"] == "check":
+                        s = trust * s + (1.0 - trust) * as_locked(np.ones_like(s))
+                    else:
+                        full, _, m = rule_mask()
+                        s = trust * s + (1.0 - trust) * as_locked(_soften(full, m)[sol.ctx.active])
                 if smoothing > 0 and only is None:
                     s = (1.0 - smoothing) * s + smoothing / len(node.names)
             if p == 0:
