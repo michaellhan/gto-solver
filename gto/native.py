@@ -19,7 +19,8 @@ from .flop_library import default_library  # noqa: E402
 # used to narrow ranges). Narrowing walks the earlier streets' solves, so they must settle too: Config()'s
 # full menu (two bet and two raise sizes a street) ran 10 turn iterations in 3 s, 60-70% of the pot from
 # equilibrium, and narrowing on it left BB 7 combos checking a K72T5 river where a long solve keeps 81.
-# Measured on BTN vs BB single-raised pots (Ks7d2c, Ks7d2cTh, Qs8d3c4h, Ks7d2cTh5s):
+# Measured on BTN vs BB single-raised pots (Ks7d2c, Ks7d2cTh, Qs8d3c4h, Ks7d2cTh5s), before river classes and the
+# turn menus below:
 # - fast: the browser's sizes (one turn and river bet and raise size) with every river under each turn:
 #   the turn at 2.5 s is 1.5-2% of the pot from equilibrium (40-45 iterations), the flop 0-0.2%, and BB's
 #   river check range 79 combos (before the charts followed published raked solves; long solves now keep
@@ -36,25 +37,45 @@ from .flop_library import default_library  # noqa: E402
 # and river by 32 hand buckets per player and turn card (river_buckets, turn_buckets): an iteration costs about
 # what the old fast tree's did (6 random turns, the river checked down: 12-18 ms), so 2.5 s gives 140-210, and
 # against every turn played its c-bet is 3.5 points off on average (was 12), its size split 7 (33), BB's check 2 (6).
+#
+# From the turn (scripts/turn_river_reference.py: six turn and four river spots against every-river solves run to
+# convergence with a 33/75/125% menu; README Accuracy vs speed), both play the river as one card per class
+# (river_classes: 13 cards on a rainbow turn, 22-24 with a flush suit, each standing for its cards through card swaps;
+# 0.3-0.5x every river's cost an iteration, about as close to equilibrium at the same iterations). The menu was the
+# biggest error: those solves overbet 29-36% of the range on blank and overcard turns, so one 75% size, converged,
+# was 0.6-3.8% of the pot off per combo. Accurate plays 33/75/125% (about its old two sizes' cost with every river):
+# 0.11-0.32% of the pot off after 30 s, where it was 0.7-2.9. Fast's 2.5 s settle two turn sizes with one river size
+# inside (75/125% turn, 75% river; 37-62 iterations): 1.2-2.4% off, 1.9 on average as before, better where the
+# reference overbets and worse where it leads or bets small (a third-pot size too doesn't settle in 2.5 s).
+# A river root bets 33/75/125/250% pot (Advisor.root_sizes): polar rivers overbet half the range, and 75% alone
+# was 1.2-7.2% of the pot off per combo where these are 0.1-0.6; a river iteration takes milliseconds.
 _FLOP = {"bet": [0.33, 0.75], "raise": [0.5]}
+ROOT_SIZES = {"river": {"bet": [0.33, 0.75, 1.25, 2.5]}}
 SPEEDS = {
-    "fast": (dict(bet_sizes={"flop": _FLOP["bet"], "turn": [0.75], "river": [0.75]},
+    "fast": (dict(bet_sizes={"flop": _FLOP["bet"], "turn": [0.75, 1.25], "river": [0.75]},
                   raise_sizes={"flop": _FLOP["raise"], "turn": [0.75], "river": [0.75]},
-                  flop_model=dict(river_buckets=32, turn_buckets=True, bucket_river_step=3)), 2.5, 2.5),
-    "accurate": (dict(bet_sizes={"flop": _FLOP["bet"], "turn": [0.5, 1.0], "river": [0.5, 1.0]},
-                      raise_sizes={"flop": _FLOP["raise"], "turn": [0.75], "river": [0.75]}), 30.0, 12.0),
+                  model=dict(river_buckets=32, turn_buckets=True, bucket_river_step=3, river_classes=True)), 2.5, 2.5),
+    "accurate": (dict(bet_sizes={"flop": _FLOP["bet"], "turn": [0.33, 0.75, 1.25], "river": [0.33, 0.75, 1.25]},
+                      raise_sizes={"flop": _FLOP["raise"], "turn": [0.75], "river": [0.75]},
+                      model=dict(river_classes=True)), 30.0, 12.0),
 }
+
+
+def config(speed: str = "fast", depth: int = 2) -> Config:
+    """The speed's tree (its model's flags included)."""
+    sizes = SPEEDS[speed][0]
+    kw = dict(sizes.get("model", {}))
+    return Config(bet_sizes={k: list(v) for k, v in sizes["bet_sizes"].items()},
+                  raise_sizes={k: list(v) for k, v in sizes["raise_sizes"].items()}, depth=depth, **kw)
 
 
 def advisor(speed: str = "fast", depth: int = 2, budget: Optional[float] = None,
             prior_budget: Optional[float] = None, library: bool = True) -> Advisor:
     """`library`: answer flop spots the precomputed library holds from it (gto/flop_library.py), at either speed."""
-    sizes, b, pb = SPEEDS[speed]
-    cfg = Config(bet_sizes={k: list(v) for k, v in sizes["bet_sizes"].items()},
-                 raise_sizes={k: list(v) for k, v in sizes["raise_sizes"].items()}, depth=depth,
-                 **sizes.get("flop_model", {}))
-    adv = Advisor(cfg, time_budget=b if budget is None else budget,
+    b, pb = SPEEDS[speed][1:]
+    adv = Advisor(config(speed, depth), time_budget=b if budget is None else budget,
                   prior_budget=pb if prior_budget is None else prior_budget)
+    adv.root_sizes = {st: {k: list(v) for k, v in d.items()} for st, d in ROOT_SIZES.items()}
     adv.library = default_library() if library else None
     return adv
 

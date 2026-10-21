@@ -1334,7 +1334,7 @@ class TestAccuracy(unittest.TestCase):
         oop, ip = parse_range("QQ"), parse_range("88, T9o")
         for b in (0.5, 1.0, 2.0):
             cfg = Config(bet_sizes={s: [b] for s in ("flop", "turn", "river")}, raise_sizes=self.NO_BETS, allin_spr=0)
-            sol = solve(board, oop, ip, pot=10, stack=100, time_budget=2, max_iters=2000, cfg=cfg)
+            sol = solve(board, oop, ip, pot=10, stack=100, time_budget=1e9, max_iters=1500, cfg=cfg)   # (iterations, not time: a loaded machine got too few)
             ipn = sol.root.children[0]
             k = 1
             st = ipn.avg_strategy0()

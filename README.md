@@ -324,9 +324,65 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   gets in 8 s, BB donked 20-37% on K72r-T and J72-5 where the answer is 0-2%.
   A small fixed river set (`n_rivers=k`) is biased once converged (the solver plays
   a game where only those k rivers can come; on K72r-T it donk-bet 32% where the
-  real answer is 6%), but under a tight time budget it was the least wrong option
-  (10-15%), so only the browser's Fast mode uses it (8 rivers). The browser's
-  Accurate mode enumerates every river with one turn/river size (donk 1-4%).
+  real answer is 6%). The browser's Fast mode used 8 such rivers; against every river its
+  per-combo EVs were 4-10% of the pot off. Every config now plays the river by
+  `river_classes`: one card per class (a rank's cards, a suit with two or more cards on the
+  turn apart: 13 rivers on a rainbow turn, 22-24 with a flush suit), the class's subtree
+  standing for each of its cards through the swap of the played card and that card. No
+  flush is possible in the swapped suits, so the swap keeps every hand's strength: a
+  class's reach is the mean of its cards' swapped reaches and a combo's utility sums its
+  swapped image's over every river, so it is exact for suit-symmetric ranges and zero-sum
+  (the combo space takes the swapped images, with zero reach). An iteration costs 0.46-0.48x
+  every river's with one size on a rainbow turn, 0.63 on a two-tone one, 0.3-0.4x with
+  two or three sizes; at 100 iterations its strategy, lifted into the every-river tree
+  (`solver.lift_classes`), is 0.35-0.55% of the pot from equilibrium there where every
+  river's own is 0.28-0.38%, frequencies within a point.
+* **Turn and river against reference solves** (`scripts/turn_river_reference.py`,
+  tests/test_turn_river.py): six turn spots (BTN vs BB after a third-pot c-bet is called, on a
+  brick, a flush-completing, a board-pairing and an overcard turn; the flop checked through; a
+  CO vs BTN 3bet pot) and four river spots (bet-bet polar, bet then checked, a flush completing
+  on the river, checked to the river), the ranges narrowed by long flop and turn solves, each
+  solved to convergence with every river card and a rich menu (33/75/125% turn and river bets;
+  33/50/75/125/200/250% on a river root; 500 turn and 3000 river iterations, 0.03-0.13% of the
+  pot from equilibrium). The size menu was the biggest error: the rich trees overbet 29% of the
+  range on K72r-3 and 36% on Q83r-A (BTN's turn barrel after a called c-bet), lead 39% at a third
+  pot on K72-7 (the one 75% size gave 7%), and on a polar river bet 79% with half the range at
+  200-250% pot. The configs at the iterations their budgets give (each config's cost against
+  one size with every river on the same spot, that tree's idle 16.8 it/s natively and Pyodide
+  at 1.45x native on the turn), range-weighted mean per-combo EV error against the rich reference
+  in % of the pot, and the mean frequency error in points (each player's bets, overbets and
+  fold / call / raise against bets, on the line's path):
+
+  | config | turn EV err, before -> after | turn freq err | river root EV err | tree now |
+  |---|---|---|---|---|
+  | browser Fast (8 s) | 7.1 (3.8-9.5) -> 1.0 (0.5-1.5) | 7.9 -> 3.1 | 3.1 -> 0.3 | turn 33/125%, river 75%, classes |
+  | browser Accurate (60 s) | 2.3 (0.6-3.8) -> 0.18 (0.08-0.33) | 5.7 -> 0.7 | 3.1 -> 0.3 | 33/75/125%, classes |
+  | native Fast (2.5 s) | 1.9 (1.4-2.9) -> 1.9 (1.2-2.4) | 5.8 -> 5.4 | 3.1 -> 0.3 | turn 75/125%, river 75%, classes |
+  | native Accurate (30 s) | 1.5 (0.7-2.9) -> 0.23 (0.11-0.32) | 5.2 -> 1.0 | 1.9 -> 0.3 | 33/75/125%, classes |
+
+  Every river with one size converged was itself 0.6-3.8% of the pot from the rich tree, so
+  the old Accurate configs' error was the menu, not convergence; Accurate now plays three sizes
+  at about its old cost (river classes pay for the third size). Native Fast is held by its 2.5 s:
+  37-62 iterations, 0.7-2.7% of the pot from equilibrium; a 125% bet halves its error where the
+  rich tree overbets (K72-3 2.6 -> 1.5, Q83-A 2.9 -> 1.2) and costs where it leads or bets
+  small (K72-7, Q83 checked through, the 3bet pot: 1.4-1.7 -> 2.1-2.4); a third-pot size as well
+  doesn't settle there (5.6% on the two-tone turn at 35 iterations). A river root (Advisor.root_sizes,
+  every config) bets 33/75/125/250% pot: per-combo EVs within 0.11-0.60% of the pot of the six-size
+  menu where 75% alone was 1.2-7.2%; a river solve is milliseconds an iteration, ~1000 in 2.5 s.
+  Published figures (TURN_REFERENCES / RIVER_REFERENCES; GTO Wizard's turn aggregates are behind an
+  account and its blog gives single spots, so the bands are wide): no BB lead on a brick turn and
+  some on a low pairing one (GTO Wizard: K75-7 ~11% at 100bb; ours leads K72-7 39% at a third pot,
+  BTN having c-bet the whole range small), BTN's barrel 41% on K72r-3 with 29% overbets (ThinkGTO's
+  JJ4: 53.5% on a brick, overbets dominant on an A), BB probing 37% and BTN delaying 38% after a
+  checked flop, the 3bettor barrelling 62% (GTO Wizard 47-63%), and on the polar river 79% bets,
+  50% overbets and BB folding 60%. River theory, on converged real-range solves (TestRiverTheory):
+  a polar bettor's bluffs (bets losing to the calling range) are within 6.5 points of b/(1+2b) and the
+  capped defender within 3 of MDF 1/(1+b) at half, 125% and twice pot (25.4 / 30.9 / 34.5% bluffs
+  against 25.3 / 35.8 / 40.0; 65.0 / 43.5 / 31.9% defence against 66.2 / 44.3 / 33.3); checked to the
+  river the defender folds far past MDF (defends 37 / 30 / 25% against 65 / 44 / 33: the bettor's
+  bluffs give up showdown value, as GTO Wizard's MDF article finds for out-of-position defenders);
+  and every hand mixing call and fold, or bet and check with a losing hand, is indifferent to 0.5%
+  of the pot.
 * **Flop**: flop and turn decisions are full; the river is beyond `depth`. It used to be an
   equity leaf both hands checked down, on 6 random turns, and the flop c-bet too little: BTN vs BB
   (100bb, a third and three quarters pot), QQ6 56% and K72 59% where published solves bet nearly
@@ -399,11 +455,12 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
 * **Native trees** (`gto/native.py`, server and CLI): `Config()`'s full menu (two bet and two raise
   sizes a street) ran 10 turn iterations in the server's 2.5 s, 60-70% of the pot from equilibrium,
   and narrowing on it left BB 7 combos checking a K72T5 river where a long solve keeps 81 (69.5 since
-  the BB's flats follow published raked solves). Fast now
-  plays the browser's sizes with every river: the turn is 1.5-2.5% of the pot from equilibrium after
-  2.5 s (40-45 iterations unloaded) and that range kept 79 (fixed 8-river sets settle sooner but narrow to 63 even converged).
-  Accurate adds a second turn and river bet size: 0.2-0.7% after 30 s, 1.7-2% after an earlier
-  street's 12 s, 89 combos. BLAS is held to one thread there.
+  the BB's flats follow published raked solves). Fast played the browser's one size with every river
+  (1.5-2.5% of the pot from equilibrium after 2.5 s, 40-45 iterations unloaded; that range kept 79);
+  it now bets 75% or 125% on the turn with the river at 75% and river classes (0.7-2.7%, 37-62
+  iterations), Accurate 33/75/125% on the turn and river with river classes (0.15-0.55% after 30 s;
+  it had two sizes with every river). A river root bets 33/75/125/250% in both (Turn and river
+  against reference solves above). BLAS is held to one thread there.
 * **Earlier streets** used for range narrowing get their own budget each, and a solve that is
   reused later in the same hand keeps iterating from its stored regrets instead of
   restarting. When a real bet or raise size differs from the abstraction by more
@@ -689,7 +746,13 @@ the tree traversal to C or Rust or a GPU, which makes full flop trees feasible.
   your cards (as your advice does): an edge the size of a blocker. A line of yours the solve rarely
   takes, or a pot that became heads-up mid-street, gets a solve from their seat instead (a few seconds,
   more in the browser).
-* The bet-size abstraction is coarse; real actions are mapped to the nearest size.
+* The bet-size abstraction is coarse; real actions are mapped to the nearest size. Native Fast's turn
+  has no third-pot bet (2.5 s don't settle three sizes), so where a solve leads or probes small (a
+  board-pairing turn, a checked flop) its frequencies run 8-10 points from a richer tree's. Raises stay
+  one size (75%) after the flop.
+* Turn and river references are this solver's own richest trees plus a few published spots; few
+  published turn and river aggregates exist (GTO Wizard's are behind an account), and BB's third-pot
+  lead on K72-7 (39%) is well above GTO Wizard's ~11% on K75-7.
 * Flop solves play the river without seeing the river card (a draw is a middling hand there, so
   river betting is worth a little less than with every river: QQ6's c-bet ~10 points under at 3
   turns) and one turn card per rank class; the fast configs (server Fast, browser Fast, and the
