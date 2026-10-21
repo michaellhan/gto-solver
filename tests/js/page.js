@@ -77,6 +77,7 @@ function loadPage(opts = {}) {
   const storage = new Map(Object.entries(opts.storage || {}));
   const posted = [];      // messages the page sent to the solver worker / server
   const workers = [];
+  const fetched = [], notFound = [];   // URLs the page fetched; those the static site doesn't have (404s)
   // The clipboard. opts.clipboard: "text" (default: navigator.clipboard.writeText only), "item" (also
   // write() with ClipboardItem, whose data may be a promise, as Safari and recent Chrome), "denied" (the
   // clipboard API always refuses). opts.gesture: like Safari, clipboard writes and execCommand("copy") work
@@ -153,7 +154,14 @@ function loadPage(opts = {}) {
     // timers never fire: the page only uses them for toasts and the solve progress clock
     setTimeout: () => 0, clearTimeout: () => {}, setInterval: () => 0, clearInterval: () => {},
     fetch: async (url, init) => {
-      if (!opts.server) throw new Error("no server");
+      fetched.push(String(url));
+      if (!opts.server) {
+        // the static site: the page's own files are there (a file that isn't is a 404, which browsers log as an error)
+        const f = path.join(path.dirname(HTML_PATH), String(url).split("?")[0]);
+        if (/^[\w.]+$/.test(String(url)) && fs.existsSync(f)) return { ok: true, status: 200, json: async () => JSON.parse(fs.readFileSync(f, "utf8")) };
+        if (/^[\w.]+$/.test(String(url))) { notFound.push(String(url)); return { ok: false, status: 404, json: async () => { throw new Error("not JSON"); } }; }
+        throw new Error("no server");
+      }
       if (String(url).startsWith("health")) return { ok: true, json: async () => ({ ok: true }) };
       if (String(url).startsWith("advise")) { posted.push({ state: JSON.parse(init.body) }); return new Promise(() => {}); }
       return { ok: true, json: async () => ({}) };
@@ -173,7 +181,7 @@ function loadPage(opts = {}) {
   // the value of an expression as a plain Node object (the page's own objects come from another realm)
   const val = (code) => { const t = run(`JSON.stringify(${code})`); return t === undefined ? undefined : JSON.parse(t); };
   const page = {
-    ctx, run, val, els, byId, storage, posted, workers, clipboard, location, replaced, rootProps, viewport,
+    ctx, run, val, els, byId, storage, posted, workers, fetched, notFound, clipboard, location, replaced, rootProps, viewport,
     // fire a window event (e.g. "hashchange" after setting location.hash)
     fire(t, e = {}) { for (const f of winListeners[t] || []) f(e); },
     // change the visual viewport (e.g. the on-screen keyboard opening) and fire its events

@@ -8,7 +8,7 @@ POST /advise  body: game state JSON (see advisor.py)  -> recommendation JSON; "s
 POST /play    body: {"state": game state, "seat": "BB", "hole": "QcQd", "seed": 7 (optional)}
               -> a GTO move for that seat holding those cards (practice opponents; see Advisor.play)
 POST /cancel  stops the solve in progress (its /advise answers {"cancelled": true})
-GET  /health
+GET  /health (also /health.json, which the page asks: the static site has a health.json saying {"ok": false})
 """
 from __future__ import annotations
 import argparse

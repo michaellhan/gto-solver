@@ -591,8 +591,10 @@ const SS_VERSION = "1";        // and session.js (the session analyzer, loaded o
 // ---- backend: the local Python server if present, otherwise the solver runs in the browser (Pyodide worker)
 let MODE = null, worker = null, reqId = 0;
 const pending = {};
+// (health.json: the local server answers it {"ok": true}; the static site has the file, {"ok": false}, so the probe
+// never 404s there, which the browser would log as an error on every load)
 const modeReady = (async () => {
-  try { const r = await fetch("health", { cache: "no-store" }); if (r.ok && (await r.json()).ok) MODE = "server"; } catch (e) {}
+  try { const r = await fetch("health.json", { cache: "no-store" }); if (r.ok && (await r.json()).ok) MODE = "server"; } catch (e) {}
   if (!MODE) { MODE = "wasm"; startWorker(); }   // start loading the in-browser solver while the hand is entered
   const ctl = document.getElementById("solvectl");
   const setSpeed = (m) => {

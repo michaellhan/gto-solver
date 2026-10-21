@@ -50,7 +50,7 @@ fi
 gh repo clone michaellhan/michaellhan.github.io "$WORK/site" -- -q --depth 1
 rm -rf "$WORK/site/gto-solver"
 mkdir -p "$WORK/site/gto-solver/gto"
-cp "$HERE/gto/static/index.html" "$HERE/gto/static/worker.js" "$HERE/gto/static/hh.js" "$HERE/gto/static/practice.js" "$HERE/gto/static/reports.js" "$HERE/gto/static/drills.js" "$HERE/gto/static/breakdown.js" "$HERE/gto/static/session.js" "$WORK/site/gto-solver/"
+cp "$HERE/gto/static/index.html" "$HERE/gto/static/worker.js" "$HERE/gto/static/hh.js" "$HERE/gto/static/practice.js" "$HERE/gto/static/reports.js" "$HERE/gto/static/drills.js" "$HERE/gto/static/breakdown.js" "$HERE/gto/static/session.js" "$HERE/gto/static/health.json" "$WORK/site/gto-solver/"
 cp "$HERE"/gto/*.py "$WORK/site/gto-solver/gto/"
 # the precomputed flop library (gto/flop_library.py): index.json and one small file per spot and flop, fetched by the
 # worker only when its spot comes up

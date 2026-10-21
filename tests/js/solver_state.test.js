@@ -136,6 +136,23 @@ test("Accurate and Pool toggles change the state sent, and are remembered", asyn
   assert.deepEqual([q.payload().speed, q.payload().opponents], ["accurate", "pool"]);
 });
 
+test("the backend probe finds a file on the static site (no 404 logged on every load), and the server answers it", async () => {
+  const p = loadPage();
+  await p.ready();
+  assert.equal(p.run("MODE"), "wasm");
+  assert.equal(p.fetched.length, 1);
+  assert.deepEqual(p.notFound, []);
+  // the file goes to the site with the page, and the local server answers the same path itself
+  const probe = p.fetched[0];
+  assert.match(fs.readFileSync(path.join(ROOT, "scripts", "deploy.sh"), "utf8"), new RegExp(`gto/static/${probe.replace(".", "\\.")}"`));
+  const handler = fs.readFileSync(path.join(ROOT, "gto", "server.py"), "utf8").match(/def do_GET[\s\S]*?\n\n/)[0];
+  const prefix = handler.match(/self\.path\.startswith\("([^"]+)"\)/)[1];
+  assert.ok(("/" + probe).startsWith(prefix), `the server answers ${prefix}, the page asks ${probe}`);
+  const q = loadPage({ server: true });
+  await q.ready();
+  assert.equal(q.run("MODE"), "server");
+});
+
 test("with the local server the state is POSTed at the server's budgets", async () => {
   const p = loadPage({ server: true });
   await p.ready();
