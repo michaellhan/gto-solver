@@ -1,0 +1,83 @@
+"""The preflop game solver (gto/pf_game.py)."""
+import unittest
+import numpy as np
+from gto import pf_game as G
+from gto.pf_classes import CLASSES, equity_matrix
+
+
+class TestTree(unittest.TestCase):
+    def test_six_max_lines(self):
+        root = G.build()
+        nodes = list(G.walk(root))
+        # the UTG open, a BTN 3bet, CO folding... the opener facing it folds, calls or 4bets
+        g = G.Game(root, G.SIX, G.flat_model())
+        nd = g.find([("UTG", "raise"), ("BTN", "raise"), ("UTG", None)][:2])
+        while g.positions[nd.player] != "UTG":
+            nd = nd.children[nd.names.index("fold")]
+        self.assertEqual(nd.names, ["fold", "call", "raise"])
+        four = nd.children[2]
+        self.assertAlmostEqual(four.line[-1][2], 7.5 * 2.3)
+        # sizes: 2.5 opens, 3bb from the SB, 3x in position, 12bb from a blind, 10bb BB over the SB
+        self.assertEqual(g.find([("CO", "raise")]).line[-1][2], 2.5)
+        self.assertEqual(g.find([("SB", "raise")]).line[-1][2], 3.0)
+        self.assertEqual(g.find([("CO", "raise"), ("BTN", "raise")]).line[-1][2], 7.5)
+        self.assertEqual(g.find([("CO", "raise"), ("BB", "raise")]).line[-1][2], 12.0)
+        self.assertEqual(g.find([("SB", "raise"), ("BB", "raise")]).line[-1][2], 10.0)
+        # a squeeze adds one open per caller
+        self.assertEqual(g.find([("CO", "raise"), ("BTN", "call"), ("BB", "raise")]).line[-1][2], 14.5)
+        # the 5bet is all-in, and at most three players see a flop (two in a raised pot)
+        self.assertTrue(all(len(t.active) <= 3 for t in nodes if t.kind == "show"))
+        self.assertTrue(all(len(t.active) == 2 for t in nodes if t.kind == "show" and t.n_raises > 1))
+        self.assertTrue(all(t.inv.max() <= 100 for t in nodes if t.kind != "dec"))
+
+    def test_zero_sum(self):
+        """Every terminal pays out what was put in (without rake): the seats' values sum to 0 heads-up, and
+        nearly so with more players (card removal against each opponent is taken independently, and
+        three-way pots are normalised over the ranges, not hand by hand)."""
+        g = G.Game(G.build(["SB", "BB"]), ["SB", "BB"], G.flat_model())
+        g.solve(20)
+        self.assertAlmostEqual(float(g.values().sum()), 0.0, places=9)
+        g = G.Game(G.build(G.SIX[2:]), G.SIX[2:], G.flat_model())
+        g.solve(20)
+        self.assertLess(abs(float(g.values().sum())), 0.04)
+
+
+class TestSolve(unittest.TestCase):
+    def test_heads_up_converges(self):
+        g = G.Game(G.build(["SB", "BB"]), ["SB", "BB"], G.flat_model())
+        g.solve(400)
+        self.assertLess(g.exploitability(), 0.01)          # bb per hand, both seats
+        # with every flop paying all-in equity (no postflop edge) the big blind defends nearly everything
+        nd = g.find([("SB", "raise"), ("BB", None)][:1])
+        s = g.strategy_at(nd)
+        self.assertGreater(float((G.PRIOR * s["fold"]).sum()), -1e-9)
+        self.assertLess(float((G.PRIOR * s["fold"]).sum()), 0.2)
+
+    def test_model_from_tables_keeps_measurements(self):
+        """The two-way decomposition gives back each side's per-bucket excess on average over the
+        opponent's hands in that bucket, and the pair shares add to the pot."""
+        from gto.pf_solve import bucket_of
+        rng = np.random.default_rng(1)
+        b = bucket_of()
+        nb = int(b.max()) + 1
+        xa = rng.normal(0, 0.05, (len(CLASSES), nb))
+        wa = rng.random(len(CLASSES)); wc = rng.random(len(CLASSES))
+        # a consistent caller table: its block means are minus the aggressor's, plus class effects
+        onehot = np.eye(nb)[b]
+        ma = (onehot * wa[:, None]).T @ xa / (onehot * wa[:, None]).sum(0)[:, None]   # (aggr bucket, caller bucket)
+        noise = rng.normal(0, 0.05, (len(CLASSES), nb))
+        mn = (onehot * wc[:, None]).T @ noise / (onehot * wc[:, None]).sum(0)[:, None]
+        xc = -ma.T[b] + noise - mn[b]
+        key = (2, True)
+        m = G.EQRModel.from_tables({key + ("aggr",): xa, key + ("caller",): xc},
+                                   {key + ("aggr",): wa, key + ("caller",): wc})
+        s = m.share(key) - equity_matrix()
+        for i in (0, 50, 100):
+            for k in range(nb):
+                cols = (b == k)
+                got = (s[i, cols] * wc[cols]).sum() / wc[cols].sum()
+                self.assertAlmostEqual(got, xa[i, k], delta=0.06)
+
+
+if __name__ == "__main__":
+    unittest.main()
