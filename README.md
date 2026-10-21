@@ -373,8 +373,10 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   menu where 75% alone was 1.2-7.2%; a river solve is milliseconds an iteration, ~1000 in 2.5 s.
   Published figures (TURN_REFERENCES / RIVER_REFERENCES; GTO Wizard's turn aggregates are behind an
   account and its blog gives single spots, so the bands are wide): no BB lead on a brick turn and
-  some on a low pairing one (GTO Wizard: K75-7 ~11% at 100bb; ours leads K72-7 39% at a third pot,
-  BTN having c-bet the whole range small), BTN's barrel 41% on K72r-3 with 29% overbets (ThinkGTO's
+  some on a low pairing one (ours: K72-7 39% at a third pot, 2-3% over every K72 turn, nearly all on
+  the pairing 7 and 2; GTO Wizard's donk article: BTN vs BB J53-3 ~40% at 40bb, its "~11% on K75r" is
+  UTG vs BB averaged over every turn; the lead is EV-flat, 23-41% across near-identical solves with BB's
+  EV 57.8% of the pot each time), BTN's barrel 41% on K72r-3 with 29% overbets (ThinkGTO's
   JJ4: 53.5% on a brick, overbets dominant on an A), BB probing 37% and BTN delaying 38% after a
   checked flop, the 3bettor barrelling 62% (GTO Wizard 47-63%), and on the polar river 79% bets,
   50% overbets and BB folding 60%. River theory, on converged real-range solves (TestRiverTheory):
@@ -791,8 +793,8 @@ the tree traversal to C or Rust or a GPU, which makes full flop trees feasible.
   board-pairing turn, a checked flop) its frequencies run 8-10 points from a richer tree's. Raises stay
   one size (75%) after the flop.
 * Turn and river references are this solver's own richest trees plus a few published spots; few
-  published turn and river aggregates exist (GTO Wizard's are behind an account), and BB's third-pot
-  lead on K72-7 (39%) is well above GTO Wizard's ~11% on K75-7.
+  published turn and river aggregates exist (GTO Wizard's are behind an account, and its blog's are
+  UTG or 40bb MTT spots with wider calling ranges).
 * Flop solves play the river without seeing the river card (a draw is a middling hand there, so
   river betting is worth a little less than with every river: QQ6's c-bet ~10 points under at 3
   turns) and one turn card per rank class; the fast configs (server Fast, browser Fast, and the

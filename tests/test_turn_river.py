@@ -160,10 +160,11 @@ class TestRiverClasses(unittest.TestCase):
 # and against the rich reference itself.
 TURN_REFERENCES = [
     # GTO Wizard, "How and why you should use turn donk bets": BB leads the turn almost only when it pairs a low board card
-    # or fills a straight; on K75 a 7 turn it leads ~11% at 100bb (16% at 40bb), mostly small. Ours leads K72 a 7 with
-    # 33% pot more often (39% in the rich tree: the BTN c-bet this flop with its whole range at a third pot)
+    # or fills a straight: BTN vs BB on J53-3 (40bb) ~40% of the range, mostly small. Its "~11% on K75r at 100bb" is UTG vs
+    # BB averaged over every turn card (its turn report), not the 7. Ours leads K72-7 39% (EV-flat: 23-41% by iterations
+    # and rounding, BB's EV 57.8% of the pot each time) and K72 over every turn ~2-3%, the pairing 7 and 2 nearly all of it
     ("t-k72-3", "oop bet", 0, 3, "GTO Wizard turn donks: none on a brick"),
-    ("t-k72-7", "oop bet", 8, 45, "GTO Wizard K75-7: ~11% at 100bb *"),
+    ("t-k72-7", "oop bet", 15, 50, "GTO Wizard: low board-pairing turns, J53-3 ~40% *"),
     # ThinkGTO (Solver+, JJ4 BTN vs BB, 25/80/135% turn sizes): brick turn barrel 53.5% (7.7% overbets), an A 28% of which
     # 21% overbets; GTO Wizard: overbets where the turn favours the c-bettor's range
     ("t-k72-3", "ip bet", 30, 65, "ThinkGTO JJ4 brick 53.5% *"),
