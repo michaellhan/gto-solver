@@ -436,7 +436,7 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
     (6.1, 13.0), its response to the small bet 1.6 (5.0, 6.2). Settled (400 iterations), 32 buckets are 3.0
     off in c-bet where per combo is ~1.4; QQ6 stays near 80% (88%), A74 near 61% (51%). Exploitability in
     the bucket game is 0.2-0.4% of the pot at 200 iterations (the old trees, not zero-sum with their
-    sampled turns, read -0.35 to 1.15%). Exploit mode's pool lock reads a bucket's percentile as its place in
+    sampled turns, read -0.35 to 1.15%). Exploit mode's pool lock and your locks read a bucket's percentile as its place in
     the range.
   Tests TestFlopStrategy hold the published table, for both models.
   A flop all-in pays its equity over every turn card with 4 evenly spread rivers each
