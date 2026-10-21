@@ -3193,6 +3193,23 @@ class TestAdvanced(unittest.TestCase):
         self.assertNotIn("size_usage", out)
         self.assertTrue(any("optimized only" in n for n in out["notes"]))
 
+    def test_optimize_sizes_with_custom_sizes(self):
+        """The street's custom sizes join the optimizer's wide menu (they used to be replaced by it silently),
+        and the response and the note say so."""
+        adv = self.adv(1.0)
+        out = adv.advise(self.river(optimize_sizes=True, sizes={"river": [40, 120]}))
+        use, kept = out["size_usage"], out["sizes_kept"]
+        self.assertEqual(set(use) - {"check", "all-in"}, {"25%", "33%", "40%", "50%", "75%", "100%", "120%", "150%", "200%"})
+        self.assertAlmostEqual(sum(use.values()), 1.0, delta=0.01)
+        self.assertEqual(out["sizes_custom"], ["40%", "120%"])
+        self.assertTrue(any("your river sizes 40%, 120% among them" in n for n in out["notes"]), out["notes"])
+        bets = [a["action"] for a in out["actions"] if a["action"] != "check"]
+        self.assertEqual(sorted(b.replace("bet ", "") for b in bets), sorted(kept))
+        # another street's custom sizes leave the river's menu alone
+        out = adv.advise(self.river(optimize_sizes=True, sizes={"flop": [40]}))
+        self.assertNotIn("40%", out["size_usage"])
+        self.assertNotIn("sizes_custom", out)
+
     def test_bad_input(self):
         adv = self.adv()
         for kw, msg in ((dict(sizes={"flop": ["x"]}), "positive numbers"), (dict(sizes={"flop": [-10]}), "positive numbers"),

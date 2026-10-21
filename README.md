@@ -323,7 +323,9 @@ sent from the flop on, so preflop advice is unchanged). All are off unless given
   uses with 3%+ of their range, the 3 most used, and the advice is solved with those. The two solves split
   the time budget (35% / 65%), so a spot takes as long as without it. The response adds `size_usage`
   (hero's mix at that node over the wide menu, `{"check": 0.13, "25%": 0.47, ...}`, summing to 1) and
-  `sizes_kept`. A kept overbet makes the second tree bigger, so it settles slower: use Accurate.
+  `sizes_kept`. A kept overbet makes the second tree bigger, so it settles slower: use Accurate. Custom
+  `"sizes"` for that street join the wide menu (kept only if the first solve uses them, like any other; the
+  response lists them as `sizes_custom` and the page's advice says whether they were kept).
 
 * `"locks": {"BB": {"fold": 15, "bluff": -50, "next_fold": 60}}`: nodelocking, your read of an opponent
   (the page: a profile per opponent, GTO, Calling station, Nit, Maniac, Overfolds to bets or Custom, whose

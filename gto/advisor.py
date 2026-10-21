@@ -1329,6 +1329,7 @@ class Advisor:
         self.rng = random.Random()
         self._breakdown = False   # this request asked for the breakdown (state "breakdown": true)
         self._lib_only = False    # state "library_only": a flop the library holds, else {"skipped": …}, no solve
+        self._req_sizes: Dict[str, List[float]] = {}   # the request's custom sizes (state "sizes"), as fractions
 
     # ------------------------------------------------------------ public
     def advise(self, state: dict) -> dict:
@@ -1400,6 +1401,7 @@ class Advisor:
             self.prior_budget = max(0.3, min(30.0, float(state["prior_budget"])))
         # the Breakdown view (gto/breakdown.py) on the advice's own spot; not for a practice opponent's move
         self._breakdown = bool(state.get("breakdown")) and actor is None
+        self._req_sizes = sizes   # (optimize_sizes puts a street's custom sizes in its wide menu)
         # the page's session analyzer in its "flop-library spots only" scope: a flop the library holds, never a solve
         self._lib_only = bool(state.get("library_only")) and actor is None
         if self._lib_only and len(board) != 3:
@@ -3361,9 +3363,13 @@ class Advisor:
         """optimize_sizes: solve this street once with OPT_SIZES (one street deep and one raise: the size is
         chosen here, and the smaller tree buys iterations), keep the sizes either player's first bet uses
         with OPT_KEEP of their range (the MAX_SIZES most used), and return the advice's config with them and
-        hero's mix there by size. The two solves split the time budget, so the total stays the same."""
+        hero's mix there by size. The two solves split the time budget, so the total stays the same. Sizes the
+        request set for the street (state "sizes") join the wide menu, so they compete with it rather than being
+        silently replaced: kept if the first solve uses them."""
+        mine_sizes = list(self._req_sizes.get(st.name) or [])
+        menu = {f"bet {int(round(f * 100))}%": f for f in sorted(set(OPT_SIZES) | set(mine_sizes))}
         wide = cfg.copy()
-        wide.bet_sizes[st.name] = list(OPT_SIZES)
+        wide.bet_sizes[st.name] = sorted(menu.values())
         wide.depth, wide.max_raises = 1, 1
         sol = self._solve_cached(board, r0, r1, st.pot_start, eff, OPT_SHARE * self.time_budget, cfg=wide)
         self.time_budget *= 1 - OPT_SHARE   # (restored by _advise)
@@ -3371,7 +3377,7 @@ class Advisor:
         chk = root.children[root.names.index("check")]
         firsts = [(root, sol.r0)] + ([(chk, sol.r1)] if isinstance(chk, Decision) else [])
         mixes = [dict(zip(n.names, n.avg_strategy0() @ (r / max(r.sum(), 1e-12)))) for n, r in firsts]
-        frac = {f"bet {int(round(f * 100))}%": f for f in OPT_SIZES}
+        frac = dict(menu)
         frac["all-in"] = round(eff / max(st.pot_start, 1e-9) + 0.01, 3)   # a bet that reaches the stack
         use: Dict[str, float] = {}
         for m in mixes:
@@ -3384,10 +3390,12 @@ class Advisor:
         out.bet_sizes[st.name] = sorted(frac[n] for n in keep)
         label = lambda n: n[4:] if n.startswith("bet ") else n   # "bet 33%" -> "33%"
         mine = mixes[min(hero_p, len(mixes) - 1)]
-        notes.append(f"{st.name}: bet sizes chosen by a first solve over {', '.join(label(n) for n in root.names[1:])}: "
-                     f"kept {', '.join(label(n) for n in keep)} (used by {OPT_KEEP:.0%}+ of a range)")
+        custom = [f"{int(round(f * 100))}%" for f in sorted(mine_sizes)]
+        notes.append(f"{st.name}: bet sizes chosen by a first solve over {', '.join(label(n) for n in root.names[1:])}"
+                     + (f" (your {st.name} sizes {', '.join(custom)} among them)" if custom else "")
+                     + f": kept {', '.join(label(n) for n in keep)} (used by {OPT_KEEP:.0%}+ of a range)")
         return out, {"size_usage": {label(n): round(float(f), 3) for n, f in mine.items()},
-                     "sizes_kept": [label(n) for n in keep]}
+                     "sizes_kept": [label(n) for n in keep], **({"sizes_custom": custom} if custom else {})}
 
     def _cfg_with_real_sizes(self, st: StreetState, oop: str, ip: str, stack: float) -> Config:
         """Tree config for this street where the bet/raise sizes actually taken replace the

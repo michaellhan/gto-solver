@@ -115,6 +115,27 @@ test("the villain's range grid and the size usage render in Details", async () =
   assert.match(p.run("handText()"), /size optimization: check 20% · 33% 50% · 125% 30%; kept 33%, 125%/);
 });
 
+test("custom sizes with size optimization: the hint says they compete in its menu, the advice whether they were kept", async () => {
+  const p = loadPage();
+  await p.ready();
+  p.S = state(FLOP);
+  p.byId("sz_flop").onchange({ target: { value: "40 120" } });
+  assert.equal(p.byId("optSizesHint").hidden, true);   // (no optimization)
+  p.byId("optSizes").onchange({ target: { checked: true } });
+  assert.equal(p.byId("optSizesHint").hidden, false);
+  p.byId("sz_flop").onchange({ target: { value: "" } });
+  p.byId("sz_raise").onchange({ target: { value: "60" } });
+  assert.equal(p.byId("optSizesHint").hidden, true);   // (a raise size isn't a street's bet menu)
+  const res = { street: "flop", recommended: "check", size_usage: { check: 0.2, "33%": 0.5, "40%": 0.3 }, sizes_kept: ["33%", "40%"], sizes_custom: ["40%", "120%"],
+    actions: [{ action: "check", freq: 1, ev_bb: 1 }] };
+  p.ctx.__res = JSON.stringify(res);
+  p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
+  assert.match(p.byId("result").innerHTML, /kept 33%, 40% \(your sizes 40%, 120% were in the menu\)/);
+  p.ctx.__res = JSON.stringify({ ...res, sizes_kept: ["33%"] });
+  p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
+  assert.match(p.run("handText()"), /kept 33% \(your sizes 40%, 120% were in the menu, not kept\)/);
+});
+
 test("the advisor reads the Advanced keys the page sends", () => {
   const src = fs.readFileSync(path.join(__dirname, "..", "..", "gto", "advisor.py"), "utf8");
   const body = src.slice(src.indexOf("def _advise("), src.indexOf("def _preflop("));

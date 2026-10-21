@@ -440,7 +440,7 @@
           <div class="row muted" title="Postflop bet sizes in % of the pot, up to 3 a street (e.g. 33 75); raises are % of the pot after calling. Empty: the solver's own. Fewer sizes solve faster.">
             <label>flop <input type="text" id="sz_flop" placeholder="auto"></label><label>turn <input type="text" id="sz_turn" placeholder="auto"></label>
             <label>river <input type="text" id="sz_river" placeholder="auto"></label><label>raise <input type="text" id="sz_raise" placeholder="auto"></label></div>
-          <label class="row muted" title="Heads-up, when you can bet: a first solve over 25-200% of the pot (a third of the time) keeps the sizes the equilibrium uses, and the advice is solved with those. Best on Accurate."><input type="checkbox" id="optSizes"> Optimize bet sizes</label>
+          <label class="row muted" title="Heads-up, when you can bet: a first solve over 25-200% of the pot (a third of the time) keeps the sizes the equilibrium uses, and the advice is solved with those. Custom sizes for that street join the menu: kept only if that solve uses them. Best on Accurate."><input type="checkbox" id="optSizes"> Optimize bet sizes <span id="optSizesHint" class="muted" hidden>(your sizes compete in its menu)</span></label>
           <div class="advh">Ranges into the flop</div>
           <div class="row" id="rangeIns" title="Ranges entering the flop, PIO style (22+, A2s+, KTo+, QJo:0.5). Empty: the preflop charts' range for the action."></div>
           <div class="advh">Opponent tendencies (heads-up, postflop)</div>
@@ -1215,7 +1215,8 @@ function convergence(res) {
   return x < 3 ? { cls: "ok", label: "converged", x } : x < 10 ? { cls: "meh", label: "fair", x } : { cls: "bad", label: "rough", x };
 }
 // optimize_sizes: hero's mix over the wide menu of the first solve, and the sizes the advice was solved with
-const SIZE_USAGE = (r) => Object.entries(r.size_usage).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(" · ") + (r.sizes_kept ? `; kept ${r.sizes_kept.join(", ")}` : "");
+const SIZE_USAGE = (r) => Object.entries(r.size_usage).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(" · ") + (r.sizes_kept ? `; kept ${r.sizes_kept.join(", ")}` : "")
+  + (r.sizes_custom ? ` (your sizes ${r.sizes_custom.join(", ")} were in the menu${r.sizes_custom.every(s => !r.sizes_kept || !r.sizes_kept.includes(s)) ? ", not kept" : ""})` : "");
 // a flop answer read from the precomputed library (gto/flop_library.py) instead of solved live
 const PRE_TIP = (p) => `Solved offline (${p.label}, ${p.iterations} iterations)${p.same_tree ? "" : " with Accurate's flop model"}: instant, at either speed.`;
 const convTip = (c) => `Exploitability ${c.x.toFixed(1)}% of the pot: a perfect counter-strategy would win that much from this solve. Under 3% is close to a full solver.`;
@@ -1546,6 +1547,8 @@ function setAdv(f) { f(); const a = cleanAdv(S, POS); for (const k of ADV_KEYS) 
 function syncAdv() {
   for (const k of SIZE_KEYS) { const el = document.getElementById("sz_" + k); if (document.activeElement !== el) el.value = (S.sizes && S.sizes[k] || []).join(" "); }
   document.getElementById("optSizes").checked = !!S.optSizes;
+  // (both set: the optimizer doesn't replace a street's custom sizes, they join its menu)
+  document.getElementById("optSizesHint").hidden = !(S.optSizes && S.sizes && ["flop", "turn", "river"].some(k => S.sizes[k]));
   syncLocks();
   const box = document.getElementById("rangeIns"), key = POS.join() + S.hero + JSON.stringify(S.ranges || {});
   if (box.dataset.k === key) return;   // rebuilt only when it changes, so a box being typed in keeps its focus
