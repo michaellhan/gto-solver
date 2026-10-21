@@ -331,6 +331,19 @@ class TestAdvisor(unittest.TestCase):
         self.assertIn("hand buckets", " ".join(r["notes"]))
         self.assertGreater(r["actions"][1]["freq"], 0.6)
 
+    def test_settled_solve_stops_early(self):
+        # a 3-way solve stops at the first checkpoint (MW_CHECKS) where it is settled (MW_SETTLED) and isn't run again:
+        # the browser's Accurate ran a 3-way river its whole 60 s to 0.01% of the pot (now 100 iterations, 15 s)
+        from unittest import mock
+        adv = A.Advisor(time_budget=1e9)
+        with mock.patch.object(A, "MW_SETTLED", 20.0):
+            st = self._state("Kh7d2c9s4h", "BB", "Kd9d", [])
+            r = adv.advise(st)
+            self.assertTrue(r.get("solved"))
+            self.assertEqual(r["solver"]["iterations"], A.MW_CHECKS[0])
+            self.assertLess(r["solver"]["exploitability_pct"], 20.0)
+            self.assertEqual(adv.advise(st)["solver"]["iterations"], A.MW_CHECKS[0])
+
     def test_flop_answer_keeps_to_its_budget(self):
         # the tree and bucket tables, the iterations and the gains and EVs after them all fit in the budget (the tables
         # used to come on top: the browser's Accurate flops ran ~10 s past 60 s)
