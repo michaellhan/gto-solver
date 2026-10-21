@@ -164,10 +164,8 @@ function loadPage(opts = {}) {
     prompt: (msg, text) => { clipboard.prompts.push(text); return null; },
   };
   ctx.window = ctx;
-  if (opts.layout) {
-    ctx.addEventListener = (t, f) => (winListeners[t] = winListeners[t] || []).push(f);
-    ctx.visualViewport = viewport;
-  }
+  ctx.addEventListener = (t, f) => (winListeners[t] = winListeners[t] || []).push(f);
+  if (opts.layout) ctx.visualViewport = viewport;
   vm.createContext(ctx);
   vm.runInContext(pageScript(), ctx, { filename: "index.html" });
   // run code in the page's global scope (its top-level let/const are visible here)
@@ -176,6 +174,8 @@ function loadPage(opts = {}) {
   const val = (code) => { const t = run(`JSON.stringify(${code})`); return t === undefined ? undefined : JSON.parse(t); };
   const page = {
     ctx, run, val, els, byId, storage, posted, workers, clipboard, location, replaced, rootProps, viewport,
+    // fire a window event (e.g. "hashchange" after setting location.hash)
+    fire(t, e = {}) { for (const f of winListeners[t] || []) f(e); },
     // change the visual viewport (e.g. the on-screen keyboard opening) and fire its events
     setViewport(v) { Object.assign(viewport, v); for (const t of ["resize", "scroll"]) for (const f of vvListeners[t] || []) f({}); },
     get S() { return val("S"); },

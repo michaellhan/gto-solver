@@ -64,6 +64,25 @@ for (const [name, st] of Object.entries(SPOTS)) {
   });
 }
 
+test("a link opened in the tab the page is already showing (only the hash changes) loads the spot", async () => {
+  const p = loadPage();
+  await p.ready();
+  p.S = state({ cards: ["2c", "7d"], preflop: acts("UTG f") });
+  p.location.hash = "#h=" + REAL;
+  p.fire("hashchange");
+  await flush(); await flush();
+  const S = j(p.S);
+  assert.deepEqual(S.cards, ["Ks", "Kd", "7d", "2s", "5s", null, null]);
+  assert.equal(S.actions.preflop.length, 9);
+  assert.deepEqual(p.replaced, ["/gto-solver/"]);
+  assert.deepEqual(JSON.parse(p.storage.get("handreview")), S);
+  // a hash that isn't a link leaves the hand alone
+  p.location.hash = "#foo";
+  p.fire("hashchange");
+  await flush();
+  assert.deepEqual(j(p.S), S);
+});
+
 test("share link survives non-ASCII text in the state", () => {
   const a = loadPage();
   a.S = { ...state({ cards: ["Ah", "Kh"] }), note: "Ünïcödé ♠♥" };

@@ -1449,15 +1449,17 @@ document.getElementById("copyhand").onclick = () => {
     if (ok) setTimeout(() => b.textContent = "Copy hand", 1500);
   });
 };
-(function loadFromLink() {
+function linkState() {   // the spot a #h= link carries (null if none), the hash cleared
   const m = location.hash.match(/#h=([A-Za-z0-9+/=]+)/);
-  if (!m) return;
-  try {
-    const st = cleanState(decodeState(m[1]));
-    if (st) { S = st; setPositions(S.players); save(); }
-  } catch (e) {}
+  if (!m) return null;
+  let st = null;
+  try { st = cleanState(decodeState(m[1])); } catch (e) {}
   history.replaceState(null, "", location.pathname);
-})();
+  return st;
+}
+(function loadFromLink() { const st = linkState(); if (st) { S = st; setPositions(S.players); save(); } })();
+// A link opened in a tab already showing the page only changes its hash (no reload): load the spot then too.
+if (typeof window.addEventListener === "function") window.addEventListener("hashchange", () => { const st = linkState(); if (st) loadHandState(st); });
 document.getElementById("stack").value = S.stack;
 document.getElementById("stack").onchange = (e) => { S.stack = parseFloat(e.target.value) > 0 ? parseFloat(e.target.value) : 100; e.target.value = S.stack; const o = S.stacks; delete S.stacks; Object.assign(S, cleanStacks({ ...S, stacks: o }, POS)); save(); renderAll(); };
 // The seats' own stacks (Stacks: "per seat"): a row of boxes, one per seat; a seat left at the table's stack has none.
