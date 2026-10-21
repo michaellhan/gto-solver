@@ -13,6 +13,7 @@ for _v in ("VECLIB_MAXIMUM_THREADS", "OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", 
 from typing import Dict, Optional  # noqa: E402
 from .advisor import Advisor        # noqa: E402
 from .solver import Config          # noqa: E402
+from .flop_library import default_library  # noqa: E402
 
 # Each speed is a tree and its budgets (seconds for the street advised on, and for each earlier street
 # used to narrow ranges). Narrowing walks the earlier streets' solves, so they must settle too: Config()'s
@@ -46,13 +47,16 @@ SPEEDS = {
 
 
 def advisor(speed: str = "fast", depth: int = 2, budget: Optional[float] = None,
-            prior_budget: Optional[float] = None) -> Advisor:
+            prior_budget: Optional[float] = None, library: bool = True) -> Advisor:
+    """`library`: answer flop spots the precomputed library holds from it (gto/flop_library.py), at either speed."""
     sizes, b, pb = SPEEDS[speed]
     cfg = Config(bet_sizes={k: list(v) for k, v in sizes["bet_sizes"].items()},
                  raise_sizes={k: list(v) for k, v in sizes["raise_sizes"].items()}, depth=depth,
                  **sizes.get("flop_model", {}))
-    return Advisor(cfg, time_budget=b if budget is None else budget,
-                   prior_budget=pb if prior_budget is None else prior_budget)
+    adv = Advisor(cfg, time_budget=b if budget is None else budget,
+                  prior_budget=pb if prior_budget is None else prior_budget)
+    adv.library = default_library() if library else None
+    return adv
 
 
 def advisors(depth: int = 2, budget: Optional[float] = None, prior_budget: Optional[float] = None) -> Dict[str, Advisor]:
