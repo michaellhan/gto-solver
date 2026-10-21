@@ -95,7 +95,6 @@ class Hands:
         for k in (0, 1):
             self.pidx[k][self.pidx[k] < 0] = n
         self.notmine = 1.0 - self.mem                                 # (n, 52)
-        self.rows = np.arange(n)
 
 
 class Boards:
@@ -113,7 +112,6 @@ class Boards:
             for i, b in enumerate(boards):
                 s[i, hands.mem[:, list(b)].sum(axis=1) > 0] = -1
         self.s = s
-        self.live = (s >= 0).astype(np.float64)
         if len(boards[0]) < 5:
             return
         self.order = np.argsort(s, axis=1, kind="stable")
@@ -217,48 +215,6 @@ class Boards:
                     C -= y0 * c0; C -= y1 * c1; C *= self.notmine32
                     out[kind] = C
         return out
-
-    # -- reference implementation (tests): (B, n, 52) running sums for every kernel
-    def prep(self, x):
-        self._exact_prep()
-        xs = np.take_along_axis(x, self.order, axis=1)
-        X = np.zeros((self.B, self.h.n + 1)); np.cumsum(xs, axis=1, out=X[:, 1:])
-        Y = np.zeros((self.B, self.h.n + 1, 52)); np.cumsum(xs[:, :, None] * self.mem_s, axis=1, out=Y[:, 1:])
-        return X, Y
-
-    def kernel(self, x, kind, XY=None, need_p=True):
-        """(K, P): K[b, h] = sum of x over the combos compatible with h that the kernel counts (U: all,
-        L: weaker than h, E: tied with h); P[b, h, c] = the same restricted to combos holding card c
-        (0 for h's own cards)."""
-        self._exact_prep()
-        h = self.h
-        if kind == "U":
-            tot = x.sum(axis=1, keepdims=True)
-            C = (x @ h.mem)[:, None, :]                               # (B, 1, 52)
-            Ca, Cb = C[:, 0, h.ca], C[:, 0, h.cb]
-            own = x
-        else:
-            X, Y = XY
-            if kind == "L":
-                tot = np.take_along_axis(X, self.lo, axis=1)
-                C = Y[self.r, self.lo]
-                own = 0.0
-            else:
-                tot = np.take_along_axis(X, self.hi, axis=1) - np.take_along_axis(X, self.lo, axis=1)
-                C = Y[self.r, self.hi] - Y[self.r, self.lo]
-                own = x
-            Ca = np.take_along_axis(C, h.ca[None, :, None], axis=2)[..., 0]
-            Cb = np.take_along_axis(C, h.cb[None, :, None], axis=2)[..., 0]
-        K = tot - Ca - Cb + own
-        if not need_p:
-            return K, None
-        xp = np.concatenate([x, np.zeros((self.B, 1))], axis=1)
-        y0, y1 = xp[:, h.pidx[0]], xp[:, h.pidx[1]]                  # (B, n, 52)
-        if kind != "U":
-            c0, c1 = self.cond[kind]
-            y0 = y0 * c0; y1 = y1 * c1
-        P = (C - y0 - y1) * h.notmine
-        return K, P
 
 
 # ------------------------------------------------------------------ tree

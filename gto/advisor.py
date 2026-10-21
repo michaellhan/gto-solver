@@ -1201,7 +1201,7 @@ class Advisor:
         self.mw_trials: Optional[int] = None   # multiway: play at least this many trials (whole passes), no time caps or early stop (tests)
         # 3-way pots: the streets solved by the 3-player solver (gto/multiway_solver.py; others, and 4+ players, use the
         # betting rules), MWConfig overrides, and the most iterations a solve runs (it stops at time_budget before)
-        self.mw_solve_streets: Tuple[str, ...] = ("flop", "turn", "river")
+        self.mw_solve_streets: Tuple[str, ...] = ("turn", "river")   # ("flop" too: possible, but see README)
         self.mw_config: Optional[dict] = None
         self.mw_max_iters: int = 1000
         self.mw_max_expl: float = 10.0   # a solve further than this from equilibrium (% pot) hands over to the rules

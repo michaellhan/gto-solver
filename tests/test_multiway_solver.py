@@ -1,13 +1,12 @@
 """The 3-player solver (gto/multiway_solver.py): exact card removal for three ranges, constant-sum payoffs,
 convergence, agreement with the heads-up solver when played two-handed, and the advisor's use of it."""
-import itertools
 import unittest
 
 import numpy as np
 
 import gto.advisor as A
 from gto import preflop as pf
-from gto.cards import ALL_COMBOS, COMBO_INDEX, cards
+from gto.cards import ALL_COMBOS, cards
 from gto.evaluator import eval_board
 from gto.multiway_solver import MWConfig, MultiwaySolver, Terminal
 from gto.solver import Config, solve
@@ -188,6 +187,14 @@ class TestAdvisor(unittest.TestCase):
         self.assertEqual(names[:2], ["fold", "call"])
         self.assertEqual(r["to_call_bb"], 4.0)
         self.assertNotEqual(r["recommended"], "fold")             # a set, with three of a kind of nothing left to fear
+
+    def test_flop_uses_the_betting_rules_by_default(self):
+        # (its equity leaves bet half as often as published solves: README, Known limits)
+        adv = A.Advisor(time_budget=1e9)
+        adv.mw_trials = 100
+        r = adv.advise(self._state("Kh7d2c", "BB", "Kd9d", []))
+        self.assertTrue(r["multiway"])
+        self.assertFalse(r.get("solved", False))
 
     def test_four_way_uses_the_betting_rules(self):
         adv = A.Advisor(time_budget=1e9)

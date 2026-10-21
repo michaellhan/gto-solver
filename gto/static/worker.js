@@ -62,9 +62,9 @@ const ready = (async () => {
              + "from gto.flop_library import FlopLibrary; from js import libFetch; "
              + "lib = FlopLibrary(lambda p: (lambda r: None if r is None else r.to_bytes())(libFetch(p))); "
              + "advs['fast'].library = advs['accurate'].library = lib; "
-             // 3-way pots: the 3-player solver on the river in Fast (~0.1 s an iteration here: 8 s is ~60-80, under 1% of the pot
-             // from equilibrium); turns and flops (every runout dealt out, ~0.5 s an iteration) only in Accurate's 60 s
-             + "advs['fast'].mw_solve_streets = ('river',)");
+             // 3-way pots: the 3-player solver on the river in Fast (0.1-0.3 s an iteration here by load: 8 s is 25-80, under 1% of the pot
+             // from equilibrium); turns (every river dealt out, 0.5-1.3 s an iteration) only in Accurate's 60 s; flops stay on the rules
+             + "advs['fast'].mw_solve_streets = ('river',); advs['accurate'].mw_solve_streets = ('turn', 'river')");
   postMessage({ status: "Solving…" });
   return py;
 })();

@@ -69,6 +69,20 @@
   street (depth 1), and the remaining cards are dealt out as equity leaves: every river from the turn, and every
   turn with one sampled river from the flop. No betting is modelled after the solved street, a known bias that
   favours draws and the out-of-position player; the heads-up solver's flop model avoids it at a much higher cost.
+  The equity leaves are why the advisor solves 3-way turns (Accurate only, for time) but leaves flops to the
+  betting rules:
+  * **Turn.** A reference solve that bets the river too (depth 2, 12 sampled rivers, 60 iterations; two turn
+    boards, BB first and BTN checked to, 63 hands) was compared against the depth-1 solve and against the
+    rules. The depth-1 solve picks the reference's best action 76% of the time (the rules 70%), gives up 0.12 bb
+    of the reference's EV (the rules 0.20 bb), and its EVs are 1.03 bb off (the rules 2.30 bb). The
+    reference's range betting frequency is 9.4/47.2% on Kh7d2c9s and 8.1/40.2% on Jh9h4c8s. The depth-1
+    solve has 3.2/34.8% and 10.8/48.5%.
+  * **Flop.** Over 10 random flops, UTG opens and both blinds call, checked to the opener. The one-size (⅓ pot)
+    depth-1 solve bets 33% into two players and 48% into the big blind alone. GTO Wizard's study (several
+    sizes) has 66% and 77%, and the rules, fitted to it, 57%. The ordering (less into two) is right, but with
+    turn and river dealt out a flop bet is worth too little. So `mw_solve_streets` leaves the flop out by
+    default.
+
   The leaves use the pairwise shortcut, with two corrections:
   1. The fraction of pairs that are mutually compatible is taken exactly from the board above the runouts and
      reused on every runout. A runout card moves that fraction very little.
@@ -77,18 +91,20 @@
 
 ## The error accepted (pairwise removal)
 
-River, CO opens, BTN and BB call, 300 iterations each. These are the pairwise solve's strategies played in the exact
+River, CO opens, BTN and BB call, 150 iterations each. These are the pairwise solve's strategies played in the exact
 game, against the exact solve:
 
-| board | exact solve's best-response gains (% pot) | pairwise strategies in the exact game | node strategies differ (mean) |
-|---|---|---|---|
-| Kh7d2c9s4h | 0.27 / 0.28 / 0.30 | 0.37 / 0.41 / 0.30 | 1.9% |
-| Ah8h3h5c2d | 0.23 / 0.27 / 0.25 | 0.37 / 0.49 / 0.40 | 2.3% |
+| board | exact solve's best-response gains (% pot) | pairwise strategies in the exact game | node mixes differ (mean) | values, exact / pairwise (bb) |
+|---|---|---|---|---|
+| Kh7d2c9s4h | 0.03 / 0.05 / 0.03 | 0.11 / 0.14 / 0.08 | 1.1 points | 1.949 2.611 3.440 / 1.959 2.607 3.433 |
+| Ah8h3h5c2d | 0.04 / 0.04 / 0.04 | 0.12 / 0.11 / 0.21 | 2.6 points | 2.392 2.380 3.229 / 2.384 2.387 3.229 |
+| 8s8d3c5h5d | 0.07 / 0.07 / 0.10 | 0.07 / 0.08 / 0.13 | 1.7 points | 2.190 2.335 3.475 / 2.193 2.343 3.464 |
 
-So the pairwise shortcut costs about 0.1-0.2% of the pot in exploitability and moves frequencies by about 2 points.
-Without the renormalisation, its EVs ran up to 1.3% of the pot off on single actions. With it, the players' values
-match the exact solve to 0.01 bb (1.95/2.61/3.44 against 1.947/2.617/3.436 on Kh7d2c9s4h). That is the error
-accepted on the turn's and flop's runouts. The river root is always exact.
+Pairwise removal costs about 0.05-0.15% of the pot in exploitability and 0.3-0.5% of the pot in single action
+EVs, and its values are within 0.01 bb. Before the per-board scaling it over-paid everyone: the three values
+summed to 8.15 in an 8 bb pot. Reusing the board-above overlap share on the runouts kept turn and flop values
+within 0.2% of the pot of summing to it. This is the error accepted on the turn's runouts. The river root is
+always exact.
 
 ## Validation
 
@@ -101,4 +117,10 @@ See `tests/test_multiway_solver.py` and `scripts/compare_multiway.py` (numbers i
 * **Two players.** Played two-handed, the solver matches the heads-up solver on the same tree: root bet frequency
   16.6% against 16.5%, per-action EVs within 0.03-0.06 bb on average.
 * **Qualitative facts.** First to act into two players, the weaker half of the range almost never bets. Checked
-  to, the strongest 3% bets over 80%. The BB bets less of its range into two players than into one.
+  to, the strongest 3% bets over 80%. On four river boards (100 iterations):
+  * The BB leads 4-14% of its range into two players, against 13-21% into one.
+  * Last to act, a player bets 14-32% against 23-44% heads-up. Its bluffs (the weakest 40% of the range) are
+    about a quarter of its bets either way, so it bluffs less only because it bets less. The top 10% always
+    bets.
+  * Facing the CO's half-pot bet, the button folds 68-73% and the big blind 49-53% after it. Both fold 34-37%
+    of the time, against MDF's 33%: the defence is shared between the two.
