@@ -1652,6 +1652,21 @@ class TestExploit(unittest.TestCase):
         raised = Node(10.0, 10.0); raised.bets = (20.0, 10.0)    # facing a raise of its own bet: no shift
         self.assertAlmostEqual(float(lock(raised, strat, reach)[0, 0].mean()), 0.5, places=5)
 
+    def test_multiway_postflop_says_it_plays_equilibrium(self):
+        # exploit mode best-responds heads-up only: a 3-way pot (solved or by the rules) says so, as locks do
+        adv = Advisor(Config(depth=1), time_budget=1e9)
+        adv.mw_max_iters = 10
+        pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
+               {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
+        chk = [{"pos": p, "action": "check"} for p in ("BB", "CO", "BTN")]
+        st = {"players": 6, "hero": "BB", "hole": "KdQd", "board": "Kh7d2c9s4h", "stack": 100, "preflop": pre,
+              "flop": chk, "turn": chk, "river": [], "opponents": "pool"}
+        for streets in (("river",), ()):
+            adv.mw_solve_streets = streets
+            r = adv.advise(st)
+            self.assertTrue(r.get("multiway"), r.get("error"))
+            self.assertTrue(any("exploit mode applies heads-up" in n for n in r["notes"]), r["notes"])
+
     def test_preflop_lines_read_as_real_ranges(self):
         """Lines whose chart or pool range was face-up: every open-limp (the small blind too, in both modes;
         heads-up the pool's was T3o and T4o) reads as LIMP; an over-limp keeps at least the limp range less

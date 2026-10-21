@@ -1807,6 +1807,9 @@ class Advisor:
             if locks and any(p in locks for p in live_opps):
                 notes.append(f"locks ({', '.join(p for p in live_opps if p in locks)}) apply heads-up only: "
                              f"this multiway pot is {'solved' if len(remaining) == 3 else 'played by the betting rules'} without them")
+            if pool:
+                notes.append("exploit mode applies heads-up after the flop: this multiway pot is played at equilibrium "
+                             "(the pool's leaks only shape the ranges preflop)")
             res = self._multiway_solve(hero, hole, board, ranges, remaining, cur, stk, t0, notes,
                                        line=_mw_line(board, hero, hole, stk, streets, cur.name, len(streets.get(cur.name) or [])))
             if res is not None:
