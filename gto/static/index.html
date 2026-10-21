@@ -395,6 +395,7 @@
       <button id="fourcolor" title="Four-colour deck: diamonds blue, clubs green">Four-colour deck</button>
       <button id="importHand" title="Paste a PokerStars or GGPoker hand history to replay and review it">Import hand…</button>
       <button id="drills" title="Drill one flop spot: random flops and hands from the precomputed solutions, each answer graded at once (keys 1-4, Space for the next)">Drills…</button>
+      <button id="analyzeSession" title="A whole session's hand histories: each of your decisions solved and graded, the EV lost by street, position, spot and preflop situation, the biggest mistakes">Analyze session…</button>
       <button id="flopReports" title="The precomputed spots' flop strategy across every flop, by texture; click a flop to load it">Flop reports…</button>
       <button id="swapCols" class="wideonly" title="Put the advice on the left and the table on the right">Advice on the left</button>
       <div class="sep"></div>
@@ -585,6 +586,7 @@ const HH_VERSION = "1";        // and this with a hash of hh.js (the hand-histor
 const RP_VERSION = "1";        // and this with a hash of reports.js (the flop reports, loaded on first use)
 const DR_VERSION = "1";        // and this with a hash of drills.js (the drills, loaded on first use, after reports.js)
 const BD_VERSION = "1";        // and breakdown.js (the advice's Breakdown and Equity views, loaded on first use)
+const SS_VERSION = "1";        // and session.js (the session analyzer, loaded on first use, after hh.js)
 
 // ---- backend: the local Python server if present, otherwise the solver runs in the browser (Pyodide worker)
 let MODE = null, worker = null, reqId = 0;
@@ -841,6 +843,9 @@ const heuristic = (r) => !!(r && r.multiway && !r.solved);
 function gradeFor(rec) {
   const r = lastResult;
   if (!r || r.error || heuristic(r) || resultKey !== JSON.stringify(payload())) return null;
+  return gradeWith(r, rec);
+}
+function gradeWith(r, rec) {   // (also the session analyzer's, on its own answers)
   let m;
   if (["fold", "check", "call", "all-in"].includes(rec.action)) m = r.actions.find(a => a.action === rec.action);
   else {
@@ -1647,6 +1652,12 @@ document.getElementById("drills").onclick = () => {
   document.getElementById("menu").hidden = true;
   loadJs("reports.js?v=" + RP_VERSION, () => window.FlopReports).then(() => loadJs("drills.js?v=" + DR_VERSION, () => window.Drills))
     .then(() => window.Drills.open()).catch(e => showErr("Couldn't load the drills: " + e.message));
+};
+// ---- the session analyzer (session.js, after hh.js whose parser it uses; it runs on the page's engine, solver and grading)
+document.getElementById("analyzeSession").onclick = () => {
+  document.getElementById("menu").hidden = true;
+  loadHH().then(() => loadJs("session.js?v=" + SS_VERSION, () => window.Session)).then(() => window.Session.open())
+    .catch(e => showErr("Couldn't load the session analyzer: " + e.message));
 };
 // ---- the advice's Breakdown and Equity views (breakdown.js, loaded the first time one is opened): the advice's own
 // request again with "breakdown": true, answered from the solve it came from; the view picked stays for later advice

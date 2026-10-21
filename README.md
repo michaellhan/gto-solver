@@ -111,6 +111,28 @@ hand with ungraded decisions) solves each of your decisions in order at the curr
 grades it as if it had been entered live and ends on the hand review; it shows "decision 2 of 5" while it
 runs and can be cancelled, keeping the grades so far.
 
+**Analyze session** (in the ⋯ menu) reviews a whole session, like GTO Wizard's analyzer: drop, choose or paste a
+hand-history file of any number of hands (any site above, mixed sites too). `hh.js`'s `splitHands` cuts it at each
+hand's header (iPoker: a `<session>` per `<game>`), each hand is imported as above, and hands that aren't Hold'em,
+lack your hole cards, have no decision of yours (a walk), repeat one already read, or can't be read are counted and
+skipped. Pick a scope: **Preflop only** (the charts: instant), **Flop-library spots** (preflop plus the flops the
+[precomputed library](#precomputed-flop-library) holds, asked with `"library_only": true` so any other flop is
+skipped rather than solved: instant) or **All streets** (every flop, turn and river solved at Fast: with the local server an 80-hand session averaged 0.7 s a flop decision (library ones
+included), 3.7 s a turn and 2.6 s a river; in the browser about 8 s plus 3 s per earlier street); each shows its decision count and estimated time. A queue
+then asks each decision in order, exactly as Review whole hand would (the page's request at Fast against GTO,
+graded the same way), with progress, an ETA from the measured time per street, Pause (after the decision in flight),
+Stop, and the session kept in IndexedDB so a reload resumes it; a finished narrower scope can be widened. The
+report: hands, decisions graded, EV lost (bb and bb/100; postflop only, as preflop chart answers carry no EVs and
+are graded by frequency), share in the solver's mix; tables by street, position, preflop situation (RFI, vs limp,
+vs open, squeeze spots, SB vs open, BB defence, vs 3bet, cold vs 3bet, vs 4bet+) and postflop spot (pot type, IP/OOP,
+facing a bet / first to act / checked to); your frequencies against the solver's for the same hands at the same
+decisions (opens, BB defence, folds and 4bets vs 3bets, flop c-bets, folds and raises vs c-bets, turn barrels,
+river bets, folds to turn and river bets); the 20 biggest mistakes by EV (a click opens that hand in the page
+rewound to that decision, Undo brings the rest back) and the clearest off-chart preflop plays. **Export CSV / JSON**
+downloads one row per decision (hand, site and number, seat, cards, board, situation, your action and its
+frequency, the solver's best, EVs, EV lost, grade, source). The panel is `gto/static/session.js`, loaded with `hh.js`
+when first opened.
+
 **Flop reports** (in the ⋯ menu) are aggregate reports of the [precomputed flop library](#precomputed-flop-library):
 pick a spot (BTN vs BB, …) and a node (out of position first; in position after a check; out of position facing
 in position's most common bet after checking) for a table of its 184 flops: each flop's range frequencies as a
@@ -221,7 +243,8 @@ range, and solver stats. With `"breakdown": true` a postflop answer also carries
 `actions`, `pot`, `hero` and `villains`, each with `made` and `draws` categories (`c` combos, `eq` equity, the
 hero's `f` per action and `ev`), the range's `eq`, `ev`, `nuts` (share at `nut_eq`, 0.8, or more) and `curve`
 (equities sorted high to low at every 2% of the range; heads-up only), and the hero's own categories (`mine`);
-`null` where the betting rules answered.
+`null` where the betting rules answered. `"library_only": true` (the session analyzer's instant scope) answers a
+flop only from the precomputed library and returns `{"skipped": …}` for any other postflop spot instead of solving it.
 
 `"opponents": "pool"` (the page's Opponents: Pool toggle) is exploit mode: opponents play like a
 typical player pool instead of GTO. Preflop, hero's calls and raises are re-drawn against the pool's
@@ -830,7 +853,7 @@ holds the library under 15 MB.
 scripts/deploy.sh
 ```
 
-copies the page, the worker, `practice.js`, `reports.js`, `drills.js`, the `gto` sources and the flop library into the `gto-solver/` folder
+copies the page, the worker, `practice.js`, `reports.js`, `drills.js`, `breakdown.js`, `session.js`, the `gto` sources and the flop library into the `gto-solver/` folder
 of the michaellhan.github.io repo and pushes. First it runs the checks and aborts
 the deploy if either fails: `python -m unittest`, then the quick sanity sweep
 (`scripts/sanity_sweep.py --quick`, about 3 minutes on 10 cores: a fixed, seeded set

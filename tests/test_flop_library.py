@@ -328,6 +328,23 @@ class TestFlopLibrary(unittest.TestCase):
         self.assertTrue(any(n.startswith("flop: precomputed solution") for n in r["notes"]), r["notes"])
         self.assertNotIn("precomputed", r)   # (the turn itself is solved live)
 
+    def test_library_only(self):
+        """"library_only" (the session analyzer's instant scope): a flop the library holds is answered from it, anything
+        else is skipped at once, never solved; preflop answers as usual."""
+        s = self.setup
+        adv = Advisor(fl.library_config(), time_budget=5.0, prior_budget=5.0)
+        adv.library = self.lib
+        base = {"hero": s["oop"], "hole": _hole_in(s["full0"], BOARD, 3), "board": BOARD, "preflop": self.pre, "stack": 100,
+                "library_only": True}
+        self.assertIn("precomputed", adv.advise(base))
+        t = time.time()
+        for st in (dict(base, board=BOARD + "4c", flop=[{"pos": s["oop"], "action": "check"}, {"pos": s["ip"], "action": "check"}]),
+                   dict(base, stack=60)):   # a turn; a stack the library doesn't hold
+            self.assertIn("skipped", adv.advise(st))
+        self.assertLess(time.time() - t, 2.0)
+        self.assertNotIn("skipped", adv.advise(dict(base, board="", preflop=self.pre[:1], hero=self.pre[1]["pos"])))
+        self.assertFalse(adv._lib_only)
+
     def test_not_used_where_it_does_not_apply(self):
         """Exploit mode, a nodelock on the villain, a custom range and a rare villain line (a lead the solve never makes) solve live."""
         s = self.setup
