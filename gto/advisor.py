@@ -52,6 +52,10 @@ SMALL_BET = 0.33
 MW_LATER = {"later": "buckets", "buckets": 16}   # 3-way flop and turn solves: the later streets by hand buckets
 # 3-way flop solves bet a third or three quarters of the pot (the heads-up flop menu; the turn and river inside one size)
 MW_FLOP_BETS = {"flop": [0.33, 0.75], "turn": 0.5, "river": 0.5}
+HU_RESERVE = 1.0   # heads-up solves likewise keep one iteration's time back (the exploitability read after: ~1 iteration)
+MW_SETTLED = 0.1   # a 3-way solve stops once its players' mean best-response gain is under this (% of the pot)...
+MW_CHECKS = (25, 50, 100, 200, 400, 700)   # ...checked at these iterations (about two iterations' time each). The
+                   # browser's Accurate ran a 3-way river 60 s to 386 iterations, 0.01% of the pot, and a turn 330, 0.03%
 MW_RESERVE = 2.5   # 3-way solves stop this many iterations' time short of the budget: best-response gains and EVs after
 XR_Z = 2.0          # multiway: a check-raise beats calling/folding by this many standard errors (see chk_plan)
 XR_MIN = 30         # ...over at least this many trials of that situation
@@ -2097,11 +2101,7 @@ class Advisor:
         # (a solve its budget ran out on isn't run again: a later request for the spot gets the same answer)
         spent = sol.build_seconds + sol.seconds
         left = min(self.time_budget - spent, self.time_budget - (time.time() - t0))
-        if left <= 0:
-            sol.out_of_time = True
-        elif not sol.out_of_time and sol.iters < self.mw_max_iters:
-            sol.run(iters=self.mw_max_iters - sol.iters, time_budget=left, should_stop=self.should_stop,
-                    reserve=MW_RESERVE, min_iters=1)
+        self._mw_run(sol, left)
         root = sol.root
         if not isinstance(root, MW.Decision) or root.player != hp:
             return None
@@ -3153,6 +3153,25 @@ class Advisor:
                      f"from equilibrium: followed {trust * 100:.0f}%, the rest by the betting rules)")
         return True
 
+    def _mw_run(self, sol, left: float):
+        """Runs a 3-way solve for at most `left` seconds (MW_RESERVE iterations' time kept back for what is read
+        off after), stopping early once settled (MW_SETTLED, checked at MW_CHECKS). A solve its budget ran out on,
+        or a settled one, isn't run again: a later request for the spot gets the same answer."""
+        while not sol.out_of_time and not getattr(sol, "settled", False) and sol.iters < self.mw_max_iters:
+            if left <= 0:
+                sol.out_of_time = True
+                break
+            if self.should_stop is not None and self.should_stop():
+                break
+            t = time.time()
+            nxt = min([c for c in MW_CHECKS if c > sol.iters] + [self.mw_max_iters])
+            sol.run(iters=nxt - sol.iters, time_budget=left, should_stop=self.should_stop, reserve=MW_RESERVE, min_iters=1)
+            if sol.out_of_time or sol.iters < nxt:
+                break
+            if sol.br_gains().mean() / sol.root_pot() * 100 < MW_SETTLED:
+                sol.settled = True
+            left -= time.time() - t
+
     def _mw_street_solve(self, board, ranges, st: StreetState, stk):
         """(solve, players, exploitability % pot) of a 3-way street from its start, for narrowing (prior_budget), or
         None (someone all-in at its start)."""
@@ -3168,12 +3187,7 @@ class Advisor:
         sol = self._mw_cache.get(key)
         if sol is None:
             sol = self._mw_cache[key] = MW.MultiwaySolver(board, rs, st.pot_start, S, cfg=mcfg)
-        left = self.prior_budget - sol.build_seconds - sol.seconds
-        if left <= 0:
-            sol.out_of_time = True
-        elif not sol.out_of_time and sol.iters < self.mw_max_iters:
-            sol.run(iters=self.mw_max_iters - sol.iters, time_budget=left, should_stop=self.should_stop,
-                    reserve=MW_RESERVE, min_iters=1)
+        self._mw_run(sol, self.prior_budget - sol.build_seconds - sol.seconds)
         gains = sol.br_gains() / sol.root_pot() * 100
         return sol, players, float(max(gains.mean(), 0.0))
 
@@ -3288,15 +3302,17 @@ class Advisor:
             # Same spot solved by warm_from (ranges can differ a little: they come from its own earlier
             # streets): start from it and count its time against the budget, as extend() does below.
             warm = self.warm_from._by_spot.get(spot) if self.warm_from is not None else None
+            # (the budget covers the tree's build and the exploitability read after the iterations: the browser's
+            # Accurate flop answered 4.5 s past its 60 s, a two-tone one 9 s)
             sol = solve(board, r0, r1, pot, stack, bets=bets, to_act=to_act, n_raises=n_raises, cfg=cfg,
                         time_budget=max(budget - warm.seconds, 0.2 * budget) if warm else budget,
-                        should_stop=self.should_stop, warm=warm)
+                        should_stop=self.should_stop, warm=warm, reserve=HU_RESERVE)
             if warm is not None:
                 sol.seconds += warm.seconds
             self._cache[key] = sol
             self._by_spot[spot] = sol
         elif sol.seconds < budget * 0.8 and sol.iters < 1000:
-            sol.extend(budget - sol.seconds, should_stop=self.should_stop)        # keep going from the stored regrets instead of restarting
+            sol.extend(budget - sol.seconds, should_stop=self.should_stop, reserve=HU_RESERVE)        # keep going from the stored regrets instead of restarting
         if settle:
             self._settle(sol, budget)
         return sol
@@ -3308,7 +3324,7 @@ class Advisor:
         if getattr(sol, "settled_once", False) or sol.iters >= 1000 or sol.exploitability() < SETTLE_EXPL:
             return False
         sol.settled_once = True
-        sol.extend(self.time_budget if budget is None else budget, should_stop=self.should_stop)
+        sol.extend(self.time_budget if budget is None else budget, should_stop=self.should_stop, reserve=HU_RESERVE)
         return True
 
     def _optimize_sizes(self, board, r0, r1, st: StreetState, eff, cfg: Config, hero_p, notes):

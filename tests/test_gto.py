@@ -287,6 +287,26 @@ class TestSolverMath(unittest.TestCase):
         self.assertEqual(match_action(["fold", "call", "raise to 12", "all-in"], "jam"), 3)
 
 
+class TestSolveBudget(unittest.TestCase):
+    """solve(reserve=k): the budget covers building the tree and k iterations' time after the solve (the advisor's
+    exploitability read), and no iteration starts that would end past it. The browser's Accurate flop answered
+    4.5 s past its 60 s (a two-tone one 9 s): the tree, the last iteration and the exploitability came on top."""
+
+    def test_budget_covers_the_build_and_the_read_after(self):
+        import time
+        r0, r1 = parse_range("22+, A2s+, K9s+, QTs+, JTs, ATo+, KJo+"), parse_range("55+, A8s+, KTs+, QJs, AJo+, KQo")
+        cfg = Config(bet_sizes={"flop": [0.33, 0.75], "turn": [0.75], "river": [0.75]})
+        t = time.time()
+        solve(cards("Kd7c2h"), r0, r1, 5.5, 97.5, cfg=cfg, time_budget=1e9, max_iters=3)
+        per = (time.time() - t) / 3                     # an iteration (and a share of the build)
+        budget = 12 * per
+        t = time.time()
+        sol = solve(cards("Kd7c2h"), r0, r1, 5.5, 97.5, cfg=cfg, time_budget=budget, reserve=1.0)
+        sol.exploitability()
+        self.assertLess(time.time() - t, budget * 1.15)
+        self.assertGreaterEqual(sol.iters, 3)
+
+
 class TestPreflop(unittest.TestCase):
     def test_rfi_and_defence(self):
         s = pf.hand_strategy("UTG", tuple(cards("7h2c")), [])
