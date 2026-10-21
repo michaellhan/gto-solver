@@ -5,7 +5,8 @@ A spot is the two players' ranges entering the flop (as the preflop charts repla
 stack; its flops are canonical under suit isomorphism (the ranges are suit-symmetric, so a flop's solve is any
 suit-permuted flop's, with its combos permuted). Per spot and flop an entry stores the flop's first decisions (the
 root, the in-position player after a check, the out-of-position player facing a bet after checking, the in-position
-player facing a lead): each combo's average strategy (in 1/Q steps) and its EV per action, plus range aggregates.
+player facing a lead): each combo's average strategy (in 1/Q steps) and its EV per action (in 1% of the pot), plus
+range aggregates; one value per suit class (combos the flop's own suit permutations map to each other, pack()).
 Lines through a raise aren't stored and are solved live.
 
 Files (gto/static/flop_library/, deployed next to the page): index.json lists the spots (their ranges'
@@ -27,15 +28,16 @@ import numpy as np
 from .cards import ALL_COMBOS, COMBO_INDEX, cards_str, cards as parse_cards
 from .solver import Config, Decision, TreeBuilder, MEMBER_FULL, FLOP_LEAF_RIVERS
 
-FORMAT = 1
+FORMAT = 2                 # the index's and the entries' (1: per combo, GTOFL2; 2: per suit-isomorphic combo, GTOFL3)
 # Bump when the solver's flop game changes in a way the tree key can't see (the equity leaves, the turn classes,
 # the river played blind): every stored entry is then ignored until rebuilt.
 MODEL_VERSION = 1
-MAGIC = b"GTOFL2"
+MAGIC = b"GTOFL3"
+MAGIC_V1 = b"GTOFL2"       # format 1 (read only to re-encode it: recode())
 Q = 100                    # strategy steps (1%)
 STORE_LINE = 0.05          # a node is stored when the other player reaches it with this share of their range or more
-EV_STEP = 0.02             # bb, the node value's step
-D_LIN, D_BASE = 64, 1.03   # an action's EV below the best: 0.02 bb steps up to 1.28 bb, then 3% steps (to ~360 bb)
+EV_STEP = 0.01             # the node value's step, in pots (0.055 bb in a 5.5 bb pot, 0.2 bb in a 3bet pot)
+D_LIN, D_BASE = 32, 1.04   # an action's EV below the best: EV_STEP steps up to 32% of the pot, then 4% steps
 DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "flop_library")
 
 # The tree entries are solved on: the browser's Accurate config (gto/static/worker.js). The native Accurate plays the
@@ -240,34 +242,125 @@ def _reaches(root: Decision, path, r0, r1):
     return r0, r1
 
 
-def _d_code(d: np.ndarray) -> np.ndarray:
-    lin = D_LIN * EV_STEP
-    big = D_LIN + np.round(np.log(np.maximum(d, lin) / lin) / np.log(D_BASE))
-    return np.clip(np.where(d < lin, np.round(d / EV_STEP), big), 0, 255).astype(np.uint8)
+def _d_code(d: np.ndarray, step: float, lin_n: int = D_LIN, base: float = D_BASE) -> np.ndarray:
+    lin = lin_n * step
+    big = lin_n + np.round(np.log(np.maximum(d, lin) / lin) / np.log(base))
+    return np.clip(np.where(d < lin, np.round(d / step), big), 0, 255).astype(np.uint8)
 
 
-def _d_value(code: np.ndarray) -> np.ndarray:
+def _d_value(code: np.ndarray, step: float, lin_n: int = D_LIN, base: float = D_BASE) -> np.ndarray:
     code = code.astype(np.float64)
-    return np.where(code < D_LIN, code * EV_STEP, D_LIN * EV_STEP * D_BASE ** (code - D_LIN))
+    return np.where(code < lin_n, code * step, lin_n * step * base ** (code - lin_n))
 
 
 def _bits(mask: np.ndarray) -> bytes:
     return np.packbits(mask.astype(np.uint8)).tobytes()
 
 
-def _unbits(b: bytes) -> np.ndarray:
-    return np.unpackbits(np.frombuffer(b, dtype=np.uint8))[:len(ALL_COMBOS)].astype(bool)
+def _unbits(b: bytes, n: int = len(ALL_COMBOS)) -> np.ndarray:
+    return np.unpackbits(np.frombuffer(b, dtype=np.uint8))[:n].astype(bool)
+
+
+def tree_hash(tree: dict) -> str:
+    """An entry's tree (tree_key), as its header holds it: the index holds the tree itself."""
+    return hashlib.sha1(_key_str(tree).encode()).hexdigest()[:12]
+
+
+# Format 2 stores a value per suit-isomorphic combo: the canonical flop's suit permutations that keep it (two-tone:
+# the two suits off the flop; monotone: the three; a pair's two suits) take a combo to equivalent ones (AhKh, AsKs
+# on Kc7c2d), which the solve (and the ranges, and the game) can't tell apart. The solver's turn classes and leaf
+# rivers are sampled by card, so its two numbers differ by noise (a 20-point mix gap for 18% of such pairs): the
+# entry stores their average (strategies weighted by the hand's reach there), which is also what a solve in other
+# suits gets nearer to. Stored combos, per node, in hand order: ranks high to low, suited first, then index (alike
+# hands side by side compress better).
+_ISO: Dict[tuple, np.ndarray] = {}
+
+
+def iso_reps(board: Sequence[int]) -> np.ndarray:
+    """rep[i]: the least combo index of combo i's class under the flop's suit stabilizer (the suit permutations that
+    map the flop to itself); rep[i] == i for a class's stored combo."""
+    key = tuple(sorted(board))
+    if key not in _ISO:
+        rep = np.arange(len(ALL_COMBOS))
+        for p in _PERMS:
+            if tuple(sorted(c // 4 * 4 + p[c % 4] for c in board)) == key:
+                rep = np.minimum(rep, combo_map(p))
+        _ISO[key] = rep
+    return _ISO[key]
+
+
+def _hand_order(idx: np.ndarray) -> np.ndarray:
+    """idx (combo indices) sorted by hand: the higher rank, then the lower (high to low), suited first, index."""
+    a = np.array([ALL_COMBOS[i] for i in idx]).reshape(-1, 2)
+    hi, lo = np.maximum(a[:, 0] // 4, a[:, 1] // 4), np.minimum(a[:, 0] // 4, a[:, 1] // 4)
+    off = (a[:, 0] % 4 != a[:, 1] % 4)
+    return idx[np.lexsort((idx, off, -lo, -hi))]
+
+
+def _layout(board, mask: np.ndarray):
+    """(stored combos in hand order, col: each mask combo's (ascending index) column among them)."""
+    rep = iso_reps(board)
+    own = np.nonzero(mask & (rep == np.arange(len(rep))))[0]
+    stored = _hand_order(own)
+    pos = np.full(len(rep), -1)
+    pos[stored] = np.arange(len(stored))
+    return stored, pos[rep[np.nonzero(mask)[0]]]
+
+
+def pack(head: dict, masks: Sequence[np.ndarray], nodes: Sequence[dict]) -> bytes:
+    """An entry (format 2): head (spot, fp, pot, stack, tree (tree_key: stored as its hash), board, seats, iters,
+    seconds, expl, ...), masks [oop, ip] (1326 bools), nodes [{path, player, names, fold0, freqs {name: range
+    frequency}, combos, strat (A, n_p), evs (A, n_p), reach (n_p)}], n_p the player's mask combos ascending, reach
+    their own reach at the node (weights the classes' strategy average)."""
+    board = parse_cards(head["board"])
+    rep = iso_reps(board)
+    step = round(EV_STEP * float(head["pot"]), 4)
+    body = []
+    for m in masks:
+        if not np.array_equal(m[rep], m):
+            raise ValueError("a range that isn't suit-symmetric")
+        body.append(_bits(m[rep == np.arange(len(rep))]))
+    hn = []
+    for nd in nodes:
+        stored, col = _layout(board, masks[nd["player"]])
+        k, A = len(stored), len(nd["names"])
+        w = np.maximum(np.asarray(nd["reach"], dtype=np.float64), 0.0)
+        ws = np.zeros(k)
+        np.add.at(ws, col, w)
+        cnt = np.bincount(col, minlength=k).astype(np.float64)
+        st = np.zeros((A, k))
+        ev = np.zeros((A, k))
+        for a in range(A):
+            np.add.at(st[a], col, nd["strat"][a] * w)
+            np.add.at(ev[a], col, nd["evs"][a])
+        flat = np.zeros((A, k))
+        for a in range(A):
+            np.add.at(flat[a], col, nd["strat"][a])
+        st = np.where(ws > 1e-12, st / np.maximum(ws, 1e-300), flat / cnt)
+        ev /= cnt
+        q = np.clip(np.round(st[:-1] * Q), 0, Q).astype(np.uint8)
+        body.append(q.tobytes())
+        vq = np.clip(np.round(ev.max(axis=0) / step), -32767, 32767).astype("<i2")
+        body.append(np.frombuffer(vq.tobytes(), dtype=np.uint8).reshape(-1, 2).T.tobytes())   # low bytes, then high
+        rows = list(range(1, A) if nd["fold0"] else range(A))
+        body.append(_d_code(np.maximum(vq.astype(np.float64) * step - ev[rows], 0.0), step, D_LIN, D_BASE).tobytes())
+        hn.append({"path": list(nd["path"]), "player": nd["player"], "names": list(nd["names"]), "fold0": nd["fold0"],
+                   "freqs": [nd["freqs"][n] for n in nd["names"]], "combos": nd["combos"]})
+    h = {k: v for k, v in head.items() if k not in ("tree", "nodes", "format")}
+    h.update(format=FORMAT, tree=tree_hash(head["tree"]) if isinstance(head.get("tree"), dict) else head.get("tree"),
+             q=Q, ev=[step, D_LIN, D_BASE], nodes=hn)
+    hb = json.dumps(h, separators=(",", ":")).encode()
+    return MAGIC + zlib.compress(struct.pack("<I", len(hb)) + hb + b"".join(body), 9)
 
 
 def encode(sol, meta: dict) -> bytes:
     """An entry from a flop solve (solver.Solution) of the canonical flop with the spot's full ranges. `meta`: spot,
-    fp ([oop, ip]), pot, stack, tree (tree_key), and anything else to keep in the header."""
+    fp ([oop, ip]), pot, stack, tree (tree_key), board, and anything else to keep in the header."""
     ctx = sol.ctx
     full = [np.zeros(len(ALL_COMBOS)), np.zeros(len(ALL_COMBOS))]
     full[0][ctx.active], full[1][ctx.active] = sol.r0, sol.r1
     masks = [f > 0 for f in full]
     cols = [np.nonzero(m[ctx.active])[0] for m in masks]     # each player's combos, as columns of the solve
-    body = [_bits(masks[0]), _bits(masks[1])]
     nodes = []
     for path in stored_paths(sol.root, sol.r0, sol.r1):
         n = node_at(sol.root, path)
@@ -278,29 +371,39 @@ def encode(sol, meta: dict) -> bytes:
         reach = (r0 if p == 0 else r1)[cols[p]]
         tot = max(float(reach.sum()), 1e-12)
         freqs = {nm: round(float((st[a] * reach).sum() / tot), 4) for a, nm in enumerate(n.names)}
-        q = np.round(st[:-1] * Q).astype(np.int64)
-        body.append(np.clip(q, 0, Q).astype(np.uint8).tobytes())
-        v = evs.max(axis=0)
-        vq = np.clip(np.round(v / EV_STEP), -32767, 32767).astype("<i2")
-        body.append(np.frombuffer(vq.tobytes(), dtype=np.uint8).reshape(-1, 2).T.tobytes())   # low bytes, then high
         fold0 = n.names[0] == "fold" and bool(np.all(np.abs(evs[0]) < 1e-3))
-        rows = range(1, len(n.names)) if fold0 else range(len(n.names))
-        d = np.maximum(vq.astype(np.float64) * EV_STEP - evs[list(rows)], 0.0)
-        body.append(_d_code(d).tobytes())
         nodes.append({"path": list(path), "player": p, "names": list(n.names), "fold0": fold0, "freqs": freqs,
-                      "combos": round(float(reach.sum()), 2)})
-    head = dict(meta, format=FORMAT, q=Q, nodes=nodes, iters=int(sol.iters), seconds=round(float(sol.seconds), 1),
-                expl=round(float(sol.exploitability()), 4))
-    hb = json.dumps(head, separators=(",", ":")).encode()
-    return MAGIC + zlib.compress(struct.pack("<I", len(hb)) + hb + b"".join(body), 9)
+                      "combos": round(float(reach.sum()), 2), "strat": st, "evs": evs, "reach": reach})
+    head = dict(meta, iters=int(sol.iters), seconds=round(float(sol.seconds), 1), expl=round(float(sol.exploitability()), 4))
+    return pack(head, masks, nodes)
 
 
-def decode(data: bytes) -> dict:
-    """{'head': header, 'masks': [oop, ip] (1326 bools), 'nodes': [{'path', 'player', 'names', 'strat' (A, n_p),
-    'evs' (A, n_p)}]}, n_p each player's combos (ascending combo index, on the canonical flop)."""
-    if data[:len(MAGIC)] != MAGIC:
-        raise ValueError("not a flop library entry")
-    raw = zlib.decompress(data[len(MAGIC):])
+def recode(data: bytes, full0: np.ndarray, full1: np.ndarray) -> bytes:
+    """A format-1 entry (GTOFL2) in format 2, without solving again: its decoded strategies and EVs (1% and 0.02 bb
+    steps), the class averages weighted by the reach the stored strategies give the spot's ranges (full0, full1:
+    entering the flop) at each node. An entry already in format 2 comes back as it is."""
+    if data[:len(MAGIC)] == MAGIC:
+        return data
+    e = _decode_v1(data)
+    board = parse_cards(e["head"]["board"])
+    bm = np.prod([1.0 - MEMBER_FULL[c] for c in board], axis=0)
+    full = [full0 * bm, full1 * bm]
+    nodes = []
+    for nd in e["nodes"]:
+        p = nd["player"]
+        m = e["masks"][p]
+        reach = full[p][m].copy()
+        for i in range(len(nd["path"])):
+            anc = next((x for x in e["nodes"] if x["path"] == nd["path"][:i]), None)
+            if anc is not None and anc["player"] == p:
+                reach *= anc["strat"][anc["names"].index(nd["path"][i])]
+        nodes.append(dict(nd, reach=reach))
+    return pack(e["head"], e["masks"], nodes)
+
+
+def _decode_v1(data: bytes) -> dict:
+    """A format-1 entry: per combo, EVs in 0.02 bb steps (the gap below the best: 64 linear, then 3%)."""
+    raw = zlib.decompress(data[len(MAGIC_V1):])
     hl = struct.unpack("<I", raw[:4])[0]
     head = json.loads(raw[4:4 + hl].decode())
     body = raw[4 + hl:]
@@ -313,19 +416,63 @@ def decode(data: bytes) -> dict:
         A = len(nd["names"])
         q = np.frombuffer(body, dtype=np.uint8, count=(A - 1) * k, offset=o).reshape(A - 1, k).astype(np.float64)
         o += (A - 1) * k
-        last = np.maximum(Q - q.sum(axis=0), 0.0)
-        st = np.vstack([q, last[None, :]])
+        st = np.vstack([q, np.maximum(Q - q.sum(axis=0), 0.0)[None, :]])
         st /= np.maximum(st.sum(axis=0, keepdims=True), 1e-12)
         v = np.frombuffer(body, dtype=np.uint8, count=2 * k, offset=o).reshape(2, k).T.copy().view("<i2")[:, 0]
-        v = v.astype(np.float64) * EV_STEP
+        v = v.astype(np.float64) * 0.02
         o += 2 * k
         rows = A - 1 if nd["fold0"] else A
         dc = np.frombuffer(body, dtype=np.uint8, count=rows * k, offset=o).reshape(rows, k)
         o += rows * k
-        ev = v[None, :] - _d_value(dc)
+        ev = v[None, :] - _d_value(dc, 0.02, 64, 1.03)
         if nd["fold0"]:
             ev = np.vstack([np.zeros((1, k)), ev])
         nodes.append(dict(nd, strat=st, evs=ev))
+    return {"head": head, "masks": masks, "nodes": nodes}
+
+
+def decode(data: bytes) -> dict:
+    """{'head': header, 'masks': [oop, ip] (1326 bools), 'nodes': [{'path', 'player', 'names', 'fold0', 'freqs'
+    {name: range frequency}, 'combos', 'strat' (A, n_p), 'evs' (A, n_p)}]}, n_p each player's combos (ascending
+    combo index, on the canonical flop; a class's combos share its stored values)."""
+    if data[:len(MAGIC_V1)] == MAGIC_V1:
+        return _decode_v1(data)
+    if data[:len(MAGIC)] != MAGIC:
+        raise ValueError("not a flop library entry")
+    raw = zlib.decompress(data[len(MAGIC):])
+    hl = struct.unpack("<I", raw[:4])[0]
+    head = json.loads(raw[4:4 + hl].decode())
+    body = raw[4 + hl:]
+    q_, (step, lin_n, base) = head["q"], head["ev"]
+    board = parse_cards(head["board"])
+    rep = iso_reps(board)
+    own = rep == np.arange(len(rep))
+    n_own = int(own.sum())
+    nb = (n_own + 7) // 8
+    masks = []
+    for p in (0, 1):
+        m = np.zeros(len(rep), dtype=bool)
+        m[own] = _unbits(body[p * nb:(p + 1) * nb], n_own)
+        masks.append(m[rep])
+    o = 2 * nb
+    nodes = []
+    for nd in head["nodes"]:
+        stored, col = _layout(board, masks[nd["player"]])
+        k, A = len(stored), len(nd["names"])
+        q = np.frombuffer(body, dtype=np.uint8, count=(A - 1) * k, offset=o).reshape(A - 1, k).astype(np.float64)
+        o += (A - 1) * k
+        st = np.vstack([q, np.maximum(q_ - q.sum(axis=0), 0.0)[None, :]])
+        st /= np.maximum(st.sum(axis=0, keepdims=True), 1e-12)
+        v = np.frombuffer(body, dtype=np.uint8, count=2 * k, offset=o).reshape(2, k).T.copy().view("<i2")[:, 0]
+        v = v.astype(np.float64) * step
+        o += 2 * k
+        rows = A - 1 if nd["fold0"] else A
+        dc = np.frombuffer(body, dtype=np.uint8, count=rows * k, offset=o).reshape(rows, k)
+        o += rows * k
+        ev = v[None, :] - _d_value(dc, step, lin_n, base)
+        if nd["fold0"]:
+            ev = np.vstack([np.zeros((1, k)), ev])
+        nodes.append(dict(nd, freqs=dict(zip(nd["names"], nd["freqs"])), strat=st[:, col], evs=ev[:, col]))
     return {"head": head, "masks": masks, "nodes": nodes}
 
 
@@ -431,7 +578,7 @@ class FlopLibrary:
                     e = decode(bytes(raw)) if raw else None
                 except Exception:
                     e = None
-            if e is not None and (e["head"].get("fp") != spot["fp"] or _key_str(e["head"].get("tree")) != _key_str(self.index().get("tree"))):
+            if e is not None and (e["head"].get("fp") != spot["fp"] or e["head"].get("tree") != tree_hash(self.index().get("tree") or {})):
                 e = None
             if len(self._entries) > 64:
                 self._entries.clear()
@@ -609,3 +756,4 @@ def build_report(spot: dict, full0: np.ndarray, full1: np.ndarray, read: Callabl
         flops.append(x)
     return {"format": REPORT_FORMAT, "id": spot["id"], "label": spot.get("label", spot["id"]), "line": spot.get("line"),
             "seats": spot.get("seats"), "pot": spot["pot"], "stack": spot["stack"], "nodes": nodes, "flops": flops}
+

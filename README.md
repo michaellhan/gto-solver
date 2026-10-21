@@ -150,7 +150,7 @@ and optionally a texture (the reports' high card, suits, pairing, connectedness)
 often it comes (any stored bet size by how often in position makes it), a hand drawn from the acting player's range
 there (its weight entering the flop, off the board, times its own frequency of the line so far) in random suits.
 Pick an action (keys 1-4) and the hand's GTO mix and per-action EVs show at once with the grade: **Best** (the
-highest EV, within the library's 0.02 bb step), **Correct** (an action the hand plays 10% or more: "mixed"), or by
+highest EV, to the library's step of 1% of the pot), **Correct** (an action the hand plays 10% or more: "mixed"), or by
 the EV given up against the best, Inaccuracy (under 2% of the pot), Mistake (under 8%), Blunder. Space or Enter
 deals the next. The session's accuracy, average EV loss (bb and % of the pot) and streak show under the hand, and
 each drill's history (hands, accuracy, last 100, best streak) is kept in the browser; **Open in the solver** loads
@@ -807,8 +807,18 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   lead; the out-of-position player facing a bet after checking), only where the other player gets there with 5%
   or more of their range (a lead the big blind never makes is the solve's noise, and the advisor solves live
   behind a line under 10% anyway). Per combo: the average strategy in 1% steps and every action's EV (the best
-  to 0.02 bb, the others as a gap below it, 0.02 bb steps then 3%), plus range totals. 5-9 KB a flop for single
-  raised pots (zlib), 2.5-4.5 KB for 3bet pots: 14.1 MB in all, each file well under 200 KB.
+  to 1% of the pot, the others as a gap below it, 1% steps then 4%), plus range totals.
+* **Format 2** (`flop_library.pack`, `FORMAT`; `drills.js` reads it too, and every reader ignores another format's
+  index): one value per suit class, the combos the flop's own suit permutations map to each other (AhKh and AsKs on
+  K♣7♣2♦; two-tone flops store 832 of 1326, monotone 416, rainbow all), their strategies averaged by reach and
+  their EVs plainly; per node in hand order (ranks high to low, suited first), zlib. The solve tells those combos
+  apart only by its sampled turn and river cards, by 4.7 points of mix per combo on average: averaged, 5 BTN vs BB
+  two-tone and monotone flops came 15-35% closer per combo (mix 8.5 -> 6.8 points, EV 3.0 -> 2.6% of the pot) to a
+  solve playing every turn card. EVs in 1% of the pot (was 0.02 bb) add 0.2-0.35% of the pot of error per combo,
+  against 2-5% between the library's model and every turn played (frequencies: 0.2 points). Recoded from format 1
+  without solving (`--recode`): 14.06 -> 8.77 MB (rainbow flops -22%, the rest ~-50%), 1.5-6 KB a flop. Pages
+  gzips `.bin` too (`application/octet-stream`, `content-encoding: gzip`), but zlib'd files gain nothing (+0.7%):
+  what's stored is what's downloaded, so the 15 MB cap is on both.
 * **Tree**: Accurate's flop model (one turn per rank class, the river bet on; the browser's Accurate config,
   which plays the same flop game as the native one), two flop sizes, 300-500 iterations, to under 0.15% of the pot
   from equilibrium (the live Accurate solve gets ~0.3-0.4% in the server's 30 s and 60-75 iterations in the
@@ -840,6 +850,7 @@ nohup nice python scripts/build_flop_library.py --jobs 5 > reports/flop_library_
 python scripts/build_flop_library.py --spots srp_btn_bb --flops all                     # all 1755 flops of a spot
 python scripts/build_flop_library.py --spots srp_btn_bb --boards Ks7d2c,Qs8s3d          # given flops
 python scripts/build_flop_library.py --index-only
+python scripts/build_flop_library.py --recode        # format-1 entries to the current format, no solving (~5 min)
 ```
 
 Each entry takes ~40-60 s natively on a rainbow flop and up to twice that two-tone, on an idle core (several

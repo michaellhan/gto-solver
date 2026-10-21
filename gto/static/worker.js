@@ -5,7 +5,7 @@ importScripts("https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js");
 const FILES = ["cards", "ranges", "evaluator", "preflop", "pf_equity", "pf_classes", "pf_solve", "pf_game", "pf_game_data", "pf_eqr", "solver", "multiway_solver", "exploit", "advisor", "flop_library", "breakdown"];
 
 // The precomputed flop library (gto/flop_library.py): the Python side asks for its index once and for an entry
-// (<spot>/<flop>.bin, ~10 KB) only when a flop spot it holds comes up. A synchronous request (allowed in a
+// (<spot>/<flop>.bin, 1.5-6 KB) only when a flop spot it holds comes up. A synchronous request (allowed in a
 // worker) because the solver runs synchronously; a missing or unreadable file is just no library.
 self.libFetch = (path) => {
   try {
