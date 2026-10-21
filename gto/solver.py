@@ -87,7 +87,7 @@ class Config:
     bucket_river_step: int = 1
     seed: int = 7
     # cfr: the regret minimizer, a key of CFR_SCHEMES (docs/cfr_research.md; README, Accuracy vs speed)
-    cfr: str = "dcfr"
+    cfr: str = "dcfr-ramp"
     # rake: the winner of a postflop pot (showdown or fold) pays rake_rate of the final pot (without an
     # uncalled bet, which goes back), at most
     # rake_cap bb (None = no cap). 0 = no rake. Preflop pots aren't raked ("no flop, no drop").
@@ -829,9 +829,23 @@ def _has_sampling(node) -> bool:
 # None: set to 0, CFR+'s floor), and the strategy sums by (t / (t + 1))^gamma, which weights iteration s in the
 # average by about s^gamma. A pair (start, end) is a hyperparameter schedule, linear in t over the solve's horizon
 # (Solver.horizon). predictive: regret matching on the regrets plus the last iteration's instantaneous regrets
-# (the prediction of the next ones; Farina et al. 2021). Updates alternate between the players in every scheme.
+# (the prediction of the next ones; Farina et al. 2021). reset4: the strategy sums start over at every power of 4.
+# Updates alternate between the players in every scheme.
+def _gamma_ramp(t: int) -> float:
+    """dcfr-ramp's averaging exponent after iteration t: 3 at the start, 8 from the 50th iteration on. A higher
+    gamma averages fewer, later iterations (s^gamma: the last ~1/(gamma+1) of them). gamma 8 throughout was 10-25%
+    less exploitable than 4 from 50 iterations on, but up to 40% more before 20 (the first iterates are poor);
+    the ramp is as good as 4 early and as 8 late (docs/cfr_research.md)."""
+    return min(8.0, 3.0 + t / 10)
+
+
 CFR_SCHEMES = {
-    "dcfr": dict(alpha=1.5, beta=0.0, gamma=4.0),             # Brown & Sandholm 2019, gamma 4 (the paper: 2)
+    # the default: DCFR (Brown & Sandholm 2019, alpha 1.5, beta 0) averaging with gamma 3 -> 8
+    "dcfr-ramp": dict(alpha=1.5, beta=0.0, gamma=_gamma_ramp),
+    # DCFR with gamma 4 (the paper: 2), the default before: the same exploitability as gamma 2 in 25-35% fewer
+    # iterations on flop, turn and 3bet spots (alpha 1-1.25 spiky, 2+ slower)
+    "dcfr": dict(alpha=1.5, beta=0.0, gamma=4.0),
+    "dcfr-reset4": dict(alpha=1.5, beta=0.0, gamma=3.0, reset4=True),   # postflop-solver's (b-inary)
     "dcfr+": dict(alpha=1.5, beta=None, gamma=4.0),           # DCFR with CFR+'s floor (Xu et al. 2024)
     "lcfr": dict(alpha=1.0, beta=1.0, gamma=1.0),             # Linear CFR
     "cfr+": dict(alpha=None, beta=None, gamma=2.0),           # Tammelin 2014, quadratic averaging
@@ -839,6 +853,7 @@ CFR_SCHEMES = {
     "pdcfr+": dict(alpha=2.3, beta=None, gamma=5.0, predictive=True),         # Xu et al. 2024 (IJCAI)
     "hs-pcfr+": dict(alpha=None, beta=None, gamma=(30.0, 25.0), predictive=True),   # Zhang, McAleer & Sandholm
     "hs-dcfr": dict(alpha=(1.0, 4.0), beta=(-1.0, -3.0), gamma=(30.0, 25.0)),         # (AAAI 2026), HS(30)
+    "hs-dcfr15": dict(alpha=(1.0, 4.0), beta=(-1.0, -3.0), gamma=(15.0, 10.0)),       # HS(15)
 }
 
 
@@ -858,9 +873,7 @@ class Solver:
     def __init__(self, ctx: Ctx, root: Decision, dead: set):
         self.ctx, self.root, self.dead = ctx, root, dead
         self.iters = 0
-        # the regret minimizer (CFR_SCHEMES). DCFR's gamma 4 (the paper: 2) weights recent iterations more in the
-        # average strategy: the same exploitability in 25-35% fewer iterations on flop, turn and 3bet spots (gamma 3-8
-        # alike; alpha 1-1.25 spiky, 2+ slower)
+        # the regret minimizer (CFR_SCHEMES, docs/cfr_research.md)
         sch = CFR_SCHEMES[ctx.cfg.cfr]
         self.alpha, self.beta, self.gamma = sch["alpha"], sch["beta"], sch["gamma"]
         self.predictive = sch.get("predictive", False)
@@ -1278,7 +1291,10 @@ class Solver:
         return u
 
     def _param(self, v):
-        """A scheme's parameter now: a pair is a schedule, linear in the iteration over the horizon."""
+        """A scheme's parameter now: a pair is a schedule, linear in the iteration over the horizon; a function
+        of the iteration count its value."""
+        if callable(v):
+            return v(self.iters)
         if not isinstance(v, tuple):
             return v
         h = max(self.horizon or 1, 1)

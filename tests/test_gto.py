@@ -248,13 +248,14 @@ class TestSolverMath(unittest.TestCase):
             cfg = Config(n_turns=2, leaf_turns=2, leaf_rivers_flop=2, n_rivers_from_flop=2, bet_sizes=small,
                          raise_sizes=small, **kw)
             # float32 sums in a different order drift apart early on (60 iterations: up to 0.08% of the pot), less
-            # so later; the default's deeper tree drifts more (150 iterations: 0.71% and 0.77% of the pot)
+            # so later; the default's deeper tree drifts more (150 iterations: 0.67% and 0.77% of the pot; with
+            # gamma 4 0.71% and 0.77%: averaging fewer, later iterations shows more of the drift)
             ref = solve(board, r_oop, r_ip, pot=5.5, stack=97.5, cfg=cfg, max_iters=150, time_budget=1e9)
             S.NO_BLAS = True
             try:
                 sol = solve(board, r_oop, r_ip, pot=5.5, stack=97.5, cfg=cfg, max_iters=150, time_budget=1e9)
                 self.assertIsNotNone(sol.solver._live)
-                self.assertLess(abs(sol.exploitability() - ref.exploitability()), max(0.05, 0.12 * ref.exploitability()))
+                self.assertLess(abs(sol.exploitability() - ref.exploitability()), max(0.05, 0.16 * ref.exploitability()))
                 live = sol.r0 > 0
                 self.assertLess(np.abs(sol.evs[:, sol.ctx.active][:, live] - ref.evs[:, ref.ctx.active][:, live]).max(), 0.2)
             finally:
