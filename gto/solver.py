@@ -86,6 +86,8 @@ class Config:
     turn_buckets: bool = False
     bucket_river_step: int = 1
     seed: int = 7
+    # cfr: the regret minimizer, a key of CFR_SCHEMES (docs/cfr_research.md; README, Accuracy vs speed)
+    cfr: str = "dcfr"
     # rake: the winner of a postflop pot (showdown or fold) pays rake_rate of the final pot (without an
     # uncalled bet, which goes back), at most
     # rake_cap bb (None = no cap). 0 = no rake. Preflop pots aren't raked ("no flop, no drop").
@@ -110,7 +112,7 @@ class Config:
                       turn_buckets=self.turn_buckets, bucket_river_step=self.bucket_river_step,
                       later_sizes=None if self.later_sizes is None else
                       {k: {st: list(v) for st, v in d.items()} for k, d in self.later_sizes.items()},
-                      seed=self.seed, rake_rate=self.rake_rate, rake_cap=self.rake_cap)
+                      seed=self.seed, cfr=self.cfr, rake_rate=self.rake_rate, rake_cap=self.rake_cap)
 
     def sizes_key(self) -> tuple:
         return (tuple((k, tuple(v)) for k, v in sorted(self.bet_sizes.items())),
@@ -522,7 +524,8 @@ class BucketEntry:
 
 
 class Decision:
-    __slots__ = ("boards", "player", "names", "children", "regret", "ssum", "pot_now", "bets", "B", "blind", "bucketed")
+    __slots__ = ("boards", "player", "names", "children", "regret", "ssum", "pred", "pot_now", "bets", "B", "blind",
+                 "bucketed")
 
     def __init__(self, boards, player, names, children, pot_now, bets, n, blind=False, bucketed=False):
         self.boards, self.player, self.names, self.children = boards, player, names, children
@@ -533,6 +536,7 @@ class Decision:
         A = len(names)
         self.regret = np.zeros((self.B, A, n), dtype=np.float32)
         self.ssum = np.zeros((self.B, A, n), dtype=np.float32)
+        self.pred = None          # the last instantaneous regrets, a predictive solver's prediction (Config.cfr)
 
     @property
     def board(self):
@@ -541,7 +545,12 @@ class Decision:
     def strategy(self, sel=None) -> np.ndarray:
         # regret matching in as few numpy calls as possible (a native solve is call-overhead bound): one
         # in-place divide, then uniform wherever no regret is positive (rare once a solve is under way)
-        pos = np.maximum(self.regret if sel is None else self.regret[sel], 0.0)
+        if self.pred is None:
+            pos = np.maximum(self.regret if sel is None else self.regret[sel], 0.0)
+        else:
+            # predictive regret matching: the regrets plus the prediction of the next iteration's (the last one's)
+            pos = self.regret + self.pred if sel is None else self.regret[sel] + self.pred[sel]
+            np.maximum(pos, 0.0, out=pos)
         tot = pos.sum(axis=1, keepdims=True)
         np.divide(pos, tot, out=pos)
         zero = tot == 0
@@ -786,6 +795,7 @@ def _merge(nodes, pairs: list):
         m.children = [_merge([n.children[a] for n in nodes], pairs) for a in range(len(first.children))]
         m.regret = np.concatenate([n.regret for n in nodes])
         m.ssum = np.concatenate([n.ssum for n in nodes])
+        m.pred = None
         pairs.append((m, nodes))
         return m
     if isinstance(first, BucketEntry):
@@ -814,6 +824,24 @@ def _has_sampling(node) -> bool:
 
 
 # ----------------------------------------------------------------- solver
+# Regret minimizers (Config.cfr; docs/cfr_research.md). After iteration t the cumulative regrets are scaled by
+# t^alpha / (t^alpha + 1) where positive (alpha None: not discounted) and t^beta / (t^beta + 1) where negative (beta
+# None: set to 0, CFR+'s floor), and the strategy sums by (t / (t + 1))^gamma, which weights iteration s in the
+# average by about s^gamma. A pair (start, end) is a hyperparameter schedule, linear in t over the solve's horizon
+# (Solver.horizon). predictive: regret matching on the regrets plus the last iteration's instantaneous regrets
+# (the prediction of the next ones; Farina et al. 2021). Updates alternate between the players in every scheme.
+CFR_SCHEMES = {
+    "dcfr": dict(alpha=1.5, beta=0.0, gamma=4.0),             # Brown & Sandholm 2019, gamma 4 (the paper: 2)
+    "dcfr+": dict(alpha=1.5, beta=None, gamma=4.0),           # DCFR with CFR+'s floor (Xu et al. 2024)
+    "lcfr": dict(alpha=1.0, beta=1.0, gamma=1.0),             # Linear CFR
+    "cfr+": dict(alpha=None, beta=None, gamma=2.0),           # Tammelin 2014, quadratic averaging
+    "pcfr+": dict(alpha=None, beta=None, gamma=2.0, predictive=True),         # Farina, Kroer & Sandholm 2021
+    "pdcfr+": dict(alpha=2.3, beta=None, gamma=5.0, predictive=True),         # Xu et al. 2024 (IJCAI)
+    "hs-pcfr+": dict(alpha=None, beta=None, gamma=(30.0, 25.0), predictive=True),   # Zhang, McAleer & Sandholm
+    "hs-dcfr": dict(alpha=(1.0, 4.0), beta=(-1.0, -3.0), gamma=(30.0, 25.0)),         # (AAAI 2026), HS(30)
+}
+
+
 class Solver:
     """Speed (natively the solve is bound by Python and numpy per-call overhead, besides the leaf matvecs):
     * the subtrees below the root street's chance nodes mostly share one shape (pots differ, actions
@@ -830,10 +858,14 @@ class Solver:
     def __init__(self, ctx: Ctx, root: Decision, dead: set):
         self.ctx, self.root, self.dead = ctx, root, dead
         self.iters = 0
-        # DCFR parameters. gamma 4 (the paper: 2) weights recent iterations more in the average strategy: the same
-        # exploitability in 25-35% fewer iterations on flop, turn and 3bet spots (gamma 3-8 alike; alpha 1-1.25 spiky,
-        # 2+ slower; negative regrets reset each iteration (beta -inf) or predictive regret matching no better)
-        self.alpha, self.beta, self.gamma = 1.5, 0.0, 4.0
+        # the regret minimizer (CFR_SCHEMES). DCFR's gamma 4 (the paper: 2) weights recent iterations more in the
+        # average strategy: the same exploitability in 25-35% fewer iterations on flop, turn and 3bet spots (gamma 3-8
+        # alike; alpha 1-1.25 spiky, 2+ slower)
+        sch = CFR_SCHEMES[ctx.cfg.cfr]
+        self.alpha, self.beta, self.gamma = sch["alpha"], sch["beta"], sch["gamma"]
+        self.predictive = sch.get("predictive", False)
+        self.reset4 = sch.get("reset4", False)
+        self.horizon = None           # a schedule's length in iterations (None: the first run's max_iters)
         self.rng = random.Random(ctx.cfg.seed + 2)
         self.sampling = True          # chance sampling while training; off for EVs and reports
         self._nodes: List[Decision] = []
@@ -894,20 +926,23 @@ class Solver:
             self._bgroups.append((_merge(members, pairs2), members))
         replaced = {id(n) for _, nodes in pairs + pairs2 for n in nodes}
         owners = [n for n in self._nodes if id(n) not in replaced] + [m for m, _ in pairs + pairs2 if id(m) not in replaced]
-        for f in ("regret", "ssum"):
-            flat = np.empty(sum(getattr(n, f).size for n in owners), dtype=np.float32)
+        for f in ("regret", "ssum") + (("pred",) if self.predictive else ()):
+            flat = np.zeros(sum(n.regret.size for n in owners), dtype=np.float32)
             off = 0
             for n in owners:
                 a = getattr(n, f)
-                v = flat[off:off + a.size].reshape(a.shape)
-                v[...] = a
+                v = flat[off:off + n.regret.size].reshape(n.regret.shape)
+                if a is not None:
+                    v[...] = a
                 setattr(n, f, v)
-                off += a.size
+                off += v.size
             setattr(self, "_" + f, flat)
         for m, nodes in pairs2 + pairs:     # (the second merge's first: the first merge's nodes are its views)
             off = 0
             for n in nodes:
                 n.regret, n.ssum = m.regret[off:off + n.B], m.ssum[off:off + n.B]
+                if self.predictive:
+                    n.pred = m.pred[off:off + n.B]
                 off += n.B
 
     def compat_sum(self, ro):
@@ -1132,12 +1167,17 @@ class Solver:
             node_util = (strat * utils).sum(axis=1)                     # (B, N)
             if update:
                 rp = r0 if p == 0 else r1
+                utils -= node_util[:, None, :]          # the instantaneous regrets
                 if sel is None:
-                    node.regret += utils - node_util[:, None, :]
+                    node.regret += utils
                     node.ssum += rp[:, None, :] * strat
+                    if node.pred is not None:
+                        node.pred[...] = utils
                 else:
-                    node.regret[sel] += utils - node_util[:, None, :]
+                    node.regret[sel] += utils
                     node.ssum[sel] += rp[:, None, :] * strat
+                    if node.pred is not None:
+                        node.pred[sel] = utils
             return node_util
         # the opponent acts: every child's reach in one product
         reach = (r1 if p == 0 else r0)[:, None, :] * strat
@@ -1237,14 +1277,29 @@ class Solver:
         self._pre.clear()
         return u
 
+    def _param(self, v):
+        """A scheme's parameter now: a pair is a schedule, linear in the iteration over the horizon."""
+        if not isinstance(v, tuple):
+            return v
+        h = max(self.horizon or 1, 1)
+        return v[0] + (v[1] - v[0]) * min(self.iters / h, 1.0)
+
     def _discount(self):
         t = float(self.iters)
-        pos_f = (t ** self.alpha) / (t ** self.alpha + 1)
-        neg_f = 0.5 if self.beta == 0 else (t ** self.beta) / (t ** self.beta + 1)
-        s_f = (t / (t + 1)) ** self.gamma
+        alpha, beta, gamma = self._param(self.alpha), self._param(self.beta), self._param(self.gamma)
         r = self._regret
-        r *= np.where(r > 0, np.float32(pos_f), np.float32(neg_f))     # (a float64 factor array: twice the traffic)
-        self._ssum *= s_f
+        if beta is None:
+            np.maximum(r, 0.0, out=r)
+            if alpha is not None:
+                r *= np.float32((t ** alpha) / (t ** alpha + 1))
+        else:
+            pos_f = 1.0 if alpha is None else (t ** alpha) / (t ** alpha + 1)
+            neg_f = (t ** beta) / (t ** beta + 1)
+            r *= np.where(r > 0, np.float32(pos_f), np.float32(neg_f))     # (a float64 factor array: twice the traffic)
+        if self.reset4:
+            # postflop-solver's averaging: the strategy sums start over at every power of 4
+            t -= 4 ** int(np.log(t) / np.log(4) + 1e-9)
+        self._ssum *= np.float32((t / (t + 1)) ** gamma)
 
     def run(self, r0, r1, time_budget=3.0, max_iters=1000, min_iters=10, should_stop=None):
         """r0, r1: (N,) root reaches. Adds iterations until the budget is spent.
@@ -1254,6 +1309,8 @@ class Solver:
             live = (np.flatnonzero(r0 > 0), np.flatnonzero(r1 > 0))
             if self._live is None or any(not np.array_equal(a, b) for a, b in zip(live, self._live)):
                 self._live, self._trimmed = live, {}
+        if self.horizon is None and max_iters > self.iters:
+            self.horizon = max_iters
         t0 = time.time()
         start = self.iters
         while self.iters < max_iters:
