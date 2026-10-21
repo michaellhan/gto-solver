@@ -1344,7 +1344,7 @@ function renderAll() {
 // ---- review the whole hand: each of your recorded decisions is solved in turn (at the current speed) and graded
 let review = null;   // { n, k, what, cancel } while a review runs; cancel "restore" (its Cancel) or "drop" (a new hand)
 async function reviewHand() {
-  if (review || !S.cards[0] || !S.cards[1]) return;
+  if (review || practicing() || !S.cards[0] || !S.cards[1]) return;   // (an import's toast can outlive it)
   document.getElementById("toast").hidden = true;
   await cancelSolve(); await modeReady;
   const full = JSON.parse(JSON.stringify(S)), spots = [];

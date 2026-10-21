@@ -250,3 +250,22 @@ test("per-seat stacks: practice deals keep them, and a short all-in's side pot i
   assert.deepEqual(r2.pots.map(x => x.winners), [["BTN", "BB"], ["BB"]]);
   assert.match(p.byId("practiceBar").innerHTML, /You lose/);
 });
+
+test("an import's toast (Review whole hand) goes when practice starts, and a review never runs on a practice hand", async () => {
+  const p = loadPage();
+  await p.ready();
+  p.run(`toast("Imported PokerStars hand", null, 15000)`);
+  assert.equal(p.byId("toast").hidden, false);
+  vm.runInContext(PRACTICE, p.ctx, { filename: "practice.js" });
+  p.run("Practice.set(true)");
+  assert.equal(p.byId("toast").hidden, true);
+  await playHand(p);
+  const hand = JSON.stringify(p.S);
+  // the toast's button, clicked before it was hidden: rewinding the practice hand to each of your decisions
+  // would have the practice loop deal over it or move the other seats
+  p.run("var seen = []; const __an = analyze; analyze = (sim) => { seen.push(JSON.stringify(S)); return __an(sim); };");
+  await p.run("reviewHand()");
+  assert.deepEqual(p.val("seen"), []);
+  assert.equal(p.val("review"), null);
+  assert.equal(JSON.stringify(p.S), hand);
+});

@@ -160,6 +160,7 @@
     P.on = !!on; store(ON, P.on ? 1 : 0);
     document.body.classList.toggle("practice", P.on);
     const b = document.getElementById("practiceBtn"); b.classList.toggle("active", P.on);
+    if (P.on) document.getElementById("toast").hidden = true;   // e.g. an import's "Review whole hand", for the hand dealt over
     if (P.on && !ours()) deal();
     renderAll();
   }
