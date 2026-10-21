@@ -1270,6 +1270,9 @@ class Advisor:
         self._by_spot: Dict[tuple, Solution] = {}    # latest solve per spot, whatever the ranges
         # precomputed flop solves (gto/flop_library.py: FlopLibrary), used where they hold the spot; None = off
         self.library = None
+        # the street advised on (heads-up from its start) also gets the earlier streets' prior_budget its narrowing
+        # didn't spend (native Fast: README, Accuracy vs speed); off: time_budget alone
+        self.spare_prior = False
         self.rng = random.Random()
 
     # ------------------------------------------------------------ public
@@ -1806,12 +1809,14 @@ class Advisor:
             return TendencyLock(sol.ctx, 1 - hero_p, adj, base, next_nodes) if adj else base
         widened: List[str] = []
         rare_lines: List[str] = []
+        spare, t_prior = 0.0, time.time()   # earlier streets' budgets (prior_budget each) left unspent
         if hu_from_start:
             # narrow through earlier streets that were also heads-up between these two
             for st in rep[1:-1]:
                 sub_board = board[:{"flop": 3, "turn": 4, "river": 5}[st.name]]
                 if st.players_start != remaining:
                     continue   # multiway: narrowed above
+                spare += self.prior_budget
                 eff = min(stk[oop] - st.inv_start[oop], stk[ip] - st.inv_start[ip])
                 cfg = self._cfg_with_real_sizes(st, oop, ip, eff)
                 hit = self._from_library(lib, full, sub_board, r0, r1, st, eff, cfg, oop, ip, notes,
@@ -1856,7 +1861,10 @@ class Advisor:
         if lib_sol is not None:
             sol = lib_sol
         elif hu_from_start:
-            sol = self._solve_cached(board, r0, r1, cur.pot_start, eff, self.time_budget, cfg=cfg)
+            # spare_prior: the street advised on also gets what the narrowing solves didn't spend (a flop from the
+            # library or from this hand's flop advice costs nothing), so a request never takes longer than cold
+            spare = max(0.0, spare - (time.time() - t_prior)) if self.spare_prior else 0.0
+            sol = self._solve_cached(board, r0, r1, cur.pot_start, eff, self.time_budget + spare, cfg=cfg)
             # The villain's actions this street are exact unless the solve rarely takes them: then
             # smooth as on earlier streets, so we aren't advised against a sliver of a range.
             walk = lambda: self._walk(sol, cur.actions, oop, ip, cur.pot_start, eff, list(notes), cur.name,

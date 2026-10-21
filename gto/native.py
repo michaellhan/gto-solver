@@ -44,15 +44,18 @@ from .flop_library import default_library  # noqa: E402
 # 0.3-0.5x every river's cost an iteration, about as close to equilibrium at the same iterations). The menu was the
 # biggest error: those solves overbet 29-36% of the range on blank and overcard turns, so one 75% size, converged,
 # was 0.6-3.8% of the pot off per combo. Accurate plays 33/75/125% (about its old two sizes' cost with every river):
-# 0.11-0.32% of the pot off after 30 s, where it was 0.7-2.9. Fast's 2.5 s settle two turn sizes with one river size
-# inside (75/125% turn, 75% river; 37-62 iterations): 1.2-2.4% off, 1.9 on average as before, better where the
-# reference overbets and worse where it leads or bets small (a third-pot size too doesn't settle in 2.5 s).
+# 0.11-0.32% of the pot off after 30 s, where it was 0.7-2.9. Fast plays the browser Fast's turn menu (33/125%, the
+# river inside at 75%) and its turn also gets the 2.5 s the narrowing flop didn't spend (Advisor.spare_prior: a flop
+# from the library or from the hand's flop advice is free, so a turn request never takes longer than a cold one's
+# 5 s): at 5 s (80-150 iterations) 0.5-1.8% of the pot off, 1.0 on average, where 75/125% at 2.5 s was 0.6-2.6, 1.65
+# (75/125% at 5 s: 1.5, its missing third-pot lead 3.0 on K72-7). Cold (the flop solved in the same request) the turn
+# keeps 2.5 s: 1.9 on average, 0.7-4.3.
 # A river root bets 33/75/125/250% pot (Advisor.root_sizes): polar rivers overbet half the range, and 75% alone
 # was 1.2-7.2% of the pot off per combo where these are 0.1-0.6; a river iteration takes milliseconds.
 _FLOP = {"bet": [0.33, 0.75], "raise": [0.5]}
 ROOT_SIZES = {"river": {"bet": [0.33, 0.75, 1.25, 2.5]}}
 SPEEDS = {
-    "fast": (dict(bet_sizes={"flop": _FLOP["bet"], "turn": [0.75, 1.25], "river": [0.75]},
+    "fast": (dict(bet_sizes={"flop": _FLOP["bet"], "turn": [0.33, 1.25], "river": [0.75]},
                   raise_sizes={"flop": _FLOP["raise"], "turn": [0.75], "river": [0.75]},
                   model=dict(river_buckets=32, turn_buckets=True, bucket_river_step=3, river_classes=True)), 2.5, 2.5),
     "accurate": (dict(bet_sizes={"flop": _FLOP["bet"], "turn": [0.33, 0.75, 1.25], "river": [0.33, 0.75, 1.25]},
@@ -85,6 +88,7 @@ def advisor(speed: str = "fast", depth: int = 2, budget: Optional[float] = None,
     adv.root_sizes = {st: {k: list(v) for k, v in d.items()} for st, d in ROOT_SIZES.items()}
     adv.mw_solve_streets = MW_STREETS[speed]
     adv.library = default_library() if library else None
+    adv.spare_prior = speed == "fast"
     return adv
 
 

@@ -59,6 +59,32 @@ class TestNativeSpeeds(unittest.TestCase):
         self.assertGreater(combos, 45, r["villain_range"])
         self.assertTrue(any("ranges follow it" in n for n in r["notes"]), r["notes"])
 
+    def test_turn_gets_the_unspent_flop_budget(self):
+        """Fast's turn also gets the prior budget its narrowing flop didn't spend (Advisor.spare_prior): solved in
+        the same request the flop takes its share; already solved for the flop's advice, the turn gets both."""
+        import gto.advisor as A
+        for speed, spare in (("fast", True), ("accurate", False)):
+            adv = advisor(speed, budget=0.4, prior_budget=0.4, library=False)
+            self.assertEqual(adv.spare_prior, spare)
+            budgets = []
+            orig = A.Advisor._solve_cached
+
+            def rec(self_, board, *a, **k):
+                budgets.append((len(board), a[4] if len(a) > 4 else k["budget"]))
+                return orig(self_, board, *a, **k)
+            base = dict(hero="BTN", hole="AhQd", stack=100, preflop=SRP, board="Ks7d2cTh",
+                        turn=[{"pos": "BB", "action": "check"}])
+            with mock.patch.object(A.Advisor, "_solve_cached", rec):
+                adv.advise(dict(base, flop=FLOP))                       # cold: the flop is solved here
+                cold = [b for n, b in budgets if n == 4][0]
+                adv.advise(dict(base, board="Ks7d2cTd", flop=FLOP))    # another turn: the flop is cached
+                warm = [b for n, b in budgets if n == 4][-1]
+            self.assertLessEqual(cold, 0.4 + 0.4)
+            if spare:
+                self.assertGreater(warm, 0.75)
+            else:
+                self.assertEqual((cold, warm), (0.4, 0.4))
+
     def test_server_picks_the_advisor_by_speed(self):
         advs = advisors(budget=1.0)
         self.assertEqual(advs["fast"].time_budget, 1.0)

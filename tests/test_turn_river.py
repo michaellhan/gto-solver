@@ -203,7 +203,8 @@ class TestTurnRiverReferences(unittest.TestCase):
     the per-budget numbers) and published figures (TURN_REFERENCES, RIVER_REFERENCES)."""
 
     _sols = {}
-    FAST_ITERS, ACC_ITERS = 60, 150     # (native Fast gets ~60-80 turn iterations in 2.5 s, Accurate 200-300 in 30 s)
+    # (native Fast's turn gets ~80-150 iterations in 5 s, the flop's unspent 2.5 s with its own; Accurate 200-300 in 30 s)
+    FAST_ITERS, ACC_ITERS = 100, 150
 
     @classmethod
     def sol(cls, speed, spot):
@@ -215,17 +216,17 @@ class TestTurnRiverReferences(unittest.TestCase):
         return cls._sols[key]
 
     def test_fast_turn_close_to_rich_reference(self):
-        # native Fast's turn (75% and 125% pot, the river inside at 75%, river classes) at 60 iterations (~2.5 s) against
-        # the rich reference: EVs within 2.6% of the pot per combo (measured 0.7-2.3; one size with every river at its
-        # 42 iterations: 1.5-3.4), frequencies within 6 points on average, 11 where the reference leads or probes a
-        # third of the pot, which Fast's menu lacks (K72-7, Q83 checked through: measured 9.8 and 8.3)
+        # native Fast's turn (33% and 125% pot, the river inside at 75%, river classes) at 100 iterations (~5 s) against
+        # the rich reference: EVs within 2% of the pot per combo (measured 0.5-1.8; 75/125% at 2.5 s, before: 0.6-2.6),
+        # frequencies within 6 points on average, 8 in the 3bet pot, where the reference's 75% barrel (no such size here) goes
+        # to 125% (measured 6.8, its EVs 1.7)
         refs = T.load_refs()
         for spot in ("t-k72-3", "t-k72s-4s", "t-k72-7", "t-q83-a", "t-q83x-5", "t-3b-k72-4"):
             sol = self.sol("fast", spot)
             ref = refs[spot]["rich"]
             err, worst = T.freq_error(T.stats(sol), ref["stats"])
-            self.assertLess(err, 11.0 if spot in ("t-k72-7", "t-q83x-5") else 6.0, f"{spot}: {err:.1f} (worst {worst})")
-            self.assertLess(T.ev_error(sol, ref["values"]), 2.6, spot)
+            self.assertLess(err, 8.0 if spot == "t-3b-k72-4" else 6.0, f"{spot}: {err:.1f} (worst {worst})")
+            self.assertLess(T.ev_error(sol, ref["values"]), 2.0, spot)
 
     def test_accurate_turn_close_to_rich_reference(self):
         # 33/75/125% with river classes at 150 iterations (native Accurate gets ~200 in 30 s): frequencies within 3.5 points
@@ -253,8 +254,8 @@ class TestTurnRiverReferences(unittest.TestCase):
         for spot, stat, lo, hi, src in TURN_REFERENCES + RIVER_REFERENCES:
             ref = REFS[spot]["rich"]["stats"].get(stat, 0.0)
             self.assertTrue(lo <= ref <= hi, f"reference {spot} {stat} {ref:.1f} not in [{lo}, {hi}] ({src})")
-            # (Accurate where its solve is shared with the test above; Fast has no small lead for K72-7's)
-            speeds = ["accurate"] if spot in ("t-k72-3", "t-k72-7", "t-q83-a") else ["fast"]
+            # (Accurate too where its solve is shared with the test above)
+            speeds = ["fast", "accurate"] if spot in ("t-k72-3", "t-k72-7", "t-q83-a") else ["fast"]
             for speed in speeds:
                 v = T.stats(self.sol(speed, spot)).get(stat, 0.0)
                 self.assertTrue(lo <= v <= hi, f"{speed} {spot} {stat} {v:.1f} not in [{lo}, {hi}] ({src})")

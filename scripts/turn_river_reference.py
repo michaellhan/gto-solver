@@ -91,7 +91,8 @@ CONFIGS = {
     # now (gto/native.py, static/worker.js)
     "browser-fast-now": (dict(_menu([0.33, 1.25], [0.75]), river_classes=True, _root_river=ROOT_RIVER), "rich", 8.0, "browser"),
     "browser-accurate-now": (dict(RICH, river_classes=True, _root_river=ROOT_RIVER), "rich", 60.0, "browser"),
-    "native-fast-now": (dict(_menu([0.75, 1.25], [0.75]), river_classes=True, _root_river=ROOT_RIVER), "rich", 2.5, "native"),
+    # (native Fast's turn gets 5 s where the flop costs nothing, 2.5 s when the request solves the flop too: -cold)
+    "native-fast-now": (dict(_menu([0.33, 1.25], [0.75]), river_classes=True, _root_river=ROOT_RIVER), "rich", 5.0, "native"),
     "native-accurate-now": (dict(RICH, river_classes=True, _root_river=ROOT_RIVER), "rich", 30.0, "native"),
     # candidates: river classes, other menus, the river root's menu
     "browser-fast-classes": (dict(ONE, river_classes=True, _root_river=ROOT_RIVER), "one", 8.0, "browser"),
@@ -107,6 +108,11 @@ CONFIGS = {
     "browser-fast-ob": (dict(_menu([0.75, 1.25], [0.75, 1.25]), river_classes=True, _root_river=ROOT_RIVER), "rich", 8.0, "browser"),
     "browser-accurate-ob": (dict(_menu([0.75, 1.25], [0.75, 1.25]), river_classes=True, _root_river=ROOT_RIVER), "rich", 60.0, "browser"),
     "browser-accurate-rich": (dict(RICH, river_classes=True, _root_river=ROOT_RIVER), "rich", 60.0, "browser"),
+    # native Fast's turn before (75/125%, 2.5 s), and with the time the narrowing flop leaves (gto/native.py)
+    "native-fast-prev": (dict(_menu([0.75, 1.25], [0.75]), river_classes=True, _root_river=ROOT_RIVER), "rich", 2.5, "native"),
+    "native-fast-5s": (dict(_menu([0.75, 1.25], [0.75]), river_classes=True, _root_river=ROOT_RIVER), "rich", 5.0, "native"),
+    "native-fast-rich-5s": (dict(_menu([0.33, 0.75, 1.25], [0.75]), river_classes=True, _root_river=ROOT_RIVER), "rich", 5.0, "native"),
+    "native-fast-cold": (dict(_menu([0.33, 1.25], [0.75]), river_classes=True, _root_river=ROOT_RIVER), "rich", 2.5, "native"),
 }
 # idle iterations a second of the one-size every-river turn tree (see the docstring)
 BASE_RATE = {"native": 16.8, "browser": 11.6}
