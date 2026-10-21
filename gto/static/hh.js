@@ -54,12 +54,35 @@
     return { lines: out, site: "iPoker", hint };
   }
 
+  // A history's lines (trimmed, no blank ones) as one array per hand: a hand starts at a site's first header line
+  // (a header within 3 lines of another is the same hand's: 888's "#Game No" then its "***** … Hand History"),
+  // anything before the first one stays with it
+  function handLines(text) {
+    const lines = String(text || "").replace(/\r/g, "").split("\n").map(l => l.trim()).filter(Boolean);
+    const starts = lines.map((l, i) => START.test(l) ? i : -1).filter((i, k, a) => i >= 0 && !a.slice(Math.max(0, k - 3), k).some(j => j >= 0));
+    if (starts.length < 2) return [lines];
+    return starts.map((s, k) => lines.slice(k ? s : 0, starts[k + 1]));
+  }
+  // A file of many hands as one text per hand, each as parseHandHistory takes it: iPoker's XML a <session> per
+  // <game> with the <general> before it (the stakes, your nickname), the other sites' text cut at each hand's header
+  function splitHands(text) {
+    text = String(text || "");
+    if (/<game\b/i.test(text)) {
+      const out = [];
+      let gen = "";
+      for (const [m] of text.matchAll(/<general\b[\s\S]*?<\/general>|<game\b[\s\S]*?<\/game>/g))
+        if (m.startsWith("<general")) gen = m; else out.push(`<session>${gen}${m}</session>`);
+      return out;
+    }
+    return handLines(text).map(ls => ls.join("\n")).filter(Boolean);
+  }
+
   // the other sites' lines as PokerStars-like ones, and the hand's site
   function norm(text, warnings) {
     if (/<game\b/i.test(text)) return ipoker(String(text), warnings);
-    let lines = String(text || "").replace(/\r/g, "").split("\n").map(l => l.trim()).filter(Boolean);
-    const starts = lines.map((l, i) => START.test(l) ? i : -1).filter((i, k, a) => i >= 0 && !a.slice(Math.max(0, k - 3), k).some(j => j >= 0));
-    if (starts.length > 1) { lines = lines.slice(starts[0], starts[1]); warnings.push(`${starts.length} hands pasted: imported the first.`); }
+    const hands = handLines(text);
+    let lines = hands[0];
+    if (hands.length > 1) { lines = lines.slice(lines.findIndex(l => START.test(l))); warnings.push(`${hands.length} hands pasted: imported the first.`); }
     const pre = lines.slice(0, 3).join("\n"), site = (SITES.find(([, re]) => re.test(pre)) || ["generic"])[0], all = lines.join(" ");
     // dots for thousands (888's "1.183.764 $"), when no amount has cents
     if (/\d\.\d{3}(?!\d)/.test(all) && !/\d\.\d\d?(?!\d)/.test(all)) lines = lines.map(l => l.replace(/(\d)\.(?=\d{3}(?!\d))/g, "$1"));
@@ -235,6 +258,6 @@
     return { state: st, hand: h, warnings };
   }
 
-  const api = { parseHandHistory, importHand, HH_SEATS: SEATS };
+  const api = { parseHandHistory, importHand, splitHands, HH_SEATS: SEATS };
   if (typeof module === "object" && module.exports) module.exports = api; else Object.assign(globalThis, api);
 })();

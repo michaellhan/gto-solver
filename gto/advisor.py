@@ -1328,6 +1328,7 @@ class Advisor:
         self.spare_prior = False
         self.rng = random.Random()
         self._breakdown = False   # this request asked for the breakdown (state "breakdown": true)
+        self._lib_only = False    # state "library_only": a flop the library holds, else {"skipped": …}, no solve
 
     # ------------------------------------------------------------ public
     def advise(self, state: dict) -> dict:
@@ -1399,6 +1400,10 @@ class Advisor:
             self.prior_budget = max(0.3, min(30.0, float(state["prior_budget"])))
         # the Breakdown view (gto/breakdown.py) on the advice's own spot; not for a practice opponent's move
         self._breakdown = bool(state.get("breakdown")) and actor is None
+        # the page's session analyzer in its "flop-library spots only" scope: a flop the library holds, never a solve
+        self._lib_only = bool(state.get("library_only")) and actor is None
+        if self._lib_only and len(board) != 3:
+            return {"skipped": "only flop spots are answered from the library"}
         try:
             res = self._postflop(hero, hole, board, stack, streets, positions, t0,
                                  pool=state.get("opponents") == "pool", actor=actor, custom=custom,
@@ -1408,7 +1413,7 @@ class Advisor:
             return res
         finally:
             self.time_budget, self.prior_budget, self.cfg, self.root_sizes = saved
-            self._breakdown = False
+            self._breakdown = self._lib_only = False
 
     # ------------------------------------------------------------ preflop
     def _preflop(self, hero, hole, preflop, positions, stack, t0, pool=False):
@@ -1810,6 +1815,8 @@ class Advisor:
             notes.append(f"{'your' if p == hero else p + chr(39) + 's'} preflop line isn't in the chart, so "
                          f"{'your' if p == hero else 'their'} range is the hands that take its last action")
         # Streets that started with 3+ players can't be solved; narrow ranges there by rule.
+        if self._lib_only and len(cur.players_start) > 2:
+            return {"skipped": "multiway: not a flop-library spot"}
         mw_streets = [st for st in rep[1:] if len(st.players_start) > 2]
         slow: Dict[str, np.ndarray] = {}
         by_rules = []
@@ -1837,6 +1844,8 @@ class Advisor:
 
         live_opps = [p for p in remaining if p != hero]
         if len(live_opps) != 1 or cur.allin & set(remaining) - {hero} and len(remaining) > 2:
+            if self._lib_only:
+                return {"skipped": "multiway: not a flop-library spot"}
             if actor:
                 move = self._mw_actor_move(board, hero, hole, stk, streets, cur, actor) if len(remaining) == 3 else None
                 return move or {"error": "multiway"}
@@ -1929,6 +1938,8 @@ class Advisor:
                     lib_sol, node, n_r0, n_r1 = hit
                     notes.extend(n2)
                     notes.append(lib_sol.note())
+        if lib_sol is None and self._lib_only:
+            return {"skipped": "not a flop-library spot"}
         if lib_sol is not None:
             sol = lib_sol
         elif hu_from_start:
