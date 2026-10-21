@@ -1182,6 +1182,11 @@ class Advisor:
         # Config fields for the earlier streets' solves that narrow ranges (prior_budget each), e.g. the browser's
         # Accurate keeps their flop's river checked down: 12 s there is ~10 iterations with river_play
         self.prior_model: Optional[dict] = None
+        # a street's bet and raise sizes when a solve starts on it ({"river": {"bet": [...], "raise": [...]}}), in place
+        # of cfg's, which also shape that street inside an earlier street's solve: a river root solves in milliseconds
+        # an iteration, so it can afford the overbets a polar river uses that a turn solve's rivers can't (README,
+        # Accuracy vs speed). Sizes the request sets for that street (state["sizes"]) win.
+        self.root_sizes: Dict[str, Dict[str, List[float]]] = {}
         self._by_spot: Dict[tuple, Solution] = {}    # latest solve per spot, whatever the ranges
         self.rng = random.Random()
 
@@ -1236,7 +1241,10 @@ class Advisor:
             if locks and "notes" in res:
                 res["notes"].append("locks apply after the flop (preflop follows the charts)")
             return res
-        saved = self.time_budget, self.prior_budget, self.cfg
+        saved = self.time_budget, self.prior_budget, self.cfg, self.root_sizes
+        if sizes:
+            self.root_sizes = {st: {k: v for k, v in d.items() if k != "raise" or "raise" not in sizes}
+                               for st, d in self.root_sizes.items() if st not in sizes}
         if positions.rake or sizes:
             self.cfg = self.cfg.copy()
         if positions.rake:
@@ -1255,7 +1263,7 @@ class Advisor:
                                   pool=state.get("opponents") == "pool", actor=actor, custom=custom,
                                   optimize=bool(state.get("optimize_sizes")), locks=locks)
         finally:
-            self.time_budget, self.prior_budget, self.cfg = saved
+            self.time_budget, self.prior_budget, self.cfg, self.root_sizes = saved
 
     # ------------------------------------------------------------ preflop
     def _preflop(self, hero, hole, preflop, positions, stack, t0, pool=False):
@@ -2881,6 +2889,8 @@ class Advisor:
         this street is never swapped out by a later one, an all-in deeper than the tree's
         all-in SPR gets a size that reaches the stack, and the raise cap covers the raises made."""
         cfg = self.cfg.copy()
+        for kind, v in self.root_sizes.get(st.name, {}).items():
+            (cfg.bet_sizes if kind == "bet" else cfg.raise_sizes)[st.name] = list(v)
         bets = [0.0, 0.0]
         pot = st.pot_start
         fixed = {"bet": set(), "raise": set()}

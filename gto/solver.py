@@ -44,6 +44,9 @@ for _i, (_a, _b) in enumerate(ALL_COMBOS):
     MEMBER_FULL[_a, _i] = 1.0
     MEMBER_FULL[_b, _i] = 1.0
 CA_FULL = np.array([a for a, b in ALL_COMBOS])
+COMBO_TABLE = np.full((52, 52), -1, dtype=np.intp)     # full combo index of a card pair, either order
+for _i, (_a, _b) in enumerate(ALL_COMBOS):
+    COMBO_TABLE[_a, _b] = COMBO_TABLE[_b, _a] = _i
 CB_FULL = np.array([b for a, b in ALL_COMBOS])
 
 
@@ -85,6 +88,12 @@ class Config:
     river_buckets: Optional[int] = None
     turn_buckets: bool = False
     bucket_river_step: int = 1
+    # river_classes: from a turn root, the river as one card per class (Ctx.turn_classes on the turn's board: a rank's
+    # cards, a suit with two or more board cards apart), each class's subtree standing for its every card through the
+    # card swap that maps one onto the other (RiverClasses). With no flush possible in the swapped suits the swap keeps
+    # every hand's strength, so the class is exact when the ranges are symmetric in those suits: 13 rivers on a rainbow
+    # turn instead of 48, 24 on a two-tone one. The game stays zero-sum.
+    river_classes: bool = False
     seed: int = 7
     # rake: the winner of a postflop pot (showdown or fold) pays rake_rate of the final pot (without an
     # uncalled bet, which goes back), at most
@@ -108,6 +117,7 @@ class Config:
                       leaf_turns=self.leaf_turns, leaf_rivers=self.leaf_rivers, leaf_rivers_flop=self.leaf_rivers_flop,
                       river_play=self.river_play, turn_classes=self.turn_classes, river_buckets=self.river_buckets,
                       turn_buckets=self.turn_buckets, bucket_river_step=self.bucket_river_step,
+                      river_classes=self.river_classes,
                       later_sizes=None if self.later_sizes is None else
                       {k: {st: list(v) for st, v in d.items()} for k, d in self.later_sizes.items()},
                       seed=self.seed, rake_rate=self.rake_rate, rake_cap=self.rake_cap)
@@ -224,6 +234,29 @@ class Ctx:
                 pref = order[r % len(order):] + order[:r % len(order)]
                 out.append((next(c for x in pref for c in rest if c % 4 == x), tuple(rest)))
         return sorted(out)
+
+    def class_perm(self, classes) -> tuple:
+        """For river classes (Config.river_classes): (G, flat, starts, sizes). Row e of G (one per card c of each class,
+        the classes in order) maps every combo to its image under the swap of the class's played card and c (identity
+        for c itself); flat is G offset by its class's index times n (one gather over (K * n)); starts: each class's
+        first row; sizes: the classes' sizes. The combo space holds every active combo's images (solve() adds them); an
+        image outside it (of a combo added that way, so with no reach of its own) is n in G, a zero reach column, and
+        the combo itself in flat (its utility is never used)."""
+        n = self.n
+        pos = np.full(N_FULL, -1, dtype=np.intp)
+        pos[self.active] = np.arange(n)
+        G, cls_of, starts, sizes = [], [], [], []
+        for k, (played, cs) in enumerate(classes):
+            starts.append(len(G)); sizes.append(len(cs))
+            for c in cs:
+                a = np.where(self.ca == played, c, np.where(self.ca == c, played, self.ca))
+                b = np.where(self.cb == played, c, np.where(self.cb == c, played, self.cb))
+                G.append(pos[COMBO_TABLE[a, b]]); cls_of.append(k)
+        G = np.array(G, dtype=np.intp).reshape(len(G), n)
+        out = G < 0
+        G[out] = n
+        flat = np.array(cls_of, dtype=np.intp)[:, None] * n + np.where(out, np.arange(n)[None, :], G)
+        return G, flat, np.array(starts, dtype=np.intp), np.array(sizes, dtype=np.float32)
 
     def leaf_matrix(self, board: tuple, dead: set) -> np.ndarray:
         """Average showdown matrix over the remaining runout(s) from `board`."""
@@ -482,10 +515,13 @@ class Chance:
     With `sample` set, each traversal visits a fresh random subset of `sample` of the K
     cards (public chance sampling). Every card keeps its own strategy, so the solver still
     solves the real game rather than one where only a few fixed cards can come."""
-    __slots__ = ("boards", "K", "masks", "child", "norm", "avail", "sample", "umasks")
+    __slots__ = ("boards", "K", "masks", "child", "norm", "avail", "sample", "umasks", "perm")
 
-    def __init__(self, boards, K, masks, child, avail, sample=None, umasks=None):
+    def __init__(self, boards, K, masks, child, avail, sample=None, umasks=None, perm=None):
         self.boards, self.K, self.masks, self.child = boards, K, masks, child
+        # river classes (Config.river_classes): child k stands for every card of class k through card swaps
+        # (Ctx.class_perm, spread, gather); masks are then the played card's live combos
+        self.perm = perm
         self.avail = avail
         self.sample = sample if sample is not None and sample < K else None
         # a child standing for several cards (turn_classes): masks are the share of its cards a combo leaves live
@@ -493,7 +529,9 @@ class Chance:
         # every combo's utility over the same divisor (as with every card enumerated) the game stays zero-sum
         self.umasks = umasks
         B = len(boards)
-        if umasks is None:
+        if perm is not None:
+            self.norm = np.full((B, masks.shape[1]), float(avail - 4), dtype=np.float32)
+        elif umasks is None:
             self.norm = self.norm_for(masks.reshape(B, K, -1))
         else:
             self.norm = np.full((B, masks.shape[1]), float(avail - 4), dtype=np.float32)
@@ -501,6 +539,26 @@ class Chance:
     def norm_for(self, m3: np.ndarray) -> np.ndarray:
         """m3: (B, k, N) masks of the traversed cards -> (B, N) divisor."""
         return np.maximum(m3.sum(axis=1) * ((self.avail - 4) / (self.avail - 2)), 1e-9)
+
+    def spread(self, r, rows) -> np.ndarray:
+        """River classes: (B, N) reaches -> (B * K, N) the class subtrees' reaches: a combo's reach in class k is the
+        mean over the class's cards c of its image's reach under the swap (played card <-> c), if the played card
+        leaves it live."""
+        G, _, starts, sizes = self.perm
+        B, n = r.shape
+        rp = np.zeros((B, n + 1), dtype=r.dtype)
+        rp[:, :n] = r
+        R = np.add.reduceat(rp[:, G], starts, axis=1)
+        R *= (self.masks.reshape(-1, self.K, n)[rows] / sizes[None, :, None]).astype(R.dtype, copy=False)
+        return R.reshape(B * self.K, n)
+
+    def gather(self, u, rows) -> np.ndarray:
+        """River classes: (B * K, N) class subtree utilities -> (B, N): a combo's utility sums, over every river card
+        c, its image's utility in c's class (the image under the swap), divided by the avail - 4 runouts of a pair."""
+        n = u.shape[1]
+        B = len(rows)
+        u = u.reshape(B, self.K * n) * self.masks.reshape(-1, self.K * n)[rows]
+        return u[:, self.perm[1]].sum(axis=1) / self.norm[rows]
 
     def weights(self, rows=None) -> np.ndarray:
         """(B, K, N) weights of each child's utility, for batch rows `rows` (None = all)."""
@@ -624,6 +682,8 @@ class TreeBuilder:
         cfg = self.cfg
         if len(boards[0]) == 3 and cfg.turn_classes:
             return self._turn_classes(boards, pot, stack, inv)
+        if len(boards[0]) == 4 and self.root_street_len == 4 and cfg.river_classes:
+            return self._river_classes(boards, pot, stack, inv)
         sample = None
         if len(boards[0]) == 3:
             k = cfg.n_turns
@@ -670,6 +730,24 @@ class TreeBuilder:
         self.n_nodes += 1
         avail = sum(1 for c in range(52) if c not in self.dead and c not in boards[0])
         return Chance(boards, K, masks, child, avail, umasks=umasks)
+
+    def _river_classes(self, boards, pot, stack, inv):
+        """The river as one card per class under a turn root (Config.river_classes; Chance.spread and gather)."""
+        ctx = self.ctx
+        if any(b != boards[0] for b in boards):
+            raise ValueError("river classes need one turn board")
+        cls = ctx.turn_classes(boards[0], self.dead)
+        K = len(cls)
+        masks = np.ones((len(boards) * K, ctx.n), dtype=np.float32)
+        child_boards = []
+        for bi, b in enumerate(boards):
+            for ki, (c, _) in enumerate(cls):
+                child_boards.append(b + (c,))
+                masks[bi * K + ki] = 1.0 - ctx.member[c]
+        child = self._decision(child_boards, pot, stack, (0.0, 0.0), 0, 0, inv, False)
+        self.n_nodes += 1
+        avail = sum(1 for c in range(52) if c not in self.dead and c not in boards[0])
+        return Chance(boards, K, masks, child, avail, perm=ctx.class_perm(cls))
 
     def _bucketed_turn(self, child_boards, pot, stack, inv):
         """The turn's subtree under a flop solve's chance node: by river_buckets hand buckets with turn_buckets."""
@@ -768,7 +846,8 @@ def _shape(node) -> tuple:
     if isinstance(node, Decision):
         return ("D", node.player, len(node.boards), tuple(_shape(c) for c in node.children))
     if isinstance(node, Chance):
-        return ("C", node.K, node.sample, node.avail, len(node.boards), node.umasks is None, _shape(node.child))
+        return ("C", node.K, node.sample, node.avail, len(node.boards), node.umasks is None, node.perm is None,
+                _shape(node.child))
     if isinstance(node, BucketEntry):
         return ("E", len(node.boards), _shape(node.child))
     return ("T", node.kind, node.folder, len(node.boards))
@@ -793,8 +872,11 @@ def _merge(nodes, pairs: list):
         m.tile = first.tile if all(n.boards == first.boards for n in nodes) else len(boards)
         return m
     if isinstance(first, Chance):
+        if first.perm is not None and any(b != boards[0] for b in boards):
+            raise ValueError("river classes merge only on one turn board")
         return Chance(boards, first.K, np.concatenate([n.masks for n in nodes]), _merge([n.child for n in nodes], pairs),
-                      first.avail, first.sample, None if first.umasks is None else np.concatenate([n.umasks for n in nodes]))
+                      first.avail, first.sample, None if first.umasks is None else np.concatenate([n.umasks for n in nodes]),
+                      first.perm)
     # chips in differ between the merged lines (different pots): one float32 per row, which is what a
     # Python float becomes when it multiplies a float32 array, so the results don't change
     inv = tuple(np.concatenate([np.full((len(n.boards), 1), n.inv[q], dtype=np.float32) for n in nodes]) for q in (0, 1))
@@ -1094,6 +1176,11 @@ class Solver:
                 return done[id(node)]
             B, K, n = r0.shape[0], node.K, self.ctx.n
             rows = np.arange(B) if sel is None else np.asarray(sel)
+            if node.perm is not None:
+                csel = None if sel is None else (rows[:, None] * K + np.arange(K)).ravel()
+                u = self._cfr(node.child, p, node.spread(r0, rows), node.spread(r1, rows), update, use_avg, csel, strats,
+                              done if sel is None else None)
+                return node.gather(u, rows)
             if node.sample is not None and self.sampling:
                 ks = np.array(sorted(self.rng.sample(range(K), node.sample)))
             else:
@@ -1167,6 +1254,9 @@ class Solver:
         elif isinstance(node, Chance):
             if not into:
                 arrive[id(node)] = (r0, r1)
+            elif node.perm is not None:
+                rows = np.arange(r0.shape[0])
+                self._down(node.child, p, node.spread(r0, rows), node.spread(r1, rows), strats, arrive, want, into)
             elif node.sample is None:
                 B, K, n = r0.shape[0], node.K, self.ctx.n
                 m3 = node.masks.reshape(B, K, n)
@@ -1282,6 +1372,9 @@ class Solver:
             return self._bucket_out(self._best_response(node.child, p, m0, m1, lock), flat[p])
         if isinstance(node, Chance):
             B, K, n = r0.shape[0], node.K, self.ctx.n
+            if node.perm is not None:
+                rows = np.arange(B)
+                return node.gather(self._best_response(node.child, p, node.spread(r0, rows), node.spread(r1, rows), lock), rows)
             m3 = node.masks.reshape(B, K, n)
             u = self._best_response(node.child, p, (r0[:, None, :] * m3).reshape(B * K, n),
                                     (r1[:, None, :] * m3).reshape(B * K, n), lock)
@@ -1430,6 +1523,42 @@ def warm_start(dst: Decision, dst_ctx: Ctx, src: Decision, src_ctx: Ctx):
     walk(dst, src)
 
 
+def lift_classes(dst: "Solution", src: "Solution"):
+    """Copy a river-classes turn solve's average strategy (src, Config.river_classes) into the same spot's tree with
+    every river card (dst, built without iterating: max_iters=0): river card c's nodes take its class's, each combo
+    the strategy of its image under the swap. dst.exploitability() is then src's strategy measured in the real game."""
+    pos = np.full(N_FULL, -1, dtype=np.intp)
+    pos[src.ctx.active] = np.arange(src.ctx.n)
+    d_full = dst.ctx.active
+    cols = pos[d_full]
+
+    def walk(d, s, rows, colmap):
+        if isinstance(d, Chance):
+            classes = {c: (k, played) for k, (played, cs) in enumerate(src.ctx.turn_classes(src.root.board, src.solver.dead))
+                       for c in cs}
+            rmap, cmaps = [], []
+            for b in d.child.boards:
+                k, played = classes[b[-1]]
+                rmap.append(k)
+                x, y = played, b[-1]
+                a, bb = CA_FULL[d_full], CB_FULL[d_full]
+                img = COMBO_TABLE[np.where(a == x, y, np.where(a == y, x, a)), np.where(bb == x, y, np.where(bb == y, x, bb))]
+                cmaps.append(pos[img])
+            return walk(d.child, s.child, np.array(rmap), np.array(cmaps))
+        if not isinstance(d, Decision):
+            return
+        cm = np.broadcast_to(colmap, (d.B, len(d_full)))
+        ok = cm >= 0
+        src_ss = s.ssum[rows]                                       # (B, A, n_src)
+        vals = np.take_along_axis(src_ss, np.where(ok, cm, 0)[:, None, :].repeat(len(d.names), axis=1), axis=2)
+        d.ssum[...] = np.where(ok[:, None, :], vals, 0.0)
+        for dc, sc in zip(d.children, s.children):
+            walk(dc, sc, rows, colmap)
+
+    walk(dst.root, src.root, np.zeros(1, dtype=np.intp), cols[None, :])
+    dst._refresh()
+
+
 class Cancelled(Exception):
     """A solve was stopped early through its should_stop callback."""
 
@@ -1438,6 +1567,20 @@ def expand(ctx: Ctx, v: np.ndarray) -> np.ndarray:
     out = np.zeros(N_FULL)
     out[ctx.active] = v
     return out
+
+
+def _class_closure(active: np.ndarray, classes) -> np.ndarray:
+    """`active` (full combo indices) with every combo's images under the river classes' card swaps added (with zero
+    reach): a class subtree's combo h stands for its images on the class's other cards, so it is needed when any of
+    them is in a range (5c4s on a 5c river plays 5s4s's hand on the 5s)."""
+    have = np.zeros(N_FULL, dtype=bool)
+    have[active] = True
+    a, b = CA_FULL[active], CB_FULL[active]
+    for x, cs in classes:
+        for y in cs:
+            if y != x:
+                have[COMBO_TABLE[np.where(a == x, y, np.where(a == y, x, a)), np.where(b == x, y, np.where(b == y, x, b))]] = True
+    return np.flatnonzero(have)
 
 
 def solve(board: Sequence[int], r_oop: np.ndarray, r_ip: np.ndarray, pot: float, stack: float,
@@ -1452,6 +1595,8 @@ def solve(board: Sequence[int], r_oop: np.ndarray, r_ip: np.ndarray, pot: float,
         bm *= 1.0 - MEMBER_FULL[c]
     r0f, r1f = r_oop * bm, r_ip * bm
     active = np.nonzero((r0f > 0) | (r1f > 0))[0]
+    if cfg.river_classes and len(board) == 4:
+        active = _class_closure(active, Ctx(active, cfg).turn_classes(board, set(dead) | set(board)))
     ctx = Ctx(active, cfg)
     ctx.root_len = len(board)
     dead_set = set(dead) | set(board)
