@@ -783,7 +783,8 @@ the tree traversal to C or Rust or a GPU, which makes full flop trees feasible.
   solve the best response also picks up the solve's own noise.
 * 3-way solves play one bet size and one raise; they start from the node in front of you, so this street's
   earlier actions, and earlier multiway streets, narrow ranges by the betting rules. Everyone plays the
-  shortest stack behind. Below the street solved hands are bucketed (all of a bucket plays alike there) and the
+  shortest stack behind (so a deeper player's all-in there is shown and played as a bet to that stack). Below the
+  street solved hands are bucketed (all of a bucket plays alike there) and the
   river under a flop is played without its card, as heads-up Fast. Checked to the opener after UTG opens and
   both blinds call (`--flop-study`, ten random flops, the blinds' full ranges) the flop solve bets 41% into two
   and 62% heads-up (47% and 61% with ranges shaped like the study's), where dealing the later streets out bet 33%
