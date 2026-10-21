@@ -1736,7 +1736,9 @@ function showView(el, v, res, key) {
     }
     // the ⋯ menu
     const btn = document.getElementById("menuBtn"), menu = document.getElementById("menu");
-    const show = (on) => { menu.hidden = !on; btn.setAttribute("aria-expanded", on ? "true" : "false"); };
+    // right-aligned to the button, unless that runs past the window's left edge (the header wraps ⋯ leftwards)
+    const show = (on) => { menu.hidden = !on; btn.setAttribute("aria-expanded", on ? "true" : "false");
+      if (on) { menu.style.right = ""; menu.style.left = ""; if (menu.getBoundingClientRect().left < 4) { menu.style.right = "auto"; menu.style.left = "0"; } } };
     btn.addEventListener("click", (e) => { e.stopPropagation(); show(menu.hidden); });
     document.addEventListener("click", (e) => { if (!menu.hidden && !e.target.closest(".menuwrap")) show(false); });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") show(false); });
