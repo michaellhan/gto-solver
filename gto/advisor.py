@@ -1240,6 +1240,16 @@ def _range_key(v: np.ndarray) -> str:
     return hashlib.md5(np.round(v, 6).tobytes()).hexdigest()[:12]
 
 
+def _mw_line(board, hero, hole, stk, streets, street, n) -> tuple:
+    """A 3-way solve's place in the hand: who it was solved for, the cards, the stacks, and every action before its
+    root (the earlier streets', and this street's first n)."""
+    norm = lambda acts: tuple((a.get("pos"), a.get("action"), round(float(a.get("amount") or a.get("to") or 0.0), 2))
+                              for a in acts or [])
+    before = tuple(norm(streets.get(st)) for st in STREETS[:STREETS.index(street)])
+    return (tuple(board), hero, tuple(sorted(hole)), tuple(sorted((k, round(v, 2)) for k, v in stk.items())),
+            before, norm((streets.get(street) or [])[:n]))
+
+
 # ----------------------------------------------------------------------------- advisor
 class Advisor:
     def __init__(self, cfg: Optional[Config] = None, time_budget: float = 4.0, prior_budget: float = 2.0,
@@ -1262,6 +1272,7 @@ class Advisor:
         self.mw_max_iters: int = 1000
         self.mw_max_expl: float = 10.0   # a solve further than this from equilibrium (% pot) hands over to the rules
         self._mw_cache: Dict[tuple, object] = {}
+        self._mw_lines: Dict[tuple, tuple] = {}   # the hand's line up to a 3-way solve's root -> (solve, players)
         self.warm_from: Optional["Advisor"] = None   # another advisor (e.g. a faster config) whose solves seed ours
         # Config fields for the earlier streets' solves that narrow ranges (prior_budget each), e.g. the browser's
         # Accurate keeps their flop's river checked down: 12 s there is ~10 iterations with river_play
@@ -1773,13 +1784,15 @@ class Advisor:
         live_opps = [p for p in remaining if p != hero]
         if len(live_opps) != 1 or cur.allin & set(remaining) - {hero} and len(remaining) > 2:
             if actor:
-                return {"error": "multiway"}
+                move = self._mw_actor_move(board, hero, hole, stk, streets, cur, actor) if len(remaining) == 3 else None
+                return move or {"error": "multiway"}
             if optimize:
                 notes.append("bet sizes are optimized only heads-up (multiway is a heuristic, not a solve)")
             if locks and any(p in locks for p in live_opps):
                 notes.append(f"locks ({', '.join(p for p in live_opps if p in locks)}) apply heads-up only: "
                              f"this multiway pot is {'solved' if len(remaining) == 3 else 'played by the betting rules'} without them")
-            res = self._multiway_solve(hero, hole, board, ranges, remaining, cur, stk, t0, notes)
+            res = self._multiway_solve(hero, hole, board, ranges, remaining, cur, stk, t0, notes,
+                                       line=_mw_line(board, hero, hole, stk, streets, cur.name, len(streets.get(cur.name) or [])))
             if res is not None:
                 return res
             return self._multiway(hero, hole, board, ranges, remaining, cur, stk, t0, notes)
@@ -1991,7 +2004,7 @@ class Advisor:
         }
 
     # ------------------------------------------------------------ multiway
-    def _multiway_solve(self, hero, hole, board, ranges, remaining, cur: StreetState, stk, t0, notes):
+    def _multiway_solve(self, hero, hole, board, ranges, remaining, cur: StreetState, stk, t0, notes, line=None):
         """Three players in: a 3-player CFR solve of this street from the current node (gto/multiway_solver.py),
         the later streets bet on by hand buckets (mw_street_config). None when it doesn't
         apply (4+ players, someone all-in, the street not in mw_solve_streets, or a bet bigger than the shortest
@@ -2041,6 +2054,8 @@ class Advisor:
             fallback_notes.append(f"the 3-way solve was still {expl:.0f}% of the pot from equilibrium after {sol.iters} "
                                   f"iterations, so the betting rules answer instead (Accurate gives it longer)")
             return None
+        if line is not None:
+            self._mw_lines[line] = (sol, players)   # practice opponents acting after us read their move off it
         ci = sol.combo_index(hole)
         strat = root.avg_strategy()[0]
         mine = sol.hand_strategy(ci, hp)
@@ -3023,6 +3038,55 @@ class Advisor:
             out["action"] = name.split()[0]
             out["to"] = round(float(pick["amount_bb"]) * float(state.get("bb", 1.0)), 2)
         return out
+
+    def _mw_actor_move(self, board, hero, hole, stk, streets, cur: StreetState, actor) -> Optional[dict]:
+        """A practice opponent's mix in a 3-way pot, read off the 3-way solve the player practising was advised from
+        earlier this street (its tree walked through the actions since its root: the root's own player acting where
+        the hero acted, as solved), so one solve serves the hero's advice and the opponents' moves after it. None
+        (play then asks from the opponent's seat) with no such solve, an action the tree doesn't have, a line the
+        solve takes with under RARE_LINE of the acting player's range (its subtree barely converged), or a hand not
+        in the solve."""
+        from . import multiway_solver as MW
+        acts = list(streets.get(cur.name) or [])
+        for k in range(len(acts), -1, -1):
+            hit = self._mw_lines.get(_mw_line(board, hero, hole, stk, streets, cur.name, k))
+            if hit is not None:
+                break
+        else:
+            return None
+        sol, players = hit
+        node, R = sol.root, sol.reach0.copy()
+        for a in acts[k:]:
+            if not isinstance(node, MW.Decision) or a.get("pos") not in players:
+                return None
+            p = players.index(a["pos"])
+            if p != node.player:
+                return None
+            kind = {"bet": ("bet", "all-in"), "raise": ("raise", "all-in"), "all-in": ("all-in", "raise", "bet")}.get(
+                a["action"], (a["action"],))
+            idx = next((i for want in kind for i, nm in enumerate(node.names) if nm.split()[0] == want), None)
+            if idx is None:
+                return None
+            sg = node.avg_strategy()[0][idx]
+            if (R[p, 0] * sg).sum() < RARE_LINE * max(R[p, 0].sum(), 1e-12):
+                return None
+            R = R.copy(); R[p] = R[p] * sg
+            node = node.children[idx]
+        seat, ahole = actor
+        if not isinstance(node, MW.Decision) or seat not in players or node.player != players.index(seat):
+            return None
+        q = node.player
+        ci = sol.combo_index(ahole)
+        if ci is None:
+            return None
+        # the average strategy where the hand reaches the node; else (it would have played differently earlier, or
+        # its range gives it no weight) the regret-matching one, which still learns from its counterfactual values
+        mix = node.avg_strategy()[0][:, ci] if R[q, 0, ci] > 1e-12 and node.ssum[0, :, ci].sum() > 0 \
+            else node.strategy()[0][:, ci]
+        return {"street": cur.name, "solved": True,
+                "actions": [{"action": nm, "freq": round(float(mix[a]), 3),
+                             "amount_bb": None if node.amounts[a] is None else round(float(node.amounts[a]), 2)}
+                            for a, nm in enumerate(node.names)]}
 
     def _actor_move(self, sol: Solution, node: Decision, n_r0, n_r1, hole, p: int, street: str) -> dict:
         """The mix of player p (to act at `node`) for `hole`, from hero's solve; an error (play then asks

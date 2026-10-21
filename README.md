@@ -119,7 +119,8 @@ to the best hand among the players in it. Your seat and cards are random; every 
 hand and the board are dealt up front, and the other seats move by themselves (a short "thinking"
 status while they do): preflop from the chart for their actual hand, after the flop drawn from the
 solve's mix for it (heads-up, the same solve that answers your own spot, so a reply to your move is
-nearly instant; multiway the advisor from their seat: a 3-way solve where it applies, else the heuristic). On your turn the advice stays
+nearly instant; in a 3-way pot your own solve too once you've acted on the street, read off its tree for their hand;
+before that the advisor from their seat: a 3-way solve where it applies, else the heuristic's pure pick). On your turn the advice stays
 hidden (the spot is solved in the background so your move can be graded) and shows once you've
 acted; each decision is graded as in a review. At the end the opponents' cards are shown at
 showdown with your result, the hand review lists the EV given up, and **Next hand** (N) deals again.

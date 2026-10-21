@@ -270,6 +270,29 @@ class TestAdvisor(unittest.TestCase):
         self.assertEqual(r["to_call_bb"], 4.0)
         self.assertNotEqual(r["recommended"], "fold")             # a set, with three of a kind of nothing left to fear
 
+    def test_practice_opponents_sample_the_cached_solve(self):
+        # the BB is advised (one 3-way solve), checks; the CO's move is drawn from that solve's mix for its hand at the
+        # node after the check, without another solve
+        adv = A.Advisor(time_budget=1e9)
+        adv.mw_max_iters = 30
+        st = self._state("Kh7d2c9s4h", "BB", "Kd9d", [])
+        r = adv.advise(st)
+        self.assertTrue(r.get("solved"))
+        n_solves = len(adv._mw_cache)
+        st2 = self._state("Kh7d2c9s4h", "BB", "Kd9d", [{"pos": "BB", "action": "check"}])
+        sol = next(iter(adv._mw_cache.values()))
+        node = sol.root.children[0]                                  # the BB checks: the CO to act
+        for hole in ("AsKs", "QcJc", "8c8s"):
+            with self.subTest(hole=hole):
+                mix = node.avg_strategy()[0][:, sol.combo_index(cards(hole))]
+                moves = [adv.play(st2, "CO", hole, seed=i) for i in range(300)]
+                self.assertEqual(len(adv._mw_cache), n_solves)        # no new solve
+                self.assertEqual([a["action"] for a in moves[0]["actions"]], node.names)
+                for a, nm in enumerate(node.names):
+                    self.assertAlmostEqual(moves[0]["actions"][a]["freq"], float(mix[a]), places=3)
+                    got = np.mean([m["name"] == nm for m in moves])
+                    self.assertLess(abs(got - mix[a]), 0.08)
+
     def test_flop_is_solved_with_later_streets_by_buckets(self):
         # (Accurate: native.MW_STREETS, the worker) checked to after two checks the opener bets AK on K72 nearly always
         adv = A.Advisor(time_budget=1e9)

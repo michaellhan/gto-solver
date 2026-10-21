@@ -261,7 +261,7 @@ def _spot_args(adv, st):
     """What the advisor hands its multiway code for this state: (hero, hole, board, ranges, remaining, cur, stacks)."""
     got = {}
 
-    def grab(self, hero, hole, board, ranges, remaining, cur, stk, t0, notes):
+    def grab(self, hero, hole, board, ranges, remaining, cur, stk, t0, notes, line=None):
         got["a"] = (hero, hole, board, dict(ranges), list(remaining), cur, stk)
         return {"stub": True}
     saved = A.Advisor._multiway_solve
