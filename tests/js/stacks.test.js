@@ -49,6 +49,19 @@ test("a bet nobody can call in full comes back once the street closes", () => {
   assert.deepEqual([r.sim().waiting, r.sim().pot, r.sim().runout], ["flop", 20, true]);
 });
 
+test("a hand that ends on a fold to a bet: the uncalled part goes back, the pot shown is the pot won", () => {
+  // flop: BB bets 6, BTN raises to 20.5, BB folds: 14.5 of the raise was never called
+  const p = page(state({ cards: BOARD.slice(0, 5), preflop: acts("UTG f, HJ f, CO f, BTN r2.5, SB f, BB c"), flop: acts("BB b6, BTN r20.5, BB f") }));
+  const s = p.sim();
+  assert.deepEqual([s.handOver, s.pot, s.invested.BTN, s.streets.flop.returned], [true, 17.5, 8.5, { BTN: 14.5 }]);
+  p.run("renderAll()");
+  assert.match(p.byId("felt").children.at(-1).innerHTML, /pot 17.5 bb/);
+  assert.match(p.byId("felt").children.find(e => e.innerHTML.startsWith('<span class="pos">BTN')).innerHTML, /in 8.5/);
+  // everyone folds to the big blind: its blind isn't called past the small blind's
+  const q = page(state({ hero: "BB", cards: BOARD.slice(0, 2), preflop: acts("UTG f, HJ f, CO f, BTN f, SB f") }));
+  assert.deepEqual([q.sim().handOver, q.sim().pot, q.sim().streets.preflop.returned], [true, 1, { BB: 0.5 }]);
+});
+
 test("an all-in raise for less than a full raise doesn't reopen the betting", () => {
   // flop: BB bets 4, CO raises to 8 (a full raise of 4), the 12bb button jams to 9.5 (1.5 more: not a full raise)
   const pre = acts("UTG f, HJ f, CO r2.5, BTN c, SB f, BB c");

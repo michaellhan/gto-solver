@@ -760,7 +760,8 @@ function simulate() {
     let actors = [...active].filter(p => !allin.has(p));
     // (one player left with chips who has matched the bet has nobody to bet against)
     const closed = active.size <= 1 || actors.every(p => acted.has(p)) || (actors.length <= 1 && actors.every(p => bets[p] >= curBet - 1e-9));
-    if (closed && active.size > 1) {
+    // (also when everyone else folded: the bet they didn't call goes back, it isn't part of the pot won)
+    if (closed) {
       const top = POS.reduce((t, p) => bets[p] > bets[t] ? p : t, POS[0]);
       const second = Math.max(0, ...POS.filter(p => p !== top).map(p => bets[p]));
       if (bets[top] > second + 1e-9) {
