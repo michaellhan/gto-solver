@@ -23,10 +23,11 @@ node --test 'tests/js/*.test.js'
 The Node tests (Node 22+, no npm packages) cover the page's JavaScript: `tests/js/page.js` loads the
 inline script of `gto/static/index.html` into a `vm` context with a minimal fake DOM and drives it
 like a user (buttons, keys, the setup inputs): the hand engine (acting order for 2 to 9 players,
-blinds, antes, straddle, pot and bet sizes, validation, undo and rewind), share links (`#h=`) and the
+blinds, antes, straddle, pot and bet sizes, validation, undo and rewind, per-seat stacks with side pots and
+incomplete raises), share links (`#h=`) and the
 copied hand text, and the state sent to the solver (its keys are checked against what
 `Advisor._advise` reads). They also write `tests/data/page_states.json`, random hands played through
-the page; `tests/test_page_states.py` replays each spot with the advisor's own `replay_hand` (same
+the page (some with per-seat stacks); `tests/test_page_states.py` replays each spot with the advisor's own `replay_hand` (same
 player to act, pot, bet and players in) and asks the advisor about a sample of them. After a change to
 the page's engine, regenerate it with `UPDATE_FIXTURES=1 node --test 'tests/js/*.test.js'`.
 
@@ -43,7 +44,8 @@ per iteration than native, so the browser solves a smaller game: two flop bet si
 turn and river bet and raise size. Fast uses 8 fixed rivers under each turn; Accurate uses
 every river. The local server (`gto/native.py`) runs Fast with the same sizes and every river, and
 Accurate with two turn and river bet sizes.) Pick the number of players (2 to 9), your seat
-and stack, click cards into your
+and the stacks (one for the table; **per seat…** gives any seat its own, shown beside its name on
+the table), click cards into your
 hand and the board (click a placed card in its slot to remove it; cards already
 on the table can't be picked again), or type them as rank then suit (`Ah`, `Tc`).
 The setup folds into one line once the hand starts, and the deck only shows
@@ -55,6 +57,11 @@ has folded, who is to act, the board and the pot; clicking a seat folds
 everyone before it (checking where there's nothing to call, and stopping at your own turn),
 and a single context shortcut ("Fold to me", "Everyone checks", "Everyone else folds",
 which checks a player who has nothing to call) skips the boring bits.
+The engine plays no-limit rules with each seat's chips: a call or all-in for less puts in what the
+player has, a raise is at least the last full raise, an all-in raise for less than that doesn't reopen
+the betting to players who already acted, a bet nobody can match in full comes back down to the most
+anyone else put in, the action ends once at most one player with chips is left, and the table shows
+the main pot and side pots.
 
 Whenever it becomes your turn the advice panel solves the spot. The **Fast /
 Accurate** toggle in the header (remembered between visits) picks the solve
@@ -87,9 +94,9 @@ deck (diamonds blue, clubs green), a switch that puts the advice on the left, an
 (other sites in the same "Seat N: name (stack)" / "name: raises 2 to 3" shape mostly parse too),
 2 to 9 players, cash or tournament. Seats map onto the page's positions from the big blind, amounts
 become big blinds, antes are averaged per player, a 2bb straddle from the first seat is kept, sitting-out
-seats are dropped and returned bets are ignored; the history needs your hole cards. The page plays equal
-stacks: yours, capped by the deepest opponent who stayed in, so a shorter player's all-in is a raise to
-its size and they check or call through later streets (a note says so). The parser is `gto/static/hh.js`,
+seats are dropped and returned bets are ignored; the history needs your hole cards. Every seat keeps its
+own stack (after the antes, as the history has it), so a short all-in, its side pot and an uncalled bet play
+out as they did. The parser is `gto/static/hh.js`,
 loaded only when the dialog opens. **Review whole hand** (offered after an import, and at the end of any
 hand with ungraded decisions) solves each of your decisions in order at the current Fast/Accurate setting,
 grades it as if it had been entered live and ends on the hand review; it shows "decision 2 of 5" while it
@@ -107,7 +114,8 @@ that reopens the exact spot, and the raw state JSON for the API or CLI.
 The hand is kept in the browser between reloads; **New hand** clears it.
 
 **Practice** in the header plays random hands against GTO opponents, with the player count,
-stacks, antes, straddle and rake of the setup. Your seat and cards are random; every other seat's
+stacks (each seat's own, if set), antes, straddle and rake of the setup; a showdown pays each side pot
+to the best hand among the players in it. Your seat and cards are random; every other seat's
 hand and the board are dealt up front, and the other seats move by themselves (a short "thinking"
 status while they do): preflop from the chart for their actual hand, after the flop drawn from the
 solve's mix for it (heads-up, the same solve that answers your own spot, so a reply to your move is
@@ -150,7 +158,7 @@ Request body (see `examples/`):
 {
   "hero": "BTN", "hole": "AhQd", "board": "Qs8d3c",
   "bb": 1.0,
-  "stacks": {"BTN": 100, "BB": 100},
+  "stack": 100, "stacks": {"BB": 40},
   "preflop": [{"pos": "CO", "action": "fold"}, {"pos": "BTN", "action": "raise", "to": 2.5},
               {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}],
   "flop": [{"pos": "BB", "action": "check"}], "turn": [], "river": []
@@ -158,11 +166,16 @@ Request body (see `examples/`):
 ```
 
 Set `bb` to your blind size and pass amounts in chips, or leave it at 1 and pass
-big blinds. Optional `"ante"` (per player, same units) and `"straddle": true` (the
+big blinds. `stack` is everyone's stack; the optional `stacks` gives seats their own (seats left out
+have `stack`, or without one the smallest of `stacks`). Each player's chips cap what they can put in
+(all-ins for less, side pots, incomplete raises, as on the page); hero plays preflop at the effective
+stack against the deepest opponent who hasn't folded (the push/fold and chart depth, implied odds and
+commitment rules), each opponent's replayed range at theirs, and heads-up postflop at the smaller of
+the two stacks. Optional `"ante"` (per player, same units) and `"straddle": true` (the
 first seat posts 2bb and acts last preflop). Optional `"rake"` (a share of the pot, `0.05` for 5%)
 and `"rake_cap"` (the most rake per pot, same units as the amounts; leave it out for no cap): off
 unless given (see Rake below). Positions are the 6-max names `UTG HJ CO BTN SB BB`.
-Optional `"sizes"`, `"ranges"` and `"optimize_sizes"` change the postflop game (see Custom sizes and ranges below).
+Optional `"sizes"`, `"ranges"`, `"optimize_sizes"` and `"locks"` change the postflop game (see Custom sizes and ranges below).
 
 Response: per-action `freq` (the mixed strategy for hero's exact hand), `ev_bb`
 (relative to folding now), `amount_bb`, a `recommended` action (highest
@@ -230,7 +243,7 @@ that ends preflop isn't raked, so opens, steals and folds to them are unchanged.
 ### Custom sizes and ranges
 
 The page's **Advanced** disclosure in the setup (saved with the hand and carried by share links, like rake;
-sent from the flop on, so preflop advice is unchanged). All three are off unless given.
+sent from the flop on, so preflop advice is unchanged). All are off unless given.
 
 * `"sizes": {"flop": [33, 75], "turn": [...], "river": [...], "raise": [60]}`: the postflop bet sizes per
   street in % of the pot, and the raise sizes (all streets) in % of the pot after calling, replacing the
@@ -248,6 +261,28 @@ sent from the flop on, so preflop advice is unchanged). All three are off unless
   the time budget (35% / 65%), so a spot takes as long as without it. The response adds `size_usage`
   (hero's mix at that node over the wide menu, `{"check": 0.13, "25%": 0.47, ...}`, summing to 1) and
   `sizes_kept`. A kept overbet makes the second tree bigger, so it settles slower: use Accurate.
+
+* `"locks": {"BB": {"fold": 15, "bluff": -50, "next_fold": 60}}`: nodelocking, your read of an opponent
+  (the page: a profile per opponent, GTO, Calling station, Nit, Maniac, Overfolds to bets or Custom, whose
+  numbers can be edited). Heads-up after the flop the advice is then the best response to their locked
+  strategy, as in exploit mode (`freq` 0 or 1 with `gto_freq` alongside, ties within the solve's noise
+  mixed), with `"locked": {"BB": {...}}` and a note; on top of GTO, or of the pool with `"opponents": "pool"`.
+  Every key is optional (`gto/exploit.py` LOCK_KEYS, TendencyLock):
+  * `fold` (-100..100, also `fold_flop` / `fold_turn` / `fold_river`, added): facing a first bet (not a raise
+    of their own bet), this many points more of their range folds, their weakest calls first (at most every
+    call; raises stay); negative, their strongest folds call.
+  * `bluff` (-100..100): their weak hands' bets (below the 50th percentile of strength on the board, tapering
+    to the 65th, as the pool's bluffs): -100 never bluff (value kept), +100 every weak hand bets.
+  * `bet`, `raise` (-100..100): every hand's betting when they can bet, and raising facing a bet: -50 halves
+    it (into checks and calls), +50 moves half of their checks or calls into it, split over the sizes as they
+    use them now.
+  * `next_fold`, `next_raise` (0..100): their fold and raise % at their next decision after each of your bets
+    or raises this street (folds by strength, raises scaled); `next_bet` (0..100): their bet % when you check.
+    The classic nodelock: "they fold 60% to my bet here". Notes give each, locked and at equilibrium.
+
+  The profile keys apply wherever they act, on later streets too, and narrow their range through what they did
+  earlier in the hand. Preflop and multiway pots (the betting rules) ignore them, with a note; an unknown seat
+  or key, your own seat, a non-number or a value out of bounds is an error.
 
 Errors come back as `{"error": "..."}` (e.g. `sizes: at most 3 flop sizes ...`, `ranges: can't read BB's
 range ...`). Heads-up responses also carry `villain_grid` (the villain's range by hand class: `cells` with
@@ -315,11 +350,29 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   A74 folds 36 / calls 45 / raises 18 (34.6 / 50.0 / 15.4). An iteration costs ~7x the old tree's
   natively (~15 it/s on a rainbow flop, half that on a two-tone or monotone one) and ~15x in
   Pyodide, and a solve needs ~100: 30 iterations were 12 points of c-bet and 15 of BB's check from
-  the reference, 60 were 8 and 8, 100 were 5 and 4. So the server's Accurate settles, while Fast
-  (2.5 s) and the browser's Fast keep random turns and the river checked down (their c-bets 10-30
-  points low on dry and paired flops), and the browser's Accurate gets 60-75 iterations in 60 s,
-  about 8 points of c-bet from the reference (12 before) with BB's check a little noisier (7.5
-  points, 6 before). Tests TestFlopStrategy hold the published table.
+  the reference, 60 were 8 and 8, 100 were 5 and 4. So the server's Accurate settles, and the
+  browser's Accurate gets 60-75 iterations in 60 s, about 8 points of c-bet from the reference (12
+  before) with BB's check a little noisier (7.5 points, 6 before).
+  * Fast (2.5 s natively, 8 s in the browser) plays the same flop model with the turn and river by
+    hand buckets (`river_buckets=32, turn_buckets=True`): each player's range on each turn card is split
+    into 32 equal shares ordered by equity against the other's flop range, and the turn and river below
+    a flop solve are played per bucket against a 32 x 32 bucket-pair equity matrix (the turn's every-river
+    equity averaged over the pairs with the flop ranges' weights, card removal as each pair's compatible
+    share; `bucket_river_step=3` averages every third river, no worse). The flop stays per combo. The two
+    players' tables are each other's negated transpose, so the game stays zero-sum. Per combo the river
+    beyond depth was ~95% of the arithmetic (N x N leaf products); by buckets an iteration costs what the
+    old Fast tree's did natively (12-18 ms on a single-raised pot) and 2.4x less in Pyodide (30-42 ms
+    against 74), so Fast gets 140-210 iterations natively and 190-260 in the browser, where it had ~200 and
+    ~100 (setup, before the budget: 0.6-1.0 s natively, 1.1-1.6 s in Pyodide, against 0.6 and 0.7; the turn
+    leaves' showdown sums now take one comparison and a byte add per board, and every board's hand
+    strengths one batched evaluator call). Against every turn played (12 flops above), at the iterations each gets: c-bet 3.6 points off
+    on average (native Fast was 12.2, the browser's 14.5), size split 7.6 (32.6, 35.5), BB's check 2.1
+    (6.1, 13.0), its response to the small bet 1.6 (5.0, 6.2). Settled (400 iterations), 32 buckets are 3.0
+    off in c-bet where per combo is ~1.4; QQ6 stays near 80% (88%), A74 near 61% (51%). Exploitability in
+    the bucket game is 0.2-0.4% of the pot at 200 iterations (the old trees, not zero-sum with their
+    sampled turns, read -0.35 to 1.15%). Exploit mode's pool lock reads a bucket's percentile as its place in
+    the range.
+  Tests TestFlopStrategy hold the published table, for both models.
   A flop all-in pays its equity over every turn card with 4 evenly spread rivers each
   (within 4% of exact; 4 sampled turns had flush draws up to 24% off).
 * `Solution.exploitability()` reports how far a solve is from equilibrium in
@@ -588,7 +641,9 @@ the tree traversal to C or Rust or a GPU, which makes full flop trees feasible.
   pool bluffs on the flop and turn, and how its extra preflop hands split between opens, open-limps, flats
   and the big blind outside the small blind, are still judgment calls. On a rough (Fast, flop or turn)
   solve the best response also picks up the solve's own noise.
-* One effective stack for the table.
+* Multiway with an all-in player for less, the heuristic pays each side pot to the best hand among the
+  players in it, but the betting rules inside its trials don't play for the side pot (an opponent bets
+  and calls as if the whole pot were at stake).
 * Practice opponents heads-up after the flop read their move off your own solve, whose ranges leave out
   your cards (as your advice does): an edge the size of a blocker. A line of yours the solve rarely
   takes, or a pot that became heads-up mid-street, gets a solve from their seat instead (a few seconds,

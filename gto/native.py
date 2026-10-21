@@ -30,14 +30,15 @@ from .flop_library import default_library  # noqa: E402
 # From the flop, accurate plays the river with its betting and one turn per rank class (Config's river_play
 # and turn_classes, with one turn and river size inside the flop solve): ~15 iterations a second on a rainbow
 # flop, half that on a two-tone or monotone one, and from ~100 iterations its c-bet frequencies are within a
-# few points of a solve over every turn (README, Accuracy vs speed). Fast's 2.5 s affords ~30, where BB's
-# check and response frequencies were still 15-20 points off, so fast keeps 6 random turns and the river
-# checked down: settled, but its c-bets run 10-30 points low on dry and paired flops (QQ6 56% for 88%).
+# few points of a solve over every turn (README, Accuracy vs speed). Fast plays the same flop model with the turn
+# and river by 32 hand buckets per player and turn card (river_buckets, turn_buckets): an iteration costs about
+# what the old fast tree's did (6 random turns, the river checked down: 12-18 ms), so 2.5 s gives 140-210, and
+# against every turn played its c-bet is 3.5 points off on average (was 12), its size split 7 (33), BB's check 2 (6).
 _FLOP = {"bet": [0.33, 0.75], "raise": [0.5]}
 SPEEDS = {
     "fast": (dict(bet_sizes={"flop": _FLOP["bet"], "turn": [0.75], "river": [0.75]},
                   raise_sizes={"flop": _FLOP["raise"], "turn": [0.75], "river": [0.75]},
-                  flop_model=dict(river_play=False, turn_classes=False)), 2.5, 2.5),
+                  flop_model=dict(river_buckets=32, turn_buckets=True, bucket_river_step=3)), 2.5, 2.5),
     "accurate": (dict(bet_sizes={"flop": _FLOP["bet"], "turn": [0.5, 1.0], "river": [0.5, 1.0]},
                       raise_sizes={"flop": _FLOP["raise"], "turn": [0.75], "river": [0.75]}), 30.0, 12.0),
 }

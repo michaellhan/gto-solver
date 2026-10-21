@@ -29,31 +29,32 @@ async function imported(text, opts) {
 const CASES = {
   stars_6max_srp: { players: 6, hero: "BTN", stack: 100, cards: ["Ah", "Qd", "Qs", "8d", "3c", "7h", "2s"],
     preflop: "UTG f, HJ f, CO f, BTN r2.5, SB f, BB c", flop: "BB x, BTN b1.8, BB c", turn: "BB x, BTN b6.1, BB c", river: "BB x, BTN b14.5, BB f", pot: 2.5 + 2.5 + 0.5 + 3.6 + 12.2 + 14.5 },
-  // a sitting-out seat isn't dealt in: five-handed; hero (120bb) is capped at the 100bb of the player who stayed in
-  stars_3bet_pot: { players: 5, hero: "BB", stack: 100, cards: ["Ac", "Kh", "Kd", "9c", "4h", "2s", "7c"],
+  // a sitting-out seat isn't dealt in: five-handed; hero has 120bb, the CO who stays in 100bb (all-in on the turn)
+  stars_3bet_pot: { players: 5, hero: "BB", stack: 120, stacks: { HJ: 100, CO: 100, BTN: 156.2, SB: 94 }, cards: ["Ac", "Kh", "Kd", "9c", "4h", "2s", "7c"],
     preflop: "HJ f, CO r2.5, BTN f, SB f, BB r11, CO c", flop: "BB b7, CO r22, BB c", turn: "BB x, CO a, BB c", river: "", pot: 200.5 },
   gg_limped_multiway: { players: 6, hero: "BB", stack: 100, cards: ["7s", "6s", "Ts", "8h", "2s", "Kd", null],
     preflop: "UTG c, HJ f, CO c, BTN f, SB c, BB x", flop: "SB x, BB x, UTG b2, CO f, SB c, BB r10.5, UTG f, SB c", turn: "SB x, BB b16, SB f", river: "", pot: 4 + 2 + 21 + 16 },
-  gg_allin_preflop: { players: 6, hero: "SB", stack: 100, cards: ["Ks", "Kh", "Jd", "5c", "2h", "9s", "Kc"],
+  gg_allin_preflop: { players: 6, hero: "SB", stack: 124, cards: ["Ks", "Kh", "Jd", "5c", "2h", "9s", "Kc"],
     preflop: "UTG f, HJ r2.5, CO f, BTN r7.5, SB r18, BB f, HJ f, BTN a, SB c", flop: "", turn: "", river: "", pot: 201 + 2.5 },
   stars_9max_mtt_ante: { players: 9, hero: "CO", stack: 80, ante: 0.1, cards: ["Ah", "Td", "Ac", "9h", "9d", "5s", "Qh"],
     preflop: "UTG f, UTG1 f, UTG2 f, LJ r2.2, HJ f, CO c, BTN f, SB f, BB c", flop: "BB x, LJ b2, CO c, BB f", turn: "LJ x, CO b5, LJ c", river: "LJ x, CO x", pot: 22 },
   stars_heads_up: { players: 2, hero: "BB", stack: 100, cards: ["9c", "9d", "Ts", "8s", "2c", "4h", "3d"],
     preflop: "SB r2.5, BB r9, SB c", flop: "BB x, SB b6, BB c", turn: "BB x, SB x", river: "BB b20, SB f", pot: 50 },
-  gg_straddle: { players: 6, hero: "BB", stack: 100, straddle: true, cards: ["Jc", "Jd", "8c", "4d", "2s", "Ah", null],
+  gg_straddle: { players: 6, hero: "BB", stack: 124, straddle: true, cards: ["Jc", "Jd", "8c", "4d", "2s", "Ah", null],
     preflop: "HJ f, CO r7, BTN f, SB f, BB r26, UTG f, CO c", flop: "BB b17.5, CO c", turn: "BB x, CO b39, BB f", river: "", pot: 26 + 26 + 0.5 + 2 + 35 + 39 },
   // names with brackets ("x (2)"), a colon, "raises", unicode; 2c/5c blinds (a 0.4bb small blind)
-  stars_zoom_names: { players: 6, hero: "UTG", stack: 67, cards: ["Td", "Tc", "9s", "4c", "2d", "Kh", null],
+  stars_zoom_names: { players: 6, hero: "UTG", stack: 128, cards: ["Td", "Tc", "9s", "4c", "2d", "Kh", null],
     preflop: "UTG r2.6, HJ f, CO r9, BTN f, SB f, BB f, UTG c", flop: "UTG x, CO b6, UTG c", turn: "UTG x, CO a, UTG f", river: "", pot: 19.5 + 12 + 52 },
-  // run twice (the first board is the hand's), all-in insurance and cash-drop lines
-  gg_run_twice_cashout: { players: 6, hero: "HJ", stack: 100, cards: ["Ah", "Ad", "2c", "7d", "9s", "Jh", "Kd"],
-    preflop: "UTG f, HJ r2.5, CO f, BTN r8.5, SB f, BB r45, HJ a, BTN c, BB c", flop: "", turn: "", river: "", pot: 300.5 },
+  // run twice (the first board is the hand's), all-in insurance and cash-drop lines; the big blind's 45bb all-in
+  // is a raise for less, the hero's jam over it is called by the 125bb button: a 45bb main pot three ways
+  gg_run_twice_cashout: { players: 6, hero: "HJ", stack: 100, stacks: { CO: 90, BTN: 125, BB: 45 }, cards: ["Ah", "Ad", "2c", "7d", "9s", "Jh", "Kd"],
+    preflop: "UTG f, HJ r2.5, CO f, BTN r8.5, SB f, BB a, HJ a, BTN c", flop: "", turn: "", river: "", pot: 245.5 },
   stars_run_twice: { players: 4, hero: "BTN", stack: 100, cards: ["As", "Ks", "Kd", "8s", "3s", "2h", "9c"],
     preflop: "CO r2.5, BTN r7.5, SB f, BB f, CO c", flop: "CO x, BTN b5, CO a, BTN c", turn: "", river: "", pot: 201.5 },
   // every player's cards in "Dealt to" lines: the hero is "Hero"
   gg_all_cards_shown: { players: 4, hero: "SB", stack: 100, cards: ["Ks", "Kh", "Jd", "5c", "2h", null, null],
     preflop: "CO f, BTN f, SB r3, BB c", flop: "SB b2, BB f", turn: "", river: "", pot: 8 },
-  stars_bounty_allin: { players: 5, hero: "BB", stack: 25, ante: 0.12, cards: ["Jh", "Js", "3d", "5h", "9c", "Td", "Ad"],
+  stars_bounty_allin: { players: 5, hero: "BB", stack: 50, ante: 0.12, cards: ["Jh", "Js", "3d", "5h", "9c", "Td", "Ad"],
     preflop: "HJ f, CO a, BTN f, SB f, BB c", flop: "", turn: "", river: "", pot: 50.86 },
 };
 
@@ -64,6 +65,7 @@ for (const [name, c] of Object.entries(CASES)) {
     assert.equal(p.byId("hhErr").textContent, "");
     assert.equal(p.byId("importBox").hidden, true);
     assert.deepEqual([S.players, S.hero, S.stack, S.ante, !!S.straddle], [c.players, c.hero, c.stack, c.ante, !!c.straddle]);
+    if (c.stacks) assert.deepEqual(S.stacks, c.stacks);
     assert.deepEqual(S.cards, c.cards);
     for (const s of ["preflop", "flop", "turn", "river"]) assert.deepEqual(S.actions[s], j(acts(c[s])), s);
     const sim = p.sim();
@@ -122,7 +124,7 @@ test("errors: no hero cards, not Hold'em, not a hand history", async () => {
   assert.deepEqual(p.S.cards, [null, null, null, null, null, null, null]);
 });
 
-test("a short all-in: equal stacks on the page, the shorter player checks through", async () => {
+test("a short all-in: every seat plays its own stack, the all-in player is out of the betting", async () => {
   // a third player all-in for 30bb with two 100bb players behind; the hero (BTN) folds the turn
   const text = HH("stars_6max_srp")
     .replace("tilt_proof: folds", "tilt_proof: raises $27 to $30 and is all-in").replace("Seat 3: tilt_proof ($100 in chips)", "Seat 3: tilt_proof ($30 in chips)")
@@ -130,10 +132,13 @@ test("a short all-in: equal stacks on the page, the shorter player checks throug
     .replace(/\*\*\* FLOP \*\*\*[\s\S]*\*\*\* SUMMARY/, "*** FLOP *** [Qs 8d 3c]\nOldTAG: checks\nHeroName: checks\n*** TURN *** [Qs 8d 3c] [7h]\nOldTAG: bets $20\nHeroName: folds\n*** SUMMARY");
   const p = await imported(text);
   const S = j(p.S);
-  assert.deepEqual(S.actions.preflop, j(acts("UTG f, HJ f, CO r30, BTN c, SB f, BB c")));
-  assert.deepEqual(S.actions.flop, j(acts("BB x, CO x, BTN x")));
-  assert.deepEqual(S.actions.turn, j(acts("BB b20, CO c, BTN f")));
-  assert.match(p.byId("toast").innerHTML, /CO went all-in for less/);
+  assert.deepEqual(S.stacks, { CO: 30, HJ: 143.27, SB: 62.4 });
+  assert.deepEqual(S.actions.preflop, j(acts("UTG f, HJ f, CO a, BTN c, SB f, BB c")));
+  assert.deepEqual(S.actions.flop, j(acts("BB x, BTN x")));
+  assert.deepEqual(S.actions.turn, j(acts("BB b20, BTN f")));
+  const sim = p.sim();   // BB's uncalled turn bet comes back; BB and CO go to showdown for the 90.5bb pot
+  assert.deepEqual([sim.waiting, sim.pot, sim.allin, sim.active], ["river", 90.5, ["CO"], ["CO", "BB"]]);
+  assert.doesNotMatch(p.byId("toast").innerHTML, /all-in for less|equal stacks/);
 });
 
 test("hh.js is loaded only when the import dialog opens", async () => {

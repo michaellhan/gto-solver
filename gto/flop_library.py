@@ -177,6 +177,10 @@ def tree_key(cfg: Config) -> dict:
              "version": MODEL_VERSION}
     if not cfg.turn_classes:
         model.update(n_turns=cfg.n_turns, seed=cfg.seed, leaf_turns=cfg.leaf_turns)
+    if getattr(cfg, "river_buckets", None) or getattr(cfg, "turn_buckets", False):
+        # Fast's flop model: the turn and river by hand buckets (per combo otherwise, as the library is solved)
+        model.update(river_buckets=cfg.river_buckets, turn_buckets=bool(cfg.turn_buckets),
+                     bucket_river_step=cfg.bucket_river_step)
     sizes = {"flop_bet": list(cfg.bet_sizes["flop"]), "flop_raise": list(cfg.raise_sizes["flop"]), **_later(cfg),
              "max_raises": cfg.max_raises, "allin_spr": cfg.allin_spr, "depth": cfg.depth,
              "rake": [cfg.rake_rate, cfg.rake_cap] if cfg.rake_rate > 0 else None}

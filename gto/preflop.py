@@ -30,13 +30,17 @@ class Table(list):
     """Seats in seating order (SEATS), plus the game's ante (bb per player, dead money) and whether the
     first seat straddles 2bb (it then acts last preflop and plays the big blind's charts). `rake`: the
     game's (rate, cap in bb or None), taken from pots that see a flop; None = no rake. `depth`: the
-    effective stack in bb, which picks the short-stack charts where there are any (chart_depth)."""
-    def __init__(self, seats, ante: float = 0.0, straddle: bool = False, rake=None, depth: float = 100.0):
+    effective stack in bb, which picks the short-stack charts where there are any (chart_depth). `stacks`:
+    each seat's own stack in bb when they differ (None: everyone has `depth`); the advisor's replay caps each
+    player's chips by theirs, and `depth` is then the effective stack of the player deciding."""
+    def __init__(self, seats, ante: float = 0.0, straddle: bool = False, rake=None, depth: float = 100.0,
+                 stacks: Optional[Dict[str, float]] = None):
         super().__init__(seats)
         self.ante = float(ante or 0.0)
         self.straddle = bool(straddle) and len(seats) >= 3
         self.rake = tuple(rake) if rake and rake[0] > 0 else None
         self.depth = float(depth)
+        self.stacks = {p: float(v) for p, v in stacks.items()} if stacks else None
 
     def preflop_order(self) -> List[str]:
         return list(self[1:]) + [self[0]] if self.straddle else list(self)
@@ -281,7 +285,13 @@ def at_depth(positions, stack: float):
     if getattr(positions, "depth", None) == float(stack):
         return positions
     return Table(list(positions), getattr(positions, "ante", 0.0), getattr(positions, "straddle", False),
-                 getattr(positions, "rake", None), stack)
+                 getattr(positions, "rake", None), stack, getattr(positions, "stacks", None))
+
+
+def stacks_key(positions) -> Optional[tuple]:
+    """The table's per-seat stacks as a hashable key (None when everyone has the same)."""
+    s = getattr(positions, "stacks", None)
+    return tuple(sorted(s.items())) if s else None
 
 
 def spot_depth(hero: str, actions: List[dict], positions) -> float:
@@ -657,7 +667,7 @@ def strategy_for(hero: str, actions: List[dict], positions: Optional[List[str]] 
     """Full mixed strategy (including fold) per combo for hero at this point."""
     key = (hero, tuple((a["pos"], a["action"], a.get("to"), a.get("amount")) for a in actions),
            tuple(positions or POSITIONS), getattr(positions, "ante", 0.0), getattr(positions, "straddle", False),
-           chart_depth(positions), _depth(positions))
+           chart_depth(positions), _depth(positions), stacks_key(positions))
     if key not in _STRAT_CACHE:
         if len(_STRAT_CACHE) > 4096:
             _STRAT_CACHE.clear()
@@ -756,25 +766,29 @@ VS_4BET_BLEND = 0.04   # equity over which a 3bettor's continue frequency ramps 
 VS_4BET_REALIZE = 0.8  # ...and the share of its equity a call of a 4bet realizes (sets the value bar)
 
 
-def _bets(actions: List[dict], depth: float = 100.0) -> Dict[str, float]:
+def _bets(actions: List[dict], depth: float = 100.0, stacks: Optional[Dict[str, float]] = None) -> Dict[str, float]:
     """Each seat's chips in after the preflop actions (blinds posted; default sizes where none given).
-    An all-in goes to its `to` (or `amount`) when given, else to `depth` (the effective stack, as
-    Table.depth); no bet goes past `depth`."""
+    An all-in goes to its `to` (or `amount`) when given, else to the player's stack (`stacks`, else
+    `depth`: the effective stack, as Table.depth); no bet goes past it, and a call or an all-in for less
+    than the bet puts in what the player has."""
+    stk = lambda p: float(stacks.get(p, depth)) if stacks else float(depth)
     bets = {"SB": 0.5, "BB": 1.0}
     cur = 1.0
     for a in actions:
+        p = a["pos"]
         if a["action"] == "call":
-            bets[a["pos"]] = cur
+            bets[p] = min(cur, stk(p))
         elif a["action"] in ("raise", "all-in"):
             size = a.get("to") or a.get("amount")
             if a["action"] == "all-in":
-                cur = float(size or depth)
+                amt = float(size or stk(p))
             else:
-                cur = float(size or cur * 3)
-            cur = min(cur, float(depth))
-            bets[a["pos"]] = cur
+                amt = float(size or cur * 3)
+            amt = min(amt, stk(p))
+            bets[p] = amt
+            cur = max(cur, amt)
         else:
-            bets.setdefault(a["pos"], 0.0)
+            bets.setdefault(p, 0.0)
     return bets
 
 
@@ -804,7 +818,7 @@ def _vs_4bet_range(hero: str, actions: List[dict], positions, acts: Dict[str, np
         return acts
     # the bar a value hand is held to: the price of calling the 4bet, over the share of its equity a
     # call realizes (the same in every spot, however wide the 3bet range the chart is applied to)
-    bets = _bets(actions, _depth(positions))
+    bets = _bets(actions, _depth(positions), getattr(positions, "stacks", None))
     owe = bets[four] - bets[hero]
     bar = owe / max(sum(bets.values()) + owe, 1e-9) / VS_4BET_REALIZE
     eq, eq_std = np.nan_to_num(eq, nan=0.0), np.nan_to_num(eq_std, nan=0.0)
@@ -819,7 +833,7 @@ def _vs_4bet_range(hero: str, actions: List[dict], positions, acts: Dict[str, np
         # which depend on this)
         def folds(line, p4, ranges):
             jams = line + [{"pos": hero, "action": "all-in"}]
-            call = _jam_calls(ranges[hero] * acts["raise"], jams, p4, _depth(positions))
+            call = _jam_calls(ranges[hero] * acts["raise"], jams, p4, _depth(positions), getattr(positions, "stacks", None))
             return float((ranges[p4] * (1.0 - call)).sum() / max(ranges[p4].sum(), 1e-12))
         f_s = folds(std, opener, std_r)
         scale = min(1.0, folds(actions, four, act_r) / max(f_s, 1e-9)) if f_s > 1e-6 else 1.0
@@ -852,7 +866,7 @@ def _vs_5bet_jam(hero: str, actions: List[dict], positions, acts: Dict[str, np.n
     r = replay_ranges(actions, positions).get(aggr[-1]["pos"])
     if r is None or r.sum() < 1e-9:
         return acts
-    call = _jam_calls(r, actions, hero, _depth(positions))
+    call = _jam_calls(r, actions, hero, _depth(positions), getattr(positions, "stacks", None))
     return {"call": call, "fold": 1.0 - call}
 
 
@@ -861,14 +875,16 @@ def _depth(positions) -> float:
     return float(getattr(positions, "depth", 100.0))
 
 
-def _jam_calls(jam_range: np.ndarray, actions: List[dict], caller: str, depth: float = 100.0) -> np.ndarray:
+def _jam_calls(jam_range: np.ndarray, actions: List[dict], caller: str, depth: float = 100.0,
+               stacks: Optional[Dict[str, float]] = None) -> np.ndarray:
     """Per combo, how often `caller` calls the all-in that ends `actions` from `jam_range`: by equity
     against it versus the pot odds (an all-in without a size goes to `depth`, the effective stack)."""
     from .pf_classes import equity_vs
     if jam_range.sum() < 1e-9:
         return np.zeros(N_COMBOS)
-    bets = _bets(actions, depth)
-    owe = bets[actions[-1]["pos"]] - bets.get(caller, 0.0)
+    bets = _bets(actions, depth, stacks)
+    owe = max(0.0, min(bets[actions[-1]["pos"]], float(stacks.get(caller, depth)) if stacks else float(depth))
+              - bets.get(caller, 0.0))
     need = owe / max(sum(bets.values()) + owe, 1e-9)
     return np.clip(0.5 + (np.nan_to_num(equity_vs(jam_range), nan=0.0) - need) / JAM_CALL_BLEND, 0.0, 1.0)
 
