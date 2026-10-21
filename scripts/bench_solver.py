@@ -22,6 +22,12 @@ BENCH_THREADS is set. --noblas runs the browser's kernels (einsum, trimmed leave
 itself use scripts/pyodide_run.mjs (NO_BLAS is on there and times are wall-clock).
 
     python scripts/bench_solver.py --curve [--noblas] [--spots srp-dry,turn] [--configs fast] [--budget 8]
+
+Regret minimizers (--algos): exploitability (% of the pot) at fixed iteration counts for each Config.cfr scheme
+(gto.solver.CFR_SCHEMES), per spot and config, and the per-iteration cost (the fastest chunk, CPU ms). Iterations,
+not seconds, so the comparison is exact on a loaded machine; the cost column says what an iteration takes.
+
+    python scripts/bench_solver.py --algos dcfr,pcfr+,pdcfr+ [--spots river,turn] [--configs fast] [--iters 200]
 """
 import os, sys, time, argparse, json
 for _v in ("VECLIB_MAXIMUM_THREADS", "OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
@@ -137,6 +143,42 @@ def run_curves(args):
             json.dump(rows, f)
 
 
+def run_algos(args):
+    if args.noblas:
+        S.NO_BLAS = True
+    spots = args.spots.split(",") if args.spots else list(SPOTS)
+    algos = args.algos.split(",")
+    marks = [m for m in (5, 10, 20, 50, 100, 200, 500, 1000, 2000) if m <= args.iters]
+    if args.iters not in marks:
+        marks.append(args.iters)
+    print(("NO_BLAS " if S.NO_BLAS else "BLAS ") + "exploitability (% pot) after N iterations; ms: CPU per iteration")
+    print(f"{'spot':12s} {'config':9s} {'cfr':9s} {'ms':>6s} " + " ".join(f"{m:>7d}" for m in marks), flush=True)
+    rows = {}
+    for spot in spots:
+        line, oop, ip, board, pot, stack = SPOTS[spot]
+        rng = ranges(line)
+        for c in args.configs.split(","):
+            for algo in algos:
+                sol = solve(cards(board), rng[oop], rng[ip], pot, stack, cfg=Config(**CONFIGS[c], cfr=algo),
+                            time_budget=1e9, max_iters=0)
+                s = sol.solver
+                s.horizon = args.iters
+                per_it, cells, pts = 1e9, [], []
+                for m in marks:
+                    n = m - s.iters
+                    t0 = clock()
+                    s.run(sol.r0, sol.r1, time_budget=1e9, max_iters=m, min_iters=n)
+                    per_it = min(per_it, (clock() - t0) / n)
+                    e = s.exploitability(sol.r0, sol.r1)
+                    pts.append((m, e))
+                    cells.append(f"{e:7.3f}")
+                rows[f"{spot}/{c}/{algo}"] = {"ms": per_it * 1000, "points": pts}
+                print(f"{spot:12s} {c:9s} {algo:9s} {per_it * 1000:6.1f} " + " ".join(cells), flush=True)
+    if args.out:
+        with open(args.out, "w") as f:
+            json.dump(rows, f)
+
+
 # --flop: BTN vs BB single-raised pots and CO vs BTN 3bet pots on a spread of textures (see tests TestFlopStrategy)
 FLOP_BOARDS = {"K72": "Kd7c2h", "QQ6": "QsQd6c", "A74": "As7h4d", "883": "8s8d3c", "765": "7h6d5c", "J95": "Jc9d5h",
                "Kh7h2h": "Kh7h2h", "986": "9h8h6c", "T98": "Th9c8d", "3b-K72": "Kd7c2h", "3b-A83": "Ah8c3d",
@@ -199,10 +241,13 @@ def main():
     ap.add_argument("--curve", action="store_true")
     ap.add_argument("--flop", action="store_true")
     ap.add_argument("--noblas", action="store_true")
+    ap.add_argument("--algos"); ap.add_argument("--iters", type=int, default=200)
     ap.add_argument("--spots"); ap.add_argument("--configs", default="fast,accurate")
     ap.add_argument("--budget", type=float, default=8.0)
     ap.add_argument("--out")
     args = ap.parse_args()
+    if args.algos:
+        return run_algos(args)
     if args.curve:
         return run_curves(args)
     if args.flop:

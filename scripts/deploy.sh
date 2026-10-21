@@ -52,6 +52,12 @@ rm -rf "$WORK/site/gto-solver"
 mkdir -p "$WORK/site/gto-solver/gto"
 cp "$HERE/gto/static/index.html" "$HERE/gto/static/worker.js" "$HERE/gto/static/hh.js" "$HERE/gto/static/practice.js" "$WORK/site/gto-solver/"
 cp "$HERE"/gto/*.py "$WORK/site/gto-solver/gto/"
+# the precomputed flop library (gto/flop_library.py): index.json and one small file per spot and flop, fetched by the
+# worker only when its spot comes up
+if [ -f "$HERE/gto/static/flop_library/index.json" ]; then
+  cp -R "$HERE/gto/static/flop_library" "$WORK/site/gto-solver/"
+  find "$WORK/site/gto-solver/flop_library" -type f ! -name index.json ! -name '*.bin' -delete   # (a running build's .tmp files)
+fi
 # Stamp the worker's cache-busting version with its content hash (and practice.js's, loaded with the same
 # version), so a changed worker.js is never served from a browser's 4h-cached copy (which would load an
 # outdated list of solver files).
