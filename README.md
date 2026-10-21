@@ -833,6 +833,14 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   tree's, more raises than it allows, or a line through a raise fall back to the live solve). Turn and river spots
   narrow the flop's ranges through it as well, instead of the earlier street's short solve. The entry ignores the
   hero's cards in the villain's range (the live solve drops them): an edge the size of a blocker.
+* **Flops not stored** are solved live from scratch, never answered from another flop. A warm start from the
+  spot's most similar stored flop (same pairing and suit pattern, nearest ranks; strategies carried over by card
+  substitution and seeded as regrets) was measured and left out (`scripts/bench_library_warm.py`, 12 unstored BTN vs
+  BB flops, geometric mean % of the pot, cold -> seeded): it helps early (Accurate at 10 / 40 / 80 iterations: 81 ->
+  53, 5.3 -> 3.9, 1.10 -> 0.98, the same with the browser's NO_BLAS kernels: 60 iterations 2.08 -> 1.60), is even by
+  100 (0.68 / 0.68) and then worse, its seeded regrets outlasting DCFR's discount: 200 iterations 0.19 -> 0.24, 400
+  0.07 -> 0.09, 10-12 of the 12 flops worse (the browser's bucketed Accurate the same, Fast at 120 0.50 -> 0.58).
+  Every budget runs past 100 (Fast 140-420, Accurate 250-450 natively, 520-870 in the browser).
 * **Invalidation**: `index.json` holds each spot's range fingerprints and the tree; an entry whose spot, tree or
   `MODEL_VERSION` (bump it when the flop game changes in a way the tree key can't see) no longer matches the code
   is ignored, and a rebuilt index leaves stale entries out (a test checks the shipped index against the charts).
