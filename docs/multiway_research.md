@@ -124,3 +124,8 @@ See `tests/test_multiway_solver.py` and `scripts/compare_multiway.py` (numbers i
     bets.
   * Facing the CO's half-pot bet, the button folds 68-73% and the big blind 49-53% after it. Both fold 34-37%
     of the time, against MDF's 33%: the defence is shared between the two.
+* **Against the betting rules.** `compare_multiway.py --spots` covers 580 hand-spots on 4 rivers and 2 turns.
+  The rules pick the solve's most frequent action 74% of the time, and their pick gives up 0.15 bb (1-3% of the
+  pot) by the solve's EVs. They disagree most when first to act (river: the rules bet 1% of the strong-leaning
+  sample, the solve 25%; turn: 26% against 3%) and when checked to (54-55% against 79-83%). Facing a bet and a
+  call they agree 84-95% of the time.
