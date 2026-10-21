@@ -14,7 +14,8 @@ import numpy as np
 from gto.solver import Config, solve, lift_classes, _class_closure, Ctx, COMBO_TABLE, CA_FULL, CB_FULL
 from scripts import turn_river_reference as T
 
-REFS = json.load(open(T.REFS_FILE))
+with open(T.REFS_FILE) as _f:
+    REFS = json.load(_f)
 
 
 def one_size(frac):
@@ -149,6 +150,119 @@ class TestRiverClasses(unittest.TestCase):
             e_cls, e_lift, e_full = cls.exploitability(), lifted.exploitability(), full.exploitability()
             self.assertLess(abs(e_cls - e_full), 0.3, spot)
             self.assertLess(e_lift - e_full, 0.3, f"{spot}: lifted {e_lift:.2f}, every river {e_full:.2f}")
+
+
+# Published turn and river figures (6-max cash 100bb unless noted) next to this solver's richest trees. (spot, statistic,
+# low, high, source); statistics as T.stats: "oop bet" the out-of-position player's leads at the root, "ip bet" the in-
+# position player's bets once checked to, "ip overbet" its bets above pot. Few aggregates are published for turns and
+# rivers (GTO Wizard's are behind an account; its blog shows single spots, mostly as images), so the bands are wide and
+# "*" marks figures from a different but similar spot. Checked against the native Accurate model (TestTurnRiverReferences)
+# and against the rich reference itself.
+TURN_REFERENCES = [
+    # GTO Wizard, "How and why you should use turn donk bets": BB leads the turn almost only when it pairs a low board card
+    # or fills a straight; on K75 a 7 turn it leads ~11% at 100bb (16% at 40bb), mostly small. Ours leads K72 a 7 with
+    # 33% pot more often (39% in the rich tree: the BTN c-bet this flop with its whole range at a third pot)
+    ("t-k72-3", "oop bet", 0, 3, "GTO Wizard turn donks: none on a brick"),
+    ("t-k72-7", "oop bet", 8, 45, "GTO Wizard K75-7: ~11% at 100bb *"),
+    # ThinkGTO (Solver+, JJ4 BTN vs BB, 25/80/135% turn sizes): brick turn barrel 53.5% (7.7% overbets), an A 28% of which
+    # 21% overbets; GTO Wizard: overbets where the turn favours the c-bettor's range
+    ("t-k72-3", "ip bet", 30, 65, "ThinkGTO JJ4 brick 53.5% *"),
+    ("t-k72-3", "ip overbet", 10, 40, "ThinkGTO JJ4 brick 7.7%, A 21% overbets *"),
+    ("t-q83-a", "ip overbet", 15, 50, "ThinkGTO JJ4-A: overbets 21 of 28% bets *"),
+    # GTO Wizard, "The turn probe bet" (T72r checked, BTN vs BB) and "The art of turn probing": BB probes most turns,
+    # often large; gtogecko: K9 probes Q72-3 61%
+    ("t-q83x-5", "oop bet", 20, 65, "GTO Wizard turn probing, gtogecko Q72-3 *"),
+    ("t-q83x-5", "ip bet", 20, 60, "GTO Wizard delayed c-bets *"),
+    # GTO Wizard, "Mastering turn play in 3-bet pots": the 3-bettor bets the turn 47-63% after a flop bet (SB vs BTN)
+    ("t-3b-k72-4", "ip bet", 45, 85, "GTO Wizard 3bet pots 47-63% *"),
+]
+RIVER_REFERENCES = [
+    # GTO Wizard, "Principles of river play": a polar river (bet, bet, brick) bets big and overbets/shoves; its MDF
+    # article: the defender folds more than MDF when it is capped
+    ("r-k72-3-5", "ip bet", 65, 90, "GTO Wizard principles of river play: polar ranges bet most of the range"),
+    ("r-k72-3-5", "ip overbet", 30, 75, "GTO Wizard principles of river play: overbets and shoves"),
+    ("r-k72-3-5", "oop vs bet: fold", 45, 70, "MDF and over-folding (blog.gtowizard.com/mdf-alpha)"),
+    ("r-q83x-5-j", "oop vs bet: fold", 55, 80, "GTO Wizard MDF: the out-of-position defender over-folds"),
+]
+
+
+def shipped(speed, spot, iters):
+    """The spot solved with gto/native.py's tree for `speed` (a river root with Advisor.root_sizes' menu)."""
+    from gto import native
+    cfg = native.config(speed)
+    board, r0, r1, pot, stack = T.load_spot(spot)
+    if len(board) == 5:
+        for kind, v in native.ROOT_SIZES["river"].items():
+            (cfg.bet_sizes if kind == "bet" else cfg.raise_sizes)["river"] = list(v)
+    return solve(board, r0, r1, pot, stack, cfg=cfg, time_budget=1e9, max_iters=iters)
+
+
+class TestTurnRiverReferences(unittest.TestCase):
+    """The shipped turn and river models against the reference solves (scripts/turn_river_reference.py --measure has
+    the per-budget numbers) and published figures (TURN_REFERENCES, RIVER_REFERENCES)."""
+
+    _sols = {}
+    FAST_ITERS, ACC_ITERS = 60, 150     # (native Fast gets ~60-80 turn iterations in 2.5 s, Accurate 200-300 in 30 s)
+
+    @classmethod
+    def sol(cls, speed, spot):
+        key = (speed, spot)
+        if key not in cls._sols:
+            # (a river root solves in milliseconds an iteration: 600 is what Fast's 2.5 s gives)
+            cls._sols[key] = shipped(speed, spot, 600 if spot.startswith("r-") else
+                                     cls.FAST_ITERS if speed == "fast" else cls.ACC_ITERS)
+        return cls._sols[key]
+
+    def test_fast_turn_close_to_rich_reference(self):
+        # native Fast's turn (75% and 125% pot, the river inside at 75%, river classes) at 60 iterations (~2.5 s) against
+        # the rich reference: EVs within 2.6% of the pot per combo (measured 0.7-2.3; one size with every river at its
+        # 42 iterations: 1.5-3.4), frequencies within 6 points on average, 11 where the reference leads or probes a
+        # third of the pot, which Fast's menu lacks (K72-7, Q83 checked through: measured 9.8 and 8.3)
+        refs = T.load_refs()
+        for spot in ("t-k72-3", "t-k72s-4s", "t-k72-7", "t-q83-a", "t-q83x-5", "t-3b-k72-4"):
+            sol = self.sol("fast", spot)
+            ref = refs[spot]["rich"]
+            err, worst = T.freq_error(T.stats(sol), ref["stats"])
+            self.assertLess(err, 11.0 if spot in ("t-k72-7", "t-q83x-5") else 6.0, f"{spot}: {err:.1f} (worst {worst})")
+            self.assertLess(T.ev_error(sol, ref["values"]), 2.6, spot)
+
+    def test_accurate_turn_close_to_rich_reference(self):
+        # 33/75/125% with river classes at 150 iterations (native Accurate gets ~200 in 30 s): frequencies within 3.5 points
+        # of the rich reference on average, EVs within 0.8% of the pot (measured: 0.4-2.4 points, 0.26-0.53%; the old two
+        # sizes with every river at the same cost: 3.6-8.8 points, 0.8-2.9%, mostly the missing overbet and small lead)
+        refs = T.load_refs()
+        for spot in ("t-k72-3", "t-k72-7", "t-q83-a"):
+            sol = self.sol("accurate", spot)
+            ref = refs[spot]["rich"]
+            err, worst = T.freq_error(T.stats(sol), ref["stats"])
+            self.assertLess(err, 3.5, f"{spot}: {err:.1f} (worst {worst})")
+            self.assertLess(T.ev_error(sol, ref["values"]), 0.8, spot)
+
+    def test_river_root_menu_close_to_rich(self):
+        # a river root's 33/75/125/250% menu at 600 iterations: per-combo EVs within 0.75% of the pot of the six-size
+        # reference (measured 0.11-0.61, the same at 2500 iterations: the menu, not convergence), frequencies within 2.5
+        refs = T.load_refs()
+        for spot in ("r-k72-3-5", "r-k72-3x-9", "r-k72s-4-9s", "r-q83x-5-j"):
+            sol = self.sol("fast", spot)        # (both speeds' river roots play the same menu)
+            ref = refs[spot]["rich"]
+            self.assertLess(T.ev_error(sol, ref["values"]), 0.75, spot)
+            self.assertLess(T.freq_error(T.stats(sol), ref["stats"])[0], 2.5, spot)
+
+    def test_published(self):
+        for spot, stat, lo, hi, src in TURN_REFERENCES + RIVER_REFERENCES:
+            ref = REFS[spot]["rich"]["stats"].get(stat, 0.0)
+            self.assertTrue(lo <= ref <= hi, f"reference {spot} {stat} {ref:.1f} not in [{lo}, {hi}] ({src})")
+            # (Accurate where its solve is shared with the test above; Fast has no small lead for K72-7's)
+            speeds = ["accurate"] if spot in ("t-k72-3", "t-k72-7", "t-q83-a") else ["fast"]
+            for speed in speeds:
+                v = T.stats(self.sol(speed, spot)).get(stat, 0.0)
+                self.assertTrue(lo <= v <= hi, f"{speed} {spot} {stat} {v:.1f} not in [{lo}, {hi}] ({src})")
+
+    def test_texture(self):
+        # the pairing turn draws leads, the brick none; the A overcard on Q83 is overbet more than the brick on K72
+        st = {s: REFS[s]["rich"]["stats"] for s in ("t-k72-3", "t-k72-7", "t-q83-a")}
+        self.assertGreater(st["t-k72-7"]["oop bet"], st["t-k72-3"]["oop bet"] + 10)
+        self.assertGreater(st["t-q83-a"]["ip overbet"], st["t-k72-3"]["ip overbet"])
 
 
 if __name__ == "__main__":

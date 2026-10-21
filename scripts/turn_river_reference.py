@@ -1,4 +1,4 @@
-"""Turn and river strategy against reference solves (tests TestTurnRiverStrategy, tests/data/turn_river_refs.json).
+"""Turn and river strategy against reference solves (tests/test_turn_river.py, tests/data/turn_river_refs.json).
 
 The spots are BTN vs BB single-raised pots and a CO vs BTN 3bet pot after a flop (and for the river spots a turn)
 line, their ranges narrowed by long solves of those streets (stored in tests/data/turn_river_spots.npz, so the tests
@@ -10,15 +10,17 @@ don't re-solve the flop):
 
 --reference solves each spot three ways, every river card in the tree: the rich menu (turn and river bets of a
 third, three quarters and 1.25 pot, raises of three quarters, the all-in; on a river root also half, double and
-2.5 pot), the one-size tree the browser and native Fast play, and native Accurate's two sizes. --measure solves each
-spot with the browser's and the native configs at the iterations their budgets get and prints the differences from
-the reference of the same tree (convergence and river sampling) and from the rich one (the size menu too):
+2.5 pot), the one-size tree the browser and native Fast played, and native Accurate's old two sizes. --measure solves
+each spot with the browser's and the native configs (before: "browser-fast" ...; "-now": the current ones; and
+candidates) at the iterations their budgets get and prints the differences from the reference of the same tree
+(convergence and river sampling) and from the rich one (the size menu too):
 aggregate frequencies (points of the range), the root players' EVs (% of the pot, per combo, range-weighted) and
 the exploitability in its own tree. Budgets become iterations by each config's cost relative to the one-size
 every-river tree on t-k72-3 measured in the same run (so a loaded machine slows both alike), and that tree's known
 idle speed: 16.8 iterations a second natively (gto/native.py: Fast's 40-45 turn iterations in 2.5 s) and 11.6 in
-Pyodide (README, Solver speed), each run with its kernels (BLAS natively, NO_BLAS for the browser). Run it with `nice`:
-a reference takes minutes per turn spot.
+Pyodide (README, Solver speed), each run with its kernels (BLAS natively, NO_BLAS for the browser). On a busy machine
+the cost ratios still swing by +-30%; the README's table measured each config's cost on each spot twice and took the
+faster. Run it with `nice`: a reference takes minutes per turn spot.
 """
 import os, sys, time, json, argparse
 for _v in ("VECLIB_MAXIMUM_THREADS", "OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
@@ -86,6 +88,11 @@ CONFIGS = {
     "browser-accurate": (dict(ONE), "one", 60.0, "browser"),
     "native-fast": (dict(ONE), "one", 2.5, "native"),
     "native-accurate": (dict(TWO), "two", 30.0, "native"),
+    # now (gto/native.py, static/worker.js)
+    "browser-fast-now": (dict(_menu([0.33, 1.25], [0.75]), river_classes=True, _root_river=ROOT_RIVER), "rich", 8.0, "browser"),
+    "browser-accurate-now": (dict(RICH, river_classes=True, _root_river=ROOT_RIVER), "rich", 60.0, "browser"),
+    "native-fast-now": (dict(_menu([0.75, 1.25], [0.75]), river_classes=True, _root_river=ROOT_RIVER), "rich", 2.5, "native"),
+    "native-accurate-now": (dict(RICH, river_classes=True, _root_river=ROOT_RIVER), "rich", 30.0, "native"),
     # candidates: river classes, other menus, the river root's menu
     "browser-fast-classes": (dict(ONE, river_classes=True, _root_river=ROOT_RIVER), "one", 8.0, "browser"),
     "browser-accurate-classes": (dict(ONE, river_classes=True, _root_river=ROOT_RIVER), "one", 60.0, "browser"),
@@ -163,9 +170,11 @@ def _pot_after(sol, line, pot):
 
 
 def load_spot(name):
-    d = np.load(RANGES_FILE)
-    meta = json.loads(str(d["meta"]))[name]
-    return cards(meta["board"]), d[name + "/oop"].astype(np.float64), d[name + "/ip"].astype(np.float64), meta["pot"], meta["stack"]
+    """(board, OOP's range, IP's range, pot, stack) of a spot (from RANGES_FILE)."""
+    with np.load(RANGES_FILE) as d:
+        meta = json.loads(str(d["meta"]))[name]
+        return (cards(meta["board"]), d[name + "/oop"].astype(np.float64), d[name + "/ip"].astype(np.float64),
+                meta["pot"], meta["stack"])
 
 
 def build_ranges(names):
@@ -349,8 +358,10 @@ def freq_error(st, ref):
 
 def load_refs():
     """REFS_FILE, with REFS_MORE's spots (a second --reference process's file) merged in."""
-    refs = json.load(open(REFS_FILE))
-    vals = dict(np.load(VALUES_FILE))
+    with open(REFS_FILE) as f:
+        refs = json.load(f)
+    with np.load(VALUES_FILE) as z:
+        vals = dict(z)
     more = os.environ.get("REFS_MORE")
     if more:
         for k, v in json.load(open(more)).items():
@@ -403,7 +414,7 @@ def main():
     ap.add_argument("--measure", action="store_true")
     ap.add_argument("--spots")
     ap.add_argument("--trees", default="rich,one,two")
-    ap.add_argument("--configs", default="browser-fast,browser-accurate,native-fast,native-accurate")
+    ap.add_argument("--configs", default="browser-fast,browser-accurate,native-fast,native-accurate,browser-fast-now,browser-accurate-now,native-fast-now,native-accurate-now")
     ap.add_argument("--iters-turn", type=int, default=400)
     ap.add_argument("--iters-river", type=int, default=3000)
     ap.add_argument("--out")
