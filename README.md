@@ -409,8 +409,9 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   sizes, 0.9 on BB's check and 2.0 on its fold/call/raise against the small bet; 6 random turns
   with the river checked down were 12.4, 27, 5.3 and 5.8 off. Inside a flop solve the turn and
   river have one bet and raise size (`later_sizes`): with two, K72 c-bets 78.8% for 77.8. Against
-  published solves (a 25%/80% flop tree like ThinkGTO's): QQ6 96% (published 98.8%, was 64%), K72
-  97% (BeyondGTO 98%, was 64%), A74 74% (67%, was 70%), 883 65% (68%, was 52%); BB vs a 25% bet on
+  published solves (a 25%/80% flop tree like ThinkGTO's), measured with the preflop charts of the time: QQ6 96%
+  (published 98.8%, was 64%), K72 97% (BeyondGTO 98%, was 64%; 76% with today's charts, whose BB defends like a
+  raked solve, see Known limits), A74 74% (67%, was 70%), 883 65% (68%, was 52%); BB vs a 25% bet on
   A74 folds 36 / calls 45 / raises 18 (34.6 / 50.0 / 15.4). An iteration costs ~7x the old tree's
   natively (~15 it/s on a rainbow flop, half that on a two-tone or monotone one) and ~15x in
   Pyodide, and a solve needs ~100: 30 iterations were 12 points of c-bet and 15 of BB's check from
