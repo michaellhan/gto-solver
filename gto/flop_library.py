@@ -65,11 +65,13 @@ SPOTS = [
     ("srp_utg_bb", "UTG vs BB single-raised pot", "UTG:r2.5,HJ:f,CO:f,BTN:f,SB:f,BB:c"),
     ("3bp_sb_btn", "SB 3bet vs BTN", "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:r10,BB:f,BTN:c"),
 ]
-# How many representative flops each spot stores (representative_flops(n); 552 = 3 x 184 holds the 184-flop set):
-# the commonest single-raised pots get more (scripts/flop_library_coverage.py: a flop not stored was 65% of the
-# heads-up flop decisions the library missed), the rest REP_FLOPS.
+# How many representative flops each spot stores (representative_flops(n); an odd multiple of a set holds it: 552 =
+# 3 x 184, 1656 = 3 x 552; 1755 is every flop): the commonest single-raised pots get more, by coverage per MB
+# (scripts/flop_library_coverage.py --assume; a flop not stored was 53 of the 79 points of heads-up flop decisions
+# the library missed): BTN vs BB on every flop +12.4 points for 4.5 MB, UTG vs BB on 552 +2.4 for 1.05 MB (SB vs BB
+# on 552: +3.5 for 2.1 MB, its ranges' entries the biggest), the rest REP_FLOPS.
 REP_FLOPS = 184
-SPOT_FLOPS = {"srp_btn_bb": 552, "srp_co_bb": 552, "srp_hj_bb": 552}
+SPOT_FLOPS = {"srp_btn_bb": 1755, "srp_co_bb": 552, "srp_hj_bb": 552, "srp_utg_bb": 552}
 
 
 def spot_setup(line: str, players: int = 6, stack: float = 100.0) -> dict:
@@ -756,4 +758,5 @@ def build_report(spot: dict, full0: np.ndarray, full1: np.ndarray, read: Callabl
         flops.append(x)
     return {"format": REPORT_FORMAT, "id": spot["id"], "label": spot.get("label", spot["id"]), "line": spot.get("line"),
             "seats": spot.get("seats"), "pot": spot["pot"], "stack": spot["stack"], "nodes": nodes, "flops": flops}
+
 

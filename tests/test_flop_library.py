@@ -457,7 +457,7 @@ class TestShippedLibrary(unittest.TestCase):
             with open(os.path.join(fl.DIR, sp["id"], "report.json"), "rb") as f:
                 data = f.read()
             self.assertEqual(sp["report"], hashlib.sha1(data).hexdigest()[:10], sp["id"])
-            self.assertLess(len(data), 200_000)   # (~45 KB on 184 flops, ~135 KB on 552)
+            self.assertLess(len(data), 500_000)   # (~45 KB on 184 flops, ~135 KB on 552, ~430 KB (80 KB gzipped) on all 1755)
             rep = json.loads(data)
             self.assertEqual({x["f"]: x["hash"] for x in rep["flops"]}, sp["flops"])
             self.assertAlmostEqual(sum(x["w"] for x in rep["flops"]), 22100, delta=1)

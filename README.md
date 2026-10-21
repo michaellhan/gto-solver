@@ -141,7 +141,7 @@ filter by high card, suits (rainbow, two-tone, monotone), pairing and connectedn
 groups' averages (each flop weighted by how many of the 22100 flops it stands for; a group row filters to it).
 Clicking a flop loads that hand: the spot's preflop action, the flop, the action up to the node, and you as the player
 to act with the hand that mixes most there, so the precomputed advice appears at once. The data is one small
-`flop_library/<spot>/report.json` per spot (~45 KB, ~12 KB gzipped; ~135 KB for the spots on 552 flops), written with the library's index
+`flop_library/<spot>/report.json` per spot (~45 KB, ~12 KB gzipped; ~135 KB on 552 flops, 430 KB / 80 KB gzipped for BTN vs BB's 1755), written with the library's index
 (`flop_library.build_report`, see Building below); the panel is `gto/static/reports.js`, loaded when first opened.
 
 **Drills** (in the ⋯ menu) drill one flop decision of the precomputed library, like GTO Wizard's trainer: pick a
@@ -795,14 +795,16 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
 * **Flops**: canonical flops matched up to suits (the ranges are suit-symmetric, so a stored flop's solve is any
   suit permutation's, its combos permuted); other flops are solved live. Each spot stores a representative set
   (`representative_flops(n)`: the 1755 suit-isomorphic flops sorted by texture and sampled by weight, so each suit
-  pattern, pairing and height gets its share): 184 flops (12.7% of all flops), and 552 (38%; it holds the 184) for
-  BTN, CO and HJ vs BB (`SPOT_FLOPS`).
+  pattern, pairing and height gets its share): 184 flops (12.7% of all flops); 552 (38%; it holds the 184) for
+  CO, HJ and UTG vs BB; every flop for BTN vs BB (`SPOT_FLOPS`).
 * **Coverage** (`scripts/flop_library_coverage.py`: the 6-max 100bb preflop game played by the charts, the flop by
-  the stored strategies): 36% of hands go heads-up to the flop, and the library answers 21.3% of their flop
-  decisions (9.4% with 184 flops everywhere). Of the rest, a flop not stored is 53 points, a spot not in
-  the library 23 (HJ / UTG flatted by the BTN 6.3, CO vs the SB's 3bet 1.2, each other 3bet pot ~1, 4bet pots 1.5
-  together), a raise 2.7. A flop's entry is worth its spot's share times its suit count, so more flops of the
-  commonest spots beat new spots (184 flops of HJ vs BTN, ~1 MB: +0.5 points; 368 more of BTN vs BB, 2.5 MB: +5).
+  the stored strategies): 36% of hands go heads-up to the flop, and the library answers 36.1% of their flop
+  decisions (21.3% before format 2 made room, 9.4% with 184 flops everywhere). Of the rest, a flop not stored is
+  38 points (SB vs BB's 184 flops 13), a spot not in the library 23 (HJ / UTG flatted by the BTN 6.3, CO vs the
+  SB's 3bet 1.2, each other 3bet pot ~1, 4bet pots 1.5 together), a raise 2.7. A flop's entry is worth its spot's
+  share times its suit count, so more flops of the commonest spots beat new spots; by points per MB (`--assume`):
+  BTN vs BB on every flop +12.4 for 4.5 MB, CO vs BB on 1656 (90%) +7.6 for 2.8, UTG vs BB on 552 +2.4 for 1.05,
+  SB vs BB on 552 +3.5 for 2.1 (its wide ranges' entries are the biggest), HJ vs BTN on 184 +0.5 for ~0.75.
 * **What is stored**: the flop's first decisions (the root; the in-position player after a check or facing a
   lead; the out-of-position player facing a bet after checking), only where the other player gets there with 5%
   or more of their range (a lead the big blind never makes is the solve's noise, and the advisor solves live
@@ -862,9 +864,9 @@ python scripts/build_flop_library.py --recode        # format-1 entries to the c
 ```
 
 Each entry takes ~40-60 s natively on a rainbow flop and up to twice that two-tone, on an idle core (several
-times that on a loaded machine): the whole library ~9 hours on 5 cores. After changing the charts or the flop model,
-run it again (stale entries are re-solved). `--flops all` multiplies a spot's size by ~10 (50-90 MB): the test
-holds the library under 15 MB.
+times that on a loaded machine; 3bet pots ~10-25 s): the whole library (4147 entries) ~12 hours on 5 cores (BTN vs
+BB's other 1203 flops and UTG's 368 took 4 hours). After changing the charts or the flop model, run it again (stale
+entries are re-solved). A spot on every flop is 4-7 MB: the test holds the library (14.27 MB) under 15 MB.
 
 ### Deploy to the website
 
