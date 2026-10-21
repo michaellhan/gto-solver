@@ -79,5 +79,25 @@ class TestSolve(unittest.TestCase):
                 self.assertAlmostEqual(got, xa[i, k], delta=0.06)
 
 
+class TestRakeRerank(unittest.TestCase):
+    def test_raked_calls_keep_playable_hands(self):
+        """With rake the big blind's calls of a button open are cut by realized equity (gto/pf_eqr.py), not
+        all-in equity: suited connectors stay, weak offsuit kings and queens go, and the total is the
+        all-in-equity rule's."""
+        from gto import preflop as pf
+        from gto.advisor import preflop_strategy
+        from gto.ranges import parse_range
+        if G.measured_model() is None:
+            self.skipTest("no gto/pf_eqr.py")
+        line = [{"pos": p, "action": "fold"} for p in ("UTG", "HJ", "CO")] + [
+            {"pos": "BTN", "action": "raise", "to": 2.5}, {"pos": "SB", "action": "fold"}]
+        T = pf.Table(pf.SEATS[6], rake=(0.05, 0.6))
+        s = preflop_strategy("BB", line, T, 100)
+        call = lambda h: float(s["call"][parse_range(h) > 0].mean())
+        self.assertGreater(min(call("76s"), call("54s")), 0.3)
+        self.assertLess(max(call("K5o"), call("Q7o"), call("J5s")), 0.1)
+        self.assertAlmostEqual(float(s["call"].mean()), 0.317, delta=0.01)
+
+
 if __name__ == "__main__":
     unittest.main()

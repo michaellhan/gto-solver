@@ -655,12 +655,43 @@ def _actions_at(hero: str, actions: List[dict], positions: Optional[List[str]] =
         return {"raise": c["4bet"], "call": c["call"]}
     if n_raises == 3:
         if hero == raisers[1]:
+            solved = solved_chart(hero, actions, positions)
+            if solved is not None:
+                return solved
             c = HU_BB_VS_4BET if len(positions) == 2 else VS_4BET
             return {"raise": c["jam"], "call": c["call"]}
         return dict(COLD_VS_4BET)      # facing a 4bet without having 3bet (the opener squeezed by a cold 4bet)
     if [a["action"] for a in actions if a["action"] in ("raise", "all-in")][-1] == "raise":
         return dict(VS_5BET_DEEP)       # a 5bet that leaves chips behind (an all-in goes to the jam logic)
     return {"call": VS_5BET["call"]}
+
+
+_SOLVED: Dict[str, Dict[str, np.ndarray]] = {}
+
+
+def solved_chart(hero: str, actions: List[dict], positions) -> Optional[Dict[str, np.ndarray]]:
+    """A chart from the derived preflop equilibrium (gto/pf_charts.py, scripts/build_pf_charts.py) for this
+    line, or None: 3 to 6 handed (seats mapped onto the 6-max charts) at 100bb charts, no straddle; the
+    line's non-fold actions, by chart seat, must be one the equilibrium was read at."""
+    positions = positions or POSITIONS
+    if len(positions) == 2 or getattr(positions, "straddle", False) or chart_depth(positions) != 100.0:
+        return None
+    try:
+        from .pf_charts import CHARTS
+    except ImportError:
+        return None
+    key = lambda p: _norm(chart_key(p, positions))
+    if len({key(p) for p in positions}) != len(positions):
+        return None
+    k = key(hero) + "|" + ",".join(key(a["pos"]) + ("r" if a["action"] in ("raise", "all-in") else "c")
+                                   for a in actions if a["action"] != "fold")
+    if k not in CHARTS:
+        return None
+    if k not in _SOLVED:
+        from .pf_classes import CLASS_OF
+        _SOLVED[k] = {act: (np.frombuffer(s.encode(), dtype=np.uint8).astype(float) - ord("a"))[CLASS_OF] / 20.0
+                      for act, s in CHARTS[k].items()}
+    return dict(_SOLVED[k])
 
 
 def strategy_for(hero: str, actions: List[dict], positions: Optional[List[str]] = None) -> Dict[str, np.ndarray]:

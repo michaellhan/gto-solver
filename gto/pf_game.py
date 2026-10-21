@@ -193,6 +193,62 @@ def _from_tables(ex: Dict[tuple, np.ndarray], w: Dict[tuple, np.ndarray]) -> "EQ
     return EQRModel(share_fn=share)
 
 
+EQR_FEATURES = ("1", "x", "x|x|", "pair", "suited", "connected", "gap", "high", "pair*x", "suited*x", "conn*x")
+
+
+@lru_cache(maxsize=1)
+def class_shape():
+    """Per class: pair, suited, connected (gap 0 or 1, not pairs), gap (0..1, six or more ranks apart = 1) and
+    high card (0..1)."""
+    rk = "23456789TJQKA"
+    pair = np.array([len(c) == 2 for c in CLASSES], float)
+    suited = np.array([len(c) == 3 and c[2] == "s" for c in CLASSES], float)
+    gap = np.array([0 if len(c) == 2 else abs(rk.index(c[0]) - rk.index(c[1])) - 1 for c in CLASSES], float)
+    conn = (1 - pair) * (gap <= 1)
+    high = np.array([rk.index(c[0]) / 12.0 for c in CLASSES])
+    return pair, suited, conn, np.minimum(gap, 6) / 6 * (1 - pair), high
+
+
+def eqr_features(e: np.ndarray) -> np.ndarray:
+    """(K, buckets, features) of the realization model, for equity e (K, buckets) against each bucket."""
+    pair, suited, conn, gap, high = (v[:, None] for v in class_shape())
+    x = e - 0.5
+    one = np.ones_like(x)
+    return np.stack([one, x, x * np.abs(x), pair * one, suited * one, conn * one, gap * one, high * one,
+                     pair * x, suited * x, conn * x], -1)
+
+
+def excess_from_fit(coef, resid) -> np.ndarray:
+    """(K, buckets) excess share: the smooth model on each class's equity against each bucket plus its residual."""
+    from .pf_solve import _bucket_equity
+    X = eqr_features(_bucket_equity())
+    return np.clip(X @ np.asarray(coef) + np.asarray(resid)[:, None], -1.5, 2.5)
+
+
+@lru_cache(maxsize=1)
+def measured_model() -> Optional[EQRModel]:
+    """The realization model measured with the postflop solver (gto/pf_eqr.py), or None."""
+    try:
+        from .pf_eqr import COEF, RESID, W
+    except ImportError:
+        return None
+    ex = {k: excess_from_fit(COEF[k], RESID[k]) for k in COEF}
+    return EQRModel.from_tables(ex, {k: np.asarray(v) for k, v in W.items()})
+
+
+def realization(model: EQRModel, n_raises: int, aggr_ip: bool, role: str, opp: np.ndarray) -> np.ndarray:
+    """Per class: pot share over all-in equity after a call that sees a flop, against the opponent's class
+    weights `opp` (role "caller": the hand called the last raise; "aggr": its raise was called)."""
+    S = model.share((min(n_raises, 3), aggr_ip))
+    E = equity_matrix()
+    with np.errstate(all="ignore"):
+        if role == "aggr":
+            W = PAIR_COMPAT * opp[None, :]
+            return (S * W).sum(1) / np.maximum((E * W).sum(1), 1e-12)
+        W = PAIR_COMPAT * opp[:, None]
+        return ((1 - S) * W).sum(0) / np.maximum(((1 - E) * W).sum(0), 1e-12)
+
+
 def flat_model() -> EQRModel:
     """Everyone realizes its equity (no postflop edge): a baseline."""
     return EQRModel(lambda key, role: np.zeros((K, K)))

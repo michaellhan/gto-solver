@@ -916,6 +916,58 @@ def _call_rake(positions, pot: float, behind: float = float("inf"), raked_chart:
     return max(0.0, r - cost(*CHART_RAKE)) if raked_chart else r
 
 
+def _call_realization(hero: str, raiser: str, n_raises: int, ranges: Dict[str, np.ndarray], positions) -> np.ndarray:
+    """Per combo: the share of its all-in equity hero realizes after calling `raiser`'s raise (the
+    n_raises-th) heads-up, from the measured realization model (pf_game.measured_model; ones without it)."""
+    from . import pf_game
+    from .pf_classes import CLASS_OF, to_classes
+    model = pf_game.measured_model()
+    opp = ranges.get(raiser)
+    if model is None or opp is None or opp.sum() <= 0 or n_raises < 1:
+        return np.ones(N_COMBOS)
+    order = pf.postflop_order(list(positions))
+    aggr_ip = order.index(raiser) > order.index(hero)
+    return pf_game.realization(model, n_raises, aggr_ip, "caller", to_classes(opp))[CLASS_OF]
+
+
+RERANK_BLEND = 0.03   # realized equity over which a re-ranked call ramps in
+RERANK_SPR = 0.6      # re-rank only while the stack-to-pot ratio after calling is at least this share of the chart's
+
+
+def _rerank(new: np.ndarray, base: np.ndarray, raise_n: np.ndarray, eq_r: np.ndarray, w: np.ndarray,
+            better) -> np.ndarray:
+    """The re-priced calls (`new`, from all-in equity against the price) moved onto realized equity, keeping
+    how many hands they add or remove: a worse price (rake, a bigger raise) cuts the chart's calls with the
+    least realized equity rather than the least all-in equity (raked solves fold offsuit kings and keep
+    suited connectors, which all-in equity ranks the other way round), a better one adds the folds with the
+    most. Raises are never cut."""
+    better = np.broadcast_to(np.asarray(better), new.shape)
+    out = new.copy()
+    for side in (False, True):
+        sel = better == side
+        if not sel.any():
+            continue
+        target = float((w * (new - base))[sel].sum())
+        if abs(target) < 1e-9:
+            continue
+
+        def moved(t):
+            if side:     # adds: folds with realized equity above t
+                return np.maximum(base, np.clip(0.5 + (eq_r - t) / RERANK_BLEND, 0.0, 1.0))
+            return np.minimum(base, np.maximum(np.clip(0.5 + (eq_r - t) / RERANK_BLEND, 0.0, 1.0), raise_n))
+
+        lo, hi = float(eq_r.min()) - 1.0, float(eq_r.max()) + 1.0
+        for _ in range(50):           # the mass moved (adds positive, cuts negative) falls as t rises
+            mid = (lo + hi) / 2
+            got = float((w * (moved(mid) - base))[sel].sum())
+            if got > target:
+                lo = mid
+            else:
+                hi = mid
+        out[sel] = moved((lo + hi) / 2)[sel]
+    return out
+
+
 def _pf_cached(key, fn):
     if key not in _PF_CACHE:
         if len(_PF_CACHE) > 512:
@@ -1516,6 +1568,15 @@ class Advisor:
         eq_std = _preflop_equity_multi([arr_std[p] for p in opp_std])
         arr = preflop_ranges(preflop, positions, stack, hero if pool else None)
         eq = _preflop_equity_multi([arr[p] for p in opp])
+        # realized equity: all-in equity times the share of it the hand realizes after calling the last raise
+        # (gto/pf_eqr.py, measured with the postflop solver); see the re-ranking below
+        # (measured at the standard sizes' stack-to-pot ratios: not after a raise that leaves much less behind)
+        eq_r = None
+        spr = lambda b, p, c: b / max(p + c, 1e-9)
+        if (raisers and st.n_raises < 4 and not pool
+                and spr(behind, pot, call) >= RERANK_SPR * spr(behind_std, std.pot_start + sum(std.bets.values()),
+                                                               std.cur_bet - std.bets[hero])):
+            eq_r = np.nan_to_num(eq * _call_realization(hero, raisers[-1], st.n_raises, arr, positions), nan=0.0)
         out = dict(full)
         msg = []
         value_n = bluff_n = raise_c
@@ -1581,7 +1642,9 @@ class Advisor:
                 if pool:
                     better = better | (np.nan_to_num(eq, nan=0.0) > np.nan_to_num(eq_std, nan=0.0) + 1e-6)
                 new = np.where(better, np.maximum(base, add), np.minimum(base, np.maximum(cut, raise_n)))
-                deep = (f", {abs(depth):g}bb {'deeper' if depth > 0 else 'shallower'} than the charts "
+                if eq_r is not None:
+                    new = _rerank(new, base, raise_n, eq_r, w, better)
+                deep =(f", {abs(depth):g}bb {'deeper' if depth > 0 else 'shallower'} than the charts "
                         f"(implied odds for pairs and suited hands)" if abs(depth) >= DEPTH_TOL else "")
                 rk = " after rake" if raked else ""
                 msg.insert(0, f"price {need:.0%} of the pot{rk} against {', '.join(opp)} (the chart assumes "
