@@ -904,6 +904,7 @@ class TestTableSizes(unittest.TestCase):
     def test_multiway_and_mid_street_hu(self):
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
         adv.mw_trials = MW_TRIALS   # fixed trials: the same result however loaded the machine is
+        adv.mw_solve_streets = ()   # the betting rules (3-way pots are solved by default)
         pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
                {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
         r = adv.advise({"players": 6, "hero": "CO", "hole": "AhAd", "board": "Kh7c2d", "preflop": pre, "flop": [{"pos": "BB", "action": "check"}]})
@@ -927,6 +928,7 @@ class TestTableSizes(unittest.TestCase):
     def test_multiway_players_behind_and_bluffs(self):
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
         adv.mw_trials = MW_TRIALS   # fixed trials: the same result however loaded the machine is
+        adv.mw_solve_streets = ()   # the betting rules (3-way pots are solved by default)
         pre = [{"pos": "UTG", "action": "raise", "to": 2.5}, {"pos": "HJ", "action": "call"}, {"pos": "CO", "action": "call"},
                {"pos": "BTN", "action": "fold"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
         st = {"players": 6, "hero": "HJ", "hole": "2c3d", "board": "Kc8h4h", "preflop": pre,
@@ -946,6 +948,7 @@ class TestTableSizes(unittest.TestCase):
         from gto.advisor import _joint_top, _top
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
         adv.mw_trials = MW_TRIALS   # fixed trials: the same result however loaded the machine is
+        adv.mw_solve_streets = ()   # the betting rules (3-way pots are solved by default)
         pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
                {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
         r = adv.advise({"players": 6, "hero": "BTN", "hole": "Qc9c", "board": "Qd8s3h2c7d", "preflop": pre,
@@ -1002,6 +1005,7 @@ class TestTableSizes(unittest.TestCase):
         # money: K5s showed +19 bb for an 8 bb call it wins 52% of the time against CO.
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
         adv.mw_trials = MW_TRIALS   # fixed trials: the same result however loaded the machine is
+        adv.mw_solve_streets = ()   # the betting rules (3-way pots are solved by default)
         pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
                {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
         r = adv.advise({"players": 6, "hero": "BTN", "hole": "Kc5c", "board": "Kh7c2d", "preflop": pre,
@@ -1038,6 +1042,7 @@ class TestTableSizes(unittest.TestCase):
         # continues against everything, middle pair only some of it (not raises), a gutshot nothing.
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
         adv.mw_trials = MW_TRIALS   # fixed trials: the same result however loaded the machine is
+        adv.mw_solve_streets = ()   # the betting rules (3-way pots are solved by default)
         pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
                {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
         share = {}
@@ -1060,6 +1065,7 @@ class TestTableSizes(unittest.TestCase):
         # the field continues wider against the small bet (each folds less, the joint fold rule).
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
         adv.mw_trials = MW_TRIALS   # fixed trials: the same result however loaded the machine is
+        adv.mw_solve_streets = ()   # the betting rules (3-way pots are solved by default)
         pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
                {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
         r = adv.advise({"players": 6, "hero": "BB", "hole": "Ts9s", "board": "Kh7c2d", "preflop": pre, "flop": []})
@@ -1088,6 +1094,7 @@ class TestTableSizes(unittest.TestCase):
         from gto.advisor import _raise_to
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
         adv.mw_trials = MW_TRIALS   # fixed trials: the same result however loaded the machine is
+        adv.mw_solve_streets = ()   # the betting rules (3-way pots are solved by default)
         pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
                {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
         line = {}
@@ -1108,6 +1115,7 @@ class TestTableSizes(unittest.TestCase):
         # trials stopped. Now they rarely do, while a set and two pair still check-raise often.
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
         adv.mw_trials = MW_TRIALS
+        adv.mw_solve_streets = ()   # the betting rules (3-way pots are solved by default)
         pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
                {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
         xr = {}
@@ -1126,6 +1134,7 @@ class TestTableSizes(unittest.TestCase):
         import time
         adv = Advisor(Config(depth=1), time_budget=4.0, prior_budget=2.0)
         adv.mw_trials = MW_TRIALS
+        adv.mw_solve_streets = ()   # the betting rules (3-way pots are solved by default)
         pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
                {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
         st = {"players": 6, "hero": "BB", "hole": "AsKd", "board": "Kh7c2d", "preflop": pre, "flop": []}
@@ -1153,6 +1162,7 @@ class TestTableSizes(unittest.TestCase):
         self.assertLess(pos[combo("Qs2d")], pos[combo("9s6s")])     # middle pair has showdown value: last
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
         adv.mw_trials = MW_TRIALS   # fixed trials: the same result however loaded the machine is
+        adv.mw_solve_streets = ()   # the betting rules (3-way pots are solved by default)
         pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
                {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
         cont = {}
@@ -1167,6 +1177,7 @@ class TestTableSizes(unittest.TestCase):
         # still act (bets get more than one caller), and raises are sized over the calls in front.
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
         adv.mw_trials = MW_TRIALS   # fixed trials: the same result however loaded the machine is
+        adv.mw_solve_streets = ()   # the betting rules (3-way pots are solved by default)
         pre = [{"pos": "UTG", "action": "raise", "to": 2.5}, {"pos": "HJ", "action": "call"}, {"pos": "CO", "action": "call"},
                {"pos": "BTN", "action": "fold"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
         r = adv.advise({"players": 6, "hero": "BB", "hole": "Qh9h", "board": "Kc8h4h", "preflop": pre, "flop": []})
@@ -1691,6 +1702,7 @@ class TestExploit(unittest.TestCase):
         F = lambda *ps: [R(p, "fold") for p in ps]
         adv = Advisor(time_budget=1, prior_budget=1)
         adv.mw_trials = MW_TRIALS
+        adv.mw_solve_streets = ()   # the betting rules (3-way pots are solved by default)
         srp = F("UTG", "HJ") + [R("CO", "raise", 2.5), R("BTN", "call"), R("SB", "fold"), R("BB", "call")]
         out = adv.advise({"players": 6, "hero": "BTN", "hole": "8s9s", "board": "Tc2h7hAc", "stack": 100, "preflop": srp,
                           "flop": [R("BB", "check"), R("CO", "check"), R("BTN", "check")],
@@ -1869,6 +1881,7 @@ class TestExploit(unittest.TestCase):
               "flop": [R("SB", "check"), R("BB", "check"), R("CO", "bet", 23.5), R("SB", "call")], "opponents": "pool"}
         adv = Advisor(time_budget=1, prior_budget=1)
         adv.mw_trials = 1000
+        adv.mw_solve_streets = ()   # the betting rules (3-way pots are solved by default)
         out = adv.advise(st)
         self.assertEqual(out["recommended"], "fold", out["actions"])
         self.assertLess(out["equity_vs_field"], 0.25)
@@ -2887,6 +2900,7 @@ class TestRake(unittest.TestCase):
         def run(cfg, hole, flop, rules=False, stats=False):
             adv = Advisor(cfg, time_budget=0.5, prior_budget=0.3)
             adv.mw_trials = 376   # two passes over the runouts
+            adv.mw_solve_streets = ()   # the betting rules (3-way pots are solved by default)
             adv.mw_rake_rules = rules
             st = replay_hand(pf.SEATS[6], 100.0, {"preflop": pre, "flop": flop}, 2)[1]
             out = adv._multiway("BB" if not flop else "CO", tuple(cards(hole)), cards("Kh7c2d"), ranges,
@@ -3025,6 +3039,7 @@ class TestPractice(unittest.TestCase):
         self.assertIn("error", adv.play(self.FLOP, "BTN", "QsJs"))
         # multiway: the seat's own Monte Carlo
         adv.mw_trials = 300
+        adv.mw_solve_streets = ()   # the betting rules (3-way pots are solved by default)
         pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
                {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
         st = {"players": 6, "hero": "BTN", "hole": "AhKh", "board": "Kd7s2c", "stack": 100, "preflop": pre, "flop": []}
@@ -3080,6 +3095,7 @@ class TestAdvanced(unittest.TestCase):
               "preflop": [R("UTG", "fold"), R("HJ", "fold"), R("CO", "raise", 2.5), R("BTN", "call"), R("SB", "fold"),
                           R("BB", "call")], "flop": []}
         adv.mw_trials = MW_TRIALS
+        adv.mw_solve_streets = ()   # the betting rules (3-way pots are solved by default)
         a = adv.advise(mw)
         b = adv.advise(dict(mw, ranges={"CO": "AA"}))
         self.assertTrue(a.get("multiway") and b.get("multiway"))

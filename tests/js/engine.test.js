@@ -361,6 +361,31 @@ test("grades: marks, rough solves and the EV given up", () => {
   assert.equal(p.S.actions.flop.at(-1).g, undefined);
 });
 
+test("a solved 3-way pot is shown and graded like a heads-up solve; the betting rules' answer isn't graded", () => {
+  const st = state({ hero: "BB", cards: ["Ah", "Kh", "Kd", "7s", "2c"], preflop: acts("UTG f, HJ f, CO r2.5, BTN c, SB f, BB c") });
+  const p = page(st);
+  assert.equal(p.sim().toAct, "BB");
+  const res = { street: "flop", hero: "BB", multiway: true, solved: true, opponents: ["CO", "BTN"], recommended: "check",
+    solver: { exploitability_pct: 0.8, iterations: 120, solve_seconds: 20, active_combos: 600, tree_actions: ["check", "bet 33%"] },
+    actions: [{ action: "check", freq: 0.7, ev_bb: 3.1 }, { action: "bet 33%", amount_bb: 2.5, freq: 0.3, ev_bb: 3.0 }], notes: [] };
+  p.ctx.__res = JSON.stringify(res);
+  p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
+  const html = p.byId("result").innerHTML;
+  assert.ok(html.includes("3 players in · 3-way solve"));
+  assert.ok(html.includes("Solver mix") && !html.includes("heuristic, not a solve"));
+  assert.ok(p.buttons().find(b => label(b) === "Bet 2.5"));        // the solve's size on the button
+  p.act({ action: "check" });
+  assert.deepEqual(p.S.actions.flop.at(-1).g, { m: "check", f: 0.7, b: "check", bf: 0.7, l: 0, e: 3.1, o: 3.1 });
+  // the betting rules (4+ players, or a 3-way spot the solve doesn't take) stay ungraded
+  const q = page(st);
+  q.ctx.__res = JSON.stringify({ ...res, solved: undefined, equity_vs_field: 0.4, recommended: "check",
+    actions: [{ action: "check", freq: 1, ev_bb: 3.1 }, { action: "bet 33%", amount_bb: 2.5, freq: 0, ev_bb: 3.0 }] });
+  q.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
+  assert.ok(q.byId("result").innerHTML.includes("heuristic, not a solve"));
+  q.act({ action: "check" });
+  assert.equal(q.S.actions.flop.at(-1).g, undefined);
+});
+
 test("convergence labels", () => {
   const p = loadPage();
   const c = (x) => p.val(`convergence({ solver: { exploitability_pct: ${x} } })`);

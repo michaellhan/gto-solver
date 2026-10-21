@@ -2,7 +2,7 @@
 importScripts("https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js");
 
 // no __init__ here: GitHub Pages (Jekyll) will not serve files starting with an underscore
-const FILES = ["cards", "ranges", "evaluator", "preflop", "pf_equity", "pf_classes", "pf_solve", "pf_game", "pf_game_data", "pf_eqr", "solver", "exploit", "advisor", "flop_library"];
+const FILES = ["cards", "ranges", "evaluator", "preflop", "pf_equity", "pf_classes", "pf_solve", "pf_game", "pf_game_data", "pf_eqr", "solver", "multiway_solver", "exploit", "advisor", "flop_library"];
 
 // The precomputed flop library (gto/flop_library.py): the Python side asks for its index once and for an entry
 // (<spot>/<flop>.bin, ~10 KB) only when a flop spot it holds comes up. A synchronous request (allowed in a
@@ -72,7 +72,10 @@ const ready = (async () => {
              // both speeds answer a flop spot the library holds from it (Accurate's flop model, solved offline)
              + "from gto.flop_library import FlopLibrary; from js import libFetch; "
              + "lib = FlopLibrary(lambda p: (lambda r: None if r is None else r.to_bytes())(libFetch(p))); "
-             + "advs['fast'].library = advs['accurate'].library = lib");
+             + "advs['fast'].library = advs['accurate'].library = lib; "
+             // 3-way pots: the 3-player solver on the river in Fast (0.1-0.3 s an iteration here by load: 8 s is 25-80, under 1% of the pot
+             // from equilibrium); turns (every river dealt out, 0.5-1.3 s an iteration) only in Accurate's 60 s; flops stay on the rules
+             + "advs['fast'].mw_solve_streets = ('river',); advs['accurate'].mw_solve_streets = ('turn', 'river')");
   postMessage({ status: "Solving…" });
   return py;
 })();

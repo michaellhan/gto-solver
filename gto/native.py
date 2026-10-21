@@ -69,6 +69,13 @@ def config(speed: str = "fast", depth: int = 2) -> Config:
                   raise_sizes={k: list(v) for k, v in sizes["raise_sizes"].items()}, depth=depth, **kw)
 
 
+# 3-way pots solved by the 3-player solver (Advisor.mw_solve_streets; the rest use the betting rules). A river
+# iteration costs 30-90 ms here (by machine load), so fast's 2.5 s runs 25-80 (0.1-1% of the pot from equilibrium); a turn one,
+# the river dealt out every card, 0.15-0.5 s, so it waits for accurate's 30 s (60-200 iterations). The flop stays on the rules:
+# with the turn and river dealt out, its solve bets half as often as published solves (README, Known limits).
+MW_STREETS = {"fast": ("river",), "accurate": ("turn", "river")}
+
+
 def advisor(speed: str = "fast", depth: int = 2, budget: Optional[float] = None,
             prior_budget: Optional[float] = None, library: bool = True) -> Advisor:
     """`library`: answer flop spots the precomputed library holds from it (gto/flop_library.py), at either speed."""
@@ -76,6 +83,7 @@ def advisor(speed: str = "fast", depth: int = 2, budget: Optional[float] = None,
     adv = Advisor(config(speed, depth), time_budget=b if budget is None else budget,
                   prior_budget=pb if prior_budget is None else prior_budget)
     adv.root_sizes = {st: {k: list(v) for k, v in d.items()} for st, d in ROOT_SIZES.items()}
+    adv.mw_solve_streets = MW_STREETS[speed]
     adv.library = default_library() if library else None
     return adv
 
