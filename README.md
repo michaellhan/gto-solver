@@ -546,25 +546,29 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
 * **Spots** (`flop_library.SPOTS`, most common first): 6-max, 100bb, no ante or rake, the page's default sizes:
   BTN, CO, HJ, UTG and SB vs BB single-raised pots, BB vs BTN and SB vs BTN 3bet pots, and BTN 3bets CO. A spot
   is matched by the two ranges entering the flop (as the charts replay them: other table sizes, stacks or charts
-  simply don't match), the pot and the stack; heads-up from the flop only, not in exploit mode, with custom ranges
-  or with Optimize sizes.
+  simply don't match), the pot and the stack; heads-up from the flop only, not in exploit mode, with locks on the
+  villain, custom ranges or Optimize sizes.
 * **Flops**: 184 canonical flops per spot (`representative_flops`: the 1755 suit-isomorphic flops sorted by
   texture and sampled by weight, so each suit pattern, pairing and height gets its share). A flop is matched up
   to suits: the ranges are suit-symmetric, so a stored flop's solve is any suit permutation's, its combos
-  permuted. Other flops are solved live as before.
+  permuted. Other flops are solved live as before. Shipped so far: BTN vs BB on its 184 flops (~1.3 MB); the
+  other spots are defined but not yet built (see Building below).
 * **What is stored**: the flop's first decisions (the root; the in-position player after a check or facing a
   lead; the out-of-position player facing a bet after checking), only where the other player gets there with 5%
   or more of their range (a lead the big blind never makes is the solve's noise, and the advisor solves live
   behind a line under 10% anyway). Per combo: the average strategy in 1% steps and every action's EV (the best
   to 0.02 bb, the others as a gap below it, 0.02 bb steps then 3%), plus range totals. 6-9 KB a flop for single
-  raised pots (zlib), smaller for 3bet pots, ~10 MB for all eight spots.
+  raised pots (zlib), smaller for 3bet pots: ~10 MB for all eight spots, each file well under 200 KB.
 * **Tree**: Accurate's flop model (one turn per rank class, the river bet on; the browser's Accurate config,
   which plays the same flop game as the native one), two flop sizes, 300-500 iterations, to under 0.15% of the pot
   from equilibrium (the live Accurate solve gets ~0.3-0.4% in the server's 30 s and 60-75 iterations in the
   browser's 60 s). The answer's `precomputed` field (a badge on the page) says which spot and how many iterations;
-  `same_tree` is false in Fast mode, whose own flop model checks the river down on a few random turns: against the
-  library its BTN c-bet runs 5.6 points off on average over 20 flops even fully converged (up to 15 on dry
-  boards: J52 58% for 71%), BB's response to the small c-bet 8.6.
+  `same_tree` is false in Fast mode, whose own flop model plays the turn and river by hand buckets: converged
+  (300 iterations) on 20 of the library's BTN vs BB flops its c-bet is 2.8 points from the library's on average (up
+  to 7, betting more), BB's response to the small c-bet 2.9; at its 2.5 s and 8 s budgets it's further. (The old
+  Fast model, the river checked down on random turns, was 5.6 and 8.6 off, up to 15 on dry boards.) Natively the
+  answer takes ~0.01 s instead of 2.5 / 30 s; in the browser ~0.03 s instead of 8 / 60 s, and a turn spot saves
+  the earlier flop solve too (BTN vs BB, J75 c-bet called: 8.2 s for the turn in Fast mode, 11.5 s before; measured on the old Fast model).
 * **Lines**: the advisor walks the actual flop action through the stored nodes (sizes taken more than 15% off the
   tree's, more raises than it allows, or a line through a raise fall back to the live solve). Turn and river spots
   narrow the flop's ranges through it as well, instead of the earlier street's short solve. The entry ignores the
@@ -585,8 +589,10 @@ python scripts/build_flop_library.py --spots srp_btn_bb --boards Ks7d2c,Qs8s3d  
 python scripts/build_flop_library.py --index-only
 ```
 
-Each entry takes ~60 s natively on a rainbow flop and up to twice that two-tone. After changing the charts or
-the flop model, run it again (stale entries are re-solved). `--flops all` multiplies a spot's size by ~10 (60-70
+Each entry takes ~40-60 s natively on a rainbow flop and up to twice that two-tone, on an idle core (several
+times that on a loaded machine). After changing the charts or the flop model, run it again (stale entries are
+re-solved: the preflop chart refit made every entry stale, and the build re-solved them). The remaining spots
+(CO, HJ, UTG, SB vs BB; the three 3bet pots) are the first command above, about 4-5 hours on 5 idle cores. `--flops all` multiplies a spot's size by ~10 (60-70
 MB): within the ~15 MB budget only one spot's full set would fit.
 
 ### Deploy to the website

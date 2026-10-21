@@ -248,13 +248,14 @@ class TestFlopLibrary(unittest.TestCase):
         self.assertNotIn("precomputed", r)   # (the turn itself is solved live)
 
     def test_not_used_where_it_does_not_apply(self):
-        """Exploit mode, a custom range and a rare villain line (a lead the solve never makes) solve live."""
+        """Exploit mode, a nodelock on the villain, a custom range and a rare villain line (a lead the solve never makes) solve live."""
         s = self.setup
         adv = Advisor(fl.library_config(), time_budget=0.5, prior_budget=0.3)
         adv.library = self.lib
         base = {"hero": s["oop"], "hole": _hole_in(s["full0"], BOARD, 3), "board": BOARD, "preflop": self.pre, "stack": 100}
         self.assertNotIn("precomputed", adv.advise(dict(base, opponents="pool")))
         self.assertNotIn("precomputed", adv.advise(dict(base, ranges={s["ip"]: "TT+, AK"})))
+        self.assertNotIn("precomputed", adv.advise(dict(base, locks={s["ip"]: {"fold": 15}})))
         lead = self.sol.root.avg_strategy0() @ (self.sol.r0 / self.sol.r0.sum())
         rare = [n for n, f in zip(self.sol.root.names, lead) if n.startswith("bet") and f < 0.05]
         if rare:   # in-position facing a lead the solve rarely makes
