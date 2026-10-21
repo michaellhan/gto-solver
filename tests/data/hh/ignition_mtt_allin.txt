@@ -1,0 +1,38 @@
+Ignition Hand #4300979169: HOLDEM Tournament #M-20241002003411 TBL#3, Normal- Level 4 (50/100) [MVS] - 2024-10-02 12:00:00 UTC
+Table Info: Version: 1, Type: MVS, Stakes: 50-100, Table: 0002067C-0, Buyin: $8.80+$1.20, TableType: MTT
+Seat 65: UTG+1 (2,500 in chips)
+Seat 146: Dealer (10,250 in chips)
+Seat 17: Small Blind (4,000 in chips)
+Seat 39: Big Blind [ME] (5,000 in chips)
+Seat 61: UTG (6,000 in chips)
+Seating Info: 65, 146, 17, 39, 61
+Dealer : Set dealer [2]
+UTG+1 : Ante chip 12
+Dealer : Ante chip 12
+Small Blind : Ante chip 12
+Big Blind [ME] : Ante chip 12
+UTG : Ante chip 12
+Small Blind : Small Blind 50
+Big Blind [ME] : Big Blind 100
+*** HOLE CARDS ***
+UTG+1 : Card dealt to a spot [Ac Kd]
+Big Blind [ME] : Card dealt to a spot [Jh Js]
+UTG : Folds
+UTG+1 : All-in(raise) 2,388 to 2,488
+Dealer : Folds
+Small Blind : Folds
+Big Blind [ME] : Calls 2,388
+*** FLOP *** [3d 5h 9c]
+*** TURN *** [3d 5h 9c] [Td]
+*** RIVER *** [3d 5h 9c Td] [Ad]
+UTG+1 : Showdown [Ad Ac Kd Td 9c]
+Big Blind [ME] : Showdown [Jh Js Ad Td 9c]
+UTG+1 : Hand result 5,086
+*** SUMMARY ***
+Total Pot(5,086)
+Board [3d 5h 9c Td Ad]
+Seat+1: UTG+1 5,086 with [Ac Kd-Ad Ac Kd Td 9c]
+Seat+2: Dealer Folded before the FLOP
+Seat+3: Small Blind Folded before the FLOP
+Seat+4: Big Blind [ME] lost with [Jh Js-Jh Js Ad Td 9c]
+Seat+5: UTG Folded before the FLOP

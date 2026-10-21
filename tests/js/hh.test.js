@@ -9,8 +9,10 @@ const { loadPage, acts, pageScript } = require("./page.js");
 
 const HH_JS = path.join(__dirname, "..", "..", "gto", "static", "hh.js");
 const { parseHandHistory, HH_SEATS } = require(HH_JS);
-const HH = (f) => fs.readFileSync(path.join(__dirname, "..", "data", "hh", f + ".txt"), "utf8");
+const HH_DIR = path.join(__dirname, "..", "data", "hh");
+const HH = (f) => fs.readFileSync(path.join(HH_DIR, /\.\w+$/.test(f) ? f : f + ".txt"), "utf8");
 const j = (x) => JSON.parse(JSON.stringify(x));
+const r2 = (x) => Math.round(x * 100) / 100;
 const flush = () => new Promise(r => setImmediate(r));
 const flushAll = async () => { for (let i = 0; i < 5; i++) await flush(); };
 
@@ -58,6 +60,13 @@ const CASES = {
     preflop: "HJ f, CO a, BTN f, SB f, BB c", flop: "", turn: "", river: "", pot: 50.86 },
 };
 
+// the other sites: the same hands in each site's format become the same page state
+const SAME = { "888_6max_srp": "stars_6max_srp", "ignition_6max_srp": "stars_6max_srp", "888_9max_mtt_ante": "stars_9max_mtt_ante",
+  winamax_mtt_ante: "stars_9max_mtt_ante", acr_9max_mtt_ante: "stars_9max_mtt_ante", party_6max_allin: "gg_allin_preflop",
+  party_mtt_bounty_allin: "stars_bounty_allin", ignition_mtt_allin: "stars_bounty_allin", winamax_3bet_pot: "stars_3bet_pot",
+  "ipoker_3bet_pot.xml": "stars_3bet_pot", acr_run_twice: "stars_run_twice" };
+for (const [f, like] of Object.entries(SAME)) CASES[f] = CASES[like];
+
 for (const [name, c] of Object.entries(CASES)) {
   test(`imports ${name}`, async () => {
     const p = await imported(HH(name));
@@ -92,6 +101,60 @@ test("parsed details: sites, seats, names and amounts in big blinds", () => {
   assert.equal(two.players, 2);
   assert.deepEqual(two.warnings, ["2 hands pasted: imported the first."]);
   assert.deepEqual(parseHandHistory(HH("stars_heads_up").replace("[9c 9d]", "[10c 9d]")).hole, ["Tc", "9d"]);
+});
+
+test("other sites: detected, seats, amounts and the hero", () => {
+  const sites = Object.keys(SAME).map(f => parseHandHistory(HH(f)).site);
+  assert.deepEqual(sites, ["888poker", "Ignition/Bovada", "888poker", "Winamax", "WPN/ACR", "partypoker", "partypoker", "Ignition/Bovada", "Winamax", "iPoker", "WPN/ACR"]);
+  for (const [f, like] of Object.entries(SAME)) {   // the parsed hand is the PokerStars/GG one but for the names and seat numbers
+    const strip = (h) => ({ ...h, site: 0, heroName: 0, seats: h.seats.map(s => [s.pos, s.stack]).sort() });
+    assert.deepEqual(strip(parseHandHistory(HH(f))), strip(parseHandHistory(HH(like))), f);
+  }
+  // 888's tournament amounts with dots for thousands; Ignition's hero is "[ME]" among everyone's cards, its seat numbers aren't the table's order
+  assert.equal(parseHandHistory(HH("888_9max_mtt_ante")).seats[0].stack, r2(18250 / 300));
+  const ig = parseHandHistory(HH("ignition_mtt_allin"));
+  assert.deepEqual([ig.heroName, ig.hole, ig.seats.map(s => s.name + "=" + s.pos).join()], ["Big Blind [ME]", ["Jh", "Js"], "UTG+1=CO,Dealer=BTN,Small Blind=SB,Big Blind [ME]=BB,UTG=HJ"]);
+  // iPoker: a session of several hands imports the first you're seated in; entities in names, comma decimals
+  const x = HH("ipoker_3bet_pot.xml"), game = x.match(/<game\b[\s\S]*<\/game>/)[0];
+  const two = parseHandHistory(x.replace(game, game.replace(/HeroName/g, "someone_else") + "\n" + game));
+  assert.deepEqual([two.heroName, two.warnings], ["HeroName", ["2 hands pasted: imported the first."]]);
+  const odd = parseHandHistory(x.replace(/grinder_pl/g, "R&amp;D").replace(/€(\d+)\.(\d\d)/g, "€$1,$2"));
+  assert.deepEqual([odd.seats[0].name, odd.seats[0].stack, odd.actions.find(a => a.pos === "CO" && a.allIn).to], ["R&D", 100, 67]);
+  // a trailing hand of another site is cut off; party's "players : 6/6" isn't the stakes
+  assert.deepEqual(parseHandHistory(HH("888_6max_srp") + "\n\n" + HH("888_9max_mtt_ante")).warnings, ["2 hands pasted: imported the first."]);
+  assert.equal(parseHandHistory(HH("party_6max_allin").replace("$0.25/$0.50 USD ", "$50 USD fastforward ")).bb, 0.5);
+});
+
+test("mutated histories never crash the importer", async () => {
+  // lines dropped, cut, swapped, duplicated or with an amount changed, in every fixture: a clear Error or a playable state
+  const p = await imported("");
+  const texts = fs.readdirSync(HH_DIR).map(f => HH(f));
+  let seed = 7, ok = 0;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648, pick = (a) => a[Math.floor(rnd() * a.length)];
+  for (let it = 0; it < 1500; it++) {
+    let lines = pick(texts).split("\n");
+    for (let k = 1 + Math.floor(rnd() * 3); k > 0 && lines.length; k--) {
+      const r = rnd(), i = Math.floor(rnd() * lines.length);
+      if (r < 0.3) lines.splice(i, 1);
+      else if (r < 0.45) lines = lines.slice(0, i);
+      else if (r < 0.55) lines = lines.slice(i);
+      else if (r < 0.7) { const t = Math.floor(rnd() * lines.length); [lines[i], lines[t]] = [lines[t], lines[i]]; }
+      else if (r < 0.85) lines[i] = lines[i].replace(/[\d.]+/, String(Math.floor(rnd() * 500) / (rnd() < 0.5 ? 1 : 100)));
+      else lines.splice(i, 0, pick(lines));
+    }
+    p.ctx.__t = lines.join("\n");
+    let r;
+    try {
+      r = p.run("(() => { const r = importHand(__t); S = r.state; setPositions(S.players); const s = simulate(); return { st: r.state, pot: s.pot }; })()");
+    } catch (e) {
+      assert.equal(e.constructor.name, "Error", `${e.stack}\n${p.ctx.__t}`);
+      continue;
+    }
+    const cards = r.st.cards.filter(Boolean);
+    assert.ok(r.st.stack > 0 && isFinite(r.pot) && r.st.cards[0] && r.st.cards[1] && new Set(cards).size === cards.length, p.ctx.__t);
+    ok++;
+  }
+  assert.ok(ok > 300, `${ok} imported`);
 });
 
 test("odd histories: no button line, mixed games, short deck, a hero without a seat line", () => {

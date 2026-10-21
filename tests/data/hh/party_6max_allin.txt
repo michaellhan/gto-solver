@@ -1,0 +1,31 @@
+#Game No : 23456789012
+***** Hand History for Game 23456789012 *****
+$0.25/$0.50 USD NL Texas Hold'em - Saturday, August 03, 23:11:52 EDT 2024
+Table Bolt  ( Real Money )
+Seat 4 is the button
+Total number of players : 6/6
+Seat 1: 3c9d1e2f ( $80 USD )
+Seat 2: 77ab01cd ( $50 USD )
+Seat 3: e1f2a3b4 ( $48.75 USD )
+Seat 4: 9a8b7c6d ( $50 USD )
+Seat 5: Hero ( $62 USD )
+Seat 6: 0f1e2d3c ( $50 USD )
+Hero posts small blind [$0.25 USD].
+0f1e2d3c posts big blind [$0.50 USD].
+** Dealing down cards **
+Dealt to Hero [  Ks Kh ]
+3c9d1e2f folds
+77ab01cd raises [$1.25 USD]
+e1f2a3b4 folds
+9a8b7c6d raises [$3.75 USD]
+Hero raises [$8.75 USD]
+0f1e2d3c folds
+77ab01cd folds
+9a8b7c6d is all-In  [$46.25 USD]
+Hero calls [$41 USD]
+** Dealing Flop ** [ Jd, 5c, 2h ]
+** Dealing Turn ** [ 9s ]
+** Dealing River ** [ Kc ]
+9a8b7c6d shows [ Ad, Ah ]a pair of Aces.
+Hero shows [ Ks, Kh ]three of a kind, Kings.
+Hero wins $100.25 USD from the main pot with three of a kind, Kings.

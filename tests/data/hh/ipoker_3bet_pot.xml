@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<session sessioncode="4096452442">
+ <general>
+  <client_version>23.5.1.13</client_version>
+  <mode>real</mode>
+  <gametype>Holdem NL €1/€2</gametype>
+  <tablename>Ajaccio, 486280776</tablename>
+  <tablecurrency>EUR</tablecurrency>
+  <smallblind>€1</smallblind>
+  <bigblind>€2</bigblind>
+  <duration>00:02:11</duration>
+  <gamecount>1</gamecount>
+  <startdate>2024-04-18 22:05:31</startdate>
+  <currency>EUR</currency>
+  <nickname>HeroName</nickname>
+  <bets>€180.00</bets>
+  <wins>€0.00</wins>
+  <chipsin>€240.00</chipsin>
+  <chipsout>€60.00</chipsout>
+ </general>
+ <game gamecode="3858162574">
+  <general>
+   <startdate>2024-04-18 22:05:31</startdate>
+   <players>
+    <player seat="1" name="grinder_pl" chips="€200.00" dealer="0" win="€397.50" bet="€200.00" rebuy="0" addon="0"/>
+    <player seat="2" name="Lucky_Lou" chips="€312.40" dealer="1" win="€0" bet="€0" rebuy="0" addon="0"/>
+    <player seat="3" name="nit_or_never" chips="€188.00" dealer="0" win="€0" bet="€1.00" rebuy="0" addon="0"/>
+    <player seat="4" name="HeroName" chips="€240.00" dealer="0" win="€0" bet="€200.00" rebuy="0" addon="0"/>
+    <player seat="5" name="sleepy_joe" chips="€200.00" dealer="0" win="€0" bet="€0" rebuy="0" addon="0"/>
+    <player seat="6" name="cold4bet" chips="€200.00" dealer="0" win="€0" bet="€0" rebuy="0" addon="0"/>
+   </players>
+  </general>
+  <round no="0">
+   <action no="1" player="nit_or_never" type="1" sum="€1.00" cards=""/>
+   <action no="2" player="HeroName" type="2" sum="€2.00" cards=""/>
+  </round>
+  <round no="1">
+   <cards type="Pocket" player="cold4bet">X X</cards>
+   <cards type="Pocket" player="grinder_pl">X X</cards>
+   <cards type="Pocket" player="Lucky_Lou">X X</cards>
+   <cards type="Pocket" player="nit_or_never">X X</cards>
+   <cards type="Pocket" player="HeroName">CA HK</cards>
+   <action no="3" player="cold4bet" type="0" sum="€0" cards=""/>
+   <action no="4" player="grinder_pl" type="23" sum="€5.00" cards=""/>
+   <action no="5" player="Lucky_Lou" type="0" sum="€0" cards=""/>
+   <action no="6" player="nit_or_never" type="0" sum="€0" cards=""/>
+   <action no="7" player="HeroName" type="23" sum="€22.00" cards=""/>
+   <action no="8" player="grinder_pl" type="3" sum="€17.00" cards=""/>
+  </round>
+  <round no="2">
+   <cards type="Flop" player="">DK C9 H4</cards>
+   <action no="9" player="HeroName" type="5" sum="€14.00" cards=""/>
+   <action no="10" player="grinder_pl" type="23" sum="€44.00" cards=""/>
+   <action no="11" player="HeroName" type="3" sum="€30.00" cards=""/>
+  </round>
+  <round no="3">
+   <cards type="Turn" player="">S2</cards>
+   <action no="12" player="HeroName" type="4" sum="€0" cards=""/>
+   <action no="13" player="grinder_pl" type="7" sum="€134.00" cards=""/>
+   <action no="14" player="HeroName" type="3" sum="€134.00" cards=""/>
+  </round>
+  <round no="4">
+   <cards type="River" player="">C7</cards>
+  </round>
+ </game>
+</session>

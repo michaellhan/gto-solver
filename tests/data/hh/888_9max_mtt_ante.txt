@@ -1,0 +1,53 @@
+#Game No : 1234567891
+***** 888poker Hand History for Game 1234567891 *****
+150/300 Blinds No Limit Holdem - *** 15 06 2024 20:31:44
+Tournament #198765432 $10 + $1 - Table #14 9 Max (Real Money)
+Seat 5 is the button
+Total number of players : 9
+Seat 1: Dragon_Ace ( 18.250 )
+Seat 2: maple_fish ( 30.000 )
+Seat 3: afk_andy ( 9.400 )
+Seat 4: HeroName ( 24.000 )
+Seat 5: RiverRat ( 41.020 )
+Seat 6: tightNtidy ( 12.500 )
+Seat 7: BB_defender ( 25.100 )
+Seat 8: shoveguy ( 33.300 )
+Seat 9: qwerty123 ( 15.000 )
+Dragon_Ace posts ante [30]
+maple_fish posts ante [30]
+afk_andy posts ante [30]
+HeroName posts ante [30]
+RiverRat posts ante [30]
+tightNtidy posts ante [30]
+BB_defender posts ante [30]
+shoveguy posts ante [30]
+qwerty123 posts ante [30]
+tightNtidy posts small blind [150]
+BB_defender posts big blind [300]
+** Dealing down cards **
+Dealt to HeroName [ Ah, 10d ]
+shoveguy folds
+qwerty123 folds
+Dragon_Ace folds
+maple_fish raises [660]
+afk_andy folds
+HeroName calls [660]
+RiverRat folds
+tightNtidy folds
+BB_defender calls [360]
+** Dealing flop ** [ Ac, 9h, 9d ]
+BB_defender checks
+maple_fish bets [600]
+HeroName calls [600]
+BB_defender folds
+** Dealing turn ** [ 5s ]
+maple_fish checks
+HeroName bets [1.500]
+maple_fish calls [1.500]
+** Dealing river ** [ Qh ]
+maple_fish checks
+HeroName checks
+** Summary **
+maple_fish shows [ Kc, Qc ]
+HeroName shows [ Ah, 10d ]
+HeroName collected [ 6.600 ]
