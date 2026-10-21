@@ -7,10 +7,12 @@ so the solve comes from the advisor's cache).
 * range_equities: every combo's equity against the other range, both ways, over the runouts (all of them on the
   turn, an even sample on the flop), with card removal between the two hands.
 * breakdown: the payload: per category its share of the range, the acting player's strategy mix and EV, the
-  category's equity; each range's sorted equity curve, average equity and EV, and its share above NUT_EQ.
+  category's equity; each range's sorted equity curve, average equity and EV, and its share above NUT_EQ; and the
+  runouts the equities are over ("runouts": [dealt, of all]).
 """
 from __future__ import annotations
 import itertools
+import math
 from typing import Dict, List, Optional, Sequence
 import numpy as np
 from .cards import ALL_COMBOS
@@ -261,9 +263,13 @@ def breakdown(board, actions: List[str], hero: str, hero_w: np.ndarray, strat: n
     board = list(board)
     one = len(villains) == 1 and equity
     e0 = e1 = None
+    runouts = None
     if one:
         (vname, vw), = villains.items()
         e0, e1 = range_equities(board, hero_w, vw)
+        # the runouts the equities are over: [dealt, of all] ([1, 1] on the river; on the flop usually a sample)
+        dealt = len(_runouts(board, int(np.count_nonzero(hero_w > 0)) * int(np.count_nonzero(vw > 0))))
+        runouts = [dealt, math.comb(52 - len(board), 5 - len(board))]
     h = side(board, hero_w, hero, e0, strat, ev)
     if hole is not None:
         h["mine"] = [made_category(hole, board, len(board) == 5 and _plays_board(hole, board)),
@@ -272,4 +278,5 @@ def breakdown(board, actions: List[str], hero: str, hero_w: np.ndarray, strat: n
     for name, vw in villains.items():
         vev = pot - h["ev"] if one and villain_ev and h.get("ev") is not None else None
         vs.append(side(board, vw, name, e1 if one else None, ev_avg=vev))
-    return {"actions": list(actions), "pot": round(float(pot), 2), "hero": h, "villains": vs, "nut_eq": NUT_EQ}
+    return {"actions": list(actions), "pot": round(float(pot), 2), "hero": h, "villains": vs, "nut_eq": NUT_EQ,
+            **({"runouts": runouts} if runouts else {})}

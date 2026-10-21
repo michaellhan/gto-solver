@@ -27,6 +27,15 @@
 
   const ST = { who: 0, part: "made", sel: null };   // the player shown (0 hero), made hands or draws, the row picked
   const players = (bd) => [bd.hero, ...bd.villains];
+  // what the equities are over (bd.runouts: [dealt, of all]): none to come on the river, every river card on the
+  // turn, on the flop usually an even sample of the turn and river runouts
+  function runText(bd) {
+    const [n, all] = bd.runouts || [];
+    if (!all) return "over the runouts";
+    if (all === 1) return "on the river, no cards to come";
+    if (n >= all) return all === 48 ? "every river card dealt out" : "every runout dealt out";
+    return `over an even sample of ${n} of the ${all} turn and river runouts`;
+  }
 
   // the Breakdown view: a row per category, its bar as long as its share of the range (against the largest), split
   // by the hero's actions (a villain's: plain), with the share, equity and EV
@@ -54,7 +63,7 @@
     const r = rows.find(x => x.id === st.sel) || rows.find(x => x.id === mine);
     if (r) h += `<div class="bd-read"><b>${esc(r.label)}</b> · ${r.c.toFixed(1)} combos (${pct(r.c / tot, 1)})${r.eq != null ? ` · equity ${pct(r.eq, 1)}` : ""}${r.ev != null && hero ? ` · EV ${evs(r.ev)} bb` : ""}`
       + (hero && r.f ? `<br>${bd.actions.map((n, a) => `<span class="a" style="--c:${color(n)}">${esc(n)} ${pct(r.f[a])}</span>`).join(" ")}` : "") + `</div>`;
-    h += `<div class="bd-note">${part === "made" ? "Made hands by what the hole cards add (a pair on the board is everyone's); top pair's kicker is top, good (the next two) or weak." : "Draws: a flush draw is four to a suit with a hole card; open-ended counts double gutshots; combo is a flush draw with a straight draw; backdoor is three to a flush or straight on the flop."}${hasEq ? " Equity is against the other range, every runout dealt out." : ""}</div>`;
+    h += `<div class="bd-note">${part === "made" ? "Made hands by what the hole cards add (a pair on the board is everyone's); top pair's kicker is top, good (the next two) or weak." : "Draws: a flush draw is four to a suit with a hole card; open-ended counts double gutshots; combo is a flush draw with a straight draw; backdoor is three to a flush or straight on the flop."}${hasEq ? ` Equity is against the other range, ${runText(bd)}.` : ""}</div>`;
     return h;
   }
 
@@ -81,7 +90,7 @@
     const eqText = `${esc(a.eq >= b.eq ? a.who : b.who)} has the range advantage (${pct(Math.max(a.eq, b.eq), 1)} equity)`;
     return `<div class="bd-cards">${ps.map(stat).join("")}</div><div class="bd-chart">${svg}<div class="bd-tip"></div></div>`
       + `<div class="bd-sum">${eqText}. ${nutText}.</div>`
-      + `<div class="bd-note">Each line is a range's hands sorted from most to least equity against the other range (every runout dealt out); the dashed line marks ${pct(bd.nut_eq)}. EV is in big blinds of the pot as it stands (the villain's: the pot less yours${ps[1].ev == null ? "; not shown with rake" : ""}).</div>`;
+      + `<div class="bd-note">Each line is a range's hands sorted from most to least equity against the other range (${runText(bd)}); the dashed line marks ${pct(bd.nut_eq)}. EV is in big blinds of the pot as it stands (the villain's: the pot less yours${ps[1].ev == null ? "; not shown with rake" : ""}).</div>`;
   }
 
   // the chart's readout: both ranges' equity at the pointer's share of the range

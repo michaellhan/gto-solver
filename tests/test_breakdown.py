@@ -98,6 +98,22 @@ class Equities(unittest.TestCase):
         self.assertAlmostEqual(a0 + a1, 1.0, places=3)
 
 
+    def test_runouts_named(self):
+        """The payload says what the equities are over, for the views' wording: the river's board alone, every
+        river card on the turn, a sample of the flop's runouts once the ranges are wide."""
+        def bd(board, r0="AA,KQ,98s,66", r1="QQ,AK,T9s,77"):
+            b = cards(board)
+            w0, w1 = (remove_blockers(parse_range(r), b) for r in (r0, r1))
+            return breakdown(b, ["check"], "BTN", w0, np.ones((1, 1326)) * (w0 > 0), np.zeros(1326), {"BB": w1}, 10.0)
+        self.assertEqual(bd("Ks7d2c5h9s")["runouts"], [1, 1])
+        self.assertEqual(bd("Ks7d2c5h")["runouts"], [48, 48])
+        n, of = bd("Ks7d2c", "22+,A2s+,K2s+,Q2s+,J2s+,T2s+,92s+,A2o+,K2o+,Q2o+", "22+,A2s+,K2s+,Q2s+,J2s+,A2o+,K2o+")["runouts"]
+        self.assertEqual(of, 1176)
+        self.assertLess(n, of)
+        self.assertNotIn("runouts", breakdown(cards("Ks7d2c"), ["check"], "BTN", parse_range("AA"), np.ones((1, 1326)),
+                                              np.zeros(1326), {"BB": parse_range("QQ")}, 10.0, equity=False))
+
+
 class AdvisorFlag(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

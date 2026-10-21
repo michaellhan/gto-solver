@@ -77,6 +77,20 @@ test("the Equity view: both curves, averages and the nut advantage; none 3-way",
   assert.match(B.equityHtml(mw), /heads-up spots/);
 });
 
+test("the views say what the equities are over: the river's board, every river card, a sample of the flop's runouts", () => {
+  const note = (runouts, view) => {
+    const h = view === "made" ? B.breakdownHtml({ ...BD, runouts }, { who: 0, part: "made", sel: null }) : B.equityHtml({ ...BD, runouts });
+    return h.match(/<div class="bd-note">([^<]*)<\/div>/)[1];
+  };
+  assert.match(note([1, 1]), /against the other range \(on the river, no cards to come\)/);
+  assert.match(note([48, 48]), /\(every river card dealt out\)/);
+  assert.match(note([392, 1176]), /\(over an even sample of 392 of the 1176 turn and river runouts\)/);
+  assert.match(note([1176, 1176]), /\(every runout dealt out\)/);
+  assert.match(note([1, 1], "made"), /Equity is against the other range, on the river, no cards to come\./);
+  assert.match(note([392, 1176], "made"), /Equity is against the other range, over an even sample of 392 of the 1176 turn and river runouts\./);
+  assert.doesNotMatch(note(undefined), /every runout/);
+});
+
 const RES = { street: "flop", hero: "BTN", villain: "BB", hand: "AQo", board: "Qs8d3c", recommended: "bet 75%",
   solver: { exploitability_pct: 0.4, iterations: 50, solve_seconds: 2, active_combos: 300, tree_actions: ["check", "bet 33%", "bet 75%"] },
   actions: [{ action: "check", freq: 0, ev_bb: 3 }, { action: "bet 33%", freq: 0, ev_bb: 3.5 }, { action: "bet 75%", freq: 1, ev_bb: 4 }],
