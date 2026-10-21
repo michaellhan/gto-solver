@@ -2,7 +2,7 @@
 canonical flops, solved with the library's tree (the browser's Accurate config) until it is within --target % of
 the pot from equilibrium (checked every --check iterations from --min-iters, at most --max-iters).
 
-    python scripts/build_flop_library.py --jobs 5                       # every spot, 184 flops each
+    python scripts/build_flop_library.py --jobs 5                       # every spot, its SPOT_FLOPS (else 184)
     python scripts/build_flop_library.py --spots srp_btn_bb --flops all # one spot on all 1755 flops
     python scripts/build_flop_library.py --spots srp_btn_bb --boards Ks7d2c,Qs8s3d   # given flops
     python scripts/build_flop_library.py --index-only                   # rewrite index.json from the entries
@@ -115,7 +115,8 @@ def write_index(out: str, spots) -> dict:
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--spots", default="", help="comma separated spot ids (default: all, most common first)")
-    ap.add_argument("--flops", default="184", help="how many representative flops per spot, or 'all' (1755)")
+    ap.add_argument("--flops", default="", help="how many representative flops per spot, or 'all' (1755); default: "
+                    "the spot's flop_library.SPOT_FLOPS, else REP_FLOPS")
     ap.add_argument("--boards", default="", help="comma separated flops instead (any suits: each is canonicalized)")
     ap.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
     ap.add_argument("--min-iters", type=int, default=200)
@@ -134,20 +135,24 @@ def main(argv=None):
     if a.index_only:
         write_index(a.out, fl.SPOTS)
         return
-    if a.boards:
-        names = list(dict.fromkeys(fl.flop_name(parse_cards(b)) for b in a.boards.split(",") if b))
-    else:
-        names = [cards_str(f) for f in fl.representative_flops(1755 if a.flops == "all" else int(a.flops))]
+    def names_for(sid):
+        if a.boards:
+            return list(dict.fromkeys(fl.flop_name(parse_cards(b)) for b in a.boards.split(",") if b))
+        n = 1755 if a.flops == "all" else int(a.flops) if a.flops else fl.SPOT_FLOPS.get(sid, fl.REP_FLOPS)
+        return [cards_str(f) for f in fl.representative_flops(n)]
     jobs = []
     opts = {"min_iters": a.min_iters, "max_iters": a.max_iters, "check": a.check, "target": a.target}
+    n_flops = 0
     for sid, label, line in spots:
         meta = _meta(sid, _setup(line))
+        names = names_for(sid)
+        n_flops += len(names)
         for nm in names:
             if not current(os.path.join(a.out, sid, nm + ".bin"), meta):
                 jobs.append((sid, line, nm, a.out, opts))
     if a.limit:
         jobs = jobs[:a.limit]
-    print(f"{len(jobs)} entries to solve ({len(spots)} spots x {len(names)} flops, the rest on disk), "
+    print(f"{len(jobs)} entries to solve ({len(spots)} spots, {n_flops} flops, the rest on disk), "
           f"{a.jobs} processes", flush=True)
     t0 = time.time()
     done = 0

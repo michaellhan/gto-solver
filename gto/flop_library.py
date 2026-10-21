@@ -10,7 +10,7 @@ Lines through a raise aren't stored and are solved live.
 
 Files (gto/static/flop_library/, deployed next to the page): index.json lists the spots (their ranges'
 fingerprints, pot, stack, label) with the tree they were solved on and, per spot, each solved flop's content hash;
-<spot>/<flop>.bin is one entry. The browser's worker fetches the index once and an entry only when its spot comes up.
+<spot>/<flop>.bin is one entry (SPOT_FLOPS: how many flops a spot stores). The browser's worker fetches the index once and an entry only when its spot comes up.
 The library ignores itself where it doesn't apply: another tree (sizes, raises, rake, MODEL_VERSION), other ranges
 (changed charts, other stacks or table sizes, a custom range) or a flop not in it.
 """
@@ -63,6 +63,11 @@ SPOTS = [
     ("srp_utg_bb", "UTG vs BB single-raised pot", "UTG:r2.5,HJ:f,CO:f,BTN:f,SB:f,BB:c"),
     ("3bp_sb_btn", "SB 3bet vs BTN", "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:r10,BB:f,BTN:c"),
 ]
+# How many representative flops each spot stores (representative_flops(n); 552 = 3 x 184 holds the 184-flop set):
+# the commonest single-raised pots get more (scripts/flop_library_coverage.py: a flop not stored was 65% of the
+# heads-up flop decisions the library missed), the rest REP_FLOPS.
+REP_FLOPS = 184
+SPOT_FLOPS = {"srp_btn_bb": 552, "srp_co_bb": 552, "srp_hj_bb": 552}
 
 
 def spot_setup(line: str, players: int = 6, stack: float = 100.0) -> dict:

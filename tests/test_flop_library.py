@@ -47,6 +47,11 @@ class TestCanonicalFlops(unittest.TestCase):
         # every suit pattern gets about its share (rainbow 40%, two-tone 55%, monotone 5% of flops)
         mono = sum(1 for f in rep if len({c % 4 for c in f}) == 1)
         self.assertTrue(5 <= mono <= 15, mono)
+        # a spot storing more flops stores a representative set holding the 184 (systematic sampling at a multiple
+        # of 184: 3 x 184 picks every third of its points at the 184's)
+        for sid, n in fl.SPOT_FLOPS.items():
+            self.assertIn(sid, [s[0] for s in fl.SPOTS])
+            self.assertTrue(set(rep) <= set(fl.representative_flops(n)), (sid, n))
 
     def test_round_trip(self):
         """Every suit permutation of a flop has the same canonical flop, the suit map takes the flop there, and
