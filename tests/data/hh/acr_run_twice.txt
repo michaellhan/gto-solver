@@ -1,0 +1,48 @@
+Hand #1234567890 - Holdem(No Limit) - $0.50/$1.00 - 2024/10/02 16:00:00 UTC
+Aurora 6-max Seat #2 is the button
+Seat 1: Villain ($100.00)
+Seat 2: Hero ($100.00)
+Seat 3: sb_guy ($100.00)
+Seat 4: bb_guy ($100.00)
+sb_guy posts the small blind $0.50
+bb_guy posts the big blind $1.00
+*** HOLE CARDS ***
+Dealt to Hero [As Ks]
+Villain raises $2.50 to $2.50
+Hero raises $7.50 to $7.50
+sb_guy folds
+bb_guy folds
+Villain calls $5.00
+*** FLOP *** [Kd 8s 3s]
+Main pot $16.50
+Villain checks
+Hero bets $5.00
+Villain raises $92.50 to $92.50 and is all-in
+Hero calls $87.50 and is all-in
+*** RUN IT TWICE ***
+*** TURN 1 *** [Kd 8s 3s] [2h]
+Main pot 1 $100.75 | Rake $1.50
+*** RIVER 1 *** [Kd 8s 3s 2h] [9c]
+Main pot 1 $100.75 | Rake $1.50
+*** SHOW DOWN 1 ***
+Main pot 1 $100.75 | Rake $1.50
+Villain shows [8h 8d] (a set of Eights [8s 8h 8d Kd 9c])
+Hero shows [As Ks] (a pair of Kings [Ks Kd As 9c 8s])
+Villain collected $99.25 from main pot 1
+*** TURN 2 *** [Kd 8s 3s] [Qs]
+Main pot 2 $100.75 | Rake $1.50
+*** RIVER 2 *** [Kd 8s 3s Qs] [4d]
+Main pot 2 $100.75 | Rake $1.50
+*** SHOW DOWN 2 ***
+Main pot 2 $100.75 | Rake $1.50
+Villain shows [8h 8d] (a set of Eights [8s 8h 8d Kd Qs])
+Hero shows [As Ks] (a flush, Ace high [As Ks Qs 8s 3s])
+Hero collected $99.25 from main pot 2
+*** SUMMARY ***
+Total pot $201.50 | Rake $3.00
+Board 1 [Kd 8s 3s 2h 9c]
+Seat 1: Villain showed [8h 8d] and won $99.25 with a set of Eights [8s 8h 8d Kd 9c]
+Seat 2: Hero (button) showed [As Ks] and lost with a pair of Kings [Ks Kd As 9c 8s]
+Board 2 [Kd 8s 3s Qs 4d]
+Seat 1: Villain showed [8h 8d] and lost with a set of Eights [8s 8h 8d Kd Qs]
+Seat 2: Hero (button) showed [As Ks] and won $99.25 with a flush, Ace high [As Ks Qs 8s 3s]

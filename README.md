@@ -90,8 +90,8 @@ point; later actions and board cards are cleared, with Undo. While others act, t
 last advice stays visible but dimmed and labelled. The **⋯** menu has a four-colour
 deck (diamonds blue, clubs green), a switch that puts the advice on the left, and Reset layout.
 
-**Import hand** (in the ⋯ menu) takes a pasted hand history: PokerStars and GGPoker/Natural8
-(other sites in the same "Seat N: name (stack)" / "name: raises 2 to 3" shape mostly parse too),
+**Import hand** (in the ⋯ menu) takes a pasted hand history: PokerStars, GGPoker/Natural8, 888poker,
+partypoker, Winamax, WPN/ACR, Ignition/Bovada and iPoker (its XML: Bet365, William Hill…), the site detected,
 2 to 9 players, cash or tournament. Seats map onto the page's positions from the big blind, amounts
 become big blinds, antes are averaged per player, a 2bb straddle from the first seat is kept, sitting-out
 seats are dropped and returned bets are ignored; the history needs your hole cards. Every seat keeps its

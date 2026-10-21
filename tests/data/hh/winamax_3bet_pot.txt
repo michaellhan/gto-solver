@@ -1,0 +1,36 @@
+Winamax Poker - CashGame - HandId: #18876587-492053-1713470731 - Holdem no limit (1€/2€) - 2024/04/18 20:05:31 UTC
+Table: 'Nice 05' 6-max (real money) Seat #2 is the button
+Seat 1: grinder_pl (200€)
+Seat 2: Lucky_Lou (312.40€)
+Seat 3: nit_or_never (188€)
+Seat 4: HeroName (240€)
+Seat 6: cold4bet (200€)
+*** ANTE/BLINDS ***
+nit_or_never posts small blind 1€
+HeroName posts big blind 2€
+Dealt to HeroName [Ac Kh]
+*** PRE-FLOP ***
+cold4bet folds
+grinder_pl raises 3€ to 5€
+Lucky_Lou folds
+nit_or_never folds
+HeroName raises 17€ to 22€
+grinder_pl calls 17€
+*** FLOP *** [Kd 9c 4h]
+HeroName bets 14€
+grinder_pl raises 30€ to 44€
+HeroName calls 30€
+*** TURN *** [Kd 9c 4h][2s]
+HeroName checks
+grinder_pl bets 134€ and is all-in
+HeroName calls 134€
+*** RIVER *** [Kd 9c 4h 2s][7c]
+*** SHOW DOWN ***
+grinder_pl shows [9d 9h] (Three of a kind : 9's)
+HeroName shows [Ac Kh] (One pair : Kings)
+grinder_pl collected 397.50€ from pot
+*** SUMMARY ***
+Total pot 401€ | Rake 3.50€
+Board: [Kd 9c 4h 2s 7c]
+Seat 1: grinder_pl showed [9d 9h] and won 397.50€ with Three of a kind : 9's
+Seat 4: HeroName (big blind) showed [Ac Kh] and lost with One pair : Kings

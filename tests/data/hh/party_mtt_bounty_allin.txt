@@ -1,0 +1,33 @@
+***** Hand History For Game 161938625156465a1b2c3d *****
+50/100 Tourney Texas Holdem Game Table (NL) (MTT Tournament #301084002) (Buyin $8.8 + $1.2) - Wed Oct 02 12:00:00 EDT 2024
+Table (301084002) Table #3 (Real Money) -- Seat 2 is the button
+Total number of players : 5/8
+Seat 1: alpha (2500)
+Seat 2: beta (10250)
+Seat 3: gamma (4000)
+Seat 4: Hero (5000)
+Seat 5: delta (6000)
+alpha posts ante (12)
+beta posts ante (12)
+gamma posts ante (12)
+Hero posts ante (12)
+delta posts ante (12)
+gamma posts small blind (50)
+Hero posts big blind (100)
+** Dealing down cards **
+Dealt to Hero [ Jh, Js ]
+delta folds
+alpha raises 2488 to 2488
+alpha is all-In.
+beta folds
+gamma folds
+Hero calls (2388)
+** Dealing Flop ** : [ 3d, 5h, 9c ]
+** Dealing Turn ** : [ Td ]
+** Dealing River ** : [ Ad ]
+Creating Main Pot with 5086 with alpha
+** Summary **
+Main Pot: 5086
+Board: [ 3d, 5h, 9c, Td, Ad ]
+alpha balance 5086, bet 2500, collected 5086, net +2586
+Hero balance 2500, lost 2500 [ Jh Js ] [ a pair of jacks -- Ad,Td,Jh,Js,9c ]

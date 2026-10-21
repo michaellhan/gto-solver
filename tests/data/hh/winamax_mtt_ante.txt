@@ -1,0 +1,55 @@
+Winamax Poker - Tournament "Monster Stack" buyIn: 9€ + 1€ level: 7 - HandId: #2357799155578961958-128-1718483504 - Holdem no limit (30/150/300) - 2024/06/15 20:31:44 UTC
+Table: 'Monster Stack(812345678)#014' 9-max (real money) Seat #5 is the button
+Seat 1: Dragon_Ace (18250)
+Seat 2: maple_fish (30000)
+Seat 3: afk_andy (9400)
+Seat 4: HeroName (24000)
+Seat 5: RiverRat (41020)
+Seat 6: tightNtidy (12500)
+Seat 7: BB_defender (25100)
+Seat 8: shoveguy (33300)
+Seat 9: qwerty123 (15000)
+*** ANTE/BLINDS ***
+tightNtidy posts ante 30
+BB_defender posts ante 30
+shoveguy posts ante 30
+qwerty123 posts ante 30
+Dragon_Ace posts ante 30
+maple_fish posts ante 30
+afk_andy posts ante 30
+HeroName posts ante 30
+RiverRat posts ante 30
+tightNtidy posts small blind 150
+BB_defender posts big blind 300
+Dealt to HeroName [Ah Td]
+*** PRE-FLOP ***
+shoveguy folds
+qwerty123 folds
+Dragon_Ace folds
+maple_fish raises 360 to 660
+afk_andy folds
+HeroName calls 660
+RiverRat folds
+tightNtidy folds
+BB_defender calls 360
+*** FLOP *** [Ac 9h 9d]
+BB_defender checks
+maple_fish bets 600
+HeroName calls 600
+BB_defender folds
+*** TURN *** [Ac 9h 9d][5s]
+maple_fish checks
+HeroName bets 1500
+maple_fish calls 1500
+*** RIVER *** [Ac 9h 9d 5s][Qh]
+maple_fish checks
+HeroName checks
+*** SHOW DOWN ***
+maple_fish shows [Kc Qc] (Two pairs : Queens and 9's)
+HeroName shows [Ah Td] (Two pairs : Aces and 9's)
+HeroName collected 6600 from pot
+*** SUMMARY ***
+Total pot 6600 | No rake
+Board: [Ac 9h 9d 5s Qh]
+Seat 2: maple_fish showed [Kc Qc] and lost with Two pairs : Queens and 9's
+Seat 4: HeroName showed [Ah Td] and won 6600 with Two pairs : Aces and 9's

@@ -1,0 +1,66 @@
+Game Hand #1263893765 - Tournament #33339185 - Holdem(No Limit) - Level 7 (150.00/300.00)- 2024/06/15 20:31:44 UTC
+Table '14' 9-max Seat #5 is the button
+Seat 1: Dragon_Ace (18250.00)
+Seat 2: maple_fish (30000.00)
+Seat 3: afk_andy (9400.00) is sitting out
+Seat 4: HeroName (24000.00)
+Seat 5: RiverRat (41020.00)
+Seat 6: tightNtidy (12500.00)
+Seat 7: BB_defender (25100.00)
+Seat 8: shoveguy (33300.00)
+Seat 9: qwerty123 (15000.00)
+Dragon_Ace posts ante 30.00
+maple_fish posts ante 30.00
+afk_andy posts ante 30.00
+HeroName posts ante 30.00
+RiverRat posts ante 30.00
+tightNtidy posts ante 30.00
+BB_defender posts ante 30.00
+shoveguy posts ante 30.00
+qwerty123 posts ante 30.00
+tightNtidy posts the small blind 150.00
+BB_defender posts the big blind 300.00
+*** HOLE CARDS ***
+Main pot 720.00
+Dealt to HeroName [Ah Td]
+shoveguy folds
+qwerty123 folds
+Dragon_Ace folds
+maple_fish raises 660.00 to 660.00
+afk_andy folds
+HeroName calls 660.00
+RiverRat folds
+tightNtidy folds
+BB_defender calls 360.00
+*** FLOP *** [Ac 9h 9d]
+Main pot 2250.00
+BB_defender checks
+maple_fish bets 600.00
+HeroName calls 600.00
+BB_defender folds
+*** TURN *** [Ac 9h 9d] [5s]
+Main pot 3450.00
+maple_fish checks
+HeroName bets 1500.00
+maple_fish calls 1500.00
+*** RIVER *** [Ac 9h 9d 5s] [Qh]
+Main pot 6450.00
+maple_fish checks
+HeroName checks
+*** SHOW DOWN ***
+Main pot 6600.00
+maple_fish shows [Kc Qc] (two pair, Queens and Nines [Qc Qh 9h 9d Ac])
+HeroName shows [Ah Td] (two pair, Aces and Nines [Ah Ac 9h 9d Qh])
+HeroName collected 6600.00 from main pot
+*** SUMMARY ***
+Total pot 6600.00
+Board [Ac 9h 9d 5s Qh]
+Seat 1: Dragon_Ace folded on the Pre-Flop and did not bet
+Seat 2: maple_fish showed [Kc Qc] and lost with two pair, Queens and Nines [Qc Qh 9h 9d Ac]
+Seat 3: afk_andy folded on the Pre-Flop and did not bet
+Seat 4: HeroName showed [Ah Td] and won 6600.00 with two pair, Aces and Nines [Ah Ac 9h 9d Qh]
+Seat 5: RiverRat (button) folded on the Pre-Flop
+Seat 6: tightNtidy (small blind) folded on the Pre-Flop
+Seat 7: BB_defender (big blind) folded on the Flop
+Seat 8: shoveguy folded on the Pre-Flop and did not bet
+Seat 9: qwerty123 folded on the Pre-Flop and did not bet
