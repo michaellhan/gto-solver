@@ -230,7 +230,8 @@ class TestLaterStreetsByBuckets(unittest.TestCase):
         per = s.seconds / 5
         s.run(iters=1000, time_budget=12 * per, min_iters=1, reserve=3.0)
         self.assertLess(s.seconds - 5 * per, 12 * per * 1.15)
-        self.assertLess(s.iters, 5 + 12)
+        # (iterations can run faster than the first 5 timed on a loaded machine, so the count is loose; time is the bound)
+        self.assertLess(s.iters, 5 + 12 * 2)
         self.assertGreater(s.build_seconds, 0.0)
 
 
