@@ -77,6 +77,17 @@ test("on your turn the worker gets the state as built, at the Fast budget", asyn
   assert.ok(p.buttons().some(b => b.innerHTML.startsWith('Bet 2<small>33% pot<span class="fq"> · 30%</span>')));
 });
 
+test("on your turn before the solve starts (the page still finding its backend) the panel doesn't say it waits for your turn", async () => {
+  const p = loadPage();
+  p.S = state(FLOP);
+  p.run("resetAdvice(); updateAdviceState()");   // as the page is right after a reload, before modeReady settles
+  assert.doesNotMatch(p.byId("result").innerHTML, /Waiting for your turn/);
+  assert.match(p.byId("result").innerHTML, /Your turn/);
+  p.S = state({ ...FLOP, flop: [] });   // BB to act: it does wait
+  p.run("resetAdvice(); updateAdviceState()");
+  assert.match(p.byId("result").innerHTML, /Waiting for your turn/);
+});
+
 test("a solve of a spot you've left doesn't hold up your next turn: it's stopped and the new spot asked at once", async () => {
   const p = loadPage();
   await p.ready();

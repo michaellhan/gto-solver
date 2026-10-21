@@ -1332,7 +1332,8 @@ function updateAdviceState() {
   note.querySelectorAll("li.rewind").forEach(li => li.onclick = () => rewindTo(li.dataset.s, +li.dataset.i));
   if (sim.handOver && mine.length && !review && !practicing()) note.insertAdjacentHTML("beforeend", `<div class="muted" style="margin-top:4px">${TAP} a decision to replay the hand from there.</div>`);
   if (el.classList.contains("empty")) el.innerHTML = S.cards[0] && S.cards[1]
-    ? (sim.handOver ? (msg ? "" : "Hand over.") : "Waiting for your turn.<br>Enter what the others do; advice appears when the action reaches you.")
+    ? (sim.handOver ? (msg ? "" : "Hand over.") : heroTurn ? "Your turn: getting the solver ready…"   // (until analyze starts)
+      : "Waiting for your turn.<br>Enter what the others do; advice appears when the action reaches you.")
     : EMPTY_ADVICE;
   if (window.Practice) window.Practice.tick(sim);   // practice: deal, or move the seat to act
 }
