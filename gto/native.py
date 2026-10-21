@@ -13,6 +13,7 @@ for _v in ("VECLIB_MAXIMUM_THREADS", "OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", 
 from typing import Dict, Optional  # noqa: E402
 from .advisor import Advisor        # noqa: E402
 from .solver import Config          # noqa: E402
+from .flop_library import default_library  # noqa: E402
 
 # Each speed is a tree and its budgets (seconds for the street advised on, and for each earlier street
 # used to narrow ranges). Narrowing walks the earlier streets' solves, so they must settle too: Config()'s
@@ -21,7 +22,9 @@ from .solver import Config          # noqa: E402
 # Measured on BTN vs BB single-raised pots (Ks7d2c, Ks7d2cTh, Qs8d3c4h, Ks7d2cTh5s):
 # - fast: the browser's sizes (one turn and river bet and raise size) with every river under each turn:
 #   the turn at 2.5 s is 1.5-2% of the pot from equilibrium (40-45 iterations), the flop 0-0.2%, and BB's
-#   river check range 79 combos. With 1.2 s for an earlier turn it was 8-10% (58-64 combos); 8 fixed
+#   river check range 79 combos (before the charts followed published raked solves; long solves now keep
+#   87.7 with the bucketed flop below, and a loaded machine's short earlier solves are followed only as far
+#   as they've settled: advisor.PRIOR_TRUST). With 1.2 s for an earlier turn it was 8-10% (58-64 combos); 8 fixed
 #   rivers settle sooner but narrow to 63 even when converged.
 # - accurate: two turn and river bet sizes: the turn at 30 s is 0.3-0.7%; an earlier turn at 12 s is
 #   1.7-2% and leaves 89 combos (at 6 s, 9-10%). Its sizes differ from fast's, so it can't warm-start
@@ -44,13 +47,16 @@ SPEEDS = {
 
 
 def advisor(speed: str = "fast", depth: int = 2, budget: Optional[float] = None,
-            prior_budget: Optional[float] = None) -> Advisor:
+            prior_budget: Optional[float] = None, library: bool = True) -> Advisor:
+    """`library`: answer flop spots the precomputed library holds from it (gto/flop_library.py), at either speed."""
     sizes, b, pb = SPEEDS[speed]
     cfg = Config(bet_sizes={k: list(v) for k, v in sizes["bet_sizes"].items()},
                  raise_sizes={k: list(v) for k, v in sizes["raise_sizes"].items()}, depth=depth,
                  **sizes.get("flop_model", {}))
-    return Advisor(cfg, time_budget=b if budget is None else budget,
-                   prior_budget=pb if prior_budget is None else prior_budget)
+    adv = Advisor(cfg, time_budget=b if budget is None else budget,
+                  prior_budget=pb if prior_budget is None else prior_budget)
+    adv.library = default_library() if library else None
+    return adv
 
 
 def advisors(depth: int = 2, budget: Optional[float] = None, prior_budget: Optional[float] = None) -> Dict[str, Advisor]:

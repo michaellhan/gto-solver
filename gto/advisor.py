@@ -70,6 +70,20 @@ LEAD_EQ = 0.5       # multiway, later streets: we lead when our equity beats thi
 RAISE_EQ = 0.55     # multiway, later streets: we raise their bet when our equity beats this vs what continues
 RARE_LINE = 0.10    # heads-up: widen the villain's range when the solve takes their line less often than this
 UNSETTLED = 3.0     # heads-up: a solve this far from equilibrium (% pot) hasn't settled (the page's "converged" cutoff)
+# Heads-up, earlier streets: narrowing follows a solve fully this close (% pot) to equilibrium, not at all this far,
+# linearly between; the rest of each action's weights are the betting rules' range for it (softened, as multiway),
+# or for a check the whole range (no evidence: the big blind checks nearly every flop to the raiser).
+# An unsettled solve's lines are far from its equilibrium's: BTN vs BB K72 c-bet called, T turn bet called, BB's
+# river check range is 69.5 combos after long solves, and a flop at 20 iterations (9% of the pot, BB checking 61%
+# and calling the c-bet 21% where it settles at 95% and 47%) left 24, 20 iterations and a 26-iteration turn (6%)
+# 18 (a loaded machine's 2.5 s; 4% of its preflop range). Followed by how settled they are (checks then narrowed
+# by the rules too): 89 there, 55-65 with 40-iteration flops (2.6%, but its BB still checks 75%, so the flop's ramp
+# starts low; were 41-43), 63-72 at 100-300. Fast's bucketed flop (river_buckets) is further off at a given count (20 iterations 27%, 40 7.7% with
+# BB checking 87% and calling 33% for 99% and 50%, 80 1.8%, 150 0.5%); long solves keep 87.7 there, short ones
+# kept 29 (20 flop, 26 turn iterations), 50 (40/26), 52 (40/45), 70-82 (80-150/45) and now keep 112, 112, 87,
+# 78-81. A settled solve (the accurate speed's, or fast's unloaded: flop 140-210 iterations, turn 1.5-2%) is
+# followed fully. Short solves err wide, not thin.
+PRIOR_TRUST = {"flop": (0.5, 5.0), "turn": (2.0, 10.0), "river": (2.0, 10.0)}
 SETTLE_EXPL = 10.0  # heads-up: the street being advised on gets one more time budget when this far (% pot) from settled
 JAM_BLEND = 0.04    # preflop vs a jam: call frequency ramps from 0 to 1 over this much equity around the pot odds
 PREFLOP_BOARDS = 400  # boards sampled for preflop all-in equity
@@ -777,6 +791,13 @@ def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack,
                 slow[p] = again | band
 
 
+def trust_of(expl: float, street: str) -> float:
+    """How far an earlier street's narrowing follows its solve, by the solve's exploitability (% pot); see
+    PRIOR_TRUST."""
+    lo, hi = PRIOR_TRUST[street]
+    return float(min(1.0, max(0.0, (hi - expl) / (hi - lo))))
+
+
 def _soften(r, keep_m) -> np.ndarray:
     """Per-combo weights for range r after a line the rules play with keep_m: 1 on the rule's hands,
     NARROW_SOFT off them, lowered so the off-rule hands make up at most OFF_RULE_MAX of the result."""
@@ -1183,6 +1204,8 @@ class Advisor:
         # Accurate keeps their flop's river checked down: 12 s there is ~10 iterations with river_play
         self.prior_model: Optional[dict] = None
         self._by_spot: Dict[tuple, Solution] = {}    # latest solve per spot, whatever the ranges
+        # precomputed flop solves (gto/flop_library.py: FlopLibrary), used where they hold the spot; None = off
+        self.library = None
         self.rng = random.Random()
 
     # ------------------------------------------------------------ public
@@ -1679,6 +1702,9 @@ class Advisor:
         oop, ip = sorted([hero, villain], key=post.index)
         hero_p = 0 if hero == oop else 1
         r0, r1 = ranges[oop].copy(), ranges[ip].copy()
+        full = (ranges[oop], ranges[ip])   # the ranges entering the flop: they pick a precomputed spot (flop_library)
+        lib = self.library if self.library is not None and not pool and not optimize and not (locks or {}).get(villain) else None
+        lib_sol = None
         for c in hole:  # villain can't hold hero's cards
             if hero_p == 0:
                 r1 = r1 * (1.0 - MEMBER_FULL[c])
@@ -1706,12 +1732,27 @@ class Advisor:
                     continue   # multiway: narrowed above
                 eff = min(stk[oop] - st.inv_start[oop], stk[ip] - st.inv_start[ip])
                 cfg = self._cfg_with_real_sizes(st, oop, ip, eff)
-                if self.prior_model:
-                    cfg = dataclasses.replace(cfg, **self.prior_model)
-                sol = self._solve_cached(sub_board, r0, r1, st.pot_start, eff, self.prior_budget, cfg=cfg)
-                node, c0, c1 = self._walk(sol, st.actions, oop, ip, st.pot_start, eff, notes, st.name, self.prior_smoothing,
-                                          board=sub_board, rules=(0, 1),
-                                          lock=mk_lock(sol))
+                hit = self._from_library(lib, full, sub_board, r0, r1, st, eff, cfg, oop, ip, notes,
+                                         smoothing=self.prior_smoothing, board=sub_board, rules=(0, 1)) \
+                    if lib is not None and st.name == "flop" else None
+                if hit is not None:
+                    sol, node, c0, c1 = hit
+                    notes.append(sol.note())
+                else:
+                    if self.prior_model:
+                        cfg = dataclasses.replace(cfg, **self.prior_model)
+                    sol = self._solve_cached(sub_board, r0, r1, st.pot_start, eff, self.prior_budget, cfg=cfg)
+                    if getattr(sol, "expl_at", (None,))[0] != sol.iters:
+                        sol.expl_at = (sol.iters, sol.exploitability())
+                    expl = sol.expl_at[1]
+                    trust = trust_of(expl, st.name)
+                    if trust < 1.0:
+                        notes.append(f"{st.name}: the solve that narrows ranges is {expl:.1f}% of the pot from "
+                                     f"equilibrium ({sol.iters} iterations), so ranges follow it {trust * 100:.0f}% and "
+                                     "simple betting rules the rest")
+                    node, c0, c1 = self._walk(sol, st.actions, oop, ip, st.pot_start, eff, notes, st.name, self.prior_smoothing,
+                                              board=sub_board, rules=(0, 1),
+                                              lock=mk_lock(sol), trust=trust)
                 r0 = _post_floor(r0, expand(sol.ctx, c0), board, oop, st.name, notes)
                 r1 = _post_floor(r1, expand(sol.ctx, c1), board, ip, st.name, notes)
             eff = min(stk[oop] - cur.inv_start[oop], stk[ip] - cur.inv_start[ip])
@@ -1719,6 +1760,20 @@ class Advisor:
             r0, r1 = self._with_hero(r0, r1, hero_p, hole, notes)
             if optimize and to_call <= 1e-9:
                 cfg, opt = self._optimize_sizes(board, r0, r1, cur, eff, cfg, hero_p, notes)
+            if lib is not None and cur.name == "flop":
+                # a precomputed solve answers when it holds the spot and the line, the villain's line isn't rare in
+                # it and the node is one it stores (else the live solve below)
+                w2, rl2, n2 = [], [], []
+                hit = self._from_library(lib, full, board, r0, r1, cur, eff, cfg, oop, ip, n2,
+                                         smoothing=self.prior_smoothing, only=1 - hero_p, widened=w2, board=board,
+                                         rare_lines=rl2)
+                if hit is not None and not w2 and not rl2 and id(hit[1]) in hit[0].stored:
+                    lib_sol, node, n_r0, n_r1 = hit
+                    notes.extend(n2)
+                    notes.append(lib_sol.note())
+        if lib_sol is not None:
+            sol = lib_sol
+        elif hu_from_start:
             sol = self._solve_cached(board, r0, r1, cur.pot_start, eff, self.time_budget, cfg=cfg)
             # The villain's actions this street are exact unless the solve rarely takes them: then
             # smooth as on earlier streets, so we aren't advised against a sliver of a range.
@@ -1844,6 +1899,7 @@ class Advisor:
                        # how far this street's solve is from equilibrium, % of the street's starting pot
                        "exploitability_pct": round(expl, 2)},
             "widened": widened,
+            **({"precomputed": lib_sol.info()} if lib_sol is not None else {}),
             **({"locked": {villain: adj}} if adj else {}),
             "notes": notes, "seconds": round(time.time() - t0, 2),
         }
@@ -2805,6 +2861,23 @@ class Advisor:
         notes.append("your hand isn't in your range for this line, so it was solved as a near-zero-weight combo")
         return (r, r1) if hero_p == 0 else (r0, r)
 
+    def _from_library(self, lib, full, flop, r0, r1, st: StreetState, eff, cfg: Config, oop, ip, notes, **walk_kw):
+        """(solution, node, r0, r1) walked from the library's solve of this flop (flop_library.LibrarySolution)
+        when it holds the spot (the ranges entering the flop, pot, stack and tree) and every node of the line
+        taken; else None. The walk's notes go to `notes` only when it is used."""
+        try:
+            sol = lib.solution(full[0], full[1], flop, r0, r1, st.pot_start, eff, cfg)
+        except Exception:   # a library that can't be read is no library
+            sol = None
+        if sol is None:
+            return None
+        visited, n2 = [], []
+        node, c0, c1 = self._walk(sol, st.actions, oop, ip, st.pot_start, eff, n2, st.name, visited=visited, **walk_kw)
+        if not sol.covers(visited):
+            return None
+        notes.extend(n2)
+        return sol, node, c0, c1
+
     def _solve_cached(self, board, r0, r1, pot, stack, budget, bets=(0.0, 0.0), to_act=0, n_raises=0, cfg=None,
                       settle=False):
         cfg = cfg or self.cfg
@@ -2922,7 +2995,7 @@ class Advisor:
         return cfg
 
     def _walk(self, sol: Solution, acts: List[dict], oop, ip, pot, stack, notes, street, smoothing=0.0, only=None,
-              widened=None, board=None, rules=None, lock=None, rare_lines=None):
+              widened=None, board=None, rules=None, lock=None, rare_lines=None, visited=None, trust=1.0):
         """Follow real actions through the solved tree, narrowing ranges. Smoothing mixes each
         strategy with uniform so a line the solve rarely takes doesn't shrink a range to nothing.
         With `only` (0 = OOP, 1 = IP) and `board`, that player's actions are exact unless the solve
@@ -2933,7 +3006,11 @@ class Advisor:
         `rules` (players, with `board`) gives the same fallback on an earlier street, where the other
         actions stay smoothed: a short prior solve can be far from equilibrium, and a line it rarely
         takes (a turn call it folds two pair to) would leave the range a sliver.
-        `lock` (exploit mode) narrows its player's range by how the pool plays instead of the solve."""
+        `lock` (exploit mode) narrows its player's range by how the pool plays instead of the solve.
+        `visited` (a list) gets every node an action was taken at.
+        `trust` (with `rules` and `board`): the weight the solve's strategy gets on `rules`' other actions,
+        the rest going to the rules' range for the action (softened, as multiway), for a solve that hasn't
+        settled (trust_of)."""
         rules = (only,) if rules is None and only is not None else rules or ()
         node = sol.root
         r0, r1 = sol.r0.copy(), sol.r1.copy()
@@ -2947,6 +3024,8 @@ class Advisor:
             if p != node.player:
                 notes.append(f"{street}: action order mismatch at {a['pos']} {a['action']}; ignoring")
                 continue
+            if visited is not None:
+                visited.append(node)
             name = self._tree_action_name(node, a, p, bets, pot, stack)
             k = match_action(node.names, name)
             rp = r0 if p == 0 else r1
@@ -2970,13 +3049,8 @@ class Advisor:
             # (a rare raise or big bet keeps the solve's hands and adds the rules' value: kept alone, a sliver
             # from a short solve decided the answer, 0.7 combos of 65s for a river overbet, and a flop jam's
             # range just above a combo threshold had AK calling it at +48 bb one run in four)
-            if p in rules and rare and board is not None and a["action"] != "fold":
-                if widened is not None and p == only:
-                    widened.append(a["pos"])
-                notes.append(f"{street}: the solve rarely has {a['pos']} {a['action']} here "
-                             f"({(rp * s).sum() / max(rp.sum(), 1e-12) * 100:.0f}% of their range), so their range "
-                             + ("comes from simple betting rules instead" if not reraise else
-                                "is the solve's with the rules' value hands added"))
+            def rule_mask():
+                # the part of p's range the betting rules play this way (see _rule_mask), and that range
                 sc, rank, bluff = _street_info(tuple(board))
                 cur_bet, pot_total = max(bets), pot + bets[0] + bets[1]
                 act_ = a["action"]
@@ -2986,8 +3060,29 @@ class Advisor:
                       else cur_bet)
                 full = expand(sol.ctx, rp) * (sc >= 0)
                 other = expand(sol.ctx, r1 if p == 0 else r0) * (sc >= 0)
-                m = _rule_mask(full, to, cur_bet, max(0.0, cur_bet - bets[p]), pot_total, 1, rank, bluff=bluff,
-                               others=[other], sc=sc)
+                return full, rank, _rule_mask(full, to, cur_bet, max(0.0, cur_bet - bets[p]), pot_total, 1, rank,
+                                              bluff=bluff, others=[other], sc=sc)
+            def as_locked(t):
+                # weights t for this action as the locked player (exploit mode's pool, your locks) plays them: the
+                # node's other actions share the rest as the solve has them, and the lock moves hands between them
+                # (the rules' range for a rare river bet, balanced with bluffs, had the pool bluffing as often as
+                # equilibrium, and the best response called it as often)
+                if lock is None or p != lock.player:
+                    return t
+                base = node.avg_strategy0().astype(np.float64)
+                rest = base.sum(axis=0) - base[k]
+                n_act = len(node.names)
+                strat = np.where(rest > 1e-12, base / np.maximum(rest, 1e-12) * (1.0 - t), (1.0 - t) / max(n_act - 1, 1))
+                strat[k] = t
+                return lock(node, strat[None].astype(np.float32), rp[None, :])[0][k]
+            if p in rules and rare and board is not None and a["action"] != "fold":
+                if widened is not None and p == only:
+                    widened.append(a["pos"])
+                notes.append(f"{street}: the solve rarely has {a['pos']} {a['action']} here "
+                             f"({(rp * s).sum() / max(rp.sum(), 1e-12) * 100:.0f}% of their range), so their range "
+                             + ("comes from simple betting rules instead" if not reraise else
+                                "is the solve's with the rules' value hands added"))
+                full, rank, m = rule_mask()
                 if reraise:
                     # no bluffs: as many combos as the rule's range, from the top (a 99bb river jam into 2bb kept
                     # 0 combos as solved, and as the rules' about half bluffs a hand playing the board called it)
@@ -3000,9 +3095,22 @@ class Advisor:
                         s = np.minimum(s, node.strategy()[0][k])
                     s = np.maximum(s, _top(full, _share(full, m), rank)[sol.ctx.active])   # with the solve's own
                 else:
-                    s = _soften(full, m)[sol.ctx.active]
-            elif smoothing > 0 and only is None:
-                s = (1.0 - smoothing) * s + smoothing / len(node.names)
+                    s = as_locked(_soften(full, m)[sol.ctx.active])
+            else:
+                if trust < 1.0 and p in rules and board is not None and a["action"] != "fold":
+                    # an unsettled earlier-street solve: its strategy counts by how settled it is, the rest is
+                    # the betting rules' range for the line (see trust_of). A check keeps the rest whole: heads-up
+                    # the big blind checks 95-99% of flops to the raiser, where the rules' check (everything but
+                    # what would bet) took its value out, and after a 10-iteration flop and turn (88% and 51% of
+                    # the pot from equilibrium, trust 0) a K8372 river checked through had the button betting
+                    # 7c6c, third pair, for value at 100% where it checks
+                    if a["action"] == "check":
+                        s = trust * s + (1.0 - trust) * as_locked(np.ones_like(s))
+                    else:
+                        full, _, m = rule_mask()
+                        s = trust * s + (1.0 - trust) * as_locked(_soften(full, m)[sol.ctx.active])
+                if smoothing > 0 and only is None:
+                    s = (1.0 - smoothing) * s + smoothing / len(node.names)
             if p == 0:
                 r0 = r0 * s
             else:

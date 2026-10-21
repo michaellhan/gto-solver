@@ -1155,6 +1155,8 @@ function convergence(res) {
 }
 // optimize_sizes: hero's mix over the wide menu of the first solve, and the sizes the advice was solved with
 const SIZE_USAGE = (r) => Object.entries(r.size_usage).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(" · ") + (r.sizes_kept ? `; kept ${r.sizes_kept.join(", ")}` : "");
+// a flop answer read from the precomputed library (gto/flop_library.py) instead of solved live
+const PRE_TIP = (p) => `Solved offline (${p.label}, ${p.iterations} iterations)${p.same_tree ? "" : " with Accurate's flop model"}: instant, at either speed.`;
 const convTip = (c) => `Exploitability ${c.x.toFixed(1)}% of the pot: a perfect counter-strategy would win that much from this solve. Under 3% is close to a full solver.`;
 
 function renderResult(res, key) {
@@ -1166,7 +1168,7 @@ function renderResult(res, key) {
   const board = res.board ? res.board.match(/../g).map(cardHtml).join(" ") : "";
   let h = `<div class="meta" style="margin:0 0 4px">${res.street} · ${res.hero} ${res.hand}${res.position ? " · " + res.position : ""}${board ? " · " + board : ""}${res.pot_bb ? " · pot " + res.pot_bb + " bb" : ""}</div>`;
   if (res.multiway) h += `<div class="verdict"><span class="big">${res.recommended}</span><span class="mix">${res.opponents.length + 1} players in · equity vs field ${(res.equity_vs_field * 100).toFixed(0)}% · heuristic, not a solve</span></div>`;
-  else h += `<div class="verdict"><span class="big">${res.recommended}</span>${conv ? `<span class="conv ${conv.cls}" title="${convTip(conv)}">${conv.label} · ${conv.x.toFixed(1)}% pot</span>` : ""}${conv && conv.cls === "bad" && SPEED === "fast" ? `<button class="link" id="goAccurate">Solve again on Accurate</button>` : ""}</div>`;
+  else h += `<div class="verdict"><span class="big">${res.recommended}</span>${conv ? `<span class="conv ${conv.cls}" title="${convTip(conv)}">${conv.label} · ${conv.x.toFixed(1)}% pot</span>` : ""}${res.precomputed ? `<span class="conv ok" title="${PRE_TIP(res.precomputed)}">precomputed</span>` : ""}${conv && conv.cls === "bad" && SPEED === "fast" ? `<button class="link" id="goAccurate">Solve again on Accurate</button>` : ""}</div>`;
   const hasEv = res.actions.some(a => a.ev_bb !== undefined);
   h += `<div class="arows${hasEv ? "" : " noev"}"><div class="arow head"><span>Action</span><span>${res.multiway ? "" : "Solver mix"}</span><span class="num">${res.multiway ? "" : "Freq"}</span>${hasEv ? '<span class="num" title="Expected value of taking this action, in big blinds">EV</span>' : ""}</div>`;
   for (const a of res.actions) {
