@@ -2,7 +2,22 @@
 importScripts("https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js");
 
 // no __init__ here: GitHub Pages (Jekyll) will not serve files starting with an underscore
-const FILES = ["cards", "ranges", "evaluator", "preflop", "pf_equity", "pf_classes", "solver", "multiway_solver", "exploit", "advisor"];
+const FILES = ["cards", "ranges", "evaluator", "preflop", "pf_equity", "pf_classes", "solver", "multiway_solver", "exploit", "advisor", "flop_library"];
+
+// The precomputed flop library (gto/flop_library.py): the Python side asks for its index once and for an entry
+// (<spot>/<flop>.bin, ~10 KB) only when a flop spot it holds comes up. A synchronous request (allowed in a
+// worker) because the solver runs synchronously; a missing or unreadable file is just no library.
+self.libFetch = (path) => {
+  try {
+    const x = new XMLHttpRequest();
+    x.open("GET", `flop_library/${path}`, false);
+    x.responseType = "arraybuffer";
+    x.send();
+    return x.status === 200 ? new Uint8Array(x.response) : null;
+  } catch (e) {
+    return null;
+  }
+};
 
 const ready = (async () => {
   postMessage({ status: "Loading the solver runtime (about 15 MB, cached after the first visit)…" });
@@ -43,6 +58,10 @@ const ready = (async () => {
              // Accurate picks up from a Fast solve of the same spot (not the reverse: Fast's few seconds can't re-fit an
              // Accurate solve to its own tree; the page shows Accurate's answer instead)
              + "advs['accurate'].warm_from = advs['fast']; advs['accurate'].prior_model = {'river_buckets': 32, 'turn_buckets': True, 'bucket_river_step': 3}; "
+             // both speeds answer a flop spot the library holds from it (Accurate's flop model, solved offline)
+             + "from gto.flop_library import FlopLibrary; from js import libFetch; "
+             + "lib = FlopLibrary(lambda p: (lambda r: None if r is None else r.to_bytes())(libFetch(p))); "
+             + "advs['fast'].library = advs['accurate'].library = lib; "
              // 3-way pots: the 3-player solver on the river in Fast (~0.1 s an iteration here: 8 s is ~60-80, under 1% of the pot
              // from equilibrium); turns and flops (every runout dealt out, ~0.5 s an iteration) only in Accurate's 60 s
              + "advs['fast'].mw_solve_streets = ('river',)");

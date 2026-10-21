@@ -821,7 +821,17 @@ class TestAdvisor(unittest.TestCase):
         out = adv.advise({"players": 6, "hero": "UTG", "hole": "KhAs", "board": "JsQs2hAh", "stack": 100, "preflop": pre,
                           "flop": [R("UTG", "check"), R("HJ", "check")]})
         self.assertGreater(out["villain_range_combos"], 4.0, out)
-        self.assertTrue(any("filled out with the rest of their flop range" in n for n in out["notes"]), out["notes"])
+        # (the flop's 0.5 s here is ~10 iterations, 15% of the pot from equilibrium: narrowing then keeps the check
+        # range whole (advisor.PRIOR_TRUST), so the floor isn't reached; it is for a settled solve's thin line)
+        self.assertTrue(any("filled out with the rest of their flop range" in n or "ranges follow it" in n
+                            for n in out["notes"]), out["notes"])
+        from gto.advisor import _post_floor
+        before = np.zeros(1326); before[:100] = 1.0
+        after = np.zeros(1326); after[:2] = 1.0
+        notes = []
+        r = _post_floor(before, after, [], "HJ", "flop", notes)
+        self.assertAlmostEqual(float(r.sum()), 2.0 + (1 - 2.0 / 8.0) * 98, places=6)   # 1 - combos / MIN_LINE_COMBOS of the rest
+        self.assertTrue(any("filled out with the rest of their flop range" in n for n in notes), notes)
         srp = [R("UTG", "fold"), R("HJ", "fold"), R("CO", "fold"), R("BTN", "raise", 2.5), R("SB", "fold"), R("BB", "call")]
         out = adv.advise({"players": 6, "hero": "BB", "hole": "9h8h", "board": "Kd7c2s5h", "stack": 100, "preflop": srp,
                           "flop": [R("BB", "check"), R("BTN", "check")]})
@@ -1376,7 +1386,15 @@ FLOP_REFERENCES = [
     # K-high flops are bet more than A-high
     ("srp", "Kd7c2h", "cbet", 65, 100, "BeyondGTO 98% *, Upswing K83 ~100%"),
     # (the BB's flats against the button follow published solves since: KQs and KJs a third flat, offsuit
-    # trash folds; the small bet fell from 56 to 46% of the range, two thirds of the c-bets)
+    # trash folds; the small bet fell from 56 to 46% of the range, two thirds of the c-bets). The c-bet's 79 -> 69,
+    # by piece (150 iterations): the button's new opens 79 -> 75 (old BB chart), the BB's polarised 3bets and part-time
+    # KQs/KJs/QJs flats 75 -> 73 (old defence width, 64.6% unraked), its unraked defence cut to 55% 73 -> 69; the small
+    # bet 56 -> 51 -> 47 -> 46. Even the old width keeps the small bet under 50, and the source only says a third pot is
+    # the most common size (46 against 23 here), so the floor stays 40. On a 25/80 tree as ThinkGTO's: 78% (84.6 with
+    # the old BB chart; published 98% *). Played at a raked table as the published NL500/NL50 solves are (5% capped
+    # at 0.6bb), the re-priced BB range c-bets 47% (QQ6 63%, BB checking 83%): the rake re-pricing cuts calls by
+    # all-in equity, so it folds 76s, 54s, T8o and 98o and keeps every offsuit king (K7o+), where raked solves keep
+    # suited connectors (see the README's Known limits)
     ("srp", "Kd7c2h", "small", 40, 100, "RangeConverter 6max 100bb aggregate: 1/3 pot the most common size"),
     ("srp", "Kd7c2h", "vs small: raise", 6, 22, "RangeConverter aggregate x/r 14%; ThinkGTO A74 15.4%"),
     # high paired: range bet small. GTO Wizard (The mechanics of c-bet sizing) QQ6: high frequency, mostly 33%, BB checks
@@ -1407,7 +1425,13 @@ FLOP_REFERENCES = [
 ]
 
 
-BUCKET_LOW = {("srp", "QsQd6c", "cbet"): 75}
+# Fast's bucket model (river_buckets) where it misses a reference by its own bias, not by iterations: QQ6's c-bet settles
+# near 80% where a solve over every turn has 88%; 765's BB checks 76.4% at 150 iterations and 76.6% at 400 where the
+# per-combo model checks 81.7% at 150 and the flop library's (Accurate's) 84.0% at 300 (the library's 184 BTN vs BB
+# flops: 98.7% on average, connected ones 86-94%, as GTO Wizard's 98% and ~93%). The BB's flats since the charts
+# follow published solves (55% unraked, little offsuit trash) are stronger on low connected boards, which the buckets
+# lead more with: 83.7% with the old charts' BB.
+BUCKET_LOW = {("srp", "QsQd6c", "cbet"): 75, ("srp", "7h6d5c", "check"): 72}
 
 
 class TestFlopStrategy(unittest.TestCase):
@@ -1460,8 +1484,8 @@ class TestFlopStrategy(unittest.TestCase):
             for kind, board, stat, lo, hi, src in FLOP_REFERENCES:
                 v = self.stats(self.solve_spot(kind, board, buckets))[stat]
                 if buckets:
-                    # the buckets' one miss: QQ6's c-bet settles near 80% where a solve over every turn has 88% (the
-                    # river checked down had 52-56%)
+                    # the buckets' misses (BUCKET_LOW): QQ6's c-bet and 765's BB check (the river checked down had
+                    # QQ6's c-bet at 52-56%)
                     lo = BUCKET_LOW.get((kind, board, stat), lo)
                 self.assertTrue(lo <= v <= hi, f"{kind} {board} {stat} {v:.1f} not in [{lo}, {hi}] ({src})"
                                 + (" with buckets" if buckets else ""))
