@@ -675,17 +675,23 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   is matched by the two ranges entering the flop (as the charts replay them: other table sizes, stacks or charts
   simply don't match), the pot and the stack; heads-up from the flop only, not in exploit mode, with locks on the
   villain, custom ranges or Optimize sizes.
-* **Flops**: 184 canonical flops per spot (`representative_flops`: the 1755 suit-isomorphic flops sorted by
-  texture and sampled by weight, so each suit pattern, pairing and height gets its share). A flop is matched up
-  to suits: the ranges are suit-symmetric, so a stored flop's solve is any suit permutation's, its combos
-  permuted. Other flops are solved live as before. Shipped so far: BTN vs BB on its 184 flops (~1.3 MB); the
-  other spots are defined but not yet built (see Building below).
+* **Flops**: canonical flops matched up to suits (the ranges are suit-symmetric, so a stored flop's solve is any
+  suit permutation's, its combos permuted); other flops are solved live. Each spot stores a representative set
+  (`representative_flops(n)`: the 1755 suit-isomorphic flops sorted by texture and sampled by weight, so each suit
+  pattern, pairing and height gets its share): 184 flops (12.7% of all flops), and 552 (38%; it holds the 184) for
+  BTN, CO and HJ vs BB (`SPOT_FLOPS`).
+* **Coverage** (`scripts/flop_library_coverage.py`: the 6-max 100bb preflop game played by the charts, the flop by
+  the stored strategies): 36% of hands go heads-up to the flop, and the library answers 21.3% of their flop
+  decisions (9.4% with 184 flops everywhere). Of the rest, a flop not stored is 53 points, a spot not in
+  the library 23 (HJ / UTG flatted by the BTN 6.3, CO vs the SB's 3bet 1.2, each other 3bet pot ~1, 4bet pots 1.5
+  together), a raise 2.7. A flop's entry is worth its spot's share times its suit count, so more flops of the
+  commonest spots beat new spots (184 flops of HJ vs BTN, ~1 MB: +0.5 points; 368 more of BTN vs BB, 2.5 MB: +5).
 * **What is stored**: the flop's first decisions (the root; the in-position player after a check or facing a
   lead; the out-of-position player facing a bet after checking), only where the other player gets there with 5%
   or more of their range (a lead the big blind never makes is the solve's noise, and the advisor solves live
   behind a line under 10% anyway). Per combo: the average strategy in 1% steps and every action's EV (the best
-  to 0.02 bb, the others as a gap below it, 0.02 bb steps then 3%), plus range totals. 6-9 KB a flop for single
-  raised pots (zlib), smaller for 3bet pots: ~10 MB for all eight spots, each file well under 200 KB.
+  to 0.02 bb, the others as a gap below it, 0.02 bb steps then 3%), plus range totals. 5-9 KB a flop for single
+  raised pots (zlib), 2.5-4.5 KB for 3bet pots: 14.1 MB in all, each file well under 200 KB.
 * **Tree**: Accurate's flop model (one turn per rank class, the river bet on; the browser's Accurate config,
   which plays the same flop game as the native one), two flop sizes, 300-500 iterations, to under 0.15% of the pot
   from equilibrium (the live Accurate solve gets ~0.3-0.4% in the server's 30 s and 60-75 iterations in the
@@ -710,17 +716,16 @@ Building (resumable: entries on disk for the current charts and tree are kept, s
 a stop; progress lines go to stdout, the index is rewritten every 20 entries):
 
 ```bash
-nohup python scripts/build_flop_library.py --jobs 5 > reports/flop_library_build.log &   # 8 spots x 184 flops, ~5 h
+nohup nice python scripts/build_flop_library.py --jobs 5 > reports/flop_library_build.log &   # every spot, its SPOT_FLOPS
 python scripts/build_flop_library.py --spots srp_btn_bb --flops all                     # all 1755 flops of a spot
 python scripts/build_flop_library.py --spots srp_btn_bb --boards Ks7d2c,Qs8s3d          # given flops
 python scripts/build_flop_library.py --index-only
 ```
 
 Each entry takes ~40-60 s natively on a rainbow flop and up to twice that two-tone, on an idle core (several
-times that on a loaded machine). After changing the charts or the flop model, run it again (stale entries are
-re-solved: the preflop chart refit made every entry stale, and the build re-solved them). The remaining spots
-(CO, HJ, UTG, SB vs BB; the three 3bet pots) are the first command above, about 4-5 hours on 5 idle cores. `--flops all` multiplies a spot's size by ~10 (60-70
-MB): within the ~15 MB budget only one spot's full set would fit.
+times that on a loaded machine): the whole library ~9 hours on 5 cores. After changing the charts or the flop model,
+run it again (stale entries are re-solved). `--flops all` multiplies a spot's size by ~10 (50-90 MB): the test
+holds the library under 15 MB.
 
 ### Deploy to the website
 
