@@ -27,6 +27,7 @@ import numpy as np
 from .cards import cards as parse_cards, COMBO_INDEX, hand_class, ALL_COMBOS, cards_str
 from .ranges import N_COMBOS, range_to_text, parse_range
 from . import preflop as pf
+from . import breakdown as BD
 from .pf_classes import push_fold
 from .exploit import PoolLock, TendencyLock, describe_lock, parse_locks, pool_preflop
 from .solver import solve, Config, Solution, Decision, Terminal, Chance, match_action, expand, MEMBER_FULL, _inv_of
@@ -1326,6 +1327,7 @@ class Advisor:
         # didn't spend (native Fast: README, Accuracy vs speed); off: time_budget alone
         self.spare_prior = False
         self.rng = random.Random()
+        self._breakdown = False   # this request asked for the breakdown (state "breakdown": true)
 
     # ------------------------------------------------------------ public
     def advise(self, state: dict) -> dict:
@@ -1395,12 +1397,18 @@ class Advisor:
             self.time_budget = max(0.5, min(120.0, float(state["budget"])))
         if state.get("prior_budget"):
             self.prior_budget = max(0.3, min(30.0, float(state["prior_budget"])))
+        # the Breakdown view (gto/breakdown.py) on the advice's own spot; not for a practice opponent's move
+        self._breakdown = bool(state.get("breakdown")) and actor is None
         try:
-            return self._postflop(hero, hole, board, stack, streets, positions, t0,
-                                  pool=state.get("opponents") == "pool", actor=actor, custom=custom,
-                                  optimize=bool(state.get("optimize_sizes")), locks=locks)
+            res = self._postflop(hero, hole, board, stack, streets, positions, t0,
+                                 pool=state.get("opponents") == "pool", actor=actor, custom=custom,
+                                 optimize=bool(state.get("optimize_sizes")), locks=locks)
+            if self._breakdown and "error" not in res and "breakdown" not in res:
+                res["breakdown"] = None   # the betting rules answered (4+ players): no solve to break down
+            return res
         finally:
             self.time_budget, self.prior_budget, self.cfg, self.root_sizes = saved
+            self._breakdown = False
 
     # ------------------------------------------------------------ preflop
     def _preflop(self, hero, hole, preflop, positions, stack, t0, pool=False):
@@ -2033,6 +2041,10 @@ class Advisor:
         w = hero_r / max(hero_r.sum(), 1e-12)
         sf = np.zeros((len(node.names), N_COMBOS)); sf[:, sol.ctx.active] = strat
         range_freq = {name: round(float((sf[a] * w).sum()), 3) for a, name in enumerate(node.names)}
+        if self._breakdown:   # the page's Breakdown view (gto/breakdown.py): asked for, on a cached solve
+            ev_full = np.zeros(N_COMBOS); ev_full[sol.ctx.active] = (strat * evs).sum(axis=0)
+            opt = {**opt, "breakdown": BD.breakdown(board, node.names, hero, hero_r, sf, ev_full, {villain: vill_r},
+                                                    node.pot_now, villain_ev=not self.cfg.rake_rate, hole=hole)}
         return {
             "street": cur.name, "hero": hero, "villain": villain, "position": "OOP" if hero_p == 0 else "IP",
             "players": len(positions), "hand": hand_class(hole), "board": cards_str(board),
@@ -2137,6 +2149,11 @@ class Advisor:
         w = hero_r / max(hero_r.sum(), 1e-12)
         sf = np.zeros((len(root.names), N_COMBOS)); sf[:, sol.hands.active] = strat
         opps = [p for p in players if p != hero]
+        if self._breakdown:   # hero's categories and the opponents' (no equity view 3-way)
+            ev_full = np.zeros(N_COMBOS); ev_full[sol.hands.active] = (strat * evs).sum(axis=0)
+            bd = BD.breakdown(board, shown, hero, hero_r, sf, ev_full,
+                              {p: sol.expand(sol.reach0[i][0]) for i, p in enumerate(players) if p != hero},
+                              root.pot_now, equity=False, hole=hole)
         to_call = max(bets) - bets[hp]
         street_note = {"river": "the river's showdowns with every card removal between the three hands counted exactly",
                        "turn": "the river dealt out after the turn's betting (an equity leaf: no river betting), every river card",
@@ -2173,6 +2190,8 @@ class Advisor:
                "notes": notes, "seconds": round(time.time() - t0, 2)}
         if len(board) == 5:
             out["equity_vs_field"] = round(sol.showdown_share(ci), 3)
+        if self._breakdown:
+            out["breakdown"] = bd
         return out
 
     def _multiway(self, hero, hole, board, ranges, remaining, cur: StreetState, stack, t0, notes):
