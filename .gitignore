@@ -5,3 +5,4 @@ __pycache__/
 .claude/
 sanity_report.md
 reports/
+.pf_cache/

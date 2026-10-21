@@ -79,6 +79,34 @@ class TestSolve(unittest.TestCase):
                 self.assertAlmostEqual(got, xa[i, k], delta=0.06)
 
 
+class TestMeasuredRealization(unittest.TestCase):
+    def test_single_raised_pot_matches_published(self):
+        """The measured model's range realization in a button-vs-big-blind single-raised pot on the charts'
+        ranges sits in the published solver reports' band (in position 1.12-1.18, big blind 0.78-0.88;
+        docs/preflop_research.md 2.1), and per class suited connectors out-realize offsuit kings."""
+        from gto import preflop as pf
+        from gto.pf_classes import to_classes
+        m = G.measured_model()
+        if m is None:
+            self.skipTest("no gto/pf_eqr.py")
+        line = [{"pos": p, "action": "fold"} for p in ("UTG", "HJ", "CO")] + [
+            {"pos": "BTN", "action": "raise", "to": 2.5}, {"pos": "SB", "action": "fold"},
+            {"pos": "BB", "action": "call"}]
+        R = pf.replay_ranges(line)
+        btn, bb = to_classes(R["BTN"]), to_classes(R["BB"])
+        eq = equity_matrix()
+        r_bb = G.realization(m, 1, True, "caller", btn)
+        r_btn = G.realization(m, 1, True, "aggr", bb)
+        from gto.pf_classes import PAIR_COMPAT
+        e_bb = (PAIR_COMPAT * (1 - eq).T * btn[None, :]).sum(1) / (PAIR_COMPAT * btn[None, :]).sum(1)
+        e_btn = (PAIR_COMPAT * eq * bb[None, :]).sum(1) / (PAIR_COMPAT * bb[None, :]).sum(1)
+        agg = lambda r, e, w: float((w * r * e).sum() / (w * e).sum())
+        self.assertTrue(0.75 <= agg(r_bb, e_bb, bb) <= 0.92, agg(r_bb, e_bb, bb))
+        self.assertTrue(1.08 <= agg(r_btn, e_btn, btn) <= 1.22, agg(r_btn, e_btn, btn))
+        i = {c: CLASSES.index(c) for c in ("76s", "65s", "K5o", "K7o")}
+        self.assertGreater(min(r_bb[i["76s"]], r_bb[i["65s"]]), max(r_bb[i["K5o"]], r_bb[i["K7o"]]))
+
+
 class TestRakeRerank(unittest.TestCase):
     def test_raked_calls_keep_playable_hands(self):
         """With rake the big blind's calls of a button open are cut by realized equity (gto/pf_eqr.py), not

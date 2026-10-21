@@ -277,8 +277,11 @@ class Game:
     rather than a Python call a node."""
 
     def __init__(self, root: Node, positions: Sequence[str], model: EQRModel, stack: float = 100.0,
-                 rake: Optional[Tuple[float, Optional[float]]] = None):
+                 rake: Optional[Tuple[float, Optional[float]]] = None, root_reach: Optional[np.ndarray] = None):
+        """`root` may be a node inside a full tree (a subgame): `root_reach` (n, K) then gives each seat's class
+        weights arriving there (the class prior times its actions so far), e.g. from the charts."""
         self.root, self.positions, self.model, self.stack, self.rake = root, list(positions), model, stack, rake
+        self.root_reach = np.tile(PRIOR, (len(self.positions), 1)) if root_reach is None else np.asarray(root_reach, float)
         n = self.n = len(self.positions)
         self.post_rank = ([POST_ORDER.index(p) for p in self.positions] if n > 2 else [1, 0])  # HU: SB has position
         # breadth-first order
@@ -435,7 +438,7 @@ class Game:
         """Reaches (N, n, K): the class prior times each seat's action probabilities (seat `skip`'s own
         left out: a best response's)."""
         reach = np.empty((self.N, self.n, K))
-        reach[0] = PRIOR[None, :]
+        reach[0] = self.root_reach
         for d in range(1, self.maxd + 1):
             idx = self.by_depth[d]
             par = self.parent[idx]
@@ -493,7 +496,7 @@ class Game:
         """Each seat's expected value, bb per hand, under `strat` (default the average strategy)."""
         s = self.average() if strat is None else strat
         V = self._up(self._down(s), s)
-        return (V[0] * PRIOR[None, :]).sum(1)
+        return (V[0] * self.root_reach).sum(1)
 
     def exploitability(self, per_seat: bool = False):
         """What each seat gains by best-responding to the others' average strategies, bb per hand (summed)."""
@@ -502,7 +505,7 @@ class Game:
         gains = []
         for p in range(self.n):
             V = self._up(self._down(s, skip=p), s, br=p)
-            gains.append(float((V[0, p] * PRIOR).sum()) - base[p])
+            gains.append(float((V[0, p] * self.root_reach[p]).sum()) - base[p])
         return gains if per_seat else sum(gains)
 
     # -------------------------------------------------------------- reading the result
