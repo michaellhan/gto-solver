@@ -190,6 +190,25 @@ class TestSolverMath(unittest.TestCase):
                 self.assertTrue(np.array_equal(x.ssum, y.ssum))
                 self.assertTrue(np.array_equal(x.regret, y.regret))
 
+    def test_raked_bucket_subtrees_merge(self):
+        # Fast's flop model merges the river bucket subtrees a second time, across the already merged turns: their
+        # raked terminals carry a rake column per row, which the second merge must stack like the chips in (a raked
+        # flop at native Fast raised "truth value of an array" for any flop outside the library). Same numbers as
+        # walking the tree node by node.
+        from gto import native
+        r_oop = parse_range("22+, A2s+, KTs+, QTs+, JTs, T9s, ATo+, KQo")
+        r_ip = parse_range("22+, A2s+, K5s+, Q8s+, J8s+, T8s+, A8o+, KTo+, QTo+")
+        cfg = native.config("fast")
+        cfg.rake_rate, cfg.rake_cap = 0.05, 3.0
+        fast = solve(cards("6s4d3h"), r_oop, r_ip, pot=6.0, stack=97.0, cfg=cfg, max_iters=0)
+        plain = solve(cards("6s4d3h"), r_oop, r_ip, pot=6.0, stack=97.0, cfg=cfg, max_iters=0)
+        self.assertTrue(fast.solver._bgroups)
+        fast.solver.batch_leaves = False
+        fast.solver.run(fast.r0, fast.r1, time_budget=1e9, max_iters=3)
+        self._plain_iterations(plain, 3)
+        for x, y in zip(fast.solver._nodes, plain.solver._nodes):
+            np.testing.assert_allclose(x.ssum, y.ssum, rtol=1e-4, atol=1e-4)
+
     def test_batched_leaves_match_one_by_one(self):
         # each pass's equity leaves computed together up front (one matrix-matrix product per matrix stack):
         # the same updates as computing them leaf by leaf, up to float32 rounding. Regret matching amplifies

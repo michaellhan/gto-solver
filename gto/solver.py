@@ -892,7 +892,9 @@ def _merge(nodes, pairs: list):
     inv = tuple(np.concatenate([np.full((len(n.boards), 1), n.inv[q], dtype=np.float32) for n in nodes]) for q in (0, 1))
     rake = None
     if any(n.rake is not None for n in nodes):
-        rake = np.concatenate([np.full((len(n.boards), 1), n.rake or 0.0, dtype=np.float32) for n in nodes])
+        # (a node merged before, as a river bucket subtree inside a merged turn, already has a (B, 1) column)
+        rake = np.concatenate([np.full((len(n.boards), 1), 0.0 if n.rake is None else n.rake, dtype=np.float32)
+                               for n in nodes])
     t = Terminal(boards, first.kind, inv, first.folder, rake)
     if first.kind == "leaf" and all(n.boards == first.boards for n in nodes):
         t.tile = len(first.boards)
