@@ -209,6 +209,30 @@ class TestLaterStreetsByBuckets(unittest.TestCase):
         s.run(iters=4)
         self.assertAlmostEqual(float(s.values().sum()), 8.0, delta=0.1)
 
+    def test_several_flop_bet_sizes(self):
+        # (the flop root bets a third and three quarters of the pot; the turn and river below keep one size)
+        s = MultiwaySolver(cards("Kh7d2c"), self.rs, 8.0, 97.5, to_act=2, pending={2},
+                           cfg=MWConfig(later="buckets", buckets=6, bucket_river_step=4,
+                                        bet={"flop": [0.75, 0.33], "turn": 0.5, "river": 0.5}))
+        self.assertEqual(s.root.names, ["check", "bet 33%", "bet 75%"])
+        self.assertEqual(s.root.amounts[1:], [2.5, 6.0])
+        self.assertEqual({nm for lv in s.levels for g in lv for nm in getattr(g.tree, "names", [])
+                          if nm.startswith("bet")}, {"bet 50%"})
+        self.assertEqual(s.root.children[2].names, ["fold", "call", "raise to 21"])   # (one raise size)
+        s.run(iters=4)
+        self.assertAlmostEqual(float(s.values().sum()), 8.0, delta=0.1)
+        self.assertEqual(sorted(s.range_freqs()), ["bet 33%", "bet 75%", "check"])
+
+    def test_run_stops_short_of_its_budget(self):
+        # no iteration starts that would end past the budget, `reserve` iterations' time kept back
+        s = MultiwaySolver(cards("Kh7d2c9s"), self.rs, 8.0, 97.5, cfg=MWConfig(later="buckets", buckets=8))
+        s.run(iters=5)
+        per = s.seconds / 5
+        s.run(iters=1000, time_budget=12 * per, min_iters=1, reserve=3.0)
+        self.assertLess(s.seconds - 5 * per, 12 * per * 1.15)
+        self.assertLess(s.iters, 5 + 12)
+        self.assertGreater(s.build_seconds, 0.0)
+
 
 class TestFlopAgainstPublished(unittest.TestCase):
     """GTO Wizard's 3-way flop study ("Playing In Position Against Two Callers", 100bb 8-max, LJ opens, SB and BB call,
@@ -305,6 +329,68 @@ class TestAdvisor(unittest.TestCase):
         self.assertEqual([a["action"] for a in r["actions"]], ["check", "bet 33%"])
         self.assertIn("hand buckets", " ".join(r["notes"]))
         self.assertGreater(r["actions"][1]["freq"], 0.6)
+
+    def test_flop_answer_keeps_to_its_budget(self):
+        # the tree and bucket tables, the iterations and the gains and EVs after them all fit in the budget (the tables
+        # used to come on top: the browser's Accurate flops ran ~10 s past 60 s)
+        adv = A.Advisor(time_budget=4.0)
+        adv.mw_solve_streets = ("flop",)
+        adv.mw_street_config = {"flop": {"later": "buckets", "buckets": 8, "bucket_river_step": 4,
+                                         "bet": {"flop": [0.33, 0.75], "turn": 0.5, "river": 0.5}}}
+        adv.mw_max_expl = 1e9
+        r = adv.advise(self._state("Kh7d2c", "BTN", "AsKs", [{"pos": "BB", "action": "check"},
+                                                             {"pos": "CO", "action": "check"}]))
+        self.assertTrue(r.get("solved"))
+        self.assertEqual([a["action"] for a in r["actions"]], ["check", "bet 33%", "bet 75%"])
+        self.assertLess(r["seconds"], 4.0 * 1.15)
+        self.assertGreaterEqual(r["solver"]["iterations"], 5)
+
+    def test_later_street_narrows_through_the_flop_solve(self):
+        # the BTN is advised on the flop (checked to), bets a third; the BB and CO call. On the turn their ranges come
+        # from that solve's strategies (as far as it has settled), not the betting rules alone
+        adv = A.Advisor(time_budget=1e9)
+        adv.mw_solve_streets = ("flop",)
+        adv.mw_street_config = {"flop": {"later": "buckets", "buckets": 8, "bucket_river_step": 4}}
+        adv.mw_max_iters = 150
+        adv.mw_trials = 50
+        chk = [{"pos": "BB", "action": "check"}, {"pos": "CO", "action": "check"}]
+        r = adv.advise(self._state("Kh7d2c", "BTN", "AsKs", chk))
+        self.assertTrue(r.get("solved"))
+        sol, players, expl = next(iter(adv._mw_lines.values()))
+        trust = A.trust_of(expl, "flop")
+        self.assertGreater(trust, 0.5)
+        flop = chk + [{"pos": "BTN", "action": "bet", "amount": 2.5}, {"pos": "BB", "action": "call"},
+                      {"pos": "CO", "action": "call"}]
+        st = {"players": 6, "hero": "BTN", "hole": "AsKs", "board": "Kh7d2c9s", "stack": 100, "preflop": PRE,
+              "flop": flop, "turn": chk}
+        got = {}
+
+        def grab(self_, hero, hole, board, ranges, remaining, cur, stk, t0, notes):
+            got["ranges"], got["notes"] = dict(ranges), list(notes)
+            return {"stub": True}
+        saved, narrow = A.Advisor._multiway, A._narrow_street
+        A.Advisor._multiway = grab
+        # (the turn's checks left out: the ranges compared are the flop's)
+        A._narrow_street = lambda ranges, board, st_, *a, **k: None if st_.name == "turn" else narrow(ranges, board, st_, *a, **k)
+        try:
+            adv.advise(st)
+            solved = got.pop("ranges"), got.pop("notes")
+            adv._mw_lines.clear()                                    # no solve to follow: the rules alone
+            adv.advise(st)
+            rules = got["ranges"]
+        finally:
+            A.Advisor._multiway, A._narrow_street = saved, narrow
+        self.assertTrue(any(n.startswith("flop: 3-way, ranges narrowed through the solve your advice came from")
+                            for n in solved[1]))
+        # the BB's call: its range at the solve's root times its call, smoothed, mixed with the rules' by trust
+        node = sol.root.children[1]
+        bb = players.index("BB")
+        s = node.avg_strategy()[0][1].astype(float)
+        want = sol.reach0[bb, 0] * ((1 - adv.prior_smoothing) * s + adv.prior_smoothing / len(node.names))
+        want = trust * sol.expand(want) + (1 - trust) * rules["BB"]
+        live = (sol.expand(np.ones(sol.hands.n)) > 0) & np.array([cards("9s")[0] not in c for c in ALL_COMBOS])
+        self.assertLess(np.abs(solved[0]["BB"] - want)[live].max(), 1e-6)
+        self.assertGreater(np.abs(solved[0]["BB"] - rules["BB"])[live].max(), 0.05)
 
     def test_flop_uses_the_betting_rules_where_not_enabled(self):
         adv = A.Advisor(time_budget=1e9)

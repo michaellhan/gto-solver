@@ -75,10 +75,12 @@ const ready = (async () => {
              + "advs['fast'].library = advs['accurate'].library = lib; "
              // 3-way pots: the 3-player solver on the river in Fast (0.1-0.3 s an iteration here by load: 8 s is 25-80, under 1% of the pot
              // from equilibrium); turns and flops only in Accurate's 60 s, the later streets bet by 12 hand buckets with the turn's
-             // tables over every third river (numpy has no BLAS here: a flop iteration is 0.6-1 s after ~4 s of tables, 45-90
-             // iterations; a turn one 0.3-0.5 s, 120-200)
+             // tables over every third river, the flop betting a third or three quarters of the pot (numpy has no BLAS here: a
+             // flop iteration ~0.7-1.2 s, 35-75 in the 60 s, which also cover the tables, ~2-2.5 s estimated, and the gains and
+             // EVs read off after: the answer used to come ~10 s late; a turn one 0.3-0.5 s, 120-200)
              + "advs['fast'].mw_solve_streets = ('river',); advs['accurate'].mw_solve_streets = ('flop', 'turn', 'river'); "
-             + "advs['accurate'].mw_street_config = {s: {'later': 'buckets', 'buckets': 12, 'bucket_river_step': 3} for s in ('flop', 'turn')}");
+             + "advs['accurate'].mw_street_config = {s: {'later': 'buckets', 'buckets': 12, 'bucket_river_step': 3} for s in ('flop', 'turn')}; "
+             + "advs['accurate'].mw_street_config['flop']['bet'] = {'flop': [0.33, 0.75], 'turn': 0.5, 'river': 0.5}");
   postMessage({ status: "Solving…" });
   return py;
 })();

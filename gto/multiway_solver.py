@@ -201,7 +201,7 @@ class Boards:
     def k_u_multi(self, x):
         """K_U for K reach vectors at once: x (B, n, K) -> (B, n, K)."""
         h = self.h
-        C = np.einsum("bnk,nc->bck", x, h.mem)
+        C = np.matmul(h.mem.T, x)                     # (B, 52, K) per-card totals (einsum: 4x slower here)
         return x.sum(axis=1, keepdims=True) - C[:, h.ca] - C[:, h.cb] + x
 
     def k_u(self, x):
@@ -283,10 +283,17 @@ STREET = {3: "flop", 4: "turn", 5: "river"}
 NEXT_STREET = {"flop": "turn", "turn": "river"}
 
 
+def bet_sizes(cfg, street) -> list:
+    """The street's bet sizes (fractions of the pot): MWConfig.bet holds one number or a list."""
+    b = cfg.bet[street]
+    return sorted(b) if isinstance(b, (list, tuple)) else [b]
+
+
 def _actions(cfg, npl, street, pot_start, stack, bets, c, p, n_raises, pending, folded):
     """Player p's actions at a node: [(name, amount (chips this street after it; a call: its size; else None),
-    bets, contributions, folded, pending after it, raised)]. One bet size, one raise (to the bet plus raise_frac of
-    the pot after calling), all-in at allin_spr pots behind or less, at most max_raises bets and raises a street."""
+    bets, contributions, folded, pending after it, raised)]. The street's bet sizes (MWConfig.bet: one or a list), one
+    raise (to the bet plus raise_frac of the pot after calling), all-in at allin_spr pots behind or less, at most
+    max_raises bets and raises a street."""
     pot_now = pot_start + sum(bets)
     top = max(bets)
     rem = stack - bets[p]
@@ -306,10 +313,15 @@ def _actions(cfg, npl, street, pot_start, stack, bets, c, p, n_raises, pending, 
     if top <= bets[p] + 1e-9:
         act("check", None, bets[p], False)
         if others_can:
-            amt = max(round(cfg.bet[street] * pot_now * 2) / 2, 1.0)
-            if amt < rem - 1e-9:
-                act(f"bet {int(round(cfg.bet[street] * 100))}%", bets[p] + amt, bets[p] + amt, True)
-            if amt >= rem - 1e-9 or rem <= cfg.allin_spr * pot_now:
+            allin, seen = rem <= cfg.allin_spr * pot_now, set()
+            for f in bet_sizes(cfg, street):
+                amt = max(round(f * pot_now * 2) / 2, 1.0)
+                if amt >= rem - 1e-9:
+                    allin = True
+                elif amt not in seen:
+                    seen.add(amt)
+                    act(f"bet {int(round(f * 100))}%", bets[p] + amt, bets[p] + amt, True)
+            if allin:
                 act("all-in", stack, stack, True)
     else:
         act("fold", None, bets[p], False, fold=True)
@@ -921,6 +933,7 @@ class MultiwaySolver:
         when nobody has bet, else everyone who hasn't matched the top bet). `include`: combos (indices into the 1326)
         to solve even with no weight in any range (a hand's strategy is then the regret-matching one: see
         hand_strategy)."""
+        t_init = time.time()
         self.cfg = cfg or MWConfig()
         self.board = tuple(board)
         self.np = len(ranges)
@@ -952,10 +965,12 @@ class MultiwaySolver:
         self.decisions = b.decisions
         self.iters = 0
         self.seconds = 0.0
+        self.out_of_time = False      # a run ended at its time budget (the advisor then doesn't run it again)
         self.levels: List[List[_Group]] = []
         self.tabs: Optional[BucketTables] = None
         if b.exits:
             self._build_later(pot)
+        self.build_seconds = time.time() - t_init     # the tree and the bucket tables (part of a solve's budget)
 
     # -- later streets by hand buckets
     def _build_later(self, pot):
@@ -1364,11 +1379,18 @@ class MultiwaySolver:
             d.regret *= np.where(d.regret > 0, np.float32(pos), np.float32(0.5))
             d.ssum *= np.float32(sf)
 
-    def run(self, iters=1000, time_budget=None, min_iters=5, should_stop=None):
+    def run(self, iters=1000, time_budget=None, min_iters=5, should_stop=None, reserve=0.0):
+        """`time_budget` (seconds): no iteration starts that would end past it (by the mean iteration so far), with
+        `reserve` more iterations' time kept back for what follows (br_gains and action_evs cost about two)."""
         t0 = time.time()
         start = self.iters
         while self.iters - start < iters:
             if should_stop is not None and should_stop():
+                break
+            done = self.iters - start
+            if time_budget is not None and done >= min_iters and \
+                    time.time() - t0 + (time.time() - t0) / max(done, 1) * (1.0 + reserve) > time_budget:
+                self.out_of_time = True
                 break
             if self.cfg.alternate:
                 for p in range(self.np):
@@ -1378,6 +1400,7 @@ class MultiwaySolver:
             self.iters += 1
             self._discount()
             if time_budget is not None and self.iters - start >= min_iters and time.time() - t0 > time_budget:
+                self.out_of_time = True
                 break
         self.seconds += time.time() - t0
         return self
