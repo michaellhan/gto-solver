@@ -251,7 +251,7 @@
       hands: sess.hands.length, handsDone, decisions: sess.items.length, done: res.length, ...all,
       bb100: handsDone ? r2(all.lost / handsDone * 100) : null,
       skipped: res.filter(r => r.status === "skipped").length, errors: res.filter(r => r.status === "error").length,
-      ungraded: res.filter(r => r.status === "ungraded").length,
+      ungraded: res.filter(r => r.status === "ungraded").length, rules: res.filter(r => r.status === "ungraded" && r.src === "rules").length,
       byStreet: groupBy(done, r => r.street, STREETS),
       byPos: groupBy(done, r => r.pos, [...new Set(seats.flatMap(n => POS[n] || []))]),
       bySpot: groupBy(done.filter(r => r.spot), r => r.spot),
@@ -350,7 +350,7 @@
   function decisionRow(r, k) {
     const h = sess.hands[r.h], g = r.g;
     return `<tr class="ss-go" data-k="${k}" title="Open this hand at this decision"><td>${cardsH(h.hole)}</td><td>${esc(h.state.hero)}</td><td>${esc(r.s)}${r.s !== "preflop" ? ` ${cardsH(boardAt(h.state, r.s))}` : ""}<div class="ss-sub">${esc(r.pf || r.spot || "")}</div></td>`
-      + `<td><b>${esc(r.act)}</b> <small>${pct(g.f)}</small><div class="ss-sub">solver: ${esc(g.b)} ${pct(g.bf)}</div></td><td class="n">${g.l != null ? bb(g.l) : `<span class="g bad">off chart</span>`}</td></tr>`;
+      + `<td><b>${esc(r.act)}</b> <small>${pct(g.f)}${g.v ? ` as the chart's ${esc(g.m)}` : ""}</small><div class="ss-sub">solver: ${esc(g.b)} ${pct(g.bf)}</div></td><td class="n">${g.l != null ? bb(g.l) : `<span class="g bad">off chart</span>`}</td></tr>`;
   }
   function reportHtml() {
     const rp = report(sess);
@@ -360,7 +360,8 @@
       + tile(rp.ev ? `−${rp.lost.toFixed(2)}` : "—", "bb EV lost", `over ${rp.ev} decisions with EVs (postflop; preflop answers are the charts, graded by frequency only)`)
       + tile(rp.bb100 != null && rp.ev ? `−${rp.bb100.toFixed(1)}` : "—", "bb/100 hands") + tile(pct(rp.graded ? rp.ok / rp.graded : null), "in the solver's mix")
       + tile(rp.bad, "off the mix (<3%)") + `</div>`;
-    const extra = [rp.skipped && `${rp.skipped} flop decisions not in the library (skipped)`, rp.ungraded && `${rp.ungraded} multiway decisions answered by the betting rules (not graded)`, rp.errors && `${rp.errors} failed`].filter(Boolean);
+    const extra = [rp.skipped && `${rp.skipped} flop decisions not in the library (skipped)`, rp.rules && `${rp.rules} multiway decisions answered by the betting rules (not graded)`,
+      rp.ungraded > rp.rules && `${rp.ungraded - rp.rules} decisions whose action the answer doesn't list (not graded)`, rp.errors && `${rp.errors} failed`].filter(Boolean);
     if (extra.length) h += `<div class="ss-note">${extra.join(" · ")}</div>`;
     h += table("By street", rp.byStreet, "Street") + table("By position", rp.byPos, "Position")
       + table("Preflop situations", rp.byPf, "Situation", "Preflop answers come from the charts: no EVs, graded by how often the solver plays your action.")

@@ -309,6 +309,41 @@ test("a limp the preflop chart leaves out (open-limp, SB completes) is graded of
   assert.equal(host.grade({ street: "flop", actions: [{ action: "check", freq: 1, ev_bb: 1 }] }, { action: "call" }), null);
 });
 
+test("a preflop jam the chart doesn't list is graded as the chart's raise (or 0% where it never raises), with a note", async () => {
+  const p = await page();
+  const host = p.ctx.Session.pageHost();
+  // facing an open: the chart 3bets to 7.5 or folds, no all-in
+  const vsOpen = { street: "preflop", actions: [{ action: "raise to 7.5", amount_bb: 7.5, freq: 0.4 }, { action: "fold", freq: 0.6 }] };
+  const g = j(host.grade(vsOpen, { action: "all-in" }));
+  assert.deepEqual(g, { m: "raise to 7.5", f: 0.4, b: "fold", bf: 0.6, l: null, v: "all-in" });
+  assert.deepEqual(j(p.ctx.gradeWith(vsOpen, { action: "all-in" })), g);
+  assert.match(p.run(`gradeTip(${JSON.stringify(g)})`), /Your line \(all-in\) 40% \(graded as the chart's raise to 7\.5: it has no all-in here\)/);
+  // a chart that only folds or calls: the jam is off it
+  const calls = { street: "preflop", actions: [{ action: "call", freq: 0.7 }, { action: "fold", freq: 0.3 }] };
+  assert.deepEqual(j(host.grade(calls, { action: "all-in" })), { m: "all-in", f: 0, b: "call", bf: 0.7, l: null });
+  assert.deepEqual(j(host.grade(calls, { action: "raise", to: 9 })), { m: "raise to 9", f: 0, b: "call", bf: 0.7, l: null });
+  // a chart that only jams: a smaller raise is graded as its jam
+  const jams = { street: "preflop", actions: [{ action: "all-in", amount_bb: 20, freq: 0.5 }, { action: "fold", freq: 0.5 }] };
+  assert.deepEqual(j(host.grade(jams, { action: "raise", to: 9 })), { m: "all-in", f: 0.5, b: "all-in", bf: 0.5, l: null, v: "raise to 9" });
+  // listed actions as before; postflop an unlisted jam stays ungraded
+  assert.equal(j(host.grade({ ...vsOpen, actions: [...vsOpen.actions, { action: "all-in", amount_bb: 100, freq: 0 }] }, { action: "all-in" })).v, undefined);
+  assert.equal(host.grade({ street: "flop", actions: [{ action: "check", freq: 1, ev_bb: 1 }, { action: "bet 33%", amount_bb: 2, freq: 0, ev_bb: 0.5 }] }, { action: "all-in" }), null);
+  // the hand review and the copied hand say how it was graded
+  p.S = { players: 6, hero: "CO", stack: 100, cards: ["Ah", "Kd", null, null, null, null, null],
+    actions: { preflop: [{ pos: "UTG", action: "fold" }, { pos: "HJ", action: "raise", to: 2.5 }, { pos: "CO", action: "all-in", g }, { pos: "BTN", action: "fold" }, { pos: "SB", action: "fold" }, { pos: "BB", action: "fold" }, { pos: "HJ", action: "fold" }], flop: [], turn: [], river: [] } };
+  p.run("renderAll()");
+  assert.match(p.byId("adviceNote").innerHTML + p.byId("result").innerHTML, /<b>all-in<\/b> · solver 40% <span class="muted">as the chart's raise to 7.5<\/span>/);
+  assert.match(p.run("handText()"), /CO all-in \[✓ solver 40% as the chart's raise to 7.5\]/);
+});
+
+test("the report counts decisions left ungraded by why: the betting rules' multiway answers apart from the rest", () => {
+  const sess = stubSession(1);
+  sess.results = [{ h: 0, s: "turn", i: 0, street: "turn", pos: "BTN", status: "ungraded", src: "rules" },
+                  { h: 0, s: "flop", i: 0, street: "flop", pos: "BTN", status: "ungraded", src: "solve" }];
+  const rp = SS.report(sess);
+  assert.deepEqual([rp.ungraded, rp.rules], [2, 1]);
+});
+
 test("a synthetic session end to end through the page: every decision asked once, in order, and graded", async () => {
   const p = await page({ server: true });
   const S = p.ctx.Session, prep = await S.prepare(synthSession(50, 11), (t) => p.ctx.importHand(t), null, 100, async () => {});
