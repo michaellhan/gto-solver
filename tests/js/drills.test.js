@@ -179,7 +179,12 @@ test("a number keyed while the next hand deals answers that hand once it shows",
   });
   vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "..", "gto", "static", "drills.js"), "utf8"), ctx);
   const Dr = ctx.Drills, ST = Dr.state;
-  const flush = async () => { for (let i = 0; i < 50; i++) await new Promise(r => setImmediate(r)); };
+  // until the hand being dealt shows (its entry is fetched and decompressed: a fixed number of ticks wasn't always
+  // enough on a loaded machine), then a few more ticks for anything queued after it
+  const flush = async () => {
+    for (let i = 0; i < 4000 && !ST.pr; i++) await new Promise(r => setTimeout(r, 1));
+    for (let i = 0; i < 50; i++) await new Promise(r => setImmediate(r));
+  };
   const press = (key) => { for (const f of keys) f({ key, target: { tagName: "BODY" }, stopPropagation() {}, preventDefault() {} }); };
   await Dr.open(); await flush();
   assert.ok(ST.pr, ST.err || body.innerHTML);
