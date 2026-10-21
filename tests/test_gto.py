@@ -4,7 +4,7 @@ from gto.cards import cards, ALL_COMBOS, hand_class
 from gto.ranges import parse_range
 from gto.evaluator import eval_board
 from gto import preflop as pf
-from gto.solver import solve, Config, Ctx, Solver, TreeBuilder, MEMBER_FULL, N_FULL, match_action
+from gto.solver import solve, Config, Ctx, Solver, TreeBuilder, MEMBER_FULL, N_FULL, match_action, Decision
 from gto.advisor import Advisor, preflop_investments
 
 MW_TRIALS = 1200   # multiway tests: trials per call, no time caps (see Advisor.mw_trials)
@@ -1570,6 +1570,14 @@ class TestFlopStrategy(unittest.TestCase):
             return out
         evs = s.node_action_br_evs(sol.root, sol.r0, sol.r1, lock=spy)
         self.assertTrue(np.isfinite(evs).all() and any(seen) and not all(seen))
+        # and so do your locks (every key that orders hands by strength; with a lock on the flop's big blind at
+        # native Fast this raised IndexError: combo indices into a bucket axis)
+        from gto.exploit import TendencyLock
+        for adj in ({"fold": 20}, {"fold": -20, "bluff": -50}, {"bluff": 50, "raise": 30}, {"next_fold": 60}):
+            nxt = [c for c in sol.root.children if isinstance(c, Decision)]
+            lock, seen = TendencyLock(sol.ctx, 1, adj, None, nxt), []
+            evs = s.node_action_br_evs(sol.root, sol.r0, sol.r1, lock=spy)
+            self.assertTrue(np.isfinite(evs).all() and any(seen) and not all(seen), adj)
 
     def test_turn_classes_cover_every_turn(self):
         ctx = Ctx(np.arange(N_FULL), Config())
