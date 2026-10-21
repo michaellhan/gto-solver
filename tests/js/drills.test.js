@@ -156,8 +156,47 @@ test("keys: 1-n answer, Space or Enter next once answered, Escape closes", () =>
   assert.equal(D.keyAction("1", { pr, g: { a: 0 } }), null);
   assert.deepEqual(D.keyAction(" ", { pr, g: { a: 0 } }), { next: true });
   assert.deepEqual(D.keyAction("Enter", { pr, g: { a: 0 } }), { next: true });
-  assert.equal(D.keyAction("1", { pr: null, g: null }), null);   // still dealing
+  assert.equal(D.keyAction("1", { pr: null, g: null }), null);   // no hand (nothing dealing)
+  assert.deepEqual(D.keyAction("1", { pr: null, g: null, dealing: true }), { queue: 0 });   // kept for the hand being dealt
   assert.deepEqual(D.keyAction("Escape", { pr: null, g: null }), { close: true });
+});
+
+test("a number keyed while the next hand deals answers that hand once it shows", async () => {
+  // the panel in a minimal DOM (a fresh copy of drills.js), the library served from gto/static/flop_library
+  const vm = require("node:vm");
+  const body = { innerHTML: "" }, keys = [];
+  const el = () => ({ hidden: false, dataset: {}, style: {}, innerHTML: "", setAttribute() {}, addEventListener() {}, appendChild() {}, focus() {},
+                      querySelector: (s) => s === ".dr-body" ? body : null });
+  const ctx = vm.createContext({
+    document: { getElementById: () => null, createElement: el, head: el(), body: el() },
+    window: { addEventListener: (t, f) => { if (t === "keydown") keys.push(f); } },
+    localStorage: { getItem: () => null, setItem() {} },
+    fetch: async (url) => {
+      const f = path.join(LIB, url.replace(/^flop_library\//, "").split("?")[0]), b = fs.readFileSync(f);
+      return { ok: true, json: async () => JSON.parse(b), arrayBuffer: async () => b.buffer.slice(b.byteOffset, b.byteOffset + b.length) };
+    },
+    FlopReports: globalThis.FlopReports, Blob, Response, DecompressionStream, TextDecoder,
+  });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "..", "gto", "static", "drills.js"), "utf8"), ctx);
+  const Dr = ctx.Drills, ST = Dr.state;
+  const flush = async () => { for (let i = 0; i < 50; i++) await new Promise(r => setImmediate(r)); };
+  const press = (key) => { for (const f of keys) f({ key, target: { tagName: "BODY" }, stopPropagation() {}, preventDefault() {} }); };
+  await Dr.open(); await flush();
+  assert.ok(ST.pr, ST.err || body.innerHTML);
+  press("1");
+  assert.equal(ST.g.a, 0);
+  press(" ");                       // the next hand deals (its entry is fetched and decoded)...
+  assert.equal(ST.pr, null);
+  press("2");                       // ...and 2 is pressed meanwhile
+  await flush();
+  assert.ok(ST.pr);
+  assert.equal(ST.g && ST.g.a, 1);
+  assert.equal(ST.session.n, 2);
+  // a number the new hand has no action for is dropped; only the last key counts
+  press(" "); press("9"); await flush();
+  assert.deepEqual([!!ST.pr, ST.g], [true, null]);
+  press("1"); press(" "); press("1"); press("2"); await flush();
+  assert.equal(ST.g.a, 1);
 });
 
 test("the solver's state for a problem: the preflop line, the flop action to the node, hero's cards", () => {

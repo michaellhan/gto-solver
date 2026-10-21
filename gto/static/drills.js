@@ -137,10 +137,11 @@
              best: Math.max(s2.best, streak), recent: [...s2.recent, g.ok ? 1 : 0].slice(-100) };
   }
   const summary = (s) => s.n ? { acc: s.ok / s.n, loss: s.loss / s.n, lossPct: s.lossPct / s.n } : { acc: 0, loss: 0, lossPct: 0 };
-  // keys: 1-9 answer, Space/Enter next once answered, Escape closes
+  // keys: 1-9 answer (while the next hand is dealing: kept for it), Space/Enter next once answered, Escape closes
   function keyAction(key, st) {
     if (key === "Escape") return { close: true };
     if (st.pr && st.g == null && /^[1-9]$/.test(key) && +key <= st.pr.names.length) return { answer: +key - 1 };
+    if (!st.pr && st.dealing && /^[1-9]$/.test(key)) return { queue: +key - 1 };
     if (st.pr && st.g != null && (key === " " || key === "Enter")) return { next: true };
     return null;
   }
@@ -158,7 +159,7 @@
 
   // ---- the panel (browser)
   const KEY = "gto-drills";
-  let box = null, index = null, rep = null, ranges = null, entries = {}, busy = false;
+  let box = null, index = null, rep = null, ranges = null, entries = {}, busy = false, queued = null;
   const ST = { spot: null, view: "vsbet", filter: {}, pr: null, g: null, session: emptyScore(), hist: {} };
   try { const s = JSON.parse(localStorage.getItem(KEY)) || {}; Object.assign(ST, { spot: s.spot || null, view: s.view || "vsbet", filter: s.filter || {}, hist: s.hist || {} }); } catch (e) {}
   const store = () => { try { localStorage.setItem(KEY, JSON.stringify({ spot: ST.spot, view: ST.view, filter: ST.filter, hist: ST.hist })); } catch (e) {} };
@@ -171,7 +172,7 @@
     return entries[k];
   }
   async function deal() {
-    if (busy) return; busy = true; ST.g = null;
+    if (busy) return; busy = true; ST.g = null; queued = null;
     try {
       const cs = candidates(rep, ST.view, ST.filter);
       ST.pr = null; ST.err = cs.length ? null : "No flop in this spot stores this decision with that texture: widen the filter.";
@@ -181,6 +182,8 @@
       }
     } catch (err) { ST.err = "Couldn't deal: " + (err.message || err); }
     busy = false; draw();
+    const q = queued; queued = null;   // an answer keyed while dealing: given to the hand now shown
+    if (q != null && ST.pr && q < ST.pr.names.length) answer(q);
   }
   function answer(a) {
     if (!ST.pr || ST.g) return;
@@ -269,11 +272,11 @@
     if (!box || box.hidden || e.metaKey || e.ctrlKey || e.altKey) return;
     if (/select|input|textarea/i.test(e.target.tagName) && e.key !== "Escape") return;
     if (e.key === "Tab") return;
-    const r = keyAction(e.key, ST);
+    const r = keyAction(e.key, { ...ST, dealing: busy });
     e.stopPropagation();                        // the page's own shortcuts stay off while the drills are open
     if (!r) return;
     e.preventDefault();
-    if (r.close) close(); else if (r.next) deal(); else answer(r.answer);
+    if (r.close) close(); else if (r.next) deal(); else if (r.queue != null) queued = r.queue; else answer(r.answer);
   }
   function close() { if (box) box.hidden = true; const m = document.getElementById("menuBtn"); if (m) m.focus(); }
   const CSS = `
