@@ -69,11 +69,12 @@ def config(speed: str = "fast", depth: int = 2) -> Config:
                   raise_sizes={k: list(v) for k, v in sizes["raise_sizes"].items()}, depth=depth, **kw)
 
 
-# 3-way pots solved by the 3-player solver (Advisor.mw_solve_streets; the rest use the betting rules). A river
-# iteration costs 30-90 ms here (by machine load), so fast's 2.5 s runs 25-80 (0.1-1% of the pot from equilibrium); a turn one,
-# the river dealt out every card, 0.15-0.5 s, so it waits for accurate's 30 s (60-200 iterations). The flop stays on the rules:
-# with the turn and river dealt out, its solve bets half as often as published solves (README, Known limits).
-MW_STREETS = {"fast": ("river",), "accurate": ("turn", "river")}
+# 3-way pots solved by the 3-player solver (Advisor.mw_solve_streets; the rest use the betting rules). A river iteration
+# costs 30-90 ms here (by machine load), so fast's 2.5 s runs 25-80 (0.1-1% of the pot from equilibrium). Turns and flops
+# bet the later streets by 16 hand buckets a player (Advisor.mw_street_config, README 3-way pots): a turn iteration costs
+# 0.1-0.2 s, a flop one 0.15-0.35 s after 1-2 s of tables, so both wait for accurate's 30 s (turn 150-300 iterations, flop
+# 90-200, 0.5-1.5% of the pot from equilibrium checked to, 2-6% for the first to act's bigger tree).
+MW_STREETS = {"fast": ("river",), "accurate": ("flop", "turn", "river")}
 
 
 def advisor(speed: str = "fast", depth: int = 2, budget: Optional[float] = None,

@@ -49,6 +49,7 @@ OFF_RULE_MAX = 0.4   # ...but those hands are at most this share of the narrowed
 # 24/36/40); the old rules (the big bet the top of the range, the small one a thin layer next to it)
 # checked 67% and bet 66% 26%, 33% 7% (heads-up 47/8/45). Hero's own size is picked by EV.
 SMALL_BET = 0.33
+MW_LATER = {"later": "buckets", "buckets": 16}   # 3-way flop and turn solves: the later streets by hand buckets
 XR_Z = 2.0          # multiway: a check-raise beats calling/folding by this many standard errors (see chk_plan)
 XR_MIN = 30         # ...over at least this many trials of that situation
 LATER_CACHE = 40000  # multiway: most later-street decisions stored per call (memory bound, ~25 KB each at most)
@@ -1253,8 +1254,11 @@ class Advisor:
         self.mw_trials: Optional[int] = None   # multiway: play at least this many trials (whole passes), no time caps or early stop (tests)
         # 3-way pots: the streets solved by the 3-player solver (gto/multiway_solver.py; others, and 4+ players, use the
         # betting rules), MWConfig overrides, and the most iterations a solve runs (it stops at time_budget before)
-        self.mw_solve_streets: Tuple[str, ...] = ("turn", "river")   # ("flop" too: possible, but see README)
+        self.mw_solve_streets: Tuple[str, ...] = ("turn", "river")   # (native and browser Accurate add the flop)
         self.mw_config: Optional[dict] = None
+        # per street MWConfig overrides: from the flop and turn the later streets are bet on by hand buckets (dealt out
+        # as equity leaves, a flop solve bet half as often as published solves: README, 3-way pots)
+        self.mw_street_config: Dict[str, dict] = {s: dict(MW_LATER) for s in ("flop", "turn")}
         self.mw_max_iters: int = 1000
         self.mw_max_expl: float = 10.0   # a solve further than this from equilibrium (% pot) hands over to the rules
         self._mw_cache: Dict[tuple, object] = {}
@@ -1989,7 +1993,7 @@ class Advisor:
     # ------------------------------------------------------------ multiway
     def _multiway_solve(self, hero, hole, board, ranges, remaining, cur: StreetState, stk, t0, notes):
         """Three players in: a 3-player CFR solve of this street from the current node (gto/multiway_solver.py),
-        with the rest of the hand dealt out after it on the flop and turn (equity leaves). None when it doesn't
+        the later streets bet on by hand buckets (mw_street_config). None when it doesn't
         apply (4+ players, someone all-in, the street not in mw_solve_streets, or a bet bigger than the shortest
         stack can call) or the solve is still over mw_max_expl from equilibrium after its budget (a note says so):
         the betting rules (_multiway) answer instead."""
@@ -2015,7 +2019,8 @@ class Advisor:
                          "strategy for it, against the ranges as they are")
         pending = {i for i, p in enumerate(players) if p not in cur.acted}
         pending.add(hp)
-        mcfg = MW.MWConfig(rake_rate=self.cfg.rake_rate, rake_cap=self.cfg.rake_cap, **(self.mw_config or {}))
+        mcfg = MW.MWConfig(rake_rate=self.cfg.rake_rate, rake_cap=self.cfg.rake_cap,
+                           **{**self.mw_street_config.get(cur.name, {}), **(self.mw_config or {})})
         inc = () if any(r[hi] > 0 for r in rs) else (hi,)    # (a hand nobody's range holds still gets solved)
         key = (tuple(board), tuple(_range_key(r) for r in rs), round(pot0, 2), round(S, 2), tuple(round(b, 2) for b in bets),
                hp, cur.n_raises, tuple(sorted(pending)), repr(mcfg), inc)
@@ -2063,6 +2068,11 @@ class Advisor:
         street_note = {"river": "the river's showdowns with every card removal between the three hands counted exactly",
                        "turn": "the river dealt out after the turn's betting (an equity leaf: no river betting), every river card",
                        "flop": "the turn and river dealt out after the flop's betting (equity leaves: no later betting), every turn"}
+        if mcfg.later == "buckets":
+            street_note["turn"] = (f"the river bet on too, by {mcfg.buckets} hand buckets a player on each river card "
+                                   f"(one card per rank class)")
+            street_note["flop"] = (f"the turn and river bet on too, by {mcfg.buckets} hand buckets a player on one turn card "
+                                   f"per rank class, the river played on the turn's boards without its card")
         notes.append(f"3-way pot solved by three-player CFR ({sol.iters} iterations): one bet size "
                      f"({int(round(mcfg.bet[cur.name] * 100))}% pot), one raise and all-in; {street_note[cur.name]}")
         if cur.acted or cur.n_raises:

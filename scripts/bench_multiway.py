@@ -5,6 +5,7 @@ per iteration, each player's best-response gain (% of the pot) and the values (w
 
   python scripts/bench_multiway.py --board Kh7d2c9s4h --iters 10,30,100
   python scripts/bench_multiway.py --board Kh7d2c9s --iters 10,30          # a turn: every river
+  python scripts/bench_multiway.py --board Kh7d2c --later buckets      # a flop, later streets bet by hand buckets
   python scripts/bench_multiway.py --pairwise                               # without the joint card removal
   node scripts/pyodide_run.mjs scripts/bench_multiway.py --iters 5,10       # in Pyodide (see that file)
 """
@@ -35,12 +36,18 @@ def main():
     ap.add_argument("--leaf-rivers", type=int, default=4)
     ap.add_argument("--depth", type=int, default=1)
     ap.add_argument("--simultaneous", action="store_true")
+    ap.add_argument("--later", default="deal", choices=("deal", "buckets"))
+    ap.add_argument("--buckets", type=int, default=16)
+    ap.add_argument("--step", type=int, default=1)
+    ap.add_argument("--no-classes", action="store_true")
+    ap.add_argument("--checked-to", action="store_true", help="the BTN to act, checked to (the root's last player)")
     a = ap.parse_args()
     R = A.preflop_ranges(PRE, pf.Table(pf.SEATS[6]), 100.0)
     rs = [R["BB"], R["CO"], R["BTN"]]
-    cfg = MWConfig(exact=not a.pairwise, depth=a.depth, alternate=not a.simultaneous, rivers=a.rivers, turns=a.turns, leaf_rivers=a.leaf_rivers)
+    cfg = MWConfig(exact=not a.pairwise, depth=a.depth, alternate=not a.simultaneous, rivers=a.rivers, turns=a.turns, leaf_rivers=a.leaf_rivers,
+                   later=a.later, buckets=a.buckets, bucket_river_step=a.step, classes=not a.no_classes)
     t0 = time.time()
-    s = MultiwaySolver(cards(a.board), rs, 8.0, 97.5, cfg=cfg)
+    s = MultiwaySolver(cards(a.board), rs, 8.0, 97.5, cfg=cfg, **(dict(to_act=2, pending={2}) if a.checked_to else {}))
     print(f"{a.board}: build {time.time() - t0:.2f} s, {s.hands.n} combos, {len(s.decisions)} decisions, "
           f"{s.builder.n_nodes} nodes", flush=True)
     for k in [int(x) for x in a.iters.split(",")]:

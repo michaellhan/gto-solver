@@ -164,31 +164,97 @@ def facts(args):
         print(json.dumps(out), flush=True)
 
 
+FLOP_STUDY = {"3-way": 0.659, "heads-up": 0.770}   # GTO Wizard's 3-way flop study: the opener's bets when checked to
+
+
+def STUDY_RANGES():
+    """Ranges shaped like the study's (its text: the SB calls with low to middle pairs, suited connectors and suited
+    Ax / Kx; with the SB in, the BB 3bets TT-JJ and suited broadways and calls a capped range; an 8-max LJ open):
+    (3-way {SB, BB, UTG}, heads-up {BB, UTG}), the opener under UTG's name."""
+    from gto.ranges import parse_range
+    lj = parse_range("22+,A2s+,K9s+,Q9s+,J9s+,T9s,98s,87s,76s,65s,ATo+,KJo+,QJo")
+    sb = parse_range("22-99,A2s-A9s,K9s-KTs,T9s,98s,87s,76s,65s,54s")
+    bb3 = parse_range("22-99,A2s-A9s,K2s-K9s,Q6s-Q9s,J7s-J9s,T7s-T9s,96s+,85s+,75s+,64s+,53s+,43s,A9o-AJo,KTo-KQo,QTo+,JTo")
+    bb2 = bb3 + parse_range("TT-JJ,ATs-AJs,KTs-KQs,QTs-QJs,JTs")
+    return {"UTG": lj, "SB": sb, "BB": bb3}, {"UTG": lj, "BB": bb2}
+
+
+def _cfg(args):
+    from gto.multiway_solver import MWConfig
+    if args.later == "deal":
+        return MWConfig()
+    return MWConfig(later="buckets", buckets=args.buckets, bucket_river_step=args.step)
+
+
 def flop_study(args):
-    """GTO Wizard's 3-way flop study (README: LJ opens, both blinds call, checked to the opener: checks 34%, bets a third
-    56%, bigger 9%; heads-up against the big blind 23/38/39): our one-size (33%) tree, 6-max UTG opening."""
+    """GTO Wizard's 3-way flop study ("Playing In Position Against Two Callers", 100bb 8-max, LJ opens, SB and BB call,
+    sizes 33/66/100%, checked to the opener: checks 34.1%, bets 65.9%; heads-up against the BB checks 23.0%, bets
+    77.0%): our one-size (33%) tree, 6-max UTG opening, on --flops random flops. --later deal: the turn and river dealt
+    out (equity leaves); buckets: bet by --buckets hand buckets."""
+    from gto.cards import cards_str
     pre = [{"pos": "UTG", "action": "raise", "to": 2.5}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "fold"},
            {"pos": "BTN", "action": "fold"}, {"pos": "SB", "action": "call"}, {"pos": "BB", "action": "call"}]
     R = A.preflop_ranges(pre, pf.Table(pf.SEATS[6]), 100.0)
     pre2 = [dict(a, action="fold") if a["pos"] == "SB" else a for a in pre]
     R2 = A.preflop_ranges(pre2, pf.Table(pf.SEATS[6]), 100.0)
+    if args.study_ranges:
+        R, R2 = STUDY_RANGES()
     rng = np.random.default_rng(args.seed)
     flops = []
     while len(flops) < args.flops:
         f = tuple(int(x) for x in rng.choice(52, 3, replace=False))
         flops.append(f)
+    cfg = _cfg(args)
     tot3, tot2 = [], []
     for f in flops:
-        s3 = MultiwaySolver(f, [R["SB"], R["BB"], R["UTG"]], 7.5, 97.5, to_act=2, pending={2}).run(iters=args.iters)
-        s2 = MultiwaySolver(f, [R2["BB"], R2["UTG"]], 5.5, 97.5, to_act=1, pending={1}).run(iters=args.iters)
+        s3 = MultiwaySolver(f, [R["SB"], R["BB"], R["UTG"]], 7.5, 97.5, to_act=2, pending={2}, cfg=cfg).run(iters=args.iters)
         b3 = 1 - s3.range_freqs()["check"]
-        b2 = 1 - s2.range_freqs()["check"]
-        tot3.append(b3); tot2.append(b2)
-        from gto.cards import cards_str
-        print(f"{cards_str(f)}: opener bets {b3 * 100:.0f}% into two (heads-up {b2 * 100:.0f}%), nash conv "
-              f"{s3.nash_conv():.2f}% / {s2.nash_conv():.2f}%", flush=True)
-    print(f"mean over {len(flops)} flops: 3-way bets {np.mean(tot3) * 100:.0f}%, heads-up {np.mean(tot2) * 100:.0f}% "
-          f"(GTO Wizard's study: 66% and 77%, several sizes)")
+        tot3.append(b3)
+        line = f"{cards_str(f)}: opener bets {b3 * 100:.1f}% into two"
+        if not args.three_only:
+            s2 = MultiwaySolver(f, [R2["BB"], R2["UTG"]], 5.5, 97.5, to_act=1, pending={1}, cfg=cfg).run(iters=args.iters)
+            b2 = 1 - s2.range_freqs()["check"]
+            tot2.append(b2)
+            line += f" (heads-up {b2 * 100:.1f}%)"
+        print(line + f", best-response gains {np.round(s3.br_gains() / s3.root_pot() * 100, 2)} % pot", flush=True)
+    print(f"mean over {len(flops)} flops: 3-way bets {np.mean(tot3) * 100:.1f}%"
+          + (f", heads-up {np.mean(tot2) * 100:.1f}%" if tot2 else "")
+          + f" (GTO Wizard's study: {FLOP_STUDY['3-way'] * 100:.0f}% and {FLOP_STUDY['heads-up'] * 100:.0f}%, several sizes)")
+    return np.mean(tot3), (np.mean(tot2) if tot2 else None)
+
+
+def hu_check(args):
+    """Two players: the 3-way solver's flop model (--later) played two-handed against the heads-up solver's (river bet
+    on, one turn per rank class, per combo; README Accuracy vs speed) on the same one-size tree (flop 33%, turn and
+    river 50%, raises 75%), UTG open called by the BB, from the BB's first action: the BB's bets, and UTG's when checked
+    to, over --flops random flops."""
+    from gto.cards import cards_str
+    from gto.solver import Config, solve
+    pre = [{"pos": "UTG", "action": "raise", "to": 2.5}] + [{"pos": p, "action": "fold"} for p in ("HJ", "CO", "BTN", "SB")] \
+        + [{"pos": "BB", "action": "call"}]
+    R = A.preflop_ranges(pre, pf.Table(pf.SEATS[6]), 100.0)
+    sizes = {"flop": [0.33], "turn": [0.5], "river": [0.5]}
+    hcfg = Config(bet_sizes=sizes, raise_sizes={k: [0.75] for k in sizes}, max_raises=2, allin_spr=1.5,
+                  later_sizes=None)
+    rng = np.random.default_rng(args.seed)
+    d_oop, d_ip = [], []
+    for _ in range(args.flops):
+        f = tuple(int(x) for x in rng.choice(52, 3, replace=False))
+        hu = solve(f, R["BB"], R["UTG"], 5.5, 97.5, cfg=hcfg, time_budget=1e9, max_iters=args.ref_iters)
+        mw = MultiwaySolver(f, [R["BB"], R["UTG"]], 5.5, 97.5, cfg=_cfg(args)).run(iters=args.iters)
+        r0 = np.zeros(1326); r0[mw.hands.active] = mw.reach0[0, 0]
+        h_oop = 1 - float(hu.root.avg_strategy0()[0] @ hu.r0 / hu.r0.sum())
+        m_oop = 1 - mw.range_freqs()["check"]
+        hc, mc = hu.root.children[0], mw.root.children[0]
+        # (the IP player's range after the check: its whole range, the check doesn't narrow it)
+        h_ip = 1 - float(hc.avg_strategy0()[0] @ hu.r1 / hu.r1.sum())
+        m_ip = 1 - mw.range_freqs(mc, mw.reach0[1, 0])["check"]
+        d_oop.append(m_oop - h_oop); d_ip.append(m_ip - h_ip)
+        print(f"{cards_str(f)}: BB bets {m_oop * 100:.1f}% (heads-up solver {h_oop * 100:.1f}%), UTG checked to bets "
+              f"{m_ip * 100:.1f}% ({h_ip * 100:.1f}%); exploitability {hu.exploitability():.2f}% / "
+              f"{mw.nash_conv() / 2:.2f}% pot", flush=True)
+    print(f"mean difference (3-way solver - heads-up solver): BB {np.mean(d_oop) * 100:+.1f} points (mean abs "
+          f"{np.mean(np.abs(d_oop)) * 100:.1f}), UTG {np.mean(d_ip) * 100:+.1f} (mean abs {np.mean(np.abs(d_ip)) * 100:.1f})")
 
 
 def _spot_args(adv, st):
@@ -207,73 +273,116 @@ def _spot_args(adv, st):
     return got["a"]
 
 
-def turn_reference(args):
-    """On the turn the solve deals the river out (no river betting). Against a deeper solve that bets the river too
-    (depth 2, --ref-rivers sampled rivers), who is closer per hand: the depth-1 solve or the betting rules?"""
-    from gto.cards import COMBO_INDEX
-    from gto.multiway_solver import MWConfig
-    adv = A.Advisor(time_budget=1e9)
-    adv.mw_max_iters = args.iters
+def _against(spots, ref_cfg, ref_iters, cands, rules):
+    """Each spot (board, hero, this street's actions, state function) solved by a reference (ref_cfg, ref_iters) and by
+    each candidate {name: (MWConfig, iterations)}; the betting rules too. Per hand: is the reference's best action the
+    candidate's most frequent one, what that pick gives up by the reference's EVs, how far each action's EV is."""
+    tot = {k: {"pick": 0, "loss": [], "evd": [], "freq": []} for k in list(cands) + ["rules"]}
+    n = 0
+    for board, hero, acts, mk in spots:
+        hero, _, b, ranges, remaining, cur, stk = _spot_args(rules, mk(board, hero, "2s2h", acts))
+        players = [p for p in cur.order if p in remaining]
+        hp = players.index(hero)
+        rs = [ranges[p] for p in players]
+        S = min(stk[p] - cur.inv_start[p] for p in players)
+        pending = {i for i, p in enumerate(players) if p not in cur.acted} | {hp}
+        ref = MultiwaySolver(b, rs, cur.pot_start, S, to_act=hp, pending=pending, cfg=ref_cfg).run(iters=ref_iters)
+        sols = {k: MultiwaySolver(b, rs, cur.pot_start, S, to_act=hp, pending=pending, cfg=c).run(iters=it)
+                for k, (c, it) in cands.items()}
+        ev_ref = ref.action_evs()
+        evs = {k: s_.action_evs() for k, s_ in sols.items()}
+        names = ref.root.names
+        fr = 1 - ref.range_freqs()["check"]
+        out = f"{board} {hero}: range bets {fr * 100:.1f}% (reference, best-response gains " \
+              f"{np.round(ref.br_gains() / ref.root_pot() * 100, 2)} % pot)"
+        for k, s_ in sols.items():
+            f = 1 - s_.range_freqs()["check"]
+            tot[k]["freq"].append(abs(f - fr))
+            out += f", {k} {f * 100:.1f}%"
+        print(out, flush=True)
+        bset = set(b)
+        for h in HANDS:
+            hole = cards(h)
+            if set(hole) & bset:
+                continue
+            ci = ref.combo_index(hole)
+            if ci is None or ref.reach0[hp, 0, ci] <= 0:
+                continue
+            r = rules.advise(mk(board, hero, h, acts))
+            er = {kind(nm): float(ev_ref[a, ci]) for a, nm in enumerate(names)}
+            best = max(er, key=er.get)
+            n += 1
+            picks = {k: kind(names[int(np.argmax(s_.hand_strategy(ci, hp)))]) for k, s_ in sols.items()}
+            picks["rules"] = kind(max(r["actions"], key=lambda x: x["freq"])["action"])
+            for k, pk in picks.items():
+                tot[k]["pick"] += pk == best
+                tot[k]["loss"].append(er[best] - er.get(pk, er[best]))
+            for k in sols:
+                tot[k]["evd"] += [abs(float(evs[k][a, ci]) - er[kind(nm)]) for a, nm in enumerate(names)]
+            rk = {kind(x["action"]): x for x in r["actions"]}
+            tot["rules"]["evd"] += [abs(rk[k]["ev_bb"] - er[k]) for k in er if k in rk]
+    print(f"{n} hands against the reference:")
+    for k, d in tot.items():
+        print(f"  {k:10s}: picks its best action {d['pick'] / n * 100:.0f}%, gives up {np.mean(d['loss']):.3f} bb, "
+              f"EVs off {np.mean(d['evd']):.2f} bb" + (f", range bets off {np.mean(d['freq']) * 100:.1f} points"
+                                                       if d["freq"] else ""), flush=True)
+
+
+def _rules(args):
     rules = A.Advisor(time_budget=1e9)
     rules.mw_solve_streets = ()
     rules.mw_trials = args.trials
-    tot = {"d1": [], "rules": [], "d1_pick": 0, "rules_pick": 0, "n": 0, "evd_d1": [], "evd_rules": []}
-    for board in TURNS:
-        for line in ("BB first", "BTN checked to"):
-            hero, acts = LINES[line]
-            hero, _, b, ranges, remaining, cur, stk = _spot_args(adv, state(board, hero, "2s2h", acts))
-            players = [p for p in cur.order if p in remaining]
-            hp = players.index(hero)
-            rs = [ranges[p] for p in players]
-            S = min(stk[p] - cur.inv_start[p] for p in players)
-            pending = {i for i, p in enumerate(players) if p not in cur.acted} | {hp}
-            ref = MultiwaySolver(b, rs, cur.pot_start, S, to_act=hp, pending=pending,
-                                 cfg=MWConfig(depth=2, rivers=args.ref_rivers)).run(iters=args.ref_iters)
-            d1 = MultiwaySolver(b, rs, cur.pot_start, S, to_act=hp, pending=pending).run(iters=args.iters)
-            ev_ref, ev_d1 = ref.action_evs(), d1.action_evs()
-            names = ref.root.names
-            print(f"{board} {line}: reference nash conv {ref.nash_conv():.2f}% pot, depth-1 {d1.nash_conv():.2f}%; "
-                  f"range bets {1 - ref.range_freqs()['check']:.3f} (reference) {1 - d1.range_freqs()['check']:.3f} (depth 1)",
-                  flush=True)
-            bset = set(b)
-            for h in HANDS:
-                hole = cards(h)
-                if set(hole) & bset:
-                    continue
-                ci = ref.combo_index(hole)
-                if ci is None or ref.reach0[hp, 0, ci] <= 0:
-                    continue
-                st = state(board, hero, h, acts)
-                r = rules.advise(st)
-                rk = {kind(a["action"]): a for a in r["actions"]}
-                er = {kind(n): float(ev_ref[a, ci]) for a, n in enumerate(names)}
-                e1 = {kind(n): float(ev_d1[a, ci]) for a, n in enumerate(names)}
-                best = max(er, key=er.get)
-                p1 = kind(names[int(np.argmax(d1.hand_strategy(ci, hp)))])
-                pr = kind(max(r["actions"], key=lambda a: a["freq"])["action"])
-                tot["n"] += 1
-                tot["d1_pick"] += p1 == best
-                tot["rules_pick"] += pr == best
-                tot["d1"].append(er[best] - er.get(p1, er[best]))
-                tot["rules"].append(er[best] - er.get(pr, er[best]))
-                for k in er:
-                    tot["evd_d1"].append(abs(e1[k] - er[k]))
-                    if k in rk:
-                        tot["evd_rules"].append(abs(rk[k]["ev_bb"] - er[k]))
-    n = tot["n"]
-    print(f"{n} hands: best action by the reference picked {tot['d1_pick'] / n * 100:.0f}% by the depth-1 solve, "
-          f"{tot['rules_pick'] / n * 100:.0f}% by the rules; reference EV given up {np.mean(tot['d1']):.2f} bb against "
-          f"{np.mean(tot['rules']):.2f} bb; EVs off by {np.mean(tot['evd_d1']):.2f} bb against {np.mean(tot['evd_rules']):.2f} bb")
+    return rules
+
+
+def turn_reference(args):
+    """Turn solves against a reference betting the river per combo (depth 2, every river with --ref-rivers 0, else that
+    many sampled): the river dealt out (equity leaves), bet by --buckets hand buckets, and the betting rules."""
+    from gto.multiway_solver import MWConfig
+    spots = [(b, LINES[ln][0], LINES[ln][1], state) for b in TURNS for ln in ("BB first", "BTN checked to")]
+    _against(spots, MWConfig(depth=2, rivers=args.ref_rivers or None), args.ref_iters,
+             {"dealt": (MWConfig(), args.iters), "buckets": (MWConfig(later="buckets", buckets=args.buckets), args.iters)},
+             _rules(args))
+
+
+FLOP_PRE = [{"pos": "UTG", "action": "raise", "to": 2.5}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "fold"},
+            {"pos": "BTN", "action": "fold"}, {"pos": "SB", "action": "call"}, {"pos": "BB", "action": "call"}]
+FLOPS = ["Kh7d2c", "8h7sJs", "QdAd3s", "Tc9c7c"]
+
+
+def flop_state(board, hero, hole, acts):
+    return {"players": 6, "hero": hero, "hole": hole, "board": board, "stack": 100, "preflop": FLOP_PRE, "flop": acts}
+
+
+def flop_reference(args):
+    """3-way flops (UTG opens, SB and BB call; UTG checked to, and the SB first) against a deeper solve of the same
+    model (--ref-buckets buckets, every turn card, every river, --ref-iters): --buckets buckets with one turn per rank
+    class, 12 buckets, the turn and river dealt out, and the betting rules."""
+    from gto.multiway_solver import MWConfig
+    chk = [{"pos": "SB", "action": "check"}, {"pos": "BB", "action": "check"}]
+    spots = [(b, h, a, flop_state) for b in FLOPS[:args.flops] for h, a in (("UTG", chk), ("SB", []))]
+    later = lambda k, **kw: MWConfig(later="buckets", buckets=k, **kw)
+    _against(spots, later(args.ref_buckets, classes=False), args.ref_iters,
+             {f"buckets {args.buckets}": (later(args.buckets), args.iters), "buckets 12": (later(12), args.iters),
+              "dealt": (MWConfig(), args.iters)}, _rules(args))
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--spots", action="store_true")
     ap.add_argument("--turn-reference", action="store_true")
+    ap.add_argument("--flop-reference", action="store_true")
+    ap.add_argument("--ref-buckets", type=int, default=24)
     ap.add_argument("--ref-rivers", type=int, default=12)
     ap.add_argument("--ref-iters", type=int, default=60)
     ap.add_argument("--facts", action="store_true")
     ap.add_argument("--flop-study", action="store_true")
+    ap.add_argument("--hu-check", action="store_true")
+    ap.add_argument("--three-only", action="store_true")
+    ap.add_argument("--study-ranges", action="store_true")
+    ap.add_argument("--later", default="buckets", choices=("deal", "buckets"))
+    ap.add_argument("--buckets", type=int, default=16)
+    ap.add_argument("--step", type=int, default=1)
     ap.add_argument("--iters", type=int, default=150)
     ap.add_argument("--trials", type=int, default=600)
     ap.add_argument("--flops", type=int, default=12)
@@ -286,8 +395,12 @@ def main():
         facts(a)
     if a.flop_study:
         flop_study(a)
+    if a.hu_check:
+        hu_check(a)
     if a.turn_reference:
         turn_reference(a)
+    if a.flop_reference:
+        flop_reference(a)
 
 
 if __name__ == "__main__":

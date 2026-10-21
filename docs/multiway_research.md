@@ -65,25 +65,70 @@
   W = weaker + tied/2 and E = tied: W_q·W_r + E_q·E_r/12 gives 1, ½ and ⅓ for beating both, tying one and tying
   both. The tests check every terminal kind against the brute-force triple loop to 1e-3 relative (float32
   tables; 1e-11 in float64).
-* **Streets.** The river is solved per combo with the exact removal. The turn and flop are solved for their own
-  street (depth 1), and the remaining cards are dealt out as equity leaves: every river from the turn, and every
-  turn with one sampled river from the flop. No betting is modelled after the solved street, a known bias that
-  favours draws and the out-of-position player; the heads-up solver's flop model avoids it at a much higher cost.
-  The equity leaves are why the advisor solves 3-way turns (Accurate only, for time) but leaves flops to the
-  betting rules:
-  * **Turn.** A reference solve that bets the river too (depth 2, 12 sampled rivers, 60 iterations; two turn
-    boards, BB first and BTN checked to, 63 hands) was compared against the depth-1 solve and against the
-    rules. The depth-1 solve picks the reference's best action 76% of the time (the rules 70%), gives up 0.12 bb
-    of the reference's EV (the rules 0.20 bb), and its EVs are 1.03 bb off (the rules 2.30 bb). The
-    reference's range betting frequency is 9.4/47.2% on Kh7d2c9s and 8.1/40.2% on Jh9h4c8s. The depth-1
-    solve has 3.2/34.8% and 10.8/48.5%.
-  * **Flop.** Over 10 random flops, UTG opens and both blinds call, checked to the opener. The one-size (⅓ pot)
-    depth-1 solve bets 33% into two players and 48% into the big blind alone. GTO Wizard's study (several
-    sizes) has 66% and 77%, and the rules, fitted to it, 57%. The ordering (less into two) is right, but with
-    turn and river dealt out a flop bet is worth too little. So `mw_solve_streets` leaves the flop out by
-    default.
+* **Streets.** The river is solved per combo with the exact removal. The turn and flop are solved per combo on
+  their own street, and the streets after it are bet on too, by hand buckets (`MWConfig.later = "buckets"`, the
+  heads-up solver's Fast flop model for three players):
+  * The next card is one card per class (a rank's cards; a suit with two or more board cards gets its own card
+    per rank), weighted by the cards it stands for. A combo holding the card played plays as its image with that
+    card swapped for another of the class. From a flop the river is then played on the turn's boards without its
+    card (its showdowns are the turn's equity over every river), as the heads-up `river_play`.
+  * On each class's card every player's root range is split into K equal shares (16 natively, 12 in the browser)
+    ordered by equity against the other two ranges. Below the root street the strategies, reaches and values are
+    per bucket.
+  * Showdowns are tensors over bucket triples: J, the weight of the compatible deals, and each live set's pot
+    shares, built from per-combo kernels on each river (pairwise removal, with the third pair's overlap share
+    taken exactly per combo from the board above, as the old leaves did), then scaled per cell so the live
+    players' shares add up to J. The bucket game is constant-sum, and the deals' total weight is scaled to the
+    root's exact mass (it moved 1.4%).
+  * The later streets' subtrees after root lines of the same shape are merged into one batch (a row per line and
+    card class), so a flop solve walks ~650 nodes a pass instead of ~11,000. A terminal's value is a K³
+    contraction per row. Below another player's fold the folded player's reach is fixed, so the tensors are summed
+    over it once and each terminal costs K² a row; below the traverser's own fold its value is minus its chips in
+    times the deals' weight, with no walk.
 
-  The leaves use the pairwise shortcut, with two corrections:
+  The old model dealt the later streets out as equity leaves: every river from the turn, every turn with one
+  sampled river from the flop. With no betting after the solved street a flop bet was worth too little, so the
+  flop was left to the betting rules. Measured against deeper references (`scripts/compare_multiway.py`):
+  * **Turn** (`--turn-reference`): two turns, BB first and BTN checked to, 63 hands, against a reference that
+    bets the river per combo (16 sampled rivers, 100 iterations, 0.1-0.3% of the pot from equilibrium):
+
+    | | picks the reference's best action | EV given up | EVs off | range bets off |
+    |---|---|---|---|---|
+    | river bet by buckets (16) | 89% | 0.032 bb | 0.75 bb | 3.8 points |
+    | river dealt out | 87% | 0.056 bb | 0.98 bb | 4.5 points |
+    | betting rules | 75% | 0.239 bb | 2.16 bb | |
+
+    Checked to on Jh9h4c8s the buckets bet 61% for the reference's 49% (dealt out 49%). Elsewhere they are
+    within 2 points. The old reference (12 rivers, 60 iterations) hadn't settled: it had BB leading Kh7d2c9s 9.4%
+    where 100 iterations give 2.6%.
+  * **Flop** (`--flop-reference`): UTG opens, SB and BB call (the advisor's ranges, the blinds' checks narrowed
+    by the rules), UTG checked to and the SB first, against the same model with 24 buckets, every turn card and
+    every river (200 iterations, 0.1-0.55% of the pot from equilibrium), three flops, 88 hands:
+
+    | | picks the reference's best action | EV given up | EVs off | range bets off |
+    |---|---|---|---|---|
+    | 16 buckets, one turn per class, 150 iterations | 90% | 0.003 bb | 0.34 bb | 1.6 points |
+    | 12 buckets (the browser) | 83% | 0.005 bb | 0.44 bb | 2.5 points |
+    | turn and river dealt out | 67% | 0.033 bb | 1.56 bb | 18.3 points |
+    | betting rules | 65% | 0.061 bb | 3.41 bb | |
+
+    Checked to, the reference bets 84.9 / 40.1 / 99.6% on Kh7d2c / 8h7sJs / QdAd3s, the 16 buckets 82.5 / 39.4 /
+    99.1% and dealing out 50.2 / 33.2 / 68.2%. First to act the SB leads 30.4 / 80.4 / 0.4%, the buckets 28.1 /
+    77.2 / 0.7%, dealing out 41.9 / 58.4 / 3.8%. This reference is the same model made finer, so it checks the
+    buckets, the card classes and convergence, not the bucketing itself; the two-player check below does that.
+  * **Flop against the published study** (`--flop-study`, 150 iterations, ten random flops, the opener checked to
+    with the blinds' full ranges): GTO Wizard's study (three sizes) has the opener betting 66% into two and 77%
+    heads-up. With the chart ranges the solve bets 40.9% and 61.5%, where dealing the later streets out bet 33.2%
+    and 48.2%. With ranges shaped like the study's (`--study-ranges`: its SB calls with low and middle pairs, suited
+    connectors and suited Ax/Kx; its BB 3bets TT-JJ and suited broadways when the SB is in) it bets 47.1% and
+    60.5%, where dealing out bet 39.3% and 48.3%. Its own flops are 20 weighted ones and its ranges aren't
+    published, so this is a band, not a match. Most of what remains looks like the one-size tree and the ranges
+    rather than the 3-way solve, since the heads-up number falls as short: played two-handed (`--hu-check`, UTG against the BB from the BB's first action, seven flops) the bucket model
+    bets 4.0 points more than the heads-up solver's per-combo flop model on the same tree (7.3 absolute; the BB
+    leads 5.2 more), which itself bets 58% there.
+
+  The old equity leaves (still `later="deal"`, and the all-in runouts there) use the pairwise shortcut, with two
+  corrections:
   1. The fraction of pairs that are mutually compatible is taken exactly from the board above the runouts and
      reused on every runout. A runout card moves that fraction very little.
   2. The live players' shares are scaled on each board so they sum to the pot, which keeps the game constant-sum.
@@ -111,9 +156,15 @@ always exact.
 See `tests/test_multiway_solver.py` and `scripts/compare_multiway.py` (numbers in the README):
 
 * **Constant-sum.** The three players' values add up to the pot, exactly on the river and within 0.2% on turn and
-  flop leaves (sampled runouts).
+  flop leaves (sampled runouts). With the later streets by buckets every live set's shares add up to the deals'
+  weight in every bucket triple (any reaches pay out exactly the pot); the values at the root's reaches add up to
+  the pot within 0.6% (the deals' weight is scaled at the root's reaches, and the bucket and exact masses part a
+  little as the ranges narrow).
 * **Convergence.** Each player's best-response gain shrinks: on the river 4.7/3.5/4.1% of the pot after 10
-  iterations, 0.8/0.8/0.5 after 30, 0.09/0.10/0.06 after 100 and 0.01/0.02/0.01 after 300.
+  iterations, 0.8/0.8/0.5 after 30, 0.09/0.10/0.06 after 100 and 0.01/0.02/0.01 after 300. A flop with the later
+  streets by buckets (Kh7d2c, UTG checked to, 16 buckets; gains in the bucket game) 14.9/9.1/11.8 after 25,
+  4.6/2.4/2.4 after 50, 1.2/0.6/0.7 after 100, 0.3/0.1/0.2 after 200 and 0.1/0.03/0.05 after 400, its bets
+  44 / 36 / 32 / 32 / 33%.
 * **Two players.** Played two-handed, the solver matches the heads-up solver on the same tree: root bet frequency
   16.6% against 16.5%, per-action EVs within 0.03-0.06 bb on average.
 * **Qualitative facts.** First to act into two players, the weaker half of the range almost never bets. Checked
