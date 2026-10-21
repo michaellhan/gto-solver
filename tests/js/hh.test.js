@@ -276,3 +276,11 @@ test("review whole hand respects Accurate, can be cancelled, and multiway spots 
   assert.ok(!("g" in mine[2]) && !("g" in mine[3]));
   assert.match(p.byId("adviceNote").innerHTML, /id="reviewAll"/);   // what's left can still be reviewed
 });
+
+test("the import dialog names every site the importer reads", () => {
+  const html = fs.readFileSync(require("./page.js").HTML_PATH, "utf8");
+  const dialog = html.match(/<div id="importBox"[\s\S]*?<\/div>/)[0].replace(/<[^>]*>/g, " ");
+  const sites = new Set(fs.readdirSync(HH_DIR).map(f => parseHandHistory(HH(f)).site));
+  assert.ok(sites.size >= 8);
+  for (const s of sites) assert.ok(dialog.includes(s), `${s} isn't named in the dialog: ${dialog.trim()}`);
+});

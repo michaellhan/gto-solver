@@ -393,7 +393,7 @@
     <button id="menuBtn" class="ghost" title="More: deck colours, import a hand, layout" aria-label="More" aria-haspopup="true" aria-expanded="false" aria-controls="menu">⋯</button>
     <div class="menu" id="menu" hidden>
       <button id="fourcolor" title="Four-colour deck: diamonds blue, clubs green">Four-colour deck</button>
-      <button id="importHand" title="Paste a PokerStars or GGPoker hand history to replay and review it">Import hand…</button>
+      <button id="importHand" title="Paste a hand history (PokerStars, GGPoker, 888, partypoker, Winamax, WPN/ACR, Ignition/Bovada, iPoker) to replay and review it">Import hand…</button>
       <button id="drills" title="Drill one flop spot: random flops and hands from the precomputed solutions, each answer graded at once (keys 1-4, Space for the next)">Drills…</button>
       <button id="analyzeSession" title="A whole session's hand histories: each of your decisions solved and graded, the EV lost by street, position, spot and preflop situation, the biggest mistakes">Analyze session…</button>
       <button id="flopReports" title="The precomputed spots' flop strategy across every flop, by texture; click a flop to load it">Flop reports…</button>
@@ -499,8 +499,8 @@
 <div id="toast" class="toast" hidden></div>
 <div id="importBox" class="importbox" role="dialog" aria-modal="true" aria-label="Import a hand history" hidden>
   <b>Import a hand history</b>
-  <span class="muted" style="font-size:12px">Paste one hand as your poker client saved it (PokerStars, GGPoker or Natural8). It's read here in the page; nothing is uploaded.</span>
-  <textarea id="hhText" spellcheck="false" placeholder="PokerStars Hand #… or Poker Hand #…"></textarea>
+  <span class="muted" style="font-size:12px">Paste one hand as your poker client saved it: PokerStars, GGPoker/Natural8, 888poker, partypoker, Winamax, WPN/ACR, Ignition/Bovada or iPoker (its XML). It's read here in the page; nothing is uploaded.</span>
+  <textarea id="hhText" spellcheck="false" placeholder="PokerStars Hand #…, Poker Hand #…, Winamax Poker…"></textarea>
   <div class="err" id="hhErr"></div>
   <div class="row"><button id="hhGo" class="active">Import</button><button id="hhCancel" class="ghost">Cancel</button></div>
 </div>
