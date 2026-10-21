@@ -192,6 +192,23 @@ test("your fold that closes the street ends the hand, with others still in", asy
   assert.equal(p.val("Practice.state.score.hands"), 1);
 });
 
+test("your fold mid-street ends the hand with the street's bets (a straddle too) still in front of the others", async () => {
+  // straddled table, seats with their own stacks: you (HJ, first after the straddle) fold preflop
+  const p = loadPage();
+  await p.ready();
+  vm.runInContext(PRACTICE, p.ctx, { filename: "practice.js" });
+  p.run("Practice.state.on = true; Practice.state.hand = { hole: ['Ah', 'Kh'], hands: {} }");
+  p.S = { players: 6, hero: "HJ", stack: 100, stacks: { BTN: 150 }, straddle: true, cards: ["7h", "2c", null, null, null, null, null],
+    actions: { preflop: [{ pos: "HJ", action: "fold" }], flop: [], turn: [], river: [] } };
+  const sim = p.sim();
+  assert.deepEqual([sim.handOver, sim.pot, sim.invested.UTG, sim.invested.BB], [true, 3.5, 2, 1]);
+  p.run("renderTable(simulate())");
+  const seat = (q) => p.byId("felt").children.find(e => e.innerHTML.startsWith(`<span class="pos">${q}`)).innerHTML;
+  assert.match(seat("UTG"), /<span class="stk"[^>]*>98<\/span>.*in 2/);
+  assert.match(seat("SB"), /<span class="stk"[^>]*>99.5<\/span>.*in 0.5/);
+  assert.match(seat("BTN"), /<span class="stk"[^>]*>150<\/span>/);
+});
+
 test("rake is taken from the called pot: a bet nobody calls goes back unraked", async () => {
   const p = loadPage();
   await p.ready();

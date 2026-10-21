@@ -785,8 +785,11 @@ function simulate() {
   }
   out.cur = out.current && !out.streets[out.current].closed ? out.streets[out.current] : null;
   out.pot = Object.values(inv).reduce((a, b) => a + b, 0) + (out.cur ? Object.values(out.cur.bets).reduce((a, b) => a + b, 0) : 0);
-  // practice: your fold ends it, also when it closes the street with others still in
-  if ((out.cur || out.waiting) && !active.has(S.hero) && practicing()) { out.handOver = true; out.cur = null; out.toAct = null; out.waiting = null; out.current = out.current || STREETS.filter(s => out.streets[s]).pop(); }
+  // practice: your fold ends it, also when it closes the street with others still in (the street's bets so far,
+  // blinds and straddle included, are then in: no street is in progress to hold them)
+  if ((out.cur || out.waiting) && !active.has(S.hero) && practicing()) {
+    if (out.cur) for (const p of POS) inv[p] += out.cur.bets[p];
+    out.handOver = true; out.cur = null; out.toAct = null; out.waiting = null; out.current = out.current || STREETS.filter(s => out.streets[s]).pop(); }
   return out;
 }
 // Whether p (to act) may bet or raise: not shut out by an all-in for less than a full raise, and someone else

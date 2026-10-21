@@ -77,8 +77,7 @@
   function finish(sim) {
     const h = P.hand;
     if (h.result) return;
-    const open = sim.streets[sim.current] && !sim.streets[sim.current].closed;   // you folded mid-street
-    const inv = (p) => sim.invested[p] + (open ? sim.streets[sim.current].bets[p] : 0);
+    const inv = (p) => sim.invested[p];   // (you folded mid-street: that street's bets are in it too)
     const board = boardCards(), live = POS.filter(p => sim.active.has(p));
     let pot = POS.reduce((t, p) => t + inv(p), 0);
     // rake (pots that saw a flop) is on the called pot: a bet or raise nobody matched goes back untouched
