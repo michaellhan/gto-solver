@@ -75,7 +75,16 @@ opens, 3bb from the small blind, 3x or 4x 3-bets, 2.3x 4-bets, then all-in; over
 postflop: the solver's bet and raise sizes in big blinds), the mixed strategy for your exact
 hand with EVs, your whole range's totals at that spot (the percentage and number of
 combos that fold, call, check, bet or raise each size, with a bar), and a 13x13 grid of
-that range by hand with your hand boxed. Click an advice row to record it as what you did and keep going. Once the advice
+that range by hand with your hand boxed. Postflop, tabs beside the grid open GTO Wizard-style
+**Breakdown** and **Equity** views of the spot: your range by hand category (made hands: quads or better down to
+top pair by kicker, middle and weak pairs, ace high, nothing; draws: combo, flush draw, open-ended, gutshot,
+backdoor), each with its share of the range, a bar split by the solver's mix, its equity and EV, and the villain's
+range the same way without a mix; and each range's equity distribution (its hands' equities against the other
+range sorted high to low), with average equity, EV and the share of each range at 80%+ equity (the nut advantage).
+3-way solves get the Breakdown only. Opening a tab asks again with `"breakdown": true` on the same state, answered
+from the solve the advice came from (no new solve; ~0.3 s native, ~0.5 s in the browser on a flop: the equities
+every turn and river on the turn, an even sample of flop runouts, `gto/breakdown.py`); the views are
+`gto/static/breakdown.js`, loaded when first opened, and the tab picked stays for later advice. Click an advice row to record it as what you did and keep going. Once the advice
 is in, your action buttons switch to the solver's own sizes with its frequency on each,
 so what you record is exactly what was solved. Postflop, a badge shows how well the solve
 converged (exploitability in % of the pot: converged under 3%, fair under 10%, rough
@@ -194,7 +203,11 @@ Response: per-action `freq` (the mixed strategy for hero's exact hand), `ev_bb`
 frequency, or highest EV when the solve is 3%+ of the pot from equilibrium and that
 EV beats the top of the mix by over 1% of the pot), a `sampled` action (drawn from the mix, use this if you want to
 actually play unexploitably), the range-wide frequencies, the villain's inferred
-range, and solver stats.
+range, and solver stats. With `"breakdown": true` a postflop answer also carries `breakdown` (`gto/breakdown.py`):
+`actions`, `pot`, `hero` and `villains`, each with `made` and `draws` categories (`c` combos, `eq` equity, the
+hero's `f` per action and `ev`), the range's `eq`, `ev`, `nuts` (share at `nut_eq`, 0.8, or more) and `curve`
+(equities sorted high to low at every 2% of the range; heads-up only), and the hero's own categories (`mine`);
+`null` where the betting rules answered.
 
 `"opponents": "pool"` (the page's Opponents: Pool toggle) is exploit mode: opponents play like a
 typical player pool instead of GTO. Preflop, hero's calls and raises are re-drawn against the pool's

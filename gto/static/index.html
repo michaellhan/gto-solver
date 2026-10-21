@@ -248,6 +248,7 @@
   .readout span.a::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; background: var(--c); }
   #pAdvice { container-type: inline-size; }
   /* range grid: capped so it never grows past ~440px; hover readout sits beside it when there's room */
+  .vtabs { margin-top: 14px; } .vtabs button { font-size: 12px; padding: 5px 12px; }
   .rangewrap { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px 16px; margin-top: 6px; }
   .rangewrap .grid { margin-top: 0; max-width: 440px; width: 100%; }
   @container (min-width: 620px) {
@@ -581,6 +582,7 @@ const practicing = () => !!(window.Practice && window.Practice.on);
 const WORKER_VERSION = "14";   // scripts/deploy.sh replaces this with a hash of worker.js
 const HH_VERSION = "1";        // and this with a hash of hh.js (the hand-history importer, loaded on first use)
 const RP_VERSION = "1";        // and this with a hash of reports.js (the flop reports, loaded on first use)
+const BD_VERSION = "1";        // and breakdown.js (the advice's Breakdown and Equity views, loaded on first use)
 
 // ---- backend: the local Python server if present, otherwise the solver runs in the browser (Pyodide worker)
 let MODE = null, worker = null, reqId = 0;
@@ -1207,7 +1209,8 @@ function renderResult(res, key) {
   }
   if (res.locked) h += `</div><div class="meta">${Object.entries(res.locked).map(([p, l]) => `Against your lock on ${p} (${LOCK_TEXT(l)})`).join("; ")}: the best response, with GTO's frequency under each.`;
   h += `</div><div class="meta">${TAP} a row to record it as what you did.${hasEv ? " EV is in big blinds relative to folding now, so fold is 0: chips already in the pot are gone either way." : res.street === "preflop" ? " Preflop comes from charts, so there's no EV column." : ""}${res.widened && res.widened.length ? ` The solve rarely has ${res.widened.join(" and ")} play this way, so their range comes from simple betting rules instead; the EVs (and the pick) are against that range, so they can disagree with the solver's mix.` : conv && conv.cls !== "ok" ? " Actions the solver mixes should have near-equal EVs; gaps here mean the solve hasn't settled." : ""}</div>`;
-  if (res.grid) h += renderGrid(res.grid, res.hand);
+  if (res.grid && res.street !== "preflop" && !heuristic(res)) h += `<div class="segment vtabs">${["grid", "breakdown", ...(res.multiway ? [] : ["equity"])].map(v => `<button data-v="${v}" class="${v === "grid" ? "active" : ""}">${v[0].toUpperCase() + v.slice(1)}</button>`).join("")}</div><div class="bdview" hidden></div>`;
+  if (res.grid) h += `<div class="gridview">${renderGrid(res.grid, res.hand)}</div>`;
   h += `<details><summary>Details</summary>`;
   if (res.villain_grid) h += `<div class="vgrid">${renderGrid(res.villain_grid, null, res.villain)}</div>`;
   if (res.villain_range) h += `<details><summary>${res.villain}'s range as text (${res.villain_range_combos} combos)</summary><div class="villain">${res.villain_range}</div></details>`;
@@ -1225,6 +1228,8 @@ function renderResult(res, key) {
   if (res.grid) wireGrid(el, res.grid, res.hand);
   const vg = el.querySelector(".vgrid");
   if (vg) wireGrid(vg, res.villain_grid, null, res.villain);
+  el.querySelectorAll(".vtabs button").forEach(b => b.onclick = () => showView(el, b.dataset.v, res, key));
+  if (VIEW !== "grid" && !review && el.querySelector(`.vtabs [data-v="${VIEW}"]`)) showView(el, VIEW, res, key);
   updateAdviceState();
   renderAction(simulate());   // on your turn the buttons carry the solver's sizes and frequencies
 }
@@ -1633,6 +1638,20 @@ document.getElementById("flopReports").onclick = () => {
   const s = document.createElement("script"); s.src = "reports.js?v=" + RP_VERSION;
   s.onload = () => window.FlopReports.open(); s.onerror = () => showErr("Couldn't load the flop reports (reports.js)."); document.head.appendChild(s);
 };
+// ---- the advice's Breakdown and Equity views (breakdown.js, loaded the first time one is opened): the advice's own
+// request again with "breakdown": true, answered from the solve it came from; the view picked stays for later advice
+let VIEW = "grid";
+function showView(el, v, res, key) {
+  VIEW = v;
+  el.querySelectorAll(".vtabs button").forEach(b => b.classList.toggle("active", b.dataset.v === v));
+  const box = el.querySelector(".bdview"); el.querySelector(".gridview").hidden = v !== "grid"; box.hidden = v === "grid";
+  if (v === "grid") return;
+  const go = () => window.Breakdown.show(box, v, res, key, (st) => callAdvise(st));
+  if (window.Breakdown) return go();
+  box.innerHTML = `<div class="meta">Loading…</div>`;
+  const s = document.createElement("script"); s.src = "breakdown.js?v=" + BD_VERSION;
+  s.onload = go; s.onerror = () => { box.innerHTML = `<div class="err">Couldn't load the breakdown (breakdown.js).</div>`; }; document.head.appendChild(s);
+}
 // ---- layout (per browser): column divider, table height, folded panels, columns swapped. Only in a real
 // browser (the tests' fake DOM has no window events), and never allowed to break the page.
 (function layout() {

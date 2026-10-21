@@ -2,7 +2,7 @@
 importScripts("https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js");
 
 // no __init__ here: GitHub Pages (Jekyll) will not serve files starting with an underscore
-const FILES = ["cards", "ranges", "evaluator", "preflop", "pf_equity", "pf_classes", "pf_solve", "pf_game", "pf_game_data", "pf_eqr", "solver", "multiway_solver", "exploit", "advisor", "flop_library"];
+const FILES = ["cards", "ranges", "evaluator", "preflop", "pf_equity", "pf_classes", "pf_solve", "pf_game", "pf_game_data", "pf_eqr", "solver", "multiway_solver", "exploit", "advisor", "flop_library", "breakdown"];
 
 // The precomputed flop library (gto/flop_library.py): the Python side asks for its index once and for an entry
 // (<spot>/<flop>.bin, ~10 KB) only when a flop spot it holds comes up. A synchronous request (allowed in a

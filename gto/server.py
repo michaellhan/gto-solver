@@ -63,7 +63,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        if p in ("/", "/index.html", "/worker.js", "/hh.js", "/practice.js", "/reports.js"):
+        if p in ("/", "/index.html", "/worker.js", "/hh.js", "/practice.js", "/reports.js", "/breakdown.js"):
             name = p[1:] if p.endswith(".js") else "index.html"
             path = os.path.join(static, name)
             with open(path, "rb") as f:
