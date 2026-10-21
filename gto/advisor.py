@@ -1570,10 +1570,11 @@ class Advisor:
         eq = _preflop_equity_multi([arr[p] for p in opp])
         # realized equity: all-in equity times the share of it the hand realizes after calling the last raise
         # (gto/pf_eqr.py, measured with the postflop solver); see the re-ranking below
-        # (measured at the standard sizes' stack-to-pot ratios: not after a raise that leaves much less behind)
+        # (measured heads-up at the standard sizes' stack-to-pot ratios: not with more players in, nor after a
+        # raise that leaves much less behind)
         eq_r = None
         spr = lambda b, p, c: b / max(p + c, 1e-9)
-        if (raisers and st.n_raises < 4 and not pool
+        if (raisers and st.n_raises < 4 and not pool and len(opp) == 1
                 and spr(behind, pot, call) >= RERANK_SPR * spr(behind_std, std.pot_start + sum(std.bets.values()),
                                                                std.cur_bet - std.bets[hero])):
             eq_r = np.nan_to_num(eq * _call_realization(hero, raisers[-1], st.n_raises, arr, positions), nan=0.0)
