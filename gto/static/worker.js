@@ -2,7 +2,7 @@
 importScripts("https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js");
 
 // no __init__ here: GitHub Pages (Jekyll) will not serve files starting with an underscore
-const FILES = ["cards", "ranges", "evaluator", "preflop", "pf_equity", "pf_classes", "solver", "exploit", "advisor"];
+const FILES = ["cards", "ranges", "evaluator", "preflop", "pf_equity", "pf_classes", "solver", "multiway_solver", "exploit", "advisor"];
 
 const ready = (async () => {
   postMessage({ status: "Loading the solver runtime (about 15 MB, cached after the first visit)…" });
@@ -40,8 +40,12 @@ const ready = (async () => {
              + `advs = {'fast': Advisor(Config(n_turns=3, n_rivers=8, leaf_turns=4, leaf_rivers_flop=4, n_rivers_from_flop=4, `
              + `river_buckets=32, turn_buckets=True, bucket_river_step=3, ${LS})), `
              + `'accurate': Advisor(Config(n_turns=4, leaf_turns=4, leaf_rivers_flop=8, n_rivers_from_flop=8, ${LS}))}; `
-             + "advs['accurate'].warm_from = advs['fast']; advs['accurate'].prior_model = {'river_buckets': 32, 'turn_buckets': True, 'bucket_river_step': 3}");   // Accurate picks up from a Fast solve of the same spot
-  // (not the reverse: Fast's few seconds can't re-fit an Accurate solve to its own tree; the page shows Accurate's answer instead)
+             // Accurate picks up from a Fast solve of the same spot (not the reverse: Fast's few seconds can't re-fit an
+             // Accurate solve to its own tree; the page shows Accurate's answer instead)
+             + "advs['accurate'].warm_from = advs['fast']; advs['accurate'].prior_model = {'river_buckets': 32, 'turn_buckets': True, 'bucket_river_step': 3}; "
+             // 3-way pots: the 3-player solver on the river in Fast (~0.1 s an iteration here: 8 s is ~60-80, under 1% of the pot
+             // from equilibrium); turns and flops (every runout dealt out, ~0.5 s an iteration) only in Accurate's 60 s
+             + "advs['fast'].mw_solve_streets = ('river',)");
   postMessage({ status: "Solving…" });
   return py;
 })();

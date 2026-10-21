@@ -78,6 +78,7 @@ class TestAdvisorStacks(unittest.TestCase):
     def setUp(self):
         self.adv = Advisor(Config(depth=1), time_budget=1.0, prior_budget=0.5)
         self.adv.mw_trials = MW_TRIALS
+        self.adv.mw_solve_streets = ()   # the betting rules (3-way pots are solved by default)
 
     def test_stacks_input(self):
         base = {"players": 6, "hero": "BTN", "hole": "AhKd", "board": "", "preflop": F("UTG", "HJ", "CO")}

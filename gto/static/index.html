@@ -803,10 +803,12 @@ function act(a) {
   if (p === S.hero) { const g = gradeFor(rec); if (g) rec.g = g; }
   S.actions[sim.current].push({ pos: p, ...rec }); save(); return null;
 }
+// A multiway result from the betting rules (4+ players, or a 3-way spot the solver doesn't take), not a solve.
+const heuristic = (r) => !!(r && r.multiway && !r.solved);
 // How your recorded action compares with the advice that was on screen for this exact spot.
 function gradeFor(rec) {
   const r = lastResult;
-  if (!r || r.error || r.multiway || resultKey !== JSON.stringify(payload())) return null;
+  if (!r || r.error || heuristic(r) || resultKey !== JSON.stringify(payload())) return null;
   let m;
   if (["fold", "check", "call", "all-in"].includes(rec.action)) m = r.actions.find(a => a.action === rec.action);
   else {
@@ -997,7 +999,7 @@ function renderAction(sim) {
   if (!isHero && practicing()) return;   // practice: the other seats move by themselves
 
   // On your turn, once the advice for this exact spot is in, the buttons use the solver's sizes and show its mix.
-  const res = isHero && lastResult && !lastResult.error && !lastResult.multiway && resultKey === JSON.stringify(payload()) ? lastResult : null;
+  const res = isHero && lastResult && !lastResult.error && !heuristic(lastResult) && resultKey === JSON.stringify(payload()) ? lastResult : null;
   const solverAct = (name) => res && res.actions.find(x => x.action === name);
   const pct = (x) => x ? `<span class="fq"> · ${(x.freq * 100).toFixed(0)}%</span>` : "";
   const acts = document.createElement("div"); acts.className = "acts" + (res ? " solver" : "");
@@ -1165,10 +1167,10 @@ function renderResult(res, key) {
   const conv = convergence(res);
   const board = res.board ? res.board.match(/../g).map(cardHtml).join(" ") : "";
   let h = `<div class="meta" style="margin:0 0 4px">${res.street} · ${res.hero} ${res.hand}${res.position ? " · " + res.position : ""}${board ? " · " + board : ""}${res.pot_bb ? " · pot " + res.pot_bb + " bb" : ""}</div>`;
-  if (res.multiway) h += `<div class="verdict"><span class="big">${res.recommended}</span><span class="mix">${res.opponents.length + 1} players in · equity vs field ${(res.equity_vs_field * 100).toFixed(0)}% · heuristic, not a solve</span></div>`;
-  else h += `<div class="verdict"><span class="big">${res.recommended}</span>${conv ? `<span class="conv ${conv.cls}" title="${convTip(conv)}">${conv.label} · ${conv.x.toFixed(1)}% pot</span>` : ""}${conv && conv.cls === "bad" && SPEED === "fast" ? `<button class="link" id="goAccurate">Solve again on Accurate</button>` : ""}</div>`;
+  if (heuristic(res)) h += `<div class="verdict"><span class="big">${res.recommended}</span><span class="mix">${res.opponents.length + 1} players in · equity vs field ${(res.equity_vs_field * 100).toFixed(0)}% · heuristic, not a solve</span></div>`;
+  else h += `<div class="verdict"><span class="big">${res.recommended}</span>${res.solved ? `<span class="mix">${res.opponents.length + 1} players in · 3-way solve</span>` : ""}${conv ? `<span class="conv ${conv.cls}" title="${convTip(conv)}">${conv.label} · ${conv.x.toFixed(1)}% pot</span>` : ""}${conv && conv.cls === "bad" && SPEED === "fast" ? `<button class="link" id="goAccurate">Solve again on Accurate</button>` : ""}</div>`;
   const hasEv = res.actions.some(a => a.ev_bb !== undefined);
-  h += `<div class="arows${hasEv ? "" : " noev"}"><div class="arow head"><span>Action</span><span>${res.multiway ? "" : "Solver mix"}</span><span class="num">${res.multiway ? "" : "Freq"}</span>${hasEv ? '<span class="num" title="Expected value of taking this action, in big blinds">EV</span>' : ""}</div>`;
+  h += `<div class="arows${hasEv ? "" : " noev"}"><div class="arow head"><span>Action</span><span>${heuristic(res) ? "" : "Solver mix"}</span><span class="num">${heuristic(res) ? "" : "Freq"}</span>${hasEv ? '<span class="num" title="Expected value of taking this action, in big blinds">EV</span>' : ""}</div>`;
   for (const a of res.actions) {
     const ev = hasEv ? (a.ev_bb !== undefined ? `<span class="num ${a.ev_bb > 0.005 ? "pos" : a.ev_bb < -0.005 ? "neg" : ""}">${a.ev_bb > 0 ? "+" : ""}${a.ev_bb.toFixed(2)} bb</span>` : "<span></span>") : "";
     h += `<div class="arow ${a.action === res.recommended ? "best" : ""}" data-act='${JSON.stringify(a)}' title="Click to record this as what you did"><span class="name">${a.action}${a.amount_bb != null ? `<small>${a.amount_bb} bb</small>` : ""}</span><div class="bar"><div style="width:${(a.freq * 100).toFixed(1)}%;background:${COLORS(a.action)}"></div></div><span class="num"${a.gto_freq !== undefined ? ` title="GTO plays this ${(a.gto_freq * 100).toFixed(1)}% of the time"` : ""}>${(a.freq * 100).toFixed(1)}%${a.gto_freq !== undefined ? `<small class="muted" style="display:block;font-size:10px">GTO ${(a.gto_freq * 100).toFixed(0)}%</small>` : ""}</span>${ev}</div>`;
@@ -1182,7 +1184,7 @@ function renderResult(res, key) {
   if (res.size_usage) h += `<div class="meta">Size optimization, your mix over the wide menu: ${SIZE_USAGE(res)}</div>`;
   if (res.solver) h += `<div class="meta">${res.solver.iterations} iterations · ${res.solver.solve_seconds}s · ${res.solver.active_combos} combos · sizes: ${res.solver.tree_actions.join(", ")}${res.solver.exploitability_pct != null ? ` · exploitability ${res.solver.exploitability_pct}% pot` : ""}</div>`;
   if (res.notes && res.notes.length) h += `<div class="meta">${res.notes.join("<br>")}</div>`;
-  if (!res.multiway) h += `<div class="meta">Want to play a mixed strategy? <button class="link" id="randomise">Randomise</button> <span id="drawn"></span></div>`;
+  if (!heuristic(res)) h += `<div class="meta">Want to play a mixed strategy? <button class="link" id="randomise">Randomise</button> <span id="drawn"></span></div>`;
   h += `</details>`;
   el.innerHTML = h;
   const rz = el.querySelector("#randomise");
@@ -1355,7 +1357,8 @@ function handText() {
     if (r.range_action_freq) lines.push("  whole range: " + Object.entries(r.range_action_freq).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(", "));
     if (r.villain_range) lines.push(`  ${r.villain} range (${r.villain_range_combos} combos): ${r.villain_range}`);
     if (r.size_usage) lines.push(`  size optimization: ${SIZE_USAGE(r)}`);
-    if (r.multiway) lines.push(`  equity vs field ${(r.equity_vs_field * 100).toFixed(0)}% (heuristic, ${r.opponents.length + 1} players)`);
+    if (r.solved) lines.push(`  3-way solve against ${r.opponents.join(" and ")}`);
+    else if (r.multiway) lines.push(`  equity vs field ${(r.equity_vs_field * 100).toFixed(0)}% (heuristic, ${r.opponents.length + 1} players)`);
     if (r.solver) lines.push(`  solver: ${r.solver.iterations} iterations, ${r.solver.solve_seconds}s, ${r.solver.active_combos} combos, sizes ${r.solver.tree_actions.join(", ")}`);
     if (r.notes && r.notes.length) lines.push("  notes: " + r.notes.join("; "));
   }

@@ -43,14 +43,22 @@ SPEEDS = {
 }
 
 
+# 3-way pots solved by the 3-player solver (Advisor.mw_solve_streets; the rest use the betting rules). A river
+# iteration costs ~30 ms here, so fast's 2.5 s runs ~80 (~0.1-0.5% of the pot from equilibrium); a turn or flop one,
+# its runouts dealt out every card, ~0.15-0.3 s, so those wait for accurate's 30 s (100-200 iterations).
+MW_STREETS = {"fast": ("river",), "accurate": ("flop", "turn", "river")}
+
+
 def advisor(speed: str = "fast", depth: int = 2, budget: Optional[float] = None,
             prior_budget: Optional[float] = None) -> Advisor:
     sizes, b, pb = SPEEDS[speed]
     cfg = Config(bet_sizes={k: list(v) for k, v in sizes["bet_sizes"].items()},
                  raise_sizes={k: list(v) for k, v in sizes["raise_sizes"].items()}, depth=depth,
                  **sizes.get("flop_model", {}))
-    return Advisor(cfg, time_budget=b if budget is None else budget,
-                   prior_budget=pb if prior_budget is None else prior_budget)
+    adv = Advisor(cfg, time_budget=b if budget is None else budget,
+                  prior_budget=pb if prior_budget is None else prior_budget)
+    adv.mw_solve_streets = MW_STREETS[speed]
+    return adv
 
 
 def advisors(depth: int = 2, budget: Optional[float] = None, prior_budget: Optional[float] = None) -> Dict[str, Advisor]:
