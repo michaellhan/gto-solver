@@ -57,6 +57,9 @@ CONFIGS = {"fast": FAST, "accurate": ACCURATE, "native": {}, "every-turn": dict(
            "accurate-old": dict(ACCURATE, river_play=False, turn_classes=False),
            "fast-old": dict(FAST, river_play=False, turn_classes=False, river_buckets=None, turn_buckets=False),
            "native-fast": dict(BUCKETS, **LS), "native-fast-old": dict(river_play=False, turn_classes=False, **LS)}
+# hand-bucket flop models at other bucket counts and river steps (bNsK: N buckets, every K-th river)
+CONFIGS.update({f"b{n}s{k}": dict(ACCURATE, river_buckets=n, turn_buckets=True, bucket_river_step=k)
+                for n in (32, 48, 64, 96) for k in (1, 3)})
 BOARDS = ["Qs8d3c", "Kd7c2h", "9h8h6c"]
 ITERS = 150
 
@@ -220,7 +223,12 @@ def run_flop(args):
             r0, r1, pot, stack = rng["srp"]["BB"], rng["srp"]["BTN"], 5.5, 97.5
         for c in args.configs.split(","):
             t0 = time.time()
-            sol = solve(cards(board), r0, r1, pot, stack, cfg=Config(**CONFIGS[c]), time_budget=args.budget, max_iters=10000)
+            if args.flop_iters:   # a fixed iteration count (a reference), not a budget
+                sol = solve(cards(board), r0, r1, pot, stack, cfg=Config(**CONFIGS[c]), time_budget=1e9,
+                            max_iters=args.flop_iters)
+            else:
+                sol = solve(cards(board), r0, r1, pot, stack, cfg=Config(**CONFIGS[c]), time_budget=args.budget,
+                            max_iters=10000)
             st = flop_stats(sol)
             st["iters"], st["seconds"] = sol.iters, time.time() - t0
             rows[f"{name}/{c}"] = st
@@ -244,6 +252,7 @@ def main():
     ap.add_argument("--algos"); ap.add_argument("--iters", type=int, default=200)
     ap.add_argument("--spots"); ap.add_argument("--configs", default="fast,accurate")
     ap.add_argument("--budget", type=float, default=8.0)
+    ap.add_argument("--flop-iters", type=int, help="--flop: solve each config this many iterations instead")
     ap.add_argument("--out")
     args = ap.parse_args()
     if args.algos:

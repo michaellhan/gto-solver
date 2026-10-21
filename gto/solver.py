@@ -1409,9 +1409,12 @@ class Solver:
             t -= 4 ** int(np.log(t) / np.log(4) + 1e-9)
         self._ssum *= np.float32((t / (t + 1)) ** gamma)
 
-    def run(self, r0, r1, time_budget=3.0, max_iters=1000, min_iters=10, should_stop=None):
+    def run(self, r0, r1, time_budget=3.0, max_iters=1000, min_iters=10, should_stop=None, reserve=None):
         """r0, r1: (N,) root reaches. Adds iterations until the budget is spent.
-        Raises Cancelled as soon as should_stop() is true."""
+        Raises Cancelled as soon as should_stop() is true.
+        `reserve` (iterations): when given, no iteration starts that would end past the budget (by the mean
+        iteration so far) with this many iterations' time kept back for what follows (an exploitability costs
+        about one); else iterations run until one ends past the budget (up to one iteration over)."""
         r0b, r1b = r0[None, :].astype(np.float32), r1[None, :].astype(np.float32)
         if self.trim_leaves:
             live = (np.flatnonzero(r0 > 0), np.flatnonzero(r1 > 0))
@@ -1424,6 +1427,10 @@ class Solver:
         while self.iters < max_iters:
             if should_stop is not None and should_stop():
                 raise Cancelled()
+            done = self.iters - start
+            if reserve is not None and done >= min_iters and \
+                    time.time() - t0 + (time.time() - t0) / max(done, 1) * (1.0 + reserve) > time_budget:
+                break
             # the opponent's strategies computed in player 0's pass are still current in player 1's
             strats = ({}, {})
             for p in (0, 1):
@@ -1550,12 +1557,12 @@ class Solution:
         """Percent of the pot a best response wins on average (see Solver.exploitability)."""
         return self.solver.exploitability(self.r0, self.r1)
 
-    def extend(self, time_budget: float, max_iters: int = 1000, should_stop=None):
-        """Keep solving from the current regrets for another `time_budget` seconds."""
+    def extend(self, time_budget: float, max_iters: int = 1000, should_stop=None, reserve=None):
+        """Keep solving from the current regrets for another `time_budget` seconds (`reserve`: Solver.run)."""
         if self.iters >= max_iters:
             return self
         _, secs = self.solver.run(self.r0, self.r1, time_budget=time_budget, max_iters=max_iters, min_iters=1,
-                                  should_stop=should_stop)
+                                  should_stop=should_stop, reserve=reserve)
         self.iters = self.solver.iters
         self.seconds += secs
         self._refresh()
@@ -1661,8 +1668,11 @@ def _class_closure(active: np.ndarray, classes) -> np.ndarray:
 def solve(board: Sequence[int], r_oop: np.ndarray, r_ip: np.ndarray, pot: float, stack: float,
           bets=(0.0, 0.0), to_act: int = 0, n_raises: int = 0, cfg: Optional[Config] = None,
           time_budget: float = 3.0, max_iters: int = 1000, dead: Sequence[int] = (), should_stop=None,
-          warm: Optional[Solution] = None) -> Solution:
-    """`warm`: an earlier solve of the same spot (possibly with a different card sampling) to start from."""
+          warm: Optional[Solution] = None, reserve: Optional[float] = None) -> Solution:
+    """`warm`: an earlier solve of the same spot (possibly with a different card sampling) to start from.
+    `reserve` (iterations, see Solver.run): when given, the budget also covers building the tree (the Accurate
+    flop's takes ~1-1.5 s in Pyodide) and that many iterations' time after the solve."""
+    t_start = time.time()
     cfg = cfg or Config()
     board = tuple(board)
     bm = np.ones(N_FULL)
@@ -1684,7 +1694,9 @@ def solve(board: Sequence[int], r_oop: np.ndarray, r_ip: np.ndarray, pot: float,
         # DCFR's iteration count starts over: carrying it on would weight the copied average strategy
         # (from a different tree, and slightly different ranges) like hundreds of iterations of this one
         warm_start(root, ctx, warm.root, warm.ctx)
-    iters, secs = s.run(r0, r1, time_budget=time_budget, max_iters=max_iters, should_stop=should_stop)
+    if reserve is not None:
+        time_budget = max(time_budget - (time.time() - t_start), 0.0)
+    iters, secs = s.run(r0, r1, time_budget=time_budget, max_iters=max_iters, should_stop=should_stop, reserve=reserve)
     sol = Solution(root, root.names, None, None, iters, secs, tb.n_nodes, ctx, r0, r1, s)
     sol._refresh()
     return sol

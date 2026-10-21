@@ -50,13 +50,13 @@ fi
 gh repo clone michaellhan/michaellhan.github.io "$WORK/site" -- -q --depth 1
 rm -rf "$WORK/site/gto-solver"
 mkdir -p "$WORK/site/gto-solver/gto"
-cp "$HERE/gto/static/index.html" "$HERE/gto/static/worker.js" "$HERE/gto/static/hh.js" "$HERE/gto/static/practice.js" "$WORK/site/gto-solver/"
+cp "$HERE/gto/static/index.html" "$HERE/gto/static/worker.js" "$HERE/gto/static/hh.js" "$HERE/gto/static/practice.js" "$HERE/gto/static/reports.js" "$HERE/gto/static/drills.js" "$HERE/gto/static/breakdown.js" "$WORK/site/gto-solver/"
 cp "$HERE"/gto/*.py "$WORK/site/gto-solver/gto/"
 # the precomputed flop library (gto/flop_library.py): index.json and one small file per spot and flop, fetched by the
 # worker only when its spot comes up
 if [ -f "$HERE/gto/static/flop_library/index.json" ]; then
   cp -R "$HERE/gto/static/flop_library" "$WORK/site/gto-solver/"
-  find "$WORK/site/gto-solver/flop_library" -type f ! -name index.json ! -name '*.bin' -delete   # (a running build's .tmp files)
+  find "$WORK/site/gto-solver/flop_library" -type f ! -name '*.json' ! -name '*.bin' -delete   # (a running build's .tmp files)
 fi
 # Stamp the worker's cache-busting version with its content hash (and practice.js's, loaded with the same
 # version), so a changed worker.js is never served from a browser's 4h-cached copy (which would load an
@@ -70,6 +70,21 @@ HV="$(shasum "$HERE/gto/static/hh.js" | cut -c1-10)"
 sed -i.bak -E "s/^const HH_VERSION = \"[^\"]*\";/const HH_VERSION = \"$HV\";/" "$WORK/site/gto-solver/index.html"
 rm "$WORK/site/gto-solver/index.html.bak"
 grep -q "const HH_VERSION = \"$HV\";" "$WORK/site/gto-solver/index.html"
+# and for the flop reports (reports.js; each spot's report.json is cache-busted by its hash in the library's index)
+RV="$(shasum "$HERE/gto/static/reports.js" | cut -c1-10)"
+sed -i.bak -E "s/^const RP_VERSION = \"[^\"]*\";/const RP_VERSION = \"$RV\";/" "$WORK/site/gto-solver/index.html"
+rm "$WORK/site/gto-solver/index.html.bak"
+grep -q "const RP_VERSION = \"$RV\";" "$WORK/site/gto-solver/index.html"
+# and the drills (drills.js, which also loads reports.js: hashed together)
+DV="$(cat "$HERE/gto/static/drills.js" "$HERE/gto/static/reports.js" | shasum | cut -c1-10)"
+sed -i.bak -E "s/^const DR_VERSION = \"[^\"]*\";/const DR_VERSION = \"$DV\";/" "$WORK/site/gto-solver/index.html"
+rm "$WORK/site/gto-solver/index.html.bak"
+grep -q "const DR_VERSION = \"$DV\";" "$WORK/site/gto-solver/index.html"
+# and for the advice's Breakdown and Equity views (breakdown.js)
+BV="$(shasum "$HERE/gto/static/breakdown.js" | cut -c1-10)"
+sed -i.bak -E "s/^const BD_VERSION = \"[^\"]*\";/const BD_VERSION = \"$BV\";/" "$WORK/site/gto-solver/index.html"
+rm "$WORK/site/gto-solver/index.html.bak"
+grep -q "const BD_VERSION = \"$BV\";" "$WORK/site/gto-solver/index.html"
 cd "$WORK/site"
 git add -A
 if git diff --cached --quiet; then echo "Site already up to date."; exit 0; fi

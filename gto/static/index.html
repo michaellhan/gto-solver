@@ -248,6 +248,7 @@
   .readout span.a::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; background: var(--c); }
   #pAdvice { container-type: inline-size; }
   /* range grid: capped so it never grows past ~440px; hover readout sits beside it when there's room */
+  .vtabs { margin-top: 14px; } .vtabs button { font-size: 12px; padding: 5px 12px; }
   .rangewrap { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px 16px; margin-top: 6px; }
   .rangewrap .grid { margin-top: 0; max-width: 440px; width: 100%; }
   @container (min-width: 620px) {
@@ -393,6 +394,8 @@
     <div class="menu" id="menu" hidden>
       <button id="fourcolor" title="Four-colour deck: diamonds blue, clubs green">Four-colour deck</button>
       <button id="importHand" title="Paste a PokerStars or GGPoker hand history to replay and review it">Import hand…</button>
+      <button id="drills" title="Drill one flop spot: random flops and hands from the precomputed solutions, each answer graded at once (keys 1-4, Space for the next)">Drills…</button>
+      <button id="flopReports" title="The precomputed spots' flop strategy across every flop, by texture; click a flop to load it">Flop reports…</button>
       <button id="swapCols" class="wideonly" title="Put the advice on the left and the table on the right">Advice on the left</button>
       <div class="sep"></div>
       <button id="resetLayout" title="Default column widths, table size and panels">Reset layout</button>
@@ -579,6 +582,9 @@ try { if (localStorage.getItem("gto-opponents") === "pool") OPP = "pool"; } catc
 const practicing = () => !!(window.Practice && window.Practice.on);
 const WORKER_VERSION = "14";   // scripts/deploy.sh replaces this with a hash of worker.js
 const HH_VERSION = "1";        // and this with a hash of hh.js (the hand-history importer, loaded on first use)
+const RP_VERSION = "1";        // and this with a hash of reports.js (the flop reports, loaded on first use)
+const DR_VERSION = "1";        // and this with a hash of drills.js (the drills, loaded on first use, after reports.js)
+const BD_VERSION = "1";        // and breakdown.js (the advice's Breakdown and Equity views, loaded on first use)
 
 // ---- backend: the local Python server if present, otherwise the solver runs in the browser (Pyodide worker)
 let MODE = null, worker = null, reqId = 0;
@@ -1205,7 +1211,8 @@ function renderResult(res, key) {
   }
   if (res.locked) h += `</div><div class="meta">${Object.entries(res.locked).map(([p, l]) => `Against your lock on ${p} (${LOCK_TEXT(l)})`).join("; ")}: the best response, with GTO's frequency under each.`;
   h += `</div><div class="meta">${TAP} a row to record it as what you did.${hasEv ? " EV is in big blinds relative to folding now, so fold is 0: chips already in the pot are gone either way." : res.street === "preflop" ? " Preflop comes from charts, so there's no EV column." : ""}${res.widened && res.widened.length ? ` The solve rarely has ${res.widened.join(" and ")} play this way, so their range comes from simple betting rules instead; the EVs (and the pick) are against that range, so they can disagree with the solver's mix.` : conv && conv.cls !== "ok" ? " Actions the solver mixes should have near-equal EVs; gaps here mean the solve hasn't settled." : ""}</div>`;
-  if (res.grid) h += renderGrid(res.grid, res.hand);
+  if (res.grid && res.street !== "preflop" && !heuristic(res)) h += `<div class="segment vtabs">${["grid", "breakdown", ...(res.multiway ? [] : ["equity"])].map(v => `<button data-v="${v}" class="${v === "grid" ? "active" : ""}">${v[0].toUpperCase() + v.slice(1)}</button>`).join("")}</div><div class="bdview" hidden></div>`;
+  if (res.grid) h += `<div class="gridview">${renderGrid(res.grid, res.hand)}</div>`;
   h += `<details><summary>Details</summary>`;
   if (res.villain_grid) h += `<div class="vgrid">${renderGrid(res.villain_grid, null, res.villain)}</div>`;
   if (res.villain_range) h += `<details><summary>${res.villain}'s range as text (${res.villain_range_combos} combos)</summary><div class="villain">${res.villain_range}</div></details>`;
@@ -1223,6 +1230,8 @@ function renderResult(res, key) {
   if (res.grid) wireGrid(el, res.grid, res.hand);
   const vg = el.querySelector(".vgrid");
   if (vg) wireGrid(vg, res.villain_grid, null, res.villain);
+  el.querySelectorAll(".vtabs button").forEach(b => b.onclick = () => showView(el, b.dataset.v, res, key));
+  if (VIEW !== "grid" && !review && el.querySelector(`.vtabs [data-v="${VIEW}"]`)) showView(el, VIEW, res, key);
   updateAdviceState();
   renderAction(simulate());   // on your turn the buttons carry the solver's sizes and frequencies
 }
@@ -1608,17 +1617,51 @@ hhText.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey 
 document.getElementById("hhGo").onclick = async () => {
   let r;
   try { await loadHH(); r = importHand(hhText.value); } catch (e) { hhErr.textContent = e.message || String(e); return; }
-  if (review) review.cancel = "drop";
-  if (practicing()) window.Practice.set(false);   // an imported hand is for review, not a practice deal
-  await cancelSolve();
-  S = cleanState(r.state); setPositions(S.players); selSlot = null; showDeck = false; editSetup = false; pendingRank = null;
-  document.getElementById("stack").value = S.stack; document.getElementById("ante").value = ANTE(); document.getElementById("straddle").checked = !!S.straddle;
-  save(); resetAdvice(); renderAll(); hhBox.hidden = true; hhText.value = "";
+  await loadHandState(r.state); hhBox.hidden = true; hhText.value = "";
   const h = r.hand;
   toast(`Imported ${h.site === "generic" ? "a" : h.site} hand: ${h.players}-handed, you are ${SEAT_LABEL(h.hero, h.players)} with ${h.hole.join("")}, ${fmt(h.effective)}bb effective${S.stacks ? ` (you have ${fmt(S.stack)}bb; every seat plays its own stack)` : ""}.${r.warnings.length ? " " + r.warnings.join(" ") : ""}`, null, 15000);
   const b = document.createElement("button"); b.className = "link"; b.textContent = "Review whole hand";
   b.onclick = () => { document.getElementById("toast").hidden = true; reviewHand(); }; document.getElementById("toast").appendChild(b);
 };
+// A whole hand replaces the page's (an imported one, a flop from the reports): a review, not a practice deal.
+async function loadHandState(st, note) {
+  if (review) review.cancel = "drop";
+  if (practicing()) window.Practice.set(false);
+  await cancelSolve();
+  S = cleanState(st); setPositions(S.players); selSlot = null; showDeck = false; editSetup = false; pendingRank = null;
+  document.getElementById("stack").value = S.stack; document.getElementById("ante").value = ANTE(); document.getElementById("straddle").checked = !!S.straddle;
+  save(); resetAdvice(); renderAll();
+  if (note) toast(`Loaded ${note}: you are ${SEAT_LABEL(S.hero, S.players)} with ${S.cards[0]}${S.cards[1]}.`);
+}
+// ---- flop reports (reports.js, loaded the first time they're opened)
+document.getElementById("flopReports").onclick = () => {
+  document.getElementById("menu").hidden = true;
+  if (window.FlopReports) return window.FlopReports.open();
+  const s = document.createElement("script"); s.src = "reports.js?v=" + RP_VERSION;
+  s.onload = () => window.FlopReports.open(); s.onerror = () => showErr("Couldn't load the flop reports (reports.js)."); document.head.appendChild(s);
+};
+// ---- drills (drills.js, which uses reports.js's textures; both loaded the first time the drills open)
+const loadJs = (src, ok) => ok() ? Promise.resolve() : new Promise((res, rej) => { const s = document.createElement("script"); s.src = src;
+  s.onload = res; s.onerror = () => rej(new Error(`couldn't load ${src.split("?")[0]}`)); document.head.appendChild(s); });
+document.getElementById("drills").onclick = () => {
+  document.getElementById("menu").hidden = true;
+  loadJs("reports.js?v=" + RP_VERSION, () => window.FlopReports).then(() => loadJs("drills.js?v=" + DR_VERSION, () => window.Drills))
+    .then(() => window.Drills.open()).catch(e => showErr("Couldn't load the drills: " + e.message));
+};
+// ---- the advice's Breakdown and Equity views (breakdown.js, loaded the first time one is opened): the advice's own
+// request again with "breakdown": true, answered from the solve it came from; the view picked stays for later advice
+let VIEW = "grid";
+function showView(el, v, res, key) {
+  VIEW = v;
+  el.querySelectorAll(".vtabs button").forEach(b => b.classList.toggle("active", b.dataset.v === v));
+  const box = el.querySelector(".bdview"); el.querySelector(".gridview").hidden = v !== "grid"; box.hidden = v === "grid";
+  if (v === "grid") return;
+  const go = () => window.Breakdown.show(box, v, res, key, (st) => callAdvise(st));
+  if (window.Breakdown) return go();
+  box.innerHTML = `<div class="meta">Loading…</div>`;
+  const s = document.createElement("script"); s.src = "breakdown.js?v=" + BD_VERSION;
+  s.onload = go; s.onerror = () => { box.innerHTML = `<div class="err">Couldn't load the breakdown (breakdown.js).</div>`; }; document.head.appendChild(s);
+}
 // ---- layout (per browser): column divider, table height, folded panels, columns swapped. Only in a real
 // browser (the tests' fake DOM has no window events), and never allowed to break the page.
 (function layout() {

@@ -1,5 +1,6 @@
 """The precomputed flop library (gto/flop_library.py, scripts/build_flop_library.py): canonical flops, entries that
 read back as solved, the advisor answering from it (and only where it holds the spot)."""
+import hashlib
 import importlib
 import itertools
 import json
@@ -52,6 +53,13 @@ class TestCanonicalFlops(unittest.TestCase):
         for sid, n in fl.SPOT_FLOPS.items():
             self.assertIn(sid, [s[0] for s in fl.SPOTS])
             self.assertTrue(set(rep) <= set(fl.representative_flops(n)), (sid, n))
+        # a report's weights: the representative set stands for every flop evenly; other sets for their own flops
+        names = [cards_str(f) for f in rep]
+        w = fl.report_weights(names)
+        self.assertAlmostEqual(sum(w.values()), 22100)
+        self.assertEqual(len(set(w.values())), 1)
+        self.assertEqual(fl.report_weights(["Kc7d2h", "4c3c2c"]), {"Kc7d2h": 24.0, "4c3c2c": 4.0})
+        self.assertEqual(sum(fl.report_weights([cards_str(f) for f in fls]).values()), 22100)
 
     def test_round_trip(self):
         """Every suit permutation of a flop has the same canonical flop, the suit map takes the flop there, and
@@ -135,6 +143,74 @@ class TestFlopLibrary(unittest.TestCase):
             gap = e0.max(axis=0, keepdims=True) - e0
             self.assertTrue(np.all(np.abs(e0 - e1) <= 0.011 + 0.016 * gap), path)
         self.assertEqual(ls.exploitability(), round(self.sol.exploitability(), 4))
+
+    def test_ranges(self):
+        """write_index writes the spot's ranges.json (the drills' hand weights): both ranges entering the flop in
+        1/10000, fingerprinted as the index's, holding every combo of the entry's ranges."""
+        with open(os.path.join(self.dir, SPOT[0], "ranges.json")) as f:
+            rg = json.load(f)
+        with open(os.path.join(self.dir, "index.json")) as f:
+            sp = json.load(f)["spots"][0]
+        s = self.setup
+        self.assertEqual(rg["fp"], sp["fp"])
+        for p, full in ((0, s["full0"]), (1, s["full1"])):
+            w = np.array(rg["w"][p]) / 10000
+            self.assertEqual(len(w), len(ALL_COMBOS))
+            self.assertLess(np.abs(w - full).max(), 0.5e-4 + 1e-9)
+            self.assertEqual(fl.range_fp(w), sp["fp"][p])
+        with open(os.path.join(self.dir, SPOT[0], CANON + ".bin"), "rb") as f:
+            e = fl.decode(f.read())
+        for p in (0, 1):
+            self.assertTrue(np.all(np.array(rg["w"][p])[e["masks"][p]] > 0))
+
+    def test_report(self):
+        """write_index writes the spot's report.json (hashed in the index): per flop, each stored node's range
+        frequencies (the entry's, summing to 1), EVs summing to the pot, equities to 1, a hand in the acting player's
+        range off the board; a rewrite keeps the lines of unchanged entries without reading them."""
+        sid = SPOT[0]
+        rp = os.path.join(self.dir, sid, "report.json")
+        with open(rp, "rb") as f:
+            data = f.read()
+        with open(os.path.join(self.dir, "index.json")) as f:
+            idx = json.load(f)
+        self.assertEqual(idx["spots"][0]["report"], hashlib.sha1(data).hexdigest()[:10])
+        rep = json.loads(data)
+        s = self.setup
+        self.assertEqual((rep["id"], rep["line"], rep["seats"], rep["pot"]), (sid, SPOT[2], [s["oop"], s["ip"]], s["pot"]))
+        self.assertEqual([x["f"] for x in rep["flops"]], [CANON])
+        line = rep["flops"][0]
+        with open(os.path.join(self.dir, sid, CANON + ".bin"), "rb") as f:
+            e = fl.decode(f.read())
+        self.assertEqual(set(line["n"]), {"|".join(nd["path"]) for nd in e["nodes"]})
+        for nd in e["nodes"]:
+            k = "|".join(nd["path"])
+            self.assertEqual(rep["nodes"][k], nd["names"])
+            fr = line["n"][k]
+            self.assertAlmostEqual(sum(fr), 1.0, delta=0.002)
+            for x, nm in zip(fr, nd["names"]):
+                self.assertAlmostEqual(x, nd["freqs"][nm], delta=0.001)
+            hand = cards(line["h"][k])
+            self.assertFalse(set(hand) & set(cards(CANON)))
+            r = s["full0"] if nd["player"] == 0 else s["full1"]
+            self.assertGreater(r[COMBO_INDEX[tuple(sorted(hand))]], 0.99)
+        self.assertAlmostEqual(sum(line["ev"]), s["pot"], delta=0.011)
+        self.assertAlmostEqual(sum(line["eq"]), 1.0, delta=0.0011)
+        # the root's EV: out of position's range average of the solve's node values
+        root = self.sol.root
+        r0 = self.sol.r0
+        v = (root.avg_strategy0() * self.sol.solver.node_action_evs(root, self.sol.r0, self.sol.r1)).sum(axis=0)
+        self.assertAlmostEqual(line["ev"][0], float((r0 * v).sum() / r0.sum()), delta=0.03)
+        # range equity: exact over every runout within half a point; a range against itself is 50%
+        board = cards(CANON)
+        bm = np.prod([1.0 - MEMBER_FULL[c] for c in board], axis=0)
+        exact = fl.range_equity(board, s["full0"] * bm, s["full1"] * bm, step=1)
+        self.assertAlmostEqual(line["eq"][0], exact, delta=0.005)
+        self.assertAlmostEqual(fl.range_equity(board, s["full0"] * bm, s["full0"] * bm), 0.5, delta=1e-9)
+        # a rewrite reuses the unchanged line (no entry read) and gives the same file
+        def read(name):
+            raise AssertionError("an unchanged entry was read again")
+        again = fl.build_report(idx["spots"][0], s["full0"], s["full1"], read, rep)
+        self.assertEqual(json.dumps(again, separators=(",", ":")).encode(), data)
 
     def test_reproduces_live_solve_in_other_suits(self):
         """The entry, read for the flop in other suits, is a live solve of that flop with the same tree and
@@ -292,6 +368,43 @@ class TestShippedLibrary(unittest.TestCase):
                 self.assertLess(size, 200_000)
                 total += size
         self.assertLess(total, 15e6)
+
+    def test_reports_match_the_index(self):
+        """Each shipped spot's report.json (the page's flop reports) is the one the index hashes, holds the index's
+        flops with their entry hashes, its weights sum to the 22100 flops, and its frequencies to 1."""
+        path = os.path.join(fl.DIR, "index.json")
+        if not os.path.exists(path):
+            self.skipTest("no library built")
+        with open(path) as f:
+            idx = json.load(f)
+        for sp in idx["spots"]:
+            with open(os.path.join(fl.DIR, sp["id"], "report.json"), "rb") as f:
+                data = f.read()
+            self.assertEqual(sp["report"], hashlib.sha1(data).hexdigest()[:10], sp["id"])
+            self.assertLess(len(data), 200_000)   # (~45 KB on 184 flops, ~135 KB on 552)
+            rep = json.loads(data)
+            self.assertEqual({x["f"]: x["hash"] for x in rep["flops"]}, sp["flops"])
+            self.assertAlmostEqual(sum(x["w"] for x in rep["flops"]), 22100, delta=1)
+            for x in rep["flops"]:
+                self.assertIn("", x["n"])
+                for k, fr in x["n"].items():
+                    self.assertEqual(len(fr), len(rep["nodes"][k]))
+                    self.assertAlmostEqual(sum(fr), 1.0, delta=0.002, msg=(sp["id"], x["f"], k))
+                self.assertAlmostEqual(sum(x["ev"]), sp["pot"], delta=0.011)
+
+    def test_shipped_ranges_match_the_index(self):
+        """Each shipped spot has its ranges.json (the page's drills), with the index's fingerprints."""
+        path = os.path.join(fl.DIR, "index.json")
+        if not os.path.exists(path):
+            self.skipTest("no library built")
+        with open(path) as f:
+            idx = json.load(f)
+        for sp in idx["spots"]:
+            with open(os.path.join(fl.DIR, sp["id"], "ranges.json")) as f:
+                rg = json.load(f)
+            self.assertEqual(rg["fp"], sp["fp"], f"{sp['id']}: rebuild the index (scripts/build_flop_library.py --index-only)")
+            for p in (0, 1):
+                self.assertEqual(fl.range_fp(np.array(rg["w"][p]) / 10000), sp["fp"][p])
 
 
 if __name__ == "__main__":

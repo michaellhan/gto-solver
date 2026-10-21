@@ -7,6 +7,9 @@ the pot from equilibrium (checked every --check iterations from --min-iters, at 
     python scripts/build_flop_library.py --spots srp_btn_bb --boards Ks7d2c,Qs8s3d   # given flops
     python scripts/build_flop_library.py --index-only                   # rewrite index.json from the entries
 
+Each index rewrite also writes <spot>/report.json (flop_library.build_report: per flop, the range frequencies at each
+stored node, both players' EV and equity; the page's flop reports), recomputing only the flops whose entries changed.
+
 Resumable: an entry already on disk for the current charts and tree is kept, so a stopped run picks up where it was
 (run it again with the same arguments). An entry whose spot's ranges or tree no longer match (the charts or the
 library's config changed) is solved again, and left out of the index until it is. The index is rewritten every
@@ -76,8 +79,37 @@ def solve_entry(job):
     return f"{sid} {name} iters={sol.iters} expl={expl:.3f}% secs={time.time() - t0:.0f} bytes={len(data)}"
 
 
+def write_report(out: str, sp: dict, s: dict) -> str:
+    """<spot>/report.json (flop_library.build_report: the spot's strategy across its flops, for the page's flop
+    reports), reusing the flops of the one on disk whose entries are unchanged; returns its content hash."""
+    path = os.path.join(out, sp["id"], "report.json")
+    try:
+        with open(path) as f:
+            old = json.load(f)
+    except (OSError, ValueError):
+        old = None
+
+    def read(name):
+        with open(os.path.join(out, sp["id"], name + ".bin"), "rb") as f:
+            return f.read()
+    rep = fl.build_report(sp, s["full0"], s["full1"], read, old)
+    data = json.dumps(rep, separators=(",", ":")).encode()
+    with open(path + ".tmp", "wb") as f:
+        f.write(data)
+    os.replace(path + ".tmp", path)
+    return hashlib.sha1(data).hexdigest()[:10]
+
+
+def write_ranges(out: str, sp: dict, s: dict) -> None:
+    """<spot>/ranges.json (flop_library.spot_ranges: the ranges entering the flop, for the page's drills)."""
+    path = os.path.join(out, sp["id"], "ranges.json")
+    with open(path + ".tmp", "w") as f:
+        json.dump(fl.spot_ranges(sp["id"], s["full0"], s["full1"]), f, separators=(",", ":"))
+    os.replace(path + ".tmp", path)
+
+
 def write_index(out: str, spots) -> dict:
-    """index.json from the entries on disk that match the current charts and tree."""
+    """index.json from the entries on disk that match the current charts and tree (and each spot's report.json)."""
     idx = {"format": fl.FORMAT, "tree": fl.tree_key(fl.library_config()), "spots": []}
     stale = 0
     total = 0
@@ -99,8 +131,11 @@ def write_index(out: str, spots) -> dict:
                 total += len(data)
                 flops[fn[:-4]] = hashlib.sha1(data).hexdigest()[:10]
         if flops:
-            idx["spots"].append({"id": sid, "label": label, "line": line, "seats": [s["oop"], s["ip"]],
-                                 "fp": meta["fp"], "pot": s["pot"], "stack": s["stack"], "flops": flops})
+            sp = {"id": sid, "label": label, "line": line, "seats": [s["oop"], s["ip"]],
+                  "fp": meta["fp"], "pot": s["pot"], "stack": s["stack"], "flops": flops}
+            sp["report"] = write_report(out, sp, s)
+            write_ranges(out, sp, s)
+            idx["spots"].append(sp)
     tmp = os.path.join(out, "index.json.tmp")
     os.makedirs(out, exist_ok=True)
     with open(tmp, "w") as f:

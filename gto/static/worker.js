@@ -2,7 +2,7 @@
 importScripts("https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js");
 
 // no __init__ here: GitHub Pages (Jekyll) will not serve files starting with an underscore
-const FILES = ["cards", "ranges", "evaluator", "preflop", "pf_equity", "pf_classes", "pf_solve", "pf_game", "pf_game_data", "pf_eqr", "solver", "multiway_solver", "exploit", "advisor", "flop_library"];
+const FILES = ["cards", "ranges", "evaluator", "preflop", "pf_equity", "pf_classes", "pf_solve", "pf_game", "pf_game_data", "pf_eqr", "solver", "multiway_solver", "exploit", "advisor", "flop_library", "breakdown"];
 
 // The precomputed flop library (gto/flop_library.py): the Python side asks for its index once and for an entry
 // (<spot>/<flop>.bin, ~10 KB) only when a flop spot it holds comes up. A synchronous request (allowed in a
@@ -48,15 +48,15 @@ const ready = (async () => {
   //   with every river: 0.6-3.8).
   // A river root bets 33/75/125/250% pot (Advisor.root_sizes): 0.1-0.6% of the pot per combo from a six-size menu,
   //   where 75% alone was 1.2-7.2 (polar rivers overbet half the range).
-  // From the flop: Fast plays Accurate's flop model (the river bet on, one turn per rank class) with the turn and river
-  //   by 32 hand buckets (river_buckets, turn_buckets): 190-260 iterations (30-42 ms each, 2.4x faster than 3
-  //   random turns with the river checked down, which ran ~100 and bet 10-30 points too little on dry and paired
-  //   flops); c-bets ~3.5 points from a solve over every turn (README, Accuracy vs speed). Accurate plays one turn per
-  //   rank class with the river still bet on (Config's defaults): 60-75 iterations on a rainbow flop, ~30 on a
-  //   two-tone or monotone one; c-bets within ~8 points of a solve over every turn there, against 12 for 4 random
-  //   turns with the river checked down. A Fast flop solve plays another game there (buckets), so it seeds
-  //   only river solves now (the turn menus differ). Its earlier-street solves (12 s, for range narrowing) play Fast's
-  //   flop model, which settles there (~300 iterations; ~10 per combo).
+  // From the flop both play one turn per rank class with the river bet on, the turn and river by hand buckets
+  //   (river_buckets, turn_buckets; README, Accuracy vs speed). Fast: 32 buckets over every third river, 130-420
+  //   iterations in 8 s (scripts/bench_browser.mjs). Accurate: 64 over every river, 520-870 iterations in 60 s
+  //   (0.03-0.05% of the pot from equilibrium in its game). Against a solve over every turn (12 flops, scripts/bench_solver.py --flop) at 400 iterations
+  //   the c-bet is 2.5 / 1.8 points off on average, the size split 4.1 / 2.3, BB's check 1.6 / 1.3. Accurate played
+  //   the turn and river per combo until measured here: 54 iterations in 60 s on a rainbow flop (7.5 points of
+  //   c-bet, 12.7 of split, 8.5 of check), ~25-30 on a two-tone one (at 25: 14.4, 18.4, 18.4) where, still 10% of
+  //   the pot from equilibrium, it took a second budget (132 s for the page's 60, a 590 MB heap). Its earlier-street solves
+  //   (12 s, for range narrowing) play its own flop model, so a hand's flop advice narrows its turn without a solve.
   const RS = "[setattr(a, 'root_sizes', {'river': {'bet': [0.33, 0.75, 1.25, 2.5]}}) for a in advs.values()]; ";
   const RAISES = "raise_sizes={'flop': [0.5], 'turn': [0.75], 'river': [0.75]}";
   py.runPython("import sys, json; sys.path.insert(0, '/app'); from gto.advisor import Advisor; from gto.solver import Config; "
@@ -64,20 +64,25 @@ const ready = (async () => {
              + `river_buckets=32, turn_buckets=True, bucket_river_step=3, river_classes=True, `
              + `bet_sizes={'flop': [0.33, 0.75], 'turn': [0.33, 1.25], 'river': [0.75]}, ${RAISES})), `
              + `'accurate': Advisor(Config(n_turns=4, leaf_turns=4, leaf_rivers_flop=8, n_rivers_from_flop=8, river_classes=True, `
+             + `river_buckets=64, turn_buckets=True, bucket_river_step=1, `
              + `bet_sizes={'flop': [0.33, 0.75], 'turn': [0.33, 0.75, 1.25], 'river': [0.33, 0.75, 1.25]}, ${RAISES}))}; `
              + RS
              // Accurate picks up from a Fast solve of the same spot (not the reverse: Fast's few seconds can't re-fit an
              // Accurate solve to its own tree; the page shows Accurate's answer instead)
-             + "advs['accurate'].warm_from = advs['fast']; advs['accurate'].prior_model = {'river_buckets': 32, 'turn_buckets': True, 'bucket_river_step': 3}; "
+             + "advs['accurate'].warm_from = advs['fast']; "
+             // Fast's turn also gets the narrowing flop's 3 s when that flop costs nothing (from the library or the hand's
+             // flop advice; Advisor.spare_prior, as natively): the page's bar counts them anyway
+             + "advs['fast'].spare_prior = True; "
              // both speeds answer a flop spot the library holds from it (Accurate's flop model, solved offline)
              + "from gto.flop_library import FlopLibrary; from js import libFetch; "
              + "lib = FlopLibrary(lambda p: (lambda r: None if r is None else r.to_bytes())(libFetch(p))); "
              + "advs['fast'].library = advs['accurate'].library = lib; "
-             // 3-way pots: the 3-player solver on the river in Fast (0.1-0.3 s an iteration here by load: 8 s is 25-80, under 1% of the pot
-             // from equilibrium); turns and flops only in Accurate's 60 s, the later streets bet by 12 hand buckets with the turn's
-             // tables over every third river, the flop betting a third or three quarters of the pot (numpy has no BLAS here: a
-             // flop iteration ~0.7-1.2 s, 35-75 in the 60 s, which also cover the tables, ~2-2.5 s estimated, and the gains and
-             // EVs read off after: the answer used to come ~10 s late; a turn one 0.3-0.5 s, 120-200)
+             // 3-way pots (measured, scripts/bench_browser.mjs): the 3-player solver on the river in Fast (0.13-0.16 s an
+             // iteration: 41-48 in 8 s, 0.3-0.4% of the pot from equilibrium); turns and flops only in Accurate's 60 s, the
+             // later streets bet by 12 hand buckets with the turn's tables over every third river, the flop betting a third or
+             // three quarters of the pot (numpy has no BLAS here: a flop iteration 0.34 s checked to, 161 in the 60 s, 0.27%;
+             // 0.7-0.95 s first to act, 56-77, 3-6%; the 60 s cover the tables and the gains and EVs read off after). Turns
+             // (0.18 s) and rivers stop once settled (advisor.MW_SETTLED): 200 iterations in 34 s, 100 in 15 s, 0.07%.
              + "advs['fast'].mw_solve_streets = ('river',); advs['accurate'].mw_solve_streets = ('flop', 'turn', 'river'); "
              + "advs['accurate'].mw_street_config = {s: {'later': 'buckets', 'buckets': 12, 'bucket_river_step': 3} for s in ('flop', 'turn')}; "
              + "advs['accurate'].mw_street_config['flop']['bet'] = {'flop': [0.33, 0.75], 'turn': 0.5, 'river': 0.5}");

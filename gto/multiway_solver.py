@@ -1421,7 +1421,16 @@ class MultiwaySolver:
         return np.array([(v[p][0] * self.reach0[p][0]).sum() for p in range(self.np)]) / m
 
     def br_gains(self):
-        """What each player gains by best-responding to the others' average strategies (bb per deal)."""
+        """What each player gains by best-responding to the others' average strategies (bb per deal). Kept until
+        the next iteration (the advisor reads it at checkpoints and again for the answer)."""
+        memo = getattr(self, "_gains_memo", None)
+        if memo is not None and memo[0] == self.iters:
+            return memo[1].copy()
+        g = self._br_gains()
+        self._gains_memo = (self.iters, g)
+        return g.copy()
+
+    def _br_gains(self):
         v = self.values()
         m = self.total_mass()
         out = []

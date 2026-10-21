@@ -40,10 +40,10 @@ python -m gto.server --port 18877
 Open http://127.0.0.1:18877/ . (The same page is what is deployed to the
 website; there it detects that no server is present and runs the identical
 Python code in a web worker with Pyodide. Pyodide's numpy is 10 to 30 times slower
-per iteration than native, so the browser solves a smaller game: two flop bet sizes and one
-turn and river bet and raise size. Fast uses 8 fixed rivers under each turn; Accurate uses
-every river. The local server (`gto/native.py`) runs Fast with the same sizes and every river, and
-Accurate with two turn and river bet sizes.) Pick the number of players (2 to 9), your seat
+per iteration than native, so the browser solves a smaller game: below a flop solve the turn and
+river are played by hand buckets (32 in Fast, 64 in Accurate), and from the turn the river is one
+card per class. The local server (`gto/native.py`) plays the same turn and river menus and Accurate's
+flop per combo; see Accuracy vs speed, Browser timings, for what each request takes in the browser.) Pick the number of players (2 to 9), your seat
 and the stacks (one for the table; **per seat…** gives any seat its own, shown beside its name on
 the table), click cards into your
 hand and the board (click a placed card in its slot to remove it; cards already
@@ -75,7 +75,16 @@ opens, 3bb from the small blind, 3x or 4x 3-bets, 2.3x 4-bets, then all-in; over
 postflop: the solver's bet and raise sizes in big blinds), the mixed strategy for your exact
 hand with EVs, your whole range's totals at that spot (the percentage and number of
 combos that fold, call, check, bet or raise each size, with a bar), and a 13x13 grid of
-that range by hand with your hand boxed. Click an advice row to record it as what you did and keep going. Once the advice
+that range by hand with your hand boxed. Postflop, tabs beside the grid open GTO Wizard-style
+**Breakdown** and **Equity** views of the spot: your range by hand category (made hands: quads or better down to
+top pair by kicker, middle and weak pairs, ace high, nothing; draws: combo, flush draw, open-ended, gutshot,
+backdoor), each with its share of the range, a bar split by the solver's mix, its equity and EV, and the villain's
+range the same way without a mix; and each range's equity distribution (its hands' equities against the other
+range sorted high to low), with average equity, EV and the share of each range at 80%+ equity (the nut advantage).
+3-way solves get the Breakdown only. Opening a tab asks again with `"breakdown": true` on the same state, answered
+from the solve the advice came from (no new solve; ~0.3 s native, ~0.5 s in the browser on a flop: the equities
+every turn and river on the turn, an even sample of flop runouts, `gto/breakdown.py`); the views are
+`gto/static/breakdown.js`, loaded when first opened, and the tab picked stays for later advice. Click an advice row to record it as what you did and keep going. Once the advice
 is in, your action buttons switch to the solver's own sizes with its frequency on each,
 so what you record is exactly what was solved. Postflop, a badge shows how well the solve
 converged (exploitability in % of the pot: converged under 3%, fair under 10%, rough
@@ -101,6 +110,31 @@ loaded only when the dialog opens. **Review whole hand** (offered after an impor
 hand with ungraded decisions) solves each of your decisions in order at the current Fast/Accurate setting,
 grades it as if it had been entered live and ends on the hand review; it shows "decision 2 of 5" while it
 runs and can be cancelled, keeping the grades so far.
+
+**Flop reports** (in the ⋯ menu) are aggregate reports of the [precomputed flop library](#precomputed-flop-library):
+pick a spot (BTN vs BB, …) and a node (out of position first; in position after a check; out of position facing
+in position's most common bet after checking) for a table of its 184 flops: each flop's range frequencies as a
+stacked bar and numbers, both players' EV (bb, at the start of the flop) and range equity. Click a column to sort;
+filter by high card, suits (rainbow, two-tone, monotone), pairing and connectedness, or group by one of them for the
+groups' averages (each flop weighted by how many of the 22100 flops it stands for; a group row filters to it).
+Clicking a flop loads that hand: the spot's preflop action, the flop, the action up to the node, and you as the player
+to act with the hand that mixes most there, so the precomputed advice appears at once. The data is one small
+`flop_library/<spot>/report.json` per spot (~45 KB, ~12 KB gzipped; ~135 KB for the spots on 552 flops), written with the library's index
+(`flop_library.build_report`, see Building below); the panel is `gto/static/reports.js`, loaded when first opened.
+
+**Drills** (in the ⋯ menu) drill one flop decision of the precomputed library, like GTO Wizard's trainer: pick a
+spot and a node (out of position first; in position after a check; out of position facing a bet after checking)
+and optionally a texture (the reports' high card, suits, pairing, connectedness). Each hand is a flop drawn by how
+often it comes (any stored bet size by how often in position makes it), a hand drawn from the acting player's range
+there (its weight entering the flop, off the board, times its own frequency of the line so far) in random suits.
+Pick an action (keys 1-4) and the hand's GTO mix and per-action EVs show at once with the grade: **Best** (the
+highest EV, within the library's 0.02 bb step), **Correct** (an action the hand plays 10% or more: "mixed"), or by
+the EV given up against the best, Inaccuracy (under 2% of the pot), Mistake (under 8%), Blunder. Space or Enter
+deals the next. The session's accuracy, average EV loss (bb and % of the pot) and streak show under the hand, and
+each drill's history (hands, accuracy, last 100, best streak) is kept in the browser; **Open in the solver** loads
+the hand into the page. `gto/static/drills.js` decodes the library's entries itself (no solver needed: answers are
+instant, also before the in-browser solver has loaded) and reads the hand weights from `flop_library/<spot>/ranges.json`
+(both ranges entering the flop, written with the index, fingerprinted as the index's).
 
 The layout fits the window at any zoom. On a wide window each column scrolls on its own and
 the action buttons stay pinned to the bottom of theirs; drag the divider between the columns
@@ -183,7 +217,11 @@ Response: per-action `freq` (the mixed strategy for hero's exact hand), `ev_bb`
 frequency, or highest EV when the solve is 3%+ of the pot from equilibrium and that
 EV beats the top of the mix by over 1% of the pot), a `sampled` action (drawn from the mix, use this if you want to
 actually play unexploitably), the range-wide frequencies, the villain's inferred
-range, and solver stats.
+range, and solver stats. With `"breakdown": true` a postflop answer also carries `breakdown` (`gto/breakdown.py`):
+`actions`, `pot`, `hero` and `villains`, each with `made` and `draws` categories (`c` combos, `eq` equity, the
+hero's `f` per action and `ev`), the range's `eq`, `ev`, `nuts` (share at `nut_eq`, 0.8, or more) and `curve`
+(equities sorted high to low at every 2% of the range; heads-up only), and the hero's own categories (`mine`);
+`null` where the betting rules answered.
 
 `"opponents": "pool"` (the page's Opponents: Pool toggle) is exploit mode: opponents play like a
 typical player pool instead of GTO. Preflop, hero's calls and raises are re-drawn against the pool's
@@ -416,9 +454,18 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   A74 folds 36 / calls 45 / raises 18 (34.6 / 50.0 / 15.4). An iteration costs ~7x the old tree's
   natively (~15 it/s on a rainbow flop, half that on a two-tone or monotone one) and ~15x in
   Pyodide, and a solve needs ~100: 30 iterations were 12 points of c-bet and 15 of BB's check from
-  the reference, 60 were 8 and 8, 100 were 5 and 4. So the server's Accurate settles, and the
-  browser's Accurate gets 60-75 iterations in 60 s, about 8 points of c-bet from the reference (12
-  before) with BB's check a little noisier (7.5 points, 6 before).
+  the reference, 60 were 8 and 8, 100 were 5 and 4. So the server's Accurate settles. The browser's
+  Accurate, measured in Pyodide (`scripts/bench_browser.mjs`), got 54 iterations in 60 s on K72 and
+  ~25-30 on a two-tone flop, which still over 10% of the pot from equilibrium took a second budget (132 s,
+  a 590 MB heap); against every turn played (12 flops, `bench_solver.py --flop --flop-iters`) 55 iterations
+  are 7.5 points of c-bet off on average (worst 20), 12.7 on the size split, 8.5 on BB's check and 6.8 on
+  its response to the small bet, 25 iterations 14.4 / 18.4 / 18.4 / 14.8. It now plays Fast's bucketed
+  flop model (below) with 64 buckets over every river (`river_buckets=64, bucket_river_step=1`): 520-870
+  iterations in 60 s (0.03-0.05% of the pot from equilibrium in its game, a 115-165 MB heap), and at 400
+  iterations 1.8 points of c-bet off (worst 4.8), 2.3 on the split, 1.3 on the check, 1.4 on the response
+  (200 iterations: 2.2 / 3.0 / 1.9 / 1.5; 32 buckets over every third river at 400: 2.5 / 4.1 / 1.6 / 1.8;
+  96 over every river 1.9 / 1.7 / 0.9 / 1.4 but 270-470 iterations). Its narrowing flops (12 s) play the
+  same model, so a hand's flop advice narrows its turn without another solve.
   * Fast (2.5 s natively, 8 s in the browser) plays the same flop model with the turn and river by
     hand buckets (`river_buckets=32, turn_buckets=True`): each player's range on each turn card is split
     into 32 equal shares ordered by equity against the other's flop range, and the turn and river below
@@ -428,7 +475,8 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
     players' tables are each other's negated transpose, so the game stays zero-sum. Per combo the river
     beyond depth was ~95% of the arithmetic (N x N leaf products); by buckets an iteration costs what the
     old Fast tree's did natively (12-18 ms on a single-raised pot) and 2.4x less in Pyodide (30-42 ms
-    against 74), so Fast gets 140-210 iterations natively and 190-260 in the browser, where it had ~200 and
+    against 74), so Fast gets 140-210 iterations natively and 130-420 in the browser (measured: 217-421 on
+    K72 by machine load, 133-142 on 986 two-tone), where it had ~200 and
     ~100 (setup, before the budget: 0.6-1.0 s natively, 1.1-1.6 s in Pyodide, against 0.6 and 0.7; the turn
     leaves' showdown sums now take one comparison and a byte add per board, and every board's hand
     strengths one batched evaluator call). Against every turn played (12 flops above), at the iterations each gets: c-bet 3.6 points off
@@ -450,6 +498,46 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   (Ks7d2cTh, every river) runs 6.3 -> 11.6 it/s, 1.76% -> 0.31% of the pot after 8 s.
   Natively Fast and Accurate flops run 150 -> 210 and 105 -> 170 it/s, and the server's
   default config 8 -> 35 it/s (Qs8d3c after 4 s: 8% -> 0.6%).
+* **Browser timings** (`scripts/bench_browser.mjs`: `gto/static/worker.js` itself, its Python setup and request
+  handler, run in Pyodide 0.26.4 under Node, a fresh worker a request, wall clock on a 10-core machine shared with
+  other jobs, so +-30% in iterations by load). "Bar" is the page's estimate, what its progress bar counts down: the
+  street's budget plus each earlier postflop street's narrowing budget (Fast 8 + 3 s, Accurate 60 + 12 s). Before,
+  the solve loops had the budget and the tree's build, the iteration in flight at the deadline and the exploitability
+  read after came on top (Accurate flop +4.5 s, a two-tone one +9 s); a heads-up solve's budget now covers its build
+  and keeps one iteration's time back (`solve(reserve=)`, `advisor.HU_RESERVE`), as the 3-way solver's did. 3-way
+  solves stop once settled (`advisor.MW_SETTLED`, 0.1% of the pot, checked at 25, 50, 100, ... iterations): Accurate
+  ran 3-way turns and rivers its whole 60 s. Fast's turn also gets the 3 s its narrowing flop didn't spend
+  (`spare_prior`, as natively). Each cell: seconds, iterations, % of the pot from equilibrium. To run it:
+  `npm install pyodide@0.26.4` in a directory of its own, then `node scripts/bench_browser.mjs --pyodide <that dir>
+  [--spots flop,turn] [--speeds fast,accurate] [--worker edited-copy.js] [--json out.json]` (`--list` shows the spots).
+
+  | request (6-max 100bb) | bar | before | after |
+  |---|---|---|---|
+  | flop in the library (K74r), either speed | 8 / 60 | 0.02 | 0.02 |
+  | flop K72r, Fast | 8 | 8.1, 421, 0.07 | 8.1, 217, 0.22 |
+  | flop K72r, Accurate | 60 | **64.6**, 54, 2.9 | 60.2, 870, 0.03 (64 buckets) |
+  | flop 986 two-tone, Fast | 8 | 8.4, 133, 0.42 | 8.1, 142, 0.37 |
+  | flop 986 two-tone, Accurate | 60 | **131.6**, 58 (two budgets), 2.1, 588 MB | 60.3, 518, 0.05, 164 MB |
+  | turn, flop from the library, Fast | 11 | 8.5, 76, 0.57 | 11.2, 95, 0.40 |
+  | turn, flop from the library, Accurate | 72 | 61.7, 203, 0.28 | 60.5, 186, 0.33 |
+  | turn, flop solved to narrow, Fast | 11 | **12.1**, 51, 1.24 | 11.3, 66, 0.74 |
+  | turn, flop solved to narrow, Accurate | 72 | 73.9, 141, 0.45 | 72.5, 188, 0.31 |
+  | turn in exploit mode, Fast / Accurate | 11 / 72 | 11.9 / 73.7 | 11.3 / 73.5 |
+  | river, Fast / Accurate | 14 / 84 | 13.7 / 31.8, 1000 | 11.5 / 29.4, 1000 |
+  | raked flop (K74r, 5% capped at 3), Fast | 8 | 8.5, 172, 0.33 | 8.5, 88, 1.13 |
+  | raked flop, Accurate | 60 | **65.8**, 66, 1.9 | 60.4, 413, 0.07 |
+  | 3-way flop, first to act, Accurate | 60 | 59.8, 56, 6.3 | 59.7-60.0, 63-77, 3.3-5.0 |
+  | 3-way flop, checked to, Accurate | 60 | | 60.1, 161, 0.27 |
+  | 3-way turn, Accurate | 72 | 59.8, 330, 0.03 | 34.0, 200, 0.07 |
+  | 3-way river, Fast / Accurate | 14 / 84 | 8.0, 41, 0.43 / 60.0, 386, 0.01 | 7.9, 48, 0.33 / 15.1, 100, 0.07 |
+  | preflop | | 0.01 | 0.01 |
+
+  Every request now ends within 6% of the bar (a raked Fast flop: the rake's exploitability costs two more passes).
+  Fast's 3-way flops and turns are answered by the rules in 2.4-3.0 s. The worker's setup (Pyodide, numpy, treys,
+  the solver's files) took 3.3-9.9 s before the first request, outside every bar. The wasm heap peaks at 490 MB (an
+  Accurate turn with its narrowing flop), was 588 MB (the two-tone Accurate flop). The deployed page in Chrome (the
+  desktop app's browser, the code before these changes, the worker's own messages timed in the page) agreed: K72
+  Accurate 63.4 s and 56 iterations, the two-tone flop 91.4 s and 36, Fast flop / turn / river 8.2 / 11.5 / 6.7 s.
 * **Regret minimizer** (`docs/cfr_research.md`, `scripts/bench_solver.py --algos`, exploitability per
   iteration): predictive CFR+ and its discounted form (PCFR+, PDCFR+), the state of the art on many
   non-poker games, are 2-7x more exploitable than DCFR here at 100-200 iterations on every spot (the river,
@@ -491,13 +579,19 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   nobody is all-in and the street is one the speed solves: the river in Fast, every street in Accurate. A solve
   over 10% of the pot from equilibrium after its budget hands over to the rules. The result has the solver's
   mix, EVs (relative to folding now), grid and each player's best-response gain, and "exploitability" is their
-  mean. A river iteration costs 30-90 ms natively and 0.1-0.3 s in Pyodide (by machine load), so Fast's 2.5 s /
-  8 s run 25-80. Turn and flop solves bet the later streets by hand buckets (Known limits; `docs/multiway_research.md`
-  has the model): a turn iteration costs 0.1-0.2 s / 0.3-0.5 s, a flop one (bets of 33 and 75%) 0.1-0.4 s / ~0.7-1.2 s
-  (estimated) after 0.6-1.7 s / ~2-2.5 s of tables, so both wait for Accurate (30 s / 60 s; unloaded natively flops
-  checked to run 200-290 iterations, 0.15-0.25% of the pot from equilibrium, first to act, a bigger tree, 100 and
-  0.8%). The budget covers the tables and the gains and EVs read off after the iterations: a 15 s flop answer took
-  16.4-16.9 s and now 14.8-14.95 (the browser's ran ~10 s past its 60). Against deeper solves (`scripts/compare_multiway.py
+  mean. A river iteration costs 30-90 ms natively and 0.13-0.16 s in Pyodide (measured, `scripts/bench_browser.mjs`),
+  so Fast's 2.5 s / 8 s run 25-80 (the browser's: 41-48, 0.3-0.4% of the pot from equilibrium). Turn and flop solves
+  bet the later streets by hand buckets (Known limits; `docs/multiway_research.md` has the model): a turn iteration
+  costs 0.1-0.2 s / 0.18 s, a flop one (bets of 33 and 75%) 0.1-0.4 s / 0.34 s checked to and 0.7-0.95 s first to
+  act, after 0.6-1.7 s of tables natively, so both wait for Accurate (30 s / 60 s; unloaded natively flops checked to
+  run 200-290 iterations, 0.15-0.25% of the pot from equilibrium, first to act, a bigger tree, 100 and 0.8%; in the
+  browser 161 and 0.27%, 56-77 and 3.3-6.3%; 8 buckets, 112 iterations in the same 60 s, was no closer to the deeper
+  solve below on its 8 spots: best action 76% against 72%, 0.020 bb given up against 0.029, but EVs 0.79 bb off
+  against 0.47 and range bets 6.1 points against 3.2). The budget covers the tables and the gains and EVs read off after the
+  iterations: a 15 s flop answer took 16.4-16.9 s and now 14.8-14.95 (the browser's 59.7-60.0 s of its 60). A solve
+  stops once settled (`advisor.MW_SETTLED`: the players' mean best-response gain under 0.1% of the pot, checked at
+  25, 50, 100, 200, 400 and 700 iterations, about two iterations' time each): the browser's Accurate ran a 3-way river
+  its whole 60 s to 386 iterations (0.01%) and a turn to 330 (0.03%), now 100 in 15 s and 200 in 34 s (0.07%). Against deeper solves (`scripts/compare_multiway.py
   --flop-reference`, `--turn-reference`, 88 and 63 hands) the bucketed flop picks the best action 90% of the time
   on the one-size tree, 75% on the two-size one (choosing between near-tied sizes; with the turn and river dealt out
   55%, the rules 56%), gives up 0.003 / 0.011 bb (dealt 0.055, the rules 0.076) and its range's bets are
@@ -713,7 +807,10 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   (`<spot>/<flop>.bin`, cache-busted by its hash) when its spot does; `scripts/deploy.sh` copies the folder.
 
 Building (resumable: entries on disk for the current charts and tree are kept, so re-run the same command after
-a stop; progress lines go to stdout, the index is rewritten every 20 entries):
+a stop; progress lines go to stdout, the index is rewritten every 20 entries, and with it each spot's
+`report.json` for the flop reports: per flop the stored nodes' range frequencies, the root's EVs, range equity over
+every 8th runout (within ~0.3 points of exact) and a hand to load; only changed entries are recomputed, ~0.15 s
+a flop, all eight spots from scratch ~3.5 min):
 
 ```bash
 nohup nice python scripts/build_flop_library.py --jobs 5 > reports/flop_library_build.log &   # every spot, its SPOT_FLOPS
@@ -733,7 +830,7 @@ holds the library under 15 MB.
 scripts/deploy.sh
 ```
 
-copies the page, the worker, `practice.js`, the `gto` sources and the flop library into the `gto-solver/` folder
+copies the page, the worker, `practice.js`, `reports.js`, `drills.js`, the `gto` sources and the flop library into the `gto-solver/` folder
 of the michaellhan.github.io repo and pushes. First it runs the checks and aborts
 the deploy if either fails: `python -m unittest`, then the quick sanity sweep
 (`scripts/sanity_sweep.py --quick`, about 3 minutes on 10 cores: a fixed, seeded set
