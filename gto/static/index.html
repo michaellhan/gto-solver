@@ -59,10 +59,13 @@
   /* Advanced: custom sizes, ranges, size optimization (the global details margin is for the advice's) */
   #adv { margin: 0 0 8px; } #adv .row { margin-top: 6px; }
   #adv input[type=text] { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 4px 6px; font: inherit; font-size: 12px; width: 64px; }
+  #adv .advh { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); margin-top: 12px; }
+  #adv .who { width: 52px; flex: none; }
   #lockIns > div { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; width: 100%; font-size: 12px; }
-  #lockIns select { padding: 3px 6px; font-size: 12px; } #lockIns input[type=text] { width: 40px; }
+  #lockIns .who { order: -1; }
+  #lockIns select { padding: 3px 6px; font-size: 12px; } #lockIns input[type=text] { width: 48px; }
   #rangeIns label { display: flex; gap: 8px; align-items: center; width: 100%; font-size: 12px; } #rangeIns input[type=text] { flex: 1; min-width: 0; }
-  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
   /* keyboard focus (Tab); a click or tap shows none */
   button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .segment button:focus-visible, .menu button:focus-visible { outline-offset: -2px; }
@@ -84,8 +87,12 @@
   .panel.collapsed > :not(h2) { display: none !important; }
   .panel.collapsed h2 { margin-bottom: 0; }
   .setuprow { margin-bottom: 8px; }
-  .setuprow > .muted:first-child { width: 58px; font-size: 12px; }
-  #seatStackIns { flex-wrap: wrap; gap: 4px 8px; flex: 1; } #seatStackIns label { font-size: 12px; white-space: nowrap; } #seatStackIns input { width: 62px; padding-left: 6px; padding-right: 4px; }
+  .setuprow > .muted:first-child { width: 58px; flex: none; font-size: 12px; }
+  /* ante and straddle: one group, so a narrow screen wraps it whole onto its own line */
+  .anteg { display: inline-flex; gap: 8px; align-items: center; margin-left: 12px; flex: 1; }
+  .anteg > .muted:first-child { font-size: 12px; }
+  #straddleBox { display: inline-flex; align-items: center; gap: 4px; }
+  #seatStackIns { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 4px 8px; flex: 1; } #seatStackIns label { font-size: 12px; white-space: nowrap; display: flex; gap: 4px; align-items: center; justify-content: flex-end; } #seatStackIns input { width: 62px; padding-left: 6px; padding-right: 4px; }
   .seat .stk { font-weight: 400; font-size: 10px; color: var(--muted); margin-left: 3px; }
   .felt .side { font-size: 11px; color: #b7c9bc; font-variant-numeric: tabular-nums; }
 
@@ -150,6 +157,7 @@
   /* ---- history */
   .tl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 10px; align-items: baseline; font-size: 13px; margin-bottom: 5px; }
   .tl .st { color: var(--faint); text-transform: uppercase; font-size: 10px; letter-spacing: .08em; white-space: nowrap; min-width: 56px; }
+  .tl .st span { color: var(--text); }
   .tl .line { display: flex; gap: 4px; flex-wrap: wrap; }
   .chip { background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; white-space: nowrap; font-size: 12px; }
   .chip.hero { border-color: var(--accent); }
@@ -188,6 +196,8 @@
   .practicebar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 12px; margin: 0 0 8px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
   .practicebar .pxscore { margin-left: auto; font-size: 11px; }
   body.practice.heroturn #result, body.practice .acts .fq { display: none; }
+  body.practice.heroturn #adviceNote[hidden] + #result + .pxwait { display: block; }
+  .pxwait { display: none; }
   body.practice .acts button.best { box-shadow: none; }
   body.practice .seat, body.practice #seats, body.practice .rewind { pointer-events: none; }
   body.practice #tableHint, body.practice #editCards, body.practice #timeline > button, body.practice .shortcut, body.practice #pCards { display: none !important; }
@@ -265,10 +275,12 @@
   details { margin-top: 12px; }
   summary { color: var(--muted); font-size: 12px; cursor: pointer; }
   .villain { font-size: 12px; color: var(--muted); word-break: break-word; margin-top: 6px; }
+  details details { margin-top: 6px; }
+  #result.empty:empty { display: none; }
 
-  .importbox { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); width: min(620px, calc(100% - 32px)); z-index: 80; background: var(--panel2); border: 1px solid var(--line2); border-radius: var(--r); padding: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.5); display: flex; flex-direction: column; gap: 8px; }
+  .importbox { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); width: min(620px, calc(100% - 32px)); z-index: 80; background: var(--panel2); border: 1px solid var(--line2); border-radius: var(--r); padding: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.5), 0 0 0 100vmax rgba(0,0,0,.55); display: flex; flex-direction: column; gap: 8px; }
   .importbox textarea { width: 100%; height: 40vh; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 8px; font: 12px/1.4 ui-monospace, Menlo, monospace; resize: vertical; }
-  .toast { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); background: #232932; border: 1px solid var(--line2); border-radius: var(--r); padding: 9px 14px; display: flex; gap: 14px; align-items: center; box-shadow: 0 8px 30px rgba(0,0,0,.5); z-index: 70; max-width: calc(100% - 32px); font-size: 13px; }
+  .toast { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); background: #232932; border: 1px solid var(--line2); border-radius: var(--r); padding: 9px 14px; display: flex; gap: 14px; align-items: center; box-shadow: 0 8px 30px rgba(0,0,0,.5); z-index: 70; width: max-content; max-width: calc(100% - 32px); font-size: 13px; }
 
   /* ---- layout
      Wide screens: the page fills the window; each column scrolls on its own and the action dock stays pinned
@@ -300,16 +312,20 @@
     .col { display: contents; }
     #pSetup { order: 10; } #pTable { order: 20; } #pCards { order: 30; } #pAdvice { order: 40; } #pHistory { order: 50; } #pAction { order: 90; }
     body.heroturn #pAdvice { order: 25; }
+    body.practice.heroturn #pAdvice:has(#adviceNote[hidden]) { display: none; }
     body.needcard #pCards { order: 15; }
     .dock { margin: 0 -10px; border-radius: var(--r) var(--r) 0 0; border-width: 1px 0 0; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
     .menu .wideonly { display: none; }
+    header .ctl > .lbl { display: none; }
   }
   /* short windows (a zoomed-in page): drop the dock's second line */
   @media (max-height: 620px) { .prompt .ask { display: none; } .prompt { margin-bottom: 6px; } }
   @media (max-width: 560px) {
     header { padding: max(8px, env(safe-area-inset-top)) 12px 8px; gap: 6px; }
-    header .ctl > .lbl { display: none; }
     .panel { padding: 10px 12px; }
+    .anteg { flex-basis: 100%; margin-left: 0; }
+    .anteg > .muted:first-child { width: 58px; flex: none; }
+    .toast { flex-wrap: wrap; gap: 6px 14px; }
     .felt::before { inset: 12% 5%; }
     .seat { width: 56px; padding: 3px 2px; }
     .seat .pos { font-size: 11px; }
@@ -342,14 +358,18 @@
     .shortcut { padding-right: 11px !important; }
   }
   @media (pointer: coarse) {
-    button:not(.link), select, input[type=number] { min-height: 40px; }
-    input[type=number], select, .importbox textarea, #adv input[type=text] { font-size: 16px; }
+    button:not(.link), select, input[type=number], #adv input[type=text] { min-height: 40px; }
+    input[type=number], select, .importbox textarea, #adv input[type=text], #lockIns select { font-size: 16px; }
     .acts button { min-height: 44px; }
     .pc { height: 38px; }
     .panel h2[data-fold] { min-height: 40px; margin-top: -10px; }
     .panel.collapsed h2[data-fold] { margin-bottom: -10px; }
     .grip { height: 20px; }
-    .chip.rewind { padding: 4px 10px; }
+    .chip.rewind { padding: 7px 12px; }
+    button.link { padding: 11px 6px; margin: -11px -6px; }
+    summary { padding: 11px 0; margin: -11px 0; }
+    input[type=checkbox] { width: 20px; height: 20px; margin: 0 4px 0 0; }
+    label:has(> input[type=checkbox]) { min-height: 40px; }
   }
   @media (prefers-reduced-motion: reduce) {
     .slot.need, .slot.flash { animation: none; }
@@ -369,7 +389,7 @@
   <button id="copyhand" title="Copy the hand, the advice and a link that reopens this exact spot">Copy hand</button>
   <button id="newhand" title="Shortcut: N">New hand <kbd>N</kbd></button>
   <span class="menuwrap">
-    <button id="menuBtn" class="ghost" title="Display and layout" aria-haspopup="true" aria-expanded="false">⋯</button>
+    <button id="menuBtn" class="ghost" title="More: deck colours, import a hand, layout" aria-label="More" aria-haspopup="true" aria-expanded="false" aria-controls="menu">⋯</button>
     <div class="menu" id="menu" hidden>
       <button id="fourcolor" title="Four-colour deck: diamonds blue, clubs green">Four-colour deck</button>
       <button id="importHand" title="Paste a PokerStars or GGPoker hand history to replay and review it">Import hand…</button>
@@ -393,12 +413,12 @@
           <span class="muted">Stacks</span>
           <input type="number" id="stack" value="100" min="5" step="1"><span class="muted">bb</span>
           <button class="link" id="stacksEdit" title="Give some seats a different stack">per seat…</button>
-          <span class="muted" style="margin-left:12px">Ante</span>
+          <span class="anteg"><span class="muted">Ante</span>
           <input type="number" id="ante" value="0" min="0" step="0.05" title="Ante per player, in big blinds"><span class="muted">bb</span>
-          <label class="muted" id="straddleBox" style="margin-left:auto" title="The first seat posts a 2bb straddle and acts last preflop"><input type="checkbox" id="straddle"> straddle</label>
+          <label class="muted" id="straddleBox" style="margin-left:auto" title="The first seat posts a 2bb straddle and acts last preflop"><input type="checkbox" id="straddle"> straddle</label></span>
         </div>
         <div class="row setuprow seatstacks" id="seatStacks" hidden title="Each seat's stack in big blinds (the others have the table's stack)">
-          <span class="muted">Seat stacks</span><span class="row" id="seatStackIns"></span>
+          <span class="muted">Per seat</span><span class="row" id="seatStackIns"></span>
           <button class="link" id="stacksSame">all equal</button>
         </div>
         <div class="row setuprow">
@@ -412,11 +432,14 @@
           </span>
         </div>
         <details id="adv"><summary>Advanced</summary>
-          <div class="row muted" title="Postflop bet sizes in % of the pot, up to 3 a street (e.g. 33 75); raises are % of the pot after calling. Empty: the solver's own. Fewer sizes solve faster.">Sizes %
+          <div class="advh">Postflop bet sizes, % of the pot</div>
+          <div class="row muted" title="Postflop bet sizes in % of the pot, up to 3 a street (e.g. 33 75); raises are % of the pot after calling. Empty: the solver's own. Fewer sizes solve faster.">
             <label>flop <input type="text" id="sz_flop" placeholder="auto"></label><label>turn <input type="text" id="sz_turn" placeholder="auto"></label>
             <label>river <input type="text" id="sz_river" placeholder="auto"></label><label>raise <input type="text" id="sz_raise" placeholder="auto"></label></div>
           <label class="row muted" title="Heads-up, when you can bet: a first solve over 25-200% of the pot (a third of the time) keeps the sizes the equilibrium uses, and the advice is solved with those. Best on Accurate."><input type="checkbox" id="optSizes"> Optimize bet sizes</label>
+          <div class="advh">Ranges into the flop</div>
           <div class="row" id="rangeIns" title="Ranges entering the flop, PIO style (22+, A2s+, KTo+, QJo:0.5). Empty: the preflop charts' range for the action."></div>
+          <div class="advh">Opponent tendencies (heads-up, postflop)</div>
           <div class="row" id="lockIns" title="Lock an opponent's tendencies (nodelocking): after the flop, heads-up, the advice is the best response to them, with GTO's frequencies alongside. On top of GTO, or of the pool with Opponents: Pool. fold: points more of their range folding to a bet (negative: calls); bluff, bet, raise: % more or less (-100 never, +100 always; bluff is their weak hands' bets); next: their fold % to your bet and bet % when you check at their very next decision."></div>
         </details>
         <div class="row">
@@ -465,11 +488,12 @@
       <h2>Advice</h2>
       <div id="adviceNote" class="note" hidden></div>
       <div id="result" class="empty">Pick your seat and cards, then enter the action seat by seat.<br>Advice appears here whenever it's your turn.</div>
+      <div class="pxwait empty">Practice: the advice for this spot shows once you've acted.</div>
     </section>
   </div>
 </main>
 <div id="toast" class="toast" hidden></div>
-<div id="importBox" class="importbox" role="dialog" aria-label="Import a hand history" hidden>
+<div id="importBox" class="importbox" role="dialog" aria-modal="true" aria-label="Import a hand history" hidden>
   <b>Import a hand history</b>
   <span class="muted" style="font-size:12px">Paste one hand as your poker client saved it (PokerStars, GGPoker or Natural8). It's read here in the page; nothing is uploaded.</span>
   <textarea id="hhText" spellcheck="false" placeholder="PokerStars Hand #… or Poker Hand #…"></textarea>
@@ -664,6 +688,8 @@ function cleanState(st) {
 }
 const encodeState = (st) => btoa(unescape(encodeURIComponent(JSON.stringify(st))));
 const decodeState = (b64) => JSON.parse(decodeURIComponent(escape(atob(b64))));
+// "Click" with a mouse, "Tap" on a touch screen (no hover)
+const TAP = '<span class="hoveronly">Click</span><span class="touchonly">Tap</span>';
 function fmt(x) { return (Math.round(x * 100) / 100).toString(); }
 function cardHtml(c) { return `<span class="${c[1]}">${c[0]}${SUIT_SYM[c[1]]}</span>`; }
 function cardText(c) { return c[0] + SUIT_SYM[c[1]]; }
@@ -972,7 +998,7 @@ function renderTable(sim) {
   const side = pots.length > 1 ? `<div class="side">${pots.map((x, i) => `${i ? "side" : "main"} ${fmt(x.amount)}`).join(" · ")}</div>` : "";
   center.innerHTML = `<div class="board">${b}</div><div class="pot">pot ${fmt(sim.pot)} bb</div>${side}`;
   el.appendChild(center);
-  document.getElementById("tableHint").textContent = sim.cur ? "click a seat to fold to it" : "";
+  document.getElementById("tableHint").innerHTML = sim.cur ? `${TAP.toLowerCase()} a seat to fold to it` : "";
   const ec = document.getElementById("editCards"), auto = !S.cards[0] || !S.cards[1] || !!sim.waiting;
   ec.hidden = auto; ec.textContent = needCard(sim) ? "Hide cards" : "Edit cards";
 }
@@ -1176,11 +1202,11 @@ function renderResult(res, key) {
     h += `<div class="arow ${a.action === res.recommended ? "best" : ""}" data-act='${JSON.stringify(a)}' title="Click to record this as what you did"><span class="name">${a.action}${a.amount_bb != null ? `<small>${a.amount_bb} bb</small>` : ""}</span><div class="bar"><div style="width:${(a.freq * 100).toFixed(1)}%;background:${COLORS(a.action)}"></div></div><span class="num"${a.gto_freq !== undefined ? ` title="GTO plays this ${(a.gto_freq * 100).toFixed(1)}% of the time"` : ""}>${(a.freq * 100).toFixed(1)}%${a.gto_freq !== undefined ? `<small class="muted" style="display:block;font-size:10px">GTO ${(a.gto_freq * 100).toFixed(0)}%</small>` : ""}</span>${ev}</div>`;
   }
   if (res.locked) h += `</div><div class="meta">${Object.entries(res.locked).map(([p, l]) => `Against your lock on ${p} (${LOCK_TEXT(l)})`).join("; ")}: the best response, with GTO's frequency under each.`;
-  h += `</div><div class="meta">Click a row to record it as what you did.${hasEv ? " EV is in big blinds relative to folding now, so fold is 0: chips already in the pot are gone either way." : res.street === "preflop" ? " Preflop comes from charts, so there's no EV column." : ""}${res.widened && res.widened.length ? ` The solve rarely has ${res.widened.join(" and ")} play this way, so their range comes from simple betting rules instead; the EVs (and the pick) are against that range, so they can disagree with the solver's mix.` : conv && conv.cls !== "ok" ? " Actions the solver mixes should have near-equal EVs; gaps here mean the solve hasn't settled." : ""}</div>`;
+  h += `</div><div class="meta">${TAP} a row to record it as what you did.${hasEv ? " EV is in big blinds relative to folding now, so fold is 0: chips already in the pot are gone either way." : res.street === "preflop" ? " Preflop comes from charts, so there's no EV column." : ""}${res.widened && res.widened.length ? ` The solve rarely has ${res.widened.join(" and ")} play this way, so their range comes from simple betting rules instead; the EVs (and the pick) are against that range, so they can disagree with the solver's mix.` : conv && conv.cls !== "ok" ? " Actions the solver mixes should have near-equal EVs; gaps here mean the solve hasn't settled." : ""}</div>`;
   if (res.grid) h += renderGrid(res.grid, res.hand);
   h += `<details><summary>Details</summary>`;
-  if (res.villain_range) h += `<div class="meta">${res.villain} range (${res.villain_range_combos} combos):</div><div class="villain">${res.villain_range}</div>`;
   if (res.villain_grid) h += `<div class="vgrid">${renderGrid(res.villain_grid, null, res.villain)}</div>`;
+  if (res.villain_range) h += `<details><summary>${res.villain}'s range as text (${res.villain_range_combos} combos)</summary><div class="villain">${res.villain_range}</div></details>`;
   if (res.size_usage) h += `<div class="meta">Size optimization, your mix over the wide menu: ${SIZE_USAGE(res)}</div>`;
   if (res.solver) h += `<div class="meta">${res.solver.iterations} iterations · ${res.solver.solve_seconds}s · ${res.solver.active_combos} combos · sizes: ${res.solver.tree_actions.join(", ")}${res.solver.exploitability_pct != null ? ` · exploitability ${res.solver.exploitability_pct}% pot` : ""}</div>`;
   if (res.notes && res.notes.length) h += `<div class="meta">${res.notes.join("<br>")}</div>`;
@@ -1269,7 +1295,7 @@ function updateAdviceState() {
   if (review) msg = `<b>Reviewing decision ${review.k} of ${review.n}</b> · ${review.what} <button class="link" id="reviewStop">Cancel</button>${list}`;
   else if (sim.handOver && S.cards[0] && S.cards[1]) {
     const lost = mine.reduce((t, [, a]) => t + (a.g.l || 0), 0), good = mine.filter(([, a]) => gradeClass(a.g) === "ok").length;
-    msg = mine.length ? `<b>Hand review</b> · ${good} of ${mine.length} decisions in the solver's mix${withEv.length ? ` · ${lost > 0.005 ? `<span class="num neg">−${lost.toFixed(2)} bb</span>` : "0.00 bb"} EV vs GTO` : ""}${list}` : `<b>Hand over.</b>`;
+    msg = mine.length ? `<b>Hand review</b> · ${good} of ${mine.length} decisions in the solver's mix${list}` : `<b>Hand over.</b>`;
   } else if (lastResult && !live && !solving) {
     msg = `<b>Advice from your last decision (${lastResult.street || "earlier"}).</b> New advice appears when it's your turn again.${list}`;
   } else if (!heroTurn && mine.length) msg = `<b>Your decisions so far</b>${list}`;
@@ -1281,9 +1307,9 @@ function updateAdviceState() {
   if (ra) ra.onclick = reviewHand;
   if (rs) rs.onclick = () => { review.cancel = "restore"; cancelSolve(); };
   note.querySelectorAll("li.rewind").forEach(li => li.onclick = () => rewindTo(li.dataset.s, +li.dataset.i));
-  if (sim.handOver && mine.length && !review && !practicing()) note.insertAdjacentHTML("beforeend", `<div class="muted" style="margin-top:4px">Click a decision to replay the hand from there.</div>`);
+  if (sim.handOver && mine.length && !review && !practicing()) note.insertAdjacentHTML("beforeend", `<div class="muted" style="margin-top:4px">${TAP} a decision to replay the hand from there.</div>`);
   if (el.classList.contains("empty")) el.innerHTML = S.cards[0] && S.cards[1]
-    ? (sim.handOver ? "Hand over." : "Waiting for your turn.<br>Enter what the others do; advice appears when the action reaches you.")
+    ? (sim.handOver ? (msg ? "" : "Hand over.") : "Waiting for your turn.<br>Enter what the others do; advice appears when the action reaches you.")
     : EMPTY_ADVICE;
   if (window.Practice) window.Practice.tick(sim);   // practice: deal, or move the seat to act
 }
@@ -1486,7 +1512,9 @@ function syncAdv() {
     const l = document.createElement("label"), i = document.createElement("input");
     i.type = "text"; i.placeholder = "preflop chart"; i.value = S.ranges && S.ranges[p] || ""; i.dataset.p = p;
     i.onchange = (e) => setAdv(() => { S.ranges = { ...S.ranges, [p]: e.target.value }; });
-    l.append(`${SEAT_LABEL(p, POS.length)} range`, i); box.appendChild(l);
+    const w = document.createElement("span"); w.className = "who"; w.textContent = SEAT_LABEL(p, POS.length);
+    i.setAttribute("aria-label", `${SEAT_LABEL(p, POS.length)}'s range`);
+    l.append(w, i); box.appendChild(l);
   }
 }
 // one row per opponent: a profile (GTO, the presets, or Custom) and, once locked, its numbers
@@ -1505,7 +1533,9 @@ function syncLocks() {
     sel.onchange = (e) => { const v = e.target.value;
       if (v === "custom") { lockOpen.add(p); syncLocks(); return; }   // (the numbers are kept, now edited)
       lockOpen.delete(p); setAdv(() => { S.locks = { ...S.locks, [p]: v ? { ...LOCK_PRESETS[v][1] } : null }; }); };
-    row.append(`${SEAT_LABEL(p, POS.length)} plays`, sel);
+    const w = document.createElement("span"); w.className = "who"; w.textContent = SEAT_LABEL(p, POS.length);
+    sel.setAttribute("aria-label", `How ${SEAT_LABEL(p, POS.length)} plays`);
+    row.append(sel, w);   // (the label shows first: CSS order)
     if (lk || lockOpen.has(p)) for (const [k, t] of LOCK_INPUTS) {
       const l = document.createElement("label"), i = document.createElement("input");
       i.type = "text"; i.inputMode = "numeric"; i.placeholder = k.startsWith("next_") ? "GTO" : "0"; i.value = lk && lk[k] != null ? lk[k] : ""; i.dataset.p = p; i.dataset.k = k;
@@ -1566,8 +1596,12 @@ document.getElementById("importHand").onclick = () => {
   document.getElementById("menu").hidden = true; hhBox.hidden = false; hhErr.textContent = "";
   loadHH().catch(e => hhErr.textContent = e.message); hhText.focus();
 };
-document.getElementById("hhCancel").onclick = () => { hhBox.hidden = true; };
-hhText.addEventListener("keydown", (e) => { if (e.key === "Escape") hhBox.hidden = true; if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) document.getElementById("hhGo").click(); });
+const hhClose = () => { hhBox.hidden = true; document.getElementById("menuBtn").focus(); };
+document.getElementById("hhCancel").onclick = hhClose;
+hhBox.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.stopPropagation(); hhClose(); } });
+// a click outside the dialog closes it, and goes no further (the page behind is dimmed)
+document.addEventListener("click", (e) => { if (!hhBox.hidden && !hhBox.contains(e.target) && !e.target.closest("#importHand")) { e.stopPropagation(); e.preventDefault(); hhClose(); } }, true);
+hhText.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) document.getElementById("hhGo").click(); });
 document.getElementById("hhGo").onclick = async () => {
   let r;
   try { await loadHH(); r = importHand(hhText.value); } catch (e) { hhErr.textContent = e.message || String(e); return; }
