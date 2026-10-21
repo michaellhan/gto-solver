@@ -4,7 +4,7 @@ from gto.cards import cards, ALL_COMBOS, hand_class
 from gto.ranges import parse_range
 from gto.evaluator import eval_board
 from gto import preflop as pf
-from gto.solver import solve, Config, Ctx, Solver, TreeBuilder, MEMBER_FULL, N_FULL, match_action
+from gto.solver import solve, Config, Ctx, Solver, TreeBuilder, MEMBER_FULL, N_FULL, match_action, Decision
 from gto.advisor import Advisor, preflop_investments
 
 MW_TRIALS = 1200   # multiway tests: trials per call, no time caps (see Advisor.mw_trials)
@@ -189,6 +189,25 @@ class TestSolverMath(unittest.TestCase):
             for x, y in zip(fast.solver._nodes, plain.solver._nodes):
                 self.assertTrue(np.array_equal(x.ssum, y.ssum))
                 self.assertTrue(np.array_equal(x.regret, y.regret))
+
+    def test_raked_bucket_subtrees_merge(self):
+        # Fast's flop model merges the river bucket subtrees a second time, across the already merged turns: their
+        # raked terminals carry a rake column per row, which the second merge must stack like the chips in (a raked
+        # flop at native Fast raised "truth value of an array" for any flop outside the library). Same numbers as
+        # walking the tree node by node.
+        from gto import native
+        r_oop = parse_range("22+, A2s+, KTs+, QTs+, JTs, T9s, ATo+, KQo")
+        r_ip = parse_range("22+, A2s+, K5s+, Q8s+, J8s+, T8s+, A8o+, KTo+, QTo+")
+        cfg = native.config("fast")
+        cfg.rake_rate, cfg.rake_cap = 0.05, 3.0
+        fast = solve(cards("6s4d3h"), r_oop, r_ip, pot=6.0, stack=97.0, cfg=cfg, max_iters=0)
+        plain = solve(cards("6s4d3h"), r_oop, r_ip, pot=6.0, stack=97.0, cfg=cfg, max_iters=0)
+        self.assertTrue(fast.solver._bgroups)
+        fast.solver.batch_leaves = False
+        fast.solver.run(fast.r0, fast.r1, time_budget=1e9, max_iters=3)
+        self._plain_iterations(plain, 3)
+        for x, y in zip(fast.solver._nodes, plain.solver._nodes):
+            np.testing.assert_allclose(x.ssum, y.ssum, rtol=1e-4, atol=1e-4)
 
     def test_batched_leaves_match_one_by_one(self):
         # each pass's equity leaves computed together up front (one matrix-matrix product per matrix stack):
@@ -1551,6 +1570,14 @@ class TestFlopStrategy(unittest.TestCase):
             return out
         evs = s.node_action_br_evs(sol.root, sol.r0, sol.r1, lock=spy)
         self.assertTrue(np.isfinite(evs).all() and any(seen) and not all(seen))
+        # and so do your locks (every key that orders hands by strength; with a lock on the flop's big blind at
+        # native Fast this raised IndexError: combo indices into a bucket axis)
+        from gto.exploit import TendencyLock
+        for adj in ({"fold": 20}, {"fold": -20, "bluff": -50}, {"bluff": 50, "raise": 30}, {"next_fold": 60}):
+            nxt = [c for c in sol.root.children if isinstance(c, Decision)]
+            lock, seen = TendencyLock(sol.ctx, 1, adj, None, nxt), []
+            evs = s.node_action_br_evs(sol.root, sol.r0, sol.r1, lock=spy)
+            self.assertTrue(np.isfinite(evs).all() and any(seen) and not all(seen), adj)
 
     def test_turn_classes_cover_every_turn(self):
         ctx = Ctx(np.arange(N_FULL), Config())
@@ -1624,6 +1651,21 @@ class TestExploit(unittest.TestCase):
         self.assertAlmostEqual(float(out[0, 0].mean()) - 0.5, 0.105, places=2)   # the turn: regulars over-fold a third-pot bet ~10.5 points
         raised = Node(10.0, 10.0); raised.bets = (20.0, 10.0)    # facing a raise of its own bet: no shift
         self.assertAlmostEqual(float(lock(raised, strat, reach)[0, 0].mean()), 0.5, places=5)
+
+    def test_multiway_postflop_says_it_plays_equilibrium(self):
+        # exploit mode best-responds heads-up only: a 3-way pot (solved or by the rules) says so, as locks do
+        adv = Advisor(Config(depth=1), time_budget=1e9)
+        adv.mw_max_iters = 10
+        pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
+               {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
+        chk = [{"pos": p, "action": "check"} for p in ("BB", "CO", "BTN")]
+        st = {"players": 6, "hero": "BB", "hole": "KdQd", "board": "Kh7d2c9s4h", "stack": 100, "preflop": pre,
+              "flop": chk, "turn": chk, "river": [], "opponents": "pool"}
+        for streets in (("river",), ()):
+            adv.mw_solve_streets = streets
+            r = adv.advise(st)
+            self.assertTrue(r.get("multiway"), r.get("error"))
+            self.assertTrue(any("exploit mode applies heads-up" in n for n in r["notes"]), r["notes"])
 
     def test_preflop_lines_read_as_real_ranges(self):
         """Lines whose chart or pool range was face-up: every open-limp (the small blind too, in both modes;
@@ -3021,6 +3063,19 @@ class TestPractice(unittest.TestCase):
             else:
                 out = adv.advise(nxt)
                 self.assertNotIn("error", out)
+
+    def test_locked_seat_still_moves(self):
+        # the page sends the locks the player practising set on their opponents with every move request; a locked
+        # seat's move (preflop, or any spot answered from its own seat) is GTO, not an error about locking yourself
+        adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        st = {"players": 6, "hero": "UTG", "hole": "2c2d", "stack": 100, "preflop": self.PRE[:3],
+              "locks": {"BTN": {"fold": 20}, "BB": {"bluff": -50}}}
+        m = adv.play(st, "BTN", "AsKs", seed=1)
+        self.assertNotIn("error", m)
+        self.assertEqual(m["action"], "raise")
+        m = adv.play(dict(self.FLOP, locks={"BB": {"fold": 20}}), "BB", "QcQd", seed=2)   # (a 3bet hand: its own seat)
+        self.assertNotIn("error", m)
+        self.assertIn(m["action"], {"check", "bet", "all-in"})
 
     def test_villain_to_act_first_and_fallbacks(self):
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)

@@ -1250,6 +1250,19 @@ def _mw_line(board, hero, hole, stk, streets, street, n) -> tuple:
             before, norm((streets.get(street) or [])[:n]))
 
 
+def _mw_names(names, amounts, behind: float, S: float, pot_now: float) -> List[str]:
+    """A 3-way solve's action names as the player plays them. The solve plays everyone at the shortest stack behind
+    (S), so its all-in for a player with more is a bet (or raise) to S, not their whole stack: recorded as all-in on
+    the page, a deep player's all-in put 97.5 bb in where the solve bet 9.5 (a short stack's cap)."""
+    out = list(names)
+    facing = bool(names) and names[0] == "fold"   # (fold is offered only facing a bet; else nothing is in this street)
+    for i, (nm, amt) in enumerate(zip(names, amounts)):
+        if nm == "all-in" and amt is not None and behind > S + 1e-6:
+            alt = f"raise to {amt:g}" if facing else f"bet {int(round(100 * amt / max(pot_now, 1e-9)))}%"
+            out[i] = alt if alt not in out else f"{'raise to' if facing else 'bet'} {amt:g}bb"
+    return out
+
+
 # ----------------------------------------------------------------------------- advisor
 class Advisor:
     def __init__(self, cfg: Optional[Config] = None, time_budget: float = 4.0, prior_budget: float = 2.0,
@@ -1794,6 +1807,9 @@ class Advisor:
             if locks and any(p in locks for p in live_opps):
                 notes.append(f"locks ({', '.join(p for p in live_opps if p in locks)}) apply heads-up only: "
                              f"this multiway pot is {'solved' if len(remaining) == 3 else 'played by the betting rules'} without them")
+            if pool:
+                notes.append("exploit mode applies heads-up after the flop: this multiway pot is played at equilibrium "
+                             "(the pool's leaks only shape the ranges preflop)")
             res = self._multiway_solve(hero, hole, board, ranges, remaining, cur, stk, t0, notes,
                                        line=_mw_line(board, hero, hole, stk, streets, cur.name, len(streets.get(cur.name) or [])))
             if res is not None:
@@ -2069,7 +2085,8 @@ class Advisor:
         mine = sol.hand_strategy(ci, hp)
         evs = sol.action_evs()
         acts = []
-        for a, name in enumerate(root.names):
+        shown = _mw_names(root.names, root.amounts, behind[hero], S, root.pot_now)
+        for a, name in enumerate(shown):
             amt = root.amounts[a]
             acts.append({"action": name, "freq": round(float(mine[a]), 3),
                          "ev_bb": round(float(evs[a, ci]), 2),
@@ -2108,12 +2125,12 @@ class Advisor:
                "position": f"{hp + 1} of 3 to act",
                "pot_bb": round(root.pot_now, 2), "to_call_bb": round(to_call, 2), "stack_bb": round(S - bets[hp], 2),
                "actions": acts, "recommended": best, "sampled": sampled,
-               "grid": strategy_grid([sf[a] for a in range(len(root.names))], list(root.names), hero_r),
-               "range_action_freq": {name: round(float((sf[a] * w).sum()), 3) for a, name in enumerate(root.names)},
+               "grid": strategy_grid([sf[a] for a in range(len(root.names))], shown, hero_r),
+               "range_action_freq": {name: round(float((sf[a] * w).sum()), 3) for a, name in enumerate(shown)},
                "hero_range_combos": round(float(hero_r.sum()), 1),
                "opponent_range_combos": {p: round(float(sol.reach0[i][0].sum()), 1) for i, p in enumerate(players) if p != hero},
                "solver": {"iterations": sol.iters, "solve_seconds": round(sol.seconds, 2), "nodes": sol.builder.n_nodes,
-                          "active_combos": sol.hands.n, "tree_actions": list(root.names),
+                          "active_combos": sol.hands.n, "tree_actions": shown,
                           # the mean of the three players' best-response gains, % of the pot (heads-up: the same mean of two)
                           "exploitability_pct": round(expl, 2),
                           "best_response_gains_pct": {p: round(float(g), 2) for p, g in zip(players, gains)}},
@@ -3028,7 +3045,10 @@ class Advisor:
             if st.get("board") and st.get("hole") and str(st.get("hero", "")).upper() != seat:
                 res = self._advise(st, actor=(seat, hole))
             if res is None or "error" in res:
-                res = self._advise(dict(st, hero=seat, hole=cards_str(hole)))
+                # from the seat's own view: a GTO player, so not best-responding to the locks the player practising
+                # set on their opponents (which can name this seat: "you can't lock your own seat" stalled practice)
+                res = self._advise({**{k: v for k, v in st.items() if k != "locks"}, "hero": seat,
+                                    "hole": cards_str(hole)})
         if "error" in res:
             return {"error": res["error"]}
         acts = [a for a in res["actions"] if a["freq"] > 0] or res["actions"]
@@ -3072,9 +3092,14 @@ class Advisor:
                 return None
             kind = {"bet": ("bet", "all-in"), "raise": ("raise", "all-in"), "all-in": ("all-in", "raise", "bet")}.get(
                 a["action"], (a["action"],))
-            idx = next((i for want in kind for i, nm in enumerate(node.names) if nm.split()[0] == want), None)
-            if idx is None:
+            cand = [i for i, nm in enumerate(node.names) if nm.split()[0] in kind]
+            if not cand:
                 return None
+            # the tree's size nearest the one made (the solve's all-in for a deeper player is a bet to the shortest
+            # stack, played as that bet: _mw_names); an all-in is the biggest
+            to = 1e9 if a["action"] == "all-in" else a.get("to") if a.get("to") is not None else a.get("amount")
+            idx = cand[0] if to is None else min(cand, key=lambda i: (abs((node.amounts[i] or 0.0) - float(to)),
+                                                                      kind.index(node.names[i].split()[0])))
             sg = node.avg_strategy()[0][idx]
             if (R[p, 0] * sg).sum() < RARE_LINE * max(R[p, 0].sum(), 1e-12):
                 return None
@@ -3091,10 +3116,12 @@ class Advisor:
         # its range gives it no weight) the regret-matching one, which still learns from its counterfactual values
         mix = node.avg_strategy()[0][:, ci] if R[q, 0, ci] > 1e-12 and node.ssum[0, :, ci].sum() > 0 \
             else node.strategy()[0][:, ci]
+        S = min(stk[p] - cur.inv_start[p] for p in players)
+        names = _mw_names(node.names, node.amounts, stk[seat] - cur.inv_start[seat], S, node.pot_now)
         return {"street": cur.name, "solved": True,
                 "actions": [{"action": nm, "freq": round(float(mix[a]), 3),
                              "amount_bb": None if node.amounts[a] is None else round(float(node.amounts[a]), 2)}
-                            for a, nm in enumerate(node.names)]}
+                            for a, nm in enumerate(names)]}
 
     def _actor_move(self, sol: Solution, node: Decision, n_r0, n_r1, hole, p: int, street: str) -> dict:
         """The mix of player p (to act at `node`) for `hole`, from hero's solve; an error (play then asks
