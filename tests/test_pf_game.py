@@ -42,6 +42,45 @@ class TestTree(unittest.TestCase):
         self.assertLess(abs(float(g.values().sum())), 0.04)
 
 
+class TestTreeOptions(unittest.TestCase):
+    def test_small_blind_limp(self):
+        """sb_limp: the small blind first in completes, the big blind checks or raises to Sizes.iso, the small
+        blind re-raises Sizes.limp_3bet times that; no limp once anyone has opened, and heads-up too."""
+        g = G.Game(G.build(sb_limp=True), G.SIX, G.flat_model())
+        nd = g.root
+        while g.positions[nd.player] != "SB":
+            nd = nd.children[nd.names.index("fold")]
+        self.assertEqual(nd.names, ["fold", "call", "raise"])
+        bb = nd.children[1]
+        self.assertEqual(bb.names, ["call", "raise"])
+        self.assertEqual(bb.children[0].kind, "show")
+        self.assertEqual(bb.children[0].inv.sum(), 2.0)
+        self.assertEqual(bb.children[1].line[-1][2], 3.5)
+        self.assertEqual(bb.children[1].children[2].line[-1][2], 10.5)
+        self.assertEqual(g.find([("CO", "raise"), ("SB", None)][:1]).names, ["fold", "call", "raise"])
+        h = G.Game(G.build(["SB", "BB"], sb_limp=True), ["SB", "BB"], G.flat_model())
+        h.solve(200)
+        self.assertLess(h.exploitability(), 0.02)
+
+    def test_four_bet_by_position(self):
+        sz = G.Sizes(four_x_ip=2.0, four_x_oop=2.7)
+        g = G.Game(G.build(sizes=sz), G.SIX, G.flat_model())
+        self.assertAlmostEqual(g.find([("CO", "raise"), ("BTN", "raise"), ("CO", "raise")]).line[-1][2], 7.5 * 2.7)
+        self.assertAlmostEqual(g.find([("BTN", "raise"), ("BB", "raise"), ("BTN", "raise")]).line[-1][2], 24.0)
+
+    def test_spot_model_picks_the_seats(self):
+        """SpotModel: a flop between measured seats uses their model, else one with the same caller, else
+        the fallback."""
+        a = G.EQRModel(share_fn=lambda key: np.full((len(CLASSES), len(CLASSES)), 0.1))
+        b = G.EQRModel(share_fn=lambda key: np.full((len(CLASSES), len(CLASSES)), 0.2))
+        f = G.EQRModel(share_fn=lambda key: np.full((len(CLASSES), len(CLASSES)), 0.3))
+        m = G.SpotModel({(1, True, "BTN", "BB"): a, (1, True, "CO", "SB"): b}, f)
+        self.assertEqual(m.share((1, True, "BTN", "BB"))[0, 0], 0.1)
+        self.assertEqual(m.share((1, True, "UTG", "SB"))[0, 0], 0.2)
+        self.assertEqual(m.share((1, True, "UTG", "BTN"))[0, 0], 0.3)
+        self.assertEqual(m.share((2, True, "BTN", "BB"))[0, 0], 0.3)
+
+
 class TestSolve(unittest.TestCase):
     def test_heads_up_converges(self):
         g = G.Game(G.build(["SB", "BB"]), ["SB", "BB"], G.flat_model())

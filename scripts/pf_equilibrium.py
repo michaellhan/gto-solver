@@ -18,6 +18,7 @@ Solves are cached per round, spot and flop (--cache), so an interrupted run resu
   python scripts/pf_equilibrium.py --rounds 3                      # the whole loop
   python scripts/pf_equilibrium.py --round 1 --stage measure       # one stage of one round
   python scripts/pf_equilibrium.py --report                        # the solve against tests/preflop_refs.py
+  python scripts/pf_equilibrium.py --round 0 --stage solve --by-spot   # each measured spot's own fit
 """
 from __future__ import annotations
 import argparse
@@ -126,7 +127,7 @@ def post_config():
     from gto.solver import Config
     sizes = SPEEDS["fast"][0]
     return Config(bet_sizes={k: list(v) for k, v in sizes["bet_sizes"].items()},
-                  raise_sizes={k: list(v) for k, v in sizes["raise_sizes"].items()}, **sizes["flop_model"])
+                  raise_sizes={k: list(v) for k, v in sizes["raise_sizes"].items()}, **sizes["model"])
 
 
 def measure_job(job):
@@ -208,8 +209,12 @@ def measure(rnd, reach, args, g):
             ent["rng"] = ent["rng"] + fw * rg / rg.sum()
             # each spot counts by the flop weights alone (spots pooled equally)
             ent["acc"] = ent["acc"] + fw * z[side]
-            ent["spots"][name] = ent["spots"].get(name, 0.0) + fw * z[side]
             ent["pre"] = ent["pre"] + fw * pre / pre.sum()
+            # and each spot on its own (its pre-action and flop ranges, for per-spot fits)
+            sp = ent["spots"].setdefault(name, {"acc": 0.0, "pre": 0.0, "rng": 0.0})
+            sp["acc"] = sp["acc"] + fw * z[side]
+            sp["pre"] = sp["pre"] + fw * pre / pre.sum()
+            sp["rng"] = sp["rng"] + fw * rg / rg.sum()
     return table
 
 
@@ -368,10 +373,47 @@ def load_fit(cache, rnd):
     return None
 
 
-def load_model(cache, rnd):
+def spot_fits(table):
+    """Per measured spot (SPOTS name): its own fit (fit_eqr on the spot's measurements alone)."""
+    out = {}
+    for name, line, key in SPOTS:
+        sub = {k: ent["spots"][name] for k, ent in table.items() if name in ent["spots"]}
+        if sub:
+            out[name] = fit_eqr(sub)
+    return out
+
+
+def spot_key(g, line, key):
+    """(pot type, aggressor in position, aggressor's seat, caller's seat) of a SPOTS line."""
+    t, _ = terminal(g, line)
+    a = t.aggressor
+    c = [q for q in t.active if q != a][0]
+    return key + (g.positions[a], g.positions[c])
+
+
+def model_of(fit):
     from gto import pf_game as G
-    fit = load_fit(cache, rnd)
     return G.EQRModel.from_tables(excess_tables(fit), {k: np.asarray(v["w"]) for k, v in fit.items()})
+
+
+def load_spot_fits(cache, rnd):
+    for name in (f"dsfit{rnd}.pkl", f"sfit{rnd}.pkl"):
+        path = os.path.join(cache, name)
+        if os.path.exists(path):
+            return pickle.load(open(path, "rb"))
+    return None
+
+
+def load_model(cache, rnd, by_spot=False):
+    """Round rnd's model: pooled per (pot type, aggressor in position), or with by_spot each measured spot's own
+    fit (pf_game.SpotModel; the pooled one for flops between other seats)."""
+    from gto import pf_game as G
+    pooled = model_of(load_fit(cache, rnd))
+    if not by_spot:
+        return pooled
+    sf = load_spot_fits(cache, rnd)
+    g = game()
+    return G.SpotModel({spot_key(g, line, key): model_of(sf[name]) for name, line, key in SPOTS if name in sf}, pooled)
 
 
 def main():
@@ -387,6 +429,7 @@ def main():
     ap.add_argument("--cache", default=DEFAULT_CACHE)
     ap.add_argument("--rake", default="", help="rate,cap for the solve (e.g. 0.05,4)")
     ap.add_argument("--tag", default="", help="suffix for the solve's file (e.g. a solve without rake)")
+    ap.add_argument("--by-spot", action="store_true", help="each measured spot's own fit (pf_game.SpotModel)")
     ap.add_argument("--report", type=int, help="print round N's solve against the references")
     ap.add_argument("--write", type=int, help="write round N's damped fit to gto/pf_eqr.py")
     args = ap.parse_args()
@@ -399,7 +442,7 @@ def main():
                   f"Round {args.write} of the fixed point ({args.flops} flops a spot, {args.budget} iterations a flop).")
         return
     if args.report is not None:
-        g.set_model(load_model(args.cache, args.report))
+        g.set_model(load_model(args.cache, args.report, args.by_spot))
         g.load(os.path.join(args.cache, f"solve{args.report}{args.tag}.npz"))
         print_report(g)
         return
@@ -409,7 +452,7 @@ def main():
         if "measure" in stages:
             reach = None
             if rnd > 0:
-                g.set_model(load_model(args.cache, rnd - 1))
+                g.set_model(load_model(args.cache, rnd - 1, args.by_spot))
                 g.load(os.path.join(args.cache, f"solve{rnd - 1}.npz"))
                 reach = g.reach()
             table = measure(rnd, reach, args, g)
@@ -418,10 +461,15 @@ def main():
             pickle.dump(fit, open(os.path.join(args.cache, f"fit{rnd}.pkl"), "wb"))
             dfit = blend_fits(fit, load_fit(args.cache, rnd - 1) if rnd > 0 else None, args.damp)
             pickle.dump(dfit, open(os.path.join(args.cache, f"dfit{rnd}.pkl"), "wb"))
+            sf = spot_fits(table)
+            pickle.dump(sf, open(os.path.join(args.cache, f"sfit{rnd}.pkl"), "wb"))
+            old = load_spot_fits(args.cache, rnd - 1) if rnd > 0 else None
+            dsf = {n: blend_fits(f, old.get(n) if old else None, args.damp) for n, f in sf.items()}
+            pickle.dump(dsf, open(os.path.join(args.cache, f"dsfit{rnd}.pkl"), "wb"))
             for k in sorted(fit):
                 print(f"  {k}: realization {fit[k]['realization']:.3f}, R^2 {fit[k]['r2']:.2f}", flush=True)
         if "solve" in stages:
-            g.set_model(load_model(args.cache, rnd))
+            g.set_model(load_model(args.cache, rnd, args.by_spot))
             g.regret[:] = 0
             g.ssum[:] = 0
             t0 = time.time()

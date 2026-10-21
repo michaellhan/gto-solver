@@ -386,7 +386,7 @@ solver and then used as the terminal value of a full preflop game:
   CFR level by level in numpy, 1,500 iterations (~0.002 bb/hand exploitability). Flops pay pot x realized
   share, raked like the advice's calls (5% to 4bb on 2.5x the flop pot); three-way pots use the product of
   heads-up equities corrected per class (`scripts/build_three_way.py`) and a guessed seat factor (0.88 / 0.97
-  / 1.12; section 4: nothing published).
+  / 1.12; section 4: nothing published; measured since, section 7).
 - **Realization** (`scripts/pf_equilibrium.py` -> `gto/pf_eqr.py`): 17 heads-up flop spots (single-raised,
   3bet and 4bet pots, the aggressor in and out of position, several seat pairs each), 68-102 texture-stratified
   flops each, the fast flop model (bucketed turn and river; on BTN vs BB its per-class realization is within
@@ -442,3 +442,61 @@ What is used: the realization model re-ranks re-priced calls (Advisor._priced, u
 the number of hands a worse price removes is still set by all-in equity, but they are now the ones with the
 least *realized* equity, so raked big-blind defence keeps 76s/54s/97s and folds K5o/Q7o/J5s (with all-in
 equity it did the reverse, against raked solves).
+
+## 7. The structural causes, one experiment each (2026-10, second pass)
+
+Each row changes one thing in the derived game and re-solves it (5% rake capped at 4bb, 1,000-1,500
+iterations); the columns are tests/preflop_refs.py's (mean error in points over the 22 certain spots, spots
+outside tolerance, hand facts outside their band). The charts: **1.03 / 0 / 0**.
+
+| change | mean | out | facts | what moved |
+|---|---|---|---|---|
+| baseline (gto/pf_eqr.py, round 2 of section 6) | 2.90 | 14 | 10 | BTN opens 37.6%; UTG folds 22-66, T9s and opens KTo, A9o |
+| no rake | 5.46 | 16 | 10 | BB defends 61% against the button (published 41%); opens don't move (37.8%) |
+| no three-way flops (`max_players=2`) | 2.80 | 13 | 9 | nearly nothing: the three-way model isn't the cause |
+| SB may limp (`sb_limp`) | 3.26 | 15 | 10 | SB limps 8.6% (published 2.3-2.9%), BB raises 42% of limps (published ~40%); the rest unchanged |
+| 4bets 2.0x in position, 2.7x out (`Sizes.four_x_ip/oop`, published) | 3.01 | 14 | 8 | 4bets stay 1.3-1.7x published |
+| 4bet pots paid at all-in equity | 5.31 | 20 | 10 | 4bets fall, 3bets and folds rise, BTN opens 30%: a sensitivity test |
+| suited and 22-99 +0.03 of the pot (and offsuit -0.015) | 2.93 (2.98) | 15 | 9 (8) | UTG still folds 44 |
+| the flop model's river correction below, single-raised pots (all pots) | 3.01 (3.09) | 15 | 9 (10) | BTN A2o 98% -> 29%; the rest within noise |
+| realization re-measured on the charts' ranges (round 0, 68 flops a spot) | 2.43 | 10 | 8 | |
+| ... each measured spot's own fit (`--by-spot`, pf_game.SpotModel) | 2.70 | 16 | 9 | the pooled fit's range realization is within 0.03 of the direct measurement for 10 of 17 aggressors, 0.05-0.09 off for CO vs BTN and UTG vs CO 3bet |
+| round 0 + measured three-way factors (below), 1,500 iterations | **2.42** | **10** | **6** | UTG opens 44 64%, KTo 2%; BB 3bets TT 65%, flats QQ vs a 3bet 89% |
+| 9 global realization shifts fitted to the references (`+-0.03` by pot type and position, the river correction by pot type) | 2.17-2.27 | 8 | 7-8 | the best of 34 solves (coordinate search); no direction gains more than the noise between neighbours (about 0.3) |
+
+**The flop model's fidelity.** The realization is measured with the fast flop model (turn by 32 equity buckets,
+the river played without its card). `scripts/pf_fidelity.py` re-solves a few flops with the turn per combo and
+the river dealt, bet and played (depth 3, 8 rivers a turn, ~100x the cost) on the charts' ranges:
+
+| spot (flops) | range realization fast -> river dealt | per class (river dealt minus fast) |
+|---|---|---|
+| UTG vs BB single-raised (8) | UTG 1.084 -> 1.067, BB 0.880 -> 0.907 | UTG: 65s +0.25, J8s +0.20, 87s +0.17, KTs +0.14, 22 +0.08; AA -0.15, AJo -0.11, KK -0.10. BB: 65s +0.23, T8o +0.15, 54s +0.15, A5s +0.12, T9s +0.11; AJo -0.17 |
+| CO vs BTN single-raised (6) | CO 1.095 -> 1.108, BTN 0.896 -> 0.885 | suited connectors and gappers +0.10-0.38, 22 +0.16-0.20, top pairs about 0 |
+| BB 3bets BTN (6) | BB 1.002 -> 0.988, BTN 0.989 -> 1.009 | J8s, T8o, 54s +0.10-0.18; the rest within 0.1 |
+
+So the fast model gets the ranges' realization within 0.03 but under-realizes the hands that make their
+money when the river comes (suited connectors, gappers, small pairs) by 0.1-0.3 in single-raised pots, about
+half that in 3bet pots, and over-realizes big pairs and offsuit aces a little. That is the direction the
+published hand order needs (it opens 54s, folds A2o on the button), but applying the correction (smoothed on
+hand features) to the game moves the hand order only partly (A2o) and the totals not at all.
+
+**Three-way pots** (`scripts/pf_three_way.py`, the 3-player solver, charts' ranges, 6 flops, flop and turn bet):
+first / middle / last to act realize 0.95 / 0.91 / 1.11 when the button opens and both blinds call, 0.88 / 1.05 /
+1.05 and 0.87 / 0.97 / 1.14 when the opener is in the middle (CO open, BTN and BB call; UTG open, CO and BB call).
+The guess was 0.88 / 0.97 / 1.12 by seat alone; pf_game.MW_REALIZE now has the measured factors by where the
+opener sits. Either way three-way flops barely move the references (row 3).
+
+**What the misses come from.** Two preflop terms decide most of the marginal opens, and both depend on the
+other seats' raising: card removal (when CO opens, all three behind fold about 12% more often to K9o than
+to 65s) and the 2.5bb lost when re-raised. A small pair or suited connector has to win that back postflop, and needs about
+0.1-0.15 more realization in single-raised pots than the measured model gives; the river correction supplies
+part of it. The equilibrium is sensitive enough that a 0.03 shift in one pot type's realization moves the mean
+error by up to 0.5 points and up to 4 spots across their tolerance (last row), and nothing measured or fitted here
+gets below 2.1. Matching 22 spots within their tolerances needs realization accurate to about 0.02 in every pot
+type and per class, which a bucketed, two-size flop model can't give: the commercial solves play a full
+postflop tree with the river dealt, and re-measuring every spot that way here is ~600 CPU-hours.
+
+**Decision**: still not adopted, and no charts were generated from it: a fit to the references as good as the
+charts' was the condition for trusting it where there are none, and the best here is 2.42 / 10 / 6 unfitted. Kept: the measured
+three-way factors, the limp and 4bet-size options (off by default), per-spot fits (`--by-spot`), the fidelity
+and three-way measurement scripts. The charts and the flop library are unchanged.
