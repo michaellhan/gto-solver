@@ -432,7 +432,10 @@
     if (d.json != null) return download(fileBase() + ".json", toJSON(sess), "application/json");
     if (d.k != null) { const r = sess.results[+d.k], h = sess.hands[r.h]; close(); return host.open(h.state, r.s, r.i); }
   }
-  function close() { if (box) box.hidden = true; const m = document.getElementById("menuBtn"); if (m) m.focus(); }
+  function close() {
+    if (box) box.hidden = true; const m = document.getElementById("menuBtn"); if (m) m.focus();
+    if (globalThis.viewClosed) globalThis.viewClosed("session");   // (the page's URL back to the solver's)
+  }
   const CSS = `
   .ss { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,.55); display: flex; justify-content: center; align-items: flex-start; padding: 40px 16px 16px; }
   .ss-card { background: var(--panel2); color: var(--text); border: 1px solid var(--line2); border-radius: var(--r); width: min(760px, 100%); max-height: calc(100dvh - 56px); display: flex; flex-direction: column; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
@@ -515,7 +518,7 @@
   }
 
   const api = { handId, decisions, prepare, buildItems, inScope, spotState, preflopRaises, preflopSituation, classify, mixOf, newSession, widen,
-                processItem, runner, estimate, eta, report, tally, freqs, toCSV, toJSON, rowsOf, lsStore, idbStore, pageHost, open, SCOPES,
+                processItem, runner, estimate, eta, report, tally, freqs, toCSV, toJSON, rowsOf, lsStore, idbStore, pageHost, open, close, SCOPES,
                 get session() { return sess; }, get runner_() { return run; } };
   if (typeof module === "object" && module.exports) module.exports = api; else globalThis.Session = api;
 })();

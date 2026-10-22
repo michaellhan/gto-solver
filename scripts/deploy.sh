@@ -3,7 +3,10 @@
 # the michaellhan/michaellhan.github.io repo (folder: gto-solver/) and pushing.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
-WORK="$(mktemp -d)"
+# BUILD_ONLY=<dir> builds the site into <dir>/site/gto-solver (as published: stamped versions, each view's URL) and
+# stops there, without the checks, cloning or pushing: to try the static site locally, e.g.
+#   BUILD_ONLY=/tmp/gto scripts/deploy.sh && python3 -m http.server -d /tmp/gto/site 8000   (then /gto-solver/practice/)
+if [ -n "${BUILD_ONLY:-}" ]; then WORK="$BUILD_ONLY"; SKIP_CHECKS=1; mkdir -p "$WORK/site"; else WORK="$(mktemp -d)"; fi
 
 # Checks before anything is published: the unit tests, the page's JavaScript tests (when node is
 # installed) and the quick sanity sweep (~3 min, rare preflop lines included; exits non-zero
@@ -47,7 +50,7 @@ if [ "${DRY_RUN:-0}" = "1" ]; then
   exit 0
 fi
 
-gh repo clone michaellhan/michaellhan.github.io "$WORK/site" -- -q --depth 1
+if [ -z "${BUILD_ONLY:-}" ]; then gh repo clone michaellhan/michaellhan.github.io "$WORK/site" -- -q --depth 1; fi
 rm -rf "$WORK/site/gto-solver"
 mkdir -p "$WORK/site/gto-solver/gto"
 cp "$HERE/gto/static/index.html" "$HERE/gto/static/worker.js" "$HERE/gto/static/hh.js" "$HERE/gto/static/practice.js" "$HERE/gto/static/reports.js" "$HERE/gto/static/drills.js" "$HERE/gto/static/breakdown.js" "$HERE/gto/static/session.js" "$HERE/gto/static/health.json" "$WORK/site/gto-solver/"
@@ -93,6 +96,11 @@ SV="$(shasum "$HERE/gto/static/session.js" | cut -c1-10)"
 sed -i.bak -E "s/^const SS_VERSION = \"[^\"]*\";/const SS_VERSION = \"$SV\";/" "$WORK/site/gto-solver/index.html"
 rm "$WORK/site/gto-solver/index.html.bak"
 grep -q "const SS_VERSION = \"$SV\";" "$WORK/site/gto-solver/index.html"
+# Each view's URL (/gto-solver/practice/, /gto-solver/reports/srp-btn-bb/...: the page's ROUTES, gto/routes.py) is a copy
+# of the stamped page with a <base href="../"> pointing its relative URLs at gto-solver/ (GitHub Pages has no rewrites).
+# (No 404.html: GitHub Pages only uses the site root's, which isn't this folder's.)
+(cd "$HERE" && "$PYTHON" -m gto.routes "$WORK/site/gto-solver")
+if [ -n "${BUILD_ONLY:-}" ]; then echo "Built $WORK/site/gto-solver (BUILD_ONLY: not published)."; exit 0; fi
 cd "$WORK/site"
 git add -A
 if git diff --cached --quiet; then echo "Site already up to date."; exit 0; fi

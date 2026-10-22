@@ -787,6 +787,32 @@ const RP_VERSION = "1";        // and this with a hash of reports.js (the flop r
 const DR_VERSION = "1";        // and this with a hash of drills.js (the drills, loaded on first use, after reports.js)
 const BD_VERSION = "1";        // and breakdown.js (the advice's Breakdown and Equity views, loaded on first use)
 const SS_VERSION = "1";        // and session.js (the session analyzer, loaded on first use, after hh.js)
+// ---- the views' URLs: the solver is the root (/gto-solver/), the others /practice/, /drills/, /reports/,
+// /session/ and /import/ under it, and /reports/<spot>/, /drills/<spot>/ a precomputed spot (its id, dashes for
+// underscores). The static site has no rewrites: each URL is a copy of this page with a <base href="../"> that
+// points its relative URLs at the root. gto/routes.py reads these two lines (scripts/deploy.sh writes the copies,
+// gto/server.py serves them). Opening a view pushes its URL and closing it pushes the solver's (Practice's, if
+// that's on under it); back and forward switch views; a view's URL opened directly opens it (applyRoute, at the end).
+const ROUTES = { practice: "Practice", drills: "Drills", reports: "Flop reports", session: "Analyze session", import: "Import hand" };
+const SPOT_ROUTES = ["drills", "reports"];
+const ROUTE_RE = new RegExp(`^(.*?/)(?:(${Object.keys(ROUTES).join("|")})(?:/([a-z0-9-]+))?/?)?(?:index\\.html)?$`);
+function parseRoute(pathname) {   // -> { root: the solver's path, view: "solver" or a ROUTES key, spot: a spot id or null }
+  const m = String(pathname).match(ROUTE_RE);
+  if (!m) return { root: String(pathname).replace(/[^/]*$/, ""), view: "solver", spot: null };
+  return { root: m[1], view: m[2] || "solver", spot: m[3] && SPOT_ROUTES.includes(m[2]) ? m[3].replace(/-/g, "_") : null };
+}
+const ROOT = parseRoute(location.pathname).root, TITLE = document.title || "GTO Solver";
+let overlay = null, overlaySpot = null, overlayLabel = null;   // the view open over the solver / Practice, if any
+let routing = 1;   // > 0 while the URL's view is being opened (the URL is already its own): nothing is pushed
+const routeUrl = (v, spot) => ROOT + (v === "solver" ? "" : v + "/" + (spot && SPOT_ROUTES.includes(v) ? spot.replace(/_/g, "-") + "/" : "")) + (location.search || "");
+// the URL and title for the view showing, pushed (or replaced: a spot picked in an open view)
+function syncRoute(replace) {
+  if (routing) return;
+  const v = overlay || (practicing() ? "practice" : "solver"), spot = overlay ? overlaySpot : null;
+  document.title = v === "solver" ? TITLE : [overlay && overlayLabel, ROUTES[v], TITLE].filter(Boolean).join(" · ");
+  const url = routeUrl(v, spot);
+  if (url !== location.pathname + (location.search || "")) try { history[replace ? "replaceState" : "pushState"]({ view: v, spot }, "", url); } catch (e) {}   // (file: pages can't)
+}
 
 // ---- backend: the local Python server if present, otherwise the solver runs in the browser (Pyodide worker)
 let MODE = null, worker = null, reqId = 0;
@@ -1592,6 +1618,7 @@ function renderAll() {
   if (sim.toAct === S.hero && S.cards[0] && S.cards[1] && !sim.handOver && !(practicing() && window.Practice.auto(sim))) analyze(sim);
   else if (!S.cards[0] || !S.cards[1]) resetAdvice();
   updateAdviceState();
+  syncRoute();   // (Practice turned on or off: its URL)
 }
 // ---- review the whole hand: each of your recorded decisions is solved in turn (at the current speed) and graded
 let review = null;   // { n, k, what, cancel } while a review runs; cancel "restore" (its Cancel) or "drop" (a new hand)
@@ -1657,7 +1684,7 @@ function handText() {
     if (r.solver) lines.push(`  solver: ${r.solver.iterations} iterations, ${r.solver.solve_seconds}s, ${r.solver.active_combos} combos, sizes ${r.solver.tree_actions.join(", ")}`);
     if (r.notes && r.notes.length) lines.push("  notes: " + r.notes.join("; "));
   }
-  const link = location.origin + location.pathname + "#h=" + encodeState(S);
+  const link = location.origin + ROOT + "#h=" + encodeState(S);   // (the solver's URL, from any view's)
   lines.push("Open this spot: " + link);
   lines.push("State JSON: " + JSON.stringify(payload()));
   return lines.join("\n");
@@ -1710,7 +1737,8 @@ function linkState() {   // the spot a #h= link carries (null if none), the hash
   history.replaceState(null, "", location.pathname);
   return st;
 }
-(function loadFromLink() { const st = linkState(); if (st) { S = st; setPositions(S.players); save(); } })();
+let linkLoaded = false;
+(function loadFromLink() { const st = linkState(); if (st) { S = st; setPositions(S.players); save(); linkLoaded = true; } })();
 // A link opened in a tab already showing the page only changes its hash (no reload): load the spot then too.
 if (typeof window.addEventListener === "function") window.addEventListener("hashchange", () => { const st = linkState(); if (st) loadHandState(st); });
 document.getElementById("stack").value = S.stack;
@@ -1866,11 +1894,9 @@ const loadHH = () => typeof importHand === "function" ? Promise.resolve() : hhLo
   s.onerror = () => { hhLoad = null; rej(new Error("Couldn't load the importer (hh.js).")); }; document.head.appendChild(s);
 });
 const hhBox = document.getElementById("importBox"), hhErr = document.getElementById("hhErr"), hhText = document.getElementById("hhText");
-document.getElementById("importHand").onclick = () => {
-  document.getElementById("menu").hidden = true; hhBox.hidden = false; hhErr.textContent = "";
-  loadHH().catch(e => hhErr.textContent = e.message); hhText.focus();
-};
-const hhClose = () => { hhBox.hidden = true; document.getElementById("menuBtn").focus(); };
+const hhOpen = () => { hhBox.hidden = false; hhErr.textContent = ""; loadHH().catch(e => hhErr.textContent = e.message); hhText.focus(); };
+document.getElementById("importHand").onclick = () => openView("import");
+const hhClose = () => { hhBox.hidden = true; window.viewClosed("import"); document.getElementById("menuBtn").focus(); };
 document.getElementById("hhCancel").onclick = hhClose;
 hhBox.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.stopPropagation(); hhClose(); } });
 // a click outside the dialog closes it, and goes no further (the page behind is dimmed)
@@ -1879,7 +1905,7 @@ hhText.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey 
 document.getElementById("hhGo").onclick = async () => {
   let r;
   try { await loadHH(); r = importHand(hhText.value); } catch (e) { hhErr.textContent = e.message || String(e); return; }
-  await loadHandState(r.state); hhBox.hidden = true; hhText.value = "";
+  await loadHandState(r.state); hhBox.hidden = true; hhText.value = ""; window.viewClosed("import");
   const h = r.hand;
   toast(`Imported ${h.site === "generic" ? "a" : h.site} hand: ${h.players}-handed, you are ${SEAT_LABEL(h.hero, h.players)} with ${h.hole.join("")}, ${fmt(h.effective)}bb effective${S.stacks ? ` (you have ${fmt(S.stack)}bb; every seat plays its own stack)` : ""}.${r.warnings.length ? " " + r.warnings.join(" ") : ""}`, null, 15000);
   const b = document.createElement("button"); b.className = "link"; b.textContent = "Review whole hand";
@@ -1896,26 +1922,38 @@ async function loadHandState(st, note) {
   if (note) toast(`Loaded ${note}: you are ${SEAT_LABEL(S.hero, S.players)} with ${S.cards[0]}${S.cards[1]}.`);
 }
 // ---- flop reports (reports.js, loaded the first time they're opened)
-document.getElementById("flopReports").onclick = () => {
-  document.getElementById("menu").hidden = true;
-  if (window.FlopReports) return window.FlopReports.open();
-  const s = document.createElement("script"); s.src = "reports.js?v=" + RP_VERSION;
-  s.onload = () => window.FlopReports.open(); s.onerror = () => showErr("Couldn't load the flop reports (reports.js)."); document.head.appendChild(s);
-};
+document.getElementById("flopReports").onclick = () => openView("reports");
 // ---- drills (drills.js, which uses reports.js's textures; both loaded the first time the drills open)
 const loadJs = (src, ok) => ok() ? Promise.resolve() : new Promise((res, rej) => { const s = document.createElement("script"); s.src = src;
   s.onload = res; s.onerror = () => rej(new Error(`couldn't load ${src.split("?")[0]}`)); document.head.appendChild(s); });
-document.getElementById("drills").onclick = () => {
-  document.getElementById("menu").hidden = true;
-  loadJs("reports.js?v=" + RP_VERSION, () => window.FlopReports).then(() => loadJs("drills.js?v=" + DR_VERSION, () => window.Drills))
-    .then(() => window.Drills.open()).catch(e => showErr("Couldn't load the drills: " + e.message));
-};
+document.getElementById("drills").onclick = () => openView("drills");
 // ---- the session analyzer (session.js, after hh.js whose parser it uses; it runs on the page's engine, solver and grading)
-document.getElementById("analyzeSession").onclick = () => {
-  document.getElementById("menu").hidden = true;
-  loadHH().then(() => loadJs("session.js?v=" + SS_VERSION, () => window.Session)).then(() => window.Session.open())
-    .catch(e => showErr("Couldn't load the session analyzer: " + e.message));
+document.getElementById("analyzeSession").onclick = () => openView("session");
+// The views over the page: open (their scripts loaded first; spot: a precomputed spot's id, else the one last
+// picked), close, and what a failed load says. Their scripts report a spot picked (viewSpot) and closing (viewClosed).
+const VIEWS = {
+  reports: { open: (spot) => loadJs("reports.js?v=" + RP_VERSION, () => window.FlopReports).then(() => window.FlopReports.open(spot)),
+             close: () => window.FlopReports && window.FlopReports.close(), err: "Couldn't load the flop reports: " },
+  drills: { open: (spot) => loadJs("reports.js?v=" + RP_VERSION, () => window.FlopReports).then(() => loadJs("drills.js?v=" + DR_VERSION, () => window.Drills))
+              .then(() => window.Drills.open(spot)), close: () => window.Drills && window.Drills.close(), err: "Couldn't load the drills: " },
+  session: { open: () => loadHH().then(() => loadJs("session.js?v=" + SS_VERSION, () => window.Session)).then(() => window.Session.open()),
+             close: () => window.Session && window.Session.close(), err: "Couldn't load the session analyzer: " },
+  import: { open: hhOpen, close: () => { hhBox.hidden = true; window.viewClosed("import"); }, err: "" },
 };
+window.viewSpot = (name, spot, label) => { if (overlay !== name) return; overlaySpot = spot; overlayLabel = label || null; syncRoute(true); };
+window.viewClosed = (name) => { if (overlay !== name) return; overlay = overlaySpot = overlayLabel = null; syncRoute(); };
+function showOverlay(name, spot, push) {
+  overlay = name; overlaySpot = spot || null; overlayLabel = null;
+  if (push) syncRoute();
+  let p; try { p = VIEWS[name].open(spot || undefined); } catch (e) { p = Promise.reject(e); }
+  return Promise.resolve(p).catch(e => { window.viewClosed(name); showErr(VIEWS[name].err + (e && e.message || e)); });
+}
+function openView(name) {   // the ⋯ menu's views
+  document.getElementById("menu").hidden = true;
+  if (overlay === name) return;
+  if (overlay) VIEWS[overlay].close();
+  return showOverlay(name, null, true);
+}
 // ---- the advice's Breakdown and Equity views (breakdown.js, loaded the first time one is opened): the advice's own
 // request again with "breakdown": true, answered from the solve it came from; the view picked stays for later advice
 let VIEW = "grid";
@@ -2009,8 +2047,26 @@ function loadPractice() {
     s.onload = () => res(window.Practice); s.onerror = () => rej(new Error("could not load practice.js")); document.head.appendChild(s); });
 }
 document.getElementById("practiceBtn").onclick = () => loadPractice().then(P => P.set(!P.on)).catch(e => showErr(String(e)));
-try { if (localStorage.getItem("gto-practice") === "1") loadPractice().then(P => P.set(true)).catch(() => {}); } catch (e) {}
+// ---- routes: the URL's view (a back or forward, or the page opened at it), opened without pushing. Practice is on at
+// /practice/ and off at the solver's URL, whatever it was last time (its "gto-practice" is no longer read); a view over
+// the page (reports, drills, session, import) leaves Practice as it is.
+async function applyRoute(r) {
+  routing++;
+  try {
+    if (overlay && overlay !== r.view) { VIEWS[overlay].close(); overlay = overlaySpot = overlayLabel = null; }
+    if (r.view === "practice" && !practicing()) await loadPractice().then(P => P.set(true)).catch(e => showErr(String(e)));
+    else if (r.view === "solver" && practicing()) window.Practice.set(false);
+    if (VIEWS[r.view] && (overlay !== r.view || (r.spot && r.spot !== overlaySpot))) await showOverlay(r.view, r.spot);
+  } finally { routing--; }
+  syncRoute(true);   // (the URL as the view has it: /reports/ -> /reports/<the spot shown>/)
+}
+if (typeof window.addEventListener === "function") window.addEventListener("popstate", () => applyRoute(parseRoute(location.pathname)));
 renderAll();
+// a #h= link opens its spot in the solver (an old link is the root's; a link opened at /practice/ too)
+const startRoute = parseRoute(location.pathname);
+if (linkLoaded && startRoute.view === "practice") startRoute.view = "solver";
+routing--;
+applyRoute(startRoute);
 </script>
 </body>
 </html>

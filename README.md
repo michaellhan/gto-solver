@@ -37,7 +37,26 @@ the page's engine, regenerate it with `UPDATE_FIXTURES=1 node --test 'tests/js/*
 python -m gto.server --port 18877
 ```
 
-Open http://127.0.0.1:18877/ . (The same page is what is deployed to the
+Open http://127.0.0.1:18877/ . Each view has its own URL, on the website and the local server alike:
+
+| URL | View |
+| --- | --- |
+| `/gto-solver/` | the solver (advice); a share link `/gto-solver/#h=…` opens its spot here |
+| `/gto-solver/practice/` | Practice |
+| `/gto-solver/drills/`, `/gto-solver/drills/<spot>/` | Drills (on a spot: `srp-btn-bb`, `3bp-bb-btn`…, the flop library's ids with dashes) |
+| `/gto-solver/reports/`, `/gto-solver/reports/<spot>/` | Flop reports |
+| `/gto-solver/session/` | Analyze session |
+| `/gto-solver/import/` | Import hand |
+
+(locally without the `/gto-solver` prefix: http://127.0.0.1:18877/practice/). Opening a view pushes its URL
+and closing it goes back to the solver's (or Practice's, when the view was opened over Practice); the browser's
+back and forward buttons switch views, the tab's title names the view ("Practice · GTO Solver"), and picking another
+spot in the reports or drills updates the URL. A URL opened directly opens its view: Practice is on at
+`/practice/` and off at the solver's URL (whatever it was on the last visit). The list is `ROUTES` in
+`gto/static/index.html`; `gto/routes.py` reads it, and since GitHub Pages has no rewrites `scripts/deploy.sh`
+writes each URL's `index.html`, a copy of the page with a `<base href="../">` that points its scripts, worker and
+library fetches at `gto-solver/` (`gto/server.py` serves the same paths, and redirects `/practice` to `/practice/`
+as GitHub Pages does). (The same page is what is deployed to the
 website; there it detects that no server is present and runs the identical
 Python code in a web worker with Pyodide. Pyodide's numpy is 10 to 30 times slower
 per iteration than native, so the browser solves a smaller game: below a flop solve the turn and
@@ -1009,7 +1028,9 @@ not part of the deploy; `scripts/sanity_sweep.py --full-report` runs it with the
 lines and writes `reports/sanity_YYYY-MM-DD.md` (nothing schedules it). It uses `.venv/bin/python` if present,
 else `python3` (`PYTHON=...` overrides). `DRY_RUN=1 scripts/deploy.sh` runs the
 checks and stops before cloning or pushing; `SKIP_CHECKS=1 scripts/deploy.sh`
-skips them, for emergencies only.
+skips them, for emergencies only. `BUILD_ONLY=<dir> scripts/deploy.sh` builds the folder as it would be published
+(versions stamped, each view's URL written) into `<dir>/site/gto-solver` without the checks, cloning or pushing, to
+try the static site: `python3 -m http.server -d <dir>/site 8000`, then http://127.0.0.1:8000/gto-solver/practice/.
 
 Tune with `Config` in `gto/solver.py` (`depth`, sizes, sample counts) or the
 `--budget` / `--depth` flags. `depth=3` from the flop is the full tree; it is

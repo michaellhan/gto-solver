@@ -68,7 +68,8 @@ class El {
   *walk() { for (const c of this.children) { yield c; yield* c.walk(); } }
 }
 
-// Options: hash (location.hash), protocol (location.protocol, default http:), storage (initial localStorage entries), server (true: /health answers ok,
+// Options: hash (location.hash), path (location.pathname, default /gto-solver/: e.g. /gto-solver/practice/), search,
+// scripts (file name -> source run instead of gto/static's file when the page loads that script), protocol (location.protocol, default http:), storage (initial localStorage entries), server (true: /health answers ok,
 // so the page uses the local server's budgets and POSTs to /advise instead of the worker).
 function loadPage(opts = {}) {
   const els = new Map();
@@ -93,8 +94,13 @@ function loadPage(opts = {}) {
     if (!allowed()) return Promise.reject(new Error("NotAllowedError"));
     return (async () => { clipboard.text = await (await items[0].items["text/plain"]).text(); clipboard.via = "write"; })();
   };
-  const location = { hash: opts.hash || "", origin: "https://www.michael-han.com", pathname: "/gto-solver/", search: "", protocol: opts.protocol || "http:" };
-  const replaced = [];
+  const location = { hash: opts.hash || "", origin: "https://www.michael-han.com", pathname: opts.path || "/gto-solver/", search: opts.search || "", protocol: opts.protocol || "http:" };
+  const replaced = [], pushed = [];   // the URLs history.replaceState / pushState were given
+  const goTo = (url) => {   // (the page passes absolute paths)
+    const u = new URL(String(url), location.origin + location.pathname);
+    location.pathname = u.pathname; location.search = u.search; location.hash = u.hash;
+  };
+  const scripts = [];   // the scripts the page loaded (document.head.appendChild), by file name
 
   class FakeWorker {
     constructor(url) { this.url = url; this.onmessage = null; this.onerror = null; this.terminated = false; workers.push(this); }
@@ -105,8 +111,24 @@ function loadPage(opts = {}) {
   for (const [id, key, vals] of [["solvectl", "m", ["fast", "accurate"]], ["oppctl", "o", ["gto", "pool"]]])
     for (const v of vals) { const b = new El("button"); b.dataset[key] = v; byId(id).appendChild(b); }
   const body = new El("body", "body");
+  // a <script src> appended to the head runs (the page's own file, or opts.scripts') after the current task, then onload
+  const head = new El("head");
+  head.appendChild = (el) => {
+    head.children.push(el);
+    if (el.tagName !== "SCRIPT" || !el.src) return el;
+    const name = String(el.src).split("?")[0];
+    scripts.push(name);
+    setImmediate(() => {
+      const f = path.join(path.dirname(HTML_PATH), name);
+      const src = opts.scripts && name in opts.scripts ? opts.scripts[name] : fs.existsSync(f) ? fs.readFileSync(f, "utf8") : null;
+      if (src == null) return el.onerror && el.onerror(new Error("404"));
+      vm.runInContext(src, ctx, { filename: name });
+      if (el.onload) el.onload();
+    });
+    return el;
+  };
   const document = {
-    body,
+    body, head, title: "GTO Solver",
     getElementById: byId,
     createElement: (t) => new El(t),
     // the page only looks up action buttons by data-key ("#actionArea [data-key=..]"); everything else is absent
@@ -141,7 +163,10 @@ function loadPage(opts = {}) {
   }
   const ctx = {
     document, location, console,
-    history: { replaceState: (_s, _t, url) => { replaced.push(url); location.hash = ""; } },
+    history: {
+      replaceState: (_s, _t, url) => { replaced.push(url); goTo(url); },
+      pushState: (_s, _t, url) => { pushed.push(url); goTo(url); },
+    },
     navigator: { clipboard: fakeClipboard },
     ...(cbMode === "item" ? { ClipboardItem } : {}),
     Blob,
@@ -181,7 +206,9 @@ function loadPage(opts = {}) {
   // the value of an expression as a plain Node object (the page's own objects come from another realm)
   const val = (code) => { const t = run(`JSON.stringify(${code})`); return t === undefined ? undefined : JSON.parse(t); };
   const page = {
-    ctx, run, val, els, byId, storage, posted, workers, fetched, notFound, clipboard, location, replaced, rootProps, viewport,
+    ctx, run, val, els, byId, storage, posted, workers, fetched, notFound, clipboard, location, replaced, pushed, scripts, rootProps, viewport,
+    // back or forward to a URL (an absolute path): location changes, then popstate
+    popTo(url) { goTo(url); page.fire("popstate", { state: null }); },
     // fire a window event (e.g. "hashchange" after setting location.hash)
     fire(t, e = {}) { for (const f of winListeners[t] || []) f(e); },
     // change the visual viewport (e.g. the on-screen keyboard opening) and fire its events

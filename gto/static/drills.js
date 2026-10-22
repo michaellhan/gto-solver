@@ -223,6 +223,7 @@
     const sp = spotOf(id);
     [rep, ranges] = await Promise.all([get(`${id}/report.json?v=${sp.report}`), get(`${id}/ranges.json?v=${sp.fp.join("")}`)]);
     if (String(ranges.fp) !== String(sp.fp)) throw new Error("the spot's ranges.json is out of date");
+    if (globalThis.viewSpot) globalThis.viewSpot("drills", id, rep.label);   // (the page's URL: /drills/<spot>/)
     store(); return deal();
   }
 
@@ -306,7 +307,10 @@
     e.preventDefault();
     if (r.close) close(); else if (r.next) deal(); else if (r.queue != null) queued = r.queue; else answer(r.answer);
   }
-  function close() { if (box) box.hidden = true; const m = document.getElementById("menuBtn"); if (m) m.focus(); }
+  function close() {
+    if (box) box.hidden = true; const m = document.getElementById("menuBtn"); if (m) m.focus();
+    if (globalThis.viewClosed) globalThis.viewClosed("drills");   // (the page's URL back to the solver's)
+  }
   const CSS = `
   .dr { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,.55); display: flex; justify-content: center; align-items: flex-start; padding: 40px 16px 16px; }
   .dr-card { background: var(--panel2); color: var(--text); border: 1px solid var(--line2); border-radius: var(--r); width: min(620px, 100%); max-height: calc(100dvh - 56px); display: flex; flex-direction: column; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
@@ -360,7 +364,8 @@
     .dr-c { width: 36px; height: 48px; font-size: 16px; }
     .dr-acts { grid-template-columns: 1fr 1fr; }
   }`;
-  async function open() {
+  // spot: a spot's id to drill (the page's /drills/<spot>/), else the one last picked
+  async function open(spot) {
     if (!document.getElementById("drStyle")) { const s = document.createElement("style"); s.id = "drStyle"; s.textContent = CSS; document.head.appendChild(s); }
     if (!box) {
       box = document.createElement("div"); box.id = "drillsBox"; box.className = "dr"; box.setAttribute("role", "dialog");
@@ -382,12 +387,13 @@
       if (index.format !== FORMAT) { index = null; throw new Error("the library changed: reload the page"); }
       const ids = (index.spots || []).filter(s => s.report).map(s => s.id);
       if (!ids.length) throw new Error("no precomputed spots");
-      if (!rep) await pickSpot(ids.includes(ST.spot) ? ST.spot : ids[0]);
+      const want = ids.includes(spot) ? spot : ids.includes(ST.spot) ? ST.spot : ids[0];
+      if (!rep || want !== ST.spot) await pickSpot(want); else if (globalThis.viewSpot) globalThis.viewSpot("drills", ST.spot, rep.label);
     } catch (err) { box.querySelector(".dr-body").innerHTML = `<div class="dr-msg">Couldn't load the drills: ${esc(err.message || err)}</div>`; }
     const t = box.querySelector(".dr-act") || box.querySelector("select"); if (t) t.focus();
   }
 
   const api = { decode, parse, nodeAt, candidates, pick, handWeights, problem, potAt, grade, addScore, emptyScore, summary,
-                keyAction, stateFor, COMBOS, VIEWS, MIX, open, state: ST };
+                keyAction, stateFor, COMBOS, VIEWS, MIX, open, close, state: ST };
   if (typeof module === "object" && module.exports) module.exports = api; else globalThis.Drills = api;
 })();
