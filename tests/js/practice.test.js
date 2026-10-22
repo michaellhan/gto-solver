@@ -114,17 +114,22 @@ test("the coach: the verdict on your last decision with the solver's mix, then e
   assert.deepEqual(log[0].mix.map(a => [a.n, a.f]), [["fold", 0.2], ["check", 0.3], ["call", 0.5]]);
   const html = p.byId("practiceBar").innerHTML;
   assert.match(html, /class="verdict">Best move</);
-  assert.match(html, /you <b>called<\/b>/);
+  assert.match(html, /preflop · you <b>called<\/b>/);
   assert.match(html, /no EV lost/);
-  assert.match(html, /call<span class="tag">you<\/span>/);
+  assert.match(html, /call <b class="num">50%<\/b><span class="tag">you<\/span>/);   // the mix, at a glance
+  assert.match(html, /<details class="cx-more"><summary>Details<\/summary>.*The solver's top choice here/);   // why and the EVs fold away
+  assert.match(html, /\+1.00 bb/);
   // after the flop you check when you can: in the mix (30%), 0.6bb below calling's EV
   await playHand(p, passive, (sim) => sim.cur.curBet > sim.cur.bets[p.S.hero] ? { action: "call" } : { action: "check" });
   const h = p.val("Practice.state.hand"), mine = Object.values(p.S.actions).flat().filter(a => a.pos === p.S.hero);
   assert.equal(h.log.length, mine.length);
   assert.ok(mine.some(a => a.action === "check"));
   assert.match(p.byId("practiceBar").innerHTML, /<span class="pill"[^>]*>Good<\/span><span class="num neg">−0.60 bb/);
-  assert.match(p.byId("practiceBar").innerHTML, /Your decisions · \d+ of \d+ in the solver's strategy/);
-  assert.match(p.byId("practiceBar").innerHTML, /Next hand/);
+  assert.match(p.byId("practiceBar").innerHTML, /This hand · \d+ of \d+ in the solver's strategy/);
+  // Next hand takes the action buttons' place
+  const next = p.byId("actionArea").children.find(b => b.id === "pxNext");
+  assert.match(next.innerHTML, /Next hand<kbd>N<\/kbd>/);
+  assert.equal(p.byId("actionArea").children.filter(b => b.className === "acts").length, 0);
   assert.equal(p.val("Practice.state.score.good"), mine.length);   // check and call are both in the mix
 });
 
@@ -311,4 +316,41 @@ test("an import's toast (Review whole hand) goes when practice starts, and a rev
   assert.deepEqual(p.val("seen"), []);
   assert.equal(p.val("review"), null);
   assert.equal(JSON.stringify(p.S), hand);
+});
+
+test("practice setup and states: a fixed or random seat, the buttons wait for the solve, GTO opponents, the full analysis on request", async () => {
+  const p = await practicePage(13, { "gto-opponents": "pool" });
+  // a fixed seat: every deal from it, kept in the browser; Random again
+  const sel = p.byId("pxSeat");
+  assert.match(sel.innerHTML, /<option value="random">Random<\/option>.*<option value="BTN">/);
+  sel.value = "CO"; sel.onchange(); await flush();
+  for (let k = 0; k < 3; k++) { assert.equal(p.S.hero, "CO"); p.run("Practice.next()"); await flush(); }
+  assert.equal(JSON.parse(p.storage.get("gto-practice-seat")), "CO");
+  sel.value = "random"; sel.onchange(); await flush();
+  const seats = new Set(); for (let k = 0; k < 8; k++) { p.run("Practice.next()"); await flush(); seats.add(p.S.hero); }
+  assert.ok(seats.size >= 3, [...seats].join());
+  // practice opponents play GTO: the pool setting isn't sent while practising
+  assert.ok(p.posted.length && p.posted.every(m => !(m.state || m).opponents));
+  // your turn before the spot is solved: "Solving your spot…", the buttons disabled; then "Your turn"
+  const done = new Set(), plays = () => { for (const m of p.posted) if (m.play && !done.has(m.id)) { done.add(m.id); p.workers.at(-1).onmessage({ data: { id: m.id, result: passive(m) } }); } };
+  for (let i = 0; i < 50 && p.sim().toAct !== p.S.hero; i++) { await flush(); plays(); await flush(); }
+  assert.equal(p.sim().toAct, p.S.hero);
+  {   // (only the opponents' requests answered so far: your spot's solve is still out)
+    assert.ok(!p.val("resultKey === JSON.stringify(payload())"));
+    const acts = p.byId("actionArea").children.find(e => /acts/.test(e.className));
+    assert.match(acts.className, /wait/);
+    assert.ok(acts.children.every(b => b.disabled));
+    assert.match(p.byId("practiceBar").innerHTML, /Solving your spot…/);
+  }
+  for (let i = 0; i < 5 && !p.val("resultKey === JSON.stringify(payload())"); i++) { await flush(); answer(p, done, passive); await flush(); }
+  const acts = p.byId("actionArea").children.find(e => /acts/.test(e.className));
+  assert.ok(!/wait/.test(acts.className) && acts.children.every(b => !b.disabled));
+  assert.match(p.byId("practiceBar").innerHTML, /Your turn/);
+  // the solver's full analysis of your last decision shows only when asked for, and never on your turn
+  assert.equal(p.act({ action: "call" }), null); p.run("renderAll()");
+  assert.ok(!p.ctx.document.body.className.includes("pxdetail"));
+  p.run("Practice.state.detail = true; renderAll()");
+  assert.ok(p.ctx.document.body.className.includes("pxdetail"));
+  p.run("Practice.next()"); await flush();
+  assert.ok(!p.ctx.document.body.className.includes("pxdetail"));   // (nothing to show on a new hand)
 });

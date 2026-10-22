@@ -192,45 +192,58 @@
   .custom.open { display: flex; }
   .err { color: var(--bad); font-size: 12px; }
   .err:empty { display: none; }
-  /* practice mode (practice.js): a coach panel (your cards, the verdict on each decision, the result, the score);
-     the full advice shows only once you've acted; no editing the hand, no solver-only controls */
+  /* practice mode (practice.js): a coach panel (your seat, what's happening, the verdict on each decision, the result,
+     the score); the solver's full analysis only when asked for, never on your turn; no editing the hand, no
+     solver-only controls; big action buttons, and Next hand where they were once the hand is over */
   #pCoach { padding: 12px 14px; }
   body:not(.practice) #pCoach, body:not(.practice) .pxonly, body.practice .nopx { display: none !important; }
-  body.practice.heroturn #pAdvice, body.practice #adviceNote, body.practice .acts .fq { display: none !important; }
+  body.practice:not(.pxdetail) #pAdvice, body.practice.heroturn #pAdvice, body.practice #adviceNote, body.practice .acts .fq { display: none !important; }
   body.practice #result.stale { opacity: 1; }
   body.practice .acts button.best { box-shadow: none; }
   body.practice .seat, body.practice #seats, body.practice .rewind, body.practice #result .arow { pointer-events: none; }
   body.practice #tableHint, body.practice #editCards, body.practice #timeline > button, body.practice .shortcut, body.practice #pCards,
-  body.practice #copyhand, body.practice #newhand, body.practice .prompt .ask { display: none !important; }
+  body.practice #copyhand, body.practice #newhand, body.practice .prompt .ask, body.practice .acts.solver::before { display: none !important; }
+  body.practice .acts button { min-height: 54px; font-size: 15px; max-width: none; }
+  @media (min-width: 561px) { body.practice .acts button { min-width: 0; flex: 1 1 0; padding: 8px 18px 8px 12px; } }
+  @media (max-width: 560px) { body.practice #solvectl { display: none; } }   /* (the header on one line) */
+  body.practice .acts.wait button { opacity: .4; }
+  #actionArea .nexth { display: block; width: 100%; min-height: 54px; font-size: 16px; font-weight: 700; background: var(--accent); color: #1a1200; border-color: var(--accent); }
+  #actionArea .nexth:hover { filter: brightness(1.08); }
+  #actionArea .nexth kbd { color: #1a1200; border-color: rgba(0,0,0,.25); }
   #practiceBtn.active { background: var(--panel2); color: var(--text); border-color: var(--line2); }
-  .cx-top { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-  .cx-top h2 { margin: 0; }
-  .cx-top .right { margin-left: auto; font-size: 12px; color: var(--muted); }
-  .cx-now { display: flex; align-items: center; gap: 14px; padding: 12px; border-radius: 10px; background: var(--panel2); border: 1px solid var(--line); }
+  .cx-top { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 12px; }
+  .cx-top select { margin-left: 6px; font-size: 13px; padding: 3px 6px; }
+  .cx-top .right { margin-left: auto; color: var(--muted); }
+  .cx-now { display: flex; align-items: center; gap: 14px; padding: 12px; min-height: 84px; border-radius: 10px; background: var(--panel2); border: 1px solid var(--line); }
   .cx-now.mine { border-color: var(--accent); }
   .cx-now .t { font-size: 17px; font-weight: 700; }
   .cx-now.mine .t { color: var(--accent); }
+  .cx-now.wait .t { color: var(--muted); }
   .cx-now .s { color: var(--muted); font-size: 13px; margin-top: 3px; line-height: 1.5; }
   .cx-cards { display: flex; gap: 4px; flex: none; }
   .cx-cards .bc { width: 38px; height: 54px; font-size: 17px; box-shadow: 0 2px 6px rgba(0,0,0,.35); }
-  .cx-cards .bc.sm { width: 26px; height: 37px; font-size: 12px; box-shadow: none; }
-  .cx-board { display: flex; gap: 3px; margin-top: 8px; align-items: center; }
-  .cx-board .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); margin-right: 4px; }
+  .cx-now .bc.sm, .cx-show .bc.sm { width: 26px; height: 37px; font-size: 12px; box-shadow: none; }
+  .cx-board { display: flex; gap: 3px; margin-top: 8px; }
   .cx-fb { margin-top: 12px; padding: 12px; border-radius: 10px; border: 1px solid var(--line); border-left: 4px solid var(--c); background: var(--panel2); }
   .cx-fb .head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-  .cx-fb .verdict { font-size: 18px; font-weight: 800; color: var(--c); margin: 0; }
+  .cx-fb .verdict { font-size: 18px; font-weight: 800; color: var(--c); }
   .cx-fb .what { color: var(--muted); font-size: 13px; }
   .cx-fb .what b { color: var(--text); }
-  .cx-fb .cost { margin-left: auto; font-size: 13px; font-variant-numeric: tabular-nums; }
-  .cx-fb .why { font-size: 13px; margin-top: 6px; line-height: 1.5; }
+  .cx-fb .cost { margin-left: auto; font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .cx-mix { display: flex; height: 8px; border-radius: 4px; overflow: hidden; margin: 10px 0 6px; background: var(--bg); }
   .cx-mix div { height: 100%; }
+  .cx-leg { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); }
+  .cx-leg > span::before, .cx-acts .n::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; background: var(--c); }
+  .cx-leg b { color: var(--text); font-weight: 600; }
+  .cx-leg .you { color: var(--text); }
+  .cx-fb .tag { font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: #1a1200; background: var(--accent); border-radius: 3px; padding: 0 4px; margin-left: 5px; vertical-align: 1px; }
+  .cx-more { margin-top: 8px; font-size: 13px; }
+  .cx-more summary { cursor: pointer; color: var(--muted); font-size: 12px; width: max-content; }
+  .cx-more .why { margin: 6px 0 8px; line-height: 1.5; }
+  .cx-more .link { margin-top: 8px; }
   .cx-acts { display: grid; grid-template-columns: 1fr auto auto; gap: 3px 14px; font-size: 13px; font-variant-numeric: tabular-nums; }
-  .cx-acts > span { padding: 2px 0; }
-  .cx-acts .n::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; background: var(--c); }
   .cx-acts .you { font-weight: 700; }
-  .cx-acts .tag { font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: #1a1200; background: var(--accent); border-radius: 3px; padding: 0 4px; margin-left: 6px; vertical-align: 1px; }
-  .cx-acts .h { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); }
+  .cx-acts .hd { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); }
   .cx-res { text-align: center; padding: 14px 10px; border-radius: 10px; background: var(--panel2); border: 1px solid var(--line); }
   .cx-res .big { font-size: 22px; font-weight: 800; }
   .cx-res .net { font-size: 18px; font-weight: 700; margin-left: 8px; }
@@ -239,20 +252,17 @@
   .cx-show b { color: var(--text); }
   .cx-show .win b { color: var(--good); }
   .cx-res .pots { font-size: 12px; color: var(--muted); margin-top: 8px; }
-  .cx-res .nexth { margin-top: 12px; padding: 9px 22px; font-size: 14px; font-weight: 700; background: var(--accent); color: #1a1200; border-color: var(--accent); }
-  .cx-res .nexth kbd { color: #1a1200; border-color: rgba(0,0,0,.25); }
-  .cx-list { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .cx-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
   .cx-list li { display: grid; grid-template-columns: 54px 1fr auto auto; gap: 10px; align-items: baseline; font-size: 13px; padding: 6px 10px; border-radius: 8px; background: var(--panel2); }
   .cx-list .st { text-transform: uppercase; font-size: 10px; letter-spacing: .08em; color: var(--faint); }
   .cx-list .pill { font-size: 11px; font-weight: 700; color: var(--c); }
   .cx-list .num { min-width: 64px; }
   .cx-h { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); margin: 14px 0 0; }
-  .cx-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 14px; }
-  .cx-stats > div { background: var(--panel2); border-radius: 8px; padding: 7px 8px; text-align: center; }
-  .cx-stats b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; }
-  .cx-stats span { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); }
-  .cx-foot { display: flex; justify-content: flex-end; margin-top: 6px; font-size: 11px; }
-  @media (max-width: 560px) { .cx-stats { grid-template-columns: repeat(2, 1fr); } .cx-cards .bc { width: 32px; height: 46px; font-size: 15px; } }
+  .cx-stats { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  .cx-stats b { color: var(--text); font-size: 14px; }
+  .cx-stats .link { margin-left: auto; }
+  /* a phone: the table and the dock already say whose turn it is, so the verdict comes straight under the table */
+  @media (max-width: 900px), (max-height: 559px) { .cx-now:not(.err) { display: none; } .cx-now:not(.err) + .cx-fb { margin-top: 0; } }
 
   /* ---- advice */
   .conv { font-size: 11px; font-weight: 600; border-radius: 999px; padding: 1px 8px; border: 1px solid currentColor; white-space: nowrap; }
@@ -433,7 +443,7 @@
 <header>
   <h1>GTO Solver</h1>
   <span class="spacer"></span>
-  <span class="ctl" id="oppctl"><span class="lbl">Opponents</span>
+  <span class="ctl nopx" id="oppctl"><span class="lbl">Opponents</span>
     <div class="segment"><button data-o="gto" class="active" title="Opponents play the equilibrium (GTO): advice that can't be exploited, whoever you face.">GTO</button><button data-o="pool" title="Opponents play like a typical player pool: they fold too often to bets of every size (most of all small ones), raise less and bluff less, from population data where it exists. Preflop, from population stats, they play more hands, 3bet more and fold less to 3bets. Your preflop calls and raises adjust to those ranges (opens follow the chart); after the flop, advice is the highest-EV play against them.">Pool</button></div></span>
   <span class="ctl" id="solvectl"><span class="lbl">Solve</span>
     <div class="segment"><button data-m="fast" class="active" title="A few seconds per spot. River answers are solid; turn and flop answers are rough.">Fast</button><button data-m="accurate" title="Much longer per spot (about 30 s with the local server, about a minute in the browser). Turn answers get close to a full solver.">Accurate</button></div></span>
@@ -497,7 +507,7 @@
           <div class="advh">Opponent tendencies (heads-up, postflop)</div>
           <div class="row" id="lockIns" title="Lock an opponent's tendencies (nodelocking): after the flop, heads-up, the advice is the best response to them, with GTO's frequencies alongside. On top of GTO, or of the pool with Opponents: Pool. fold: points more of their range folding to a bet (negative: calls); bluff, bet, raise: % more or less (-100 never, +100 always; bluff is their weak hands' bets); next: their fold % to your bet and bet % when you check at their very next decision."></div>
         </details>
-        <div class="row">
+        <div class="row nopx">
           <span class="muted" style="width:58px;font-size:12px">You are</span>
           <div class="row seats" id="seats"></div>
           <button class="link" id="setupDone" style="margin-left:auto" hidden>Done</button>
@@ -539,6 +549,7 @@
 
   <div class="col" id="colR">
     <section class="panel" id="pCoach">
+      <div class="cx-top"><label class="muted">Your seat <select id="pxSeat" title="Practice from one seat, or a random seat each hand"></select></label><span class="right" id="pxHandNo"></span></div>
       <div id="practiceBar" hidden></div>
     </section>
     <section class="panel" id="pAdvice">
@@ -1094,6 +1105,11 @@ function renderAction(sim) {
   const step = document.getElementById("stepLabel");
   const prompt = document.createElement("div"); prompt.className = "prompt";
   if (!S.cards[0] || !S.cards[1]) { step.textContent = ""; prompt.innerHTML = `<span class="ask">Place your two hole cards to start.</span>`; el.appendChild(prompt); return; }
+  if (sim.handOver && practicing()) {   // practice: the one way on is Next hand (or N), where the action buttons were
+    step.textContent = "hand over"; prompt.innerHTML = `<span class="who">Hand over</span><span class="pot">pot ${fmt(sim.pot)} bb</span>`;
+    const b = document.createElement("button"); b.className = "nexth"; b.id = "pxNext"; b.innerHTML = "Next hand<kbd>N</kbd>";
+    b.onclick = () => window.Practice.next(); el.append(prompt, b); return;
+  }
   if (sim.handOver) { step.textContent = "hand over"; prompt.innerHTML = `<span class="who">Hand over</span><span class="pot">pot ${fmt(sim.pot)} bb</span><span class="ask">Press <kbd style="margin:0">N</kbd> for a new hand.</span>`; el.appendChild(prompt); return; }
   if (sim.waiting) {
     step.textContent = sim.waiting;
@@ -1104,9 +1120,11 @@ function renderAction(sim) {
   const myBet = info.bets[p], toCall = info.curBet - myBet, remaining = STACK(p) - sim.invested[p] - myBet, facing = toCall > 1e-9;
   step.textContent = street;
   const callAmt = Math.min(toCall, remaining), need = callAmt / (info.pot + callAmt);
-  prompt.innerHTML = `<span class="who ${isHero ? "hero" : ""}">${isHero ? "Your turn" : p + " to act"}</span><span class="pot">pot ${fmt(info.pot)} bb${facing ? ` · ${fmt(callAmt)} to call · <span title="Pot odds: the equity a call needs to break even">need ${(need * 100).toFixed(0)}%</span>` : ""}</span><span class="ask">${practicing() ? (isHero ? "Your move." : p + " is thinking…") : isHero ? "Check the advice, then record what you did." : "What did " + p + " do?"}</span>`;
+  // practice: the other seats move by themselves; on your turn the buttons wait for the spot's solve (to grade your move)
+  const px = practicing(), wait = px && isHero && resultKey !== JSON.stringify(payload());
+  if (px && !isHero) { prompt.innerHTML = `<span class="who">${SEAT_LABEL(p, POS.length)} is thinking…</span><span class="pot">pot ${fmt(info.pot)} bb</span>`; el.appendChild(prompt); return; }
+  prompt.innerHTML = `<span class="who ${isHero ? "hero" : ""}">${wait ? '<span class="spinner"></span>Solving your spot…' : isHero ? "Your turn" : p + " to act"}</span><span class="pot">pot ${fmt(info.pot)} bb${facing ? ` · ${fmt(callAmt)} to call · <span title="Pot odds: the equity a call needs to break even">need ${(need * 100).toFixed(0)}%</span>` : ""}</span><span class="ask">${isHero ? "Check the advice, then record what you did." : "What did " + p + " do?"}</span>`;
   el.appendChild(prompt);
-  if (!isHero && practicing()) return;   // practice: the other seats move by themselves
 
   // On your turn, once the advice for this exact spot is in, the buttons use the solver's sizes and show its mix.
   const res = isHero && lastResult && !lastResult.error && !heuristic(lastResult) && resultKey === JSON.stringify(payload()) ? lastResult : null;
@@ -1147,6 +1165,7 @@ function renderAction(sim) {
     acts.appendChild(custom);
   }
   if (remaining > 0 && (raiseOk || remaining <= toCall + 1e-9)) mk("All-in", "agg", { action: "all-in" }, fmt(myBet + remaining) + " bb" + pct(solverAct("all-in")), "A", solverAct("all-in"));
+  if (wait) { acts.classList.add("wait"); for (const b of acts.children) b.disabled = true; }
   el.appendChild(acts);
 
   const cb = document.createElement("div"); cb.className = "custom"; cb.id = "customBox";
@@ -1204,7 +1223,7 @@ function payload() {
            ...(ANTE() ? { ante: ANTE() } : {}), ...(STRADDLER() ? { straddle: true } : {}),
            ...(RAKE() ? { rake: RAKE() / 100, ...(RAKE_CAP() ? { rake_cap: RAKE_CAP() } : {}) } : {}),
            preflop: conv(S.actions.preflop), flop: conv(S.actions.flop), turn: conv(S.actions.turn), river: conv(S.actions.river), budget: BUDGET, prior_budget: PRIOR, speed: SPEED,
-           ...(OPP === "pool" ? { opponents: "pool" } : {}), ...adv };
+           ...(OPP === "pool" && !practicing() ? { opponents: "pool" } : {}), ...adv };   // (practice opponents play GTO)
 }
 // the payload key of the same spot at another speed
 function keyFor(key, speed) {
@@ -1306,7 +1325,7 @@ function renderResult(res, key) {
   const src = res.actions.some(a => a.gto_freq !== undefined) ? gtoSource(res, key) : "";
   if (res.locked) h += `</div><div class="meta">${Object.entries(res.locked).map(([p, l]) => `Against your lock on ${p} (${LOCK_TEXT(l)})`).join("; ")}: the best response, with GTO's frequency under each (${src}).`;
   else if (src) h += `</div><div class="meta">Against a typical player pool: the best response, with GTO's frequency under each (${src}).`;
-  h += `</div><div class="meta">${TAP} a row to record it as what you did.${hasEv ? " EV is in big blinds relative to folding now, so fold is 0: chips already in the pot are gone either way." : res.street === "preflop" ? " Preflop comes from charts, so there's no EV column." : ""}${res.widened && res.widened.length ? ` The solve rarely has ${res.widened.join(" and ")} play this way, so their range comes from simple betting rules instead; the EVs (and the pick) are against that range, so they can disagree with the solver's mix.` : conv && conv.cls !== "ok" ? " Actions the solver mixes should have near-equal EVs; gaps here mean the solve hasn't settled." : ""}</div>`;
+  h += `</div><div class="meta">${practicing() ? "" : TAP + " a row to record it as what you did."}${hasEv ? " EV is in big blinds relative to folding now, so fold is 0: chips already in the pot are gone either way." : res.street === "preflop" ? " Preflop comes from charts, so there's no EV column." : ""}${res.widened && res.widened.length ? ` The solve rarely has ${res.widened.join(" and ")} play this way, so their range comes from simple betting rules instead; the EVs (and the pick) are against that range, so they can disagree with the solver's mix.` : conv && conv.cls !== "ok" ? " Actions the solver mixes should have near-equal EVs; gaps here mean the solve hasn't settled." : ""}</div>`;
   if (res.grid && res.street !== "preflop" && !heuristic(res)) h += `<div class="segment vtabs">${["grid", "breakdown", ...(res.multiway ? [] : ["equity"])].map(v => `<button data-v="${v}" class="${v === "grid" ? "active" : ""}">${v[0].toUpperCase() + v.slice(1)}</button>`).join("")}</div><div class="bdview" hidden></div>`;
   if (res.grid) h += `<div class="gridview">${renderGrid(res.grid, res.hand)}</div>`;
   h += `<details><summary>Details</summary>`;

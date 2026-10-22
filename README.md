@@ -169,20 +169,26 @@ advice with frequencies, EVs and sizes, the villain range, solver stats, a link
 that reopens the exact spot, and the raw state JSON for the API or CLI.
 The hand is kept in the browser between reloads; **New hand** clears it.
 
-**Practice** in the header plays random hands against GTO opponents, with the player count,
-stacks (each seat's own, if set), antes, straddle and rake of the setup; a showdown pays each side pot
-to the best hand among the players in it. Your seat and cards are random; every other seat's
-hand and the board are dealt up front, and the other seats move by themselves (a short "thinking"
-status while they do): preflop from the chart for their actual hand, after the flop drawn from the
-solve's mix for it (heads-up, the same solve that answers your own spot, so a reply to your move is
-nearly instant; in a 3-way pot your own solve too once you've acted on the street, read off its tree for their hand;
-before that the advisor from their seat: a 3-way solve where it applies, else the heuristic's pure pick). On your turn the advice stays
-hidden (the spot is solved in the background so your move can be graded) and shows once you've
-acted; each decision is graded as in a review. At the end the opponents' cards are shown at
-showdown with your result, the hand review lists the EV given up, and **Next hand** (N) deals again.
-The running score (hands, average EV given up per decision, how often you took the solver's top
-action, chips won) is kept in the browser. Folding ends the hand for you; Undo and replaying a
-decision are off while practising. The page loads `practice.js` the first time Practice is turned on.
+**Practice** in the header plays random hands against GTO opponents (**Exit practice** in the same place goes back
+to the solver), with the player count, stacks (each seat's own, if set), antes, straddle and rake of the setup; a
+showdown pays each side pot to the best hand among the players in it. Your seat is random each hand, or the one
+picked under **Your seat** in the coach panel; every other seat's hand and the board are dealt up front, and the
+other seats move by themselves ("BTN is thinking…" while they do): preflop from the chart for their actual hand,
+after the flop drawn from the solve's mix for it (heads-up, the same solve that answers your own spot, so a reply
+to your move is nearly instant; in a 3-way pot your own solve too once you've acted on the street, read off its tree
+for their hand; before that the advisor from their seat: a 3-way solve where it applies, else the heuristic's pure
+pick). They play GTO whatever the Opponents setting (hidden while practising, with the other solver-only controls).
+On your turn the spot is solved in the background so your move can be graded: until it is, the coach and the action
+dock say "Solving your spot…" and the (large) action buttons are disabled. Right after each decision the coach shows
+its verdict (Best move, Good, Inaccuracy, Mistake) in colour, the EV it gave up and the solver's mix as a bar with
+its frequencies; **Details** opens why and each action's EV (the choice is remembered), and from there **Show the
+solver's full analysis** opens the usual advice panel for your last decision (never on your turn). At the end the
+opponents' cards are shown at showdown with your result, the verdict on your last decision and the hand's
+decisions with the EV each gave up, and **Next hand** (N) takes the action buttons' place. The score on one line
+(hands, how often your action was in the solver's strategy, average EV given up per decision, chips won; **Reset**)
+is kept in the browser. On a phone the coach's verdict comes straight under the table (the table and the dock
+already say whose turn it is). Folding ends the hand for you; Undo and replaying a decision are off while
+practising. The page loads `practice.js` the first time Practice is turned on.
 
 ## Use from the shell
 
