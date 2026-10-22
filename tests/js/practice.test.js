@@ -354,3 +354,99 @@ test("practice setup and states: a fixed or random seat, the buttons wait for th
   p.run("Practice.next()"); await flush();
   assert.ok(!p.ctx.document.body.className.includes("pxdetail"));   // (nothing to show on a new hand)
 });
+
+// the solver checks or calls half the time (whichever you have), both at the best EV
+const EVEN = { ...ADVICE, actions: [{ action: "fold", freq: 0.1, ev_bb: 0 }, { action: "check", freq: 0.5, ev_bb: 1 }, { action: "call", freq: 0.5, ev_bb: 1 }] };
+const passMe = (sim) => sim.cur.curBet > sim.cur.bets[sim.toAct] ? { action: "call" } : { action: "check" };
+// your first decision, its spot solved (the opponents check or call)
+async function toMyTurn(p, done, reply = (m) => m.play ? passive(m) : ADVICE) {
+  for (let i = 0; i < 50 && !(p.sim().toAct === p.S.hero && p.val("resultKey === JSON.stringify(payload())")); i++) {
+    await flush();
+    for (const m of p.posted) if (m.id != null && !done.has(m.id)) { done.add(m.id); p.workers.at(-1).onmessage({ data: { id: m.id, result: reply(m) } }); }
+    await flush();
+  }
+  assert.equal(p.sim().toAct, p.S.hero);
+}
+
+test("looking ahead: once your spot is solved, the line where you check or call is asked for while you decide, and used when you take it", async () => {
+  const p = await practicePage(11);
+  const done = new Set(), reply = (m) => m.play ? passive(m) : EVEN;
+  await toMyTurn(p, done, reply);
+  const hero = p.S.hero, street = p.sim().current, mine = passMe(p.sim());
+  await flush();
+  // requests for the hand after your check or call (the browser looks ahead at Fast when the solver plays that
+  // half the time or more), the page's own hand untouched
+  const ahead = p.posted.filter(m => m.state && m.state[street].some(a => a.pos === hero));
+  assert.ok(ahead.length >= 1, "a request goes out before you act");
+  assert.deepEqual(ahead[0].state[street].find(a => a.pos === hero), { pos: hero, ...mine });
+  assert.equal(p.S.actions[street].filter(a => a.pos === hero).length, 0, "the page's hand is untouched");
+  // answer the look-ahead to its end (your next spot), then call: nothing is asked twice
+  const answerAll = () => { for (const m of p.posted) if (m.id != null && !done.has(m.id)) { done.add(m.id); p.workers.at(-1).onmessage({ data: { id: m.id, result: reply(m) } }); } };
+  for (let i = 0; i < 20; i++) { await flush(); answerAll(); }
+  assert.equal(p.act(mine), null);
+  for (let i = 0; i < 20 && !(p.sim().toAct === hero && p.val("resultKey === JSON.stringify(payload())")); i++) { await flush(); answerAll(); await flush(); }
+  assert.equal(p.sim().toAct, hero);
+  assert.ok(p.val("resultKey === JSON.stringify(payload())"), "your next spot is answered already");
+  const key = (m) => JSON.stringify([m.state, m.play || null]), keys = p.posted.filter(m => m.id != null).map(key);
+  assert.equal(new Set(keys).size, keys.length, "no request twice: the opponents' moves and your spot came from the look-ahead");
+});
+
+test("looking ahead in the browser only when the solver checks or calls your hand half the time or more; another move stops it", async () => {
+  const RARE = { ...ADVICE, actions: [{ action: "fold", freq: 0.6, ev_bb: 0 }, { action: "check", freq: 0.4, ev_bb: 1 }, { action: "call", freq: 0.4, ev_bb: 1 }] };
+  const p = await practicePage(11);
+  const done = new Set();
+  await toMyTurn(p, done, (m) => m.play ? passive(m) : RARE);
+  await flush(); await flush();
+  const street = p.sim().current;
+  assert.ok(!p.posted.some(m => m.state && m.state[street].some(a => a.pos === p.S.hero)), "a check or call 40% of the time: no look-ahead");
+  // at 50% it looks ahead; your fold then ends the hand and the look-ahead with it
+  const q = await practicePage(11), d2 = new Set();
+  await toMyTurn(q, d2, (m) => m.play ? passive(m) : EVEN);
+  await flush();
+  const st2 = q.sim().current;
+  assert.ok(q.posted.some(m => m.state && m.state[st2].some(a => a.pos === q.S.hero)));
+  assert.equal(q.act({ action: "fold" }), null);
+  for (let i = 0; i < 5; i++) { await flush(); answer(q, d2, passive); }
+  const m = q.posted.length; await flush(); answer(q, d2, passive); await flush();
+  assert.equal(q.posted.length, m, "nothing more is asked once the hand is over");
+  assert.ok(q.val("Practice.state.hand.result"));
+});
+
+test("Review mistakes: your decisions that gave up the most EV across hands, each opening its verdict; the dock's one-line verdict", async () => {
+  const p = await practicePage(11);
+  // before any decision the dock's line says where the verdict will be
+  assert.match(p.byId("pxStrip").innerHTML, /Hand 1 · each decision is graded here/);
+  const done = new Set();
+  await toMyTurn(p, done);
+  const hole = p.S.cards.slice(0, 2);
+  p.key("n"); await flush();
+  assert.deepEqual(p.S.cards.slice(0, 2), hole, "a stray N mid-hand doesn't throw the hand away");
+  assert.equal(p.act({ action: "fold" }), null);   // 20% in the mix, 1bb below calling's EV
+  p.run("renderAll()");
+  assert.match(p.byId("pxStrip").innerHTML, /You folded/);
+  const r = p.val("Practice.state.review");
+  assert.equal(r.length, 1);
+  assert.deepEqual([r[0].n, r[0].seat, r[0].rec, r[0].g.l], [1, p.S.hero, { action: "fold" }, 1]);
+  assert.deepEqual(r[0].hole, p.S.cards.slice(0, 2));
+  // a second hand: a call (the solver's best) is no mistake; the dock's line carries its verdict
+  p.run("Practice.next()"); await flush();
+  await toMyTurn(p, done, (m) => m.play ? passive(m) : EVEN);
+  assert.equal(p.act(passMe(p.sim())), null); p.run("renderAll()");   // (in the mix at the best EV: no mistake)
+  assert.match(p.byId("pxStrip").innerHTML, /(Best move|Good)<\/b><span class="muted">preflop · you (called|checked)/);
+  let html = p.byId("practiceBar").innerHTML;
+  assert.match(html, /<button class="link" id="pxRev"[^>]*>Review mistakes \(1\)<\/button>/);
+  assert.doesNotMatch(html, /cx-rev/);
+  p.run("Practice.state.rev = true; renderAll()");   // (Review mistakes: the fake DOM can't find the bar's buttons)
+  html = p.byId("practiceBar").innerHTML;
+  assert.match(html, /<ul class="cx-list cx-rev"><li class="pick" data-i="0"[^>]*><span class="st">#1 preflop<\/span>.*fold.*−1.00 bb/);
+  assert.equal((html.match(/<li class="pick/g) || []).length, 1, "only the mistake");
+  p.run("Practice.state.pick = 0; renderAll()");
+  html = p.byId("practiceBar").innerHTML;
+  assert.match(html, /<li class="spot">.*<span class="verdict">Good<\/span>.*you <b>folded<\/b>/);
+  assert.doesNotMatch(html.split('<li class="spot">')[1], /pxDetail/, "the full analysis is for your last decision only");
+  // kept with the score in this browser; Reset clears both
+  assert.equal(JSON.parse(p.storage.get("gto-practice-review")).length, 2);
+  p.run("confirm = () => true");
+  p.run("Practice.state.review = []; renderAll()");
+  assert.doesNotMatch(p.byId("practiceBar").innerHTML, /pxRev/);
+});
