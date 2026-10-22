@@ -382,6 +382,11 @@
     body.practice .pxstrip::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--line2)); }
     .pxstrip > * { flex: none; } .pxstrip > .fit { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
     .pxstrip .go { margin-left: auto; color: var(--muted); font-size: 18px; line-height: 1; }
+    /* the verdict, the result and the score first, straight under the table; the seat and spot pickers (settings,
+       rarely touched mid-session) after them */
+    body.practice #pCoach { display: flex; flex-direction: column; }
+    body.practice #practiceBar { order: -1; margin-bottom: 14px; }
+    body.practice #practiceBar[hidden] { display: none; }
   }
   @media (max-width: 560px) {
     .cx-leg > span.muted { display: none; }   /* (the solver's 0% actions: in Details) */
@@ -535,7 +540,10 @@
     .felt::before { inset: 12% 5%; }
     .seat { width: 56px; padding: 3px 2px; }
     .seat .pos { font-size: 11px; }
-    .bc { width: 24px; height: 34px; font-size: 11px; }
+    .bc { width: 28px; height: 39px; font-size: 13px; }
+    /* your own cards: the thing you look at most, so bigger than the rest of the seat */
+    .seat.hero { width: 70px; }
+    .seat.hero .hc { font-size: 15px; }
     .pc { height: 30px; font-size: 11px; }
     .slot { width: 32px; height: 46px; font-size: 15px; }
     .slots { gap: 10px; }

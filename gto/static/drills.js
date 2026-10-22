@@ -287,7 +287,7 @@
     const body = box.querySelector(".dr-body");
     if (!index || !rep) { body.innerHTML = `<div class="dr-msg">Loading…</div>`; return; }
     body.innerHTML = controls() + `<div class="dr-stage">${stageHtml()}</div>` + scoreHtml()
-      + `<div class="dr-note">Keys: 1-${ST.pr ? ST.pr.names.length : 3} answer, Space or Enter for the next hand. Correct: the best EV, or an action the hand plays ${MIX * 100}% of the time or more. Flops drawn by how often they come, hands by the range's weight at this point.</div>`;
+      + `<div class="dr-note"><span class="hoveronly">Keys: 1-${ST.pr ? ST.pr.names.length : 3} answer, Space or Enter for the next hand. </span>Correct: the best EV, or an action the hand plays ${MIX * 100}% of the time or more. Flops drawn by how often they come, hands by the range's weight at this point.</div>`;
   }
   function act(d) {
     if (d.a != null) return answer(+d.a);
