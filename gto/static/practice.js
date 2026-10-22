@@ -7,21 +7,23 @@
 // ahead()). The running score and your last decisions (Review mistakes) are kept in this browser.
 "use strict";
 (() => {
-  const ON = "gto-practice", HAND = "gto-practice-hand", SCORE = "gto-practice-score", SEAT = "gto-practice-seat", REVIEW = "gto-practice-review";
+  const ON = "gto-practice", HAND = "gto-practice-hand", SCORE = "gto-practice-score", SEAT = "gto-practice-seat", REVIEW = "gto-practice-review", DRILL = "gto-practice-drill", HINT = "gto-practice-hint";
   const read = (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } };
   const store = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
   const ZERO = { hands: 0, decisions: 0, best: 0, good: 0, evDecisions: 0, evLost: 0, net: 0 };
   // hand: { hero, players, hole, hands: {seat: [c, c]}, board: [5 cards], result }
   // seat: "random" or a position; more: the verdict's details open; detail: the solver's full analysis shown;
-  // review: your last decisions (REVIEW_KEEP), for Review mistakes; rev: that list open; pick: the one shown in it
+  // review: your last decisions (REVIEW_KEEP), for Review mistakes; rev: that list open; pick: the one shown in it;
+  // drill: the kind of pot dealt (DRILLS); tries: deals so far looking for it; hint: the first-run hint dismissed
   const P = { on: false, hand: read(HAND), score: { ...ZERO, ...(read(SCORE) || {}) }, busy: false, status: "", error: "",
     seat: read(SEAT) || "random", more: !!read("gto-practice-more"), detail: !!read("gto-practice-detail"),
-    review: Array.isArray(read(REVIEW)) ? read(REVIEW) : [], rev: false, pick: null };
+    review: Array.isArray(read(REVIEW)) ? read(REVIEW) : [], rev: false, pick: null,
+    drill: read(DRILL) || "any", tries: 0, hint: !!read(HINT) };
   const REVIEW_KEEP = 60, REVIEW_SHOW = 6;
   if (P.score.decisions && !(read(SCORE) || {}).good) P.score.good = P.score.best;   // (a score from before "good" was kept)
 
   // ---- 7-card hand strength: [category, tie-breakers...], compared left to right
-  const CATS = ["high card", "pair", "two pair", "three of a kind", "straight", "flush", "full house", "four of a kind", "straight flush"];
+  const CATS = ["high card", "a pair", "two pair", "three of a kind", "a straight", "a flush", "a full house", "four of a kind", "a straight flush"];
   function rank7(cs) {
     const v = (c) => 14 - RANKS.indexOf(c[0]), cnt = {}, suits = {};
     for (const c of cs) { cnt[v(c)] = (cnt[v(c)] || 0) + 1; (suits[c[1]] = suits[c[1]] || []).push(v(c)); }
@@ -43,21 +45,46 @@
   const cmp = (a, b) => { for (let i = 0; i < Math.max(a.length, b.length); i++) if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) - (b[i] || 0); return 0; };
 
   // ---- dealing
+  // the table (stacks, ante, straddle, rake): a change in the setup deals a new hand rather than alter this one
+  const chips = () => JSON.stringify([POS.map(STACK), ANTE(), STRADDLER(), RAKE(), RAKE_CAP()]);
   function deal() {
     const deck = []; for (const r of RANKS) for (const s of SUITS) deck.push(r + s);
     for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
-    const hero = POS.includes(P.seat) ? P.seat : POS[Math.floor(Math.random() * POS.length)], hands = {};
+    const pool = seatsFor(P.drill), hero = pool.includes(P.seat) ? P.seat : pool[Math.floor(Math.random() * pool.length)], hands = {};
     for (const p of POS) hands[p] = [deck.pop(), deck.pop()];
     S = { ...fresh(S.players), hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanAdv(S, POS), ...cleanStacks(S, POS) };   // (as New hand: seats keep their stacks)
     S.cards[0] = hands[hero][0]; S.cards[1] = hands[hero][1];
     const hole = hands[hero]; delete hands[hero];
-    P.hand = { hero, players: S.players, hole, hands, board: deck.slice(0, 5), result: null, log: [] };
-    P.error = ""; editSetup = false; store(HAND, P.hand); save(); resetAdvice();
+    P.hand = { hero, players: S.players, hole, hands, board: deck.slice(0, 5), result: null, log: [], chips: chips() };
+    P.error = ""; store(HAND, P.hand); save(); resetAdvice();
     A.moves.clear(); A.key = null; A.gen++;
   }
   // the hand on the page is the one dealt here (not changed by New hand, the setup or a share link)
   const ours = () => { const h = P.hand; return !!h && h.hero === S.hero && h.players === S.players && S.cards[0] === h.hole[0] && S.cards[1] === h.hole[1]
-    && POS.every(p => p === h.hero || h.hands[p]) && S.cards.slice(2).every((c, i) => !c || c === h.board[i]); };
+    && POS.every(p => p === h.hero || h.hands[p]) && S.cards.slice(2).every((c, i) => !c || c === h.board[i]) && (!h.chips || h.chips === chips()); };
+
+  // ---- drills: only one kind of pot. The preflop is played for you too (from the chart, as the opponents'), and
+  // the hand dealt again until it reaches the flop heads-up, you in it, as that kind of pot; you play from the flop.
+  const DRILLS = { any: "Any hand", srp: "Raised pot", "3bet": "3-bet pot", bvb: "Blind vs blind" };
+  const DRILL_TIP = { any: "Every hand from the start", srp: "Heads-up after one preflop raise and a call: preflop is played for you, you play from the flop",
+    "3bet": "Heads-up after a 3-bet and a call: preflop is played for you, you play from the flop", bvb: "Small blind against big blind, folded to them: preflop is played for you, you play from the flop" };
+  const DRILL_TRIES = 400;
+  const seatsFor = (d) => d === "bvb" ? POS.filter(p => p === "SB" || p === "BB") : POS;
+  const drilling = () => P.on && P.drill !== "any";
+  // your preflop is played for you (the drill's preflop, until the flop)
+  const auto = (sim) => drilling() && !!sim.cur && sim.current === "preflop" && sim.toAct === S.hero;
+  // while the drill's preflop is played (the deals flash by): what the coach and the dock say, else null
+  const seeking = () => drilling() && P.hand && !P.hand.result && !S.cards[2] ? `Dealing a ${DRILLS[P.drill].toLowerCase()}…` : null;
+  // the drill's preflop has gone another way (dealt again), else false (still on course, or on the flop)
+  function offDrill(sim) {
+    if (!drilling() || S.cards[2]) return false;
+    const pre = S.actions.preflop, raises = pre.filter(a => a.action === "raise" || a.action === "bet").length;
+    const want = { srp: 1, "3bet": 2 }[P.drill], blinds = seatsFor("bvb");
+    if (!sim.active.has(S.hero) || pre.some(a => a.action === "all-in") || (want && raises > want)) return true;
+    if (P.drill === "bvb" && (!blinds.includes(S.hero) || pre.some(a => !blinds.includes(a.pos) && a.action !== "fold"))) return true;
+    if (sim.handOver) return true;
+    return sim.waiting === "flop" && (sim.active.size !== 2 || (want != null && raises !== want));
+  }
   function dealStreet() {
     const sim = simulate();
     for (let i = 2; i < 2 + NEED[sim.waiting]; i++) if (!S.cards[i]) S.cards[i] = P.hand.board[i - 2];
@@ -67,17 +94,17 @@
   // ---- an opponent's move: the GTO mix for its hand, drawn by the solver
   async function villain() {
     await modeReady;
-    const sim = simulate(), p = sim.toAct, before = JSON.stringify([S.actions, S.cards]);
-    P.status = `${SEAT_LABEL(p, S.players)} is thinking…`; bar(sim);
+    const sim = simulate(), p = sim.toAct, before = JSON.stringify([S.actions, S.cards]), mine = p === S.hero;
+    P.status = seeking() || `${SEAT_LABEL(p, S.players)} is thinking…`; bar(sim);
     const req = payload();
     let res;
-    try { res = (await fromAhead(JSON.stringify(req) + "|" + p)) || await callAdvise(req, { seat: p, hole: P.hand.hands[p].join("") }); }
+    try { res = (!mine && await fromAhead(JSON.stringify(req) + "|" + p)) || await callAdvise(req, { seat: p, hole: (mine ? P.hand.hole : P.hand.hands[p]).join("") }); }
     catch (e) { res = { error: "Request failed: " + e }; }
     P.status = "";
     if (!P.on || before !== JSON.stringify([S.actions, S.cards])) return;   // the hand moved on while it thought
     if (res.cancelled) return;                                           // asked again on the next render
     if (res.error) { P.error = `${p}'s move failed: ${res.error}`; return; }
-    const e = act(move(res));
+    const e = act({ ...move(res), auto: mine });
     if (e) P.error = `${p}'s move (${res.name}) was rejected: ${e}`;
   }
 
@@ -190,6 +217,7 @@
     sc.hands++; sc.decisions += mine.length; sc.best += mine.filter(g => g.m === g.b).length; sc.good += mine.filter(g => gradeClass(g) === "ok").length;
     sc.evDecisions += ev.length; sc.evLost += ev.reduce((t, g) => t + g.l, 0); sc.net += net;
     store(HAND, h); store(SCORE, sc);
+    if (!P.hint) { P.hint = true; store(HINT, 1); }   // (the first-run hint: once a hand is played, it's known)
   }
 
   // ---- your decisions: each one's verdict and the solver's mix for the spot, kept with the hand
@@ -197,7 +225,7 @@
   const YOU = (a) => ({ fold: "folded", check: "checked", call: "called", "all-in": "went all-in" })[a.action] || (a.action === "bet" ? `bet ${fmt(a.to)}` : `raised to ${fmt(a.to)}`);
   function graded(street, rec, res) {
     if (!P.hand) return;
-    const mix = res && !res.error && res.actions ? res.actions.map(a => ({ n: a.action, f: a.freq, ...(a.ev_bb !== undefined ? { ev: a.ev_bb } : {}) })) : null;
+    const mix = res && !res.error && !heuristic(res) && res.actions ? res.actions.map(a => ({ n: a.action, f: a.freq, ...(a.ev_bb !== undefined ? { ev: a.ev_bb } : {}) })) : null;
     const e = { street, rec: { action: rec.action, ...(rec.to != null ? { to: rec.to } : {}) }, g: rec.g || null, mix };
     (P.hand.log = P.hand.log || []).push(e);
     store(HAND, P.hand);
@@ -221,27 +249,34 @@
   const evTxt = (x) => `${x > 0 ? "+" : x < 0 ? "−" : ""}${Math.abs(x).toFixed(2)}`;
   function why(e) {
     const g = e.g, v = verdict(g);
-    if (!g) return "This spot isn't solved (4 or more players), so this decision isn't graded.";
+    if (!g) return "The solver doesn't solve this multiway spot, so this decision isn't graded.";
     const as = g.v ? ` (graded as its ${g.m})` : "";
     if (v.k === "best") return g.f >= 0.995 ? `The solver always plays this here.` : `The solver's top choice here: it plays this ${pct(g.f)} of the time.`;
     if (v.k === "good") return `The solver mixes this in ${pct(g.f)} of the time${as}; its top choice is ${g.b} (${pct(g.bf)}).`;
     return `The solver ${g.f < 0.005 ? "never plays this" : `plays this only ${pct(g.f)} of the time`}${as}; it prefers ${g.b} (${pct(g.bf)}).`;
   }
+  // the EV a decision gave up: red for an inaccuracy or a mistake; muted for a move in the solver's strategy (its
+  // mixed actions are worth the same in theory: a small gap there is the solve's noise more than an error)
+  const lostCls = (e) => !(e.g && e.g.l > 0.005) ? "muted" : ["best", "good"].includes(verdict(e.g).k) ? "soft" : "neg";
   // the verdict on one decision: the verdict, what you did and the EV it cost, the solver's mix as a bar with
-  // its frequencies; why and the EVs fold away (Details), as does the solver's full analysis of the spot
-  function feedback(e, past) {
-    const v = verdict(e.g), g = e.g;
-    const cost = g && g.l != null ? (g.l > 0.005 ? `<span class="cost num neg" title="EV given up against the solver's best action">−${g.l.toFixed(2)} bb</span>` : `<span class="cost num pos">no EV lost</span>`) : "";
+  // its frequencies; why and the EVs fold away (Details), as does the solver's full analysis of the spot.
+  // o.label: headed "Last decision · street" (the coach's card); o.old: you're on a new decision now (faded);
+  // o.past: a decision from the review list (no full analysis)
+  function feedback(e, o = {}) {
+    const v = verdict(e.g), g = e.g, past = o.past;
+    const cost = g && g.l != null ? (g.l > 0.005 ? `<span class="cost num ${lostCls(e)}" title="EV given up against the solver's best action">−${g.l.toFixed(2)} bb</span>` : `<span class="cost num pos">no EV lost</span>`) : "";
     let mix = "", table = "";
     if (e.mix && e.mix.length) {
-      setColors(e.mix.map(a => a.n));
-      const ev = e.mix.some(a => a.ev !== undefined), you = (a) => g && a.n === g.m;
-      mix = `<div class="cx-mix">${e.mix.filter(a => a.f >= 0.0005).map(a => `<div style="width:${(a.f * 100).toFixed(1)}%;background:${COLORS(a.n)}" title="${a.n} ${pct(a.f)}">${a.f >= 0.2 ? `<span>${a.n} ${pct(a.f)}</span>` : ""}</div>`).join("")}</div>`
-        + `<div class="cx-leg">${e.mix.map(a => `<span class="${you(a) ? "you" : a.f < 0.005 ? "muted" : ""}" style="--c:${COLORS(a.n)}">${a.n} <b class="num">${pct(a.f)}</b>${you(a) ? '<span class="tag">you</span>' : ""}</span>`).join("")}</div>`;
+      const you = (a) => g && a.n === g.m, leg = g && !e.mix.some(you) ? [...e.mix, { n: g.m, f: 0 }] : e.mix;   // (your move, also when the solve hasn't it)
+      setColors(leg.map(a => a.n));
+      const ev = e.mix.some(a => a.ev !== undefined);
+      mix = `<div class="cx-mix">${e.mix.filter(a => a.f >= 0.0005).map(a => `<div style="width:${(a.f * 100).toFixed(1)}%;background:${COLORS(a.n)}" title="${a.n} ${pct(a.f)}">${a.f >= 0.2 ? `<span>${a.n}${/%$/.test(a.n) ? " · " : " "}${pct(a.f)}</span>` : ""}</div>`).join("")}</div>`
+        + `<div class="cx-leg">${leg.map(a => `<span class="${you(a) ? "you" : a.f < 0.005 ? "muted" : ""}" style="--c:${COLORS(a.n)}">${a.n} <b class="num">${pct(a.f)}</b>${you(a) ? '<span class="tag">you</span>' : ""}</span>`).join("")}</div>`;
       if (ev) table = `<div class="cx-acts"><span class="hd">Action</span><span class="hd num">How often</span><span class="hd num">EV</span>`
         + e.mix.map(a => `<span class="n${you(a) ? " you" : ""}" style="--c:${COLORS(a.n)}">${a.n}</span><span class="num${you(a) ? " you" : ""}">${pct(a.f)}</span><span class="num">${a.ev !== undefined ? evTxt(a.ev) + " bb" : ""}</span>`).join("") + `</div>`;
     }
-    return `<div class="cx-fb" style="--c:${v.c}"><div class="head"><span class="ico" aria-hidden="true">${ICON[v.k]}</span><span class="verdict">${v.label}</span><span class="what">${e.street} · you <b>${YOU(e.rec)}</b></span>${cost}</div>${mix}`
+    const lbl = o.label ? `<div class="lbl">${o.label} · ${e.street}</div>` : "";
+    return `<div class="cx-fb${o.old ? " old" : ""}" style="--c:${v.c}">${lbl}<div class="head"><span class="ico" aria-hidden="true">${ICON[v.k]}</span><span class="verdict">${v.label}</span><span class="what">${o.label ? "" : e.street + " · "}you <b>${YOU(e.rec)}</b></span>${cost}</div>${mix}`
       + `<details class="cx-more"${P.more ? " open" : ""}><summary>Details</summary><div class="why">${why(e)}${g && g.r ? ' <span class="muted">(rough solve: a hint, not a verdict)</span>' : ""}</div>${table}`
       + (past ? "" : `<button class="link" id="pxDetail">${P.detail ? "Hide" : "Show"} the solver's full analysis</button>`) + `</details></div>`;
   }
@@ -281,11 +316,11 @@
       + (r.shown.length ? `<div class="cx-show">${mineShown}${shown}</div>` : "")
       + (r.best ? `<div class="pots">${names(r.winners)} ${r.winners.length > 1 || r.winners[0] === S.hero ? "win" : "wins"} with ${r.best}</div>` : "")
       + (r.pots ? `<div class="pots">${r.pots.map((x, i) => `${i ? "side" : "main"} pot ${fmt(x.amount)}: ${names(x.winners)}`).join(" · ")}</div>` : "") + `</div>`;
-    if (log.length) out += feedback(log[log.length - 1]);   // your last decision's verdict, as after any other
+    if (log.length) out += feedback(log[log.length - 1], { label: "Your last decision" });   // (as after any other)
     if (log.length > 1) {
       const lost = log.reduce((t, e) => t + (e.g && e.g.l || 0), 0), good = log.filter(e => ["best", "good"].includes(verdict(e.g).k)).length;
       out += `<div class="cx-h">This hand · ${good} of ${log.length} in the solver's strategy${lost > 0.005 ? ` · <span class="num neg">−${lost.toFixed(2)} bb</span> EV lost` : ""}</div><ul class="cx-list">`
-        + log.map(e => { const v = verdict(e.g); return `<li title="${e.g ? gradeTip(e.g) : ""}"><span class="st">${e.street}</span><span>${ACT(e.rec)} <span class="muted">· solver ${e.g ? pct(e.g.f) : "–"}</span></span><span class="pill" style="--c:${v.c}">${v.label}</span><span class="num ${e.g && e.g.l > 0.005 ? "neg" : "muted"}">${e.g && e.g.l != null ? (e.g.l > 0.005 ? "−" + e.g.l.toFixed(2) + " bb" : "0 bb") : ""}</span></li>`; }).join("") + `</ul>`;
+        + log.map(e => { const v = verdict(e.g); return `<li title="${e.g ? gradeTip(e.g) : ""}"><span class="st">${e.street}</span><span>${ACT(e.rec)} <span class="muted">· solver ${e.g ? pct(e.g.f) : "–"}</span></span><span class="pill" style="--c:${v.c}">${v.label}</span><span class="num ${lostCls(e)}">${e.g && e.g.l != null ? (e.g.l > 0.005 ? "−" + e.g.l.toFixed(2) + " bb" : "0 bb") : ""}</span></li>`; }).join("") + `</ul>`;
     }
     return out;
   }
@@ -305,7 +340,7 @@
   // rarest in the solver's mix: preflop has no EVs), each opening its verdict
   const lostOf = (e) => e.g && e.g.l != null ? e.g.l : 0;
   function mistakes() {
-    const bad = P.review.map((e, i) => ({ e, i })).filter(({ e }) => e.g && (lostOf(e) > 0.005 || ["meh", "bad"].includes(verdict(e.g).k)));
+    const bad = P.review.map((e, i) => ({ e, i })).filter(({ e }) => e.g && e.g.m !== e.g.b && (lostOf(e) > 0.005 || ["meh", "bad"].includes(verdict(e.g).k)));
     return bad.sort((a, b) => lostOf(b.e) - lostOf(a.e) || a.e.g.f - b.e.g.f || b.i - a.i).slice(0, REVIEW_SHOW);
   }
   // a review row: hand number and street, your cards and action, the verdict and the EV it gave up; a click opens its spot
@@ -313,8 +348,8 @@
     const v = verdict(e.g);
     const row = `<li class="pick${P.pick === i ? " on" : ""}" data-i="${i}" tabindex="0" role="button" aria-expanded="${P.pick === i}" title="Show this decision's verdict"><span class="st">#${e.n} ${e.street}</span>`
       + `<span><span class="hole">${e.hole.map(cardHtml).join("")}</span> ${ACT(e.rec)}</span><span class="pill" style="--c:${v.c}">${v.label}</span>`
-      + `<span class="num ${lostOf(e) > 0.005 ? "neg" : "muted"}">${e.g && e.g.l != null ? (lostOf(e) > 0.005 ? "−" + e.g.l.toFixed(2) + " bb" : "0 bb") : ""}</span></li>`;
-    return row + (P.pick === i ? `<li class="spot"><div class="muted">${SEAT_LABEL(e.seat, S.players)} · ${e.board.length ? e.board.map(cardHtml).join(" ") + " · " : ""}${e.line}</div>${feedback(e, true)}</li>` : "");
+      + `<span class="num ${lostCls(e)}">${e.g && e.g.l != null ? (lostOf(e) > 0.005 ? "−" + e.g.l.toFixed(2) + " bb" : "0 bb") : ""}</span></li>`;
+    return row + (P.pick === i ? `<li class="spot"><div class="muted">${SEAT_LABEL(e.seat, S.players)} · ${e.board.length ? e.board.map(cardHtml).join(" ") + " · " : ""}${e.line}</div>${feedback(e, { past: true })}</li>` : "");
   }
   // on a wide screen, under the score (the coach's column has the room): your last decisions, newest first
   const RECENT = 8;
@@ -330,24 +365,33 @@
     if (!xs.length) return `<div class="cx-empty cx-rev">No mistakes in your last ${REVIEW_KEEP} decisions so far.</div>`;
     return `<div class="cx-h">Your biggest mistakes · last ${REVIEW_KEEP} decisions</div><ul class="cx-list cx-rev">${xs.map(({ e, i }) => reviewRow(e, i)).join("")}</ul>`;
   }
-  // the seat picker above the panel: a row of seats, Random first (a radio group: arrows move, Enter, Space or a
-  // click picks); built once per table size and only its state changed after, so a re-render keeps its focus
-  function seatPicker() {
-    const box = document.getElementById("pxSeat"), want = ["random", ...POS].join(), cur = POS.includes(P.seat) ? P.seat : "random";
+  // a row of the site's buttons, one picked (a radio group: arrows move, Enter, Space or a click picks); built once
+  // per set of options and only its state changed after, so a re-render keeps its focus. opts: [[value, label,
+  // title, class]]; now: the one outlined (this hand's seat, with Random); off: the ones that can't be picked
+  function radios(box, opts, cur, pick, now, off = []) {
+    const want = opts.map(o => o[0]).join();
     if (box.dataset.opts !== want) {
-      box.innerHTML = ["random", ...POS].map(p => `<button type="button" role="radio" class="${p === "random" ? "rnd" : ""}" data-seat="${p}" title="${p === "random" ? "A random seat each hand" : `Every hand from ${SEAT_LABEL(p, POS.length)}`}">${p === "random" ? "Random" : SEAT_LABEL(p, POS.length)}</button>`).join("");
+      box.innerHTML = opts.map(([v, l, t, c]) => `<button type="button" role="radio" class="${c || ""}" data-v="${v}" title="${t}">${l}</button>`).join("");
       box.dataset.opts = want;
     }
-    const bs = box.querySelectorAll ? [...box.querySelectorAll("[data-seat]")] : [];
-    const now = ours() ? S.hero : null;
-    for (const b of bs) { const on = b.dataset.seat === cur; b.setAttribute("aria-checked", on); b.tabIndex = on ? 0 : -1; b.classList.toggle("cur", b.dataset.seat === now); }
-    const pick = (v) => { if (v === cur || !v) return; P.seat = v; store(SEAT, P.seat); next(); };
-    box.onclick = (e) => { const b = e.target.closest && e.target.closest("[data-seat]"); if (b) pick(b.dataset.seat); };
+    const bs = box.querySelectorAll ? [...box.querySelectorAll("[data-v]")] : [];
+    for (const b of bs) { const on = b.dataset.v === cur; b.setAttribute("aria-checked", on); b.tabIndex = on ? 0 : -1; b.classList.toggle("cur", b.dataset.v === now); b.disabled = off.includes(b.dataset.v); }
+    box.onclick = (e) => { const b = e.target.closest && e.target.closest("[data-v]"); if (b && b.dataset.v !== cur && !b.disabled) pick(b.dataset.v); };
     box.onkeydown = (e) => {
-      const i = bs.indexOf(e.target), d = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+      const ok = bs.filter(b => !b.disabled), i = ok.indexOf(e.target), d = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
       if (i < 0 || !d) return;
-      e.preventDefault(); e.stopPropagation(); bs[(i + d + bs.length) % bs.length].focus();
+      e.preventDefault(); e.stopPropagation(); ok[(i + d + ok.length) % ok.length].focus();
     };
+  }
+  // above the panel: your seat (Random first) and the drill (the kind of pot); a blind-vs-blind drill is played
+  // from a blind
+  function pickers() {
+    const pool = seatsFor(P.drill), cur = pool.includes(P.seat) ? P.seat : "random";
+    radios(document.getElementById("pxSeat"), [["random", "Random", P.drill === "bvb" ? "A random blind each hand" : "A random seat each hand", "rnd"],
+      ...POS.map(p => [p, SEAT_LABEL(p, POS.length), `Every hand from ${SEAT_LABEL(p, POS.length)}`])], cur,
+      (v) => { P.seat = v; store(SEAT, P.seat); next(); }, ours() ? S.hero : null, POS.filter(p => !pool.includes(p)));
+    radios(document.getElementById("pxDrill"), Object.entries(DRILLS).map(([k, l]) => [k, l, DRILL_TIP[k]]), P.drill,
+      (v) => { P.drill = v; store(DRILL, v); next(); });
     const n = document.getElementById("pxHandNo"); n.textContent = `Hand ${P.score.hands + (P.hand && P.hand.result ? 0 : 1)}`;
   }
   // a phone: the coach sits under the table, often below the fold, so the action dock carries one line for it: the
@@ -356,34 +400,40 @@
   function strip(sim) {
     const el = document.getElementById("pxStrip"); if (!el) return;
     const h = P.hand, r = h && h.result, log = (h && h.log) || [], last = log[log.length - 1];
-    let html = `<span class="muted fit">Hand ${P.score.hands + (r ? 0 : 1)} · each decision is graded here</span>`;
+    let html = P.hint ? `<span class="muted fit">Hand ${P.score.hands + (r ? 0 : 1)} · each decision is graded here</span>`
+      : `<span class="fit">Your seat is marked <b>you</b> · the others play GTO</span>`;   // (first run)
     if (r) html = `<b>${r.folded ? "You folded" : headline(r)}</b><span class="num ${r.net > 0 ? "pos" : r.net < 0 ? "neg" : ""}">${money(r.net)}</span>`
       + (log.length ? `<span class="muted fit">· ${log.filter(e => ["best", "good"].includes(verdict(e.g).k)).length} of ${log.length} in the solver's strategy</span>` : "");
     else if (last) {
       const v = verdict(last.g), g = last.g, top = last.mix && last.mix.length ? last.mix.reduce((b, a) => a.f > b.f ? a : b) : null;
-      html = `<b style="color:${v.c}">${v.label}</b><span class="muted">${last.street} · you ${YOU(last.rec)}</span>`
+      html = (sim && sim.cur && sim.toAct === S.hero ? `<span class="muted">Last:</span>` : "") + `<b style="color:${v.c}">${v.label}</b><span class="muted">${last.street} · you ${YOU(last.rec)}</span>`
         + (g && g.l != null && g.l > 0.005 ? `<span class="num neg">−${g.l.toFixed(2)} bb</span>` : "")
         + (top && v.k !== "best" ? `<span class="muted fit">· solver: ${top.n} ${pct(top.f)}</span>` : "");
     }
     el.innerHTML = html + `<span class="go">›</span>`;
     el.style.setProperty && el.style.setProperty("--c", r ? (r.net > 0 ? "var(--good)" : r.net < 0 ? "var(--bad)" : "var(--line2)") : last ? verdict(last.g).c : "var(--line)");
-    el.onclick = () => { const t = document.querySelector && (document.querySelector("#practiceBar .cx-fb") || document.getElementById("pCoach")); if (t && t.scrollIntoView) t.scrollIntoView({ behavior: "smooth", block: "start" }); };
+    el.onclick = () => { const t = document.querySelector && (document.querySelector("#practiceBar .cx-hint, #practiceBar .cx-fb:not(.empty)") || document.getElementById("pCoach")); if (t && t.scrollIntoView) t.scrollIntoView({ behavior: "smooth", block: "start" }); };
   }
   function bar(sim) {
     const el = document.getElementById("practiceBar"); el.hidden = !P.on; if (!P.on) return;
-    seatPicker();
+    pickers();
     const h = P.hand, r = h && h.result, log = (h && h.log) || [];
     let body = "";
-    if (h) body = r ? summary(r) : now(sim) + (log.length ? feedback(log[log.length - 1])   // (until you act again)
+    const again = !r && sim.cur && sim.toAct === S.hero && !P.status;   // (a new decision of yours: the last one's verdict fades)
+    if (h) body = r ? summary(r) : now(sim) + (log.length ? feedback(log[log.length - 1], { label: "Last decision", old: again })
       : `<div class="cx-fb empty">Each decision is graded here once you act: the verdict, the EV it gave up and the solver's mix.</div>`);
-    const html = body + stats() + reviewList();
+    const hint = P.hint ? "" : `<div class="cx-hint"><div>You play the seat marked <b>you</b>; the others play GTO by themselves.`
+      + ` Act with the action buttons<span class="hoveronly"> or their keys (F, C, 1‑3, R, A; N for the next hand)</span>.</div><button class="small" id="pxHint">Got it</button></div>`;
+    const html = hint + body + stats() + reviewList();
     if (el.pxHtml !== html) { el.innerHTML = html; el.pxHtml = html; }   // (unchanged: kept, with its focus and open Details)
     strip(sim);
     const hp = document.getElementById("pHistory"); if (hp && hp.scrollHeight > hp.clientHeight) hp.scrollTop = hp.scrollHeight;
     // the solver's full analysis of your last decision, under the coach, when asked for
     document.body.classList.toggle("pxdetail", P.detail && log.length > 0);
+    document.body.classList.toggle("pxseek", !!seeking() && !P.error);   // (the drill's deals flash by, dimmed)
     const q = (sel) => el.querySelector ? el.querySelector(sel) : null, on = (id, f) => { const b = q("#" + id); if (b) b.onclick = f; };
-    on("pxRetry", () => { P.error = ""; renderAll(); });
+    on("pxHint", () => { P.hint = true; store(HINT, 1); renderAll(); });
+    on("pxRetry", () => { P.error = ""; P.tries = 0; renderAll(); });
     on("pxDetail", () => { P.detail = !P.detail; store("gto-practice-detail", P.detail); renderAll(); });
     on("pxReset", () => { if (typeof confirm === "function" && !confirm("Reset your practice score and mistakes?")) return; P.score = { ...ZERO }; store(SCORE, P.score); P.review = []; store(REVIEW, P.review); renderAll(); });
     on("pxRev", () => { P.rev = !P.rev; P.pick = null; renderAll(); });
@@ -403,12 +453,16 @@
     if (!P.on) return;
     if (P.busy || P.error) return;
     if (!ours()) return schedule(deal);
+    if (offDrill(sim)) {   // (dealt again until the drill's spot comes up, within reason)
+      if (++P.tries <= DRILL_TRIES) return schedule(deal);
+      P.error = `No ${DRILLS[P.drill].toLowerCase()} came up in ${DRILL_TRIES} deals: try another seat or drill.`; return bar(sim);
+    }
     if (sim.handOver) { if (!P.hand.result) { finish(sim); bar(sim); renderTable(sim); } return; }
     if (sim.waiting) return schedule(dealStreet);
-    if (sim.cur && sim.toAct !== S.hero) schedule(villain);
+    if (sim.cur && (sim.toAct !== S.hero || auto(sim))) schedule(villain);
     else if (sim.cur && resultKey === JSON.stringify(payload())) ahead().catch(() => {});   // your turn, solved: look ahead
   }
-  function next() { schedule(deal); }
+  function next() { P.tries = 0; editSetup = false; schedule(deal); }   // (a new hand folds the setup; a change in it deals one, open)
   function set(on) {
     P.on = !!on; store(ON, P.on ? 1 : 0); A.gen++; A.key = null;
     document.body.classList.toggle("practice", P.on);
@@ -420,5 +474,5 @@
   // a seat's cards once the hand is over (shown at showdown)
   const shown = (p) => P.on && P.hand && P.hand.result && P.hand.result.shown.includes(p) && ours() ? P.hand.hands[p] : null;
 
-  window.Practice = { get on() { return P.on; }, set, tick, next, shown, graded, rank7, fromAhead, state: P, ahead: A };
+  window.Practice = { get on() { return P.on; }, set, tick, next, shown, graded, rank7, fromAhead, auto, seeking, state: P, ahead: A };
 })();
