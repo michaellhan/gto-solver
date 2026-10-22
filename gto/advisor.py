@@ -801,18 +801,24 @@ def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack,
         bets[p] = max(bets[p], min(to, bets[p] + remaining))
         ranges[p] = r * (_soften(r, keep_m, CHECK_SOFT) if act == "check" and len(board) == 3 else _soften(r, keep_m))
         if act == "call" and to_call > 1e-9 and raise_ok:
-            # the hands the rules have raising instead are slowplayed some of the time: cut whole, an
-            # overcaller's range after three streets of calls was underpairs (TT-55 on K72-5-9, no Kx left)
-            # and KQ overcalled a pot-sized river bet
             k = _keep(to_call, pot, n) if call_k is None else call_k
-            band = _top(r, k * RAISE_SHARE, rank)
-            # a hand that already slowplayed an earlier call mostly keeps on (halved again each street, an
-            # overcaller after three calls was TT-55 with KJs at 0.07)
-            again = slow.get(p, np.zeros(N_COMBOS, dtype=bool)) if slow is not None else np.zeros(N_COMBOS, dtype=bool)
-            w = np.where(again, SLOWPLAY_AGAIN, SLOWPLAY)
-            ranges[p] = np.where(band, np.maximum(ranges[p], w * r), ranges[p])
-            if slow is not None:
-                slow[p] = again | band
+            ranges[p] = r * _slowplayed(r, ranges[p] / np.where(r > 0, r, 1.0), k, rank, slow, p)
+
+
+def _slowplayed(r, w, k, rank, slow=None, p=None) -> np.ndarray:
+    """Weights w for a call of range r that continues with its top k (rank order), with the hands the rules
+    have raising instead (the top k * RAISE_SHARE) kept at SLOWPLAY: cut whole, an overcaller's range after
+    three streets of calls was underpairs (TT-55 on K72-5-9, no Kx left) and KQ overcalled a pot-sized river
+    bet; heads-up, BB's flop and turn calls on Q32ss-J kept 18% of its sets and 27% of its flushes where it
+    kept half its air, and A4 jammed the river into the rest (converged solves keep the flushes).
+    `slow` (carried from street to street, keyed by p): the combos a call has already slowplayed; such a hand
+    mostly keeps on (SLOWPLAY_AGAIN: halved again each street, an overcaller after three calls was TT-55 with
+    KJs at 0.07). Updated in place."""
+    band = _top(r, k * RAISE_SHARE, rank)
+    again = slow.get(p, np.zeros(N_COMBOS, dtype=bool)) if slow is not None else np.zeros(N_COMBOS, dtype=bool)
+    if slow is not None:
+        slow[p] = again | band
+    return np.where(band, np.maximum(w, np.where(again, SLOWPLAY_AGAIN, SLOWPLAY)), w)
 
 
 def trust_of(expl: float, street: str) -> float:
@@ -1983,6 +1989,7 @@ class Advisor:
         widened: List[str] = []
         rare_lines: List[str] = []
         spare, t_prior = 0.0, time.time()   # earlier streets' budgets (prior_budget each) left unspent
+        slow_hu: Dict[int, np.ndarray] = {}   # per player, the combos a call by the rules slowplayed (_slowplayed)
         if hu_from_start:
             # narrow through earlier streets that were also heads-up between these two
             for st in rep[1:-1]:
@@ -1993,7 +2000,7 @@ class Advisor:
                 eff = min(stk[oop] - st.inv_start[oop], stk[ip] - st.inv_start[ip])
                 cfg = self._cfg_with_real_sizes(st, oop, ip, eff)
                 hit = self._from_library(lib, full, sub_board, r0, r1, st, eff, cfg, oop, ip, notes,
-                                         smoothing=self.prior_smoothing, board=sub_board, rules=(0, 1)) \
+                                         smoothing=self.prior_smoothing, board=sub_board, rules=(0, 1), slow=slow_hu) \
                     if lib is not None and st.name == "flop" else None
                 if hit is not None:
                     sol, node, c0, c1 = hit
@@ -2012,7 +2019,7 @@ class Advisor:
                                      "simple betting rules the rest")
                     node, c0, c1 = self._walk(sol, st.actions, oop, ip, st.pot_start, eff, notes, st.name, self.prior_smoothing,
                                               board=sub_board, rules=(0, 1),
-                                              lock=mk_lock(sol), trust=trust)
+                                              lock=mk_lock(sol), trust=trust, slow=slow_hu)
                 r0 = _post_floor(r0, expand(sol.ctx, c0), board, oop, st.name, notes)
                 r1 = _post_floor(r1, expand(sol.ctx, c1), board, ip, st.name, notes)
             eff = min(stk[oop] - cur.inv_start[oop], stk[ip] - cur.inv_start[ip])
@@ -2044,10 +2051,10 @@ class Advisor:
             # smooth as on earlier streets, so we aren't advised against a sliver of a range.
             walk = lambda: self._walk(sol, cur.actions, oop, ip, cur.pot_start, eff, list(notes), cur.name,
                                       self.prior_smoothing, only=1 - hero_p, widened=[], board=board,
-                                      lock=mk_lock(sol), rare_lines=[])
+                                      lock=mk_lock(sol), rare_lines=[], slow=dict(slow_hu))
             node, n_r0, n_r1 = self._walk(sol, cur.actions, oop, ip, cur.pot_start, eff, notes, cur.name,
                                           self.prior_smoothing, only=1 - hero_p, widened=widened, board=board,
-                                          lock=mk_lock(sol), rare_lines=rare_lines)
+                                          lock=mk_lock(sol), rare_lines=rare_lines, slow=dict(slow_hu))
             if not rare_lines and self._settle(sol):
                 # (far from settled: one more budget, then walk the line again; when the line is rare the
                 # solve from the node below gets it instead, so a spot doesn't pay for both)
@@ -3541,7 +3548,7 @@ class Advisor:
         return cfg
 
     def _walk(self, sol: Solution, acts: List[dict], oop, ip, pot, stack, notes, street, smoothing=0.0, only=None,
-              widened=None, board=None, rules=None, lock=None, rare_lines=None, visited=None, trust=1.0):
+              widened=None, board=None, rules=None, lock=None, rare_lines=None, visited=None, trust=1.0, slow=None):
         """Follow real actions through the solved tree, narrowing ranges. Smoothing mixes each
         strategy with uniform so a line the solve rarely takes doesn't shrink a range to nothing.
         With `only` (0 = OOP, 1 = IP) and `board`, that player's actions are exact unless the solve
@@ -3556,7 +3563,8 @@ class Advisor:
         `visited` (a list) gets every node an action was taken at.
         `trust` (with `rules` and `board`): the weight the solve's strategy gets on `rules`' other actions,
         the rest going to the rules' range for the action (softened, as multiway), for a solve that hasn't
-        settled (trust_of)."""
+        settled (trust_of). A call by the rules keeps the hands they have raising at SLOWPLAY when the player
+        could have raised (_slowplayed; `slow`, {player: mask} carried from street to street, as multiway)."""
         rules = (only,) if rules is None and only is not None else rules or ()
         node = sol.root
         r0, r1 = sol.r0.copy(), sol.r1.copy()
@@ -3595,6 +3603,9 @@ class Advisor:
             # (a rare raise or big bet keeps the solve's hands and adds the rules' value: kept alone, a sliver
             # from a short solve decided the answer, 0.7 combos of 65s for a river overbet, and a flop jam's
             # range just above a combo threshold had AK calling it at +48 bb one run in four)
+            # facing a bet with chips behind the call (as multiway's raise_ok: by the real bets, not the tree's, where an
+            # all-in can map to a bet with raises under it); facing an all-in the rules' call keeps its strongest hands
+            can_raise = bets[p] + 1e-9 < max(bets) < stack - 1e-9
             def rule_mask():
                 # the part of p's range the betting rules play this way (see _rule_mask), and that range
                 sc, rank, bluff = _street_info(tuple(board))
@@ -3607,7 +3618,14 @@ class Advisor:
                 full = expand(sol.ctx, rp) * (sc >= 0)
                 other = expand(sol.ctx, r1 if p == 0 else r0) * (sc >= 0)
                 return full, rank, _rule_mask(full, to, cur_bet, max(0.0, cur_bet - bets[p]), pot_total, 1, rank,
-                                              bluff=bluff, others=[other], sc=sc)
+                                              bluff=bluff, others=[other], raise_ok=can_raise, sc=sc)
+            def rule_weights(full, rank, m):
+                # the rules' weights for the action (_soften); a call that could have raised keeps the hands
+                # they have raising at SLOWPLAY, as multiway (heads-up they were cut to NARROW_SOFT)
+                w = _soften(full, m)
+                if a["action"] == "call" and can_raise:
+                    w = _slowplayed(full, w, _keep(max(bets) - bets[p], pot + bets[0] + bets[1], 1), rank, slow, p)
+                return w
             def as_locked(t):
                 # weights t for this action as the locked player (exploit mode's pool, your locks) plays them: the
                 # node's other actions share the rest as the solve has them, and the lock moves hands between them
@@ -3641,7 +3659,7 @@ class Advisor:
                         s = np.minimum(s, node.strategy()[0][k])
                     s = np.maximum(s, _top(full, _share(full, m), rank)[sol.ctx.active])   # with the solve's own
                 else:
-                    s = as_locked(_soften(full, m)[sol.ctx.active])
+                    s = as_locked(rule_weights(full, rank, m)[sol.ctx.active])
             else:
                 if trust < 1.0 and p in rules and board is not None and a["action"] != "fold":
                     # an unsettled earlier-street solve: its strategy counts by how settled it is, the rest is
@@ -3653,8 +3671,8 @@ class Advisor:
                     if a["action"] == "check":
                         s = trust * s + (1.0 - trust) * as_locked(np.ones_like(s))
                     else:
-                        full, _, m = rule_mask()
-                        s = trust * s + (1.0 - trust) * as_locked(_soften(full, m)[sol.ctx.active])
+                        full, rank, m = rule_mask()
+                        s = trust * s + (1.0 - trust) * as_locked(rule_weights(full, rank, m)[sol.ctx.active])
                 if smoothing > 0 and only is None:
                     s = (1.0 - smoothing) * s + smoothing / len(node.names)
             if p == 0:

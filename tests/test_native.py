@@ -59,6 +59,36 @@ class TestNativeSpeeds(unittest.TestCase):
         self.assertGreater(combos, 45, r["villain_range"])
         self.assertTrue(any("ranges follow it" in n for n in r["notes"]), r["notes"])
 
+    def test_unsettled_calls_keep_the_flushes(self):
+        """HJ vs BB, Q32ss c-bet called, Js turn overbet (126%) called, river 3c checked, at a loaded Fast's iterations
+        (flop 30, turn 15: 9% and 18% of the pot from equilibrium, so both calls are read by the betting rules). The
+        rules cut the hands they have raising, BB's flushes and sets, from its calls (advisor._slowplayed): 6.1 of 131
+        combos were flushes on the river and A4c jammed 100% at +4.4 bb over a check, where solves settled on the flop
+        and turn keep 9 of 29 and A4c mixes jam and check at the same EV."""
+        import numpy as np
+        import gto.advisor as A
+        from gto.cards import cards
+        from gto.evaluator import eval_board
+        f = lambda *ts: [dict(zip(("pos", "action", "amount"), t)) for t in ts]
+        seen = []
+        orig = A.Advisor._solve_cached
+
+        def rec(self_, board, r0, *a, **k):
+            seen.append((len(board), r0))
+            return orig(self_, board, r0, *a, **k)
+        p1, p2 = fixed_iters({3: 30, 4: 15, 5: 100})
+        with p1, p2, mock.patch.object(A.Advisor, "_solve_cached", rec):
+            r = advisor("fast", library=False).advise(dict(
+                players=8, hero="HJ", hole="Ac4c", board="Qh3s2sJs3c", stack=89,
+                preflop=f(("UTG", "fold"), ("UTG1", "fold"), ("LJ", "fold")) + [{"pos": "HJ", "action": "raise", "to": 2.5}]
+                + f(("CO", "fold"), ("BTN", "fold"), ("SB", "fold"), ("BB", "call")),
+                flop=f(("BB", "check"), ("HJ", "bet", 4), ("BB", "call")),
+                turn=f(("BB", "check"), ("HJ", "bet", 17), ("BB", "call")), river=f(("BB", "check"))))
+        self.assertTrue(any("ranges follow it 0%" in n for n in r["notes"]), r["notes"])
+        bb = next(r0 for n, r0 in seen if n == 5) * (eval_board(cards("Qh3s2sJs3c")) >= 0)
+        flush = np.array([a % 4 == 3 and b % 4 == 3 for a, b in A.ALL_COMBOS])   # (two spades: the board has three)
+        self.assertGreater(bb[flush].sum(), 10.0, bb.sum())   # (were 6.1)
+
     def test_turn_gets_the_unspent_flop_budget(self):
         """Fast's turn also gets the prior budget its narrowing flop didn't spend (Advisor.spare_prior): solved in
         the same request the flop takes its share; already solved for the flop's advice, the turn gets both."""

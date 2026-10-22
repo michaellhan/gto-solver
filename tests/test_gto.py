@@ -1664,6 +1664,57 @@ class TestFlopStrategy(unittest.TestCase):
         self.assertAlmostEqual(sol.for_combo(tuple(hero))["check"][1], 10 * _exact_equity(cards("Kh8d5c"), hero, vr), delta=0.15)
 
 
+class TestHeadsUpRuleCalls(unittest.TestCase):
+    """Heads-up, an unsettled earlier street's call read by the betting rules (Advisor._walk with trust 0):
+    the hands the rules have raising instead are slowplayed at SLOWPLAY, as multiway (_slowplayed); they were
+    cut to NARROW_SOFT, so BB's flop and turn calls on Q32ss-J kept 27% of its flushes and half its air, and
+    A4 jammed the river into the rest (a converged turn keeps 57% of the flushes calling a 125% overbet).
+    Facing an all-in nobody can raise, so the call keeps its strongest hands whole."""
+    BOARD = "Qh3s2sJs"
+
+    def walk(self, acts, slow):
+        """BB's range before its last action in acts (the call) and after, walked with trust 0, and the rank order."""
+        from gto.advisor import _street_info
+        from gto.solver import expand
+        board = cards(self.BOARD)
+        bb = parse_range("22-TT, A2s-AKs, K9s-KQs, Q9s-QJs, J9s-JTs, T9s, 98s, 87s, 76s, 65s, 54s, A2o-AKo, KTo-KQo, QTo-QJo, JTo")
+        hj = parse_range("TT+, AQs+, AKo, KQs, A5s")
+        cfg = Config(bet_sizes={"flop": [0.75], "turn": [1.25], "river": [0.75]},
+                     raise_sizes={"flop": [0.75], "turn": [0.75], "river": [0.75]}, river_classes=True)
+        sol = solve(board, bb, hj, 13.5, 82.5, cfg=cfg, time_budget=1e9, max_iters=3)
+        sc, rank, _ = _street_info(tuple(board))
+        bb_at = lambda a, sl: expand(sol.ctx, Advisor()._walk(sol, a, "BB", "HJ", 13.5, 82.5, [], "turn", 0.15, board=board,
+                                                             rules=(0, 1), trust=0.0, slow=sl)[1]) * (sc >= 0)
+        before, after = bb_at(acts[:-1], {}), bb_at(acts, slow)
+        # each hand's weight for the call, relative to the call's full weight (the walk smooths it toward uniform)
+        w = np.where(before > 0, after / np.where(before > 0, before, 1.0), 0.0)
+        return before, w / w.max(), rank
+
+    def test_call_keeps_raising_hands_slowplayed(self):
+        from gto.advisor import _top, _keep, RAISE_SHARE, SLOWPLAY, SLOWPLAY_AGAIN
+        from gto.cards import COMBO_INDEX
+        R = lambda p, a, x=None: dict({"pos": p, "action": a}, **({"amount": x} if x else {}))
+        acts = [R("BB", "check"), R("HJ", "bet", 17), R("BB", "call")]
+        slow = {}
+        before, w, rank = self.walk(acts, slow)
+        band = _top(before, _keep(17, 30.5, 1) * RAISE_SHARE, rank) & (before > 0)
+        self.assertTrue(band[COMBO_INDEX[tuple(sorted(cards("9s8s")))]])   # (a flush: in the band)
+        self.assertGreater(band.sum(), 10)
+        self.assertGreaterEqual(w[band].min(), SLOWPLAY)   # (were NARROW_SOFT: 0.34 with the smoothing)
+        self.assertTrue(slow[0][band].all())
+        # slowplayed on an earlier call: SLOWPLAY_AGAIN
+        _, w, _ = self.walk(acts, {0: band.copy()})
+        self.assertGreaterEqual(w[band].min(), SLOWPLAY_AGAIN)
+
+    def test_call_of_all_in_keeps_the_top(self):
+        from gto.advisor import _top, _keep
+        R = lambda p, a, x=None: dict({"pos": p, "action": a}, **({"amount": x} if x else {}))
+        # (no all-in in this tree at an SPR of 6: the jam maps to the 125% bet, which has a raise under it)
+        before, w, rank = self.walk([R("BB", "check"), R("HJ", "all-in"), R("BB", "call")], {})
+        top = _top(before, 0.5 * _keep(82.5, 96.0, 1), rank) & (before > 0)
+        self.assertAlmostEqual(w[top].min(), 1.0)
+
+
 class TestRiverStrength(unittest.TestCase):
     """The river under a flop solve by river-strength buckets (Config.river_strength, solver.RiverEntry)."""
 

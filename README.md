@@ -759,7 +759,13 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   40-iteration flops, were 41-43). With Fast's bucketed flop (long solves keep 87.7;
   20 iterations are 27% of the pot from equilibrium, 40 7.7%, 80 1.8%, 150 0.5%): 29 -> 112 at a
   20-iteration flop and 26-iteration turn, 50 -> 112 at 40/26, 52 -> 87 at 40/45, 70-82 -> 78-81 at
-  80-150/45 (tests.test_native judges by iterations, not time).
+  80-150/45 (tests.test_native judges by iterations, not time). A call read by the rules keeps the hands they
+  have raising instead at `SLOWPLAY` (0.5; 0.85 on a later street's call), as multiway, where heads-up they were
+  cut to the off-rule weight, and facing an all-in (nothing to raise) it keeps them whole: HJ vs BB on
+  Q♥3♠2♠ (c-bet called), J♠ (126% overbet called), 3♣, at 30 flop and 15 turn iterations (9% and 18% of the pot),
+  BB's flop and turn calls kept 18% of its sets and 27% of its flushes where they kept half its air, its river
+  range was 6.1 flushes in 131 combos (now 11.6 in 144), and A4c jammed 100% at +4.4 bb over a check (now +2.6).
+  A turn solved to 0.1% keeps 57% of the flushes calling that overbet; the flop's check-raises take most sets.
 * **3-way pots are solved** (`gto/multiway_solver.py`, `docs/multiway_research.md`) where three players are live,
   nobody is all-in and the street is one the speed solves: the river in Fast, every street in Accurate. A solve
   over 10% of the pot from equilibrium after its budget hands over to the rules. The result has the solver's
@@ -1127,6 +1133,17 @@ the tree traversal to C or Rust or a GPU, which makes full flop trees feasible.
   sizes don't close the rest (as heads-up, a second size takes bets from the small one); playing the river with its
   card (heads-up, per combo, seven flops) bets 3 points more (64% against 60%); the ranges are worth 6 points 3-way;
   rake (5%, 3bb cap) and a 75% turn and river size moved a flop by 0-4 points.
+* Heads-up, the betting rules that stand in for an unsettled earlier street's solve price a call by the bet's
+  size alone (`_keep`: a quarter less folding than a balanced defence), not by the bettor's range, and keep some of
+  every hand they rule out (`NARROW_SOFT`, up to `OFF_RULE_MAX` of the range), so the caller's range errs wide, and
+  wide with weak hands, which overstates fold equity on later streets. The river solve on top of it is exact (an
+  independent CFR+ with a brute-force showdown matrix agrees to 0.5 points and 0.01 bb), and the convergence badge
+  reads only that solve. The Q♥3♠2♠-J♠-3♣ line above: Fast's ranges (flop 9%, turn 18% of the pot from equilibrium)
+  give BB 144 river combos, 28% of them one pair, and A4c jams 100%; at 60/30 iterations (2.0% and 3.9%) 41 combos
+  and A4c checks 100%; at 150/45 and beyond (0.3% and 1.2% or better) 28-30 combos, 31-33% flushes, and A4c mixes jam
+  and check within 0.04 bb (about +0.75 bb each at 89bb stacks). Shading the rules to a balanced defence
+  heads-up moved Fast's range only from 144 to 126 combos, so it is left as is; the earlier streets' budget is what
+  settles it.
 * Multiway with an all-in player for less, the heuristic pays each side pot to the best hand among the
   players in it, but the betting rules inside its trials don't play for the side pot (an opponent bets
   and calls as if the whole pot were at stake).
