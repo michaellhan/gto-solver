@@ -255,7 +255,7 @@
     background: color-mix(in srgb, var(--accent) 7%, var(--panel2)); border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line)); }
   .cx-hint b { color: var(--accent); } .cx-hint button { flex: none; }
   .cx-fb .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: -2px 0 6px; }
-  .cx-fb.old { opacity: .6; transition: opacity .15s; } .cx-fb.old:hover, .cx-fb.old:focus-within { opacity: 1; }
+  .cx-fb.old { opacity: .6; transition: opacity .15s; } .cx-fb.old:hover, .cx-fb.old:focus-within, .cx-fb.old:has(.cx-ai) { opacity: 1; }
   .cx-fb .head { display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap; }
   .cx-fb .ico { flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--c); color: #111; font-size: 12px; font-weight: 900; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
   .cx-fb .verdict { display: inline; margin: 0; font-size: 18px; font-weight: 800; color: var(--c); letter-spacing: -.01em; }
@@ -285,6 +285,23 @@
   .cx-acts .n { display: inline-flex; align-items: center; }
   .cx-acts .you { font-weight: 700; }
   .cx-acts .hd { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); }
+  /* Copy for AI / Explain with AI (in Details), the streamed explanation and the API key form */
+  .cx-aib { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .cx-aib button { background: none; color: var(--muted); border-color: var(--line2); font-weight: 600; }
+  .cx-aib button:hover { color: var(--text); background: var(--panel2); }
+  .cx-aib button[aria-expanded="true"] { color: var(--text); border-color: var(--muted); }
+  .cx-ai { margin-top: 8px; padding: 10px 12px; border-radius: 8px; background: var(--bg); border: 1px solid var(--line); line-height: 1.55; overflow-wrap: anywhere; }
+  .cx-ai p { margin: 0 0 8px; } .cx-ai b { color: var(--text); }
+  .cx-ai .err { font-size: 13px; }
+  .cx-ai .acts2 { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .cx-ai .ft { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 11px; color: var(--faint); border-top: 1px solid var(--line); padding-top: 6px; }
+  .cx-more .cx-ai .link { margin-top: 0; font-size: 11px; }
+  .cx-ai.form label { display: block; font-weight: 600; margin-bottom: 6px; }
+  .cx-ai .row { display: flex; gap: 6px; }
+  .cx-ai input.cx-key { flex: 1; min-width: 0; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; font: 13px ui-monospace, Menlo, monospace; }
+  .cx-ai .note { color: var(--muted); font-size: 12px; margin: 8px 0 4px; }
+  .cx-ai a { color: var(--accent); }
+  .cx-more .cx-ai.form .link { margin-top: 4px; font-size: 12px; }
   /* the result */
   .cx-res { --c: var(--line2); text-align: center; padding: 16px 12px; border-radius: 10px; background: var(--panel2); border: 1px solid var(--line); }
   .cx-res.won { --c: var(--good); } .cx-res.lost { --c: var(--bad); }
@@ -525,6 +542,8 @@
     .pc:hover { transform: none; box-shadow: none; }
     .acts button:hover { filter: none; }
     .cx-more > summary, .setupsum .link, #setupDone { min-height: 40px; }
+    .cx-aib button, .cx-ai .acts2 button, .cx-ai .row button { min-height: 40px; padding: 6px 12px; }
+    .cx-ai input.cx-key { font-size: 16px; }
   }
   /* a touch screen without a mouse has no keyboard to speak of: the shortcut keys only crowded the labels
      (on a 320px phone "Raise to 2.5" ran into its "1") */

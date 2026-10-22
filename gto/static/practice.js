@@ -225,8 +225,9 @@
   const YOU = (a) => ({ fold: "folded", check: "checked", call: "called", "all-in": "went all-in" })[a.action] || (a.action === "bet" ? `bet ${fmt(a.to)}` : `raised to ${fmt(a.to)}`);
   function graded(street, rec, res) {
     if (!P.hand) return;
-    const mix = res && !res.error && !heuristic(res) && res.actions ? res.actions.map(a => ({ n: a.action, f: a.freq, ...(a.ev_bb !== undefined ? { ev: a.ev_bb } : {}) })) : null;
-    const e = { street, rec: { action: rec.action, ...(rec.to != null ? { to: rec.to } : {}) }, g: rec.g || null, mix };
+    const mix = res && !res.error && !heuristic(res) && res.actions ? res.actions.map(a => ({ n: a.action, f: a.freq, ...(a.ev_bb !== undefined ? { ev: a.ev_bb } : {}), ...(amtOf(a) != null ? { a: amtOf(a) } : {}) })) : null;
+    const id = Date.now().toString(36) + (++AI.seq).toString(36);   // (the explanation kept in memory; not Math.random, the deal's)
+    const e = { id, street, rec: { action: rec.action, ...(rec.to != null ? { to: rec.to } : {}) }, g: rec.g || null, mix, ctx: spot(street) };
     (P.hand.log = P.hand.log || []).push(e);
     store(HAND, P.hand);
     // for Review mistakes: the spot (hand number, seat, cards, board, the street's action before you) with it
@@ -277,8 +278,201 @@
     }
     const lbl = o.label ? `<div class="lbl">${o.label} · ${e.street}</div>` : "";
     return `<div class="cx-fb${o.old ? " old" : ""}" style="--c:${v.c}">${lbl}<div class="head"><span class="ico" aria-hidden="true">${ICON[v.k]}</span><span class="verdict">${v.label}</span><span class="what">${o.label ? "" : e.street + " · "}you <b>${YOU(e.rec)}</b></span>${cost}</div>${mix}`
-      + `<details class="cx-more"${P.more ? " open" : ""}><summary>Details</summary><div class="why">${why(e)}${g && g.r ? ' <span class="muted">(rough solve: a hint, not a verdict)</span>' : ""}</div>${table}`
+      + `<details class="cx-more"${P.more ? " open" : ""}><summary>Details</summary><div class="why">${why(e)}${g && g.r ? ' <span class="muted">(rough solve: a hint, not a verdict)</span>' : ""}</div>${table}${aiHtml(e)}`
       + (past ? "" : `<button class="link" id="pxDetail">${P.detail ? "Hide" : "Show"} the solver's full analysis</button>`) + `</details></div>`;
+  }
+
+  // ---- explaining a decision. Copy for AI puts the decision on the clipboard as a prompt for any AI chat;
+  // Explain with AI sends that prompt from this browser to the Claude Messages API with your own API key (kept in
+  // this browser's localStorage, sent only to api.anthropic.com: the site is static, nothing of ours in between)
+  // and streams the answer into the card. Each answer is kept in memory per decision (AI.cache).
+  const AI_KEY = "gto-anthropic-key", AI_URL = "https://api.anthropic.com/v1/messages", AI_MODEL = "claude-sonnet-5-5";
+  const AI_SYSTEM = "You are a concise no-limit hold'em coach. The user sends one decision from a practice hand against a GTO solver, "
+    + "with the solver's frequencies and EVs for their exact hand. Treat those numbers as ground truth: never contradict them or invent other "
+    + "frequencies or EVs. Explain in plain language why the solver's play is better than (or as good as) the user's: the ranges both sides "
+    + "have here, equity now and on later streets, blockers, board texture and sizing, whichever matter in this spot (with no solver numbers, coach "
+    + "the spot from sound principles and say it isn't solved). 150-250 words in short "
+    + "paragraphs, no headings or tables, bold only a few key words. End with one line starting \"Takeaway:\" giving one heuristic to remember.";
+  // cache: id -> { s: "run" | "done" | "err", t: text so far, err, bad (the key was refused) }; open: ids whose
+  // explanation (or key form) is shown; form: the id whose key form is open; entries: id -> decision, as rendered
+  const AI = { cache: {}, open: {}, form: null, entries: {}, seq: 0, timer: null };
+  const aiKey = () => { try { return localStorage.getItem(AI_KEY) || ""; } catch (e) { return ""; } };
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  // the model's text as paragraphs, **bold** kept, anything else as text
+  const md = (t) => esc(t).split(/\n{2,}/).map(p => p.trim()).filter(Boolean)
+    .map(p => `<p>${p.replace(/^#+\s*/gm, "").replace(/^\s*[-*]\s+/gm, "• ").replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/\n/g, "<br>")}</p>`).join("");
+  const keyOf = (e) => e.id || "h" + [...JSON.stringify([e.n, e.street, e.hole, e.rec, e.line])].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7).toString(36);
+  const bb = (x) => `${fmt(x)}bb`;
+  const Street = (s) => s[0].toUpperCase() + s.slice(1);
+
+  // The spot as text, kept with each decision (the page's hand moves on): the game, your seat and cards, every
+  // action so far with its size and the pot, and the decision (the pot, what's to call, the stacks behind).
+  function spot(street) {
+    const n = S.players, hero = S.hero, keep = S.actions, board = boardCards();
+    const who = (p) => p === hero ? `Hero (${SEAT_LABEL(p, n)})` : SEAT_LABEL(p, n);
+    // the hand as it stood before the k-th action of street s
+    const at = (s, k) => {
+      const i = STREETS.indexOf(s);
+      S.actions = Object.fromEntries(STREETS.map((t, j) => [t, j < i ? keep[t] : j === i ? keep[t].slice(0, k) : []]));
+      try { return simulate(); } finally { S.actions = keep; }
+    };
+    const game = [`No-limit hold'em cash game, ${n}-handed, ${UNEQUAL() ? `stacks ${POS.map(p => `${SEAT_LABEL(p, n)} ${bb(STACK(p))}`).join(", ")}` : `${bb(S.stack)} stacks`}`,
+      `Blinds 0.5/1bb${ANTE() ? `, ${bb(ANTE())} ante each` : ""}${STRADDLER() ? `, ${SEAT_LABEL(STRADDLER(), n)} straddles 2bb` : ""}, ${RAKE() ? RAKE_TEXT() + " (pots that see a flop)" : "no rake"}`,
+      ...(ADV_TEXT() ? [`Solver settings: ${ADV_TEXT()}`] : []),
+      "The opponents play the solver's GTO strategy"];
+    const action = [];
+    for (const s of STREETS.slice(0, STREETS.indexOf(street) + 1)) {
+      const cards = s === "preflop" ? "" : " " + board.slice(s === "flop" ? 0 : NEED[s] - 1, NEED[s]).join(" ");
+      const parts = keep[s].map((a, k) => {
+        const sim = at(s, k), info = sim.cur, p = a.pos, pot = sim.pot;
+        const left = info ? STACK(p) - sim.invested[p] - info.bets[p] : 0;
+        const says = a.action === "fold" ? "folds" : a.action === "check" ? "checks"
+          : a.action === "call" ? `calls ${bb(info ? Math.min(info.curBet, info.bets[p] + left) : 0)}`
+          : a.action === "all-in" ? `goes all-in (${bb(info ? info.bets[p] + left : 0)})`
+          : a.action === "bet" || !info || info.curBet < 1e-9 ? `bets ${bb(a.to)} (${Math.round(a.to / pot * 100)}% of ${bb(pot)})` : `raises to ${bb(a.to)}`;
+        return `${who(p)} ${says}`;
+      });
+      action.push(`${Street(s)}${cards} (pot ${bb(at(s, 0).pot)}): ${parts.join(", ") || "no action yet"}`);
+    }
+    const sim = simulate(), info = sim.cur || { pot: sim.pot, curBet: 0, bets: {} }, mine = info.bets[hero] || 0;
+    const toCall = Math.max(0, Math.min(info.curBet - mine, STACK(hero) - sim.invested[hero] - mine));
+    const behind = [hero, ...POS.filter(p => p !== hero && sim.active.has(p))].map(p => `${who(p)} ${bb(STACK(p) - sim.invested[p] - (info.bets[p] || 0))}`);
+    return { game, hand: `Hero: ${SEAT_LABEL(hero, n)} with ${S.cards[0]} ${S.cards[1]}`, action,
+      at: `${Street(street)}, Hero to act. Pot ${bb(info.pot)}${toCall > 1e-9 ? `, ${bb(toCall)} to call` : ", nothing to call"}. Stacks behind: ${behind.join(", ")}`,
+      pot: info.pot, toCall };
+  }
+  // the decision as a prompt for an AI: the spot, what you did, the solver's mix with EVs, the verdict, the ask
+  function prompt(e) {
+    // (a decision kept from before the spot was: what the review list has, else this hand's)
+    const h = P.hand || {}, seat = e.seat || h.hero, hole = e.hole || h.hole || [];
+    const g = e.g, v = verdict(g), c = e.ctx || { game: [`No-limit hold'em, ${S.players}-handed`], hand: `Hero: ${seat ? SEAT_LABEL(seat, S.players) : "?"} with ${hole.join(" ")}`,
+      action: [e.board ? `Board: ${e.board.join(" ") || "none yet"}` : "", e.line ? `${Street(e.street)} action before Hero: ${e.line}` : ""].filter(Boolean), at: `${Street(e.street)}, Hero to act` };
+    const r = e.rec, f = (x) => x > 0 && x < 0.005 ? "<1%" : pct(x);
+    const did = r.action === "bet" ? `bet ${bb(r.to)}${c.pot ? ` (${Math.round(r.to / c.pot * 100)}% pot)` : ""}` : r.action === "raise" ? `raise to ${bb(r.to)}`
+      : r.action === "call" && c.toCall ? `call ${bb(c.toCall)}` : r.action;
+    const L = ["I'm practising no-limit hold'em against a GTO solver. Please explain one of my decisions.", "", "GAME", ...c.game.map(x => "- " + x), "- " + c.hand, "",
+      "ACTION (sizes in bb; the pot at the start of each street)", ...c.action, "", "DECISION", "- " + c.at,
+      `- I chose: ${did}${g && g.m !== r.action ? ` (graded as the solver's "${g.m}")` : ""}`];
+    if (e.mix && e.mix.length) {
+      L.push("- The solver's strategy for my exact hand (how often, EV in bb):");
+      for (const a of e.mix) L.push(`  - ${a.n}${a.a != null ? ` (${bb(a.a)})` : ""}: ${f(a.f)}${a.ev !== undefined ? `, EV ${evTxt(a.ev).replace("−", "-")}` : ""}${g && a.n === g.m ? "  <- my move" : ""}`);
+      if (!e.mix.some(a => a.ev !== undefined)) L.push("  (preflop: the solver's chart gives frequencies, no EVs)");
+    } else L.push("- The solver doesn't solve this multiway spot, so it has no mix here");
+    if (g) {
+      L.push(`- The solver's top action: ${g.b} (${f(g.bf)})`);
+      L.push(`- EV lost against the best action: ${g.l != null ? bb(g.l) : "not known (no EVs preflop)"}`);
+      L.push(`- Verdict: ${v.label}. ${why(e)}`);
+      if (g.r) L.push("- Note: this solve hadn't fully converged, so close frequencies are rough");
+    } else L.push(`- Verdict: ${v.label}`);
+    if (!(e.mix && e.mix.length)) L.push("", "Please explain in plain language how to think about this spot and whether my play is reasonable: "
+      + "the ranges each player has, equity, blockers, board texture and bet sizing. Keep it to about 200 words and end with one short heuristic I can remember.");
+    else L.push("", "Please explain in plain language why the solver's play is better than mine here (or, if mine is in its mix, why both work): "
+      + "the ranges both sides have in this spot, equity, blockers, board texture and bet sizing. Treat the solver's numbers above as ground truth "
+      + "and don't contradict them. Keep it to about 200 words and end with one short heuristic I can remember.");
+    return L.join("\n");
+  }
+  // Inside Details: Copy for AI and Explain with AI, then the explanation (or the key form) when open
+  function aiHtml(e) {
+    const k = keyOf(e), c = AI.cache[k], open = AI.open[k];
+    AI.entries[k] = e;
+    let out = `<div class="cx-aib"><button class="small" data-ai="copy" data-k="${k}" title="Copy this decision as a prompt to paste into any AI chat">Copy for AI</button>`
+      + `<button class="small" data-ai="explain" data-k="${k}" aria-expanded="${!!open}" title="Claude explains this decision (with your own Anthropic API key)">${open ? "Hide explanation" : "Explain with AI"}</button></div>`;
+    if (!open) return out;
+    if (AI.form === k) return out + `<div class="cx-ai form"><label for="pxKey">Your Anthropic API key</label><div class="row">`
+      + `<input id="pxKey" class="cx-key" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false" data-k="${k}">`
+      + `<button class="small" data-ai="save" data-k="${k}">Save &amp; explain</button></div>`
+      + (AI.formErr ? `<p class="err">${esc(AI.formErr)}</p>` : "")
+      + `<p class="note">It's kept only in this browser (localStorage) and sent only to api.anthropic.com, from this page; each explanation is a small charge to your Anthropic account. `
+      + `<a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">Get a key</a></p><button class="link" data-ai="cancel" data-k="${k}">Cancel</button></div>`;
+    if (!c) return out;
+    out += `<div class="cx-ai${c.s === "err" ? " err" : ""}" aria-live="polite">`
+      + (c.t ? md(c.t) : c.s === "run" ? `<p class="muted"><span class="spinner"></span>Asking Claude…</p>` : "")
+      + (c.s === "err" ? `<p class="err">${esc(c.err)}</p><div class="acts2"><button class="small" data-ai="retry" data-k="${k}">Try again</button>${c.bad ? `<button class="small" data-ai="change" data-k="${k}">Enter another key</button>` : ""}</div>` : "")
+      + `<div class="ft"><span>Claude ${AI_MODEL.replace("claude-", "").replace(/-(\d)-(\d)$/, " $1.$2").replace(/^./, (x) => x.toUpperCase())} · from the solver's numbers above</span>`
+      + (aiKey() ? `<button class="link" data-ai="forget" data-k="${k}">Forget key</button>` : "") + `</div></div>`;
+    return out;
+  }
+  // re-render the coach (at most every 50 ms while an answer streams in)
+  function redraw(now) {
+    if (now) { clearTimeout(AI.timer); AI.timer = null; if (P.on) bar(simulate()); return; }
+    if (AI.timer) return;
+    AI.timer = setTimeout(() => { AI.timer = null; if (P.on) bar(simulate()); }, 50);
+  }
+  // an error answer from the API as one line for the card
+  function aiError(status, msg) {
+    if (status === 401) return "Anthropic didn't accept this API key (401). Check it, or enter another.";
+    if (status === 403) return `This key isn't allowed to do that (403)${msg ? ": " + msg : ""}.`;
+    if (status === 429) return "Too many requests, or this key is out of credit (429). Wait a moment and try again.";
+    if (status === 529 || status === 503) return `Anthropic's API is busy right now (${status}). Try again in a moment.`;
+    return `The request failed (${status})${msg ? ": " + msg : ""}.`;
+  }
+  // stream Claude's explanation of decision k into AI.cache[k] (Server-Sent Events: text_delta pieces)
+  async function explain(k) {
+    const e = AI.entries[k], key = aiKey();
+    if (!e) return;
+    if (!key) { AI.form = k; AI.open[k] = true; return redraw(true); }
+    const c = AI.cache[k] = { s: "run", t: "" };
+    AI.open[k] = true; redraw(true);
+    let res;
+    try {
+      res = await fetch(AI_URL, { method: "POST", headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true" }, body: JSON.stringify({ model: AI_MODEL, max_tokens: 700, stream: true,
+        output_config: { effort: "low" }, system: AI_SYSTEM, messages: [{ role: "user", content: prompt(e) }] }) });
+    } catch (err) { Object.assign(c, { s: "err", err: "Couldn't reach api.anthropic.com. Check your connection (or a content blocker) and try again." }); return redraw(true); }
+    if (!res.ok) {
+      let msg = ""; try { const j = await res.json(); msg = j && j.error && j.error.message || ""; } catch (err) {}
+      Object.assign(c, { s: "err", err: aiError(res.status, msg), bad: res.status === 401 }); return redraw(true);
+    }
+    let buf = "", stop = null;
+    const take = (block) => {
+      const data = block.split("\n").filter(l => l.startsWith("data:")).map(l => l.slice(5).trim()).join("");
+      if (!data) return;
+      let m; try { m = JSON.parse(data); } catch (err) { return; }
+      if (m.type === "content_block_delta" && m.delta && m.delta.type === "text_delta") { c.t += m.delta.text; redraw(); }
+      else if (m.type === "message_delta" && m.delta && m.delta.stop_reason) stop = m.delta.stop_reason;
+      else if (m.type === "error") throw new Error(m.error && m.error.message || "the API stopped with an error");
+    };
+    const feed = (chunk, end) => {
+      buf = (buf + chunk).replace(/\r\n?/g, "\n");
+      let i; while ((i = buf.indexOf("\n\n")) >= 0) { const b = buf.slice(0, i); buf = buf.slice(i + 2); take(b); }
+      if (end && buf.trim()) { take(buf); buf = ""; }
+    };
+    try {
+      if (res.body && res.body.getReader) {
+        const rd = res.body.getReader(), dec = new TextDecoder();
+        for (;;) { const { done, value } = await rd.read(); if (done) break; feed(dec.decode(value, { stream: true })); }
+        feed(dec.decode(), true);
+      } else feed(await res.text(), true);
+    } catch (err) {
+      Object.assign(c, { s: "err", err: `The answer stopped early: ${err && err.message || err}` }); return redraw(true);
+    }
+    if (stop === "refusal" && !c.t) Object.assign(c, { s: "err", err: "Claude declined to explain this one." });
+    else if (!c.t) Object.assign(c, { s: "err", err: "The answer came back empty. Try again." });
+    else { if (stop === "max_tokens") c.t += " …"; c.s = "done"; }
+    redraw(true);
+  }
+  // the buttons of the AI row (a, the button's data-ai; value: the key typed, for save)
+  function aiClick(a, k, value) {
+    if (a === "copy") {
+      const e = AI.entries[k]; if (!e) return;
+      return copyText(prompt(e)).then(ok => { if (ok) toast("Copied", null, 2000); });
+    }
+    if (a === "explain") {
+      if (AI.open[k]) { AI.open[k] = false; if (AI.form === k) AI.form = null; return redraw(true); }
+      const c = AI.cache[k];
+      if (c && c.s !== "err") { AI.open[k] = true; return redraw(true); }
+      return explain(k);
+    }
+    if (a === "save") {
+      const inp = document.getElementById("pxKey"), v = String(value != null ? value : inp && inp.value || "").trim();
+      if (!/^sk-ant-\S{8,}$/.test(v)) { AI.formErr = "That doesn't look like an Anthropic API key (they start with sk-ant-)."; return redraw(true); }
+      try { localStorage.setItem(AI_KEY, v); } catch (err) { AI.formErr = "This browser won't store the key (private mode?)."; return redraw(true); }
+      AI.form = null; AI.formErr = ""; return explain(k);
+    }
+    if (a === "cancel") { AI.form = null; AI.formErr = ""; AI.open[k] = false; return redraw(true); }
+    if (a === "retry") return explain(k);
+    if (a === "change") { delete AI.cache[k]; AI.form = k; AI.open[k] = true; return redraw(true); }
+    if (a === "forget") { try { localStorage.removeItem(AI_KEY); } catch (err) {} for (const x of Object.keys(AI.cache)) if (AI.cache[x].s === "err") delete AI.cache[x]; toast("API key forgotten", null, 2500); return redraw(true); }
   }
 
   // ---- the coach panel: what's happening now, the verdict on your last decision, the result, the score
@@ -425,7 +619,11 @@
     const hint = P.hint ? "" : `<div class="cx-hint"><div>You play the seat marked <b>you</b>; the others play GTO by themselves.`
       + ` Act with the action buttons<span class="hoveronly"> or their keys (F, C, 1‑3, R, A; N for the next hand)</span>.</div><button class="small" id="pxHint">Got it</button></div>`;
     const html = hint + body + stats() + reviewList();
-    if (el.pxHtml !== html) { el.innerHTML = html; el.pxHtml = html; }   // (unchanged: kept, with its focus and open Details)
+    if (el.pxHtml !== html) {   // (unchanged: kept, with its focus and open Details; a key being typed survives a change)
+      const ki = el.querySelector ? el.querySelector("input.cx-key") : null, kv = ki && ki.value, kf = ki && document.activeElement === ki;
+      el.innerHTML = html; el.pxHtml = html;
+      const kn = (kv || kf) && el.querySelector("input.cx-key"); if (kn) { kn.value = kv || ""; if (kf) kn.focus(); }
+    }
     strip(sim);
     const hp = document.getElementById("pHistory"); if (hp && hp.scrollHeight > hp.clientHeight) hp.scrollTop = hp.scrollHeight;
     // the solver's full analysis of your last decision, under the coach, when asked for
@@ -441,6 +639,11 @@
       li.onclick = () => { P.pick = P.pick === +li.dataset.i ? null : +li.dataset.i; renderAll(); const t = el.querySelector(`li.pick[data-i="${li.dataset.i}"]`); if (t) t.focus(); };
       li.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); li.onclick(); } };
     });
+    if (el.querySelectorAll) {
+      const typed = (b) => { const f = b.closest && b.closest(".cx-ai"), i = f && f.querySelector("input.cx-key"); return i ? i.value : undefined; };
+      el.querySelectorAll("[data-ai]").forEach(b => { b.onclick = () => aiClick(b.dataset.ai, b.dataset.k, typed(b)); });
+      el.querySelectorAll("input.cx-key").forEach(i => { i.onkeydown = (ev) => { if (ev.key === "Enter") { ev.preventDefault(); aiClick("save", i.dataset.k, i.value); } }; });
+    }
     const d = q("details.cx-more"); if (d) d.ontoggle = () => { P.more = d.open; store("gto-practice-more", P.more); };
   }
   // ---- the loop: each render, if it's not your turn, deal the street or move the opponent to act
@@ -474,5 +677,6 @@
   // a seat's cards once the hand is over (shown at showdown)
   const shown = (p) => P.on && P.hand && P.hand.result && P.hand.result.shown.includes(p) && ours() ? P.hand.hands[p] : null;
 
-  window.Practice = { get on() { return P.on; }, set, tick, next, shown, graded, rank7, fromAhead, auto, seeking, state: P, ahead: A };
+  window.Practice = { get on() { return P.on; }, set, tick, next, shown, graded, rank7, fromAhead, auto, seeking, state: P, ahead: A,
+    ai: { prompt, spot, click: aiClick, explain, keyOf, state: AI, md } };
 })();

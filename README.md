@@ -218,7 +218,18 @@ end, rather than squeeze the Hand panel behind the dock. On a phone the coach's 
 straight under the table (the table and the dock already say whose turn it is), and the action dock carries it in
 one line (the verdict, the EV it gave up, the solver's top choice; the result once the hand is over) that a tap
 scrolls to the full card; the line is always there, so the dock never changes height. Folding ends the hand for you; Undo and replaying a decision are off while
-practising. The page loads `practice.js` the first time Practice is turned on.
+practising. Under each verdict's **Details** (the coach's card and an opened mistake or recent decision) two buttons explain
+a decision. **Copy for AI** puts it on the clipboard as a prompt for any AI chat ("Copied"): the game (players, stacks,
+blinds, ante, straddle, rake), your seat and cards, the board and every action by street with its size in bb and the
+pot, the decision (pot, what's to call, the stacks behind), what you did, the solver's mix with each action's
+frequency and EV, the EV lost and the verdict, and a request to explain in plain language why the solver's play is
+better (ranges, equity, blockers, board texture, sizing) and end with one heuristic. **Explain with AI** streams
+Claude's explanation (Claude Sonnet 5.5, about 150-250 words ending "Takeaway:", the solver's numbers taken as
+given) into the card, straight from the browser to the Claude Messages API with your own Anthropic API key: the
+first time it asks for one (a link to console.anthropic.com to get one); the key is kept only in this browser's
+localStorage and sent only to api.anthropic.com (the site is static, nothing of ours in between), and **Forget key**
+removes it. A refused key (401), a rate limit (429) or no network say so in the card with **Try again**; each
+explanation is kept in memory for its decision, so opening it again costs nothing. The page loads `practice.js` the first time Practice is turned on.
 
 ## Use from the shell
 
