@@ -192,15 +192,67 @@
   .custom.open { display: flex; }
   .err { color: var(--bad); font-size: 12px; }
   .err:empty { display: none; }
-  /* practice mode (practice.js): the advice for your spot shows once you've acted; no editing the hand */
-  .practicebar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 12px; margin: 0 0 8px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
-  .practicebar .pxscore { margin-left: auto; font-size: 11px; }
-  body.practice.heroturn #result, body.practice .acts .fq { display: none; }
-  body.practice.heroturn #adviceNote[hidden] + #result + .pxwait { display: block; }
-  .pxwait { display: none; }
+  /* practice mode (practice.js): a coach panel (your cards, the verdict on each decision, the result, the score);
+     the full advice shows only once you've acted; no editing the hand, no solver-only controls */
+  #pCoach { padding: 12px 14px; }
+  body:not(.practice) #pCoach, body:not(.practice) .pxonly, body.practice .nopx { display: none !important; }
+  body.practice.heroturn #pAdvice, body.practice #adviceNote, body.practice .acts .fq { display: none !important; }
+  body.practice #result.stale { opacity: 1; }
   body.practice .acts button.best { box-shadow: none; }
-  body.practice .seat, body.practice #seats, body.practice .rewind { pointer-events: none; }
-  body.practice #tableHint, body.practice #editCards, body.practice #timeline > button, body.practice .shortcut, body.practice #pCards { display: none !important; }
+  body.practice .seat, body.practice #seats, body.practice .rewind, body.practice #result .arow { pointer-events: none; }
+  body.practice #tableHint, body.practice #editCards, body.practice #timeline > button, body.practice .shortcut, body.practice #pCards,
+  body.practice #copyhand, body.practice #newhand, body.practice .prompt .ask { display: none !important; }
+  #practiceBtn.active { background: var(--panel2); color: var(--text); border-color: var(--line2); }
+  .cx-top { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .cx-top h2 { margin: 0; }
+  .cx-top .right { margin-left: auto; font-size: 12px; color: var(--muted); }
+  .cx-now { display: flex; align-items: center; gap: 14px; padding: 12px; border-radius: 10px; background: var(--panel2); border: 1px solid var(--line); }
+  .cx-now.mine { border-color: var(--accent); }
+  .cx-now .t { font-size: 17px; font-weight: 700; }
+  .cx-now.mine .t { color: var(--accent); }
+  .cx-now .s { color: var(--muted); font-size: 13px; margin-top: 3px; line-height: 1.5; }
+  .cx-cards { display: flex; gap: 4px; flex: none; }
+  .cx-cards .bc { width: 38px; height: 54px; font-size: 17px; box-shadow: 0 2px 6px rgba(0,0,0,.35); }
+  .cx-cards .bc.sm { width: 26px; height: 37px; font-size: 12px; box-shadow: none; }
+  .cx-board { display: flex; gap: 3px; margin-top: 8px; align-items: center; }
+  .cx-board .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); margin-right: 4px; }
+  .cx-fb { margin-top: 12px; padding: 12px; border-radius: 10px; border: 1px solid var(--line); border-left: 4px solid var(--c); background: var(--panel2); }
+  .cx-fb .head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .cx-fb .verdict { font-size: 18px; font-weight: 800; color: var(--c); margin: 0; }
+  .cx-fb .what { color: var(--muted); font-size: 13px; }
+  .cx-fb .what b { color: var(--text); }
+  .cx-fb .cost { margin-left: auto; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .cx-fb .why { font-size: 13px; margin-top: 6px; line-height: 1.5; }
+  .cx-mix { display: flex; height: 8px; border-radius: 4px; overflow: hidden; margin: 10px 0 6px; background: var(--bg); }
+  .cx-mix div { height: 100%; }
+  .cx-acts { display: grid; grid-template-columns: 1fr auto auto; gap: 3px 14px; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .cx-acts > span { padding: 2px 0; }
+  .cx-acts .n::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; background: var(--c); }
+  .cx-acts .you { font-weight: 700; }
+  .cx-acts .tag { font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: #1a1200; background: var(--accent); border-radius: 3px; padding: 0 4px; margin-left: 6px; vertical-align: 1px; }
+  .cx-acts .h { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); }
+  .cx-res { text-align: center; padding: 14px 10px; border-radius: 10px; background: var(--panel2); border: 1px solid var(--line); }
+  .cx-res .big { font-size: 22px; font-weight: 800; }
+  .cx-res .net { font-size: 18px; font-weight: 700; margin-left: 8px; }
+  .cx-show { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 18px; margin-top: 10px; font-size: 12px; color: var(--muted); }
+  .cx-show > span { display: flex; align-items: center; gap: 6px; }
+  .cx-show b { color: var(--text); }
+  .cx-show .win b { color: var(--good); }
+  .cx-res .pots { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .cx-res .nexth { margin-top: 12px; padding: 9px 22px; font-size: 14px; font-weight: 700; background: var(--accent); color: #1a1200; border-color: var(--accent); }
+  .cx-res .nexth kbd { color: #1a1200; border-color: rgba(0,0,0,.25); }
+  .cx-list { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .cx-list li { display: grid; grid-template-columns: 54px 1fr auto auto; gap: 10px; align-items: baseline; font-size: 13px; padding: 6px 10px; border-radius: 8px; background: var(--panel2); }
+  .cx-list .st { text-transform: uppercase; font-size: 10px; letter-spacing: .08em; color: var(--faint); }
+  .cx-list .pill { font-size: 11px; font-weight: 700; color: var(--c); }
+  .cx-list .num { min-width: 64px; }
+  .cx-h { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); margin: 14px 0 0; }
+  .cx-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 14px; }
+  .cx-stats > div { background: var(--panel2); border-radius: 8px; padding: 7px 8px; text-align: center; }
+  .cx-stats b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; }
+  .cx-stats span { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); }
+  .cx-foot { display: flex; justify-content: flex-end; margin-top: 6px; font-size: 11px; }
+  @media (max-width: 560px) { .cx-stats { grid-template-columns: repeat(2, 1fr); } .cx-cards .bc { width: 32px; height: 46px; font-size: 15px; } }
 
   /* ---- advice */
   .conv { font-size: 11px; font-weight: 600; border-radius: 999px; padding: 1px 8px; border: 1px solid currentColor; white-space: nowrap; }
@@ -311,9 +363,8 @@
   @media (max-width: 900px), (max-height: 559px) {
     main { display: flex; flex-direction: column; padding: 10px 10px 0; }
     .col { display: contents; }
-    #pSetup { order: 10; } #pTable { order: 20; } #pCards { order: 30; } #pAdvice { order: 40; } #pHistory { order: 50; } #pAction { order: 90; }
+    #pSetup { order: 10; } #pTable { order: 20; } #pCoach { order: 22; } #pCards { order: 30; } #pAdvice { order: 40; } #pHistory { order: 50; } #pAction { order: 90; }
     body.heroturn #pAdvice { order: 25; }
-    body.practice.heroturn #pAdvice:has(#adviceNote[hidden]) { display: none; }
     body.needcard #pCards { order: 15; }
     .dock { margin: 0 -10px; border-radius: var(--r) var(--r) 0 0; border-width: 1px 0 0; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
     .menu .wideonly { display: none; }
@@ -479,7 +530,6 @@
     </section>
 
     <section class="panel dock" id="pAction">
-      <div id="practiceBar" class="practicebar" hidden></div>
       <div class="err" id="err"></div>
       <div id="actionArea"></div>
     </section>
@@ -488,11 +538,13 @@
   <div class="split" id="split" title="Drag to resize · double-click to reset"></div>
 
   <div class="col" id="colR">
+    <section class="panel" id="pCoach">
+      <div id="practiceBar" hidden></div>
+    </section>
     <section class="panel" id="pAdvice">
-      <h2>Advice</h2>
+      <h2><span class="nopx">Advice</span><span class="pxonly">Solver detail · your last decision</span></h2>
       <div id="adviceNote" class="note" hidden></div>
       <div id="result" class="empty">Pick your seat and cards, then enter the action seat by seat.<br>Advice appears here whenever it's your turn.</div>
-      <div class="pxwait empty">Practice: the advice for this spot shows once you've acted.</div>
     </section>
   </div>
 </main>
@@ -844,6 +896,7 @@ function act(a) {
   }
   if (p === S.hero && practicing() && resultKey !== JSON.stringify(payload())) return "One moment: the spot is being solved, so your move can be graded.";
   if (p === S.hero) { const g = gradeFor(rec); if (g) rec.g = g; }
+  if (p === S.hero && practicing()) window.Practice.graded(sim.current, rec, resultKey === JSON.stringify(payload()) ? lastResult : null);
   S.actions[sim.current].push({ pos: p, ...rec }); save(); return null;
 }
 // A multiway result from the betting rules (4+ players, or a 3-way spot the solver doesn't take), not a solve.

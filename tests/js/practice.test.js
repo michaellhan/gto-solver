@@ -102,6 +102,32 @@ test("opponents move by asking the solver for their own hand's move; you are gra
   assert.equal(p.val("Practice.state.score.hands"), 1);
 });
 
+test("the coach: the verdict on your last decision with the solver's mix, then each decision in the hand's summary", async () => {
+  const p = await practicePage(11);
+  const done = new Set();
+  for (let i = 0; i < 50 && !(p.sim().toAct === p.S.hero && p.val("resultKey === JSON.stringify(payload())")); i++) { await flush(); answer(p, done, passive); await flush(); }
+  assert.match(p.byId("practiceBar").innerHTML, /Your turn/);
+  assert.equal(p.act({ action: "call" }), null);   // the solver's top action (50%)
+  p.run("renderAll()");
+  const log = p.val("Practice.state.hand.log");
+  assert.equal(log.length, 1);
+  assert.deepEqual(log[0].mix.map(a => [a.n, a.f]), [["fold", 0.2], ["check", 0.3], ["call", 0.5]]);
+  const html = p.byId("practiceBar").innerHTML;
+  assert.match(html, /class="verdict">Best move</);
+  assert.match(html, /you <b>called<\/b>/);
+  assert.match(html, /no EV lost/);
+  assert.match(html, /call<span class="tag">you<\/span>/);
+  // after the flop you check when you can: in the mix (30%), 0.6bb below calling's EV
+  await playHand(p, passive, (sim) => sim.cur.curBet > sim.cur.bets[p.S.hero] ? { action: "call" } : { action: "check" });
+  const h = p.val("Practice.state.hand"), mine = Object.values(p.S.actions).flat().filter(a => a.pos === p.S.hero);
+  assert.equal(h.log.length, mine.length);
+  assert.ok(mine.some(a => a.action === "check"));
+  assert.match(p.byId("practiceBar").innerHTML, /<span class="pill"[^>]*>Good<\/span><span class="num neg">−0.60 bb/);
+  assert.match(p.byId("practiceBar").innerHTML, /Your decisions · \d+ of \d+ in the solver's strategy/);
+  assert.match(p.byId("practiceBar").innerHTML, /Next hand/);
+  assert.equal(p.val("Practice.state.score.good"), mine.length);   // check and call are both in the mix
+});
+
 test("your fold ends the hand; you can't act before the spot is solved; opponents' bets and raises", async () => {
   const p = await practicePage(5);
   await flush();

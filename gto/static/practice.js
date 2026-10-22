@@ -9,9 +9,10 @@
   const ON = "gto-practice", HAND = "gto-practice-hand", SCORE = "gto-practice-score";
   const read = (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } };
   const store = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
-  const ZERO = { hands: 0, decisions: 0, best: 0, evDecisions: 0, evLost: 0, net: 0 };
+  const ZERO = { hands: 0, decisions: 0, best: 0, good: 0, evDecisions: 0, evLost: 0, net: 0 };
   // hand: { hero, players, hole, hands: {seat: [c, c]}, board: [5 cards], result }
   const P = { on: false, hand: read(HAND), score: { ...ZERO, ...(read(SCORE) || {}) }, busy: false, status: "", error: "" };
+  if (P.score.decisions && !(read(SCORE) || {}).good) P.score.good = P.score.best;   // (a score from before "good" was kept)
 
   // ---- 7-card hand strength: [category, tie-breakers...], compared left to right
   const CATS = ["high card", "pair", "two pair", "three of a kind", "straight", "flush", "full house", "four of a kind", "straight flush"];
@@ -44,7 +45,7 @@
     S = { ...fresh(S.players), hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanAdv(S, POS), ...cleanStacks(S, POS) };   // (as New hand: seats keep their stacks)
     S.cards[0] = hands[hero][0]; S.cards[1] = hands[hero][1];
     const hole = hands[hero]; delete hands[hero];
-    P.hand = { hero, players: S.players, hole, hands, board: deck.slice(0, 5), result: null };
+    P.hand = { hero, players: S.players, hole, hands, board: deck.slice(0, 5), result: null, log: [] };
     P.error = ""; store(HAND, P.hand); save(); resetAdvice();
   }
   // the hand on the page is the one dealt here (not changed by New hand, the setup or a share link)
@@ -60,7 +61,7 @@
   async function villain() {
     await modeReady;
     const sim = simulate(), p = sim.toAct, before = JSON.stringify([S.actions, S.cards]);
-    P.status = `${SEAT_LABEL(p, S.players)} is thinking…`; bar(sim);
+    P.status = `${SEAT_LABEL(p, S.players)} is deciding…`; bar(sim);
     let res;
     try { res = await callAdvise(payload(), { seat: p, hole: P.hand.hands[p].join("") }); }
     catch (e) { res = { error: "Request failed: " + e }; }
@@ -104,14 +105,59 @@
     h.result = { net, winners, shown, best, folded: !sim.active.has(S.hero), ...(pots ? { pots } : {}) };
     const mine = []; for (const s of STREETS) for (const a of S.actions[s]) if (a.pos === S.hero && a.g) mine.push(a.g);
     const sc = P.score, ev = mine.filter(g => g.l != null);
-    sc.hands++; sc.decisions += mine.length; sc.best += mine.filter(g => g.m === g.b).length;
+    sc.hands++; sc.decisions += mine.length; sc.best += mine.filter(g => g.m === g.b).length; sc.good += mine.filter(g => gradeClass(g) === "ok").length;
     sc.evDecisions += ev.length; sc.evLost += ev.reduce((t, g) => t + g.l, 0); sc.net += net;
     store(HAND, h); store(SCORE, sc);
   }
 
-  // ---- the practice bar (in the action dock)
+  // ---- your decisions: each one's verdict and the solver's mix for the spot, kept with the hand
+  const ACT = (a) => a.action === "bet" ? `bet ${fmt(a.to)}` : a.action === "raise" ? `raise to ${fmt(a.to)}` : a.action;
+  const YOU = (a) => ({ fold: "folded", check: "checked", call: "called", "all-in": "went all-in" })[a.action] || (a.action === "bet" ? `bet ${fmt(a.to)}` : `raised to ${fmt(a.to)}`);
+  function graded(street, rec, res) {
+    if (!P.hand) return;
+    const mix = res && !res.error && res.actions ? res.actions.map(a => ({ n: a.action, f: a.freq, ...(a.ev_bb !== undefined ? { ev: a.ev_bb } : {}) })) : null;
+    (P.hand.log = P.hand.log || []).push({ street, rec: { action: rec.action, ...(rec.to != null ? { to: rec.to } : {}) }, g: rec.g || null, mix });
+    store(HAND, P.hand);
+  }
+  // the verdict: best (the solver's top action), good (in its mix), inaccuracy (rare), mistake (almost never)
+  function verdict(g) {
+    if (!g) return { k: "none", label: "Not graded", c: "var(--muted)" };
+    const cls = gradeClass(g);
+    if (g.m === g.b) return { k: "best", label: "Best move", c: "var(--good)" };
+    if (cls === "ok") return { k: "good", label: "Good", c: "var(--good)" };
+    if (cls === "meh") return { k: "meh", label: "Inaccuracy", c: "var(--meh)" };
+    return { k: "bad", label: "Mistake", c: "var(--bad)" };
+  }
+  const pct = (f) => `${Math.round(f * 100)}%`;
+  const evTxt = (x) => `${x > 0 ? "+" : x < 0 ? "−" : ""}${Math.abs(x).toFixed(2)}`;
+  function why(e) {
+    const g = e.g, v = verdict(g);
+    if (!g) return "This spot isn't solved (4 or more players), so this decision isn't graded.";
+    const as = g.v ? ` (graded as its ${g.m})` : "";
+    if (v.k === "best") return g.f >= 0.995 ? `The solver always plays this here.` : `The solver's top choice here: it plays this ${pct(g.f)} of the time.`;
+    if (v.k === "good") return `The solver mixes this in ${pct(g.f)} of the time${as}; its top choice is ${g.b} (${pct(g.bf)}).`;
+    return `The solver ${g.f < 0.005 ? "never plays this" : `plays this only ${pct(g.f)} of the time`}${as}; it prefers ${g.b} (${pct(g.bf)}).`;
+  }
+  function feedback(e) {
+    const v = verdict(e.g), g = e.g;
+    const cost = g && g.l != null ? (g.l > 0.005 ? `<span class="cost num neg" title="EV given up against the solver's best action">−${g.l.toFixed(2)} bb</span>` : `<span class="cost num pos">no EV lost</span>`) : "";
+    let mix = "";
+    if (e.mix && e.mix.length) {
+      setColors(e.mix.map(a => a.n));
+      const ev = e.mix.some(a => a.ev !== undefined);
+      mix = `<div class="cx-mix">${e.mix.map(a => `<div style="width:${(a.f * 100).toFixed(1)}%;background:${COLORS(a.n)}" title="${a.n} ${pct(a.f)}"></div>`).join("")}</div>`
+        + `<div class="cx-acts"><span class="h">Solver plays</span><span class="h num">How often</span><span class="h num">${ev ? "EV" : ""}</span>`
+        + e.mix.map(a => { const you = g && a.n === g.m; return `<span class="n${you ? " you" : ""}" style="--c:${COLORS(a.n)}">${a.n}${you ? '<span class="tag">you</span>' : ""}</span><span class="num${you ? " you" : ""}">${pct(a.f)}</span><span class="num">${a.ev !== undefined ? evTxt(a.ev) + " bb" : ""}</span>`; }).join("")
+        + `</div>`;
+    }
+    return `<div class="cx-fb" style="--c:${v.c}"><div class="head"><span class="verdict">${v.label}</span><span class="what">${e.street}: you <b>${YOU(e.rec)}</b></span>${cost}</div>`
+      + `<div class="why">${why(e)}${g && g.r ? ' <span class="muted">(rough solve: a hint, not a verdict)</span>' : ""}</div>${mix}</div>`;
+  }
+
+  // ---- the coach panel: what's happening now, the verdict on your last decision, the result, the score
   const money = (x) => (x > 0 ? "+" : x < 0 ? "−" : "") + fmt(Math.abs(x)) + " bb";
   const names = (ps) => ps.map(p => p === S.hero ? "you" : SEAT_LABEL(p, S.players)).join(" and ");
+  const big = (cs, sm) => cs.map(c => `<div class="bc ${c[1]}${sm ? " sm" : ""}">${c[0]}<span>${SUIT_SYM[c[1]]}</span></div>`).join("");
   // with side pots, which of the pots you were in you won
   function headline(r) {
     if (!r.pots) return r.winners.includes(S.hero) ? (r.winners.length > 1 ? "Split pot" : "You win") : "You lose";
@@ -119,25 +165,63 @@
     return !won.length ? "You lose" : won.length === mine.length ? (won.some(x => x.winners.length > 1) ? "Split pot" : "You win")
       : won.includes(r.pots[0]) ? "You win the main pot" : "You win a side pot";
   }
+  function now(sim) {
+    const h = P.hand, seat = SEAT_LABEL(S.hero, S.players), board = boardCards();
+    const boardRow = board.length ? `<div class="cx-board"><span class="lbl">Board</span>${big(board, true)}</div>` : "";
+    let cls = "", t, sub;
+    if (P.error) { t = "Something went wrong"; sub = `<span class="err">${P.error}</span> <button class="link" id="pxRetry">Retry</button>`; }
+    else if (P.status) { t = P.status; sub = `<span class="spinner"></span>Playing the solver's strategy for their hand`; }
+    else if (sim.toAct === S.hero && sim.cur) {
+      cls = " mine"; t = "Your turn";
+      const info = sim.cur, toCall = Math.min(info.curBet - info.bets[S.hero], STACK(S.hero) - sim.invested[S.hero] - info.bets[S.hero]);
+      sub = `${seat} · ${sim.current} · pot ${fmt(info.pot)} bb${toCall > 1e-9 ? ` · <b>${fmt(toCall)} bb to call</b>` : ""}<br>`
+        + (resultKey !== JSON.stringify(payload()) ? `<span class="spinner"></span>Getting the solver's answer ready…` : `Pick an action below. You'll see how the solver plays this hand right after.`);
+    } else { t = "Dealing…"; sub = `${seat}${sim.current ? " · " + sim.current : ""}`; }
+    return `<div class="cx-now${cls}"><div class="cx-cards">${big(h.hole)}</div><div><div class="t">${t}</div><div class="s">${sub}</div>${boardRow}</div></div>`;
+  }
+  function summary(r) {
+    const h = P.hand, log = h.log || [];
+    const shown = r.shown.map(p => `<span class="${r.winners.includes(p) ? "win" : ""}"><b>${SEAT_LABEL(p, S.players)}</b>${big(h.hands[p], true)}</span>`).join("");
+    const mineShown = r.shown.length && !r.folded ? `<span class="${r.winners.includes(S.hero) ? "win" : ""}"><b>You</b>${big(h.hole, true)}</span>` : "";
+    let out = `<div class="cx-res"><div><span class="big">${r.folded ? "You folded" : headline(r)}</span><span class="net num ${r.net > 0 ? "pos" : r.net < 0 ? "neg" : ""}">${money(r.net)}</span></div>`
+      + (r.shown.length ? `<div class="cx-show">${mineShown}${shown}</div>` : "")
+      + (r.best ? `<div class="pots">${names(r.winners)} ${r.winners.length > 1 || r.winners[0] === S.hero ? "win" : "wins"} with ${r.best}</div>` : "")
+      + (r.pots ? `<div class="pots">${r.pots.map((x, i) => `${i ? "side" : "main"} pot ${fmt(x.amount)}: ${names(x.winners)}`).join(" · ")}</div>` : "")
+      + `<button class="nexth" id="pxNext">Next hand <kbd>N</kbd></button></div>`;
+    if (log.length) {
+      const lost = log.reduce((t, e) => t + (e.g && e.g.l || 0), 0), good = log.filter(e => ["best", "good"].includes(verdict(e.g).k)).length;
+      out += `<div class="cx-h">Your decisions · ${good} of ${log.length} in the solver's strategy${lost > 0.005 ? ` · <span class="num neg">−${lost.toFixed(2)} bb</span> EV lost` : ""}</div><ul class="cx-list">`
+        + log.map(e => { const v = verdict(e.g); return `<li title="${e.g ? gradeTip(e.g) : ""}"><span class="st">${e.street}</span><span>${ACT(e.rec)} <span class="muted">· solver ${e.g ? pct(e.g.f) : "–"}</span></span><span class="pill" style="--c:${v.c}">${v.label}</span><span class="num ${e.g && e.g.l > 0.005 ? "neg" : "muted"}">${e.g && e.g.l != null ? (e.g.l > 0.005 ? "−" + e.g.l.toFixed(2) + " bb" : "0 bb") : ""}</span></li>`; }).join("") + `</ul>`;
+    }
+    return out;
+  }
+  function stats() {
+    const sc = P.score, acc = sc.decisions ? pct(sc.good / sc.decisions) : "–";
+    const avg = sc.evDecisions ? (sc.evLost / sc.evDecisions).toFixed(2) : "–";
+    return `<div class="cx-stats" title="Your practice score in this browser"><div><b>${sc.hands}</b><span>Hands</span></div>`
+      + `<div title="Decisions the solver's strategy includes (it plays them 15% of the time or more)"><b>${acc}</b><span>Accuracy</span></div>`
+      + `<div title="Average EV given up against the solver's best action, per decision that has an EV (after the flop)"><b>${avg}</b><span>bb lost / decision</span></div>`
+      + `<div><b class="num ${sc.net > 0 ? "pos" : sc.net < 0 ? "neg" : ""}" style="text-align:center">${sc.hands ? money(Math.round(sc.net * 100) / 100) : "–"}</b><span>Won</span></div></div>`
+      + `<div class="cx-foot"><button class="link" id="pxReset">Reset score</button></div>`;
+  }
   function bar(sim) {
     const el = document.getElementById("practiceBar"); el.hidden = !P.on; if (!P.on) return;
-    const h = P.hand, r = h && h.result, sc = P.score;
-    let msg;
-    if (P.error) msg = `<span class="err">${P.error}</span> <button class="link" id="pxRetry">Retry</button>`;
-    else if (r) msg = `<b>${r.folded ? "You folded" : headline(r)}</b> <span class="num ${r.net > 0 ? "pos" : r.net < 0 ? "neg" : ""}">${money(r.net)}</span>`
-      + (r.shown.length ? ` · ${r.shown.map(p => `${SEAT_LABEL(p, S.players)} ${h.hands[p].map(cardHtml).join("")}`).join(" · ")}${r.best ? ` · ${names(r.winners)} with ${r.best}` : ""}` : "")
-      + (r.pots ? ` · ${r.pots.map((x, i) => `${i ? "side" : "main"} pot ${fmt(x.amount)}: ${names(x.winners)}`).join(" · ")}` : "")
-      + ` <button class="small" id="pxNext">Next hand <kbd>N</kbd></button>`;
-    else if (P.status) msg = `<span class="spinner"></span>${P.status}`;
-    else if (sim.toAct === S.hero) msg = resultKey !== JSON.stringify(payload()) ? `<span class="spinner"></span>Your move (solving the spot so it can be graded)` : "Your move. The advice shows once you've acted.";
-    else msg = "";
-    const avg = sc.evDecisions ? `${(sc.evLost / sc.evDecisions).toFixed(2)} bb lost/decision` : "";
-    const best = sc.decisions ? `${Math.round(sc.best / sc.decisions * 100)}% best` : "";
-    el.innerHTML = `<span class="pxmsg">${msg}</span><span class="pxscore muted" title="Practice score in this browser: hands played, average EV given up per decision with an EV (postflop), share of decisions that took the solver's top action, and chips won">${[`${sc.hands} hands`, avg, best, sc.hands ? money(Math.round(sc.net * 100) / 100) : ""].filter(Boolean).join(" · ")} <button class="link" id="pxReset">reset</button></span>`;
+    const h = P.hand, r = h && h.result, log = (h && h.log) || [];
+    let body = "";
+    if (h) {
+      if (r) body = summary(r);
+      else {
+        body = now(sim);
+        // the verdict on your last decision stays up until you act again
+        if (log.length) body += feedback(log[log.length - 1]);
+      }
+    }
+    el.innerHTML = `<div class="cx-top"><h2>Practice vs GTO</h2><span class="right">Hand ${P.score.hands + (r ? 0 : 1)}</span><button class="small ghost" id="pxExit" title="Back to the solver">Exit</button></div>${body}${stats()}`;
     const on = (id, f) => { const b = el.querySelector ? el.querySelector("#" + id) : null; if (b) b.onclick = f; };
     on("pxRetry", () => { P.error = ""; renderAll(); });
     on("pxNext", () => next());
-    on("pxReset", () => { P.score = { ...ZERO }; store(SCORE, P.score); renderAll(); });
+    on("pxExit", () => set(false));
+    on("pxReset", () => { if (typeof confirm === "function" && !confirm("Reset your practice score?")) return; P.score = { ...ZERO }; store(SCORE, P.score); renderAll(); });
   }
 
   // ---- the loop: each render, if it's not your turn, deal the street or move the opponent to act
@@ -158,7 +242,7 @@
   function set(on) {
     P.on = !!on; store(ON, P.on ? 1 : 0);
     document.body.classList.toggle("practice", P.on);
-    const b = document.getElementById("practiceBtn"); b.classList.toggle("active", P.on);
+    const b = document.getElementById("practiceBtn"); b.classList.toggle("active", P.on); b.textContent = P.on ? "Exit practice" : "Practice";
     if (P.on) document.getElementById("toast").hidden = true;   // e.g. an import's "Review whole hand", for the hand dealt over
     if (P.on && !ours()) deal();
     renderAll();
@@ -166,5 +250,5 @@
   // a seat's cards once the hand is over (shown at showdown)
   const shown = (p) => P.on && P.hand && P.hand.result && P.hand.result.shown.includes(p) && ours() ? P.hand.hands[p] : null;
 
-  window.Practice = { get on() { return P.on; }, set, tick, next, shown, rank7, state: P };
+  window.Practice = { get on() { return P.on; }, set, tick, next, shown, graded, rank7, state: P };
 })();
