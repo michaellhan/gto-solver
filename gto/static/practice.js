@@ -379,7 +379,7 @@
   // own key", it goes from this browser to the Claude Messages API with their own API key (kept in this browser's
   // localStorage, sent only to api.anthropic.com). Each answer is kept in memory per decision (AI.cache).
   // EXPLAIN_PROXY: the deployed worker's URL, e.g. "https://gto-explain.<subdomain>.workers.dev/explain"; "" = own key only
-  const EXPLAIN_PROXY = "";
+  const EXPLAIN_PROXY = "https://gto-explain.combatrobotics.workers.dev/explain";
   const AI_KEY = "gto-anthropic-key", AI_OWN = "gto-explain-own", AI_URL = "https://api.anthropic.com/v1/messages", AI_MODEL = "claude-sonnet-5-5";
   const AI_SYSTEM = "You are a concise no-limit hold'em coach. The user sends one decision from a practice hand against a GTO solver, "
     + "with the solver's frequencies and EVs for their exact hand. Treat those numbers as ground truth: never contradict them or invent other "

@@ -262,7 +262,7 @@ pot, the decision (pot, what's to call, the stacks behind), what you did, the so
 frequency and EV, the EV lost and the verdict, and a request to explain in plain language why the solver's play is
 better (ranges, equity, blockers, board texture, sizing) and end with one heuristic. **Explain with AI** streams
 Claude's explanation (Claude Sonnet 5.5, about 150-250 words ending "Takeaway:", the solver's numbers taken as
-given) into the card. Once the proxy is deployed (`EXPLAIN_PROXY` in `practice.js`, see
+given) into the card. Through the proxy (`EXPLAIN_PROXY` in `practice.js`, see
 [Explain with AI proxy](#explain-with-ai-proxy)) it works for every visitor with no key, a few a day each; when they're
 used up the card says "Daily free explanations used up — add your own key" and offers the key form, and a small
 **Use my own key** link switches to your own key (and **Use free explanations** back). Without the proxy, or with
@@ -286,7 +286,9 @@ Anthropic's errors come back as short JSON errors (a refused key as "proxy misco
 again"), never with the key or Anthropic's headers. Its tests: `cd cloudflare/explain-proxy && npm test`. The
 worker isn't part of the site: `scripts/deploy.sh` copies only the page's own files.
 
-To deploy it (a free Cloudflare account is enough):
+It's deployed at `https://gto-explain.combatrobotics.workers.dev` (`EXPLAIN_PROXY` is its `/explain`; the KV id is
+in `wrangler.toml`), so redeploying after a change is `npx wrangler deploy` in its folder. To deploy it afresh (a free
+Cloudflare account is enough):
 
 1. Get an Anthropic API key from the Console's API Keys page, <https://console.anthropic.com/settings/keys>: it starts
    with `sk-ant-api03-`. (Set a monthly spend limit in the Console too; with the default caps it's at most 1000
@@ -294,7 +296,7 @@ To deploy it (a free Cloudflare account is enough):
 2. In the folder: `cd cloudflare/explain-proxy && npm install`
 3. `npx wrangler login` (opens the browser to sign in to Cloudflare)
 4. `npx wrangler kv namespace create COUNTS` and paste the `id` it prints into `wrangler.toml` (the
-   `[[kv_namespaces]]` entry, in place of `PASTE_THE_KV_NAMESPACE_ID_HERE`)
+   `[[kv_namespaces]]` entry's `id`)
 5. `npx wrangler secret put ANTHROPIC_API_KEY` and paste the key when it asks (it's stored encrypted by Cloudflare,
    never in the repo)
 6. `npx wrangler deploy`: it prints the worker's URL, like `https://gto-explain.<your-subdomain>.workers.dev`

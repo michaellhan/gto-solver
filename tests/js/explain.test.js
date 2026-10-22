@@ -25,9 +25,9 @@ async function atDecision(storage = {}, api = null, { proxy = "" } = {}) {
   p.apiCalls = [];
   const own = p.ctx.fetch;
   p.ctx.fetch = (url, init) => String(url).startsWith("https://api.anthropic.com") || (proxy && String(url) === proxy) ? (p.apiCalls.push({ url: String(url), init }), api(url, init)) : own(url, init);
-  // (with a proxy: practice.js as it is once EXPLAIN_PROXY is filled in after the worker's deploy)
-  const src = proxy ? PRACTICE.replace('const EXPLAIN_PROXY = "";', `const EXPLAIN_PROXY = ${JSON.stringify(proxy)};`) : PRACTICE;
-  assert.ok(!proxy || src !== PRACTICE, "EXPLAIN_PROXY in practice.js");
+  // (EXPLAIN_PROXY set to the test's proxy, or "" for your own key only, as before the worker's deploy)
+  const src = PRACTICE.replace(/const EXPLAIN_PROXY = "[^"]*";/, `const EXPLAIN_PROXY = ${JSON.stringify(proxy)};`);
+  assert.ok(src.includes(`const EXPLAIN_PROXY = ${JSON.stringify(proxy)};`), "EXPLAIN_PROXY in practice.js");
   vm.runInContext(src, p.ctx, { filename: "practice.js" });
   p.run("Practice.set(true)");
   const done = new Set();
@@ -196,8 +196,8 @@ test("the prompt on a later street: the board by street, each bet with the pot, 
   assert.match(text, /- I chose: call 6bb\n- The solver doesn't solve this multiway spot.*\n- Verdict: Not graded\n/s);
 });
 
-test("EXPLAIN_PROXY is empty in the repo (filled in after the worker's deploy), so explanations need your own key until then", () => {
-  assert.match(PRACTICE, /\n  const EXPLAIN_PROXY = "";\n/);
+test("EXPLAIN_PROXY is the deployed worker's /explain, so explanations are free by default; no API key in the page", () => {
+  assert.match(PRACTICE, /\n  const EXPLAIN_PROXY = "https:\/\/gto-explain\.[a-z0-9-]+\.workers\.dev\/explain";\n/);
   assert.ok(!/sk-ant-api\d/.test(PRACTICE), "no API key in practice.js");
 });
 
