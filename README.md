@@ -537,8 +537,12 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
     other jobs, CPU time): per combo the river's showdowns are 32 x 32 instead of N x N, so a native Accurate
     iteration is 3x cheaper (K72 62 -> 20 ms, 986 100 -> 33 ms; its 30 s run ~3x the iterations), its tables up to
     0.5 s; native Fast's tables add 0.15-0.3 s to its 2.5 s (K72 ~175 -> 155 iterations, 986 ~175 -> 145).
-    With the browser's kernels natively (NO_BLAS; Pyodide is ~2x slower) Fast's setup grows 0.15-0.45 s
-    and Accurate's 0.5-0.8 s, the same or cheaper per iteration. The flop library is still Accurate's river on
+    In the browser (`bench_browser.mjs`, the library off so the flop is solved live, medians of 3-7 runs on a
+    machine shared with other jobs) Fast gets ~17% fewer iterations in its 8 s: K72 350 -> 291 (0.09-0.12% of
+    the pot from equilibrium either way), 986 two-tone 225 -> 185 (0.15 -> 0.2%); Accurate reaches its 1000
+    iteration cap in 27 s on K72 and 45 s on 986 where it ran 664 and 854 in 60 s (0.04 / 0.02% -> 0.01%).
+    16 shares for Fast would run more iterations than before (K72 ~445, 986 ~275) but were further from the
+    river with its card (c-bet 5.9 off, size split 9.0). The flop library is still Accurate's river on
     the turn's boards (an entry stands in with a note).
   Tests TestFlopStrategy hold the published table, for both models; TestRiverStrength the tables and the game.
   A flop all-in pays its equity over every turn card with 4 evenly spread rivers each
