@@ -237,8 +237,11 @@ solver's mix as a bar (each action of 20% or more named in it) with its frequenc
 when the solve hasn't it); the card is headed "Last decision · flop" (at the end "Your last decision"), and once
 it's your turn again it fades, so it never reads as a verdict on the spot above it (the phone's dock line then
 starts "Last:"). The EV a move in the solver's strategy gave up is shown muted, not red (its mixed actions are worth
-the same in theory); a multiway spot the solver doesn't take shows no mix ("isn't graded"); **Details** opens why and each action's EV (the choice is remembered), and from there **Show the
-solver's full analysis** opens the usual advice panel for your last decision (never on your turn). At the end the
+the same in theory); a multiway spot the solver doesn't take shows no mix ("isn't graded"); **Details** opens why and each action's EV (the choice is remembered), and from there **See how the
+solver plays your whole range** opens your range at your last decision under the coach (never on your turn), headed
+"Your range · flop · BTN vs BB": the advice panel's Grid (every hand class's mix, yours outlined; hover or tap a hand
+for its mix), Breakdown and Equity, without the rows the verdict card already gives (a decision whose solve the page
+has moved on from, or one from the lists below, has none). At the end the
 opponents' cards are shown at showdown with your result, the verdict on your last decision and the hand's
 decisions with the EV each gave up, and **Next hand** (N) takes the action buttons' place (N does nothing mid-hand). The score
 (hands, how often your action was in the solver's strategy, average EV given up per decision, chips won; **Reset**)

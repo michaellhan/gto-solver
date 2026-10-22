@@ -25,16 +25,18 @@ async function practicePage(seed = 7, storage) {
 }
 // Answer the solver's requests: play requests with villain(message), advice requests with ADVICE.
 // Returns the play requests answered.
-function answer(p, done, villain) {
+function answer(p, done, villain, advice = ADVICE) {
   const plays = [];
   for (const m of p.posted) {
     if (m.id == null || done.has(m.id)) continue;
     done.add(m.id);
     if (m.play) plays.push(m);
-    p.workers.at(-1).onmessage({ data: { id: m.id, result: m.play ? villain(m) : ADVICE } });
+    p.workers.at(-1).onmessage({ data: { id: m.id, result: m.play ? villain(m) : advice } });
   }
   return plays;
 }
+// advice with the range grid (the advice panel's Grid): your whole range at the decision
+const RANGED = { ...ADVICE, grid: { actions: ["fold", "check", "call"], cells: { AKs: { w: 1, f: [0.2, 0.3, 0.5] } } } };
 const passive = (m) => ({ pos: m.play.seat, action: "call" });   // calls a bet, checks otherwise
 
 // Play the hand out: opponents per villain(), you per hero(sim) once the advice is in.
@@ -325,8 +327,9 @@ test("an import's toast (Review whole hand) goes when practice starts, and a rev
   assert.equal(JSON.stringify(p.S), hand);
 });
 
-test("practice setup and states: a fixed or random seat, the buttons wait for the solve, GTO opponents, the full analysis on request", async () => {
+test("practice setup and states: a fixed or random seat, the buttons wait for the solve, GTO opponents, your range on request", async () => {
   const p = await practicePage(13, { "gto-opponents": "pool" });
+  p.run("wireGrid = () => {}");   // (the fake DOM has no grid element to wire)
   // a fixed seat: every deal from it, kept in the browser; Random again. The picker is a row of the site's
   // buttons (a radio group), not the browser's select: a click on one picks it
   const sel = p.byId("pxSeat"), pick = (v) => sel.onclick({ target: { closest: () => ({ dataset: { v } }) } });
@@ -351,15 +354,28 @@ test("practice setup and states: a fixed or random seat, the buttons wait for th
     assert.ok(acts.children.every(b => b.disabled));
     assert.match(p.byId("practiceBar").innerHTML, /Solving your spot…/);
   }
-  for (let i = 0; i < 5 && !p.val("resultKey === JSON.stringify(payload())"); i++) { await flush(); answer(p, done, passive); await flush(); }
+  for (let i = 0; i < 5 && !p.val("resultKey === JSON.stringify(payload())"); i++) { await flush(); answer(p, done, passive, RANGED); await flush(); }
   const acts = p.byId("actionArea").children.find(e => /acts/.test(e.className));
   assert.ok(!/wait/.test(acts.className) && acts.children.every(b => !b.disabled));
   assert.match(p.byId("practiceBar").innerHTML, /Your turn/);
-  // the solver's full analysis of your last decision shows only when asked for, and never on your turn
+  // how the solver plays your whole range at your last decision: in its Details, shown only when asked for, never
+  // on your turn; the advice panel then shows only the range (Grid first, a view picked in solver mode aside)
+  p.run(`VIEW = "breakdown"; renderResult(lastResult, resultKey)`);
+  assert.match(p.byId("result").innerHTML, /<button data-v="grid" class="active">Grid<\/button>/);
+  assert.equal(p.val("VIEW"), "breakdown", "practice opens on the Grid without changing the solver's view");
+  const street = p.sim().current, me = p.val("SEAT_LABEL(S.hero, S.players)");
   assert.equal(p.act({ action: "call" }), null); p.run("renderAll()");
   assert.ok(!p.ctx.document.body.className.includes("pxdetail"));
+  assert.match(p.byId("practiceBar").innerHTML, /<button class="cx-rangeb" id="pxDetail" aria-expanded="false">See how the solver plays your whole range<\/button>/);
+  assert.doesNotMatch(p.byId("practiceBar").innerHTML, /full analysis/);
   p.run("Practice.state.detail = true; renderAll()");
   assert.ok(p.ctx.document.body.className.includes("pxdetail"));
+  assert.match(p.byId("practiceBar").innerHTML, /aria-expanded="true">Hide your range</);
+  assert.match(p.byId("pxRangeHd").textContent, new RegExp(`^Your range · ${street} · ${me} vs (\\w+(, \\w+)?|\\d+ players)$`));
+  // a decision graded without a range grid (or whose solve the page has moved on from): no range to show
+  p.run("Practice.state.range = null; renderAll()");
+  assert.ok(!p.ctx.document.body.className.includes("pxdetail"));
+  assert.doesNotMatch(p.byId("practiceBar").innerHTML, /pxDetail/);
   p.run("Practice.next()"); await flush();
   assert.ok(!p.ctx.document.body.className.includes("pxdetail"));   // (nothing to show on a new hand)
 });
