@@ -441,7 +441,14 @@ they stay. The solve's other spots were checked for a clear improvement:
 What is used: the realization model re-ranks re-priced calls (Advisor._priced, under rake or another size):
 the number of hands a worse price removes is still set by all-in equity, but they are now the ones with the
 least *realized* equity, so raked big-blind defence keeps 76s/54s/97s and folds K5o/Q7o/J5s (with all-in
-equity it did the reverse, against raked solves).
+equity it did the reverse, against raked solves). Since 2026-10 the realized equity there carries the river
+correction above, smoothed on hand shape (advisor._river_fix: connectors and gappers up to J-high +0.15, 22-66
++0.10, offsuit aces -0.05; full in single-raised pots, half in 3bet pots): at 5% capped at 4bb the big blind
+now folds A2o (was 51% continue; gtopreflop.com: a pure fold) and keeps T8o/98o/87o (were 19/56/0%), the
+totals unchanged (they are set by the price). Measured directly, rake's own per-hand incidence is too small to
+reorder anything: 34 BTN-BB flops solved with and without 5% rake (fast model, chart ranges) cost the big
+blind 7.7-9.1% of its pot share at a 0.6bb cap by hand group (offsuit aces 9.0, suited connectors 8.0, small
+pairs 7.7) and 12.5-14.2% at 4bb, under 0.004 of the pot between groups.
 
 ## 7. The structural causes, one experiment each (2026-10, second pass)
 

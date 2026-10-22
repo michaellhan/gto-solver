@@ -8,7 +8,7 @@ the certain references (points per share).
 import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from tests.preflop_refs import REFS, HANDS, measure, measure_hand, misses
+from tests.preflop_refs import REFS, HANDS, RAKED_HANDS, measure, measure_hand, measure_raked_hand, misses
 
 
 def main():
@@ -35,6 +35,14 @@ def main():
         print(f"  {h[0]:36s} {h[4]} {v * 100:5.1f}% (want {h[5] * 100:.0f}-{h[6] * 100:.0f}) {'ok' if ok else 'MISS'}"
               + (f"  {h[7]}" if "-v" in sys.argv else ""))
     print(f"hand facts: {len(HANDS)}, outside range {n_bad}")
+    n_bad = 0
+    for h in RAKED_HANDS:
+        v = measure_raked_hand(h)
+        ok = h[5] - 1e-9 <= v <= h[6] + 1e-9
+        n_bad += not ok
+        print(f"  {h[0]:36s} {h[4]} {v * 100:5.1f}% (want {h[5] * 100:.0f}-{h[6] * 100:.0f}) {'ok' if ok else 'MISS'}"
+              + (f"  {h[7]}" if "-v" in sys.argv else ""))
+    print(f"raked hand facts (at their rake, through the advice): {len(RAKED_HANDS)}, outside range {n_bad}")
 
 
 if __name__ == "__main__":

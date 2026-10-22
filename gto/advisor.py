@@ -936,7 +936,39 @@ def _call_realization(hero: str, raiser: str, n_raises: int, ranges: Dict[str, n
         return np.ones(N_COMBOS)
     order = pf.postflop_order(list(positions))
     aggr_ip = order.index(raiser) > order.index(hero)
-    return pf_game.realization(model, n_raises, aggr_ip, "caller", to_classes(opp))[CLASS_OF]
+    r = pf_game.realization(model, n_raises, aggr_ip, "caller", to_classes(opp))
+    return (r + RIVER_FIX.get(n_raises, 0.0) * _river_fix())[CLASS_OF]
+
+
+# The realization model is measured with the fast flop model (turn and river by hand buckets, the river
+# played without its card). Re-solved with the river dealt and played (scripts/pf_fidelity.py, docs/
+# preflop_research.md section 7), callers in single-raised pots realize more with connectors and gappers
+# (65s +0.23, T8o and 54s +0.15, T9s +0.11, J8s +0.20) and small pairs (22 +0.08 to +0.20), and less with
+# offsuit aces (AJo -0.17); about half that in 3bet pots. _river_fix is that correction smoothed on hand
+# shape (the aces' shrunk from 8 flops' -0.17 to -0.05: at -0.10 the big blind at 5%/4bb folded A2o-A8o
+# but for 3bets), scaled by RIVER_FIX per number of raises called. Used only to rank re-priced calls
+# (_rerank), whose number the price sets.
+RIVER_FIX = {1: 1.0, 2: 0.5}
+_RIVER_FIX = None
+
+
+def _river_fix() -> np.ndarray:
+    """Per class: the realization the river-dealt flop model adds over the fast one (see RIVER_FIX)."""
+    global _RIVER_FIX
+    if _RIVER_FIX is None:
+        from .pf_classes import CLASSES
+        rk = "23456789TJQKA"
+        out = np.zeros(len(CLASSES))
+        for i, c in enumerate(CLASSES):
+            hi, lo = rk.index(c[0]), rk.index(c[1])
+            if hi == lo:
+                out[i] = 0.10 if hi <= rk.index("6") else 0.0
+            elif c[0] == "A":
+                out[i] = -0.05 if c[2] == "o" else 0.0
+            elif hi <= rk.index("J") and hi - lo <= 2:
+                out[i] = 0.15
+        _RIVER_FIX = out
+    return _RIVER_FIX
 
 
 RERANK_BLEND = 0.03   # realized equity over which a re-ranked call ramps in
