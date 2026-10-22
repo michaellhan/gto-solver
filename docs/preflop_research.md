@@ -443,7 +443,7 @@ the number of hands a worse price removes is still set by all-in equity, but the
 least *realized* equity, so raked big-blind defence keeps 76s/54s/97s and folds K5o/Q7o/J5s (with all-in
 equity it did the reverse, against raked solves). Since 2026-10 the realized equity there carries the river
 correction above, smoothed on hand shape (advisor._river_fix: connectors and gappers up to J-high +0.15, 22-66
-+0.10, offsuit aces -0.05; full in single-raised pots, half in 3bet pots): at 5% capped at 4bb the big blind
++0.10, offsuit aces -0.05; full in single-raised pots, half in 3bet pots; since extended to every suited hand +0.10 and every non-connected offsuit hand -0.05, section 8): at 5% capped at 4bb the big blind
 now folds A2o (was 51% continue; gtopreflop.com: a pure fold) and keeps T8o/98o/87o (were 19/56/0%), the
 totals unchanged (they are set by the price). Measured directly, rake's own per-hand incidence is too small to
 reorder anything: 34 BTN-BB flops solved with and without 5% rake (fast model, chart ranges) cost the big
@@ -507,3 +507,62 @@ postflop tree with the river dealt, and re-measuring every spot that way here is
 charts' was the condition for trusting it where there are none, and the best here is 2.42 / 10 / 6 unfitted. Kept: the measured
 three-way factors, the limp and 4bet-size options (off by default), per-spot fits (`--by-spot`), the fidelity
 and three-way measurement scripts. The charts and the flop library are unchanged.
+
+## 8. Third pass: raked hand order, cold calls, squeezes and 4bets (2026-10)
+
+New published figures (searched: gtopreflop.com, GTO Wizard's blog, Poker Academy, GTO Gecko, thinkgto.com,
+Preflop Wizard, Upswing-type guides; most guides give rules of thumb, not solver output):
+
+- **Cold calls** (gtopreflop.com, multiway page, already in 3.1): against a LJ (6-max UTG) open HJ 2.1%, CO
+  2.9%, BTN 4.6%, SB 4.1% of hands, "3-bet more often than they call". Now certain references.
+- **BTN against a SB 3bet** (gtopreflop.com, 4-bet guide, fold / call / 4bet per hand): KK 0/0/100, QQ
+  0/10.5/89.5, AKo 0/20/80, A9s 0/22/77.5, KTs 0/24/75.8, AKs 0/41/59.4, A4s 54/3/43, K9s 66/0/34, KQo 67/0/33,
+  JJ 0/76/24, AJo 77/0/23, A5s 6/72/22, TT 0/81/19.5, AQs and KQs 0/100/0. Six are now raked hand facts.
+- **CO against a BTN 3bet** (same): A5s 84.8%, A4s 55.9%, KJs 100% 4bet. UTG (8-max UTG, not the 6-max seat)
+  TT 48/43/10, so not used.
+- **GTO Gecko's library** (gtogecko.com/blog/wheel-ace-fourbet-study, "catalogued rake 5%, capped at 4bb",
+  solver not named, exports "not validated optimal responses"): BTN vs a BB 12bb 3bet A3s 2/28/70 (fold /
+  call / 4bet to 24bb), A4s 0/89/11, A5s and A9s 100% call; CO vs a BTN 7.5bb 3bet A2s pure fold, A4s 4/52/44,
+  A5s 0/13/87; **the big blind's 3bet range against BTN's 24bb 4bet: fold 46.9%, call 29.3%, jam 23.8%**
+  (127.7 of 146.7 combos, hero's As5s removed; As9s the same within 0.5). The only response to a 4bet found
+  anywhere. Its A5s 4bet against a SB 3bet (6.4%) differs from gtopreflop.com's (21.9%): a different library.
+  gtogecko.com/blog/suited-connectors-threebet-study: BTN folds 98s to a BB 3bet (99.9%), CO calls JTs (99.3%).
+- **Squeeze** (Poker Academy, already in 3.2): BB over BTN open + SB call 71.2 / 16.1 / 12.7, calls at a 20%
+  price against 29.0% at 27.3% heads-up. Reported (uncertain, like the other Poker Academy spots).
+- **Facing an open and a 3bet** (GTO Wizard, should-you-ever-cold-call-a-3-bet): the button folds "more than
+  90%" to "just under 97%". Reported.
+- thinkgto.com's 3bet guide: "continue with approximately 30-40% of your 3-bet range" against a 4bet; no
+  solve cited, not used.
+
+What changed, each measured with `scripts/preflop_reference.py` (22 original spots: 1.03 -> 0.99 points, 0
+outside; the 4 new cold-call spots 0 outside; hand facts 14/14 -> 15/15; raked hand facts 4/5 -> 11/11; 
+`scripts/preflop_sweep.py` 0 issues unraked, at 5%/0.6bb and at 5%/4bb):
+
+| change | before | after | published |
+|---|---|---|---|
+| river correction: other suited hands +0.10, every non-connected offsuit hand -0.05 (was: offsuit aces only; advisor._river_fix) | BB vs BTN at 5%/4bb: Q9o 100%, K2s-K9s 95% (K2s 60%), K9o/KTo 100%, K7o/K8o 75/63% | Q9o 33%, K2s-K9s 100%, K9o/KTo 73/69%, K7o/K8o 0% | Q9o 27%, K2s-K9s 100% |
+| multiway calls re-drawn by equity against all players at the chart's bar (Advisor._priced), not only added to the chart's | BB over BTN + SB call, 5%/4bb: 46.4 / 44.5 / 9.1 | 75.9 / 15.0 / 9.1 (61.6 / 29.3 / 9.1 unraked) | 71.2 / 16.1 / 12.7 |
+| BTN (and CO vs HJ) facing an early open: the NL500 flats cut, more 3bets | BTN vs UTG 85.7 / 9.1 / 5.2 | 89.1 / 4.5 / 6.4 | call 4.6, 3bets > calls |
+| CO vs BTN 3bet: A5s 85%, A4s 55% 4bet, the rest folding, KQo 70%, K8s and Q9s 40% 4bet to keep the total (calls unchanged: the shipped flop library's BTN-3bet-vs-CO spot is built on them, so KJs keeps calling 60%) | A4s 100%, KJs 40% | A4s 55%, KJs 40% | 55.9%, KJs 100% |
+| VS_4BET: QQ 0.8, AKo 0.8, JJ 0.3, A5s 0.4 jam (were 0.6 / 0.5 / 0 / 0.3) | BB vs BTN 24bb 4bet (As5s removed) 45.6 / 38.6 / 15.9 | 45.6 / 34.0 / 20.4 | 46.9 / 29.3 / 23.8 |
+
+The suited correction follows section 7's river-dealt measurements (KTs +0.14, A5s +0.12, J8s +0.20 alongside
+the connectors; AJo -0.11 to -0.17), smoothed to one value per shape; a grid (suited 0-0.12, offsuit 0 to
+-0.08) left the 22 spots within 0.02 points of each other, and Q9o only came off 100% with both (offsuit
+alone: 88-97%; suited alone: 93-100%). The multiway re-draw has no new parameter: the bar is the one the chart
+already sets heads-up. It applies only with a raise in and the chart's own spot having an opponent (limped pots
+keep the old rule: over-limps were the chart's calls). Squeezes stay at about 0.8x the heads-up 3bet over BTN
++ SB (9.1% against 11.6%; published 0.95-1.10x): flooring the bluffs' fold-equity scale at 0.85 moved it only
+to 10.9%, so it was left.
+
+**The 3bettor facing a 4bet.** The derived equilibrium (section 6) said the charts fold too often against
+their 4bets. The one published response says the total is right where it can be compared: at 24bb the charts
+continue 54% of the big blind's 3bets against the button with the same cards removed, the export 53%. What
+the charts get wrong is the split (now closer) and the size response: the 4bet default is 2.3x (27.6bb over
+12bb), the published ones 2x in position and 2.7x out (24bb, 20.25bb over 7.5bb), and the re-pricing adds
+calls by equity at the chart's bar, under which much of a 3bet range sits bunched against a bluff-heavy 4bet
+range: the big blind against the button folds 64% at 27.6bb, 45% at 24bb, 38% at 22bb and 5% at 20bb, against
+the cutoff 47% at 27.6bb and 6% at 24bb. Moving the default 4bet to the published sizes makes 24bb the chart's
+own line (64% folds, against the export's 47%) unless the chart widens, and changes every recommended 4bet
+size; with one published spot it was left. Open: a 4bet-response reference per seat pair, which none of the
+public libraries publishes.

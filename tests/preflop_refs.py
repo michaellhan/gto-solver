@@ -80,6 +80,11 @@ for _o, _t, _three, _want in (("UTG", "BTN", 7.5, (0.570, 0.244, 0.187)), ("HJ",
 ref("SB open vs BB 3bet", "SB", "SB raise 3, BB raise 10", {"fold": 0.636, "call": 0.214, "raise": 0.150}, 0.04,
     GTOPRE, of="range", rake=RK)
 
+# cold calls of a UTG (its LJ) open by the seats with players behind: "between 2.1% and 4.6% of hands",
+# and they "3-bet more often than they call" (https://gtopreflop.com/posts/multiway-preflop-ranges)
+for _h, _c in (("HJ", 0.021), ("CO", 0.029), ("BTN", 0.046), ("SB", 0.041)):
+    ref(f"{_h} cold-calls UTG open", _h, "UTG raise 2.5", {"call": _c}, 0.015, GTOPRE, rake=RK, note="UTG = its LJ")
+
 # ---- opening ranges: raked 2.5bb solves (SB 3bb), consistent across sources ----
 OPENS = ("pokalab.com/tools/preflop-charts (GG NL50 rake, raise or fold) 17.6/22.3/29.1/43.6/43.5; "
          "Poker Academy GG NL200 18.5/-/-/46.5 (poker.academy/blog/post/what-is-gto-in-poker); "
@@ -101,6 +106,19 @@ ref("BB vs UTG open (pokalab NL50)", "BB", "UTG raise 2.5", {"fold": 0.783, "cal
     "pokalab.com (GG NL50 rake, 3bet to 13bb)", rake=RK, uncertain=True)
 ref("BB vs SB open (thinkgto)", "BB", "SB raise 3", {"fold": 0.445, "call": 0.387, "raise": 0.169}, 0.04,
     "thinkgto.com blind-vs-blind (GTO Ranges+, 3bet to 9bb, rake not stated)", uncertain=True)
+ref("BB squeeze BTN open + SB call (PA NL200)", "BB", "BTN raise 2.5, SB call",
+    {"fold": 0.712, "call": 0.161, "raise": 0.127}, 0.04, PA, rake=RK, uncertain=True,
+    note="squeeze to 12.2bb; calls 16.1% at a 20% price against 29.0% heads-up at 27.3%")
+ref("BTN cold vs HJ open + CO 3bet (GTOW NL500)", "BTN", "HJ raise 2.5, CO raise 7.5", {"fold": 0.935}, 0.035,
+    "GTO Wizard NL500 100bb, blog.gtowizard.com/should-you-ever-cold-call-a-3-bet: 'more than 90%' to "
+    "'just under 97%' folds", uncertain=True)
+# the 3bettor facing a 4bet: one library export, BB's 3bet range (146.7 combos) against BTN's 24bb 4bet,
+# with hero's As5s removed (so its AA/AK share is low): 46.9% fold, 29.3% call, 23.8% jam
+# (gtogecko.com/blog/wheel-ace-fourbet-study, "catalogued rake 5%, capped at 4bb", solver not named,
+# "not validated optimal responses")
+ref("BB 3bet vs BTN 4bet to 24 (GTO Gecko)", "BB", "BTN raise 2.5, BB raise 12, BTN raise 24",
+    {"fold": 0.469, "call": 0.293, "raise": 0.238}, 0.06, "GTO Gecko library export (5% capped at 4bb)",
+    of="range", rake=RK, uncertain=True, note="card-removed with As5s; the only published 4bet response found")
 
 
 # ---- hand-level facts: (name, hero, line, hands, action, low, high, source), on the chart's own line ----
@@ -118,6 +136,8 @@ HANDS = [
     ("BB 3bets A5o often vs BTN", "BB", "BTN raise 2.5", "A5o", "raise", 0.4, 0.9, "gtopreflop.com: 87%"),
     ("UTG flats QQ vs BTN 3bet", "UTG", "UTG raise 2.5, BTN raise 7.5", "QQ", "call", 0.7, 0.95, "gtopreflop.com: 85%"),
     ("CO 4bets A5s vs BTN 3bet", "CO", "CO raise 2.5, BTN raise 7.5", "A5s", "raise", 0.75, 1.0, "gtopreflop.com: 85%"),
+    ("CO 4bets A4s about half vs BTN 3bet", "CO", "CO raise 2.5, BTN raise 7.5", "A4s", "raise", 0.35, 0.7,
+     "gtopreflop.com: 55.9% (GTO Gecko's library 44%)"),
     ("BTN calls AQs vs SB 3bet", "BTN", "BTN raise 2.5, SB raise 12", "AQs", "call", 0.95, 1.0, "gtopreflop.com: 100%"),
     ("BTN 4bets A9s vs SB 3bet", "BTN", "BTN raise 2.5, SB raise 12", "A9s", "raise", 0.6, 0.9, "gtopreflop.com: 77.5%"),
 ]
@@ -141,6 +161,7 @@ def measure_hand(h) -> float:
 # ---- hand-level facts of raked solves, played at their rake through the advice (re-pricing included):
 # (name, hero, line, hands, action, low, high, source, rake); "continue" is call + raise ----
 GTOPRE_BB = "gtopreflop.com/posts/big-blind-defense (5% capped at 4bb)"
+GTOPRE_4B = "gtopreflop.com/posts/4-bet-ranges-guide (5% capped at 4bb)"
 RAKED_HANDS = [
     ("BB folds A2o vs BTN (raked)", "BB", "BTN raise 2.5", "A2o", "continue", 0.0, 0.1, GTOPRE_BB + ": pure fold", RK),
     ("BB defends Q9o rarely vs BTN (raked)", "BB", "BTN raise 2.5", "Q9o", "continue", 0.1, 0.5,
@@ -150,7 +171,15 @@ RAKED_HANDS = [
     ("BB calls A2s-A4s vs BTN (raked)", "BB", "BTN raise 2.5", "A2s-A4s", "call", 0.9, 1.0,
      GTOPRE_BB + ": call essentially always", RK),
     ("BB 3bets A5o mostly vs BTN (raked)", "BB", "BTN raise 2.5", "A5o", "raise", 0.4, 1.0, GTOPRE_BB + ": 87%", RK),
-]
+] + [(f"BTN {_w} vs SB 3bet (raked)", "BTN", "BTN raise 2.5, SB raise 12", _h, _a, _lo, _hi, GTOPRE_4B + _src, RK)
+     for _w, _h, _a, _lo, _hi, _src in (
+         ("4bets QQ", "QQ", "raise", 0.8, 1.0, ": 89.5%"),
+         ("calls JJ, TT", "JJ, TT", "call", 0.65, 0.9, ": 76%, 81%"),
+         ("calls AQs, KQs", "AQs, KQs", "call", 0.95, 1.0, ": 100%"),
+         ("folds AJo, KQo mostly", "AJo, KQo", "fold", 0.55, 0.85, ": 77%, 67%"),
+         ("4bets KTs mostly", "KTs", "raise", 0.6, 0.9, ": 75.8%"),
+         ("folds K9s mostly", "K9s", "fold", 0.5, 0.8, ": 66%"),
+     )]
 
 
 def measure_raked_hand(h) -> float:
