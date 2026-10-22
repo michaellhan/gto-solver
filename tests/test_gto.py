@@ -1004,9 +1004,10 @@ class TestTableSizes(unittest.TestCase):
         bb, co = (int(note.split(f"{p} continues with ")[1].split("%")[0]) for p in ("BB", "CO"))
         # (BB's flop call keeps the hands that would have raised at SLOWPLAY, so its river lead is no longer
         # mostly air: the two continue about equally, 45% and 43%, against 64% each before the joint bar)
-        self.assertLess(max(bb, co), 55)
-        self.assertLessEqual(abs(bb - co), 8)   # (47 / 41 with the dealt-out multiway preflop equity, 48 / 40 with
-                                                # ties kept together in the check ranges)
+        # (were 45 / 43; BB's flop overcall now keeps a quarter of the first caller's share, advisor.OVERCALL, so
+        # its range is the stronger one and keeps more of it: 60 / 21)
+        self.assertLess(max(bb, co), 70)
+        self.assertGreater(bb, co)
         # One range: the same as keeping its top share.
         rng = np.random.default_rng(1)
         w, sc = rng.random(1326), rng.random(1326)
@@ -1034,8 +1035,10 @@ class TestTableSizes(unittest.TestCase):
         for p in ("HJ", "BTN"):
             self.assertLess(ranges[p].sum(), 0.8 * before[p].sum())
         self.assertGreater(ranges["HJ"][sets] / before["HJ"][sets], 0.9)   # a set bets
-        from gto.advisor import NARROW_SOFT
-        self.assertLessEqual(ranges["BB"][sets] / before["BB"][sets], NARROW_SOFT + 1e-9)   # and doesn't check
+        from gto.advisor import CHECK_SOFT
+        # and checks less often (a flop check keeps CHECK_SOFT of what the rules have betting: 3-way solves lead less)
+        self.assertLessEqual(ranges["BB"][sets] / before["BB"][sets], CHECK_SOFT + 1e-9)
+        self.assertLess(CHECK_SOFT, 1.0)
 
     def test_multiway_players_behind_a_call_fold_like_the_field(self):
         # CO pots it 3-way on K72, BTN (hero) calls with BB behind. BB faced the bet with us, so it
@@ -1056,9 +1059,10 @@ class TestTableSizes(unittest.TestCase):
         # wider range that would have bet small, so BB is weaker; the dead-money bug gave +19 bb)
         self.assertLess(r["actions"][1]["ev_bb"], 18.0)
 
-    def test_multiway_overcall_narrows_like_the_first_call(self):
+    def test_multiway_overcall_narrows_tighter_than_the_first_call(self):
         # HJ bets 3-way, BTN calls, BB overcalls. Both faced the same bet; the overcall used to be priced
-        # against the pot the first call had grown, so with equal ranges BB kept more than BTN.
+        # against the pot the first call had grown, so with equal ranges BB kept more than BTN, then the
+        # same; 3-way solves overcall about a quarter as wide as the first caller (advisor.OVERCALL).
         from gto.advisor import replay_hand, _narrow_street
         pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "raise", "to": 2.5}, {"pos": "CO", "action": "fold"},
                {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
@@ -1072,7 +1076,8 @@ class TestTableSizes(unittest.TestCase):
         # BB's check narrows its range first; compare the call step alone by checking from equal ranges
         st.actions = flop[1:]
         _narrow_street(ranges, cards("Jc7h2s"), st, 100.0)
-        self.assertAlmostEqual(ranges["BB"].sum(), ranges["BTN"].sum(), delta=0.01 * ranges["BTN"].sum())
+        self.assertLess(ranges["BB"].sum(), 0.4 * ranges["BTN"].sum())
+        self.assertGreater(ranges["BB"].sum(), 0.15 * ranges["BTN"].sum())
 
     def test_multiway_players_behind_a_bettor_act_after_we_check(self):
         # BB checks 3-way: CO may bet with BTN between it and us, or BTN may bet with CO behind us. The

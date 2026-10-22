@@ -73,6 +73,15 @@ SMALL_VALUE_MAX = 0.55  # ...but at most this share of the bettor's range: behin
 NUT_TOP = 0.1       # multiway: the nuts, for the big bet: this top share of the players' ranges pooled
 ADV0, ADV_SPAN = 0.4, 0.2  # ...the big bet starts at this share of the nuts and takes all the value over this much more
 RAISE_SHARE = 0.2   # multiway: facing a bet, this share of what continues (the strongest) raises
+CHECK_SOFT = 0.7   # multiway narrowing: a flop check keeps this much of the hands the rules have betting (NARROW_SOFT
+                   # elsewhere; capped by OFF_RULE_MAX as it is). 3-way solves from the SB's action (UTG opens, both blinds
+                   # call; ten flops) check through with 73-91% of the BB's range where the rules kept 68-80%: the rules'
+                   # check ranges were 0.21 (SB) and 0.14 (BB) off the solve's in total variation, now 0.15 and 0.05, and
+                   # UTG's solve in front of them bet 72.5% (five flops) where the full street's bets 49%, now 51.5%
+OVERCALL = 0.25    # multiway narrowing: a call behind another caller continues with this share of what the first would. In
+                   # 3-way solves (UTG bets a third into both blinds, the SB calls 53-78%) the BB overcalls 3.5-20% of its
+                   # range (13% on average, eight flops), where the first caller's share kept 57% (compare_multiway.py
+                   # --narrowing: the turn's ranges 0.52 off -> 0.44, and 0.52 -> 0.46 on four other flops)
 SLOWPLAY = 0.5      # multiway narrowing: weight a call keeps on the hands RAISE_SHARE has raising (judgment)
 SLOWPLAY_AGAIN = 0.85  # ...and on a later street's call, for a hand that already slowplayed one (judgment)
 LEAD_EQ = 0.5       # multiway, later streets: we lead when our equity beats this vs every calling range
@@ -739,6 +748,7 @@ def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack,
     cur = 0.0
     active = set(st.players_start)
     faced = None    # the last bet or raise: (pot before it, chips its maker added, players facing it)
+    called = 0      # calls of it so far
     allin = False   # the bet to call is an all-in: nobody can raise it
     start = {p: ranges[p] for p in ranges}   # the ranges the street began with
     checked = set()
@@ -769,22 +779,27 @@ def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack,
             to = min(float(to) if to is not None else _default_size_post(pot, cur, bets[p]), bets[p] + remaining)
         else:
             to = cur
-        # A call continues against the bet as everyone it was made into would together, the same share
-        # for a first caller and an overcaller (pricing the bet into the pot it had grown to left
-        # overcallers wider than the first caller).
+        # A call continues against the bet as everyone it was made into would together (pricing the bet
+        # into the pot it had grown to left overcallers wider than the first caller); an overcaller,
+        # who needs to beat the caller too, with OVERCALL of that.
         call_k = _keep(faced[1], faced[0], faced[2]) if faced and to_call > 1e-9 and to <= cur + 1e-9 else None
+        if call_k is not None and called:
+            call_k *= OVERCALL
         others = [ranges[q] * (sc >= 0) for q in active if q != p and q in ranges]
         # calling an all-in (or calling all-in) keeps the hands that would have raised: there's no raise
         raise_ok = not (allin or to_call >= remaining - 1e-9)
         keep_m = _rule_mask(r, to, cur, to_call, pot, n, rank, call_k, bluff, others, raise_ok=raise_ok, sc=sc)
         if to > cur + 1e-9:
             faced = (pot, min(to, bets[p] + remaining) - bets[p], max(n, 1))
+            called = 0
             allin = to >= bets[p] + remaining - 1e-9
         if act == "check":
             checked.add(p)
+        if act == "call" and to_call > 1e-9:
+            called += 1
         cur = max(cur, to)
         bets[p] = max(bets[p], min(to, bets[p] + remaining))
-        ranges[p] = r * _soften(r, keep_m)
+        ranges[p] = r * (_soften(r, keep_m, CHECK_SOFT) if act == "check" and len(board) == 3 else _soften(r, keep_m))
         if act == "call" and to_call > 1e-9 and raise_ok:
             # the hands the rules have raising instead are slowplayed some of the time: cut whole, an
             # overcaller's range after three streets of calls was underpairs (TT-55 on K72-5-9, no Kx left)
@@ -807,7 +822,7 @@ def trust_of(expl: float, street: str) -> float:
     return float(min(1.0, max(0.0, (hi - expl) / (hi - lo))))
 
 
-def _soften(r, keep_m) -> np.ndarray:
+def _soften(r, keep_m, soft=None) -> np.ndarray:
     """Per-combo weights for range r after a line the rules play with keep_m: 1 on the rule's hands,
     NARROW_SOFT off them, lowered so the off-rule hands make up at most OFF_RULE_MAX of the result."""
     on, off = float(r[keep_m].sum()), float(r[~keep_m].sum())
@@ -816,7 +831,7 @@ def _soften(r, keep_m) -> np.ndarray:
         # checking the turn): nothing to narrow by, so the range stays as it was rather than emptying (0 combos
         # left, and the solve against it put every hand of ours at exactly half the pot)
         return np.ones_like(r)
-    soft = NARROW_SOFT
+    soft = NARROW_SOFT if soft is None else soft
     if off * soft > 0 and OFF_RULE_MAX < 1.0:
         soft = min(soft, OFF_RULE_MAX / (1.0 - OFF_RULE_MAX) * on / off)
     return np.where(keep_m, 1.0, soft)

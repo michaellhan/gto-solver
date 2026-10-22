@@ -154,6 +154,18 @@
 
     So the tree is not what is missing; the river's card is worth about 3 points, the ranges about 6, and the rest
     is the study's ranges and flops (not published).
+  * **Which node.** The study's tree lets the blinds lead (its SB leads 9.8%), and its 66% is the opener's play after
+    they checked. With the blinds' full ranges our number is that of blinds who never lead. Solved from the SB's
+    action (`--full-street`, five of the ten flops, 100 iterations) the opener bets 49.0% at that node where the
+    full ranges give 43.0% on the same flops; our blinds lead far more than the study's (they check through 21-98%,
+    65% on average). The advice plays the blinds' checks narrowed by the rules (above): 51.5% (72.5% before).
+  * **The raise size.** The study raises 33% of the pot; ours raises to the bet plus 75% of the pot after calling.
+    With 33% (`--raise-frac 33`, ten flops, 150 iterations) heads-up bets 64.0% (was 53.7%; 51.4 / 78.7 / 60.7 /
+    41.7 / 68.5 / 58.5 / 57.9 / 64.5 / 86.1 / 72.0%) and 3-way 40.3% (39.8%): a big raise punishes the small c-bet
+    against one player, not two. The default stays (3-way is what the solver plays).
+  * Rake (5%, 3bb cap: K72 32.1 -> 32.2%, Q75 29.2 -> 28.7%), turn and river bets of 75% inside the flop (K72 35.7%),
+    raises to 50% (32.0%), a re-raise (31.5%), and 75% turn bets with 50% raises (37.6%) move a flop by 0-5 points
+    (100 iterations, full ranges).
 
   The old equity leaves (still `later="deal"`, and the all-in runouts there) use the pairwise shortcut, with two
   corrections:
@@ -173,12 +185,26 @@
 
   | | mean distance | the BB's call (combos; reference 29-48) |
   |---|---|---|
-  | betting rules | 0.52 | 141-167 |
+  | betting rules (before) | 0.52 | 141-167 |
+  | betting rules, an overcall at OVERCALL (0.25) of the first caller's share | 0.44 | 51-52 |
   | through a 60-iteration solve (1.4-3.4% of the pot, followed 35-80%) | 0.43 | 62-116 |
   | through a 150-iteration solve (0.3-0.9%, followed 91-100%) | 0.22 | 34-51 |
 
   The rules let the BB call a third-pot bet with nearly its whole check range after the SB called; the solve has it
-  fold 70-80%. The heads-up walk's fallback to the rules for a line the solve takes with under 10% of the range
+  fold 70-80% (it overcalls 3.5-20% of its range, 13% on average over eight flops, where the SB's first call keeps
+  53-78%). An overcall now keeps a quarter of the first caller's share (advisor.OVERCALL; fitted on these four flops,
+  0.20-0.25 best; on four others, 7dQs5h 9s9d4c Ah6c2d JdTc8h, 0.52 -> 0.46). The BB's distance stays near 0.5: the
+  solve raises its sets and top pairs and calls with the middle (KTo, JJ, TT, A7s), which a strength cut can't draw.
+  UTG's third-pot bet is the other half: in the two-size tree the solve splits its betting range between the sizes
+  (1-148 combos bet a third), which the rules don't model.
+* **The blinds' checks.** In front of the opener's solve the blinds' flop checks are narrowed by the rules (with no
+  solve of their actions). Against a solve of the street from the SB's action (`--full-street`, ten flops, 100
+  iterations; its check ranges saved) they were 0.21 (SB) and 0.14 (BB) off: the rules kept 68-80% of the BB's range
+  where the solve checks 73-91%. A flop check now keeps CHECK_SOFT = 0.7 (was NARROW_SOFT, 0.3) of the hands the rules
+  have betting: 0.15 and 0.05 (0.5: 0.17 / 0.09, 1.0: 0.14 / 0.03). The opener's solve in front of them (`--flop-study
+  --rules-checks`, five flops, 100 iterations) bet 72.5% (36.7 / 99.2 / 76.8 / 54.6 / 95.1%) where the full street's
+  solve bets 49.0% at that node (30.6 / 81.0 / 41.6 / 30.0 / 61.9%); now 51.5% (21.3 / 91.8 / 39.1 / 32.9 / 72.7%),
+  7 points off per flop where it was 23. The heads-up walk's fallback to the rules for a line the solve takes with under 10% of the range
   (RARE_LINE) made it worse here (0.46 at 60 iterations: the BB's call is such a line early on), so the 3-way walk
   relies on the smoothing alone. With no such solve (a hand entered on the turn) the rules narrow the street: a
   solve from its start (`Advisor.mw_prior_solve`) got 40-65 iterations in native Accurate's 12 s earlier-street
