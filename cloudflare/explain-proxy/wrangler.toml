@@ -1,0 +1,29 @@
+# Cloudflare Worker for Practice mode's "Explain with AI" (see README.md here and "Explain with AI proxy" in the
+# repo's README). The API key is a secret, never in this file: npx wrangler secret put ANTHROPIC_API_KEY
+name = "gto-explain"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+[vars]
+# origins allowed to call /explain (comma-separated; "scheme://host:*" allows any port on that host)
+ALLOWED_ORIGINS = "https://www.michael-han.com,https://michael-han.com,http://localhost:*,http://127.0.0.1:*"
+# explanations a day (UTC) per client IP, and for everyone together (bounds the key's cost)
+DAILY_PER_IP = "20"
+DAILY_GLOBAL = "1000"
+
+# per-IP burst limit: 5 requests a minute (Workers Rate Limiting; period must be 10 or 60 seconds).
+# namespace_id is any number you choose, unique among your account's rate limiters.
+[[ratelimits]]
+name = "RATE_LIMITER"
+namespace_id = "1701"
+
+  [ratelimits.simple]
+  limit = 5
+  period = 60
+
+# the daily counters. Create the namespace with
+#   npx wrangler kv namespace create COUNTS
+# and paste the id it prints here.
+[[kv_namespaces]]
+binding = "COUNTS"
+id = "PASTE_THE_KV_NAMESPACE_ID_HERE"

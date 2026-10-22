@@ -373,20 +373,30 @@
   }
 
   // ---- explaining a decision. Copy for AI puts the decision on the clipboard as a prompt for any AI chat;
-  // Explain with AI sends that prompt from this browser to the Claude Messages API with your own API key (kept in
-  // this browser's localStorage, sent only to api.anthropic.com: the site is static, nothing of ours in between)
-  // and streams the answer into the card. Each answer is kept in memory per decision (AI.cache).
-  const AI_KEY = "gto-anthropic-key", AI_URL = "https://api.anthropic.com/v1/messages", AI_MODEL = "claude-sonnet-5-5";
+  // Explain with AI streams Claude's answer to that prompt into the card. With EXPLAIN_PROXY set (the Cloudflare Worker
+  // in cloudflare/explain-proxy, which holds the API key and fixes the model, system prompt and token cap; a few free
+  // explanations a day per visitor) it goes there by default, with no key; otherwise, or when the user chose "Use my
+  // own key", it goes from this browser to the Claude Messages API with their own API key (kept in this browser's
+  // localStorage, sent only to api.anthropic.com). Each answer is kept in memory per decision (AI.cache).
+  // EXPLAIN_PROXY: the deployed worker's URL, e.g. "https://gto-explain.<subdomain>.workers.dev/explain"; "" = own key only
+  const EXPLAIN_PROXY = "";
+  const AI_KEY = "gto-anthropic-key", AI_OWN = "gto-explain-own", AI_URL = "https://api.anthropic.com/v1/messages", AI_MODEL = "claude-sonnet-5-5";
   const AI_SYSTEM = "You are a concise no-limit hold'em coach. The user sends one decision from a practice hand against a GTO solver, "
     + "with the solver's frequencies and EVs for their exact hand. Treat those numbers as ground truth: never contradict them or invent other "
     + "frequencies or EVs. Explain in plain language why the solver's play is better than (or as good as) the user's: the ranges both sides "
     + "have here, equity now and on later streets, blockers, board texture and sizing, whichever matter in this spot (with no solver numbers, coach "
     + "the spot from sound principles and say it isn't solved). 150-250 words in short "
     + "paragraphs, no headings or tables, bold only a few key words. End with one line starting \"Takeaway:\" giving one heuristic to remember.";
-  // cache: id -> { s: "run" | "done" | "err", t: text so far, err, bad (the key was refused) }; open: ids whose
+  // (the worker in cloudflare/explain-proxy sends this same prompt, its tests check they match)
+  // cache: id -> { s: "run" | "done" | "err", t: text so far, err, bad (the key was refused), via: "proxy" | "key",
+  // quota (the free explanations are used up: offer the key form) }; open: ids whose
   // explanation (or key form) is shown; form: the id whose key form is open; entries: id -> decision, as rendered
   const AI = { cache: {}, open: {}, form: null, entries: {}, seq: 0, timer: null };
   const aiKey = () => { try { return localStorage.getItem(AI_KEY) || ""; } catch (e) { return ""; } };
+  // the user chose their own key over the free proxy ("Use my own key", or saving a key in the form)
+  const ownChosen = () => { try { return localStorage.getItem(AI_OWN) === "1"; } catch (e) { return false; } };
+  const setOwn = (on) => { try { if (on) localStorage.setItem(AI_OWN, "1"); else localStorage.removeItem(AI_OWN); } catch (e) {} };
+  const viaProxy = () => !!EXPLAIN_PROXY && !(ownChosen() && aiKey());
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
   // the model's text as paragraphs, **bold** kept, anything else as text
   const md = (t) => esc(t).split(/\n{2,}/).map(p => p.trim()).filter(Boolean)
@@ -466,7 +476,7 @@
     const k = keyOf(e), c = AI.cache[k], open = AI.open[k];
     AI.entries[k] = e;
     let out = `<div class="cx-aib"><button class="small" data-ai="copy" data-k="${k}" title="Copy this decision as a prompt to paste into any AI chat">Copy for AI</button>`
-      + `<button class="small" data-ai="explain" data-k="${k}" aria-expanded="${!!open}" title="Claude explains this decision (with your own Anthropic API key)">${open ? "Hide explanation" : "Explain with AI"}</button></div>`;
+      + `<button class="small" data-ai="explain" data-k="${k}" aria-expanded="${!!open}" title="${EXPLAIN_PROXY ? "Claude explains this decision" : "Claude explains this decision (with your own Anthropic API key)"}">${open ? "Hide explanation" : "Explain with AI"}</button></div>`;
     if (!open) return out;
     if (AI.form === k) return out + `<div class="cx-ai form"><label for="pxKey">Your Anthropic API key</label><div class="row">`
       + `<input id="pxKey" class="cx-key" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false" data-k="${k}">`
@@ -477,8 +487,11 @@
     if (!c) return out;
     out += `<div class="cx-ai${c.s === "err" ? " err" : ""}" aria-live="polite">`
       + (c.t ? md(c.t) : c.s === "run" ? `<p class="muted"><span class="spinner"></span>Asking Claude…</p>` : "")
-      + (c.s === "err" ? `<p class="err">${esc(c.err)}</p><div class="acts2"><button class="small" data-ai="retry" data-k="${k}">Try again</button>${c.bad ? `<button class="small" data-ai="change" data-k="${k}">Enter another key</button>` : ""}</div>` : "")
+      + (c.s === "err" ? `<p class="err">${esc(c.err)}</p><div class="acts2">${c.quota ? "" : `<button class="small" data-ai="retry" data-k="${k}">Try again</button>`}`
+        + `${c.bad ? `<button class="small" data-ai="change" data-k="${k}">Enter another key</button>` : ""}${c.quota ? `<button class="small" data-ai="own" data-k="${k}">Add your own key</button>` : ""}</div>` : "")
       + `<div class="ft"><span>Claude ${AI_MODEL.replace("claude-", "").replace(/-(\d)-(\d)$/, " $1.$2").replace(/^./, (x) => x.toUpperCase())} · from the solver's numbers above</span>`
+      + (EXPLAIN_PROXY && c.via === "proxy" && !c.quota ? `<button class="link" data-ai="own" data-k="${k}">Use my own key</button>` : "")
+      + (EXPLAIN_PROXY && c.via === "key" ? `<button class="link" data-ai="free" data-k="${k}">Use free explanations</button>` : "")
       + (aiKey() ? `<button class="link" data-ai="forget" data-k="${k}">Forget key</button>` : "") + `</div></div>`;
     return out;
   }
@@ -496,22 +509,37 @@
     if (status === 529 || status === 503) return `Anthropic's API is busy right now (${status}). Try again in a moment.`;
     return `The request failed (${status})${msg ? ": " + msg : ""}.`;
   }
+  // an error answer from the proxy (its JSON {error, retryAfter, scope}) for the card; quota: offer the key form
+  function proxyError(status, j) {
+    j = j || {};
+    if (status === 429 && j.scope === "minute") return { err: `Too many explanations in a minute. Try again in ${j.retryAfter || 60}s.` };
+    if (status === 429) return { err: j.scope === "global" ? "Today's free explanations are used up — add your own key" : "Daily free explanations used up — add your own key", quota: true };
+    if (status === 403) return { err: "This page can't use the free explanations (403) — add your own key", quota: true };
+    return { err: j.error ? String(j.error) : `The explanation service failed (${status}).` };
+  }
   // stream Claude's explanation of decision k into AI.cache[k] (Server-Sent Events: text_delta pieces)
   async function explain(k) {
-    const e = AI.entries[k], key = aiKey();
+    const e = AI.entries[k], key = aiKey(), proxy = viaProxy();
     if (!e) return;
-    if (!key) { AI.form = k; AI.open[k] = true; return redraw(true); }
-    const c = AI.cache[k] = { s: "run", t: "" };
+    if (!proxy && !key) { AI.form = k; AI.open[k] = true; return redraw(true); }
+    const c = AI.cache[k] = { s: "run", t: "", via: proxy ? "proxy" : "key" };
     AI.open[k] = true; redraw(true);
     let res;
     try {
-      res = await fetch(AI_URL, { method: "POST", headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01",
-        "anthropic-dangerous-direct-browser-access": "true" }, body: JSON.stringify({ model: AI_MODEL, max_tokens: 700, stream: true,
-        output_config: { effort: "low" }, system: AI_SYSTEM, messages: [{ role: "user", content: prompt(e) }] }) });
-    } catch (err) { Object.assign(c, { s: "err", err: "Couldn't reach api.anthropic.com. Check your connection (or a content blocker) and try again." }); return redraw(true); }
+      // the proxy takes only the prompt (it sets the model, system prompt and token cap itself)
+      res = proxy ? await fetch(EXPLAIN_PROXY, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt: prompt(e).slice(0, 8000) }) })
+        : await fetch(AI_URL, { method: "POST", headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true" }, body: JSON.stringify({ model: AI_MODEL, max_tokens: 700, stream: true,
+          output_config: { effort: "low" }, system: AI_SYSTEM, messages: [{ role: "user", content: prompt(e) }] }) });
+    } catch (err) {
+      Object.assign(c, { s: "err", err: proxy ? "Couldn't reach the explanation service. Check your connection (or a content blocker) and try again."
+        : "Couldn't reach api.anthropic.com. Check your connection (or a content blocker) and try again." }); return redraw(true);
+    }
     if (!res.ok) {
-      let msg = ""; try { const j = await res.json(); msg = j && j.error && j.error.message || ""; } catch (err) {}
-      Object.assign(c, { s: "err", err: aiError(res.status, msg), bad: res.status === 401 }); return redraw(true);
+      let j = null; try { j = await res.json(); } catch (err) {}
+      if (proxy) Object.assign(c, { s: "err", ...proxyError(res.status, j) });
+      else Object.assign(c, { s: "err", err: aiError(res.status, j && j.error && j.error.message || ""), bad: res.status === 401 });
+      return redraw(true);
     }
     let buf = "", stop = null;
     const take = (block) => {
@@ -557,12 +585,15 @@
       const inp = document.getElementById("pxKey"), v = String(value != null ? value : inp && inp.value || "").trim();
       if (!/^sk-ant-\S{8,}$/.test(v)) { AI.formErr = "That doesn't look like an Anthropic API key (they start with sk-ant-)."; return redraw(true); }
       try { localStorage.setItem(AI_KEY, v); } catch (err) { AI.formErr = "This browser won't store the key (private mode?)."; return redraw(true); }
-      AI.form = null; AI.formErr = ""; return explain(k);
+      setOwn(true); AI.form = null; AI.formErr = ""; return explain(k);
     }
     if (a === "cancel") { AI.form = null; AI.formErr = ""; AI.open[k] = false; return redraw(true); }
     if (a === "retry") return explain(k);
     if (a === "change") { delete AI.cache[k]; AI.form = k; AI.open[k] = true; return redraw(true); }
-    if (a === "forget") { try { localStorage.removeItem(AI_KEY); } catch (err) {} for (const x of Object.keys(AI.cache)) if (AI.cache[x].s === "err") delete AI.cache[x]; toast("API key forgotten", null, 2500); return redraw(true); }
+    // Use my own key (or Add your own key, when the free ones are used up): the saved key, else the key form
+    if (a === "own") { delete AI.cache[k]; AI.open[k] = true; if (aiKey()) { setOwn(true); return explain(k); } AI.form = k; return redraw(true); }
+    if (a === "free") { setOwn(false); delete AI.cache[k]; return explain(k); }
+    if (a === "forget") { try { localStorage.removeItem(AI_KEY); } catch (err) {} setOwn(false); for (const x of Object.keys(AI.cache)) if (AI.cache[x].s === "err") delete AI.cache[x]; toast("API key forgotten", null, 2500); return redraw(true); }
   }
 
   // ---- the coach panel: what's happening now, the verdict on your last decision, the result, the score
