@@ -52,6 +52,12 @@ from .flop_library import default_library  # noqa: E402
 # keeps 2.5 s: 1.9 on average, 0.7-4.3.
 # A river root bets 33/75/125/250% pot (Advisor.root_sizes): polar rivers overbet half the range, and 75% alone
 # was 1.2-7.2% of the pot off per combo where these are 0.1-0.6; a river iteration takes milliseconds.
+# A shallow turn (at most 4.5 x the pot behind: a 3bet pot's turn has 3.2, a single-raised pot's 6.8-18) plays Fast at
+# 33/75% instead of 33/125% (Advisor.spr_sizes): a 3bet pot barrels three quarters pot where a single-raised one
+# overbets. Four CO vs BTN 3bet turns against the rich reference (scripts/turn_river_reference.py): per-combo EVs 1.95%
+# of the pot off on average -> 0.81 at 5 s (0.55-4.8 -> 0.42-1.5), frequencies 6.8 points -> 2.0 (33/75/125%: 1.07 and
+# 2.4, fewer iterations); cold at 2.5 s 1.82 -> 1.38. In single-raised pots 33/75% was 1.6-3.7% off (no overbet).
+FAST_SPR_SIZES = {"turn": (4.5, {"bet": [0.33, 0.75]})}
 _FLOP = {"bet": [0.33, 0.75], "raise": [0.5]}
 ROOT_SIZES = {"river": {"bet": [0.33, 0.75, 1.25, 2.5]}}
 SPEEDS = {
@@ -93,6 +99,8 @@ def advisor(speed: str = "fast", depth: int = 2, budget: Optional[float] = None,
     adv.mw_solve_streets = MW_STREETS[speed]
     adv.library = default_library() if library else None
     adv.spare_prior = speed == "fast"
+    if speed == "fast":
+        adv.spr_sizes = {st: (m, {k: list(v) for k, v in d.items()}) for st, (m, d) in FAST_SPR_SIZES.items()}
     return adv
 
 

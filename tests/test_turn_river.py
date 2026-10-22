@@ -188,13 +188,18 @@ RIVER_REFERENCES = [
 
 
 def shipped(speed, spot, iters):
-    """The spot solved with gto/native.py's tree for `speed` (a river root with Advisor.root_sizes' menu)."""
+    """The spot solved with gto/native.py's tree for `speed` (a river root with Advisor.root_sizes' menu, a shallow
+    Fast turn with FAST_SPR_SIZES')."""
     from gto import native
     cfg = native.config(speed)
     board, r0, r1, pot, stack = T.load_spot(spot)
     if len(board) == 5:
         for kind, v in native.ROOT_SIZES["river"].items():
             (cfg.bet_sizes if kind == "bet" else cfg.raise_sizes)["river"] = list(v)
+    max_spr, shallow = native.FAST_SPR_SIZES.get("turn", (0.0, {})) if speed == "fast" and len(board) == 4 else (0.0, {})
+    if stack <= max_spr * pot:
+        for kind, v in shallow.items():
+            (cfg.bet_sizes if kind == "bet" else cfg.raise_sizes)["turn"] = list(v)
     return solve(board, r0, r1, pot, stack, cfg=cfg, time_budget=1e9, max_iters=iters)
 
 
@@ -211,22 +216,37 @@ class TestTurnRiverReferences(unittest.TestCase):
         key = (speed, spot)
         if key not in cls._sols:
             # (a river root solves in milliseconds an iteration: 600 is what Fast's 2.5 s gives)
+            # (a 3bet pot's narrow ranges: Fast's 5 s gives 170-350 there)
             cls._sols[key] = shipped(speed, spot, 600 if spot.startswith("r-") else
-                                     cls.FAST_ITERS if speed == "fast" else cls.ACC_ITERS)
+                                     (170 if spot.startswith("t-3b") else cls.FAST_ITERS) if speed == "fast" else
+                                     cls.ACC_ITERS)
         return cls._sols[key]
 
     def test_fast_turn_close_to_rich_reference(self):
-        # native Fast's turn (33% and 125% pot, the river inside at 75%, river classes) at 100 iterations (~5 s) against
-        # the rich reference: EVs within 2% of the pot per combo (measured 0.5-1.8; 75/125% at 2.5 s, before: 0.6-2.6),
-        # frequencies within 6 points on average, 8 in the 3bet pot, where the reference's 75% barrel (no such size here) goes
-        # to 125% (measured 6.8, its EVs 1.7)
+        # native Fast's turn (33% and 125% pot, the river inside at 75%, river classes; 33/75% in a 3bet pot's shallow
+        # turn) at 100 iterations (~5 s) against the rich reference: EVs within 2% of the pot per combo (measured 0.5-1.8;
+        # 75/125% at 2.5 s, before: 0.6-2.6), frequencies within 6 points on average (the 3bet pots with 33/125% were
+        # 2.4-14.5, the reference's 75% barrel going to 125%, EVs 0.55-4.9)
         refs = T.load_refs()
-        for spot in ("t-k72-3", "t-k72s-4s", "t-k72-7", "t-q83-a", "t-q83x-5", "t-3b-k72-4"):
+        for spot in ("t-k72-3", "t-k72s-4s", "t-k72-7", "t-q83-a", "t-q83x-5", "t-3b-k72-4", "t-3b-k72-a", "t-3b-t94-2",
+                     "t-3b-a85-8"):
             sol = self.sol("fast", spot)
             ref = refs[spot]["rich"]
             err, worst = T.freq_error(T.stats(sol), ref["stats"])
-            self.assertLess(err, 8.0 if spot == "t-3b-k72-4" else 6.0, f"{spot}: {err:.1f} (worst {worst})")
+            self.assertLess(err, 6.0, f"{spot}: {err:.1f} (worst {worst})")
             self.assertLess(T.ev_error(sol, ref["values"]), 2.0, spot)
+
+    def test_fast_shallow_turn_sizes(self):
+        # Advisor.spr_sizes: native Fast's turn bets 33/75% with at most 4.5 x the pot behind (a 3bet pot's turn: 87 behind
+        # a 27.5 pot), 33/125% deeper (a single-raised pot's: 95.7 behind 9.1), the request's own sizes winning
+        from gto import native
+        from gto.advisor import StreetState
+        adv = native.advisor("fast", library=False)
+        st = StreetState("turn", ["BB", "BTN"], ["BB", "BTN"], 27.5, {"BB": 6.5, "BTN": 6.5})
+        self.assertEqual(adv._cfg_with_real_sizes(st, "BB", "BTN", 87.0).bet_sizes["turn"], [0.33, 0.75])
+        st.pot_start = 9.1
+        self.assertEqual(adv._cfg_with_real_sizes(st, "BB", "BTN", 95.7).bet_sizes["turn"], [0.33, 1.25])
+        self.assertEqual(native.advisor("accurate", library=False).spr_sizes, {})
 
     def test_accurate_turn_close_to_rich_reference(self):
         # 33/75/125% with river classes at 150 iterations (native Accurate gets ~200 in 30 s): frequencies within 3.5 points

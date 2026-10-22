@@ -55,6 +55,9 @@ SPOTS = {
     "t-q83-a": ("srp", "Qs8d3c", BC, "Ah", None, None, "c-bet called, an overcard"),
     "t-q83x-5": ("srp", "Qs8d3c", XX, "5h", None, None, "flop checked through: the BB probes, the BTN delays"),
     "t-3b-k72-4": ("3bet", "Kd7c2h", BC, "4s", None, None, "3bet pot, c-bet called, brick turn"),
+    "t-3b-k72-a": ("3bet", "Kd7c2h", BC, "Ad", None, None, "3bet pot, c-bet called, an overcard"),
+    "t-3b-t94-2": ("3bet", "Th9h4c", BC, "2s", None, None, "3bet pot, two-tone middling flop, brick turn"),
+    "t-3b-a85-8": ("3bet", "As8d5c", BC, "8h", None, None, "3bet pot, c-bet called, the turn pairs the board"),
     "r-k72-3-5": ("srp", "Ks7d2c", BC, "3h", TURN_BC, "5c", "bet, bet, brick river: polar bettor, capped catcher"),
     "r-k72-3x-9": ("srp", "Ks7d2c", BC, "3h", TURN_XX, "9d", "bet, check-check: condensed ranges"),
     "r-k72s-4-9s": ("srp", "Ks7s2d", BC, "4h", TURN_BC, "9s", "bet, bet, the flush completes on the river: blockers"),
@@ -70,8 +73,11 @@ RICH = dict(bet_sizes={"flop": [0.75], "turn": [0.33, 0.75, 1.25], "river": [0.3
             raise_sizes={"flop": [0.75], "turn": [0.75], "river": [0.75]})
 RICH_RIVER = dict(bet_sizes={"flop": [0.75], "turn": [0.75], "river": [0.33, 0.5, 0.75, 1.25, 2.0, 2.5]},
                   raise_sizes={"flop": [0.75], "turn": [0.75], "river": [0.75]})
+# the rich menu with a second raise size (about a 2.5x raise: 40% of the pot after the call) beside 75%
+RICH_RAISE = dict(RICH, raise_sizes={"flop": [0.75], "turn": [0.4, 0.75], "river": [0.4, 0.75]})
+RICH_RIVER_RAISE = dict(RICH_RIVER, raise_sizes={"flop": [0.75], "turn": [0.75], "river": [0.4, 0.75]})
 # the trees each reference is solved in (every river card)
-REF_TREES = {"rich": RICH, "one": ONE, "two": TWO}
+REF_TREES = {"rich": RICH, "one": ONE, "two": TWO, "richr": RICH_RAISE}
 def _menu(turn, river, raise_=(0.75,)):
     return dict(bet_sizes={"flop": [0.75], "turn": list(turn), "river": list(river)},
                 raise_sizes={"flop": [0.75], "turn": list(raise_), "river": list(raise_)})
@@ -113,6 +119,15 @@ CONFIGS = {
     "native-fast-5s": (dict(_menu([0.75, 1.25], [0.75]), river_classes=True, _root_river=ROOT_RIVER), "rich", 5.0, "native"),
     "native-fast-rich-5s": (dict(_menu([0.33, 0.75, 1.25], [0.75]), river_classes=True, _root_river=ROOT_RIVER), "rich", 5.0, "native"),
     "native-fast-cold": (dict(_menu([0.33, 1.25], [0.75]), river_classes=True, _root_river=ROOT_RIVER), "rich", 2.5, "native"),
+    # Fast's turn in a low-SPR pot (a 3bet pot's turn: 3.2 x the pot behind) and a second raise size
+    **{f"{w}-fast-{tag}{sfx}": (dict(_menu(turn, [0.75]), river_classes=True, _root_river=ROOT_RIVER), "rich", b, w)
+       for w, b0 in (("browser", 8.0), ("native", 5.0)) for sfx, b in (("", b0), ("-cold", 2.5 if w == "native" else None))
+       if b is not None
+       for tag, turn in (("33-75", [0.33, 0.75]), ("75-125", [0.75, 1.25]), ("75", [0.75]), ("rich", [0.33, 0.75, 1.25]))},
+    **{f"{w}-{speed}-r2": (dict(_menu(turn, river, (0.4, 0.75)), river_classes=True, _root_river=ROOT_RIVER), "rich", b, w)
+       for w, speed, turn, river, b in (("browser", "fast", [0.33, 1.25], [0.75], 8.0), ("native", "fast", [0.33, 1.25], [0.75], 5.0),
+                                        ("browser", "accurate", [0.33, 0.75, 1.25], [0.33, 0.75, 1.25], 60.0),
+                                        ("native", "accurate", [0.33, 0.75, 1.25], [0.33, 0.75, 1.25], 30.0))},
 }
 # idle iterations a second of the one-size every-river turn tree (see the docstring)
 BASE_RATE = {"native": 16.8, "browser": 11.6}
@@ -197,13 +212,17 @@ def build_ranges(names):
         meta[name] = {"board": cards_str(board), "pot": pot, "stack": stack}
         arrays[name + "/oop"], arrays[name + "/ip"] = r0.astype(np.float32), r1.astype(np.float32)
         print(f"  {cards_str(board)} pot {pot} stack {stack}: {r0.sum():.0f} / {r1.sum():.0f} combos", flush=True)
-    np.savez_compressed(RANGES_FILE, meta=json.dumps(meta), **arrays)
+    tmp = RANGES_FILE[:-4] + ".tmp.npz"     # (atomic: a --measure may be reading it)
+    np.savez_compressed(tmp, meta=json.dumps(meta), **arrays)
+    os.replace(tmp, RANGES_FILE)
 
 
 def tree_kw(name, tree):
     """The reference trees' kwargs for a spot: a river root gets the richer river menu."""
     if tree == "rich" and SPOTS[name][5] is not None:
         return RICH_RIVER
+    if tree == "richr" and SPOTS[name][5] is not None:
+        return RICH_RIVER_RAISE
     return REF_TREES[tree]
 
 
@@ -386,7 +405,8 @@ def budget_iters(name, kw, budget, where, base):
     return int(max(10, min(1000, (budget - setup * scale) / (per * scale))))
 
 
-def measure(names, configs):
+def measure(names, configs, against="rich"):
+    """`against`: the richest reference compared with ("rich"; "richr": the rich menu with a second raise size)."""
     refs = load_refs()
     rows = []
     base = {w: per_iter_cpu(BASE_SPOT, ONE, w == "browser")[1] for w in ("native", "browser")}
@@ -399,7 +419,7 @@ def measure(names, configs):
             sol = solve_spot(name, kw, iters)
             st = stats(sol)
             ex = sol.exploitability()
-            same, rich = refs[name][tree], refs[name]["rich"]
+            same, rich = refs[name][tree], refs[name][against]
             fe_same, worst_same = freq_error(st, same["stats"])
             fe_rich, worst_rich = freq_error(st, rich["stats"])
             row = dict(spot=name, config=c, iters=iters, expl=ex, fe_same=fe_same, fe_rich=fe_rich,
@@ -424,6 +444,7 @@ def main():
     ap.add_argument("--iters-turn", type=int, default=400)
     ap.add_argument("--iters-river", type=int, default=3000)
     ap.add_argument("--out")
+    ap.add_argument("--against", default="rich")
     args = ap.parse_args()
     names = args.spots.split(",") if args.spots else list(SPOTS)
     if args.ranges:
@@ -431,7 +452,7 @@ def main():
     if args.reference:
         build_references(names, args.iters_turn, args.iters_river, args.trees.split(","))
     if args.measure:
-        rows = measure(names, args.configs.split(","))
+        rows = measure(names, args.configs.split(","), args.against)
         if args.out:
             json.dump(rows, open(args.out, "w"), indent=1)
 

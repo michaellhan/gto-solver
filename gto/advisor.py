@@ -1353,6 +1353,10 @@ class Advisor:
         # an iteration, so it can afford the overbets a polar river uses that a turn solve's rivers can't (README,
         # Accuracy vs speed). Sizes the request sets for that street (state["sizes"]) win.
         self.root_sizes: Dict[str, Dict[str, List[float]]] = {}
+        # a street's sizes in a shallow pot: {"turn": (max_spr, {"bet": [...]})} replaces cfg's (and root_sizes') where
+        # the street starts with at most max_spr x its pot behind (a 3bet pot's turn), for the street's own solve and
+        # an earlier street's solve of it alike. Sizes the request sets for that street win.
+        self.spr_sizes: Dict[str, Tuple[float, Dict[str, List[float]]]] = {}
         self._by_spot: Dict[tuple, Solution] = {}    # latest solve per spot, whatever the ranges
         # precomputed flop solves (gto/flop_library.py: FlopLibrary), used where they hold the spot; None = off
         self.library = None
@@ -1419,10 +1423,12 @@ class Advisor:
             if locks and "notes" in res:
                 res["notes"].append("locks apply after the flop (preflop follows the charts)")
             return res
-        saved = self.time_budget, self.prior_budget, self.cfg, self.root_sizes
+        saved = self.time_budget, self.prior_budget, self.cfg, self.root_sizes, self.spr_sizes
         if sizes:
             self.root_sizes = {st: {k: v for k, v in d.items() if k != "raise" or "raise" not in sizes}
                                for st, d in self.root_sizes.items() if st not in sizes}
+            self.spr_sizes = {st: (m, {k: v for k, v in d.items() if k != "raise" or "raise" not in sizes})
+                              for st, (m, d) in self.spr_sizes.items() if st not in sizes}
         if positions.rake or sizes:
             self.cfg = self.cfg.copy()
         if positions.rake:
@@ -1451,7 +1457,7 @@ class Advisor:
                 res["breakdown"] = None   # the betting rules answered (4+ players): no solve to break down
             return res
         finally:
-            self.time_budget, self.prior_budget, self.cfg, self.root_sizes = saved
+            self.time_budget, self.prior_budget, self.cfg, self.root_sizes, self.spr_sizes = saved
             self._breakdown = self._lib_only = False
 
     # ------------------------------------------------------------ preflop
@@ -3447,6 +3453,10 @@ class Advisor:
         cfg = self.cfg.copy()
         for kind, v in self.root_sizes.get(st.name, {}).items():
             (cfg.bet_sizes if kind == "bet" else cfg.raise_sizes)[st.name] = list(v)
+        max_spr, shallow = self.spr_sizes.get(st.name, (0.0, {}))
+        if stack <= max_spr * st.pot_start:
+            for kind, v in shallow.items():
+                (cfg.bet_sizes if kind == "bet" else cfg.raise_sizes)[st.name] = list(v)
         bets = [0.0, 0.0]
         pot = st.pot_start
         fixed = {"bet": set(), "raise": set()}

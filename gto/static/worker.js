@@ -132,6 +132,9 @@ const ready = (async () => {
              // Fast's turn also gets the narrowing flop's 3 s when that flop costs nothing (from the library or the hand's
              // flop advice; Advisor.spare_prior, as natively): the page's bar counts them anyway
              + "advs['fast'].spare_prior = True; "
+             // a shallow turn (at most 4.5 x the pot behind: a 3bet pot's) bets 33/75% in Fast, not 33/125% (gto/native.py
+             // FAST_SPR_SIZES: four 3bet turns 1.96% of the pot off per combo -> 0.80 at 8 s, frequencies 6.8 points -> 2.0)
+             + "advs['fast'].spr_sizes = {'turn': (4.5, {'bet': [0.33, 0.75]})}; "
              // both speeds answer a flop spot the library holds from it (Accurate's flop model, solved offline)
              + "from gto.flop_library import FlopLibrary; from js import libFetch; "
              + "lib = FlopLibrary(lambda p: (lambda r: None if r is None else r.to_bytes())(libFetch(p))); "
