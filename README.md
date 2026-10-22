@@ -173,7 +173,12 @@ The hand is kept in the browser between reloads; **New hand** clears it.
 to the solver), with the player count, stacks (each seat's own, if set), antes, straddle and rake of the setup; a
 showdown pays each side pot to the best hand among the players in it. Your seat is random each hand, or the one
 picked in the row of seats under **Your seat** at the top of the coach panel (Random first; with Random, this hand's
-seat is outlined; arrow keys move along the row, Enter or Space picks); the table marks your seat "you" and the
+seat is outlined; arrow keys move along the row, Enter or Space picks). The row under it picks the spots: **Any
+hand**, or a drill, **Raised pot**, **3-bet pot** or **Blind vs blind** (from a blind), where your preflop is played
+for you too (from the chart for your hand, not graded) and the hand dealt again ("Dealing a 3-bet pot…", the table
+dimmed) until it reaches the flop heads-up with you in it as that kind of pot, so you play it from the flop. The first
+time, a two-line hint in the coach (and the phone's dock line) says which seat is yours and how to act, until **Got
+it** or the end of the first hand. The table marks your seat "you" and the
 seat to act (an opponent's glows while it thinks); every other seat's hand and the board are dealt up front, and the
 other seats move by themselves ("BTN is thinking…" while they do): preflop from the chart for their actual hand,
 after the flop drawn from the solve's mix for it (heads-up, the same solve that answers your own spot, so a reply
@@ -191,18 +196,25 @@ browser's solver can't stop one, so there it looks ahead only at Fast and when t
 half the time or more. Until your first decision a dashed card says where
 the verdict will be; right after each decision the coach shows
 its verdict (Best move, Good, Inaccuracy, Mistake) in colour on a card tinted to match, the EV it gave up and the
-solver's mix as a bar (each action of 20% or more named in it) with its frequencies; **Details** opens why and each action's EV (the choice is remembered), and from there **Show the
+solver's mix as a bar (each action of 20% or more named in it) with its frequencies (your move among them, at 0%
+when the solve hasn't it); the card is headed "Last decision · flop" (at the end "Your last decision"), and once
+it's your turn again it fades, so it never reads as a verdict on the spot above it (the phone's dock line then
+starts "Last:"). The EV a move in the solver's strategy gave up is shown muted, not red (its mixed actions are worth
+the same in theory); a multiway spot the solver doesn't take shows no mix ("isn't graded"); **Details** opens why and each action's EV (the choice is remembered), and from there **Show the
 solver's full analysis** opens the usual advice panel for your last decision (never on your turn). At the end the
 opponents' cards are shown at showdown with your result, the verdict on your last decision and the hand's
 decisions with the EV each gave up, and **Next hand** (N) takes the action buttons' place (N does nothing mid-hand). The score
 (hands, how often your action was in the solver's strategy, average EV given up per decision, chips won; **Reset**)
 is kept in the browser, with your last 60 decisions; on a wide screen the eight most recent are listed under it,
 newest first, each opening its spot like a mistake below. **Review mistakes** under the score (with how many) lists the six of them that gave up
-the most EV (then the rarest in the solver's mix; preflop has no EVs), each with its hand number, cards and street,
+the most EV (then the rarest in the solver's mix: preflop has no EVs; never the solver's top move), each with its hand number, cards and street,
 and a click (or Enter) opens that spot's board, the action before you and its verdict. On a wide screen the Hand
 panel scrolls on its own while practising, its newest line in view, so the table and the action buttons stay on
 screen; the action buttons wrap to a second row rather than cut a label short, and the one for a size of your own
-reads "Bet" or "Raise to" over "your size…". Each new hand folds the setup back to its one-line summary. On a phone the coach's verdict comes
+reads "Bet" or "Raise to" over "your size…" (R opens it). Each new hand folds the setup back to its one-line
+summary; a change to the table there (players, stacks, ante, straddle, rake) deals a new hand, the setup left open,
+and while it's open on a wide screen the table is smaller and the left column scrolls as one, the action dock at its
+end, rather than squeeze the Hand panel behind the dock. On a phone the coach's verdict comes
 straight under the table (the table and the dock already say whose turn it is), and the action dock carries it in
 one line (the verdict, the EV it gave up, the solver's top choice; the result once the hand is over) that a tap
 scrolls to the full card; the line is always there, so the dock never changes height. Folding ends the hand for you; Undo and replaying a decision are off while

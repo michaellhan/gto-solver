@@ -227,8 +227,10 @@
   #pxHandNo { font-variant-numeric: tabular-nums; }
   /* your seat: a segmented row of seats (Random first), not the browser's select */
   .cx-seats { display: flex; flex-wrap: wrap; gap: 2px; padding: 2px; margin-bottom: 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); }
-  .cx-seats button { flex: 1 1 auto; min-width: 0; padding: 5px 6px; font-size: 12px; font-weight: 600; color: var(--muted); background: none; border: 0; border-radius: 7px; white-space: nowrap; transition: background .12s, color .12s, box-shadow .12s; }
-  .cx-seats button:hover { color: var(--text); background: var(--panel2); }
+  .cx-seats button { flex: 1 1 auto; min-width: 0; padding: 5px 6px; font-size: 12px; font-weight: 600; color: var(--muted); background: none; border: 0; border-radius: 7px; white-space: nowrap; }
+  .cx-seats button:not([aria-checked="true"]):not(:disabled):hover { color: var(--text); background: var(--panel2); }
+  .cx-seats button:disabled { color: var(--line2); cursor: default; }
+  #pxSeat { margin-bottom: 4px; } #pxDrill { margin-bottom: 12px; }
   .cx-seats button[aria-checked="true"] { background: var(--accent); color: #1a1200; }
   .cx-seats button.rnd { flex-grow: 1.6; }
   .cx-seats button.cur:not([aria-checked="true"]) { color: var(--accent); box-shadow: inset 0 0 0 1px rgba(242,181,68,.45); }   /* (Random: this hand's seat) */
@@ -248,7 +250,12 @@
   .cx-board { display: flex; gap: 4px; margin-top: 8px; }
   .cx-fb { --tint: color-mix(in srgb, var(--c) 9%, var(--panel2)); margin-top: 12px; padding: 12px; border-radius: 10px; background: var(--panel2); background: var(--tint);
     border: 1px solid var(--line); border-color: color-mix(in srgb, var(--c) 35%, var(--line)); }
-  .cx-fb.empty { --c: var(--line2); background: none; border-style: dashed; border-color: var(--line2); color: var(--faint); font-size: 13px; text-align: center; padding: 16px 12px; }
+  .cx-fb.empty { --c: var(--line2); background: none; border-style: dashed; border-color: var(--line2); color: var(--muted); font-size: 13px; text-align: center; padding: 16px 12px; }
+  .cx-hint { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; padding: 10px 12px; border-radius: 10px; font-size: 13px; line-height: 1.5; color: var(--muted);
+    background: color-mix(in srgb, var(--accent) 7%, var(--panel2)); border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line)); }
+  .cx-hint b { color: var(--accent); } .cx-hint button { flex: none; }
+  .cx-fb .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: -2px 0 6px; }
+  .cx-fb.old { opacity: .6; transition: opacity .15s; } .cx-fb.old:hover, .cx-fb.old:focus-within { opacity: 1; }
   .cx-fb .head { display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap; }
   .cx-fb .ico { flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--c); color: #111; font-size: 12px; font-weight: 900; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
   .cx-fb .verdict { display: inline; margin: 0; font-size: 18px; font-weight: 800; color: var(--c); letter-spacing: -.01em; }
@@ -256,6 +263,7 @@
   .cx-fb .what b { color: var(--text); }
   .cx-fb .cost { margin-left: auto; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
   .cx-fb .cost.neg { background: color-mix(in srgb, var(--bad) 16%, transparent); }
+  .cx-fb .cost.soft { color: var(--muted); background: var(--line); font-weight: 600; }
   .cx-fb .cost.pos { background: color-mix(in srgb, var(--good) 14%, transparent); font-weight: 600; }
   .cx-mix { display: flex; gap: 2px; height: 20px; border-radius: 6px; overflow: hidden; margin: 12px 0 8px; background: var(--bg); }
   .cx-mix div { height: 100%; min-width: 0; display: flex; align-items: center; padding: 0 6px; overflow: hidden; }
@@ -294,10 +302,10 @@
   /* lists (this hand's decisions, Review mistakes): one grid, so every row's columns line up */
   .cx-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content max-content; gap: 4px 0; }
   .cx-list li { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; column-gap: 12px; align-items: center; font-size: 13px; padding: 6px 12px; border-radius: 8px; background: var(--panel2); border: 1px solid transparent; }
-  .cx-list .st { text-transform: uppercase; font-size: 10px; letter-spacing: .08em; color: var(--faint); white-space: nowrap; }
+  .cx-list .st { text-transform: uppercase; font-size: 10px; letter-spacing: .08em; color: var(--muted); white-space: nowrap; }
   .cx-list .pill { font-size: 11px; font-weight: 700; color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); border-radius: 999px; padding: 1px 8px; white-space: nowrap; justify-self: start; }
-  .cx-list .num { min-width: 56px; }
-  .cx-h { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); margin: 16px 0 0; }
+  .cx-list li > .num { min-width: 56px; text-align: right; }
+  .cx-h { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 16px 0 0; }
   .cx-h .num { font-size: 11px; letter-spacing: 0; text-transform: none; }
   /* the score: four figures, then Review mistakes and Reset */
   .cx-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); }
@@ -309,7 +317,7 @@
   .cx-tools .rev[aria-expanded="true"] { border-color: var(--line2); background: var(--line); }
   .cx-tools #pxReset { margin-left: auto; }
   .cx-rev { margin-top: 8px; }
-  .cx-empty { font-size: 13px; color: var(--faint); text-align: center; padding: 12px; margin-top: 8px; border: 1px dashed var(--line2); border-radius: 8px; }
+  .cx-empty { font-size: 13px; color: var(--muted); text-align: center; padding: 12px; margin-top: 8px; border: 1px dashed var(--line2); border-radius: 8px; }
   .cx-list li.pick { cursor: pointer; transition: background .12s, border-color .12s; } .cx-list li.pick:hover { background: var(--line); }
   .cx-list li.pick.on { border-color: var(--line2); background: var(--line); }
   .cx-list li.pick:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
@@ -321,6 +329,7 @@
   /* recent decisions: wide screens only (on a phone the coach is already a long scroll) */
   @media (max-width: 900px), (max-height: 559px) { .cx-recent { display: none; } }
   /* the table while practising: your seat marked, the seat to act lit (an opponent's pulses while it thinks), cards as cards */
+  body.pxseek #felt, body.pxseek #timeline, body.pxseek .cx-now .cx-cards { opacity: .35; }
   body.practice .seat.hero { border-color: var(--accent); }
   body.practice .seat.hero::before { content: "you"; position: absolute; left: 50%; top: 0; transform: translate(-50%, -60%); font-size: 9px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: #1a1200; background: var(--accent); border-radius: 999px; padding: 1px 6px; line-height: 1.3; }
   body.practice .seat.hero.folded::before { background: var(--line2); color: var(--muted); }
@@ -336,7 +345,7 @@
     .cx-now:not(.err) { display: none; } .cx-now:not(.err) + .cx-fb { margin-top: 0; }
     .cx-fb.empty { display: none; }   /* (the dock's line says it) */
     .cx-fb.empty + .cx-stats { margin-top: 0; border-top: 0; padding-top: 0; }
-    body.practice .pxstrip { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 0; height: 36px; margin: -2px 0 8px; padding: 0 10px 0 12px;
+    body.practice .pxstrip { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 0; height: 40px; margin: -2px 0 8px; padding: 0 10px 0 12px;
       overflow: hidden; white-space: nowrap; text-align: left; font-size: 13px; background: var(--panel2); background: color-mix(in srgb, var(--c, var(--line)) 9%, var(--panel2));
       border: 1px solid var(--line); border-color: color-mix(in srgb, var(--c, var(--line)) 35%, var(--line)); border-radius: 10px; color: var(--text); font-variant-numeric: tabular-nums; }
     body.practice .pxstrip::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--line2)); }
@@ -382,7 +391,7 @@
   .bar { height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; }
   .bar > div { height: 100%; border-radius: 4px; }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
-  .num.pos { color: var(--good); } .num.neg { color: var(--bad); }
+  .num.pos { color: var(--good); } .num.neg { color: var(--bad); } .num.soft { color: var(--muted); }
   .meta { color: var(--muted); font-size: 12px; margin-top: 10px; line-height: 1.6; }
   .grid { display: grid; grid-template-columns: repeat(13, 1fr); gap: 2px; margin-top: 6px; }
   .cell { aspect-ratio: 1; border-radius: 3px; position: relative; background: #111418; font-size: 10px; overflow: hidden; cursor: crosshair; }
@@ -465,6 +474,11 @@
     #pAdvice { margin-bottom: 0; min-height: 100%; }
     body.practice #colL > * { flex-shrink: 0; }
     body.practice #colL > #pHistory { flex-shrink: 1; min-height: 88px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line2) transparent; }
+    /* (the setup opened mid-hand: a smaller table, and the column scrolls as one, the dock in it, rather than
+       squeeze the Hand panel behind the dock) */
+    body.practice.setupopen { --felt-h: clamp(190px, 28vh, 210px); }
+    body.practice.setupopen #colL > #pHistory { flex-shrink: 0; }
+    body.practice.setupopen .dock { position: static; box-shadow: none; }
     body.practice #pHistory h2 { position: sticky; top: -12px; margin: -12px -14px 8px; padding: 12px 14px 4px; background: var(--panel); z-index: 1; }
   }
   /* Narrow screens (phones, or a zoomed-in window): one column that scrolls; the action dock sticks to the
@@ -510,6 +524,7 @@
     .slot.filled:hover { opacity: 1; }
     .pc:hover { transform: none; box-shadow: none; }
     .acts button:hover { filter: none; }
+    .cx-more > summary, .setupsum .link, #setupDone { min-height: 40px; }
   }
   /* a touch screen without a mouse has no keyboard to speak of: the shortcut keys only crowded the labels
      (on a 320px phone "Raise to 2.5" ran into its "1") */
@@ -609,6 +624,7 @@
         <div class="row">
           <span class="muted nopx" style="width:58px;font-size:12px">You are</span>
           <div class="row seats nopx" id="seats"></div>
+          <span class="muted pxonly" style="font-size:12px">A change to the table deals a new hand.</span>
           <button class="link" id="setupDone" style="margin-left:auto" hidden>Done</button>
         </div>
       </div>
@@ -651,6 +667,7 @@
     <section class="panel" id="pCoach">
       <h2 id="pxSeatLbl">Your seat <span class="right num" id="pxHandNo"></span></h2>
       <div class="cx-seats" id="pxSeat" role="radiogroup" aria-labelledby="pxSeatLbl" title="Practice from one seat, or a random seat each hand"></div>
+      <div class="cx-seats" id="pxDrill" role="radiogroup" aria-label="Spots to practise" title="Every hand, or only one kind of pot (its preflop played for you)"></div>
       <div id="practiceBar" hidden></div>
     </section>
     <section class="panel" id="pAdvice">
@@ -1006,9 +1023,10 @@ function act(a) {
       else rec = { action: facing || info.curBet > 0 ? "raise" : "bet", to };
     }
   }
-  if (p === S.hero && practicing() && resultKey !== JSON.stringify(payload())) return "One moment: the spot is being solved, so your move can be graded.";
-  if (p === S.hero) { const g = gradeFor(rec); if (g) rec.g = g; }
-  if (p === S.hero && practicing()) window.Practice.graded(sim.current, rec, resultKey === JSON.stringify(payload()) ? lastResult : null);
+  // (practice: a drill plays your preflop for you (a.auto), not graded)
+  if (p === S.hero && practicing() && !a.auto && resultKey !== JSON.stringify(payload())) return "One moment: the spot is being solved, so your move can be graded.";
+  if (p === S.hero && !a.auto) { const g = gradeFor(rec); if (g) rec.g = g; }
+  if (p === S.hero && practicing() && !a.auto) window.Practice.graded(sim.current, rec, resultKey === JSON.stringify(payload()) ? lastResult : null);
   S.actions[sim.current].push({ pos: p, ...rec }); save(); return null;
 }
 // A multiway result from the betting rules (4+ players, or a 3-way spot the solver doesn't take), not a solve.
@@ -1112,6 +1130,7 @@ function renderSetup() {
   const full = !started || editSetup;
   document.getElementById("setupFull").hidden = !full;
   document.getElementById("pSetup").classList.toggle("slim", !full);
+  document.body.classList.toggle("setupopen", !!(full && started));
   document.getElementById("setupDone").hidden = !started;
   const sum = document.getElementById("setupSum"); sum.hidden = full;
   sum.innerHTML = `<span><b>${S.players}-handed</b> <span class="muted">·</span> you are <b>${SEAT_LABEL(S.hero, S.players)}</b> <span class="muted">·</span> <b>${fmt(S.stack)}bb</b> stacks${UNEQUAL() ? ` (${STACKS_TEXT()})` : ""}${ANTE() ? ` <span class="muted">·</span> ${fmt(ANTE())}bb ante` : ""}${STRADDLER() ? ` <span class="muted">·</span> ${SEAT_LABEL(STRADDLER(), S.players)} straddles` : ""}${RAKE() ? ` <span class="muted">·</span> ${RAKE_TEXT()}` : ""}${ADV_TEXT() ? ` <span class="muted">·</span> ${ADV_TEXT()}` : ""}</span>`;
@@ -1221,9 +1240,10 @@ function renderAction(sim) {
   const myBet = info.bets[p], toCall = info.curBet - myBet, remaining = STACK(p) - sim.invested[p] - myBet, facing = toCall > 1e-9;
   step.textContent = street;
   const callAmt = Math.min(toCall, remaining), need = callAmt / (info.pot + callAmt);
-  // practice: the other seats move by themselves; on your turn the buttons wait for the spot's solve (to grade your move)
+  // practice: the other seats move by themselves (and a drill's preflop yours: "Dealing a 3-bet pot…"); on your
+  // turn the buttons wait for the spot's solve (to grade your move)
   const px = practicing(), wait = px && isHero && resultKey !== JSON.stringify(payload());
-  if (px && !isHero) { prompt.innerHTML = `<span class="who">${SEAT_LABEL(p, POS.length)} is thinking…</span><span class="pot">pot ${fmt(info.pot)} bb</span>`; el.appendChild(prompt); return; }
+  if (px && (!isHero || window.Practice.auto(sim))) { prompt.innerHTML = `<span class="who">${window.Practice.seeking() || SEAT_LABEL(p, POS.length) + " is thinking…"}</span><span class="pot">pot ${fmt(info.pot)} bb</span>`; el.appendChild(prompt); return; }
   prompt.innerHTML = `<span class="who ${isHero ? "hero" : ""}">${wait ? '<span class="spinner"></span>Solving your spot…' : isHero ? "Your turn" : p + " to act"}</span><span class="pot">pot ${fmt(info.pot)} bb${facing ? ` · ${fmt(callAmt)} to call · <span title="Pot odds: the equity a call needs to break even">need ${(need * 100).toFixed(0)}%</span>` : ""}</span><span class="ask">${isHero ? "Check the advice, then record what you did." : "What did " + p + " do?"}</span>`;
   el.appendChild(prompt);
 
@@ -1261,7 +1281,7 @@ function renderAction(sim) {
     for (const [v, l] of sizes) if (v < myBet + remaining - 1e-9 && v >= minTo - 1e-9) mk(`${verb} ${fmt(v)}`, "agg", { action: "bet", to: v }, l, String(++k));
   }
   if (canRaiseNow) {
-    const custom = document.createElement("button"); custom.className = "agg"; custom.innerHTML = `${verb}<small>your size…</small><kbd>R</kbd>`;   // (a bare "Raise to …" read as a cut-off label) custom.dataset.key = "r";
+    const custom = document.createElement("button"); custom.className = "agg"; custom.innerHTML = `${verb}<small>your size…</small><kbd>R</kbd>`; custom.dataset.key = "r";   // (a bare "Raise to …" read as a cut-off label)
     custom.onclick = () => { document.getElementById("customBox").classList.toggle("open"); document.getElementById("customAmt").focus(); };
     acts.appendChild(custom);
   }
@@ -1550,7 +1570,7 @@ function renderAll() {
   document.body.classList.toggle("needcard", needCard(sim));
   document.getElementById("pCards").hidden = !needCard(sim);   // the deck shows while a card is needed, or on request
   renderSetup(); renderSlots(sim); renderPicker(sim); renderTable(sim); renderAction(sim); renderTimeline();
-  if (sim.toAct === S.hero && S.cards[0] && S.cards[1] && !sim.handOver) analyze(sim);
+  if (sim.toAct === S.hero && S.cards[0] && S.cards[1] && !sim.handOver && !(practicing() && window.Practice.auto(sim))) analyze(sim);
   else if (!S.cards[0] || !S.cards[1]) resetAdvice();
   updateAdviceState();
 }

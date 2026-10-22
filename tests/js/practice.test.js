@@ -114,17 +114,23 @@ test("the coach: the verdict on your last decision with the solver's mix, then e
   assert.deepEqual(log[0].mix.map(a => [a.n, a.f]), [["fold", 0.2], ["check", 0.3], ["call", 0.5]]);
   const html = p.byId("practiceBar").innerHTML;
   assert.match(html, /class="verdict">Best move</);
-  assert.match(html, /preflop · you <b>called<\/b>/);
+  // headed by which decision it is about (the table may be on another street by now)
+  assert.match(html, /<div class="cx-fb" [^>]*><div class="lbl">Last decision · preflop<\/div>.*you <b>called<\/b>/);
   assert.match(html, /no EV lost/);
   assert.match(html, /call <b class="num">50%<\/b><span class="tag">you<\/span>/);   // the mix, at a glance
   assert.match(html, /<details class="cx-more"><summary>Details<\/summary>.*The solver's top choice here/);   // why and the EVs fold away
   assert.match(html, /\+1.00 bb/);
+  // until the hand is over, a new decision of yours fades the last one's card
+  for (let i = 0; i < 50 && !(p.sim().toAct === p.S.hero && p.val("resultKey === JSON.stringify(payload())")); i++) { await flush(); answer(p, done, passive); await flush(); }
+  assert.equal(p.sim().toAct, p.S.hero); p.run("renderAll()");
+  assert.match(p.byId("practiceBar").innerHTML, /<div class="cx-fb old" [^>]*><div class="lbl">Last decision · preflop/);
   // after the flop you check when you can: in the mix (30%), 0.6bb below calling's EV
   await playHand(p, passive, (sim) => sim.cur.curBet > sim.cur.bets[p.S.hero] ? { action: "call" } : { action: "check" });
   const h = p.val("Practice.state.hand"), mine = Object.values(p.S.actions).flat().filter(a => a.pos === p.S.hero);
   assert.equal(h.log.length, mine.length);
   assert.ok(mine.some(a => a.action === "check"));
-  assert.match(p.byId("practiceBar").innerHTML, /<span class="pill"[^>]*>Good<\/span><span class="num neg">−0.60 bb/);
+  assert.match(p.byId("practiceBar").innerHTML, /<span class="pill"[^>]*>Good<\/span><span class="num soft">−0.60 bb/);   // (in the strategy: not in red)
+  assert.match(p.byId("practiceBar").innerHTML, /<div class="lbl">Your last decision · /);
   assert.match(p.byId("practiceBar").innerHTML, /This hand · \d+ of \d+ in the solver's strategy/);
   // Next hand takes the action buttons' place
   const next = p.byId("actionArea").children.find(b => b.id === "pxNext");
@@ -322,8 +328,8 @@ test("practice setup and states: a fixed or random seat, the buttons wait for th
   const p = await practicePage(13, { "gto-opponents": "pool" });
   // a fixed seat: every deal from it, kept in the browser; Random again. The picker is a row of the site's
   // buttons (a radio group), not the browser's select: a click on one picks it
-  const sel = p.byId("pxSeat"), pick = (seat) => sel.onclick({ target: { closest: () => ({ dataset: { seat } }) } });
-  assert.match(sel.innerHTML, /<button type="button" role="radio" class="rnd" data-seat="random"[^>]*>Random<\/button>.*data-seat="BTN"[^>]*>BTN<\/button>/);
+  const sel = p.byId("pxSeat"), pick = (v) => sel.onclick({ target: { closest: () => ({ dataset: { v } }) } });
+  assert.match(sel.innerHTML, /<button type="button" role="radio" class="rnd" data-v="random"[^>]*>Random<\/button>.*data-v="BTN"[^>]*>BTN<\/button>/);
   assert.doesNotMatch(sel.innerHTML, /<select|<option/);
   pick("CO"); await flush();
   for (let k = 0; k < 3; k++) { assert.equal(p.S.hero, "CO"); p.run("Practice.next()"); await flush(); }
@@ -417,6 +423,11 @@ test("looking ahead in the browser only when the solver checks or calls your han
 test("Review mistakes: your decisions that gave up the most EV across hands, each opening its verdict; the dock's one-line verdict", async () => {
   const p = await practicePage(11);
   // before any decision the dock's line says where the verdict will be
+  // (a first run: the dock's line says which seat is yours, the coach has a hint; Got it puts them away)
+  assert.match(p.byId("pxStrip").innerHTML, /Your seat is marked <b>you<\/b>/);
+  assert.match(p.byId("practiceBar").innerHTML, /<div class="cx-hint">.*id="pxHint">Got it</);
+  p.run("Practice.state.hint = true; renderAll()");
+  assert.doesNotMatch(p.byId("practiceBar").innerHTML, /cx-hint/);
   assert.match(p.byId("pxStrip").innerHTML, /Hand 1 · each decision is graded here/);
   const done = new Set();
   await toMyTurn(p, done);
@@ -453,4 +464,62 @@ test("Review mistakes: your decisions that gave up the most EV across hands, eac
   p.run("confirm = () => true");
   p.run("Practice.state.review = []; renderAll()");
   assert.doesNotMatch(p.byId("practiceBar").innerHTML, /pxRev/);
+});
+
+test("the first-run hint goes once a hand is played; a change to the table's chips deals a new hand", async () => {
+  const p = await practicePage(5);
+  assert.match(p.byId("practiceBar").innerHTML, /cx-hint/);
+  await playHand(p);
+  assert.doesNotMatch(p.byId("practiceBar").innerHTML, /cx-hint/);
+  assert.equal(p.storage.get("gto-practice-hint"), "1");
+  p.run("Practice.next()"); await flush();
+  const hole = p.val("Practice.state.hand.hole");
+  p.run("S.stack = 60; save(); renderAll()");
+  const done = new Set(); for (let i = 0; i < 5; i++) { await flush(); answer(p, done, passive); }
+  assert.notDeepEqual(p.val("Practice.state.hand.hole"), hole);
+  assert.equal(p.val("Practice.state.hand.chips"), p.val("JSON.stringify([POS.map(STACK), ANTE(), STRADDLER(), RAKE(), RAKE_CAP()])"));
+});
+
+test("the verdicts: a multiway guess shows no mix; the solver's top move is never listed as a mistake", async () => {
+  const p = await practicePage(5);
+  p.run(`Practice.graded("preflop", { action: "call" }, { multiway: true, actions: [{ action: "call", freq: 1 }] })`);
+  assert.equal(p.val("Practice.state.hand.log.at(-1).mix"), null);
+  const e = (m, b, l) => ({ street: "flop", rec: { action: m }, g: { m, b, f: m === b ? 0.84 : 0.16, bf: 0.84, l }, mix: null, n: 1, seat: "BTN", hole: ["Ah", "Kd"], board: [], line: "" });
+  p.run(`Practice.state.review = ${JSON.stringify([e("call", "call", 0.15), e("fold", "call", 0.4)])}; Practice.state.rev = true; renderAll()`);
+  const html = p.byId("practiceBar").innerHTML;
+  assert.match(html, /Review mistakes<span class="n">1<\/span>|Hide mistakes<span class="n">1<\/span>/);
+  assert.equal((html.match(/<li class="pick/g) || []).length, 1);
+  assert.match(html, /<li class="pick"[^>]*>.*fold.*<span class="num soft">−0.40 bb/);   // (in the strategy: not in red)
+});
+
+// opponents (and, in a drill, your own preflop): the first to act raises, the big blind calls a raise, the rest fold
+const opener = (m) => { const pre = m.state.preflop || [], raised = pre.some(a => a.action === "raise" || a.action === "bet");
+  return !raised ? { pos: m.play.seat, action: "raise", to: 2.5 } : m.play.seat === "BB" ? { pos: m.play.seat, action: "call" } : { pos: m.play.seat, action: "fold" }; };
+
+test("drills: the preflop is played for you, ungraded, and dealt again until the pot is the drill's; blind vs blind from a blind", async () => {
+  const p = await practicePage(9, { "gto-practice-drill": JSON.stringify("srp"), "gto-practice-hint": "1" });
+  const done = new Set();
+  await flush(); p.run("renderAll()");
+  assert.match(p.byId("actionArea").children[0].innerHTML, /Dealing a raised pot…/);   // (the dock, while the deals go by)
+  assert.ok(p.ctx.document.body.className.includes("pxseek"));
+  for (let i = 0; i < 400 && !(p.S.cards[2] && p.sim().toAct === p.S.hero); i++) { await flush(); answer(p, done, opener); await flush(); }
+  const sim = p.sim(), pre = p.S.actions.preflop;
+  assert.ok(p.S.cards[2], "on the flop");
+  assert.equal(sim.active.length, 2); assert.ok(sim.active.includes(p.S.hero));
+  assert.equal(pre.filter(a => a.action === "raise").length, 1);
+  assert.ok(pre.some(a => a.pos === p.S.hero && a.action !== "fold"), "you played preflop");
+  assert.ok(pre.every(a => !a.g), "not graded");
+  assert.deepEqual(p.val("Practice.state.hand.log"), []);
+  assert.deepEqual(p.val("Practice.state.review"), []);
+  assert.equal(p.val("Practice.state.score.hands"), 0, "the hands dealt again don't count");
+  assert.ok(p.posted.some(m => m.play && m.play.seat === p.S.hero && m.play.hole === p.S.cards.slice(0, 2).join("")), "your preflop move came from the chart for your hand");
+  // the drill row; blind vs blind: only the blinds can be picked, and every deal is from one
+  const drill = p.byId("pxDrill");
+  assert.match(drill.innerHTML, /data-v="any"[^>]*>Any hand<.*data-v="srp"[^>]*>Raised pot<.*data-v="3bet"[^>]*>3-bet pot<.*data-v="bvb"[^>]*>Blind vs blind</);
+  drill.onclick({ target: { closest: () => ({ dataset: { v: "bvb" }, disabled: false }) } }); await flush();
+  assert.equal(JSON.parse(p.storage.get("gto-practice-drill")), "bvb");
+  for (let k = 0; k < 4; k++) { assert.ok(["SB", "BB"].includes(p.S.hero), p.S.hero); p.run("Practice.next()"); await flush(); }
+  // a deal that goes another way preflop: dealt again, within reason
+  p.run("Practice.state.drill = 'any'; Practice.next()"); await flush();
+  assert.equal(p.val("Practice.auto(simulate())"), false);
 });
