@@ -215,7 +215,8 @@ the position picked, not the table), where your preflop is played
 for you too (from the chart for your hand, not graded) and the hand dealt again ("Dealing a 3-bet pot…", the table
 dimmed) until it reaches the flop heads-up with you in it as that kind of pot, so you play it from the flop. The first
 time, a two-line hint in the coach (and the phone's dock line) says which seat is yours and how to act, until **Got
-it** or the end of the first hand. The table marks your seat "you" and the
+it** or the end of the first hand. From the flop on, the coach names under the board the best hand your
+cards make with it ("Your hand: two pair, kings and sevens"). The table marks your seat "you" and the
 seat to act (an opponent's glows while it thinks); every other seat's hand and the board are dealt up front, and the
 other seats move by themselves ("BTN is thinking…" while they do): preflop from the chart for their actual hand,
 after the flop drawn from the solve's mix for it (heads-up, the same solve that answers your own spot, so a reply

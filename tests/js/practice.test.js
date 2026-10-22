@@ -193,6 +193,22 @@ test("a move that arrives after the hand moved on is dropped, and the practice h
   assert.ok(!q.ctx.document.body.className.includes("practice"));
 });
 
+test("the coach names the best hand your cards make with the board, from the flop on", async () => {
+  const p = await practicePage(11);
+  const done = new Set(), mine = () => p.sim().toAct === p.S.hero && p.val("resultKey === JSON.stringify(payload())");
+  for (let i = 0; i < 50 && !mine(); i++) { await flush(); answer(p, done, passive); await flush(); }
+  p.run("renderAll()");
+  assert.doesNotMatch(p.byId("practiceBar").innerHTML, /cx-made/);   // preflop: no board yet
+  for (let k = 0; k < 6 && p.val("boardCards().length") < 3 && !p.val("Practice.state.hand.result"); k++) {
+    if (mine()) p.act({ action: p.sim().cur.curBet > p.sim().cur.bets[p.S.hero] ? "call" : "check" });
+    for (let i = 0; i < 50 && !mine() && !p.val("Practice.state.hand.result"); i++) { await flush(); answer(p, done, passive); await flush(); }
+  }
+  assert.ok(p.val("boardCards().length") >= 3);
+  p.run("renderAll()");
+  const want = p.val("Practice.handName(Practice.rank7([...Practice.state.hand.hole, ...boardCards()]))");
+  assert.ok(p.byId("practiceBar").innerHTML.includes(`<div class="cx-made">Your hand: <b>${want}</b></div>`), want);
+});
+
 test("hand strength: categories and kickers", async () => {
   const p = await practicePage();
   const r = (s) => p.val(`Practice.rank7(${JSON.stringify(s.split(" "))})`);
