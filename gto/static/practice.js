@@ -306,7 +306,7 @@
       cls = ready ? " mine" : " wait"; t = ready ? "Your turn" : `<span class="spinner"></span>Solving your spot…`;
       sub = `${seat} · ${sim.current} · pot ${fmt(info.pot)} bb${toCall > 1e-9 ? ` · <b>${fmt(toCall)} bb to call</b>` : ""}`;
     } else { t = "Dealing…"; sub = `${seat}${sim.current ? " · " + sim.current : ""}`; }
-    return `<div class="cx-now${cls}"><div class="cx-cards">${big(h.hole)}</div><div><div class="t">${t}</div><div class="s">${sub}</div>${boardRow}</div></div>`;
+    return `<div class="cx-now${cls}"><div class="cx-cards">${big(h.hole)}</div><div><div class="t">${t}</div><div class="sub">${sub}</div>${boardRow}</div></div>`;
   }
   function summary(r) {
     const h = P.hand, log = h.log || [];
