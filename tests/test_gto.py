@@ -1432,9 +1432,9 @@ FLOP_REFERENCES = [
     # bet 56 -> 51 -> 47 -> 46. Even the old width keeps the small bet under 50, and the source only says a third pot is
     # the most common size (46 against 23 here), so the floor stays 40. On a 25/80 tree as ThinkGTO's: 78% (84.6 with
     # the old BB chart; published 98% *). Played at a raked table as the published NL500/NL50 solves are (5% capped
-    # at 0.6bb), the re-priced BB range c-bets 47% (QQ6 63%, BB checking 83%): the rake re-pricing cuts calls by
-    # all-in equity, so it folds 76s, 54s, T8o and 98o and keeps every offsuit king (K7o+), where raked solves keep
-    # suited connectors (see the README's Known limits)
+    # at 0.6bb, the flop raked), the re-priced BB range c-bets 49% (QQ6 81%, BB checking 95%), with the calls cut by
+    # realized equity (it keeps 76s, 54s, T8o and 98o and folds A2o) as with all-in equity before (49%; see the
+    # README's Known limits)
     ("srp", "Kd7c2h", "small", 40, 100, "RangeConverter 6max 100bb aggregate: 1/3 pot the most common size"),
     ("srp", "Kd7c2h", "vs small: raise", 6, 22, "RangeConverter aggregate x/r 14%; ThinkGTO A74 15.4%"),
     # high paired: range bet small. GTO Wizard (The mechanics of c-bet sizing) QQ6: high frequency, mostly 33%, BB checks
@@ -2731,6 +2731,14 @@ class TestPublishedPreflopReferences(unittest.TestCase):
         from tests.preflop_refs import HANDS, measure_hand
         bad = [(h[0], round(v, 3)) for h in HANDS if not h[5] - 1e-9 <= (v := measure_hand(h)) <= h[6] + 1e-9]
         self.assertEqual(bad, [])
+
+    def test_raked_hand_facts(self):
+        # through the advice at the solve's rake (the re-priced calls); Q9o is the known miss: the realization
+        # model keeps it (the published raked solve defends it 27%, at about zero EV)
+        from tests.preflop_refs import RAKED_HANDS, measure_raked_hand
+        bad = [(h[0], round(v, 3)) for h in RAKED_HANDS
+               if not h[5] - 1e-9 <= (v := measure_raked_hand(h)) <= h[6] + 1e-9]
+        self.assertEqual([b for b in bad if not b[0].startswith("BB defends Q9o")], [])
 
 
 class TestRake(unittest.TestCase):

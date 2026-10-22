@@ -136,3 +136,34 @@ def measure_hand(h) -> float:
     s = pf.strategy_for(hero, pre, T)
     m = parse_range(hand) > 0
     return float(s.get(action, np.zeros(pf.N_COMBOS))[m].mean())
+
+
+# ---- hand-level facts of raked solves, played at their rake through the advice (re-pricing included):
+# (name, hero, line, hands, action, low, high, source, rake); "continue" is call + raise ----
+GTOPRE_BB = "gtopreflop.com/posts/big-blind-defense (5% capped at 4bb)"
+RAKED_HANDS = [
+    ("BB folds A2o vs BTN (raked)", "BB", "BTN raise 2.5", "A2o", "continue", 0.0, 0.1, GTOPRE_BB + ": pure fold", RK),
+    ("BB defends Q9o rarely vs BTN (raked)", "BB", "BTN raise 2.5", "Q9o", "continue", 0.1, 0.5,
+     GTOPRE_BB + ": 27%, EV about 0", RK),
+    ("BB defends K2s-K9s vs BTN (raked)", "BB", "BTN raise 2.5", "K2s-K9s", "continue", 0.95, 1.0,
+     GTOPRE_BB + ": 100%", RK),
+    ("BB calls A2s-A4s vs BTN (raked)", "BB", "BTN raise 2.5", "A2s-A4s", "call", 0.9, 1.0,
+     GTOPRE_BB + ": call essentially always", RK),
+    ("BB 3bets A5o mostly vs BTN (raked)", "BB", "BTN raise 2.5", "A5o", "raise", 0.4, 1.0, GTOPRE_BB + ": 87%", RK),
+]
+
+
+def measure_raked_hand(h) -> float:
+    """The advice's frequency of `action` for the hand classes h[3] on the line h[2] at the rake h[8]."""
+    from gto import preflop as pf
+    from gto.ranges import parse_range
+    from gto.advisor import preflop_strategy, replay_hand
+    _, hero, line, hand, action = h[:5]
+    T = pf.Table(pf.SEATS[6], rake=h[8])
+    pre = _line(line, T)
+    while (st := replay_hand(T, 100, {"preflop": pre}, 1)[0]).to_act != hero:
+        pre.append({"pos": st.to_act, "action": "fold"})
+    s = preflop_strategy(hero, pre, T, 100)
+    m = parse_range(hand) > 0
+    v = 1.0 - s["fold"] if action == "continue" else s.get(action, np.zeros(pf.N_COMBOS))
+    return float(v[m].mean())
