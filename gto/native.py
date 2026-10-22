@@ -52,15 +52,20 @@ from .flop_library import default_library  # noqa: E402
 # keeps 2.5 s: 1.9 on average, 0.7-4.3.
 # A river root bets 33/75/125/250% pot (Advisor.root_sizes): polar rivers overbet half the range, and 75% alone
 # was 1.2-7.2% of the pot off per combo where these are 0.1-0.6; a river iteration takes milliseconds.
+# From the flop the river is played by 32 buckets of river strength (Config.river_strength; README, Accuracy vs
+# speed): a draw enters the river strong on the cards that hit it and weak on the rest, where the river on the turn's
+# boards made it a middling hand and the flop c-bet too little.
+RIVER_STRENGTH = 32
 _FLOP = {"bet": [0.33, 0.75], "raise": [0.5]}
 ROOT_SIZES = {"river": {"bet": [0.33, 0.75, 1.25, 2.5]}}
 SPEEDS = {
     "fast": (dict(bet_sizes={"flop": _FLOP["bet"], "turn": [0.33, 1.25], "river": [0.75]},
                   raise_sizes={"flop": _FLOP["raise"], "turn": [0.75], "river": [0.75]},
-                  model=dict(river_buckets=32, turn_buckets=True, bucket_river_step=3, river_classes=True)), 2.5, 2.5),
+                  model=dict(river_buckets=32, turn_buckets=True, bucket_river_step=3, river_classes=True,
+                             river_strength=RIVER_STRENGTH)), 2.5, 2.5),
     "accurate": (dict(bet_sizes={"flop": _FLOP["bet"], "turn": [0.33, 0.75, 1.25], "river": [0.33, 0.75, 1.25]},
                       raise_sizes={"flop": _FLOP["raise"], "turn": [0.75], "river": [0.75]},
-                      model=dict(river_classes=True)), 30.0, 12.0),
+                      model=dict(river_classes=True, river_strength=RIVER_STRENGTH)), 30.0, 12.0),
 }
 
 

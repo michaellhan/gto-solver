@@ -42,12 +42,12 @@ from gto.solver import Config, solve
 
 LS = dict(bet_sizes={"flop": [0.33, 0.75], "turn": [0.75], "river": [0.75]},
           raise_sizes={"flop": [0.5], "turn": [0.75], "river": [0.75]})
-BUCKETS = dict(river_buckets=32, turn_buckets=True, bucket_river_step=3)    # Fast's flop model (native and browser)
+BUCKETS = dict(river_buckets=32, turn_buckets=True, bucket_river_step=3, river_strength=32)    # Fast's flop model (native and browser)
 # (from a turn root: river classes, Fast 33/125% and Accurate 33/75/125% on the turn and river; a flop solve plays
 # later_sizes' one size there)
 FAST = dict(n_turns=3, leaf_turns=4, leaf_rivers_flop=4, n_rivers_from_flop=4, river_classes=True, **BUCKETS,
             **dict(LS, bet_sizes={"flop": [0.33, 0.75], "turn": [0.33, 1.25], "river": [0.75]}))
-ACCURATE = dict(n_turns=4, leaf_turns=4, leaf_rivers_flop=8, n_rivers_from_flop=8, river_classes=True,
+ACCURATE = dict(n_turns=4, leaf_turns=4, leaf_rivers_flop=8, n_rivers_from_flop=8, river_classes=True, river_strength=32,
                 **dict(LS, bet_sizes={"flop": [0.33, 0.75], "turn": [0.33, 0.75, 1.25], "river": [0.33, 0.75, 1.25]}))
 # the browser's configs (static/worker.js) and Config()'s defaults; "every-turn" plays every turn card from the
 # flop (the reference the turn classes are measured against: slow), "accurate-old" is Accurate before river_play
@@ -58,6 +58,17 @@ CONFIGS = {"fast": FAST, "accurate": ACCURATE, "native": {}, "every-turn": dict(
            "fast-old": dict(FAST, river_play=False, turn_classes=False, river_buckets=None, turn_buckets=False),
            "native-fast": dict(BUCKETS, **LS), "native-fast-old": dict(river_play=False, turn_classes=False, **LS)}
 # hand-bucket flop models at other bucket counts and river steps (bNsK: N buckets, every K-th river)
+# before the river by river strength (the river on the turn's boards): "-blind"
+CONFIGS.update({k + "-blind": dict(CONFIGS[k], river_strength=None) for k in ("fast", "accurate", "native-fast")})
+CONFIGS["native-accurate"] = dict(LS, bet_sizes={"flop": [0.33, 0.75], "turn": [0.33, 0.75, 1.25], "river": [0.33, 0.75, 1.25]},
+                                  river_classes=True, river_strength=32)
+CONFIGS["native-accurate-blind"] = dict(CONFIGS["native-accurate"], river_strength=None)
+# the river with its card under 3 fixed turns, per combo (the reference river_strength is measured against: slow)
+# (and the models on the same 3 turns: python scripts/bench_solver.py --flop --flop-iters 300 --configs
+#  river-cards-3t,accurate-blind-3t,accurate-3t,fast-blind-3t,fast-3t; the reference at 200 iterations)
+CONFIGS["river-cards-3t"] = dict(ACCURATE, river_strength=None, turn_classes=False, n_turns=3, depth=3, n_rivers_from_flop=48)
+CONFIGS.update({k + "-3t": dict(CONFIGS[k], turn_classes=False, n_turns=3)
+                for k in ("accurate", "accurate-blind", "fast", "fast-blind")})
 CONFIGS.update({f"b{n}s{k}": dict(ACCURATE, river_buckets=n, turn_buckets=True, bucket_river_step=k)
                 for n in (32, 48, 64, 96) for k in (1, 3)})
 BOARDS = ["Qs8d3c", "Kd7c2h", "9h8h6c"]

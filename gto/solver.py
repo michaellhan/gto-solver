@@ -88,6 +88,19 @@ class Config:
     river_buckets: Optional[int] = None
     turn_buckets: bool = False
     bucket_river_step: int = 1
+    # river_strength: with river_play, the river beyond `depth` is played by this many buckets of river strength
+    # (RiverEntry, Ctx.river_table): on each river card each player's range splits into equal shares by equity there
+    # against the other's root range, and a hand coming from the turn (a combo, or a turn bucket) enters the river
+    # in each bucket with the share of the river cards that put it there. So a draw is a strong hand on the rivers it
+    # hits and air on the others, which the turn's equity leaf (a draw as a middling hand) can't play. The players
+    # don't see the river card itself, only where it puts them (bucket-pair showdowns averaged over the rivers).
+    # bucket_river_step: every step-th river card in the tables. None = the river on the turn's boards as above.
+    river_strength: Optional[int] = None
+    # ... on flops with at least this stack-to-pot ratio (the root's stack over its pot). Below it (3bet pots and up)
+    # the river stays on the turn's boards: against the river with its card in 3bet pots (3 fixed turns, every river,
+    # K72, A83, 765) river strength had the 3-bettor bet three quarters pot with 15-31% of its range where the
+    # reference bets it 0-9% (the turn's boards 0%), its c-bet as far off on average (README, Accuracy vs speed).
+    river_strength_spr: float = 8.0
     # river_classes: from a turn root, the river as one card per class (Ctx.turn_classes on the turn's board: a rank's
     # cards, a suit with two or more board cards apart), each class's subtree standing for its every card through the
     # card swap that maps one onto the other (RiverClasses). With no flush possible in the swapped suits the swap keeps
@@ -119,6 +132,7 @@ class Config:
                       leaf_turns=self.leaf_turns, leaf_rivers=self.leaf_rivers, leaf_rivers_flop=self.leaf_rivers_flop,
                       river_play=self.river_play, turn_classes=self.turn_classes, river_buckets=self.river_buckets,
                       turn_buckets=self.turn_buckets, bucket_river_step=self.bucket_river_step,
+                      river_strength=self.river_strength, river_strength_spr=self.river_strength_spr,
                       river_classes=self.river_classes,
                       later_sizes=None if self.later_sizes is None else
                       {k: {st: list(v) for st, v in d.items()} for k, d in self.later_sizes.items()},
@@ -351,6 +365,104 @@ class Ctx:
         self._stacks[key] = T
         return T
 
+    def _compat_rows(self, ro: np.ndarray) -> np.ndarray:
+        """ro: (B, N) -> (B, N) mass of the combos sharing no card with each combo (Solver.compat_sum)."""
+        cs = (ro @ self.member.T)[:, self.cab]
+        n = self.n
+        return ro.sum(axis=1, keepdims=True) - cs[:, :n] - cs[:, n:] + ro
+
+    def _compat_cols(self, X: np.ndarray) -> np.ndarray:
+        """X: (B, N, K) -> (B, N, K) each column's mass of the combos sharing no card with each combo."""
+        n = self.n
+        cs = np.add.reduceat(X[:, self.card_perm, :], self.card_starts, axis=1)[:, self.cab_held, :]
+        return X.sum(axis=1, keepdims=True) - cs[:, :n] - cs[:, n:] + X
+
+    def river_table(self, board: tuple, dead: set, K: int, outer: Optional[int]) -> tuple:
+        """River-strength buckets for a turn board (Config.river_strength): (X, E, kappa). On each river card (every
+        bucket_river_step-th) each player q's root range (self.root_reach) splits into K equal shares by equity there
+        against the opponent's root range. X[q] (N x K, or K_t x K from `outer` turn buckets: Ctx.bucket_table's) is
+        the share of the rivers that put each combo (each turn bucket, its combos weighted by the root range) in each
+        river bucket: a reach r enters the river as r @ X[q], and the river's bucket utilities u come back as X[q] @ u.
+        kappa[q] (K x K): the compatible share of the opponent's bucket mass, as it is spread by X at root reach (folds);
+        E[q]: kappa times the mean showdown (+1 / -1) of the bucket pair's compatible pairs over the rivers, per pair
+        of hands on the same river card. E[1] = -E[0].T and kappa[1] = kappa[0].T: the game stays zero-sum."""
+        key = ("river", tuple(sorted(board)), K, outer)
+        T = self._stacks.get(key)
+        if T is not None:
+            return T
+        n = self.n
+        step = self.cfg.bucket_river_step
+        avail = [c for c in range(52) if c not in dead and c not in board]
+        rivers = avail[board[-1] % step::step] if step > 1 else avail
+        boards = [tuple(board) + (r,) for r in rivers]
+        rk = Ranking(self, list(self._strengths(boards)))
+        R = len(boards)
+        live = (~rk.blocked).astype(np.float64)                         # (R, n): holds no board card
+        w = [live * self.root_reach[q][None, :] for q in (0, 1)]
+        ids = []
+        for q in (0, 1):
+            eq = rk.utility(w[1 - q]) / np.maximum(self._compat_rows(w[1 - q]), 1e-12)
+            on = w[q] > 0
+            order = np.argsort(np.where(on, eq, np.inf), axis=1, kind="stable")
+            ws = np.take_along_axis(w[q], order, axis=1)
+            cum = np.cumsum(ws, axis=1)
+            b = np.minimum(((cum - ws / 2) / np.maximum(cum[:, -1:], 1e-12) * K).astype(np.intp), K - 1)
+            b[ws <= 0] = K
+            bid = np.empty_like(b)
+            np.put_along_axis(bid, order, b, axis=1)
+            ids.append(bid)
+        rows = np.arange(n)[None, :] * (K + 1)
+        P = []
+        for q in (0, 1):
+            cnt = np.bincount((rows + ids[q]).ravel(), minlength=n * (K + 1)).reshape(n, K + 1)[:, :K].astype(np.float64)
+            P.append(cnt / np.maximum(cnt.sum(axis=1, keepdims=True), 1.0))
+        # the bucket pairs' showdown sums and compatible masses, on the same river card
+        # (K opponent buckets as columns of one pass, a few rivers at a time: (rivers, n, K) arrays)
+        num = np.zeros((K + 1, K)); den = np.zeros((K + 1, K))
+        cr = max(1, 4096 // max(n, 1) * 16 // K)
+        for lo in range(0, R, cr):
+            sel = np.arange(lo, min(R, lo + cr))
+            b = len(sel)
+            ro = np.zeros((b, n, K + 1), dtype=np.float32)
+            np.put_along_axis(ro, ids[1][sel][:, :, None], w[1][sel][:, :, None].astype(np.float32), axis=2)
+            ro = ro[:, :, :K]
+            u = rk._sub(sel).utility_cols(ro)
+            c = self._compat_cols(ro)
+            order = np.argsort(ids[0][sel].ravel(), kind="stable")
+            bk = ids[0][sel].ravel()[order]
+            starts = np.searchsorted(bk, np.arange(K + 1))
+            w0 = w[0][sel].reshape(-1, 1)[order].astype(np.float32)
+            for acc, X in ((num, u), (den, c)):
+                Y = np.concatenate([X.reshape(-1, K)[order] * w0, np.zeros((1, K), dtype=np.float32)])
+                part = np.add.reduceat(Y, np.minimum(starts, len(Y) - 1), axis=0)
+                part[starts >= len(Y) - 1] = 0
+                part[np.append(starts[1:] == starts[:-1], False)] = 0
+                acc += part
+        num, den = num[:K], den[:K]
+        sd = np.where(den > 0, num / np.where(den > 0, den, 1.0), 0.0)
+        # kappa at the reaches X spreads: A_q = root reach x X[q] (n, K); compat @ A1 by per-card sums
+        r = [np.where(self.member[list(board)].sum(axis=0) == 0, self.root_reach[q], 0.0) for q in (0, 1)]
+        A = [r[q][:, None] * P[q] for q in (0, 1)]
+        cA1 = (self._compat_rows(A[1].T)).T                            # (n, K)
+        M = [A[q].sum(axis=0) for q in (0, 1)]
+        mm = np.outer(M[0], M[1])
+        kap = np.where(mm > 0, (A[0].T @ cA1) / np.where(mm > 0, mm, 1.0), 0.0)
+        E = sd * kap
+        if outer:
+            tids = self.bucket_table(board, dead, outer)[0]
+            X = []
+            for q in (0, 1):
+                Q = np.zeros((outer + 1, K))
+                np.add.at(Q, tids[q], A[q])
+                wt = np.bincount(tids[q], weights=r[q], minlength=outer + 1)
+                X.append((Q / np.maximum(wt, 1e-300)[:, None])[:outer])
+        else:
+            X = P
+        T = (np.stack(X).astype(np.float32), np.stack([E, -E.T]).astype(np.float32),
+             np.stack([kap, kap.T]).astype(np.float32))
+        self._stacks[key] = T
+        return T
+
     def _flop_leaf(self, board: tuple, dead: set) -> np.ndarray:
         """The flop's equity matrix (a flop all-in): every turn card, each with FLOP_LEAF_RIVERS or more
         rivers (leaf_turns x leaf_rivers_flop runouts in all, spread over the turns). Sampled turns gave a
@@ -369,6 +481,18 @@ class Ctx:
             boards += [board + (t, r) for r in dict.fromkeys(rivers)]
         return self._avg_showdown(boards)
 
+    def _strengths(self, boards) -> np.ndarray:
+        """(boards, n) hand strengths on 5-card boards (-1: holds a board card). Those of a turn's rivers are kept,
+        for the bucket tables and the river-strength tables both (river_strength)."""
+        key = ("S", tuple(boards))
+        S = self._stacks.get(key)
+        if S is None:
+            S = np.concatenate([eval_boards(boards[i:i + 64], self.active_list) for i in range(0, len(boards), 64)]) \
+                if boards else np.zeros((0, self.n), dtype=np.int32)
+            if len(boards) <= 52:
+                self._stacks[key] = S
+        return S
+
     def _avg_showdown(self, boards) -> np.ndarray:
         """The showdown matrix averaged over 5-card boards, per pair over the boards neither hand blocks;
         the boards' own matrices aren't kept."""
@@ -378,9 +502,7 @@ class Ctx:
         G = np.zeros((self.n, self.n), dtype=np.uint8 if len(boards) < 256 else np.uint16)
         gt = np.empty((self.n, self.n), dtype=bool)
         gv = gt.view(np.uint8)
-        S = np.concatenate([eval_boards(boards[i:i + 64], self.active_list) for i in range(0, len(boards), 64)]) \
-            if boards else np.zeros((0, self.n))
-        S = S.astype(np.float32)
+        S = self._strengths(boards).astype(np.float32)
         bl = S < 0                           # combos holding a card of the board
         S[bl] = np.nan
         for s in S:
@@ -474,6 +596,28 @@ class Ranking:
         u = u.reshape(B, n)
         u -= total
         u *= self.live
+        return u
+
+    def utility_cols(self, ro: np.ndarray) -> np.ndarray:
+        """utility() for K reach vectors at once: ro (B, n, K) -> (B, n, K)."""
+        B, n = self.B, self.n
+        K = ro.shape[2]
+        cum = np.zeros((B, n + 1, K), dtype=ro.dtype)
+        r2 = ro.reshape(B * n, K)
+        np.cumsum(r2[self.fsort].reshape(B, n, K), axis=1, out=cum[:, 1:])
+        cs = np.zeros((B, 2 * n + 1, K), dtype=ro.dtype)
+        np.cumsum(r2[self.pgather].reshape(B, 2 * n, K), axis=1, out=cs[:, 1:])
+        total = cum[:, n:, :]
+        c2 = cum.reshape(-1, K)
+        u = c2[self.fwin] + c2[self.flose]
+        k = (cs[:, self.cend] + cs[:, self.cstart]).reshape(-1, K)[self.fK]
+        u += k[:B * n]; u += k[B * n:]
+        q = cs.reshape(-1, K)[self.f4]
+        for j in range(4):
+            u -= q[j * B * n:(j + 1) * B * n]
+        u = u.reshape(B, n, K)
+        u -= total
+        u *= self.live[:, :, None]
         return u
 
     def _sub(self, sel) -> "Ranking":
@@ -581,6 +725,18 @@ class BucketEntry:
         self.tile = len(boards)
 
 
+class RiverEntry(BucketEntry):
+    """The river beyond `depth` played by river-strength buckets (Config.river_strength): the reaches coming in (per
+    combo, or per turn bucket: `outer`) are spread over each player's river buckets by Ctx.river_table's X, the
+    subtree below (Decisions K wide, terminals "rfold" and "rleaf") is solved on those masses, and its bucket
+    utilities go back through X."""
+    __slots__ = ("outer",)
+
+    def __init__(self, boards, child, outer=None):
+        super().__init__(boards, child)
+        self.outer = outer
+
+
 class Decision:
     __slots__ = ("boards", "player", "names", "children", "regret", "ssum", "pred", "pot_now", "bets", "B", "blind",
                  "bucketed")
@@ -636,12 +792,15 @@ class TreeBuilder:
         self.dead = set(dead)
         self.n_nodes = 0
         self.root_street_len = 0
+        self.root_spr = 0.0
         self._blind = False       # building a river played without its card (river_play)
         self._width = None        # ... by river_buckets hand buckets (its nodes' width) instead of per combo
+        self._kind = "b"          # bucket terminals' kind prefix: "r" below a RiverEntry (river_strength)
 
     def build(self, board, pot, stack, bets=(0.0, 0.0), to_act=0, n_raises=0, inv=None):
         board = tuple(board)
         self.root_street_len = len(board)
+        self.root_spr = stack / max(pot + bets[0] + bets[1], 1e-9)
         if inv is None:
             inv = (pot / 2 + bets[0], pot / 2 + bets[1])
         checked = (to_act == 1 and bets[0] == bets[1] and bets[0] == 0 and n_raises == 0)
@@ -653,19 +812,25 @@ class TreeBuilder:
         if len(boards[0]) == 5:
             return Terminal(boards, "showdown", inv, rake=self._rake(inv))
         if allin or new_stack <= 1e-9 or self._blind:
-            return Terminal(boards, "bleaf" if self._width else "leaf", inv, rake=self._rake(inv))
+            return Terminal(boards, self._kind + "leaf" if self._width else "leaf", inv, rake=self._rake(inv))
         streets_used = len(boards[0]) - self.root_street_len + 1
         if streets_used >= self.cfg.depth:
             if self.cfg.river_play and self.root_street_len == 3 and len(boards[0]) == 4:
                 # the river's betting on the turn's boards; its showdowns are the turn's equity leaves (every river)
                 outer = self._width     # (already by buckets when the turn is: turn_buckets)
+                rs = self.cfg.river_strength if self.root_spr >= self.cfg.river_strength_spr else None
                 self._blind = True
-                self._width = self.cfg.river_buckets
+                self._width = rs or self.cfg.river_buckets
+                if rs:
+                    self._kind = "r"
                 try:
                     d = self._decision(boards, new_pot, new_stack, (0.0, 0.0), 0, 0, inv, False)
                 finally:
                     self._blind = False
                     self._width = outer
+                    self._kind = "b"
+                if rs:
+                    return RiverEntry(boards, d, outer)
                 return BucketEntry(boards, d) if self.cfg.river_buckets and not outer else d
             # an equity leaf: raked on the pot as it stands. The leaf pays equity x this pot (later bets
             # aren't modelled, neither the chips they'd add nor their rake), so raking this pot keeps the
@@ -817,7 +982,7 @@ class TreeBuilder:
                 kids.append(self._decision(boards, pot, stack, nb, o, n_raises + 1, ninv, False))
         else:  # facing a bet
             names.append("fold")
-            kids.append(Terminal(boards, "bfold" if self._width else "fold", inv, folder=p, rake=self._rake(inv)))
+            kids.append(Terminal(boards, self._kind + "fold" if self._width else "fold", inv, folder=p, rake=self._rake(inv)))
             call_amt = min(b_op - b_me, remaining)
             nb, ninv = with_bet(b_me + call_amt)
             names.append("call")
@@ -857,6 +1022,8 @@ def _shape(node) -> tuple:
     if isinstance(node, Chance):
         return ("C", node.K, node.sample, node.avail, len(node.boards), node.umasks is None, node.perm is None,
                 _shape(node.child))
+    if isinstance(node, RiverEntry):
+        return ("R", node.outer, len(node.boards), _shape(node.child))
     if isinstance(node, BucketEntry):
         return ("E", len(node.boards), _shape(node.child))
     return ("T", node.kind, node.folder, len(node.boards))
@@ -878,7 +1045,8 @@ def _merge(nodes, pairs: list):
         pairs.append((m, nodes))
         return m
     if isinstance(first, BucketEntry):
-        m = BucketEntry(boards, _merge([n.child for n in nodes], pairs))
+        m = BucketEntry(boards, _merge([n.child for n in nodes], pairs)) if not isinstance(first, RiverEntry) else \
+            RiverEntry(boards, _merge([n.child for n in nodes], pairs), first.outer)
         m.tile = first.tile if all(n.boards == first.boards for n in nodes) else len(boards)
         return m
     if isinstance(first, Chance):
@@ -1074,7 +1242,7 @@ class Solver:
         combos outside p's range may get 0 (their regrets never matter: their reach is 0)."""
         if node.kind == "fold":
             return node.fold_pay(p) * self.compat_sum(ro)
-        if node.kind[0] == "b":
+        if node.kind[0] in "br":
             return self._bucket_terminal(node, p, ro, sel)
         u, f32 = self._showdown(node, p, ro, sel, train)
         inv = np.float32(node.inv[p]) if f32 else node.inv[p]
@@ -1105,6 +1273,49 @@ class Solver:
             self._btabs[id(node)] = t
         return t
 
+    def _rtab(self, node):
+        """River-strength tables for a RiverEntry or an "r" terminal's rows: (period T of its boards, X (2, T, W, K),
+        E (2, T, K, K), kappa (2, T, K, K)), see Ctx.river_table (W: N per combo, or the turn's buckets)."""
+        t = self._btabs.get(id(node))
+        if t is None:
+            boards, B = node.boards, len(node.boards)
+            T = next(k for k in range(1, B + 1) if B % k == 0 and all(boards[i] == boards[i % k] for i in range(B)))
+            cfg = self.ctx.cfg
+            outer = cfg.river_buckets if cfg.turn_buckets and cfg.river_buckets else None
+            key = ("rtab", tuple(boards[:T]))
+            t = self._btabs.get(key)
+            if t is None:
+                tabs = [self.ctx.river_table(b, self.dead, cfg.river_strength, outer) for b in boards[:T]]
+                t = self._btabs[key] = (T, np.stack([x[0] for x in tabs], axis=1), np.stack([x[1] for x in tabs], axis=1),
+                                        np.stack([x[2] for x in tabs], axis=1))
+            self._btabs[id(node)] = t
+        return t
+
+    @staticmethod
+    def _per_board(X, x, T, sel, transpose=False):
+        """x: (B, W) rows of boards with period T, X: (T, W, K) -> (B, K), each row times its board's matrix (X's
+        transpose, (T, K, W) -> (B, W) with `transpose`)."""
+        Xm = X.transpose(0, 2, 1) if transpose else X
+        if sel is None:
+            B, W = x.shape
+            return np.matmul(x.reshape(B // T, T, 1, W), Xm)[:, :, 0, :].reshape(B, -1)
+        rows = np.asarray(sel) % T
+        out = np.empty((x.shape[0], Xm.shape[2]), dtype=np.float32)
+        for t in np.unique(rows):
+            m = rows == t
+            out[m] = x[m] @ Xm[t]
+        return out
+
+    def _river_in(self, node: RiverEntry, rs, sel):
+        """Reaches (B, W) each -> river bucket masses (B, K) each."""
+        T, X, _, _ = self._rtab(node)
+        return [self._per_board(X[q], rs[q].astype(np.float32, copy=False), T, sel) for q in (0, 1)]
+
+    def _river_out(self, node: RiverEntry, u, p, sel):
+        """p's river bucket utilities (B, K) -> (B, W)."""
+        T, X, _, _ = self._rtab(node)
+        return self._per_board(X[p], u.astype(np.float32, copy=False), T, sel, transpose=True)
+
     def _bucket_matvec(self, node, M, ro, sel):
         """M: (T, K, K) per board of the node's rows' period, ro: (B, K) -> (B, K)."""
         # (matmul broadcasting the per-board matrices over the repeats: ~4x faster than einsum natively, as fast in Pyodide)
@@ -1116,8 +1327,8 @@ class Solver:
 
     def _bucket_terminal(self, node: Terminal, p, ro, sel=None):
         """p's bucket utilities at a terminal of a bucket subtree; ro: the opponent's bucket masses."""
-        _, _, E, kap = self._btab(node)
-        if node.kind == "bfold":
+        _, _, E, kap = self._btab(node) if node.kind[0] == "b" else self._rtab(node)
+        if node.kind[1:] == "fold":
             return node.fold_pay(p) * self._bucket_matvec(node, kap[p], ro, sel)
         u = self._bucket_matvec(node, E[p], ro, sel)
         inv = node.inv[p]
@@ -1216,6 +1427,11 @@ class Solver:
         # because the real hand can go there (a donk bet, an overbet) and we read its strategy
         if isinstance(node, Terminal):
             return self._terminal(node, p, r1 if p == 0 else r0, sel, strats is not None)
+        if isinstance(node, RiverEntry):
+            if done is not None and id(node) in done:
+                return done[id(node)]
+            m0, m1 = self._river_in(node, (r0, r1), sel)
+            return self._river_out(node, self._cfr(node.child, p, m0, m1, update, use_avg, sel, strats), p, sel)
         if isinstance(node, BucketEntry):
             if done is not None and id(node) in done:
                 return done[id(node)]
@@ -1448,6 +1664,9 @@ class Solver:
         strategy into the one they actually play (exploit mode's player pool)."""
         if isinstance(node, Terminal):
             return self._cfr(node, p, r0, r1, update=False, use_avg=True)
+        if isinstance(node, RiverEntry):
+            m0, m1 = self._river_in(node, (r0, r1), None)
+            return self._river_out(node, self._best_response(node.child, p, m0, m1, lock), p, None)
         if isinstance(node, BucketEntry):
             # (p best-responds by bucket, the bucket game's best response)
             (m0, m1), flat = self._bucket_in(node, (r0, r1), None)

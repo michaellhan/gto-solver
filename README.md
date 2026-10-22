@@ -513,7 +513,34 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
     the bucket game is 0.2-0.4% of the pot at 200 iterations (the old trees, not zero-sum with their
     sampled turns, read -0.35 to 1.15%). Exploit mode's pool lock and your locks read a bucket's percentile as its place in
     the range.
-  Tests TestFlopStrategy hold the published table, for both models.
+  * The river by river strength (`river_strength=32`, every config's flop solve in single-raised pots): played
+    on the turn's boards, a draw was a middling hand there (its turn equity), so it could neither value bet the
+    rivers that hit it nor bluff the ones that miss, and the flop c-bet ran low. Now on each river card each
+    player's range splits into 32 equal shares by equity there against the other's flop range, and a hand (a
+    combo, or a turn bucket in Fast) enters the river in each share with the fraction of river cards that put it
+    there: a flush draw is in the top two shares on its 9 of 46 rivers and near the bottom on the rest. The
+    players see their share, not the card; the showdowns are each pair of shares' mean over the rivers, per pair
+    of hands on the same card (zero-sum, `Ctx.river_table`). Measured against the river with its card (each
+    model on the same 3 turns of 5 BTN vs BB flops, QQ6, K72, A74, 986 and 765; the reference per combo with every
+    river under each turn, 200 iterations, 4-6 minutes a flop; the models 300; `bench_solver.py --flop --flop-iters
+    300 --configs river-cards-3t,accurate-blind-3t,accurate-3t,fast-blind-3t,fast-3t`): per combo the c-bet was
+    2-11 points under on every flop (6.0 on average; QQ6 60.2% against 67.4%) and is now 1-6 over (3.2; QQ6
+    69.4%), the size split 5.0 -> 3.1 off, BB's check 3.7 -> 3.0, the range-weighted error in per-combo node EV
+    2.7 -> 3.0% of the pot at the root (BB) and 3.9 -> 3.0 for BTN after a check; Fast's buckets 6.9 -> 4.2 in
+    c-bet (QQ6 62.5 -> 70.4), split 6.9 -> 5.0, check 1.2 -> 4.9 (986 and 765, where BB leads more), EV 5.4 ->
+    5.3 and 6.1 -> 5.7. 64 shares are no closer than 32. In 3bet pots (K72, A83, 765) it had the 3-bettor bet
+    three quarters pot with 15-31% of its range where the reference bets 0-9% and the turn's boards 0%, so a flop
+    whose stack is under 8 times the pot keeps the river on the turn's boards (`river_strength_spr`). With the
+    configs' own trees (one turn per rank class) the c-bet goes up 2-5.5 points: native Fast at 200 iterations
+    QQ6 76.1 -> 78.7%, K72 66.5 -> 70.8, A74 50.4 -> 52.6, 986 41.0 -> 45.0, 765 38.6 -> 43.0; native Accurate
+    at 300 79.3 -> 82.4, 66.5 -> 72.0, 46.1 -> 49.1, 41.9 -> 43.2, 39.4 -> 42.1. Cost (a machine shared with
+    other jobs, CPU time): per combo the river's showdowns are 32 x 32 instead of N x N, so a native Accurate
+    iteration is 3x cheaper (K72 62 -> 20 ms, 986 100 -> 33 ms; its 30 s run ~3x the iterations), its tables up to
+    0.5 s; native Fast's tables add 0.15-0.3 s to its 2.5 s (K72 ~175 -> 155 iterations, 986 ~175 -> 145).
+    With the browser's kernels natively (NO_BLAS; Pyodide is ~2x slower) Fast's setup grows 0.15-0.45 s
+    and Accurate's 0.5-0.8 s, the same or cheaper per iteration. The flop library is still Accurate's river on
+    the turn's boards (an entry stands in with a note).
+  Tests TestFlopStrategy hold the published table, for both models; TestRiverStrength the tables and the game.
   A flop all-in pays its equity over every turn card with 4 evenly spread rivers each
   (within 4% of exact; 4 sampled turns had flush draws up to 24% off).
 * `Solution.exploitability()` reports how far a solve is from equilibrium in
@@ -988,9 +1015,11 @@ the tree traversal to C or Rust or a GPU, which makes full flop trees feasible.
 * Turn and river references are this solver's own richest trees plus a few published spots; few
   published turn and river aggregates exist (GTO Wizard's are behind an account, and its blog's are
   UTG or 40bb MTT spots with wider calling ranges).
-* Flop solves play the river without seeing the river card (a draw is a middling hand there, so
-  river betting is worth a little less than with every river: QQ6's c-bet ~10 points under at 3
-  turns) and one turn card per rank class; the fast configs (server Fast, browser Fast, and the
-  browser Accurate's earlier streets for narrowing) still check the river down on a few random
-  turns, so their flop c-bets run low (see Accuracy vs speed). 3bet pots match every-turn solves
-  less well than single-raised ones (narrow ranges hold the turn cards played more often).
+* Flop solves play the river without seeing the river card and one turn card per rank class. In
+  single-raised pots the river is played by river strength (each hand knows where the river card puts
+  it, not the card): against the river with its card on 3 fixed turns the c-bet is now 1-6 points
+  over (it was 2-11 under, QQ6 7 under); 3bet pots keep the river on the turn's boards, where a draw is
+  a middling hand (river strength overused the big bet there), so their c-bets still run a few points
+  off (see Accuracy vs speed). The flop library was solved with the river on the turn's boards. 3bet
+  pots match every-turn solves less well than single-raised ones (narrow ranges hold the turn cards
+  played more often).

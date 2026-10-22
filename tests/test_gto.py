@@ -1634,6 +1634,83 @@ class TestFlopStrategy(unittest.TestCase):
         self.assertAlmostEqual(sol.for_combo(tuple(hero))["check"][1], 10 * _exact_equity(cards("Kh8d5c"), hero, vr), delta=0.15)
 
 
+class TestRiverStrength(unittest.TestCase):
+    """The river under a flop solve by river-strength buckets (Config.river_strength, solver.RiverEntry)."""
+
+    @staticmethod
+    def ctx_for(board, cfg):
+        from gto.advisor import preflop_ranges
+        rng = preflop_ranges([{"pos": p, "action": "fold"} for p in ("UTG", "HJ", "CO")]
+                             + [{"pos": "BTN", "action": "raise", "to": 2.5}, {"pos": "SB", "action": "fold"},
+                                {"pos": "BB", "action": "call"}], pf.Table(pf.SEATS[6]), 100)
+        live = np.prod([1.0 - MEMBER_FULL[c] for c in board[:3]], axis=0)
+        r0, r1 = rng["BB"] * live, rng["BTN"] * live
+        active = np.nonzero((r0 > 0) | (r1 > 0))[0]
+        ctx = Ctx(active, cfg)
+        ctx.root_len, ctx.root_reach = 3, (r0[active], r1[active])
+        return ctx, active
+
+    def test_tables(self):
+        # zero-sum tables, each in-range combo's river shares sum to one, and a flush draw is bimodal: on the
+        # rivers that complete it (9 of 46) it is in the top buckets, on the rest near the bottom
+        board = tuple(cards("Kh7h2cTs"))
+        for outer in (None, 16):
+            ctx, active = self.ctx_for(board, Config(river_buckets=16, turn_buckets=True))
+            X, E, kap = ctx.river_table(board, set(board), 16, outer)
+            self.assertTrue(np.allclose(E[1], -E[0].T) and np.allclose(kap[1], kap[0].T))
+            self.assertTrue((kap >= 0).all() and (kap <= 1 + 1e-6).all() and (np.abs(E[0]) <= kap[0] + 1e-6).all())
+            for q in (0, 1):
+                tot = X[q].sum(axis=1)
+                if outer is None:
+                    on = (ctx.root_reach[q] > 0) & (ctx.member[board[3]] == 0)
+                    self.assertTrue(np.allclose(tot[on], 1.0, atol=1e-5) and np.allclose(tot[~on], 0.0))
+                else:
+                    self.assertTrue(np.allclose(tot, 1.0, atol=1e-5))
+            self.assertTrue((E[0][-1] >= E[0][0]).all())
+            if outer is None:
+                fd = list(active).index(next(i for i, (a, b) in enumerate(ALL_COMBOS) if {a, b} == set(cards("Ah5h"))))
+                x = X[1][fd]
+                self.assertAlmostEqual(float(x[-2:].sum()), 9 / 46, delta=0.03)
+                self.assertGreater(float(x[:8].sum()), 0.6)
+
+    def test_game_zero_sum(self):
+        # both players' values sum to zero, per combo and from turn buckets; the pool lock reaches the river nodes
+        r_oop, r_ip = parse_range("22+, A2s+, K9s+, QTs+, JTs, ATo+, KJo+"), parse_range("44+, A5s+, KTs+, QJs, AJo+, KQo")
+        from gto.exploit import PoolLock
+        for kw in (dict(river_strength=8), dict(river_buckets=8, turn_buckets=True, bucket_river_step=3, river_strength=8)):
+            sol = solve(cards("Kd7c2h"), r_oop, r_ip, pot=6, stack=60, cfg=Config(**kw), time_budget=1e9, max_iters=30)
+            s = sol.solver
+            a, b = sol.r0[None, :].astype(np.float32), sol.r1[None, :].astype(np.float32)
+            v0 = float((s._cfr(sol.root, 0, a, b, update=False, use_avg=True)[0] * sol.r0).sum())
+            v1 = float((s._cfr(sol.root, 1, a, b, update=False, use_avg=True)[0] * sol.r1).sum())
+            pairs = float((s.compat_sum(b)[0] * sol.r0).sum())
+            self.assertLess(abs(v0 + v1) / pairs, 1e-4, kw)
+            self.assertGreater(sol.exploitability(), 0)
+            lock, seen = PoolLock(sol.ctx, 1), []
+
+            def spy(node, strat, reach, sel=None):
+                seen.append(node.blind)
+                out = lock(node, strat, reach, sel)
+                self.assertEqual(out.shape, strat.shape)
+                return out
+            evs = s.node_action_br_evs(sol.root, sol.r0, sol.r1, lock=spy)
+            self.assertTrue(np.isfinite(evs).all() and any(seen), kw)
+
+    def test_bets_more_than_the_turn_leaf(self):
+        # the draws' river (hit or miss) is worth betting into: QQ6's c-bet goes up against the river on the turn's
+        # equity (README, Accuracy vs speed)
+        from gto.advisor import preflop_ranges
+        pre = [{"pos": p, "action": "fold"} for p in ("UTG", "HJ", "CO")] + [
+            {"pos": "BTN", "action": "raise", "to": 2.5}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
+        rng = preflop_ranges(pre, pf.Table(pf.SEATS[6]), 100)
+        c = {}
+        for rs in (None, 32):
+            cfg = Config(river_buckets=32, turn_buckets=True, bucket_river_step=3, river_strength=rs)
+            sol = solve(cards("QsQd6c"), rng["BB"], rng["BTN"], 5.5, 97.5, cfg=cfg, time_budget=1e9, max_iters=100)
+            c[rs] = TestFlopStrategy.stats(sol)["cbet"]
+        self.assertGreater(c[32], c[None] + 1, c)
+
+
 class TestExploit(unittest.TestCase):
     """Exploit mode: opponents play like a typical player pool (gto/exploit.py) and hero best-responds."""
 
