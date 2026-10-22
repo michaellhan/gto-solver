@@ -188,12 +188,30 @@ advice with frequencies, EVs and sizes, the villain range, solver stats, a link
 that reopens the exact spot, and the raw state JSON for the API or CLI.
 The hand is kept in the browser between reloads; **New hand** clears it.
 
-**Practice** in the header plays random hands against GTO opponents (**Exit practice** in the same place goes back
-to the solver), with the player count, stacks (each seat's own, if set), antes, straddle and rake of the setup; a
-showdown pays each side pot to the best hand among the players in it. Your seat is random each hand, or the one
-picked in the row of seats under **Your seat** at the top of the coach panel (Random first; with Random, this hand's
-seat is outlined; arrow keys move along the row, Enter or Space picks). The row under it picks the spots: **Any
-hand**, or a drill, **Raised pot**, **3-bet pot** or **Blind vs blind** (from a blind), where your preflop is played
+**Practice** in the header plays hands against GTO opponents (**Exit practice** in the same place goes back
+to the solver), with the player count, stacks (each seat's own, if set), antes, straddle and rake of the setup. The
+row of seats under **Your seat** at the top of the coach panel picks how you sit (this hand's seat is outlined; arrow
+keys move along the row, Enter or Space picks). **Table**, the default, is a ring game: you keep one seat and the
+dealer button (the D chip on the felt) moves one seat clockwise after each hand played out, so your position goes
+BTN, CO, HJ … UTG, BB, SB and round again, the seats relabelled each hand; every seat's chips carry over from hand
+to hand (shown beside each seat; the solver and the charts get each seat's own stack, as with per-seat stacks in
+the setup), a seat under a quarter of the setup's stack rebuys to it at the next deal ("UTG rebought to 100"), a
+stack typed in the setup's seat stacks is taken over, a new stack or player count in the setup starts a new table,
+and **Reset stacks** (beside your stack) puts every seat back to the setup's stack from a new hand. The table, the
+button and the hand in play are kept in the browser over a reload. **Random** deals a random seat each hand, and a
+position plays every hand from it (setup stacks, not carried over). Every seat's two cards come from the same
+shuffled deck as yours and the board's. At a showdown everyone still in shows their cards on the table, the best
+hand wins ("CO's Q-high flush beats your two pair, kings and sevens"; "Split pot: you and SB tie with …", the
+deciding kicker named when two hands share a name), each side pot goes to the best hand among the players in it
+(main and side pots listed, a tie split evenly, rake taken in proportion), and the seats that collect are lit with
+what they won and their chips after the hand. When you fold, the hand ends for you: **Run it out** (beside Next
+hand, and in the coach) plays it on without you, every opponent by its strategy for its own cards, to its real end,
+with everyone's cards shown and its showdown named, and the table's chips go as it went; with one opponent left it's
+**Show hands** (everyone's cards and the rest of the board). Neither changes your result or the score. Without a
+run-out the others' chips go as if they checked it down from there, each winning at most what it put in from each
+player. The row under it picks the spots: **Any
+hand**, or a drill, **Raised pot**, **3-bet pot** or **Blind vs blind** (from a blind; a drill deals a random seat, or
+the position picked, not the table), where your preflop is played
 for you too (from the chart for your hand, not graded) and the hand dealt again ("Dealing a 3-bet pot…", the table
 dimmed) until it reaches the flop heads-up with you in it as that kind of pot, so you play it from the flop. The first
 time, a two-line hint in the coach (and the phone's dock line) says which seat is yours and how to act, until **Got

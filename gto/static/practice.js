@@ -1,24 +1,26 @@
-// Practice mode, loaded by the page's Practice button on first use: random hands against GTO opponents.
-// It drives the page's own engine: your seat and cards are random, the other seats' hands and the board are
-// dealt up front, and each opponent's move is drawn from the GTO mix for its actual hand (Advisor.play: the
-// preflop chart, then the postflop solve, through the worker or POST /play). Your decisions are graded as
-// in a hand review; the advice stays hidden on your turn and shows once you've acted. Your seat is random or
-// the one picked in the coach panel. While you decide, the line where you check or call is asked for ahead (see
-// ahead()). The running score and your last decisions (Review mistakes) are kept in this browser.
+// Practice mode, loaded by the page's Practice button on first use: hands against GTO opponents.
+// It drives the page's own engine: the other seats' hands and the board are dealt up front from one deck, and
+// each opponent's move is drawn from the GTO mix for its actual hand (Advisor.play: the preflop chart, then the
+// postflop solve, through the worker or POST /play). Your decisions are graded as in a hand review; the advice
+// stays hidden on your turn and shows once you've acted. Your seat (Your seat): Table (the default: a real ring
+// game, you at one seat, the button moving one seat each hand and every seat's chips carried over), Random, or
+// one position every hand. While you decide, the line where you check or call is asked for ahead (see ahead()).
+// The running score, the table and your last decisions (Review mistakes) are kept in this browser.
 "use strict";
 (() => {
-  const ON = "gto-practice", HAND = "gto-practice-hand", SCORE = "gto-practice-score", SEAT = "gto-practice-seat", REVIEW = "gto-practice-review", DRILL = "gto-practice-drill", HINT = "gto-practice-hint";
+  const ON = "gto-practice", HAND = "gto-practice-hand", SCORE = "gto-practice-score", SEAT = "gto-practice-seat", REVIEW = "gto-practice-review", DRILL = "gto-practice-drill", HINT = "gto-practice-hint", TABLE = "gto-practice-table";
   const read = (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } };
   const store = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
   const ZERO = { hands: 0, decisions: 0, best: 0, good: 0, evDecisions: 0, evLost: 0, net: 0 };
   // hand: { hero, players, hole, hands: {seat: [c, c]}, board: [5 cards], result }
-  // seat: "random" or a position; more: the verdict's details open; detail: the solver's full analysis shown;
+  // seat: "table", "random" or a position; table: the ring game (see deal()); more: the verdict's details open; detail: the solver's full analysis shown;
   // review: your last decisions (REVIEW_KEEP), for Review mistakes; rev: that list open; pick: the one shown in it;
   // drill: the kind of pot dealt (DRILLS); tries: deals so far looking for it; hint: the first-run hint dismissed
   const P = { on: false, hand: read(HAND), score: { ...ZERO, ...(read(SCORE) || {}) }, busy: false, status: "", error: "",
-    seat: read(SEAT) || "random", more: !!read("gto-practice-more"), detail: !!read("gto-practice-detail"),
+    seat: read(SEAT) || "table", table: read(TABLE), more: !!read("gto-practice-more"), detail: !!read("gto-practice-detail"),
     review: Array.isArray(read(REVIEW)) ? read(REVIEW) : [], rev: false, pick: null,
     drill: read(DRILL) || "any", tries: 0, hint: !!read(HINT) };
+  P.running = !!(P.hand && P.hand.run && !P.hand.run.done);   // (a run-out after your fold, resumed after a reload)
   const REVIEW_KEEP = 60, REVIEW_SHOW = 6;
   if (P.score.decisions && !(read(SCORE) || {}).good) P.score.good = P.score.best;   // (a score from before "good" was kept)
 
@@ -43,20 +45,100 @@
     return [0, ...kick([], 5)];
   }
   const cmp = (a, b) => { for (let i = 0; i < Math.max(a.length, b.length); i++) if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) - (b[i] || 0); return 0; };
+  // a rank7() value in words: "Q-high flush", "two pair, kings and sevens"; against a hand of the same name (vs),
+  // with the kicker that decides it
+  const RW = { 2: "twos", 3: "threes", 4: "fours", 5: "fives", 6: "sixes", 7: "sevens", 8: "eights", 9: "nines", 10: "tens", 11: "jacks", 12: "queens", 13: "kings", 14: "aces" };
+  const HI = (x) => x === 10 ? "10" : "  23456789TJQKA"[x];
+  function handName(v, vs) {
+    const [c, a, b] = v;
+    const n = [`${HI(a)}-high`, `pair of ${RW[a]}`, `two pair, ${RW[a]} and ${RW[b]}`, `three ${RW[a]}`, `${HI(a)}-high straight`, `${HI(a)}-high flush`,
+      `full house, ${RW[a]} full of ${RW[b]}`, `four ${RW[a]}`, a === 14 ? "royal flush" : `${HI(a)}-high straight flush`][c];
+    if (!vs || vs[0] !== c || handName(vs) !== n) return n;
+    const i = v.findIndex((x, k) => k > 0 && x !== vs[k]);
+    return i > 0 ? `${n}, ${HI(v[i])} kicker` : n;
+  }
+
+  // ---- the pot to the best hands: chips in by seat (inv), the players still in (live), those all-in (allin: each
+  // wins at most its stake from each player); each side pot goes to the best hand among the players in it, split
+  // evenly on a tie, all of them short the rake (pots that saw a flop: raked) in proportion; a bet nobody matched
+  // goes back. Returns { pays: {seat: chips won}, pots: [{amount, eligible, winners}], winners, val: {seat: rank7} }.
+  function settle(inv, live, allin, board, cards, raked) {
+    let pot = POS.reduce((t, p) => t + (inv[p] || 0), 0);
+    const most = POS.map(p => inv[p] || 0).sort((a, b) => b - a), uncalled = most[0] - (most[1] || 0);
+    if (raked && RAKE()) pot -= Math.min((pot - uncalled) * RAKE() / 100, RAKE_CAP() || Infinity);
+    const r2 = (x) => Math.round(x * 100) / 100, pays = {};
+    if (live.length < 2) { if (live[0]) pays[live[0]] = r2(pot); return { pays, pots: [], winners: live, val: {} }; }
+    const val = Object.fromEntries(live.map(p => [p, rank7([...cards(p), ...board])]));
+    const top = (ps) => { const b = ps.reduce((b, p) => cmp(val[p], val[b]) > 0 ? p : b); return ps.filter(p => cmp(val[p], val[b]) === 0); };
+    const side = sidePots(Object.fromEntries(POS.map(p => [p, inv[p] || 0])), live, allin);
+    const total = side.reduce((t, x) => t + x.amount, 0), keep = total > 0 ? pot / total : 1;
+    const pots = side.map(x => { const w = top(x.eligible); for (const p of w) pays[p] = (pays[p] || 0) + x.amount * keep / w.length;
+      return { amount: r2(x.amount * keep), eligible: x.eligible, winners: w }; });
+    for (const p in pays) pays[p] = r2(pays[p]);
+    return { pays, pots, winners: top(live), val };
+  }
+  // a showdown in a line: "CO's Q-high flush beats your two pair, kings and sevens"
+  function says(st) {
+    const who = (p) => p === S.hero ? "your" : `${SEAT_LABEL(p, S.players)}'s`, w = st.winners, v = st.val;
+    if (!w.length || !v[w[0]]) return "";
+    if (w.length > 1) return `Split pot: ${names(w)} tie with ${handName(v[w[0]])}`;
+    const rest = Object.keys(v).filter(p => !w.includes(p)), lo = rest.reduce((b, p) => b && cmp(v[b], v[p]) >= 0 ? b : p, null);
+    const top = handName(v[w[0]], v[lo]);
+    return lo ? `${who(w[0])} ${top} ${/^(three|four) /.test(top) ? "beat" : "beats"} ${who(lo)} ${handName(v[lo], v[w[0]])}`.replace(/^./, (c) => c.toUpperCase()) : "";
+  }
+
+  // ---- the table (Your seat: Table): a ring game. You keep seat 0; the button moves one seat clockwise each hand
+  // played out, so your position goes BTN, CO, HJ … UTG, BB, SB, BTN; each seat's chips carry over from hand to
+  // hand, and a seat under a quarter of the starting stack (S.stack) rebuys to it. P.table: { n, start, btn (the
+  // button's seat), seats: [chips by seat], seq (hands dealt) }; each hand keeps where it started (hand.tbl).
+  const REBUY = 0.25;
+  const tableMode = () => P.seat === "table" && P.drill === "any";
+  // seat k's position with the button at seat b, n-handed (the seats run clockwise, as SEATS[n] and the action)
+  const posAt = (k, b, n) => { const s = SEATS[n], i = s.indexOf(n === 2 ? "SB" : "BTN"); return s[(((i + k - b) % n) + n) % n]; };
+  const seatOf = (p, b, n) => { for (let k = 0; k < n; k++) if (posAt(k, b, n) === p) return k; return -1; };
+  // the hand's chips into the table: each seat's stack at the start of the hand, plus what it won, less what it put in
+  function toTable(h, pays, inv) {
+    const T = P.table, t = h.tbl;
+    if (!t || !T || T.seq !== t.seq) return;   // (not the table's latest hand)
+    T.seats = t.stacks.map((x, k) => { const p = posAt(k, t.btn, T.n); return Math.max(0, Math.round((x + (pays[p] || 0) - (inv[p] || 0)) * 100) / 100); });
+    store(TABLE, T);
+  }
+  // the table for the next hand: the button moved on if the last hand was played out (a stack typed in the setup
+  // meanwhile taken over), short stacks topped up. Returns the hand's start: { seq, btn, stacks, rebuys }
+  function seatUp() {
+    const n = S.players, h = P.hand;
+    let T = P.table;
+    if (!T || T.n !== n || T.start !== S.stack || !Array.isArray(T.seats) || T.seats.length !== n)
+      T = P.table = { n, start: S.stack, btn: Math.floor(Math.random() * n), seats: Array(n).fill(S.stack), seq: 0 };
+    else if (h && h.tbl && h.tbl.seq === T.seq) {
+      if (h.result) T.btn = (T.btn + 1) % n;
+      else POS.forEach(p => { const k = seatOf(p, h.tbl.btn, n); if (Math.abs(STACK(p) - h.tbl.stacks[k]) > 1e-9) T.seats[k] = STACK(p); });
+    }
+    const rebuys = [];
+    T.seats = T.seats.map((x, k) => { if (x < T.start * REBUY - 1e-9) { rebuys.push(posAt(k, T.btn, n)); return T.start; } return x; });
+    T.seq++; store(TABLE, T);
+    return { seq: T.seq, btn: T.btn, stacks: T.seats.slice(), rebuys };
+  }
+  // Reset stacks: every seat back to the starting stack, from a new hand
+  function rebuyAll() { if (P.table) { P.table.seats = P.table.seats.map(() => P.table.start); store(TABLE, P.table); } next(); }
 
   // ---- dealing
-  // the table (stacks, ante, straddle, rake): a change in the setup deals a new hand rather than alter this one
-  const chips = () => JSON.stringify([POS.map(STACK), ANTE(), STRADDLER(), RAKE(), RAKE_CAP()]);
+  // the table (stacks, ante, straddle, rake; at the table the starting stack too, though every seat has its own):
+  // a change in the setup deals a new hand rather than alter this one
+  const chips = () => JSON.stringify([POS.map(STACK), ANTE(), STRADDLER(), RAKE(), RAKE_CAP(), ...(tableMode() ? [S.stack] : [])]);
   function deal() {
     const deck = []; for (const r of RANKS) for (const s of SUITS) deck.push(r + s);
     for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
-    const pool = seatsFor(P.drill), hero = pool.includes(P.seat) ? P.seat : pool[Math.floor(Math.random() * pool.length)], hands = {};
+    const tbl = tableMode() ? seatUp() : null, pool = seatsFor(P.drill), hands = {};
+    const hero = tbl ? posAt(0, tbl.btn, S.players) : pool.includes(P.seat) ? P.seat : pool[Math.floor(Math.random() * pool.length)];
     for (const p of POS) hands[p] = [deck.pop(), deck.pop()];
-    S = { ...fresh(S.players), hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanAdv(S, POS), ...cleanStacks(S, POS) };   // (as New hand: seats keep their stacks)
+    // (as New hand: seats keep their stacks; at the table, each its own chips)
+    const stacks = tbl ? cleanStacks({ stack: S.stack, stacks: Object.fromEntries(POS.map(p => [p, tbl.stacks[seatOf(p, tbl.btn, S.players)]])) }, POS) : cleanStacks(S, POS);
+    S = { ...fresh(S.players), hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanAdv(S, POS), ...stacks };
     S.cards[0] = hands[hero][0]; S.cards[1] = hands[hero][1];
     const hole = hands[hero]; delete hands[hero];
-    P.hand = { hero, players: S.players, hole, hands, board: deck.slice(0, 5), result: null, log: [], chips: chips() };
-    P.error = ""; store(HAND, P.hand); save(); resetAdvice();
+    P.hand = { hero, players: S.players, hole, hands, board: deck.slice(0, 5), result: null, log: [], chips: chips(), ...(tbl ? { tbl } : {}) };
+    P.error = ""; P.running = false; store(HAND, P.hand); save(); resetAdvice();
     A.moves.clear(); A.key = null; A.gen++;
   }
   // the hand on the page is the one dealt here (not changed by New hand, the setup or a share link)
@@ -96,7 +178,7 @@
     await modeReady;
     const sim = simulate(), p = sim.toAct, before = JSON.stringify([S.actions, S.cards]), mine = p === S.hero;
     P.status = seeking() || `${SEAT_LABEL(p, S.players)} is thinking…`; bar(sim);
-    const req = payload();
+    const req = P.running ? { ...payload(), hero: p, hole: cards(p).join("") } : payload();   // (a run-out: from the seat's own view)
     let res;
     try { res = (!mine && await fromAhead(JSON.stringify(req) + "|" + p)) || await callAdvise(req, { seat: p, hole: (mine ? P.hand.hole : P.hand.hands[p]).join("") }); }
     catch (e) { res = { error: "Request failed: " + e }; }
@@ -187,37 +269,45 @@
   function finish(sim) {
     const h = P.hand;
     if (h.result) return;
-    const inv = (p) => sim.invested[p];   // (you folded mid-street: that street's bets are in it too)
-    const board = boardCards(), live = POS.filter(p => sim.active.has(p));
-    let pot = POS.reduce((t, p) => t + inv(p), 0);
-    // rake (pots that saw a flop) is on the called pot: a bet or raise nobody matched goes back untouched
-    const most = POS.map(inv).sort((a, b) => b - a), uncalled = most[0] - (most[1] || 0);
-    if (board.length >= 3 && RAKE()) pot -= Math.min((pot - uncalled) * RAKE() / 100, RAKE_CAP() || Infinity);
-    const cards = (p) => p === S.hero ? h.hole : h.hands[p];
-    let winners = live, shown = [], best = null, won = pot / Math.max(1, live.length), pots = null;
-    if (!sim.active.has(S.hero)) { winners = []; won = 0; }
-    else if (live.length > 1) {
-      const val = Object.fromEntries(live.map(p => [p, rank7([...cards(p), ...board])]));
-      const top = (ps) => { const b = ps.reduce((b, p) => cmp(val[p], val[b]) > 0 ? p : b); return ps.filter(p => cmp(val[p], val[b]) === 0); };
-      winners = top(live);
-      shown = live.filter(p => p !== S.hero);
-      best = CATS[val[winners[0]][0]];
-      // side pots: each all-in player's stake caps what they win from everyone; each pot goes to the best hand
-      // among the players in it, all of them short the rake in proportion
-      const all = Object.fromEntries(POS.map(p => [p, inv(p)])), side = sidePots(all, live, sim.allin);
-      const total = side.reduce((t, x) => t + x.amount, 0), keep = total > 0 ? pot / total : 1;
-      won = 0;
-      pots = side.map(x => { const w = top(x.eligible); if (w.includes(S.hero)) won += x.amount * keep / w.length; return { amount: Math.round(x.amount * keep * 100) / 100, eligible: x.eligible, winners: w }; });
-      if (pots.length < 2) pots = null;
-    }
-    const net = Math.round((won - inv(S.hero)) * 100) / 100;
-    h.result = { net, winners, shown, best, folded: !sim.active.has(S.hero), ...(pots ? { pots } : {}) };
+    const inv = { ...sim.invested };   // (you folded mid-street: that street's bets are in it too)
+    const board = boardCards(), live = POS.filter(p => sim.active.has(p)), folded = !sim.active.has(S.hero);
+    // your fold with others still in: unless you run it out, the others' chips go as if they checked it down from
+    // there (each wins at most what it put in from each player, on the board dealt up front)
+    const st = folded && live.length > 1 ? settle(inv, live, new Set(live), h.board, cards, true) : settle(inv, live, sim.allin, board, cards, board.length >= 3);
+    const showdown = !folded && live.length > 1;
+    const net = Math.round(((folded ? 0 : st.pays[S.hero] || 0) - inv[S.hero]) * 100) / 100;
+    h.result = { net, winners: folded ? [] : st.winners, shown: showdown ? live.filter(p => p !== S.hero) : [], best: showdown ? CATS[st.val[st.winners[0]][0]] : null,
+      folded, pays: folded && live.length > 1 ? {} : st.pays, ...(showdown ? { says: says(st) } : {}), ...(showdown && st.pots.length > 1 ? { pots: st.pots } : {}) };
+    toTable(h, st.pays, inv);
     const mine = []; for (const s of STREETS) for (const a of S.actions[s]) if (a.pos === S.hero && a.g) mine.push(a.g);
     const sc = P.score, ev = mine.filter(g => g.l != null);
     sc.hands++; sc.decisions += mine.length; sc.best += mine.filter(g => g.m === g.b).length; sc.good += mine.filter(g => gradeClass(g) === "ok").length;
     sc.evDecisions += ev.length; sc.evLost += ev.reduce((t, g) => t + g.l, 0); sc.net += net;
     store(HAND, h); store(SCORE, sc);
     if (!P.hint) { P.hint = true; store(HINT, 1); }   // (the first-run hint: once a hand is played, it's known)
+  }
+  const cards = (p) => p === S.hero ? P.hand.hole : P.hand.hands[p];
+
+  // ---- after your fold: Show hands (everyone's cards, the rest of the board) or, with others still in, Run it out
+  // (the opponents play the hand on by their strategies, to its real end, and the table's chips go as it did).
+  // Your result and the score stay as they were at your fold.
+  const runLabel = () => { const h = P.hand, r = h && h.result; if (!P.on || !r || !r.folded || h.run || !ours()) return null;
+    return simulate().active.size > 1 ? "Run it out" : "Show hands"; };
+  function runOut() {
+    const h = P.hand, label = runLabel();
+    if (!label) return;
+    h.run = { done: label === "Show hands" };
+    if (h.run.done) { for (let i = 2; i < 7; i++) S.cards[i] = h.board[i - 2]; save(); }
+    else P.running = true;
+    store(HAND, h); renderAll();
+  }
+  // the run-out has reached the end of the hand: its showdown, and the table's chips as it went
+  function endRun(sim) {
+    const h = P.hand, inv = { ...sim.invested }, live = POS.filter(p => sim.active.has(p)), board = boardCards();
+    const st = settle(inv, live, sim.allin, board, cards, board.length >= 3);
+    P.running = false;
+    h.run = { done: true, live, winners: st.winners, pays: st.pays, ...(live.length > 1 ? { says: says(st) } : {}), ...(st.pots.length > 1 ? { pots: st.pots } : {}) };
+    toTable(h, st.pays, inv); store(HAND, h);
   }
 
   // ---- your decisions: each one's verdict and the solver's mix for the spot, kept with the hand
@@ -477,7 +567,7 @@
 
   // ---- the coach panel: what's happening now, the verdict on your last decision, the result, the score
   const money = (x) => (x > 0 ? "+" : x < 0 ? "−" : "") + fmt(Math.abs(x)) + " bb";
-  const names = (ps) => ps.map(p => p === S.hero ? "you" : SEAT_LABEL(p, S.players)).join(" and ");
+  const names = (ps) => ps.map(p => p === S.hero ? "you" : SEAT_LABEL(p, S.players)).join(", ").replace(/, ([^,]*)$/, " and $1");
   const big = (cs, sm) => cs.map(c => `<div class="bc ${c[1]}${sm ? " sm" : ""}">${c[0]}<span>${SUIT_SYM[c[1]]}</span></div>`).join("");
   // with side pots, which of the pots you were in you won
   function headline(r) {
@@ -508,8 +598,10 @@
     const mineShown = r.shown.length && !r.folded ? `<span class="${r.winners.includes(S.hero) ? "win" : ""}"><b>You</b>${big(h.hole, true)}</span>` : "";
     let out = `<div class="cx-res ${r.net > 0 ? "won" : r.net < 0 ? "lost" : ""}"><div><span class="big">${r.folded ? "You folded" : headline(r)}</span><span class="net num ${r.net > 0 ? "pos" : r.net < 0 ? "neg" : ""}">${money(r.net)}</span></div>`
       + (r.shown.length ? `<div class="cx-show">${mineShown}${shown}</div>` : "")
-      + (r.best ? `<div class="pots">${names(r.winners)} ${r.winners.length > 1 || r.winners[0] === S.hero ? "win" : "wins"} with ${r.best}</div>` : "")
-      + (r.pots ? `<div class="pots">${r.pots.map((x, i) => `${i ? "side" : "main"} pot ${fmt(x.amount)}: ${names(x.winners)}`).join(" · ")}</div>` : "") + `</div>`;
+      + (r.says ? `<div class="says">${r.says}</div>` : "")
+      + (r.best && !r.says ? `<div class="pots">${names(r.winners)} ${r.winners.length > 1 || r.winners[0] === S.hero ? "win" : "wins"} with ${r.best}</div>` : "")
+      + (r.pots ? `<div class="pots">${r.pots.map((x, i) => `${i ? "side" : "main"} pot ${fmt(x.amount)}: ${names(x.winners)}`).join(" · ")}</div>` : "")
+      + (r.folded ? runPart(h) : "") + `</div>`;
     if (log.length) out += feedback(log[log.length - 1], { label: "Your last decision" });   // (as after any other)
     if (log.length > 1) {
       const lost = log.reduce((t, e) => t + (e.g && e.g.l || 0), 0), good = log.filter(e => ["best", "good"].includes(verdict(e.g).k)).length;
@@ -517,6 +609,28 @@
         + log.map(e => { const v = verdict(e.g); return `<li title="${e.g ? gradeTip(e.g) : ""}"><span class="st">${e.street}</span><span>${ACT(e.rec)} <span class="muted">· solver ${e.g ? pct(e.g.f) : "–"}</span></span><span class="pill" style="--c:${v.c}">${v.label}</span><span class="num ${lostCls(e)}">${e.g && e.g.l != null ? (e.g.l > 0.005 ? "−" + e.g.l.toFixed(2) + " bb" : "0 bb") : ""}</span></li>`; }).join("") + `</ul>`;
     }
     return out;
+  }
+  // at the table: your seat's chips (and who rebought this hand), Reset stacks
+  function tableLine() {
+    const h = P.hand, t = h && h.tbl, T = P.table;
+    if (!tableMode() || !t || !T || !ours()) return "";
+    const mine = h.result && !P.running && T.seq === t.seq ? T.seats[0] : t.stacks[0], re = (t.rebuys || []).map(p => p === S.hero ? "you" : SEAT_LABEL(p, S.players));
+    return `<div class="cx-tbl"><span>Your stack <b>${fmt(mine)} bb</b>${re.length ? ` · ${re.join(", ")} rebought to ${fmt(T.start)}` : " · the button moves each hand"}</span>`
+      + `<button class="small ghost" id="pxRebuy" title="Every seat back to ${fmt(T.start)} bb (the setup's stack), from a new hand">Reset stacks</button></div>`;
+  }
+  // after your fold: the run-out (or Show hands) as it went, else its button
+  function runPart(h) {
+    const run = h.run, label = runLabel();
+    if (label) return `<div class="cx-run"><button class="small" id="pxRun2" title="${label === "Run it out" ? "Play the hand on without you and show everyone's cards (your score doesn't change)" : "Show everyone's cards and the rest of the board"}">${label}</button></div>`;
+    if (!run) return "";
+    if (!run.done) return `<div class="cx-run muted"><span class="spinner"></span>Running it out…</div>`;
+    const live = run.live || [];
+    const shown = live.map(p => `<span class="${run.winners.includes(p) ? "win" : ""}"><b>${SEAT_LABEL(p, S.players)}</b>${big(h.hands[p], true)}</span>`).join("");
+    const w = run.winners || [];
+    return `<div class="cx-run"><div class="cx-h">Run out</div>${shown ? `<div class="cx-show">${shown}</div>` : ""}`
+      + (run.says ? `<div class="says">${run.says}</div>` : "")
+      + (w.length ? `<div class="pots">${names(w)} ${w.length > 1 ? "win" : "wins"} ${fmt(w.reduce((t, p) => t + (run.pays[p] || 0), 0))} bb</div>` : "")
+      + (run.pots ? `<div class="pots">${run.pots.map((x, i) => `${i ? "side" : "main"} pot ${fmt(x.amount)}: ${names(x.winners)}`).join(" · ")}</div>` : "") + `</div>`;
   }
   // the score, one line
   function stats() {
@@ -577,13 +691,14 @@
       e.preventDefault(); e.stopPropagation(); ok[(i + d + ok.length) % ok.length].focus();
     };
   }
-  // above the panel: your seat (Random first) and the drill (the kind of pot); a blind-vs-blind drill is played
-  // from a blind
+  // above the panel: your seat (Table first, then Random) and the drill (the kind of pot); a drill deals a random
+  // seat (a blind-vs-blind drill, a blind) or the one picked
   function pickers() {
-    const pool = seatsFor(P.drill), cur = pool.includes(P.seat) ? P.seat : "random";
-    radios(document.getElementById("pxSeat"), [["random", "Random", P.drill === "bvb" ? "A random blind each hand" : "A random seat each hand", "rnd"],
+    const pool = seatsFor(P.drill), cur = tableMode() ? "table" : pool.includes(P.seat) ? P.seat : "random";
+    radios(document.getElementById("pxSeat"), [["table", "Table", P.drill === "any" ? "A ring game: you keep your seat, the button moves one seat each hand and the chips carry over" : "A drill deals a random seat", "rnd"],
+      ["random", "Random", P.drill === "bvb" ? "A random blind each hand" : "A random seat each hand", "rnd"],
       ...POS.map(p => [p, SEAT_LABEL(p, POS.length), `Every hand from ${SEAT_LABEL(p, POS.length)}`])], cur,
-      (v) => { P.seat = v; store(SEAT, P.seat); next(); }, ours() ? S.hero : null, POS.filter(p => !pool.includes(p)));
+      (v) => { P.seat = v; store(SEAT, P.seat); next(); }, ours() ? S.hero : null, [...(P.drill === "any" ? [] : ["table"]), ...POS.filter(p => !pool.includes(p))]);
     radios(document.getElementById("pxDrill"), Object.entries(DRILLS).map(([k, l]) => [k, l, DRILL_TIP[k]]), P.drill,
       (v) => { P.drill = v; store(DRILL, v); next(); });
     const n = document.getElementById("pxHandNo"); n.textContent = `Hand ${P.score.hands + (P.hand && P.hand.result ? 0 : 1)}`;
@@ -618,7 +733,7 @@
       : `<div class="cx-fb empty">Each decision is graded here once you act: the verdict, the EV it gave up and the solver's mix.</div>`);
     const hint = P.hint ? "" : `<div class="cx-hint"><div>You play the seat marked <b>you</b>; the others play GTO by themselves.`
       + ` Act with the action buttons<span class="hoveronly"> or their keys (F, C, 1‑3, R, A; N for the next hand)</span>.</div><button class="small" id="pxHint">Got it</button></div>`;
-    const html = hint + body + stats() + reviewList();
+    const html = hint + tableLine() + body + stats() + reviewList();
     if (el.pxHtml !== html) {   // (unchanged: kept, with its focus and open Details; a key being typed survives a change)
       const ki = el.querySelector ? el.querySelector("input.cx-key") : null, kv = ki && ki.value, kf = ki && document.activeElement === ki;
       el.innerHTML = html; el.pxHtml = html;
@@ -635,6 +750,8 @@
     on("pxDetail", () => { P.detail = !P.detail; store("gto-practice-detail", P.detail); renderAll(); });
     on("pxReset", () => { if (typeof confirm === "function" && !confirm("Reset your practice score and mistakes?")) return; P.score = { ...ZERO }; store(SCORE, P.score); P.review = []; store(REVIEW, P.review); renderAll(); });
     on("pxRev", () => { P.rev = !P.rev; P.pick = null; renderAll(); });
+    on("pxRebuy", () => { if (typeof confirm === "function" && !confirm("Put every seat back to the starting stack and deal a new hand?")) return; rebuyAll(); });
+    on("pxRun2", runOut);
     if (el.querySelectorAll) el.querySelectorAll("li.pick").forEach(li => {
       li.onclick = () => { P.pick = P.pick === +li.dataset.i ? null : +li.dataset.i; renderAll(); const t = el.querySelector(`li.pick[data-i="${li.dataset.i}"]`); if (t) t.focus(); };
       li.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); li.onclick(); } };
@@ -660,7 +777,7 @@
       if (++P.tries <= DRILL_TRIES) return schedule(deal);
       P.error = `No ${DRILLS[P.drill].toLowerCase()} came up in ${DRILL_TRIES} deals: try another seat or drill.`; return bar(sim);
     }
-    if (sim.handOver) { if (!P.hand.result) { finish(sim); bar(sim); renderTable(sim); } return; }
+    if (sim.handOver) { if (!P.hand.result || P.running) { if (P.running) endRun(sim); else finish(sim); bar(sim); renderTable(sim); renderAction(sim); } return; }
     if (sim.waiting) return schedule(dealStreet);
     if (sim.cur && (sim.toAct !== S.hero || auto(sim))) schedule(villain);
     else if (sim.cur && resultKey === JSON.stringify(payload())) ahead().catch(() => {});   // your turn, solved: look ahead
@@ -674,9 +791,19 @@
     if (P.on && !ours()) deal();
     renderAll();
   }
-  // a seat's cards once the hand is over (shown at showdown)
-  const shown = (p) => P.on && P.hand && P.hand.result && P.hand.result.shown.includes(p) && ours() ? P.hand.hands[p] : null;
+  // a seat's cards once the hand is over (shown at showdown; everyone's after Show hands or Run it out)
+  const shown = (p) => P.on && P.hand && P.hand.result && (P.hand.run || P.hand.result.shown.includes(p)) && ours() ? P.hand.hands[p] : null;
+  // at the table, a seat on the felt: its chips once the hand's over (null: the engine's stack behind) and what it
+  // collected, or null away from the table
+  function seatView(p) {
+    const h = P.hand;
+    if (!P.on || !h || !h.tbl || !ours() || !P.table || P.table.seq !== h.tbl.seq) return null;
+    // (after your fold the others' chips show as they stand until a run-out: the hand isn't over for them)
+    const r = h.result, end = r && !P.running && (!r.folded || !!h.run || simulate().active.size < 2), pays = end ? (h.run && h.run.pays) || r.pays || {} : {};
+    return { after: end ? P.table.seats[seatOf(p, h.tbl.btn, S.players)] : null, won: pays[p] || 0 };
+  }
 
-  window.Practice = { get on() { return P.on; }, set, tick, next, shown, graded, rank7, fromAhead, auto, seeking, state: P, ahead: A,
+  window.Practice = { get on() { return P.on; }, get running() { return P.running; }, set, tick, next, shown, seatView, runLabel, runOut, rebuyAll,
+    graded, rank7, handName, settle, posAt, fromAhead, auto, seeking, state: P, ahead: A,
     ai: { prompt, spot, click: aiClick, explain, keyOf, state: AI, md } };
 })();
