@@ -354,6 +354,20 @@
   @keyframes think { 50% { box-shadow: 0 0 0 3px rgba(242,181,68,.25), 0 0 16px rgba(242,181,68,.35); } }
   body.practice .seat .hc { display: flex; justify-content: center; gap: 2px; margin: 2px 0 1px; }
   body.practice .seat .hc > span { background: #f5f5f0; border-radius: 3px; padding: 0 2px; line-height: 1.35; color: #111; }
+  /* the dealer button on its seat; at the end of a hand the seats that collected chips */
+  .seat .dbtn { position: absolute; right: -7px; bottom: -7px; width: 18px; height: 18px; border-radius: 50%; background: #f5f5f0; color: #111; font-size: 10px; font-weight: 800; line-height: 18px; box-shadow: 0 1px 3px rgba(0,0,0,.5); transition: none; }
+  .seat.won { border-color: var(--good); box-shadow: 0 0 0 2px color-mix(in srgb, var(--good) 25%, transparent); }
+  .seat.won .amt { color: var(--good); font-weight: 700; }
+  /* after your fold: Run it out (or Show hands) beside Next hand */
+  #actionArea .pxend { display: flex; gap: 8px; }
+  #actionArea .pxend .nexth { flex: 2 1 0; }
+  #actionArea .pxend .runit { flex: 1 1 0; min-height: 54px; font-weight: 700; }
+  /* the table: your seat's stack, the button moving, Reset stacks */
+  .cx-tbl { display: flex; align-items: center; gap: 8px; margin: -4px 0 12px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .cx-tbl b { color: var(--text); } .cx-tbl button { margin-left: auto; flex: none; }
+  .cx-run { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .cx-run .cx-show { margin-top: 6px; }
+  .cx-res .says { font-size: 13px; color: var(--text); margin-top: 8px; }
   /* a phone: the table and the dock already say whose turn it is, so the verdict comes straight under the table,
      and the dock carries it in one line (the coach is often below the fold); the line is always there, so the
      dock never changes height */
@@ -991,8 +1005,8 @@ function simulate() {
   out.cur = out.current && !out.streets[out.current].closed ? out.streets[out.current] : null;
   out.pot = Object.values(inv).reduce((a, b) => a + b, 0) + (out.cur ? Object.values(out.cur.bets).reduce((a, b) => a + b, 0) : 0);
   // practice: your fold ends it, also when it closes the street with others still in (the street's bets so far,
-  // blinds and straddle included, are then in: no street is in progress to hold them)
-  if ((out.cur || out.waiting) && !active.has(S.hero) && practicing()) {
+  // blinds and straddle included, are then in: no street is in progress to hold them); unless you run it out
+  if ((out.cur || out.waiting) && !active.has(S.hero) && practicing() && !window.Practice.running) {
     if (out.cur) for (const p of POS) inv[p] += out.cur.bets[p];
     out.handOver = true; out.cur = null; out.toAct = null; out.waiting = null; out.current = out.current || STREETS.filter(s => out.streets[s]).pop(); }
   return out;
@@ -1222,9 +1236,13 @@ function renderTable(sim) {
     const shown = p === S.hero ? (S.cards[0] && S.cards[1] ? S.cards.slice(0, 2) : null) : window.Practice && window.Practice.shown(p);
     const hc = shown ? `<span class="hc">${cardHtml(shown[0])}${cardHtml(shown[1])}</span>` : p === S.hero ? '<span class="you">you</span>' : "";
     const ta = sim.toAct === p ? `<span class="ta">to act</span>` : "";
-    // (stacks that differ: each seat's chips behind beside its name)
-    const stk = UNEQUAL() && !folded ? `<span class="stk" title="${SEAT_LABEL(p, n)}'s stack behind">${fmt(Math.max(0, STACK(p) - total))}</span>` : "";
-    d.innerHTML = `<span class="pos">${SEAT_LABEL(p, n)}${stk}</span>${hc}<span class="amt">${amt}${ta}</span>`;
+    // (stacks that differ, or practice at a table: each seat's chips behind beside its name, once the hand's over
+    // its chips after it, and what it won)
+    const tv = window.Practice && window.Practice.seatView && window.Practice.seatView(p);
+    const stk = (UNEQUAL() && !folded) || tv ? `<span class="stk" title="${SEAT_LABEL(p, n)}'s stack${tv && tv.after != null ? "" : " behind"}">${fmt(tv && tv.after != null ? tv.after : Math.max(0, STACK(p) - total))}</span>` : "";
+    if (tv && tv.won > 0) d.classList.add("won");
+    const btn = p === (n === 2 ? "SB" : "BTN") ? '<span class="dbtn" title="The dealer button">D</span>' : "";
+    d.innerHTML = `<span class="pos">${SEAT_LABEL(p, n)}${stk}</span>${hc}<span class="amt">${tv && tv.won > 0 ? `wins ${fmt(tv.won)}` : amt}${ta}</span>${btn}`;
     if (clickable) { d.title = `Everyone before ${p} folds`; d.onclick = () => { showErr(advanceTo(p)); renderAll(); }; }
     el.appendChild(d);
   });
@@ -1247,7 +1265,11 @@ function renderAction(sim) {
   if (sim.handOver && practicing()) {   // practice: the one way on is Next hand (or N), where the action buttons were
     step.textContent = "hand over"; prompt.innerHTML = `<span class="who">Hand over</span><span class="pot">pot ${fmt(sim.pot)} bb</span>`;
     const b = document.createElement("button"); b.className = "nexth"; b.id = "pxNext"; b.innerHTML = "Next hand<kbd>N</kbd>";
-    b.onclick = () => window.Practice.next(); el.append(prompt, b); return;
+    b.onclick = () => window.Practice.next(); el.append(prompt);
+    const run = window.Practice.runLabel();   // (after your fold: everyone's cards, or the hand played on)
+    if (run) { const r = document.createElement("button"); r.className = "runit"; r.id = "pxRun"; r.textContent = run; r.onclick = () => window.Practice.runOut();
+      const row = document.createElement("div"); row.className = "pxend"; row.append(r, b); el.append(row); } else el.append(b);
+    return;
   }
   if (sim.handOver) { step.textContent = "hand over"; prompt.innerHTML = `<span class="who">Hand over</span><span class="pot">pot ${fmt(sim.pot)} bb</span><span class="ask">Press <kbd style="margin:0">N</kbd> for a new hand.</span>`; el.appendChild(prompt); return; }
   if (sim.waiting) {

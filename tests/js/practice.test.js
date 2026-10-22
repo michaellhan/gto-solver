@@ -13,9 +13,10 @@ const flush = async (n = 4) => { for (let i = 0; i < n; i++) await new Promise(r
 const ADVICE = { street: "flop", hero: "BTN", hand: "AKs", recommended: "call",
   actions: [{ action: "fold", freq: 0.2, ev_bb: 0 }, { action: "check", freq: 0.3, ev_bb: 0.4 }, { action: "call", freq: 0.5, ev_bb: 1 }] };
 
-// a page in browser (worker) mode with practice.js loaded and a seeded Math.random
+// a page in browser (worker) mode with practice.js loaded and a seeded Math.random; a random seat each hand
+// unless storage says otherwise (the table, the default, has its own tests in table.test.js)
 async function practicePage(seed = 7, storage) {
-  const p = loadPage({ storage });
+  const p = loadPage({ storage: { "gto-practice-seat": '"random"', ...storage } });
   await p.ready();
   p.run(`Math.random = (() => { let s = ${seed}; return () => (s = (s * 16807) % 2147483647) / 2147483647; })();`);
   vm.runInContext(PRACTICE, p.ctx, { filename: "practice.js" });
