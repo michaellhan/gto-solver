@@ -1193,6 +1193,25 @@ class TestTableSizes(unittest.TestCase):
         adv.advise(dict(st, hole="7s6s"))
         self.assertLess(time.process_time() - c, 6.0)
 
+    def test_multiway_rules_answer_says_when_a_3way_solve_would_take_it(self):
+        # Fast solves 3-way rivers only: its rules answer on a 3-way flop says the solver takes the spot at a
+        # speed that solves flops (Practice then asks Accurate, to grade it); with a fourth player or someone
+        # all-in it doesn't, since no speed solves those
+        adv = Advisor(Config(depth=1), time_budget=4.0, prior_budget=2.0)
+        adv.mw_trials = MW_TRIALS
+        adv.mw_solve_streets = ("river",)
+        pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
+               {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
+        st = {"players": 6, "hero": "BB", "hole": "AsKd", "board": "Kh7c2d", "preflop": pre, "flop": []}
+        res = adv.advise(st)
+        self.assertTrue(res["multiway"]); self.assertNotIn("solved", res)
+        self.assertTrue(res["mw_solvable"])
+        four = adv.advise(dict(st, preflop=pre[:4] + [{"pos": "SB", "action": "call"}, pre[5]], hero="SB"))
+        self.assertEqual(four["players"], 4); self.assertNotIn("mw_solvable", four)
+        jam = adv.advise(dict(st, stacks={"BTN": 10}, flop=[{"pos": "BB", "action": "check"}, {"pos": "CO", "action": "check"},
+                                                            {"pos": "BTN", "action": "all-in"}]))
+        self.assertTrue(jam["multiway"]); self.assertNotIn("mw_solvable", jam)
+
     def test_multiway_top_pair_continues_like_draws(self):
         # 8-6-3 checked to the BB 3-way. The bettor's bluffs used to come from the bottom of its range
         # (air) and its value only from what beat what would call as if everyone held its range, so an

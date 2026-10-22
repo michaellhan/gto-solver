@@ -543,3 +543,29 @@ test("sound effects: the deal, each move, your verdict and the pot; the menu's S
   assert.equal(q.val("SFX.on"), false);
   assert.equal(q.byId("soundBtn").textContent, "Sounds off");
 });
+
+test("a 3-way flop or turn Fast leaves to the betting rules is solved on Accurate, so your move is graded", async () => {
+  const p = await practicePage(5);
+  const done = new Set();
+  const ACC = { ...ADVICE, multiway: true, solved: true, opponents: ["CO", "BB"], recommended: "call",
+    actions: [{ action: "fold", freq: 0, ev_bb: 0 }, { action: "call", freq: 1, ev_bb: 1 }] };
+  let fast = null, acc = null;
+  for (let i = 0; i < 50 && !acc; i++) {
+    await flush();
+    for (const m of p.posted) {
+      if (m.id == null || done.has(m.id)) continue;
+      done.add(m.id);
+      const r = m.play ? passive(m) : m.state.speed === "accurate" ? (acc = m, ACC) : (fast = fast || m, { ...ADVICE, multiway: true, opponents: ["CO", "BB"], equity_vs_field: 0.4, mw_solvable: true });
+      p.workers.at(-1).onmessage({ data: { id: m.id, result: r } });
+    }
+  }
+  assert.ok(fast && acc, "the Fast answer, then an Accurate request");
+  assert.deepEqual({ ...acc.state, speed: "fast", budget: fast.state.budget, prior_budget: fast.state.prior_budget }, fast.state);   // the same spot
+  assert.deepEqual([acc.state.budget, acc.state.prior_budget], [60, 12]);
+  await flush();
+  assert.equal(p.val("lastResult.solved"), true);
+  assert.ok(p.val("resultKey === JSON.stringify(payload())"), "shown as this spot's answer");
+  assert.equal(p.act({ action: "call" }), null);
+  const g = p.val(`[...Object.values(S.actions)].flat().filter(a => a.pos === S.hero).at(-1).g`);
+  assert.ok(g && g.m === "call" && g.f === 1, "graded against the Accurate answer (Fast's mix calls 50%)");
+});

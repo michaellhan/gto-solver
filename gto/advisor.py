@@ -975,6 +975,15 @@ RIVER_FIX_OFFSUIT = -0.05
 _RIVER_FIX = None
 
 
+def _mw_applies(remaining, cur, stk) -> bool:
+    """Whether the 3-way solver can take this node (Advisor._multiway_solve), whatever streets it's set to solve:
+    three players live, nobody all-in, and no bet bigger than the shortest stack behind."""
+    if len(remaining) != 3 or set(remaining) & cur.allin:
+        return False
+    S = min(stk[p] - cur.inv_start[p] for p in remaining)
+    return S > 1e-9 and max(cur.bets[p] for p in remaining) <= S + 1e-9
+
+
 def _river_fix() -> np.ndarray:
     """Per class: the realization the river-dealt flop model adds over the fast one (see RIVER_FIX)."""
     global _RIVER_FIX
@@ -1941,7 +1950,10 @@ class Advisor:
                                        line=_mw_line(board, hero, hole, stk, streets, cur.name, len(streets.get(cur.name) or [])))
             if res is not None:
                 return res
-            return self._multiway(hero, hole, board, ranges, remaining, cur, stk, t0, notes)
+            res = self._multiway(hero, hole, board, ranges, remaining, cur, stk, t0, notes)
+            if cur.name not in self.mw_solve_streets and _mw_applies(remaining, cur, stk):
+                res["mw_solvable"] = True   # the 3-way solver takes it at a speed that solves this street (Practice asks it)
+            return res
         villain = live_opps[0]
         post = cur.order
         oop, ip = sorted([hero, villain], key=post.index)
@@ -2172,16 +2184,12 @@ class Advisor:
         the betting rules (_multiway) answer instead."""
         from . import multiway_solver as MW
         fallback_notes, notes = notes, list(notes)
-        if not self.mw_solve_streets or cur.name not in self.mw_solve_streets or len(remaining) != 3:
-            return None
-        if set(remaining) & cur.allin:
+        if not self.mw_solve_streets or cur.name not in self.mw_solve_streets or not _mw_applies(remaining, cur, stk):
             return None
         players = [p for p in cur.order if p in remaining]          # postflop acting order
         behind = {p: stk[p] - cur.inv_start[p] for p in players}
         S = min(behind.values())
         bets = [cur.bets[p] for p in players]
-        if max(bets) > S + 1e-9 or S <= 1e-9:
-            return None
         dead_bets = sum(b for q, b in cur.bets.items() if q not in remaining)
         pot0 = cur.pot_start + dead_bets
         hp = players.index(hero)

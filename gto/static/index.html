@@ -1453,6 +1453,18 @@ async function analyze(sim) {
   // (practice: the answer the look-ahead already asked for, else once its request is out of the way)
   try { res = (practicing() && await window.Practice.fromAhead(key)) || await callAdvise(JSON.parse(key)); }
   catch (e) { res = { error: "Request failed: " + e }; }
+  // Practice grades your move: a 3-way flop or turn that Fast leaves to the betting rules (not graded) is solved on
+  // Accurate instead, shown and cached as this spot's answer (and Accurate's, for the speed switch)
+  if (res.mw_solvable && SPEED === "fast" && practicing() && gen === solveGen) {
+    const akey = keyFor(key, "accurate"), [b, p] = BUDGETS[MODE].accurate;
+    est = b + p * Math.max(0, STREETS.indexOf(sim.current) - 1); solveStart = performance.now();
+    const m = document.getElementById("solveMsg");
+    if (m) m.textContent = `3-way pot: solving it on Accurate so your move can be graded (${MODE === "wasm" ? "a minute or more" : "up to a minute"})…`;
+    let acc;
+    try { acc = await callAdvise(JSON.parse(akey)); } catch (e) { acc = { error: "Request failed: " + e }; }
+    if (!acc.error && !acc.cancelled) { cache.set(akey, acc); res = acc; }
+    else if (acc.cancelled) res = acc;
+  }
   clearInterval(tick);
   if (gen !== solveGen) return;                                         // cancelled here; a newer solve owns the panel
   if (res.cancelled) { solving = false; lastKey = null; return; }        // cancelled by another tab on the same server

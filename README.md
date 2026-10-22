@@ -241,7 +241,9 @@ solver's mix as a bar (each action of 20% or more named in it) with its frequenc
 when the solve hasn't it); the card is headed "Last decision · flop" (at the end "Your last decision"), and once
 it's your turn again it fades, so it never reads as a verdict on the spot above it (the phone's dock line then
 starts "Last:"). The EV a move in the solver's strategy gave up is shown muted, not red (its mixed actions are worth
-the same in theory); a multiway spot the solver doesn't take shows no mix ("isn't graded"); **Details** opens why and each action's EV (the choice is remembered), and from there **Show the
+the same in theory); a 3-way flop or turn that Fast leaves to the betting rules is solved on Accurate instead
+("3-way pot: solving it on Accurate so your move can be graded", up to a minute; the answer flags it with
+`mw_solvable`), and a multiway spot no speed solves (4+ players, someone all-in) shows no mix ("isn't graded"); **Details** opens why and each action's EV (the choice is remembered), and from there **Show the
 solver's full analysis** opens the usual advice panel for your last decision (never on your turn). At the end the
 opponents' cards are shown at showdown with your result, the verdict on your last decision and the hand's
 decisions with the EV each gave up, and **Next hand** (N) takes the action buttons' place (N does nothing mid-hand). The score
