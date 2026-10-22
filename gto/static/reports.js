@@ -178,6 +178,7 @@
     ST.spot = id; rep = null; draw();
     const sp = index.spots.find(s => s.id === id);
     rep = await get(`${id}/report.json?v=${sp.report}`); draw(); store();
+    if (globalThis.viewSpot) globalThis.viewSpot("reports", id, rep.label);   // (the page's URL: /reports/<spot>/)
   }
   function act(d) {
     if (d.view) { ST.view = d.view; }
@@ -189,7 +190,10 @@
     else if (d.ctl && d.ctl.startsWith("f:")) ST.filter = { ...ST.filter, [d.ctl.slice(2)]: d.value };
     store(); draw();
   }
-  function close() { if (box) box.hidden = true; const m = document.getElementById("menuBtn"); if (m) m.focus(); }
+  function close() {
+    if (box) box.hidden = true; const m = document.getElementById("menuBtn"); if (m) m.focus();
+    if (globalThis.viewClosed) globalThis.viewClosed("reports");   // (the page's URL back to the solver's)
+  }
   // styles on the page's tokens (--panel, --line, --text…), so the panel follows the page's theme
   const CSS = `
   .rp { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,.55); display: flex; justify-content: center; align-items: flex-start; padding: 40px 16px 16px; }
@@ -230,7 +234,8 @@
     .rp-ctl select { font-size: 16px; flex: 1 1 40%; }
     .rp-t .rp-b { min-width: 90px; }
   }`;
-  async function open() {
+  // spot: a spot's id to show (the page's /reports/<spot>/), else the one last picked
+  async function open(spot) {
     if (!document.getElementById("rpStyle")) {
       const s = document.createElement("style"); s.id = "rpStyle"; s.textContent = CSS; document.head.appendChild(s);
     }
@@ -252,12 +257,13 @@
       index = index || await get("index.json");
       const ids = (index.spots || []).filter(s => s.report).map(s => s.id);
       if (!ids.length) throw new Error("no precomputed spots");
-      if (!rep) await pick(ids.includes(ST.spot) ? ST.spot : ids[0]);
+      const want = ids.includes(spot) ? spot : ids.includes(ST.spot) ? ST.spot : ids[0];
+      if (!rep || want !== ST.spot) await pick(want); else if (globalThis.viewSpot) globalThis.viewSpot("reports", ST.spot, rep.label);
     } catch (err) { box.querySelector(".rp-body").innerHTML = `<div class="rp-msg">Couldn't load the flop reports: ${esc(err.message || err)}</div>`; }
     const t = box.querySelector("select, button"); if (t) t.focus();
   }
 
   const api = { texture, rows, columns, nodeOf, filter, sort, average, groups, html, stateFor, VIEWS, LABELS,
-                open, act, state: ST, _set: (i, r) => { index = i; rep = r; } };
+                open, close, act, state: ST, _set: (i, r) => { index = i; rep = r; } };
   if (typeof module === "object" && module.exports) module.exports = api; else globalThis.FlopReports = api;
 })();

@@ -8,6 +8,7 @@ POST /advise  body: game state JSON (see advisor.py)  -> recommendation JSON; "s
 POST /play    body: {"state": game state, "seat": "BB", "hole": "QcQd", "seed": 7 (optional)}
               -> a GTO move for that seat holding those cards (practice opponents; see Advisor.play)
 POST /cancel  stops the solve in progress (its /advise answers {"cancelled": true})
+GET  /, /practice/, /reports/<spot>/ ... the page (gto/routes.py); /worker.js, /practice.js ... its scripts
 GET  /health (also /health.json, which the page asks: the static site has a health.json saying {"ok": false})
 """
 from __future__ import annotations
@@ -21,6 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from .native import advisors   # (first: it holds BLAS to one thread before numpy loads)
 from .advisor import Advisor
 from .solver import Cancelled
+from . import routes
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -63,8 +65,25 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        if p in ("/", "/index.html", "/worker.js", "/hh.js", "/practice.js", "/reports.js", "/drills.js", "/breakdown.js", "/session.js"):
-            name = p[1:] if p.endswith(".js") else "index.html"
+        if p != "/" and routes.is_route_without_slash(p):   # "/practice" -> "/practice/", as the static host does
+            q = self.path[len(p):]
+            self.send_response(301)
+            self.send_header("Location", p + "/" + q)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        page = routes.page_for(p) if p.endswith("/") or p.endswith("/index.html") else None
+        if page is not None:   # the page, or a view's URL (/practice/, /reports/srp-btn-bb/: gto/routes.py)
+            body = page.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if p in ("/worker.js", "/hh.js", "/practice.js", "/reports.js", "/drills.js", "/breakdown.js", "/session.js"):
+            name = p[1:]
             path = os.path.join(static, name)
             with open(path, "rb") as f:
                 body = f.read()
