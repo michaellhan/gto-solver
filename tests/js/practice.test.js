@@ -524,3 +524,22 @@ test("drills: the preflop is played for you, ungraded, and dealt again until the
   p.run("Practice.state.drill = 'any'; Practice.next()"); await flush();
   assert.equal(p.val("Practice.auto(simulate())"), false);
 });
+
+test("sound effects: the deal, each move, your verdict and the pot; the menu's Sounds turns them off, kept in the browser", async () => {
+  const p = await practicePage(11);
+  assert.deepEqual(p.val("SFX.played"), ["deal"]);
+  await playHand(p);
+  const heard = p.val("SFX.played");
+  assert.ok(heard.includes("call") && heard.includes("card") && heard.includes("good"), heard.join());   // calls, the board, a best move
+  assert.equal(heard.at(-1), p.val("Practice.state.hand.result.net") > 0 ? "win" : "lose");
+  // off: nothing plays, and it stays off in this browser
+  p.byId("soundBtn").click();
+  assert.equal(p.byId("soundBtn").textContent, "Sounds off");
+  assert.equal(p.storage.get("gto-sound"), "0");
+  const n = p.val("SFX.played.length");
+  p.run("Practice.next()"); await flush();
+  assert.equal(p.val("SFX.played.length"), n);
+  const q = loadPage({ storage: { "gto-sound": "0" } }); await q.ready();
+  assert.equal(q.val("SFX.on"), false);
+  assert.equal(q.byId("soundBtn").textContent, "Sounds off");
+});

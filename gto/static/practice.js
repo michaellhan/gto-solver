@@ -139,6 +139,7 @@
     const hole = hands[hero]; delete hands[hero];
     P.hand = { hero, players: S.players, hole, hands, board: deck.slice(0, 5), result: null, log: [], chips: chips(), ...(tbl ? { tbl } : {}) };
     P.error = ""; P.running = false; store(HAND, P.hand); save(); resetAdvice();
+    if (!drilling()) sfx("deal");   // (a drill's deals flash by until its spot comes up: its flop is heard instead)
     A.moves.clear(); A.key = null; A.gen++;
   }
   // the hand on the page is the one dealt here (not changed by New hand, the setup or a share link)
@@ -170,7 +171,7 @@
   function dealStreet() {
     const sim = simulate();
     for (let i = 2; i < 2 + NEED[sim.waiting]; i++) if (!S.cards[i]) S.cards[i] = P.hand.board[i - 2];
-    save();
+    save(); sfx("card");
   }
 
   // ---- an opponent's move: the GTO mix for its hand, drawn by the solver
@@ -188,6 +189,7 @@
     if (res.error) { P.error = `${p}'s move failed: ${res.error}`; return; }
     const e = act({ ...move(res), auto: mine });
     if (e) P.error = `${p}'s move (${res.name}) was rejected: ${e}`;
+    else if (!seeking()) heard(S.actions[sim.current].at(-1));
   }
 
   // ---- looking ahead: on your turn, once your spot is solved, the line where you check or call is played on
@@ -262,6 +264,8 @@
     if (MODE === "server") { try { await fetch("cancel", { method: "POST" }); } catch (e) {} await o.p; }
     return null;
   }
+  // an action's sound: a knock for a check, chips for a call, more for a bet or raise, a stack for an all-in
+  const heard = (a) => sfx({ raise: "bet", "all-in": "allin" }[a.action] || a.action);
   // an opponent's move as the page records it (a size under the minimum raise is lifted to it, rather than refused)
   const move = (res) => res.action === "bet" || res.action === "raise" ? { action: "bet", to: res.to, clamp: true } : { action: res.action };
 
@@ -284,6 +288,7 @@
     sc.hands++; sc.decisions += mine.length; sc.best += mine.filter(g => g.m === g.b).length; sc.good += mine.filter(g => gradeClass(g) === "ok").length;
     sc.evDecisions += ev.length; sc.evLost += ev.reduce((t, g) => t + g.l, 0); sc.net += net;
     store(HAND, h); store(SCORE, sc);
+    if (!folded && net !== 0) sfx(net > 0 ? "win" : "lose", 0.25);   // (after the last action's sound)
     if (!P.hint) { P.hint = true; store(HINT, 1); }   // (the first-run hint: once a hand is played, it's known)
   }
   const cards = (p) => p === S.hero ? P.hand.hole : P.hand.hands[p];
@@ -325,6 +330,9 @@
       ? before.map(a => `${SEAT_LABEL(a.pos, S.players)} ${ACT(a)}`).join(", ") : street === "preflop" ? "folded to you" : "first to act";
     P.review.push({ ...e, n: P.score.hands + 1, seat: S.hero, hole: P.hand.hole, board: boardCards(), line });
     P.review = P.review.slice(-REVIEW_KEEP); P.pick = null; store(REVIEW, P.review);
+    heard(rec);   // your move, then its verdict: a chime when it's in the solver's mix, a low note for a mistake
+    const gc = rec.g && gradeClass(rec.g);
+    if (gc === "ok" || gc === "bad") sfx(gc === "ok" ? "good" : "bad", 0.2);
   }
   // the verdict: best (the solver's top action), good (in its mix), inaccuracy (rare), mistake (almost never)
   function verdict(g) {

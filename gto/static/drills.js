@@ -216,6 +216,7 @@
   function answer(a) {
     if (!ST.pr || ST.g) return;
     ST.g = grade(ST.pr, a); ST.session = addScore(ST.session, ST.g); ST.hist[hkey()] = addScore(ST.hist[hkey()], ST.g); store(); draw();
+    if (globalThis.sfx) globalThis.sfx(ST.g.ok ? "good" : "bad");
     const n = box.querySelector("[data-next]"); if (n) n.focus();
   }
   async function pickSpot(id) {

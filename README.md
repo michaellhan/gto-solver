@@ -116,7 +116,11 @@ hand ends the advice panel lists them as a hand review with the EV given up per 
 Click any of your decisions (in the review or the timeline) to replay the hand from that
 point; later actions and board cards are cleared, with Undo. While others act, the
 last advice stays visible but dimmed and labelled. The **⋯** menu has a four-colour
-deck (diamonds blue, clubs green), a switch that puts the advice on the left, and Reset layout.
+deck (diamonds blue, clubs green), Sounds on/off, a switch that puts the advice on the left, and Reset layout.
+Sounds (on by default, kept in the browser) are short effects synthesized with Web Audio, no files: in Practice,
+the deal and each board card, a knock for a check, chips for a call, bet or all-in, a swish for a fold, a chime
+when your move is in the solver's mix and a low note for a mistake, and a pot won or lost; in Drills, each answer's
+verdict.
 
 **Import hand** (in the ⋯ menu) takes a pasted hand history: PokerStars, GGPoker/Natural8, 888poker,
 partypoker, Winamax, WPN/ACR, Ignition/Bovada and iPoker (its XML: Bet365, William Hill…), the site detected,
