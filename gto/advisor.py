@@ -3406,7 +3406,7 @@ class Advisor:
                       settle=False):
         cfg = cfg or self.cfg
         spot = (tuple(board), round(pot, 2), round(stack, 2), tuple(round(b, 2) for b in bets), to_act, n_raises,
-                cfg.sizes_key()) + (((cfg.river_play, cfg.turn_classes, cfg.river_buckets, cfg.turn_buckets),)
+                cfg.sizes_key()) + (((cfg.river_play, cfg.turn_classes, cfg.river_buckets, cfg.turn_buckets, cfg.river_strength),)
                                     if len(board) == 3 else ())
         # (a flop solve's river_play and turn_classes are part of the spot: a Fast flop solve, river checked down,
         # seeded an Accurate one at its lower c-bet frequencies and did worse in the same time than a cold start)

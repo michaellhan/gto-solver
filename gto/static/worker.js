@@ -108,7 +108,8 @@ const ready = (async () => {
   // A river root bets 33/75/125/250% pot (Advisor.root_sizes): 0.1-0.6% of the pot per combo from a six-size menu,
   //   where 75% alone was 1.2-7.2 (polar rivers overbet half the range).
   // From the flop both play one turn per rank class with the river bet on, the turn and river by hand buckets
-  //   (river_buckets, turn_buckets; README, Accuracy vs speed). Fast: 32 buckets over every third river, 130-420
+  //   (river_buckets, turn_buckets; README, Accuracy vs speed), the river in single-raised pots by 32 buckets of river
+  //   strength (river_strength: a draw strong where it hits, weak where it misses). Fast: 32 buckets over every third river, 130-420
   //   iterations in 8 s (scripts/bench_browser.mjs). Accurate: 64 over every river, 520-870 iterations in 60 s
   //   (0.03-0.05% of the pot from equilibrium in its game). Against a solve over every turn (12 flops, scripts/bench_solver.py --flop) at 400 iterations
   //   the c-bet is 2.5 / 1.8 points off on average, the size split 4.1 / 2.3, BB's check 1.6 / 1.3. Accurate played
@@ -120,10 +121,10 @@ const ready = (async () => {
   const RAISES = "raise_sizes={'flop': [0.5], 'turn': [0.75], 'river': [0.75]}";
   py.runPython("import sys, json; sys.path.insert(0, '/app'); from gto.advisor import Advisor; from gto.solver import Config; "
              + `advs = {'fast': Advisor(Config(n_turns=3, leaf_turns=4, leaf_rivers_flop=4, n_rivers_from_flop=4, `
-             + `river_buckets=32, turn_buckets=True, bucket_river_step=3, river_classes=True, `
+             + `river_buckets=32, turn_buckets=True, bucket_river_step=3, river_classes=True, river_strength=32, `
              + `bet_sizes={'flop': [0.33, 0.75], 'turn': [0.33, 1.25], 'river': [0.75]}, ${RAISES})), `
              + `'accurate': Advisor(Config(n_turns=4, leaf_turns=4, leaf_rivers_flop=8, n_rivers_from_flop=8, river_classes=True, `
-             + `river_buckets=64, turn_buckets=True, bucket_river_step=1, `
+             + `river_buckets=64, turn_buckets=True, bucket_river_step=1, river_strength=32, `
              + `bet_sizes={'flop': [0.33, 0.75], 'turn': [0.33, 0.75, 1.25], 'river': [0.33, 0.75, 1.25]}, ${RAISES}))}; `
              + RS
              // Accurate picks up from a Fast solve of the same spot (not the reverse: Fast's few seconds can't re-fit an

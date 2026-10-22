@@ -81,10 +81,14 @@ class TestCanonicalFlops(unittest.TestCase):
         self.assertEqual(fl.flop_name(cards("2h7hKs")), fl.flop_name(cards("Kd7c2c")))
 
     def test_tree_key(self):
-        """The native and browser Accurate trees are the library's; Fast is the same sizes, another flop model."""
+        """The native and browser Accurate trees are the library's but for the river by river strength (the library's
+        river is on the turn's boards); Fast is the same sizes, another flop model."""
         from gto.native import advisor
         lk = fl.tree_key(fl.library_config())
         acc, fast = (fl.tree_key(advisor(s, library=False).cfg) for s in ("accurate", "fast"))
+        self.assertEqual(fl._key_str(acc["sizes"]), fl._key_str(lk["sizes"]))
+        self.assertEqual(acc["model"].pop("river_strength"), 32)
+        acc["model"].pop("bucket_river_step")
         self.assertEqual(fl._key_str(acc), fl._key_str(lk))
         self.assertEqual(fl._key_str(fast["sizes"]), fl._key_str(lk["sizes"]))
         self.assertNotEqual(fl._key_str(fast["model"]), fl._key_str(lk["model"]))

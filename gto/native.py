@@ -58,15 +58,20 @@ from .flop_library import default_library  # noqa: E402
 # of the pot off on average -> 0.81 at 5 s (0.55-4.8 -> 0.42-1.5), frequencies 6.8 points -> 2.0 (33/75/125%: 1.07 and
 # 2.4, fewer iterations); cold at 2.5 s 1.82 -> 1.38. In single-raised pots 33/75% was 1.6-3.7% off (no overbet).
 FAST_SPR_SIZES = {"turn": (4.5, {"bet": [0.33, 0.75]})}
+# From the flop the river is played by 32 buckets of river strength (Config.river_strength; README, Accuracy vs
+# speed): a draw enters the river strong on the cards that hit it and weak on the rest, where the river on the turn's
+# boards made it a middling hand and the flop c-bet too little.
+RIVER_STRENGTH = 32
 _FLOP = {"bet": [0.33, 0.75], "raise": [0.5]}
 ROOT_SIZES = {"river": {"bet": [0.33, 0.75, 1.25, 2.5]}}
 SPEEDS = {
     "fast": (dict(bet_sizes={"flop": _FLOP["bet"], "turn": [0.33, 1.25], "river": [0.75]},
                   raise_sizes={"flop": _FLOP["raise"], "turn": [0.75], "river": [0.75]},
-                  model=dict(river_buckets=32, turn_buckets=True, bucket_river_step=3, river_classes=True)), 2.5, 2.5),
+                  model=dict(river_buckets=32, turn_buckets=True, bucket_river_step=3, river_classes=True,
+                             river_strength=RIVER_STRENGTH)), 2.5, 2.5),
     "accurate": (dict(bet_sizes={"flop": _FLOP["bet"], "turn": [0.33, 0.75, 1.25], "river": [0.33, 0.75, 1.25]},
                       raise_sizes={"flop": _FLOP["raise"], "turn": [0.75], "river": [0.75]},
-                      model=dict(river_classes=True)), 30.0, 12.0),
+                      model=dict(river_classes=True, river_strength=RIVER_STRENGTH)), 30.0, 12.0),
 }
 
 
