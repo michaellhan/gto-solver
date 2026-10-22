@@ -125,13 +125,16 @@ def _vs_rfi_ip(early: bool) -> Dict[str, np.ndarray]:
             "3bet": R("QQ+, JJ:0.7, TT:0.4, 99:0.4, 88:0.2, AKs, AKo, AQs, AJs:0.7, ATs:0.6, AQo:0.55, AJo:0.4, A5s, A4s, A3s:0.7, A2s:0.3, KQs, KJs:0.4, KTs:0.3, K9s:0.2, KQo:0.4, QJs:0.4, JTs:0.3, T9s:0.3, 98s:0.3, 87s:0.2, 76s:0.2"),
             "call": R("JJ:0.3, TT:0.6, 99:0.6, 88:0.6, 77:0.5, 66:0.4, 55:0.3, 44:0.2, 33:0.2, 22:0.2, AJs:0.3, ATs:0.4, KJs:0.4, QJs:0.4, JTs:0.4, T9s:0.3"),
         }
-    # BTN facing UTG/HJ, CO facing HJ: 85.7/9.1/5.2 fold/call/3bet. Published: BTN vs UTG 84.3/8.2/7.5
-    # (GTO Wizard, NL500 6-max 100bb, "Playing calls from the button"; open size not stated); BeyondGTO
-    # (NL500, 2.5bb open, unnamed solver) CO vs HJ ~87/5/8, BTN vs HJ ~84/8/8, BTN vs LJ 14% defend.
-    # All within 5 points: left.
+    # BTN facing UTG/HJ, CO facing HJ. gtopreflop.com's raked solve (5% capped at 4bb, the charts' rake;
+    # https://gtopreflop.com/posts/multiway-preflop-ranges) has the seats behind a LJ (6-max UTG) open
+    # cold-calling 2.1-4.6% of hands, the button 4.6%, and 3betting more often than they call. The NL500
+    # solves (0.6bb cap) flat more: BTN vs UTG 84.3/8.2/7.5 (GTO Wizard, "Playing calls from the button"),
+    # BeyondGTO (2.5bb open) CO vs HJ ~87/5/8, BTN vs HJ ~84/8/8. This chart played 85.7/9.1/5.2 (the NL500
+    # flats, fewer 3bets): now 89.1/4.5/6.4 against UTG, the weakest flats (small pairs in part, offsuit broadways,
+    # suited one-gappers) folding and AQo, TT, AJs, KQs and the wheel aces 3betting more.
     return {  # BTN facing UTG/HJ/CO, or CO facing HJ-ish
-        "3bet": R("JJ+, TT:0.4, AKs, AKo, AQs, AQo:0.4, AJs:0.5, A5s, A4s, A3s:0.5, KQs:0.5, KJs:0.3, 76s:0.3, 65s:0.3"),
-        "call": R("22-99, TT:0.6, AJs:0.5, ATs, A9s:0.5, AQo:0.6, AJo:0.5, KQs:0.5, KJs:0.7, KTs, KQo:0.5, QJs, QTs, JTs, J9s:0.5, T9s, 98s, 87s, 76s:0.7, 65s:0.7, 54s:0.5"),
+        "3bet": R("JJ+, TT:0.6, 99:0.2, AKs, AKo, AQs, AQo:0.6, AJs:0.6, ATs:0.3, AJo:0.2, A5s, A4s, A3s:0.6, A2s:0.2, KQs:0.6, KJs:0.4, KQo:0.2, QJs:0.2, JTs:0.2, T9s:0.2, 76s:0.3, 65s:0.3, 54s:0.2"),
+        "call": R("TT:0.4, 99:0.8, 88:0.9, 77:0.8, 66:0.7, 55:0.6, 44:0.5, 33:0.4, 22:0.4, AJs:0.4, ATs:0.7, A9s:0.2, AQo:0.3, KQs:0.4, KJs:0.5, KTs:0.4, QJs:0.6, QTs:0.3, JTs:0.6, T9s:0.5, 98s:0.4, 87s:0.3, 76s:0.2, 65s:0.2"),
     }
 
 VS_RFI: Dict[Tuple[str, str], Dict[str, np.ndarray]] = {}
@@ -252,8 +255,9 @@ VS_RFI[("BB", "SB")] = {
 # (more JJ-TT, AQ, suited broadways and wheel aces, a few suited connectors) taken from calls so the
 # defence totals stay (33%, 39%, 45%).
 # Squeezes (the advisor re-draws the chart for the callers, see Advisor._priced): BB over a BTN open
-# and an SB call 30/60/10 against Poker Academy's 71.2/16.1/12.7 (NL200, to 12.2bb; the calls are
-# rake); over CO + BTN 7.3% (was 4.9%) and UTG + a caller 4.5% (was 3.4%). The only cash squeeze solve
+# and an SB call 75.9/15.0/9.1 at 5% capped at 4bb (61.6/29.3/9.1 unraked; 46/45/9 before its calls were
+# re-drawn by equity against both, Advisor._priced) against Poker Academy's 71.2/16.1/12.7 (NL200, to
+# 12.2bb); over CO + BTN 7.3% (was 4.9%) and UTG + a caller 4.5% (was 3.4%). The only cash squeeze solve
 # found, GTO Wizard's NL500 at 40bb (CO min-open, BTN call: 9.8% against 10.3% heads-up,
 # https://blog.gtowizard.com/how-to-construct-a-squeezing-range/), puts the squeeze at 0.95x the
 # heads-up 3bet, which the charts now give (7.3% against 8.0%). GTO Wizard's 13% and 7.9% over CO/UTG
@@ -368,7 +372,12 @@ VS_3BET_OOP = {
         "call": R("QQ:0.2, JJ:0.8, TT, 99:0.9, 88:0.7, 77:0.5, 66:0.4, 55:0.2, AQs:0.7, AJs:0.8, ATs:0.6, KQs:0.7, KJs:0.5, KTs:0.4, QJs:0.5, QTs:0.3, JTs:0.5, T9s:0.3, 98s:0.2, AQo:0.4, AJo:0.2, KQo:0.2"),
     },
     "CO": {
-        "4bet": R("AA, KK, QQ, AKs, AKo, JJ:0.3, AQs:0.4, A5s, A4s, A3s, A2s:0.6, KJs:0.4, KTs:0.4, K9s:0.5, K8s:0.3, QJs:0.2, Q9s:0.3, J9s:0.2, AJo:0.3, KQo:0.5, ATo:0.2"),
+        # gtopreflop.com's hands: A5s 4bets 84.8%, A4s 55.9%, KJs 100% (GTO Gecko's library: A5s 86.6% with
+        # 13.4% calls, A4s 44% with 52% calls, A2s folds); the chart 4bet A5s-A3s always and KJs 40%. A5s and
+        # A4s are cut to theirs, folding the rest (which keeps the calling range the shipped flop library's
+        # 3bet-pot spot was built for, so KJs still calls 60%: gto/static/flop_library), the 4bets kept with
+        # more KQo, K8s and Q9s
+        "4bet": R("AA, KK, QQ, AKs, AKo, JJ:0.3, AQs:0.4, A5s:0.85, A4s:0.55, A3s, A2s:0.6, KJs:0.4, KTs:0.4, K9s:0.5, K8s:0.4, QJs:0.2, Q9s:0.4, J9s:0.2, AJo:0.3, KQo:0.7, ATo:0.3"),
         "call": R("JJ:0.7, TT, 99, 88:0.9, 77:0.7, 66:0.5, 55:0.3, AQs:0.6, AJs, ATs:0.7, A9s:0.3, KQs, KJs:0.6, QJs:0.8, JTs:0.8, T9s:0.6, 98s:0.4, 87s:0.3, AQo:0.5"),
     },
     # the small blind against the big blind's 3bet to 10bb (3bb open): gtopreflop.com's raked solve folds
@@ -470,9 +479,13 @@ BTN_VS_SB_3BET = {
 
 
 # ---------- 3bettor facing a 4bet ----------
+# The one published response to a 4bet found (GTO Gecko's library export, 5% capped at 4bb: the big blind's
+# 3bet range against the button's 24bb 4bet, hero's As5s removed) folds 46.9%, calls 29.3% and jams 23.8%;
+# the chart there (re-priced by the advice: its default 4bet is 27.6bb) played 45.6 / 38.6 / 15.9 with the
+# same cards removed: the total matches, the solve jams more of QQ, AK and JJ. Here 45.6 / 34.0 / 20.4.
 VS_4BET = {
-    "jam": R("KK+, QQ:0.6, AKs, AKo:0.5, A5s:0.3"),
-    "call": R("QQ:0.4, JJ, TT:0.6, 99:0.3, AKo:0.5, AQs, AJs:0.5, KQs:0.5, A5s:0.3, A4s:0.3, AQo:0.3"),
+    "jam": R("KK+, QQ:0.8, AKs, AKo:0.8, JJ:0.3, A5s:0.4"),
+    "call": R("QQ:0.2, JJ:0.7, TT:0.6, 99:0.3, AKo:0.2, AQs, AJs:0.5, KQs:0.5, A5s:0.2, A4s:0.3, AQo:0.3"),
 }
 # cold-facing a 3bet (hero neither opener nor 3bettor)
 COLD_VS_3BET = {   # the 3bet came over an early open (a tight 3bet)

@@ -959,11 +959,19 @@ def _call_realization(hero: str, raiser: str, n_raises: int, ranges: Dict[str, n
 # played without its card). Re-solved with the river dealt and played (scripts/pf_fidelity.py, docs/
 # preflop_research.md section 7), callers in single-raised pots realize more with connectors and gappers
 # (65s +0.23, T8o and 54s +0.15, T9s +0.11, J8s +0.20) and small pairs (22 +0.08 to +0.20), and less with
-# offsuit aces (AJo -0.17); about half that in 3bet pots. _river_fix is that correction smoothed on hand
-# shape (the aces' shrunk from 8 flops' -0.17 to -0.05: at -0.10 the big blind at 5%/4bb folded A2o-A8o
-# but for 3bets), scaled by RIVER_FIX per number of raises called. Used only to rank re-priced calls
-# (_rerank), whose number the price sets.
+# offsuit aces (AJo -0.17); about half that in 3bet pots. Suited high cards gain too (KTs +0.14, A5s
+# +0.12: the flush draw is paid on the river the fast model plays blind). _river_fix is that correction
+# smoothed on hand shape: connectors and gappers up to J-high +0.15, 22-66 +0.10, other suited hands
+# +RIVER_FIX_SUITED, other offsuit hands RIVER_FIX_OFFSUIT (the aces' shrunk from 8 flops' -0.17 to -0.05:
+# at -0.10 the big blind at 5%/4bb folded A2o-A8o but for 3bets), scaled by RIVER_FIX per number of raises
+# called. Used only to rank re-priced calls (_rerank), whose number the price sets. Until 2026-10 only
+# the offsuit aces had theirs and suited non-connectors none: at 5%/4bb the big blind then kept Q9o 100%
+# (gtopreflop.com 27%) and cut K2s to 60% (K2s-K9s 95%, published 100%); the suited +0.10 and every
+# offsuit non-connector at -0.05 give Q9o 33%, K2s-K9s 100%, K9o/KTo 73/69% and K7o/K8o folds (no
+# published figure for those), the 22 spots 1.03 -> 1.02 points (docs/preflop_research.md section 8).
 RIVER_FIX = {1: 1.0, 2: 0.5}
+RIVER_FIX_SUITED = 0.10
+RIVER_FIX_OFFSUIT = -0.05
 _RIVER_FIX = None
 
 
@@ -978,10 +986,10 @@ def _river_fix() -> np.ndarray:
             hi, lo = rk.index(c[0]), rk.index(c[1])
             if hi == lo:
                 out[i] = 0.10 if hi <= rk.index("6") else 0.0
-            elif c[0] == "A":
-                out[i] = -0.05 if c[2] == "o" else 0.0
             elif hi <= rk.index("J") and hi - lo <= 2:
                 out[i] = 0.15
+            else:
+                out[i] = RIVER_FIX_SUITED if c[2] == "s" else RIVER_FIX_OFFSUIT
         _RIVER_FIX = out
     return _RIVER_FIX
 
@@ -1700,7 +1708,8 @@ class Advisor:
         implied = lambda b, n=1: call / np.maximum(pot + call + _IMPLIED_W * max(b, 0.0) * np.sqrt(n), call + 1e-9)
         need_v = need + implied(behind, max(len(opp), 1)) - implied(behind_std, max(len(opp_std), 1))
         more = sorted(opp) != sorted(opp_std)
-        reprice = abs(need - need_std) >= PRICE_TOL or abs(depth) >= DEPTH_TOL or pool or raked
+        reprice = (abs(need - need_std) >= PRICE_TOL or abs(depth) >= DEPTH_TOL or pool or raked
+                   or (more and st.n_raises >= 1 and bool(opp_std)))
         if not (more or reprice):
             return full
         raise_c = full.get("raise", np.zeros(N_COMBOS))
@@ -1786,6 +1795,17 @@ class Advisor:
                 if pool:
                     better = better | (np.nan_to_num(eq, nan=0.0) > np.nan_to_num(eq_std, nan=0.0) + 1e-6)
                 new = np.where(better, np.maximum(base, add), np.minimum(base, np.maximum(cut, raise_n)))
+                if more and not pool and st.n_raises >= 1 and opp_std:
+                    # more players in than the chart's: every call is re-drawn by its equity against all of
+                    # them at the chart's own bar (the realization that makes its weakest continuing hand break
+                    # even), not only added to or cut from the chart's calls. Equity shared three ways is
+                    # bunched, and the chart's calls (built on heads-up equity) aren't a floor: Poker Academy's
+                    # NL200 solve has the big blind calling 16.1% over a button open and a small-blind call at a
+                    # 20% price, against 29.0% heads-up at 27.3%; adding to the chart's calls had it at 44.5%
+                    # (5% capped at 4bb), the re-draw 15.0%.
+                    redraw = np.clip(0.5 + (eq * realize - need_v) / PRICE_BLEND, 0.0, 1.0)
+                    redraw[np.isnan(redraw)] = 0.0
+                    new = np.maximum(redraw, raise_n)
                 if eq_r is not None:
                     new = _rerank(new, base, raise_n, eq_r, w, better)
                 deep =(f", {abs(depth):g}bb {'deeper' if depth > 0 else 'shallower'} than the charts "

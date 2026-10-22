@@ -2,7 +2,7 @@
 players through the charts and their adjustments, and flag errors, frequencies that don't sum to 1,
 AA/KK folding, 72o continuing, and a hand continuing less often than one it dominates. -v prints each line's continue rate.
 
-    python scripts/preflop_sweep.py [-v]
+    python scripts/preflop_sweep.py [-v] [--rake 0.05 4]     # --rake: rate and cap (bb) the table plays with
 """
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -14,9 +14,13 @@ from gto.advisor import parse_cards
 idx = lambda h: COMBO_INDEX[tuple(sorted(parse_cards(h)))]
 AA, KK, T72, QQ = idx("AhAd"), idx("KhKd"), idx("7h2d"), idx("QhQd")
 R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
+RAKE = None
+if "--rake" in sys.argv:
+    _i = sys.argv.index("--rake")
+    RAKE = (float(sys.argv[_i + 1]), float(sys.argv[_i + 2]))
 issues, table = [], []
 def check(n, label, line, hero, stack=100):
-    T = pf.Table(pf.SEATS[n])
+    T = pf.Table(pf.SEATS[n], rake=RAKE)
     st = replay_hand(T, stack, {"preflop": line}, 1)[0]
     if st.closed or st.to_act != hero:
         issues.append(f"{n}h {label}: not hero's turn ({st.to_act})"); return

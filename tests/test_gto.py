@@ -438,13 +438,15 @@ class TestPreflop(unittest.TestCase):
 
     def test_5bet_jam_priced_at_table_depth(self):
         """Facing a 5bet jam at 40bb deep the 4bettor calls QQ, JJ and AKo (it needs ~27% equity, not
-        the 41% a 100bb jam would ask); at 100bb it folds them."""
+        the 41% a 100bb jam would ask); at 100bb it folds JJ and mostly AKo (QQ, with ~42% against the jam
+        range since it holds JJ and more QQ/AK, calls)."""
         R_ = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
         pre = [R_("UTG", "raise", 2.5), R_("HJ", "fold"), R_("CO", "fold"), R_("BTN", "raise", 7.5),
                R_("SB", "fold"), R_("BB", "fold"), R_("UTG", "raise", 18), R_("BTN", "all-in")]
-        for depth, lo, hi in ((40, 0.9, 1.0), (100, 0.0, 0.1)):
+        for depth, want in ((40, {"QQ": (0.9, 1.0), "JJ": (0.9, 1.0), "AKo": (0.9, 1.0)}),
+                            (100, {"QQ": (0.8, 1.0), "JJ": (0.0, 0.1), "AKo": (0.0, 0.4)})):
             s = pf.strategy_for("UTG", pre, pf.Table(pf.SEATS[6], depth=depth))
-            for h in ("QQ", "JJ", "AKo"):
+            for h, (lo, hi) in want.items():
                 c = float(s["call"][parse_range(h) > 0].mean())
                 self.assertTrue(lo <= c <= hi, (depth, h, c))
         # an all-in with its size given is priced at that size whatever the table depth
@@ -835,7 +837,10 @@ class TestAdvisor(unittest.TestCase):
         for h in ("AsAd", "KsKd", "QsQd", "AhKd", "AhKh"):
             r = adv.advise({"players": 6, "hero": "UTG", "hole": h, "board": "", "stack": 100, "preflop": pre})
             self.assertAlmostEqual(float(s["call"][ix(h)]), r["actions"][0]["freq"], delta=0.02, msg=h)
-        self.assertEqual(float(s["call"][ix("QsQd")]), 0.0)
+        # JJ folds; QQ (~42% against the jam, needing 41%) calls since the jam holds JJ and
+        # more QQ/AK (VS_4BET, fit to GTO Gecko's export)
+        self.assertEqual(float(s["call"][ix("JsJd")]), 0.0)
+        self.assertGreater(float(s["call"][ix("QsQd")]), 0.5)
 
     def test_thin_line_tops_up_from_prior_range(self):
         """An opener calling a cold 4bet: the chart calls only 6.8 combos even from scratch, so filling with
@@ -1005,7 +1010,8 @@ class TestTableSizes(unittest.TestCase):
         # (BB's flop call keeps the hands that would have raised at SLOWPLAY, so its river lead is no longer
         # mostly air: the two continue about equally, 45% and 43%, against 64% each before the joint bar)
         # (were 45 / 43; BB's flop overcall now keeps a quarter of the first caller's share, advisor.OVERCALL, so
-        # its range is the stronger one and keeps more of it: 60 / 21)
+        # its range is the stronger one and keeps more of it: 60 / 21; the preflop overcall re-drawn by equity
+        # against both narrows it further)
         self.assertLess(max(bb, co), 70)
         self.assertGreater(bb, co)
         # One range: the same as keeping its top share.
@@ -2738,12 +2744,12 @@ class TestPublishedPreflopReferences(unittest.TestCase):
         self.assertEqual(bad, [])
 
     def test_raked_hand_facts(self):
-        # through the advice at the solve's rake (the re-priced calls); Q9o is the known miss: the realization
-        # model keeps it (the published raked solve defends it 27%, at about zero EV)
+        # through the advice at the solve's rake (the re-priced calls, ranked by realized equity with the
+        # river correction: Q9o 33% against the published 27%, which it kept fully before suited hands had theirs)
         from tests.preflop_refs import RAKED_HANDS, measure_raked_hand
         bad = [(h[0], round(v, 3)) for h in RAKED_HANDS
                if not h[5] - 1e-9 <= (v := measure_raked_hand(h)) <= h[6] + 1e-9]
-        self.assertEqual([b for b in bad if not b[0].startswith("BB defends Q9o")], [])
+        self.assertEqual(bad, [])
 
 
 class TestRake(unittest.TestCase):
