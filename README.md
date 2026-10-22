@@ -179,15 +179,26 @@ to your move is nearly instant; in a 3-way pot your own solve too once you've ac
 for their hand; before that the advisor from their seat: a 3-way solve where it applies, else the heuristic's pure
 pick). They play GTO whatever the Opponents setting (hidden while practising, with the other solver-only controls).
 On your turn the spot is solved in the background so your move can be graded: until it is, the coach and the action
-dock say "Solving your spot…" and the (large) action buttons are disabled. Right after each decision the coach shows
+dock say "Solving your spot…" and the (large) action buttons are disabled; each shows its key (F fold, C or X check
+or call, 1-3 the sizes, R a size of your own, A all-in). Once it is solved the page looks ahead while you decide: the
+line where you check or call is played on (the opponents' replies drawn as they will be, the next street dealt) up to
+the next request that takes a solve, your own next spot or an opponent's move on a new street, and its answer is
+used if you take that line, so the wait for it goes into your thinking time (about 1.5 s less a wait with a quick
+1.5 s decision, at most 3.6 s against 5.3 s). A local server stops a look-ahead your move made useless; the
+browser's solver can't stop one, so there it looks ahead only at Fast and when the solver checks or calls your hand
+half the time or more. Right after each decision the coach shows
 its verdict (Best move, Good, Inaccuracy, Mistake) in colour, the EV it gave up and the solver's mix as a bar with
 its frequencies; **Details** opens why and each action's EV (the choice is remembered), and from there **Show the
 solver's full analysis** opens the usual advice panel for your last decision (never on your turn). At the end the
 opponents' cards are shown at showdown with your result, the verdict on your last decision and the hand's
-decisions with the EV each gave up, and **Next hand** (N) takes the action buttons' place. The score on one line
+decisions with the EV each gave up, and **Next hand** (N) takes the action buttons' place (N does nothing mid-hand). The score on one line
 (hands, how often your action was in the solver's strategy, average EV given up per decision, chips won; **Reset**)
-is kept in the browser. On a phone the coach's verdict comes straight under the table (the table and the dock
-already say whose turn it is). Folding ends the hand for you; Undo and replaying a decision are off while
+is kept in the browser, with your last 60 decisions: **Review mistakes** beside it lists the six of them that gave up
+the most EV (then the rarest in the solver's mix; preflop has no EVs), each with its hand number, cards and street,
+and a click opens that spot's board, the action before you and its verdict. On a phone the coach's verdict comes
+straight under the table (the table and the dock already say whose turn it is), and the action dock carries it in
+one line (the verdict, the EV it gave up, the solver's top choice; the result once the hand is over) that a tap
+scrolls to the full card; the line is always there, so the dock never changes height. Folding ends the hand for you; Undo and replaying a decision are off while
 practising. The page loads `practice.js` the first time Practice is turned on.
 
 ## Use from the shell

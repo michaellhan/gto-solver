@@ -204,9 +204,10 @@
   body.practice #tableHint, body.practice #editCards, body.practice #timeline > button, body.practice .shortcut, body.practice #pCards,
   body.practice #copyhand, body.practice #newhand, body.practice .prompt .ask, body.practice .acts.solver::before { display: none !important; }
   body.practice .acts button { min-height: 54px; font-size: 15px; max-width: none; }
-  @media (min-width: 561px) { body.practice .acts button { min-width: 0; flex: 1 1 0; padding: 8px 18px 8px 12px; } }
+  @media (min-width: 561px) { body.practice .acts button { min-width: 0; flex: 1 1 auto; padding: 8px 26px 8px 12px; } }   /* (one row where they fit, else two: a label never runs under its key) */
   @media (max-width: 560px) { body.practice #solvectl { display: none; } }   /* (the header on one line) */
   body.practice .acts.wait button { opacity: .4; }
+  body.practice .acts button kbd { top: 5px; right: 5px; font-size: 11px; line-height: 15px; padding: 0 4px; color: var(--muted); border-color: var(--line2); }
   #actionArea .nexth { display: block; width: 100%; min-height: 54px; font-size: 16px; font-weight: 700; background: var(--accent); color: #1a1200; border-color: var(--accent); }
   #actionArea .nexth:hover { filter: brightness(1.08); }
   #actionArea .nexth kbd { color: #1a1200; border-color: rgba(0,0,0,.25); }
@@ -261,8 +262,22 @@
   .cx-stats { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
   .cx-stats b { color: var(--text); font-size: 14px; }
   .cx-stats .link { margin-left: auto; }
-  /* a phone: the table and the dock already say whose turn it is, so the verdict comes straight under the table */
-  @media (max-width: 900px), (max-height: 559px) { .cx-now:not(.err) { display: none; } .cx-now:not(.err) + .cx-fb { margin-top: 0; } }
+  .cx-rev { margin-top: 8px; }
+  .cx-rev li.pick { cursor: pointer; } .cx-rev li.pick:hover, .cx-rev li.pick.on { background: var(--line); }
+  .cx-rev .hole span { margin-right: 2px; font-weight: 600; }
+  .cx-rev li.spot { display: block; background: none; padding: 2px 0 6px; }
+  .cx-rev li.spot .cx-fb { margin-top: 6px; }
+  /* a phone: the table and the dock already say whose turn it is, so the verdict comes straight under the table,
+     and the dock carries it in one line (the coach is often below the fold); the line is always there, so the
+     dock never changes height */
+  .pxstrip { display: none; }
+  @media (max-width: 900px), (max-height: 559px) {
+    .cx-now:not(.err) { display: none; } .cx-now:not(.err) + .cx-fb { margin-top: 0; }
+    body.practice .pxstrip { display: flex; align-items: baseline; gap: 6px; width: 100%; min-height: 0; height: 30px; margin: -2px 0 8px; padding: 5px 10px;
+      overflow: hidden; white-space: nowrap; text-align: left; font-size: 13px; background: var(--panel2); border: 1px solid var(--line); border-left: 4px solid var(--c, var(--line)); border-radius: 8px; color: var(--text); }
+    .pxstrip > * { flex: none; } .pxstrip > .fit { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .pxstrip .go { margin-left: auto; color: var(--faint); font-size: 16px; line-height: 1; }
+  }
 
   /* ---- advice */
   .conv { font-size: 11px; font-weight: 600; border-radius: 999px; padding: 1px 8px; border: 1px solid currentColor; white-space: nowrap; }
@@ -540,6 +555,7 @@
     </section>
 
     <section class="panel dock" id="pAction">
+      <button class="pxstrip" id="pxStrip" title="Show the coach's verdict"></button>
       <div class="err" id="err"></div>
       <div id="actionArea"></div>
     </section>
@@ -1261,7 +1277,8 @@ async function analyze(sim) {
     if (bar) bar.style.width = Math.min(97, t / est * 100) + "%";
   }, 100);
   let res;
-  try { res = await callAdvise(JSON.parse(key)); }
+  // (practice: the answer the look-ahead already asked for, else once its request is out of the way)
+  try { res = (practicing() && await window.Practice.fromAhead(key)) || await callAdvise(JSON.parse(key)); }
   catch (e) { res = { error: "Request failed: " + e }; }
   clearInterval(tick);
   if (gen !== solveGen) return;                                         // cancelled here; a newer solve owns the panel
@@ -1714,7 +1731,7 @@ document.addEventListener("keydown", (e) => {
   if (b) { e.preventDefault(); b.click(); }
 });
 document.getElementById("newhand").onclick = () => {
-  if (practicing()) return window.Practice.next();
+  if (practicing()) { if (simulate().handOver) window.Practice.next(); return; }   // (practice: N is Next hand; a stray N mid-hand doesn't throw it away)
   if (review) { review.cancel = "drop"; cancelSolve(); }
   S = { ...fresh(S.players), hero: S.hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanAdv(S, POS), ...cleanStacks(S, POS) }; selSlot = null; showDeck = false; editSetup = false; pendingRank = null; save(); resetAdvice(); renderAll();
 };
