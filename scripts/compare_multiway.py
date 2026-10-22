@@ -4,6 +4,9 @@ multiway play, on 3-way pots: CO opens, BTN and BB call (6-max, 100bb), earlier 
   python scripts/compare_multiway.py --spots          # per hand: the rules' pick and EVs against the solve's
   python scripts/compare_multiway.py --facts          # range-level facts (3-way vs heads-up, bluffs, shared defence)
   python scripts/compare_multiway.py --flop-study     # the opener's flop c-bet into two callers (GTO Wizard's 3-way study)
+      --rules-checks   # ... the blinds' checks narrowed by the betting rules first (what the advice plays)
+      --full-street    # ... solved from the SB's action, read where both blinds checked (and the rules' check ranges against it)
+      --raise-frac 33  # ... raises of a third of the pot (the study's)
   python scripts/compare_multiway.py --turn-reference # turn: the solve (river dealt out) and the rules against a solve betting the river
   python scripts/compare_multiway.py --narrowing      # the turn's ranges after a 3-way flop: rules vs through the flop solve
 
@@ -183,9 +186,10 @@ def STUDY_RANGES():
 def _cfg(args):
     from gto.multiway_solver import MWConfig
     bet = {"flop": [float(x) / 100 for x in args.flop_sizes.split(",")], "turn": 0.5, "river": 0.5}
+    kw = {} if args.raise_frac is None else {"raise_frac": args.raise_frac / 100}
     if args.later == "deal":
-        return MWConfig(bet=bet)
-    return MWConfig(later="buckets", buckets=args.buckets, bucket_river_step=args.step, bet=bet)
+        return MWConfig(bet=bet, **kw)
+    return MWConfig(later="buckets", buckets=args.buckets, bucket_river_step=args.step, bet=bet, **kw)
 
 
 def flop_study(args):
@@ -201,6 +205,7 @@ def flop_study(args):
     R2 = A.preflop_ranges(pre2, pf.Table(pf.SEATS[6]), 100.0)
     if args.study_ranges:
         R, R2 = STUDY_RANGES()
+    R0, R20 = R, R2
     rng = np.random.default_rng(args.seed)
     flops = []
     while len(flops) < args.flops:
@@ -208,16 +213,70 @@ def flop_study(args):
         flops.append(f)
     cfg = _cfg(args)
     tot3, tot2, sz3, sz2 = [], [], [], []
+    def reach_at(s, target, i):
+        """Player i's strategy product down to `target` along checks (the full-street solve's root to the opener)."""
+        node, out = s.root, np.ones(s.hands.n)
+        while node is not target:
+            k = node.names.index("check")
+            if node.player == i:
+                out = out * node.avg_strategy()[0][k]
+            node = node.children[k]
+        return out
+
+    def checked_to(s, n):
+        """(--full-street) The opener's node after the blinds' checks in a solve from the first blind's action, and the
+        share of the time the blinds check through to it."""
+        node, ch = s.root, 1.0
+        for _ in range(n - 1):
+            i = node.names.index("check")
+            r = s.reach0[node.player, 0]
+            ch *= float(node.avg_strategy()[0][i] @ r / r.sum())
+            node = node.children[i]
+        return node, ch
+
+    def rules_checks(f, rs, pre_, who):
+        """The ranges after the blinds' checks narrowed by the betting rules, as the advisor narrows them in front of the
+        opener's solve when it has no solve of the blinds' actions."""
+        out = dict(rs)
+        st = A.replay_hand(pf.Table(pf.SEATS[6]), 100.0, {"preflop": pre_, "flop": [{"pos": p, "action": "check"} for p in who]},
+                           2)[1]
+        A._narrow_street(out, f, st, 100.0)
+        return out
+
+    def tv(a, b):
+        return 0.5 * float(np.abs(a / a.sum() - b / b.sum()).sum())
+
+    tvs = []
     for f in flops:
-        s3 = MultiwaySolver(f, [R["SB"], R["BB"], R["UTG"]], 7.5, 97.5, to_act=2, pending={2}, cfg=cfg).run(iters=args.iters)
-        fr3 = s3.range_freqs()
+        if args.rules_checks:
+            R = rules_checks(f, R0, pre, ("SB", "BB"))
+            R2 = rules_checks(f, R20, pre2, ("BB",))
+        if args.full_street:
+            s3 = MultiwaySolver(f, [R["SB"], R["BB"], R["UTG"]], 7.5, 97.5, cfg=cfg).run(iters=args.iters)
+            node3, chk3 = checked_to(s3, 3)
+            fr3 = s3.range_freqs(node3, s3.reach0[2, 0])
+        else:
+            s3 = MultiwaySolver(f, [R["SB"], R["BB"], R["UTG"]], 7.5, 97.5, to_act=2, pending={2}, cfg=cfg).run(iters=args.iters)
+            fr3 = s3.range_freqs()
         b3 = 1 - fr3["check"]
         tot3.append(b3)
         sz3.append(fr3)
         line = f"{cards_str(f)}: opener bets {b3 * 100:.1f}% into two"
+        if args.full_street:
+            line += f" (the blinds check {chk3 * 100:.0f}%)"
+            # the blinds' ranges where they checked to the opener, against what the betting rules leave them
+            ru = rules_checks(f, R0, pre, ("SB", "BB"))
+            d = [tv(s3.expand(s3.reach0[i, 0] * reach_at(s3, node3, i)), ru[p]) for i, p in ((0, "SB"), (1, "BB"))]
+            tvs.append(d)
+            line += f" [the rules' check ranges off by SB {d[0]:.2f}, BB {d[1]:.2f}]"
         if not args.three_only:
-            s2 = MultiwaySolver(f, [R2["BB"], R2["UTG"]], 5.5, 97.5, to_act=1, pending={1}, cfg=cfg).run(iters=args.iters)
-            fr2 = s2.range_freqs()
+            if args.full_street:
+                s2 = MultiwaySolver(f, [R2["BB"], R2["UTG"]], 5.5, 97.5, cfg=cfg).run(iters=args.iters)
+                node2, _ = checked_to(s2, 2)
+                fr2 = s2.range_freqs(node2, s2.reach0[1, 0])
+            else:
+                s2 = MultiwaySolver(f, [R2["BB"], R2["UTG"]], 5.5, 97.5, to_act=1, pending={1}, cfg=cfg).run(iters=args.iters)
+                fr2 = s2.range_freqs()
             b2 = 1 - fr2["check"]
             tot2.append(b2)
             sz2.append(fr2)
@@ -226,6 +285,9 @@ def flop_study(args):
     print(f"mean over {len(flops)} flops: 3-way bets {np.mean(tot3) * 100:.1f}%"
           + (f", heads-up {np.mean(tot2) * 100:.1f}%" if tot2 else "")
           + f" (GTO Wizard's study: {FLOP_STUDY['3-way'] * 100:.0f}% and {FLOP_STUDY['heads-up'] * 100:.0f}%, several sizes)")
+    if tvs:
+        print(f"  the betting rules' check ranges against the solve's (total variation): SB {np.mean([d[0] for d in tvs]):.2f}, "
+              f"BB {np.mean([d[1] for d in tvs]):.2f}")
     for nm, sz in (("3-way", sz3), ("heads-up", sz2)):
         if sz:
             print(f"  {nm} by action: " + ", ".join(f"{k} {np.mean([d[k] for d in sz]) * 100:.1f}%" for k in sz[0]))
@@ -447,10 +509,15 @@ def main():
     ap.add_argument("--flop-study", action="store_true")
     ap.add_argument("--hu-check", action="store_true")
     ap.add_argument("--three-only", action="store_true")
+    ap.add_argument("--rules-checks", action="store_true",
+                    help="--flop-study: the blinds' checks narrow their ranges by the betting rules first (as the advisor)")
+    ap.add_argument("--full-street", action="store_true",
+                    help="--flop-study: solve from the first blind's action and read the opener where both checked")
     ap.add_argument("--study-ranges", action="store_true")
     ap.add_argument("--later", default="buckets", choices=("deal", "buckets"))
     ap.add_argument("--buckets", type=int, default=16)
     ap.add_argument("--flop-sizes", default="33", help="the flop's bet sizes, %% pot (comma separated)")
+    ap.add_argument("--raise-frac", type=float, default=None, help="raises to the bet plus this %% of the pot after calling")
     ap.add_argument("--step", type=int, default=1)
     ap.add_argument("--iters", type=int, default=150)
     ap.add_argument("--trials", type=int, default=600)

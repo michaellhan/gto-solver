@@ -981,20 +981,26 @@ the tree traversal to C or Rust or a GPU, which makes full flop trees feasible.
 * 3-way solves play two flop bet sizes (33 and 75%), one turn and river size and one raise; they start from the node
   in front of you. This street's earlier actions and earlier 3-way streets narrow the ranges through the solve your
   advice there came from, followed as far as it had settled (advisor.trust_of), else by the betting rules: against
-  the turn ranges a 400-iteration flop solve leaves (`--narrowing`, four flops, the blinds check, UTG bets, both
-  call) the rules are 0.52 off (total variation; the BB keeps 140-170 combos for its 30-50), the 60-iteration
-  solve's walk 0.43 and the 150-iteration one 0.22. Without such a solve an earlier street stays with the rules:
-  solving it from its start (Advisor.mw_prior_solve) gets 40-65 iterations in native Accurate's 12 s, 4-6% of the
-  pot from equilibrium, followed 0-20%, so it is off. Everyone plays the shortest stack behind (a deeper player's all-in there is shown and played
-  as a bet to that stack). Below the street
-  solved hands are bucketed (all of a bucket plays alike there) and the river under a flop is played without its
-  card, as heads-up Fast. Checked to the opener after UTG opens and both blinds call (`--flop-study`, ten random
-  flops, the blinds' full ranges) the flop solve bets 40% into two and 54% heads-up (47% and 54% with ranges shaped
-  like the study's; one 33% size 41/62 and 47/61, three sizes as the study's 39/53 and 46/53); GTO Wizard's 3-way
-  study (its own ranges and flops) has 66% and 77%. The sizes don't close it: as in the heads-up solver (60, 57 and
-  53% on one size, two, and Accurate's tree here) a second size takes bets from the small one. Playing the river
-  with its card (heads-up, per combo, seven flops) bets 3 points more (64% against 60%); the ranges are worth 6
-  points 3-way; the rest is the study's ranges and flops, which aren't published.
+  the turn ranges a 400-iteration flop solve leaves (`--narrowing`, four flops, the blinds check, UTG bets a third,
+  both call) the rules are 0.44 off (total variation; were 0.52, the BB overcalling with 140-170 combos for the
+  solve's 30-50, now ~55: an overcall keeps advisor.OVERCALL, a quarter, of the first caller's share; 0.52 -> 0.46 on
+  four other flops), the 60-iteration solve's walk 0.43 and the 150-iteration one 0.22. The blinds' flop checks in
+  front of the opener narrow by the rules too, now keeping CHECK_SOFT (0.7, was 0.3) of what the rules have betting:
+  against a solve from the SB's action (ten flops) their check ranges were 0.21 / 0.14 off (SB / BB), now 0.15 /
+  0.05. Without such a solve an earlier street stays with the rules: solving it from its start
+  (Advisor.mw_prior_solve) gets 40-65 iterations in native Accurate's 12 s, 4-6% of the pot from equilibrium,
+  followed 0-20%, so it is off. Everyone plays the shortest stack behind (a deeper player's all-in there is shown
+  and played as a bet to that stack). Below the street solved hands are bucketed (all of a bucket plays alike there)
+  and the river under a flop is played without its card, as heads-up Fast. The opener's flop c-bet, UTG open called
+  by both blinds (`--flop-study`, 33/75%): what the advice plays, the blinds' checks narrowed by the rules
+  (`--rules-checks`, five flops), bets 51.5% into two (72.5% with the old check rule), where the street solved from
+  the SB's action bets 49.0% at that node (`--full-street`; the blinds check through 21-98% of the time, 65% on
+  average). With the blinds' full ranges (as if they never lead; ten flops) it bets 40% into two and 54%
+  heads-up. GTO Wizard's 3-way study has 66% and 77%, with its own ranges, 20 weighted flops, the SB leading 9.8%
+  and a 33%-pot raise: with that raise (`--raise-frac 33`) heads-up goes 54 -> 64%, 3-way stays at 40%. The flop
+  sizes don't close the rest (as heads-up, a second size takes bets from the small one); playing the river with its
+  card (heads-up, per combo, seven flops) bets 3 points more (64% against 60%); the ranges are worth 6 points 3-way;
+  rake (5%, 3bb cap) and a 75% turn and river size moved a flop by 0-4 points.
 * Multiway with an all-in player for less, the heuristic pays each side pot to the best hand among the
   players in it, but the betting rules inside its trials don't play for the side pot (an opponent bets
   and calls as if the whole pot were at stake).
