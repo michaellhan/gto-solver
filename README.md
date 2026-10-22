@@ -172,7 +172,9 @@ The hand is kept in the browser between reloads; **New hand** clears it.
 **Practice** in the header plays random hands against GTO opponents (**Exit practice** in the same place goes back
 to the solver), with the player count, stacks (each seat's own, if set), antes, straddle and rake of the setup; a
 showdown pays each side pot to the best hand among the players in it. Your seat is random each hand, or the one
-picked under **Your seat** in the coach panel; every other seat's hand and the board are dealt up front, and the
+picked in the row of seats under **Your seat** at the top of the coach panel (Random first; with Random, this hand's
+seat is outlined; arrow keys move along the row, Enter or Space picks); the table marks your seat "you" and the
+seat to act (an opponent's glows while it thinks); every other seat's hand and the board are dealt up front, and the
 other seats move by themselves ("BTN is thinking…" while they do): preflop from the chart for their actual hand,
 after the flop drawn from the solve's mix for it (heads-up, the same solve that answers your own spot, so a reply
 to your move is nearly instant; in a 3-way pot your own solve too once you've acted on the street, read off its tree
@@ -186,16 +188,21 @@ the next request that takes a solve, your own next spot or an opponent's move on
 used if you take that line, so the wait for it goes into your thinking time (about 1.5 s less a wait with a quick
 1.5 s decision, at most 3.6 s against 5.3 s). A local server stops a look-ahead your move made useless; the
 browser's solver can't stop one, so there it looks ahead only at Fast and when the solver checks or calls your hand
-half the time or more. Right after each decision the coach shows
-its verdict (Best move, Good, Inaccuracy, Mistake) in colour, the EV it gave up and the solver's mix as a bar with
-its frequencies; **Details** opens why and each action's EV (the choice is remembered), and from there **Show the
+half the time or more. Until your first decision a dashed card says where
+the verdict will be; right after each decision the coach shows
+its verdict (Best move, Good, Inaccuracy, Mistake) in colour on a card tinted to match, the EV it gave up and the
+solver's mix as a bar (each action of 20% or more named in it) with its frequencies; **Details** opens why and each action's EV (the choice is remembered), and from there **Show the
 solver's full analysis** opens the usual advice panel for your last decision (never on your turn). At the end the
 opponents' cards are shown at showdown with your result, the verdict on your last decision and the hand's
-decisions with the EV each gave up, and **Next hand** (N) takes the action buttons' place (N does nothing mid-hand). The score on one line
+decisions with the EV each gave up, and **Next hand** (N) takes the action buttons' place (N does nothing mid-hand). The score
 (hands, how often your action was in the solver's strategy, average EV given up per decision, chips won; **Reset**)
-is kept in the browser, with your last 60 decisions: **Review mistakes** beside it lists the six of them that gave up
+is kept in the browser, with your last 60 decisions; on a wide screen the eight most recent are listed under it,
+newest first, each opening its spot like a mistake below. **Review mistakes** under the score (with how many) lists the six of them that gave up
 the most EV (then the rarest in the solver's mix; preflop has no EVs), each with its hand number, cards and street,
-and a click opens that spot's board, the action before you and its verdict. On a phone the coach's verdict comes
+and a click (or Enter) opens that spot's board, the action before you and its verdict. On a wide screen the Hand
+panel scrolls on its own while practising, its newest line in view, so the table and the action buttons stay on
+screen; the action buttons wrap to a second row rather than cut a label short, and the one for a size of your own
+reads "Bet" or "Raise to" over "your size…". Each new hand folds the setup back to its one-line summary. On a phone the coach's verdict comes
 straight under the table (the table and the dock already say whose turn it is), and the action dock carries it in
 one line (the verdict, the EV it gave up, the solver's top choice; the result once the hand is over) that a tap
 scrolls to the full card; the line is always there, so the dock never changes height. Folding ends the hand for you; Undo and replaying a decision are off while

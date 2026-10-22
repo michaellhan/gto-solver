@@ -320,13 +320,15 @@ test("an import's toast (Review whole hand) goes when practice starts, and a rev
 
 test("practice setup and states: a fixed or random seat, the buttons wait for the solve, GTO opponents, the full analysis on request", async () => {
   const p = await practicePage(13, { "gto-opponents": "pool" });
-  // a fixed seat: every deal from it, kept in the browser; Random again
-  const sel = p.byId("pxSeat");
-  assert.match(sel.innerHTML, /<option value="random">Random<\/option>.*<option value="BTN">/);
-  sel.value = "CO"; sel.onchange(); await flush();
+  // a fixed seat: every deal from it, kept in the browser; Random again. The picker is a row of the site's
+  // buttons (a radio group), not the browser's select: a click on one picks it
+  const sel = p.byId("pxSeat"), pick = (seat) => sel.onclick({ target: { closest: () => ({ dataset: { seat } }) } });
+  assert.match(sel.innerHTML, /<button type="button" role="radio" class="rnd" data-seat="random"[^>]*>Random<\/button>.*data-seat="BTN"[^>]*>BTN<\/button>/);
+  assert.doesNotMatch(sel.innerHTML, /<select|<option/);
+  pick("CO"); await flush();
   for (let k = 0; k < 3; k++) { assert.equal(p.S.hero, "CO"); p.run("Practice.next()"); await flush(); }
   assert.equal(JSON.parse(p.storage.get("gto-practice-seat")), "CO");
-  sel.value = "random"; sel.onchange(); await flush();
+  pick("random"); await flush();
   const seats = new Set(); for (let k = 0; k < 8; k++) { p.run("Practice.next()"); await flush(); seats.add(p.S.hero); }
   assert.ok(seats.size >= 3, [...seats].join());
   // practice opponents play GTO: the pool setting isn't sent while practising
@@ -434,8 +436,10 @@ test("Review mistakes: your decisions that gave up the most EV across hands, eac
   assert.equal(p.act(passMe(p.sim())), null); p.run("renderAll()");   // (in the mix at the best EV: no mistake)
   assert.match(p.byId("pxStrip").innerHTML, /(Best move|Good)<\/b><span class="muted">preflop · you (called|checked)/);
   let html = p.byId("practiceBar").innerHTML;
-  assert.match(html, /<button class="link" id="pxRev"[^>]*>Review mistakes \(1\)<\/button>/);
+  assert.match(html, /<button class="small rev" id="pxRev"[^>]*>Review mistakes<span class="n">1<\/span><\/button>/);
   assert.doesNotMatch(html, /cx-rev/);
+  // closed, a wide screen lists your recent decisions, newest first
+  assert.match(html, /<div class="cx-recent">.*<li class="pick" data-i="1"[^>]*>.*<li class="pick" data-i="0"/);
   p.run("Practice.state.rev = true; renderAll()");   // (Review mistakes: the fake DOM can't find the bar's buttons)
   html = p.byId("practiceBar").innerHTML;
   assert.match(html, /<ul class="cx-list cx-rev"><li class="pick" data-i="0"[^>]*><span class="st">#1 preflop<\/span>.*fold.*−1.00 bb/);

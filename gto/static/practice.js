@@ -52,7 +52,7 @@
     S.cards[0] = hands[hero][0]; S.cards[1] = hands[hero][1];
     const hole = hands[hero]; delete hands[hero];
     P.hand = { hero, players: S.players, hole, hands, board: deck.slice(0, 5), result: null, log: [] };
-    P.error = ""; store(HAND, P.hand); save(); resetAdvice();
+    P.error = ""; editSetup = false; store(HAND, P.hand); save(); resetAdvice();
     A.moves.clear(); A.key = null; A.gen++;
   }
   // the hand on the page is the one dealt here (not changed by New hand, the setup or a share link)
@@ -216,6 +216,7 @@
     if (cls === "meh") return { k: "meh", label: "Inaccuracy", c: "var(--meh)" };
     return { k: "bad", label: "Mistake", c: "var(--bad)" };
   }
+  const ICON = { best: "★", good: "✓", meh: "?!", bad: "✕", none: "–" };
   const pct = (f) => `${Math.round(f * 100)}%`;
   const evTxt = (x) => `${x > 0 ? "+" : x < 0 ? "−" : ""}${Math.abs(x).toFixed(2)}`;
   function why(e) {
@@ -235,12 +236,12 @@
     if (e.mix && e.mix.length) {
       setColors(e.mix.map(a => a.n));
       const ev = e.mix.some(a => a.ev !== undefined), you = (a) => g && a.n === g.m;
-      mix = `<div class="cx-mix">${e.mix.map(a => `<div style="width:${(a.f * 100).toFixed(1)}%;background:${COLORS(a.n)}" title="${a.n} ${pct(a.f)}"></div>`).join("")}</div>`
-        + `<div class="cx-leg">${e.mix.map(a => `<span class="${you(a) ? "you" : ""}" style="--c:${COLORS(a.n)}">${a.n} <b class="num">${pct(a.f)}</b>${you(a) ? '<span class="tag">you</span>' : ""}</span>`).join("")}</div>`;
+      mix = `<div class="cx-mix">${e.mix.filter(a => a.f >= 0.0005).map(a => `<div style="width:${(a.f * 100).toFixed(1)}%;background:${COLORS(a.n)}" title="${a.n} ${pct(a.f)}">${a.f >= 0.2 ? `<span>${a.n} ${pct(a.f)}</span>` : ""}</div>`).join("")}</div>`
+        + `<div class="cx-leg">${e.mix.map(a => `<span class="${you(a) ? "you" : a.f < 0.005 ? "muted" : ""}" style="--c:${COLORS(a.n)}">${a.n} <b class="num">${pct(a.f)}</b>${you(a) ? '<span class="tag">you</span>' : ""}</span>`).join("")}</div>`;
       if (ev) table = `<div class="cx-acts"><span class="hd">Action</span><span class="hd num">How often</span><span class="hd num">EV</span>`
         + e.mix.map(a => `<span class="n${you(a) ? " you" : ""}" style="--c:${COLORS(a.n)}">${a.n}</span><span class="num${you(a) ? " you" : ""}">${pct(a.f)}</span><span class="num">${a.ev !== undefined ? evTxt(a.ev) + " bb" : ""}</span>`).join("") + `</div>`;
     }
-    return `<div class="cx-fb" style="--c:${v.c}"><div class="head"><span class="verdict">${v.label}</span><span class="what">${e.street} · you <b>${YOU(e.rec)}</b></span>${cost}</div>${mix}`
+    return `<div class="cx-fb" style="--c:${v.c}"><div class="head"><span class="ico" aria-hidden="true">${ICON[v.k]}</span><span class="verdict">${v.label}</span><span class="what">${e.street} · you <b>${YOU(e.rec)}</b></span>${cost}</div>${mix}`
       + `<details class="cx-more"${P.more ? " open" : ""}><summary>Details</summary><div class="why">${why(e)}${g && g.r ? ' <span class="muted">(rough solve: a hint, not a verdict)</span>' : ""}</div>${table}`
       + (past ? "" : `<button class="link" id="pxDetail">${P.detail ? "Hide" : "Show"} the solver's full analysis</button>`) + `</details></div>`;
   }
@@ -263,7 +264,7 @@
     const boardRow = board.length ? `<div class="cx-board">${big(board, true)}</div>` : "";
     let cls = "", t, sub;
     if (P.error) { cls = " err"; t = "Something went wrong"; sub = `<span class="err">${P.error}</span> <button class="link" id="pxRetry">Retry</button>`; }
-    else if (P.status) { t = P.status; sub = `${seat} · ${sim.current || ""}`; }
+    else if (P.status) { t = `<span class="spinner"></span>${P.status}`; sub = `${seat} · ${sim.current || ""}`; }
     else if (sim.toAct === S.hero && sim.cur) {
       const info = sim.cur, toCall = Math.min(info.curBet - info.bets[S.hero], STACK(S.hero) - sim.invested[S.hero] - info.bets[S.hero]);
       const ready = resultKey === JSON.stringify(payload());
@@ -276,7 +277,7 @@
     const h = P.hand, log = h.log || [];
     const shown = r.shown.map(p => `<span class="${r.winners.includes(p) ? "win" : ""}"><b>${SEAT_LABEL(p, S.players)}</b>${big(h.hands[p], true)}</span>`).join("");
     const mineShown = r.shown.length && !r.folded ? `<span class="${r.winners.includes(S.hero) ? "win" : ""}"><b>You</b>${big(h.hole, true)}</span>` : "";
-    let out = `<div class="cx-res"><div><span class="big">${r.folded ? "You folded" : headline(r)}</span><span class="net num ${r.net > 0 ? "pos" : r.net < 0 ? "neg" : ""}">${money(r.net)}</span></div>`
+    let out = `<div class="cx-res ${r.net > 0 ? "won" : r.net < 0 ? "lost" : ""}"><div><span class="big">${r.folded ? "You folded" : headline(r)}</span><span class="net num ${r.net > 0 ? "pos" : r.net < 0 ? "neg" : ""}">${money(r.net)}</span></div>`
       + (r.shown.length ? `<div class="cx-show">${mineShown}${shown}</div>` : "")
       + (r.best ? `<div class="pots">${names(r.winners)} ${r.winners.length > 1 || r.winners[0] === S.hero ? "win" : "wins"} with ${r.best}</div>` : "")
       + (r.pots ? `<div class="pots">${r.pots.map((x, i) => `${i ? "side" : "main"} pot ${fmt(x.amount)}: ${names(x.winners)}`).join(" · ")}</div>` : "") + `</div>`;
@@ -296,8 +297,9 @@
       + `<span title="Decisions the solver's strategy includes (it plays them 15% of the time or more)"><b class="num">${acc}</b> accuracy</span>`
       + `<span title="Average EV given up against the solver's best action, per decision that has an EV (after the flop)"><b class="num">${avg}</b> bb lost / decision</span>`
       + `<span><b class="num ${sc.net > 0 ? "pos" : sc.net < 0 ? "neg" : ""}">${sc.hands ? money(Math.round(sc.net * 100) / 100) : "–"}</b> won</span>`
-      + (P.review.length ? `<button class="link" id="pxRev" aria-expanded="${P.rev}">${P.rev ? "Hide mistakes" : `Review mistakes${mistakes().length ? ` (${mistakes().length})` : ""}`}</button>` : "")
-      + `<button class="link" id="pxReset">Reset</button></div>`;
+      + `</div><div class="cx-tools">`
+      + (P.review.length ? `<button class="small rev" id="pxRev" aria-expanded="${P.rev}">${P.rev ? "Hide mistakes" : "Review mistakes"}${mistakes().length ? `<span class="n">${mistakes().length}</span>` : ""}</button>` : "")
+      + `<button class="small ghost" id="pxReset" title="Reset your practice score and mistakes">Reset</button></div>`;
   }
   // Review mistakes: of your last REVIEW_KEEP decisions, the REVIEW_SHOW that gave up the most EV (then the
   // rarest in the solver's mix: preflop has no EVs), each opening its verdict
@@ -306,25 +308,46 @@
     const bad = P.review.map((e, i) => ({ e, i })).filter(({ e }) => e.g && (lostOf(e) > 0.005 || ["meh", "bad"].includes(verdict(e.g).k)));
     return bad.sort((a, b) => lostOf(b.e) - lostOf(a.e) || a.e.g.f - b.e.g.f || b.i - a.i).slice(0, REVIEW_SHOW);
   }
+  // a review row: hand number and street, your cards and action, the verdict and the EV it gave up; a click opens its spot
+  function reviewRow(e, i) {
+    const v = verdict(e.g);
+    const row = `<li class="pick${P.pick === i ? " on" : ""}" data-i="${i}" tabindex="0" role="button" aria-expanded="${P.pick === i}" title="Show this decision's verdict"><span class="st">#${e.n} ${e.street}</span>`
+      + `<span><span class="hole">${e.hole.map(cardHtml).join("")}</span> ${ACT(e.rec)}</span><span class="pill" style="--c:${v.c}">${v.label}</span>`
+      + `<span class="num ${lostOf(e) > 0.005 ? "neg" : "muted"}">${e.g && e.g.l != null ? (lostOf(e) > 0.005 ? "−" + e.g.l.toFixed(2) + " bb" : "0 bb") : ""}</span></li>`;
+    return row + (P.pick === i ? `<li class="spot"><div class="muted">${SEAT_LABEL(e.seat, S.players)} · ${e.board.length ? e.board.map(cardHtml).join(" ") + " · " : ""}${e.line}</div>${feedback(e, true)}</li>` : "");
+  }
+  // on a wide screen, under the score (the coach's column has the room): your last decisions, newest first
+  const RECENT = 8;
+  function recent() {
+    if (P.rev) return "";
+    const xs = P.review.map((e, i) => ({ e, i })).slice(-RECENT).reverse();
+    return `<div class="cx-recent"><div class="cx-h">Recent decisions</div>` + (xs.length ? `<ul class="cx-list">${xs.map(({ e, i }) => reviewRow(e, i)).join("")}</ul>`
+      : `<div class="cx-empty">Your decisions are listed here as you play, each opening its verdict.</div>`) + `</div>`;
+  }
   function reviewList() {
     const xs = mistakes();
-    if (!P.rev) return "";
-    if (!xs.length) return `<div class="cx-rev muted">No mistakes in your last ${REVIEW_KEEP} decisions so far.</div>`;
-    return `<ul class="cx-list cx-rev">${xs.map(({ e, i }) => { const v = verdict(e.g);
-      const row = `<li class="pick${P.pick === i ? " on" : ""}" data-i="${i}" title="Show this decision's verdict"><span class="st">#${e.n} ${e.street}</span>`
-        + `<span><span class="hole">${e.hole.map(cardHtml).join("")}</span> ${ACT(e.rec)}</span><span class="pill" style="--c:${v.c}">${v.label}</span>`
-        + `<span class="num ${lostOf(e) > 0.005 ? "neg" : "muted"}">${e.g.l != null ? (lostOf(e) > 0.005 ? "−" + e.g.l.toFixed(2) + " bb" : "0 bb") : ""}</span></li>`;
-      return row + (P.pick === i ? `<li class="spot"><div class="muted">${SEAT_LABEL(e.seat, S.players)} · ${e.board.length ? e.board.map(cardHtml).join(" ") + " · " : ""}${e.line}</div>${feedback(e, true)}</li>` : ""); }).join("")}</ul>`;
+    if (!P.rev) return recent();
+    if (!xs.length) return `<div class="cx-empty cx-rev">No mistakes in your last ${REVIEW_KEEP} decisions so far.</div>`;
+    return `<div class="cx-h">Your biggest mistakes · last ${REVIEW_KEEP} decisions</div><ul class="cx-list cx-rev">${xs.map(({ e, i }) => reviewRow(e, i)).join("")}</ul>`;
   }
-  // the seat picker above the panel (static, so a re-render doesn't close it while open): Random or a seat
+  // the seat picker above the panel: a row of seats, Random first (a radio group: arrows move, Enter, Space or a
+  // click picks); built once per table size and only its state changed after, so a re-render keeps its focus
   function seatPicker() {
-    const sel = document.getElementById("pxSeat"), want = ["random", ...POS].join();
-    if (sel.dataset.opts !== want) {
-      sel.innerHTML = `<option value="random">Random</option>` + POS.map(p => `<option value="${p}">${SEAT_LABEL(p, POS.length)}</option>`).join("");
-      sel.dataset.opts = want;
+    const box = document.getElementById("pxSeat"), want = ["random", ...POS].join(), cur = POS.includes(P.seat) ? P.seat : "random";
+    if (box.dataset.opts !== want) {
+      box.innerHTML = ["random", ...POS].map(p => `<button type="button" role="radio" class="${p === "random" ? "rnd" : ""}" data-seat="${p}" title="${p === "random" ? "A random seat each hand" : `Every hand from ${SEAT_LABEL(p, POS.length)}`}">${p === "random" ? "Random" : SEAT_LABEL(p, POS.length)}</button>`).join("");
+      box.dataset.opts = want;
     }
-    sel.value = POS.includes(P.seat) ? P.seat : "random";
-    sel.onchange = () => { P.seat = sel.value; store(SEAT, P.seat); next(); };
+    const bs = box.querySelectorAll ? [...box.querySelectorAll("[data-seat]")] : [];
+    const now = ours() ? S.hero : null;
+    for (const b of bs) { const on = b.dataset.seat === cur; b.setAttribute("aria-checked", on); b.tabIndex = on ? 0 : -1; b.classList.toggle("cur", b.dataset.seat === now); }
+    const pick = (v) => { if (v === cur || !v) return; P.seat = v; store(SEAT, P.seat); next(); };
+    box.onclick = (e) => { const b = e.target.closest && e.target.closest("[data-seat]"); if (b) pick(b.dataset.seat); };
+    box.onkeydown = (e) => {
+      const i = bs.indexOf(e.target), d = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+      if (i < 0 || !d) return;
+      e.preventDefault(); e.stopPropagation(); bs[(i + d + bs.length) % bs.length].focus();
+    };
     const n = document.getElementById("pxHandNo"); n.textContent = `Hand ${P.score.hands + (P.hand && P.hand.result ? 0 : 1)}`;
   }
   // a phone: the coach sits under the table, often below the fold, so the action dock carries one line for it: the
@@ -343,7 +366,7 @@
         + (top && v.k !== "best" ? `<span class="muted fit">· solver: ${top.n} ${pct(top.f)}</span>` : "");
     }
     el.innerHTML = html + `<span class="go">›</span>`;
-    el.style.setProperty && el.style.setProperty("--c", last ? verdict(last.g).c : "var(--line)");
+    el.style.setProperty && el.style.setProperty("--c", r ? (r.net > 0 ? "var(--good)" : r.net < 0 ? "var(--bad)" : "var(--line2)") : last ? verdict(last.g).c : "var(--line)");
     el.onclick = () => { const t = document.querySelector && (document.querySelector("#practiceBar .cx-fb") || document.getElementById("pCoach")); if (t && t.scrollIntoView) t.scrollIntoView({ behavior: "smooth", block: "start" }); };
   }
   function bar(sim) {
@@ -351,9 +374,12 @@
     seatPicker();
     const h = P.hand, r = h && h.result, log = (h && h.log) || [];
     let body = "";
-    if (h) body = r ? summary(r) : now(sim) + (log.length ? feedback(log[log.length - 1]) : "");   // (until you act again)
-    el.innerHTML = body + stats() + reviewList();
+    if (h) body = r ? summary(r) : now(sim) + (log.length ? feedback(log[log.length - 1])   // (until you act again)
+      : `<div class="cx-fb empty">Each decision is graded here once you act: the verdict, the EV it gave up and the solver's mix.</div>`);
+    const html = body + stats() + reviewList();
+    if (el.pxHtml !== html) { el.innerHTML = html; el.pxHtml = html; }   // (unchanged: kept, with its focus and open Details)
     strip(sim);
+    const hp = document.getElementById("pHistory"); if (hp && hp.scrollHeight > hp.clientHeight) hp.scrollTop = hp.scrollHeight;
     // the solver's full analysis of your last decision, under the coach, when asked for
     document.body.classList.toggle("pxdetail", P.detail && log.length > 0);
     const q = (sel) => el.querySelector ? el.querySelector(sel) : null, on = (id, f) => { const b = q("#" + id); if (b) b.onclick = f; };
@@ -361,7 +387,10 @@
     on("pxDetail", () => { P.detail = !P.detail; store("gto-practice-detail", P.detail); renderAll(); });
     on("pxReset", () => { if (typeof confirm === "function" && !confirm("Reset your practice score and mistakes?")) return; P.score = { ...ZERO }; store(SCORE, P.score); P.review = []; store(REVIEW, P.review); renderAll(); });
     on("pxRev", () => { P.rev = !P.rev; P.pick = null; renderAll(); });
-    if (el.querySelectorAll) el.querySelectorAll("li.pick").forEach(li => li.onclick = () => { P.pick = P.pick === +li.dataset.i ? null : +li.dataset.i; renderAll(); });
+    if (el.querySelectorAll) el.querySelectorAll("li.pick").forEach(li => {
+      li.onclick = () => { P.pick = P.pick === +li.dataset.i ? null : +li.dataset.i; renderAll(); const t = el.querySelector(`li.pick[data-i="${li.dataset.i}"]`); if (t) t.focus(); };
+      li.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); li.onclick(); } };
+    });
     const d = q("details.cx-more"); if (d) d.ontoggle = () => { P.more = d.open; store("gto-practice-more", P.more); };
   }
   // ---- the loop: each render, if it's not your turn, deal the street or move the opponent to act

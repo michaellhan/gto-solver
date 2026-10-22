@@ -55,6 +55,16 @@
   button:disabled { opacity: .35; cursor: default; }
   input[type=number], select { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; font: inherit; }
   input[type=number] { width: 72px; }
+  select { -webkit-appearance: none; appearance: none; padding-right: 26px; cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238a919c' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 9px center; }
+  select:hover, input[type=number]:hover { border-color: var(--line2); }
+  input[type=checkbox] { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; margin: 0 4px 0 0; flex: none; border: 1px solid var(--line2); border-radius: 4px; background: var(--panel2); cursor: pointer; vertical-align: -3px; display: inline-grid; place-content: center; transition: background .12s, border-color .12s; }
+  input[type=checkbox]::after { content: ""; width: 4px; height: 8px; border: solid #1a1200; border-width: 0 2px 2px 0; transform: rotate(45deg) translate(-1px, -1px); opacity: 0; }
+  input[type=checkbox]:checked { background: var(--accent); border-color: var(--accent); }
+  input[type=checkbox]:checked::after { opacity: 1; }
+  input[type=checkbox]:hover { border-color: var(--muted); }
+  input[type=checkbox]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   #rakeCustom input { width: 60px; }
   /* Advanced: custom sizes, ranges, size optimization (the global details margin is for the advice's) */
   #adv { margin: 0 0 8px; } #adv .row { margin-top: 6px; }
@@ -63,7 +73,7 @@
   #adv .who { width: 52px; flex: none; }
   #lockIns > div { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; width: 100%; font-size: 12px; }
   #lockIns .who { order: -1; }
-  #lockIns select { padding: 3px 6px; font-size: 12px; } #lockIns input[type=text] { width: 48px; }
+  #lockIns select { padding: 3px 22px 3px 6px; font-size: 12px; background-position: right 7px center; } #lockIns input[type=text] { width: 48px; }
   #rangeIns label { display: flex; gap: 8px; align-items: center; width: 100%; font-size: 12px; } #rangeIns input[type=text] { flex: 1; min-width: 0; }
   input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
   /* keyboard focus (Tab); a click or tap shows none */
@@ -204,7 +214,7 @@
   body.practice #tableHint, body.practice #editCards, body.practice #timeline > button, body.practice .shortcut, body.practice #pCards,
   body.practice #copyhand, body.practice #newhand, body.practice .prompt .ask, body.practice .acts.solver::before { display: none !important; }
   body.practice .acts button { min-height: 54px; font-size: 15px; max-width: none; }
-  @media (min-width: 561px) { body.practice .acts button { min-width: 0; flex: 1 1 auto; padding: 8px 26px 8px 12px; } }   /* (one row where they fit, else two: a label never runs under its key) */
+  @media (min-width: 561px) { body.practice .acts button { min-width: max-content; flex: 1 1 auto; padding: 8px 30px 8px 12px; } }   /* (one row where they fit, else two: a label never runs under its key) */
   @media (max-width: 560px) { body.practice #solvectl { display: none; } }   /* (the header on one line) */
   body.practice .acts.wait button { opacity: .4; }
   body.practice .acts button kbd { top: 5px; right: 5px; font-size: 11px; line-height: 15px; padding: 0 4px; color: var(--muted); border-color: var(--line2); }
@@ -212,71 +222,136 @@
   #actionArea .nexth:hover { filter: brightness(1.08); }
   #actionArea .nexth kbd { color: #1a1200; border-color: rgba(0,0,0,.25); }
   #practiceBtn.active { background: var(--panel2); color: var(--text); border-color: var(--line2); }
-  .cx-top { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 12px; }
-  .cx-top select { margin-left: 6px; font-size: 13px; padding: 3px 6px; }
-  .cx-top .right { margin-left: auto; color: var(--muted); }
-  .cx-now { display: flex; align-items: center; gap: 14px; padding: 12px; min-height: 84px; border-radius: 10px; background: var(--panel2); border: 1px solid var(--line); }
-  .cx-now.mine { border-color: var(--accent); }
-  .cx-now .t { font-size: 17px; font-weight: 700; }
+  /* the coach: one card system (radius 10, 12px padding, 4/8px rhythm, tinted by the verdict's colour --c) */
+  #pCoach h2 { margin-bottom: 8px; }
+  #pxHandNo { font-variant-numeric: tabular-nums; }
+  /* your seat: a segmented row of seats (Random first), not the browser's select */
+  .cx-seats { display: flex; flex-wrap: wrap; gap: 2px; padding: 2px; margin-bottom: 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); }
+  .cx-seats button { flex: 1 1 auto; min-width: 0; padding: 5px 6px; font-size: 12px; font-weight: 600; color: var(--muted); background: none; border: 0; border-radius: 7px; white-space: nowrap; transition: background .12s, color .12s, box-shadow .12s; }
+  .cx-seats button:hover { color: var(--text); background: var(--panel2); }
+  .cx-seats button[aria-checked="true"] { background: var(--accent); color: #1a1200; }
+  .cx-seats button.rnd { flex-grow: 1.6; }
+  .cx-seats button.cur:not([aria-checked="true"]) { color: var(--accent); box-shadow: inset 0 0 0 1px rgba(242,181,68,.45); }   /* (Random: this hand's seat) */
+  .cx-seats button:focus-visible { outline-offset: -2px; }
+  .cx-now { display: flex; align-items: center; gap: 14px; padding: 12px; min-height: 84px; border-radius: 10px; background: var(--panel2); border: 1px solid var(--line); transition: border-color .15s, box-shadow .15s; }
+  .cx-now.mine { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(242,181,68,.10); }
+  .cx-now.err { border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
+  .cx-now .t { font-size: 17px; font-weight: 700; display: flex; align-items: center; }
   .cx-now.mine .t { color: var(--accent); }
   .cx-now.wait .t { color: var(--muted); }
-  .cx-now .s { color: var(--muted); font-size: 13px; margin-top: 3px; line-height: 1.5; }
+  .cx-now .s { color: var(--muted); font-size: 13px; margin-top: 4px; line-height: 1.5; font-variant-numeric: tabular-nums; }
+  .cx-now .s b { color: var(--text); }
+  .cx-now .err { font-size: 13px; }
   .cx-cards { display: flex; gap: 4px; flex: none; }
   .cx-cards .bc { width: 38px; height: 54px; font-size: 17px; box-shadow: 0 2px 6px rgba(0,0,0,.35); }
   .cx-now .bc.sm, .cx-show .bc.sm { width: 26px; height: 37px; font-size: 12px; box-shadow: none; }
-  .cx-board { display: flex; gap: 3px; margin-top: 8px; }
-  .cx-fb { margin-top: 12px; padding: 12px; border-radius: 10px; border: 1px solid var(--line); border-left: 4px solid var(--c); background: var(--panel2); }
-  .cx-fb .head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-  .cx-fb .verdict { font-size: 18px; font-weight: 800; color: var(--c); }
+  .cx-board { display: flex; gap: 4px; margin-top: 8px; }
+  .cx-fb { --tint: color-mix(in srgb, var(--c) 9%, var(--panel2)); margin-top: 12px; padding: 12px; border-radius: 10px; background: var(--panel2); background: var(--tint);
+    border: 1px solid var(--line); border-color: color-mix(in srgb, var(--c) 35%, var(--line)); }
+  .cx-fb.empty { --c: var(--line2); background: none; border-style: dashed; border-color: var(--line2); color: var(--faint); font-size: 13px; text-align: center; padding: 16px 12px; }
+  .cx-fb .head { display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap; }
+  .cx-fb .ico { flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--c); color: #111; font-size: 12px; font-weight: 900; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
+  .cx-fb .verdict { display: inline; margin: 0; font-size: 18px; font-weight: 800; color: var(--c); letter-spacing: -.01em; }
   .cx-fb .what { color: var(--muted); font-size: 13px; }
   .cx-fb .what b { color: var(--text); }
-  .cx-fb .cost { margin-left: auto; font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
-  .cx-mix { display: flex; height: 8px; border-radius: 4px; overflow: hidden; margin: 10px 0 6px; background: var(--bg); }
-  .cx-mix div { height: 100%; }
-  .cx-leg { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); }
-  .cx-leg > span::before, .cx-acts .n::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; background: var(--c); }
-  .cx-leg b { color: var(--text); font-weight: 600; }
+  .cx-fb .cost { margin-left: auto; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+  .cx-fb .cost.neg { background: color-mix(in srgb, var(--bad) 16%, transparent); }
+  .cx-fb .cost.pos { background: color-mix(in srgb, var(--good) 14%, transparent); font-weight: 600; }
+  .cx-mix { display: flex; gap: 2px; height: 20px; border-radius: 6px; overflow: hidden; margin: 12px 0 8px; background: var(--bg); }
+  .cx-mix div { height: 100%; min-width: 0; display: flex; align-items: center; padding: 0 6px; overflow: hidden; }
+  .cx-mix span { font-size: 11px; font-weight: 700; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.5); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+  .cx-mix div:first-child { border-radius: 6px 0 0 6px; } .cx-mix div:last-child { border-radius: 0 6px 6px 0; }
+  .cx-leg { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .cx-leg > span { display: inline-flex; align-items: center; white-space: nowrap; }
+  .cx-leg > span::before, .cx-acts .n::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; background: var(--c); flex: none; }
+  .cx-leg b { color: var(--text); font-weight: 600; margin-left: 4px; }
   .cx-leg .you { color: var(--text); }
-  .cx-fb .tag { font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: #1a1200; background: var(--accent); border-radius: 3px; padding: 0 4px; margin-left: 5px; vertical-align: 1px; }
-  .cx-more { margin-top: 8px; font-size: 13px; }
-  .cx-more summary { cursor: pointer; color: var(--muted); font-size: 12px; width: max-content; }
-  .cx-more .why { margin: 6px 0 8px; line-height: 1.5; }
+  .cx-leg > span.muted { opacity: .5; }
+  .cx-fb .tag { font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: #1a1200; background: var(--accent); border-radius: 3px; padding: 1px 4px; margin-left: 6px; line-height: 1.2; }
+  /* Details: a chevron, not the browser's disclosure triangle */
+  .cx-more { margin-top: 8px; font-size: 13px; border-top: 1px solid color-mix(in srgb, var(--c) 18%, var(--line)); padding-top: 4px; }
+  .cx-more > summary { display: inline-flex; padding: 4px 0; font-weight: 600; }
+  .cx-more .why { margin: 4px 0 8px; line-height: 1.5; }
   .cx-more .link { margin-top: 8px; }
-  .cx-acts { display: grid; grid-template-columns: 1fr auto auto; gap: 3px 14px; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .cx-acts { display: grid; grid-template-columns: 1fr auto auto; gap: 4px 16px; font-size: 13px; font-variant-numeric: tabular-nums; padding: 8px 0 0; }
+  .cx-acts .n { display: inline-flex; align-items: center; }
   .cx-acts .you { font-weight: 700; }
   .cx-acts .hd { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); }
-  .cx-res { text-align: center; padding: 14px 10px; border-radius: 10px; background: var(--panel2); border: 1px solid var(--line); }
-  .cx-res .big { font-size: 22px; font-weight: 800; }
-  .cx-res .net { font-size: 18px; font-weight: 700; margin-left: 8px; }
-  .cx-show { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 18px; margin-top: 10px; font-size: 12px; color: var(--muted); }
-  .cx-show > span { display: flex; align-items: center; gap: 6px; }
-  .cx-show b { color: var(--text); }
+  /* the result */
+  .cx-res { --c: var(--line2); text-align: center; padding: 16px 12px; border-radius: 10px; background: var(--panel2); border: 1px solid var(--line); }
+  .cx-res.won { --c: var(--good); } .cx-res.lost { --c: var(--bad); }
+  .cx-res.won, .cx-res.lost { background: color-mix(in srgb, var(--c) 7%, var(--panel2)); border-color: color-mix(in srgb, var(--c) 30%, var(--line)); }
+  .cx-res > div:first-child { display: flex; justify-content: center; align-items: baseline; flex-wrap: wrap; gap: 0 10px; }
+  .cx-res .big { font-size: 22px; font-weight: 800; letter-spacing: -.01em; }
+  .cx-res .net { font-size: 18px; font-weight: 700; }
+  .cx-show { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 16px; margin-top: 12px; font-size: 12px; color: var(--muted); }
+  .cx-show > span { display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px 4px; border-radius: 8px; }
+  .cx-show > span .bc + .bc { margin-left: -2px; }
+  .cx-show b { color: var(--text); min-width: 24px; text-align: right; }
+  .cx-show .win { background: color-mix(in srgb, var(--good) 12%, transparent); }
   .cx-show .win b { color: var(--good); }
-  .cx-res .pots { font-size: 12px; color: var(--muted); margin-top: 8px; }
-  .cx-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-  .cx-list li { display: grid; grid-template-columns: 54px 1fr auto auto; gap: 10px; align-items: baseline; font-size: 13px; padding: 6px 10px; border-radius: 8px; background: var(--panel2); }
-  .cx-list .st { text-transform: uppercase; font-size: 10px; letter-spacing: .08em; color: var(--faint); }
-  .cx-list .pill { font-size: 11px; font-weight: 700; color: var(--c); }
-  .cx-list .num { min-width: 64px; }
-  .cx-h { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); margin: 14px 0 0; }
-  .cx-stats { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
-  .cx-stats b { color: var(--text); font-size: 14px; }
-  .cx-stats .link { margin-left: auto; }
+  .cx-res .pots { font-size: 12px; color: var(--muted); margin-top: 8px; font-variant-numeric: tabular-nums; }
+  /* lists (this hand's decisions, Review mistakes): one grid, so every row's columns line up */
+  .cx-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content max-content; gap: 4px 0; }
+  .cx-list li { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; column-gap: 12px; align-items: center; font-size: 13px; padding: 6px 12px; border-radius: 8px; background: var(--panel2); border: 1px solid transparent; }
+  .cx-list .st { text-transform: uppercase; font-size: 10px; letter-spacing: .08em; color: var(--faint); white-space: nowrap; }
+  .cx-list .pill { font-size: 11px; font-weight: 700; color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); border-radius: 999px; padding: 1px 8px; white-space: nowrap; justify-self: start; }
+  .cx-list .num { min-width: 56px; }
+  .cx-h { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); margin: 16px 0 0; }
+  .cx-h .num { font-size: 11px; letter-spacing: 0; text-transform: none; }
+  /* the score: four figures, then Review mistakes and Reset */
+  .cx-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); }
+  .cx-stats > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; line-height: 1.3; }
+  .cx-stats b { color: var(--text); font-size: 16px; font-weight: 700; text-align: left; }
+  .cx-tools { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  .cx-tools .rev { display: inline-flex; align-items: center; gap: 6px; }
+  .cx-tools .rev .n { font-size: 11px; font-weight: 700; border-radius: 999px; padding: 0 6px; background: color-mix(in srgb, var(--bad) 20%, transparent); color: var(--bad); font-variant-numeric: tabular-nums; }
+  .cx-tools .rev[aria-expanded="true"] { border-color: var(--line2); background: var(--line); }
+  .cx-tools #pxReset { margin-left: auto; }
   .cx-rev { margin-top: 8px; }
-  .cx-rev li.pick { cursor: pointer; } .cx-rev li.pick:hover, .cx-rev li.pick.on { background: var(--line); }
-  .cx-rev .hole span { margin-right: 2px; font-weight: 600; }
-  .cx-rev li.spot { display: block; background: none; padding: 2px 0 6px; }
-  .cx-rev li.spot .cx-fb { margin-top: 6px; }
+  .cx-empty { font-size: 13px; color: var(--faint); text-align: center; padding: 12px; margin-top: 8px; border: 1px dashed var(--line2); border-radius: 8px; }
+  .cx-list li.pick { cursor: pointer; transition: background .12s, border-color .12s; } .cx-list li.pick:hover { background: var(--line); }
+  .cx-list li.pick.on { border-color: var(--line2); background: var(--line); }
+  .cx-list li.pick:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .cx-list .hole { margin-right: 4px; }
+  .cx-list .hole span { margin-right: 2px; font-weight: 700; }
+  .cx-list li.spot { display: block; background: none; padding: 0 0 8px; }
+  .cx-list li.spot > .muted { font-size: 12px; padding: 0 4px; }
+  .cx-list li.spot .cx-fb { margin-top: 6px; }
+  /* recent decisions: wide screens only (on a phone the coach is already a long scroll) */
+  @media (max-width: 900px), (max-height: 559px) { .cx-recent { display: none; } }
+  /* the table while practising: your seat marked, the seat to act lit (an opponent's pulses while it thinks), cards as cards */
+  body.practice .seat.hero { border-color: var(--accent); }
+  body.practice .seat.hero::before { content: "you"; position: absolute; left: 50%; top: 0; transform: translate(-50%, -60%); font-size: 9px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: #1a1200; background: var(--accent); border-radius: 999px; padding: 1px 6px; line-height: 1.3; }
+  body.practice .seat.hero.folded::before { background: var(--line2); color: var(--muted); }
+  body.practice .seat.toact:not(.hero) { animation: think 1.4s ease-in-out infinite; }
+  @keyframes think { 50% { box-shadow: 0 0 0 3px rgba(242,181,68,.25), 0 0 16px rgba(242,181,68,.35); } }
+  body.practice .seat .hc { display: flex; justify-content: center; gap: 2px; margin: 2px 0 1px; }
+  body.practice .seat .hc > span { background: #f5f5f0; border-radius: 3px; padding: 0 2px; line-height: 1.35; color: #111; }
   /* a phone: the table and the dock already say whose turn it is, so the verdict comes straight under the table,
      and the dock carries it in one line (the coach is often below the fold); the line is always there, so the
      dock never changes height */
   .pxstrip { display: none; }
   @media (max-width: 900px), (max-height: 559px) {
     .cx-now:not(.err) { display: none; } .cx-now:not(.err) + .cx-fb { margin-top: 0; }
-    body.practice .pxstrip { display: flex; align-items: baseline; gap: 6px; width: 100%; min-height: 0; height: 30px; margin: -2px 0 8px; padding: 5px 10px;
-      overflow: hidden; white-space: nowrap; text-align: left; font-size: 13px; background: var(--panel2); border: 1px solid var(--line); border-left: 4px solid var(--c, var(--line)); border-radius: 8px; color: var(--text); }
+    .cx-fb.empty { display: none; }   /* (the dock's line says it) */
+    .cx-fb.empty + .cx-stats { margin-top: 0; border-top: 0; padding-top: 0; }
+    body.practice .pxstrip { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 0; height: 36px; margin: -2px 0 8px; padding: 0 10px 0 12px;
+      overflow: hidden; white-space: nowrap; text-align: left; font-size: 13px; background: var(--panel2); background: color-mix(in srgb, var(--c, var(--line)) 9%, var(--panel2));
+      border: 1px solid var(--line); border-color: color-mix(in srgb, var(--c, var(--line)) 35%, var(--line)); border-radius: 10px; color: var(--text); font-variant-numeric: tabular-nums; }
+    body.practice .pxstrip::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--line2)); }
     .pxstrip > * { flex: none; } .pxstrip > .fit { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-    .pxstrip .go { margin-left: auto; color: var(--faint); font-size: 16px; line-height: 1; }
+    .pxstrip .go { margin-left: auto; color: var(--muted); font-size: 18px; line-height: 1; }
+  }
+  @media (max-width: 560px) {
+    .cx-leg > span.muted { display: none; }   /* (the solver's 0% actions: in Details) */
+    .cx-stats b { font-size: 15px; }
+    .cx-list li { column-gap: 8px; padding: 6px 8px; }
+    .cx-fb .verdict { font-size: 17px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    body.practice .seat.toact:not(.hero) { animation: none; }
+    summary::before, .cx-now, .cx-seats button, .cx-rev li.pick { transition: none; }
   }
 
   /* ---- advice */
@@ -351,7 +426,13 @@
   .solvehead .num { margin-left: auto; color: var(--muted); font-size: 12px; }
   .empty { color: var(--muted); padding: 30px 10px; text-align: center; line-height: 1.7; }
   details { margin-top: 12px; }
-  summary { color: var(--muted); font-size: 12px; cursor: pointer; }
+  /* disclosures: a chevron, not the browser's triangle */
+  summary { color: var(--muted); font-size: 12px; cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; width: max-content; max-width: 100%; border-radius: 4px; -webkit-user-select: none; user-select: none; }
+  summary::-webkit-details-marker { display: none; }
+  summary::before { content: ""; flex: none; width: 6px; height: 6px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: rotate(-45deg); transition: transform .15s; margin: 0 2px 0 1px; }
+  details[open] > summary::before { transform: rotate(45deg) translate(-2px, -1px); }
+  summary:hover { color: var(--text); }
+  summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .villain { font-size: 12px; color: var(--muted); word-break: break-word; margin-top: 6px; }
   details details { margin-top: 6px; }
   #result.empty:empty { display: none; }
@@ -382,6 +463,9 @@
     body.dragging { cursor: col-resize; -webkit-user-select: none; user-select: none; }
     body.dragging-v { cursor: ns-resize; -webkit-user-select: none; user-select: none; }
     #pAdvice { margin-bottom: 0; min-height: 100%; }
+    body.practice #colL > * { flex-shrink: 0; }
+    body.practice #colL > #pHistory { flex-shrink: 1; min-height: 88px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line2) transparent; }
+    body.practice #pHistory h2 { position: sticky; top: -12px; margin: -12px -14px 8px; padding: 12px 14px 4px; background: var(--panel); z-index: 1; }
   }
   /* Narrow screens (phones, or a zoomed-in window): one column that scrolls; the action dock sticks to the
      bottom of the window. On your turn the advice comes straight after the table. */
@@ -522,9 +606,9 @@
           <div class="advh">Opponent tendencies (heads-up, postflop)</div>
           <div class="row" id="lockIns" title="Lock an opponent's tendencies (nodelocking): after the flop, heads-up, the advice is the best response to them, with GTO's frequencies alongside. On top of GTO, or of the pool with Opponents: Pool. fold: points more of their range folding to a bet (negative: calls); bluff, bet, raise: % more or less (-100 never, +100 always; bluff is their weak hands' bets); next: their fold % to your bet and bet % when you check at their very next decision."></div>
         </details>
-        <div class="row nopx">
-          <span class="muted" style="width:58px;font-size:12px">You are</span>
-          <div class="row seats" id="seats"></div>
+        <div class="row">
+          <span class="muted nopx" style="width:58px;font-size:12px">You are</span>
+          <div class="row seats nopx" id="seats"></div>
           <button class="link" id="setupDone" style="margin-left:auto" hidden>Done</button>
         </div>
       </div>
@@ -565,7 +649,8 @@
 
   <div class="col" id="colR">
     <section class="panel" id="pCoach">
-      <div class="cx-top"><label class="muted">Your seat <select id="pxSeat" title="Practice from one seat, or a random seat each hand"></select></label><span class="right" id="pxHandNo"></span></div>
+      <h2 id="pxSeatLbl">Your seat <span class="right num" id="pxHandNo"></span></h2>
+      <div class="cx-seats" id="pxSeat" role="radiogroup" aria-labelledby="pxSeatLbl" title="Practice from one seat, or a random seat each hand"></div>
       <div id="practiceBar" hidden></div>
     </section>
     <section class="panel" id="pAdvice">
@@ -1176,7 +1261,7 @@ function renderAction(sim) {
     for (const [v, l] of sizes) if (v < myBet + remaining - 1e-9 && v >= minTo - 1e-9) mk(`${verb} ${fmt(v)}`, "agg", { action: "bet", to: v }, l, String(++k));
   }
   if (canRaiseNow) {
-    const custom = document.createElement("button"); custom.className = "agg"; custom.innerHTML = `${verb} …<kbd>R</kbd>`; custom.dataset.key = "r";
+    const custom = document.createElement("button"); custom.className = "agg"; custom.innerHTML = `${verb}<small>your size…</small><kbd>R</kbd>`;   // (a bare "Raise to …" read as a cut-off label) custom.dataset.key = "r";
     custom.onclick = () => { document.getElementById("customBox").classList.toggle("open"); document.getElementById("customAmt").focus(); };
     acts.appendChild(custom);
   }
