@@ -85,7 +85,7 @@ the main pot and side pots.
 Whenever it becomes your turn the advice panel solves the spot. The **Quick / Fast /
 Accurate** toggle in the header (remembered between visits) picks the solve
 time: Quick is about 2 s either way (the requests Practice makes at Fast, below: `QUICK_BUDGETS`, `"quick": true`;
-rough on the turn, a 3-way flop or turn left to the betting rules); Fast is 8 s in the browser and 2.5 s against the local server (2.5 s per earlier street too); Accurate
+rough on the turn, a 3-way turn or a 3-way flop the [3-way library](#precomputed-3-way-flop-library) doesn't hold left to the betting rules); Fast is 8 s in the browser and 2.5 s against the local server (2.5 s per earlier street too); Accurate
 is about 60 s in the browser and 30 s locally (12 s per earlier street), with more time for the earlier
 streets used to narrow ranges. River spots are solid either way; turn spots need
 Accurate to get close to a full solver (see Accuracy vs speed below).
@@ -249,7 +249,8 @@ its checks keeping the range whole, rather than solved (a solve's 10 least itera
 trusted 0%: 88% of flop narrowing solves at half a second were 5%+ of the pot from equilibrium; over 24 fuzzed
 heads-up turns and rivers quick answers took 1.3 s natively where they took 3.6 s, as close to Fast's as before); no second
 budget for an unsettled street; 3-way pots solved on the river only, in 1.8 s (`advisor.MW_QUICK_BUDGET`), a 3-way
-flop or turn answered by the betting rules; measured in Pyodide, `BENCH_STATE='{"quick":true}'
+flop's first decision in the commonest 3-way pots read from the [3-way library](#precomputed-3-way-flop-library) at
+once, other 3-way flops and turns answered by the betting rules; measured in Pyodide, `BENCH_STATE='{"quick":true}'
 BENCH_BUDGETS='{"fast":[1.5,0.3]}' scripts/bench_browser.mjs`: a turn 1.9 s, 22 iterations, 7.8-8.9% of the pot from
 equilibrium where Fast's 8 s settle it to 0.15%; a river 0.8 s of solving, 220 iterations, 0.09%; a 3-way river 1.8 s,
 14 iterations, 2.6%; a flop from the library at once). While you decide, the lines you're likeliest to take are solved ahead: your
@@ -1094,6 +1095,51 @@ Each entry takes ~40-60 s natively on a rainbow flop and up to twice that two-to
 times that on a loaded machine; 3bet pots ~10-25 s): the whole library (4147 entries) ~12 hours on 5 cores (BTN vs
 BB's other 1203 flops and UTG's 368 took 4 hours). After changing the charts or the flop model, run it again (stale
 entries are re-solved). A spot on every flop is 4-7 MB: the test holds the library (14.27 MB) under 15 MB.
+
+### Precomputed 3-way flop library
+
+A 3-way flop needs ~8 s of live solving even in Fast's smaller game and Accurate's 30-60 s for its own, so Quick and
+Practice's quick answers left it to the betting rules. The commonest 3-way pots' flops are solved offline instead
+(`gto/mw_library.py`, built by `scripts/build_mw_library.py`), so the flop's first decision is a real 3-way solve,
+answered at once at every speed (Quick and Practice's `"quick": true` too), in the browser as natively.
+
+* **Spots** (`mw_library.SPOTS`; 6-max, 100bb, no ante or rake, 2.5bb opens), with how often the charts deal each
+  line: BTN opens, SB and BB call (0.25% of hands); HJ opens, CO or BTN and BB call (0.22% each: the CO's cold call
+  is the BTN's, so one game serves both); UTG opens, BTN and BB call (0.18%); CO opens, BTN and BB call (0.14%).
+  `mw_index.json` lists the spots built (a spot in `SPOTS` not built yet just isn't answered from it).
+  A spot is matched by the three ranges entering the flop (as the charts replay them), the pot and the stack; not
+  with rake, custom sizes or ranges, exploit mode, locks or Optimize sizes.
+* **Flops**: the heads-up library's 184 representative canonical flops (`flop_library.representative_flops`), plus
+  K72 rainbow (`EXTRA_FLOPS`), matched up to suits; other flops are solved live (or, quick, left to the rules).
+* **What is stored**: one 3-player CFR solve from the flop's start on native Accurate's 3-way game
+  (`advisor.MW_LATER`, `MW_FLOP_BETS`: bets of 33 and 75% pot, one raise and all-in, the turn and river bet on by
+  16 hand buckets a player), run to under 0.1% of the pot mean best-response gain (300-500 iterations, ~3-4 min a
+  flop on a loaded core), stores the flop's first decisions: first to act, checked to once, checked to twice. The
+  solve takes every hand the flop doesn't block (`include`, ~7% more time), so a hand off its player's range (a
+  cold call the charts 3bet or fold) gets its current strategy, as a live solve gives it. Per hand: the mix in 1%
+  steps and each action's EV, in the heads-up library's entry format (`flop_library.pack`, one mask per player).
+  An entry is 3.8-7.6 KB; CO / BTN / BB's 185 flops are 1.12 MB (`du` 1.4 MB), so the four spots ~4.5 MB.
+* **Lines**: a line through a bet isn't stored; facing a bet the flop is solved live (or, quick, by the rules) as
+  before. Practice opponents after a library answer read their move off it (`_mw_actor_move`), and a turn after the
+  flop checks through narrows the flop's ranges through it (`_mw_walk`), where the rules did before.
+* **Accuracy** (`scripts/compare_mw_library.py`, CO / BTN / BB on K72r, KJ2 two-tone, K82 monotone, K55, against
+  the native Accurate advisor's live solve of each node in its 30 s, library off): the library's solves are 0.06-0.08%
+  of the pot from equilibrium (300-600 iterations); the live ones 0.85-1.9% at the root (80-130 iterations) and
+  0.1-0.8% checked to, from ranges the betting rules narrowed through the checks (the library's are the solve's own).
+  Their acting ranges' action frequencies are 8 points apart on average (2-18; the BB's root leads 2-18% live,
+  0-0.5% in the library), the same most frequent action for 85% of hands, per-hand mixes 18 points apart and EVs
+  3.9% of the pot (1-12.5).
+* **Browser** (`scripts/bench_browser.mjs`, `mw-flop` first to act, `mw-flop-x` checked to twice): answered from the
+  library in 0.49-0.57 s at Quick (`BENCH_STATE='{"quick":true}'`), Fast and Accurate alike, most of it the first
+  request importing the 3-way solver (Accurate's live solve took its 60 s, Quick's answer was the rules');
+  `mw-turn` narrows the checked-through flop through it (followed 100%). The worker fetches `mw_index.json` the first
+  time a 3-way flop comes up and one entry when its spot does.
+
+```bash
+nohup nice python scripts/build_mw_library.py --jobs 8 > reports/mw_library_build.log &   # every spot (resumable)
+python scripts/build_mw_library.py --spots mw_co_btn_bb --boards Kh7d2c                  # given flops
+python scripts/compare_mw_library.py --spot mw_co_btn_bb --boards Kh7d2c,9s8s5d          # against live Accurate
+```
 
 ### Deploy to the website
 

@@ -14,6 +14,7 @@ from typing import Dict, Optional  # noqa: E402
 from .advisor import Advisor, MW_FAST_STREETS  # noqa: E402
 from .solver import Config          # noqa: E402
 from .flop_library import default_library  # noqa: E402
+from . import mw_library  # noqa: E402
 
 # Each speed is a tree and its budgets (seconds for the street advised on, and for each earlier street
 # used to narrow ranges). Narrowing walks the earlier streets' solves, so they must settle too: Config()'s
@@ -99,7 +100,8 @@ MW_FAST_BUDGET = 5.0
 
 def advisor(speed: str = "fast", depth: int = 2, budget: Optional[float] = None,
             prior_budget: Optional[float] = None, library: bool = True) -> Advisor:
-    """`library`: answer flop spots the precomputed library holds from it (gto/flop_library.py), at either speed."""
+    """`library`: answer flop spots the precomputed libraries hold from them (gto/flop_library.py, heads-up; and
+    gto/mw_library.py, a 3-way flop's first decisions), at either speed."""
     b, pb = SPEEDS[speed][1:]
     adv = Advisor(config(speed, depth), time_budget=b if budget is None else budget,
                   prior_budget=pb if prior_budget is None else prior_budget)
@@ -109,6 +111,7 @@ def advisor(speed: str = "fast", depth: int = 2, budget: Optional[float] = None,
         adv.mw_street_config = {st: dict(c) for st, c in MW_FAST_STREETS.items()}
         adv.mw_budget = MW_FAST_BUDGET
     adv.library = default_library() if library else None
+    adv.mw_library = mw_library.default_library() if library else None
     adv.spare_prior = speed == "fast"
     if speed == "fast":
         adv.spr_sizes = {st: (m, {k: list(v) for k, v in d.items()}) for st, (m, d) in FAST_SPR_SIZES.items()}

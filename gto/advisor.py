@@ -1507,6 +1507,8 @@ class Advisor:
         self._by_spot: Dict[tuple, Solution] = {}    # latest solve per spot, whatever the ranges
         # precomputed flop solves (gto/flop_library.py: FlopLibrary), used where they hold the spot; None = off
         self.library = None
+        # precomputed 3-way flop solves (gto/mw_library.py: MWLibrary): a 3-way flop's first decisions, at every speed
+        self.mw_library = None
         # the street advised on (heads-up from its start) also gets the earlier streets' prior_budget its narrowing
         # didn't spend (native Fast: README, Accuracy vs speed); off: time_budget alone
         self.spare_prior = False
@@ -2027,6 +2029,11 @@ class Advisor:
         for p in [q for q in getattr(pf_r, "rebuilt", []) if q not in (custom or {})]:
             notes.append(f"{'your' if p == hero else p + chr(39) + 's'} preflop line isn't in the chart, so "
                          f"{'your' if p == hero else 'their'} range is the hands that take its last action")
+        # a 3-way flop's first decision the 3-way library holds: its precomputed solve answers (no narrowing needed)
+        if len(cur.players_start) == 3 and actor is None and not pool and not optimize:
+            res = self._mw_from_library(hero, hole, board, ranges, cur, stk, streets, t0, notes, locks)
+            if res is not None:
+                return res
         # Streets that started with 3+ players can't be solved; narrow ranges there by rule.
         if self._lib_only and len(cur.players_start) > 2:
             return {"skipped": "multiway: not a flop-library spot"}
@@ -3389,6 +3396,12 @@ class Advisor:
             if hit is not None:
                 break
         src = "the solve your advice came from"
+        if hit is None and st.name == "flop" and len(st.players_start) == 3:
+            # a flop the 3-way library holds (before: the ranges entering it), through its stored lines
+            lib = self._mw_library_solution(before, bk, st, stk)
+            if lib is not None:
+                hit, k, src = (lib, [p for p in st.order if p in st.players_start], lib.exploitability()), 0, \
+                    "the precomputed 3-way solve"
         if hit is None:
             if current or not self.mw_prior_solve or st.name not in self.mw_solve_streets:
                 return False
@@ -3403,6 +3416,8 @@ class Advisor:
         R = sol.reach0[:, 0, :].copy()
         node = sol.root
         for a in acts[k:]:
+            if getattr(node, "unstored", False):
+                return False   # (a library line it doesn't hold)
             if not isinstance(node, MW.Decision):
                 break
             if a.get("pos") not in players or players.index(a["pos"]) != node.player:
@@ -3420,6 +3435,82 @@ class Advisor:
         notes.append(f"{st.name}: 3-way, ranges narrowed through {src} ({sol.iters} iterations, {expl:.1f}% of the pot "
                      f"from equilibrium: followed {trust * 100:.0f}%, the rest by the betting rules)")
         return True
+
+    def _mw_library_solution(self, entering, flop, st: StreetState, stk):
+        """The 3-way library's solve of this flop (mw_library.LibraryMWSolution) when it holds the spot: the three
+        players' ranges entering the flop (`entering`), the pot and the stack behind, no rake and no custom sizes."""
+        if self.mw_library is None or len(flop) != 3 or len(st.players_start) != 3 or self.cfg.rake_rate > 0 \
+                or self._req_sizes:
+            return None
+        players = [p for p in st.order if p in st.players_start]
+        if any(p not in entering for p in players):
+            return None
+        S = min(stk[p] - st.inv_start[p] for p in players)
+        try:
+            return self.mw_library.solution([entering[p] for p in players], tuple(flop[:3]), st.pot_start, S)
+        except Exception:   # a library that can't be read is no library
+            return None
+
+    def _mw_from_library(self, hero, hole, board, entering, cur: StreetState, stk, streets, t0, notes, locks):
+        """A 3-way flop's first decision (first to act, or checked to) answered from the 3-way library's solve
+        (gto/mw_library.py), shaped like _multiway_solve's answer; None where it doesn't hold the spot or the node."""
+        if len(board) != 3 or cur.name != "flop" or cur.n_raises or any(a["action"] != "check" for a in cur.actions):
+            return None
+        players = [p for p in cur.order if p in cur.players_start]
+        if set(players) != set(cur.active) or hero not in players or any(p in (locks or {}) for p in players):
+            return None
+        sol = self._mw_library_solution(entering, board, cur, stk)
+        if sol is None:
+            return None
+        path = tuple("check" for _ in cur.actions)
+        node = sol.nodes.get(path)
+        hp = players.index(hero)
+        ci = sol.combo_index(hole)
+        if node is None or node.player != hp or ci is None:
+            return None   # (a node it doesn't store: solved live)
+        if sol.reach0[hp, 0, ci] <= 1e-12:
+            notes.append("your hand isn't in your range for this line: its mix is the solve's current (regret-matching) "
+                         "strategy for it, against the ranges as they are")
+        R = sol.reach_at(path)
+        expl = sol.exploitability()
+        gains = sol.br_gains() / sol.root_pot() * 100
+        S = min(stk[p] - cur.inv_start[p] for p in players)
+        self._mw_lines[_mw_line(board, hero, hole, stk, streets, cur.name, 0)] = (sol, players, expl)
+        strat = node.avg_strategy()[0]
+        evs = sol.action_evs(node)
+        mine = strat[:, ci]
+        shown = _mw_names(node.names, node.amounts, stk[hero] - cur.inv_start[hero], S, node.pot_now)
+        acts = [{"action": name, "freq": round(float(mine[a]), 3), "ev_bb": round(float(evs[a, ci]), 2),
+                 "amount_bb": None if node.amounts[a] is None else round(float(node.amounts[a]), 2)}
+                for a, name in enumerate(shown)]
+        best = max(acts, key=lambda x: x["freq"])["action"]
+        hero_r = sol.expand(R[hp, 0])
+        w = hero_r / max(hero_r.sum(), 1e-12)
+        sf = np.zeros((len(node.names), N_COMBOS)); sf[:, sol.hands.active] = strat
+        opps = [p for p in players if p != hero]
+        notes.append(f"precomputed 3-way solve ({sol.label}, {sol.iters} iterations, {expl:.2f}% of the pot from "
+                     f"equilibrium): three-player CFR from the flop's start, bets of 33 and 75% pot, one raise and "
+                     f"all-in; the turn and river bet on too, by 16 hand buckets a player")
+        notes.append(f"best-response gains (% pot): " + ", ".join(f"{p} {g:.2f}" for p, g in zip(players, gains)))
+        out = {"street": cur.name, "hero": hero, "hand": hand_class(hole), "board": cards_str(board),
+               "players": 3, "multiway": True, "solved": True, "opponents": opps, "position": f"{hp + 1} of 3 to act",
+               "pot_bb": round(node.pot_now, 2), "to_call_bb": 0.0, "stack_bb": round(S, 2),
+               "actions": acts, "recommended": best, "sampled": self._sample(acts),
+               "grid": strategy_grid([sf[a] for a in range(len(node.names))], shown, hero_r),
+               "range_action_freq": {name: round(float((sf[a] * w).sum()), 3) for a, name in enumerate(shown)},
+               "hero_range_combos": round(float(hero_r.sum()), 1),
+               "opponent_range_combos": {p: round(float(R[i, 0].sum()), 1) for i, p in enumerate(players) if p != hero},
+               "solver": {"iterations": sol.iters, "solve_seconds": 0.0, "nodes": len(sol.nodes),
+                          "active_combos": sol.hands.n, "tree_actions": shown, "exploitability_pct": round(expl, 2),
+                          "best_response_gains_pct": {p: round(float(g), 2) for p, g in zip(players, gains)}},
+               "precomputed": sol.info(), "notes": notes, "seconds": round(time.time() - t0, 2)}
+        if self._breakdown:
+            from . import breakdown as BD
+            ev_full = np.zeros(N_COMBOS); ev_full[sol.hands.active] = (strat * evs).sum(axis=0)
+            out["breakdown"] = BD.breakdown(board, shown, hero, hero_r, sf, ev_full,
+                                            {p: sol.expand(R[i, 0]) for i, p in enumerate(players) if p != hero},
+                                            node.pot_now, equity=False, hole=hole)
+        return out
 
     def _mw_run(self, sol, left: float):
         """Runs a 3-way solve for at most `left` seconds (MW_RESERVE iterations' time kept back for what is read

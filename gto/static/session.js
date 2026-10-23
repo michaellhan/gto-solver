@@ -383,7 +383,7 @@
       + (draft ? `<div class="ss-found"><b>${draft.hands.length} hand${draft.hands.length === 1 ? "" : "s"} to analyze</b>${draft.name ? ` from ${esc(draft.name)}` : ""} (${draft.total} in the file${skl.length ? `; skipped: ${skl.join(", ")}` : ""})`
         + `${draft.errors.length ? `<details><summary>${draft.errors.length} unreadable</summary>${draft.errors.slice(0, 20).map(e => `<div class="ss-sub">hand ${e.n}${e.id ? ` (#${esc(e.id)})` : ""}: ${esc(e.msg)}</div>`).join("")}</details>` : ""}</div>`
         + `<div class="ss-scopes" role="radiogroup">${Object.entries(SCOPES).map(([k, l]) => `<button role="radio" aria-checked="${k === scope}" data-scope="${k}" class="${k === scope ? "active" : ""}">${l}${est(k)}</button>`).join("")}</div>`
-        + `<div class="ss-note">Each decision is solved at Fast, as a hand review would. Flop-library spots are the precomputed heads-up flops: instant, the rest of the flops skipped. All streets solves every turn and river too.</div>`
+        + `<div class="ss-note">Each decision is solved at Fast, as a hand review would. Flop-library spots are the precomputed flops (heads-up, and the first decision of the commonest 3-way pots): instant, the rest of the flops skipped. All streets solves every turn and river too.</div>`
         + `<div class="ss-row"><button class="active" data-go${draft.hands.length ? "" : " disabled"}>Analyze</button></div>` : "");
   }
   function runHtml() {

@@ -437,7 +437,7 @@ def _decode_v1(data: bytes) -> dict:
 
 
 def decode(data: bytes) -> dict:
-    """{'head': header, 'masks': [oop, ip] (1326 bools), 'nodes': [{'path', 'player', 'names', 'fold0', 'freqs'
+    """{'head': header, 'masks': [oop, ip] (1326 bools; a 3-way entry's: one per player, head 'players'), 'nodes': [{'path', 'player', 'names', 'fold0', 'freqs'
     {name: range frequency}, 'combos', 'strat' (A, n_p), 'evs' (A, n_p)}]}, n_p each player's combos (ascending
     combo index, on the canonical flop; a class's combos share its stored values)."""
     if data[:len(MAGIC_V1)] == MAGIC_V1:
@@ -455,11 +455,12 @@ def decode(data: bytes) -> dict:
     n_own = int(own.sum())
     nb = (n_own + 7) // 8
     masks = []
-    for p in (0, 1):
+    n_masks = int(head.get("players", 2))         # (3-way entries, gto/mw_library.py: a mask per player)
+    for p in range(n_masks):
         m = np.zeros(len(rep), dtype=bool)
         m[own] = _unbits(body[p * nb:(p + 1) * nb], n_own)
         masks.append(m[rep])
-    o = 2 * nb
+    o = n_masks * nb
     nodes = []
     for nd in head["nodes"]:
         stored, col = _layout(board, masks[nd["player"]])

@@ -140,6 +140,10 @@ const ready = (async () => {
              + "from gto.flop_library import FlopLibrary; from js import libFetch; "
              + "lib = FlopLibrary(lambda p: (lambda r: None if r is None else r.to_bytes())(libFetch(p))); "
              + "advs['fast'].library = advs['accurate'].library = lib; "
+             // and a 3-way flop's first decisions the 3-way library holds (gto/mw_library.py: mw_index.json, its entries
+             // ~4 KB), at every speed, Practice's quick answers included
+             + "from gto.mw_library import MWLibrary; mwlib = MWLibrary(lib._fetch); "
+             + "advs['fast'].mw_library = advs['accurate'].mw_library = mwlib; "
              // 3-way pots (measured, scripts/bench_browser.mjs): the 3-player solver on the river in Fast (0.13-0.16 s an
              // iteration: 41-48 in 8 s, 0.3-0.4% of the pot from equilibrium); Fast's turns and flops in a smaller game
              // (advisor.MW_FAST_STREETS: 6 buckets, every sixth river, the flop betting half the pot) in its 8 s: a flop
