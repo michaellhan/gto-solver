@@ -1211,6 +1211,10 @@ class TestTableSizes(unittest.TestCase):
         jam = adv.advise(dict(st, stacks={"BTN": 10}, flop=[{"pos": "BB", "action": "check"}, {"pos": "CO", "action": "check"},
                                                             {"pos": "BTN", "action": "all-in"}]))
         self.assertTrue(jam["multiway"]); self.assertNotIn("mw_solvable", jam)
+        # a speed that solves the street but whose solve didn't settle answers by the rules too, flagged for Accurate
+        adv.mw_solve_streets, adv.mw_trials, adv.mw_max_expl = ("flop", "turn", "river"), None, -1.0
+        unsettled = adv.advise(dict(st, hole="7s6s"))
+        self.assertNotIn("solved", unsettled); self.assertTrue(unsettled["mw_solvable"])
 
     def test_multiway_top_pair_continues_like_draws(self):
         # 8-6-3 checked to the BB 3-way. The bettor's bluffs used to come from the bottom of its range

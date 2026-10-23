@@ -11,7 +11,7 @@ for _v in ("VECLIB_MAXIMUM_THREADS", "OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", 
     os.environ.setdefault(_v, "1")
 
 from typing import Dict, Optional  # noqa: E402
-from .advisor import Advisor        # noqa: E402
+from .advisor import Advisor, MW_FAST_STREETS  # noqa: E402
 from .solver import Config          # noqa: E402
 from .flop_library import default_library  # noqa: E402
 
@@ -86,12 +86,15 @@ def config(speed: str = "fast", depth: int = 2) -> Config:
 # 3-way pots solved by the 3-player solver (Advisor.mw_solve_streets; the rest use the betting rules). A river iteration
 # costs 30-90 ms here (by machine load), so fast's 2.5 s runs 25-80 (0.1-1% of the pot from equilibrium). Turns and flops
 # bet the later streets by 16 hand buckets a player (Advisor.mw_street_config, README 3-way pots): a turn iteration costs
-# 0.1-0.2 s, a flop one 0.1-0.4 s (two flop bet sizes, 33/75%; by machine load) after 0.6-1.7 s of tables, so both wait
+# 0.1-0.2 s, a flop one 0.1-0.4 s (two flop bet sizes, 33/75%; by machine load) after 0.6-1.7 s of tables, so this game waits
 # for accurate's 30 s, which covers the tables and the read-off too (turn 150-300 iterations; flop unloaded 200-290 checked
 # to, 0.15-0.25% of the pot from equilibrium, 100 for the first to act's bigger tree, 0.8%; one size ran 260-370 and 150). An earlier 3-way flop is narrowed through your advice's
 # solve of it; a solve of it from its start (Advisor.mw_prior_solve) stays off: in 12 s it runs 40-65 iterations, 4-6% of
 # the pot from equilibrium, which narrowing would follow 0-20%.
-MW_STREETS = {"fast": ("river",), "accurate": ("flop", "turn", "river")}
+# Fast solves 3-way flops and turns too, in a smaller game (advisor.MW_FAST_STREETS) and 5 s (MW_FAST_BUDGET; 2.5 s ran a
+# flop first to act 22 iterations, 17% of the pot from equilibrium): 49-98 iterations on a flop, 132 on a turn.
+MW_STREETS = {"fast": ("flop", "turn", "river"), "accurate": ("flop", "turn", "river")}
+MW_FAST_BUDGET = 5.0
 
 
 def advisor(speed: str = "fast", depth: int = 2, budget: Optional[float] = None,
@@ -102,6 +105,9 @@ def advisor(speed: str = "fast", depth: int = 2, budget: Optional[float] = None,
                   prior_budget=pb if prior_budget is None else prior_budget)
     adv.root_sizes = {st: {k: list(v) for k, v in d.items()} for st, d in ROOT_SIZES.items()}
     adv.mw_solve_streets = MW_STREETS[speed]
+    if speed == "fast":
+        adv.mw_street_config = {st: dict(c) for st, c in MW_FAST_STREETS.items()}
+        adv.mw_budget = MW_FAST_BUDGET
     adv.library = default_library() if library else None
     adv.spare_prior = speed == "fast"
     if speed == "fast":

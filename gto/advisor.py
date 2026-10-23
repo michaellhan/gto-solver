@@ -53,6 +53,12 @@ SMALL_BET = 0.33
 MW_LATER = {"later": "buckets", "buckets": 16}   # 3-way flop and turn solves: the later streets by hand buckets
 # 3-way flop solves bet a third or three quarters of the pot (the heads-up flop menu; the turn and river inside one size)
 MW_FLOP_BETS = {"flop": [0.33, 0.75], "turn": 0.5, "river": 0.5}
+# Fast's 3-way flop and turn solves: a smaller game (6 hand buckets, the turn's tables over every sixth river, the flop
+# betting half the pot), so they settle in seconds where MW_LATER's needs Accurate's minute in the browser (measured,
+# scripts/bench_browser.mjs, 8 s: a flop first to act 51 iterations, 2.6% of the pot from equilibrium in its game;
+# checked to 85, 0.44%; a turn 110, 0.15%). Practice grades on them instead of waiting for an Accurate solve.
+MW_FAST = {"later": "buckets", "buckets": 6, "bucket_river_step": 6}
+MW_FAST_STREETS = {"flop": dict(MW_FAST, bet={"flop": [0.5], "turn": 0.5, "river": 0.5}), "turn": dict(MW_FAST)}
 HU_RESERVE = 1.0   # heads-up solves likewise keep one iteration's time back (the exploitability read after: ~1 iteration)
 MW_SETTLED = 0.1   # a 3-way solve stops once its players' mean best-response gain is under this (% of the pot)...
 MW_CHECKS = (25, 50, 100, 200, 400, 700)   # ...checked at these iterations (about two iterations' time each). The
@@ -1406,6 +1412,7 @@ class Advisor:
         # as equity leaves, a flop solve bet half as often as published solves: README, 3-way pots)
         self.mw_street_config: Dict[str, dict] = {"flop": dict(MW_LATER, bet=MW_FLOP_BETS), "turn": dict(MW_LATER)}
         self.mw_max_iters: int = 1000
+        self.mw_budget: Optional[float] = None   # a 3-way solve's budget when longer than time_budget (native Fast's 2.5 s)
         self.mw_max_expl: float = 10.0   # a solve further than this from equilibrium (% pot) hands over to the rules
         # an earlier 3-way street with no solve from your advice on it: solve it from its start (prior_budget) to narrow
         # the ranges through (_mw_walk); off: the rules narrow it (native Accurate on: its 12 s settle a flop enough)
@@ -1987,8 +1994,10 @@ class Advisor:
             if res is not None:
                 return res
             res = self._multiway(hero, hole, board, ranges, remaining, cur, stk, t0, notes)
-            if cur.name not in self.mw_solve_streets and _mw_applies(remaining, cur, stk):
-                res["mw_solvable"] = True   # the 3-way solver takes it at a speed that solves this street (Practice asks it)
+            if _mw_applies(remaining, cur, stk):
+                # the 3-way solver takes it at a speed that solves this street, or longer than this one's solve had
+                # before settling (Practice asks Accurate)
+                res["mw_solvable"] = True
             return res
         villain = live_opps[0]
         post = cur.order
@@ -2252,8 +2261,9 @@ class Advisor:
         # the budget covers the whole answer: the tree and bucket tables (a flop's take 1-2 s natively, a few in the
         # browser), the iterations, and the gains and EVs read off after them (MW_RESERVE iterations' time)
         # (a solve its budget ran out on isn't run again: a later request for the spot gets the same answer)
+        budget = max(self.time_budget, self.mw_budget or 0.0)
         spent = sol.build_seconds + sol.seconds
-        left = min(self.time_budget - spent, self.time_budget - (time.time() - t0))
+        left = min(budget - spent, budget - (time.time() - t0))
         self._mw_run(sol, left)
         root = sol.root
         if not isinstance(root, MW.Decision) or root.player != hp:

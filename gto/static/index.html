@@ -1462,6 +1462,8 @@ async function analyze(sim) {
   solveStart = performance.now();
   if (MODE === "wasm" && workerStatus !== "Solving…") setStatus(workerStatus || "Loading the solver runtime…");   // runtime still loading
   let est = BUDGET + PRIOR * Math.max(0, STREETS.indexOf(sim.current) - 1);   // earlier postflop streets are re-solved to narrow ranges
+  // the local server's Fast gives a 3-way flop or turn 5 s, not its 2.5 (gto/native.py MW_FAST_BUDGET)
+  if (MODE === "server" && SPEED === "fast" && sim.active.size === 3 && ["flop", "turn"].includes(sim.current)) est = Math.max(est, 5);
   if (SPEED === "accurate") {   // Accurate continues from a Fast solve of this spot, counting its time
     const f = cache.get(keyFor(key, "fast"));
     if (f && f.seconds) est = Math.round(Math.max(est * 0.2, est - f.seconds));
@@ -1476,8 +1478,8 @@ async function analyze(sim) {
   // (practice: the answer the look-ahead already asked for, else once its request is out of the way)
   try { res = (practicing() && await window.Practice.fromAhead(key)) || await callAdvise(JSON.parse(key)); }
   catch (e) { res = { error: "Request failed: " + e }; }
-  // Practice grades your move: a 3-way flop or turn that Fast leaves to the betting rules (not graded) is solved on
-  // Accurate instead, shown and cached as this spot's answer (and Accurate's, for the speed switch)
+  // Practice grades your move: a 3-way flop or turn whose Fast solve didn't settle (the betting rules answered, not
+  // graded) is solved on Accurate instead, shown and cached as this spot's answer (and Accurate's, for the speed switch)
   if (res.mw_solvable && SPEED === "fast" && practicing() && gen === solveGen) {
     const akey = keyFor(key, "accurate"), [b, p] = BUDGETS[MODE].accurate;
     est = b + p * Math.max(0, STREETS.indexOf(sim.current) - 1); solveStart = performance.now();

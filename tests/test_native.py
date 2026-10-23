@@ -115,6 +115,21 @@ class TestNativeSpeeds(unittest.TestCase):
             else:
                 self.assertEqual((cold, warm), (0.4, 0.4))
 
+    def test_fast_solves_a_3way_flop(self):
+        """Fast solves a 3-way flop itself, in its smaller game and MW_FAST_BUDGET (Practice used to wait for an
+        Accurate solve of it, half a minute here and a minute in the browser)."""
+        import time
+        from gto.native import MW_FAST_BUDGET
+        pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
+               {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
+        flop = [{"pos": "BB", "action": "check"}, {"pos": "CO", "action": "check"}]
+        t = time.time()
+        r = advisor("fast", library=False).advise(dict(players=6, hero="BTN", hole="AhJd", stack=100, preflop=pre,
+                                                       board="Kh7d2c", flop=flop))
+        self.assertLess(time.time() - t, MW_FAST_BUDGET + 2.0)
+        self.assertTrue(r.get("solved"), r.get("notes"))
+        self.assertNotIn("mw_solvable", r)
+
     def test_server_picks_the_advisor_by_speed(self):
         advs = advisors(budget=1.0)
         self.assertEqual(advs["fast"].time_budget, 1.0)

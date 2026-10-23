@@ -141,12 +141,16 @@ const ready = (async () => {
              + "lib = FlopLibrary(lambda p: (lambda r: None if r is None else r.to_bytes())(libFetch(p))); "
              + "advs['fast'].library = advs['accurate'].library = lib; "
              // 3-way pots (measured, scripts/bench_browser.mjs): the 3-player solver on the river in Fast (0.13-0.16 s an
-             // iteration: 41-48 in 8 s, 0.3-0.4% of the pot from equilibrium); turns and flops only in Accurate's 60 s, the
+             // iteration: 41-48 in 8 s, 0.3-0.4% of the pot from equilibrium); Fast's turns and flops in a smaller game
+             // (advisor.MW_FAST_STREETS: 6 buckets, every sixth river, the flop betting half the pot) in its 8 s: a flop
+             // first to act 51 iterations, 2.6% of the pot; checked to 85, 0.44%; a turn 110, 0.15%. Accurate's in its 60 s, the
              // later streets bet by 12 hand buckets with the turn's tables over every third river, the flop betting a third or
              // three quarters of the pot (numpy has no BLAS here: a flop iteration 0.34 s checked to, 161 in the 60 s, 0.27%;
              // 0.7-0.95 s first to act, 56-77, 3-6%; the 60 s cover the tables and the gains and EVs read off after). Turns
              // (0.18 s) and rivers stop once settled (advisor.MW_SETTLED): 200 iterations in 34 s, 100 in 15 s, 0.07%.
-             + "advs['fast'].mw_solve_streets = ('river',); advs['accurate'].mw_solve_streets = ('flop', 'turn', 'river'); "
+             + "from gto.advisor import MW_FAST_STREETS; advs['fast'].mw_solve_streets = ('flop', 'turn', 'river'); "
+             + "advs['fast'].mw_street_config = {s: dict(c) for s, c in MW_FAST_STREETS.items()}; "
+             + "advs['accurate'].mw_solve_streets = ('flop', 'turn', 'river'); "
              + "advs['accurate'].mw_street_config = {s: {'later': 'buckets', 'buckets': 12, 'bucket_river_step': 3} for s in ('flop', 'turn')}; "
              + "advs['accurate'].mw_street_config['flop']['bet'] = {'flop': [0.33, 0.75], 'turn': 0.5, 'river': 0.5}");
   lap("advisors");
