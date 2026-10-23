@@ -64,6 +64,7 @@ LATER_CACHE = 40000  # multiway: most later-street decisions stored per call (me
 HIT_TOP = 0.15      # multiway bluffs: a hand "gets there" on a runout ending in this top share of combos (judgment)
 SHOWDOWN_Q = 0.6    # ...and has showdown value (bluffs last) when it usually ends above this share (judgment)
 VALUE_SHARE = 0.35  # multiway: a bet's value range is this share of what would call it
+BEATS_NOTE_MAX = 0.05  # river, facing a bet: say so when our hand beats at most this share of the bettor's range
 SMALL_SHARE = 0.7   # multiway: the small bet's value range is this share of what one player would call it with,
                     # compounding with more players (1 - 0.3^n of what the field calls); fitted, see _bet_ranges
 SMALL_VALUE_MAX = 0.55  # ...but at most this share of the bettor's range: behind two checks (capped ranges) the
@@ -979,6 +980,35 @@ RIVER_FIX = {1: 1.0, 2: 0.5}
 RIVER_FIX_SUITED = 0.10
 RIVER_FIX_OFFSUIT = -0.05
 _RIVER_FIX = None
+
+
+def _beats_note(hole, board, bettor: str, r: np.ndarray) -> Optional[str]:
+    """On the river, facing a bet: a note when our hand beats at most BEATS_NOTE_MAX of the bettor's range r
+    (combos blocked by the board or our cards left out), naming the range's weakest hand classes, so a fold
+    to a tiny bet reads as what it is (A8s on 79QKJ ties every Ax and beats none of a range of pairs and Ax)."""
+    if len(board) != 5:
+        return None
+    from .evaluator import eval_board
+    s = eval_board(list(board))
+    hi = COMBO_INDEX[(min(hole), max(hole))]
+    r = r * (s >= 0)
+    for c in hole:
+        r = r * (1.0 - MEMBER_FULL[c])
+    tot = float(r.sum())
+    if tot <= 1e-9:
+        return None
+    beat = float(r[s < s[hi]].sum()) / tot
+    if beat > BEATS_NOTE_MAX:
+        return None
+    tie = float(r[s == s[hi]].sum()) / tot
+    weak: List[str] = []
+    for i in np.argsort(s, kind="stable"):
+        if r[i] > 1e-3 and hand_class(ALL_COMBOS[i]) not in weak:
+            weak.append(hand_class(ALL_COMBOS[i]))
+            if len(weak) == 5:
+                break
+    return (f"{hand_class(hole)} beats {beat:.0%} of {bettor}'s range"
+            + (f" and ties {tie:.0%}" if tie >= 0.005 else "") + f" (weakest: {', '.join(weak)})")
 
 
 def _mw_applies(remaining, cur, stk) -> bool:
@@ -2150,6 +2180,8 @@ class Advisor:
                 best = sampled = top["action"]
         hero_r = expand(sol.ctx, n_r0 if hero_p == 0 else n_r1)
         vill_r = expand(sol.ctx, n_r1 if hero_p == 0 else n_r0)
+        if to_call > 1e-9 and (bn := _beats_note(hole, board, villain, vill_r)):
+            notes.append(bn)
         w = hero_r / max(hero_r.sum(), 1e-12)
         sf = np.zeros((len(node.names), N_COMBOS)); sf[:, sol.ctx.active] = strat
         range_freq = {name: round(float((sf[a] * w).sum()), 3) for a, name in enumerate(node.names)}
@@ -2265,6 +2297,10 @@ class Advisor:
                               {p: sol.expand(sol.reach0[i][0]) for i, p in enumerate(players) if p != hero},
                               root.pot_now, equity=False, hole=hole)
         to_call = max(bets) - bets[hp]
+        bettor = next((a["pos"] for a in reversed(cur.actions) if a["action"] in ("bet", "raise", "all-in")), None)
+        if to_call > 1e-9 and bettor in players and (bn := _beats_note(hole, board, bettor,
+                                                                        sol.expand(sol.reach0[players.index(bettor)][0]))):
+            notes.append(bn)
         street_note = {"river": "the river's showdowns with every card removal between the three hands counted exactly",
                        "turn": "the river dealt out after the turn's betting (an equity leaf: no river betting), every river card",
                        "flop": "the turn and river dealt out after the flop's betting (equity leaves: no later betting), every turn"}

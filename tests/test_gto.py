@@ -1715,6 +1715,36 @@ class TestHeadsUpRuleCalls(unittest.TestCase):
         self.assertAlmostEqual(w[top].min(), 1.0)
 
 
+class TestBeatsNote(unittest.TestCase):
+    """The river note when our hand beats (almost) none of the bettor's range (advisor._beats_note)."""
+
+    def test_beats_none(self):
+        from gto.advisor import _beats_note
+        board = tuple(cards("7d9hQcKsJh"))
+        note = _beats_note(tuple(cards("As8s")), board, "CO", parse_range("33-66, ATo, AJo, A8s, A5s"))
+        self.assertTrue(note.startswith("A8s beats 0% of CO's range and ties"), note)
+        self.assertIn("weakest:", note)
+        self.assertIn("A5s", note)   # any Ax ties: the 8 doesn't play
+
+    def test_quiet_when_it_beats_some(self):
+        from gto.advisor import _beats_note
+        board = tuple(cards("7d9hQcKsJh"))
+        self.assertIsNone(_beats_note(tuple(cards("As8s")), board, "CO", parse_range("33-66, 65s, 54s, 86s")))
+        self.assertIsNone(_beats_note(tuple(cards("As8s")), board[:4], "CO", parse_range("33-66")))   # river only
+
+    def test_advice_carries_it(self):
+        from gto.native import advisor
+        out = advisor("fast", 2, 8, 3).advise({
+            "players": 8, "hero": "BTN", "hole": "As8s", "board": "7d9hQcKsJh", "stack": 100,
+            "preflop": [{"pos": p, "action": "fold"} for p in ("UTG", "UTG1", "LJ", "HJ")]
+            + [{"pos": "CO", "action": "raise", "to": 2.5}, {"pos": "BTN", "action": "raise", "to": 7.5},
+               {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}, {"pos": "CO", "action": "call"}],
+            "flop": [{"pos": p, "action": "check"} for p in ("BB", "CO", "BTN")],
+            "turn": [{"pos": p, "action": "check"} for p in ("BB", "CO", "BTN")],
+            "river": [{"pos": "BB", "action": "check"}, {"pos": "CO", "action": "bet", "amount": 1}]})
+        self.assertTrue(any(n.startswith("A8s beats 0% of CO's range") for n in out["notes"]), out["notes"])
+
+
 class TestRiverStrength(unittest.TestCase):
     """The river under a flop solve by river-strength buckets (Config.river_strength, solver.RiverEntry)."""
 
