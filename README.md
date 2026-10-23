@@ -1118,7 +1118,8 @@ answered at once at every speed (Quick and Practice's `"quick": true` too), in t
   solve takes every hand the flop doesn't block (`include`, ~7% more time), so a hand off its player's range (a
   cold call the charts 3bet or fold) gets its current strategy, as a live solve gives it. Per hand: the mix in 1%
   steps and each action's EV, in the heads-up library's entry format (`flop_library.pack`, one mask per player).
-  An entry is 3.8-7.6 KB; CO / BTN / BB's 185 flops are 1.12 MB (`du` 1.4 MB), so the four spots ~4.5 MB.
+  An entry is 3.8-7.6 KB; a spot's 185 flops ~1.1 MB, the four spots' 740 flops 4.53 MB
+  (built in ~2.5 h a spot on 8 loaded cores).
 * **Lines**: a line through a bet isn't stored; facing a bet the flop is solved live (or, quick, by the rules) as
   before. Practice opponents after a library answer read their move off it (`_mw_actor_move`), and a turn after the
   flop checks through narrows the flop's ranges through it (`_mw_walk`), where the rules did before.
