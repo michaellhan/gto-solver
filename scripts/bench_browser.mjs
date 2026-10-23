@@ -30,7 +30,9 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const STATIC = path.join(ROOT, "gto", "static");
 
 // the page's budgets in the browser (index.html BUDGETS.wasm): [street, each earlier postflop street]
-const BUDGETS = { fast: [8, 3], accurate: [60, 12] };
+// (BENCH_BUDGETS='{"fast":[1.5,0.25]}' tries others, BENCH_STATE='{"quick":true}' adds request fields, e.g. Practice's;
+// children inherit both)
+const BUDGETS = { fast: [8, 3], accurate: [60, 12], ...JSON.parse(process.env.BENCH_BUDGETS || "{}") };
 
 const F = (pos) => ({ pos, action: "fold" }), C = (pos) => ({ pos, action: "call" }), X = (pos) => ({ pos, action: "check" });
 const R = (pos, to) => ({ pos, action: "raise", to }), B = (pos, amount) => ({ pos, action: "bet", amount });
@@ -141,7 +143,7 @@ async function runOne(spot, speeds, pyodideDir, bundlePath) {
   let fastSeconds = null;
   for (const speed of speeds) {
     const [budget, prior_budget] = BUDGETS[speed];
-    const state = { ...SPOTS[spot], budget, prior_budget, speed };
+    const state = { ...SPOTS[spot], budget, prior_budget, speed, ...JSON.parse(process.env.BENCH_STATE || "{}") };
     const t0 = performance.now();
     const m = await w.request(state);
     const wall = (performance.now() - t0) / 1000;

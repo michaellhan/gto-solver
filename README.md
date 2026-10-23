@@ -230,22 +230,27 @@ pick). They play GTO whatever the Opponents setting (hidden while practising, wi
 On your turn the spot is solved in the background so your move can be graded: until it is, the coach and the action
 dock say "Solving your spot…" and the (large) action buttons are disabled; each shows its key (F fold, C or X check
 or call, 1-3 the sizes, R a size of your own, A all-in). Once it is solved the page looks ahead while you decide: the
-line where you check or call is played on (the opponents' replies drawn as they will be, the next street dealt) up to
-the next request that takes a solve, your own next spot or an opponent's move on a new street, and its answer is
-used if you take that line, so the wait for it goes into your thinking time (about 1.5 s less a wait with a quick
-1.5 s decision, at most 3.6 s against 5.3 s). A local server stops a look-ahead your move made useless; the
-browser's solver can't stop one, so there it looks ahead only at Fast and when the solver checks or calls your hand
-half the time or more. Until your first decision a dashed card says where
+lines you're likeliest to take (below) are played on (the opponents' replies drawn as they will be, the next street
+dealt) up to the next request that takes a solve, your own next spot or an opponent's move on a new street, and the
+answer is used if you take that line, so the wait for it goes into your thinking time. A local server stops a
+look-ahead your move made useless; the browser's solver can't stop one, so there it looks ahead only at Fast, where a
+wrong guess costs at most one quick answer's ~2 s. Until your first decision a dashed card says where
 the verdict will be; right after each decision the coach shows
 its verdict (Best move, Good, Inaccuracy, Mistake) in colour on a card tinted to match, the EV it gave up and the
 solver's mix as a bar (each action of 20% or more named in it) with its frequencies (your move among them, at 0%
 when the solve hasn't it); the card is headed "Last decision · flop" (at the end "Your last decision"), and once
 it's your turn again it fades, so it never reads as a verdict on the spot above it (the phone's dock line then
 starts "Last:"). The EV a move in the solver's strategy gave up is shown muted, not red (its mixed actions are worth
-the same in theory); Fast solves 3-way flops and turns itself in a smaller game (6 hand buckets, the flop betting
-half the pot: 8 s in the browser, 5 s natively; `advisor.MW_FAST_STREETS`), and only one whose solve doesn't settle
-(the betting rules answer) is solved on Accurate instead ("3-way pot: solving it on Accurate so your move can be
-graded", up to a minute; the answer flags it with `mw_solvable`), and a multiway spot no speed solves (4+ players, someone all-in) shows no mix ("isn't graded"); **Details** opens why and each action's EV (the choice is remembered), and from there **See how the
+the same in theory); at Fast, Practice asks for quick answers, about 2 s each (`"quick": true`, budgets
+`PRACTICE_BUDGETS` in index.html: 1.5 s on the flop and turn, 0.8 s on the river, 0.3 s an earlier street; no second
+budget for an unsettled street; 3-way pots solved on the river only, in 1.8 s (`advisor.MW_QUICK_BUDGET`), a 3-way
+flop or turn answered by the betting rules and not graded; measured in Pyodide, `BENCH_STATE='{"quick":true}'
+BENCH_BUDGETS='{"fast":[1.5,0.3]}' scripts/bench_browser.mjs`: a turn 1.9 s, 22 iterations, 7.8-8.9% of the pot from
+equilibrium where Fast's 8 s settle it to 0.15%; a river 0.8 s of solving, 220 iterations, 0.09%; a 3-way river 1.8 s,
+14 iterations, 2.6%; a flop from the library at once). While you decide, the lines you're likeliest to take are solved ahead: your
+hand's mix blended half and half with what you usually do (fold, check or call, bet or raise; facing a bet or not;
+kept in this browser as `gto-practice-habits`), up to two lines at least 20% likely, a bet at the solver's size, never
+a fold; the solver's own Fast (8 s) solves 3-way flops and turns in a smaller game (`advisor.MW_FAST_STREETS`), and a multiway spot no speed solves (4+ players, someone all-in) shows no mix ("isn't graded"); **Details** opens why and each action's EV (the choice is remembered), and from there **See how the
 solver plays your whole range** opens your range at your last decision under the coach (never on your turn), headed
 "Your range · flop · BTN vs BB": the advice panel's Grid (every hand class's mix, yours outlined; hover or tap a hand
 for its mix), Breakdown and Equity, without the rows the verdict card already gives (a decision whose solve the page

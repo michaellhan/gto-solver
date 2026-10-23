@@ -808,9 +808,17 @@ const SLOT_NAMES = ["your first card", "your second card", "flop card 1", "flop 
 const SLOT_WHERE = ["in your hand", "in your hand", "on the flop", "on the flop", "on the flop", "on the turn", "on the river"];
 // seconds per solve for each speed setting: [current street, each earlier street used for range narrowing]
 const BUDGETS = { server: { fast: [2.5, 2.5], accurate: [30, 12] }, wasm: { fast: [8, 3], accurate: [60, 12] } };
+// Practice at Fast answers in about 2 s (the request's "quick": no second budget for an unsettled street, 3-way solves on
+// the river only, gto/advisor.py): [street, each earlier postflop street], by street (a river settles in less), either backend
+const PRACTICE_BUDGETS = { flop: [1.5, 0.3], turn: [1.5, 0.3], river: [0.8, 0.3] };   // (a 3-way river 1.8: advisor.MW_QUICK_BUDGET)
+// a request's [budget, prior_budget, quick] at a speed, for a board (cards as a string)
+function budgetsFor(speed, board) {
+  const st = { 6: "flop", 8: "turn", 10: "river" }[board.length];
+  if (!MODE) return [null, null, false];   // (the backend not known yet)
+  return practicing() && speed === "fast" && st ? [...PRACTICE_BUDGETS[st], true] : [...BUDGETS[MODE][speed], false];
+}
 let SPEED = "fast";
 try { if (localStorage.getItem("gto-speed") === "accurate") SPEED = "accurate"; } catch (e) {}
-let BUDGET = null, PRIOR = null;   // set from BUDGETS once the backend (MODE) is known
 // opponents: "gto" (equilibrium) or "pool" (a typical player pool, exploited); a preference like the speed
 let OPP = "gto";
 try { if (localStorage.getItem("gto-opponents") === "pool") OPP = "pool"; } catch (e) {}
@@ -862,7 +870,7 @@ const modeReady = (async () => {
   if (!MODE) { MODE = "wasm"; startWorker(); }   // start loading the in-browser solver while the hand is entered
   const ctl = document.getElementById("solvectl");
   const setSpeed = (m) => {
-    SPEED = m; [BUDGET, PRIOR] = BUDGETS[MODE][m];
+    SPEED = m;
     ctl.querySelectorAll("button").forEach(x => x.classList.toggle("active", x.dataset.m === m));
     try { localStorage.setItem("gto-speed", m); } catch (e) {}
   };
@@ -1430,17 +1438,20 @@ function payload() {
   const conv = (arr) => arr.map(a => a.action === "bet" ? { pos: a.pos, action: "bet", amount: a.to } : a.action === "raise" ? { pos: a.pos, action: "raise", to: a.to } : { pos: a.pos, action: a.action });
   // the Advanced fields change postflop solves only: sent from the flop on, so preflop advice (and its cache) is the same
   const post = boardCards().length >= 3, adv = post ? { ...(S.sizes ? { sizes: S.sizes } : {}), ...(OPP_RANGES() ? { ranges: OPP_RANGES() } : {}), ...(S.optSizes ? { optimize_sizes: true } : {}), ...(OPP_LOCKS() ? { locks: OPP_LOCKS() } : {}) } : {};
+  const [budget, prior_budget, quick] = budgetsFor(SPEED, boardCards().join(""));
   return { players: S.players, hero: S.hero, hole: (S.cards[0] || "") + (S.cards[1] || ""), board: boardCards().join(""), stack: S.stack,
            ...(UNEQUAL() ? { stacks: Object.fromEntries(POS.map(p => [p, STACK(p)])) } : {}),
            ...(ANTE() ? { ante: ANTE() } : {}), ...(STRADDLER() ? { straddle: true } : {}),
            ...(RAKE() ? { rake: RAKE() / 100, ...(RAKE_CAP() ? { rake_cap: RAKE_CAP() } : {}) } : {}),
-           preflop: conv(S.actions.preflop), flop: conv(S.actions.flop), turn: conv(S.actions.turn), river: conv(S.actions.river), budget: BUDGET, prior_budget: PRIOR, speed: SPEED,
+           preflop: conv(S.actions.preflop), flop: conv(S.actions.flop), turn: conv(S.actions.turn), river: conv(S.actions.river), budget, prior_budget, speed: SPEED, ...(quick ? { quick } : {}),
            ...(OPP === "pool" && !practicing() ? { opponents: "pool" } : {}), ...adv };   // (practice opponents play GTO)
 }
 // the payload key of the same spot at another speed
 function keyFor(key, speed) {
-  const [budget, prior_budget] = BUDGETS[MODE][speed];
-  return JSON.stringify({ ...JSON.parse(key), budget, prior_budget, speed });
+  const { quick: _, ...p } = JSON.parse(key), [budget, prior_budget, quick] = budgetsFor(speed, p.board);
+  // (quick right after speed, where payload() puts it)
+  const o = {}; for (const [k, v] of Object.entries({ ...p, budget, prior_budget, speed })) { o[k] = v; if (k === "speed" && quick) o.quick = true; }
+  return JSON.stringify(o);
 }
 async function analyze(sim) {
   if (!S.cards[0] || !S.cards[1]) return;
@@ -1461,9 +1472,10 @@ async function analyze(sim) {
   el.innerHTML = `<div class="solvehead muted"><span class="spinner"></span><span id="solveMsg">Solving the ${sim.current}…${sim.current !== "preflop" && SPEED === "accurate" ? ` (Accurate mode: this can take ${MODE === "wasm" ? "a minute or more" : "up to a minute"})` : ""}</span><span class="num" id="solveTime"></span></div>${sim.current === "preflop" ? "" : '<div class="prog"><div id="solveBar"></div></div>'}`;
   solveStart = performance.now();
   if (MODE === "wasm" && workerStatus !== "Solving…") setStatus(workerStatus || "Loading the solver runtime…");   // runtime still loading
-  let est = BUDGET + PRIOR * Math.max(0, STREETS.indexOf(sim.current) - 1);   // earlier postflop streets are re-solved to narrow ranges
-  // the local server's Fast gives a 3-way flop or turn 5 s, not its 2.5 (gto/native.py MW_FAST_BUDGET)
-  if (MODE === "server" && SPEED === "fast" && sim.active.size === 3 && ["flop", "turn"].includes(sim.current)) est = Math.max(est, 5);
+  const kp = JSON.parse(key);
+  let est = kp.budget + kp.prior_budget * Math.max(0, STREETS.indexOf(sim.current) - 1);   // earlier postflop streets are re-solved to narrow ranges
+  // the local server's Fast gives a 3-way flop or turn 5 s, not its 2.5 (gto/native.py MW_FAST_BUDGET; not Practice's quick)
+  if (MODE === "server" && SPEED === "fast" && !kp.quick && sim.active.size === 3 && ["flop", "turn"].includes(sim.current)) est = Math.max(est, 5);
   if (SPEED === "accurate") {   // Accurate continues from a Fast solve of this spot, counting its time
     const f = cache.get(keyFor(key, "fast"));
     if (f && f.seconds) est = Math.round(Math.max(est * 0.2, est - f.seconds));
@@ -1478,18 +1490,6 @@ async function analyze(sim) {
   // (practice: the answer the look-ahead already asked for, else once its request is out of the way)
   try { res = (practicing() && await window.Practice.fromAhead(key)) || await callAdvise(JSON.parse(key)); }
   catch (e) { res = { error: "Request failed: " + e }; }
-  // Practice grades your move: a 3-way flop or turn whose Fast solve didn't settle (the betting rules answered, not
-  // graded) is solved on Accurate instead, shown and cached as this spot's answer (and Accurate's, for the speed switch)
-  if (res.mw_solvable && SPEED === "fast" && practicing() && gen === solveGen) {
-    const akey = keyFor(key, "accurate"), [b, p] = BUDGETS[MODE].accurate;
-    est = b + p * Math.max(0, STREETS.indexOf(sim.current) - 1); solveStart = performance.now();
-    const m = document.getElementById("solveMsg");
-    if (m) m.textContent = `3-way pot: solving it on Accurate so your move can be graded (${MODE === "wasm" ? "a minute or more" : "up to a minute"})…`;
-    let acc;
-    try { acc = await callAdvise(JSON.parse(akey)); } catch (e) { acc = { error: "Request failed: " + e }; }
-    if (!acc.error && !acc.cancelled) { cache.set(akey, acc); res = acc; }
-    else if (acc.cancelled) res = acc;
-  }
   clearInterval(tick);
   if (gen !== solveGen) return;                                         // cancelled here; a newer solve owns the panel
   if (res.cancelled) { solving = false; lastKey = null; return; }        // cancelled by another tab on the same server

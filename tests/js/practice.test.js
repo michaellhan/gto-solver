@@ -477,26 +477,48 @@ test("looking ahead: once your spot is solved, the line where you check or call 
   assert.equal(new Set(keys).size, keys.length, "no request twice: the opponents' moves and your spot came from the look-ahead");
 });
 
-test("looking ahead in the browser only when the solver checks or calls your hand half the time or more; another move stops it", async () => {
-  const RARE = { ...ADVICE, actions: [{ action: "fold", freq: 0.6, ev_bb: 0 }, { action: "check", freq: 0.4, ev_bb: 1 }, { action: "call", freq: 0.4, ev_bb: 1 }] };
-  const p = await practicePage(11);
-  const done = new Set();
+test("looking ahead follows your likeliest moves: the solver's mix blended with your habits, a bet at its size, never a fold", async () => {
+  const heroReqs = (p, street) => p.posted.filter(m => m.state && m.state[street].some(a => a.pos === p.S.hero));
+  // a check or call 10% of the time, a fold the rest: no look-ahead
+  const RARE = { ...ADVICE, actions: [{ action: "fold", freq: 0.8, ev_bb: 0 }, { action: "check", freq: 0.1, ev_bb: 1 }, { action: "call", freq: 0.1, ev_bb: 1 }] };
+  const p = await practicePage(11), done = new Set();
   await toMyTurn(p, done, (m) => m.play ? passive(m) : RARE);
   await flush(); await flush();
-  const street = p.sim().current;
-  assert.ok(!p.posted.some(m => m.state && m.state[street].some(a => a.pos === p.S.hero)), "a check or call 40% of the time: no look-ahead");
-  // at 50% it looks ahead; your fold then ends the hand and the look-ahead with it
-  const q = await practicePage(11), d2 = new Set();
-  await toMyTurn(q, d2, (m) => m.play ? passive(m) : EVEN);
+  assert.equal(heroReqs(p, p.sim().current).length, 0, "a check or call 10% of the time: no look-ahead");
+  // ...but you nearly always check or call: blended with that habit, the look-ahead takes the line
+  const habits = { open: { fold: 0, pass: 10, aggr: 0 }, facing: { fold: 0, pass: 10, aggr: 0 } };
+  const q = await practicePage(11, { "gto-practice-habits": JSON.stringify(habits) }), d2 = new Set();
+  await toMyTurn(q, d2, (m) => m.play ? passive(m) : RARE);
   await flush();
-  const st2 = q.sim().current;
-  assert.ok(q.posted.some(m => m.state && m.state[st2].some(a => a.pos === q.S.hero)));
-  assert.equal(q.act({ action: "fold" }), null);
-  for (let i = 0; i < 5; i++) { await flush(); answer(q, d2, passive); }
-  const m = q.posted.length; await flush(); answer(q, d2, passive); await flush();
-  assert.equal(q.posted.length, m, "nothing more is asked once the hand is over");
-  assert.ok(q.val("Practice.state.hand.result"));
+  const s2 = q.sim().current, a2 = heroReqs(q, s2);
+  assert.ok(a2.length >= 1, "your usual check or call is looked ahead");
+  assert.deepEqual(a2[0].state[s2].find(a => a.pos === q.S.hero), { pos: q.S.hero, ...passMe(q.sim()) });
+  // your decisions add to the habits (kept in this browser)
+  assert.equal(q.act(passMe(q.sim())), null);
+  const kept = JSON.parse(q.storage.get("gto-practice-habits"));
+  assert.equal(kept.open.pass + kept.facing.pass, 21);
+  // a bet or raise the solver favours is looked ahead too, at its size
+  let size = null;
+  const BIG = (r) => { const c = r.sim().cur; size = size || Math.max(3, c.curBet * 3);
+    return { ...ADVICE, actions: [{ action: "fold", freq: 0.1, ev_bb: 0 }, { action: "check", freq: 0.1, ev_bb: 0 }, { action: "call", freq: 0.1, ev_bb: 0 },
+      { action: "raise", freq: 0.7, ev_bb: 1, amount_bb: size }] }; };
+  const r = await practicePage(11), d3 = new Set();
+  await toMyTurn(r, d3, (m) => m.play ? passive(m) : BIG(r));
+  await flush();
+  const s3 = r.sim().current, mine = heroReqs(r, s3).map(m => m.state[s3].find(a => a.pos === r.S.hero));
+  assert.ok(mine.some(a => (a.action === "raise" && a.to === size) || (a.action === "bet" && a.amount === size)), JSON.stringify(mine));
+  // with the even mix it looks ahead; your fold then ends the hand and the look-ahead with it
+  const f = await practicePage(11), d4 = new Set();
+  await toMyTurn(f, d4, (m) => m.play ? passive(m) : EVEN);
+  await flush();
+  assert.ok(f.posted.some(m => m.state && m.state[f.sim().current].some(a => a.pos === f.S.hero)));
+  assert.equal(f.act({ action: "fold" }), null);
+  for (let i = 0; i < 5; i++) { await flush(); answer(f, d4, passive); }
+  const n = f.posted.length; await flush(); answer(f, d4, passive); await flush();
+  assert.equal(f.posted.length, n, "nothing more is asked once the hand is over");
+  assert.ok(f.val("Practice.state.hand.result"));
 });
+
 
 test("Review mistakes: your decisions that gave up the most EV across hands, each opening its verdict; the dock's one-line verdict", async () => {
   const p = await practicePage(11);
@@ -621,28 +643,29 @@ test("sound effects: the deal, each move, your verdict and the pot; the menu's S
   assert.equal(q.byId("soundBtn").textContent, "Sounds off");
 });
 
-test("a 3-way flop or turn Fast leaves to the betting rules is solved on Accurate, so your move is graded", async () => {
+test("Practice at Fast asks for quick answers, about 2 s by street, and never waits on an Accurate solve", async () => {
   const p = await practicePage(5);
   const done = new Set();
-  const ACC = { ...ADVICE, multiway: true, solved: true, opponents: ["CO", "BB"], recommended: "call",
-    actions: [{ action: "fold", freq: 0, ev_bb: 0 }, { action: "call", freq: 1, ev_bb: 1 }] };
-  let fast = null, acc = null;
-  for (let i = 0; i < 50 && !acc; i++) {
+  let post = null;
+  for (let i = 0; i < 50 && !post; i++) {
     await flush();
     for (const m of p.posted) {
       if (m.id == null || done.has(m.id)) continue;
       done.add(m.id);
-      const r = m.play ? passive(m) : m.state.speed === "accurate" ? (acc = m, ACC) : (fast = fast || m, { ...ADVICE, multiway: true, opponents: ["CO", "BB"], equity_vs_field: 0.4, mw_solvable: true });
+      if (!m.play && m.state.board) post = post || m;
+      const r = m.play ? passive(m) : { ...ADVICE, multiway: true, opponents: ["CO", "BB"], equity_vs_field: 0.4 };
       p.workers.at(-1).onmessage({ data: { id: m.id, result: r } });
     }
   }
-  assert.ok(fast && acc, "the Fast answer, then an Accurate request");
-  assert.deepEqual({ ...acc.state, speed: "fast", budget: fast.state.budget, prior_budget: fast.state.prior_budget }, fast.state);   // the same spot
-  assert.deepEqual([acc.state.budget, acc.state.prior_budget], [60, 12]);
-  await flush();
-  assert.equal(p.val("lastResult.solved"), true);
-  assert.ok(p.val("resultKey === JSON.stringify(payload())"), "shown as this spot's answer");
-  assert.equal(p.act({ action: "call" }), null);
-  const g = p.val(`[...Object.values(S.actions)].flat().filter(a => a.pos === S.hero).at(-1).g`);
-  assert.ok(g && g.m === "call" && g.f === 1, "graded against the Accurate answer (Fast's mix calls 50%)");
+  assert.ok(post, "a postflop spot asked");
+  const street = { 6: "flop", 8: "turn", 10: "river" }[post.state.board.length];
+  assert.equal(post.state.quick, true);
+  assert.deepEqual([post.state.budget, post.state.prior_budget], p.val(`PRACTICE_BUDGETS.${street}`));
+  for (let i = 0; i < 5; i++) { await flush(); answer(p, done, passive); }
+  assert.ok(!p.posted.some(m => m.state && m.state.speed === "accurate"), "no Accurate request");
+  // the solver's own Fast isn't quick
+  p.run("Practice.set(false)");
+  assert.equal(p.val("payload().quick"), undefined);
+  assert.deepEqual(p.val("[payload().budget, payload().prior_budget]"), [8, 3]);
 });
+

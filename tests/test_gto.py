@@ -1193,28 +1193,18 @@ class TestTableSizes(unittest.TestCase):
         adv.advise(dict(st, hole="7s6s"))
         self.assertLess(time.process_time() - c, 6.0)
 
-    def test_multiway_rules_answer_says_when_a_3way_solve_would_take_it(self):
-        # Fast solves 3-way rivers only: its rules answer on a 3-way flop says the solver takes the spot at a
-        # speed that solves flops (Practice then asks Accurate, to grade it); with a fourth player or someone
-        # all-in it doesn't, since no speed solves those
+    def test_quick_answers_leave_a_3way_flop_to_the_rules(self):
+        # Practice's quick answers (~2 s) solve 3-way pots on the river only: a 3-way flop's tables alone take
+        # about a second in the browser, so the betting rules answer it, at once and without a solve
         adv = Advisor(Config(depth=1), time_budget=4.0, prior_budget=2.0)
         adv.mw_trials = MW_TRIALS
-        adv.mw_solve_streets = ("river",)
+        adv.mw_solve_streets = ("flop", "turn", "river")
         pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
                {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
-        st = {"players": 6, "hero": "BB", "hole": "AsKd", "board": "Kh7c2d", "preflop": pre, "flop": []}
+        st = {"players": 6, "hero": "BB", "hole": "AsKd", "board": "Kh7c2d", "preflop": pre, "flop": [], "quick": True}
         res = adv.advise(st)
         self.assertTrue(res["multiway"]); self.assertNotIn("solved", res)
-        self.assertTrue(res["mw_solvable"])
-        four = adv.advise(dict(st, preflop=pre[:4] + [{"pos": "SB", "action": "call"}, pre[5]], hero="SB"))
-        self.assertEqual(four["players"], 4); self.assertNotIn("mw_solvable", four)
-        jam = adv.advise(dict(st, stacks={"BTN": 10}, flop=[{"pos": "BB", "action": "check"}, {"pos": "CO", "action": "check"},
-                                                            {"pos": "BTN", "action": "all-in"}]))
-        self.assertTrue(jam["multiway"]); self.assertNotIn("mw_solvable", jam)
-        # a speed that solves the street but whose solve didn't settle answers by the rules too, flagged for Accurate
-        adv.mw_solve_streets, adv.mw_trials, adv.mw_max_expl = ("flop", "turn", "river"), None, -1.0
-        unsettled = adv.advise(dict(st, hole="7s6s"))
-        self.assertNotIn("solved", unsettled); self.assertTrue(unsettled["mw_solvable"])
+        self.assertEqual(adv._mw_cache, {})
 
     def test_multiway_top_pair_continues_like_draws(self):
         # 8-6-3 checked to the BB 3-way. The bettor's bluffs used to come from the bottom of its range

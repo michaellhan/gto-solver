@@ -128,7 +128,6 @@ class TestNativeSpeeds(unittest.TestCase):
                                                        board="Kh7d2c", flop=flop))
         self.assertLess(time.time() - t, MW_FAST_BUDGET + 2.0)
         self.assertTrue(r.get("solved"), r.get("notes"))
-        self.assertNotIn("mw_solvable", r)
 
     def test_server_picks_the_advisor_by_speed(self):
         advs = advisors(budget=1.0)

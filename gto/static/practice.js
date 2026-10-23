@@ -4,11 +4,11 @@
 // postflop solve, through the worker or POST /play). Your decisions are graded as in a hand review; the advice
 // stays hidden on your turn and shows once you've acted. Your seat (Your seat): Table (the default: a real ring
 // game, you at one seat, the button moving one seat each hand and every seat's chips carried over), Random, or
-// one position every hand. While you decide, the line where you check or call is asked for ahead (see ahead()).
+// one position every hand. While you decide, the lines you are likeliest to take are asked for ahead (see ahead()).
 // The running score, the table and your last decisions (Review mistakes) are kept in this browser.
 "use strict";
 (() => {
-  const ON = "gto-practice", STATE = "gto-practice-state", HAND = "gto-practice-hand", SCORE = "gto-practice-score", SEAT = "gto-practice-seat", REVIEW = "gto-practice-review", DRILL = "gto-practice-drill", HINT = "gto-practice-hint", TABLE = "gto-practice-table";
+  const ON = "gto-practice", HABITS = "gto-practice-habits", STATE = "gto-practice-state", HAND = "gto-practice-hand", SCORE = "gto-practice-score", SEAT = "gto-practice-seat", REVIEW = "gto-practice-review", DRILL = "gto-practice-drill", HINT = "gto-practice-hint", TABLE = "gto-practice-table";
   const read = (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } };
   const store = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
   const ZERO = { hands: 0, decisions: 0, best: 0, good: 0, evDecisions: 0, evLost: 0, net: 0 };
@@ -16,7 +16,7 @@
   // seat: "table", "random" or a position; table: the ring game (see deal()); more: the verdict's details open; detail: your range shown (see range);
   // review: your last decisions (REVIEW_KEEP), for Review mistakes; rev: that list open; pick: the one shown in it;
   // drill: the kind of pot dealt (DRILLS); tries: deals so far looking for it; hint: the first-run hint dismissed
-  const P = { on: false, hand: read(HAND), score: { ...ZERO, ...(read(SCORE) || {}) }, busy: false, status: "", error: "",
+  const P = { on: false, hand: read(HAND), score: { ...ZERO, ...(read(SCORE) || {}) }, habits: read(HABITS) || {}, busy: false, status: "", error: "",
     seat: read(SEAT) || "table", table: read(TABLE), more: !!read("gto-practice-more"), detail: !!read("gto-practice-detail"),
     review: Array.isArray(read(REVIEW)) ? read(REVIEW) : [], rev: false, pick: null,
     drill: read(DRILL) || "any", tries: 0, hint: !!read(HINT), range: null };
@@ -194,15 +194,39 @@
     else if (!seeking()) heard(S.actions[sim.current].at(-1));
   }
 
-  // ---- looking ahead: on your turn, once your spot is solved, the line where you check or call is played on
-  // (the opponents' replies drawn as they will be, the next street dealt) as far as the next request that takes a
-  // solve: your own next spot (kept in the page's cache) or an opponent's move (kept here, used if you do check
-  // or call). Moves the solve already holds (heads-up, a reply on your own tree) cost nothing, so the wait goes
-  // into the time you take to decide. A local server cancels a look-ahead your move made useless; the browser's
-  // solver can't stop one, so there it only looks ahead at Fast, when the solver checks or calls your hand half
-  // the time or more (a wrong guess makes the next request wait for it).
+  // ---- looking ahead: on your turn, once your spot is solved, the lines you're likeliest to take are played on
+  // (the opponents' replies drawn as they will be, the next street dealt), each as far as the next request that takes
+  // a solve: your own next spot (kept in the page's cache) or an opponent's move (kept here, used if you do take that
+  // line). Moves the solve already holds (heads-up, a reply on your own tree) cost nothing, so the wait goes into the
+  // time you take to decide. Your likeliest moves: the solver's mix for your hand, blended half and half with what you
+  // usually do in that kind of spot (habits: fold / check or call / bet or raise, facing a bet or not) once you've
+  // decided it a few times; up to AHEAD_LINES of them, each at least AHEAD_MIN likely, a fold never (it ends your hand).
+  // A local server cancels a look-ahead your move made useless; the browser's solver can't stop one, so there it
+  // looks ahead only at Fast, where Practice's answers take about 2 s (a wrong guess makes the next request wait
+  // that long at most).
+  const AHEAD_LINES = 2, AHEAD_MIN = 0.2, HABIT_MIN = 5;
   const A = { key: null, gen: 0, moves: new Map(), out: null };   // out: {k, p} the look-ahead request in flight
   const clone = (x) => JSON.parse(JSON.stringify(x));
+  const kindOf = (action) => action === "fold" ? "fold" : action === "check" || action === "call" ? "pass" : "aggr";
+  // what you've done, by spot kind: {facing|open: {fold, pass, aggr}} (kept in this browser)
+  function habit(facing, action) {
+    const h = P.habits[facing ? "facing" : "open"] = P.habits[facing ? "facing" : "open"] || { fold: 0, pass: 0, aggr: 0 };
+    h[kindOf(action)]++; store(HABITS, P.habits);
+  }
+  // your moves at this spot, likeliest first: [{rec, p}] (rec as the page records it)
+  function likely(res, sim) {
+    const info = sim.cur, facing = info.curBet - info.bets[S.hero] > 1e-9;
+    const legal = (res.actions || []).filter(a => a.action !== "fold" && (facing ? a.action !== "check" : a.action !== "call"));
+    const h = P.habits[facing ? "facing" : "open"], n = h ? h.fold + h.pass + h.aggr : 0;
+    const byKind = {}; for (const a of res.actions || []) byKind[kindOf(a.action)] = (byKind[kindOf(a.action)] || 0) + a.freq;
+    return legal.map(a => {
+      const k = kindOf(a.action);
+      const p = n >= HABIT_MIN ? 0.5 * a.freq + 0.5 * (h[k] / n) * (byKind[k] > 0 ? a.freq / byKind[k] : 0) : a.freq;
+      const rec = k === "pass" ? { action: facing ? "call" : "check" } : a.action === "all-in" ? { action: "all-in" }
+        : a.amount_bb != null ? { action: facing || info.curBet > 0 ? "raise" : "bet", to: Math.round(a.amount_bb * 2) / 2 } : null;
+      return { rec, p };
+    }).filter(c => c.rec && c.p >= AHEAD_MIN).sort((x, y) => y.p - x.p).slice(0, AHEAD_LINES);
+  }
   // run f with the page's hand set to st's actions and cards (act() and payload() read the page's S)
   function within(st, f) {
     const keep = [S.actions, S.cards]; S.actions = st.actions; S.cards = st.cards;
@@ -217,12 +241,18 @@
     const key = JSON.stringify(payload());
     if (A.key === key || !lastResult || lastResult.error) return;
     A.key = key; const gen = ++A.gen;
-    const sim0 = simulate(), info = sim0.cur, facing = info.curBet - info.bets[S.hero] > 1e-9, pass = facing ? "call" : "check";
-    const pf = (lastResult.actions || []).find(a => a.action === pass);
-    if (MODE !== "server" && (SPEED !== "fast" || !pf || pf.freq < 0.5)) return;
+    if (MODE !== "server" && SPEED !== "fast") return;
+    const sim0 = simulate();
+    for (const c of likely(lastResult, sim0)) {
+      if (gen !== A.gen) return;
+      await line(gen, sim0.current, c.rec);
+    }
+  }
+  // one line: your move, then the hand played on to the next request that takes a solve
+  async function line(gen, street, rec) {
     const st = { actions: clone(S.actions), cards: S.cards.slice() };
-    st.actions[sim0.current].push({ pos: S.hero, action: pass });
-    // the hand on the page is still on that line (you haven't gone another way, it hasn't ended)
+    st.actions[street].push({ pos: S.hero, ...rec });
+    // the hand on the page is still where the line starts, or on it (you haven't gone another way, it hasn't ended)
     const sig = (acts) => STREETS.map(s => acts[s].map(a => `${a.pos} ${a.action} ${a.to || ""}`));
     const onLine = () => { const r = sig(S.actions), h = sig(st.actions);
       return ours() && !simulate().handOver && r.every((x, i) => x.every((y, j) => y === h[i][j])); };
@@ -322,6 +352,7 @@
   const YOU = (a) => ({ fold: "folded", check: "checked", call: "called", "all-in": "went all-in" })[a.action] || (a.action === "bet" ? `bet ${fmt(a.to)}` : `raised to ${fmt(a.to)}`);
   function graded(street, rec, res) {
     if (!P.hand) return;
+    { const c = simulate().cur; if (c) habit(c.curBet - c.bets[S.hero] > 1e-9, rec.action); }   // (before the move: what it faced)
     const mix = res && !res.error && !heuristic(res) && res.actions ? res.actions.map(a => ({ n: a.action, f: a.freq, ...(a.ev_bb !== undefined ? { ev: a.ev_bb } : {}), ...(amtOf(a) != null ? { a: amtOf(a) } : {}) })) : null;
     const id = Date.now().toString(36) + (++AI.seq).toString(36);   // (the explanation kept in memory; not Math.random, the deal's)
     const e = { id, street, rec: { action: rec.action, ...(rec.to != null ? { to: rec.to } : {}) }, g: rec.g || null, mix, ctx: spot(street) };

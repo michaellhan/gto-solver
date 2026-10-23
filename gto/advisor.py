@@ -56,7 +56,9 @@ MW_FLOP_BETS = {"flop": [0.33, 0.75], "turn": 0.5, "river": 0.5}
 # Fast's 3-way flop and turn solves: a smaller game (6 hand buckets, the turn's tables over every sixth river, the flop
 # betting half the pot), so they settle in seconds where MW_LATER's needs Accurate's minute in the browser (measured,
 # scripts/bench_browser.mjs, 8 s: a flop first to act 51 iterations, 2.6% of the pot from equilibrium in its game;
-# checked to 85, 0.44%; a turn 110, 0.15%). Practice grades on them instead of waiting for an Accurate solve.
+# checked to 85, 0.44%; a turn 110, 0.15%). (Practice's quick answers leave 3-way flops and turns to the rules.)
+MW_QUICK_BUDGET = 1.8   # Practice's quick answers: a 3-way river's least budget (its tables take ~0.7 s in the browser:
+                        # at 1.2 s it ran 4 iterations, 19% of the pot from equilibrium; at 1.5, 7-19, 2-8.5%)
 MW_FAST = {"later": "buckets", "buckets": 6, "bucket_river_step": 6}
 MW_FAST_STREETS = {"flop": dict(MW_FAST, bet={"flop": [0.5], "turn": 0.5, "river": 0.5}), "turn": dict(MW_FAST)}
 HU_RESERVE = 1.0   # heads-up solves likewise keep one iteration's time back (the exploitability read after: ~1 iteration)
@@ -1517,6 +1519,10 @@ class Advisor:
             self.time_budget = max(0.5, min(120.0, float(state["budget"])))
         if state.get("prior_budget"):
             self.prior_budget = max(0.3, min(30.0, float(state["prior_budget"])))
+        # Practice's quick answers (~2 s): the page's budget as sent (a 3-way river MW_QUICK_BUDGET, not mw_budget; no second
+        # budget for an unsettled street, SETTLE_EXPL), 3-way solves on the river only (a flop's or turn's tables alone
+        # take ~1 s in the browser: the betting rules answer)
+        self._quick = bool(state.get("quick"))
         # the Breakdown view (gto/breakdown.py) on the advice's own spot; not for a practice opponent's move
         self._breakdown = bool(state.get("breakdown")) and actor is None
         self._req_sizes = sizes   # (optimize_sizes puts a street's custom sizes in its wide menu)
@@ -1993,12 +1999,7 @@ class Advisor:
                                        line=_mw_line(board, hero, hole, stk, streets, cur.name, len(streets.get(cur.name) or [])))
             if res is not None:
                 return res
-            res = self._multiway(hero, hole, board, ranges, remaining, cur, stk, t0, notes)
-            if _mw_applies(remaining, cur, stk):
-                # the 3-way solver takes it at a speed that solves this street, or longer than this one's solve had
-                # before settling (Practice asks Accurate)
-                res["mw_solvable"] = True
-            return res
+            return self._multiway(hero, hole, board, ranges, remaining, cur, stk, t0, notes)
         villain = live_opps[0]
         post = cur.order
         oop, ip = sorted([hero, villain], key=post.index)
@@ -2234,6 +2235,8 @@ class Advisor:
         fallback_notes, notes = notes, list(notes)
         if not self.mw_solve_streets or cur.name not in self.mw_solve_streets or not _mw_applies(remaining, cur, stk):
             return None
+        if getattr(self, "_quick", False) and cur.name != "river":
+            return None
         players = [p for p in cur.order if p in remaining]          # postflop acting order
         behind = {p: stk[p] - cur.inv_start[p] for p in players}
         S = min(behind.values())
@@ -2261,7 +2264,7 @@ class Advisor:
         # the budget covers the whole answer: the tree and bucket tables (a flop's take 1-2 s natively, a few in the
         # browser), the iterations, and the gains and EVs read off after them (MW_RESERVE iterations' time)
         # (a solve its budget ran out on isn't run again: a later request for the spot gets the same answer)
-        budget = max(self.time_budget, self.mw_budget or 0.0)
+        budget = max(self.time_budget, MW_QUICK_BUDGET if getattr(self, "_quick", False) else self.mw_budget or 0.0)
         spent = sol.build_seconds + sol.seconds
         left = min(budget - spent, budget - (time.time() - t0))
         self._mw_run(sol, left)
@@ -3496,7 +3499,8 @@ class Advisor:
         """The street being advised on, far from settled after its budget (SETTLE_EXPL): one more budget,
         once. Limped pots, turn probes and short-stack check-raises stopped at 10 iterations 27-55% of the
         pot from settled, showing confident mixes (an all-in 75% at +15 beside a call at +22). Whether it ran."""
-        if getattr(sol, "settled_once", False) or sol.iters >= 1000 or sol.exploitability() < SETTLE_EXPL:
+        if getattr(self, "_quick", False) or getattr(sol, "settled_once", False) or sol.iters >= 1000 \
+                or sol.exploitability() < SETTLE_EXPL:
             return False
         sol.settled_once = True
         sol.extend(self.time_budget if budget is None else budget, should_stop=self.should_stop, reserve=HU_RESERVE)
