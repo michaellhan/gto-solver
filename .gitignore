@@ -6,3 +6,6 @@ __pycache__/
 sanity_report.md
 reports/
 .pf_cache/
+node_modules/
+.wrangler/
+.dev.vars

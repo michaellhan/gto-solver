@@ -14,17 +14,21 @@ const ADVICE = { street: "flop", hero: "BTN", hand: "AKs", recommended: "call",
   actions: [{ action: "fold", freq: 0.2, ev_bb: 0 }, { action: "check", freq: 0.3, ev_bb: 0.4 }, { action: "call", freq: 0.5, ev_bb: 1 }] };
 const API = "https://api.anthropic.com/v1/messages";
 const KEY = "sk-ant-api03-obviously-fake-key-for-tests";
+const PROXY = "https://gto-explain.example.workers.dev/explain";
 
 // a practice page at your first decision; fetches to the API go to api(url, init) (recorded in p.apiCalls)
-async function atDecision(storage = {}, api = null) {
+async function atDecision(storage = {}, api = null, { proxy = "" } = {}) {
   const p = loadPage({ storage });
   await p.ready();
   p.run("Math.random = (() => { let s = 11; return () => (s = (s * 16807) % 2147483647) / 2147483647; })();");
   p.ctx.TextDecoder = TextDecoder;
   p.apiCalls = [];
   const own = p.ctx.fetch;
-  p.ctx.fetch = (url, init) => String(url).startsWith("https://api.anthropic.com") ? (p.apiCalls.push({ url: String(url), init }), api(url, init)) : own(url, init);
-  vm.runInContext(PRACTICE, p.ctx, { filename: "practice.js" });
+  p.ctx.fetch = (url, init) => String(url).startsWith("https://api.anthropic.com") || (proxy && String(url) === proxy) ? (p.apiCalls.push({ url: String(url), init }), api(url, init)) : own(url, init);
+  // (EXPLAIN_PROXY set to the test's proxy, or "" for your own key only, as before the worker's deploy)
+  const src = PRACTICE.replace(/const EXPLAIN_PROXY = "[^"]*";/, `const EXPLAIN_PROXY = ${JSON.stringify(proxy)};`);
+  assert.ok(src.includes(`const EXPLAIN_PROXY = ${JSON.stringify(proxy)};`), "EXPLAIN_PROXY in practice.js");
+  vm.runInContext(src, p.ctx, { filename: "practice.js" });
   p.run("Practice.set(true)");
   const done = new Set();
   for (let i = 0; i < 50 && !(p.sim().toAct === p.S.hero && p.val("resultKey === JSON.stringify(payload())")); i++) {
@@ -190,4 +194,109 @@ test("the prompt on a later street: the board by street, each bet with the pot, 
   assert.equal(ctx.at, "Turn, Hero to act. Pot 14.8bb, 6bb to call. Stacks behind: Hero (BB) 95.6bb, BTN/SB 89.6bb");
   const text = p.val(`Practice.ai.prompt({ street: "turn", rec: { action: "call" }, g: null, mix: null, ctx: ${JSON.stringify(ctx)} })`);
   assert.match(text, /- I chose: call 6bb\n- The solver doesn't solve this multiway spot.*\n- Verdict: Not graded\n/s);
+});
+
+test("EXPLAIN_PROXY is the deployed worker's /explain, so explanations are free by default; no API key in the page", () => {
+  assert.match(PRACTICE, /\n  const EXPLAIN_PROXY = "https:\/\/gto-explain\.[a-z0-9-]+\.workers\.dev\/explain";\n/);
+  assert.ok(!/sk-ant-api\d/.test(PRACTICE), "no API key in practice.js");
+});
+
+test("with the proxy: Explain with AI streams from it with no key, sending only the prompt; Use my own key and back", async () => {
+  const pieces = [ev("content_block_delta", { index: 0, delta: { type: "text_delta", text: "Free **answer**." } }),
+    ev("message_delta", { delta: { stop_reason: "end_turn" } }) + ev("message_stop", {})];
+  const p = await atDecision({}, async () => sse(pieces), { proxy: PROXY });
+  p.act({ action: "fold" });
+  const k = JSON.stringify(lastKey(p));
+  assert.match(html(p), /data-ai="explain"[^>]*title="Claude explains this decision">Explain with AI</);
+  await p.run(`Practice.ai.click("explain", ${k})`);
+  await flush();
+  assert.equal(p.apiCalls.length, 1);
+  const { url, init } = p.apiCalls[0];
+  assert.equal(url, PROXY);
+  assert.equal(init.method, "POST");
+  assert.deepEqual({ ...init.headers }, { "content-type": "application/json" });
+  assert.deepEqual(JSON.parse(init.body), { prompt: p.val("Practice.ai.prompt(Practice.state.hand.log.at(-1))") });
+  let h = html(p);
+  assert.doesNotMatch(h, /cx-key/);
+  assert.match(h, /<p>Free <b>answer<\/b>\.<\/p>/);
+  assert.match(h, /data-ai="own"[^>]*>Use my own key</);
+  assert.doesNotMatch(h, /Forget key|Use free explanations/);
+  // Use my own key with none saved: the key form; saving it switches to the API with the key, and it's remembered
+  await p.run(`Practice.ai.click("own", ${k})`);
+  assert.match(html(p), /class="cx-key"/);
+  assert.equal(p.apiCalls.length, 1);
+  await p.run(`Practice.ai.click("save", ${k}, ${JSON.stringify(KEY)})`);
+  await flush();
+  assert.equal(p.apiCalls.length, 2);
+  assert.equal(p.apiCalls[1].url, API);
+  assert.equal(p.apiCalls[1].init.headers["x-api-key"], KEY);
+  assert.equal(p.storage.get("gto-explain-own"), "1");
+  h = html(p);
+  assert.match(h, /data-ai="free"[^>]*>Use free explanations<.*data-ai="forget"[^>]*>Forget key</s);
+  // back to the free ones (the key stays saved, unused)
+  await p.run(`Practice.ai.click("free", ${k})`);
+  await flush();
+  assert.equal(p.apiCalls.at(-1).url, PROXY);
+  assert.equal(p.storage.has("gto-explain-own"), false);
+  assert.equal(p.storage.get("gto-anthropic-key"), KEY);
+  // a key saved but not chosen doesn't take over; Use my own key with one saved uses it straight away
+  const q = await atDecision({ "gto-anthropic-key": KEY }, async () => sse(pieces), { proxy: PROXY });
+  q.act({ action: "call" });
+  const k2 = JSON.stringify(lastKey(q));
+  await q.run(`Practice.ai.click("explain", ${k2})`);
+  await flush();
+  assert.equal(q.apiCalls.at(-1).url, PROXY);
+  await q.run(`Practice.ai.click("own", ${k2})`);
+  await flush();
+  assert.equal(q.apiCalls.at(-1).url, API);
+  assert.doesNotMatch(html(q), /cx-key/);
+  // chosen before (gto-explain-own): the key from the start
+  const r = await atDecision({ "gto-anthropic-key": KEY, "gto-explain-own": "1" }, async () => sse(pieces), { proxy: PROXY });
+  r.act({ action: "call" });
+  await r.run(`Practice.ai.click("explain", ${JSON.stringify(lastKey(r))})`);
+  await flush();
+  assert.equal(r.apiCalls.length, 1);
+  assert.equal(r.apiCalls[0].url, API);
+});
+
+test("with the proxy: the daily limit (429) offers your own key, a minute's limit says wait, 403 and no network say so", async () => {
+  let answer;
+  const p = await atDecision({}, async () => answer(), { proxy: PROXY });
+  p.act({ action: "call" });
+  const k = JSON.stringify(lastKey(p));
+  const err = (status, body) => () => ({ ok: false, status, json: async () => body });
+  answer = err(429, { error: "Daily free explanations used up. Add your own key, or come back tomorrow.", retryAfter: 3600, scope: "day" });
+  await p.run(`Practice.ai.click("explain", ${k})`);
+  let h = html(p);
+  assert.match(h, /<div class="cx-ai err"[^>]*>.*Daily free explanations used up — add your own key/s);
+  assert.match(h, /data-ai="own"[^>]*>Add your own key</);
+  assert.doesNotMatch(h, /data-ai="retry"|Use my own key/);
+  await p.run(`Practice.ai.click("own", ${k})`);
+  assert.match(html(p), /class="cx-key"/);
+  answer = () => sse([ev("content_block_delta", { delta: { type: "text_delta", text: "With my key." } })]);
+  await p.run(`Practice.ai.click("save", ${k}, ${JSON.stringify(KEY)})`);
+  await flush();
+  assert.equal(p.apiCalls.at(-1).url, API);
+  assert.match(html(p), /<p>With my key\.<\/p>/);
+  // the global cap, the per-minute limit, a refused origin, a proxy error and no network
+  const q = await atDecision({}, async () => answer(), { proxy: PROXY });
+  q.act({ action: "call" });
+  const k2 = JSON.stringify(lastKey(q));
+  const cases = [
+    [err(429, { error: "x", retryAfter: 100, scope: "global" }), /Today's free explanations are used up — add your own key/, true],
+    [err(429, { error: "x", retryAfter: 60, scope: "minute" }), /Too many explanations in a minute\. Try again in 60s\./, false],
+    [err(403, { error: "This origin may not use the explanation service." }), /can't use the free explanations \(403\) — add your own key/, true],
+    [err(503, { error: "Claude is busy right now. Try again in a moment.", retryAfter: 30 }), /Claude is busy right now\. Try again in a moment\./, false],
+    [err(502, null), /The explanation service failed \(502\)\./, false],
+    [() => Promise.reject(new TypeError("Failed to fetch")), /Couldn't reach the explanation service/, false]];
+  for (const [a, re, quota] of cases) {
+    answer = a;
+    await q.run(`Practice.ai.click("retry", ${k2})`);
+    h = html(q);
+    assert.match(h, re);
+    assert.equal(/data-ai="retry"/.test(h), !quota, String(re));
+    assert.equal(/>Add your own key</.test(h), quota, String(re));
+    assert.doesNotMatch(h, /Enter another key/);
+  }
+  assert.ok(q.apiCalls.every(c => c.url === PROXY));
 });

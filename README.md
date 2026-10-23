@@ -268,11 +268,50 @@ pot, the decision (pot, what's to call, the stacks behind), what you did, the so
 frequency and EV, the EV lost and the verdict, and a request to explain in plain language why the solver's play is
 better (ranges, equity, blockers, board texture, sizing) and end with one heuristic. **Explain with AI** streams
 Claude's explanation (Claude Sonnet 5.5, about 150-250 words ending "Takeaway:", the solver's numbers taken as
-given) into the card, straight from the browser to the Claude Messages API with your own Anthropic API key: the
+given) into the card. Through the proxy (`EXPLAIN_PROXY` in `practice.js`, see
+[Explain with AI proxy](#explain-with-ai-proxy)) it works for every visitor with no key, a few a day each; when they're
+used up the card says "Daily free explanations used up — add your own key" and offers the key form, and a small
+**Use my own key** link switches to your own key (and **Use free explanations** back). Without the proxy, or with
+your own key chosen, it goes straight from the browser to the Claude Messages API with your own Anthropic API key: the
 first time it asks for one (a link to console.anthropic.com to get one); the key is kept only in this browser's
 localStorage and sent only to api.anthropic.com (the site is static, nothing of ours in between), and **Forget key**
 removes it. A refused key (401), a rate limit (429) or no network say so in the card with **Try again**; each
 explanation is kept in memory for its decision, so opening it again costs nothing. The page loads `practice.js` the first time Practice is turned on.
+
+## Explain with AI proxy
+
+`cloudflare/explain-proxy/` is a small Cloudflare Worker that lets Practice mode's **Explain with AI** work for
+visitors without their own API key. The page POSTs `{prompt}` (the Copy for AI text, at most 8000 characters) to
+`/explain`; the worker builds the Claude Messages API request itself (Claude Sonnet 5.5, the coach system prompt,
+700 tokens at most, streamed: the page can't choose any of these) with the key kept as a Worker secret, and streams
+the answer back. Only `https://www.michael-han.com`, `https://michael-han.com` and `http://localhost:*` /
+`http://127.0.0.1:*` may call it (`ALLOWED_ORIGINS` in `wrangler.toml`; others get 403). Each visitor's IP gets 5
+a minute (the Workers Rate Limiting binding) and 20 a day, and everyone together 1000 a day (`DAILY_PER_IP`,
+`DAILY_GLOBAL`; daily counters in a KV namespace, by a hash of the IP), each answered 429 `{error, retryAfter}`;
+Anthropic's errors come back as short JSON errors (a refused key as "proxy misconfigured", 429/529 as "busy, try
+again"), never with the key or Anthropic's headers. Its tests: `cd cloudflare/explain-proxy && npm test`. The
+worker isn't part of the site: `scripts/deploy.sh` copies only the page's own files.
+
+It's deployed at `https://gto-explain.combatrobotics.workers.dev` (`EXPLAIN_PROXY` is its `/explain`; the KV id is
+in `wrangler.toml`), so redeploying after a change is `npx wrangler deploy` in its folder. To deploy it afresh (a free
+Cloudflare account is enough):
+
+1. Get an Anthropic API key from the Console's API Keys page, <https://console.anthropic.com/settings/keys>: it starts
+   with `sk-ant-api03-`. (Set a monthly spend limit in the Console too; with the default caps it's at most 1000
+   short explanations a day.)
+2. In the folder: `cd cloudflare/explain-proxy && npm install`
+3. `npx wrangler login` (opens the browser to sign in to Cloudflare)
+4. `npx wrangler kv namespace create COUNTS` and paste the `id` it prints into `wrangler.toml` (the
+   `[[kv_namespaces]]` entry's `id`)
+5. `npx wrangler secret put ANTHROPIC_API_KEY` and paste the key when it asks (it's stored encrypted by Cloudflare,
+   never in the repo)
+6. `npx wrangler deploy`: it prints the worker's URL, like `https://gto-explain.<your-subdomain>.workers.dev`
+7. Set `EXPLAIN_PROXY` in `gto/static/practice.js` to that URL plus `/explain` (or tell Claude the URL), then
+   deploy the site.
+
+To check it: `curl -i -X POST https://gto-explain.<your-subdomain>.workers.dev/explain -H 'Origin: https://michael-han.com' -H 'content-type: application/json' -d '{"prompt":"Is folding 72o UTG right?"}'`
+streams an answer. `npx wrangler tail` shows its requests live; the limits are vars in `wrangler.toml` (redeploy
+after changing them). To stop it: `npx wrangler delete`, or roll the key in the Console.
 
 ## Use from the shell
 
