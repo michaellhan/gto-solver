@@ -540,10 +540,11 @@
     .felt::before { inset: 12% 5%; }
     .seat { width: 56px; padding: 3px 2px; }
     .seat .pos { font-size: 11px; }
-    .bc { width: 28px; height: 39px; font-size: 13px; }
-    /* your own cards: the thing you look at most, so bigger than the rest of the seat */
-    .seat.hero { width: 70px; }
-    .seat.hero .hc { font-size: 15px; }
+    .bc { width: 24px; height: 34px; font-size: 11px; }
+    /* Practice: the board and your own cards are what you look at most, so bigger than the rest of the table */
+    body.practice .bc { width: 28px; height: 39px; font-size: 13px; }
+    body.practice .seat.hero { width: 70px; }
+    body.practice .seat.hero .hc { font-size: 15px; }
     .pc { height: 30px; font-size: 11px; }
     .slot { width: 32px; height: 46px; font-size: 15px; }
     .slots { gap: 10px; }
@@ -923,8 +924,11 @@ let lastResult = null;
 const cache = new Map();  // payload -> result, so undo/redo doesn't re-solve
 
 function fresh(n) { n = n || 6; return { players: n, hero: n === 2 ? "SB" : "BTN", stack: 100, cards: [null, null, null, null, null, null, null], actions: { preflop: [], flop: [], turn: [], river: [] } }; }
-function save() { try { localStorage.setItem("handreview", JSON.stringify(S)); } catch (e) {} }
-function load() { try { const s = localStorage.getItem("handreview"); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
+// Practice and the solver each keep their own hand and setup: the solver's under "handreview", Practice's under
+// "gto-practice-state"; turning Practice on or off puts one away and brings the other back (swapState)
+function stateKey() { return practicing() ? "gto-practice-state" : "handreview"; }
+function save() { try { localStorage.setItem(stateKey(), JSON.stringify(S)); } catch (e) {} }
+function load() { try { const s = localStorage.getItem(stateKey()); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
 // the board up to its first empty slot: with an earlier card removed, later ones wait for it rather than slide down
 function boardCards() { const b = []; for (let i = 2; i < 7 && S.cards[i]; i++) b.push(S.cards[i]); return b; }
 // A hand from a share link or this browser's storage, repaired so a bad one can't break the page (unknown
@@ -2018,6 +2022,15 @@ async function loadHandState(st, note) {
   document.getElementById("stack").value = S.stack; document.getElementById("ante").value = ANTE(); document.getElementById("straddle").checked = !!S.straddle;
   save(); resetAdvice(); renderAll();
   if (note) toast(`Loaded ${note}: you are ${SEAT_LABEL(S.hero, S.players)} with ${S.cards[0]}${S.cards[1]}.`);
+}
+// Practice turned on or off (Practice.set, its state already switched): the page takes that mode's own hand and setup,
+// or seed (Practice's first time: the solver's setup, no hand) when it has none yet
+function swapState(seed) {
+  if (review) review.cancel = "drop";
+  cancelSolve();
+  S = cleanState(load()) || seed || fresh(); setPositions(S.players); selSlot = null; showDeck = false; editSetup = false; pendingRank = null;
+  document.getElementById("stack").value = S.stack; document.getElementById("ante").value = ANTE(); document.getElementById("straddle").checked = !!S.straddle;
+  save(); resetAdvice();
 }
 // ---- flop reports (reports.js, loaded the first time they're opened)
 document.getElementById("flopReports").onclick = () => openView("reports");

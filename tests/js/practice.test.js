@@ -306,6 +306,51 @@ test("per-seat stacks: practice deals keep them, and a short all-in's side pot i
   assert.match(p.byId("practiceBar").innerHTML, /You lose/);
 });
 
+test("Practice and the solver keep their own hand and setup: switching modes brings each one back, a reload too", async () => {
+  const p = loadPage({ storage: { "gto-practice-seat": '"random"' } });
+  await p.ready();
+  p.run(`S = { ...fresh(6), hero: "CO", stack: 80, sizes: { flop: [50] }, cards: ["Ah", "Kh", "2c", "7d", "9h", null, null],
+    actions: { preflop: [{ pos: "UTG", action: "fold" }], flop: [], turn: [], river: [] } }; setPositions(6); save();`);
+  const solver = JSON.stringify(p.S);
+  vm.runInContext(PRACTICE, p.ctx, { filename: "practice.js" });
+  p.run("Practice.set(true)");
+  await flush();
+  // the first time: the solver's setup (stack, Advanced), none of its hand
+  assert.equal(p.S.stack, 80);
+  assert.deepEqual(p.S.sizes, { flop: [50] });
+  assert.notEqual(JSON.stringify(p.S.cards), JSON.stringify(["Ah", "Kh", "2c", "7d", "9h", null, null]));
+  p.run("S.stack = 50; Practice.next();");   // Practice's own setup and a new hand
+  await flush();
+  const practice = JSON.stringify(p.S);
+  p.run("Practice.set(false)");
+  assert.equal(JSON.stringify(p.S), solver);   // the solver's hand and its 80bb, untouched
+  p.run("Practice.set(true)");
+  assert.equal(JSON.stringify(p.S), practice);
+  // a reload at the solver's URL: its own hand, not the practice one last played
+  const q = loadPage({ storage: Object.fromEntries(p.storage) });
+  await q.ready();
+  assert.equal(JSON.stringify(q.S), solver);
+  vm.runInContext(PRACTICE, q.ctx, { filename: "practice.js" });
+  q.run("Practice.set(true)");
+  assert.equal(JSON.stringify(q.S), practice);
+});
+
+test("a practice hand left on the solver's page from before the two were kept apart goes back to Practice", async () => {
+  const p = await practicePage(5);
+  p.run("S.stacks = { BTN: 40 }; save(); Practice.next();");   // (the table's chips: per-seat stacks)
+  await flush();
+  const hand = JSON.stringify(p.S), storage = Object.fromEntries(p.storage);
+  storage.handreview = storage["gto-practice-state"]; delete storage["gto-practice-state"];   // (one shared slot, as it was)
+  const q = loadPage({ storage });
+  await q.ready();
+  vm.runInContext(PRACTICE, q.ctx, { filename: "practice.js" });
+  q.run("Practice.set(true)");
+  assert.equal(JSON.stringify(q.S), hand);   // the same hand resumed
+  q.run("Practice.set(false)");
+  assert.deepEqual(q.S.cards, [null, null, null, null, null, null, null]);   // the solver: no hand, no table chips
+  assert.equal(q.S.stacks, undefined);
+});
+
 test("an import's toast (Review whole hand) goes when practice starts, and a review never runs on a practice hand", async () => {
   const p = loadPage();
   await p.ready();

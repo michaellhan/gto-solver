@@ -8,7 +8,7 @@
 // The running score, the table and your last decisions (Review mistakes) are kept in this browser.
 "use strict";
 (() => {
-  const ON = "gto-practice", HAND = "gto-practice-hand", SCORE = "gto-practice-score", SEAT = "gto-practice-seat", REVIEW = "gto-practice-review", DRILL = "gto-practice-drill", HINT = "gto-practice-hint", TABLE = "gto-practice-table";
+  const ON = "gto-practice", STATE = "gto-practice-state", HAND = "gto-practice-hand", SCORE = "gto-practice-score", SEAT = "gto-practice-seat", REVIEW = "gto-practice-review", DRILL = "gto-practice-drill", HINT = "gto-practice-hint", TABLE = "gto-practice-table";
   const read = (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } };
   const store = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
   const ZERO = { hands: 0, decisions: 0, best: 0, good: 0, evDecisions: 0, evLost: 0, net: 0 };
@@ -792,7 +792,17 @@
   }
   function next() { P.tries = 0; editSetup = false; schedule(deal); }   // (a new hand folds the setup; a change in it deals one, open)
   function set(on) {
-    P.on = !!on; store(ON, P.on ? 1 : 0); A.gen++; A.key = null;
+    on = !!on; const was = P.on;
+    // the first time, Practice starts from the solver's setup without its hand; a practice hand still on the solver's
+    // page (from before the two kept their own) goes back to Practice, and the solver keeps no hand or table chips of it
+    let seed = null;
+    if (on && !was && read(STATE) === null) {
+      const blank = { ...S, cards: fresh().cards, actions: fresh().actions };
+      if (ours()) { seed = S; S = blank; delete S.stacks; } else seed = blank;
+    }
+    if (on !== was) save();   // (the mode being left, under its own key)
+    P.on = on; store(ON, P.on ? 1 : 0); A.gen++; A.key = null;
+    if (on !== was) swapState(seed);
     document.body.classList.toggle("practice", P.on);
     const b = document.getElementById("practiceBtn"); b.classList.toggle("active", P.on); b.textContent = P.on ? "Exit practice" : "Practice";
     if (P.on) document.getElementById("toast").hidden = true;   // e.g. an import's "Review whole hand", for the hand dealt over
