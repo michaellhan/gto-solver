@@ -67,7 +67,7 @@ test("Copy for AI: the decision as a prompt with the game, the action, the solve
   assert.match(text, /- I chose: fold\n/);
   assert.match(text, /  - fold: 20%, EV 0\.00  <- my move\n  - check: 30%, EV \+0\.40\n  - call: 50%, EV \+1\.00\n/);
   assert.match(text, /- The solver's top action: call \(50%\)\n- EV lost against the best action: 1bb\n- Verdict: Good\. The solver mixes this in 20% of the time; its top choice is call \(50%\)\./);
-  assert.match(text, /explain in plain language why the solver's play is better.*ranges.*equity, blockers, board texture and bet sizing.*ground truth.*heuristic/s);
+  assert.match(text, /Why is the solver's play better than mine here.*ground truth.*one-sentence verdict, two or three short reasons \(ranges, equity, blockers, board texture or bet sizing.*one takeaway.*Under 70 words\.$/s);
   // the buttons are in Details; a click copies it and says so
   assert.match(html(p), new RegExp(`<button class="small" data-ai="copy" data-k="${k}"[^>]*>Copy for AI</button><button class="small" data-ai="explain" data-k="${k}" aria-expanded="false"[^>]*>Explain with AI</button>`));
   await p.run(`Practice.ai.click("copy", ${JSON.stringify(k)})`);

@@ -397,12 +397,16 @@
   // EXPLAIN_PROXY: the deployed worker's URL, e.g. "https://gto-explain.<subdomain>.workers.dev/explain"; "" = own key only
   const EXPLAIN_PROXY = "https://gto-explain.combatrobotics.workers.dev/explain";
   const AI_KEY = "gto-anthropic-key", AI_OWN = "gto-explain-own", AI_URL = "https://api.anthropic.com/v1/messages", AI_MODEL = "claude-sonnet-5-5";
-  const AI_SYSTEM = "You are a concise no-limit hold'em coach. The user sends one decision from a practice hand against a GTO solver, "
+  const AI_SYSTEM = "You coach no-limit hold'em players who are learning from a GTO solver. The user sends one decision from a practice hand, "
     + "with the solver's frequencies and EVs for their exact hand. Treat those numbers as ground truth: never contradict them or invent other "
-    + "frequencies or EVs. Explain in plain language why the solver's play is better than (or as good as) the user's: the ranges both sides "
-    + "have here, equity now and on later streets, blockers, board texture and sizing, whichever matter in this spot (with no solver numbers, coach "
-    + "the spot from sound principles and say it isn't solved). 150-250 words in short "
-    + "paragraphs, no headings or tables, bold only a few key words. End with one line starting \"Takeaway:\" giving one heuristic to remember.";
+    + "frequencies or EVs.\n\nReply in exactly this shape, 70 words at most in all:\n"
+    + "**Verdict:** one sentence, at most 20 words: was their move right, and what does the solver prefer.\n"
+    + "- Two or three bullets (never more), each one sentence of at most 15 words: the reasons that matter most here (ranges, equity, blockers, board texture "
+    + "or sizing; only those that matter).\n"
+    + "**Takeaway:** one rule they can reuse, at most 15 words.\n\n"
+    + "Plain words, numbers only from the hand. Check every fact against the hand before using it (who is in position, the board, Hero's cards "
+    + "and draws). No preamble, no restating the hand, no headings or tables. With no solver "
+    + "numbers, coach the spot from sound principles and say it isn't solved.";
   // (the worker in cloudflare/explain-proxy sends this same prompt, its tests check they match)
   // cache: id -> { s: "run" | "done" | "err", t: text so far, err, bad (the key was refused), via: "proxy" | "key",
   // quota (the free explanations are used up: offer the key form) }; open: ids whose
@@ -480,11 +484,12 @@
       L.push(`- Verdict: ${v.label}. ${why(e)}`);
       if (g.r) L.push("- Note: this solve hadn't fully converged, so close frequencies are rough");
     } else L.push(`- Verdict: ${v.label}`);
-    if (!(e.mix && e.mix.length)) L.push("", "Please explain in plain language how to think about this spot and whether my play is reasonable: "
-      + "the ranges each player has, equity, blockers, board texture and bet sizing. Keep it to about 200 words and end with one short heuristic I can remember.");
-    else L.push("", "Please explain in plain language why the solver's play is better than mine here (or, if mine is in its mix, why both work): "
-      + "the ranges both sides have in this spot, equity, blockers, board texture and bet sizing. Treat the solver's numbers above as ground truth "
-      + "and don't contradict them. Keep it to about 200 words and end with one short heuristic I can remember.");
+    // (short and skimmable: a verdict, two or three reasons, one takeaway)
+    const shape = "Answer briefly: a one-sentence verdict, two or three short reasons (ranges, equity, blockers, board texture or bet sizing, "
+      + "whichever matter here) and one takeaway I can reuse. Under 70 words.";
+    if (!(e.mix && e.mix.length)) L.push("", "How should I think about this spot, and was my play reasonable? " + shape);
+    else L.push("", "Why is the solver's play better than mine here (or, if mine is in its mix, why do both work)? Treat the solver's numbers above "
+      + "as ground truth and don't contradict them. " + shape);
     return L.join("\n");
   }
   // Inside Details: Copy for AI and Explain with AI, then the explanation (or the key form) when open
