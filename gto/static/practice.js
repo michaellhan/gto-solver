@@ -202,7 +202,7 @@
   // usually do in that kind of spot (habits: fold / check or call / bet or raise, facing a bet or not) once you've
   // decided it a few times; up to AHEAD_LINES of them, each at least AHEAD_MIN likely, a fold never (it ends your hand).
   // A local server cancels a look-ahead your move made useless; the browser's solver can't stop one, so there it
-  // looks ahead only at Fast, where Practice's answers take about 2 s (a wrong guess makes the next request wait
+  // looks ahead only at Fast or Quick, where Practice's answers take about 2 s (a wrong guess makes the next request wait
   // that long at most).
   const AHEAD_LINES = 2, AHEAD_MIN = 0.2, HABIT_MIN = 5;
   const A = { key: null, gen: 0, moves: new Map(), out: null };   // out: {k, p} the look-ahead request in flight
@@ -241,7 +241,7 @@
     const key = JSON.stringify(payload());
     if (A.key === key || !lastResult || lastResult.error) return;
     A.key = key; const gen = ++A.gen;
-    if (MODE !== "server" && SPEED !== "fast") return;
+    if (MODE !== "server" && SPEED === "accurate") return;
     const sim0 = simulate();
     for (const c of likely(lastResult, sim0)) {
       if (gen !== A.gen) return;
@@ -353,7 +353,7 @@
   function graded(street, rec, res) {
     if (!P.hand) return;
     { const c = simulate().cur; if (c) habit(c.curBet - c.bets[S.hero] > 1e-9, rec.action); }   // (before the move: what it faced)
-    const mix = res && !res.error && !heuristic(res) && res.actions ? res.actions.map(a => ({ n: a.action, f: a.freq, ...(a.ev_bb !== undefined ? { ev: a.ev_bb } : {}), ...(amtOf(a) != null ? { a: amtOf(a) } : {}) })) : null;
+    const mix = res && !res.error && res.actions ? res.actions.map(a => ({ n: a.action, f: a.freq, ...(a.ev_bb !== undefined ? { ev: a.ev_bb } : {}), ...(amtOf(a) != null ? { a: amtOf(a) } : {}) })) : null;
     const id = Date.now().toString(36) + (++AI.seq).toString(36);   // (the explanation kept in memory; not Math.random, the deal's)
     const e = { id, street, rec: { action: rec.action, ...(rec.to != null ? { to: rec.to } : {}) }, g: rec.g || null, mix, ctx: spot(street) };
     // (the others still in: one or two by name, more as a count)
@@ -387,7 +387,11 @@
   const evTxt = (x) => `${x > 0 ? "+" : x < 0 ? "−" : ""}${Math.abs(x).toFixed(2)}`;
   function why(e) {
     const g = e.g, v = verdict(g);
-    if (!g) return "The solver doesn't solve this multiway spot, so this decision isn't graded.";
+    if (!g) return "This multiway spot has no EVs to grade by, so this decision isn't graded.";
+    if (g.h != null) {   // (a multiway spot left to the betting rules: graded by EV)
+      const rules = "No solve for this multiway spot: graded by the betting rules' EVs, a heuristic against every live range.";
+      return g.m === g.b ? `${rules} Your move has the highest EV.` : `${rules} Its best is ${g.b}; yours gives up ${g.h}% of the pot.`;
+    }
     const as = g.v ? ` (graded as its ${g.m})` : "";
     if (v.k === "best") return g.f >= 0.995 ? `The solver always plays this here.` : `The solver's top choice here: it plays this ${pct(g.f)} of the time.`;
     if (v.k === "good") return `The solver mixes this in ${pct(g.f)} of the time${as}; its top choice is ${g.b} (${pct(g.bf)}).`;
@@ -404,7 +408,12 @@
     const v = verdict(e.g), g = e.g, past = o.past;
     const cost = g && g.l != null ? (g.l > 0.005 ? `<span class="cost num ${lostCls(e)}" title="EV given up against the solver's best action">−${g.l.toFixed(2)} bb</span>` : `<span class="cost num pos">no EV lost</span>`) : "";
     let mix = "", table = "";
-    if (e.mix && e.mix.length) {
+    if (e.mix && e.mix.length && g && g.h != null) {   // the betting rules: their EVs, no mix (0/1)
+      const you = (a) => a.n === g.m;
+      setColors(e.mix.map(a => a.n));
+      table = `<div class="cx-acts"><span class="hd">Action</span><span class="hd num"></span><span class="hd num">EV</span>`
+        + e.mix.map(a => `<span class="n${you(a) ? " you" : ""}" style="--c:${COLORS(a.n)}">${a.n}</span><span class="num"></span><span class="num">${a.ev !== undefined ? evTxt(a.ev) + " bb" : ""}</span>`).join("") + `</div>`;
+    } else if (e.mix && e.mix.length) {
       const you = (a) => g && a.n === g.m, leg = g && !e.mix.some(you) ? [...e.mix, { n: g.m, f: 0 }] : e.mix;   // (your move, also when the solve hasn't it)
       setColors(leg.map(a => a.n));
       const ev = e.mix.some(a => a.ev !== undefined);
@@ -558,13 +567,16 @@
       ...(c.read ? ["HERO'S HAND (worked out from the cards, exact: use these, don't recompute them)", ...c.read.map(x => "- " + x), ""] : []),
       "DECISION", "- " + c.at,
       `- I chose: ${did}${g && g.m !== r.action ? ` (graded as the solver's "${g.m}")` : ""}`];
-    if (e.mix && e.mix.length) {
+    if (e.mix && e.mix.length && g && g.h != null) {
+      L.push("- No solver solution for this multiway spot: the betting rules (a heuristic against every live range) give these EVs for my hand (bb):");
+      for (const a of e.mix) L.push(`  - ${a.n}${a.a != null ? ` (${bb(a.a)})` : ""}: EV ${a.ev !== undefined ? evTxt(a.ev).replace("−", "-") : "?"}${a.n === g.m ? "  <- my move" : ""}`);
+    } else if (e.mix && e.mix.length) {
       L.push("- The solver's strategy for my exact hand (how often, EV in bb):");
       for (const a of e.mix) L.push(`  - ${a.n}${a.a != null ? ` (${bb(a.a)})` : ""}: ${f(a.f)}${a.ev !== undefined ? `, EV ${evTxt(a.ev).replace("−", "-")}` : ""}${g && a.n === g.m ? "  <- my move" : ""}`);
       if (!e.mix.some(a => a.ev !== undefined)) L.push("  (preflop: the solver's chart gives frequencies, no EVs)");
     } else L.push("- The solver doesn't solve this multiway spot, so it has no mix here");
     if (g) {
-      L.push(`- The solver's top action: ${g.b} (${f(g.bf)})`);
+      L.push(g.h != null ? `- Highest EV by the betting rules: ${g.b}` : `- The solver's top action: ${g.b} (${f(g.bf)})`);
       L.push(`- EV lost against the best action: ${g.l != null ? bb(g.l) : "not known (no EVs preflop)"}`);
       L.push(`- Verdict: ${v.label}. ${why(e)}`);
       if (g.r) L.push("- Note: this solve hadn't fully converged, so close frequencies are rough");
@@ -745,7 +757,7 @@
     if (log.length > 1) {
       const lost = log.reduce((t, e) => t + (e.g && e.g.l || 0), 0), good = log.filter(e => ["best", "good"].includes(verdict(e.g).k)).length;
       out += `<div class="cx-h">This hand · ${good} of ${log.length} in the solver's strategy${lost > 0.005 ? ` · <span class="num neg">−${lost.toFixed(2)} bb</span> EV lost` : ""}</div><ul class="cx-list">`
-        + log.map(e => { const v = verdict(e.g); return `<li title="${e.g ? gradeTip(e.g) : ""}"><span class="st">${e.street}</span><span>${ACT(e.rec)} <span class="muted">· solver ${e.g ? pct(e.g.f) : "–"}</span></span><span class="pill" style="--c:${v.c}">${v.label}</span><span class="num ${lostCls(e)}">${e.g && e.g.l != null ? (e.g.l > 0.005 ? "−" + e.g.l.toFixed(2) + " bb" : "0 bb") : ""}</span></li>`; }).join("") + `</ul>`;
+        + log.map(e => { const v = verdict(e.g); return `<li title="${e.g ? gradeTip(e.g) : ""}"><span class="st">${e.street}</span><span>${ACT(e.rec)} <span class="muted">· ${e.g && e.g.h != null ? "rules' best: " + e.g.b : "solver " + (e.g ? pct(e.g.f) : "–")}</span></span><span class="pill" style="--c:${v.c}">${v.label}</span><span class="num ${lostCls(e)}">${e.g && e.g.l != null ? (e.g.l > 0.005 ? "−" + e.g.l.toFixed(2) + " bb" : "0 bb") : ""}</span></li>`; }).join("") + `</ul>`;
     }
     return out;
   }
@@ -856,7 +868,7 @@
       const v = verdict(last.g), g = last.g, top = last.mix && last.mix.length ? last.mix.reduce((b, a) => a.f > b.f ? a : b) : null;
       html = (sim && sim.cur && sim.toAct === S.hero ? `<span class="muted">Last:</span>` : "") + `<b style="color:${v.c}">${v.label}</b><span class="muted">${last.street} · you ${YOU(last.rec)}</span>`
         + (g && g.l != null && g.l > 0.005 ? `<span class="num neg">−${g.l.toFixed(2)} bb</span>` : "")
-        + (top && v.k !== "best" ? `<span class="muted fit">· solver: ${top.n} ${pct(top.f)}</span>` : "");
+        + (top && v.k !== "best" ? `<span class="muted fit">· ${g && g.h != null ? `rules' best: ${top.n}` : `solver: ${top.n} ${pct(top.f)}`}</span>` : "");
     }
     el.innerHTML = html + `<span class="go">›</span>`;
     el.style.setProperty && el.style.setProperty("--c", r ? (r.net > 0 ? "var(--good)" : r.net < 0 ? "var(--bad)" : "var(--line2)") : last ? verdict(last.g).c : "var(--line)");

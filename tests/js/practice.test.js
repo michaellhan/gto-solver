@@ -580,10 +580,25 @@ test("the first-run hint goes once a hand is played; a change to the table's chi
   assert.equal(p.val("Practice.state.hand.chips"), p.val("JSON.stringify([POS.map(STACK), ANTE(), STRADDLER(), RAKE(), RAKE_CAP()])"));
 });
 
-test("the verdicts: a multiway guess shows no mix; the solver's top move is never listed as a mistake", async () => {
+test("the verdicts: a multiway spot the betting rules answer is graded by EV; the solver's top move is never listed as a mistake", async () => {
   const p = await practicePage(5);
-  p.run(`Practice.graded("preflop", { action: "call" }, { multiway: true, actions: [{ action: "call", freq: 1 }] })`);
-  assert.equal(p.val("Practice.state.hand.log.at(-1).mix"), null);
+  // no solve (the betting rules: 0/1 frequencies, EVs): graded by the EV given up, % of the pot
+  const RULES = { multiway: true, pot_bb: 10, recommended: "bet 33%", actions: [{ action: "check", freq: 0, ev_bb: 0.9 },
+    { action: "bet 33%", freq: 1, ev_bb: 1.2, amount_bb: 3.3 }, { action: "bet 66%", freq: 0, ev_bb: 0.2, amount_bb: 6.6 }] };
+  const g = (rec) => p.val(`gradeWith(${JSON.stringify(RULES)}, ${JSON.stringify(rec)})`);
+  assert.deepEqual([g({ action: "bet", to: 3.3 }).h, p.val(`gradeClass(${JSON.stringify(g({ action: "bet", to: 3.3 }))})`)], [0, "ok"]);
+  assert.deepEqual([g({ action: "check" }).h, p.val(`gradeClass(${JSON.stringify(g({ action: "check" }))})`)], [3, "ok"]);
+  assert.deepEqual([g({ action: "bet", to: 6.6 }).h, p.val(`gradeClass(${JSON.stringify(g({ action: "bet", to: 6.6 }))})`)], [10, "meh"]);
+  assert.equal(p.val(`gradeClass({ ...${JSON.stringify(g({ action: "bet", to: 6.6 }))}, h: 12 })`), "bad");
+  // in the coach: its EVs, no mix bar, and why it's graded that way
+  p.run(`Practice.graded("flop", { action: "check", g: ${JSON.stringify(g({ action: "check" }))} }, ${JSON.stringify(RULES)})`);
+  assert.equal(p.val("Practice.state.hand.log.at(-1).mix.length"), 3);
+  p.run("renderAll()");
+  const card = p.byId("practiceBar").innerHTML;
+  assert.match(card, />Good</);
+  assert.match(card, /graded by the betting rules' EVs/);
+  assert.match(card, /\+1\.20 bb/);
+  assert.doesNotMatch(card, /cx-mix/);
   const e = (m, b, l) => ({ street: "flop", rec: { action: m }, g: { m, b, f: m === b ? 0.84 : 0.16, bf: 0.84, l }, mix: null, n: 1, seat: "BTN", hole: ["Ah", "Kd"], board: [], line: "" });
   p.run(`Practice.state.review = ${JSON.stringify([e("call", "call", 0.15), e("fold", "call", 0.4)])}; Practice.state.rev = true; renderAll()`);
   const html = p.byId("practiceBar").innerHTML;
@@ -660,7 +675,7 @@ test("Practice at Fast asks for quick answers, about 2 s by street, and never wa
   assert.ok(post, "a postflop spot asked");
   const street = { 6: "flop", 8: "turn", 10: "river" }[post.state.board.length];
   assert.equal(post.state.quick, true);
-  assert.deepEqual([post.state.budget, post.state.prior_budget], p.val(`PRACTICE_BUDGETS.${street}`));
+  assert.deepEqual([post.state.budget, post.state.prior_budget], p.val(`QUICK_BUDGETS.${street}`));
   for (let i = 0; i < 5; i++) { await flush(); answer(p, done, passive); }
   assert.ok(!p.posted.some(m => m.state && m.state.speed === "accurate"), "no Accurate request");
   // the solver's own Fast isn't quick

@@ -114,13 +114,30 @@ test("a solve of a spot you've left doesn't hold up your next turn: it's stopped
   assert.equal(p.posted.length, n);
 });
 
+test("Quick asks for quick answers, about 2 s by street, and is remembered", async () => {
+  const p = loadPage();
+  await p.ready();
+  p.S = state(FLOP);
+  await flush();
+  await p.byId("solvectl").children[0].onclick();
+  await flush();
+  const pl = p.payload();
+  assert.deepEqual([pl.speed, pl.quick, pl.budget, pl.prior_budget], ["quick", true, ...p.val("QUICK_BUDGETS.flop")]);
+  assert.equal(p.storage.get("gto-speed"), "quick");
+  assert.deepEqual(p.posted.at(-1).state, pl);
+  const q = loadPage({ storage: { "gto-speed": "quick" } });
+  await q.ready();
+  assert.equal(q.val("SPEED"), "quick");
+  assert.match(q.byId("solvectl").children[0].className, /active/);
+});
+
 test("Accurate and Pool toggles change the state sent, and are remembered", async () => {
   const p = loadPage();
   await p.ready();
   p.S = state(FLOP);
   await flush();
   const n = p.posted.length;
-  await p.byId("solvectl").children[1].onclick();
+  await p.byId("solvectl").children[2].onclick();   // (Quick, Fast, Accurate)
   await p.byId("oppctl").children[1].onclick();
   await flush();
   const pl = p.payload();

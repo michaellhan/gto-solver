@@ -322,7 +322,7 @@
         } finally { S = old; setPositions(old.players); }
       },
       advise: (p) => callAdvise(p),
-      grade: (res, rec) => heuristic(res) ? null : gradeWith(res, rec),
+      grade: (res, rec) => gradeWith(res, rec),
       // the whole hand, rewound to the decision (its Undo brings the rest back)
       open: async (st, s, i) => { await loadHandState(clone(st)); rewindTo(s, i); },
     };

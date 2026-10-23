@@ -82,9 +82,10 @@ the betting to players who already acted, a bet nobody can match in full comes b
 anyone else put in, the action ends once at most one player with chips is left, and the table shows
 the main pot and side pots.
 
-Whenever it becomes your turn the advice panel solves the spot. The **Fast /
+Whenever it becomes your turn the advice panel solves the spot. The **Quick / Fast /
 Accurate** toggle in the header (remembered between visits) picks the solve
-time: Fast is 8 s in the browser and 2.5 s against the local server (2.5 s per earlier street too); Accurate
+time: Quick is about 2 s either way (the requests Practice makes at Fast, below: `QUICK_BUDGETS`, `"quick": true`;
+rough on the turn, a 3-way flop or turn left to the betting rules); Fast is 8 s in the browser and 2.5 s against the local server (2.5 s per earlier street too); Accurate
 is about 60 s in the browser and 30 s locally (12 s per earlier street), with more time for the earlier
 streets used to narrow ranges. River spots are solid either way; turn spots need
 Accurate to get close to a full solver (see Accuracy vs speed below).
@@ -242,15 +243,18 @@ when the solve hasn't it); the card is headed "Last decision · flop" (at the en
 it's your turn again it fades, so it never reads as a verdict on the spot above it (the phone's dock line then
 starts "Last:"). The EV a move in the solver's strategy gave up is shown muted, not red (its mixed actions are worth
 the same in theory); at Fast, Practice asks for quick answers, about 2 s each (`"quick": true`, budgets
-`PRACTICE_BUDGETS` in index.html: 1.5 s on the flop and turn, 0.8 s on the river, 0.3 s an earlier street; no second
+`QUICK_BUDGETS` in index.html: 1.5 s on the flop and turn, 0.8 s on the river, 0.3 s an earlier street; no second
 budget for an unsettled street; 3-way pots solved on the river only, in 1.8 s (`advisor.MW_QUICK_BUDGET`), a 3-way
-flop or turn answered by the betting rules and not graded; measured in Pyodide, `BENCH_STATE='{"quick":true}'
+flop or turn answered by the betting rules; measured in Pyodide, `BENCH_STATE='{"quick":true}'
 BENCH_BUDGETS='{"fast":[1.5,0.3]}' scripts/bench_browser.mjs`: a turn 1.9 s, 22 iterations, 7.8-8.9% of the pot from
 equilibrium where Fast's 8 s settle it to 0.15%; a river 0.8 s of solving, 220 iterations, 0.09%; a 3-way river 1.8 s,
 14 iterations, 2.6%; a flop from the library at once). While you decide, the lines you're likeliest to take are solved ahead: your
 hand's mix blended half and half with what you usually do (fold, check or call, bet or raise; facing a bet or not;
 kept in this browser as `gto-practice-habits`), up to two lines at least 20% likely, a bet at the solver's size, never
-a fold; the solver's own Fast (8 s) solves 3-way flops and turns in a smaller game (`advisor.MW_FAST_STREETS`), and a multiway spot no speed solves (4+ players, someone all-in) shows no mix ("isn't graded"); **Details** opens why and each action's EV (the choice is remembered), and from there **See how the
+a fold; the solver's own Fast (8 s) solves 3-way flops and turns in a smaller game (`advisor.MW_FAST_STREETS`), and a multiway spot left to the betting rules (4+ players, someone all-in, a 3-way flop or turn in a quick answer) is
+graded by the EV your move gives up against the rules' best, as a share of the pot (their frequencies are all or
+nothing: within 3% Good, within 10% an Inaccuracy, more a Mistake; `HEUR_OK`, `HEUR_MEH`), the card listing the rules'
+EV for each action and saying it's a heuristic, not a solve; **Details** opens why and each action's EV (the choice is remembered), and from there **See how the
 solver plays your whole range** opens your range at your last decision under the coach (never on your turn), headed
 "Your range · flop · BTN vs BB": the advice panel's Grid (every hand class's mix, yours outlined; hover or tap a hand
 for its mix), Breakdown and Equity, without the rows the verdict card already gives (a decision whose solve the page

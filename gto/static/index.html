@@ -612,7 +612,7 @@
   <span class="ctl nopx" id="oppctl"><span class="lbl">Opponents</span>
     <div class="segment"><button data-o="gto" class="active" title="Opponents play the equilibrium (GTO): advice that can't be exploited, whoever you face.">GTO</button><button data-o="pool" title="Opponents play like a typical player pool: they fold too often to bets of every size (most of all small ones), raise less and bluff less, from population data where it exists. Preflop, from population stats, they play more hands, 3bet more and fold less to 3bets. Your preflop calls and raises adjust to those ranges (opens follow the chart); after the flop, advice is the highest-EV play against them.">Pool</button></div></span>
   <span class="ctl" id="solvectl"><span class="lbl">Solve</span>
-    <div class="segment"><button data-m="fast" class="active" title="A few seconds per spot. River answers are solid; turn and flop answers are rough.">Fast</button><button data-m="accurate" title="Much longer per spot (about 30 s with the local server, about a minute in the browser). Turn answers get close to a full solver.">Accurate</button></div></span>
+    <div class="segment"><button data-m="quick" title="About 2 s per spot. River answers are solid; turn answers are rough, and a 3-way flop or turn gets the betting rules, not a solve.">Quick</button><button data-m="fast" class="active" title="A few seconds per spot. River answers are solid; turn and flop answers are rough.">Fast</button><button data-m="accurate" title="Much longer per spot (about 30 s with the local server, about a minute in the browser). Turn answers get close to a full solver.">Accurate</button></div></span>
   <button id="practiceBtn" title="Practice against GTO: random hands, the other seats play the solver's strategy for their cards, and each of your decisions is graded">Practice</button>
   <button id="copyhand" title="Copy the hand, the advice and a link that reopens this exact spot">Copy hand</button>
   <button id="newhand" title="Shortcut: N">New hand <kbd>N</kbd></button>
@@ -806,19 +806,21 @@ const STREETS = ["preflop", "flop", "turn", "river"];
 const NEED = { preflop: 0, flop: 3, turn: 4, river: 5 };
 const SLOT_NAMES = ["your first card", "your second card", "flop card 1", "flop card 2", "flop card 3", "the turn", "the river"];
 const SLOT_WHERE = ["in your hand", "in your hand", "on the flop", "on the flop", "on the flop", "on the turn", "on the river"];
-// seconds per solve for each speed setting: [current street, each earlier street used for range narrowing]
-const BUDGETS = { server: { fast: [2.5, 2.5], accurate: [30, 12] }, wasm: { fast: [8, 3], accurate: [60, 12] } };
-// Practice at Fast answers in about 2 s (the request's "quick": no second budget for an unsettled street, 3-way solves on
-// the river only, gto/advisor.py): [street, each earlier postflop street], by street (a river settles in less), either backend
-const PRACTICE_BUDGETS = { flop: [1.5, 0.3], turn: [1.5, 0.3], river: [0.8, 0.3] };   // (a 3-way river 1.8: advisor.MW_QUICK_BUDGET)
+// seconds per solve for each speed setting: [current street, each earlier street used for range narrowing] (Quick's
+// postflop ones by street: QUICK_BUDGETS)
+const BUDGETS = { server: { quick: [1.5, 0.3], fast: [2.5, 2.5], accurate: [30, 12] }, wasm: { quick: [1.5, 0.3], fast: [8, 3], accurate: [60, 12] } };
+// Quick, and Practice at Fast, answer in about 2 s (the request's "quick": no second budget for an unsettled street,
+// 3-way solves on the river only, gto/advisor.py): [street, each earlier postflop street], by street (a river settles
+// in less), either backend
+const QUICK_BUDGETS = { flop: [1.5, 0.3], turn: [1.5, 0.3], river: [0.8, 0.3] };   // (a 3-way river 1.8: advisor.MW_QUICK_BUDGET)
 // a request's [budget, prior_budget, quick] at a speed, for a board (cards as a string)
 function budgetsFor(speed, board) {
   const st = { 6: "flop", 8: "turn", 10: "river" }[board.length];
   if (!MODE) return [null, null, false];   // (the backend not known yet)
-  return practicing() && speed === "fast" && st ? [...PRACTICE_BUDGETS[st], true] : [...BUDGETS[MODE][speed], false];
+  return st && (speed === "quick" || practicing() && speed === "fast") ? [...QUICK_BUDGETS[st], true] : [...BUDGETS[MODE][speed], false];
 }
 let SPEED = "fast";
-try { if (localStorage.getItem("gto-speed") === "accurate") SPEED = "accurate"; } catch (e) {}
+try { const v = localStorage.getItem("gto-speed"); if (v === "accurate" || v === "quick") SPEED = v; } catch (e) {}
 // opponents: "gto" (equilibrium) or "pool" (a typical player pool, exploited); a preference like the speed
 let OPP = "gto";
 try { if (localStorage.getItem("gto-opponents") === "pool") OPP = "pool"; } catch (e) {}
@@ -1122,10 +1124,13 @@ function act(a) {
 }
 // A multiway result from the betting rules (4+ players, or a 3-way spot the solver doesn't take), not a solve.
 const heuristic = (r) => !!(r && r.multiway && !r.solved);
+// Its frequencies are 0/1 (the highest EV), so a move there is graded by the EV it gives up, % of the pot (g.h):
+// within HEUR_OK of the best Good, within HEUR_MEH an Inaccuracy, more a Mistake (its EVs are Monte Carlo estimates)
+const HEUR_OK = 3, HEUR_MEH = 10;
 // How your recorded action compares with the advice that was on screen for this exact spot.
 function gradeFor(rec) {
   const r = lastResult;
-  if (!r || r.error || heuristic(r) || resultKey !== JSON.stringify(payload())) return null;
+  if (!r || r.error || resultKey !== JSON.stringify(payload())) return null;
   return gradeWith(r, rec);
 }
 function gradeWith(r, rec) {   // (also the session analyzer's, on its own answers)
@@ -1150,17 +1155,21 @@ function gradeWith(r, rec) {   // (also the session analyzer's, on its own answe
   const hasEv = evs.length && m.ev_bb !== undefined, top = hasEv ? Math.max(...evs) : null;
   const loss = hasEv ? Math.max(0, top - m.ev_bb) : null;
   const conv = convergence(r), r2 = (x) => Math.round(x * 100) / 100;
+  if (heuristic(r) && hasEv && r.pot_bb > 0)   // (the rules' best by EV, not by its 0/1 frequency)
+    return { m: m.action, f: m.freq, b: best.action, bf: best.freq, l: r2(loss), e: r2(m.ev_bb), o: r2(top), h: Math.round(loss / r.pot_bb * 1000) / 10 };
+  if (heuristic(r)) return null;
   return { m: m.action, f: m.freq, b: best.action, bf: best.freq, l: loss == null ? null : r2(loss), ...(hasEv ? { e: r2(m.ev_bb), o: r2(top) } : {}), ...(conv && conv.cls === "bad" ? { r: 1 } : {}), ...(v ? { v } : {}) };
 }
 // a grade's note when your action was graded as the chart's nearest one (g.v: what you played)
 const gradeAs = (g) => g.v ? ` (graded as the chart's ${g.m}: it has no ${g.v === "all-in" ? "all-in" : "smaller raise"} here)` : "";
 // A rough (unconverged) solve can't condemn a line: its worst grade is "~".
-const gradeClass = (g) => g.f >= 0.15 ? "ok" : g.f >= 0.03 || g.r ? "meh" : "bad";
+const gradeClass = (g) => g.h != null ? (g.h <= HEUR_OK ? "ok" : g.h <= HEUR_MEH ? "meh" : "bad")
+  : g.f >= 0.15 ? "ok" : g.f >= 0.03 || g.r ? "meh" : "bad";
 const gradeMark = (g) => ({ ok: "✓", meh: "~", bad: "✗" })[gradeClass(g)];
 const sgn = (x) => (x > 0 ? "+" : x < 0 ? "−" : "") + Math.abs(x).toFixed(2);
 // Your EV vs the GTO-best EV for one decision, plus the EV lost.
 const evLossHtml = (g) => g.e == null ? `<span class="muted">no EV (preflop chart)</span>` : `EV ${sgn(g.e)} vs GTO ${sgn(g.o)} · ${g.l > 0.005 ? `<span class="num neg">−${g.l.toFixed(2)} bb</span>` : `<span class="num pos">0.00 bb</span>`}`;
-const gradeTip = (g) => `Solver: ${g.b} ${(g.bf * 100).toFixed(0)}%. Your line (${g.v || g.m}) ${(g.f * 100).toFixed(0)}%${gradeAs(g)}${g.e != null ? `, EV ${sgn(g.e)} bb vs GTO ${sgn(g.o)} bb (${g.l > 0.005 ? "−" + g.l.toFixed(2) : "0.00"} bb)` : g.l ? `, ${g.l.toFixed(2)} bb below the best EV` : ""}.${g.r ? " Rough solve: treat this as a hint, not a verdict." : ""}`;
+const gradeTip = (g) => g.h != null ? `Betting rules (no solve in this multiway spot): best ${g.b}. Your line (${g.m}) EV ${sgn(g.e)} bb vs ${sgn(g.o)} bb (${g.l > 0.005 ? "−" + g.l.toFixed(2) : "0.00"} bb, ${g.h}% of the pot).` : `Solver: ${g.b} ${(g.bf * 100).toFixed(0)}%. Your line (${g.v || g.m}) ${(g.f * 100).toFixed(0)}%${gradeAs(g)}${g.e != null ? `, EV ${sgn(g.e)} bb vs GTO ${sgn(g.o)} bb (${g.l > 0.005 ? "−" + g.l.toFixed(2) : "0.00"} bb)` : g.l ? `, ${g.l.toFixed(2)} bb below the best EV` : ""}.${g.r ? " Rough solve: treat this as a hint, not a verdict." : ""}`;
 
 // Everyone before pos folds (checks when there's nothing to call), but never you: it stops at your turn.
 function advanceTo(pos) {
@@ -1463,8 +1472,9 @@ async function analyze(sim) {
   // one up (in the browser a whole Accurate solve, with the panel still saying it waits for your turn).
   if (solving) { await cancelSolve(); if (lastKey !== key) return; }
   if (cache.has(key)) { renderResult(cache.get(key), key); return; }
-  const acc = SPEED === "fast" && cache.get(keyFor(key, "accurate"));
-  if (acc) { cache.set(key, acc); renderResult(acc, key); return; }   // an Accurate answer for this spot beats a Fast re-solve
+  // an answer for this spot at a slower speed beats a re-solve at this one (Accurate over Fast or Quick, Fast over Quick)
+  const slower = SPEED === "accurate" ? null : cache.get(keyFor(key, "accurate")) || (SPEED === "quick" && cache.get(keyFor(key, "fast")));
+  if (slower) { cache.set(key, slower); renderResult(slower, key); return; }
   solving = true;
   const gen = ++solveGen;
   const el = document.getElementById("result");
@@ -1542,7 +1552,7 @@ function renderResult(res, key) {
   const board = res.board ? res.board.match(/../g).map(cardHtml).join(" ") : "";
   let h = `<div class="meta" style="margin:0 0 4px">${res.street} · ${res.hero} ${res.hand}${res.position ? " · " + res.position : ""}${board ? " · " + board : ""}${res.pot_bb ? " · pot " + res.pot_bb + " bb" : ""}</div>`;
   if (heuristic(res)) h += `<div class="verdict"><span class="big">${res.recommended}</span><span class="mix">${res.opponents.length + 1} players in · equity vs field ${(res.equity_vs_field * 100).toFixed(0)}% · heuristic, not a solve</span></div>`;
-  else h += `<div class="verdict"><span class="big">${res.recommended}</span>${res.solved ? `<span class="mix">${res.opponents.length + 1} players in · 3-way solve</span>` : ""}${conv ? `<span class="conv ${conv.cls}" title="${convTip(conv)}">${conv.label} · ${conv.x.toFixed(1)}% pot</span>` : ""}${res.precomputed ? `<span class="conv ok" title="${PRE_TIP(res.precomputed)}">precomputed</span>` : ""}${conv && conv.cls === "bad" && SPEED === "fast" ? `<button class="link" id="goAccurate">Solve again on Accurate</button>` : ""}</div>`;
+  else h += `<div class="verdict"><span class="big">${res.recommended}</span>${res.solved ? `<span class="mix">${res.opponents.length + 1} players in · 3-way solve</span>` : ""}${conv ? `<span class="conv ${conv.cls}" title="${convTip(conv)}">${conv.label} · ${conv.x.toFixed(1)}% pot</span>` : ""}${res.precomputed ? `<span class="conv ok" title="${PRE_TIP(res.precomputed)}">precomputed</span>` : ""}${conv && conv.cls === "bad" && SPEED !== "accurate" ? `<button class="link" id="goAccurate">Solve again on Accurate</button>` : ""}</div>`;
   const hasEv = res.actions.some(a => a.ev_bb !== undefined);
   h += `<div class="arows${hasEv ? "" : " noev"}"><div class="arow head"><span>Action</span><span>${heuristic(res) ? "" : "Solver mix"}</span><span class="num">${heuristic(res) ? "" : "Freq"}</span>${hasEv ? '<span class="num" title="Expected value of taking this action, in big blinds">EV</span>' : ""}</div>`;
   for (const a of res.actions) {
