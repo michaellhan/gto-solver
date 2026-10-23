@@ -1147,6 +1147,23 @@ class Solver:
         self._live = None
         self._trimmed: Dict[tuple, np.ndarray] = {}
         self._btabs: Dict[int, tuple] = {}
+        # a training pass's reaches into each chance node's (and bucket and river entry's) children, by (node, player):
+        # the opponent's computed once a pass (_down's, for _cfr's walk of the same pass), the traverser's once a run:
+        # a pass never multiplies the traverser's reach by its own strategies, so it is the root reach's every pass
+        self._cin: Dict[tuple, object] = {}
+        self._own: Dict[tuple, object] = {}
+        self._p = None              # the training pass's player
+
+    def _child_reach(self, node, q, r, fn):
+        """fn(r), player q's reach into node's children, through the memo (training passes, every row only)."""
+        if self._p is None:         # (a pass outside run(), e.g. a test's or a report's: no memo)
+            return fn(r)
+        key = (id(node), q)
+        memo = self._own if q == self._p else self._cin
+        v = memo.get(key)
+        if v is None:
+            v = memo[key] = fn(r)
+        return v
 
     def _collect(self, node):
         if isinstance(node, Decision):
@@ -1311,6 +1328,11 @@ class Solver:
         T, X, _, _ = self._rtab(node)
         return [self._per_board(X[q], rs[q].astype(np.float32, copy=False), T, sel) for q in (0, 1)]
 
+    def _river_in1(self, node: RiverEntry, q, r):
+        """Player q's reach (B, W) -> its river bucket masses (B, K), every row."""
+        T, X, _, _ = self._rtab(node)
+        return self._per_board(X[q], r.astype(np.float32, copy=False), T, None)
+
     def _river_out(self, node: RiverEntry, u, p, sel):
         """p's river bucket utilities (B, K) -> (B, W)."""
         T, X, _, _ = self._rtab(node)
@@ -1365,16 +1387,26 @@ class Solver:
                 idx.append((flat, (r * n + order).ravel(), (r * n + e).ravel(), e[:, 1:] == e[:, :-1]))
             if sel is None:
                 self._btabs[key] = idx
-        ms = []
-        for q in (0, 1):
-            _, fsort, starts, empty = idx[q]
-            x = np.empty(B * n + 1, dtype=np.float32)
-            x[-1] = 0      # (an empty last bucket starts there)
-            x[:-1] = rs[q].ravel()[fsort]
-            m = np.add.reduceat(x, starts).reshape(B, K + 1)[:, :K]
-            m[empty] = 0
-            ms.append(m)
+        ms = [self._bucket_mass(idx[q], rs[q], B, K) for q in (0, 1)]
         return ms, [x[0] for x in idx]
+
+    def _bucket_in1(self, node: BucketEntry, q, r):
+        """_bucket_in for player q's reach alone, every row: (masses, flat bucket index)."""
+        idx = self._btabs.get(("flat", id(node)))
+        if idx is None:
+            self._bucket_in(node, (r, r), None)
+            idx = self._btabs[("flat", id(node))]
+        return self._bucket_mass(idx[q], r, r.shape[0], self.ctx.cfg.river_buckets), idx[q][0]
+
+    @staticmethod
+    def _bucket_mass(ix, r, B, K):
+        _, fsort, starts, empty = ix
+        x = np.empty(r.size + 1, dtype=np.float32)
+        x[-1] = 0      # (an empty last bucket starts there)
+        x[:-1] = r.ravel()[fsort]
+        m = np.add.reduceat(x, starts).reshape(B, K + 1)[:, :K]
+        m[empty] = 0
+        return m
 
     @staticmethod
     def _bucket_out(u, flat):
@@ -1430,12 +1462,20 @@ class Solver:
         if isinstance(node, RiverEntry):
             if done is not None and id(node) in done:
                 return done[id(node)]
-            m0, m1 = self._river_in(node, (r0, r1), sel)
+            if strats is not None and sel is None:
+                m0, m1 = (self._child_reach(node, q, r, lambda x, q=q: self._river_in1(node, q, x)) for q, r in ((0, r0), (1, r1)))
+            else:
+                m0, m1 = self._river_in(node, (r0, r1), sel)
             return self._river_out(node, self._cfr(node.child, p, m0, m1, update, use_avg, sel, strats), p, sel)
         if isinstance(node, BucketEntry):
             if done is not None and id(node) in done:
                 return done[id(node)]
-            (m0, m1), flat = self._bucket_in(node, (r0, r1), sel)
+            if strats is not None and sel is None:
+                (m0, f0), (m1, f1) = (self._child_reach(node, q, r, lambda x, q=q: self._bucket_in1(node, q, x))
+                                      for q, r in ((0, r0), (1, r1)))
+                flat = (f0, f1)
+            else:
+                (m0, m1), flat = self._bucket_in(node, (r0, r1), sel)
             return self._bucket_out(self._cfr(node.child, p, m0, m1, update, use_avg, sel, strats), flat[p])
         if isinstance(node, Chance):
             if done is not None and id(node) in done:
@@ -1444,8 +1484,11 @@ class Solver:
             rows = np.arange(B) if sel is None else np.asarray(sel)
             if node.perm is not None:
                 csel = None if sel is None else (rows[:, None] * K + np.arange(K)).ravel()
-                u = self._cfr(node.child, p, node.spread(r0, rows), node.spread(r1, rows), update, use_avg, csel, strats,
-                              done if sel is None else None)
+                if strats is not None and sel is None:
+                    c0, c1 = (self._child_reach(node, q, r, lambda x: node.spread(x, rows)) for q, r in ((0, r0), (1, r1)))
+                else:
+                    c0, c1 = node.spread(r0, rows), node.spread(r1, rows)
+                u = self._cfr(node.child, p, c0, c1, update, use_avg, csel, strats, done if sel is None else None)
                 return node.gather(u, rows)
             if node.sample is not None and self.sampling:
                 ks = np.array(sorted(self.rng.sample(range(K), node.sample)))
@@ -1453,10 +1496,14 @@ class Solver:
                 ks = np.arange(K)
             k = len(ks)
             csel = (rows[:, None] * K + ks[None, :]).ravel()
-            m3 = node.masks[csel].reshape(B, k, n)
-            r0c = (r0[:, None, :] * m3).reshape(B * k, n)
-            r1c = (r1[:, None, :] * m3).reshape(B * k, n)
             full = sel is None and k == K
+            m3 = node.masks.reshape(B, k, n) if full else node.masks[csel].reshape(B, k, n)
+            if full and strats is not None:
+                r0c, r1c = (self._child_reach(node, q, r, lambda x: (x[:, None, :] * m3).reshape(B * k, n))
+                            for q, r in ((0, r0), (1, r1)))
+            else:
+                r0c = (r0[:, None, :] * m3).reshape(B * k, n)
+                r1c = (r1[:, None, :] * m3).reshape(B * k, n)
             u = self._cfr(node.child, p, r0c, r1c, update, use_avg, None if full else csel, strats, done if full else None)
             norm = node.norm_for(m3) if k < K else node.norm[rows]
             w = m3 if node.umasks is None else node.weights(None if sel is None else rows)
@@ -1527,12 +1574,14 @@ class Solver:
                 arrive[id(node)] = (r0, r1)
             elif node.perm is not None:
                 rows = np.arange(r0.shape[0])
-                self._down(node.child, p, node.spread(r0, rows), node.spread(r1, rows), strats, arrive, want, into)
+                c0, c1 = (self._child_reach(node, q, r, lambda x: node.spread(x, rows)) for q, r in ((0, r0), (1, r1)))
+                self._down(node.child, p, c0, c1, strats, arrive, want, into)
             elif node.sample is None:
                 B, K, n = r0.shape[0], node.K, self.ctx.n
                 m3 = node.masks.reshape(B, K, n)
-                self._down(node.child, p, (r0[:, None, :] * m3).reshape(B * K, n), (r1[:, None, :] * m3).reshape(B * K, n),
-                           strats, arrive, want, into)
+                c0, c1 = (self._child_reach(node, q, r, lambda x: (x[:, None, :] * m3).reshape(B * K, n))
+                          for q, r in ((0, r0), (1, r1)))
+                self._down(node.child, p, c0, c1, strats, arrive, want, into)
         else:
             cache = strats[node.player]
             strat = cache.get(id(node))
@@ -1640,6 +1689,7 @@ class Solver:
             self.horizon = max_iters
         t0 = time.time()
         start = self.iters
+        self._own.clear()       # (the traverser's reaches are this run's root reaches')
         while self.iters < max_iters:
             if should_stop is not None and should_stop():
                 raise Cancelled()
@@ -1649,9 +1699,15 @@ class Solver:
                 break
             # the opponent's strategies computed in player 0's pass are still current in player 1's
             strats = ({}, {})
-            for p in (0, 1):
-                self._traverse(p, r0b, r1b, strats)
-                strats[p].clear()
+            try:
+                for p in (0, 1):
+                    self._p = p
+                    self._traverse(p, r0b, r1b, strats)
+                    self._cin.clear()
+                    strats[p].clear()
+            finally:
+                self._p = None
+                self._cin.clear()
             self.iters += 1
             self._discount()
             if self.iters - start >= min_iters and time.time() - t0 > time_budget:

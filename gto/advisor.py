@@ -811,13 +811,14 @@ def _preflop_equity_multi_calc(villains: List[np.ndarray]) -> np.ndarray:
 
 
 def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack, hero=None, hole=(),
-                   slow: Optional[Dict[str, np.ndarray]] = None) -> None:
+                   slow: Optional[Dict[str, np.ndarray]] = None, check_whole: bool = False) -> None:
     """Narrow each player's range (in place) by what they did on a street that started multiway,
     with the multiway rules: a check drops most of the hands that would have bet, a bet or raise
     keeps its value + bluff range, a call keeps what continues minus what would have raised.
     Hands a rule rules out keep some weight (players don't follow our rules), see _soften. `slow`
     (carried from street to street): per player, the combos a call has already slowplayed. `stack`: everyone's
-    stack in bb, or {seat: stack}."""
+    stack in bb, or {seat: stack}. `check_whole`: a check keeps the range whole, as a heads-up street's rules do
+    (Advisor._walk at trust 0: heads-up the rules' check took the value out of ranges that check nearly all of it)."""
     sc, rank, bluff = _street_info(tuple(board))
     dead = [MEMBER_FULL[c] for c in hole]
     bets = {p: 0.0 for p in st.inv_start}
@@ -875,6 +876,8 @@ def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack,
             called += 1
         cur = max(cur, to)
         bets[p] = max(bets[p], min(to, bets[p] + remaining))
+        if act == "check" and check_whole:
+            continue
         ranges[p] = r * (_soften(r, keep_m, CHECK_SOFT) if act == "check" and len(board) == 3 else _soften(r, keep_m))
         if act == "call" and to_call > 1e-9 and raise_ok:
             k = _keep(to_call, pot, n) if call_k is None else call_k
@@ -2102,6 +2105,7 @@ class Advisor:
         rare_lines: List[str] = []
         spare, t_prior = 0.0, time.time()   # earlier streets' budgets (prior_budget each) left unspent
         slow_hu: Dict[int, np.ndarray] = {}   # per player, the combos a call by the rules slowplayed (_slowplayed)
+        slow_rules: Dict[str, np.ndarray] = {}   # ...the same by seat, for a street the rules narrow alone (quick)
         if hu_from_start:
             # narrow through earlier streets that were also heads-up between these two
             for st in rep[1:-1]:
@@ -2120,6 +2124,20 @@ class Advisor:
                 else:
                     if self.prior_model:
                         cfg = dataclasses.replace(cfg, **self.prior_model)
+                    if getattr(self, "_quick", False) and \
+                            self._cache.get(self._solve_key(sub_board, r0, r1, st.pot_start, eff, cfg=cfg)) is None:
+                        # A quick answer has no time to solve an earlier street (0.3 s: the 10 iterations a solve
+                        # runs at least took 2-4 s natively on a limped flop, more in the browser, and ended 20-90% of
+                        # the pot from equilibrium, which the narrowing then trusts 0%: 88% of flop narrowing solves at
+                        # half a second). The betting rules narrow it, as they would have; one solved already (your
+                        # advice on that street) is still walked.
+                        rs = {oop: r0, ip: r1}
+                        _narrow_street(rs, sub_board, st, stk, hero, hole, slow_rules, check_whole=True)
+                        notes.append(f"{st.name}: ranges narrowed by simple betting rules (a quick answer: the street "
+                                     f"isn't solved)")
+                        r0 = _post_floor(r0, rs[oop], board, oop, st.name, notes)
+                        r1 = _post_floor(r1, rs[ip], board, ip, st.name, notes)
+                        continue
                     sol = self._solve_cached(sub_board, r0, r1, st.pot_start, eff, self.prior_budget, cfg=cfg)
                     if getattr(sol, "expl_at", (None,))[0] != sol.iters:
                         sol.expl_at = (sol.iters, sol.exploitability())
@@ -3538,15 +3556,21 @@ class Advisor:
         notes.extend(n2)
         return sol, node, c0, c1
 
-    def _solve_cached(self, board, r0, r1, pot, stack, budget, bets=(0.0, 0.0), to_act=0, n_raises=0, cfg=None,
-                      settle=False):
+    def _solve_key(self, board, r0, r1, pot, stack, bets=(0.0, 0.0), to_act=0, n_raises=0, cfg=None):
+        """(cache key, spot) of a heads-up solve: its ranges and the spot (_by_spot's key)."""
         cfg = cfg or self.cfg
         spot = (tuple(board), round(pot, 2), round(stack, 2), tuple(round(b, 2) for b in bets), to_act, n_raises,
                 cfg.sizes_key()) + (((cfg.river_play, cfg.turn_classes, cfg.river_buckets, cfg.turn_buckets, cfg.river_strength),)
                                     if len(board) == 3 else ())
         # (a flop solve's river_play and turn_classes are part of the spot: a Fast flop solve, river checked down,
         # seeded an Accurate one at its lower c-bet frequencies and did worse in the same time than a cold start)
-        key = (_range_key(r0), _range_key(r1)) + spot
+        return (_range_key(r0), _range_key(r1)) + spot
+
+    def _solve_cached(self, board, r0, r1, pot, stack, budget, bets=(0.0, 0.0), to_act=0, n_raises=0, cfg=None,
+                      settle=False):
+        cfg = cfg or self.cfg
+        key = self._solve_key(board, r0, r1, pot, stack, bets, to_act, n_raises, cfg)
+        spot = key[2:]
         sol = self._cache.get(key)
         if sol is None:
             # Same spot solved by warm_from (ranges can differ a little: they come from its own earlier

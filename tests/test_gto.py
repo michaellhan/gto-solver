@@ -1206,6 +1206,23 @@ class TestTableSizes(unittest.TestCase):
         self.assertTrue(res["multiway"]); self.assertNotIn("solved", res)
         self.assertEqual(adv._mw_cache, {})
 
+    def test_quick_answers_narrow_an_unsolved_earlier_street_by_the_rules(self):
+        # A quick answer doesn't solve an earlier heads-up street to narrow ranges (its 10 least iterations took 2-4 s
+        # and were trusted 0%): a limped flop checked through is narrowed by the rules, its checks whole; one already
+        # solved (your advice on it) is still walked
+        adv = Advisor(Config(depth=1), time_budget=1.0, prior_budget=0.3)
+        pre = [{"pos": "SB", "action": "call"}, {"pos": "BB", "action": "check"}]
+        flop = [{"pos": "BB", "action": "check"}, {"pos": "SB", "action": "check"}]
+        st = {"players": 2, "hero": "BB", "hole": "8h6d", "board": "5cJsKc9s", "preflop": pre, "flop": flop, "quick": True}
+        res = adv.advise(st)
+        self.assertTrue(res["actions"])
+        self.assertTrue(any("flop: ranges narrowed by simple betting rules" in n for n in res["notes"]), res["notes"])
+        self.assertEqual([k for k in adv._cache if len(k[2]) == 3], [])   # no flop solve
+        # the flop solved first (advice on it): the turn walks it
+        adv.advise(dict(st, board="5cJsKc", flop=[], quick=False))
+        res = adv.advise(st)
+        self.assertFalse(any("flop: ranges narrowed by simple betting rules" in n for n in res["notes"]), res["notes"])
+
     def test_multiway_top_pair_continues_like_draws(self):
         # 8-6-3 checked to the BB 3-way. The bettor's bluffs used to come from the bottom of its range
         # (air) and its value only from what beat what would call as if everyone held its range, so an

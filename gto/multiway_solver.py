@@ -76,7 +76,7 @@ class MWConfig:
     classes: bool = True         # the next card as one per class (a rank; a suit with two or more board cards apart)
     bucket_river_step: int = 1   # from a flop: the turn's showdown tensors average every step-th river card
     alpha: float = 1.5           # DCFR: positive regrets x t^a / (t^a + 1), negative x 1/2,
-    gamma: float = 2.0           # average strategy x (t / (t + 1))^g
+    gamma: float = 3.0           # average strategy x (t / (t + 1))^g (3: 20-30% less exploitable than 2 at equal time, 3-way river and turns)
     seed: int = 3
 
     def rake(self, pot: float) -> float:
@@ -964,6 +964,14 @@ class MultiwaySolver:
         self.root = b.build(self.board, pot, stack, bets, to_act, n_raises, pending)
         self.decisions = b.decisions
         self.iters = 0
+        # alternating updates: a player's reach at a node is its own strategies' product, so it only changes in the
+        # pass that updates that player. The showdown tables built from one opponent's reach (and the strategies) are
+        # kept by player and version (how many times its regrets were updated) for the next pass that needs them
+        # unchanged: of each player's two opponent passes an iteration, player 0's (passes 1 and 2) and the last
+        # player's (0 and 1) share one version. Pair terms (two opponents' reaches) change every pass.
+        self._ver = [0] * self.np
+        self._tmemo: Dict[tuple, tuple] = {}
+        self._smemo: Dict[int, tuple] = {}
         self.seconds = 0.0
         self.out_of_time = False      # a run ended at its time budget (the advisor then doesn't run it again)
         self.levels: List[List[_Group]] = []
@@ -1183,9 +1191,9 @@ class MultiwaySolver:
         return self._walk(node, R, mode, p)
 
     # -- terminal values
-    def _term(self, node: Terminal, R, need=None, rho=None):
+    def _term(self, node: Terminal, R, need=None, rho=None, memo=False):
         """(np, B, n) values: u_p = share x (pot - rake) - chips put in, summed over the others' compatible hands
-        (only player `need`'s row when given)."""
+        (only player `need`'s row when given). `memo`: an alternating pass's, whose tables are kept (see __init__)."""
         bd = node.bd
         npl = self.np
         exact = self.cfg.exact and bd.B == 1
@@ -1196,7 +1204,18 @@ class MultiwaySolver:
 
         def get(key, fn):
             if key not in cache:
-                cache[key] = fn()
+                if memo:
+                    who = key[1:]
+                    stamp = tuple(self._ver[j] for j in who)
+                    mk = (id(node),) + key
+                    hit = self._tmemo.get(mk)
+                    if hit is not None and hit[1] == stamp:
+                        cache[key] = hit[2]
+                    else:
+                        cache[key] = fn()
+                        self._tmemo[mk] = (who, stamp, cache[key])
+                else:
+                    cache[key] = fn()
             return cache[key]
 
         KU = lambda j: get(("U", j), lambda: bd.k_u(R[j]))
@@ -1299,7 +1318,7 @@ class MultiwaySolver:
         "alt": the traverser p's regrets and average strategy only (alternating updates), p's values.
         `rho`: an equity leaf's overlap ratios, from the board above its runouts (see _leaf_rho)."""
         if isinstance(node, Terminal):
-            v = self._term(node, R, None if mode not in ("br", "alt") else p, rho)
+            v = self._term(node, R, None if mode not in ("br", "alt") else p, rho, memo=mode == "alt")
             return v[p] if mode in ("br", "alt") else v
         if isinstance(node, Exit):
             return node.V
@@ -1318,7 +1337,13 @@ class MultiwaySolver:
         q = node.player
         if mode == "alt":
             # alternating updates: only the traverser p's regrets and average strategy
-            sig = node.strategy()
+            # (q's strategy is the same until q's own pass updates its regrets)
+            hit = self._smemo.get(id(node))
+            if hit is not None and hit[0] == self._ver[q]:
+                sig = hit[1]
+            else:
+                sig = node.strategy()
+                self._smemo[id(node)] = (self._ver[q], sig)
             vals = []
             for a, ch in enumerate(node.children):
                 Ra = R.copy(); Ra[q] = R[q] * sig[:, a, :]
@@ -1378,12 +1403,14 @@ class MultiwaySolver:
         for d in self.decisions:
             d.regret *= np.where(d.regret > 0, np.float32(pos), np.float32(0.5))
             d.ssum *= np.float32(sf)
+        self._ver = [v + 1 for v in self._ver]      # (every player's regrets changed)
 
     def run(self, iters=1000, time_budget=None, min_iters=5, should_stop=None, reserve=0.0):
         """`time_budget` (seconds): no iteration starts that would end past it (by the mean iteration so far), with
         `reserve` more iterations' time kept back for what follows (br_gains and action_evs cost about two)."""
         t0 = time.time()
         start = self.iters
+        self._tmemo.clear(); self._smemo.clear()     # (kept within a run: its reaches are this run's root reaches')
         while self.iters - start < iters:
             if should_stop is not None and should_stop():
                 break
@@ -1395,6 +1422,12 @@ class MultiwaySolver:
             if self.cfg.alternate:
                 for p in range(self.np):
                     self._pass(self.reach0, "alt", p)
+                    self._ver[p] += 1
+                    # (memory) what no later pass can reuse: the pair terms, and the next traverser's tables (stale
+                    # by its next opponent pass)
+                    nxt = (p + 1) % self.np
+                    for k in [k for k, (who, _, _) in self._tmemo.items() if len(who) == 2 or who[0] == nxt]:
+                        del self._tmemo[k]
             else:
                 self._pass(self.reach0, "cfr")
             self.iters += 1
