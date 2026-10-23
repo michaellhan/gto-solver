@@ -7,6 +7,8 @@
 
 export const UPSTREAM = "https://api.anthropic.com/v1/messages";
 export const MODEL = "claude-sonnet-5-5";
+// (with extended thinking off: thinking: between_tools. Sonnet 5.5 thinks by default, and its thinking counts toward
+// max_tokens, so it could use up the 700 before the answer)
 export const MAX_TOKENS = 700;
 export const MAX_PROMPT = 8000;
 // (the same coach prompt as practice.js's AI_SYSTEM, which the own-key path sends; test/index.test.js keeps them equal)
@@ -102,7 +104,7 @@ export const handler = {
     try {
       res = await fetch(UPSTREAM, { method: "POST", headers: { "content-type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY,
         "anthropic-version": "2023-06-01" }, body: JSON.stringify({ model: MODEL, max_tokens: MAX_TOKENS, stream: true,
-        output_config: { effort: "low" }, system: SYSTEM, messages: [{ role: "user", content: prompt }] }) });
+        thinking: { type: "between_tools" }, output_config: { effort: "low" }, system: SYSTEM, messages: [{ role: "user", content: prompt }] }) });
     } catch (e) {
       return json(502, { error: "Couldn't reach Claude. Try again in a moment." }, origin);
     }

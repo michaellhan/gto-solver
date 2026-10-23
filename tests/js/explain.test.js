@@ -121,6 +121,7 @@ test("Explain with AI streams Claude's answer into the card, safely, once per de
   assert.deepEqual({ ...init.headers }, { "content-type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" });
   assert.equal(body.model, "claude-sonnet-5-5");
   assert.equal(body.max_tokens, 700);
+  assert.deepEqual(body.thinking, { type: "between_tools" });   // (no extended thinking eating the 700)
   assert.equal(body.stream, true);
   assert.match(body.system, /ground truth/);
   assert.equal(body.messages[0].content, p.val("Practice.ai.prompt(Practice.state.hand.log.at(-1))"));

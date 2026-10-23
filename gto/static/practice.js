@@ -546,7 +546,7 @@
       res = proxy ? await fetch(EXPLAIN_PROXY, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt: prompt(e).slice(0, 8000) }) })
         : await fetch(AI_URL, { method: "POST", headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01",
           "anthropic-dangerous-direct-browser-access": "true" }, body: JSON.stringify({ model: AI_MODEL, max_tokens: 700, stream: true,
-          output_config: { effort: "low" }, system: AI_SYSTEM, messages: [{ role: "user", content: prompt(e) }] }) });
+          thinking: { type: "between_tools" }, output_config: { effort: "low" }, system: AI_SYSTEM, messages: [{ role: "user", content: prompt(e) }] }) });
     } catch (err) {
       Object.assign(c, { s: "err", err: proxy ? "Couldn't reach the explanation service. Check your connection (or a content blocker) and try again."
         : "Couldn't reach api.anthropic.com. Check your connection (or a content blocker) and try again." }); return redraw(true);

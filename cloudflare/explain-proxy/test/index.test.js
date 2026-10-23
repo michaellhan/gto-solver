@@ -94,7 +94,7 @@ test("the client can't choose the model, system prompt, tools or tokens: the wor
     assert.equal(url, UPSTREAM);
     assert.equal(init.method, "POST");
     assert.deepEqual(init.headers, { "content-type": "application/json", "x-api-key": FAKE, "anthropic-version": "2023-06-01" });
-    assert.deepEqual(body, { model: MODEL, max_tokens: MAX_TOKENS, stream: true, output_config: { effort: "low" }, system: SYSTEM,
+    assert.deepEqual(body, { model: MODEL, max_tokens: MAX_TOKENS, stream: true, thinking: { type: "between_tools" }, output_config: { effort: "low" }, system: SYSTEM,
       messages: [{ role: "user", content: "Explain my fold." }] });
     assert.equal(body.model, "claude-sonnet-5-5");
     assert.equal(body.max_tokens, 700);
