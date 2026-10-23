@@ -13,13 +13,15 @@
   const store = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
   const ZERO = { hands: 0, decisions: 0, best: 0, good: 0, evDecisions: 0, evLost: 0, net: 0 };
   // hand: { hero, players, hole, hands: {seat: [c, c]}, board: [5 cards], result }
-  // seat: "table", "random" or a position; table: the ring game (see deal()); more: the verdict's details open; detail: the solver's full analysis shown;
+  // seat: "table", "random" or a position; table: the ring game (see deal()); more: the verdict's details open; detail: your range shown (see range);
   // review: your last decisions (REVIEW_KEEP), for Review mistakes; rev: that list open; pick: the one shown in it;
   // drill: the kind of pot dealt (DRILLS); tries: deals so far looking for it; hint: the first-run hint dismissed
   const P = { on: false, hand: read(HAND), score: { ...ZERO, ...(read(SCORE) || {}) }, busy: false, status: "", error: "",
     seat: read(SEAT) || "table", table: read(TABLE), more: !!read("gto-practice-more"), detail: !!read("gto-practice-detail"),
     review: Array.isArray(read(REVIEW)) ? read(REVIEW) : [], rev: false, pick: null,
-    drill: read(DRILL) || "any", tries: 0, hint: !!read(HINT) };
+    drill: read(DRILL) || "any", tries: 0, hint: !!read(HINT), range: null };
+  // range: { id, res, label } for your last decision, kept in memory while its solve is the page's advice (lastResult):
+  // how the solver plays your whole range there (the advice panel's Grid, Breakdown and Equity, nothing else)
   P.running = !!(P.hand && P.hand.run && !P.hand.run.done);   // (a run-out after your fold, resumed after a reload)
   const REVIEW_KEEP = 60, REVIEW_SHOW = 6;
   if (P.score.decisions && !(read(SCORE) || {}).good) P.score.good = P.score.best;   // (a score from before "good" was kept)
@@ -323,6 +325,10 @@
     const mix = res && !res.error && !heuristic(res) && res.actions ? res.actions.map(a => ({ n: a.action, f: a.freq, ...(a.ev_bb !== undefined ? { ev: a.ev_bb } : {}), ...(amtOf(a) != null ? { a: amtOf(a) } : {}) })) : null;
     const id = Date.now().toString(36) + (++AI.seq).toString(36);   // (the explanation kept in memory; not Math.random, the deal's)
     const e = { id, street, rec: { action: rec.action, ...(rec.to != null ? { to: rec.to } : {}) }, g: rec.g || null, mix, ctx: spot(street) };
+    // (the others still in: one or two by name, more as a count)
+    const vs = [...simulate().active].filter(p => p !== S.hero).map(p => SEAT_LABEL(p, S.players));
+    P.range = res && !res.error && !heuristic(res) && res.grid ? { id, res, label: `Your range · ${street} · ${SEAT_LABEL(S.hero, S.players)}`
+      + (vs.length ? ` vs ${vs.length <= 2 ? vs.join(", ") : vs.length + " players"}` : "") } : null;
     (P.hand.log = P.hand.log || []).push(e);
     store(HAND, P.hand);
     // for Review mistakes: the spot (hand number, seat, cards, board, the street's action before you) with it
@@ -345,6 +351,8 @@
   }
   const ICON = { best: "★", good: "✓", meh: "?!", bad: "✕", none: "–" };
   const pct = (f) => `${Math.round(f * 100)}%`;
+  // your range at decision e, while its solve is still the advice panel's
+  const rangeOf = (e) => P.range && e && P.range.id === e.id && P.range.res === lastResult ? P.range : null;
   const evTxt = (x) => `${x > 0 ? "+" : x < 0 ? "−" : ""}${Math.abs(x).toFixed(2)}`;
   function why(e) {
     const g = e.g, v = verdict(g);
@@ -358,9 +366,9 @@
   // mixed actions are worth the same in theory: a small gap there is the solve's noise more than an error)
   const lostCls = (e) => !(e.g && e.g.l > 0.005) ? "muted" : ["best", "good"].includes(verdict(e.g).k) ? "soft" : "neg";
   // the verdict on one decision: the verdict, what you did and the EV it cost, the solver's mix as a bar with
-  // its frequencies; why and the EVs fold away (Details), as does the solver's full analysis of the spot.
+  // its frequencies; why and the EVs fold away (Details), with how the solver plays your whole range there.
   // o.label: headed "Last decision · street" (the coach's card); o.old: you're on a new decision now (faded);
-  // o.past: a decision from the review list (no full analysis)
+  // o.past: a decision from the review list (no range: its solve is gone)
   function feedback(e, o = {}) {
     const v = verdict(e.g), g = e.g, past = o.past;
     const cost = g && g.l != null ? (g.l > 0.005 ? `<span class="cost num ${lostCls(e)}" title="EV given up against the solver's best action">−${g.l.toFixed(2)} bb</span>` : `<span class="cost num pos">no EV lost</span>`) : "";
@@ -377,7 +385,7 @@
     const lbl = o.label ? `<div class="lbl">${o.label} · ${e.street}</div>` : "";
     return `<div class="cx-fb${o.old ? " old" : ""}" style="--c:${v.c}">${lbl}<div class="head"><span class="ico" aria-hidden="true">${ICON[v.k]}</span><span class="verdict">${v.label}</span><span class="what">${o.label ? "" : e.street + " · "}you <b>${YOU(e.rec)}</b></span>${cost}</div>${mix}`
       + `<details class="cx-more"${P.more ? " open" : ""}><summary>Details</summary><div class="why">${why(e)}${g && g.r ? ' <span class="muted">(rough solve: a hint, not a verdict)</span>' : ""}</div>${table}${aiHtml(e)}`
-      + (past ? "" : `<button class="link" id="pxDetail">${P.detail ? "Hide" : "Show"} the solver's full analysis</button>`) + `</details></div>`;
+      + (!past && rangeOf(e) ? `<button class="cx-rangeb" id="pxDetail" aria-expanded="${P.detail}">${P.detail ? "Hide your range" : "See how the solver plays your whole range"}</button>` : "") + `</details></div>`;
   }
 
   // ---- explaining a decision. Copy for AI puts the decision on the clipboard as a prompt for any AI chat;
@@ -780,13 +788,18 @@
     }
     strip(sim);
     const hp = document.getElementById("pHistory"); if (hp && hp.scrollHeight > hp.clientHeight) hp.scrollTop = hp.scrollHeight;
-    // the solver's full analysis of your last decision, under the coach, when asked for
-    document.body.classList.toggle("pxdetail", P.detail && log.length > 0);
+    // how the solver plays your whole range at your last decision, under the coach, when asked for
+    const rg = P.detail && rangeOf(log[log.length - 1]);
+    document.body.classList.toggle("pxdetail", !!rg);
+    const rh = document.getElementById("pxRangeHd"); if (rh && rg) rh.textContent = rg.label;
     document.body.classList.toggle("pxseek", !!seeking() && !P.error);   // (the drill's deals flash by, dimmed)
     const q = (sel) => el.querySelector ? el.querySelector(sel) : null, on = (id, f) => { const b = q("#" + id); if (b) b.onclick = f; };
     on("pxHint", () => { P.hint = true; store(HINT, 1); renderAll(); });
     on("pxRetry", () => { P.error = ""; P.tries = 0; renderAll(); });
-    on("pxDetail", () => { P.detail = !P.detail; store("gto-practice-detail", P.detail); renderAll(); });
+    on("pxDetail", () => {
+      P.detail = !P.detail; store("gto-practice-detail", P.detail); renderAll();
+      const pa = P.detail && document.getElementById("pAdvice"); if (pa && pa.scrollIntoView) pa.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
     on("pxReset", () => { if (typeof confirm === "function" && !confirm("Reset your practice score and mistakes?")) return; P.score = { ...ZERO }; store(SCORE, P.score); P.review = []; store(REVIEW, P.review); renderAll(); });
     on("pxRev", () => { P.rev = !P.rev; P.pick = null; renderAll(); });
     on("pxRebuy", () => { if (typeof confirm === "function" && !confirm("Put every seat back to the starting stack and deal a new hand?")) return; rebuyAll(); });

@@ -203,12 +203,20 @@
   .err { color: var(--bad); font-size: 12px; }
   .err:empty { display: none; }
   /* practice mode (practice.js): a coach panel (your seat, what's happening, the verdict on each decision, the result,
-     the score); the solver's full analysis only when asked for, never on your turn; no editing the hand, no
+     the score); your range at the last decision (the advice's Grid, Breakdown and Equity, nothing else) only when
+     asked for, never on your turn; no editing the hand, no
      solver-only controls; big action buttons, and Next hand where they were once the hand is over */
   #pCoach { padding: 12px 14px; }
   body:not(.practice) #pCoach, body:not(.practice) .pxonly, body.practice .nopx { display: none !important; }
   body.practice:not(.pxdetail) #pAdvice, body.practice.heroturn #pAdvice, body.practice #adviceNote, body.practice .acts .fq { display: none !important; }
   body.practice #result.stale { opacity: 1; }
+  body.practice #result > :not(.vtabs):not(.bdview):not(.gridview) { display: none !important; }
+  body.practice #result .vtabs { margin-top: 8px; }
+  body.practice #result .gridview > .meta:first-child { margin-top: 10px !important; }
+  #pAdvice .pxhint { margin: -4px 0 0; font-size: 12px; }
+  .cx-rangeb { display: block; margin-top: 10px; background: none; color: var(--accent); border-color: var(--line2); font-weight: 600; font-size: 13px; text-align: left; }
+  .cx-rangeb:hover { background: var(--panel2); border-color: var(--accent); }
+  .cx-rangeb[aria-expanded="true"] { color: var(--text); border-color: var(--muted); }
   body.practice .acts button.best { box-shadow: none; }
   body.practice .seat, body.practice #seats, body.practice .rewind, body.practice #result .arow { pointer-events: none; }
   body.practice #tableHint, body.practice #editCards, body.practice #timeline > button, body.practice .shortcut, body.practice #pCards,
@@ -714,7 +722,8 @@
       <div id="practiceBar" hidden></div>
     </section>
     <section class="panel" id="pAdvice">
-      <h2><span class="nopx">Advice</span><span class="pxonly">Solver detail · your last decision</span></h2>
+      <h2><span class="nopx">Advice</span><span class="pxonly" id="pxRangeHd">Your range</span></h2>
+      <div class="pxonly meta pxhint">What the solver does with every hand you could hold here; your hand is outlined.</div>
       <div id="adviceNote" class="note" hidden></div>
       <div id="result" class="empty">Pick your seat and cards, then enter the action seat by seat.<br>Advice appears here whenever it's your turn.</div>
     </section>
@@ -1560,7 +1569,7 @@ function renderResult(res, key) {
   const vg = el.querySelector(".vgrid");
   if (vg) wireGrid(vg, res.villain_grid, null, res.villain);
   el.querySelectorAll(".vtabs button").forEach(b => b.onclick = () => showView(el, b.dataset.v, res, key));
-  if (VIEW !== "grid" && !review && el.querySelector(`.vtabs [data-v="${VIEW}"]`)) showView(el, VIEW, res, key);
+  if (VIEW !== "grid" && !review && !practicing() && el.querySelector(`.vtabs [data-v="${VIEW}"]`)) showView(el, VIEW, res, key);
   updateAdviceState();
   renderAction(simulate());   // on your turn the buttons carry the solver's sizes and frequencies
 }
