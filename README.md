@@ -251,8 +251,10 @@ heads-up turns and rivers quick answers took 1.3 s natively where they took 3.6 
 budget for an unsettled street; 3-way pots solved on the river only, in 1.8 s (`advisor.MW_QUICK_BUDGET`), a 3-way
 flop's first decision in the commonest 3-way pots read from the [3-way library](#precomputed-3-way-flop-library) at
 once, other 3-way flops and turns answered by the betting rules; measured in Pyodide, `BENCH_STATE='{"quick":true}'
-BENCH_BUDGETS='{"fast":[1.5,0.3]}' scripts/bench_browser.mjs`: a turn 1.9 s, 22 iterations, 7.8-8.9% of the pot from
-equilibrium where Fast's 8 s settle it to 0.15%; a river 0.8 s of solving, 220 iterations, 0.09%; a 3-way river 1.8 s,
+BENCH_BUDGETS='{"fast":[1.5,0.3]}' scripts/bench_browser.mjs`, medians of 3 on an idle machine: a turn 1.9 s, 26
+iterations, 6.4-6.9% of the pot from equilibrium (was 22-23, 8.1-8.9%) where Fast's 8 s settle it to 0.12%; a river
+(budgets `[0.8,0.3]`) 1.4 s, 412 iterations, 0.04%, its turn narrowed by the rules (was 1.8 s, 244 iterations, 0.08%,
+with a 1 s turn solve trusted 0%, and a 272 MB wasm heap, now 76 MB); a 3-way river 1.8 s,
 14 iterations, 2.6%; a flop from the library at once). While you decide, the lines you're likeliest to take are solved ahead: your
 hand's mix blended half and half with what you usually do (fold, check or call, bet or raise; facing a bet or not;
 kept in this browser as `gto-practice-habits`), up to two lines at least 20% likely, a bet at the solver's size, never
@@ -752,6 +754,10 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   | 3-way turn, Accurate | 72 | 59.8, 330, 0.03 | 34.0, 200, 0.07 |
   | 3-way river, Fast / Accurate | 14 / 84 | 8.0, 41, 0.43 / 60.0, 386, 0.01 | 7.9, 48, 0.33 / 15.1, 100, 0.07 |
   | preflop | | 0.01 | 0.01 |
+
+  Later (the heads-up solver's chance reaches computed once a pass and once a run, `Solver._child_reach`; medians of 3
+  on an idle machine): the Fast turn after a library flop 172-177 -> 186-194 iterations, 0.14-0.16 -> 0.12-0.15% of the
+  pot from equilibrium, in the same 11.1 s; the river unchanged (1000 iterations in 6.2 s).
 
   Every request now ends within 6% of the bar (a raked Fast flop: the rake's exploitability costs two more passes).
   Fast's 3-way flops and turns are answered by the rules in 2.4-3.0 s. The worker's setup (Pyodide, numpy, treys,
