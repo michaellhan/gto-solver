@@ -1925,23 +1925,24 @@ try { SFX.on = localStorage.getItem("gto-sound") !== "0"; } catch (e) {}
 function applySound() { const b = document.getElementById("soundBtn"); b.classList.toggle("active", SFX.on); b.textContent = SFX.on ? "Sounds on" : "Sounds off"; }
 applySound();
 document.getElementById("soundBtn").onclick = () => { SFX.on = !SFX.on; applySound(); try { localStorage.setItem("gto-sound", SFX.on ? "1" : "0"); } catch (e) {} if (SFX.on) sfx("good"); };
-// each sound: [start (s), kind, ...]: "tone" frequency, end frequency, length, wave, volume; "noise" length, filter
-// frequency, end frequency, volume (a swish of filtered noise)
+// each sound: tones [start (s), frequency, end frequency, length, wave, volume]; a card is a soft wooden tick, not a
+// swish of noise (heard on every street, it grated)
 // (their jitter has its own generator: Math.random deals Practice's hands)
 const SOUNDS = (() => {
-  const clicks = (n, gap, vol) => Array.from({ length: n }, (_, i) => [i * gap + sfxRand() * 0.01, "tone", 2600 + sfxRand() * 900, 1800, 0.03, "triangle", vol]);
+  const clicks = (n, gap, vol) => Array.from({ length: n }, (_, i) => [i * gap + sfxRand() * 0.01, 2600 + sfxRand() * 900, 1800, 0.03, "triangle", vol]);
+  const tick = (at, vol) => [at, 1250, 800, 0.035, "sine", vol];
   return {
-    card: () => [[0, "noise", 0.07, 4200, 2200, 0.25]],
-    deal: () => [[0, "noise", 0.07, 4200, 2200, 0.22], [0.11, "noise", 0.07, 4200, 2200, 0.22]],
-    check: () => [[0, "tone", 170, 110, 0.07, "sine", 0.5], [0.12, "tone", 170, 110, 0.07, "sine", 0.5]],
+    card: () => [tick(0, 0.1)],
+    deal: () => [tick(0, 0.08), tick(0.09, 0.08)],
+    check: () => [[0, 170, 110, 0.07, "sine", 0.5], [0.12, 170, 110, 0.07, "sine", 0.5]],
     call: () => clicks(3, 0.045, 0.12),
     bet: () => clicks(5, 0.04, 0.13),
-    allin: () => [...clicks(9, 0.035, 0.13), [0, "tone", 120, 60, 0.25, "sine", 0.45]],
-    fold: () => [[0, "noise", 0.16, 1800, 500, 0.2]],
-    good: () => [[0, "tone", 1047, 1047, 0.12, "sine", 0.18], [0.09, "tone", 1319, 1319, 0.18, "sine", 0.18]],
-    bad: () => [[0, "tone", 330, 300, 0.14, "triangle", 0.2], [0.12, "tone", 247, 220, 0.22, "triangle", 0.2]],
-    win: () => [...[523, 659, 784, 1047].map((f, i) => [i * 0.08, "tone", f, f, 0.2, "sine", 0.16]), ...clicks(6, 0.04, 0.1).map(c => [c[0] + 0.3, ...c.slice(1)])],
-    lose: () => [[0, "tone", 392, 370, 0.16, "sine", 0.14], [0.14, "tone", 294, 262, 0.3, "sine", 0.14]],
+    allin: () => [...clicks(9, 0.035, 0.13), [0, 120, 60, 0.25, "sine", 0.45]],
+    fold: () => [[0, 420, 260, 0.12, "sine", 0.08]],
+    good: () => [[0, 1047, 1047, 0.12, "sine", 0.18], [0.09, 1319, 1319, 0.18, "sine", 0.18]],
+    bad: () => [[0, 330, 300, 0.14, "triangle", 0.2], [0.12, 247, 220, 0.22, "triangle", 0.2]],
+    win: () => [...[523, 659, 784, 1047].map((f, i) => [i * 0.08, f, f, 0.2, "sine", 0.16]), ...clicks(6, 0.04, 0.1).map(c => [c[0] + 0.3, ...c.slice(1)])],
+    lose: () => [[0, 392, 370, 0.16, "sine", 0.14], [0.14, 294, 262, 0.3, "sine", 0.14]],
   };
 })();
 function sfx(name, delay = 0) {
@@ -1953,20 +1954,11 @@ function sfx(name, delay = 0) {
     const c = SFX.ctx || (SFX.ctx = new AC());
     if (c.state === "suspended") c.resume();
     const t0 = c.currentTime + 0.01 + delay;
-    for (const [at, kind, ...a] of SOUNDS[name]()) {
-      const t = t0 + at, g = c.createGain(); g.connect(c.destination);
-      if (kind === "tone") {
-        const [f0, f1, len, wave, vol] = a, o = c.createOscillator();
-        o.type = wave; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + len);
-        g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, t + len);
-        o.connect(g); o.start(t); o.stop(t + len + 0.02);
-      } else {
-        const [len, f0, f1, vol] = a, buf = c.createBuffer(1, Math.ceil(c.sampleRate * len), c.sampleRate), d = buf.getChannelData(0);
-        for (let i = 0; i < d.length; i++) d[i] = (sfxRand() * 2 - 1) * (1 - i / d.length);
-        const s = c.createBufferSource(), f = c.createBiquadFilter();
-        s.buffer = buf; f.type = "bandpass"; f.Q.value = 0.8; f.frequency.setValueAtTime(f0, t); f.frequency.exponentialRampToValueAtTime(f1, t + len);
-        g.gain.setValueAtTime(vol, t); s.connect(f); f.connect(g); s.start(t);
-      }
+    for (const [at, f0, f1, len, wave, vol] of SOUNDS[name]()) {
+      const t = t0 + at, g = c.createGain(), o = c.createOscillator();
+      o.type = wave; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + len);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+      o.connect(g); g.connect(c.destination); o.start(t); o.stop(t + len + 0.02);
     }
   } catch (e) {}
 }
