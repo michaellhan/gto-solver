@@ -268,11 +268,13 @@ scrolls to the full card; the line is always there, so the dock never changes he
 practising. Under each verdict's **Details** (the coach's card and an opened mistake or recent decision) two buttons explain
 a decision. **Copy for AI** puts it on the clipboard as a prompt for any AI chat ("Copied"): the game (players, stacks,
 blinds, ante, straddle, rake), your seat and cards, the board and every action by street with its size in bb and the
-pot, the decision (pot, what's to call, the stacks behind), what you did, the solver's mix with each action's
-frequency and EV, the EV lost and the verdict, and a request to explain in plain language why the solver's play is
-better (ranges, equity, blockers, board texture, sizing) and end with one heuristic. **Explain with AI** streams
-Claude's explanation (Claude Sonnet 5.5, about 150-250 words ending "Takeaway:", the solver's numbers taken as
-given) into the card. Through the proxy (`EXPLAIN_PROXY` in `practice.js`, see
+pot, the decision (pot, what's to call, the stacks behind), Hero's hand read from the cards (made hand, each draw with
+the cards that complete it, the board's suits and pairing, position after the flop: worked out by the page, since a
+model left to it gets draws wrong), what you did, the solver's mix with each action's frequency and EV, the EV lost
+and the verdict, and a request for a short answer: a one-sentence verdict, three reasons, one takeaway. **Explain
+with AI** streams Claude's explanation (Claude Sonnet 5.5, extended thinking off, at most about 70 words: a bold
+Verdict, three one-line reasons shown as a list, cut at three if it writes more, and a bold Takeaway; the solver's
+numbers and the hand reading taken as given) into the card. Through the proxy (`EXPLAIN_PROXY` in `practice.js`, see
 [Explain with AI proxy](#explain-with-ai-proxy)) it works for every visitor with no key, a few a day each; when they're
 used up the card says "Daily free explanations used up — add your own key" and offers the key form, and a small
 **Use my own key** link switches to your own key (and **Use free explanations** back). Without the proxy, or with

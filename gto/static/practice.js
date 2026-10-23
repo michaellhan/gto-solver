@@ -401,11 +401,11 @@
     + "with the solver's frequencies and EVs for their exact hand. Treat those numbers as ground truth: never contradict them or invent other "
     + "frequencies or EVs.\n\nReply in exactly this shape, 70 words at most in all:\n"
     + "**Verdict:** one sentence, at most 20 words: was their move right, and what does the solver prefer.\n"
-    + "- Two or three bullets (never more), each one sentence of at most 15 words: the reasons that matter most here (ranges, equity, blockers, board texture "
+    + "- Exactly three bullets, each one sentence of at most 15 words: the three reasons that matter most here (ranges, equity, blockers, board texture "
     + "or sizing; only those that matter).\n"
     + "**Takeaway:** one rule they can reuse, at most 15 words.\n\n"
-    + "Plain words, numbers only from the hand. Check every fact against the hand before using it (who is in position, the board, Hero's cards "
-    + "and draws). No preamble, no restating the hand, no headings or tables. With no solver "
+    + "Plain words, numbers only from the hand. Take Hero's made hand, draws, outs and position from the HERO'S HAND lines: they are exact, "
+    + "so never work them out yourself. Don't mention data the hand doesn't have (such as missing EVs). No preamble, no restating the hand, no headings or tables. With no solver "
     + "numbers, coach the spot from sound principles and say it isn't solved.";
   // (the worker in cloudflare/explain-proxy sends this same prompt, its tests check they match)
   // cache: id -> { s: "run" | "done" | "err", t: text so far, err, bad (the key was refused), via: "proxy" | "key",
@@ -419,12 +419,64 @@
   const viaProxy = () => !!EXPLAIN_PROXY && !(ownChosen() && aiKey());
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
   // the model's text as paragraphs, **bold** kept, anything else as text
-  const md = (t) => esc(t).split(/\n{2,}/).map(p => p.trim()).filter(Boolean)
-    .map(p => `<p>${p.replace(/^#+\s*/gm, "").replace(/^\s*[-*]\s+/gm, "• ").replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/\n/g, "<br>")}</p>`).join("");
+  // (the reasons cut at three, the most the coach's shape asks for: the model sometimes adds a fourth, weaker one)
+  const MAX_BULLETS = 3;
+  const md = (t) => { let n = 0; return mdText(String(t).split("\n").filter(l => !/^\s*[-*•]\s+/.test(l) || ++n <= MAX_BULLETS).join("\n")); };
+  const mdText = (t) => esc(t).split(/\n{2,}/).map(p => p.trim()).filter(Boolean)
+    .map(p => {
+      const inline = (x) => x.replace(/^#+\s*/gm, "").replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+      const lines = p.split("\n"), item = /^\s*[-*•]\s+/;
+      // (a paragraph of reasons as a list, so a long one wraps under its own text)
+      if (lines.every(l => item.test(l))) return `<ul>${lines.map(l => `<li>${inline(l.replace(item, ""))}</li>`).join("")}</ul>`;
+      return `<p>${inline(p).replace(item, "• ").replace(/\n\s*[-*•]\s+/g, "\n• ").replace(/\n/g, "<br>")}</p>`;
+    }).join("");
   const keyOf = (e) => e.id || "h" + [...JSON.stringify([e.n, e.street, e.hole, e.rec, e.line])].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7).toString(36);
   const bb = (x) => `${fmt(x)}bb`;
   const Street = (s) => s[0].toUpperCase() + s.slice(1);
 
+  // Hero's hand read from the cards, for the prompt (a model left to work out draws gets them wrong): what Hero has
+  // made, each draw with the cards that complete it, the board's texture and Hero's position after the flop.
+  // hole: Hero's two cards; board: the cards out; active: the seats still in
+  const SUIT_NAME = { s: "spades", h: "hearts", d: "diamonds", c: "clubs" };
+  const RANK_OF = (x) => x === 1 ? "A" : "  23456789TJQKA"[x];
+  function heroRead(hole, board, active, hero) {
+    const out = [], val = (c) => 14 - RANKS.indexOf(c[0]), river = board.length >= 5;
+    const others = ORDER_POST.filter(p => p !== hero && active.has(p)), last = ORDER_POST.filter(p => active.has(p)).at(-1);
+    if (others.length) out.push(last === hero ? `Position: Hero is in position (acts last after the flop) against ${others.join(", ")}`
+      : `Position: Hero is out of position against ${others.filter(p => ORDER_POST.indexOf(p) > ORDER_POST.indexOf(hero)).join(", ")}`);
+    if (!board.length) {
+      const [a, b] = [...hole].sort((x, y) => val(y) - val(x));
+      out.push(`Hero's hand: ${a[0]}${b[0]}${a[0] === b[0] ? " (a pocket pair)" : a[1] === b[1] ? "s (suited)" : "o (offsuit)"}`);
+      return out;
+    }
+    const mine = rank7([...hole, ...board]), rb = rank7(board), onBoard = board.length >= 5 && cmp(rb, mine) === 0;
+    // (a pair or trips that is all the board's: Hero's cards are only kickers)
+    const boards = !onBoard && mine[0] > 0 && rb[0] === mine[0] && rb[1] === mine[1] && (mine[0] !== 2 || rb[2] === mine[2]);
+    out.push(`Hero's made hand: ${handName(mine)}${onBoard ? " (all on the board: Hero only plays the board)" : boards ? " (on the board: Hero's cards are only kickers)" : ""}`);
+    // texture: suits and pairs on the board
+    const bs = {}; for (const c of board) bs[c[1]] = (bs[c[1]] || 0) + 1;
+    const most = Math.max(...Object.values(bs)), ms = Object.keys(bs).find(k => bs[k] === most);
+    const paired = new Set(board.map(c => c[0])).size < board.length;
+    out.push(`Board: ${most >= 3 ? `${most} ${SUIT_NAME[ms]} (a flush is possible)` : most === 2 ? `two ${SUIT_NAME[ms]}` : "rainbow"}${paired ? ", paired" : ""}`);
+    if (river || mine[0] >= 4) return out;   // (no cards to come, or already a straight or better)
+    // flush draws: four (or on the flop three, backdoor) of a suit, at least one of them Hero's
+    for (const st of Object.keys(SUIT_NAME)) {
+      const n = [...hole, ...board].filter(c => c[1] === st).length, h = hole.filter(c => c[1] === st);
+      if (!h.length || n < 3) continue;
+      if (n === 4) out.push(`Draw: flush draw in ${SUIT_NAME[st]} (Hero's ${h.join(" ")}; 9 outs)`);
+      else if (n === 3 && board.length === 3 && h.length >= 1) out.push(`Draw: backdoor flush draw in ${SUIT_NAME[st]} (needs two more)`);
+    }
+    // straight draws: the ranks that would give Hero a straight it doesn't have with the board alone
+    const outs = [];
+    for (let r = 2; r <= 14; r++) {
+      const c = RANKS[14 - r] + "x";
+      const with_ = rank7([...hole, ...board, c]), boardOnly = rank7([...board, c]);
+      if (with_[0] === 4 && !(boardOnly[0] === 4 && boardOnly[1] === with_[1])) outs.push(RANK_OF(r));
+    }
+    if (outs.length) out.push(`Draw: ${outs.length >= 2 ? "straight draw, 8 outs" : "gutshot, 4 outs"}: any ${outs.join(" or ")} makes Hero a straight`);
+    if (!out.some(l => l.startsWith("Draw:"))) out.push("Draw: none");
+    return out;
+  }
   // The spot as text, kept with each decision (the page's hand moves on): the game, your seat and cards, every
   // action so far with its size and the pot, and the decision (the pot, what's to call, the stacks behind).
   function spot(street) {
@@ -457,7 +509,7 @@
     const sim = simulate(), info = sim.cur || { pot: sim.pot, curBet: 0, bets: {} }, mine = info.bets[hero] || 0;
     const toCall = Math.max(0, Math.min(info.curBet - mine, STACK(hero) - sim.invested[hero] - mine));
     const behind = [hero, ...POS.filter(p => p !== hero && sim.active.has(p))].map(p => `${who(p)} ${bb(STACK(p) - sim.invested[p] - (info.bets[p] || 0))}`);
-    return { game, hand: `Hero: ${SEAT_LABEL(hero, n)} with ${S.cards[0]} ${S.cards[1]}`, action,
+    return { game, hand: `Hero: ${SEAT_LABEL(hero, n)} with ${S.cards[0]} ${S.cards[1]}`, action, read: heroRead([S.cards[0], S.cards[1]], board, sim.active, hero),
       at: `${Street(street)}, Hero to act. Pot ${bb(info.pot)}${toCall > 1e-9 ? `, ${bb(toCall)} to call` : ", nothing to call"}. Stacks behind: ${behind.join(", ")}`,
       pot: info.pot, toCall };
   }
@@ -471,7 +523,9 @@
     const did = r.action === "bet" ? `bet ${bb(r.to)}${c.pot ? ` (${Math.round(r.to / c.pot * 100)}% pot)` : ""}` : r.action === "raise" ? `raise to ${bb(r.to)}`
       : r.action === "call" && c.toCall ? `call ${bb(c.toCall)}` : r.action;
     const L = ["I'm practising no-limit hold'em against a GTO solver. Please explain one of my decisions.", "", "GAME", ...c.game.map(x => "- " + x), "- " + c.hand, "",
-      "ACTION (sizes in bb; the pot at the start of each street)", ...c.action, "", "DECISION", "- " + c.at,
+      "ACTION (sizes in bb; the pot at the start of each street)", ...c.action, "",
+      ...(c.read ? ["HERO'S HAND (worked out from the cards, exact: use these, don't recompute them)", ...c.read.map(x => "- " + x), ""] : []),
+      "DECISION", "- " + c.at,
       `- I chose: ${did}${g && g.m !== r.action ? ` (graded as the solver's "${g.m}")` : ""}`];
     if (e.mix && e.mix.length) {
       L.push("- The solver's strategy for my exact hand (how often, EV in bb):");
@@ -485,7 +539,7 @@
       if (g.r) L.push("- Note: this solve hadn't fully converged, so close frequencies are rough");
     } else L.push(`- Verdict: ${v.label}`);
     // (short and skimmable: a verdict, two or three reasons, one takeaway)
-    const shape = "Answer briefly: a one-sentence verdict, two or three short reasons (ranges, equity, blockers, board texture or bet sizing, "
+    const shape = "Answer briefly: a one-sentence verdict, three short reasons (ranges, equity, blockers, board texture or bet sizing, "
       + "whichever matter here) and one takeaway I can reuse. Under 70 words.";
     if (!(e.mix && e.mix.length)) L.push("", "How should I think about this spot, and was my play reasonable? " + shape);
     else L.push("", "Why is the solver's play better than mine here (or, if mine is in its mix, why do both work)? Treat the solver's numbers above "
@@ -874,5 +928,5 @@
 
   window.Practice = { get on() { return P.on; }, get running() { return P.running; }, set, tick, next, shown, seatView, runLabel, runOut, rebuyAll,
     graded, rank7, handName, settle, posAt, fromAhead, auto, seeking, state: P, ahead: A,
-    ai: { prompt, spot, click: aiClick, explain, keyOf, state: AI, md } };
+    ai: { prompt, spot, heroRead, click: aiClick, explain, keyOf, state: AI, md } };
 })();

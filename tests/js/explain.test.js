@@ -67,7 +67,7 @@ test("Copy for AI: the decision as a prompt with the game, the action, the solve
   assert.match(text, /- I chose: fold\n/);
   assert.match(text, /  - fold: 20%, EV 0\.00  <- my move\n  - check: 30%, EV \+0\.40\n  - call: 50%, EV \+1\.00\n/);
   assert.match(text, /- The solver's top action: call \(50%\)\n- EV lost against the best action: 1bb\n- Verdict: Good\. The solver mixes this in 20% of the time; its top choice is call \(50%\)\./);
-  assert.match(text, /Why is the solver's play better than mine here.*ground truth.*one-sentence verdict, two or three short reasons \(ranges, equity, blockers, board texture or bet sizing.*one takeaway.*Under 70 words\.$/s);
+  assert.match(text, /Why is the solver's play better than mine here.*ground truth.*one-sentence verdict, three short reasons \(ranges, equity, blockers, board texture or bet sizing.*one takeaway.*Under 70 words\.$/s);
   // the buttons are in Details; a click copies it and says so
   assert.match(html(p), new RegExp(`<button class="small" data-ai="copy" data-k="${k}"[^>]*>Copy for AI</button><button class="small" data-ai="explain" data-k="${k}" aria-expanded="false"[^>]*>Explain with AI</button>`));
   await p.run(`Practice.ai.click("copy", ${JSON.stringify(k)})`);
@@ -300,4 +300,43 @@ test("with the proxy: the daily limit (429) offers your own key, a minute's limi
     assert.doesNotMatch(h, /Enter another key/);
   }
   assert.ok(q.apiCalls.every(c => c.url === PROXY));
+});
+
+test("the prompt reads Hero's hand from the cards: made hand, draws with their outs, the board and position", async () => {
+  const p = loadPage();
+  await p.ready();
+  vm.runInContext(PRACTICE, p.ctx, { filename: "practice.js" });
+  const read = (hole, board, active, hero) => p.val(`Practice.ai.heroRead(${JSON.stringify(hole)}, ${JSON.stringify(board)}, new Set(${JSON.stringify(active)}), ${JSON.stringify(hero)})`);
+  // the hand Claude got wrong: a flush draw and a gutshot (a jack makes nothing), in position
+  assert.deepEqual(read(["8h", "6s"], ["5h", "9h", "Th"], ["BB", "UTG", "BTN"], "BTN"), [
+    "Position: Hero is in position (acts last after the flop) against BB, UTG",
+    "Hero's made hand: 10-high",
+    "Board: 3 hearts (a flush is possible)",
+    "Draw: flush draw in hearts (Hero's 8h; 9 outs)",
+    "Draw: gutshot, 4 outs: any 7 makes Hero a straight"]);
+  // open-ended, out of position; a backdoor flush
+  assert.deepEqual(read(["8s", "7s"], ["9c", "6h", "2s"], ["BB", "BTN"], "BB").slice(0, 1), ["Position: Hero is out of position against BTN"]);
+  assert.ok(read(["8s", "7s"], ["9c", "6h", "2s"], ["BB", "BTN"], "BB").includes("Draw: straight draw, 8 outs: any 5 or T makes Hero a straight"));
+  assert.ok(read(["8s", "7s"], ["9c", "6h", "2s"], ["BB", "BTN"], "BB").includes("Draw: backdoor flush draw in spades (needs two more)"));
+  // a straight the board makes alone isn't Hero's draw; a paired board says so
+  assert.deepEqual(read(["Ac", "Kd"], ["5c", "6d", "7h", "8s"], ["CO", "BTN"], "BTN").slice(1), ["Hero's made hand: A-high", "Board: rainbow", "Draw: none"]);
+  assert.deepEqual(read(["Ac", "Kd"], ["9c", "9d", "2h"], ["CO", "BTN"], "BTN").slice(1, 3), ["Hero's made hand: pair of nines (on the board: Hero's cards are only kickers)", "Board: rainbow, paired"]);
+  // the river: no draws; preflop: the hand's class
+  assert.deepEqual(read(["Ac", "Kd"], ["Ah", "7d", "2h", "3s", "Jc"], ["SB", "BB"], "SB").slice(1), ["Hero's made hand: pair of aces", "Board: two hearts"]);
+  assert.deepEqual(read(["6s", "8h"], [], ["UTG", "BTN", "SB", "BB"], "BTN"), ["Position: Hero is in position (acts last after the flop) against SB, BB, UTG", "Hero's hand: 86o (offsuit)"]);
+  // and it goes into the prompt, marked as exact
+  const q = await atDecision();
+  q.act({ action: "call" });
+  await flush();
+  const text = q.val("Practice.ai.prompt(Practice.state.hand.log.at(-1))");
+  assert.match(text, /\nHERO'S HAND \(worked out from the cards, exact: use these, don't recompute them\)\n- Position: Hero is /);
+  assert.match(text, /\n- Hero's hand: [2-9TJQKA]{2}[so ]/);
+});
+
+test("an answer shows at most three reasons, however many the model wrote", async () => {
+  const p = loadPage();
+  await p.ready();
+  vm.runInContext(PRACTICE, p.ctx, { filename: "practice.js" });
+  const h = p.val(`Practice.ai.md("**Verdict:** Bet.\\n\\n- one\\n- two\\n- three\\n- four\\n\\n**Takeaway:** bet.")`);
+  assert.equal(h, "<p><b>Verdict:</b> Bet.</p><ul><li>one</li><li>two</li><li>three</li></ul><p><b>Takeaway:</b> bet.</p>");
 });
