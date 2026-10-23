@@ -628,6 +628,8 @@
   function now(sim) {
     const h = P.hand, seat = SEAT_LABEL(S.hero, S.players), board = boardCards();
     const boardRow = board.length ? `<div class="cx-board">${big(board, true)}</div>` : "";
+    // the best hand your cards make with the board so far: "Your hand: two pair, kings and sevens"
+    const made = board.length >= 3 && h.hole && h.hole.length === 2 ? `<div class="cx-made">Your hand: <b>${handName(rank7([...h.hole, ...board]))}</b></div>` : "";
     let cls = "", t, sub;
     if (P.error) { cls = " err"; t = "Something went wrong"; sub = `<span class="err">${P.error}</span> <button class="link" id="pxRetry">Retry</button>`; }
     else if (P.status) { t = `<span class="spinner"></span>${P.status}`; sub = `${seat} · ${sim.current || ""}`; }
@@ -637,7 +639,7 @@
       cls = ready ? " mine" : " wait"; t = ready ? "Your turn" : `<span class="spinner"></span>Solving your spot…`;
       sub = `${seat} · ${sim.current} · pot ${fmt(info.pot)} bb${toCall > 1e-9 ? ` · <b>${fmt(toCall)} bb to call</b>` : ""}`;
     } else { t = "Dealing…"; sub = `${seat}${sim.current ? " · " + sim.current : ""}`; }
-    return `<div class="cx-now${cls}"><div class="cx-cards">${big(h.hole)}</div><div><div class="t">${t}</div><div class="sub">${sub}</div>${boardRow}</div></div>`;
+    return `<div class="cx-now${cls}"><div class="cx-cards">${big(h.hole)}</div><div><div class="t">${t}</div><div class="sub">${sub}</div>${boardRow}${made}</div></div>`;
   }
   function summary(r) {
     const h = P.hand, log = h.log || [];
