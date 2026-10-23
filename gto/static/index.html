@@ -1013,12 +1013,14 @@ function simulate() {
     if (nb < NEED[street]) { out.waiting = street; break; }
     const pre = street === "preflop", order = pre ? (STRADDLER() ? [...POS.slice(1), POS[0]] : ORDER_PRE) : ORDER_POST;
     const bets = Object.fromEntries(POS.map(p => [p, 0]));
-    if (pre) { bets.SB = 0.5; bets.BB = 1; if (STRADDLER()) bets[STRADDLER()] = 2; for (const p of POS) bets[p] = Math.min(bets[p], STACK(p) - inv[p]); }
+    if (pre) { bets.SB = 0.5; bets.BB = 1; if (STRADDLER()) bets[STRADDLER()] = 2; for (const p of POS) bets[p] = Math.min(bets[p], STACK(p) - inv[p]);
+      // (as the advisor's replay_hand: a seat whose ante or blind took all its chips is all-in, with no decision)
+      for (const p of POS) if (bets[p] + inv[p] >= STACK(p) - 1e-9) allin.add(p); }
     let curBet = pre ? (STRADDLER() ? 2 : 1) : 0, nRaises = 0, acted = new Set(), lastActor = null;
     let minRaise = pre ? curBet : 1, locked = new Set(), returned = null;
     const potBefore = Object.values(inv).reduce((a, b) => a + b, 0);
     for (const a of S.actions[street]) {
-      const p = a.pos; if (!active.has(p)) continue;
+      const p = a.pos; if (!active.has(p) || allin.has(p)) continue;
       const remaining = STACK(p) - inv[p] - bets[p];
       if (a.action === "fold") active.delete(p);
       else if (a.action === "check" || a.action === "call") {

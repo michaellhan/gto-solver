@@ -56,6 +56,12 @@ def equity_vs(villain: np.ndarray) -> np.ndarray:
     return eq[CLASS_OF]
 
 
+@lru_cache(maxsize=1)
+def _eq_compat() -> np.ndarray:
+    """equity_matrix() times PAIR_COMPAT: equity against a class, weighted by the pairs of combos that can meet."""
+    return equity_matrix() * PAIR_COMPAT
+
+
 def push_fold(jam_range: np.ndarray, call_range: np.ndarray, jam: float, jammer_in: float, caller_in: float,
               pot: float, n_callers: int = 1, iters: int = 400, rake=None, alt=None) -> np.ndarray:
     """Push/fold equilibrium by fictitious play, in hand classes.
@@ -69,28 +75,37 @@ def push_fold(jam_range: np.ndarray, call_range: np.ndarray, jam: float, jammer_
     folding) of the jammer's best other option, a flat call of the raise it faces: a hand jams only when the
     jam beats it (push/fold against folding alone jammed a big blind's 25bb rejam over a button open with
     30% of hands, where the solves flat most of them)."""
-    eq = equity_matrix()
     alt_c = np.zeros(len(CLASSES)) if alt is None else np.bincount(CLASS_OF, weights=alt, minlength=len(CLASSES)) / N_IN
     wj, wc = to_classes(jam_range), to_classes(call_range)
     final = 2 * jam + pot - jammer_in - caller_in
     if rake and rake[0] > 0:
         r = rake[0] * final
         final -= r if rake[1] is None else min(r, rake[1])   # what the winner collects
-    push = np.ones(len(CLASSES)); call = np.zeros(len(CLASSES))
+    # (each iteration's sums over the other class are matrix-vector products with the card-removal shares: ~5x
+    # faster than the (169, 169) products summed, which a many-way jam line called 50 times over)
+    # (matmul raises spurious warnings with macOS Accelerate: see class_sums)
+    with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+        return _fictitious_play(wj, wc, alt_c, jam, jammer_in, caller_in, final, pot, n_callers, iters)[CLASS_OF]
+
+
+def _fictitious_play(wj, wc, alt_c, jam, jammer_in, caller_in, final, pot, n_callers, iters):
+    push = np.ones(len(CLASSES))
     avg_p = np.zeros(len(CLASSES)); avg_c = np.zeros(len(CLASSES))
+    eqc = _eq_compat()
+    tot = np.maximum(PAIR_COMPAT @ wc, 1e-12)
     for t in range(1, iters + 1):
         # callers: call when equity against the pushing range pays for the call
-        wp = PAIR_COMPAT * (push * wj)[None, :]
-        e_c = (eq * wp).sum(1) / np.maximum(wp.sum(1), 1e-12)
+        x = push * wj
+        e_c = (eqc @ x) / np.maximum(PAIR_COMPAT @ x, 1e-12)
         call = (e_c * final - (jam - caller_in) > 0).astype(float)
         avg_c += (call - avg_c) / t
         # jammer: push when it beats folding (0) given the callers' average strategy
-        wq = PAIR_COMPAT * (avg_c * wc)[None, :]
-        tot = PAIR_COMPAT * wc[None, :]
-        p_call1 = wq.sum(1) / np.maximum(tot.sum(1), 1e-12)
+        y = avg_c * wc
+        q = PAIR_COMPAT @ y
+        p_call1 = q / tot
         p_nocall = (1 - p_call1) ** n_callers
-        e_j = (eq * wq).sum(1) / np.maximum(wq.sum(1), 1e-12)
+        e_j = (eqc @ y) / np.maximum(q, 1e-12)
         ev = p_nocall * pot + (1 - p_nocall) * (e_j * final - (jam - jammer_in))
         push = (ev > alt_c).astype(float)
         avg_p += (push - avg_p) / t
-    return avg_p[CLASS_OF]
+    return avg_p

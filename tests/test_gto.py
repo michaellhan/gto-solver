@@ -3405,11 +3405,16 @@ class TestAdvanced(unittest.TestCase):
         for kw, msg in ((dict(sizes={"flop": ["x"]}), "positive numbers"), (dict(sizes={"flop": [-10]}), "positive numbers"),
                         (dict(sizes={"river": [10, 20, 30, 40]}), "at most 3"), (dict(sizes={"preflop": [50]}), "unknown street"),
                         (dict(sizes=[33]), "must be an object"), (dict(ranges={"BTN": "ZZ+"}), "can't read BTN's range"),
-                        (dict(ranges={"LJ": "AA"}), "not a seat"), (dict(ranges={"BTN": "KhKd"}), "no combos left on this board"),
+                        (dict(ranges={"LJ": "AA"}), "not a seat"),
                         (dict(ranges="AA"), "must be an object")):
             out = adv.advise(self.river(**kw))
             self.assertIn("error", out, kw)
             self.assertIn(msg, out["error"], kw)
+        # a custom range the board blocks entirely is the chart's range, with a note (an answer, not an error)
+        out = adv.advise(self.river(ranges={"BTN": "KhKd"}))
+        self.assertNotIn("error", out)
+        self.assertTrue(out["actions"])
+        self.assertTrue(any("no combos left on this board" in n for n in out["notes"]), out["notes"])
         # sizes are held to 5-500% of the pot; an empty range box is the chart's range
         out = adv.advise(self.river(sizes={"river": [1, 900]}, ranges={"BTN": " "}))
         self.assertEqual([a["action"] for a in out["actions"]][:2], ["check", "bet 5%"])

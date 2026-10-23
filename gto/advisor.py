@@ -320,6 +320,8 @@ def replay_hand(positions: List[str], stack: float, streets: Dict[str, List[dict
             st.cur_bet = max(st.posted.values())
             st.min_raise = st.cur_bet
         st.active, st.allin = set(active), set(allin)
+        # (a seat whose ante or blind took all its chips is all-in: it has nothing left to act with)
+        st.allin |= {p for p in st.active if st.bets[p] + inv[p] >= stk[p] - 1e-9}
         last = None
         for a in streets.get(name, []):
             p, act = a["pos"], a["action"]
@@ -711,27 +713,92 @@ def _beat_share(bi: int, w: np.ndarray) -> np.ndarray:
     return np.where(tot > 1e-12, win / np.maximum(tot, 1e-12), 0.0), tot
 
 
+@lru_cache(maxsize=1)
+def _board_index_all():
+    """_board_index for the first MULTI_BOARDS boards stacked (B, ...) with each board's offsets into the flattened
+    cumulative sums, so _beat_share_all reads every board's shares in one pass of numpy calls rather than one per
+    board (preflop equity against several ranges: 400 boards x 30 calls each was most of a big multiway preflop
+    line's time, more so in the browser)."""
+    bi = _board_index()[:MULTI_BOARDS]
+    B = len(bi)
+    rows1 = (np.arange(B) * (N_COMBOS + 1))[:, None]
+    rows2 = (np.arange(B) * (2 * N_COMBOS + 1))[:, None]
+    o = np.stack([x[0] for x in bi]).astype(np.int64)
+    o2 = np.stack([x[1] for x in bi]).astype(np.int64)
+    ix = [np.stack([x[2][j] for x in bi]).astype(np.int64) + (rows1 if j < 2 else rows2) for j in range(10)]
+    live = np.stack([s >= 0 for s in _preflop_boards()[:MULTI_BOARDS]])
+    return o, o2, ix, live
+
+
+def _beat_share_all(w: np.ndarray):
+    """_beat_share on every one of the first MULTI_BOARDS boards at once: w (B, 1326), each board's range (zero on
+    the combos it blocks) -> (share, compatible weight), each (B, 1326)."""
+    o, o2, ix, _ = _board_index_all()
+    B = w.shape[0]
+    cw = np.zeros((B, N_COMBOS + 1)); np.cumsum(np.take_along_axis(w, o, axis=1), axis=1, out=cw[:, 1:])
+    c2 = np.zeros((B, 2 * N_COMBOS + 1))
+    np.cumsum(np.take_along_axis(np.concatenate([w, w], axis=1), o2, axis=1), axis=1, out=c2[:, 1:])
+    cw, c2 = cw.ravel(), c2.ravel()
+    lt, le = cw[ix[0]], cw[ix[1]]
+    lt_ab = le_ab = tot_ab = 0.0
+    for j in (2, 6):
+        base = c2[ix[j]]
+        lt_ab = lt_ab + c2[ix[j + 1]] - base
+        le_ab = le_ab + c2[ix[j + 2]] - base
+        tot_ab = tot_ab + c2[ix[j + 3]] - base
+    tot = w.sum(axis=1, keepdims=True) - tot_ab + w
+    win = (lt - lt_ab) + 0.5 * ((le - le_ab + w) - (lt - lt_ab))
+    return np.where(tot > 1e-12, win / np.maximum(tot, 1e-12), 0.0), tot
+
+
+BEAT_CACHE = 4   # ranges whose shares on every board are kept (8.5 MB each): a line's pricing meets the same few
+_BEAT: Dict[str, tuple] = {}
+
+
+def _beat_share_cached(r: np.ndarray, live: np.ndarray):
+    key = _range_key(r)
+    hit = _BEAT.pop(key, None)
+    if hit is None:
+        hit = _beat_share_all(np.where(live, r[None, :], 0.0))
+    _BEAT[key] = hit   # (most recent last)
+    while len(_BEAT) > BEAT_CACHE:
+        _BEAT.pop(next(iter(_BEAT)))
+    return hit
+
+
 def _preflop_equity_multi(villains: List[np.ndarray]) -> np.ndarray:
     """Preflop equity of every combo against several weighted ranges at once: on each board, the product
     of the chances of beating each (ties count half; card removal between the villains is ignored), over
     the first MULTI_BOARDS boards (each class pools its combos below)."""
     if len(villains) == 1:
         return _preflop_equity(villains[0])
-    sts = _preflop_boards()
-    num = np.zeros(N_COMBOS); den = np.zeros(N_COMBOS)
-    tw = [max(float(r.sum()), 1e-12) for r in villains]
-    for bi, s in enumerate(sts[:MULTI_BOARDS]):
-        live = s >= 0
-        p = live.astype(float)
-        bw = live.astype(float)
-        for r, t in zip(villains, tw):
-            sh, tot = _beat_share(bi, np.where(live, r, 0.0))
-            p = p * sh
-            # boards are as likely as the players' hands leave them: a board of the cards their ranges hold
-            # comes less often (high cards, against ranges of broadways), which the uniform boards missed: 76s
-            # and 22 read 2-3 points under a dealt-out simulation against five players, Q9o 2 over
-            bw = bw * tot / t
-        num += p * bw; den += bw
+    # (a preflop line's pricing asks the same ranges again and again: an 8-way limped pot's 57 calls were 22 of them)
+    key = tuple(_range_key(v) for v in villains)
+    hit = _EQ_MULTI.get(key)
+    if hit is None:
+        hit = _EQ_MULTI[key] = _preflop_equity_multi_calc(villains)
+        while len(_EQ_MULTI) > EQ_MULTI_CACHE:
+            _EQ_MULTI.pop(next(iter(_EQ_MULTI)))
+    return hit.copy()
+
+
+EQ_MULTI_CACHE = 256   # preflop equities against several ranges kept (10 KB each)
+_EQ_MULTI: Dict[tuple, np.ndarray] = {}
+
+
+def _preflop_equity_multi_calc(villains: List[np.ndarray]) -> np.ndarray:
+    live = _board_index_all()[3]
+    p = live.astype(float)
+    bw = live.astype(float)
+    for r in villains:
+        t = max(float(r.sum()), 1e-12)
+        sh, tot = _beat_share_cached(r, live)
+        p = p * sh
+        # boards are as likely as the players' hands leave them: a board of the cards their ranges hold
+        # comes less often (high cards, against ranges of broadways), which the uniform boards missed: 76s
+        # and 22 read 2-3 points under a dealt-out simulation against five players, Q9o 2 over
+        bw = bw * tot / t
+    num, den = (p * bw).sum(axis=0), bw.sum(axis=0)
     # Every combo of a hand class is the same hand up to suits, and the (chart) ranges are suit-symmetric,
     # so the class's combos share one estimate: each combo alone saw only its 60-75 boards, and 76s came out at
     # 5.1% against five players where 65s had 9.5% and Q9o 14.7%, so BB folded 76s, 65s and 54s 70-77% of the
@@ -1822,8 +1889,10 @@ class Advisor:
                 to = min(_default_size(s, hero, True), stk - s.inv_start[hero])
                 add = to - s.bets[hero]
                 return add / max(s.pot_start + sum(s.bets.values()) + add, 1e-9)
-            scale = min(1.5 if pool else 1.0,
-                        (f / fold_need(st, stack)) / max(f_std / fold_need(std, cs), 1e-9))
+            # (a seat with no chips behind risks nothing: no bar, the chart's bluffs as they are)
+            fn_now, fn_std = fold_need(st, stack), fold_need(std, cs)
+            scale = min(1.5 if pool else 1.0, (f / fn_now) / max(f_std / fn_std, 1e-9)) \
+                if fn_now > 1e-9 and fn_std > 1e-9 else 1.0
             bluff_n = bluff_c * scale
             out["raise"] = np.minimum(1.0, value_n + bluff_n)
             msg.append(f"raises re-drawn for {'the player pool' if pool and not more else f'{len(opp)} players in'}: value raises keep the equity over break-even "
@@ -1945,7 +2014,10 @@ class Advisor:
             if p not in rep[0].active:
                 continue   # folded preflop: nothing to override
             if (r * bm).sum() <= 0:
-                return {"error": f"ranges: {p}'s range has no combos left on this board"}
+                # (the board blocks every hand of it: the chart's range answers, with a note, rather than no answer)
+                notes.append(f"{'your' if p == hero else p + chr(39) + 's'} custom range has no combos left on this "
+                             f"board, so the preflop chart's range is used")
+                continue
             ranges[p] = r
             notes.append(f"{'your' if p == hero else p + chr(39) + 's'} range entering the flop is the custom one "
                          f"({(r * bm).sum():.0f} combos), not the preflop chart's")

@@ -52,6 +52,16 @@ class TestReplayStacks(unittest.TestCase):
         self.assertTrue(st.closed)
         self.assertEqual(st.returned, {"BB": 0.25})
 
+    def test_blind_that_takes_the_whole_stack_is_all_in(self):
+        # a 0.5bb small blind is all-in by posting: it has no decision, and its 'call' (as a history may write it)
+        # is skipped
+        t3 = pf.Table(pf.SEATS[3], stacks={"BTN": 100, "SB": 0.5, "BB": 100})
+        st = replay_hand(t3, 100, {"preflop": [R("BTN", "call")]}, 1)[0]
+        self.assertIn("SB", st.allin)
+        self.assertEqual(st.to_act, "BB")
+        st = replay_hand(t3, 100, {"preflop": [R("BTN", "call"), R("SB", "call")]}, 1)[0]
+        self.assertEqual(st.to_act, "BB")
+
     def test_incomplete_raise_does_not_reopen(self):
         pre = F("UTG", "HJ") + [R("CO", "raise", 2.5), R("BTN", "call")] + F("SB") + [R("BB", "call")]
         flop = [R("BB", "bet", 4), R("CO", "raise", 8), R("BTN", "all-in")]   # 12bb BTN: all-in to 9.5, 1.5 more
@@ -79,6 +89,16 @@ class TestAdvisorStacks(unittest.TestCase):
         self.adv = Advisor(Config(depth=1), time_budget=1.0, prior_budget=0.5)
         self.adv.mw_trials = MW_TRIALS
         self.adv.mw_solve_streets = ()   # the betting rules (3-way pots are solved by default)
+
+    def test_blind_all_in_seat_answers(self):
+        # (was a ZeroDivisionError in the preflop pricing: the seat's raise risked nothing) preflop, and every later
+        # street, whose ranges replay that seat's line
+        for sb, extra in ((0.5, {}), (0.3, {}), (1.0, {"ante": 0.5})):
+            base = {"players": 3, "stack": 100, "stacks": {"SB": sb}, "hero": "BB", "hole": "KsQd", **extra}
+            out = self.adv.advise(dict(base, board="", preflop=[R("BTN", "call"), R("SB", "call")]))
+            self.assertTrue(out.get("actions"), (sb, out))
+            out = self.adv.advise(dict(base, board="3h2c5s", preflop=[R("BTN", "call"), R("SB", "call"), R("BB", "check")]))
+            self.assertTrue(out.get("actions"), (sb, out))
 
     def test_stacks_input(self):
         base = {"players": 6, "hero": "BTN", "hole": "AhKd", "board": "", "preflop": F("UTG", "HJ", "CO")}
