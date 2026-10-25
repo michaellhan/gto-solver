@@ -132,17 +132,23 @@
   }
   // one decision: the page's request for the spot (at Fast), the answer, the grade
   async function processItem(sess, it, host) {
-    const hand = sess.hands[it.h], rec = hand.state.actions[it.s][it.i];
+    const hand = sess.hands[it.h], played = hand.state.actions[it.s][it.i];
     const base = { h: it.h, s: it.s, i: it.i };
     const sp = host.spot(spotState(hand.state, it.s, it.i));
-    if (!sp) return { ...base, street: it.s, pos: hand.state.hero, act: actLabel(rec), cls: actClass(rec), status: "error", err: "the hand doesn't reach this decision" };
+    if (!sp) return { ...base, street: it.s, pos: hand.state.hero, act: actLabel(played), cls: actClass(played), status: "error", err: "the hand doesn't reach this decision" };
     Object.assign(base, classify(hand.state, it.s, it.i, sp));
+    const rec = played.action === "all-in" && sp.allinAs ? { action: sp.allinAs } : played;
     const req = { ...sp.payload, ...(sess.scope === "library" && it.s === "flop" ? { library_only: true } : {}) };
     let res;
     try { res = await host.advise(req); } catch (e) { res = { error: String(e && e.message || e) }; }
     if (!res || res.cancelled) return { retry: true };
     if (res.skipped) return { ...base, status: "skipped", why: res.skipped };
     if (res.error) return { ...base, status: "error", err: String(res.error) };
+    // a jam deeper than the answer's tree: asked again with all-in at every decision of the street (index.html jamOffTree)
+    if (host.jamOffTree && host.jamOffTree(res, rec) && !host.grade(res, rec)) {
+      let r2; try { r2 = await host.advise({ ...req, jam: true }); } catch (e) { r2 = null; }
+      if (r2 && !r2.error && !r2.cancelled && r2.actions) res = r2;
+    }
     const g = host.grade(res, rec);
     return { ...base, status: g ? "ok" : "ungraded", ...(g ? { g } : {}), mix: mixOf(res),
              src: res.precomputed ? "library" : it.s === "preflop" ? "chart" : res.multiway && !res.solved ? "rules" : "solve" };
@@ -303,7 +309,7 @@
 
   // ---- the page: its importer, engine, solver and grading (globals of index.html and hh.js)
   function pageHost() {
-    /* global importHand, modeReady, BUDGETS, MODE, S, cleanState, setPositions, simulate, payload, callAdvise, heuristic, gradeWith, loadHandState, rewindTo */
+    /* global importHand, modeReady, BUDGETS, MODE, S, cleanState, setPositions, simulate, payload, callAdvise, heuristic, gradeWith, jamOffTree, gradedMove, loadHandState, rewindTo */
     return {
       importHand: (t) => importHand(t),
       ready: () => modeReady,
@@ -317,12 +323,15 @@
           if (!sim.cur || sim.toAct !== S.hero) return null;
           const [budget, prior_budget] = BUDGETS[MODE].fast, live = sim.cur.order.filter(p => sim.active.has(p));
           const p = { ...payload(), budget, prior_budget, speed: "fast" }; delete p.opponents;
-          return { payload: p, pot: sim.cur.pot, toCall: sim.cur.curBet - sim.cur.bets[S.hero], ip: live[live.length - 1] === S.hero,
+          // (an all-in here that nobody can match more of is graded as the call or check it is)
+          const jam = gradedMove(sim, { action: "all-in" });
+          return { payload: p, ...(jam.action !== "all-in" ? { allinAs: jam.action } : {}), pot: sim.cur.pot, toCall: sim.cur.curBet - sim.cur.bets[S.hero], ip: live[live.length - 1] === S.hero,
                    players: live.length, raises: sim.streets.preflop.nRaises };
         } finally { S = old; setPositions(old.players); }
       },
       advise: (p) => callAdvise(p),
       grade: (res, rec) => gradeWith(res, rec),
+      jamOffTree: (res, rec) => jamOffTree(res, rec),
       // the whole hand, rewound to the decision (its Undo brings the rest back)
       open: async (st, s, i) => { await loadHandState(clone(st)); rewindTo(s, i); },
     };

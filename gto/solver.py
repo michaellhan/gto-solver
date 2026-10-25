@@ -115,6 +115,9 @@ class Config:
     # rake_cap bb (None = no cap). 0 = no rake. Preflop pots aren't raked ("no flop, no drop").
     rake_rate: float = 0.0
     rake_cap: Optional[float] = None
+    # root_allin: every decision on the root street offers all-in, however deep (not just at allin_spr pots or less),
+    # so a jam there is priced and can be graded (a 15x-pot flop jam had no action in the tree to grade against)
+    root_allin: bool = False
 
     def rake(self, pot: float) -> float:
         """Rake in bb taken from a final pot of `pot` bb."""
@@ -136,14 +139,16 @@ class Config:
                       river_classes=self.river_classes,
                       later_sizes=None if self.later_sizes is None else
                       {k: {st: list(v) for st, v in d.items()} for k, d in self.later_sizes.items()},
-                      seed=self.seed, cfr=self.cfr, rake_rate=self.rake_rate, rake_cap=self.rake_cap)
+                      seed=self.seed, cfr=self.cfr, rake_rate=self.rake_rate, rake_cap=self.rake_cap,
+                      root_allin=self.root_allin)
 
     def sizes_key(self) -> tuple:
         return (tuple((k, tuple(v)) for k, v in sorted(self.bet_sizes.items())),
                 tuple((k, tuple(v)) for k, v in sorted(self.raise_sizes.items())), self.depth, self.max_raises,
                 None if self.later_sizes is None else
                 tuple((k, tuple((st, tuple(v)) for st, v in sorted(d.items()))) for k, d in sorted(self.later_sizes.items()))) + \
-            ((("rake", self.rake_rate, self.rake_cap),) if self.rake_rate > 0 else ())
+            ((("rake", self.rake_rate, self.rake_cap),) if self.rake_rate > 0 else ()) + \
+            (("root_allin",) if self.root_allin else ())
 
 
 def street_of(board_len: int) -> str:
@@ -948,6 +953,8 @@ class TreeBuilder:
         pot_total = pot + bets[0] + bets[1]
         remaining = stack - b_me
         names, kids = [], []
+        # (root_allin: all-in offered at any depth on the root street)
+        jam_ok = cfg.root_allin and not self._blind and not self._width and len(boards[0]) == self.root_street_len
 
         def with_bet(new_me):
             nb = list(bets); nb[p] = new_me
@@ -976,7 +983,7 @@ class TreeBuilder:
                 nb, ninv = with_bet(b_me + amt)
                 names.append(name)
                 kids.append(self._decision(boards, pot, stack, nb, o, n_raises + 1, ninv, False))
-            if not offered_allin and remaining > 0 and remaining <= cfg.allin_spr * pot_total:
+            if not offered_allin and remaining > 0 and (remaining <= cfg.allin_spr * pot_total or jam_ok):
                 nb, ninv = with_bet(b_me + remaining)
                 names.append("all-in")
                 kids.append(self._decision(boards, pot, stack, nb, o, n_raises + 1, ninv, False))
@@ -1005,7 +1012,7 @@ class TreeBuilder:
                         nb, ninv = with_bet(raise_to)
                         names.append(f"raise to {raise_to:g}")
                         kids.append(self._decision(boards, pot, stack, nb, o, n_raises + 1, ninv, False))
-                if capped or not offered or remaining <= cfg.allin_spr * pot_total:
+                if capped or not offered or remaining <= cfg.allin_spr * pot_total or jam_ok:
                     nb, ninv = with_bet(stack)
                     names.append("all-in")
                     kids.append(self._decision(boards, pot, stack, nb, o, n_raises + 1, ninv, False))

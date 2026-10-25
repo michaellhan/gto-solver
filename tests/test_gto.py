@@ -1223,6 +1223,38 @@ class TestTableSizes(unittest.TestCase):
         res = adv.advise(st)
         self.assertFalse(any("flop: ranges narrowed by simple betting rules" in n for n in res["notes"]), res["notes"])
 
+    def test_jam_request_offers_all_in_on_the_street(self):
+        # A 15x-pot flop jam has no action in the usual tree (all-in only at allin_spr pots or less), so Practice couldn't
+        # grade it; asked again with "jam": true the street offers all-in at every decision, priced (here 0%, below the
+        # bets), while the earlier streets and later ones keep their trees
+        adv = Advisor(Config(depth=1), time_budget=1.5, prior_budget=0.5)
+        F = lambda p: {"pos": p, "action": "fold"}
+        st = {"players": 8, "hero": "BTN", "hole": "Ah2h", "board": "7h6s7d",
+              "preflop": [F("UTG"), F("UTG1"), F("LJ"), {"pos": "HJ", "action": "raise", "to": 2.5}, F("CO"),
+                          {"pos": "BTN", "action": "call"}, F("SB"), F("BB")],
+              "flop": [{"pos": "HJ", "action": "check"}]}
+        plain = adv.advise(st)
+        self.assertNotIn("all-in", [a["action"] for a in plain["actions"]])
+        jam = adv.advise(dict(st, jam=True))
+        acts = {a["action"]: a for a in jam["actions"]}
+        self.assertIn("all-in", acts)
+        self.assertLess(acts["all-in"]["freq"], 0.05)
+        self.assertLess(acts["all-in"]["ev_bb"], max(a["ev_bb"] for a in jam["actions"]) - 1.0)
+        self.assertFalse(adv.cfg.root_allin)   # (the request's config only)
+        # facing a bet too, and in a pot the betting rules answer (4 players), which price the jam as a line of its own
+        jam = adv.advise(dict(st, flop=[{"pos": "HJ", "action": "bet", "amount": 2}], jam=True))
+        self.assertIn("all-in", [a["action"] for a in jam["actions"]])
+        adv.mw_trials = MW_TRIALS
+        pre4 = [F("UTG"), F("UTG1"), F("LJ"), {"pos": "HJ", "action": "raise", "to": 2.5}, {"pos": "CO", "action": "call"},
+                {"pos": "BTN", "action": "call"}, F("SB"), {"pos": "BB", "action": "call"}]
+        st4 = dict(st, preflop=pre4, flop=[{"pos": "BB", "action": "check"}, {"pos": "HJ", "action": "check"},
+                                           {"pos": "CO", "action": "check"}])
+        self.assertNotIn("all-in", [a["action"] for a in adv.advise(st4)["actions"]])
+        rules = adv.advise(dict(st4, jam=True))
+        self.assertTrue(rules["multiway"])
+        jam4 = next(a for a in rules["actions"] if a["action"] == "all-in")
+        self.assertAlmostEqual(jam4["amount_bb"], 97.5)
+
     def test_multiway_top_pair_continues_like_draws(self):
         # 8-6-3 checked to the BB 3-way. The bettor's bluffs used to come from the bottom of its range
         # (air) and its value only from what beat what would call as if everyone held its range, so an

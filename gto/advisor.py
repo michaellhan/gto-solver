@@ -1595,6 +1595,13 @@ class Advisor:
         # budget for an unsettled street, SETTLE_EXPL), 3-way solves on the river only (a flop's or turn's tables alone
         # take ~1 s in the browser: the betting rules answer)
         self._quick = bool(state.get("quick"))
+        # "jam": the street advised on offers all-in at every decision however deep (Config.root_allin), so a jam the
+        # usual tree leaves out (15x the pot on a flop) is solved and can be graded; the page asks it again with this
+        # once you jam there. Not the earlier streets' narrowing solves, nor the flop library (no all-in stored)
+        self._jam = bool(state.get("jam"))
+        if self._jam:
+            self.cfg = self.cfg.copy()
+            self.cfg.root_allin = True
         # the Breakdown view (gto/breakdown.py) on the advice's own spot; not for a practice opponent's move
         self._breakdown = bool(state.get("breakdown")) and actor is None
         self._req_sizes = sizes   # (optimize_sizes puts a street's custom sizes in its wide menu)
@@ -1611,7 +1618,7 @@ class Advisor:
             return res
         finally:
             self.time_budget, self.prior_budget, self.cfg, self.root_sizes, self.spr_sizes = saved
-            self._breakdown = self._lib_only = False
+            self._breakdown = self._lib_only = self._jam = False
 
     # ------------------------------------------------------------ preflop
     def _preflop(self, hero, hole, preflop, positions, stack, t0, pool=False):
@@ -2030,7 +2037,7 @@ class Advisor:
             notes.append(f"{'your' if p == hero else p + chr(39) + 's'} preflop line isn't in the chart, so "
                          f"{'your' if p == hero else 'their'} range is the hands that take its last action")
         # a 3-way flop's first decision the 3-way library holds: its precomputed solve answers (no narrowing needed)
-        if len(cur.players_start) == 3 and actor is None and not pool and not optimize:
+        if len(cur.players_start) == 3 and actor is None and not pool and not optimize and not self._jam:
             res = self._mw_from_library(hero, hole, board, ranges, cur, stk, streets, t0, notes, locks)
             if res is not None:
                 return res
@@ -2088,7 +2095,8 @@ class Advisor:
         hero_p = 0 if hero == oop else 1
         r0, r1 = ranges[oop].copy(), ranges[ip].copy()
         full = (ranges[oop], ranges[ip])   # the ranges entering the flop: they pick a precomputed spot (flop_library)
-        lib = self.library if self.library is not None and not pool and not optimize and not (locks or {}).get(villain) else None
+        lib = self.library if self.library is not None and not pool and not optimize and not (locks or {}).get(villain) \
+            and not getattr(self, "_jam", False) else None
         lib_sol = None
         for c in hole:  # villain can't hold hero's cards
             if hero_p == 0:
@@ -2131,6 +2139,8 @@ class Advisor:
                 else:
                     if self.prior_model:
                         cfg = dataclasses.replace(cfg, **self.prior_model)
+                    if cfg.root_allin:
+                        cfg = dataclasses.replace(cfg, root_allin=False)   # (a jam request: the street advised on only)
                     if getattr(self, "_quick", False) and \
                             self._cache.get(self._solve_key(sub_board, r0, r1, st.pot_start, eff, cfg=cfg)) is None:
                         # A quick answer has no time to solve an earlier street (0.3 s: the 10 iterations a solve
@@ -2350,6 +2360,8 @@ class Advisor:
         pending.add(hp)
         mcfg = MW.MWConfig(rake_rate=self.cfg.rake_rate, rake_cap=self.cfg.rake_cap,
                            **{**self.mw_street_config.get(cur.name, {}), **(self.mw_config or {})})
+        if getattr(self, "_jam", False):
+            mcfg.allin_spr = 1e9   # (a jam request: all-in offered however deep)
         inc = () if any(r[hi] > 0 for r in rs) else (hi,)    # (a hand nobody's range holds still gets solved)
         key = (tuple(board), tuple(_range_key(r) for r in rs), round(pot0, 2), round(S, 2), tuple(round(b, 2) for b in bets),
                hp, cur.n_raises, tuple(sorted(pending)), repr(mcfg), inc)
@@ -2367,6 +2379,11 @@ class Advisor:
         self._mw_run(sol, left)
         root = sol.root
         if not isinstance(root, MW.Decision) or root.player != hp:
+            return None
+        if getattr(self, "_jam", False) and "all-in" not in _mw_names(root.names, root.amounts, behind[hero], S, root.pot_now):
+            # a jam request the solve can't price (it plays everyone at the shortest stack: a 0.6bb one left no jam
+            # against the deep player): the betting rules, which play each seat's own stack, price it
+            fallback_notes.append("the 3-way solve plays everyone at the shortest stack, so the betting rules price your all-in")
             return None
         gains = sol.br_gains() / sol.root_pot() * 100        # each player's best-response gain, % of the pot
         expl = float(max(gains.mean(), 0.0))
@@ -2985,6 +3002,11 @@ class Advisor:
         else:
             big, small = (min(round(f * pot * 2) / 2, hero_rem) for f in (0.66, SMALL_BET))
             sizes = ([("bet 33%", small)] if 1e-9 < small < big - 1e-9 else []) + [("bet 66%", big)]
+        if getattr(self, "_jam", False) and (to_call <= 1e-9 or can_raise(cur, hero)):
+            # a jam request (the page grading your all-in): the rules price all-in too, as its own line or as the size
+            # that already puts the stack in
+            jam_to = cur.bets[hero] + hero_rem
+            sizes = [(n, t) for n, t in sizes if t < jam_to - 1e-9] + [("all-in", jam_to)]
         aggs = {}
         for name, to in sizes:
             a = agg_line(to)

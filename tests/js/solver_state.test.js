@@ -252,3 +252,67 @@ test("hands played through the page: fixture for the Python advisor (tests/data/
   if (process.env.UPDATE_FIXTURES || !fs.existsSync(file)) fs.writeFileSync(file, text);
   assert.equal(fs.readFileSync(file, "utf8"), text, "the page's engine changed: rerun with UPDATE_FIXTURES=1 and check tests/test_page_states.py");
 });
+
+test("a jam the answer's tree has no all-in for is asked again with jam: true and graded against that answer", async () => {
+  const p = loadPage();
+  await p.ready();
+  p.S = state(FLOP);
+  await flush();
+  const m = p.posted.at(-1);
+  // a deep flop: the tree's bets are a third and three quarters of the pot, no all-in
+  const deep = { street: "flop", hero: "BTN", hand: "AKs", recommended: "bet 75%", pot_bb: 5.5,
+    actions: [{ action: "check", freq: 0.1, ev_bb: 2.4 }, { action: "bet 33%", amount_bb: 1.8, freq: 0.1, ev_bb: 2.6 }, { action: "bet 75%", amount_bb: 4, freq: 0.8, ev_bb: 2.7 }] };
+  p.workers[0].onmessage({ data: { id: m.id, result: deep } });
+  await flush();
+  const n = p.posted.length;
+  assert.equal(p.act({ action: "all-in" }), null);
+  const rec = () => p.val("S.actions.flop.at(-1)");
+  assert.equal(rec().g, undefined);   // not gradeable yet
+  const again = p.posted.slice(n).find(x => x.state && x.state.jam);
+  assert.ok(again, "the spot asked again with jam: true");
+  assert.deepEqual({ ...again.state, jam: undefined }, { ...m.state, jam: undefined });   // (the spot before the jam)
+  p.workers[0].onmessage({ data: { id: again.id, result: { ...deep, actions: [...deep.actions, { action: "all-in", amount_bb: 97.5, freq: 0, ev_bb: -2.3 }] } } });
+  await flush();
+  assert.deepEqual([rec().g.m, rec().g.f, rec().g.l], ["all-in", 0, 5]);
+  assert.equal(p.val("gradeClass(S.actions.flop.at(-1).g)"), "bad");
+  // an answer with an all-in grades the jam at once, with no second request (another hand: not the cached spot)
+  p.S = state({ ...FLOP, cards: ["Qh", "Qd", "Kd", "7s", "2c"] });
+  await flush();
+  const m2 = p.posted.at(-1);
+  p.workers[0].onmessage({ data: { id: m2.id, result: { ...deep, actions: [...deep.actions, { action: "all-in", amount_bb: 97.5, freq: 0, ev_bb: -2.3 }] } } });
+  await flush();
+  const n2 = p.posted.length;
+  assert.equal(p.act({ action: "all-in" }), null);
+  assert.equal(rec().g.m, "all-in");
+  assert.ok(!p.posted.slice(n2).some(x => x.state && x.state.jam));
+});
+
+test("after the flop a raise the tree has only an all-in for is graded as its all-in; a 4+-way jam is asked again too", async () => {
+  const p = await (async () => { const q = loadPage(); await q.ready(); return q; })();
+  // facing a 4bet: fold, call or all-in
+  const r = { street: "flop", pot_bb: 60, actions: [{ action: "fold", freq: 0.3, ev_bb: 0 }, { action: "call", freq: 0.5, amount_bb: 23, ev_bb: 4 },
+    { action: "all-in", freq: 0.2, amount_bb: 97.5, ev_bb: 3.9 }] };
+  const g = p.val(`gradeWith(${JSON.stringify(r)}, { action: "raise", to: 80 })`);
+  assert.deepEqual([g.m, g.f, g.v], ["all-in", 0.2, "raise to 80"]);
+  assert.match(p.run(`gradeTip(${JSON.stringify(g)})`), /graded as the solver's all-in: it has no smaller raise here/);
+  // the betting rules (4+ players) list no all-in: a jam there is asked again
+  const rules = { street: "flop", multiway: true, pot_bb: 10, actions: [{ action: "check", freq: 1, ev_bb: 1 }, { action: "bet 33%", freq: 0, ev_bb: 0.8, amount_bb: 3.5 }] };
+  assert.equal(p.val(`jamOffTree(${JSON.stringify(rules)}, { action: "all-in" })`), true);
+  assert.equal(p.val(`jamOffTree(${JSON.stringify(rules)}, { action: "check" })`), false);
+  assert.equal(p.val(`jamOffTree({ ...${JSON.stringify(rules)}, street: "preflop" }, { action: "all-in" })`), false);
+});
+
+test("an all-in nobody can match more of is graded as the call (or check) it is", async () => {
+  const p = loadPage();
+  await p.ready();
+  // BTN with 20bb behind faces BB's 30bb bet: all-in is a call for less
+  p.S = { ...state({ ...FLOP, flop: acts("BB b30") }), stacks: { BTN: 22.5 } };
+  assert.deepEqual(p.val('gradedMove(simulate(), { action: "all-in" })'), { action: "call" });
+  // deep, facing a third pot: a real jam
+  p.S = state({ ...FLOP, flop: acts("BB b2") });
+  assert.deepEqual(p.val('gradedMove(simulate(), { action: "all-in" })'), { action: "all-in" });
+  // the only other player is all-in for less than the bet to call: nobody can match more, so it's the call
+  p.S = { ...state({ ...FLOP, flop: acts("BB a") }), stacks: { BB: 12.5 } };
+  assert.deepEqual(p.val('gradedMove(simulate(), { action: "all-in" })'), { action: "call" });
+  assert.deepEqual(p.val('gradedMove(simulate(), { action: "bet", to: 5 })'), { action: "bet", to: 5 });
+});

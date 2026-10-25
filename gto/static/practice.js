@@ -350,10 +350,11 @@
   // ---- your decisions: each one's verdict and the solver's mix for the spot, kept with the hand
   const ACT = (a) => a.action === "bet" ? `bet ${fmt(a.to)}` : a.action === "raise" ? `raise to ${fmt(a.to)}` : a.action;
   const YOU = (a) => ({ fold: "folded", check: "checked", call: "called", "all-in": "went all-in" })[a.action] || (a.action === "bet" ? `bet ${fmt(a.to)}` : `raised to ${fmt(a.to)}`);
+  const mixOf = (res) => res && !res.error && res.actions ? res.actions.map(a => ({ n: a.action, f: a.freq, ...(a.ev_bb !== undefined ? { ev: a.ev_bb } : {}), ...(amtOf(a) != null ? { a: amtOf(a) } : {}) })) : null;
   function graded(street, rec, res) {
-    if (!P.hand) return;
+    if (!P.hand) return null;
     { const c = simulate().cur; if (c) habit(c.curBet - c.bets[S.hero] > 1e-9, rec.action); }   // (before the move: what it faced)
-    const mix = res && !res.error && res.actions ? res.actions.map(a => ({ n: a.action, f: a.freq, ...(a.ev_bb !== undefined ? { ev: a.ev_bb } : {}), ...(amtOf(a) != null ? { a: amtOf(a) } : {}) })) : null;
+    const mix = mixOf(res);
     const id = Date.now().toString(36) + (++AI.seq).toString(36);   // (the explanation kept in memory; not Math.random, the deal's)
     const e = { id, street, rec: { action: rec.action, ...(rec.to != null ? { to: rec.to } : {}) }, g: rec.g || null, mix, ctx: spot(street) };
     // (the others still in: one or two by name, more as a count)
@@ -370,6 +371,25 @@
     heard(rec);   // your move, then its verdict: a chime when it's in the solver's mix, a low note for a mistake
     const gc = rec.g && gradeClass(rec.g);
     if (gc === "ok" || gc === "bad") sfx(gc === "ok" ? "good" : "bad", 0.2);
+    return e;
+  }
+  // a decision graded after the fact (a jam deeper than the answer's tree, solved again with all-in in it: index.html
+  // jamGrade): its verdict and mix, in the hand's log and Review mistakes, and the score if the hand already counted
+  function regraded(e, g, res) {
+    if (!e || e.g) return;
+    e.g = g; e.mix = mixOf(res) || e.mix;
+    const r = P.review.find(x => x.id === e.id); if (r) { r.g = g; r.mix = e.mix; store(REVIEW, P.review); }
+    const h = P.hand && P.hand.log && P.hand.log.includes(e) ? P.hand : null;
+    if (h) store(HAND, h);
+    if (h && h.result) {   // (finish() counted the hand's grades before this one came in)
+      const sc = P.score;
+      sc.decisions++; sc.best += g.m === g.b ? 1 : 0; sc.good += gradeClass(g) === "ok" ? 1 : 0;
+      if (g.l != null) { sc.evDecisions++; sc.evLost += g.l; }
+      store(SCORE, sc);
+    }
+    const gc = gradeClass(g);
+    if (gc === "ok" || gc === "bad") sfx(gc === "ok" ? "good" : "bad", 0.2);
+    renderAll();
   }
   // the verdict: best (the solver's top action), good (in its mix), inaccuracy (rare), mistake (almost never)
   function verdict(g) {
@@ -970,6 +990,6 @@
   }
 
   window.Practice = { get on() { return P.on; }, get running() { return P.running; }, set, tick, next, shown, seatView, runLabel, runOut, rebuyAll,
-    graded, rank7, handName, settle, posAt, fromAhead, auto, seeking, state: P, ahead: A,
+    graded, regraded, rank7, handName, settle, posAt, fromAhead, auto, seeking, state: P, ahead: A,
     ai: { prompt, spot, heroRead, click: aiClick, explain, keyOf, state: AI, md } };
 })();

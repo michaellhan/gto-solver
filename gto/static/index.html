@@ -1120,9 +1120,15 @@ function act(a) {
   }
   // (practice: a drill plays your preflop for you (a.auto), not graded)
   if (p === S.hero && practicing() && !a.auto && resultKey !== JSON.stringify(payload())) return "One moment: the spot is being solved, so your move can be graded.";
-  if (p === S.hero && !a.auto) { const g = gradeFor(rec); if (g) rec.g = g; }
-  if (p === S.hero && practicing() && !a.auto) window.Practice.graded(sim.current, rec, resultKey === JSON.stringify(payload()) ? lastResult : null);
-  S.actions[sim.current].push({ pos: p, ...rec }); save(); return null;
+  const move = p === S.hero ? gradedMove(sim, rec) : rec;
+  if (p === S.hero && !a.auto) { const g = gradeFor(move); if (g) rec.g = g; }
+  const shown = resultKey === JSON.stringify(payload()) ? lastResult : null, key = resultKey;
+  const logged = p === S.hero && practicing() && !a.auto ? window.Practice.graded(sim.current, rec, shown) : null;
+  const entry = { pos: p, ...rec };
+  S.actions[sim.current].push(entry); save();
+  if (p === S.hero && !a.auto && !rec.g && jamOffTree(shown, move))
+    jamGrade(key, move).then(g => { if (!g) return; entry.g = g; save(); if (logged) window.Practice.regraded(logged, g, g.res); renderAll(); });
+  return null;
 }
 // A multiway result from the betting rules (4+ players, or a 3-way spot the solver doesn't take), not a solve.
 const heuristic = (r) => !!(r && r.multiway && !r.solved);
@@ -1146,8 +1152,12 @@ function gradeWith(r, rec) {   // (also the session analyzer's, on its own answe
     if (!m && pre && rec.action === "all-in" && r.actions.some(raise)) { m = r.actions.filter(raise).reduce((b, a) => a.amount_bb > b.amount_bb ? a : b); v = "all-in"; }
     else if (!m && pre) m = { action: rec.action, freq: 0 };
   } else {
-    const agg = r.actions.filter(raise);
-    if (agg.length) m = agg.reduce((b, a) => Math.abs(a.amount_bb - rec.to) < Math.abs(b.amount_bb - rec.to) ? a : b);
+    // (after the flop the nearest of the bets and raises, or the all-in: facing a 4bet the tree's only raise is all-in)
+    const agg = r.actions.filter(a => raise(a) || (!pre && a.action === "all-in" && a.amount_bb != null));
+    if (agg.length) {
+      m = agg.reduce((b, a) => Math.abs(a.amount_bb - rec.to) < Math.abs(b.amount_bb - rec.to) ? a : b);
+      if (m.action === "all-in") v = `${rec.action} to ${fmt(rec.to)}`;
+    }
     // (preflop: a chart that only jams grades a raise as its jam; one that never raises, 0%)
     else if (pre) { m = r.actions.find(a => a.action === "all-in"); if (m) v = `${rec.action} to ${fmt(rec.to)}`; else m = { action: `${rec.action} to ${fmt(rec.to)}`, freq: 0 }; }
   }
@@ -1160,10 +1170,33 @@ function gradeWith(r, rec) {   // (also the session analyzer's, on its own answe
   if (heuristic(r) && hasEv && r.pot_bb > 0)   // (the rules' best by EV, not by its 0/1 frequency)
     return { m: m.action, f: m.freq, b: best.action, bf: best.freq, l: r2(loss), e: r2(m.ev_bb), o: r2(top), h: Math.round(loss / r.pot_bb * 1000) / 10 };
   if (heuristic(r)) return null;
-  return { m: m.action, f: m.freq, b: best.action, bf: best.freq, l: loss == null ? null : r2(loss), ...(hasEv ? { e: r2(m.ev_bb), o: r2(top) } : {}), ...(conv && conv.cls === "bad" ? { r: 1 } : {}), ...(v ? { v } : {}) };
+  return { m: m.action, f: m.freq, b: best.action, bf: best.freq, l: loss == null ? null : r2(loss), ...(hasEv ? { e: r2(m.ev_bb), o: r2(top) } : {}), ...(conv && conv.cls === "bad" ? { r: 1 } : {}), ...(v ? { v, ...(pre ? {} : { vs: 1 }) } : {}) };
+}
+// The move a recorded action is graded as: an all-in that puts in no more than anyone left can match (a stack that
+// doesn't cover the call, or nobody else with chips behind the bet) is a call, or a check: the answers list it so.
+function gradedMove(sim, rec) {
+  if (rec.action !== "all-in" || !sim.cur) return rec;
+  const info = sim.cur, p = sim.toAct, allInTo = info.bets[p] + STACK(p) - sim.invested[p] - info.bets[p];
+  const cover = Math.max(0, ...[...sim.active].filter(q => q !== p).map(q => STACK(q) - sim.invested[q]));
+  if (Math.min(allInTo, cover) > info.curBet + 1e-9) return rec;
+  return { action: info.curBet - info.bets[p] > 1e-9 ? "call" : "check" };
+}
+// A jam the answer has no all-in for (a solve's tree offers it at 2.5 pots behind or less: a 15x-pot flop jam isn't
+// in it; the betting rules' bets are a third and two thirds of the pot): not gradeable against it, so the spot is asked
+// again with "jam": true (the advisor offers all-in at every decision of the street, the rules price it too) and the
+// jam graded against that answer, its EV and the solver's 0% included. null where it can't be (cancelled, failed).
+const jamOffTree = (r, rec) => rec.action === "all-in" && !!r && !r.error && r.street !== "preflop"
+  && Array.isArray(r.actions) && !r.actions.some(a => a.action === "all-in");
+async function jamGrade(key, rec) {
+  if (!key) return null;
+  const res = await callAdvise({ ...JSON.parse(key), jam: true });
+  if (!res || res.error || res.cancelled || !res.actions) return null;
+  const g = gradeWith(res, rec);
+  if (g) Object.defineProperty(g, "res", { value: res, enumerable: false });   // (Practice's mix; not saved with the grade)
+  return g;
 }
 // a grade's note when your action was graded as the chart's nearest one (g.v: what you played)
-const gradeAs = (g) => g.v ? ` (graded as the chart's ${g.m}: it has no ${g.v === "all-in" ? "all-in" : "smaller raise"} here)` : "";
+const gradeAs = (g) => g.v ? ` (graded as the ${g.vs ? "solver" : "chart"}'s ${g.m}: it has no ${g.v === "all-in" ? "all-in" : "smaller raise"} here)` : "";
 // A rough (unconverged) solve can't condemn a line: its worst grade is "~".
 const gradeClass = (g) => g.h != null ? (g.h <= HEUR_OK ? "ok" : g.h <= HEUR_MEH ? "meh" : "bad")
   : g.f >= 0.15 ? "ok" : g.f >= 0.03 || g.r ? "meh" : "bad";
@@ -1718,7 +1751,9 @@ async function reviewHand() {
       await new Promise(r => setTimeout(r, 300)); done = solving ? null : analyze(simulate());
     }
     if (rv.cancel || JSON.stringify(S) !== spot) break;   // cancelled, or you went on from this spot yourself
-    a.g = gradeFor(a);   // null (multiway, failed solve): reviewed, no grade
+    const mv = gradedMove(sim, a);
+    a.g = gradeFor(mv);   // null (multiway, failed solve): reviewed, no grade
+    if (!a.g && jamOffTree(lastResult, mv)) a.g = await jamGrade(resultKey, mv);
   }
   review = null;
   if (rv.cancel !== "drop" && (!spot || JSON.stringify(S) === spot)) { S = full; save(); }
