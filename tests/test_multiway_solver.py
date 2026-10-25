@@ -21,8 +21,9 @@ def _ranges():
     return [R["BB"], R["CO"], R["BTN"]]
 
 
-def _brute(s: MultiwaySolver, term: Terminal, board):
-    """Every player's terminal values by the triple loop over compatible hands."""
+def _brute(s: MultiwaySolver, term: Terminal, board, allin=None, main=0.0):
+    """Every player's terminal values by the triple loop over compatible hands (with `allin`, the player all-in: the
+    main pot `main` among everyone live, the rest among the others live)."""
     st = eval_board(board)
     act = s.hands.active
     R = s.reach0[:, 0, :]
@@ -41,12 +42,19 @@ def _brute(s: MultiwaySolver, term: Terminal, board):
                     if cr & ch or cr & cq:
                         continue
                     hs = {p: st[fh], q: st[act[iq]], r: st[act[ir]]}
-                    if p not in term.live:
-                        share = 0.0
+
+                    def share(live):
+                        if p not in live:
+                            return 0.0
+                        best = max(hs[j] for j in live)
+                        return 0.0 if hs[p] < best else 1.0 / sum(1 for j in live if hs[j] == best)
+                    net = term.pot - term.rake
+                    if allin is not None and allin in term.live and len(term.live) > 1:
+                        fm = min(1.0, main / term.pot)
+                        won = net * (fm * share(term.live) + (1 - fm) * share(tuple(j for j in term.live if j != allin)))
                     else:
-                        best = max(hs[j] for j in term.live)
-                        share = 0.0 if hs[p] < best else 1.0 / sum(1 for j in term.live if hs[j] == best)
-                    tot += R[q, iq] * R[r, ir] * (share * (term.pot - term.rake) - term.c[p])
+                        won = net * share(term.live)
+                    tot += R[q, iq] * R[r, ir] * (won - term.c[p])
             out[p, ih] = tot
     return out
 
@@ -73,6 +81,20 @@ class TestCardRemoval(unittest.TestCase):
                 got = s._term(t, s.reach0)[:, 0]
                 want = _brute(s, t, self.board)
                 self.assertLess(np.abs(got - want).max(), 1e-3 * np.abs(want).max())
+
+    def test_side_pot_terminals_match_the_triple_loop(self):
+        # player 2 all-in at the root for a main pot of 12: everyone live contests it, the side pot the others live
+        s, bd = self.s, self.s.root.bd
+        s.cfg.allin, s.cfg.main = (2,), 12.0
+        try:
+            for live in [(0, 1, 2), (0, 2), (1, 2)]:
+                t = Terminal(bd, live, 30.0, np.array([5.0, 7.0, 0.0]), 0.6, "show")
+                with self.subTest(live=live):
+                    got = s._term(t, s.reach0)[:, 0]
+                    want = _brute(s, t, self.board, allin=2, main=12.0)
+                    self.assertLess(np.abs(got - want).max(), 1e-3 * np.abs(want).max())
+        finally:
+            s.cfg.allin, s.cfg.main = (), 0.0
 
     def test_pairwise_is_an_approximation(self):
         s, bd = self.s, self.s.root.bd
@@ -429,3 +451,24 @@ class TestAdvisor(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAllIn(unittest.TestCase):
+    """MWConfig.allin: a player all-in at the root never acts; the other two bet for the side pot."""
+
+    def test_river_and_turn_with_a_player_all_in(self):
+        R = _ranges()
+        # BTN (2) all-in for 20 over a 8bb pot: the main pot 8 + 3 x 20 = 68 at the flop... here the river's root:
+        # main 40, the pot 40, BB and CO 77.5 behind to bet for the side pot
+        for board, cfg in (("Kh7d2c9s4h", MWConfig(allin=(2,), main=40.0)),
+                           ("Kh7d2c9s", MWConfig(allin=(2,), main=40.0, later="buckets", buckets=8))):
+            with self.subTest(board=board):
+                s = MultiwaySolver(cards(board), R, 40.0, 77.5, cfg=cfg).run(iters=60)
+                self.assertNotIn(2, [d.player for d in s.decisions])     # the all-in player never acts
+                self.assertAlmostEqual(float(s.values().sum()), 40.0, delta=0.4)   # constant-sum: the pot
+                g = s.br_gains() / s.root_pot() * 100
+                self.assertAlmostEqual(float(g[2]), 0.0, places=6)
+                self.assertLess(float(g.mean()), 3.0)
+                # the root offers the bets to its first player, and a fold leaves the main pot to the others
+                self.assertEqual(s.root.player, 0)
+                self.assertIn("check", s.root.names)

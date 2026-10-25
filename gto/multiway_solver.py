@@ -75,6 +75,11 @@ class MWConfig:
     buckets: int = 16            # hand buckets per player and card below the root street
     classes: bool = True         # the next card as one per class (a rank; a suit with two or more board cards apart)
     bucket_river_step: int = 1   # from a flop: the turn's showdown tensors average every step-th river card
+    # allin: a player all-in at the root (its index; at most one): it never acts, and a showdown pays the main pot
+    # (`main` chips, everyone live contesting it) by everyone's hands and the rest of the pot, the side pot, between
+    # the players who still bet (a fold there gives up both)
+    allin: tuple = ()
+    main: float = 0.0
     alpha: float = 1.5           # DCFR: positive regrets x t^a / (t^a + 1), negative x 1/2,
     gamma: float = 3.0           # average strategy x (t / (t + 1))^g (3: 20-30% less exploitable than 2 at equal time, 3-way river and turns)
     seed: int = 3
@@ -306,10 +311,10 @@ def _actions(cfg, npl, street, pot_start, stack, bets, c, p, n_raises, pending, 
             nc[p] += new_bet - bets[p]; nb[p] = new_bet
         npend = set(pending) - {p}
         if raised:
-            npend = {i for i in range(npl) if i != p and i not in nf and nb[i] < stack - 1e-9}
+            npend = {i for i in range(npl) if i != p and i not in nf and nb[i] < stack - 1e-9 and i not in cfg.allin}
         out.append((name, amt, nb, nc, nf, npend, int(raised)))
 
-    others_can = any(i != p and i not in folded and bets[i] < stack - 1e-9 for i in range(npl))
+    others_can = any(i != p and i not in folded and i not in cfg.allin and bets[i] < stack - 1e-9 for i in range(npl))
     if top <= bets[p] + 1e-9:
         act("check", None, bets[p], False)
         if others_can:
@@ -398,8 +403,12 @@ class Builder:
     def _close(self, boards, pot_start, stack, bets, c, folded):
         live = [i for i in range(self.np) if i not in folded]
         street_len = len(boards[0])
+        # (with a player all-in, one player left who bets has nobody to bet against: the cards are dealt out)
+        alone = len([i for i in live if i not in self.cfg.allin]) < 2
         if self.cfg.later == "buckets" and street_len < 5 and len(live) > 1:
             lv, pot, c2, behind = _street_end(self.np, pot_start, stack, bets, c, folded)
+            if alone:
+                behind = 0.0
             e = Exit(lv, folded, pot, c2, behind)
             self.exits.append(e)
             self.n_nodes += 1
@@ -415,7 +424,7 @@ class Builder:
         behind = stack - max(bets)
         if street_len == 5:
             return self._terminal(boards, tuple(live), pot, list(c), "show")
-        if behind <= 1e-9 or street_len - self.root_len + 1 >= self.cfg.depth:
+        if behind <= 1e-9 or alone or street_len - self.root_len + 1 >= self.cfg.depth:
             # all-in, or the last street the tree bets on: the rest is dealt out (an equity leaf)
             return self._runout(boards, tuple(live), pot, list(c))
         return self._chance(boards, pot, behind, list(c), folded)
@@ -451,7 +460,7 @@ class Builder:
 
     def _chance(self, boards, pot, behind, c, folded):
         k = self.cfg.turns if len(boards[0]) == 3 else self._k_rivers()
-        pending = {i for i in range(self.np) if i not in folded}
+        pending = {i for i in range(self.np) if i not in folded and i not in self.cfg.allin}
         first = min(pending)
         return self._chance_node(boards, lambda cb: self._decision(cb, pot, behind, [0.0] * self.np, c, first, 0,
                                                                    set(pending), folded), k)
@@ -540,7 +549,8 @@ def _template(cfg, npl, street, pot, c, behind, folded):
     `behind` chips; a street that closes with two or more live ends in a showdown on the river (or all-in), else in
     a _TX to the next street."""
     live = tuple(i for i in range(npl) if i not in folded)
-    if behind <= 1e-9:
+    acting = tuple(i for i in live if i not in cfg.allin)
+    if behind <= 1e-9 or len(acting) < 2:
         return _TT(live, pot, list(c), "show")
 
     def dec(bets, cc, p, n_raises, pending, fl):
@@ -560,7 +570,7 @@ def _template(cfg, npl, street, pot, c, behind, folded):
                 kid = dec(nb, nc, _next_player(npl, p, npend), n_raises + raised, npend, nf)
             names.append(name); kids.append(kid)
         return _TD(p, names, kids)
-    return dec([0.0] * npl, list(c), live[0], 0, set(live), frozenset(folded))
+    return dec([0.0] * npl, list(c), acting[0], 0, set(acting), frozenset(folded))
 
 
 def _tlive(t):
@@ -957,6 +967,8 @@ class MultiwaySolver:
             else:
                 pending = {i for i in range(self.np) if bets[i] < top - 1e-9}
                 pending.add(to_act)
+        pending = set(pending) - set(self.cfg.allin)
+        assert len(self.cfg.allin) <= 1 and self.np == 3 or not self.cfg.allin, "allin: one player, 3-way"
         self.pot_start, self.stack = pot, stack
         b = Builder(self.hands, self.cfg, self.np, dead_all - set(board))
         b.root_len = len(self.board)
@@ -1148,7 +1160,12 @@ class MultiwaySolver:
                 for t in ts:
                     m = tb.apply(MJ, t.X[q])
                     if p in t.live:
-                        t.V = t.net[:, None] * (tb.apply(MS, t.X[q]) if len(t.live) > 1 else m) - t.c[p][:, None] * m
+                        win = tb.apply(MS, t.X[q]) if len(t.live) > 1 else m
+                        # (with a player all-in: the side pot is p's alone here, the other bettor having folded)
+                        fm = self._main_share(t)
+                        if fm is not None:
+                            win = fm[:, None] * win + (1.0 - fm[:, None]) * (m if p not in self.cfg.allin else 0.0)
+                        t.V = t.net[:, None] * win - t.c[p][:, None] * m
                     else:
                         t.V = -t.c[p][:, None] * m
             return
@@ -1163,25 +1180,47 @@ class MultiwaySolver:
         cut = np.cumsum([0] + rows)
         Xall = np.concatenate([t.X for t in terms], axis=1)
         mJ = tb.contract(("J",), p, Xall)
-        win = {}
-        for lv in {t.live for t in terms if len(t.live) > 1 and p in t.live}:
-            ix = [i for i, t in enumerate(terms) if t.live == lv]
-            sub = np.concatenate([Xall[:, cut[i]:cut[i + 1]] for i in ix], axis=1)
-            w = tb.contract(("S", lv), p, sub)
-            o = np.cumsum([0] + [rows[i] for i in ix])
-            for k, i in enumerate(ix):
-                win[i] = w[o[k]:o[k + 1]]
+        a = self.cfg.allin[0] if self.cfg.allin else None
+        # each terminal's pots by who contests them: the whole pot by its live players, or with a player all-in the
+        # main pot by everyone live and the side pot by the players who still bet
+        side = lambda t: tuple(j for j in t.live if j != a)
+        wins = {}
+        for key, sel in (("all", lambda t: t.live), ("side", side)):
+            if key == "side" and a is None:
+                break
+            for lv in {sel(t) for t in terms if len(sel(t)) > 1 and p in sel(t)}:
+                ix = [i for i, t in enumerate(terms) if sel(t) == lv]
+                sub = np.concatenate([Xall[:, cut[i]:cut[i + 1]] for i in ix], axis=1)
+                w = tb.contract(("S", lv), p, sub)
+                o = np.cumsum([0] + [rows[i] for i in ix])
+                for k, i in enumerate(ix):
+                    wins[(key, i)] = w[o[k]:o[k + 1]]
         res = []
         for i, t in enumerate(terms):
             m = mJ[cut[i]:cut[i + 1]]
             if p in t.live:
-                v = t.net[:, None] * (win[i] if len(t.live) > 1 else m) - t.c[p][:, None] * m
+                win = wins[("all", i)] if len(t.live) > 1 else m
+                fm = self._main_share(t)
+                if fm is not None:
+                    sv = side(t)
+                    ws = (wins[("side", i)] if len(sv) > 1 else m) if p in sv else 0.0
+                    win = fm[:, None] * win + (1.0 - fm[:, None]) * ws
+                v = t.net[:, None] * win - t.c[p][:, None] * m
             else:
                 v = -t.c[p][:, None] * m
             if keep:
                 t.V = v
             res.append(v)
         return res
+
+    def _main_share(self, t):
+        """A bucketed terminal's main pot as a share of its pot, per row, when a player all-in at the root contests it
+        (MWConfig.allin), else None."""
+        a = self.cfg.allin[0] if self.cfg.allin else None
+        if a is None or a not in t.live or len(t.live) < 2:
+            return None
+        pot = np.asarray(t.pot, dtype=np.float64)
+        return np.minimum(1.0, self.cfg.main / np.maximum(pot, 1e-12))
 
     def _pass(self, R, mode, p=None, node=None):
         """A walk from `node` (the root), the later streets (if any) evaluated first."""
@@ -1221,9 +1260,11 @@ class MultiwaySolver:
         KU = lambda j: get(("U", j), lambda: bd.k_u(R[j]))
         KLE = lambda j: get(("LE", j), lambda: bd.k_le(R[j]))
         KW = lambda j: get(("W", j), lambda: KLE(j)[0] + 0.5 * KLE(j)[1])
-        live3 = len(node.live) == 3
-        P = lambda j, kind: get(("P", j), lambda: bd.p_tables(R[j], ("W", "E") if live3 else
-                                                              ("W",) if j in node.live else ("U",)))[kind]
+
+        def P(j, kind, live):
+            # the card tables for live set `live` (the terminal's own, or a side pot's: a key of its own)
+            kinds = ("W", "E") if len(live) == 3 else ("W",) if j in live else ("U",)
+            return get(("P" if live == node.live else "PS", j), lambda: bd.p_tables(R[j], kinds))[kind]
         y = lambda q, r: get(("y", min(q, r), max(q, r)), lambda: R[q] * R[r])
         ykle = lambda q, r: get(("yLE", min(q, r), max(q, r)), lambda: bd.k_le(y(q, r)))
 
@@ -1234,50 +1275,63 @@ class MultiwaySolver:
 
         dot = lambda a, b: np.einsum("bnc,bnc->bn", a, b)
 
-        def win_of(p):
-            """p's pot share summed over the others' compatible hands, and the joint mass."""
+        def win_of(p, live):
+            """p's share of a pot the players `live` contest, summed over the others' compatible hands, and the joint
+            mass."""
             others = [j for j in range(npl) if j != p]
             if npl == 2:
                 q = others[0]
                 m = KU(q)[0]
-                if p not in node.live:
+                if p not in live:
                     return 0.0, m
-                return (m if len(node.live) == 1 else KW(q)), m
+                return (m if len(live) == 1 else KW(q)), m
             q, r = others
             m = mass(q, r)
-            if p not in node.live:
+            if p not in live:
                 return 0.0, m
-            if len(node.live) == 1:
+            if len(live) == 1:
                 return m, m
-            if len(node.live) == 2:
-                o = q if q in node.live else r
+            if len(live) == 2:
+                o = q if q in live else r
                 f = r if o == q else q
                 if exact:
                     kl, ke = ykle(o, f)
-                    return KW(o) * KU(f)[0] - dot(P(o, "W"), P(f, "U")) + kl + 0.5 * ke, m
+                    return KW(o) * KU(f)[0] - dot(P(o, "W", live), P(f, "U", live)) + kl + 0.5 * ke, m
                 return KW(o) * KU(f)[0] * self._ratio(m, KU(o)[0], KU(f)[0]), m
             KEq, KEr = KLE(q)[1], KLE(r)[1]
             win = KW(q) * KW(r) + KEq * KEr / 12.0
             if exact:
                 kl, ke = ykle(q, r)
-                return win - dot(P(q, "W"), P(r, "W")) - dot(P(q, "E"), P(r, "E")) / 12.0 + kl + ke / 3.0, m
+                return win - dot(P(q, "W", live), P(r, "W", live)) - dot(P(q, "E", live), P(r, "E", live)) / 12.0 \
+                    + kl + ke / 3.0, m
             return win * self._ratio(m, KU(q)[0], KU(r)[0]), m
 
-        if not exact and npl == 3 and len(node.live) >= 2:
-            # pairwise: q and r independent given h (the joint mass kept exact). The live players' shares then
-            # needn't add up to every deal's pot; scaled per board so they do, the game stays constant-sum.
-            wm = {p: win_of(p) for p in node.live}
-            tot = sum((R[p] * wm[p][0]).sum(axis=1, keepdims=True) for p in node.live)
-            p0 = node.live[0]
-            M = (R[p0] * wm[p0][1]).sum(axis=1, keepdims=True)
-            k = np.where(tot > 1e-300, M / np.where(tot > 1e-300, tot, 1.0), 1.0)
-            for p in players:
-                win, m = (wm[p][0] * k, wm[p][1]) if p in wm else win_of(p)
-                out[p] = net * win - node.c[p] * m
-            return out
+        # the pots and who contests each: the whole pot by the live players, or with a player all-in at the root
+        # (MWConfig.allin) the main pot by everyone live and the side pot by the players who still bet
+        a = self.cfg.allin[0] if self.cfg.allin else None
+        if a is not None and a in node.live and len(node.live) > 1 and node.pot > 1e-12:
+            fm = min(1.0, self.cfg.main / node.pot)
+            pots = [(net * fm, node.live), (net * (1.0 - fm), tuple(i for i in node.live if i != a))]
+        else:
+            pots = [(net, node.live)]
+        wins = [{} for _ in pots]
+        for k, (_, live) in enumerate(pots):
+            if not exact and npl == 3 and len(live) >= 2:
+                # pairwise: q and r independent given h (the joint mass kept exact). The live players' shares then
+                # needn't add up to every deal's pot; scaled per board so they do, the game stays constant-sum.
+                wm = {p: win_of(p, live) for p in live}
+                tot = sum((R[p] * wm[p][0]).sum(axis=1, keepdims=True) for p in live)
+                p0 = live[0]
+                M = (R[p0] * wm[p0][1]).sum(axis=1, keepdims=True)
+                sc = np.where(tot > 1e-300, M / np.where(tot > 1e-300, tot, 1.0), 1.0)
+                wins[k] = {p: (w * sc, m) for p, (w, m) in wm.items()}
         for p in players:
-            win, m = win_of(p)
-            out[p] = net * win - node.c[p] * m
+            m = None
+            v = 0.0
+            for k, (net_k, live) in enumerate(pots):
+                win, m = wins[k][p] if p in wins[k] else win_of(p, live)
+                v = v + net_k * win
+            out[p] = v - node.c[p] * m
         return out
 
     @staticmethod
@@ -1421,7 +1475,8 @@ class MultiwaySolver:
                 break
             if self.cfg.alternate:
                 for p in range(self.np):
-                    self._pass(self.reach0, "alt", p)
+                    if p not in self.cfg.allin:   # (no decisions to learn)
+                        self._pass(self.reach0, "alt", p)
                     self._ver[p] += 1
                     # (memory) what no later pass can reuse: the pair terms, and the next traverser's tables (stale
                     # by its next opponent pass)

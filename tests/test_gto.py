@@ -1223,6 +1223,21 @@ class TestTableSizes(unittest.TestCase):
         res = adv.advise(st)
         self.assertFalse(any("flop: ranges narrowed by simple betting rules" in n for n in res["notes"]), res["notes"])
 
+    def test_three_way_pot_with_a_player_all_in_is_solved(self):
+        # CO opens, the 20bb BTN shoves, BB and CO call: the two who bet play for the side pot, the main pot goes to the
+        # best of the three (MWConfig.allin), where the betting rules answered before
+        adv = Advisor(Config(depth=1), time_budget=2.0, prior_budget=0.5)
+        F = lambda p: {"pos": p, "action": "fold"}
+        X = lambda p: {"pos": p, "action": "check"}
+        pre = [F("UTG"), F("HJ"), {"pos": "CO", "action": "raise", "to": 2.5}, {"pos": "BTN", "action": "all-in"}, F("SB"),
+               {"pos": "BB", "action": "call"}, {"pos": "CO", "action": "call"}]
+        st = {"players": 6, "stack": 100, "stacks": {"BTN": 20}, "hero": "CO", "hole": "QsQd", "board": "Kh7d2c9s4h",
+              "preflop": pre, "flop": [X("BB"), X("CO")], "turn": [X("BB"), X("CO")], "river": [X("BB")]}
+        res = adv.advise(st)
+        self.assertTrue(res.get("solved"), res.get("notes"))
+        self.assertTrue(any("main pot (60.5 bb)" in n for n in res["notes"]), res["notes"])
+        self.assertAlmostEqual(sum(a["freq"] for a in res["actions"]), 1.0, places=2)
+
     def test_jam_request_offers_all_in_on_the_street(self):
         # A 15x-pot flop jam has no action in the usual tree (all-in only at allin_spr pots or less), so Practice couldn't
         # grade it; asked again with "jam": true the street offers all-in at every decision, priced (here 0%, below the

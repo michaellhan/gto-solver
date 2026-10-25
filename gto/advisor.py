@@ -1091,11 +1091,13 @@ def _beats_note(hole, board, bettor: str, r: np.ndarray) -> Optional[str]:
 
 def _mw_applies(remaining, cur, stk) -> bool:
     """Whether the 3-way solver can take this node (Advisor._multiway_solve), whatever streets it's set to solve:
-    three players live, nobody all-in, and no bet bigger than the shortest stack behind."""
-    if len(remaining) != 3 or set(remaining) & cur.allin:
+    three players live, at most one of them all-in (the other two bet for a side pot: MWConfig.allin), and no bet
+    bigger than the shortest stack behind of the two who bet."""
+    if len(remaining) != 3 or len(set(remaining) & cur.allin) > 1:
         return False
-    S = min(stk[p] - cur.inv_start[p] for p in remaining)
-    return S > 1e-9 and max(cur.bets[p] for p in remaining) <= S + 1e-9
+    acting = [p for p in remaining if p not in cur.allin]
+    S = min(stk[p] - cur.inv_start[p] for p in acting)
+    return S > 1e-9 and max(cur.bets[p] for p in acting) <= S + 1e-9
 
 
 def _river_fix() -> np.ndarray:
@@ -2342,11 +2344,16 @@ class Advisor:
         fallback_notes, notes = notes, list(notes)
         if not self.mw_solve_streets or cur.name not in self.mw_solve_streets or not _mw_applies(remaining, cur, stk):
             return None
-        if getattr(self, "_quick", False) and cur.name != "river":
+        # (quick: rivers only, but a pot with a player all-in on any street: two bettors, solved in the browser in 1.4-1.6
+        # s on a flop or turn, 100 iterations, 0.05% of the pot from equilibrium)
+        if getattr(self, "_quick", False) and cur.name != "river" and not set(remaining) & cur.allin:
             return None
         players = [p for p in cur.order if p in remaining]          # postflop acting order
         behind = {p: stk[p] - cur.inv_start[p] for p in players}
-        S = min(behind.values())
+        # a player all-in (at most one, _mw_applies) doesn't act: the others bet for the side pot, at the shorter stack
+        # behind of the two; the main pot (everyone's chips up to the all-in's) goes to the best of the three
+        shoved = [p for p in players if p in cur.allin]
+        S = min(v for p, v in behind.items() if p not in shoved)
         bets = [cur.bets[p] for p in players]
         dead_bets = sum(b for q, b in cur.bets.items() if q not in remaining)
         pot0 = cur.pot_start + dead_bets
@@ -2362,6 +2369,14 @@ class Advisor:
                            **{**self.mw_street_config.get(cur.name, {}), **(self.mw_config or {})})
         if getattr(self, "_jam", False):
             mcfg.allin_spr = 1e9   # (a jam request: all-in offered however deep)
+        if shoved:
+            a = shoved[0]
+            cap = cur.inv_start[a] + cur.bets[a]
+            mcfg.allin = (players.index(a),)
+            mcfg.main = float(sum(min(cur.inv_start[q] + cur.bets[q], cap) for q in cur.inv_start))
+            pending.discard(players.index(a))
+            notes.append(f"{a} is all-in: the main pot ({mcfg.main:.1f} bb) goes to the best of the three hands, the rest "
+                         f"(the side pot) to the better of yours and {next(q for q in players if q not in (hero, a))}'s")
         inc = () if any(r[hi] > 0 for r in rs) else (hi,)    # (a hand nobody's range holds still gets solved)
         key = (tuple(board), tuple(_range_key(r) for r in rs), round(pot0, 2), round(S, 2), tuple(round(b, 2) for b in bets),
                hp, cur.n_raises, tuple(sorted(pending)), repr(mcfg), inc)
