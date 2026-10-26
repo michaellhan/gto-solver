@@ -128,6 +128,7 @@ IMPLIED = {"pair": 0.06, "suited": 0.03}  # preflop calls: share of the stack be
 DEPTH_TOL = 20.0   # ...a spot this many bb deeper or shallower than the charts re-prices calls
 PRICE_TOL = 0.02    # ...and a spot within this much of the chart's pot odds, against the raisers only, is the chart's own
 CUT_FLOOR = 0.05    # ...a worse price holds the chart's continuing hands to the equity of its weakest this share of them
+LOCK_BLUFF_MAX = 1.5  # preflop, your locks: hero's bluff raises grow at most this much against a player who folds more (as the pool's)
 EV_GAP = 1.0        # heads-up, unsettled solve: recommend the highest EV when it beats the top of the mix by this % of pot
 BR_TIE_MIN = 0.005  # exploit mode: best-response EVs this close (share of pot; more when the solve is unsettled) count as tied
 COMMIT_BET = 0.75   # exploit mode: a postflop bet this big (share of the pot) marks its maker committed: no extra folds
@@ -1192,11 +1193,15 @@ def preflop_strategy(p: str, before: List[dict], positions, stack: float) -> Dic
     return _pf_cached(_pf_key("s", p, before, positions, stack), work)
 
 
-def preflop_ranges(actions: List[dict], positions, stack: float, pool_except: Optional[str] = None) -> Dict[str, np.ndarray]:
+def preflop_ranges(actions: List[dict], positions, stack: float, pool_except: Optional[str] = None,
+                   locks=None) -> Dict[str, np.ndarray]:
     """Each still-active player's range after the preflop actions (pf.replay_ranges with the adjusted
     strategies). With `pool_except` (hero's seat), everyone else plays like a typical player pool
-    (exploit.pool_preflop)."""
+    (exploit.pool_preflop). With `locks` (your reads, {seat: {key: value}} or _lock_spec's tuple), a locked
+    seat's decisions follow its lock (lock_strategy), on top of the pool's with pool_except."""
     positions = pf.at_depth(positions, stack)
+    locks = _lock_spec(locks)
+    locked = {p: dict(kv) for p, kv in locks}
 
     def work():
         ranges = {p: np.ones(N_COMBOS) for p in positions}
@@ -1215,6 +1220,8 @@ def preflop_ranges(actions: List[dict], positions, stack: float, pool_except: Op
             limp = act == "call" and "call" not in strat and not any(h["action"] in ("raise", "all-in") for h in actions[:i])
             if pool_except is not None and pos != pool_except:
                 strat = pool_strategy(strat, pos, actions[:i], ranges)
+            if pos in locked:
+                strat = lock_strategy(strat, pos, actions[:i], ranges, locked[pos], positions)
             key = "raise" if act == "all-in" else ("call" if act == "check" and "check" not in strat else act)
             jam = next((h for h in reversed(actions[:i]) if h["action"] in ("raise", "all-in")), None)
             if limp:
@@ -1236,7 +1243,7 @@ def preflop_ranges(actions: List[dict], positions, stack: float, pool_except: Op
                 # called a 100bb open-jam with Q2s and 43s) and lose the hands the chart raises (calling a
                 # 3bet jam without QQ+ or AK).
                 ji = max(j for j in range(i) if actions[j] is jam)
-                jr, _ = _jam_range(actions, ji, positions, stack, pool_except)
+                jr, _ = _jam_range(actions, ji, positions, stack, pool_except, locks)
                 st = replay_hand(positions, stack, {"preflop": actions[:i]}, 1)[0]
                 callers = [h["pos"] for h in actions[ji + 1:i] if h["action"] in ("call", "all-in") and h["pos"] in ranges]
                 eq = _preflop_equity_multi([jr] + [ranges[c] for c in callers])
@@ -1253,7 +1260,7 @@ def preflop_ranges(actions: List[dict], positions, stack: float, pool_except: Op
             elif act == "all-in" and sum(h["action"] in ("raise", "all-in") for h in actions[:i]) <= 1:
                 # an open- or 3bet-jam: the push/fold range, as our call of it reads it (_jam_range), not the
                 # chart's open or 3bet (a 100bb open-jam read as CO's whole 27% open)
-                ranges[pos] = _jam_range(actions, i, positions, stack, pool_except)[0]
+                ranges[pos] = _jam_range(actions, i, positions, stack, pool_except, locks)[0]
             elif key in strat:
                 # an off-chart or very narrow line: filled out with the hands that take this action, so
                 # the solve doesn't face a face-up hand (pf.thin_line)
@@ -1265,7 +1272,7 @@ def preflop_ranges(actions: List[dict], positions, stack: float, pool_except: Op
         out = PreflopRanges({p: ranges[p] for p in active})
         out.rebuilt = [p for p in dict.fromkeys(rebuilt) if p in active]
         return out
-    return _pf_cached(_pf_key("r", pool_except, actions, positions, stack), work)
+    return _pf_cached(_pf_key("r", (pool_except, locks) if locks else pool_except, actions, positions, stack), work)
 
 
 def _flat_ev(full: Dict[str, np.ndarray], w: np.ndarray, raiser: np.ndarray, pot: float, to_call: float,
@@ -1290,13 +1297,13 @@ def _flat_ev(full: Dict[str, np.ndarray], w: np.ndarray, raiser: np.ndarray, pot
     return np.where(cont > 1e-9, np.maximum(ev, 0.0), 0.0)
 
 
-def _jam_range(actions: List[dict], ji: int, positions, stack: float, pool_except: Optional[str] = None):
+def _jam_range(actions: List[dict], ji: int, positions, stack: float, pool_except: Optional[str] = None, locks=None):
     """(the range of the player whose all-in is actions[ji], notes). An open- or 3bet-jam: push/fold
     equilibrium against the players left to act (the opener, if any, is the one who calls); later, the
-    replayed (or the pool's) raising range through the jam."""
+    replayed (or the pool's, or your lock's) raising range through the jam. `locks`: as preflop_ranges'."""
     jammer, before = actions[ji]["pos"], actions[:ji]
     prev = replay_hand(positions, stack, {"preflop": before}, 1)[0]
-    arr = preflop_ranges(before, positions, stack, pool_except)
+    arr = preflop_ranges(before, positions, stack, pool_except, locks)
     rng = arr.get(jammer, np.ones(N_COMBOS))
     notes = []
     if prev.n_raises <= 1:
@@ -1324,9 +1331,11 @@ def _jam_range(actions: List[dict], ji: int, positions, stack: float, pool_excep
     else:
         # the replayed range through the jam: the chart's (or the pool's) raising range, rebuilt
         # from it alone when the jammer's line is off-chart (a flat, then a jam over the 4bet)
-        jr = preflop_ranges(actions[:ji + 1], positions, stack, pool_except)
+        jr = preflop_ranges(actions[:ji + 1], positions, stack, pool_except, locks)
         rng = jr.get(jammer, rng)
-        if pool_except is not None:
+        if any(p == jammer for p, _ in _lock_spec(locks)):
+            notes.append(f"locked: {jammer}'s jam is their raising range as you locked it")
+        elif pool_except is not None:
             notes.append(f"exploit mode: {jammer}'s jam is the player pool's raising range")
         if jammer in getattr(jr, "rebuilt", []):
             notes.append(f"{jammer}'s line isn't in the chart, so their jam range is the hands that jam "
@@ -1425,6 +1434,51 @@ def pool_strategy(strat: Dict[str, np.ndarray], p: str, before: List[dict], rang
     from .exploit import pool_preflop
     return pool_preflop(strat, len(raisers), p, ranges.get(p, np.ones(N_COMBOS)), eq, opener, first_in,
                         heads_up=len(ranges) == 2)
+
+
+def _lock_spec(locks) -> tuple:
+    """Your locks (exploit.parse_locks' {seat: {key: value}}, or this tuple already) as far as they act preflop
+    (exploit.LOCK_PREFLOP_KEYS), frozen for the preflop caches: ((seat, ((key, value), ...)), ...); () for none."""
+    if not locks:
+        return ()
+    if isinstance(locks, tuple):
+        return locks
+    from .exploit import LOCK_PREFLOP_KEYS
+    out = []
+    for p, adj in sorted(locks.items()):
+        kv = tuple((k, float(adj[k])) for k in LOCK_PREFLOP_KEYS if adj.get(k))
+        if kv:
+            out.append((p, kv))
+    return tuple(out)
+
+
+def _quantile(eq: np.ndarray, w: np.ndarray, share: float) -> float:
+    """The equity of the hand at `share` of the range `w` counted from the top by `eq` (blocked combos left out)."""
+    ok = ~np.isnan(eq) & (w > 0)
+    order = np.argsort(-eq[ok])
+    cum = np.cumsum(w[ok][order])
+    return float(eq[ok][order][min(np.searchsorted(cum, share * cum[-1]), len(cum) - 1)])
+
+
+def lock_strategy(strat: Dict[str, np.ndarray], p: str, before: List[dict], ranges: Dict[str, np.ndarray],
+                  adj: Dict[str, float], positions) -> Dict[str, np.ndarray]:
+    """p's preflop strategy `strat` (after the actions `before`) with your lock `adj` on them (exploit.lock_preflop):
+    calls and folds move by p's equity against the last raiser's range (against any hand when nobody has raised),
+    raises by p's equity against what the last raiser continues with facing p's raise (their chart there)."""
+    raisers = [h["pos"] for h in before if h["action"] in ("raise", "all-in")]
+    eq = eq_raise = None
+    if not raisers:
+        eq = _equity_vs_any()
+    elif raisers[-1] in ranges:
+        last = raisers[-1]
+        eq = eq_raise = _preflop_equity(ranges[last])
+        if "raise" in strat:
+            s_last = pf.strategy_for(last, before + [{"pos": p, "action": "raise"}], positions)
+            cont = ranges[last] * (1.0 - s_last.get("fold", 0.0))
+            if cont.sum() >= 1.0:
+                eq_raise = _preflop_equity(cont)
+    from .exploit import lock_preflop
+    return lock_preflop(strat, adj, len(raisers), ranges.get(p, np.ones(N_COMBOS)), eq, eq_raise)
 
 
 _EQ_ANY = None
@@ -1585,11 +1639,8 @@ class Advisor:
             stack = _eff_stack(positions, hero, streets["preflop"], stack)
         positions = pf.at_depth(positions, stack)
         if not board:
-            res = self._preflop(hero, hole, streets["preflop"], positions, stack, t0,
-                                pool=state.get("opponents") == "pool")
-            if locks and "notes" in res:
-                res["notes"].append("locks apply after the flop (preflop follows the charts)")
-            return res
+            return self._preflop(hero, hole, streets["preflop"], positions, stack, t0,
+                                 pool=state.get("opponents") == "pool", locks=locks)
         saved = self.time_budget, self.prior_budget, self.cfg, self.root_sizes, self.spr_sizes
         if sizes:
             self.root_sizes = {st: {k: v for k, v in d.items() if k != "raise" or "raise" not in sizes}
@@ -1639,20 +1690,32 @@ class Advisor:
             self._breakdown = self._lib_only = self._jam = False
 
     # ------------------------------------------------------------ preflop
-    def _preflop(self, hero, hole, preflop, positions, stack, t0, pool=False):
-        res = self._preflop_play(hero, hole, preflop, positions, stack, t0, pool)
-        if pool and "actions" in res:
+    def _preflop(self, hero, hole, preflop, positions, stack, t0, pool=False, locks=None):
+        # your locks on the players still in (exploit.lock_preflop; the keys that act preflop): the advice is
+        # re-drawn against them (_locked, _vs_jam), with the chart's mix alongside as GTO %
+        live, later = (), []
+        if locks:
+            st = replay_hand(positions, stack, {"preflop": preflop}, 1)[0]
+            live = tuple((p, kv) for p, kv in _lock_spec(locks) if p in st.active and p != hero)
+            later = [p for p in locks if p in st.active and p != hero and p not in dict(live)]
+        res = self._preflop_play(hero, hole, preflop, positions, stack, t0, pool, live)
+        if (pool or live) and "actions" in res:
             # Against the pool a hand takes its best price, so a chart mix (44 flatting a CO open 30%) plays
             # 100% one way: show the chart's share beside it, as postflop shows the equilibrium's.
             g = {a["action"]: a["freq"] for a in self._preflop_play(hero, hole, preflop, positions, stack, t0)["actions"]}
             for a in res["actions"]:
                 a["gto_freq"] = g.get(a["action"], 0.0)
-            if any(abs(a["freq"] - a["gto_freq"]) > 0.05 for a in res["actions"]):
+            if pool and any(abs(a["freq"] - a["gto_freq"]) > 0.05 for a in res["actions"]):
                 res["notes"].append("exploit mode: against the pool each hand takes its best-paying action, so the "
                                     "chart's mix (GTO %) plays one way")
+        if "actions" in res:
+            if live:
+                res["locked"] = {p: dict(locks[p]) for p, _ in live}
+            for p in later:
+                res["notes"].append(f"locked: {p}'s lock ({', '.join(locks[p])}) acts after the flop only")
         return res
 
-    def _preflop_play(self, hero, hole, preflop, positions, stack, t0, pool=False):
+    def _preflop_play(self, hero, hole, preflop, positions, stack, t0, pool=False, locks=()):
         st = replay_hand(positions, stack, {"preflop": preflop}, 1)[0]
         if st.closed:
             return {"error": "preflop betting is already closed (deal the flop)"}
@@ -1660,14 +1723,16 @@ class Advisor:
             return {"error": f"it is {st.to_act}'s turn, not {hero}'s"}
         aggr = [a["pos"] for a in preflop if a["action"] in ("raise", "all-in", "bet")]
         if aggr and aggr[-1] in st.allin and aggr[-1] != hero:
-            return self._vs_jam(hero, hole, preflop, positions, stack, st, t0, pool)
+            return self._vs_jam(hero, hole, preflop, positions, stack, st, t0, pool, locks)
         full = pf.strategy_for(hero, preflop, positions)
         notes = ["preflop: chart approximation"]
         if "call" in full:
             full = self._priced(hero, preflop, positions, stack, st, full, notes, pool)
-        elif pool:
+        elif pool and not locks:
             notes.append("exploit mode: opens follow the chart (the pool 3bets more and flats more, and "
                          "folds less to 3bets, so there's no clear edge in opening wider or tighter)")
+        if locks:
+            full = self._locked(hero, preflop, positions, stack, st, full, notes, pool, locks)
         if "raise" in full and not can_raise(st, hero):
             # an all-in for less than a full raise doesn't reopen the betting (or nobody behind has chips
             # left to face a raise): the chart's raises call
@@ -1696,7 +1761,7 @@ class Advisor:
                     or (stack - st.inv_start[hero] - size) < spr_bar * pot_called or short_open):
                 size = st.bets[hero] + remaining
                 if short_open or stack < CHART_STACK - DEPTH_TOL:
-                    full = self._push(hero, preflop, positions, stack, st, size, full, notes, pool)
+                    full = self._push(hero, preflop, positions, stack, st, size, full, notes, pool, locks)
                 else:
                     notes.append("the raise would commit the stack, so it goes all-in")
                 if "call" in full and st.n_raises >= 2 and remaining - to_call < spr_bar * (pot + to_call):
@@ -1727,7 +1792,7 @@ class Advisor:
         }
 
     @staticmethod
-    def _push(hero, preflop, positions, stack, st, jam, full, notes, pool=False):
+    def _push(hero, preflop, positions, stack, st, jam, full, notes, pool=False, locks=()):
         """A raise that would commit much of the stack is an all-in: hero's range for it is the push/fold
         equilibrium against the players still in (the last raiser's range calls, if there is one); hands
         the chart continued with that don't shove call. Facing a 3bet or more, the chart's raise is a value
@@ -1736,7 +1801,7 @@ class Advisor:
         if st.n_raises >= 2:
             notes.append(f"a raise here commits too much of a {jam + st.inv_start[hero]:g}bb stack: the chart's raises go all-in")
             return full
-        arr = preflop_ranges(preflop, positions, stack, hero if pool else None)
+        arr = preflop_ranges(preflop, positions, stack, hero if pool else None, locks)
         last = next((a["pos"] for a in reversed(preflop) if a["action"] in ("raise", "all-in")), None)
         opp = [p for p in st.order if p in st.active and p != hero and p not in st.allin]
         if last:
@@ -1978,14 +2043,163 @@ class Advisor:
         notes.extend(msg)
         return pf.monotone(out)
 
-    def _vs_jam(self, hero, hole, preflop, positions, stack, st, t0, pool=False):
+    @staticmethod
+    def _locked(hero, preflop, positions, stack, st, full, notes, pool=False, locks=()):
+        """Your locks on players still in (_lock_spec; exploit.lock_preflop sets their strategies), against `full`, the
+        advice without them (the chart re-priced for this spot by _priced, against the pool with `pool`). Hero's line
+        is re-drawn against the locked ranges and answers at the bars `full` itself sets, so only what the lock
+        changes moves (a spot the charts don't cover keeps its own adjustments):
+        - calls, with a locked player in the pot: each hand's equity against everyone in moves by what it gains or loses
+          against the locked ranges instead of the unlocked ones, priced at the realization that makes the hand at
+          full's continuing share (by that equity) break even, as _priced's re-pricing. A continuing hand keeps
+          continuing while what it had over the price covers the loss (one below that bar, a hand continuing for its
+          implied odds or playability, has no such margin: it goes as soon as it loses equity); a folding hand starts
+          once the gain covers its shortfall. (All-in equity, not realized: the measured realizations are against the
+          charts' ranges, and KQs realizes far less against a nit's QQ+/AK than against them.)
+        - raises, with a locked player to answer them (in the pot or behind: an open with a locked blind, a 3bet of a
+          locked opener): full's raises split into value (the top of hero's range by equity when called, as many hands
+          as it raises) and bluffs, as _priced does. A value raise stays while its equity against what the locked players
+          continue with clears the weakest value raise's unlocked; one that no longer does calls where the lock costs
+          the raise more than the call, else raises on (first in, with no call, it is a steal like the bluffs); a hand
+          under that bar unlocked that now clears it raises (from its calls, then its folds). Bluffs scale by how often
+          everyone folds, locked over unlocked (at most LOCK_BLUFF_MAX times), the extra first from the hands already
+          mixing raises with folds, then the strongest folds by equity when called. Equity when called lumps re-raises
+          in with calls, as _priced does."""
+        spec = tuple((p, kv) for p, kv in _lock_spec(locks) if p in st.active and p != hero and p not in st.allin)
+        if not spec:
+            return full
+        from .exploit import describe_lock, _move
+        lk = {p: dict(kv) for p, kv in spec}
+        pe = hero if pool else None
+        arr0 = preflop_ranges(preflop, positions, stack, pe)
+        arrL = preflop_ranges(preflop, positions, stack, pe, spec)
+        w = arr0.get(hero, np.ones(N_COMBOS))
+        tot = max(float(w.sum()), 1e-12)
+        share = lambda v: float((w * v).sum() / tot)
+        opp = [p for p in st.order if p in st.active and p != hero and
+               (p in st.acted or st.bets[p] > st.posted.get(p, 0.0) + 1e-9)]
+        behind = [p for p in st.order if p in st.active and p != hero and p not in opp and p not in st.allin]
+        out = {k: np.broadcast_to(np.asarray(v, dtype=np.float64), (N_COMBOS,)).copy() for k, v in full.items()}
+        on = "the pool" if pool else "GTO"
+        msg = []
+        for p in lk:
+            where = (f"their range here is {arrL[p].sum():.0f} combos ({arr0[p].sum():.0f} unlocked)" if p in opp
+                     else "to act behind you")
+            msg.append(f"locked: {p} {describe_lock(lk[p], preflop=True)} (on {on}); preflop {where}")
+        # calls, against the locked ranges of the players in the pot: each hand's margin over the price unlocked (v0)
+        # and what the lock adds or takes (delta)
+        lk_in = [p for p in opp if p in lk]
+        to_call = min(st.cur_bet - st.bets[hero], stack - st.inv_start[hero] - st.bets[hero])
+        cont0 = np.broadcast_to(full.get("call", 0.0) + full.get("raise", 0.0), (N_COMBOS,))
+        q0 = share(cont0)
+        priced = "call" in out and "fold" in out and lk_in and to_call > 1e-9 and 0.02 < q0 < 0.98
+        if priced:
+            eq0 = np.nan_to_num(_preflop_equity_multi([arr0[p] for p in opp]), nan=0.0)
+            eqL = np.nan_to_num(_preflop_equity_multi([arrL[p] for p in opp]), nan=0.0)
+            pot = st.pot_start + sum(st.bets.values())
+            left = stack - st.inv_start[hero] - st.bets[hero] - to_call
+            need = to_call / max(pot + to_call - _call_rake(positions, pot + to_call, left), 1e-9)
+            k = need / max(_quantile(eq0, w, q0), 1e-6)
+            v0 = k * eq0 - need
+            delta = k * (eqL - eq0)
+        # raises: against what the players facing it do, locked and not
+        face = opp + [p for p in behind if p in lk]
+        raise0 = out.get("raise")
+        if raise0 is not None and share(raise0) > 0.005 and any(p in lk for p in face) and can_raise(st, hero):
+            line = preflop + [{"pos": hero, "action": "raise"}]
+
+            def facing(arr, locked):
+                # the chance everyone facing the raise folds, and hero's equity when called (against each continuing
+                # range, weighted by how often it continues), as _priced's facing_raise
+                arr = dict(arr, **{hero: w * raise0})
+                f, num, den = 1.0, np.zeros(N_COMBOS), 0.0
+                for p in face:
+                    wp = arr.get(p, np.ones(N_COMBOS))
+                    s_p = pf.strategy_for(p, line, positions)
+                    if pool:
+                        s_p = pool_strategy(s_p, p, line, arr)
+                    if locked and p in lk:
+                        s_p = lock_strategy(s_p, p, line, arr, lk[p], positions)
+                    cont = wp * (1.0 - s_p.get("fold", 0.0))
+                    c = float(cont.sum() / max(wp.sum(), 1e-12))
+                    f *= 1.0 - c
+                    if c > 1e-6:
+                        num = num + c * np.nan_to_num(_preflop_equity(cont), nan=0.0)
+                        den += c
+                return f, num / max(den, 1e-12)
+
+            f0, e0 = facing(arr0, False)
+            fL, eL = facing(arrL, True)
+            v_bar = _quantile(e0, w, share(raise0))
+            # each hand's raise is value as far as its equity when called clears the bar (ramped), the rest bluff
+            ramp = lambda e: np.clip(0.5 + (e - v_bar) / RAISE_BLEND, 0.0, 1.0)
+            k0, kL = ramp(e0), ramp(eL)
+            kept = raise0 * np.minimum(k0, kL)               # value that still clears it
+            lost = raise0 * np.maximum(k0 - kL, 0.0)         # value that no longer does
+            now = raise0 * np.maximum(kL - k0, 0.0)          # bluffs that now do: value, not scaled
+            bluff = raise0 * (1.0 - np.maximum(k0, kL))      # still bluffs
+            gain = np.maximum(kL - k0, 0.0) * (1.0 - raise0)   # new value raises, from calls, then folds
+            passive = "check" if "check" in out else (
+                "call" if "call" in out and st.cur_bet > st.bets[hero] + 1e-9 else None)
+            sink = "fold" if "fold" in out else passive
+            got = np.zeros(N_COMBOS)
+            for src in dict.fromkeys(k for k in (passive, sink) if k):
+                take = np.minimum(gain - got, out[src])
+                out[src] = out[src] - take
+                got = got + take
+            # a lost value raise calls (checks) instead where the lock costs the raise more than the call: the raise's
+            # EV (everyone folds: the pot; called: its equity of the pot then, less what it puts in) against the call's
+            # (its equity against the locked ranges, at the price); first in, with no call, it is a bluff like the rest
+            # (a nit's 3bet: QQ calls rather than 4bets; an overfolder opening: KQs 3bets on, for the folds)
+            pot = st.pot_start + sum(st.bets.values())
+            to = min(_default_size(st, hero, True), stack - st.inv_start[hero])
+            add = to - st.bets[hero]
+            pot_c = pot + add + max(to - st.cur_bet, 0.0)
+            d_raise = (fL - f0) * pot + (1.0 - fL) * (eL * pot_c - add) - (1.0 - f0) * (e0 * pot_c - add)
+            d_call = k * (eqL - eq0) * (pot + to_call) if priced else np.zeros(N_COMBOS)
+            calls = np.zeros(N_COMBOS) if passive is None else (d_call > d_raise).astype(float)
+            out[passive or sink] = out[passive or sink] + lost * calls
+            kept = kept + lost * (1.0 - calls) * (passive is not None)
+            bluff = bluff + lost * (1.0 - calls) * (passive is None)
+            s = float(np.clip(fL / f0, 0.0, LOCK_BLUFF_MAX)) if f0 > 1e-6 else 1.0
+            out[sink] = out[sink] + bluff * (1.0 - min(s, 1.0))   # bluffs dropped fold
+            raise_n = kept + now + got + bluff * min(s, 1.0)
+            if s > 1.0:
+                # more bluffs: first the hands already mixing raises with folds (the baseline's own bluffs), then the
+                # strongest folds by equity when called against the locked continuers
+                mixed = (raise_n >= 0.02) & (out[sink] >= 0.02)
+                sm = np.stack([out[sink], raise_n])[None]
+                _move(sm, 0, 1, w[None], np.lexsort((-eL, ~mixed))[None], (s - 1.0) * share(bluff))
+                out[sink], raise_n = sm[0, 0], sm[0, 1]
+            out["raise"] = np.minimum(raise_n, 1.0)
+            who = ", ".join(p for p in face if p in lk)
+            msg.append(f"raises re-drawn against {who} as locked: everyone folds {fL:.0%} ({f0:.0%} unlocked), so bluffs "
+                       f"x{s:.2f}; value raises keep the equity when called the weakest one has unlocked ({v_bar:.0%}): "
+                       f"you raise {share(out['raise']):.0%} of your range ({share(raise0):.0%} unlocked)")
+        if priced:
+            # a continuing hand keeps continuing while its margin covers what it loses; a folding one starts once the
+            # gain covers its shortfall (raises are never cut here)
+            rs = out.get("raise", np.zeros(N_COMBOS))
+            cont = rs + out["call"]
+            drop = np.maximum(cont * np.clip(1.0 + (np.maximum(v0, 0.0) + delta) / PRICE_BLEND, 0.0, 1.0), rs)
+            add = cont + (1.0 - cont) * np.clip((delta - np.maximum(-v0, 0.0)) / PRICE_BLEND, 0.0, 1.0)
+            new = np.where(delta < 0, drop, add)
+            out["call"] = new - rs
+            out["fold"] = 1.0 - new
+            msg.append(f"calls re-drawn by equity against {', '.join(lk_in)}'s locked range{'s' * (len(lk_in) > 1)}: "
+                       f"you continue with {share(new):.0%} of your range ({q0:.0%} unlocked)")
+        notes.extend(msg)
+        return pf.monotone(out)
+
+    def _vs_jam(self, hero, hole, preflop, positions, stack, st, t0, pool=False, locks=()):
         """Facing a preflop all-in: call when equity against the jammer's range beats the pot odds.
-        With `pool`, a jam over a raise comes from the player pool's raising range (premiums, mostly)."""
+        With `pool`, a jam over a raise comes from the player pool's raising range (premiums, mostly); with
+        `locks` (_lock_spec), a locked jammer's from their raising range as locked."""
         ji = max(i for i, a in enumerate(preflop) if a["action"] in ("raise", "all-in", "bet"))
         jammer = preflop[ji]["pos"]
         pool_except = hero if pool else None
         notes = ["preflop: facing an all-in, call when equity beats the pot odds"]
-        rng, more = _jam_range(preflop, ji, positions, stack, pool_except)
+        rng, more = _jam_range(preflop, ji, positions, stack, pool_except, locks)
         notes += more
         remaining = stack - st.inv_start[hero] - st.bets[hero]
         to_call = min(st.cur_bet - st.bets[hero], remaining)
@@ -1995,7 +2209,7 @@ class Advisor:
         # a called all-in sees the flop, so the pot is raked
         need = to_call / (win + to_call - _rake(positions, win + to_call))
         # everyone who already called the jam is in the pot too: equity against all of them
-        after = preflop_ranges(preflop, positions, stack, pool_except)
+        after = preflop_ranges(preflop, positions, stack, pool_except, locks)
         callers = [a["pos"] for a in preflop[ji + 1:] if a["action"] in ("call", "all-in") and a["pos"] in st.active]
         eq = _preflop_equity_multi([rng] + [after[p] for p in callers])
         idx = COMBO_INDEX[(min(hole), max(hole))]
@@ -2037,7 +2251,8 @@ class Advisor:
         if cur.to_act != (actor[0] if actor else hero):
             return {"error": f"it is {cur.to_act}'s turn, not {actor[0] if actor else hero}'s"}
         # a copy: narrowing below replaces entries, and the cached dict is shared with later requests
-        pf_r = preflop_ranges(streets["preflop"], positions, stack, hero if pool else None)
+        # (with your locks: their preflop decisions as locked, so a nit's 3bet pot starts from their tighter range)
+        pf_r = preflop_ranges(streets["preflop"], positions, stack, hero if pool else None, locks)
         ranges = dict(pf_r)
         bm = np.prod([1.0 - MEMBER_FULL[c] for c in board], axis=0)
         for p, r in (custom or {}).items():
@@ -2097,8 +2312,9 @@ class Advisor:
             if optimize:
                 notes.append("bet sizes are optimized only heads-up (multiway is a heuristic, not a solve)")
             if locks and any(p in locks for p in live_opps):
-                notes.append(f"locks ({', '.join(p for p in live_opps if p in locks)}) apply heads-up only: "
-                             f"this multiway pot is {'solved' if len(remaining) == 3 else 'played by the betting rules'} without them")
+                notes.append(f"locks ({', '.join(p for p in live_opps if p in locks)}) apply heads-up only after the flop: "
+                             f"this multiway pot is {'solved' if len(remaining) == 3 else 'played by the betting rules'} without them "
+                             f"(they shape the ranges preflop)")
             if pool:
                 notes.append("exploit mode applies heads-up after the flop: this multiway pot is played at equilibrium "
                              "(the pool's leaks only shape the ranges preflop)")

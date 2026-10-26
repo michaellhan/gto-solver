@@ -389,7 +389,7 @@ the two stacks. Optional `"ante"` (per player, same units) and `"straddle": true
 first seat posts 2bb and acts last preflop). Optional `"rake"` (a share of the pot, `0.05` for 5%)
 and `"rake_cap"` (the most rake per pot, same units as the amounts; leave it out for no cap): off
 unless given (see Rake below). Positions are the 6-max names `UTG HJ CO BTN SB BB`.
-Optional `"sizes"`, `"ranges"`, `"optimize_sizes"` and `"locks"` change the postflop game (see Custom sizes and ranges below).
+Optional `"sizes"`, `"ranges"` and `"optimize_sizes"` change the postflop game, `"locks"` the preflop one too (see Custom sizes and ranges below).
 
 Response: per-action `freq` (the mixed strategy for hero's exact hand), `ev_bb`
 (relative to folding now), `amount_bb`, a `recommended` action (highest
@@ -473,7 +473,8 @@ that ends preflop isn't raked, so opens, steals and folds to them are unchanged.
 ### Custom sizes and ranges
 
 The page's **Advanced** disclosure in the setup (saved with the hand and carried by share links, like rake;
-sent from the flop on, so preflop advice is unchanged). All are off unless given.
+sizes, ranges and size optimization are sent from the flop on, so preflop advice is unchanged; locks from the
+first decision, since they act preflop too). All are off unless given.
 
 * `"sizes": {"flop": [33, 75], "turn": [...], "river": [...], "raise": [60]}`: the postflop bet sizes per
   street in % of the pot, and the raise sizes (all streets) in % of the pot after calling, replacing the
@@ -496,9 +497,10 @@ sent from the flop on, so preflop advice is unchanged). All are off unless given
 
 * `"locks": {"BB": {"fold": 15, "bluff": -50, "next_fold": 60}}`: nodelocking, your read of an opponent
   (the page: a profile per opponent, GTO, Calling station, Nit, Maniac, Overfolds to bets or Custom, whose
-  numbers can be edited). Heads-up after the flop the advice is then the best response to their locked
-  strategy, as in exploit mode (`freq` 0 or 1 with `gto_freq` alongside, ties within the solve's noise
-  mixed), with `"locked": {"BB": {...}}` and a note; on top of GTO, or of the pool with `"opponents": "pool"`.
+  numbers can be edited). Preflop their decisions follow it and your line is re-drawn against them (below);
+  heads-up after the flop the advice is the best response to their locked strategy, as in exploit mode (`freq`
+  0 or 1 with `gto_freq` alongside, ties within the solve's noise mixed), with `"locked": {"BB": {...}}` and a
+  note; on top of GTO, or of the pool with `"opponents": "pool"`.
   Every key is optional (`gto/exploit.py` LOCK_KEYS, TendencyLock):
   * `fold` (-100..100, also `fold_flop` / `fold_turn` / `fold_river`, added): facing a first bet (not a raise
     of their own bet), this many points more of their range folds, their weakest calls first (at most every
@@ -513,8 +515,48 @@ sent from the flop on, so preflop advice is unchanged). All are off unless given
     The classic nodelock: "they fold 60% to my bet here". Notes give each, locked and at equilibrium.
 
   The profile keys apply wherever they act, on later streets too, and narrow their range through what they did
-  earlier in the hand. Preflop and multiway pots (the betting rules) ignore them, with a note; an unknown seat
-  or key, your own seat, a non-number or a value out of bounds is an error.
+  earlier in the hand. Multiway pots after the flop (the 3-way solve, the betting rules) play without them, with a
+  note; an unknown seat or key, your own seat, a non-number or a value out of bounds is an error.
+
+  Preflop (`exploit.lock_preflop`, `Advisor._locked`) `fold`, `bluff`, `bet` and `raise` act on the locked
+  player's chart strategy (the pool's with `"opponents": "pool"`) at each of their decisions; the street keys and
+  `next_*` are for after the flop. `bet` scales their first raise (opens, iso-raises, the big blind's raise over
+  limps) by 1 + bet/100, the weakest opens folding or the strongest folds opening; `raise` scales their raises
+  facing a raise (3bets, 4bets) the same way, the weakest raises calling (the strongest calls, then folds, raising
+  for more), so a station's -50 3bets half as often; `bluff` scales their bluff raises facing a raise (under 45%
+  equity when called, tapering to value at 50%), the dropped ones folding and the extra coming from their strongest
+  folds; `fold` folds this many points more of their range facing a raise, weakest calls first, then weakest raises
+  (negative: their strongest folds call), in points of a range at least half of which continues (the big blind
+  facing an open, the opener facing a 3bet) and that much less where less does (fold +15 on a cold seat continuing
+  7% of hands folds 30% of what continues, not all of it). The hands that move are first those the chart already
+  mixes (indifferent at equilibrium, they lose least by switching: the nit's JJ flats before its AK stops 3betting),
+  then the rest by equity: against the last raiser's range between calling and folding, against what the raiser
+  continues with facing a raise between raising and not (equity when called: all-in equity against the opener's
+  whole range ranks TT over AKo). The locked seat's preflop decisions then shape every range replayed after them
+  (`preflop_ranges`), so the flop starts from the nit's tighter 3bet range, and a locked jammer's 4bet jam is their
+  raising range as locked. Hero's own decision is re-drawn against the advice without the lock (the chart re-priced
+  for the spot, against the pool in exploit mode), at the bars that advice sets, so only what the lock changes moves:
+  with a locked player in the pot, each hand's equity against the locked ranges instead of the unlocked ones moves
+  it against the price, a continuing hand going once the loss eats what it had over the bar (the equity at the
+  continuing share; a hand continuing below it, for implied odds, goes as soon as it loses equity), a folding one
+  starting once the gain covers its shortfall (all-in equity: the measured realizations are against the charts'
+  ranges, where KQs isn't dominated); with a locked player to answer a raise (in the pot or behind, so an open with
+  a locked blind counts), the raises split into value and bluffs as the multiway re-pricing does: value stays while
+  its equity when called against what the locked players continue with clears the unlocked bar, a hand under it that
+  now clears it raises, a value raise that no longer does calls where the lock costs the raise more than the call
+  (first in it is a steal), and bluffs scale with how often everyone folds, locked over unlocked (at most 1.5x, the
+  extra first from the hands mixing raises with folds). `gto_freq` carries the chart's mix and `"locked"` the locks
+  on players still in, with notes giving the locked range's size, the fold rates and the share hero continues or
+  raises, locked and not. Measured (6-max 100bb): UTG's TT facing a nit small blind's 3bet to 10bb (the nit preset:
+  its 3bet range QQ+, AK, most of JJ, some AQo and TT, 45 combos against the chart's 74) folds 34% where the chart
+  always calls, and UTG continues with 21% of its opening range instead of 44% (AQs, KQs and 77-99 fold, JJ+ and AK
+  stay); against a 12bb 3bet TT folds 100% (the chart still calls). Against a station on the button the big blind
+  3bets A8o and 44 for value (the chart calls them) and bluff-3bets T9s and JTs 62% instead of 90%, everyone folding
+  37% to its 3bet against 53%; with a nit or an overfolder in the big blind the button opens 50% or 51% of hands
+  instead of 45%, with a station 50% but its suited connectors 56% instead of always (fewer steals, more thin value
+  against a 75% defence); a maniac's 3bet gets TT to 4bet. The equity when called lumps re-raises in with calls, as
+  the multiway re-pricing does, so a maniac's extra 3bets read as calls when hero opens into it. Without locks every
+  preflop answer is bit-identical (the preflop caches key on the locks).
 
 Errors come back as `{"error": "..."}` (e.g. `sizes: at most 3 flop sizes ...`, `ranges: can't read BB's
 range ...`). Heads-up responses also carry `villain_grid` (the villain's range by hand class: `cells` with
