@@ -811,7 +811,13 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   Every request now ends within 6% of the bar (a raked Fast flop: the rake's exploitability costs two more passes).
   Fast's 3-way flops and turns are answered by the rules in 2.4-3.0 s. The worker's setup (Pyodide, numpy, treys,
   the solver's files) took 3.3-9.9 s before the first request, outside every bar (now 1.2-1.4 s: Worker startup). The wasm heap peaks at 490 MB (an
-  Accurate turn with its narrowing flop), was 588 MB (the two-tone Accurate flop). The deployed page in Chrome (the
+  Accurate turn with its narrowing flop), was 588 MB (the two-tone Accurate flop). Those are one answer's; over a
+  session the solves kept for reuse added up (each street's, every hand's, never dropped: a Fast turn holds ~195 MB, its
+  river ~185, an Accurate turn ~240), and 12 answers over 5 hands (Fast and Accurate turns and rivers) took the heap to
+  its 2 GB, after which every solve failed for want of memory until the page was reloaded. Now the solves both speeds
+  keep share one budget, 700 MB in the browser (`Advisor.cache_mb`; 1000 MB natively), the least recently used going
+  first (a later street then solves an earlier one again to narrow through it): the same 12 answers peak at 1065 MB,
+  the solves kept 495-700 MB, every answer given. The deployed page in Chrome (the
   desktop app's browser, the code before these changes, the worker's own messages timed in the page) agreed: K72
   Accurate 63.4 s and 56 iterations, the two-tone flop 91.4 s and 36, Fast flop / turn / river 8.2 / 11.5 / 6.7 s.
 * **Worker startup** (time to the first answer: the worker's setup, then a preflop request or a library flop, each

@@ -119,5 +119,8 @@ def advisor(speed: str = "fast", depth: int = 2, budget: Optional[float] = None,
 
 
 def advisors(depth: int = 2, budget: Optional[float] = None, prior_budget: Optional[float] = None) -> Dict[str, Advisor]:
-    """One advisor per speed (each keeps its own solve cache); budget/prior_budget override fast's."""
-    return {"fast": advisor("fast", depth, budget, prior_budget), "accurate": advisor("accurate", depth)}
+    """One advisor per speed (each keeps its own solves, under one memory budget: Advisor.cache_mb); budget/prior_budget
+    override fast's."""
+    advs = {"fast": advisor("fast", depth, budget, prior_budget), "accurate": advisor("accurate", depth)}
+    advs["accurate"]._held = advs["fast"]._held
+    return advs

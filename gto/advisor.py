@@ -17,9 +17,11 @@ Actions: fold, check, call, bet (amount), raise (to), all-in.
 """
 from __future__ import annotations
 import dataclasses
+import functools
 import hashlib
 import random
 import time
+import types
 from functools import lru_cache
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
@@ -69,6 +71,11 @@ MW_RESERVE = 2.5   # 3-way solves stop this many iterations' time short of the b
 XR_Z = 2.0          # multiway: a check-raise beats calling/folding by this many standard errors (see chk_plan)
 XR_MIN = 30         # ...over at least this many trials of that situation
 LATER_CACHE = 40000  # multiway: most later-street decisions stored per call (memory bound, ~25 KB each at most)
+# Solves kept for reuse (Advisor.cache_mb): a heads-up turn's holds ~200 MB (its rivers' equity tables), an Accurate
+# one's 240-330, a 3-way turn's ~10-100; kept without bound, the browser's worker passed its 2 GB heap after a few
+# hands (12 answers: Fast and Accurate turns and rivers) and every later solve failed for want of memory.
+CACHE_MB = 1000.0
+CACHE_KEEP = 2      # ...the latest this many stay whatever they hold (the solve being answered from and the one before)
 HIT_TOP = 0.15      # multiway bluffs: a hand "gets there" on a runout ending in this top share of combos (judgment)
 SHOWDOWN_Q = 0.6    # ...and has showdown value (bluffs last) when it usually ends above this share (judgment)
 VALUE_SHARE = 0.35  # multiway: a bet's value range is this share of what would call it
@@ -1492,6 +1499,34 @@ def _equity_vs_any() -> np.ndarray:
     return _EQ_ANY
 
 
+def _held_bytes(obj) -> int:
+    """Bytes of the numpy arrays reachable from obj, each counted once: about what dropping a cached solve frees
+    (arrays it shares with module-level tables count too). Functions, methods and classes aren't followed."""
+    seen, todo, total = set(), [obj], 0
+    skip = (str, bytes, int, float, bool, type(None), type, types.ModuleType, types.FunctionType,
+            types.BuiltinFunctionType, types.MethodType, functools.partial)
+    while todo:
+        o = todo.pop()
+        if id(o) in seen or isinstance(o, skip):
+            continue
+        seen.add(id(o))
+        if isinstance(o, np.ndarray):
+            if isinstance(o.base, np.ndarray):
+                todo.append(o.base)
+            else:
+                total += o.nbytes
+        elif isinstance(o, dict):
+            todo.extend(o.values())
+        elif isinstance(o, (list, tuple, set, frozenset)):
+            todo.extend(o)
+        else:
+            todo.extend(getattr(o, "__dict__", {}).values())
+            for t in type(o).__mro__:
+                sl = t.__dict__.get("__slots__", ())
+                todo.extend(getattr(o, a) for a in ((sl,) if isinstance(sl, str) else sl) if hasattr(o, a))
+    return total
+
+
 def _range_key(v: np.ndarray) -> str:
     return hashlib.md5(np.round(v, 6).tobytes()).hexdigest()[:12]
 
@@ -1542,6 +1577,12 @@ class Advisor:
         self.prior_budget = prior_budget
         self.prior_smoothing = prior_smoothing
         self._cache: Dict[tuple, Solution] = {}
+        # the solves in _cache and _mw_cache by (advisor, store, key) -> bytes of their arrays, least recently used first:
+        # once they hold more than cache_mb the oldest go (_keep). A later street then solves an earlier one again to
+        # narrow through it, as with no advice on it. Advisors can share one (native.advisors and the browser's worker:
+        # Fast's and Accurate's), so switching speed drops the other's old hands first.
+        self.cache_mb = CACHE_MB
+        self._held: Dict[tuple, int] = {}
         self.should_stop = None   # callable; when it returns true the running solve raises solver.Cancelled
         self.mw_rake_rules = True   # multiway: our in-trial calls, leads and raises count the rake (off: payouts only)
         self.mw_trials: Optional[int] = None   # multiway: play at least this many trials (whole passes), no time caps or early stop (tests)
@@ -2648,6 +2689,7 @@ class Advisor:
         spent = sol.build_seconds + sol.seconds
         left = min(budget - spent, budget - (time.time() - t0))
         self._mw_run(sol, left)
+        self._keep("_mw_cache", key, sol)
         root = sol.root
         if not isinstance(root, MW.Decision) or root.player != hp:
             return None
@@ -3855,6 +3897,7 @@ class Advisor:
         if sol is None:
             sol = self._mw_cache[key] = MW.MultiwaySolver(board, rs, st.pot_start, S, cfg=mcfg)
         self._mw_run(sol, self.prior_budget - sol.build_seconds - sol.seconds)
+        self._keep("_mw_cache", key, sol)
         gains = sol.br_gains() / sol.root_pot() * 100
         return sol, players, float(max(gains.mean(), 0.0))
 
@@ -3984,11 +4027,29 @@ class Advisor:
                 sol.seconds += warm.seconds
             self._cache[key] = sol
             self._by_spot[spot] = sol
-        elif sol.seconds < budget * 0.8 and sol.iters < 1000:
-            sol.extend(budget - sol.seconds, should_stop=self.should_stop, reserve=HU_RESERVE)        # keep going from the stored regrets instead of restarting
+            self._keep("_cache", key, sol)
+        else:
+            self._keep("_cache", key, None)
+            if sol.seconds < budget * 0.8 and sol.iters < 1000:
+                sol.extend(budget - sol.seconds, should_stop=self.should_stop, reserve=HU_RESERVE)        # keep going from the stored regrets instead of restarting
         if settle:
             self._settle(sol, budget)
         return sol
+
+    def _keep(self, store: str, key, sol) -> None:
+        """A solve in self.<store> (_cache or _mw_cache) just used: the most recent now, its arrays counted when `sol`
+        is given (a new or grown one); then the least recently used go while they hold more than cache_mb."""
+        k = (self, store, key)
+        held = self._held.pop(k, None)
+        self._held[k] = _held_bytes(sol) if sol is not None else (held or 0)
+        while len(self._held) > CACHE_KEEP and sum(self._held.values()) > self.cache_mb * 2 ** 20:
+            adv, st, old = next(iter(self._held))
+            del self._held[(adv, st, old)]
+            gone = getattr(adv, st).pop(old, None)
+            # (the spot and line indexes hold the same solve: drop theirs too, or it stays in memory)
+            for d, of in ((adv._by_spot, lambda v: v), (adv._mw_lines, lambda v: v[0])):
+                for s in [s for s, v in d.items() if of(v) is gone]:
+                    del d[s]
 
     def _settle(self, sol: Solution, budget: Optional[float] = None) -> bool:
         """The street being advised on, far from settled after its budget (SETTLE_EXPL): one more budget,

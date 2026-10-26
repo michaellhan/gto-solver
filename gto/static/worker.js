@@ -160,7 +160,11 @@ const ready = (async () => {
              // 4+ way rivers (and two all-in) by the N-player solve (scripts/bench_browser.mjs): 4-way 2.5 s at Fast, 50
              // iterations, 0.08% of the pot from equilibrium (Quick 1.8 s, 0.27%); 5-way 7.6 s, 0.1% (Quick 5 iterations,
              // 5.4%); 6-way ~3 s an iteration, so Fast leaves it to the rules and Accurate's 60 s solve it
-             + "advs['fast'].mw_nway_max = 5; advs['accurate'].mw_nway_max = 6");
+             + "advs['fast'].mw_nway_max = 5; advs['accurate'].mw_nway_max = 6; "
+             // the solves kept for reuse, both speeds' under one budget (advisor.CACHE_MB): a hand's Fast flop, turn and
+             // river hold ~380 MB here, Accurate's turn and river ~470; kept without bound the heap reached its 2 GB in 12
+             // answers over 5 hands and every later solve failed for want of memory
+             + "advs['accurate']._held = advs['fast']._held; advs['fast'].cache_mb = advs['accurate'].cache_mb = 700");
   lap("advisors");
   setup.total = +((performance.now() - T0) / 1000).toFixed(2);
   postMessage({ status: "Solving…", setup });
