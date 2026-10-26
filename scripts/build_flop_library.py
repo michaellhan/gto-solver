@@ -182,7 +182,7 @@ def main(argv=None):
     ap.add_argument("--boards", default="", help="comma separated flops instead (any suits: each is canonicalized)")
     ap.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
     ap.add_argument("--min-iters", type=int, default=200)
-    ap.add_argument("--max-iters", type=int, default=500)
+    ap.add_argument("--max-iters", type=int, default=1000)   # (paired and trips boards settle slowest: 600-800)
     ap.add_argument("--check", type=int, default=100, help="iterations between exploitability checks")
     ap.add_argument("--target", type=float, default=0.15, help="stop under this exploitability (%% of the pot)")
     ap.add_argument("--out", default=fl.DIR)
