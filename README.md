@@ -162,6 +162,15 @@ downloads one row per decision (hand, site and number, seat, cards, board, situa
 frequency, the solver's best, EVs, EV lost, grade, source). The panel is `gto/static/session.js`, loaded with `hh.js`
 when first opened.
 
+Each analyzed session's summary (not its hands) is also kept in the browser (IndexedDB, up to 200 sessions; a file
+analyzed again, in any scope, replaces its earlier entry), and **Across your sessions** (or **Your sessions so far**
+before a new one) sums them: sessions, hands, bb/100 lost, share in the solver's mix; the **leaks** that show over many
+sessions, ranked by how far off times the square root of the decisions (a frequency of yours 10+ points from the
+solver's on the same hands over 15+ decisions, a preflop situation with under 80% of your actions in the chart's mix
+over 15+, a postflop spot losing 0.5bb+ a decision over 10+); each session's date, file, hands, share in the mix and
+bb/100 with a line of bb/100 over time (Forget removes one, Clear history all); and the street, preflop-situation,
+postflop-spot and frequency tables summed over every session.
+
 **Flop reports** (in the ⋯ menu) are aggregate reports of the [precomputed flop library](#precomputed-flop-library):
 pick a spot (BTN vs BB, …) and a node (out of position first; in position after a check; out of position facing
 in position's most common bet after checking) for a table of its 184 flops: each flop's range frequencies as a
@@ -353,6 +362,8 @@ python -m gto.cli --hero BB --hole 9h8h --board Ks7d2cTh \
 Action tokens are `POS:act` with `f` fold, `x` check, `c` call, `r<to>` raise to,
 `b<amount>` bet, `ai` all-in. Amounts are in big blinds. `--ante 0.2` adds an ante
 per player, `--straddle` has the first seat straddle 2bb, `--rake 0.05 --rake-cap 3` sets a 5% rake capped at 3bb (see Rake).
+`--players 4` deals 2-9 players (default 6), `--stacks "CO=40,BTN=25,SB=8,BB=25"` gives seats their own stacks and `--payouts "50 30 20"` makes it a tournament
+(see Tournaments).
 `--speed accurate` uses the server's Accurate tree and budgets (default `fast`; `--budget` / `--prior-budget` override).
 
 Server for your sandbox table:
@@ -388,7 +399,10 @@ commitment rules), each opponent's replayed range at theirs, and heads-up postfl
 the two stacks. Optional `"ante"` (per player, same units) and `"straddle": true` (the
 first seat posts 2bb and acts last preflop). Optional `"rake"` (a share of the pot, `0.05` for 5%)
 and `"rake_cap"` (the most rake per pot, same units as the amounts; leave it out for no cap): off
-unless given (see Rake below). Positions are the 6-max names `UTG HJ CO BTN SB BB`.
+unless given (see Rake below). Optional `"payouts"` (the prizes still to be paid, first place first, a list
+or a string like `"50 30 20"`) makes it a tournament, the advice in prize equity (ICM), with two prizes or
+more; `"field"` adds the players at other tables (a list of their stacks, or `{"players": n, "chips": total}`;
+see Tournaments below). Positions are the 6-max names `UTG HJ CO BTN SB BB`.
 Optional `"sizes"`, `"ranges"` and `"optimize_sizes"` change the postflop game, `"locks"` the preflop one too (see Custom sizes and ranges below).
 
 Response: per-action `freq` (the mixed strategy for hero's exact hand), `ev_bb`
@@ -469,6 +483,46 @@ that ends preflop isn't raked, so opens, steals and folds to them are unchanged.
   less its rake (the pot without an uncalled bet; a split costs hero its share), so the EVs it ranks
   actions by are raked. The opponents' betting rules and hero's own call/lead/raise rules within each
   trial stay unraked.
+
+### Tournaments (ICM)
+
+The page's **Payouts** row under Rake (saved with the hand, kept across new hands and carried by share links)
+takes the prizes still to be paid, first place first ("50 30 20", in any unit), and, once there are two or more,
+the players left at other tables and their average stack. With two prizes or more every chip is priced by what it
+is worth in prizes (gto/icm.py): Malmuth-Harville ICM, each player's chance of each place from the stacks, by
+dynamic programming over who is left (exact, checked against every finishing order). One prize is winner-take-all,
+the same as chips, so nothing changes. A big field is modelled by at most 12 players: the table's seats plus
+stand-ins for the rest (equal groups of the other stacks sorted, each at its group's average), the payouts
+compressed so each model place pays the average of the real places it covers; every player keeps their equity
+share (27 players with 12 paid: the button's 1/27 of the prizes exactly). Answers carry `tournament`
+(`equity_share`, what hero's stack is worth of what's left to pay, and `bubble_factors`: what losing a chip costs
+over what winning one gains, against each opponent) and a note naming the model.
+
+* Push/fold (hero's shove and the jam range hero faces) runs fictitious play on the prize values of each outcome
+  (steal, called and win, called and lose), with each caller's own range and payoffs in turn: a 5bb big blind
+  calls far wider than a 15bb small blind on a bubble, which one shared caller averaged away. Calling an all-in
+  needs the equity that pays in prizes, said in the notes against the chip price: 4 left, 3 paid (50/30/20),
+  the small blind with 15bb facing a 20bb button jam (CO 30, BB 5) folds AJo and 99, which call in chips; AA
+  still calls.
+* Other preflop decisions take a risk premium on top of the chart's price: the extra equity getting the
+  effective stack in needs in prizes over chips (against the last raiser, or the players behind for an open),
+  times min(1, ICM_COMMIT / (1 + the stack-to-pot ratio after the call)), so a call that commits the stack pays
+  all of it and a cheap call little. Calls are re-priced by realized equity as rake is, value raises are kept
+  to hands that clear break-even plus the premium, bluff raises scaled by the fold rate they need with the
+  premium added, and opens (advisor._icm_open) shrink by fold need / (fold need + premium), the weakest by
+  equity against what continues dropped first. 4 left, 3 paid, stacks CO 40 / BTN 25 / SB 8 / BB 25 (chips ->
+  prizes): the big blind continues 60.5% against a button min-raise instead of 93%, the button 3bets a CO open
+  7.0% instead of 12.2%, CO continues 29% against that 3bet instead of 47%, and the button opens 43.6% instead
+  of 45% (CO 29.3% / 30%): published ICM work has the same shape (opens change little, calls and 3bets tighten
+  a lot).
+* Heads-up after the flop the solver plays prize equity: every terminal (fold, showdown, equity leaf) pays each
+  player the chip-equivalent of the prizes they end with (solver.Config.icm, icm.HUPayoffs: the change in prize
+  equity times total chips over the prize pool, so winner-take-all is exactly chips, checked by the solve's
+  action EVs). The game isn't zero-sum then, so exploitability counts each best response's gain over its own
+  payoff, as with rake. Bubble pressure makes the bigger bets and all-ins rarer (the river all-in of a bubble
+  solve below the chip solve's). The precomputed flop libraries (solved in chips) are skipped, so a tournament
+  flop solves live, and solves are cached apart from the chip game's.
+* Multiway pots after the flop (3-way solves and the rules) stay in chips; the notes say so.
 
 ### Custom sizes and ranges
 
@@ -1012,6 +1066,22 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   products over the runouts, and later-street decisions are cached per runout. A warm
   3-way flop spot (a new hand on a board already seen) took about 2 s and hit the time
   cap; now 0.4-1.3 s, mostly stopping on the noise rule.
+* 4+ way flops and turns stay with these rules (GTO Wizard doesn't solve 4+ way postflop either). Scored against
+  4-way turn solves that play the river (`scripts/score_multiway4.py`: HJ opens, CO, BTN and BB call, the flop
+  checked through; six turns, each of four lines, 40 hands of hero's range drawn by weight; one bet size a street,
+  and only hero may raise, so if anything they overvalue hero's raises), the rules give up 0.70% of the pot to the
+  solve's mix and pick its best action 58% of the time (were 0.91% and 54%): first to act 0.40%, checked to last 0.35%
+  (was 0.77%: the players who checked raised a bet of ours with RAISE_SHARE of what continues, a fifth, where a
+  check keeps few raises; CHECKED_RAISE_SHARE, 0.05, has the rules bet 53% of hands there as the solve does, not
+  36%), facing a bet 0.57%, facing a bet and a call 1.49% (was 1.89%: the trials' later streets pay a raise off too
+  often, so top pair with a weak kicker raised AcKd5c5s for +3.9bb over calling where the solve calls for +2.8bb;
+  there a raise needs ROOT_RAISE_EQ, 65%, equity against what each player continues with). What's left facing a
+  bet and a call is mostly semi-bluffs: the solves raise strong draws (KhTh on Jh9h4c8s, QJs on Kh7d2c9s) that the
+  rules call or fold, but those solves never face a re-raise, so how much of that holds is unclear. The same solve
+  with the river dealt out gives up 0.29% of the hand-weighted pot (natively 3.4-5.5 s for 30 iterations, settled to
+  0.13% in its own game; the rules take 0.1-0.2 s), but it plays the references' own game (their one size and
+  hero-only raises, the river aside), which flatters it: on 3-way turns, against a richer solve, dealt-out gave up
+  6.5% of the pot where the rules gave up 1.5% (see N-player pots), so the rules stay.
 * Streets that started multiway narrow every player's range by the same rules
   (a check drops most hands that would have bet, a bet keeps its value + bluff
   range, a call drops what would have folded or raised, with a first call and an
@@ -1270,6 +1340,12 @@ the tree traversal to C or Rust or a GPU, which makes full flop trees feasible.
   heuristic rakes its payouts but not the betting rules inside its trials (see Rake above).
   BTN vs BB on K72 at 5% capped at 0.6bb (both ranges re-priced, the flop raked) still c-bets 49% (QQ6 81%,
   the BB checking 95%) against 69% unraked and published 90%+: the hands the re-pricing swaps don't move it.
+* Tournaments (ICM): Malmuth-Harville equity (no future-game model: a big stack's edge from covering others,
+  or the blinds' next orbit, isn't counted), at most 12 players modelled (stand-ins for a bigger field). Preflop
+  the charts are chip charts re-priced by a risk premium and the commitment factor ICM_COMMIT (1.0, judgment
+  fit to the published shape: 2.5 cut the big blind's defence of a button min-raise to 31%), and push/fold
+  equilibria run in prize equity. After the flop only heads-up pots are played in prizes; multiway pots stay
+  in chips.
 * Exploit mode's pool is fitted to public population data where any was found (flop and river
   folds, turn folds and river bluffs from 500nl+ regulars, preflop frequencies, one flop spot's raise
   frequency, and the small blind's open-limps); folds to big flop bets and the turn's shape at small

@@ -447,7 +447,7 @@ class TestShippedLibrary(unittest.TestCase):
                 size = os.path.getsize(os.path.join(fl.DIR, sp["id"], name + ".bin"))
                 self.assertLess(size, 200_000)
                 total += size
-        self.assertLess(total, 15e6)
+        self.assertLess(total, 25e6)
 
     def test_reports_match_the_index(self):
         """Each shipped spot's report.json (the page's flop reports) is the one the index hashes, holds the index's

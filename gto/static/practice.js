@@ -136,7 +136,7 @@
     for (const p of POS) hands[p] = [deck.pop(), deck.pop()];
     // (as New hand: seats keep their stacks; at the table, each its own chips)
     const stacks = tbl ? cleanStacks({ stack: S.stack, stacks: Object.fromEntries(POS.map(p => [p, tbl.stacks[seatOf(p, tbl.btn, S.players)]])) }, POS) : cleanStacks(S, POS);
-    S = { ...fresh(S.players), hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanAdv(S, POS), ...stacks };
+    S = { ...fresh(S.players), hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, payouts: S.payouts, fieldN: S.fieldN, fieldAvg: S.fieldAvg, ...cleanAdv(S, POS), ...stacks };
     S.cards[0] = hands[hero][0]; S.cards[1] = hands[hero][1];
     const hole = hands[hero]; delete hands[hero];
     P.hand = { hero, players: S.players, hole, hands, board: deck.slice(0, 5), result: null, log: [], chips: chips(), ...(tbl ? { tbl } : {}) };
@@ -549,7 +549,7 @@
       try { return simulate(); } finally { S.actions = keep; }
     };
     const game = [`No-limit hold'em cash game, ${n}-handed, ${UNEQUAL() ? `stacks ${POS.map(p => `${SEAT_LABEL(p, n)} ${bb(STACK(p))}`).join(", ")}` : `${bb(S.stack)} stacks`}`,
-      `Blinds 0.5/1bb${ANTE() ? `, ${bb(ANTE())} ante each` : ""}${STRADDLER() ? `, ${SEAT_LABEL(STRADDLER(), n)} straddles 2bb` : ""}, ${RAKE() ? RAKE_TEXT() + " (pots that see a flop)" : "no rake"}`,
+      `Blinds 0.5/1bb${ANTE() ? `, ${bb(ANTE())} ante each` : ""}${STRADDLER() ? `, ${SEAT_LABEL(STRADDLER(), n)} straddles 2bb` : ""}, ${RAKE() ? RAKE_TEXT() + " (pots that see a flop)" : "no rake"}${ICM() ? `; ${ICM_TEXT()}: the grading is in prize equity (ICM)` : ""}`,
       ...(ADV_TEXT() ? [`Solver settings: ${ADV_TEXT()}`] : []),
       "The opponents play the solver's GTO strategy"];
     const action = [];

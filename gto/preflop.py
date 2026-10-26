@@ -32,10 +32,12 @@ class Table(list):
     game's (rate, cap in bb or None), taken from pots that see a flop; None = no rake. `depth`: the
     effective stack in bb, which picks the short-stack charts where there are any (chart_depth). `stacks`:
     each seat's own stack in bb when they differ (None: everyone has `depth`); the advisor's replay caps each
-    player's chips by theirs, and `depth` is then the effective stack of the player deciding."""
+    player's chips by theirs, and `depth` is then the effective stack of the player deciding. `icm`: a tournament's
+    prize model (gto/icm.py Model, stacks in bb at the start of the hand), None for chips."""
     def __init__(self, seats, ante: float = 0.0, straddle: bool = False, rake=None, depth: float = 100.0,
-                 stacks: Optional[Dict[str, float]] = None):
+                 stacks: Optional[Dict[str, float]] = None, icm=None):
         super().__init__(seats)
+        self.icm = icm
         self.ante = float(ante or 0.0)
         self.straddle = bool(straddle) and len(seats) >= 3
         self.rake = tuple(rake) if rake and rake[0] > 0 else None
@@ -289,7 +291,7 @@ def at_depth(positions, stack: float):
     if getattr(positions, "depth", None) == float(stack):
         return positions
     return Table(list(positions), getattr(positions, "ante", 0.0), getattr(positions, "straddle", False),
-                 getattr(positions, "rake", None), stack, getattr(positions, "stacks", None))
+                 getattr(positions, "rake", None), stack, getattr(positions, "stacks", None), getattr(positions, "icm", None))
 
 
 def stacks_key(positions) -> Optional[tuple]:

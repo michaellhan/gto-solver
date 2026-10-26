@@ -53,6 +53,9 @@ def main(argv=None):
     ap.add_argument("--straddle", action="store_true", help="the first seat straddles 2bb")
     ap.add_argument("--rake", type=float, default=0.0, help="rake, share of the pot (0.05 = 5%%); 0 = none")
     ap.add_argument("--rake-cap", type=float, default=None, help="most rake per pot in bb (default: no cap)")
+    ap.add_argument("--players", type=int, default=6, help="players dealt in, 2-9")
+    ap.add_argument("--stacks", default="", help='seats\' own stacks in bb, "CO=40,BTN=25,SB=8,BB=25"')
+    ap.add_argument("--payouts", default="", help='a tournament\'s prizes still to be paid, "50 30 20" (ICM)')
     ap.add_argument("--speed", choices=("fast", "accurate"), default="fast",
                     help="tree and budgets: fast 2.5 s a street, accurate 30 s (12 s per earlier street)")
     ap.add_argument("--budget", type=float, default=None, help="seconds for the current street solve")
@@ -61,11 +64,15 @@ def main(argv=None):
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
     state = {
-        "hero": args.hero, "hole": args.hole, "board": args.board, "stack": args.stack,
+        "players": args.players, "hero": args.hero, "hole": args.hole, "board": args.board, "stack": args.stack,
         "ante": args.ante, "straddle": args.straddle, "rake": args.rake, "rake_cap": args.rake_cap,
         "preflop": parse_actions(args.preflop), "flop": parse_actions(args.flop),
         "turn": parse_actions(args.turn), "river": parse_actions(args.river),
     }
+    if args.stacks:
+        state["stacks"] = {k.strip(): float(v) for k, v in (x.split("=") for x in args.stacks.split(",") if x.strip())}
+    if args.payouts:
+        state["payouts"] = args.payouts
     adv = advisor(args.speed, args.depth, args.budget, args.prior_budget)
     res = adv.advise(state)
     if args.json:

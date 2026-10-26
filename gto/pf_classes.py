@@ -63,7 +63,7 @@ def _eq_compat() -> np.ndarray:
 
 
 def push_fold(jam_range: np.ndarray, call_range: np.ndarray, jam: float, jammer_in: float, caller_in: float,
-              pot: float, n_callers: int = 1, iters: int = 400, rake=None, alt=None) -> np.ndarray:
+              pot: float, n_callers: int = 1, iters: int = 400, rake=None, alt=None, icm=None) -> np.ndarray:
     """Push/fold equilibrium by fictitious play, in hand classes.
 
     The jammer (range jam_range, combos) has jammer_in in the pot of `pot` and shoves to `jam`; each of
@@ -74,9 +74,18 @@ def push_fold(jam_range: np.ndarray, call_range: np.ndarray, jam: float, jammer_
     takes the pot uncalled ends preflop and isn't ("no flop, no drop"). `alt`: per combo, the EV (over
     folding) of the jammer's best other option, a flat call of the raise it faces: a hand jams only when the
     jam beats it (push/fold against folding alone jammed a big blind's 25bb rejam over a button open with
-    30% of hands, where the solves flat most of them)."""
+    30% of hands, where the solves flat most of them). `icm`: a tournament's values of the outcomes, in chip
+    equivalents (gto/icm.py), each against the player folding: (steal: the jam takes the pot uncalled, [per caller in
+    the order they act: (the jammer's win and loss when they call, their win and loss)], their ranges (combos)), in
+    place of the chips they move and call_range / n_callers: callers differ there (a 5bb big blind calls far wider than
+    a 15bb small blind on a bubble), so each has its own range and payoffs, the first to call taking the pot on."""
     alt_c = np.zeros(len(CLASSES)) if alt is None else np.bincount(CLASS_OF, weights=alt, minlength=len(CLASSES)) / N_IN
-    wj, wc = to_classes(jam_range), to_classes(call_range)
+    wj = to_classes(jam_range)
+    if icm is not None:
+        steal, vals, ranges = icm
+        with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+            return _fictitious_play_seq(wj, [to_classes(r) for r in ranges], alt_c, steal, vals, iters)[CLASS_OF]
+    wc = to_classes(call_range)
     final = 2 * jam + pot - jammer_in - caller_in
     if rake and rake[0] > 0:
         r = rake[0] * final
@@ -84,11 +93,44 @@ def push_fold(jam_range: np.ndarray, call_range: np.ndarray, jam: float, jammer_
     # (each iteration's sums over the other class are matrix-vector products with the card-removal shares: ~5x
     # faster than the (169, 169) products summed, which a many-way jam line called 50 times over)
     # (matmul raises spurious warnings with macOS Accelerate: see class_sums)
+    # chips: the steal is the pot; called, the jammer wins the final pot less what it adds, or loses that
+    vals = (pot, final - (jam - jammer_in), -(jam - jammer_in), final - (jam - caller_in), -(jam - caller_in))
     with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
-        return _fictitious_play(wj, wc, alt_c, jam, jammer_in, caller_in, final, pot, n_callers, iters)[CLASS_OF]
+        return _fictitious_play(wj, wc, alt_c, vals, n_callers, iters)[CLASS_OF]
 
 
-def _fictitious_play(wj, wc, alt_c, jam, jammer_in, caller_in, final, pot, n_callers, iters):
+def _fictitious_play_seq(wj, wcs, alt_c, steal, vals, iters):
+    """_fictitious_play with callers that differ (push_fold's `icm`): caller i, acting in turn, calls by its own
+    payoffs vals[i] = (jammer's win, jammer's loss, its win, its loss) against the pushing range; the jammer's EV is
+    the steal when all fold, else the first caller's showdown."""
+    k = len(wcs)
+    push = np.ones(len(CLASSES))
+    avg_p = np.zeros(len(CLASSES)); avg_c = [np.zeros(len(CLASSES)) for _ in range(k)]
+    eqc = _eq_compat()
+    tots = [np.maximum(PAIR_COMPAT @ wc, 1e-12) for wc in wcs]
+    for t in range(1, iters + 1):
+        x = push * wj
+        e_c = (eqc @ x) / np.maximum(PAIR_COMPAT @ x, 1e-12)
+        for i in range(k):
+            call = (e_c * vals[i][2] + (1 - e_c) * vals[i][3] > 0).astype(float)
+            avg_c[i] += (call - avg_c[i]) / t
+        ev = np.zeros(len(CLASSES))
+        none = np.ones(len(CLASSES))   # per jammer class: the chance nobody before this caller called
+        for i in range(k):
+            y = avg_c[i] * wcs[i]
+            q = PAIR_COMPAT @ y
+            pc = q / tots[i]
+            e_j = (eqc @ y) / np.maximum(q, 1e-12)
+            ev += none * pc * (e_j * vals[i][0] + (1 - e_j) * vals[i][1])
+            none = none * (1 - pc)
+        ev += none * steal
+        push = (ev > alt_c).astype(float)
+        avg_p += (push - avg_p) / t
+    return avg_p
+
+
+def _fictitious_play(wj, wc, alt_c, vals, n_callers, iters):
+    steal, j_win, j_lose, c_win, c_lose = vals
     push = np.ones(len(CLASSES))
     avg_p = np.zeros(len(CLASSES)); avg_c = np.zeros(len(CLASSES))
     eqc = _eq_compat()
@@ -97,7 +139,7 @@ def _fictitious_play(wj, wc, alt_c, jam, jammer_in, caller_in, final, pot, n_cal
         # callers: call when equity against the pushing range pays for the call
         x = push * wj
         e_c = (eqc @ x) / np.maximum(PAIR_COMPAT @ x, 1e-12)
-        call = (e_c * final - (jam - caller_in) > 0).astype(float)
+        call = (e_c * c_win + (1 - e_c) * c_lose > 0).astype(float)
         avg_c += (call - avg_c) / t
         # jammer: push when it beats folding (0) given the callers' average strategy
         y = avg_c * wc
@@ -105,7 +147,7 @@ def _fictitious_play(wj, wc, alt_c, jam, jammer_in, caller_in, final, pot, n_cal
         p_call1 = q / tot
         p_nocall = (1 - p_call1) ** n_callers
         e_j = (eqc @ y) / np.maximum(q, 1e-12)
-        ev = p_nocall * pot + (1 - p_nocall) * (e_j * final - (jam - jammer_in))
+        ev = p_nocall * steal + (1 - p_nocall) * (e_j * j_win + (1 - e_j) * j_lose)
         push = (ev > alt_c).astype(float)
         avg_p += (push - avg_p) / t
     return avg_p

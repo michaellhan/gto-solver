@@ -89,6 +89,11 @@ SMALL_VALUE_MAX = 0.55  # ...but at most this share of the bettor's range: behin
 NUT_TOP = 0.1       # multiway: the nuts, for the big bet: this top share of the players' ranges pooled
 ADV0, ADV_SPAN = 0.4, 0.2  # ...the big bet starts at this share of the nuts and takes all the value over this much more
 RAISE_SHARE = 0.2   # multiway: facing a bet, this share of what continues (the strongest) raises
+CHECKED_RAISE_SHARE = 0.05  # ...and of a player who checked to our bet (a capped range: the check kept few raises), at the
+                   # rules' root in 4+ way pots (3-way ones keep RAISE_SHARE). Scored against 4-way turn solves
+                   # (scripts/score_multiway4.py: six boards, 40 hands a line; only the advised player may raise there):
+                   # checked to last, the rules bet 36% of hands for the solve's 53% and gave up 0.77% of the pot to its
+                   # mix; at 0.05 they bet 53%, giving up 0.35% (0.1: 48%, 0.65%), the other lines unchanged
 CHECK_SOFT = 0.7   # multiway narrowing: a flop check keeps this much of the hands the rules have betting (NARROW_SOFT
                    # elsewhere; capped by OFF_RULE_MAX as it is). 3-way solves from the SB's action (UTG opens, both blinds
                    # call; ten flops) check through with 73-91% of the BB's range where the rules kept 68-80%: the rules'
@@ -102,6 +107,13 @@ SLOWPLAY = 0.5      # multiway narrowing: weight a call keeps on the hands RAISE
 SLOWPLAY_AGAIN = 0.85  # ...and on a later street's call, for a hand that already slowplayed one (judgment)
 LEAD_EQ = 0.5       # multiway, later streets: we lead when our equity beats this vs every calling range
 RAISE_EQ = 0.55     # multiway, later streets: we raise their bet when our equity beats this vs what continues
+ROOT_RAISE_EQ = 0.65  # multiway, 4+ players facing a bet and a call: the trials' raise is picked only when our equity
+                   # beats this against what each player continues with. Their later streets pay a raise off too often
+                   # (opponents call our river value bets by a balanced defence): against the 4-way references (see
+                   # CHECKED_RAISE_SHARE) the rules raised AT-AQ on AcKd5c5s for +3.9bb over calling where the solve
+                   # (which lets nobody re-raise, so if anything overvalues raising) calls for +2.8bb. Facing a bet and
+                   # a call 0.65 gives up 1.49% of the pot to the solve's mix where none gave up 1.89% (0.55: 2.08,
+                   # 0.6: 1.65, 0.7: 1.49); facing a lone bet any bar did worse (0.57 -> 0.64-0.70), so it isn't used there
 RARE_LINE = 0.10    # heads-up: widen the villain's range when the solve takes their line less often than this
 UNSETTLED = 3.0     # heads-up: a solve this far from equilibrium (% pot) hasn't settled (the page's "converged" cutoff)
 # Heads-up, earlier streets: narrowing follows a solve fully this close (% pot) to equilibrium, not at all this far,
@@ -129,6 +141,7 @@ JAM_SPR = 1.5      # ...as does one leaving less than this many pots behind once
 CHECK_REALIZE = 0.8  # preflop, short stacks: the share of its equity the big blind's free check over limpers realizes
 JAM_SPR_DEEP = 1.25 # ...this many at the charts' own depth (within DEPTH_TOL of CHART_STACK), where a 4bet to 2.3x
                     # leaves ~1.45 pots behind and is called, as in 100bb solves
+ICM_COMMIT = 1.0   # tournament: a call's risk premium is the all-in's times min(1, this / (1 + SPR after it))
 PUSH_FOLD_STACK = 12.0  # preflop: at or below this many bb, raising first in is all-in (push/fold)
 CHART_STACK = 100.0  # the depth the preflop charts are written for
 IMPLIED = {"pair": 0.06, "suited": 0.03}  # preflop calls: share of the stack behind (beyond the chart's) small pairs / suited hands expect to win later
@@ -223,6 +236,64 @@ def _state_stacks(stack_raw, raw, positions, bb: float) -> Tuple[float, Optional
     if all(abs(v - stack) < 1e-9 for v in stacks.values()):
         return stack, None
     return stack, stacks
+
+
+def _num_list(raw, what: str) -> List[float]:
+    """A list of numbers from a list or a comma-separated string. Raises ValueError for the user."""
+    if isinstance(raw, (int, float)):
+        raw = [raw]
+    if isinstance(raw, str):
+        raw = [x for x in raw.replace(";", ",").replace(" ", ",").split(",") if x.strip()]
+    try:
+        out = [float(x) for x in raw]
+    except (TypeError, ValueError):
+        raise ValueError(f"{what} must be numbers like 50, 30, 20")
+    if any(not np.isfinite(x) or x < 0 for x in out):
+        raise ValueError(f"{what} must be numbers of 0 or more")
+    return out
+
+
+def _tournament(state: dict, positions, stack: float, stacks, bb: float):
+    """The tournament's prize model (gto/icm.py) from the state's "payouts" (the prizes still to be paid, first place
+    first, in any unit) and optional "field": the other tables' stacks in chips, as a list or {"players": n, "chips":
+    total} (an even split). None when there are no payouts, or one (winner-take-all: chips are prizes). Stacks in bb."""
+    if not state.get("payouts"):
+        return None
+    pay = [x for x in _num_list(state["payouts"], "payouts") if x > 0]
+    field = state.get("field") or []
+    if isinstance(field, dict):
+        try:
+            n_f, chips = int(field.get("players") or 0), float(field.get("chips") or 0.0)
+        except (TypeError, ValueError):
+            raise ValueError('field must be the other tables\' stacks, or {"players": n, "chips": total}')
+        if n_f < 0 or chips < 0 or (n_f and chips <= 0):
+            raise ValueError("field: the players at other tables need chips")
+        others = [chips / n_f / bb] * n_f if n_f else []
+    else:
+        others = [x / bb for x in _num_list(field, "field") if x > 0]
+    if len(pay) <= 1:
+        return None
+    from . import icm
+    seats = {p: float(stacks.get(p, stack)) if stacks else float(stack) for p in positions}
+    if len(pay) > len(seats) + len(others):
+        pay = pay[:len(seats) + len(others)]
+    return icm.Model(seats, pay, others)
+
+
+def _tournament_info(model, hero: str, positions, street) -> dict:
+    """What the answer says about the tournament: hero's prize equity (share of the prizes left) and the bubble
+    factor against each opponent (what a chip lost costs over what one won gains, all in against them)."""
+    eq = model.base[hero] / model.real_pool
+    bf = {}
+    for p in positions:
+        if p != hero:
+            b = model.bubble_factor(hero, p)
+            bf[p] = round(b, 2) if np.isfinite(b) else None
+    top = max((v for v in bf.values() if v), default=1.0)
+    approx = f" ({model.players} players modelled by {len(model.seats) + len(model.field)})" if model.approx else ""
+    note = (f"tournament: ICM{approx}, your prize equity {eq:.1%} of what's left to pay; bubble factor up to {top:.2f} "
+            f"(a chip lost costs {top:.2f}x what one won gains)")
+    return {"equity_share": round(eq, 4), "bubble_factors": bf, "note": note}
 
 
 def _norm_actions(acts: List[dict], bb: float) -> List[dict]:
@@ -997,8 +1068,9 @@ _PF_CACHE: Dict[tuple, object] = {}
 
 def _pf_key(kind, p, actions, positions, stack) -> tuple:
     acts = tuple((a["pos"], a["action"], a.get("to"), a.get("amount")) for a in actions)
+    icm = getattr(positions, "icm", None)
     return (kind, p, acts, tuple(positions), getattr(positions, "ante", 0.0), getattr(positions, "straddle", False), stack,
-            getattr(positions, "rake", None), pf.stacks_key(positions))
+            getattr(positions, "rake", None), pf.stacks_key(positions), icm.key if icm is not None else None)
 
 
 def _rake(positions, pot: float) -> float:
@@ -1192,10 +1264,11 @@ def preflop_strategy(p: str, before: List[dict], positions, stack: float) -> Dic
 
     def work():
         full = pf.strategy_for(p, before, positions)
-        if "call" in full:
+        if "call" in full or getattr(positions, "icm", None) is not None:
             st = replay_hand(positions, stack, {"preflop": before}, 1)[0]
             if not st.closed and st.to_act == p:
-                full = Advisor._priced(p, before, positions, stack, st, full, [])
+                full = Advisor._priced(p, before, positions, stack, st, full, []) if "call" in full else \
+                    Advisor._icm_open(p, before, positions, stack, st, full, [])
         return full
     return _pf_cached(_pf_key("s", p, before, positions, stack), work)
 
@@ -1259,6 +1332,7 @@ def preflop_ranges(actions: List[dict], positions, stack: float, pool_except: Op
                 pot = st.pot_start + sum(st.bets.values())
                 win = pot - max(0.0, st.bets[jam["pos"]] - (st.bets[pos] + to_call))
                 need = to_call / max(win + to_call - _rake(positions, win + to_call), 1e-9)
+                need = _icm_need(positions, st, pos, jam["pos"], to_call, need)
                 call = np.nan_to_num(np.clip(0.5 + (eq - need) / JAM_BLEND, 0.0, 1.0), nan=0.0)
                 r, mostly_filler = pf.thin_line(ranges[pos] * call, call, ranges[pos])
                 if mostly_filler:
@@ -1304,6 +1378,56 @@ def _flat_ev(full: Dict[str, np.ndarray], w: np.ndarray, raiser: np.ndarray, pot
     return np.where(cont > 1e-9, np.maximum(ev, 0.0), 0.0)
 
 
+def _put(st: "StreetState") -> Dict[str, float]:
+    """Every seat's chips in the pot now (antes and blinds included)."""
+    return {p: st.inv_start[p] + st.bets[p] for p in st.inv_start}
+
+
+def _icm_push_vals(model, st: "StreetState", jammer: str, jam: float, callers: List[str], taker: Optional[str],
+                   ranges: Dict[str, np.ndarray]):
+    """A tournament's push/fold payoffs (pf_classes.push_fold's `icm`) for jammer's all-in to `jam` (a street total):
+    each outcome's prize equity in chip equivalents against folding, for each player who might call (in the order they
+    act, each up to their stack, from their range). Folding leaves the pot to `taker` (the last raiser, or the big
+    blind)."""
+    put = _put(st)
+    F = model.value(put, {taker or callers[0]: sum(put.values())})
+    pj = dict(put)
+    pj[jammer] = st.inv_start[jammer] + jam
+    S = model.value(pj, {jammer: sum(pj.values())})
+    vals = []
+    for c in callers:
+        pc = dict(pj)
+        pc[c] = min(model.stacks[c], st.inv_start[c] + max(jam, st.bets[c]))
+        wj, wc = model.showdown(pc, jammer, c)
+        vals.append((wj[jammer] - F[jammer], wc[jammer] - F[jammer], wc[c] - S[c], wj[c] - S[c]))
+    return S[jammer] - F[jammer], vals, [ranges.get(c, np.ones(N_COMBOS)) for c in callers]
+
+
+def _icm_need(positions, st: "StreetState", hero: str, jammer: str, to_call: float, need: float) -> float:
+    """The equity hero's call of an all-in needs: in a tournament, the prize equity's (folding leaves the pot to the
+    jammer; anyone else in is dead money), else `need` (the chips')."""
+    model = getattr(positions, "icm", None)
+    if model is None:
+        return need
+    return model.call_need(_put(st), hero, jammer, to_call)[0]
+
+
+def _icm_premium(positions, st: "StreetState", hero: str, villains: List[str], call: float, pot: float,
+                 behind: float) -> Tuple[float, float]:
+    """(premium, all-in premium): the risk premium (gto/icm.py Model.premium: the extra equity ICM asks of getting
+    the stacks in, averaged over `villains`) scaled by how much of the stack a pot this deep tends to take,
+    min(1, ICM_COMMIT / (1 + SPR)) after putting in `call` (all of it once the stacks are in; 0.2 at 4 pots behind,
+    0.05 at 20). (0, 0) without a tournament."""
+    model = getattr(positions, "icm", None)
+    vs = [v for v in villains if v != hero]
+    if model is None or not vs:
+        return 0.0, 0.0
+    put = _put(st)
+    full = float(np.mean([model.premium(put, hero, v) for v in vs]))
+    spr = max(behind, 0.0) / max(pot + call, 1e-9)
+    return full * min(1.0, ICM_COMMIT / (1.0 + spr)), full
+
+
 def _jam_range(actions: List[dict], ji: int, positions, stack: float, pool_except: Optional[str] = None, locks=None):
     """(the range of the player whose all-in is actions[ji], notes). An open- or 3bet-jam: push/fold
     equilibrium against the players left to act (the opener, if any, is the one who calls); later, the
@@ -1329,8 +1453,12 @@ def _jam_range(actions: List[dict], ji: int, positions, stack: float, pool_excep
                 alt = _flat_ev(full_j, rng, call_rng, pot_before, to_call,
                                _eff_stack(positions, jammer, before, stack) - prev.inv_start[jammer]
                                - prev.bets[jammer] - to_call)
+        model = getattr(positions, "icm", None)
+        vals = _icm_push_vals(model, prev, jammer, jam, [caller] if caller else opp,
+                              caller or ("BB" if "BB" in opp else opp[-1] if opp else None), arr) \
+            if model is not None and opp else None
         push = push_fold(rng, call_rng, jam, prev.bets[jammer], caller_in, pot_before, len(opp),
-                         rake=getattr(positions, "rake", None), alt=alt)
+                         rake=getattr(positions, "rake", None), alt=alt, icm=vals)
         share = float((rng * push).sum() / max(rng.sum(), 1e-12))
         rng = rng * push
         notes.append(f"{jammer}'s {jam:g}bb jam range: push/fold equilibrium against {len(opp)} "
@@ -1631,6 +1759,8 @@ class Advisor:
         self._req_sizes: Dict[str, List[float]] = {}   # the request's custom sizes (state "sizes"), as fractions
 
     # ------------------------------------------------------------ public
+    _icm = None   # the tournament's prize model while a request is answered (_advise), else None
+
     def advise(self, state: dict) -> dict:
         with np.errstate(all="ignore"):
             return self._advise(state)
@@ -1673,12 +1803,26 @@ class Advisor:
         except ValueError as e:
             return {"error": str(e)}
         streets = {s: _norm_actions(state.get(s), bb) for s in STREETS}
-        if stacks:
+        try:
+            model = _tournament(state, positions, stack, stacks, bb)
+        except ValueError as e:
+            return {"error": str(e)}
+        self._icm = model
+        if model is not None and positions.rake:
+            positions = pf.Table(list(positions), positions.ante, positions.straddle, None)
+        if stacks or model is not None:
             # each seat's own stack; the depth hero plays at is the effective stack against the deepest
             # opponent still in (preflop: who hasn't folded)
-            positions = pf.Table(list(positions), positions.ante, positions.straddle, positions.rake, stack, stacks)
+            positions = pf.Table(list(positions), positions.ante, positions.straddle, positions.rake, stack, stacks, model)
             stack = _eff_stack(positions, hero, streets["preflop"], stack)
         positions = pf.at_depth(positions, stack)
+        res = self._advise_at(state, actor, t0, hero, hole, board, positions, stack, streets, sizes, custom, locks)
+        if model is not None and "actions" in res:
+            res["tournament"] = _tournament_info(model, hero, positions, res.get("street"))
+            res.setdefault("notes", []).insert(0, res["tournament"]["note"])   # (a practice move's answer has none)
+        return res
+
+    def _advise_at(self, state, actor, t0, hero, hole, board, positions, stack, streets, sizes, custom, locks):
         if not board:
             return self._preflop(hero, hole, streets["preflop"], positions, stack, t0,
                                  pool=state.get("opponents") == "pool", locks=locks)
@@ -1769,6 +1913,8 @@ class Advisor:
         notes = ["preflop: chart approximation"]
         if "call" in full:
             full = self._priced(hero, preflop, positions, stack, st, full, notes, pool)
+        elif getattr(positions, "icm", None) is not None:
+            full = self._icm_open(hero, preflop, positions, stack, st, full, notes)
         elif pool and not locks:
             notes.append("exploit mode: opens follow the chart (the pool 3bets more and flats more, and "
                          "folds less to 3bets, so there's no clear edge in opening wider or tighter)")
@@ -1865,8 +2011,12 @@ class Advisor:
             eq = _preflop_equity_multi([arr.get(p, np.ones(N_COMBOS)) for p in limpers]) if limpers else None
             if eq is not None:
                 alt = CHECK_REALIZE * np.nan_to_num(eq, nan=0.0) * pot
+        model = getattr(positions, "icm", None)
+        vals = _icm_push_vals(model, st, hero, jam, [last] if last else opp,
+                              last or ("BB" if "BB" in opp else opp[-1] if opp else None), arr) \
+            if model is not None and opp else None
         push = push_fold(arr.get(hero, np.ones(N_COMBOS)), call_rng, jam, st.bets[hero], caller_in, pot,
-                         max(1, len(opp)), rake=getattr(positions, "rake", None), alt=alt)
+                         max(1, len(opp)), rake=getattr(positions, "rake", None), alt=alt, icm=vals)
         out = dict(full)
         out["raise"] = push
         if "call" in full:   # what the chart continued with and doesn't shove calls
@@ -1877,7 +2027,8 @@ class Advisor:
             out["fold"] = 1.0 - push - out.get("call", 0.0)
             out = pf.monotone(out)
         notes.append(f"a raise here commits too much of a {jam + st.inv_start[hero]:g}bb stack: all-in, "
-                     f"range from the push/fold equilibrium against {len(opp)} player{'s' * (len(opp) > 1)}")
+                     f"range from the push/fold equilibrium against {len(opp)} player{'s' * (len(opp) > 1)}"
+                     + (" in prize equity (ICM: both the jams and the calls)" if model is not None else ""))
         return out
 
     @staticmethod
@@ -1957,6 +2108,11 @@ class Advisor:
                     and pf._norm(pf.chart_key(raisers[1], positions)) in ("SB", "BB")))
         opp, need, call, pot, behind = priced(st, stack, positions if rk_on else None, not unraked)
         raked = rk_on and need > call / max(pot + call, 1e-9) + 1e-12
+        # a tournament: the call's price plus the risk premium against the raiser (the players in, limped), and the
+        # raises re-drawn with it below
+        icm_on = getattr(positions, "icm", None) is not None
+        prem = _icm_premium(positions, st, hero, raisers[-1:] or opp, call, pot, behind)[0] if icm_on else 0.0
+        need += prem
         opp_std, need_std, _, _, behind_std = priced(std, cs)
         # implied odds: pairs and suited hands win more when they hit, by the stack behind. Deeper or
         # shallower than the charts moves their price by how their odds with those winnings change at
@@ -1971,7 +2127,7 @@ class Advisor:
         more = sorted(opp) != sorted(opp_std)
         reprice = (abs(need - need_std) >= PRICE_TOL or abs(depth) >= DEPTH_TOL or pool or raked
                    or (more and st.n_raises >= 1 and bool(opp_std)))
-        if not (more or reprice):
+        if not (more or reprice or icm_on):
             return full
         raise_c = full.get("raise", np.zeros(N_COMBOS))
         call_c = full["call"]
@@ -1996,7 +2152,7 @@ class Advisor:
         value_n = bluff_n = raise_c
         value_c = raise_c
         r = float((w * raise_c).sum() / tot)
-        if (more or pool) and r > 0.005:
+        if (more or pool or icm_on) and r > 0.005:
             f, eq_c = facing_raise(preflop, opp, arr, positions, pool)
             f_std, eq_c_std = facing_raise(std_line, opp_std, arr_std, table)
             v_bar = quantile(eq_c_std, w, r)
@@ -2008,7 +2164,13 @@ class Advisor:
                 to = min(_default_size(s, hero, True), stk - s.inv_start[hero])
                 add = to - s.bets[hero]
                 return add / max(s.pot_start + sum(s.bets.values()) + add + to - s.cur_bet, 1e-9)
-            keep = np.clip(0.5 + (eq_c - breakeven(st, stack) - v_bar + breakeven(std, cs)) / RAISE_BLEND,
+            # (a tournament: the raise's risk premium against the players left, at the SPR of a called raise, on top)
+            pr = 0.0
+            if icm_on:
+                to_r = min(_default_size(st, hero, True), stack - st.inv_start[hero])
+                pr = _icm_premium(positions, st, hero, opp, 2 * to_r - st.bets[hero] - st.cur_bet, pot,
+                                  stack - st.inv_start[hero] - to_r)[0]
+            keep = np.clip(0.5 + (eq_c - breakeven(st, stack) - pr - v_bar + breakeven(std, cs)) / RAISE_BLEND,
                            0.0, 1.0)
             keep[np.isnan(keep)] = 0.0
             # only ever tighter than the chart: the charts' continuing ranges don't see the bigger
@@ -2026,18 +2188,20 @@ class Advisor:
                 add = to - s.bets[hero]
                 return add / max(s.pot_start + sum(s.bets.values()) + add, 1e-9)
             # (a seat with no chips behind risks nothing: no bar, the chart's bluffs as they are)
-            fn_now, fn_std = fold_need(st, stack), fold_need(std, cs)
+            fn_now, fn_std = fold_need(st, stack) + pr, fold_need(std, cs)
             scale = min(1.5 if pool else 1.0, (f / fn_now) / max(f_std / fn_std, 1e-9)) \
                 if fn_now > 1e-9 and fn_std > 1e-9 else 1.0
             bluff_n = bluff_c * scale
             out["raise"] = np.minimum(1.0, value_n + bluff_n)
-            msg.append(f"raises re-drawn for {'the player pool' if pool and not more else f'{len(opp)} players in'}: value raises keep the equity over break-even "
-                       f"against what continues that the chart's weakest value raise has heads-up ({v_bar:.0%}); bluffs x{scale:.2f} "
-                       f"(everyone folds {f:.0%} vs {f_std:.0%}, needing {fold_need(st, stack):.0%} vs "
-                       f"{fold_need(std, cs):.0%})")
+            who = 'the player pool' if pool and not more else (f'{len(opp)} players in' if more else 'the tournament')
+            msg.append(f"raises re-drawn for {who}: value raises keep the equity over break-even "
+                       f"against what continues that the chart's weakest value raise has heads-up ({v_bar:.0%})"
+                       + (f", plus a {pr:.1%} risk premium (ICM)" if pr > 0.0005 else "") + f"; bluffs x{scale:.2f} "
+                       f"(everyone folds {f:.0%} vs {f_std:.0%}, needing {fn_now:.0%} vs "
+                       f"{fn_std:.0%})")
         raise_n = out.get("raise", raise_c)
         # continuing before the price: the chart's calls and value raises, kept bluffs, new value raises
-        base = np.minimum(1.0, np.maximum(call_c + value_c + (raise_n - value_n if more or pool else raise_c - value_c), raise_n))
+        base = np.minimum(1.0, np.maximum(call_c + value_c + (raise_n - value_n if more or pool or icm_on else raise_c - value_c), raise_n))
         new = base
         if reprice:
             q = float((w * (call_c + raise_c)).sum() / tot)
@@ -2074,6 +2238,8 @@ class Advisor:
                 deep =(f", {abs(depth):g}bb {'deeper' if depth > 0 else 'shallower'} than the charts "
                         f"(implied odds for pairs and suited hands)" if abs(depth) >= DEPTH_TOL else "")
                 rk = " after rake" if raked else ""
+                if prem > 0.0005:
+                    rk += f" with a {prem:.1%} risk premium (ICM)"
                 msg.insert(0, f"price {need:.0%} of the pot{rk} against {', '.join(opp)} (the chart assumes "
                               f"{need_std:.0%} against {', '.join(opp_std)}{deep}): calls re-drawn by equity "
                               f"against the pot odds" + (", against the player pool's ranges" if pool else ""))
@@ -2083,6 +2249,52 @@ class Advisor:
         out["fold"] = 1.0 - new
         notes.extend(msg)
         return pf.monotone(out)
+
+    @staticmethod
+    def _icm_open(hero, preflop, positions, stack, st, full, notes):
+        """A tournament, raising first in (or over limpers): the chart's raises less the weakest of them, by equity
+        against what the players left continue with, as the risk premium raises the steal's price. In chips the raise
+        needs everyone to fold add / (pot + add) of the time; in prize equity that plus the premium against them
+        (averaged, at the SPR of a called raise), so the share raised scales by the chips' price over the prizes'
+        (a 2.5bb open into 2.5bb needing 50% folds, with a 10% premium: 5/6 of the chart's opens)."""
+        if "raise" not in full:
+            return full
+        opp = [p for p in st.order if p in st.active and p != hero and p not in st.allin]
+        if not opp:
+            return full
+        to = min(_default_size(st, hero, True), stack - st.inv_start[hero])
+        add = to - st.bets[hero]
+        pot = st.pot_start + sum(st.bets.values())
+        prem = _icm_premium(positions, st, hero, opp, add + max(to - st.cur_bet, 0.0), pot,
+                            stack - st.inv_start[hero] - to)[0]
+        fn = add / max(pot + add, 1e-9)
+        if prem < 0.0005 or fn <= 0:
+            return full
+        r = full["raise"]
+        share = float(r.mean())
+        target = share * fn / (fn + prem)
+        # by equity against what continues behind (each player's chart facing the raise)
+        arr = preflop_ranges(preflop, positions, stack)
+        line = preflop + [{"pos": hero, "action": "raise"}]
+        cont = np.zeros(N_COMBOS)
+        for p in opp:
+            s_p = pf.strategy_for(p, line, positions)
+            c = arr.get(p, np.ones(N_COMBOS)) * (1.0 - s_p.get("fold", 0.0))
+            cont += c / max(c.sum(), 1e-12)
+        eq = np.nan_to_num(_preflop_equity(cont), nan=0.0)
+        order = np.argsort(-eq)
+        cum = np.cumsum(r[order])
+        keep_o = np.clip((target * N_COMBOS - (cum - r[order])) / np.maximum(r[order], 1e-12), 0.0, 1.0)
+        keep = np.zeros(N_COMBOS)
+        keep[order] = keep_o
+        new_r = r * keep
+        out = dict(full)
+        out["raise"] = new_r
+        rest = "check" if "check" in full else "fold"
+        out[rest] = full.get(rest, 0.0) + (r - new_r)
+        notes.append(f"tournament: raises {target:.0%} of hands instead of the chart's {share:.0%}, the weakest against "
+                     f"what continues dropped (a {prem:.1%} risk premium on a steal needing {fn:.0%} folds in chips)")
+        return out
 
     @staticmethod
     def _locked(hero, preflop, positions, stack, st, full, notes, pool=False, locks=()):
@@ -2254,6 +2466,11 @@ class Advisor:
         win = pot - max(0.0, st.bets[jammer] - (st.bets[hero] + to_call))
         # a called all-in sees the flop, so the pot is raked
         need = to_call / (win + to_call - _rake(positions, win + to_call))
+        if getattr(positions, "icm", None) is not None:
+            chips = need
+            need = _icm_need(positions, st, hero, jammer, to_call, need)
+            notes.append(f"tournament: calling needs {need:.1%} equity in prize equity against {chips:.1%} in chips "
+                         f"(a risk premium of {need - chips:+.1%})")
         # everyone who already called the jam is in the pot too: equity against all of them
         after = preflop_ranges(preflop, positions, stack, pool_except, locks)
         callers = [a["pos"] for a in preflop[ji + 1:] if a["action"] in ("call", "all-in") and a["pos"] in st.active]
@@ -2316,7 +2533,8 @@ class Advisor:
             notes.append(f"{'your' if p == hero else p + chr(39) + 's'} preflop line isn't in the chart, so "
                          f"{'your' if p == hero else 'their'} range is the hands that take its last action")
         # a 3-way flop's first decision the 3-way library holds: its precomputed solve answers (no narrowing needed)
-        if len(cur.players_start) == 3 and actor is None and not pool and not optimize and not self._jam:
+        if len(cur.players_start) == 3 and actor is None and not pool and not optimize and not self._jam \
+                and getattr(self, "_icm", None) is None:
             res = self._mw_from_library(hero, hole, board, ranges, cur, stk, streets, t0, notes, locks)
             if res is not None:
                 return res
@@ -2364,6 +2582,9 @@ class Advisor:
             if pool:
                 notes.append("exploit mode applies heads-up after the flop: this multiway pot is played at equilibrium "
                              "(the pool's leaks only shape the ranges preflop)")
+            if getattr(self, "_icm", None) is not None:
+                notes.append("tournament: this multiway pot is played in chips (ICM applies preflop and to heads-up "
+                             "pots after the flop)")
             res = self._multiway_solve(hero, hole, board, ranges, remaining, cur, stk, t0, notes,
                                        line=_mw_line(board, hero, hole, stk, streets, cur.name, len(streets.get(cur.name) or [])))
             if res is not None:
@@ -2375,8 +2596,9 @@ class Advisor:
         hero_p = 0 if hero == oop else 1
         r0, r1 = ranges[oop].copy(), ranges[ip].copy()
         full = (ranges[oop], ranges[ip])   # the ranges entering the flop: they pick a precomputed spot (flop_library)
+        # (the library's solves are in chips: a tournament solves live)
         lib = self.library if self.library is not None and not pool and not optimize and not (locks or {}).get(villain) \
-            and not getattr(self, "_jam", False) else None
+            and not getattr(self, "_jam", False) and getattr(self, "_icm", None) is None else None
         lib_sol = None
         for c in hole:  # villain can't hold hero's cards
             if hero_p == 0:
@@ -2490,9 +2712,10 @@ class Advisor:
                 # Their line was rare in the solve, so everything below it barely converged: answered from
                 # there, a min-reraise on KQT9 read by the rules had AQ jamming for +31.8 bb. Solve again
                 # from here, against the range they showed.
+                bets_now = (min(cur.bets[oop], eff), min(cur.bets[ip], eff))
                 sol = self._solve_cached(board, expand(sol.ctx, n_r0), expand(sol.ctx, n_r1), cur.pot_start, eff,
-                                         self.time_budget, bets=(min(cur.bets[oop], eff), min(cur.bets[ip], eff)), to_act=hero_p,
-                                         n_raises=cur.n_raises, settle=True)
+                                         self.time_budget, bets=bets_now, to_act=hero_p,
+                                         n_raises=cur.n_raises, settle=True, cfg=self._icm_cfg(self.cfg, cur, oop, ip, bets_now))
                 node, n_r0, n_r1 = sol.root, sol.r0.copy(), sol.r1.copy()
                 notes.append(f"{cur.name}: {', '.join(rare_lines)}'s line is rare in the solve, so solved again from here"
                              + (" against their rule-based range" if widened else ""))
@@ -2502,9 +2725,10 @@ class Advisor:
             # pot became heads-up during this street: solve from the current node
             eff = min(stk[oop] - cur.inv_start[oop], stk[ip] - cur.inv_start[ip])
             r0, r1 = self._with_hero(r0, r1, hero_p, hole, notes)
+            bets_now = (min(cur.bets[oop], eff), min(cur.bets[ip], eff))
             sol = self._solve_cached(board, r0, r1, cur.pot_start, eff, self.time_budget,
-                                     bets=(min(cur.bets[oop], eff), min(cur.bets[ip], eff)), to_act=hero_p, n_raises=cur.n_raises,
-                                     settle=True)
+                                     bets=bets_now, to_act=hero_p, n_raises=cur.n_raises,
+                                     settle=True, cfg=self._icm_cfg(self.cfg, cur, oop, ip, bets_now))
             node, n_r0, n_r1 = sol.root, sol.r0.copy(), sol.r1.copy()
             notes.append(f"{cur.name}: pot became heads-up this street; solved from here")
         if not isinstance(node, Decision):
@@ -2586,7 +2810,7 @@ class Advisor:
             from . import breakdown as BD
             ev_full = np.zeros(N_COMBOS); ev_full[sol.ctx.active] = (strat * evs).sum(axis=0)
             opt = {**opt, "breakdown": BD.breakdown(board, node.names, hero, hero_r, sf, ev_full, {villain: vill_r},
-                                                    node.pot_now, villain_ev=not self.cfg.rake_rate, hole=hole)}
+                                                    node.pot_now, villain_ev=not self.cfg.rake_rate and self._icm is None, hole=hole)}
         return {
             "street": cur.name, "hero": hero, "villain": villain, "position": "OOP" if hero_p == 0 else "IP",
             "players": len(positions), "hand": hand_class(hole), "board": cards_str(board),
@@ -3313,7 +3537,8 @@ class Advisor:
                 hero_to = min(rto, cur.bets[hero] + hero_rem)
                 extra = hero_to - agg_to
                 if extra > 1e-9:
-                    m = aggro(opp_ranges[i], k_agg[i] * RAISE_SHARE, rto - agg_to, pot + hero_add + opp_add[i], rank0, bluff0)
+                    rs_i = CHECKED_RAISE_SHARE if n_opp >= 3 and cur.cur_bet <= 1e-9 and opps[i] in cur.acted else RAISE_SHARE
+                    m = aggro(opp_ranges[i], k_agg[i] * rs_i, rto - agg_to, pot + hero_add + opp_add[i], rank0, bluff0)
                     p_r = pot + hero_add + rto - cur.bets[opps[i]]
                     rr[i] = (m, opp_ranges[i] * m, hero_to, extra, p_r,
                              calls(opp_ranges[i] * m, mt0, extra, p_r))
@@ -3664,7 +3889,17 @@ class Advisor:
             acts.append({"action": name, "freq": 0.0, "ev_bb": round(ev[name], 2), "amount_bb": round(a["to"], 2)})
             notes.append(f"vs {name}: " + ", ".join(f"{opps[i]} continues with {a['k'][i]*100:.0f}%"
                                                     for i in range(n_opp)) + " of their range")
-        pick = max(range(len(acts)), key=lambda i: acts[i]["ev_bb"])
+        thin = set()
+        callers_in = sum(1 for i in range(n_opp) if cur.bets[opps[i]] >= cur.cur_bet - 1e-9) - 1   # (the bettor aside)
+        if to_call > 1e-9 and n_opp >= 3 and callers_in >= 1:
+            for name, a in aggs.items():
+                eqs = [equity(a["cont_r"][i], mt0) for i in range(n_opp) if a["opp_add"][i] > 1e-9 and a["cont_r"][i].sum() > 0]
+                if eqs and min(eqs) <= ROOT_RAISE_EQ:
+                    thin.add(name)
+        pick = max((i for i in range(len(acts)) if acts[i]["action"] not in thin), key=lambda i: acts[i]["ev_bb"])
+        if any(acts[i]["ev_bb"] > acts[pick]["ev_bb"] for i in range(len(acts))):
+            notes.append(f"not raising: the raise isn't for value ({ROOT_RAISE_EQ * 100:.0f}%+ equity against what each "
+                         f"player continues with), and the trials' later streets pay a thin raise off too often")
         acts[pick]["freq"] = 1.0
         notes.append(f"{trials} trials; the best action leads the next by {d:.2f} ± {se:.2f} bb")
         out = {"street": cur.name, "hero": hero, "hand": hand_class(hole), "board": cards_str(board),
@@ -4151,6 +4386,22 @@ class Advisor:
                 n_aggr += 1
         # past the cap the tree offers only all-in, so a 3bet that isn't one would be read as a jam
         cfg.max_raises = max(cfg.max_raises, n_aggr)
+        return self._icm_cfg(cfg, st, oop, ip)
+
+    def _icm_cfg(self, cfg: Config, st: StreetState, oop: str, ip: str, bets=(0.0, 0.0)) -> Config:
+        """cfg with a tournament's payoffs (Config.icm: gto/icm.py HUPayoffs) for a heads-up solve of oop and ip from
+        street st's start (bets: theirs at the solve's root, when it starts mid-street; everyone's bets this street
+        are then in the pot), or cfg itself without a tournament."""
+        model = getattr(self, "_icm", None)
+        if model is None:
+            return cfg
+        from .icm import HUPayoffs
+        mid = any(b > 1e-9 for b in bets)
+        contrib = {p: st.inv_start[p] + (st.bets[p] if mid else 0.0) for p in st.inv_start}
+        inv0 = (st.pot_start / 2 + bets[0], st.pot_start / 2 + bets[1])
+        cfg = cfg.copy()
+        cfg.icm = HUPayoffs(model, (oop, ip), contrib, inv0)
+        cfg.rake_rate = 0.0
         return cfg
 
     def _walk(self, sol: Solution, acts: List[dict], oop, ip, pot, stack, notes, street, smoothing=0.0, only=None,

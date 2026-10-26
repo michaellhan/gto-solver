@@ -663,6 +663,14 @@
             <input type="number" id="rakeCap" min="0" step="0.5" title="Most rake per pot, in big blinds (0 = no cap)"><span class="muted">bb</span>
           </span>
         </div>
+        <div class="row setuprow" title="A tournament: the prizes still to be paid, first place first, in any unit (50 30 20). The advice is then in prize equity (ICM): calls and raises that risk your stack need more equity, push/fold and heads-up postflop solves pay prizes, not chips. Give each seat's stack with per seat…; players at other tables count too. Empty: a cash game.">
+          <span class="muted">Payouts</span>
+          <input type="text" id="payouts" placeholder="cash game" style="width:130px">
+          <span class="row" id="fieldBox" hidden><span class="muted">+</span>
+            <input type="number" id="fieldN" min="0" step="1" style="width:56px" title="Players left at other tables"><span class="muted">others, avg</span>
+            <input type="number" id="fieldAvg" min="0" step="1" style="width:56px" title="Their average stack, in big blinds"><span class="muted">bb</span>
+          </span>
+        </div>
         <details id="adv"><summary>Advanced</summary>
           <div class="advh">Postflop bet sizes, % of the pot</div>
           <div class="row muted" title="Postflop bet sizes in % of the pot, up to 3 a street (e.g. 33 75); raises are % of the pot after calling. Empty: the solver's own. Fewer sizes solve faster.">
@@ -757,6 +765,14 @@ const STRADDLER = () => S.straddle && S.players >= 3 ? POS[0] : null;
 const RAKE = () => { const r = +S.rake; return r > 0 && r <= 25 ? r : 0; };
 const RAKE_CAP = () => RAKE() && +S.rakeCap > 0 ? +S.rakeCap : 0;
 const RAKE_TEXT = () => RAKE() ? `${fmt(RAKE())}% rake${RAKE_CAP() ? ` (cap ${fmt(RAKE_CAP())}bb)` : " (no cap)"}` : "";
+// a tournament: the prizes still to be paid (S.payouts, first place first) and the players at other tables (S.fieldN of
+// them, S.fieldAvg bb on average); with two prizes or more the advice is in prize equity (ICM: gto/icm.py)
+const parsePayouts = (v) => (Array.isArray(v) ? v : String(v ?? "").split(/[\s,;\/]+/)).map(parseFloat).filter(x => x > 0 && isFinite(x)).slice(0, 200);
+const PAYOUTS = () => parsePayouts(S.payouts);
+const ICM = () => PAYOUTS().length >= 2;
+const FIELD_N = () => ICM() && +S.fieldN > 0 ? Math.min(10000, Math.floor(+S.fieldN)) : 0;
+const FIELD_AVG = () => FIELD_N() && +S.fieldAvg > 0 ? +S.fieldAvg : 0;
+const ICM_TEXT = () => ICM() ? `tournament, payouts ${PAYOUTS().map(fmt).join("/")}${FIELD_N() && FIELD_AVG() ? ` (+${FIELD_N()} at other tables)` : ""}` : "";
 // Advanced: postflop bet sizes (S.sizes: flop/turn/river/raise -> up to 3 % of the pot), ranges entering the
 // flop by seat (S.ranges: PIO strings) and size optimization (S.optSizes); unset = the default game
 const SIZE_KEYS = ["flop", "turn", "river", "raise"];
@@ -969,6 +985,14 @@ function cleanState(st) {
   // rake: a percent in (0, 25] and a positive cap (none = no cap), or no rake at all
   if (!(+st.rake > 0 && +st.rake <= 25)) { delete out.rake; delete out.rakeCap; }
   else { out.rake = +st.rake; if (+st.rakeCap > 0) out.rakeCap = +st.rakeCap; else delete out.rakeCap; }
+  // a tournament's prizes (positive numbers; it is one from two of them), and the other tables' players and average stack
+  const pay = parsePayouts(st.payouts);
+  delete out.payouts; delete out.fieldN; delete out.fieldAvg;
+  if (pay.length) {
+    out.payouts = pay;
+    if (+st.fieldN > 0) out.fieldN = Math.min(10000, Math.floor(+st.fieldN));
+    if (+st.fieldAvg > 0) out.fieldAvg = +st.fieldAvg;
+  }
   for (const k of ADV_KEYS) delete out[k];
   delete out.stacks;
   return Object.assign(out, cleanAdv(st, seats), cleanStacks({ ...st, stack: out.stack }, seats));
@@ -1268,7 +1292,7 @@ function renderSetup() {
   document.body.classList.toggle("setupopen", !!(full && started));
   document.getElementById("setupDone").hidden = !started;
   const sum = document.getElementById("setupSum"); sum.hidden = full;
-  sum.innerHTML = `<span><b>${S.players}-handed</b> <span class="muted">·</span> you are <b>${SEAT_LABEL(S.hero, S.players)}</b> <span class="muted">·</span> <b>${fmt(S.stack)}bb</b> stacks${UNEQUAL() ? ` (${STACKS_TEXT()})` : ""}${ANTE() ? ` <span class="muted">·</span> ${fmt(ANTE())}bb ante` : ""}${STRADDLER() ? ` <span class="muted">·</span> ${SEAT_LABEL(STRADDLER(), S.players)} straddles` : ""}${RAKE() ? ` <span class="muted">·</span> ${RAKE_TEXT()}` : ""}${ADV_TEXT() ? ` <span class="muted">·</span> ${ADV_TEXT()}` : ""}</span>`;
+  sum.innerHTML = `<span><b>${S.players}-handed</b> <span class="muted">·</span> you are <b>${SEAT_LABEL(S.hero, S.players)}</b> <span class="muted">·</span> <b>${fmt(S.stack)}bb</b> stacks${UNEQUAL() ? ` (${STACKS_TEXT()})` : ""}${ANTE() ? ` <span class="muted">·</span> ${fmt(ANTE())}bb ante` : ""}${STRADDLER() ? ` <span class="muted">·</span> ${SEAT_LABEL(STRADDLER(), S.players)} straddles` : ""}${RAKE() ? ` <span class="muted">·</span> ${RAKE_TEXT()}` : ""}${ICM() ? ` <span class="muted">·</span> ${ICM_TEXT()}` : ""}${ADV_TEXT() ? ` <span class="muted">·</span> ${ADV_TEXT()}` : ""}</span>`;
   const e = document.createElement("button"); e.className = "link"; e.style.marginLeft = "auto"; e.textContent = "Edit"; e.onclick = () => { editSetup = true; renderAll(); };
   sum.appendChild(e);
 
@@ -1279,7 +1303,7 @@ function renderSetup() {
     b.onclick = () => { S.hero = p; save(); renderAll(); }; el.appendChild(b); }
   const pl = document.getElementById("players"); pl.innerHTML = "";
   for (let n = 2; n <= 9; n++) { const b = document.createElement("button"); b.className = "small"; b.textContent = n; if (n === S.players) b.classList.add("active");
-    b.onclick = () => { if (n === S.players) return; S = { ...fresh(n), stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanAdv(S, SEATS[n]), ...cleanStacks(S, SEATS[n]), cards: S.cards }; setPositions(n); selSlot = null; save(); resetAdvice(); renderAll(); }; pl.appendChild(b); }
+    b.onclick = () => { if (n === S.players) return; S = { ...fresh(n), stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, payouts: S.payouts, fieldN: S.fieldN, fieldAvg: S.fieldAvg, ...cleanAdv(S, SEATS[n]), ...cleanStacks(S, SEATS[n]), cards: S.cards }; setPositions(n); selSlot = null; save(); resetAdvice(); renderAll(); }; pl.appendChild(b); }
 }
 function renderSlots(sim) {
   const needIdx = sim.waiting ? S.cards.findIndex((c, i) => !c && i >= 2 && i < 2 + NEED[sim.waiting]) : (!S.cards[0] ? 0 : !S.cards[1] ? 1 : -1);
@@ -1387,7 +1411,7 @@ function renderAction(sim) {
   // turn the buttons wait for the spot's solve (to grade your move)
   const px = practicing(), wait = px && isHero && resultKey !== JSON.stringify(payload());
   if (px && (!isHero || window.Practice.auto(sim))) { prompt.innerHTML = `<span class="who">${window.Practice.seeking() || SEAT_LABEL(p, POS.length) + " is thinking…"}</span><span class="pot">pot ${fmt(info.pot)} bb</span>`; el.appendChild(prompt); return; }
-  prompt.innerHTML = `<span class="who ${isHero ? "hero" : ""}">${wait ? '<span class="spinner"></span>Solving your spot…' : isHero ? "Your turn" : p + " to act"}</span><span class="pot">pot ${fmt(info.pot)} bb${facing ? ` · ${fmt(callAmt)} to call · <span title="Pot odds: the equity a call needs to break even">need ${(need * 100).toFixed(0)}%</span>` : ""}</span><span class="ask">${isHero ? "Check the advice, then record what you did." : "What did " + p + " do?"}</span>`;
+  prompt.innerHTML = `<span class="who ${isHero ? "hero" : ""}">${wait ? '<span class="spinner"></span>Solving your spot…' : isHero ? "Your turn" : p + " to act"}</span><span class="pot">pot ${fmt(info.pot)} bb${facing ? ` · ${fmt(callAmt)} to call · <span title="Pot odds: the equity a call needs to break even${ICM() ? " in chips (in a tournament your prize equity asks more: the advice's notes give it)" : ""}">need ${(need * 100).toFixed(0)}%${ICM() ? " in chips" : ""}</span>` : ""}</span><span class="ask">${isHero ? "Check the advice, then record what you did." : "What did " + p + " do?"}</span>`;
   el.appendChild(prompt);
 
   // On your turn, once the advice for this exact spot is in, the buttons use the solver's sizes and show its mix.
@@ -1488,6 +1512,7 @@ function payload() {
            ...(UNEQUAL() ? { stacks: Object.fromEntries(POS.map(p => [p, STACK(p)])) } : {}),
            ...(ANTE() ? { ante: ANTE() } : {}), ...(STRADDLER() ? { straddle: true } : {}),
            ...(RAKE() ? { rake: RAKE() / 100, ...(RAKE_CAP() ? { rake_cap: RAKE_CAP() } : {}) } : {}),
+           ...(ICM() ? { payouts: PAYOUTS(), ...(FIELD_AVG() ? { field: { players: FIELD_N(), chips: FIELD_N() * FIELD_AVG() } } : {}) } : {}),
            preflop: conv(S.actions.preflop), flop: conv(S.actions.flop), turn: conv(S.actions.turn), river: conv(S.actions.river), budget, prior_budget, speed: SPEED, ...(quick ? { quick } : {}),
            ...(OPP === "pool" && !practicing() ? { opponents: "pool" } : {}), ...adv };   // (practice opponents play GTO)
 }
@@ -1769,7 +1794,7 @@ function resetAdvice() {
 // ---- share: plain-text summary + link that reopens the spot
 function handText() {
   const n = S.players, seat = SEAT_LABEL(S.hero, n);
-  const lines = [`GTO Solver hand: ${n}-handed, ${UNEQUAL() ? `${S.stack}bb stacks (${STACKS_TEXT()})` : `${S.stack}bb effective`}${ANTE() ? `, ${fmt(ANTE())}bb ante` : ""}${STRADDLER() ? `, ${SEAT_LABEL(STRADDLER(), n)} straddles 2bb` : ""}${RAKE() ? `, ${RAKE_TEXT()}` : ""}${ADV_TEXT() ? `, ${ADV_TEXT()}` : ""}, I am ${seat} with ${S.cards[0] || "?"}${S.cards[1] || "?"}`];
+  const lines = [`GTO Solver hand: ${n}-handed, ${UNEQUAL() ? `${S.stack}bb stacks (${STACKS_TEXT()})` : `${S.stack}bb effective`}${ANTE() ? `, ${fmt(ANTE())}bb ante` : ""}${STRADDLER() ? `, ${SEAT_LABEL(STRADDLER(), n)} straddles 2bb` : ""}${RAKE() ? `, ${RAKE_TEXT()}` : ""}${ICM() ? `, ${ICM_TEXT()}` : ""}${ADV_TEXT() ? `, ${ADV_TEXT()}` : ""}, I am ${seat} with ${S.cards[0] || "?"}${S.cards[1] || "?"}`];
   const act = (a) => `${SEAT_LABEL(a.pos, n)} ${a.action === "bet" ? "bets " + fmt(a.to) : a.action === "raise" ? "raises to " + fmt(a.to) : a.action === "all-in" ? "all-in" : a.action + "s"}${a.g ? ` [${gradeMark(a.g)} solver ${(a.g.f * 100).toFixed(0)}%${a.g.v ? ` as the chart's ${a.g.m}` : ""}${a.g.l ? `, -${a.g.l.toFixed(2)}bb` : ""}]` : ""}`;
   const bd = (s) => s === "preflop" ? "" : " (" + boardCards().slice(NEED[s] - (s === "flop" ? 3 : 1), NEED[s]).join(" ") + ")";
   const sim = simulate();
@@ -1908,6 +1933,25 @@ document.getElementById("rake").onchange = (e) => {
 document.getElementById("rakePct").onchange = (e) => setRake(Math.min(25, Math.max(0, parseFloat(e.target.value) || 0)), RAKE_CAP() || +S.rakeCap || 0);
 document.getElementById("rakeCap").onchange = (e) => setRake(RAKE(), Math.max(0, parseFloat(e.target.value) || 0));
 syncRake();
+// tournament payouts, and the players at other tables (shown once there are payouts)
+function syncIcm() {
+  const el = document.getElementById("payouts");
+  if (document.activeElement !== el) el.value = PAYOUTS().map(fmt).join(" ");
+  document.getElementById("fieldBox").hidden = !ICM();
+  document.getElementById("fieldN").value = +S.fieldN > 0 ? S.fieldN : "";
+  document.getElementById("fieldAvg").value = +S.fieldAvg > 0 ? S.fieldAvg : "";
+}
+function setIcm(f) {
+  f();
+  const pay = parsePayouts(S.payouts);
+  if (pay.length) S.payouts = pay; else delete S.payouts;
+  for (const k of ["fieldN", "fieldAvg"]) if (!(+S[k] > 0) || !pay.length) delete S[k];
+  syncIcm(); save(); resetAdvice(); renderAll();
+}
+document.getElementById("payouts").onchange = (e) => setIcm(() => { S.payouts = e.target.value; });
+document.getElementById("fieldN").onchange = (e) => setIcm(() => { S.fieldN = Math.floor(+e.target.value || 0); });
+document.getElementById("fieldAvg").onchange = (e) => setIcm(() => { S.fieldAvg = +e.target.value || 0; });
+syncIcm();
 // Advanced: the inputs show S (renderSetup calls syncAdv); a change is cleaned like a share link's
 function setAdv(f) { f(); const a = cleanAdv(S, POS); for (const k of ADV_KEYS) delete S[k]; Object.assign(S, a); save(); resetAdvice(); renderAll(); }
 function syncAdv() {
@@ -2041,7 +2085,7 @@ document.addEventListener("keydown", (e) => {
 document.getElementById("newhand").onclick = () => {
   if (practicing()) { if (simulate().handOver) window.Practice.next(); return; }   // (practice: N is Next hand; a stray N mid-hand doesn't throw it away)
   if (review) { review.cancel = "drop"; cancelSolve(); }
-  S = { ...fresh(S.players), hero: S.hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanAdv(S, POS), ...cleanStacks(S, POS) }; selSlot = null; showDeck = false; editSetup = false; pendingRank = null; save(); resetAdvice(); renderAll();
+  S = { ...fresh(S.players), hero: S.hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, payouts: S.payouts, fieldN: S.fieldN, fieldAvg: S.fieldAvg, ...cleanAdv(S, POS), ...cleanStacks(S, POS) }; selSlot = null; showDeck = false; editSetup = false; pendingRank = null; save(); resetAdvice(); renderAll();
 };
 // ---- hand-history import (hh.js, loaded the first time the dialog opens)
 let hhLoad = null;

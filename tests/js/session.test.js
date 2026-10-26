@@ -362,3 +362,86 @@ test("a synthetic session end to end through the page: every decision asked once
   assert.ok(rp.byPf.some(r => r.key === "RFI") && rp.byPf.some(r => r.key === "BB defence") && rp.bySpot.length >= 4);
   assert.ok(rp.freqs.some(f => f.label === "Flop c-bet"));
 });
+
+// ---- across sessions: summaries kept, summed, leaks ranked
+function reported(created, name, rows) {
+  const sess = stubSession(rows.hands || 10);
+  sess.created = created; sess.name = name;
+  sess.results = rows.results; sess.next = sess.results.length;
+  return sess;
+}
+const G2 = (f, l) => ({ m: "x", f, b: "best", bf: 0.7, l, ...(l != null ? { e: 0, o: l } : {}) });
+const many = (k, s, extra, g) => Array.from({ length: k }, (_, n) => graded(n % 10, s, extra, g));
+
+test("history: a session's summary, kept newest first, one per session", () => {
+  assert.equal(SS.summarize(stubSession(2)), null);   // nothing asked yet: nothing to keep
+  const a = reported(1000, "a.txt", { results: [...many(4, "flop", { pos: "BTN", spot: "SRP · IP · checked to", role: "PFR", facing: false, cls: "aggr" }, G2(0.5, 0.25))] });
+  const sa = SS.summarize(a), rp = SS.report(a);
+  assert.deepEqual([sa.id, sa.name, sa.scope, sa.hands, sa.decisions, sa.graded, sa.ev, sa.lost, sa.bb100], [1000, "a.txt", "all", 4, 4, 4, 4, 1, rp.bb100]);
+  assert.deepEqual(j(sa.bySpot), j(rp.bySpot.map(({ key, n, graded, ok, bad, ev, lost }) => ({ key, n, graded, ok, bad, ev, lost }))));
+  const b = SS.summarize(reported(2000, "b.txt", { hands: 6, results: many(2, "preflop", { pos: "BTN", pf: "RFI", cls: "fold" }, G2(0.01, null)) }));
+  let h = SS.remember(SS.remember([], sa), b);
+  assert.deepEqual(h.map(x => x.id), [2000, 1000]);
+  h = SS.remember(h, { ...sa, hands: 9 });            // the same session again: replaced, not added
+  assert.deepEqual(h.map(x => [x.id, x.hands]), [[2000, 2], [1000, 9]]);
+  assert.deepEqual(SS.remember(null, null), []);
+  assert.deepEqual(SS.remember([null, { x: 1 }, sa], null).map(x => x.id), [1000]);   // (anything else stored is dropped)
+  // the same hands analyzed again (another session, any scope): the newer replaces the older
+  const again = reported(3000, "b-again.txt", { hands: 6, results: many(2, "preflop", { pos: "BTN", pf: "RFI", cls: "fold" }, G2(0.01, null)) });
+  again.scope = "preflop";
+  const sg = SS.summarize(again);
+  assert.equal(sg.fp, b.fp);
+  assert.notEqual(sa.fp, SS.summarize(reported(4000, "c", { hands: 3, results: many(2, "flop", {}, G2(0.5, 0)) })).fp);
+  assert.deepEqual(SS.remember(h, sg).map(x => x.id), [3000, 1000]);   // (b.txt's entry gone)
+  const lots = Array.from({ length: 250 }, (_, k) => ({ ...sa, id: k, date: k, fp: String(k) }));
+  assert.equal(SS.remember(lots, b).length, 200);
+});
+
+test("history: sums over sessions, frequencies weighted by decisions, each session's bb/100 oldest first", () => {
+  const spot = { pos: "BTN", spot: "SRP · IP · checked to", role: "PFR", facing: false, cls: "aggr", mix: { fold: 0, passive: 0.5, aggr: 0.5 } };
+  const a = SS.summarize(reported(1000, "a.txt", { results: [...many(10, "flop", spot, G2(0.5, 0.1)), ...many(10, "preflop", { pos: "BTN", pf: "RFI", cls: "aggr" }, G2(0.9, null))] }));
+  const b = SS.summarize(reported(2000, "b.txt", { results: many(30, "flop", { ...spot, cls: "passive" }, G2(0.5, 0.2)) }));
+  const tr = SS.trends([b, a]);
+  assert.deepEqual([tr.sessions, tr.hands, tr.decisions, tr.ev, tr.lost], [2, 20, 50, 40, 7]);
+  assert.equal(tr.bb100, 35);                                    // 7bb over 20 hands
+  assert.deepEqual(tr.byStreet.map(r => [r.key, r.n, r.ev, r.lost]), [["preflop", 10, 0, 0], ["flop", 40, 40, 7]]);
+  assert.deepEqual(tr.bySpot.map(r => [r.key, r.n, r.lost, r.avg]), [["SRP · IP · checked to", 40, 7, 0.175]]);
+  const cbet = tr.freqs.find(f => f.label === "Flop c-bet");    // you bet 10 of 40; the solver half of each
+  assert.deepEqual([cbet.n, cbet.you, cbet.gto], [40, 0.25, 0.5]);
+  assert.deepEqual(tr.series.map(x => [x.id, x.bb100]), [[1000, 10], [2000, 60]]);
+  assert.deepEqual(SS.trends([]).sessions, 0);
+});
+
+test("history: leaks past their thresholds, the clearest first", () => {
+  const spot = (k, cls, l) => many(k, "flop", { pos: "BB", spot: "SRP · OOP · facing bet", role: "caller", facing: true, cls, mix: { fold: 0.3, passive: 0.65, aggr: 0.05 } }, G2(0.3, l));
+  const pf = (k, f) => many(k, "preflop", { pos: "BB", pf: "BB defence", cls: "fold", mix: { fold: 0.3, passive: 0.65, aggr: 0.05 } }, G2(f, null));
+  // folding to a c-bet 100% of the time where the solver folds 30% (20 decisions), losing 0.6bb a decision there,
+  // and BB defence folds the chart plays 1% of the time (20 decisions, 0 in the mix)
+  const s1 = SS.summarize(reported(1, "x", { results: [...spot(20, "fold", 0.6), ...pf(20, 0.01)] }));
+  const L = SS.leaks(SS.trends([s1]));
+  assert.deepEqual(L.map(l => [l.kind, l.key]).sort(), [["freq", "BB defence: fold"], ["freq", "Flop vs c-bet: fold"], ["pf", "BB defence"], ["spot", "SRP · OOP · facing bet"]]);
+  assert.ok(L.every((l, k) => !k || L[k - 1].score >= l.score));
+  // under the thresholds: none
+  const s2 = SS.summarize(reported(2, "y", { results: [...spot(5, "fold", 0.6), ...pf(5, 0.01)] }));
+  assert.deepEqual(SS.leaks(SS.trends([s2])), []);
+  // the page's list: each leak said, the sessions with a Forget button, the empty note
+  const html = SS.historyHtml([s1, s2], "Across your sessions");
+  assert.match(html, /Flop vs c-bet: fold<\/b>: you 100%, GTO 30% on the same hands/);
+  assert.match(html, /BB defence<\/b>: 0% of your actions in the chart's mix/);
+  assert.match(html, /SRP · OOP · facing bet<\/b>: −0\.60bb a decision/);
+  assert.equal((html.match(/data-forget="/g) || []).length, 2);
+  assert.match(SS.historyHtml([s2], "t"), /No clear leak yet/);
+  assert.equal(SS.historyHtml([], "t"), "");
+});
+
+test("history storage: its own key beside the session's", async () => {
+  const mem = new Map();
+  global.localStorage = { getItem: (k) => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: (k) => mem.delete(k) };
+  try {
+    const cur = SS.lsStore("gto-session"), hist = SS.lsStore("gto-session-history");
+    await cur.set({ v: 1 }); await hist.set([{ id: 1 }]);
+    assert.deepEqual(await hist.get(), [{ id: 1 }]);
+    await cur.del();
+    assert.deepEqual(await hist.get(), [{ id: 1 }]);
+  } finally { delete global.localStorage; }
+});

@@ -71,7 +71,7 @@ SPOTS = [
 # the library missed): BTN vs BB on every flop +12.4 points for 4.5 MB, UTG vs BB on 552 +2.4 for 1.05 MB (SB vs BB
 # on 552: +3.5 for 2.1 MB, its ranges' entries the biggest), the rest REP_FLOPS.
 REP_FLOPS = 184
-SPOT_FLOPS = {"srp_btn_bb": 1755, "srp_co_bb": 552, "srp_hj_bb": 552, "srp_utg_bb": 552}
+SPOT_FLOPS = {"srp_btn_bb": 1755, "srp_co_bb": 1755, "srp_hj_bb": 552, "srp_utg_bb": 552, "srp_sb_bb": 552}
 
 
 def spot_setup(line: str, players: int = 6, stack: float = 100.0) -> dict:

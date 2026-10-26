@@ -5,13 +5,15 @@
 // a whole-hand review grades it (gradeWith), one after another in a queue that can be paused, resumed (also after a
 // reload: the session is kept in IndexedDB) or stopped. The report: EV lost (bb, bb/100) by street, position,
 // postflop spot and preflop situation, your frequencies against the solver's on the same decisions, the biggest
-// mistakes (a click opens that hand at that decision in the page), and the decisions as CSV or JSON.
+// mistakes (a click opens that hand at that decision in the page), and the decisions as CSV or JSON. Each session's
+// summary is also kept (its own IndexedDB entry, "history") and summed across sessions: the leaks that show over
+// many sessions, and each session's EV lost over time.
 // Everything but open() and the page host is pure and takes its host as an argument (the Node tests' stub solver).
 (function () {
   "use strict";
   const STREETS = ["preflop", "flop", "turn", "river"], NEED = { preflop: 0, flop: 3, turn: 4, river: 5 };
   const SCOPES = { preflop: "Preflop only", library: "Flop-library spots (instant)", all: "All streets" };
-  const STORE_KEY = "current", MIX_OK = 0.15, MIX_OFF = 0.03;
+  const STORE_KEY = "current", HISTORY_KEY = "history", HISTORY_MAX = 200, MIX_OK = 0.15, MIX_OFF = 0.03;
   const r2 = (x) => Math.round(x * 100) / 100;
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
   const HH = () => typeof globalThis.splitHands === "function" ? globalThis : require("./hh.js");
@@ -288,8 +290,87 @@
       summary: { ...rp, mistakes: rp.mistakes.map(strip), offChart: rp.offChart.map(strip) }, decisions: rowsOf(sess) }, null, 1);
   }
 
+  // ---- across sessions: a summary of each analyzed session (newest first, at most HISTORY_MAX), summed
+  // the hands a session holds, as one short string (the same file analyzed again, in any scope, has the same)
+  function handsFp(hands) {
+    const keys = hands.map(h => `${h.site}|${h.id}|${h.hole}|${h.state && h.state.hero}`).sort().join("\n");
+    let a = 0x811c9dc5, b = 0;
+    for (let k = 0; k < keys.length; k++) { const c = keys.charCodeAt(k); a = Math.imul(a ^ c, 16777619) >>> 0; b = (Math.imul(b, 31) + c) >>> 0; }
+    return `${hands.length}:${a.toString(36)}${b.toString(36)}`;
+  }
+  const slim = (rows) => rows.map(({ key, n, graded, ok, bad, ev, lost }) => ({ key, n, graded, ok, bad, ev, lost }));
+  function summarize(sess) {
+    const rp = report(sess, 0);
+    if (!rp.done) return null;
+    return { id: sess.created, fp: handsFp(sess.hands), name: sess.name || "", scope: sess.scope, date: sess.created, hands: rp.handsDone, decisions: rp.done,
+             graded: rp.graded, ok: rp.ok, bad: rp.bad, ev: rp.ev, lost: rp.lost, bb100: rp.bb100,
+             byStreet: slim(rp.byStreet), byPos: slim(rp.byPos), byPf: slim(rp.byPf), bySpot: slim(rp.bySpot),
+             freqs: rp.freqs.map(({ label, cls, n, you, gto }) => ({ label, cls, n, you, gto })) };
+  }
+  // the history with this summary in, in place of an older one of the same session or the same hands (a file analyzed
+  // again is counted once)
+  function remember(list, sum) {
+    const L = Array.isArray(list) ? list.filter(x => x && x.id != null) : [];
+    if (!sum) return L;
+    return [sum, ...L.filter(x => x.id !== sum.id && !(sum.fp && x.fp === sum.fp))].sort((a, b) => b.date - a.date).slice(0, HISTORY_MAX);
+  }
+  // rows of the same key summed over sessions, the most EV lost first (or in `order`)
+  function mergeRows(groups, order) {
+    const m = new Map();
+    for (const g of groups) for (const r of g || []) {
+      const t = m.get(r.key) || { key: r.key, n: 0, graded: 0, ok: 0, bad: 0, ev: 0, lost: 0 };
+      for (const k of ["n", "graded", "ok", "bad", "ev"]) t[k] += r[k] || 0;
+      t.lost = r2(t.lost + (r.lost || 0));
+      m.set(r.key, t);
+    }
+    const out = [...m.values()].map(t => ({ ...t, avg: t.ev ? Math.round(t.lost / t.ev * 1000) / 1000 : null }));
+    return order ? out.sort((a, b) => (order.indexOf(a.key) + 1 || 99) - (order.indexOf(b.key) + 1 || 99)) : out.sort((a, b) => b.lost - a.lost || b.n - a.n);
+  }
+  // Leaks over the sessions, the clearest first: a frequency of yours 10+ points off the solver's on the same hands (15+
+  // decisions), a preflop situation where under 80% of your actions are in the chart's mix (15+ graded), a postflop spot
+  // losing 0.5bb+ a decision (10+ with EVs). Each scored by how far off times the square root of its decisions.
+  const LEAK = { freq: [0.1, 15], pf: [0.8, 15], spot: [0.5, 10] };
+  function leaks(tr) {
+    const out = [];
+    for (const f of tr.freqs) {
+      const d = f.you - f.gto;
+      if (f.n >= LEAK.freq[1] && Math.abs(d) >= LEAK.freq[0])
+        out.push({ kind: "freq", key: f.label, n: f.n, you: f.you, gto: f.gto, score: Math.abs(d) * Math.sqrt(f.n) });
+    }
+    for (const r of tr.byPf) {
+      if (r.graded >= LEAK.pf[1] && r.ok / r.graded < LEAK.pf[0])
+        out.push({ kind: "pf", key: r.key, n: r.graded, inMix: r.ok / r.graded, score: (1 - r.ok / r.graded) * Math.sqrt(r.graded) });
+    }
+    for (const r of tr.bySpot) {
+      if (r.ev >= LEAK.spot[1] && r.avg >= LEAK.spot[0])
+        out.push({ kind: "spot", key: r.key, n: r.ev, avg: r.avg, lost: r.lost, score: r.avg / 2 * Math.sqrt(r.ev) });
+    }
+    return out.sort((a, b) => b.score - a.score);
+  }
+  function trends(list) {
+    const L = Array.isArray(list) ? list : [];
+    const sum = (k) => L.reduce((t, x) => t + (x[k] || 0), 0);
+    const hands = sum("hands"), lost = r2(sum("lost")), fm = new Map();
+    for (const x of L) for (const f of x.freqs || []) {
+      const t = fm.get(f.label) || { label: f.label, cls: f.cls, n: 0, you: 0, gto: 0 };
+      t.n += f.n; t.you += f.you * f.n; t.gto += f.gto * f.n;
+      fm.set(f.label, t);
+    }
+    const order = FREQS.map(f => f[0]);
+    const tr = { sessions: L.length, hands, decisions: sum("decisions"), graded: sum("graded"), ok: sum("ok"), bad: sum("bad"), ev: sum("ev"), lost,
+                 bb100: hands ? r2(lost / hands * 100) : null,
+                 byStreet: mergeRows(L.map(x => x.byStreet), STREETS), byPos: mergeRows(L.map(x => x.byPos)),
+                 byPf: mergeRows(L.map(x => x.byPf), PF_ORDER), bySpot: mergeRows(L.map(x => x.bySpot)),
+                 freqs: [...fm.values()].map(t => ({ ...t, you: t.you / t.n, gto: t.gto / t.n })).sort((a, b) => order.indexOf(a.label) - order.indexOf(b.label)),
+                 // oldest first: each session's EV lost and share in the mix, for the trend
+                 series: L.slice().reverse().map(x => ({ id: x.id, date: x.date, name: x.name, hands: x.hands, bb100: x.ev ? x.bb100 : null,
+                                                         inMix: x.graded ? x.ok / x.graded : null })) };
+    tr.leaks = leaks(tr);
+    return tr;
+  }
+
   // ---- storage: the session in IndexedDB (localStorage if that's missing); a big session is a few MB
-  function idbStore(db = "gto-session") {
+  function idbStore(db = "gto-session", key = STORE_KEY) {
     const open = () => new Promise((res, rej) => {
       const q = indexedDB.open(db, 1);
       q.onupgradeneeded = () => q.result.createObjectStore("kv"); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error);
@@ -298,14 +379,15 @@
       const d = await open();
       return new Promise((res, rej) => { const t = d.transaction("kv", mode), q = f(t.objectStore("kv")); t.oncomplete = () => { d.close(); res(q.result); }; t.onerror = t.onabort = () => { d.close(); rej(t.error); }; });
     };
-    return { get: () => tx("readonly", s => s.get(STORE_KEY)), set: (v) => tx("readwrite", s => s.put(v, STORE_KEY)), del: () => tx("readwrite", s => s.delete(STORE_KEY)) };
+    return { get: () => tx("readonly", s => s.get(key)), set: (v) => tx("readwrite", s => s.put(v, key)), del: () => tx("readwrite", s => s.delete(key)) };
   }
   function lsStore(key = "gto-session") {
     return { get: async () => { try { return JSON.parse(localStorage.getItem(key)); } catch (e) { return null; } },
              set: async (v) => { try { localStorage.setItem(key, JSON.stringify(v)); } catch (e) {} },
              del: async () => { try { localStorage.removeItem(key); } catch (e) {} } };
   }
-  const defaultStore = () => typeof indexedDB === "object" && indexedDB ? idbStore() : lsStore();
+  const defaultStore = (key = STORE_KEY) => typeof indexedDB === "object" && indexedDB ? idbStore("gto-session", key)
+    : lsStore(key === STORE_KEY ? "gto-session" : "gto-session-" + key);
 
   // ---- the page: its importer, engine, solver and grading (globals of index.html and hh.js)
   function pageHost() {
@@ -338,10 +420,20 @@
   }
 
   // ---- the panel
-  let box = null, host = null, store = null, sess = null, run = null, draft = null, reading = null, scope = "library", drawT = null, loaded = false;
+  let box = null, host = null, store = null, hstore = null, history = [], clearArm = false, sess = null, run = null, draft = null, reading = null, scope = "library", drawT = null, loaded = false;
   // (a redraw between a press and its release would lose the click: not while a pointer is down on the panel)
   function schedule() { if (drawT) return; drawT = setTimeout(() => { drawT = null; if (box && box._down) schedule(); else draw(); }, 400); }
-  const save = (x) => store ? store.set(clone(x)).catch(() => {}) : Promise.resolve();
+  // (a session that isn't running goes into the history too: its summary as it stands)
+  const save = (x) => {
+    if (x.status !== "running") keep(x);
+    return store ? store.set(clone(x)).catch(() => {}) : Promise.resolve();
+  };
+  function keep(x) {
+    const sum = summarize(x);
+    if (!sum) return;
+    history = remember(history, sum);
+    if (hstore) hstore.set(clone(history)).catch(() => {});
+  }
   function start(s) {
     sess = s; run = runner(sess, host, { update: schedule, save });
     return run.run();
@@ -355,6 +447,44 @@
     return `<h3>${esc(title)}</h3>${note ? `<div class="ss-note">${note}</div>` : ""}<div class="ss-tw"><table class="ss-t"><thead><tr><th>${esc(first)}</th><th class="n">Decisions</th><th class="n" title="in the solver's mix (15%+)">In mix</th><th class="n" title="EV given up, bb">EV lost</th><th class="n" title="per decision with EVs">Avg</th></tr></thead><tbody>`
       + rows.map(r => `<tr><td>${esc(r.key)}</td><td class="n">${r.n}</td><td class="n">${r.graded ? pct(r.ok / r.graded) : "—"}</td><td class="n">${r.ev ? bb(r.lost) : "<span class=muted>—</span>"}</td><td class="n">${r.avg == null ? "—" : r.avg.toFixed(2)}</td></tr>`).join("")
       + `</tbody></table></div>`;
+  }
+  function freqTable(freqs, title) {
+    if (!freqs.length) return "";
+    return `<h3>${esc(title)}</h3><div class="ss-note">On the same decisions with the same hands: how often you took the action, and the solver's average frequency for those hands.</div><div class="ss-tw"><table class="ss-t"><thead><tr><th>Node</th><th class="n">n</th><th class="n">You</th><th class="n">GTO</th><th class="n">Diff</th></tr></thead><tbody>`
+      + freqs.map(f => { const d = Math.round((f.you - f.gto) * 100); return `<tr><td>${esc(f.label)}</td><td class="n">${f.n}</td><td class="n">${pct(f.you)}</td><td class="n">${pct(f.gto)}</td><td class="n ${Math.abs(d) >= 10 ? "neg" : ""}">${d > 0 ? "+" : ""}${d}</td></tr>`; }).join("") + `</tbody></table></div>`;
+  }
+  const leakText = (l) => l.kind === "freq" ? `<b>${esc(l.key)}</b>: you ${pct(l.you)}, GTO ${pct(l.gto)} on the same hands <small>(${l.n} decisions)</small>`
+    : l.kind === "pf" ? `<b>${esc(l.key)}</b>: ${pct(l.inMix)} of your actions in the chart's mix <small>(${l.n} decisions)</small>`
+    : `<b>${esc(l.key)}</b>: −${l.avg.toFixed(2)}bb a decision <small>(${l.n} decisions, −${l.lost.toFixed(1)}bb in all)</small>`;
+  // each session's bb/100 lost, oldest to newest (two sessions with EVs or more)
+  function sparkline(series) {
+    const pts = series.filter(x => x.bb100 != null);
+    if (pts.length < 2) return "";
+    const W = 240, H = 40, hi = Math.max(...pts.map(x => x.bb100), 1e-9);
+    const xy = pts.map((x, k) => `${(k / (pts.length - 1) * (W - 8) + 4).toFixed(1)},${(H - 4 - x.bb100 / hi * (H - 8)).toFixed(1)}`).join(" ");
+    return `<div class="ss-sparkbox"><svg class="ss-spark" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="bb/100 lost per session, oldest to newest"><polyline points="${xy}" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>`
+      + `<span class="ss-note">bb/100 lost per session, oldest to newest (lower is better)</span></div>`;
+  }
+  const dateOf = (t) => { const d = new Date(t); return isNaN(d) ? "" : d.toISOString().slice(0, 10); };
+  // the history: leaks over every session kept (the current one as it stands), each session, the sums
+  function historyHtml(list, title) {
+    if (!list.length) return "";
+    const tr = trends(list), tile = (v, l) => `<div class="ss-tile"><b>${v}</b><small>${l}</small></div>`;
+    let h = `<h2 class="ss-h2">${esc(title)}</h2><div class="ss-note">Kept in this browser: a summary of every session analyzed here (not the hands themselves).</div>`
+      + `<div class="ss-tiles">${tile(tr.sessions, tr.sessions === 1 ? "session" : "sessions")}${tile(tr.hands, "hands")}`
+      + tile(tr.ev ? `−${tr.bb100.toFixed(1)}` : "—", "bb/100 hands") + tile(pct(tr.graded ? tr.ok / tr.graded : null), "in the solver's mix") + `</div>`;
+    h += `<h3>Leaks</h3>` + (tr.leaks.length
+      ? `<ol class="ss-leaks">${tr.leaks.slice(0, 8).map(l => `<li>${leakText(l)}</li>`).join("")}</ol>`
+      : `<div class="ss-note">No clear leak yet. One shows once a frequency is 10+ points off the solver's over 15+ decisions, a preflop situation has under 80% of your actions in the chart's mix over 15+, or a postflop spot loses 0.5bb+ a decision over 10+.</div>`);
+    h += `<h3>Sessions</h3>${sparkline(tr.series)}<div class="ss-tw"><table class="ss-t"><thead><tr><th>Date</th><th>File</th><th class="n">Hands</th><th class="n">In mix</th><th class="n">bb/100</th><th></th></tr></thead><tbody>`
+      + list.map(x => `<tr><td>${dateOf(x.date)}</td><td>${esc(x.name || "—")} <small>${esc(SCOPES[x.scope] || "")}</small></td><td class="n">${x.hands}</td><td class="n">${pct(x.graded ? x.ok / x.graded : null)}</td>`
+        + `<td class="n">${x.ev && x.bb100 != null ? bb(x.bb100) : "—"}</td><td class="n">${sess && x.id === sess.created ? "<small>this one</small>" : `<button class="link" data-forget="${x.id}" title="Remove this session from the history">Forget</button>`}</td></tr>`).join("")
+      + `</tbody></table></div>`;
+    h += table("By street, all sessions", tr.byStreet, "Street") + table("Preflop situations, all sessions", tr.byPf, "Situation")
+      + table("Postflop spots, all sessions", tr.bySpot, "Spot") + freqTable(tr.freqs, "Your frequencies vs GTO, all sessions");
+    h += `<div class="ss-row">${clearArm ? `<span class="ss-note">Forget every session's summary?</span><button data-clearhist="yes">Yes, clear the history</button><button class="link" data-clearhist="no">Cancel</button>`
+      : `<button class="link" data-clearhist="ask">Clear history</button>`}</div>`;
+    return h;
   }
   function decisionRow(r, k) {
     const h = sess.hands[r.h], g = r.g;
@@ -375,8 +505,7 @@
     h += table("By street", rp.byStreet, "Street") + table("By position", rp.byPos, "Position")
       + table("Preflop situations", rp.byPf, "Situation", "Preflop answers come from the charts: no EVs, graded by how often the solver plays your action.")
       + table("Postflop spots", rp.bySpot, "Spot", "Pot type, your position, and whether you faced a bet.");
-    if (rp.freqs.length) h += `<h3>Your frequencies vs GTO</h3><div class="ss-note">On the same decisions with the same hands: how often you took the action, and the solver's average frequency for those hands.</div><div class="ss-tw"><table class="ss-t"><thead><tr><th>Node</th><th class="n">n</th><th class="n">You</th><th class="n">GTO</th><th class="n">Diff</th></tr></thead><tbody>`
-      + rp.freqs.map(f => { const d = Math.round((f.you - f.gto) * 100); return `<tr><td>${esc(f.label)}</td><td class="n">${f.n}</td><td class="n">${pct(f.you)}</td><td class="n">${pct(f.gto)}</td><td class="n ${Math.abs(d) >= 10 ? "neg" : ""}">${d > 0 ? "+" : ""}${d}</td></tr>`; }).join("") + `</tbody></table></div>`;
+    h += freqTable(rp.freqs, "Your frequencies vs GTO");
     const list = (title, rows, note) => rows.length ? `<h3>${title}</h3><div class="ss-note">${note}</div><div class="ss-tw"><table class="ss-t ss-m"><thead><tr><th>Hand</th><th>Seat</th><th>Street</th><th>You / solver</th><th class="n">EV lost</th></tr></thead><tbody>`
       + rows.map(r => decisionRow(r, sess.results.indexOf(r))).join("") + `</tbody></table></div>` : "";
     h += list("Biggest mistakes", rp.mistakes, "By EV given up. Click one to open the hand at that decision.");
@@ -405,13 +534,15 @@
     if (!rn && sess.results.length) btns += `<button data-csv>Export CSV</button><button data-json>Export JSON</button>`;
     if (!rn && sess.status === "done" && sess.scope !== "all") btns += `<button data-widen title="Also ask the decisions this scope left out">${sess.scope === "preflop" ? "Add the flop-library spots" : "Add all streets"}</button>`;
     if (!rn) btns += `<button class="link" data-new>New session</button>`;
+    const all = remember(history, summarize(sess));
     return `<div class="ss-prog"><div class="ss-bar"><i style="width:${n ? (k / n * 100).toFixed(1) : 0}%"></i></div><div class="ss-st"><span>${k} of ${n} decisions${left}</span><span>${st}</span></div>`
-      + `<div class="ss-sub">${esc(sess.name || "Session")} · ${sess.hands.length} hands · ${SCOPES[sess.scope]}</div></div><div class="ss-row">${btns}</div>` + reportHtml();
+      + `<div class="ss-sub">${esc(sess.name || "Session")} · ${sess.hands.length} hands · ${SCOPES[sess.scope]}</div></div><div class="ss-row">${btns}</div>` + reportHtml()
+      + (all.some(x => x.id !== sess.created) ? historyHtml(all, "Across your sessions") : "");
   }
   function draw() {
     if (!box || box.hidden) return;
     const body = box.querySelector(".ss-body"), y = body.scrollTop;
-    body.innerHTML = !loaded ? `<div class="ss-note">Loading…</div>` : sess ? runHtml() : inputHtml();
+    body.innerHTML = !loaded ? `<div class="ss-note">Loading…</div>` : sess ? runHtml() : inputHtml() + historyHtml(history, "Your sessions so far");
     body.scrollTop = y;
   }
   async function readText(text, name) {
@@ -436,10 +567,16 @@
     if (d.pause != null && run) return run.pause();
     if (d.stop != null && sess) { if (run && run.running) run.cancel(); else { sess.status = "stopped"; await save(sess); } return draw(); }
     if (d.widen != null && sess) return start(widen(sess, sess.scope === "preflop" ? "library" : "all"));
-    if (d.new != null) { if (run && run.running) return; sess = run = null; if (store) await store.del().catch(() => {}); return draw(); }
+    if (d.new != null) { if (run && run.running) return; keep(sess); sess = run = null; if (store) await store.del().catch(() => {}); return draw(); }
     if (d.csv != null) return download(fileBase() + ".csv", toCSV(sess), "text/csv");
     if (d.json != null) return download(fileBase() + ".json", toJSON(sess), "application/json");
     if (d.k != null) { const r = sess.results[+d.k], h = sess.hands[r.h]; close(); return host.open(h.state, r.s, r.i); }
+    if (d.forget != null) { history = history.filter(x => String(x.id) !== d.forget); if (hstore) await hstore.set(clone(history)).catch(() => {}); return draw(); }
+    if (d.clearhist != null) {
+      clearArm = d.clearhist === "ask";
+      if (d.clearhist === "yes") { history = []; if (hstore) await hstore.del().catch(() => {}); }
+      return draw();
+    }
   }
   function close() {
     if (box) box.hidden = true; const m = document.getElementById("menuBtn"); if (m) m.focus();
@@ -484,6 +621,9 @@
   .ss-c.h { color: #c62828; } .ss-c.d { color: #c62828; }
   body.four .ss-c.d { color: #1565c0; } body.four .ss-c.c { color: #2e7d32; }
   .ss-m td:first-child { white-space: nowrap; }
+  .ss-h2 { font-size: 14px; margin: 14px 0 0; padding-top: 10px; border-top: 1px solid var(--line2); }
+  .ss-leaks { margin: 0; padding-left: 20px; font-size: 12px; line-height: 1.6; } .ss-leaks small { color: var(--muted); }
+  .ss-sparkbox { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; } .ss-spark { color: var(--bad); display: block; max-width: 100%; }
   @media (max-width: 600px) {
     .ss { padding: 0; }
     .ss-card { max-height: 100dvh; height: 100dvh; border-radius: 0; border: 0; width: 100%; }
@@ -496,6 +636,7 @@
   async function open(h) {
     host = h || host || pageHost();
     if (!store) try { store = defaultStore(); } catch (e) { store = lsStore(); }
+    if (!hstore) try { hstore = defaultStore(HISTORY_KEY); } catch (e) { hstore = lsStore("gto-session-" + HISTORY_KEY); }
     if (!document.getElementById("ssStyle")) { const s = document.createElement("style"); s.id = "ssStyle"; s.textContent = CSS; document.head.appendChild(s); }
     if (!box) {
       box = document.createElement("div"); box.id = "sessionBox"; box.className = "ss"; box.setAttribute("role", "dialog");
@@ -504,7 +645,7 @@
       document.body.appendChild(box);
       box.addEventListener("click", (e) => {
         if (e.target === box) return close();
-        const t = e.target.closest("[data-close],[data-scope],[data-go],[data-resume],[data-pause],[data-stop],[data-widen],[data-new],[data-csv],[data-json],[data-k]");
+        const t = e.target.closest("[data-close],[data-scope],[data-go],[data-resume],[data-pause],[data-stop],[data-widen],[data-new],[data-csv],[data-json],[data-k],[data-forget],[data-clearhist]");
         if (!t || t.disabled) return;
         if (t.dataset.close != null) close(); else act(t.dataset);
       });
@@ -522,12 +663,14 @@
     if (!loaded) {
       try { await host.ready(); } catch (e) {}
       if (!sess) { try { const s = await store.get(); if (s && s.v === 1 && s.items) { sess = s; if (s.status === "running" || s.status === "ready") sess.status = "paused"; } } catch (e) {} }
+      try { history = remember(await hstore.get(), null); } catch (e) { history = []; }
       loaded = true; draw();
     }
   }
 
   const api = { handId, decisions, prepare, buildItems, inScope, spotState, preflopRaises, preflopSituation, classify, mixOf, newSession, widen,
                 processItem, runner, estimate, eta, report, tally, freqs, toCSV, toJSON, rowsOf, lsStore, idbStore, pageHost, open, close, SCOPES,
+                summarize, remember, mergeRows, trends, leaks, historyHtml, get history() { return history; },
                 get session() { return sess; }, get runner_() { return run; } };
   if (typeof module === "object" && module.exports) module.exports = api; else globalThis.Session = api;
 })();
