@@ -1130,7 +1130,7 @@ function act(a) {
     jamGrade(key, move).then(g => { if (!g) return; entry.g = g; save(); if (logged) window.Practice.regraded(logged, g, g.res); renderAll(); });
   return null;
 }
-// A multiway result from the betting rules (4+ players, or a 3-way spot the solver doesn't take), not a solve.
+// A multiway result from the betting rules (4+ players on the flop or turn, or a spot the solvers don't take), not a solve.
 const heuristic = (r) => !!(r && r.multiway && !r.solved);
 // Its frequencies are 0/1 (the highest EV), so a move there is graded by the EV it gives up, % of the pot (g.h):
 // within HEUR_OK of the best Good, within HEUR_MEH an Inaccuracy, more a Mistake (its EVs are Monte Carlo estimates)

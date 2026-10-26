@@ -1238,6 +1238,16 @@ class TestTableSizes(unittest.TestCase):
         self.assertTrue(any("main pot (60.5 bb)" in n for n in res["notes"]), res["notes"])
         self.assertAlmostEqual(sum(a["freq"] for a in res["actions"]), 1.0, places=2)
 
+    def test_one_combo_range_a_turn_blocks(self):
+        # (a custom range of one combo, AhKh, that the Ah and Kh turns empty crashed the flop solve's river buckets)
+        adv = Advisor(Config(depth=1), time_budget=1.0, prior_budget=0.5)
+        res = adv.advise({"players": 3, "bb": 0.25, "stack": 100.0, "stacks": {"BTN": 242.77, "SB": 2.06}, "straddle": True,
+                          "preflop": [{"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "raise", "to": 1.0},
+                                      {"pos": "BTN", "action": "call"}],
+                          "board": "Qh9h5s", "hero": "BB", "hole": "4s2s", "ranges": {"BTN": "AhKh"}})
+        self.assertNotIn("error", res)
+        self.assertTrue(res["actions"])
+
     def test_jam_request_offers_all_in_on_the_street(self):
         # A 15x-pot flop jam has no action in the usual tree (all-in only at allin_spr pots or less), so Practice couldn't
         # grade it; asked again with "jam": true the street offers all-in at every decision, priced (here 0%, below the

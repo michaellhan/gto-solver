@@ -355,6 +355,9 @@ class Ctx:
         def group_sums(A, q, axis):
             """Sums of A's entries along `axis` over q's buckets, weighted by q's root reach."""
             o = orders[q]
+            if not len(o):   # (q's range is empty on this turn: a one-combo range the turn card blocks)
+                shape = list(A.shape); shape[axis] = K
+                return np.zeros(shape)
             X = np.take(A, o, axis=axis) * (w[q][o][:, None] if axis == 0 else w[q][o][None, :])
             cs = np.cumsum(X, axis=axis)
             cs = np.concatenate([np.zeros_like(np.take(cs, [0], axis=axis)), cs], axis=axis)

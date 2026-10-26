@@ -1100,6 +1100,19 @@ def _mw_applies(remaining, cur, stk) -> bool:
     return S > 1e-9 and max(cur.bets[p] for p in acting) <= S + 1e-9
 
 
+def _nway_applies(remaining, cur, stk, hero, max_players: int) -> bool:
+    """Whether the N-player solve takes the node (Advisor._multiway_solve, where _mw_applies doesn't: four or more in,
+    or three with two all-in): at most `max_players` in, hero among those with chips, and on the river (no equity
+    leaves: dealt-out later streets did worse than the rules on 3-way turns) or with hero the only one left with chips
+    (then nothing is bet later: dealt out is exact)."""
+    if len(remaining) < 3 or len(remaining) > max_players or hero in cur.allin:
+        return False
+    acting = [p for p in remaining if p not in cur.allin]
+    if cur.name != "river" and len(acting) > 1:
+        return False
+    return min(stk[p] - cur.inv_start[p] for p in acting) > 1e-9
+
+
 def _river_fix() -> np.ndarray:
     """Per class: the realization the river-dealt flop model adds over the fast one (see RIVER_FIX)."""
     global _RIVER_FIX
@@ -1478,7 +1491,7 @@ class Advisor:
         self.should_stop = None   # callable; when it returns true the running solve raises solver.Cancelled
         self.mw_rake_rules = True   # multiway: our in-trial calls, leads and raises count the rake (off: payouts only)
         self.mw_trials: Optional[int] = None   # multiway: play at least this many trials (whole passes), no time caps or early stop (tests)
-        # 3-way pots: the streets solved by the 3-player solver (gto/multiway_solver.py; others, and 4+ players, use the
+        # 3-way pots: the streets solved by the 3-player solver (gto/multiway_solver.py; others, and 4+ players off the river, use the
         # betting rules), MWConfig overrides, and the most iterations a solve runs (it stops at time_budget before)
         self.mw_solve_streets: Tuple[str, ...] = ("turn", "river")   # (native and browser Accurate add the flop)
         self.mw_config: Optional[dict] = None
@@ -1488,6 +1501,9 @@ class Advisor:
         self.mw_max_iters: int = 1000
         self.mw_budget: Optional[float] = None   # a 3-way solve's budget when longer than time_budget (native Fast's 2.5 s)
         self.mw_max_expl: float = 10.0   # a solve further than this from equilibrium (% pot) hands over to the rules
+        # the N-player solve (four or more in, or two all-in): at most this many players (the browser's numpy takes 5-way
+        # rivers past its budget: gto/static/worker.js lowers it)
+        self.mw_nway_max: int = 6
         # an earlier 3-way street with no solve from your advice on it: solve it from its start (prior_budget) to narrow
         # the ranges through (_mw_walk); off: the rules narrow it (native Accurate on: its 12 s settle a flop enough)
         self.mw_prior_solve = False
@@ -2076,7 +2092,7 @@ class Advisor:
             if self._lib_only:
                 return {"skipped": "multiway: not a flop-library spot"}
             if actor:
-                move = self._mw_actor_move(board, hero, hole, stk, streets, cur, actor) if len(remaining) == 3 else None
+                move = self._mw_actor_move(board, hero, hole, stk, streets, cur, actor) if len(remaining) >= 3 else None
                 return move or {"error": "multiway"}
             if optimize:
                 notes.append("bet sizes are optimized only heads-up (multiway is a heuristic, not a solve)")
@@ -2342,7 +2358,11 @@ class Advisor:
         the betting rules (_multiway) answer instead."""
         from . import multiway_solver as MW
         fallback_notes, notes = notes, list(notes)
-        if not self.mw_solve_streets or cur.name not in self.mw_solve_streets or not _mw_applies(remaining, cur, stk):
+        exact3 = _mw_applies(remaining, cur, stk)
+        nway = not exact3 and _nway_applies(remaining, cur, stk, hero, self.mw_nway_max)
+        # (the N-player solve off the river is the hand of the only player with chips: nothing to solve but its call)
+        if not self.mw_solve_streets or not (exact3 and cur.name in self.mw_solve_streets
+                                             or nway and (cur.name != "river" or "river" in self.mw_solve_streets)):
             return None
         # (quick: rivers only, but a pot with a player all-in on any street: two bettors, solved in the browser in 1.4-1.6
         # s on a flop or turn, 100 iterations, 0.05% of the pot from equilibrium)
@@ -2354,7 +2374,8 @@ class Advisor:
         # behind of the two; the main pot (everyone's chips up to the all-in's) goes to the best of the three
         shoved = [p for p in players if p in cur.allin]
         S = min(v for p, v in behind.items() if p not in shoved)
-        bets = [cur.bets[p] for p in players]
+        # (N players: an all-in bet the others can't match in full is played at what they can: the rest comes back)
+        bets = [min(cur.bets[p], S) if nway else cur.bets[p] for p in players]
         dead_bets = sum(b for q, b in cur.bets.items() if q not in remaining)
         pot0 = cur.pot_start + dead_bets
         hp = players.index(hero)
@@ -2365,11 +2386,25 @@ class Advisor:
                          "strategy for it, against the ranges as they are")
         pending = {i for i, p in enumerate(players) if p not in cur.acted}
         pending.add(hp)
-        mcfg = MW.MWConfig(rake_rate=self.cfg.rake_rate, rake_cap=self.cfg.rake_cap,
-                           **{**self.mw_street_config.get(cur.name, {}), **(self.mw_config or {})})
+        n_act = len(players) - len(shoved)
+        if nway:
+            # Four or more in (or three, two of them all-in): pairwise card removal (the others' hands independent
+            # given yours, their overlap corrected), the pots layered by the all-in players' stakes, a bet of half the
+            # pot; with four or more betting one bet a street and no raises but yours (MWConfig.root_raise: a raise
+            # there made the 4-way tree 1053 nodes, unsettled; without, 65 and 0.02% of the pot in 150 iterations)
+            mcfg = MW.MWConfig(rake_rate=self.cfg.rake_rate, rake_cap=self.cfg.rake_cap, later="deal", depth=1,
+                               bet={"flop": 0.33, "turn": 0.5, "river": 0.5}, max_raises=2 if n_act <= 3 else 1,
+                               root_raise=n_act >= 4, allin=tuple(players.index(a) for a in shoved),
+                               inv0=tuple(float(cur.inv_start[p]) for p in players),
+                               dead=tuple(float(cur.inv_start[q] + cur.bets[q]) for q in cur.inv_start if q not in remaining))
+            for a in shoved:
+                pending.discard(players.index(a))
+        else:
+            mcfg = MW.MWConfig(rake_rate=self.cfg.rake_rate, rake_cap=self.cfg.rake_cap,
+                               **{**self.mw_street_config.get(cur.name, {}), **(self.mw_config or {})})
         if getattr(self, "_jam", False):
-            mcfg.allin_spr = 1e9   # (a jam request: all-in offered however deep)
-        if shoved:
+            mcfg.root_jam = True   # (a jam request: all-in offered however deep, at your decision: the solve's root)
+        if shoved and not nway:
             a = shoved[0]
             cap = cur.inv_start[a] + cur.bets[a]
             mcfg.allin = (players.index(a),)
@@ -2401,10 +2436,11 @@ class Advisor:
             fallback_notes.append("the 3-way solve plays everyone at the shortest stack, so the betting rules price your all-in")
             return None
         gains = sol.br_gains() / sol.root_pot() * 100        # each player's best-response gain, % of the pot
-        expl = float(max(gains.mean(), 0.0))
+        # (the mean over the players who bet: an all-in player has no decisions, nothing to gain)
+        expl = float(max(np.mean([g for i, g in enumerate(gains) if i not in mcfg.allin]), 0.0))
         if expl > self.mw_max_expl:
-            fallback_notes.append(f"the 3-way solve was still {expl:.0f}% of the pot from equilibrium after {sol.iters} "
-                                  f"iterations, so the betting rules answer instead (Accurate gives it longer)")
+            fallback_notes.append(f"the {len(players)}-way solve was still {expl:.0f}% of the pot from equilibrium after "
+                                  f"{sol.iters} iterations, so the betting rules answer instead (Accurate gives it longer)")
             return None
         if line is not None:
             self._mw_lines[line] = (sol, players, expl)   # practice opponents and later streets read it (_mw_walk)
@@ -2452,10 +2488,24 @@ class Advisor:
             street_note["flop"] = (f"the turn and river bet on too, by {mcfg.buckets} hand buckets a player on one turn card "
                                    f"per rank class, the river played on the turn's boards without its card")
         sizes = MW.bet_sizes(mcfg, cur.name)
-        notes.append(f"3-way pot solved by three-player CFR ({sol.iters} iterations): "
+        if nway:
+            street_note = {s_: "the cards to come dealt out: nobody else has chips to bet" for s_ in ("flop", "turn")}
+            street_note["river"] = ("card removal between the hands taken pair by pair (each opponent's hand independent "
+                                    "of the others' given yours, their overlap corrected): within ~1% of the pot of the "
+                                    "exact count, 3-way")
+            if shoved:
+                # (the pots as they stand once you match the bet)
+                c_call = list(sol.root.c); c_call[hp] = max(min(max(c_call), S), c_call[hp])
+                lv = sol._layers(tuple(range(len(players))), c_call, sol.root_pot() + c_call[hp] - sol.root.c[hp])
+                notes.append(f"{', '.join(shoved)} all-in: " + "; ".join(
+                    f"{'the main pot' if i == 0 else 'a side pot'} ({amt:.1f} bb) to the best of "
+                    + ", ".join(players[j] for j in el) for i, (amt, el) in enumerate(lv)))
+        raises = ("no raises but yours" if mcfg.root_raise else "one raise") if mcfg.max_raises <= 1 or mcfg.root_raise \
+            else "one raise"
+        notes.append(f"{len(players)}-way pot solved by {len(players)}-player CFR ({sol.iters} iterations): "
                      + (f"one bet size ({sizes[0] * 100:.0f}% pot)" if len(sizes) == 1 else
                         f"bets of {', '.join(f'{x * 100:.0f}' for x in sizes)}% pot")
-                     + f", one raise and all-in; {street_note[cur.name]}")
+                     + f", {raises} and all-in; {street_note[cur.name]}")
         if (cur.acted or cur.n_raises) and not any(n.startswith(f"{cur.name}: 3-way, ranges narrowed") for n in notes):
             notes.append("this street's earlier actions narrow the ranges by the betting rules; the solve starts from here")
         if max(behind.values()) - S > 0.05 * S:
@@ -2463,7 +2513,7 @@ class Advisor:
         notes.append(f"best-response gains (% pot): " + ", ".join(f"{p} {g:.2f}" for p, g in zip(players, gains)))
         out = {"street": cur.name, "hero": hero, "hand": hand_class(hole), "board": cards_str(board),
                "players": len(players), "multiway": True, "solved": True, "opponents": opps,
-               "position": f"{hp + 1} of 3 to act",
+               "position": f"{hp + 1} of {len(players)} to act",
                "pot_bb": round(root.pot_now, 2), "to_call_bb": round(to_call, 2), "stack_bb": round(S - bets[hp], 2),
                "actions": acts, "recommended": best, "sampled": sampled,
                "grid": strategy_grid([sf[a] for a in range(len(root.names))], shown, hero_r),
@@ -3358,7 +3408,7 @@ class Advisor:
                "players": len(remaining), "multiway": True, "opponents": opps,
                "equity_vs_field": round(eq, 3), "pot_bb": round(pot, 2), "to_call_bb": round(call_amt, 2),
                "actions": acts, "recommended": acts[pick]["action"], "sampled": acts[pick]["action"],
-               "notes": notes + [f"{len(remaining)} players in the pot: the solver is heads-up only, this is a Monte Carlo heuristic"],
+               "notes": notes + [f"{len(remaining)} players in the pot: not a solve here (the solvers take heads-up and 3-way pots and 4+ way rivers), this is a Monte Carlo heuristic"],
                "seconds": round(time.time() - t0, 2)}
         if ls_stats["bets"]:
             n_b = ls_stats["bets"]
@@ -3629,7 +3679,7 @@ class Advisor:
         # its range gives it no weight) the regret-matching one, which still learns from its counterfactual values
         mix = node.avg_strategy()[0][:, ci] if R[q, 0, ci] > 1e-12 and node.ssum[0, :, ci].sum() > 0 \
             else node.strategy()[0][:, ci]
-        S = min(stk[p] - cur.inv_start[p] for p in players)
+        S = min(stk[p] - cur.inv_start[p] for p in players if p not in cur.allin)   # (the players who bet: as solved)
         names = _mw_names(node.names, node.amounts, stk[seat] - cur.inv_start[seat], S, node.pot_now)
         return {"street": cur.name, "solved": True,
                 "actions": [{"action": nm, "freq": round(float(mix[a]), 3),

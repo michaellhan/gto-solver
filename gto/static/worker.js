@@ -156,7 +156,11 @@ const ready = (async () => {
              + "advs['fast'].mw_street_config = {s: dict(c) for s, c in MW_FAST_STREETS.items()}; "
              + "advs['accurate'].mw_solve_streets = ('flop', 'turn', 'river'); "
              + "advs['accurate'].mw_street_config = {s: {'later': 'buckets', 'buckets': 12, 'bucket_river_step': 3} for s in ('flop', 'turn')}; "
-             + "advs['accurate'].mw_street_config['flop']['bet'] = {'flop': [0.33, 0.75], 'turn': 0.5, 'river': 0.5}");
+             + "advs['accurate'].mw_street_config['flop']['bet'] = {'flop': [0.33, 0.75], 'turn': 0.5, 'river': 0.5}; "
+             // 4+ way rivers (and two all-in) by the N-player solve (scripts/bench_browser.mjs): 4-way 2.5 s at Fast, 50
+             // iterations, 0.08% of the pot from equilibrium (Quick 1.8 s, 0.27%); 5-way 7.6 s, 0.1% (Quick 5 iterations,
+             // 5.4%); 6-way ~3 s an iteration, so Fast leaves it to the rules and Accurate's 60 s solve it
+             + "advs['fast'].mw_nway_max = 5; advs['accurate'].mw_nway_max = 6");
   lap("advisors");
   setup.total = +((performance.now() - T0) / 1000).toFixed(2);
   postMessage({ status: "Solving…", setup });
