@@ -166,12 +166,15 @@ class TestPreflopLocks(unittest.TestCase):
         pre = BTN_FIRST[:2] + [R("CO", "raise", 2.5), R("BTN", "raise", 7.5), R("SB", "fold"), R("BB", "fold"), R("CO", "call")]
         self.assertGreater(preflop_ranges(pre, T, 100, None, {"CO": STATION})["CO"].sum(),
                            2 * preflop_ranges(pre, T, 100)["CO"].sum())
-        # the big blind against a station's button open: thin value 3bets (A8o, 44 called before), fewer bluffs
+        # the big blind against a station's button open: thin value 3bets (A8o called before), fewer bluffs; the small
+        # pairs keep flatting (they play for implied odds, which a station pays more: never new value raises)
         gto = self.advise("BB", "AhKh", BB_VS_BTN)
         r = self.advise("BB", "AhKh", BB_VS_BTN, {"BTN": STATION})
-        for h in ("A8o", "44"):
-            self.assertEqual(freq(gto, h, "raise"), 0.0, h)
-            self.assertGreater(freq(r, h, "raise"), 0.5, h)
+        self.assertEqual(freq(gto, "A8o", "raise"), 0.0)
+        self.assertGreater(freq(r, "A8o", "raise"), 0.5)
+        for h in ("22", "44", "55"):
+            self.assertLessEqual(freq(r, h, "raise"), freq(gto, h, "raise") + 1e-9, h)
+            self.assertGreaterEqual(freq(r, h, "call"), freq(gto, h, "call") - 0.05, h)
         for h in ("T9s", "JTs"):
             self.assertLess(freq(r, h, "raise"), freq(gto, h, "raise") - 0.2, h)
         self.assertTrue(any(n.startswith("raises re-drawn against BTN as locked: everyone folds") and "bluffs x0." in n

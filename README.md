@@ -551,7 +551,8 @@ first decision, since they act preflop too). All are off unless given.
   its 3bet range QQ+, AK, most of JJ, some AQo and TT, 45 combos against the chart's 74) folds 34% where the chart
   always calls, and UTG continues with 21% of its opening range instead of 44% (AQs, KQs and 77-99 fold, JJ+ and AK
   stay); against a 12bb 3bet TT folds 100% (the chart still calls). Against a station on the button the big blind
-  3bets A8o and 44 for value (the chart calls them) and bluff-3bets T9s and JTs 62% instead of 90%, everyone folding
+  3bets A8o for value (the chart calls it; small pairs and suited non-broadways, which play for implied odds a
+  station pays more, never turn into new value raises: by all-in equity alone 44 and 55 3bet 33-46%) and bluff-3bets T9s and JTs 62% instead of 90%, everyone folding
   37% to its 3bet against 53%; with a nit or an overfolder in the big blind the button opens 50% or 51% of hands
   instead of 45%, with a station 50% but its suited connectors 56% instead of always (fewer steals, more thin value
   against a 75% defence); a maniac's 3bet gets TT to 4bet. The equity when called lumps re-raises in with calls, as

@@ -2134,6 +2134,11 @@ class Advisor:
             # each hand's raise is value as far as its equity when called clears the bar (ramped), the rest bluff
             ramp = lambda e: np.clip(0.5 + (e - v_bar) / RAISE_BLEND, 0.0, 1.0)
             k0, kL = ramp(e0), ramp(eL)
+            # (the hands that play for implied odds, small pairs and suited non-broadways, never turn into new value
+            # raises: all-in equity overrates them, and a lock that has opponents calling more pays their flats more,
+            # not their raises; ranked by it a station's wide calls had BTN 3betting 44 and 55 33-46% for value over
+            # a CO open, and the monotone pass then had 44-66 calling 70% where the chart folds half)
+            kL = np.where(_IMPLIED_W > 0, np.minimum(kL, k0), kL)
             kept = raise0 * np.minimum(k0, kL)               # value that still clears it
             lost = raise0 * np.maximum(k0 - kL, 0.0)         # value that no longer does
             now = raise0 * np.maximum(kL - k0, 0.0)          # bluffs that now do: value, not scaled
