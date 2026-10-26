@@ -671,8 +671,8 @@
           <label class="row muted" title="Heads-up, when you can bet: a first solve over 25-200% of the pot (a third of the time) keeps the sizes the equilibrium uses, and the advice is solved with those. Custom sizes for that street join the menu: kept only if that solve uses them. Best on Accurate."><input type="checkbox" id="optSizes"> Optimize bet sizes <span id="optSizesHint" class="muted" hidden>(your sizes compete in its menu)</span></label>
           <div class="advh">Ranges into the flop</div>
           <div class="row" id="rangeIns" title="Ranges entering the flop, PIO style (22+, A2s+, KTo+, QJo:0.5). Empty: the preflop charts' range for the action."></div>
-          <div class="advh">Opponent tendencies (heads-up, postflop)</div>
-          <div class="row" id="lockIns" title="Lock an opponent's tendencies (nodelocking): after the flop, heads-up, the advice is the best response to them, with GTO's frequencies alongside. On top of GTO, or of the pool with Opponents: Pool. fold: points more of their range folding to a bet (negative: calls); bluff, bet, raise: % more or less (-100 never, +100 always; bluff is their weak hands' bets); next: their fold % to your bet and bet % when you check at their very next decision."></div>
+          <div class="advh">Opponent tendencies (preflop, and heads-up postflop)</div>
+          <div class="row" id="lockIns" title="Lock an opponent's tendencies (nodelocking), with GTO's frequencies alongside. Preflop their opens, 3bets, calls and folds follow it and your line is re-priced against them; after the flop, heads-up, the advice is the best response to them. On top of GTO, or of the pool with Opponents: Pool. fold: points more of their range folding to a bet or raise (negative: calls); bluff, bet, raise: % more or less (-100 never, +100 always; bluff is their weak hands' bets; preflop bet is their opens, raise their 3bets and 4bets, scaled); next: their fold % to your bet and bet % when you check at their very next decision (after the flop)."></div>
         </details>
         <div class="row">
           <span class="muted nopx" style="width:58px;font-size:12px">You are</span>
@@ -1480,8 +1480,9 @@ function renderTimeline() {
 // ------------------------------------------------------------------ advice
 function payload() {
   const conv = (arr) => arr.map(a => a.action === "bet" ? { pos: a.pos, action: "bet", amount: a.to } : a.action === "raise" ? { pos: a.pos, action: "raise", to: a.to } : { pos: a.pos, action: a.action });
-  // the Advanced fields change postflop solves only: sent from the flop on, so preflop advice (and its cache) is the same
-  const post = boardCards().length >= 3, adv = post ? { ...(S.sizes ? { sizes: S.sizes } : {}), ...(OPP_RANGES() ? { ranges: OPP_RANGES() } : {}), ...(S.optSizes ? { optimize_sizes: true } : {}), ...(OPP_LOCKS() ? { locks: OPP_LOCKS() } : {}) } : {};
+  // sizes, ranges and size optimization change postflop solves only: sent from the flop on, so preflop advice (and its
+  // cache) is the same; locks act preflop too (gto/exploit.py lock_preflop), so they're always sent
+  const post = boardCards().length >= 3, adv = { ...(post ? { ...(S.sizes ? { sizes: S.sizes } : {}), ...(OPP_RANGES() ? { ranges: OPP_RANGES() } : {}), ...(S.optSizes ? { optimize_sizes: true } : {}) } : {}), ...(OPP_LOCKS() ? { locks: OPP_LOCKS() } : {}) };
   const [budget, prior_budget, quick] = budgetsFor(SPEED, boardCards().join(""));
   return { players: S.players, hero: S.hero, hole: (S.cards[0] || "") + (S.cards[1] || ""), board: boardCards().join(""), stack: S.stack,
            ...(UNEQUAL() ? { stacks: Object.fromEntries(POS.map(p => [p, STACK(p)])) } : {}),
@@ -1569,13 +1570,14 @@ const PRE_TIP = (p) => `Solved offline (${p.label}, ${p.iterations} iterations)$
 const convTip = (c) => `Exploitability ${c.x.toFixed(1)}% of the pot: a perfect counter-strategy would win that much from this solve. Under 3% is close to a full solver.`;
 
 // Where the GTO % under an exploit's mix (the pool, your locks) comes from: preflop the chart; after it the
-// equilibrium of the same solve the exploit is built on. Against the pool that solve starts from the pool's ranges
-// into the flop, so its GTO can differ from what the GTO setting shows for the hand (which may come from the
-// precomputed flop library, on the charts' ranges).
+// equilibrium of the same solve the exploit is built on. Against the pool, or a player you locked (whose preflop
+// follows the lock), that solve starts from those ranges into the flop, so its GTO can differ from what the GTO setting
+// shows for the hand (which may come from the precomputed flop library, on the charts' ranges).
 function gtoSource(res, key) {
   if (res.street === "preflop") return "the preflop chart's mix";
   let pool = false; try { pool = JSON.parse(key).opponents === "pool"; } catch (e) {}
-  return pool ? "the equilibrium of this same solve, which starts from the pool's ranges into the flop: the GTO setting's advice, on the charts' ranges, can differ"
+  const from = pool ? "the pool's ranges" : res.locked ? "the ranges your lock leaves" : "";
+  return from ? `the equilibrium of this same solve, which starts from ${from} into the flop: the GTO setting's advice, on the charts' ranges, can differ`
     : "the equilibrium of this same solve";
 }
 function renderResult(res, key) {
@@ -1595,7 +1597,7 @@ function renderResult(res, key) {
     h += `<div class="arow ${a.action === res.recommended ? "best" : ""}" data-act='${JSON.stringify(a)}' title="Click to record this as what you did"><span class="name">${a.action}${amtOf(a) != null ? `<small>${amtOf(a)} bb</small>` : ""}</span><div class="bar"><div style="width:${(a.freq * 100).toFixed(1)}%;background:${COLORS(a.action)}"></div></div><span class="num"${a.gto_freq !== undefined ? ` title="GTO plays this ${(a.gto_freq * 100).toFixed(1)}% of the time (${res.street === "preflop" ? "the chart" : "this solve's equilibrium"})"` : ""}>${(a.freq * 100).toFixed(1)}%${a.gto_freq !== undefined ? `<small class="muted" style="display:block;font-size:10px">GTO ${(a.gto_freq * 100).toFixed(0)}%</small>` : ""}</span>${ev}</div>`;
   }
   const src = res.actions.some(a => a.gto_freq !== undefined) ? gtoSource(res, key) : "";
-  if (res.locked) h += `</div><div class="meta">${Object.entries(res.locked).map(([p, l]) => `Against your lock on ${p} (${LOCK_TEXT(l)})`).join("; ")}: the best response, with GTO's frequency under each (${src}).`;
+  if (res.locked) h += `</div><div class="meta">${Object.entries(res.locked).map(([p, l]) => `Against your lock on ${p} (${LOCK_TEXT(l)})`).join("; ")}: ${res.street === "preflop" ? "your line re-priced against it" : "the best response"}, with GTO's frequency under each (${src}).`;
   else if (src) h += `</div><div class="meta">Against a typical player pool: the best response, with GTO's frequency under each (${src}).`;
   h += `</div><div class="meta">${practicing() ? "" : TAP + " a row to record it as what you did."}${hasEv ? " EV is in big blinds relative to folding now, so fold is 0: chips already in the pot are gone either way." : res.street === "preflop" ? " Preflop comes from charts, so there's no EV column." : ""}${res.widened && res.widened.length ? ` The solve rarely has ${res.widened.join(" and ")} play this way, so their range comes from simple betting rules instead; the EVs (and the pick) are against that range, so they can disagree with the solver's mix.` : conv && conv.cls !== "ok" ? " Actions the solver mixes should have near-equal EVs; gaps here mean the solve hasn't settled." : ""}</div>`;
   if (res.grid && res.street !== "preflop" && !heuristic(res)) h += `<div class="segment vtabs">${["grid", "breakdown", ...(res.multiway ? [] : ["equity"])].map(v => `<button data-v="${v}" class="${v === "grid" ? "active" : ""}">${v[0].toUpperCase() + v.slice(1)}</button>`).join("")}</div><div class="bdview" hidden></div>`;

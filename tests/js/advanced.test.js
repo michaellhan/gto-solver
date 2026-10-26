@@ -142,12 +142,13 @@ test("the advisor reads the Advanced keys the page sends", () => {
   for (const k of ["sizes", "ranges", "optimize_sizes"]) assert.ok(body.includes(`state.get("${k}")`), k);
 });
 
-// Locks (S.locks, sent as "locks"): an opponent's tendencies, best-responded to after the flop (gto/exploit.py)
+// Locks (S.locks, sent as "locks"): an opponent's tendencies, re-priced against preflop and best-responded to after the
+// flop (gto/exploit.py)
 const lockRow = (p, seat) => [...p.byId("lockIns").children].find(r => r.children[0].dataset.p === seat);
 const lockSel = (p, seat) => lockRow(p, seat).children[0];
 const lockBox = (p, seat, k) => [...lockRow(p, seat).walk()].find(e => e.tagName === "INPUT" && e.dataset.k === k);
 
-test("locks: a profile per opponent, sent from the flop on, and its numbers editable", async () => {
+test("locks: a profile per opponent, sent preflop and after, and its numbers editable", async () => {
   const p = loadPage();
   await p.ready();
   p.S = state(FLOP);
@@ -175,9 +176,10 @@ test("locks: a profile per opponent, sent from the flop on, and its numbers edit
   // back to GTO: unlocked
   lockSel(p, "SB").onchange({ target: { value: "" } });
   assert.deepEqual(Object.keys(p.S.locks), ["BB"]);
-  // preflop nothing is sent; your own seat's lock never is
-  p.S = { ...state({ cards: ["Ah", "Kh"] }), locks: { BB: { fold: 10 } } };
-  assert.equal("locks" in p.payload(), false);
+  // preflop the locks are sent too (they act there), the other Advanced fields aren't; your own seat's lock never is
+  p.S = { ...state({ cards: ["Ah", "Kh"] }), locks: { BB: { fold: 10 } }, sizes: { flop: [50] } };
+  assert.deepEqual(j(p.payload().locks), { BB: { fold: 10 } });
+  assert.equal("sizes" in p.payload(), false);
   p.S = { ...state(FLOP), locks: { BTN: { fold: 10 }, BB: { bet: -20 } } };
   assert.deepEqual(j(p.payload().locks), { BB: { bet: -20 } });
 });
@@ -200,6 +202,12 @@ test("locks: share link round trip, the summary, the copied hand and the advice 
   assert.match(b.byId("result").innerHTML, /Against your lock on BB \(overfolds to bets\): the best response/);
   assert.match(b.byId("result").innerHTML, /GTO 40%/);
   assert.match(b.run("handText()"), /Advice \(flop, vs BB locked \(overfolds to bets\)\): bet 75%/);
+
+  // preflop: re-priced against the lock, the chart's mix as GTO %
+  b.ctx.__res = JSON.stringify({ street: "preflop", hero: "BTN", hand: "AKs", recommended: "raise", locked: { BB: { fold: 15 } },
+    actions: [{ action: "raise", freq: 1, gto_freq: 0.8, amount_bb: 2.5 }, { action: "fold", freq: 0, gto_freq: 0.2 }], notes: [] });
+  b.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
+  assert.match(b.byId("result").innerHTML, /Against your lock on BB \(overfolds to bets\): your line re-priced against it, with GTO's frequency under each \(the preflop chart's mix\)/);
 });
 
 test("locks: bad fields in a link are dropped or clamped", () => {

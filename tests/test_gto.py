@@ -3597,11 +3597,12 @@ class TestLocks(unittest.TestCase):
             out = self.adv.advise(self.river("5h4h", locks=locks))
             self.assertIn("error", out, locks)
             self.assertIn(msg, out["error"], locks)
-        # preflop: noted, the charts' advice
+        # preflop they apply too (tests/test_preflop_locks.py): hero's open re-drawn against the locked big blind
         R = self.R
         out = self.adv.advise({"players": 6, "hero": "BTN", "hole": "AhKh", "board": "", "stack": 100,
                                "preflop": [R(*a) for a in self.PRE[:3]], "locks": {"BB": {"fold": 20}}})
-        self.assertTrue(any("after the flop" in n for n in out["notes"]))
+        self.assertEqual(out["locked"], {"BB": {"fold": 20.0}})
+        self.assertTrue(any(n.startswith("locked: BB folds +20 pts to raises") for n in out["notes"]), out["notes"])
         # multiway: noted, the betting rules
         pre = [R("UTG", "fold"), R("HJ", "fold"), R("CO", "fold"), R("BTN", "raise", 2.5), R("SB", "call"), R("BB", "call")]
         out = self.adv.advise({"players": 6, "hero": "BTN", "hole": "AhKh", "board": "Ks8d3c", "stack": 100, "preflop": pre,
