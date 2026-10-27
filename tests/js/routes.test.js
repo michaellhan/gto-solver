@@ -145,6 +145,23 @@ test("a view over Practice returns to /practice/ when closed; back to the solver
   assert.equal(p.val("practicing()"), false);
 });
 
+test("the menu's range builder opens Study at its URL, asking for its Build mode", async () => {
+  const p = page({ path: "/gto-solver/" });
+  await p.ready(); await flush();
+  p.click("rangeBuilder"); await flush();
+  assert.deepEqual(p.pushed, ["/gto-solver/study/"]);
+  assert.equal(p.val("Study.opened"), 1);
+  assert.equal(p.val("window.STUDY_BUILD"), true);
+});
+
+test("the solver's page pins its base to the root, so a view's URL pushed doesn't move its scripts", async () => {
+  // (Study opened from the menu at /gto-solver/study/ had loaded /gto-solver/study/study.js, a 404)
+  const p = page({ path: "/gto-solver/" });
+  await p.ready();
+  assert.equal(p.val("document.head.children[0].tagName"), "BASE");
+  assert.equal(p.val("document.head.children[0].href"), "/gto-solver/");
+});
+
 test("a view's script that fails to load leaves its URL", async () => {
   const p = loadPage({ scripts: { ...SCRIPTS, "session.js": null } });
   await p.ready();

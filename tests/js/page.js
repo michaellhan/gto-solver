@@ -49,6 +49,7 @@ class El {
   get innerHTML() { return this._html; }
   set innerHTML(v) { this._html = String(v); this.children = []; }
   appendChild(c) { this.children.push(c); return c; }
+  prepend(c) { this.children.unshift(c); }
   append(...xs) { for (const x of xs) if (typeof x === "string") this._html += x; else this.children.push(x); }
   insertAdjacentHTML(_, h) { this._html += h; }
   addEventListener(t, f) { (this.listeners[t] = this.listeners[t] || []).push(f); }

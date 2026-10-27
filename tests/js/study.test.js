@@ -194,3 +194,70 @@ test("the actions table, the range's totals, a hand's combos and the status line
   assert.match(h, /<span class="sy-now">BTN \?<\/span>$/);
   assert.doesNotMatch(S.lineHtml(SPOT, { study: "deal" }), /sy-now/);
 });
+
+test("the range builder: a blank paint, brushes, the score, and its grid, panel and detail", () => {
+  assert.equal(S.passiveOf(["fold", "call", "raise"]), 0);
+  assert.equal(S.passiveOf(["check", "bet 33%"]), 0);
+  assert.equal(S.passiveOf(["raise", "call"]), 1);
+  const p = S.blankPaint(NODE);
+  assert.deepEqual(p.f, { AA: [1, 0, 0], KQo: [1, 0, 0], "72s": [1, 0, 0] });
+  // a brush sets its action's share, the rest keeping its proportions (all on one action: to the passive one, or
+  // spread when the brush is the passive action)
+  const near = (a, b) => assert.deepEqual(a.map(x => +x.toFixed(6)), b);
+  near(S.brush([1, 0, 0], 2, 1, 0), [0, 0, 1]);
+  near(S.brush([1, 0, 0], 1, 0.5, 0), [0.5, 0.5, 0]);
+  near(S.brush([0.5, 0.5, 0], 2, 0.5, 0), [0.25, 0.25, 0.5]);
+  near(S.brush([0, 0, 1], 2, 0.5, 0), [0.5, 0, 0.5]);
+  near(S.brush([1, 0, 0], 0, 0.5, 0), [0.5, 0.25, 0.25]);
+  // all checked: AA (6 combos) 80% off, KQo (half its 12) 40%, 72s right: 1 - (6 x 0.8 + 6 x 0.4) / 16
+  const sc = S.scoreBuild(NODE, p);
+  assert.equal(sc.combos, 16);
+  assert.ok(Math.abs(sc.acc - 0.55) < 1e-9);
+  assert.ok(Math.abs(sc.ev_loss_bb - 9 / 16) < 1e-9);          // AA 11.3 - 10 = 1.3, KQo 5.2 - 5 = 0.2, a combo
+  assert.ok(Math.abs(sc.ev_loss_pct - 100 * 9 / 16 / 5.5) < 1e-9);
+  near(sc.mine, [1, 0, 0]);
+  near(sc.gto, [0.55, 0.2625, 0.1875]);
+  const exact = { f: Object.fromEntries(Object.entries(NODE.grid.cells).map(([k, c]) => [k, [...c.f]])), score: null };
+  assert.equal(S.scoreBuild(NODE, exact).acc, 1);
+  assert.equal(S.scoreBuild(NODE, exact).ev_loss_bb, 0);
+  // preflop: no EVs, accuracy only
+  const pre = { ...NODE, street: "preflop", grid: { actions: ["fold", "raise"], cells: { AA: { w: 1, f: [0, 1] }, "72o": { w: 1, f: [1, 0] } } } };
+  const ps = S.scoreBuild(pre, S.blankPaint(pre));
+  assert.equal(ps.ev_loss_bb, null);
+  assert.ok(Math.abs(ps.acc - 12 / 18) < 1e-9);
+  assert.equal(S.grade(0.95), "Excellent");
+  assert.equal(S.grade(0.55), "Off");
+  // the grid: painted mixes; once scored the solver's above yours, outlined by the difference
+  const ui = { sel: null, brush: 1, amt: 0.5, tally: { n: 0, acc: 0 } };
+  let g = S.buildGridHtml(NODE, p, ui);
+  assert.equal(cellsOf(g).length, 169);
+  assert.equal(cellsOf(g).filter(c => !/ out/.test(c)).length, 3);
+  assert.match(g, /sy-build"/);
+  const scored = { ...p, score: sc };
+  g = S.buildGridHtml(NODE, scored, ui);
+  assert.match(g, /class="sy-cell pair e2" data-cls="AA"/);
+  assert.match(g, /class="sy-cell e1" data-cls="KQo"/);
+  assert.match(g, /class="sy-cell" data-cls="72s"/);
+  assert.equal((g.match(/sy-half top/g) || []).length, 3);
+  // the panel: brushes and amounts, then the score, each action both ways and the biggest differences
+  let h = S.buildPanelHtml(NODE, p, ui);
+  assert.equal((h.match(/data-brush=/g) || []).length, 3);
+  assert.match(h, /data-brush="1" class="active"/);
+  assert.match(h, /data-amt="0.5" class="active"/);
+  assert.match(h, /Unpainted hands check/);
+  assert.match(h, /data-score/);
+  h = S.buildPanelHtml(NODE, scored, { ...ui, tally: { n: 2, acc: 1.5 } });
+  assert.match(h, /<b>55\.0%<\/b> accurate · Off/);
+  assert.match(h, /0\.563<\/b>bb a combo \(10\.23% of the pot\)/);
+  assert.match(h, /data-cls="AA" class="ghost">AA <small>80% · −1\.30bb/);
+  assert.ok(h.indexOf('data-cls="AA"') < h.indexOf('data-cls="KQo"'));
+  assert.doesNotMatch(h, /data-cls="72s"/);
+  assert.match(h, /data-newflop/);
+  assert.match(h, /2 ranges, 75\.0% accurate/);
+  assert.doesNotMatch(S.buildPanelHtml({ ...NODE, board: "Kd7c2h5s" }, scored, ui), /data-newflop/);
+  // a hand's detail: yours, then the solver's with its EVs
+  assert.match(S.buildDetailHtml(NODE, p, "AA"), /Yours<\/div><div class="sy-mix"><span style="--c:[^"]*">check <b>100%/);
+  assert.doesNotMatch(S.buildDetailHtml(NODE, p, "AA"), /Solver/);
+  assert.match(S.buildDetailHtml(NODE, scored, "AA"), /bet 75% <b>50%<\/b> <small>\+12\.00/);
+  assert.match(S.buildDetailHtml(NODE, scored, "QJs"), /not in BTN's range/);
+});

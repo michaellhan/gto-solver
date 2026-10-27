@@ -220,6 +220,18 @@ Preflop it shows the charts' mix (no EVs or equities). After the flop it browses
 players saw the flop is refused). The panel is `gto/static/study.js`, loaded when first opened; it asks the solver
 with `"study": true` (see Use from the shell).
 
+**✎ Build** (or the B key) in Study turns the decision into a range-building drill, like GTO Wizard's range builder:
+the grid shows the acting player's range with every hand at the passive action (fold, else check or call), and you
+paint the strategy yourself. Pick an action (keys 1-9) and a share (100/75/50/25%: the rest of the hand's mix keeps
+its proportions, so painting twice makes a mix), then click or drag over hands; **Fill all** paints the whole range,
+and the range's frequencies update as you paint. **Check my range** scores it against the solver: accuracy (one minus
+the share of the range, by combos, that you played differently), the EV given up (bb a combo and % of the pot, at
+each action's EV against the solver's opponent; not preflop, where the charts have no EVs), each action's share
+yours and the solver's, and the biggest differences. Each hand then shows the solver's mix above yours, outlined
+where they differ by 20% or more (red at 50%); a hand's detail compares the two mixes with each action's EV. **Try
+again** keeps your paint, **New flop** deals the same spot on a random flop, **Show the solution** leaves the drill.
+Any decision Study reaches can be built, preflop included (the charts' mix).
+
 The layout fits the window at any zoom. On a wide window each column scrolls on its own and
 the action buttons stay pinned to the bottom of theirs; drag the divider between the columns
 to resize them, drag the bar under the table to resize it, and click the Table or Hand title

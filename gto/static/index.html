@@ -625,6 +625,7 @@
       <button id="drills" title="Drill one flop spot: random flops and hands from the precomputed solutions, each answer graded at once (keys 1-4, Space for the next)">Drills…</button>
       <button id="analyzeSession" title="A whole session's hand histories: each of your decisions solved and graded, the EV lost by street, position, spot and preflop situation, the biggest mistakes">Analyze session…</button>
       <button id="study" title="Browse the solver's strategy for a whole range, node by node: every hand's mix, EV and equity; play any action, deal any card">Study…</button>
+      <button id="rangeBuilder" title="Paint a range's strategy yourself and score it against the solver's (Study's Build mode), on random flops of a precomputed spot">Range builder…</button>
       <button id="flopReports" title="The precomputed spots' flop strategy across every flop, by texture; click a flop to load it">Flop reports…</button>
       <button id="swapCols" class="wideonly" title="Put the advice on the left and the table on the right">Advice on the left</button>
       <div class="sep"></div>
@@ -865,6 +866,10 @@ function parseRoute(pathname) {   // -> { root: the solver's path, view: "solver
   return { root: m[1], view: m[2] || "solver", spot: m[3] && SPOT_ROUTES.includes(m[2]) ? m[3].replace(/-/g, "_") : null };
 }
 const ROOT = parseRoute(location.pathname).root, TITLE = document.title || "GTO Solver";
+// a view's URL pushed (/study/, …) would move the page's relative URLs under it (a view's script, the worker, the
+// library: Study opened from the menu loaded /study/study.js, a 404): the solver's own page pins its base to the
+// root, as the views' copies do with theirs
+try { if (!document.querySelector("base")) { const b = document.createElement("base"); b.href = ROOT; document.head.prepend(b); } } catch (e) {}
 let overlay = null, overlaySpot = null, overlayLabel = null;   // the view open over the solver / Practice, if any
 let routing = 1;   // > 0 while the URL's view is being opened (the URL is already its own): nothing is pushed
 const routeUrl = (v, spot) => ROOT + (v === "solver" ? "" : v + "/" + (spot && SPOT_ROUTES.includes(v) ? spot.replace(/_/g, "-") + "/" : "")) + (location.search || "");
@@ -2143,6 +2148,8 @@ document.getElementById("analyzeSession").onclick = () => openView("session");
 // ---- Study mode (study.js): a hand walked node by node with the acting player's whole range (gto/advisor.py,
 // Advisor.study), asked at the speed's budgets; it can start from the page's own hand (its advice payload)
 document.getElementById("study").onclick = () => openView("study");
+// the range builder: Study in its Build mode, from a random flop of its spot
+document.getElementById("rangeBuilder").onclick = () => { window.STUDY_BUILD = true; openView("study"); };
 async function studyAsk(st) {
   await modeReady;
   const [budget, prior_budget] = BUDGETS[MODE][st.speed === "accurate" ? "accurate" : "fast"];

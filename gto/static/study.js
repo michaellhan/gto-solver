@@ -173,6 +173,98 @@
     }
     return h + `</tbody></table>`;
   }
+  // ---- the range builder: the actor's strategy painted hand by hand, then scored against the solver's. A paint is
+  // {f: {class: mix}, score}; a brush plays action a at share t of a hand, the rest of its mix keeping its proportions
+  const AMOUNTS = [1, 0.75, 0.5, 0.25];
+  // what an unpainted hand plays: fold, else check or call
+  const passiveOf = (names) => { const i = names.indexOf("fold"); return i >= 0 ? i : Math.max(0, names.findIndex(n => n === "check" || n === "call")); };
+  function blankPaint(res) {
+    const g = res.grid, d = passiveOf(g.actions), f = {};
+    for (const [cls, c] of Object.entries(g.cells)) if (c.w > 0) f[cls] = g.actions.map((_, a) => a === d ? 1 : 0);
+    return { f, score: null };
+  }
+  function brush(mix, a, t, d) {
+    const out = mix.map((x, i) => i === a ? 0 : x), rest = out.reduce((s, x) => s + x, 0);
+    if (rest > 1e-9) for (let i = 0; i < out.length; i++) out[i] *= (1 - t) / rest;
+    else if (t < 1 && a !== d) out[d] = 1 - t;
+    else if (t < 1) for (let i = 0; i < out.length; i++) if (i !== a) out[i] = (1 - t) / (out.length - 1);
+    out[a] = t;
+    return out;
+  }
+  // a paint against the solver's mix, every hand by its combos in the range: accuracy (one minus the share of the
+  // range played differently), the EV given up (bb a combo, where the answer has EVs: not preflop), each action's
+  // share of the range both ways, and per hand its difference and loss
+  function scoreBuild(res, paint) {
+    const g = res.grid, n = g.actions.length, mine = new Array(n).fill(0), gto = new Array(n).fill(0), cells = {};
+    let W = 0, off = 0, loss = 0, evs = true;
+    for (const [cls, c] of Object.entries(g.cells)) {
+      if (!(c.w > 0)) continue;
+      const m = paint.f[cls] || g.actions.map((_, a) => a === passiveOf(g.actions) ? 1 : 0), wc = c.w * combosOf(cls);
+      const d = 0.5 * m.reduce((s, x, a) => s + Math.abs(x - c.f[a]), 0);
+      let l = null;
+      if (c.ev) { const ev = (f) => f.reduce((s, x, a) => s + x * c.ev[a], 0); l = Math.max(0, ev(c.f) - ev(m)); loss += wc * l; } else evs = false;
+      cells[cls] = { off: d, loss: l, combos: wc };
+      W += wc; off += wc * d;
+      m.forEach((x, a) => { mine[a] += wc * x; gto[a] += wc * c.f[a]; });
+    }
+    const per = (x) => W ? x / W : 0;
+    return { acc: W ? 1 - off / W : 1, ev_loss_bb: evs && W ? loss / W : null, ev_loss_pct: evs && W && res.pot_bb ? 100 * loss / W / res.pot_bb : null,
+             mine: mine.map(per), gto: gto.map(per), combos: W, cells };
+  }
+  const grade = (acc) => acc >= 0.9 ? "Excellent" : acc >= 0.8 ? "Good" : acc >= 0.65 ? "Fair" : "Off";
+  const segsHtml = (f, names) => names.map((n, a) => f[a] > 0.0005 ? `<i style="width:${(f[a] * 100).toFixed(1)}%;background:${color(n)}"></i>` : "").join("");
+  // the grid while building: each hand's painted mix (as tall as its share of the class); once scored, the solver's
+  // mix above yours, outlined by how far apart they are
+  function buildGridHtml(res, paint, ui) {
+    const g = res.grid, names = g.actions, sc = paint.score;
+    let h = `<div class="sy-grid sy-build${sc ? " scored" : ""}">`;
+    for (let i = 0; i < 13; i++) for (let j = 0; j < 13; j++) {
+      const cls = classAt(i, j), c = g.cells[cls], on = c && c.w > 0, m = paint.f[cls];
+      let inner = "", k = "";
+      if (on && sc) {
+        inner = `<span class="sy-half top">${segsHtml(c.f, names)}</span><span class="sy-half bot">${segsHtml(m, names)}</span>`;
+        const d = sc.cells[cls].off;
+        k = d >= 0.5 ? " e2" : d >= 0.2 ? " e1" : "";
+      } else if (on) inner = `<span class="sy-fill" style="height:${(Math.min(1, c.w) * 100).toFixed(1)}%">${segsHtml(m, names)}</span>`;
+      h += `<div class="sy-cell${i === j ? " pair" : ""}${on ? "" : " out"}${k}${ui.sel === cls ? " sel" : ""}" data-cls="${cls}">${inner}<span class="sy-l">${cls}</span></div>`;
+    }
+    return h + `</div>`;
+  }
+  function buildPanelHtml(res, paint, ui) {
+    const names = res.grid.actions, sc = paint.score, now = sc || scoreBuild(res, paint);
+    const bar = (f) => `<div class="sy-bar">${names.map((n, a) => f[a] > 0.0005 ? `<i style="width:${(f[a] * 100).toFixed(2)}%;background:${color(n)}" title="${esc(n)} ${pct(f[a], 1)}"></i>` : "").join("")}</div>`;
+    if (!sc) {
+      let h = `<div class="sy-bh">Paint ${esc(res.actor)}'s strategy: pick an action, then click or drag over hands. Unpainted hands ${esc(names[passiveOf(names)])}.</div>`;
+      h += `<div class="sy-brushes">${names.map((n, a) => `<button data-brush="${a}" class="${a === ui.brush ? "active" : ""}" title="Key ${a + 1}"><i class="sy-sw" style="background:${color(n)}"></i>${esc(n)}</button>`).join("")}</div>`;
+      h += `<div class="sy-ctl"><span class="segment">${AMOUNTS.map(t => `<button data-amt="${t}" class="${t === ui.amt ? "active" : ""}">${t * 100}%</button>`).join("")}</span>`
+        + `<button class="ghost" data-fill title="Paint every hand with this brush">Fill all</button><button class="ghost" data-reset>Reset</button></div>`;
+      h += `<div class="sy-tot">Your range: ${names.map((n, a) => `${esc(n)} <b data-mine="${a}">${pct(now.mine[a], 1)}</b>`).join(" · ")}</div><div data-minebar>${bar(now.mine)}</div>`;
+      return h + `<div class="sy-ctl sy-go"><button data-score>Check my range</button><button class="ghost" data-build>Show the solution</button></div>`;
+    }
+    let h = `<div class="sy-score"><b>${pct(sc.acc, 1)}</b> accurate · ${grade(sc.acc)}`
+      + (sc.ev_loss_bb != null ? `<br><span class="sy-mut">EV given up: <b>${sc.ev_loss_bb.toFixed(3)}</b>bb a combo (${sc.ev_loss_pct.toFixed(2)}% of the pot)</span>` : "") + `</div>`;
+    h += `<table class="sy-acts"><thead><tr><th>Action</th><th class="n">Yours</th><th class="n">Solver</th></tr></thead><tbody>`
+      + names.map((n, a) => `<tr><td><i class="sy-sw" style="background:${color(n)}"></i>${esc(n)}</td><td class="n">${pct(sc.mine[a], 1)}</td><td class="n">${pct(sc.gto[a], 1)}</td></tr>`).join("")
+      + `</tbody></table><div class="sy-mut sy-key">Each hand: the solver's mix above, yours below; outlined where they differ by 20% or more (red: 50%).</div>`;
+    const miss = Object.entries(sc.cells).filter(([, x]) => x.off >= 0.05).sort((a, b) => b[1].off * b[1].combos - a[1].off * a[1].combos).slice(0, 6);
+    if (miss.length) h += `<div class="sy-miss"><div class="sy-mut">Biggest differences:</div>${miss.map(([cls, x]) => `<button data-cls="${cls}" class="ghost">${cls} <small>${pct(x.off)}${x.loss != null ? ` · −${x.loss.toFixed(2)}bb` : ""}</small></button>`).join("")}</div>`;
+    if (ui.tally && ui.tally.n) h += `<div class="sy-mut sy-key">This session: ${ui.tally.n} range${ui.tally.n > 1 ? "s" : ""}, ${pct(ui.tally.acc / ui.tally.n, 1)} accurate on average.</div>`;
+    return h + `<div class="sy-ctl sy-go"><button data-retry>Try again</button>${cardsOf(res.board || "").length === 3 ? `<button class="ghost" data-newflop title="The same spot on a random flop">New flop</button>` : ""}<button class="ghost" data-build>Show the solution</button></div>`;
+  }
+  // a hand's detail while building: your mix, and once scored the solver's with each action's EV
+  function buildDetailHtml(res, paint, cls) {
+    if (!cls) return `<div class="sy-hint">${paint.score ? "Hover or click a hand to compare." : "Hover a hand for its mix."}</div>`;
+    const g = res.grid, c = g.cells[cls], names = g.actions, m = paint.f[cls];
+    if (!c || !(c.w > 0)) return `<div class="sy-dh"><b>${cls}</b> <span class="sy-mut">not in ${esc(res.actor)}'s range here</span></div>`;
+    const mix = (f, ev) => `<div class="sy-mix">${names.map((nm, a) => f[a] >= 0.005 ? `<span style="--c:${color(nm)}">${esc(nm)} <b>${pct(f[a])}</b>${ev ? ` <small>${sgn(ev[a])}</small>` : ""}</span>` : "").join("")}</div>`;
+    let h = `<div class="sy-dh"><b>${cls}</b> <span class="sy-mut">${num(c.w * combosOf(cls))} of ${combosOf(cls)} combos</span></div><div class="sy-mut">Yours</div>${mix(m)}`;
+    if (paint.score) {
+      const x = paint.score.cells[cls];
+      h += `<div class="sy-mut">Solver${c.ev ? " (EV of each action)" : ""}</div>${mix(c.f, c.ev)}<div class="sy-mut">${pct(x.off)} of it played differently${x.loss != null ? `, ${x.loss.toFixed(3)}bb a combo given up` : ""}</div>`;
+    }
+    return h;
+  }
+
   function lineHtml(st, res) {
     let h = "";
     line(st).forEach((it, i) => {
@@ -198,9 +290,14 @@
 
   // ---- the panel (browser)
   let box = null, index = null, res = null, err = null, busy = false, gen = 0;
-  const ST = { state: null, spot: "", speed: typeof SPEED === "string" && SPEED !== "quick" ? SPEED : "fast", view: "strategy", who: "me", sel: null, hover: null, focus: null };
-  try { const s = JSON.parse(localStorage.getItem("gto-study")) || {}; for (const k of ["state", "spot", "speed", "view"]) if (s[k] != null) ST[k] = s[k]; } catch (e) {}
-  const store = () => { try { localStorage.setItem("gto-study", JSON.stringify({ state: ST.state, spot: ST.spot, speed: ST.speed, view: ST.view })); } catch (e) {} };
+  const ST = { state: null, spot: "", speed: typeof SPEED === "string" && SPEED !== "quick" ? SPEED : "fast", view: "strategy", who: "me", sel: null, hover: null, focus: null,
+               build: false, brush: 0, amt: 1, tally: { n: 0, acc: 0 } };
+  try { const s = JSON.parse(localStorage.getItem("gto-study")) || {}; for (const k of ["state", "spot", "speed", "view", "build"]) if (s[k] != null) ST[k] = s[k]; } catch (e) {}
+  const store = () => { try { localStorage.setItem("gto-study", JSON.stringify({ state: ST.state, spot: ST.spot, speed: ST.speed, view: ST.view, build: ST.build })); } catch (e) {} };
+  // the range builder's paints, by the answer they're of
+  const paints = new Map();
+  const building = () => ST.build && res && res.study === "node" && !busy;
+  const paintOf = (r) => { if (!paints.has(r.key)) paints.set(r.key, blankPaint(r)); return paints.get(r.key); };
   const answers = new Map();   // request (JSON) -> its answer's promise
   const ask = (st) => typeof globalThis.studyAsk === "function" ? globalThis.studyAsk(st) : Promise.reject(new Error("no solver"));
   async function go(state) {
@@ -218,6 +315,7 @@
     else if (r.error) { err = r.error; res = null; }
     else { err = null; res = r; res.key = key; }
     if (res && res.study === "node" && typeof setColors === "function") setColors(res.actions.map(a => a.action));
+    if (res && res.study === "node" && ST.brush >= res.grid.actions.length) ST.brush = 0;
     draw();
   }
   function controls() {
@@ -237,13 +335,20 @@
     }
     if (res.study === "over") return `<div class="sy-msg">${res.winner ? `Hand over: everyone else folded, ${esc(res.winner)} wins the pot.` : "Hand over: the river's betting is done, the hands go to showdown."} Step back along the line above to look at another branch.</div>`;
     const pre = res.street === "preflop", cls = ST.hover || ST.sel;
+    const buildBtn = `<button class="ghost${ST.build ? " active" : ""}" data-build title="Paint the strategy yourself, then score it (B)">${ST.build ? "✎ Building" : "✎ Build"}</button>`;
+    if (ST.build) {
+      const paint = paintOf(res), ui = { ...ST };
+      return `<div class="sy-status">${statusHtml(res)}</div><div class="sy-main"><div class="sy-left"><div class="sy-ctl">${buildBtn}</div>`
+        + buildGridHtml(res, paint, ui) + `</div><div class="sy-right"><div class="sy-bpanel">${buildPanelHtml(res, paint, ui)}</div>`
+        + `<div class="sy-detail">${buildDetailHtml(res, paint, cls)}</div></div></div><div class="sy-note">${solverHtml(res)}</div>`;
+    }
     const views = pre ? ["strategy"] : [...Object.keys(VIEWS), "breakdown"];
     const view = views.includes(ST.view) ? ST.view : "strategy";
     const ui = { ...ST, view };
     let h = `<div class="sy-status">${statusHtml(res)}</div><div class="sy-main"><div class="sy-left"><div class="sy-ctl">`
       + `<span class="segment">${views.map(v => `<button data-view="${v}" class="${v === view ? "active" : ""}">${VIEWS[v] || "Breakdown"}</button>`).join("")}</span>`
       + (res.opponent_grid && view !== "breakdown" ? `<span class="segment">${["me", "opp"].map(w => `<button data-who="${w}" class="${w === ST.who ? "active" : ""}">${esc(w === "me" ? res.actor : res.opponent)}</button>`).join("")}</span>` : "")
-      + `</div>`;
+      + buildBtn + `</div>`;
     h += view === "breakdown" ? `<div class="sy-bd"></div>` : gridHtml(res, ui);
     h += `</div><div class="sy-right">${actionsHtml(res, ui)}<div class="sy-detail">${view === "breakdown" ? "" : detailHtml(res, ui, cls)}</div></div></div>`;
     h += `<div class="sy-note">${solverHtml(res)} ${pre ? "" : `EV: bb won from here relative to folding now. Equity: against ${esc(res.opponent)}'s range with the rest of the board dealt. EQR: EV over equity × pot.`}`
@@ -260,6 +365,8 @@
     const bd = b.querySelector(".sy-bd");
     if (bd && res && !busy) showBreakdown(bd);
     const inp = b.querySelector("[data-deal] input"); if (inp && !busy && !("ontouchstart" in window)) inp.focus();
+    // (a redraw drops the focused button: the panel keeps the focus, so its keys still work)
+    if (!box.hidden && !box.contains(document.activeElement)) box.querySelector(".sy-card").focus({ preventScroll: true });
   }
   function showBreakdown(el) {
     const go2 = () => window.Breakdown.show(el, "breakdown", res, res.key, (st) => ask(st));
@@ -271,6 +378,15 @@
   // hover, focus and a hand picked: the cells (in place: a tap's click lands on the cell it started on) and the detail
   function redrawGrid() {
     if (!box || !res || res.study !== "node" || busy) return;
+    if (ST.build) {
+      const paint = paintOf(res), g = box.querySelector(".sy-grid"), d = box.querySelector(".sy-detail");
+      if (g) {
+        const t = document.createElement("div"); t.innerHTML = buildGridHtml(res, paint, ST);
+        [...t.firstElementChild.children].forEach((c, i) => { const o = g.children[i]; o.className = c.className; o.innerHTML = c.innerHTML; });
+      }
+      if (d) d.innerHTML = buildDetailHtml(res, paint, ST.hover || ST.sel);
+      return;
+    }
     const view = res.street === "preflop" ? "strategy" : ST.view, ui = { ...ST, view };
     const g = box.querySelector(".sy-grid"), d = box.querySelector(".sy-detail");
     if (g) {
@@ -292,6 +408,23 @@
     return go(sp ? fromSpot(sp) : fresh());
   }
   function stepBack() { const b = back(ST.state); if (b) go(b); }
+  // a hand painted with the brush (not once scored): its cell and the range's totals redrawn in place
+  function paintCell(cls) {
+    if (!building()) return;
+    const paint = paintOf(res), c = res.grid.cells[cls];
+    if (paint.score || !c || !(c.w > 0)) return;
+    paint.f[cls] = brush(paint.f[cls], ST.brush, ST.amt, passiveOf(res.grid.actions));
+    redrawGrid();
+    const now = scoreBuild(res, paint);
+    box.querySelectorAll("[data-mine]").forEach(b => { b.textContent = pct(now.mine[+b.dataset.mine], 1); });
+    const t = document.createElement("div"); t.innerHTML = buildPanelHtml(res, paint, ST);
+    const mb = box.querySelector("[data-minebar]"), nb = t.querySelector("[data-minebar]");
+    if (mb && nb) mb.innerHTML = nb.innerHTML;
+  }
+  function newFlop() {
+    const base = { ...ST.state, board: "", flop: [], turn: [], river: [] };
+    return go(deal(base, randomCards(base, 3)));
+  }
   function act(d, e) {
     if (d.close != null) return close();
     if (d.speed) { if (d.speed !== ST.speed) { ST.speed = d.speed; return go(ST.state); } return; }
@@ -301,6 +434,18 @@
     if (d.who) { ST.who = d.who; ST.sel = ST.hover = null; return draw(); }
     if (d.random != null && res && res.study === "deal") return go(deal(ST.state, randomCards(ST.state, res.street === "flop" ? 3 : 1)));
     if (d.act != null && res && res.study === "node" && !busy) return go(play(ST.state, res, res.actions[+d.act]));
+    if (d.build != null) { ST.build = !ST.build; ST.sel = ST.hover = ST.focus = null; store(); return draw(); }
+    if (building()) {
+      const paint = paintOf(res);
+      if (d.brush != null) { ST.brush = +d.brush; return draw(); }
+      if (d.amt != null) { ST.amt = +d.amt; return draw(); }
+      if (d.reset != null) { paints.set(res.key, blankPaint(res)); return draw(); }
+      if (d.fill != null) { for (const k of Object.keys(paint.f)) paint.f[k] = brush(paint.f[k], ST.brush, ST.amt, passiveOf(res.grid.actions)); return draw(); }
+      if (d.score != null) { paint.score = scoreBuild(res, paint); ST.tally.n++; ST.tally.acc += paint.score.acc; return draw(); }
+      if (d.retry != null) { paint.score = null; return draw(); }
+      if (d.newflop != null) return newFlop();
+      if (d.cls) { if (paint.score) { ST.sel = ST.sel === d.cls ? null : d.cls; ST.hover = null; redrawGrid(); } return; }
+    }
     if (d.cls) { ST.sel = ST.sel === d.cls ? null : d.cls; ST.hover = null; return redrawGrid(); }
   }
   function close() {
@@ -310,6 +455,7 @@
   }
   const CSS = `
   .sy { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,.55); display: flex; justify-content: center; align-items: flex-start; padding: 28px 16px 16px; }
+  .sy-card:focus { outline: none; }
   .sy-card { background: var(--panel2); color: var(--text); border: 1px solid var(--line2); border-radius: var(--r); width: min(1120px, 100%); max-height: calc(100dvh - 44px); display: flex; flex-direction: column; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
   .sy-head { display: flex; align-items: baseline; gap: 10px; padding: 10px 12px 6px; }
   .sy-sub { color: var(--muted); font-size: 12px; flex: 1; }
@@ -374,6 +520,25 @@
   .sy-deal form { display: flex; gap: 6px; flex-wrap: wrap; }
   .sy-deal input { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; font: inherit; width: 150px; text-transform: none; }
   .sy-bd { min-height: 200px; }
+  .sy-build { touch-action: none; user-select: none; -webkit-user-select: none; }
+  .sy-build .sy-cell { cursor: crosshair; }
+  .sy-build.scored .sy-cell { cursor: pointer; }
+  .sy-half { position: absolute; left: 0; right: 0; height: 50%; display: flex; pointer-events: none; }
+  .sy-half.top { top: 0; } .sy-half.bot { bottom: 0; border-top: 1px solid rgba(0,0,0,.6); }
+  .sy-half i { display: block; height: 100%; }
+  .sy-cell.e1 { box-shadow: inset 0 0 0 2px #e0b341; }
+  .sy-cell.e2 { box-shadow: inset 0 0 0 2px var(--bad); }
+  .sy-bh { font-size: 13px; color: var(--muted); margin-bottom: 8px; line-height: 1.5; }
+  .sy-brushes { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .sy-brushes button { font-size: 13px; padding: 6px 10px; background: var(--panel); border: 1px solid var(--line); color: var(--text); border-radius: 7px; }
+  .sy-brushes button.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .sy-go { margin-top: 12px; }
+  .sy-score { font-size: 14px; margin-bottom: 10px; line-height: 1.6; }
+  .sy-score > b { font-size: 22px; }
+  .sy-key { font-size: 11px; margin-top: 6px; line-height: 1.5; }
+  .sy-miss { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 8px; font-size: 12px; }
+  .sy-miss button { font-size: 12px; padding: 3px 7px; }
+  .sy-miss small { color: var(--muted); }
   @media (max-width: 760px) {
     .sy { padding: 0; }
     .sy-card { max-height: 100dvh; height: 100dvh; border-radius: 0; border: 0; width: 100%; }
@@ -392,9 +557,9 @@
     if (!box) {
       box = document.createElement("div"); box.id = "studyBox"; box.className = "sy"; box.setAttribute("role", "dialog");
       box.setAttribute("aria-modal", "true"); box.setAttribute("aria-label", "Study");
-      box.innerHTML = `<div class="sy-card"><div class="sy-head"><b>Study</b><span class="sy-sub">the solver's strategy for a whole range, node by node: click an action to play it</span><button class="ghost sy-x" data-close aria-label="Close">✕</button></div><div class="sy-body"></div></div>`;
+      box.innerHTML = `<div class="sy-card" tabindex="-1"><div class="sy-head"><b>Study</b><span class="sy-sub">the solver's strategy for a whole range, node by node: click an action to play it</span><button class="ghost sy-x" data-close aria-label="Close">✕</button></div><div class="sy-body"></div></div>`;
       document.body.appendChild(box);
-      const data = (t) => { const e = t.closest("[data-close],[data-speed],[data-back],[data-step],[data-view],[data-who],[data-random],[data-act],[data-cls]"); return e && !e.disabled ? e.dataset : null; };
+      const data = (t) => { const e = t.closest("[data-close],[data-speed],[data-back],[data-step],[data-view],[data-who],[data-random],[data-act],[data-cls],[data-build],[data-brush],[data-amt],[data-reset],[data-fill],[data-score],[data-retry],[data-newflop]"); return e && !e.disabled ? e.dataset : null; };
       box.addEventListener("click", (e) => { if (e.target === box) return close(); const d = data(e.target); if (d) act(d, e); });
       box.addEventListener("submit", (e) => {
         e.preventDefault();
@@ -408,7 +573,30 @@
         if (e.key === "Escape") { e.stopPropagation(); close(); }
         else if (e.key === "Backspace" && !/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) { e.preventDefault(); stepBack(); }
         else if ((e.key === "Enter" || e.key === " ") && e.target.matches("tr[data-act]")) { e.preventDefault(); act(e.target.dataset); }
+        else if (/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName) || e.metaKey || e.ctrlKey || e.altKey) return;
+        else if (e.key === "b" || e.key === "B") { e.stopPropagation(); act({ build: "" }); }
+        else if (building() && /^[1-9]$/.test(e.key) && +e.key <= res.grid.actions.length) { e.stopPropagation(); act({ brush: String(+e.key - 1) }); }
       });
+      // painting: a press on a hand paints it, and a drag (mouse, pen or finger) every hand on its path (in steps of
+      // a few pixels between two moves: a quick drag skips cells)
+      let painting = null;
+      const paintAt = (x, y, done) => {
+        const el = document.elementFromPoint(x, y), c = el && el.closest(".sy-build .sy-cell");
+        if (c && !done.has(c.dataset.cls)) { done.add(c.dataset.cls); paintCell(c.dataset.cls); }
+      };
+      box.addEventListener("pointerdown", (e) => {
+        const c = e.target.closest(".sy-build .sy-cell");
+        if (!c || !building() || paintOf(res).score) return;
+        e.preventDefault(); painting = { x: e.clientX, y: e.clientY, done: new Set() }; paintAt(e.clientX, e.clientY, painting.done);
+      });
+      box.addEventListener("pointermove", (e) => {
+        if (!painting) return;
+        const { x, y } = painting, n = Math.max(1, Math.ceil(Math.hypot(e.clientX - x, e.clientY - y) / 6));
+        for (let i = 1; i <= n; i++) paintAt(x + (e.clientX - x) * i / n, y + (e.clientY - y) * i / n, painting.done);
+        painting.x = e.clientX; painting.y = e.clientY;
+      });
+      window.addEventListener("pointerup", () => { painting = null; });
+      window.addEventListener("pointercancel", () => { painting = null; });
       // hover: a hand's combos, an action's hands
       box.addEventListener("mouseover", (e) => {
         const c = e.target.closest(".sy-cell"), a = e.target.closest("tr[data-act]");
@@ -420,12 +608,18 @@
     box.hidden = false; res = null; err = null; draw();
     try { index = index || await fetch("flop_library/index.json", { cache: "no-cache" }).then(r => r.ok ? r.json() : null); } catch (e) { index = null; }
     if (ST.spot === "table") ST.spot = "";
+    if (globalThis.STUDY_BUILD) {   // (the menu's Range builder: a random flop of the spot, building)
+      globalThis.STUDY_BUILD = false; ST.build = true;
+      const sp = index && (index.spots.find(s => s.id === ST.spot) || index.spots[0]);
+      if (sp) { ST.spot = sp.id; ST.state = fromSpot(sp); await newFlop(); const t = box.querySelector("select, button"); if (t) t.focus(); return; }
+    }
     await go(ST.state && ST.state.preflop ? ST.state : (index && index.spots.length ? (ST.spot = index.spots[0].id, fromSpot(index.spots[0])) : fresh()));
     const t = box.querySelector("select, button"); if (t) t.focus();
   }
 
   const api = { fresh, parseLine, fromSpot, fromPayload, streetOf, request, kindOf, play, deal, randomCards, readCards, line, back, label,
                 eqr, cellValue, gridHtml, actionsHtml, detailHtml, lineHtml, statusHtml, solverHtml, classAt, combosOf,
+                passiveOf, blankPaint, brush, scoreBuild, grade, buildGridHtml, buildPanelHtml, buildDetailHtml,
                 open, close, state: ST };
   if (typeof module === "object" && module.exports) module.exports = api; else globalThis.Study = api;
 })();
