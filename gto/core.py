@@ -33,6 +33,7 @@ CHUNK_S = 0.1          # seconds of iterations a call (between the budget and sh
 # flop (every turn class, the river by equity at 3917 leaf rows of 529 x 529) ran 40 iterations in 17.6 s in the core,
 # 4.6 s in numpy. Trees with more leaf rows than this stay in numpy there (turns have 4-6; the browser has no BLAS).
 LEAF_ROWS_BLAS = 256
+ARENA_MAX = 1 << 30    # bytes a program may take: offsets are 32-bit, and a browser tab's memory runs out sooner
 MAX_CHUNK = 1024       # iterations a call at most (the discount factors' buffer)
 
 _lib = None            # the loaded core; False: none
@@ -185,6 +186,7 @@ class Program:
         self._rank = {}
         self.at = {}             # id(node) -> its record
         self.leaf_rows = 0
+        self.bytes = 0
         L.reset()
         _gen += 1
         self.gen = _gen
@@ -223,6 +225,9 @@ class Program:
         if hit is not None:
             return hit[0]
         arr = np.ascontiguousarray(a, dtype=dtype)
+        self.bytes += arr.nbytes
+        if self.bytes > ARENA_MAX:
+            raise Unsupported("over ARENA_MAX")
         off = self.L.alloc(arr.nbytes)
         self.L.write(off, arr)
         self._up[key] = (off, a)      # (a kept alive: its id stays its own)
@@ -332,19 +337,21 @@ class Program:
 
 def _program(L, solver, r0, r1, regrets: bool = True):
     """The solver's program with its regrets (unless not `regrets`), sums and root reaches r0, r1 uploaded: the one
-    in the arena if it's this solver's, else built. None when the tree has something the core doesn't run
-    (remembered: a tree doesn't change)."""
+    in the arena if it's this solver's, else built. None when the tree has something the core doesn't run, or more
+    than the arena takes (the browser's memory may refuse to grow: the core traps): remembered, as a tree doesn't
+    change, and numpy runs it."""
     global _prog
     if not solver._core_ok:
         return None
-    if _prog is not None and _prog.valid(L, solver):
-        _prog.upload(solver, regrets)
-        _prog.reaches(r0, r1)
-        return _prog
-    _prog = None
     try:
+        if _prog is not None and _prog.valid(L, solver):
+            _prog.upload(solver, regrets)
+            _prog.reaches(r0, r1)
+            return _prog
+        _prog = None
         _prog = Program(L, solver, r0, r1)
-    except Unsupported:
+    except Exception:
+        _prog = None
         solver._core_ok = False
     return _prog
 
@@ -359,10 +366,7 @@ def evaluate(solver, jobs):
     if not _lock.acquire(blocking=False):
         return None
     try:
-        try:
-            prog = _program(L, solver, jobs[0][2], jobs[0][3], regrets=False)
-        except Unsupported:
-            return None
+        prog = _program(L, solver, jobs[0][2], jobs[0][3], regrets=False)
         if prog is None:
             return None
         n, out = prog.n, []
@@ -395,10 +399,7 @@ def run(solver, r0, r1, t0: float, time_budget: float, max_iters: int, min_iters
         return False
     try:
         start = solver.iters
-        try:
-            prog = _program(L, solver, r0, r1)
-        except Unsupported:
-            return False
+        prog = _program(L, solver, r0, r1)
         if prog is None:
             return False
         t1 = time.time()

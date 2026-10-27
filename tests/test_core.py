@@ -140,6 +140,19 @@ class TestProgram(unittest.TestCase):
         self.assertIsNotNone(prog)
         self.assertGreater(prog.leaf_rows, core.LEAF_ROWS_BLAS)
 
+    def test_numpy_runs_what_the_arena_cant_hold(self):
+        # over ARENA_MAX, or the arena failing to grow (the browser's memory.grow refused: the core traps)
+        want = _solve("Ks7d2cTh5s", OOP, IP, 20, 90, native.config("fast"), 5, use_core=False).exploitability()
+        trap = mock.patch.object(type(core.lib()), "alloc", side_effect=RuntimeError("unreachable"))
+        for patch in (mock.patch.object(core, "ARENA_MAX", 1 << 16), trap):
+            with self.subTest(str(patch.attribute)), patch:
+                core._prog = None
+                sol = _solve("Ks7d2cTh5s", OOP, IP, 20, 90, native.config("fast"), 5)
+                self.assertIsNone(core._prog)
+                self.assertFalse(sol.solver._core_ok)
+                self.assertEqual(sol.iters, 5)
+                self.assertAlmostEqual(sol.exploitability(), want, places=4)
+
     def test_busy_core_numpy_runs(self):
         with core._lock:
             sol = _solve("Ks7d2cTh5s", OOP, IP, 20, 90, native.config("fast"), 5)
