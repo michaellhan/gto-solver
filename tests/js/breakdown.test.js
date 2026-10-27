@@ -163,3 +163,13 @@ test("the view renders the answer in the page", async () => {
   await p.run(`window.Breakdown.show(__box, "equity", JSON.parse(__res), "{}", async () => { throw new Error("cached") })`);
   assert.match(p.run("__box.innerHTML"), /polyline/);
 });
+
+test("in Study a hero's category offers the grid filtered to it", () => {
+  const got = [];
+  const h = B.breakdownHtml(BD, { who: 0, part: "made", sel: "set" }, { filter: (k) => got.push(k) });
+  assert.match(h, /<button class="ghost bd-go" data-filter="m:set">Show these hands in the grid<\/button>/);
+  assert.match(B.breakdownHtml(BD, { who: 0, part: "draws", sel: "gutshot" }, { filter: () => {} }), /data-filter="d:gutshot"/);
+  assert.doesNotMatch(B.breakdownHtml(BD, { who: 0, part: "draws", sel: "none" }, { filter: () => {} }), /data-filter/);
+  assert.doesNotMatch(B.breakdownHtml(BD, { who: 1, part: "made", sel: "middle" }, { filter: () => {} }), /data-filter/);
+  assert.doesNotMatch(B.breakdownHtml(BD, { who: 0, part: "made", sel: "set" }), /data-filter/);   // (the advice panel)
+});

@@ -220,6 +220,15 @@ Preflop it shows the charts' mix (no EVs or equities). After the flop it browses
 players saw the flop is refused). The panel is `gto/static/study.js`, loaded when first opened; it asks the solver
 with `"study": true` (see Use from the shell).
 
+The **All hands** menu beside the views filters the range to one made hand or draw, like GTO Wizard's filters (the
+Breakdown's categories: set, top pair by kicker, middle pair, no made hand, flush draw, open-ended, …, each with its
+share of the range): the grid then shows only those hands (a class as tall as its combos in the category), the
+actions table and the range's line give their frequencies, combos, EV and equity, and a hand's detail lists only
+its combos in the category. The filter stays on as you play through the hand (a draw's filter shows every hand on
+the river, where there are none); **✕ All hands** clears it. In the Breakdown, a row of the player to act offers
+**Show these hands in the grid**. Each combo of the answer carries its category (`"categories"`: the indices are into
+its made-hand and draw lists).
+
 **✎ Build** (or the B key) in Study turns the decision into a range-building drill, like GTO Wizard's range builder:
 the grid shows the acting player's range with every hand at the passive action (fold, else check or call), and you
 paint the strategy yourself. Pick an action (keys 1-9) and a share (100/75/50/25%: the rest of the hand's mix keeps
@@ -458,8 +467,10 @@ their whole range and no hero, at equilibrium (`hero`, `hole`, `opponents`, `loc
 `optimize_sizes` are ignored):
 `{"study": "node", "actor", "opponent", "street", "pot_bb", "to_call_bb", "stack_bb", "actions", "grid", "combos",
 …}` with per action the range's `freq`, `combos` and `ev_bb` (of the hands that take it), per hand class in `grid`
-its weight `w`, mix `f`, per-action EVs `ev`, EV `evm` and equity `eq`, per combo in `combos` the same, the opponent's
-range in `opponent_grid`, and the solver's stats (`breakdown` too with `"breakdown": true`). Where nobody acts it says
+its weight `w`, mix `f`, per-action EVs `ev`, EV `evm` and equity `eq`, per combo in `combos` the same as
+`[cards, w, f, ev, eq, made, draw]` (the last two indices into `categories`' `made` and `draws` lists, `[id, label]`
+each; no draws on the river), the opponent's range in `opponent_grid`, and the solver's stats (`breakdown` too with
+`"breakdown": true`). Where nobody acts it says
 what the hand needs: `{"study": "deal", "street": "turn", "allin": false}` (the next street's cards),
 `{"study": "over", "street", "winner"}` (everyone else folded) or `{"study": "over", "street": "river", "showdown": true}`.
 Preflop it is the charts' mix (no EVs); postflop it browses heads-up pots only.

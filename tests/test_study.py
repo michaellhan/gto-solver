@@ -5,6 +5,8 @@ import unittest
 
 import numpy as np
 
+from gto.breakdown import draw_category, made_category
+from gto.cards import cards
 from gto.native import advisor
 
 PRE = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "fold"},
@@ -72,6 +74,16 @@ class TestStudy(unittest.TestCase):
                 self.assertAlmostEqual((w * [x[2][a] for x in cs]).sum() / w.sum(), c["f"][a], delta=0.002)
                 self.assertAlmostEqual((w * [x[3][a] for x in cs]).sum() / w.sum(), c["ev"][a], delta=0.01)
             self.assertTrue(all(len(x[0]) == 4 and 0 <= x[4] <= 1 for x in cs))
+        # each combo's made hand and draw (the Breakdown's categories, for the page's filter)
+        made, draws = [k for k, _ in r["categories"]["made"]], [k for k, _ in r["categories"]["draws"]]
+        board = cards("Kd7c2h")
+        for cls, want in (("AKo", "top_tk"), ("77", "set"), ("KQs", "top_gk"), ("AA", "overpair"), ("QJs", None)):
+            for x in r["combos"].get(cls, []):
+                hole = cards(x[0])
+                self.assertEqual(made[x[5]], made_category(hole, board), x[0])
+                self.assertEqual(draws[x[6]], draw_category(hole, board), x[0])
+                if want:
+                    self.assertEqual(made[x[5]], want, x[0])
         # no combo holds a board card; strong hands have the equity, and the two ranges' equities add up to one
         self.assertFalse(any("Kd" in x[0] or "7c" in x[0] for cs in r["combos"].values() for x in cs))
         self.assertGreater(r["grid"]["cells"]["77"]["eq"], 0.9)
@@ -104,6 +116,10 @@ class TestStudy(unittest.TestCase):
         self.assertGreater(r["solver"]["iterations"], 0)
         self.check_totals(r)
         self.assertAlmostEqual(r["pot_bb"], 9.1, delta=0.01)
+        self.assertTrue(r["categories"]["draws"])
+        river = self.study(preflop=PRE, board="Kd7c2h5s9d", flop=flop, turn=[{"pos": "BB", "action": "check"},
+                           {"pos": "BTN", "action": "check"}], budget=1.0)
+        self.assertEqual((river["street"], river["categories"]["draws"]), ("river", []))   # (none on the river)
 
     def test_multiway_after_the_flop(self):
         pre = PRE[:3] + [{"pos": "BTN", "action": "raise", "to": 2.5}, {"pos": "SB", "action": "call"},

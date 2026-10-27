@@ -2910,8 +2910,9 @@ class Advisor:
                     lib_sol, positions, notes, t0):
         """Study mode's answer at a heads-up node (Advisor.study): the actor's whole range, per hand class (the
         grid) and combo: its reach (w), the mix (f), each action's EV in bb relative to folding now (ev; evm the
-        mix's) and its equity against the opponent's range at the node (eq: all-in, the rest of the board dealt)."""
-        from .breakdown import range_equities
+        mix's) and its equity against the opponent's range at the node (eq: all-in, the rest of the board dealt), and
+        its made hand and draw (indices into "categories": the Breakdown's, for the page's filter)."""
+        from .breakdown import range_equities, categorize, MADE, DRAWS
         me = expand(sol.ctx, n_r0 if hero_p == 0 else n_r1)
         opp = expand(sol.ctx, n_r1 if hero_p == 0 else n_r0)
         names = list(node.names)
@@ -2933,6 +2934,9 @@ class Advisor:
                          # (the EV of the hands that take it; none for an action under a twentieth of a combo)
                          "ev_bb": round(float((wa * ev[a]).sum() / wa.sum()), 2) if wa.sum() >= 0.05 else None})
         cells, combos, opp_cells = {}, {}, {}
+        held = np.flatnonzero(me >= 5e-4)
+        mi, di = {k: i for i, (k, _) in enumerate(MADE)}, {k: i for i, (k, _) in enumerate(DRAWS)}
+        cat = {int(i): (mi[m], di[d]) for i, m, d in zip(held, *categorize(board, held))}
         for cls, idx in _class_index().items():
             w = me[idx]
             sw = float(w.sum())
@@ -2943,7 +2947,8 @@ class Advisor:
                               "evm": round(float((evm[idx] * w).sum()) / sw, 2), "eq": mean(eq[idx], w)}
                 combos[cls] = [[cards_str(sorted(ALL_COMBOS[i], reverse=True)), round(float(me[i]), 3),
                                 [round(float(sf[a, i]), 3) for a in range(A)], [round(float(ev[a, i]), 2) for a in range(A)],
-                                None if np.isnan(eq[i]) else round(float(eq[i]), 3)] for i in idx if me[i] >= 5e-4]
+                                None if np.isnan(eq[i]) else round(float(eq[i]), 3), *cat[int(i)]]
+                               for i in idx if me[i] >= 5e-4]
             wo = opp[idx]
             if wo.sum() > 1e-9:
                 opp_cells[cls] = {"w": round(float(wo.sum()) / len(idx), 3), "f": [1.0], "eq": mean(eq_opp[idx], wo)}
@@ -2952,6 +2957,7 @@ class Advisor:
             "position": "OOP" if hero_p == 0 else "IP", "players": len(positions), "board": cards_str(board),
             "pot_bb": round(node.pot_now, 2), "to_call_bb": round(to_call, 2), "stack_bb": round(behind, 2),
             "actions": acts, "grid": {"actions": names, "cells": cells}, "combos": combos,
+            "categories": {"made": [list(x) for x in MADE], "draws": [list(x) for x in DRAWS] if len(board) < 5 else []},
             "range_combos": round(float(me.sum()), 1), "range_ev_bb": round(float((me * evm).sum()) / tot, 2),
             "range_eq": mean(eq, me), "opponent_combos": round(float(opp.sum()), 1),
             "opponent_eq": mean(eq_opp, opp), "opponent_grid": {"actions": ["in range"], "cells": opp_cells},

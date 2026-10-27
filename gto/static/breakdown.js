@@ -39,7 +39,7 @@
 
   // the Breakdown view: a row per category, its bar as long as its share of the range (against the largest), split
   // by the hero's actions (a villain's: plain), with the share, equity and EV
-  function breakdownHtml(bd, st = ST) {
+  function breakdownHtml(bd, st = ST, opts = {}) {
     const ps = players(bd), p = ps[Math.min(st.who, ps.length - 1)], hero = p === bd.hero;
     const parts = bd.hero.draws.length ? ["made", "draws"] : ["made"];
     const part = parts.includes(st.part) ? st.part : "made", rows = p[part] || [];
@@ -62,7 +62,8 @@
     h += `</div>`;
     const r = rows.find(x => x.id === st.sel) || rows.find(x => x.id === mine);
     if (r) h += `<div class="bd-read"><b>${esc(r.label)}</b> · ${r.c.toFixed(1)} combos (${pct(r.c / tot, 1)})${r.eq != null ? ` · equity ${pct(r.eq, 1)}` : ""}${r.ev != null && hero ? ` · EV ${evs(r.ev)} bb` : ""}`
-      + (hero && r.f ? `<br>${bd.actions.map((n, a) => `<span class="a" style="--c:${color(n)}">${esc(n)} ${pct(r.f[a])}</span>`).join(" ")}` : "") + `</div>`;
+      + (hero && r.f ? `<br>${bd.actions.map((n, a) => `<span class="a" style="--c:${color(n)}">${esc(n)} ${pct(r.f[a])}</span>`).join(" ")}` : "")
+      + (hero && opts.filter && r.id !== "none" ? `<br><button class="ghost bd-go" data-filter="${part === "made" ? "m" : "d"}:${esc(r.id)}">Show these hands in the grid</button>` : "") + `</div>`;
     h += `<div class="bd-note">${part === "made" ? "Made hands by what the hole cards add (a pair on the board is everyone's); top pair's kicker is top, good (the next two) or weak." : "Draws: a flush draw is four to a suit with a hole card; open-ended counts double gutshots; combo is a flush draw with a straight draw; backdoor is three to a flush or straight on the flop."}${hasEq ? ` Equity is against the other range, ${runText(bd)}.` : ""}</div>`;
     return h;
   }
@@ -128,6 +129,7 @@
   .bd-bar { display: flex; height: 12px; border-radius: 3px; overflow: hidden; min-width: 2px; background: var(--line2); }
   .bd-bar i { display: block; height: 100%; }
   .bd-read { margin-top: 8px; font-size: 12px; line-height: 1.6; min-height: 2.6em; }
+  .bd-go { font-size: 11px; padding: 2px 8px; margin-top: 4px; }
   .bd-read .a::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin: 0 4px 0 6px; background: var(--c); }
   .bd-note { color: var(--muted); font-size: 11px; line-height: 1.5; margin-top: 8px; }
   .bd-msg { color: var(--muted); font-size: 13px; padding: 14px 2px; }
@@ -155,7 +157,8 @@
   }`;
 
   // show a view ("breakdown" or "equity") of the advice res (payload key) in box; ask: the page's solver call
-  async function show(box, view, res, key, ask) {
+  // opts.filter(key): a hero's category row offers it (Study: the grid filtered to "m:<id>" or "d:<id>")
+  async function show(box, view, res, key, ask, opts = {}) {
     if (!document.getElementById("bdStyle")) {
       const s = document.createElement("style"); s.id = "bdStyle"; s.textContent = CSS; document.head.appendChild(s);
     }
@@ -167,12 +170,13 @@
     if (out.error) { box.innerHTML = `<div class="bd-msg">${esc(out.error)}</div>`; return; }
     const bd = out.breakdown;
     const draw = () => {
-      box.innerHTML = view === "equity" ? equityHtml(bd) : breakdownHtml(bd);
+      box.innerHTML = view === "equity" ? equityHtml(bd) : breakdownHtml(bd, ST, opts);
       if (view === "equity") wireChart(box, bd);
     };
     box.onclick = (e) => {
-      const t = e.target.closest("[data-who],[data-part],[data-row]");
+      const t = e.target.closest("[data-who],[data-part],[data-row],[data-filter]");
       if (!t) return;
+      if (t.dataset.filter) return opts.filter(t.dataset.filter);
       if (t.dataset.who != null) { ST.who = +t.dataset.who; ST.sel = null; }
       else if (t.dataset.part) { ST.part = t.dataset.part; ST.sel = null; }
       else ST.sel = ST.sel === t.dataset.row ? null : t.dataset.row;

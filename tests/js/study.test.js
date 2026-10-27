@@ -261,3 +261,48 @@ test("the range builder: a blank paint, brushes, the score, and its grid, panel 
   assert.match(S.buildDetailHtml(NODE, scored, "AA"), /bet 75% <b>50%<\/b> <small>\+12\.00/);
   assert.match(S.buildDetailHtml(NODE, scored, "QJs"), /not in BTN's range/);
 });
+
+test("the filter: one made hand or draw, the grid, the range's totals and the combos over its hands", () => {
+  // combo rows tagged with their made hand and draw (indices into categories)
+  const node = { ...NODE, categories: { made: [["set", "Set"], ["overpair", "Overpair"], ["top_tk", "Top pair, top kicker"]],
+                                        draws: [["fd", "Flush draw"], ["none", "No draw"]] },
+    combos: { AA: [["AsAh", 1, [0, 0, 1], [10, 11, 12], 0.9, 1, 1], ["AdAc", 1, [1, 0, 0], [9, 8, 7], 0.88, 1, 0]],
+              KQo: [["KsQh", 1, [0.5, 0.5, 0], [5, 6, 4], 0.8, 2, 1], ["KhQd", 0.5, [1, 0, 0], [4, 4, 4], 0.7, 2, 1]],
+              "72s": [["7s2s", 1, [0, 0, 1], [3, 2, 8], 0.95, 0, 1]] } };
+  assert.deepEqual(S.catsOf(node).map(c => [c.key, c.label, c.combos]),
+                   [["m:set", "Set", 1], ["m:overpair", "Overpair", 2], ["m:top_tk", "Top pair, top kicker", 1.5], ["d:fd", "Flush draw", 1]]);
+  assert.deepEqual(S.catsOf(NODE), []);                    // (preflop, or an answer without them)
+  const near = (a, b) => assert.deepEqual(a.map(x => x == null ? x : +x.toFixed(6)), b);
+  const op = S.filterRes(node, "m:overpair");
+  assert.deepEqual(Object.keys(op.grid.cells), ["AA"]);
+  const aa = op.grid.cells.AA;
+  near([aa.w, aa.evm, aa.eq], [+(2 / 6).toFixed(6), 10.5, 0.89]);
+  near(aa.f, [0.5, 0, 0.5]);
+  near(aa.ev, [9.5, 9.5, 9.5]);
+  near(op.actions.map(a => a.freq), [0.5, 0, 0.5]);
+  near(op.actions.map(a => a.ev_bb), [9, null, 12]);       // (none for an action no hand of it takes)
+  assert.deepEqual(op.actions.map(a => a.action), ["check", "bet 33%", "bet 75%"]);
+  near([op.range_combos, op.range_ev_bb, op.range_eq], [2, 10.5, 0.89]);
+  assert.deepEqual(op.filter, { key: "m:overpair", label: "Overpair", of: 400 });
+  const tp = S.filterRes(node, "m:top_tk").grid.cells.KQo;
+  near([tp.w, ...tp.f], [0.125, +(2 / 3).toFixed(6), +(1 / 3).toFixed(6), 0]);
+  const fd = S.filterRes(node, "d:fd");
+  assert.deepEqual(fd.combos, { AA: [node.combos.AA[1]] });
+  assert.equal(S.filterRes(node, "d:oesd"), node);          // not a category here (draws on the river): every hand
+  assert.equal(S.filterRes(node, null), node);
+  // the select, the grid, the totals and the detail
+  const sel = S.filterHtml(node, "m:overpair");
+  assert.match(sel, /<option value="">All hands<\/option><optgroup label="Made hands"><option value="m:set">Set · 0\.3%/);
+  assert.match(sel, /<option value="m:overpair" selected>Overpair · 0\.5%<\/option>/);
+  assert.match(sel, /<optgroup label="Draws"><option value="d:fd">Flush draw · 0\.3%<\/option><\/optgroup>/);
+  assert.doesNotMatch(sel, /No draw/);
+  assert.equal(S.filterHtml(NODE, null), "");
+  assert.equal(cellsOf(S.gridHtml(op, { view: "strategy", who: "me" })).filter(c => / out/.test(c)).length, 168);
+  const t = S.actionsHtml(op, {});
+  assert.match(t, /BTN's <b>overpair<\/b>: <b>2<\/b> of 400 combos \(0\.5%\) · EV <b>\+10\.50<\/b>bb/);
+  assert.match(t, /data-unfilter/);
+  assert.doesNotMatch(S.actionsHtml(node, {}), /data-unfilter/);
+  const d = S.detailHtml(fd, { who: "me" }, "AA");
+  assert.match(d, /1 of 6 combos/);
+  assert.equal((d.match(/<tr title=/g) || []).length, 1);
+});

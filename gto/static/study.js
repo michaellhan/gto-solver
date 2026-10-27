@@ -147,8 +147,10 @@
         + `<td class="n">${a.combos.toFixed(1)}</td>${res.street === "preflop" ? "" : `<td class="n">${sgn(a.ev_bb)}</td>`}</tr>`;
     });
     h += `</tbody></table><div class="sy-bar">${res.actions.map(a => a.freq > 0.0005 ? `<i style="width:${(a.freq * 100).toFixed(2)}%;background:${color(a.action)}" title="${esc(label(a))} ${pct(a.freq, 1)}"></i>` : "").join("")}</div>`;
-    h += `<div class="sy-tot">${res.actor}'s range: <b>${num(tot)}</b> combos`
+    const f = res.filter;
+    h += `<div class="sy-tot">` + (f ? `${res.actor}'s <b>${esc(f.label.toLowerCase())}</b>: <b>${num(tot)}</b> of ${num(f.of)} combos (${pct(tot / f.of, 1)})` : `${res.actor}'s range: <b>${num(tot)}</b> combos`)
       + (res.range_ev_bb != null ? ` · EV <b>${sgn(res.range_ev_bb)}</b>bb · equity <b>${pct(res.range_eq, 1)}</b> · EQR <b>${(res.range_ev_bb / (res.range_eq * res.pot_bb)).toFixed(2)}</b>` : "")
+      + (f ? ` <button class="ghost sy-unf" data-unfilter title="Show every hand again">✕ All hands</button>` : "")
       + (res.opponent ? `<br>${res.opponent}: ${num(res.opponent_combos)} combos · equity ${pct(res.opponent_eq, 1)}` : "") + `</div>`;
     return h;
   }
@@ -172,6 +174,58 @@
         + `<td class="n">${sgn(evOf(x))}</td><td class="n">${pct(x[4])}</td></tr>`;
     }
     return h + `</tbody></table>`;
+  }
+  // ---- the filter (GTO Wizard's): the actor's hands of one made-hand or draw category, the grid, the range's totals
+  // and the combos over them alone. A combo row is [cards, reach, mix, EVs, equity, made, draw], the last two indices
+  // into res.categories (the Breakdown's); a filter's key is "m:<id>" or "d:<id>"
+  function catsOf(res) {
+    const cats = res && res.categories;
+    if (!cats) return [];
+    const tot = { m: new Map(), d: new Map() };
+    for (const cs of Object.values(res.combos || {})) for (const x of cs) {
+      tot.m.set(x[5], (tot.m.get(x[5]) || 0) + x[1]);
+      tot.d.set(x[6], (tot.d.get(x[6]) || 0) + x[1]);
+    }
+    const out = [];
+    for (const [part, list] of [["m", cats.made], ["d", cats.draws]]) list.forEach(([id, lab], i) => {
+      const c = tot[part].get(i) || 0;
+      if (c >= 0.05 && id !== "none") out.push({ key: part + ":" + id, part, i, label: lab, combos: c });
+    });
+    return out;
+  }
+  // res over the filter's hands (res itself where the key isn't one of this node's: draws on the river)
+  function filterRes(res, key) {
+    const cat = key ? catsOf(res).find(c => c.key === key) : null;
+    if (!cat) return res;
+    const col = cat.part === "m" ? 5 : 6, A = res.grid.actions.length, zero = () => new Array(A).fill(0);
+    const cells = {}, combos = {}, fw = zero(), fe = zero();
+    let W = 0, EV = 0, EQ = 0, EQW = 0;
+    for (const [cls, cs] of Object.entries(res.combos || {})) {
+      const rows = cs.filter(x => x[col] === cat.i);
+      if (!rows.length) continue;
+      combos[cls] = rows;
+      const f = zero(), ev = zero();
+      let w = 0, evm = 0, eq = 0, ew = 0;
+      for (const x of rows) {
+        w += x[1];
+        for (let a = 0; a < A; a++) { f[a] += x[1] * x[2][a]; ev[a] += x[1] * x[3][a]; evm += x[1] * x[2][a] * x[3][a]; fe[a] += x[1] * x[2][a] * x[3][a]; }
+        if (x[4] != null) { eq += x[1] * x[4]; ew += x[1]; }
+      }
+      f.forEach((v, a) => { fw[a] += v; });
+      cells[cls] = { w: w / combosOf(cls), f: f.map(v => v / w), ev: ev.map(v => v / w), evm: evm / w, eq: ew ? eq / ew : null };
+      W += w; EV += evm; EQ += eq; EQW += ew;
+    }
+    const actions = res.actions.map((a, i) => ({ ...a, freq: W ? fw[i] / W : 0, combos: fw[i], ev_bb: fw[i] >= 0.05 ? fe[i] / fw[i] : null }));
+    return { ...res, grid: { ...res.grid, cells }, combos, actions, range_combos: W, range_ev_bb: W ? EV / W : null,
+      range_eq: EQW ? EQ / EQW : null, filter: { key, label: cat.label, of: res.range_combos } };
+  }
+  function filterHtml(res, key) {
+    const cats = catsOf(res);
+    if (!cats.length) return "";
+    const tot = res.range_combos || 1, opt = (c) => `<option value="${c.key}"${c.key === key ? " selected" : ""}>${esc(c.label)} · ${pct(c.combos / tot, 1)}</option>`;
+    const group = (part, name) => { const cs = cats.filter(c => c.part === part); return cs.length ? `<optgroup label="${name}">${cs.map(opt).join("")}</optgroup>` : ""; };
+    return `<select data-ctl="filter" aria-label="Show only the hands of one category" title="Show only the hands of one category: the grid, the range's frequencies and the combos over them">`
+      + `<option value="">All hands</option>${group("m", "Made hands")}${group("d", "Draws")}</select>`;
   }
   // ---- the range builder: the actor's strategy painted hand by hand, then scored against the solver's. A paint is
   // {f: {class: mix}, score}; a brush plays action a at share t of a hand, the rest of its mix keeping its proportions
@@ -291,7 +345,7 @@
   // ---- the panel (browser)
   let box = null, index = null, res = null, err = null, busy = false, gen = 0;
   const ST = { state: null, spot: "", speed: typeof SPEED === "string" && SPEED !== "quick" ? SPEED : "fast", view: "strategy", who: "me", sel: null, hover: null, focus: null,
-               build: false, brush: 0, amt: 1, tally: { n: 0, acc: 0 } };
+               build: false, brush: 0, amt: 1, tally: { n: 0, acc: 0 }, filter: null };
   try { const s = JSON.parse(localStorage.getItem("gto-study")) || {}; for (const k of ["state", "spot", "speed", "view", "build"]) if (s[k] != null) ST[k] = s[k]; } catch (e) {}
   const store = () => { try { localStorage.setItem("gto-study", JSON.stringify({ state: ST.state, spot: ST.spot, speed: ST.speed, view: ST.view, build: ST.build })); } catch (e) {} };
   // the range builder's paints, by the answer they're of
@@ -344,16 +398,26 @@
     }
     const views = pre ? ["strategy"] : [...Object.keys(VIEWS), "breakdown"];
     const view = views.includes(ST.view) ? ST.view : "strategy";
-    const ui = { ...ST, view };
+    const ui = { ...ST, view }, r = shown(view);
     let h = `<div class="sy-status">${statusHtml(res)}</div><div class="sy-main"><div class="sy-left"><div class="sy-ctl">`
       + `<span class="segment">${views.map(v => `<button data-view="${v}" class="${v === view ? "active" : ""}">${VIEWS[v] || "Breakdown"}</button>`).join("")}</span>`
       + (res.opponent_grid && view !== "breakdown" ? `<span class="segment">${["me", "opp"].map(w => `<button data-who="${w}" class="${w === ST.who ? "active" : ""}">${esc(w === "me" ? res.actor : res.opponent)}</button>`).join("")}</span>` : "")
+      + (view !== "breakdown" && ST.who !== "opp" ? filterHtml(res, r.filter ? r.filter.key : "") : "")
       + buildBtn + `</div>`;
-    h += view === "breakdown" ? `<div class="sy-bd"></div>` : gridHtml(res, ui);
-    h += `</div><div class="sy-right">${actionsHtml(res, ui)}<div class="sy-detail">${view === "breakdown" ? "" : detailHtml(res, ui, cls)}</div></div></div>`;
+    h += view === "breakdown" ? `<div class="sy-bd"></div>` : gridHtml(r, ui);
+    h += `</div><div class="sy-right">${actionsHtml(r, ui)}<div class="sy-detail">${view === "breakdown" ? "" : detailHtml(r, ui, cls)}</div></div></div>`;
     h += `<div class="sy-note">${solverHtml(res)} ${pre ? "" : `EV: bb won from here relative to folding now. Equity: against ${esc(res.opponent)}'s range with the rest of the board dealt. EQR: EV over equity × pot.`}`
       + `${(res.notes || []).length ? `<br>${res.notes.map(esc).join("<br>")}` : ""}</div>`;
     return h;
+  }
+  // the answer as shown: under the filter (the actor's grid; not the Breakdown or the range builder), cached per
+  // answer and filter for the hover's redraws
+  let filtered = { res: null, key: null, out: null };
+  function shown(view) {
+    const key = view !== "breakdown" && !ST.build && ST.who !== "opp" ? ST.filter : null;
+    if (!key) return res;
+    if (filtered.res !== res || filtered.key !== key) filtered = { res, key, out: filterRes(res, key) };
+    return filtered.out;
   }
   function draw() {
     if (!box) return;
@@ -369,7 +433,8 @@
     if (!box.hidden && !box.contains(document.activeElement)) box.querySelector(".sy-card").focus({ preventScroll: true });
   }
   function showBreakdown(el) {
-    const go2 = () => window.Breakdown.show(el, "breakdown", res, res.key, (st) => ask(st));
+    const go2 = () => window.Breakdown.show(el, "breakdown", res, res.key, (st) => ask(st),
+      { filter: (key) => { ST.filter = key; ST.view = "strategy"; ST.who = "me"; store(); draw(); } });
     if (window.Breakdown) return go2();
     el.innerHTML = `<div class="sy-msg"><span class="spinner"></span>Loading…</div>`;
     const p = typeof loadJs === "function" ? loadJs("breakdown.js?v=" + (typeof BD_VERSION === "string" ? BD_VERSION : "1"), () => window.Breakdown) : Promise.reject(new Error("no loader"));
@@ -387,15 +452,15 @@
       if (d) d.innerHTML = buildDetailHtml(res, paint, ST.hover || ST.sel);
       return;
     }
-    const view = res.street === "preflop" ? "strategy" : ST.view, ui = { ...ST, view };
+    const view = res.street === "preflop" ? "strategy" : ST.view, ui = { ...ST, view }, r = shown(view);
     const g = box.querySelector(".sy-grid"), d = box.querySelector(".sy-detail");
     if (g) {
-      const t = document.createElement("div"); t.innerHTML = gridHtml(res, ui);
+      const t = document.createElement("div"); t.innerHTML = gridHtml(r, ui);
       const now = t.firstElementChild;
       g.className = now.className;
       [...now.children].forEach((c, i) => { const o = g.children[i]; o.className = c.className; o.setAttribute("style", c.getAttribute("style")); o.innerHTML = c.innerHTML; });
     }
-    if (d && view !== "breakdown") d.innerHTML = detailHtml(res, ui, ST.hover || ST.sel);
+    if (d && view !== "breakdown") d.innerHTML = detailHtml(r, ui, ST.hover || ST.sel);
     box.querySelectorAll(".sy-acts tr[data-act]").forEach(r => r.classList.toggle("focus", +r.dataset.act === ST.focus));
   }
   function startFrom(spot) {
@@ -431,6 +496,7 @@
     if (d.back != null) return stepBack();
     if (d.step != null) return go(line(ST.state)[+d.step].st);
     if (d.view) { ST.view = d.view; store(); return draw(); }
+    if (d.unfilter != null) { ST.filter = null; return draw(); }
     if (d.who) { ST.who = d.who; ST.sel = ST.hover = null; return draw(); }
     if (d.random != null && res && res.study === "deal") return go(deal(ST.state, randomCards(ST.state, res.street === "flop" ? 3 : 1)));
     if (d.act != null && res && res.study === "node" && !busy) return go(play(ST.state, res, res.actions[+d.act]));
@@ -456,6 +522,7 @@
   const CSS = `
   .sy { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,.55); display: flex; justify-content: center; align-items: flex-start; padding: 28px 16px 16px; }
   .sy-card:focus { outline: none; }
+  .sy-unf { font-size: 11px; padding: 1px 6px; margin-left: 4px; }
   .sy-card { background: var(--panel2); color: var(--text); border: 1px solid var(--line2); border-radius: var(--r); width: min(1120px, 100%); max-height: calc(100dvh - 44px); display: flex; flex-direction: column; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
   .sy-head { display: flex; align-items: baseline; gap: 10px; padding: 10px 12px 6px; }
   .sy-sub { color: var(--muted); font-size: 12px; flex: 1; }
@@ -559,8 +626,9 @@
       box.setAttribute("aria-modal", "true"); box.setAttribute("aria-label", "Study");
       box.innerHTML = `<div class="sy-card" tabindex="-1"><div class="sy-head"><b>Study</b><span class="sy-sub">the solver's strategy for a whole range, node by node: click an action to play it</span><button class="ghost sy-x" data-close aria-label="Close">✕</button></div><div class="sy-body"></div></div>`;
       document.body.appendChild(box);
-      const data = (t) => { const e = t.closest("[data-close],[data-speed],[data-back],[data-step],[data-view],[data-who],[data-random],[data-act],[data-cls],[data-build],[data-brush],[data-amt],[data-reset],[data-fill],[data-score],[data-retry],[data-newflop]"); return e && !e.disabled ? e.dataset : null; };
-      box.addEventListener("click", (e) => { if (e.target === box) return close(); const d = data(e.target); if (d) act(d, e); });
+      const data = (t) => { const e = t.closest("[data-close],[data-speed],[data-back],[data-step],[data-view],[data-who],[data-random],[data-act],[data-cls],[data-build],[data-brush],[data-amt],[data-reset],[data-fill],[data-score],[data-retry],[data-newflop],[data-unfilter]"); return e && !e.disabled ? e.dataset : null; };
+      // (the Breakdown's own buttons are its: its player and parts aren't the panel's)
+      box.addEventListener("click", (e) => { if (e.target === box) return close(); if (e.target.closest(".sy-bd")) return; const d = data(e.target); if (d) act(d, e); });
       box.addEventListener("submit", (e) => {
         e.preventDefault();
         if (!res || res.study !== "deal") return;
@@ -568,7 +636,10 @@
         if (r.error) { const m = box.querySelector("[data-dealerr]"); if (m) m.textContent = r.error; return; }
         go(deal(ST.state, r.cards));
       });
-      box.addEventListener("change", (e) => { if (e.target.dataset.ctl === "spot") startFrom(e.target.value); });
+      box.addEventListener("change", (e) => {
+        if (e.target.dataset.ctl === "spot") startFrom(e.target.value);
+        else if (e.target.dataset.ctl === "filter") { ST.filter = e.target.value || null; ST.hover = null; draw(); }
+      });
       box.addEventListener("keydown", (e) => {
         if (e.key === "Escape") { e.stopPropagation(); close(); }
         else if (e.key === "Backspace" && !/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) { e.preventDefault(); stepBack(); }
@@ -620,6 +691,7 @@
   const api = { fresh, parseLine, fromSpot, fromPayload, streetOf, request, kindOf, play, deal, randomCards, readCards, line, back, label,
                 eqr, cellValue, gridHtml, actionsHtml, detailHtml, lineHtml, statusHtml, solverHtml, classAt, combosOf,
                 passiveOf, blankPaint, brush, scoreBuild, grade, buildGridHtml, buildPanelHtml, buildDetailHtml,
+                catsOf, filterRes, filterHtml,
                 open, close, state: ST };
   if (typeof module === "object" && module.exports) module.exports = api; else globalThis.Study = api;
 })();
