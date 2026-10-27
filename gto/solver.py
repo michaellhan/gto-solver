@@ -23,6 +23,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 from .cards import ALL_COMBOS, COMBO_INDEX
 from .evaluator import eval_board, eval_boards
+from . import core
 np.seterr(divide="ignore", over="ignore", invalid="ignore")
 # The browser's Pyodide numpy has no BLAS and its matmul is a plain loop, so a browser flop solve is
 # ~95% equity-leaf matvecs (arithmetic, not call overhead); einsum's dot-product loops run them and the
@@ -1198,6 +1199,8 @@ class Solver:
         self._cin: Dict[tuple, object] = {}
         self._own: Dict[tuple, object] = {}
         self._p = None              # the training pass's player
+        self.use_core = True        # run() in the compiled core when it covers the tree (gto/core.py)
+        self._core_ok = True        # False: the tree has something the core doesn't run
 
     def _child_reach(self, node, q, r, fn):
         """fn(r), player q's reach into node's children, through the memo (training passes, every row only)."""
@@ -1712,22 +1715,28 @@ class Solver:
         h = max(self.horizon or 1, 1)
         return v[0] + (v[1] - v[0]) * min(self.iters / h, 1.0)
 
-    def _discount(self):
+    def _factors(self) -> tuple:
+        """The discount after iteration self.iters: (floor, the positive regrets' factor, the negative ones', the
+        strategy sums'); floor: the regrets are floored at 0 first (beta None, CFR+'s)."""
         t = float(self.iters)
         alpha, beta, gamma = self._param(self.alpha), self._param(self.beta), self._param(self.gamma)
-        r = self._regret
-        if beta is None:
-            np.maximum(r, 0.0, out=r)
-            if alpha is not None:
-                r *= np.float32((t ** alpha) / (t ** alpha + 1))
-        else:
-            pos_f = 1.0 if alpha is None else (t ** alpha) / (t ** alpha + 1)
-            neg_f = (t ** beta) / (t ** beta + 1)
-            r *= np.where(r > 0, np.float32(pos_f), np.float32(neg_f))     # (a float64 factor array: twice the traffic)
+        pos_f = 1.0 if alpha is None else (t ** alpha) / (t ** alpha + 1)
+        neg_f = 0.0 if beta is None else (t ** beta) / (t ** beta + 1)
         if self.reset4:
             # postflop-solver's averaging: the strategy sums start over at every power of 4
             t -= 4 ** int(np.log(t) / np.log(4) + 1e-9)
-        self._ssum *= np.float32((t / (t + 1)) ** gamma)
+        return beta is None, pos_f, neg_f, (t / (t + 1)) ** gamma
+
+    def _discount(self):
+        floor, pos_f, neg_f, ss_f = self._factors()
+        r = self._regret
+        if floor:
+            np.maximum(r, 0.0, out=r)
+            if pos_f != 1.0:
+                r *= np.float32(pos_f)
+        else:
+            r *= np.where(r > 0, np.float32(pos_f), np.float32(neg_f))     # (a float64 factor array: twice the traffic)
+        self._ssum *= np.float32(ss_f)
 
     def run(self, r0, r1, time_budget=3.0, max_iters=1000, min_iters=10, should_stop=None, reserve=None):
         """r0, r1: (N,) root reaches. Adds iterations until the budget is spent.
@@ -1744,6 +1753,9 @@ class Solver:
             self.horizon = max_iters
         t0 = time.time()
         start = self.iters
+        # the compiled core (gto/core.py) runs the iterations of the trees it covers, numpy the rest
+        if self.use_core and core.run(self, r0b[0], r1b[0], t0, time_budget, max_iters, min_iters, should_stop, reserve):
+            return self.iters, time.time() - t0
         self._own.clear()       # (the traverser's reaches are this run's root reaches')
         while self.iters < max_iters:
             if should_stop is not None and should_stop():
@@ -1808,19 +1820,25 @@ class Solver:
         """Average of what each player's best response wins against the other's average
         strategy, in percent of the pot at the root (0 at an exact equilibrium of this tree)."""
         a, b = r0[None, :].astype(np.float32), r1[None, :].astype(np.float32)
-        v0 = float((self._best_response(self.root, 0, a, b)[0] * r0).sum())
-        v1 = float((self._best_response(self.root, 1, a, b)[0] * r1).sum())
+        raked = self.ctx.cfg.rake_rate > 0 or self.ctx.cfg.icm is not None
+        u = core.evaluate(self, [(self.root, p, a, b, core.BR) for p in (0, 1)] +
+                          [(self.root, p, a, b, core.AVG) for p in ((0, 1) if raked else ())])
+        if u is None:
+            u = [self._best_response(self.root, p, a, b) for p in (0, 1)]
+        v0 = float((u[0][0] * r0).sum())
+        v1 = float((u[1][0] * r1).sum())
         pairs = float((self.compat_sum(r1[None, :])[0] * r0).sum())
-        if self.ctx.cfg.rake_rate > 0 or self.ctx.cfg.icm is not None:
+        if raked:
             # raked (or a tournament's payoffs), the game isn't zero-sum: each best response gains over what its player gets now,
             # and the two now sum to minus the rake the average strategies pay (0 without rake)
-            self.sampling = False
-            try:
-                for p in (0, 1):
-                    u = self._cfr(self.root, p, a, b, update=False, use_avg=True)[0]
-                    v0 -= float((u * (r0 if p == 0 else r1)).sum())
-            finally:
-                self.sampling = True
+            if len(u) == 2:
+                self.sampling = False
+                try:
+                    u += [self._cfr(self.root, p, a, b, update=False, use_avg=True) for p in (0, 1)]
+                finally:
+                    self.sampling = True
+            for p in (0, 1):
+                v0 -= float((u[2 + p][0] * (r0 if p == 0 else r1)).sum())
         return (v0 + v1) / 2 / max(pairs, 1e-12) / self.root.pot_now * 100
 
     def node_action_evs(self, node: Decision, r0, r1):
@@ -1831,10 +1849,11 @@ class Solver:
         cs = self.compat_sum(ro)[0]
         inv_p = _inv_of(node, p, self.ctx.cfg.icm)
         evs = np.zeros((len(node.names), self.ctx.n))
+        got = core.evaluate(self, [(c, p, r0, r1, core.AVG) for c in node.children])
         self.sampling = False           # exact expectation over every card in the tree
         try:
             for a, child in enumerate(node.children):
-                u = self._cfr(child, p, r0[None, :], r1[None, :], update=False, use_avg=True)[0]
+                u = got[a][0] if got else self._cfr(child, p, r0[None, :], r1[None, :], update=False, use_avg=True)[0]
                 evs[a] = np.where(cs > 1e-12, u / np.where(cs > 1e-12, cs, 1.0), 0.0) + inv_p
         finally:
             self.sampling = True
@@ -1848,8 +1867,10 @@ class Solver:
         cs = self.compat_sum(ro)[0]
         inv_p = _inv_of(node, p, self.ctx.cfg.icm)
         evs = np.zeros((len(node.names), self.ctx.n))
+        got = core.evaluate(self, [(c, p, r0, r1, core.BR) for c in node.children]) if lock is None else None
         for a, child in enumerate(node.children):
-            u = self._best_response(child, p, r0[None, :].astype(np.float32), r1[None, :].astype(np.float32), lock)[0]
+            u = got[a][0] if got else \
+                self._best_response(child, p, r0[None, :].astype(np.float32), r1[None, :].astype(np.float32), lock)[0]
             evs[a] = np.where(cs > 1e-12, u / np.where(cs > 1e-12, cs, 1.0), 0.0) + inv_p
         return evs
 

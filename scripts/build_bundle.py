@@ -1,7 +1,8 @@
 """The browser solver's Python code in one file: solver.zip, which gto/static/worker.js fetches (alongside Pyodide, not
 after it) and unpacks into Pyodide's file system. It holds every gto/*.py (gto/__init__.py too: inside a zip the leading
-underscore GitHub Pages won't serve doesn't matter) and treys, the hand evaluator's lookup tables (pure Python, MIT
-licensed: its LICENSE goes along), taken from this interpreter's install, so the page needs neither micropip nor PyPI.
+underscore GitHub Pages won't serve doesn't matter), the compiled CFR core (gto/core.wasm, scripts/build_core.py) and
+treys, the hand evaluator's lookup tables (pure Python, MIT licensed: its LICENSE goes along), taken from this
+interpreter's install, so the page needs neither micropip nor PyPI.
 The zip is deterministic (sorted names, fixed timestamps): the same sources give the same bytes and hash, which
 scripts/deploy.sh puts in the worker's version.
 
@@ -23,6 +24,10 @@ def bundle_files() -> List[Tuple[str, str]]:
     """(name in the zip, source path), sorted by name."""
     import treys
     out = [(f"gto/{os.path.basename(p)}", p) for p in glob.glob(os.path.join(ROOT, "gto", "*.py"))]
+    # the compiled CFR core's module (gto/core.py), which worker.js instantiates from the unpacked bundle
+    wasm = os.path.join(ROOT, "gto", "core.wasm")
+    if os.path.exists(wasm):
+        out.append(("gto/core.wasm", wasm))
     tdir = os.path.dirname(treys.__file__)
     out += [(f"treys/{os.path.basename(p)}", p) for p in glob.glob(os.path.join(tdir, "*.py"))]
     lic = glob.glob(os.path.join(os.path.dirname(tdir), "treys-*.dist-info", "LICENSE*"))

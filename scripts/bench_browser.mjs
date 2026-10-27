@@ -93,7 +93,7 @@ async function startWorker(pyodideDir, bundlePath) {
   let py = null, onMsg = null;
   const ctx = {
     console, setTimeout, clearTimeout, URL, URLSearchParams, TextDecoder, TextEncoder, Uint8Array, ArrayBuffer, JSON, Promise,
-    Error, performance, importScripts: () => {},
+    Error, performance, WebAssembly, importScripts: () => {},
     loadPyodide: async () => (py = await loadPyodide()),   // the npm package's own files, not the CDN's
     fetch: async (url) => {
       if (/^https?:/.test(url)) return { ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0) };   // the numpy prefetch
@@ -126,6 +126,7 @@ async function startWorker(pyodideDir, bundlePath) {
     onMsg = (m) => { if (m.status === "Solving…") { stages = m.setup || null; res(); } if (m.error) rej(new Error(m.error)); };
   });
   const setup = (performance.now() - t0) / 1000;
+  globalThis.gtoCore = ctx.gtoCore;   // (the compiled core the setup instantiated, for `from js import gtoCore`)
   const heap = () => py._module.HEAPU8.buffer.byteLength / 2 ** 20;
   let id = 0;
   const request = (state) => new Promise((res) => {

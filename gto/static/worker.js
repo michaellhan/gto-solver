@@ -73,6 +73,14 @@ const ready = (async () => {
   Object.assign(setup, { bundle_cached: cached, pyc_cached: !!pyc });
   py.unpackArchive(buf, "zip", { extractDir: "/app" });
   if (pyc) py.unpackArchive(pyc, "zip", { extractDir: "/app" });
+  // the compiled CFR core (gto/core.py; in the bundle, ~20 KB): turn and river solves run their iterations in it. Where
+  // it can't load (a browser without wasm SIMD) the solver runs in numpy as before.
+  try {
+    self.gtoCore = (await WebAssembly.instantiate(py.FS.readFile("/app/gto/core.wasm"))).instance.exports;
+  } catch (e) {
+    self.gtoCore = null;
+  }
+  setup.core = !!self.gtoCore;
   // the sources get a fixed mtime (a .pyc is valid while its source's mtime and size match) and the startup imports
   // write their bytecode (Pyodide turns that off), which goes to the Cache API once the first request has its answer
   py.runPython("import os, sys, json\n"
@@ -94,17 +102,20 @@ const ready = (async () => {
   }, 0);
   lap("imports");
   // Pyodide numpy is 10-30x slower per iteration than native on the flop (its leaf products have no BLAS), ~1.5x on the
-  // turn (vectorised river showdowns), so the browser plays a smaller game. Two flop bet sizes; inside a flop solve one
+  // turn (vectorised river showdowns), so the browser plays a smaller game. Turn and river solves run their iterations
+  // in the compiled core (gto/core.wasm, above): 5.5-6.7x numpy's iterations on the turn, the river's solve 0.5 s for
+  // numpy's 10-13 (scripts/bench_browser.mjs, README Compiled core). Two flop bet sizes; inside a flop solve one
   // turn and river size (Config.later_sizes).
   // From the turn (scripts/turn_river_reference.py: 6 turn spots against every-river solves run to convergence with a
   // 33/75/125% menu; README Accuracy vs speed), the river is one card per class (river_classes: 13 cards on a rainbow
   // turn, 22-24 with a flush suit, each standing for its cards through suit swaps; within ~0.1% of the pot of every
   // river at the same iterations, 2-3x cheaper). The old Fast's 8 fixed rivers settled (~450 iterations) into a game
   // where only those rivers come: per-combo EVs 5-10% of the pot from its own tree with every river.
-  // Fast (8 s): a third and 125% pot on the turn, the river inside at 75%, ~90-150 iterations: per-combo EVs 0.5-1.5%
-  //   of the pot from the rich reference (the old 8 rivers: 3.8-9.5; 75% alone, converged: 0.6-3.8).
-  // Accurate (60 s): a third, three quarters and 125% on the turn and river, ~180-360 iterations: 0.08-0.33% (one size
-  //   with every river: 0.6-3.8).
+  // Fast (8 s): a third and 125% pot on the turn, the river inside at 75%, ~90-150 iterations in numpy (now ~280 in
+  //   the core, 0.07-0.08% of the pot from equilibrium): per-combo EVs 0.5-1.5% of the pot from the rich reference (the
+  //   old 8 rivers: 3.8-9.5; 75% alone, converged: 0.6-3.8).
+  // Accurate (60 s): a third, three quarters and 125% on the turn and river, ~180-360 iterations in numpy (now ~450-490
+  //   in the core): 0.08-0.33% (one size with every river: 0.6-3.8).
   // A river root bets 33/75/125/250% pot (Advisor.root_sizes): 0.1-0.6% of the pot per combo from a six-size menu,
   //   where 75% alone was 1.2-7.2 (polar rivers overbet half the range).
   // From the flop both play one turn per rank class with the river bet on, the turn and river by hand buckets

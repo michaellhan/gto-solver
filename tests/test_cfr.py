@@ -219,6 +219,7 @@ class TestSchemesInTheSolver(unittest.TestCase):
             plain = solve(cards("Ks7d2cTh"), r_oop, r_ip, pot=5.5, stack=97.5, cfg=cfg, max_iters=0)
             self.assertTrue(any(len(m) > 1 for _, m in fast.solver._groups))
             fast.solver.batch_leaves = False
+            fast.solver.use_core = False          # (numpy's own traversal: the compiled core is tests/test_core.py's)
             for s in (fast.solver, plain.solver):
                 s.horizon = 12
             fast.solver.run(fast.r0, fast.r1, time_budget=1e9, max_iters=12)

@@ -9,3 +9,4 @@ reports/
 node_modules/
 .wrangler/
 .dev.vars
+core/build/

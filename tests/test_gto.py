@@ -184,6 +184,7 @@ class TestSolverMath(unittest.TestCase):
             plain = solve(board, r_oop, r_ip, pot=5.5, stack=97.5, cfg=cfg, max_iters=0)
             self.assertTrue(any(len(m) > 1 for _, m in fast.solver._groups))
             fast.solver.batch_leaves = False      # matrix-matrix products round differently (see the next test)
+            fast.solver.use_core = False          # (numpy's own traversal: the compiled core is tests/test_core.py's)
             fast.solver.run(fast.r0, fast.r1, time_budget=1e9, max_iters=12)
             self._plain_iterations(plain, 12)
             for x, y in zip(fast.solver._nodes, plain.solver._nodes):
