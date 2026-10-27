@@ -1,0 +1,17 @@
+# The benchmark harness for scripts/bench_postflop_solver.py: b-inary's postflop-solver (AGPL-3.0) on a spot given as
+# JSON. Not part of the site. Build (its default features pull a bincode release candidate that no longer compiles,
+# and newer rustc denies a lint in its action_tree.rs):
+#   RUSTFLAGS="-A dangerous_implicit_autorefs -C target-cpu=native" cargo build --release --manifest-path scripts/pfbench/Cargo.toml
+[package]
+name = "pfbench"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+
+[dependencies]
+postflop-solver = { git = "https://github.com/b-inary/postflop-solver", rev = "9d1509fe5077d019825f833eed04b16d342dfda1", default-features = false, features = ["rayon"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3

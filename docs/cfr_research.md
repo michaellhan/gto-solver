@@ -133,6 +133,25 @@ Fast srp-dry 11.0 / 11.5 / 10.6 ms; the Accurate turn 73.6 / 75.5 / 72.4 ms. The
 predictive scheme adds one regret-sized array (memory) and one add per strategy; flooring negatives is one cheap
 pass instead of a select.
 
+**Late swings, and the beta step.** Benchmarked against postflop-solver on the Advisor's own turns
+(`scripts/bench_postflop_solver.py`), two of 15 Accurate turns (BTN vs BB after check, bet, call: QcTc2c-7s and
+Tc6d2c-Ks) answered 1.0 and 1.5% of the pot from equilibrium where the others were at 0.2-0.6%. Exploitability every
+25 iterations with beta 0 throughout (`dcfr-ramp-b0`): QcTc2c7s 0.626 / 0.444 / 0.330 at 100-150, then 2.845 at
+175, 1.487, 0.769, ... 0.124 at 400; Tc6d2cKs 0.157 at 275, then 1.975 at 300, ... 0.344 at 400. The mechanism: a
+line one player has all but stopped taking (IP facing OOP's unused bet) gets almost no regret, halving the
+negatives every iteration wipes what it has, its hands drift back toward their early strategy, the bet into it
+turns profitable again and the iterates swing; the average, weighted to the last ~30 iterations by gamma 8, takes
+the swing in. Averaging changes only moved it (gamma capped at 5: 0.157 -> 1.730 at 300; postflop-solver's gamma 3
+restarted at powers of 4: 0.156 -> 2.295; postflop-solver itself, which also halves the negatives, has bumps of
+0.3 -> 1.0 on Tc6d2cKs that recover), and keeping the regrets of rows the opponent didn't reach out of the discount
+didn't stop it (0.190 -> 2.975 at 225). Beta 0.5 (negatives x sqrt(t) / (sqrt(t) + 1)) from the 60th, 100th or
+130th iteration, or ramped from 0 to 0.5 over 100, removed it: with the step at 100, 0.076 and 0.063 at 400 and
+never above the curve. Its cost on the standard spots, Fast / Accurate at 200 and 300 iterations (beta 0 in
+brackets): the river 0.039 / 0.022 (0.040 / 0.021) and 0.067 / 0.044 (0.063 / 0.040); srp-wet 0.201 / 0.104 (0.191
+/ 0.096) and 0.182 / 0.091 (0.166 / 0.083); the turn 0.146 / 0.068 (0.133 / 0.060) and 0.250 / 0.127 (0.342 / 0.134),
+identical through 100 (the tables above are beta 0 throughout). Beta 0.5 from the start is 1.5-2x worse at 50-100 iterations (the turn 4.56 / 1.14 at 50 /
+100 against 2.58 / 0.78).
+
 ## Conclusions
 
 * The previous finding holds and is now measured carefully: PCFR+ (last instantaneous regret as the prediction,
@@ -145,5 +164,8 @@ pass instead of a select.
   first iterations are behind: `dcfr-ramp` (gamma 3 + t/10, capped at 8), now the default. 10-20% less exploitable
   at 50-200 iterations on flops, the same on the river and turn, no cost per iteration, horizon-free (budgets and
   `Solution.extend` don't need to know the iteration count).
+* Beta 0 is fastest early but can swing late (above): `dcfr-ramp` now raises beta to 0.5 at the 100th iteration,
+  5-13% more exploitable at 200-300 iterations on the standard spots and better on the wide Accurate turn, the
+  same through 100, and no late swings on the turns that had them (`dcfr-ramp-b0` keeps beta 0).
 * Not done: regret-based pruning (an action can only be skipped when no hand of the range plays it, rare in a
   vectorised range-vs-range solve), learned discounting (DDCFR: a trained policy and per-iteration features).

@@ -1122,9 +1122,23 @@ def _gamma_ramp(t: int) -> float:
     return min(8.0, 3.0 + t / 10)
 
 
+def _beta_step(t: int) -> float:
+    """dcfr-ramp's negative-regret exponent after iteration t: 0 (negatives halved every iteration, as in
+    postflop-solver) for the first 100 iterations, then 0.5 (x sqrt(t) / (sqrt(t) + 1), the DCFR paper's other
+    setting). Beta 0 converges fastest early, but a line one player has all but stopped taking gets almost no
+    regret, the halving wipes what it has, and its hands drift back toward their first strategy: the other player's
+    bets into it turn profitable again and the iterates swing. Two of 15 Accurate turns (~180 iterations) jumped
+    from 0.15-0.33% of the pot to 2-2.8% (the average, weighted to the last ~30 iterations, takes the swing in) and
+    took 100+ iterations to recover; with 0.5 from the 100th iteration neither did, and Fast turns (~100
+    iterations) are unchanged (docs/cfr_research.md)."""
+    return 0.0 if t < 100 else 0.5
+
+
 CFR_SCHEMES = {
-    # the default: DCFR (Brown & Sandholm 2019, alpha 1.5, beta 0) averaging with gamma 3 -> 8
-    "dcfr-ramp": dict(alpha=1.5, beta=0.0, gamma=_gamma_ramp),
+    # the default: DCFR (Brown & Sandholm 2019, alpha 1.5) with beta 0 rising to 0.5 at the 100th iteration,
+    # averaging with gamma 3 -> 8
+    "dcfr-ramp": dict(alpha=1.5, beta=_beta_step, gamma=_gamma_ramp),
+    "dcfr-ramp-b0": dict(alpha=1.5, beta=0.0, gamma=_gamma_ramp),      # beta 0 throughout, the default before
     # DCFR with gamma 4 (the paper: 2), the default before: the same exploitability as gamma 2 in 25-35% fewer
     # iterations on flop, turn and 3bet spots (alpha 1-1.25 spiky, 2+ slower)
     "dcfr": dict(alpha=1.5, beta=0.0, gamma=4.0),
