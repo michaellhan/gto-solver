@@ -19,7 +19,8 @@ const stub = (g, name, label = (s) => s + " label") => `globalThis.${g} = { open
   const s = spot || "srp_btn_bb"; return Promise.resolve().then(() => viewSpot("${name}", s, (${label})(s))); },
   close() { this.closed = (this.closed || 0) + 1; viewClosed("${name}"); } };`;
 const SCRIPTS = { "reports.js": stub("FlopReports", "reports"), "drills.js": stub("Drills", "drills"),
-                  "session.js": `globalThis.Session = { opened: 0, open() { this.opened++; return Promise.resolve(); }, close() { viewClosed("session"); } };` };
+                  "session.js": `globalThis.Session = { opened: 0, open() { this.opened++; return Promise.resolve(); }, close() { viewClosed("session"); } };`,
+                  "study.js": `globalThis.Study = { opened: 0, open() { this.opened++; return Promise.resolve(); }, close() { viewClosed("study"); } };` };
 const page = (opts = {}) => loadPage({ scripts: SCRIPTS, ...opts });
 
 test("paths parse to a view and the solver's root", () => {
@@ -112,6 +113,13 @@ test("a view's URL opened directly opens it, on its spot", async () => {
   assert.deepEqual(s.scripts, ["hh.js", "session.js"]);
   assert.equal(s.val("Session.opened"), 1);
   assert.equal(s.ctx.document.title, "Analyze session · GTO Solver");
+  const y = page({ path: "/gto-solver/study/" });
+  await y.ready(); await flush();
+  assert.deepEqual(y.scripts, ["study.js"]);
+  assert.equal(y.val("Study.opened"), 1);
+  assert.equal(y.ctx.document.title, "Study · GTO Solver");
+  y.run("Study.close()");
+  assert.deepEqual(y.pushed, ["/gto-solver/"]);
   const i = page({ path: "/gto-solver/import/" });
   await i.ready(); await flush();
   assert.equal(i.byId("importBox").hidden, false);
@@ -175,13 +183,13 @@ test("the route table is the one gto/routes.py reads, and deploy.sh writes each 
   assert.deepEqual(spot, p.val("SPOT_ROUTES"));
   assert.match(html, /^const ROUTES = \{.*\};$/m);
   // each label is the ⋯ menu's / header's (without its ellipsis)
-  for (const [id, r] of [["practiceBtn", "practice"], ["drills", "drills"], ["analyzeSession", "session"], ["flopReports", "reports"], ["importHand", "import"]]) {
+  for (const [id, r] of [["practiceBtn", "practice"], ["drills", "drills"], ["analyzeSession", "session"], ["study", "study"], ["flopReports", "reports"], ["importHand", "import"]]) {
     const label = html.match(new RegExp(`<button id="${id}"[^>]*>([^<]*)</button>`))[1].replace("…", "");
     assert.equal(p.val(`ROUTES[${JSON.stringify(r)}]`), label, id);
   }
   const deploy = fs.readFileSync(path.join(ROOT, "scripts", "deploy.sh"), "utf8");
   const gen = deploy.indexOf('-m gto.routes "$WORK/site/gto-solver"');
   assert.ok(gen > 0, "deploy.sh doesn't run gto.routes on the site folder");
-  for (const v of ["WORKER", "HH", "RP", "DR", "BD", "SS"]) assert.ok(deploy.indexOf(`const ${v}_VERSION = \\"$`) < gen, `${v}_VERSION is stamped after the routes' pages are copied`);
+  for (const v of ["WORKER", "HH", "RP", "DR", "BD", "SS", "SY"]) assert.ok(deploy.indexOf(`const ${v}_VERSION = \\"$`) < gen, `${v}_VERSION is stamped after the routes' pages are copied`);
   assert.ok(gen < deploy.indexOf("git add -A"));
 });

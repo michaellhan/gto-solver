@@ -45,6 +45,7 @@ Open http://127.0.0.1:18877/ . Each view has its own URL, on the website and the
 | `/gto-solver/practice/` | Practice |
 | `/gto-solver/drills/`, `/gto-solver/drills/<spot>/` | Drills (on a spot: `srp-btn-bb`, `3bp-bb-btn`…, the flop library's ids with dashes) |
 | `/gto-solver/reports/`, `/gto-solver/reports/<spot>/` | Flop reports |
+| `/gto-solver/study/` | Study |
 | `/gto-solver/session/` | Analyze session |
 | `/gto-solver/import/` | Import hand |
 
@@ -195,6 +196,24 @@ each drill's history (hands, accuracy, last 100, best streak) is kept in the bro
 the hand into the page. `gto/static/drills.js` decodes the library's entries itself (no solver needed: answers are
 instant, also before the in-browser solver has loaded) and reads the hand weights from `flop_library/<spot>/ranges.json`
 (both ranges entering the flop, written with the index, fingerprinted as the index's).
+
+**Study** (in the ⋯ menu) is a solution browser: walk a hand node by node with no cards of your own, and at each
+decision see the solver's answer for every hand of the player to act. Start from a precomputed spot's preflop line
+(BTN vs BB, …: instant on the library's flops), a new 6-max 100bb hand, or the hand on the page's table (its seats,
+stacks, antes, straddle, rake and action so far, without your cards, locks or exploit settings). The 13x13 grid shows
+each hand class's mix (each class's bar as tall as its share of the class's combos in the range), or by **EV** (bb
+from here, relative to folding now), **Equity** (against the opponent's range, the rest of the board dealt) or
+**EQR** (EV over equity times the pot), shaded red to green; **Breakdown** is the range by made hands and draws (as
+the advice's Breakdown tab, both players). The toggle beside the views shows the opponent's range instead (its
+weights and equity). Hover over an action for the hands that take it; hover over a class (or click to keep it) for
+its combos, best first, each with its own mix, EVs and equity. The actions table gives the range's frequency,
+combos and the EV of the hands that take each action; click one to play it and the next player's decision appears.
+When the betting closes, type the next card(s) or deal random ones; the line above the grid steps back to any earlier
+decision (Backspace steps back one). Fast or Accurate picks the solver's speed for live solves (turns and rivers, or
+flops the library doesn't hold: a Fast turn ~10 s in the browser), and answers already seen come back at once.
+Preflop it shows the charts' mix (no EVs or equities). After the flop it browses heads-up pots only (a pot where 3+
+players saw the flop is refused). The panel is `gto/static/study.js`, loaded when first opened; it asks the solver
+with `"study": true` (see Use from the shell).
 
 The layout fits the window at any zoom. On a wide window each column scrolls on its own and
 the action buttons stay pinned to the bottom of theirs; drag the divider between the columns
@@ -416,6 +435,17 @@ hero's `f` per action and `ev`), the range's `eq`, `ev`, `nuts` (share at `nut_e
 (equities sorted high to low at every 2% of the range; heads-up only), and the hero's own categories (`mine`);
 `null` where the betting rules answered. `"library_only": true` (the session analyzer's instant scope) answers a
 flop only from the precomputed library and returns `{"skipped": …}` for any other postflop spot instead of solving it.
+
+`"study": true` (the page's Study mode, `Advisor.study`) answers for whoever acts next on the hand as recorded, with
+their whole range and no hero, at equilibrium (`hero`, `hole`, `opponents`, `locks`, `jam`, `payouts` and
+`optimize_sizes` are ignored):
+`{"study": "node", "actor", "opponent", "street", "pot_bb", "to_call_bb", "stack_bb", "actions", "grid", "combos",
+…}` with per action the range's `freq`, `combos` and `ev_bb` (of the hands that take it), per hand class in `grid`
+its weight `w`, mix `f`, per-action EVs `ev`, EV `evm` and equity `eq`, per combo in `combos` the same, the opponent's
+range in `opponent_grid`, and the solver's stats (`breakdown` too with `"breakdown": true`). Where nobody acts it says
+what the hand needs: `{"study": "deal", "street": "turn", "allin": false}` (the next street's cards),
+`{"study": "over", "street", "winner"}` (everyone else folded) or `{"study": "over", "street": "river", "showdown": true}`.
+Preflop it is the charts' mix (no EVs); postflop it browses heads-up pots only.
 
 `"opponents": "pool"` (the page's Opponents: Pool toggle) is exploit mode: opponents play like a
 typical player pool instead of GTO. Preflop, hero's calls and raises are re-drawn against the pool's
@@ -1339,7 +1369,7 @@ python scripts/compare_mw_library.py --spot mw_co_btn_bb --boards Kh7d2c,9s8s5d 
 scripts/deploy.sh
 ```
 
-copies the page, the worker, `practice.js`, `reports.js`, `drills.js`, `breakdown.js`, `session.js`, `solver.zip` (the worker's Python code: every `gto/*.py` and treys, `scripts/build_bundle.py`), the `gto` sources and the flop library into the `gto-solver/` folder
+copies the page, the worker, `practice.js`, `reports.js`, `drills.js`, `breakdown.js`, `session.js`, `study.js`, `solver.zip` (the worker's Python code: every `gto/*.py` and treys, `scripts/build_bundle.py`), the `gto` sources and the flop library into the `gto-solver/` folder
 of the michaellhan.github.io repo and pushes. First it runs the checks and aborts
 the deploy if either fails: `python -m unittest`, then the quick sanity sweep
 (`scripts/sanity_sweep.py --quick`, about 3 minutes on 10 cores: a fixed, seeded set

@@ -1,0 +1,196 @@
+// Study mode (gto/static/study.js, loaded on demand): the hand walked node by node, the requests it sends, the line
+// to step back along, typed and random cards, and the HTML of the grid, the actions and a hand's combos.
+"use strict";
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const path = require("node:path");
+
+const S = require(path.join(__dirname, "..", "..", "gto", "static", "study.js"));
+const LINE = "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:c";
+const SPOT = S.fromSpot({ id: "srp_btn_bb", line: LINE });
+const cellsOf = (h) => h.match(/class="sy-cell[^"]*"/g);
+
+// a flop node shaped like Advisor.study's: BTN to act after BB checks on Kd7c2h
+const NODE = {
+  study: "node", street: "flop", actor: "BTN", opponent: "BB", position: "IP", players: 2, board: "Kd7c2h",
+  pot_bb: 5.5, to_call_bb: 0, stack_bb: 97.5,
+  actions: [{ action: "check", amount_bb: null, freq: 0.5, combos: 200, ev_bb: 3.1 },
+            { action: "bet 33%", amount_bb: 2, freq: 0.4, combos: 160, ev_bb: 4.2 },
+            { action: "bet 75%", amount_bb: 4, freq: 0.1, combos: 40, ev_bb: 6 }],
+  grid: { actions: ["check", "bet 33%", "bet 75%"], cells: {
+    AA: { w: 1, f: [0.2, 0.3, 0.5], ev: [10, 11, 12], evm: 11.3, eq: 0.9 },
+    KQo: { w: 0.5, f: [0.6, 0.4, 0], ev: [5, 5.5, 4], evm: 5.2, eq: 0.8 },
+    "72s": { w: 1, f: [1, 0, 0], ev: [-0.02, -0.5, -1], evm: -0.02, eq: 0.6 } } },
+  combos: { AA: [["AsAh", 1, [0, 0, 1], [10, 11, 12.5], 0.91], ["AdAc", 1, [1, 0, 0], [9, 8, 7], 0.88]] },
+  range_combos: 400, range_ev_bb: 4, range_eq: 0.55, opponent_combos: 300, opponent_eq: 0.45,
+  opponent_grid: { actions: ["in range"], cells: { "72s": { w: 0.25, f: [1], eq: 0.7 }, QJs: { w: 1, f: [1], eq: 0.3 } } },
+  solver: { iterations: 400, solve_seconds: 0, exploitability_pct: 0.11 }, precomputed: { label: "BTN vs BB" }, notes: [],
+};
+
+test("a spot's preflop line and the page's hand become states", () => {
+  assert.deepEqual(S.parseLine(LINE), [{ pos: "UTG", action: "fold" }, { pos: "HJ", action: "fold" }, { pos: "CO", action: "fold" },
+    { pos: "BTN", action: "raise", to: 2.5 }, { pos: "SB", action: "fold" }, { pos: "BB", action: "call" }]);
+  assert.deepEqual(S.parseLine(""), []);
+  assert.deepEqual(SPOT, { players: 6, stack: 100, board: "", preflop: S.parseLine(LINE), flop: [], turn: [], river: [] });
+  // the table's hand: without hero, hole cards or the advice's settings; streets copied
+  const p = { hero: "BTN", hole: "AsKs", players: 6, stack: 100, ante: 0.1, board: "Kd7c2h", preflop: SPOT.preflop,
+              flop: [{ pos: "BB", action: "check" }], speed: "fast", locks: { BB: {} }, stacks: null };
+  const st = S.fromPayload(p);
+  assert.deepEqual(Object.keys(st).sort(), ["ante", "board", "flop", "players", "preflop", "stack"]);
+  assert.notEqual(st.flop[0], p.flop[0]);
+  assert.deepEqual(S.request(st, "accurate"), { ...st, study: true, speed: "accurate" });
+  assert.equal(S.streetOf(st), "flop");
+  assert.equal(S.streetOf(S.fresh()), "preflop");
+  assert.equal(S.streetOf(S.deal(st, "5s9h")), "river");
+});
+
+test("an action played goes on the street it was answered for", () => {
+  assert.deepEqual(["check", "call", "fold", "bet 33%", "raise to 7", "raise", "all-in"].map(S.kindOf),
+                   ["check", "call", "fold", "bet", "raise", "raise", "all-in"]);
+  const st = S.deal(SPOT, "Kd7c2h");
+  const a = S.play(st, { street: "flop", actor: "BB" }, { action: "check", amount_bb: null });
+  assert.deepEqual(a.flop, [{ pos: "BB", action: "check" }]);
+  assert.deepEqual(SPOT.flop, []);                                   // (states aren't changed in place)
+  const b = S.play(a, NODE, NODE.actions[1]);
+  assert.deepEqual(b.flop[1], { pos: "BTN", action: "bet", to: 2 });
+  const c = S.play(b, { street: "flop", actor: "BB" }, { action: "raise to 7", amount_bb: 7 });
+  assert.deepEqual(c.flop[2], { pos: "BB", action: "raise", to: 7 });
+  assert.deepEqual(S.play(c, NODE, { action: "all-in", amount_bb: 97.5 }).flop[3], { pos: "BTN", action: "all-in" });
+  assert.deepEqual(S.play(SPOT, { street: "preflop", actor: "UTG" }, { action: "raise", amount_bb: 2.5 }).preflop.at(-1),
+                   { pos: "UTG", action: "raise", to: 2.5 });
+});
+
+test("the line: street headings, actions, preflop folds in a row as one step, and back", () => {
+  const st = S.play(S.deal(SPOT, "Kd7c2h"), { street: "flop", actor: "BB" }, { action: "check" });
+  const ln = S.line(st);
+  assert.deepEqual(ln.map(x => x.kind === "street" ? x.street + ":" + x.cards : x.label),
+                   ["preflop:", "UTG–CO fold", "BTN raise 2.5", "SB fold", "BB call", "flop:Kd7c2h", "BB check"]);
+  // each step is the state it was taken from
+  assert.deepEqual(ln[1].st.preflop, []);
+  assert.deepEqual(ln[2].st.preflop.map(a => a.pos), ["UTG", "HJ", "CO"]);
+  assert.equal(ln[5].st.board, "Kd7c2h");
+  assert.deepEqual(ln[5].st.flop, []);
+  assert.deepEqual(ln[0].st, { ...st, board: "", preflop: [], flop: [] });
+  // back: the last action's decision, then before the flop was dealt, then preflop's actions
+  const b1 = S.back(st);
+  assert.deepEqual(b1, { ...st, flop: [] });
+  const b2 = S.back(b1);
+  assert.deepEqual(b2, { ...st, board: "", flop: [] });
+  assert.deepEqual(S.back(b2).preflop.map(a => a.pos), ["UTG", "HJ", "CO", "BTN", "SB"]);
+  assert.equal(S.back(S.fresh()), null);
+  assert.deepEqual(S.back({ ...S.fresh(), preflop: [{ pos: "UTG", action: "fold" }] }).preflop, []);
+  // turn and river headings carry their card; a missing state is an empty line
+  const r = S.deal(S.deal(S.deal(SPOT, "Kd7c2h"), "5s"), "9h");
+  assert.deepEqual(S.line(r).filter(x => x.kind === "street").map(x => x.cards), ["", "Kd7c2h", "5s", "9h"]);
+  assert.equal(S.back(r).board, "Kd7c2h5s");
+  assert.deepEqual(S.line(null), []);
+});
+
+test("typed cards are read and checked against the board; random ones are off it", () => {
+  const st = S.deal(SPOT, "Kd7c2h");
+  assert.deepEqual(S.readCards(SPOT, "kd 7C,2h", 3), { cards: "Kd7c2h" });
+  assert.deepEqual(S.readCards(st, "10s", 1), { cards: "Ts" });
+  assert.match(S.readCards(st, "5s9h", 1).error, /a card/);
+  assert.match(S.readCards(SPOT, "Kd7c", 3).error, /3 cards/);
+  assert.match(S.readCards(st, "5x", 1).error, /rank .* suit/);
+  assert.match(S.readCards(st, "Kd", 1).error, /already out/);
+  assert.match(S.readCards(SPOT, "KdKd2h", 3).error, /already out/);
+  let i = 0;
+  const rnd = () => [0, 0.999, 0.5][i++ % 3];
+  const cs = S.randomCards(st, 3, rnd);
+  assert.equal(cs.length, 6);
+  assert.equal(cs.slice(0, 2), "Ac");
+  const got = cs.match(/../g);
+  assert.equal(new Set(got).size, 3);
+  assert.ok(got.every(c => !["Kd", "7c", "2h"].includes(c)));
+  for (let k = 0; k < 50; k++) assert.ok(!["Kd", "7c", "2h"].includes(S.randomCards(st, 1)));
+});
+
+test("action labels, EQR and the cell numbers", () => {
+  assert.equal(S.label({ action: "check", amount_bb: null }), "Check");
+  assert.equal(S.label({ action: "bet 33%", amount_bb: 1.815 }), "Bet 33% · 1.82bb");
+  assert.equal(S.label({ action: "raise to 7", amount_bb: 7 }), "Raise to 7bb");
+  assert.equal(S.label({ action: "raise", amount_bb: 7.5 }), "Raise to 7.5bb");
+  assert.equal(S.label({ action: "call", amount_bb: 2 }), "Call 2bb");
+  assert.equal(S.label({ action: "all-in", amount_bb: 97.5 }), "All-in 97.5bb");
+  assert.equal(S.eqr({ evm: 2.75, eq: 0.5 }, 5.5), 1);
+  assert.equal(S.eqr({ evm: 1, eq: 0 }, 5.5), null);
+  assert.equal(S.eqr({ evm: null, eq: 0.5 }, 5.5), null);
+  const c = NODE.grid.cells["72s"];
+  assert.equal(S.cellValue(c, "ev", NODE, null).txt, "0.0");             // (-0.02 shows as 0, not -0.0)
+  assert.equal(S.cellValue(c, "ev", NODE, 2).txt, "-1.0");
+  assert.equal(S.cellValue(c, "equity", NODE, null).txt, "60");
+  assert.equal(S.cellValue(c, "eqr", NODE, null).txt, (-0.02 / (0.6 * 5.5)).toFixed(2));
+  assert.equal(S.cellValue({ w: 1, f: [1] }, "ev", NODE, null), null);
+  assert.equal(S.cellValue(c, "strategy", NODE, null), null);
+  assert.deepEqual([S.classAt(0, 0), S.classAt(0, 1), S.classAt(1, 0), S.classAt(12, 12)], ["AA", "AKs", "AKo", "22"]);
+  assert.deepEqual(["AA", "AKs", "AKo"].map(S.combosOf), [6, 4, 12]);
+});
+
+test("the grid: 169 classes, the range's mix stacked, a focused action, numbers, and the opponent's range", () => {
+  const ui = { view: "strategy", who: "me", sel: "KQo", focus: null };
+  let h = S.gridHtml(NODE, ui);
+  const cells = cellsOf(h);
+  assert.equal(cells.length, 169);
+  assert.equal(cells.filter(c => / out/.test(c)).length, 166);
+  assert.match(h, /class="sy-cell sel" data-cls="KQo"/);
+  assert.match(h, /data-cls="KQo" style=""><span class="sy-fill" style="height:50.0%">(<i [^>]*><\/i>){2}<\/span>/);
+  assert.match(h, /data-cls="AA" style=""><span class="sy-fill" style="height:100.0%">(<i [^>]*><\/i>){3}<\/span>/);
+  // an action hovered: only its share of each hand
+  h = S.gridHtml(NODE, { ...ui, focus: 2 });
+  assert.match(h, /data-cls="AA" style=""><span class="sy-fill" style="height:100.0%"><i style="width:50.0%[^>]*><\/i><\/span>/);
+  assert.match(h, /data-cls="KQo" style=""><span class="sy-fill" style="height:50.0%"><\/span>/);
+  // EV: shaded with the number (the focused action's EV)
+  h = S.gridHtml(NODE, { ...ui, view: "ev" });
+  assert.match(h, /class="sy-grid sy-num"/);
+  assert.match(h, /data-cls="AA" style="background:hsl\([^"]+"><span class="sy-v">11\.3<\/span>/);
+  assert.match(S.gridHtml(NODE, { ...ui, view: "ev", focus: 0 }), /data-cls="AA"[^>]*><span class="sy-v">10\.0<\/span>/);
+  assert.match(S.gridHtml(NODE, { ...ui, view: "equity" }), /data-cls="AA"[^>]*><span class="sy-v">90<\/span>/);
+  // the opponent's range: its weights (strategy and EV views alike), or its equity
+  h = S.gridHtml(NODE, { ...ui, who: "opp", view: "ev", focus: 1 });
+  assert.equal(cellsOf(h).filter(c => !/ out/.test(c)).length, 2);
+  assert.match(h, /data-cls="72s" style=""><span class="sy-fill" style="height:25.0%"><i style="width:100%;background:var\(--accent\)"><\/i>/);
+  assert.match(S.gridHtml(NODE, { ...ui, who: "opp", view: "equity" }), /data-cls="QJs"[^>]*><span class="sy-v">30<\/span>/);
+  // a node without an opponent's grid (preflop) shows the actor's whatever "who" says
+  assert.equal(cellsOf(S.gridHtml({ ...NODE, opponent_grid: undefined }, { ...ui, who: "opp" })).filter(c => !/ out/.test(c)).length, 3);
+});
+
+test("the actions table, the range's totals, a hand's combos and the status lines", () => {
+  const ui = { view: "strategy", who: "me", sel: null, focus: 1 };
+  let h = S.actionsHtml(NODE, ui);
+  assert.equal((h.match(/<tr data-act=/g) || []).length, 3);
+  assert.match(h, /<tr data-act="1" tabindex="0" class="focus" title="Play Bet 33% · 2bb">/);
+  assert.match(h, /40\.0%<\/td><td class="n">160\.0<\/td><td class="n">\+4\.20<\/td>/);
+  assert.match(h, /BTN's range: <b>400<\/b> combos · EV <b>\+4\.00<\/b>bb · equity <b>55\.0%<\/b> · EQR <b>1\.32<\/b>/);
+  assert.match(h, /BB: 300 combos · equity 45\.0%/);
+  const pre = { ...NODE, street: "preflop", range_ev_bb: null, opponent: null };
+  h = S.actionsHtml(pre, ui);
+  assert.doesNotMatch(h, />EV</);
+  assert.doesNotMatch(h, /equity/);
+  // a hand: its mix and EVs, then its combos best first
+  h = S.detailHtml(NODE, ui, "AA");
+  assert.match(h, /<b>AA<\/b> <span class="sy-mut">6 of 6 combos<\/span> · EV <b>\+11\.30<\/b> · eq <b>90\.0%<\/b>/);
+  const rows = h.match(/<tr title="[^"]*"/g);
+  assert.equal(rows.length, 2);
+  assert.match(rows[0], /check 0% \(EV \+10\.00\), bet 33% 0% \(EV \+11\.00\), bet 75% 100% \(EV \+12\.50\)/);
+  assert.match(rows[1], /check 100% \(EV \+9\.00\)/);
+  assert.match(S.detailHtml(NODE, ui, "KQo"), /6 of 12 combos/);
+  assert.doesNotMatch(S.detailHtml(NODE, ui, "KQo"), /<table/);
+  assert.match(S.detailHtml(NODE, ui, "32o"), /not in BTN's range here/);
+  assert.match(S.detailHtml(NODE, { ...ui, who: "opp" }, "72s"), /1 of 4 combos<\/span> · equity <b>70\.0%<\/b><\/div>$/);
+  assert.match(S.detailHtml(NODE, { ...ui, who: "opp" }, "AA"), /not in BB's range here/);
+  assert.match(S.detailHtml(NODE, ui, null), /a hand for its combos/);
+  // status, the solver's line, the line's buttons
+  assert.equal(S.statusHtml(NODE), "<b>BTN</b> to act (IP) · pot 5.5bb · 97.5bb behind");
+  assert.equal(S.statusHtml({ ...NODE, to_call_bb: 2, position: null }), "<b>BTN</b> to act · pot 5.5bb · 2bb to call · 97.5bb behind");
+  assert.equal(S.statusHtml({ study: "deal", street: "turn" }), "");
+  assert.equal(S.solverHtml(NODE), "Precomputed (BTN vs BB): 400 iterations, 0.11% of the pot from equilibrium.");
+  assert.match(S.solverHtml({ ...NODE, precomputed: null, solver: { iterations: 90, solve_seconds: 3.456, exploitability_pct: 0.5 } }),
+               /^Solved live in 3\.46 s: 90 iterations, 0\.5% of the pot/);
+  assert.match(S.solverHtml({ street: "preflop" }), /charts' mix/);
+  h = S.lineHtml(S.deal(SPOT, "Kd7c2h"), NODE);
+  assert.equal((h.match(/data-step=/g) || []).length, 6);
+  assert.match(h, /<button class="sy-a" data-step="1" title="Back to this decision">UTG–CO fold<\/button>/);
+  assert.match(h, /<span class="sy-now">BTN \?<\/span>$/);
+  assert.doesNotMatch(S.lineHtml(SPOT, { study: "deal" }), /sy-now/);
+});

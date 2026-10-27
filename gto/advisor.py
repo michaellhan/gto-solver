@@ -476,6 +476,24 @@ def replay_hand(positions: List[str], stack: float, streets: Dict[str, List[dict
     return out
 
 
+def _study_next(positions, stack: float, streets: Dict[str, List[dict]], n_board: int):
+    """Study mode (Advisor.study): the seat to act after the hand's actions, else what the hand needs next:
+    {"study": "deal", "street"} once a street's betting closes ("allin": nobody can bet any more), {"study": "over"}
+    when one player is left or the river's betting closed."""
+    n = {0: 1, 3: 2, 4: 3, 5: 4}[n_board]
+    rep = replay_hand(positions, stack, streets, n)
+    if len(rep) < n:
+        return {"error": "an earlier street's betting is not finished"}
+    cur = rep[-1]
+    if len(cur.active) <= 1:
+        return {"study": "over", "street": cur.name, "winner": next(iter(cur.active), None)}
+    if cur.closed:
+        if n == 4:
+            return {"study": "over", "street": "river", "showdown": True}
+        return {"study": "deal", "street": STREETS[n], "allin": sum(p not in cur.allin for p in cur.active) <= 1}
+    return cur.to_act
+
+
 # ----------------------------------------------------------------------------- multiway range rules
 # Not a solve: simple rules for how players with ranges act once 3+ are in the pot. Used by
 # Advisor._multiway and to narrow ranges through multiway streets (see _narrow_street).
@@ -1756,14 +1774,29 @@ class Advisor:
         self.rng = random.Random()
         self._breakdown = False   # this request asked for the breakdown (state "breakdown": true)
         self._lib_only = False    # state "library_only": a flop the library holds, else {"skipped": …}, no solve
+        self._study = False       # state "study": Study mode's answer (Advisor.study)
         self._req_sizes: Dict[str, List[float]] = {}   # the request's custom sizes (state "sizes"), as fractions
 
     # ------------------------------------------------------------ public
     _icm = None   # the tournament's prize model while a request is answered (_advise), else None
 
     def advise(self, state: dict) -> dict:
+        if state.get("study"):
+            return self.study(state)
         with np.errstate(all="ignore"):
             return self._advise(state)
+
+    def study(self, state: dict) -> dict:
+        """Study mode (the page's solution browser): the hand as recorded, answered for whoever acts next with every
+        hand of their range instead of one: per hand class and combo the mix, each action's EV and the equity
+        against the other range (heads-up after the flop; preflop the charts' mix), the range's totals per action.
+        Where nobody acts: {"study": "deal", "street"} (the next card is due) or {"study": "over"}. At equilibrium
+        (no pool, locks, tournament payouts or jam requests) and without hero's cards (no card removal for them)."""
+        st = {k: v for k, v in state.items() if k not in ("hero", "hole", "opponents", "locks", "jam", "library_only",
+                                                           "payouts", "optimize_sizes")}
+        st["study"] = True
+        with np.errstate(all="ignore"):
+            return self._advise(st)
 
     def _advise(self, state: dict, actor=None) -> dict:
         t0 = time.time()
@@ -1779,8 +1812,9 @@ class Advisor:
         cap = state.get("rake_cap")
         cap = float(cap) / bb if cap not in (None, "") and float(cap) > 0 else None
         positions = pf.Table(pf.SEATS[n], ante, straddle, (rate, cap) if rate > 0 else None)
-        hero = str(state["hero"]).upper()
-        if hero not in positions:
+        study = bool(state.get("study"))   # (Advisor.study: hero is whoever acts next)
+        hero = str(state.get("hero") or "").upper()
+        if hero not in positions and not study:
             return {"error": f"hero seat {hero} is not one of {positions}"}
         try:
             sizes = _custom_sizes(state["sizes"]) if state.get("sizes") else {}
@@ -1792,9 +1826,9 @@ class Advisor:
                 locks = {}
         except ValueError as e:
             return {"error": str(e)}
-        hole = tuple(parse_cards(str(state["hole"])))
+        hole = () if study else tuple(parse_cards(str(state["hole"])))
         board = parse_cards(str(state.get("board") or ""))
-        if len(hole) != 2 or len(board) not in (0, 3, 4, 5):
+        if (len(hole) != 2 and not study) or len(board) not in (0, 3, 4, 5):
             return {"error": "need two hole cards and 0, 3, 4 or 5 board cards"}
         if len(set(hole) | set(board)) != len(hole) + len(board):
             return {"error": "the same card appears twice in your hand and the board"}
@@ -1810,6 +1844,13 @@ class Advisor:
         self._icm = model
         if model is not None and positions.rake:
             positions = pf.Table(list(positions), positions.ante, positions.straddle, None)
+        if study:
+            tab = pf.Table(list(positions), positions.ante, positions.straddle, positions.rake, stack, stacks) \
+                if stacks else positions
+            nxt = _study_next(tab, stack, streets, len(board))
+            if isinstance(nxt, dict):
+                return nxt
+            hero = nxt
         if stacks or model is not None:
             # each seat's own stack; the depth hero plays at is the effective stack against the deepest
             # opponent still in (preflop: who hasn't folded)
@@ -1823,6 +1864,8 @@ class Advisor:
         return res
 
     def _advise_at(self, state, actor, t0, hero, hole, board, positions, stack, streets, sizes, custom, locks):
+        if not board and state.get("study"):
+            return self._study_preflop(hero, streets["preflop"], positions, stack, t0)
         if not board:
             return self._preflop(hero, hole, streets["preflop"], positions, stack, t0,
                                  pool=state.get("opponents") == "pool", locks=locks)
@@ -1863,6 +1906,7 @@ class Advisor:
         self._lib_only = bool(state.get("library_only")) and actor is None
         if self._lib_only and len(board) != 3:
             return {"skipped": "only flop spots are answered from the library"}
+        self._study = bool(state.get("study")) and actor is None
         try:
             res = self._postflop(hero, hole, board, stack, streets, positions, t0,
                                  pool=state.get("opponents") == "pool", actor=actor, custom=custom,
@@ -1872,7 +1916,7 @@ class Advisor:
             return res
         finally:
             self.time_budget, self.prior_budget, self.cfg, self.root_sizes, self.spr_sizes = saved
-            self._breakdown = self._lib_only = self._jam = False
+            self._breakdown = self._lib_only = self._jam = self._study = False
 
     # ------------------------------------------------------------ preflop
     def _preflop(self, hero, hole, preflop, positions, stack, t0, pool=False, locks=None):
@@ -1977,6 +2021,26 @@ class Advisor:
             "grid": strategy_grid([full[k] for k in names], names, arriving),
             "notes": notes, "seconds": round(time.time() - t0, 3),
         }
+
+    def _study_preflop(self, hero, preflop, positions, stack, t0):
+        """Study mode preflop: the charts' mix for hero's whole range (no EVs or equities: the charts aren't solves)."""
+        res = self._preflop(hero, (0, 1), preflop, positions, stack, t0)   # (any hand: the grid is the range's)
+        if "actions" not in res:
+            return res
+        g = res["grid"]
+        n = {k: c["w"] * (6 if len(k) == 2 else 4 if k.endswith("s") else 12) for k, c in g["cells"].items()}
+        tot = max(sum(n.values()), 1e-12)
+        acts = []
+        for a, act in enumerate(res["actions"]):   # (in the grid's order)
+            share = sum(n[k] * c["f"][a] for k, c in g["cells"].items())
+            acts.append({"action": act["action"], "amount_bb": act.get("amount_bb"), "freq": round(share / tot, 3),
+                         "combos": round(share, 1), "ev_bb": None})
+        return {"study": "node", "street": "preflop", "actor": hero, "players": res["players"], "board": "",
+                "pot_bb": res["pot_bb"], "to_call_bb": res["to_call_bb"], "actions": acts,
+                "grid": {"actions": g["actions"], "cells": {k: c for k, c in g["cells"].items() if c["w"] > 0}},
+                "range_combos": round(tot, 1),
+                "notes": [x for x in res["notes"] if not x.startswith(("equity ", "preflop: chart approximation"))],
+                "seconds": round(time.time() - t0, 3)}
 
     @staticmethod
     def _push(hero, preflop, positions, stack, st, jam, full, notes, pool=False, locks=()):
@@ -2534,7 +2598,7 @@ class Advisor:
                          f"{'your' if p == hero else 'their'} range is the hands that take its last action")
         # a 3-way flop's first decision the 3-way library holds: its precomputed solve answers (no narrowing needed)
         if len(cur.players_start) == 3 and actor is None and not pool and not optimize and not self._jam \
-                and getattr(self, "_icm", None) is None:
+                and getattr(self, "_icm", None) is None and not self._study:
             res = self._mw_from_library(hero, hole, board, ranges, cur, stk, streets, t0, notes, locks)
             if res is not None:
                 return res
@@ -2542,6 +2606,9 @@ class Advisor:
         if self._lib_only and len(cur.players_start) > 2:
             return {"skipped": "multiway: not a flop-library spot"}
         mw_streets = [st for st in rep[1:] if len(st.players_start) > 2]
+        if self._study and mw_streets:
+            return {"error": f"Study mode browses heads-up pots after the flop: {len(mw_streets[0].players_start)} "
+                             f"players saw the {mw_streets[0].name}"}
         slow: Dict[str, np.ndarray] = {}
         by_rules = []
         for st in mw_streets:
@@ -2764,6 +2831,10 @@ class Advisor:
         else:
             evs = sol.solver.node_action_evs(node, n_r0, n_r1)
             strat = node.avg_strategy0()
+        if self._study:
+            return self._study_node(sol, node, n_r0, n_r1, evs, strat, cur, hero, villain, hero_p, board,
+                                    min(to_call, hero_remaining), min(eff - max(node.bets), hero_remaining), expl,
+                                    lib_sol, positions, notes, t0)
         idx = COMBO_INDEX[(min(hole), max(hole))]
         pos_in_active = np.nonzero(sol.ctx.active == idx)[0]
         ci = int(pos_in_active[0]) if len(pos_in_active) else None
@@ -2834,6 +2905,67 @@ class Advisor:
             **({"locked": {villain: adj}} if adj else {}),
             "notes": notes, "seconds": round(time.time() - t0, 2),
         }
+
+    def _study_node(self, sol, node, n_r0, n_r1, evs, strat, cur, hero, villain, hero_p, board, to_call, behind, expl,
+                    lib_sol, positions, notes, t0):
+        """Study mode's answer at a heads-up node (Advisor.study): the actor's whole range, per hand class (the
+        grid) and combo: its reach (w), the mix (f), each action's EV in bb relative to folding now (ev; evm the
+        mix's) and its equity against the opponent's range at the node (eq: all-in, the rest of the board dealt)."""
+        from .breakdown import range_equities
+        me = expand(sol.ctx, n_r0 if hero_p == 0 else n_r1)
+        opp = expand(sol.ctx, n_r1 if hero_p == 0 else n_r0)
+        names = list(node.names)
+        A = len(names)
+        sf = np.zeros((A, N_COMBOS)); sf[:, sol.ctx.active] = strat
+        ev = np.zeros((A, N_COMBOS)); ev[:, sol.ctx.active] = evs
+        evm = (sf * ev).sum(axis=0)
+        eq, eq_opp = range_equities(board, me, opp)
+        tot = max(float(me.sum()), 1e-12)
+
+        def mean(x, w):
+            ok = ~np.isnan(x) & (w > 0)
+            return round(float((x[ok] * w[ok]).sum() / w[ok].sum()), 3) if ok.any() else None
+        acts = []
+        for a, name in enumerate(names):
+            wa = me * sf[a]
+            acts.append({"action": name, "amount_bb": self._amount(name, node, hero_p),
+                         "freq": round(float(wa.sum()) / tot, 3), "combos": round(float(wa.sum()), 1),
+                         # (the EV of the hands that take it; none for an action under a twentieth of a combo)
+                         "ev_bb": round(float((wa * ev[a]).sum() / wa.sum()), 2) if wa.sum() >= 0.05 else None})
+        cells, combos, opp_cells = {}, {}, {}
+        for cls, idx in _class_index().items():
+            w = me[idx]
+            sw = float(w.sum())
+            if sw > 1e-9:
+                cells[cls] = {"w": round(sw / len(idx), 3),
+                              "f": [round(float((sf[a, idx] * w).sum()) / sw, 3) for a in range(A)],
+                              "ev": [round(float((ev[a, idx] * w).sum()) / sw, 2) for a in range(A)],
+                              "evm": round(float((evm[idx] * w).sum()) / sw, 2), "eq": mean(eq[idx], w)}
+                combos[cls] = [[cards_str(sorted(ALL_COMBOS[i], reverse=True)), round(float(me[i]), 3),
+                                [round(float(sf[a, i]), 3) for a in range(A)], [round(float(ev[a, i]), 2) for a in range(A)],
+                                None if np.isnan(eq[i]) else round(float(eq[i]), 3)] for i in idx if me[i] >= 5e-4]
+            wo = opp[idx]
+            if wo.sum() > 1e-9:
+                opp_cells[cls] = {"w": round(float(wo.sum()) / len(idx), 3), "f": [1.0], "eq": mean(eq_opp[idx], wo)}
+        res = {
+            "study": "node", "street": cur.name, "actor": hero, "opponent": villain,
+            "position": "OOP" if hero_p == 0 else "IP", "players": len(positions), "board": cards_str(board),
+            "pot_bb": round(node.pot_now, 2), "to_call_bb": round(to_call, 2), "stack_bb": round(behind, 2),
+            "actions": acts, "grid": {"actions": names, "cells": cells}, "combos": combos,
+            "range_combos": round(float(me.sum()), 1), "range_ev_bb": round(float((me * evm).sum()) / tot, 2),
+            "range_eq": mean(eq, me), "opponent_combos": round(float(opp.sum()), 1),
+            "opponent_eq": mean(eq_opp, opp), "opponent_grid": {"actions": ["in range"], "cells": opp_cells},
+            "solver": {"iterations": sol.iters, "solve_seconds": round(sol.seconds, 2), "nodes": sol.n_nodes,
+                       "active_combos": sol.ctx.n, "exploitability_pct": round(expl, 2)},
+            **({"precomputed": lib_sol.info()} if lib_sol is not None else {}),
+            # (the page plays the tree's own sizes, rounded: their mapping back onto it isn't news)
+            "notes": [n for n in notes if "to tree action" not in n], "seconds": round(time.time() - t0, 2),
+        }
+        if self._breakdown:
+            from . import breakdown as BD
+            res["breakdown"] = BD.breakdown(board, names, hero, me, sf, evm, {villain: opp}, node.pot_now,
+                                            villain_ev=not self.cfg.rake_rate and self._icm is None)
+        return res
 
     # ------------------------------------------------------------ multiway
     def _multiway_solve(self, hero, hole, board, ranges, remaining, cur: StreetState, stk, t0, notes, line=None):
@@ -4208,6 +4340,8 @@ class Advisor:
     def _with_hero(r0, r1, hero_p, hole, notes):
         """Our hand gets a negligible weight when the ranges say we'd never be here, so the solve
         still gives it a strategy and EVs (against the opponent's range) without changing the rest."""
+        if not hole:   # (Study mode: no hand of ours)
+            return r0, r1
         i = COMBO_INDEX[(min(hole), max(hole))]
         r = r0 if hero_p == 0 else r1
         if r[i] > 1e-9:
@@ -4614,20 +4748,25 @@ def _swap_nearest(sizes: List[float], frac: float, tol: float = 0.15, fixed: Opt
 RANKS = "AKQJT98765432"
 
 
-def strategy_grid(strats: List[np.ndarray], names: List[str], weights: np.ndarray) -> dict:
-    """13x13 hand-class grid: for each class, the range weight and per-action frequency."""
+@lru_cache(maxsize=1)
+def _class_index() -> Dict[str, np.ndarray]:
+    """Each hand class's combos (indices into ALL_COMBOS)."""
     cls_idx: Dict[str, List[int]] = {}
     for i, cb in enumerate(ALL_COMBOS):
         cls_idx.setdefault(hand_class(cb), []).append(i)
+    return {k: np.array(v) for k, v in cls_idx.items()}
+
+
+def strategy_grid(strats: List[np.ndarray], names: List[str], weights: np.ndarray) -> dict:
+    """13x13 hand-class grid: for each class, the range weight and per-action frequency."""
     out = {}
-    for cls, idxs in cls_idx.items():
-        idx = np.array(idxs)
+    for cls, idx in _class_index().items():
         w = weights[idx]
         tot = float(w.sum())
         if tot <= 1e-12:
             out[cls] = {"w": 0.0, "f": [0.0] * len(names)}
             continue
-        out[cls] = {"w": round(tot / len(idxs), 3),
+        out[cls] = {"w": round(tot / len(idx), 3),
                     "f": [round(float((s[idx] * w).sum() / tot), 3) for s in strats]}
     return {"actions": names, "cells": out}
 

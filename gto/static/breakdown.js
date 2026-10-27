@@ -45,7 +45,7 @@
     const part = parts.includes(st.part) ? st.part : "made", rows = p[part] || [];
     const tot = rows.reduce((t, r) => t + r.c, 0) || 1, max = Math.max(...rows.map(r => r.c), 1e-9);
     const mine = hero && bd.hero.mine ? bd.hero.mine[part === "made" ? 0 : 1] : null;
-    let h = `<div class="bd-ctl"><div class="segment">${ps.map((x, i) => `<button data-who="${i}" class="${x === p ? "active" : ""}">${i ? esc(x.who) : `You (${esc(x.who)})`}</button>`).join("")}</div>`;
+    let h = `<div class="bd-ctl"><div class="segment">${ps.map((x, i) => `<button data-who="${i}" class="${x === p ? "active" : ""}">${i || !bd.hero.mine ? esc(x.who) : `You (${esc(x.who)})`}</button>`).join("")}</div>`;
     if (parts.length > 1) h += `<div class="segment">${parts.map(x => `<button data-part="${x}" class="${x === part ? "active" : ""}">${x === "made" ? "Made hands" : "Draws"}</button>`).join("")}</div>`;
     h += `</div>`;
     if (hero) h += `<div class="bd-legend">${bd.actions.map(n => `<span style="--c:${color(n)}">${esc(n)}</span>`).join("")}</div>`;
@@ -83,7 +83,7 @@
       svg += `<polyline fill="none" stroke="${col(i)}" stroke-width="2" stroke-linejoin="round" points="${p.curve.map((e, k) => `${x(k / n).toFixed(1)},${y(e).toFixed(1)}`).join(" ")}"/>`;
     });
     svg += `<line class="bd-cur" x1="0" x2="0" y1="${T}" y2="${H - B}" visibility="hidden"/></svg>`;
-    const stat = (p, i) => `<div class="bd-card" style="--c:${col(i)}"><div class="bd-who">${i ? "" : "You · "}${esc(p.who)} <small>${p.combos} combos</small></div>`
+    const stat = (p, i) => `<div class="bd-card" style="--c:${col(i)}"><div class="bd-who">${i || !bd.hero.mine ? "" : "You · "}${esc(p.who)} <small>${p.combos} combos</small></div>`
       + `<div class="bd-stats"><span><small>Equity</small><b>${pct(p.eq, 1)}</b></span><span><small>EV</small><b>${p.ev != null ? evs(p.ev) + " bb" : "—"}</b></span><span title="Share of the range with ${pct(bd.nut_eq)} equity or more"><small>≥${pct(bd.nut_eq)}</small><b>${pct(p.nuts, 1)}</b></span></div></div>`;
     const [a, b] = ps, lead = (a.nuts - b.nuts) * 100;
     const nutText = Math.abs(lead) < 1 ? "Neither range has a nut advantage" : `${esc(lead > 0 ? a.who : b.who)} has the nut advantage: ${Math.abs(lead).toFixed(1)} points more of the range at ${pct(bd.nut_eq)}+ equity`;

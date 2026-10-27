@@ -18,7 +18,7 @@ LIB = os.path.join(ROOT, "gto", "static", "flop_library")
 class TestRoutes(unittest.TestCase):
     def test_table(self):
         names, spot = routes.routes(HTML)
-        self.assertEqual(names, ["practice", "drills", "reports", "session", "import"])
+        self.assertEqual(names, ["practice", "drills", "reports", "session", "study", "import"])
         self.assertEqual(spot, ["drills", "reports"])
 
     def test_pages_and_base(self):
@@ -59,7 +59,7 @@ class TestRoutes(unittest.TestCase):
             page = open(os.path.join(d, "practice", "index.html"), encoding="utf-8").read()
             self.assertIn('<base href="../">', page)
             self.assertIn('WORKER_VERSION = "stamped', page)   # a copy of the stamped page
-            self.assertEqual(len(done), 5)   # (no flop_library here: no spot pages)
+            self.assertEqual(len(done), 6)   # (no flop_library here: no spot pages)
 
 
 class TestServer(unittest.TestCase):

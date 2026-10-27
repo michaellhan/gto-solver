@@ -624,6 +624,7 @@
       <button id="importHand" title="Paste a hand history (PokerStars, GGPoker, 888, partypoker, Winamax, WPN/ACR, Ignition/Bovada, iPoker) to replay and review it">Import hand…</button>
       <button id="drills" title="Drill one flop spot: random flops and hands from the precomputed solutions, each answer graded at once (keys 1-4, Space for the next)">Drills…</button>
       <button id="analyzeSession" title="A whole session's hand histories: each of your decisions solved and graded, the EV lost by street, position, spot and preflop situation, the biggest mistakes">Analyze session…</button>
+      <button id="study" title="Browse the solver's strategy for a whole range, node by node: every hand's mix, EV and equity; play any action, deal any card">Study…</button>
       <button id="flopReports" title="The precomputed spots' flop strategy across every flop, by texture; click a flop to load it">Flop reports…</button>
       <button id="swapCols" class="wideonly" title="Put the advice on the left and the table on the right">Advice on the left</button>
       <div class="sep"></div>
@@ -848,13 +849,14 @@ const RP_VERSION = "1";        // and this with a hash of reports.js (the flop r
 const DR_VERSION = "1";        // and this with a hash of drills.js (the drills, loaded on first use, after reports.js)
 const BD_VERSION = "1";        // and breakdown.js (the advice's Breakdown and Equity views, loaded on first use)
 const SS_VERSION = "1";        // and session.js (the session analyzer, loaded on first use, after hh.js)
+const SY_VERSION = "1";        // and study.js (Study mode, the solution browser, loaded on first use)
 // ---- the views' URLs: the solver is the root (/gto-solver/), the others /practice/, /drills/, /reports/,
-// /session/ and /import/ under it, and /reports/<spot>/, /drills/<spot>/ a precomputed spot (its id, dashes for
+// /session/, /study/ and /import/ under it, and /reports/<spot>/, /drills/<spot>/ a precomputed spot (its id, dashes for
 // underscores). The static site has no rewrites: each URL is a copy of this page with a <base href="../"> that
 // points its relative URLs at the root. gto/routes.py reads these two lines (scripts/deploy.sh writes the copies,
 // gto/server.py serves them). Opening a view pushes its URL and closing it pushes the solver's (Practice's, if
 // that's on under it); back and forward switch views; a view's URL opened directly opens it (applyRoute, at the end).
-const ROUTES = { practice: "Practice", drills: "Drills", reports: "Flop reports", session: "Analyze session", import: "Import hand" };
+const ROUTES = { practice: "Practice", drills: "Drills", reports: "Flop reports", session: "Analyze session", study: "Study", import: "Import hand" };
 const SPOT_ROUTES = ["drills", "reports"];
 const ROUTE_RE = new RegExp(`^(.*?/)(?:(${Object.keys(ROUTES).join("|")})(?:/([a-z0-9-]+))?/?)?(?:index\\.html)?$`);
 function parseRoute(pathname) {   // -> { root: the solver's path, view: "solver" or a ROUTES key, spot: a spot id or null }
@@ -2138,6 +2140,15 @@ const loadJs = (src, ok) => ok() ? Promise.resolve() : new Promise((res, rej) =>
 document.getElementById("drills").onclick = () => openView("drills");
 // ---- the session analyzer (session.js, after hh.js whose parser it uses; it runs on the page's engine, solver and grading)
 document.getElementById("analyzeSession").onclick = () => openView("session");
+// ---- Study mode (study.js): a hand walked node by node with the acting player's whole range (gto/advisor.py,
+// Advisor.study), asked at the speed's budgets; it can start from the page's own hand (its advice payload)
+document.getElementById("study").onclick = () => openView("study");
+async function studyAsk(st) {
+  await modeReady;
+  const [budget, prior_budget] = BUDGETS[MODE][st.speed === "accurate" ? "accurate" : "fast"];
+  return callAdvise({ ...st, budget, prior_budget });
+}
+function studyHand() { return payload(); }
 // The views over the page: open (their scripts loaded first; spot: a precomputed spot's id, else the one last
 // picked), close, and what a failed load says. Their scripts report a spot picked (viewSpot) and closing (viewClosed).
 const VIEWS = {
@@ -2147,6 +2158,8 @@ const VIEWS = {
               .then(() => window.Drills.open(spot)), close: () => window.Drills && window.Drills.close(), err: "Couldn't load the drills: " },
   session: { open: () => loadHH().then(() => loadJs("session.js?v=" + SS_VERSION, () => window.Session)).then(() => window.Session.open()),
              close: () => window.Session && window.Session.close(), err: "Couldn't load the session analyzer: " },
+  study: { open: () => loadJs("study.js?v=" + SY_VERSION, () => window.Study).then(() => window.Study.open()),
+           close: () => window.Study && window.Study.close(), err: "Couldn't load Study mode: " },
   import: { open: hhOpen, close: () => { hhBox.hidden = true; window.viewClosed("import"); }, err: "" },
 };
 window.viewSpot = (name, spot, label) => { if (overlay !== name) return; overlaySpot = spot; overlayLabel = label || null; syncRoute(true); };
@@ -2258,7 +2271,7 @@ function loadPractice() {
 document.getElementById("practiceBtn").onclick = () => loadPractice().then(P => P.set(!P.on)).catch(e => showErr(String(e)));
 // ---- routes: the URL's view (a back or forward, or the page opened at it), opened without pushing. Practice is on at
 // /practice/ and off at the solver's URL, whatever it was last time (its "gto-practice" is no longer read); a view over
-// the page (reports, drills, session, import) leaves Practice as it is.
+// the page (reports, drills, session, study, import) leaves Practice as it is.
 async function applyRoute(r) {
   routing++;
   try {

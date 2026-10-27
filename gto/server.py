@@ -82,7 +82,8 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        if p in ("/worker.js", "/hh.js", "/practice.js", "/reports.js", "/drills.js", "/breakdown.js", "/session.js"):
+        if p in ("/worker.js", "/hh.js", "/practice.js", "/reports.js", "/drills.js", "/breakdown.js", "/session.js",
+                 "/study.js"):
             name = p[1:]
             path = os.path.join(static, name)
             with open(path, "rb") as f:
