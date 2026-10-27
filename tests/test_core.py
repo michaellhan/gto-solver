@@ -25,12 +25,12 @@ def _solve(board, r0, r1, pot, stack, cfg, iters, use_core=True):
         return solve(cards(board), r0, r1, pot, stack, cfg=cfg, time_budget=1e9, max_iters=iters)
 
 
-def _strategies(sol):
+def _decisions(sol):
     out = []
 
     def walk(n):
         if isinstance(n, Decision):
-            out.append(n.avg_strategy())
+            out.append(n)
             for c in n.children:
                 walk(c)
         elif isinstance(n, Chance):
@@ -58,13 +58,20 @@ class TestSameAsNumpy(unittest.TestCase):
     def test_solve_and_evaluations(self):
         for name, board, r0, r1, pot, stack, cfg, iters in self.SPOTS:
             with self.subTest(name):
-                # every node's strategy the same after two iterations; later they part as numpy's own native and
-                # browser paths do (a hand indifferent between actions goes one way or the other by rounding, the
-                # same nodes by the same amounts), equally far from equilibrium
+                # the first iteration's regrets the same to rounding, and every node's strategy after the second
+                # but where the first left a hand tied (worth the same to every action: 0.4% of the by-class turn's
+                # slots, 88 on the 8 class among them); later they part as numpy's own native and browser paths do
+                # (a hand indifferent between actions goes one way or the other by rounding, the same nodes by the
+                # same amounts), equally far from equilibrium
+                a, b = (_decisions(_solve(board, r0, r1, pot, stack, cfg, 1, use_core=u)) for u in (True, False))
+                self.assertEqual(len(a), len(b))
+                scale = [float(np.abs(y.regret).max()) for y in b]     # (regrets weigh in the opponent's combos)
+                self.assertLess(max(float(np.abs(x.regret - y.regret).max()) / (m + 1)
+                                    for x, y, m in zip(a, b, scale)), 1e-5)
+                tied = [np.abs(y.regret).max(axis=1, keepdims=True) < 1e-5 * m for y, m in zip(b, scale)]
                 a, b = (_solve(board, r0, r1, pot, stack, cfg, 2, use_core=u) for u in (True, False))
                 self.assertIs(core._prog.s(), a.solver)
-                sa, sb = _strategies(a), _strategies(b)
-                self.assertEqual(len(sa), len(sb))
+                sa, sb = ([np.where(t, 0, n.avg_strategy()) for t, n in zip(tied, _decisions(x))] for x in (a, b))
                 self.assertLess(max(float(np.abs(x - y).max()) for x, y in zip(sa, sb)), 1e-4)
                 a, b = (_solve(board, r0, r1, pot, stack, cfg, iters, use_core=u) for u in (True, False))
                 self.assertEqual((a.iters, b.iters), (iters, iters))

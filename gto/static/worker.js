@@ -111,9 +111,11 @@ const ready = (async () => {
   // turn, 22-24 with a flush suit, each standing for its cards through suit swaps; within ~0.1% of the pot of every
   // river at the same iterations, 2-3x cheaper). The old Fast's 8 fixed rivers settled (~450 iterations) into a game
   // where only those rivers come: per-combo EVs 5-10% of the pot from its own tree with every river.
-  // Fast (8 s): a third and 125% pot on the turn, the river inside at 75%, ~90-150 iterations in numpy (now ~280 in
-  //   the core, 0.07-0.08% of the pot from equilibrium): per-combo EVs 0.5-1.5% of the pot from the rich reference (the
-  //   old 8 rivers: 3.8-9.5; 75% alone, converged: 0.6-3.8).
+  // Fast (8 s): a third, three quarters and 125% pot on the turn, the river inside at a third and 125% (gto/native.py):
+  //   ~105 iterations in the core on a loaded machine (0.3-0.8% of the pot from equilibrium), per-combo EVs 0.34-0.55%
+  //   of the pot from the rich reference on five single-raised turns. Before the core it played 33/125% with the river
+  //   at 75%, ~90-150 iterations in numpy; converged in the core (~280) that menu was 0.58-1.48% off (the old 8 rivers:
+  //   3.8-9.5; 75% alone, converged: 0.6-3.8).
   // Accurate (60 s): a third, three quarters and 125% on the turn and river, ~180-360 iterations in numpy (now ~450-490
   //   in the core): 0.08-0.33% (one size with every river: 0.6-3.8).
   // A river root bets 33/75/125/250% pot (Advisor.root_sizes): 0.1-0.6% of the pot per combo from a six-size menu,
@@ -133,7 +135,7 @@ const ready = (async () => {
   py.runPython("import sys, json; sys.path.insert(0, '/app'); from gto.advisor import Advisor; from gto.solver import Config; "
              + `advs = {'fast': Advisor(Config(n_turns=3, leaf_turns=4, leaf_rivers_flop=4, n_rivers_from_flop=4, `
              + `river_buckets=32, turn_buckets=True, bucket_river_step=3, river_classes=True, river_strength=32, `
-             + `bet_sizes={'flop': [0.33, 0.75], 'turn': [0.33, 1.25], 'river': [0.75]}, ${RAISES})), `
+             + `bet_sizes={'flop': [0.33, 0.75], 'turn': [0.33, 0.75, 1.25], 'river': [0.33, 1.25]}, ${RAISES})), `
              + `'accurate': Advisor(Config(n_turns=4, leaf_turns=4, leaf_rivers_flop=8, n_rivers_from_flop=8, river_classes=True, `
              + `river_buckets=64, turn_buckets=True, bucket_river_step=1, river_strength=32, `
              + `bet_sizes={'flop': [0.33, 0.75], 'turn': [0.33, 0.75, 1.25], 'river': [0.33, 0.75, 1.25]}, ${RAISES}))}; `
@@ -146,7 +148,7 @@ const ready = (async () => {
              + "advs['fast'].spare_prior = True; "
              // a shallow turn (at most 4.5 x the pot behind: a 3bet pot's) bets 33/75% in Fast, not 33/125% (gto/native.py
              // FAST_SPR_SIZES: four 3bet turns 1.96% of the pot off per combo -> 0.80 at 8 s, frequencies 6.8 points -> 2.0)
-             + "advs['fast'].spr_sizes = {'turn': (4.5, {'bet': [0.33, 0.75]})}; "
+             + "advs['fast'].spr_sizes = {'turn': (4.5, {'bet': [0.33, 0.75], 'river': [0.75]})}; "
              // both speeds answer a flop spot the library holds from it (Accurate's flop model, solved offline)
              + "from gto.flop_library import FlopLibrary; from js import libFetch; "
              + "lib = FlopLibrary(lambda p: (lambda r: None if r is None else r.to_bytes())(libFetch(p))); "

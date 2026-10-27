@@ -199,7 +199,7 @@ def shipped(speed, spot, iters):
     max_spr, shallow = native.FAST_SPR_SIZES.get("turn", (0.0, {})) if speed == "fast" and len(board) == 4 else (0.0, {})
     if stack <= max_spr * pot:
         for kind, v in shallow.items():
-            (cfg.bet_sizes if kind == "bet" else cfg.raise_sizes)["turn"] = list(v)
+            (cfg.raise_sizes if kind == "raise" else cfg.bet_sizes)["turn" if kind in ("bet", "raise") else kind] = list(v)
     return solve(board, r0, r1, pot, stack, cfg=cfg, time_budget=1e9, max_iters=iters)
 
 
@@ -208,7 +208,8 @@ class TestTurnRiverReferences(unittest.TestCase):
     the per-budget numbers) and published figures (TURN_REFERENCES, RIVER_REFERENCES)."""
 
     _sols = {}
-    # (native Fast's turn gets ~80-150 iterations in 5 s, the flop's unspent 2.5 s with its own; Accurate 200-300 in 30 s)
+    # (native Fast's turn gets ~150 iterations in 5 s in the core, the flop's unspent 2.5 s with its own, ~75 cold;
+    # Accurate 200-300 in 30 s)
     FAST_ITERS, ACC_ITERS = 100, 150
 
     @classmethod
@@ -223,10 +224,11 @@ class TestTurnRiverReferences(unittest.TestCase):
         return cls._sols[key]
 
     def test_fast_turn_close_to_rich_reference(self):
-        # native Fast's turn (33% and 125% pot, the river inside at 75%, river classes; 33/75% in a 3bet pot's shallow
-        # turn) at 100 iterations (~5 s) against the rich reference: EVs within 2% of the pot per combo (measured 0.5-1.8;
-        # 75/125% at 2.5 s, before: 0.6-2.6), frequencies within 6 points on average (the 3bet pots with 33/125% were
-        # 2.4-14.5, the reference's 75% barrel going to 125%, EVs 0.55-4.9)
+        # native Fast's turn (33/75/125% pot, the river inside at 33/125%, river classes; 33/75% with the river at 75%
+        # in a 3bet pot's shallow turn) at 100 iterations against the rich reference: EVs within 2% of the pot per combo
+        # (measured 0.34-0.55 in single-raised pots at ~105; 33/125% with the river at 75%, converged: 0.58-1.48),
+        # frequencies within 6 points on average (the 3bet pots with 33/125% were 2.4-14.5, the reference's 75% barrel
+        # going to 125%, EVs 0.55-4.9)
         refs = T.load_refs()
         for spot in ("t-k72-3", "t-k72s-4s", "t-k72-7", "t-q83-a", "t-q83x-5", "t-3b-k72-4", "t-3b-k72-a", "t-3b-t94-2",
                      "t-3b-a85-8"):
@@ -237,15 +239,18 @@ class TestTurnRiverReferences(unittest.TestCase):
             self.assertLess(T.ev_error(sol, ref["values"]), 2.0, spot)
 
     def test_fast_shallow_turn_sizes(self):
-        # Advisor.spr_sizes: native Fast's turn bets 33/75% with at most 4.5 x the pot behind (a 3bet pot's turn: 87 behind
-        # a 27.5 pot), 33/125% deeper (a single-raised pot's: 95.7 behind 9.1), the request's own sizes winning
+        # Advisor.spr_sizes: native Fast's turn bets 33/75% and its river 75% with at most 4.5 x the pot behind (a 3bet
+        # pot's turn: 87 behind a 27.5 pot), 33/75/125% and 33/125% deeper (a single-raised pot's: 95.7 behind 9.1)
         from gto import native
         from gto.advisor import StreetState
         adv = native.advisor("fast", library=False)
         st = StreetState("turn", ["BB", "BTN"], ["BB", "BTN"], 27.5, {"BB": 6.5, "BTN": 6.5})
-        self.assertEqual(adv._cfg_with_real_sizes(st, "BB", "BTN", 87.0).bet_sizes["turn"], [0.33, 0.75])
+        cfg = adv._cfg_with_real_sizes(st, "BB", "BTN", 87.0)
+        self.assertEqual((cfg.bet_sizes["turn"], cfg.bet_sizes["river"]), ([0.33, 0.75], [0.75]))
         st.pot_start = 9.1
-        self.assertEqual(adv._cfg_with_real_sizes(st, "BB", "BTN", 95.7).bet_sizes["turn"], [0.33, 1.25])
+        cfg = adv._cfg_with_real_sizes(st, "BB", "BTN", 95.7)
+        self.assertEqual((cfg.bet_sizes["turn"], cfg.bet_sizes["river"]), ([0.33, 0.75, 1.25], [0.33, 1.25]))
+        self.assertEqual(adv.cfg.bet_sizes["river"], [0.33, 1.25])          # (a copy changed, not the advisor's)
         self.assertEqual(native.advisor("accurate", library=False).spr_sizes, {})
 
     def test_accurate_turn_close_to_rich_reference(self):

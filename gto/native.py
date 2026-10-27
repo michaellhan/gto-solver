@@ -45,12 +45,15 @@ from . import mw_library  # noqa: E402
 # 0.3-0.5x every river's cost an iteration, about as close to equilibrium at the same iterations). The menu was the
 # biggest error: those solves overbet 29-36% of the range on blank and overcard turns, so one 75% size, converged,
 # was 0.6-3.8% of the pot off per combo. Accurate plays 33/75/125% (about its old two sizes' cost with every river):
-# 0.11-0.32% of the pot off after 30 s, where it was 0.7-2.9. Fast plays the browser Fast's turn menu (33/125%, the
-# river inside at 75%) and its turn also gets the 2.5 s the narrowing flop didn't spend (Advisor.spare_prior: a flop
+# 0.11-0.32% of the pot off after 30 s, where it was 0.7-2.9. Fast plays the browser Fast's turn menu (33/75/125%, the
+# river inside at 33/125%) and its turn also gets the 2.5 s the narrowing flop didn't spend (Advisor.spare_prior: a flop
 # from the library or from the hand's flop advice is free, so a turn request never takes longer than a cold one's
-# 5 s): at 5 s (80-150 iterations) 0.5-1.8% of the pot off, 1.0 on average, where 75/125% at 2.5 s was 0.6-2.6, 1.65
-# (75/125% at 5 s: 1.5, its missing third-pot lead 3.0 on K72-7). Cold (the flop solved in the same request) the turn
-# keeps 2.5 s: 1.9 on average, 0.7-4.3.
+# 5 s). The compiled core (gto/core.py) runs 2.8-3.6x numpy's turn iterations, so Fast's menu grew from 33/125% with
+# the river at 75%: that one, converged in the core (~410 iterations in 5 s, 0.05% of the pot from equilibrium), was
+# 0.58-1.48% of the pot off per combo on the five single-raised turns, 1.02 on average, frequencies 3.2 points; this
+# one costs 2.6x an iteration (~150 in 5 s, 0.3%; ~105 at the browser's 8 s on a loaded machine): 0.34-0.55, 0.47 on
+# average, 1.8 points (33/125% on the turn and 33/75/125% on the river: 0.48 and 2.9; 33/125% both: 0.62 and 2.5).
+# Cold (the flop solved in the same request) the turn keeps 2.5 s (~75 iterations, 1.2% of the pot from equilibrium).
 # A river root bets 33/75/125/250% pot (Advisor.root_sizes): polar rivers overbet half the range, and 75% alone
 # was 1.2-7.2% of the pot off per combo where these are 0.1-0.6; a river iteration takes milliseconds.
 # A shallow turn (at most 4.5 x the pot behind: a 3bet pot's turn has 3.2, a single-raised pot's 6.8-18) plays Fast at
@@ -58,7 +61,9 @@ from . import mw_library  # noqa: E402
 # overbets. Four CO vs BTN 3bet turns against the rich reference (scripts/turn_river_reference.py): per-combo EVs 1.95%
 # of the pot off on average -> 0.81 at 5 s (0.55-4.8 -> 0.42-1.5), frequencies 6.8 points -> 2.0 (33/75/125%: 1.07 and
 # 2.4, fewer iterations); cold at 2.5 s 1.82 -> 1.38. In single-raised pots 33/75% was 1.6-3.7% off (no overbet).
-FAST_SPR_SIZES = {"turn": (4.5, {"bet": [0.33, 0.75]})}
+# Its river inside stays at 75%: in the core at the same budget 33/75% there gave 0.61% of the pot off on average,
+# 33/125% on the river 0.57, 33/75/125% on the turn 0.62, both of the single-raised menu's 0.68 (one board 1.1-1.8).
+FAST_SPR_SIZES = {"turn": (4.5, {"bet": [0.33, 0.75], "river": [0.75]})}
 # From the flop the river is played by 32 buckets of river strength (Config.river_strength; README, Accuracy vs
 # speed): a draw enters the river strong on the cards that hit it and weak on the rest, where the river on the turn's
 # boards made it a middling hand and the flop c-bet too little.
@@ -66,7 +71,7 @@ RIVER_STRENGTH = 32
 _FLOP = {"bet": [0.33, 0.75], "raise": [0.5]}
 ROOT_SIZES = {"river": {"bet": [0.33, 0.75, 1.25, 2.5]}}
 SPEEDS = {
-    "fast": (dict(bet_sizes={"flop": _FLOP["bet"], "turn": [0.33, 1.25], "river": [0.75]},
+    "fast": (dict(bet_sizes={"flop": _FLOP["bet"], "turn": [0.33, 0.75, 1.25], "river": [0.33, 1.25]},
                   raise_sizes={"flop": _FLOP["raise"], "turn": [0.75], "river": [0.75]},
                   model=dict(river_buckets=32, turn_buckets=True, bucket_river_step=3, river_classes=True,
                              river_strength=RIVER_STRENGTH)), 2.5, 2.5),

@@ -722,9 +722,9 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
 
   | config | turn EV err, before -> after | turn freq err | river root EV err | tree now |
   |---|---|---|---|---|
-  | browser Fast (8 s) | 7.1 (3.8-9.5) -> 1.0 (0.5-1.5) | 7.9 -> 3.1 | 3.1 -> 0.3 | turn 33/125%, river 75%, classes |
+  | browser Fast (8 s) | 7.1 (3.8-9.5) -> 1.0 (0.5-1.5) -> 0.47 (0.34-0.55) | 7.9 -> 3.1 -> 1.8 | 3.1 -> 0.3 | turn 33/75/125%, river 33/125%, classes |
   | browser Accurate (60 s) | 2.3 (0.6-3.8) -> 0.18 (0.08-0.33) | 5.7 -> 0.7 | 3.1 -> 0.3 | 33/75/125%, classes |
-  | native Fast (2.5 s; turn 5 s with the flop free) | 1.9 (1.4-2.9) -> 1.0 (0.5-1.8) | 5.8 -> 3.4 | 3.1 -> 0.3 | turn 33/125%, river 75%, classes |
+  | native Fast (2.5 s; turn 5 s with the flop free) | 1.9 (1.4-2.9) -> 1.0 (0.5-1.8) -> ~0.47 | 5.8 -> 3.4 -> ~1.8 | 3.1 -> 0.3 | turn 33/75/125%, river 33/125%, classes |
   | native Accurate (30 s) | 1.5 (0.7-2.9) -> 0.23 (0.11-0.32) | 5.2 -> 1.0 | 1.9 -> 0.3 | 33/75/125%, classes |
 
   Every river with one size converged was itself 0.6-3.8% of the pot from the rich tree, so
@@ -741,7 +741,16 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   so Fast's turn there bets 33/75% (`Advisor.spr_sizes`, at most 4.5x the pot behind): per-combo EVs 1.95% of the
   pot off on average -> 0.81 natively at 5 s (0.55-4.8 -> 0.42-1.5; browser 1.96 -> 0.80), frequencies 6.8 points ->
   2.0 (33/75/125%: 1.07 and 2.4, fewer iterations; cold at 2.5 s 1.82 -> 1.38). In single-raised pots 33/75% was
-  1.6-3.7 off (it has no overbet) and 33/75/125% 0.75-2.65 against 33/125%'s 0.54-1.42. A river root (Advisor.root_sizes,
+  1.6-3.7 off (it has no overbet) and 33/75/125% 0.75-2.65 against 33/125%'s 0.54-1.42.
+  The compiled core (see Compiled core) then made an iteration 2.8-3.6x cheaper natively and 5.5-6.7x in the
+  browser, and the error left was the menu: 33/125% with the river at 75%, converged (~280 iterations at the browser's
+  8 s on a loaded machine, 0.05-0.14% of the pot from equilibrium), was 0.58-1.48% of the pot off per combo on the
+  five single-raised turns, 1.02 on average, 3.2 points of frequencies. Fast's single-raised turn now bets 33/75/125%
+  with the river inside at 33/125% (2.6x the cost an iteration: ~105 iterations in the browser on a loaded machine, ~150
+  natively in 5 s, 0.3-0.8% of the pot from equilibrium): 0.34-0.55, 0.47 on average, 1.8 points (33/125% on the turn
+  with 33/75/125% on the river: 0.48 and 2.9; 33/125% on both: 0.62 and 2.5; the turn's three sizes with the river at
+  75%: 0.97). A 3bet pot's shallow turn keeps 33/75% with the river at 75% (0.61; with the river at 33/125% 0.57, the
+  single-raised menu 0.68, one board 1.1-1.8 either way). A river root (Advisor.root_sizes,
   every config) bets 33/75/125/250% pot: per-combo EVs within 0.11-0.60% of the pot of the six-size
   menu where 75% alone was 1.2-7.2%; a river solve is milliseconds an iteration, ~1000 in 2.5 s.
   Published figures (TURN_REFERENCES / RIVER_REFERENCES; GTO Wizard's turn aggregates are behind an
@@ -1512,9 +1521,9 @@ and the river they lead to) are next, which would make full flop trees feasible.
   takes, or a pot that became heads-up mid-street, gets a solve from their seat instead (a few seconds,
   more in the browser).
 * The bet-size abstraction is coarse. A real bet or raise more than 15% off every tree size is put
-  into that street's tree (closer ones are played as the nearest size). The Fast turn bets 33/125% in
-  single-raised pots and 33/75% where the turn starts at most 4.5x the pot deep (a 3bet pot's 3.2;
-  `Advisor.spr_sizes`), so a pot in between barrels three quarters pot from 33/125%. Raises stay one size (75%)
+  into that street's tree (closer ones are played as the nearest size). The Fast turn bets 33/75/125% in
+  single-raised pots (the river inside 33/125%) and 33/75% where the turn starts at most 4.5x the pot deep (a 3bet
+  pot's 3.2; the river inside 75%; `Advisor.spr_sizes`). Raises stay one size (75%)
   after the flop: a second one (40% of the pot after the call, about 2.5x) moved four 3bet turns' aggregates
   1-5 points at up to 2.6x the solve's cost, so it was left out.
 * Turn and river references are this solver's own richest trees plus a few published spots; few

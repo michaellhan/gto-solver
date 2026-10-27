@@ -1873,7 +1873,7 @@ class Advisor:
         if sizes:
             self.root_sizes = {st: {k: v for k, v in d.items() if k != "raise" or "raise" not in sizes}
                                for st, d in self.root_sizes.items() if st not in sizes}
-            self.spr_sizes = {st: (m, {k: v for k, v in d.items() if k != "raise" or "raise" not in sizes})
+            self.spr_sizes = {st: (m, {k: v for k, v in d.items() if k not in sizes})
                               for st, (m, d) in self.spr_sizes.items() if st not in sizes}
         if positions.rake or sizes:
             self.cfg = self.cfg.copy()
@@ -4480,8 +4480,8 @@ class Advisor:
             (cfg.bet_sizes if kind == "bet" else cfg.raise_sizes)[st.name] = list(v)
         max_spr, shallow = self.spr_sizes.get(st.name, (0.0, {}))
         if stack <= max_spr * st.pot_start:
-            for kind, v in shallow.items():
-                (cfg.bet_sizes if kind == "bet" else cfg.raise_sizes)[st.name] = list(v)
+            for kind, v in shallow.items():   # (a street's name: its bets inside this street's solve)
+                (cfg.raise_sizes if kind == "raise" else cfg.bet_sizes)[st.name if kind in ("bet", "raise") else kind] = list(v)
         bets = [0.0, 0.0]
         pot = st.pot_start
         fixed = {"bet": set(), "raise": set()}
