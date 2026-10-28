@@ -776,7 +776,14 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   natively in 5 s, 0.3-0.8% of the pot from equilibrium): 0.34-0.55, 0.47 on average, 1.8 points (33/125% on the turn
   with 33/75/125% on the river: 0.48 and 2.9; 33/125% on both: 0.62 and 2.5; the turn's three sizes with the river at
   75%: 0.97). A 3bet pot's shallow turn keeps 33/75% with the river at 75% (0.61; with the river at 33/125% 0.57, the
-  single-raised menu 0.68, one board 1.1-1.8 either way). A river root (Advisor.root_sizes,
+  single-raised menu 0.68, one board 1.1-1.8 either way). Then threads (see Threads) gave 2.5-3x the iterations,
+  and with the core on 4 or more (`native.THREADED_FAST`: the server's `--threads`, the browser's helpers) Fast's turn
+  plays Accurate's tree, the river inside at 33/75/125% and shallow turns too. In the core, per-combo EVs against the
+  rich reference on the five single-raised turns (mean, % of the pot) at 150 / 200 / 300 / 450 iterations: Accurate's
+  tree 0.31 / 0.21 / 0.12 / 0.07, Fast's own 0.38 / 0.35 / 0.34 / 0.34 (it settles there: its river has no 75%); the
+  four 3bet turns 0.82 / 0.45 / 0.16 / 0.13 where the shallow menu stays at 0.69 (200) and 0.59 (450). Accurate's
+  tree costs 1.4x an iteration in single-raised pots and 2.2x in 3bet pots', so it pays from ~200 of Fast's
+  iterations; on one thread Fast keeps its own. A river root (Advisor.root_sizes,
   every config) bets 33/75/125/250% pot: per-combo EVs within 0.11-0.60% of the pot of the six-size
   menu where 75% alone was 1.2-7.2%; a river solve is milliseconds an iteration, ~1000 in 2.5 s.
   Published figures (TURN_REFERENCES / RIVER_REFERENCES; GTO Wizard's turn aggregates are behind an
@@ -1600,8 +1607,9 @@ natively, whose BLAS multiplies its many equity leaves faster (`core.LEAF_ROWS_B
   more in the browser).
 * The bet-size abstraction is coarse. A real bet or raise more than 15% off every tree size is put
   into that street's tree (closer ones are played as the nearest size). The Fast turn bets 33/75/125% in
-  single-raised pots (the river inside 33/125%) and 33/75% where the turn starts at most 4.5x the pot deep (a 3bet
-  pot's 3.2; the river inside 75%; `Advisor.spr_sizes`). Raises stay one size (75%)
+  single-raised pots (the river inside 33/125%; 33/75/125% with the core on 4+ threads, as Accurate) and on one
+  thread 33/75% where the turn starts at most 4.5x the pot deep (a 3bet pot's 3.2; the river inside 75%;
+  `Advisor.spr_sizes`). Raises stay one size (75%)
   after the flop: a second one (40% of the pot after the call, about 2.5x) moved four 3bet turns' aggregates
   1-5 points at up to 2.6x the solve's cost, so it was left out.
 * Turn and river references are this solver's own richest trees plus a few published spots; few

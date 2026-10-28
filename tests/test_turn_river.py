@@ -187,16 +187,19 @@ RIVER_REFERENCES = [
 ]
 
 
-def shipped(speed, spot, iters):
+def shipped(speed, spot, iters, threaded=False):
     """The spot solved with gto/native.py's tree for `speed` (a river root with Advisor.root_sizes' menu, a shallow
-    Fast turn with FAST_SPR_SIZES')."""
+    Fast turn with FAST_SPR_SIZES'; `threaded`: Fast's with the core on THREADED_FAST threads, Accurate's turn tree)."""
     from gto import native
     cfg = native.config(speed)
     board, r0, r1, pot, stack = T.load_spot(spot)
+    if threaded:
+        cfg.bet_sizes["river"] = list(native.SPEEDS["accurate"][0]["bet_sizes"]["river"])
     if len(board) == 5:
         for kind, v in native.ROOT_SIZES["river"].items():
             (cfg.bet_sizes if kind == "bet" else cfg.raise_sizes)["river"] = list(v)
-    max_spr, shallow = native.FAST_SPR_SIZES.get("turn", (0.0, {})) if speed == "fast" and len(board) == 4 else (0.0, {})
+    max_spr, shallow = (native.FAST_SPR_SIZES.get("turn", (0.0, {})) if speed == "fast" and len(board) == 4 and not threaded
+                        else (0.0, {}))
     if stack <= max_spr * pot:
         for kind, v in shallow.items():
             (cfg.raise_sizes if kind == "raise" else cfg.bet_sizes)["turn" if kind in ("bet", "raise") else kind] = list(v)
@@ -252,6 +255,37 @@ class TestTurnRiverReferences(unittest.TestCase):
         self.assertEqual((cfg.bet_sizes["turn"], cfg.bet_sizes["river"]), ([0.33, 0.75, 1.25], [0.33, 1.25]))
         self.assertEqual(adv.cfg.bet_sizes["river"], [0.33, 1.25])          # (a copy changed, not the advisor's)
         self.assertEqual(native.advisor("accurate", library=False).spr_sizes, {})
+
+    def test_fast_threaded_plays_accurate_tree(self):
+        # with the core on 4+ threads native Fast's turn plays Accurate's 33/75/125% river, shallow turns too
+        from gto import core, native
+        if core.lib() is None:
+            self.skipTest("no compiled core")
+        was = core.threads()
+        try:
+            core.threads(native.THREADED_FAST)
+            adv = native.advisor("fast", library=False)
+            self.assertEqual((adv.cfg.bet_sizes["turn"], adv.cfg.bet_sizes["river"]), ([0.33, 0.75, 1.25], [0.33, 0.75, 1.25]))
+            self.assertEqual(adv.spr_sizes, {})
+            self.assertEqual(adv.cfg.bet_sizes["flop"], native.config("fast").bet_sizes["flop"])
+            core.threads(1)
+            adv = native.advisor("fast", library=False)
+            self.assertEqual(adv.cfg.bet_sizes["river"], [0.33, 1.25])
+            self.assertIn("turn", adv.spr_sizes)
+        finally:
+            core.threads(was)
+
+    def test_fast_threaded_3bet_turn_close_to_rich_reference(self):
+        # threaded Fast's tree on the 3bet pots' shallow turns at 300 iterations (2.5-3x the ~100-170 one thread gets):
+        # EVs within 0.4% of the pot per combo (measured 0.09-0.31; the shallow menu's 0.48-0.65 at 450, converged),
+        # frequencies within 2 points on average (0.05-0.62)
+        refs = T.load_refs()
+        for spot in ("t-3b-k72-4", "t-3b-k72-a", "t-3b-t94-2", "t-3b-a85-8"):
+            sol = shipped("fast", spot, 300, threaded=True)
+            ref = refs[spot]["rich"]
+            err, worst = T.freq_error(T.stats(sol), ref["stats"])
+            self.assertLess(err, 2.0, f"{spot}: {err:.1f} (worst {worst})")
+            self.assertLess(T.ev_error(sol, ref["values"]), 0.4, spot)
 
     def test_accurate_turn_close_to_rich_reference(self):
         # 33/75/125% with river classes at 150 iterations (native Accurate gets ~200 in 30 s): frequencies within 3.5 points

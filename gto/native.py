@@ -15,6 +15,7 @@ from .advisor import Advisor, MW_FAST_STREETS  # noqa: E402
 from .solver import Config          # noqa: E402
 from .flop_library import default_library  # noqa: E402
 from . import mw_library  # noqa: E402
+from . import core  # noqa: E402
 
 # Each speed is a tree and its budgets (seconds for the street advised on, and for each earlier street
 # used to narrow ranges). Narrowing walks the earlier streets' solves, so they must settle too: Config()'s
@@ -66,6 +67,15 @@ from . import mw_library  # noqa: E402
 # Its river inside stays at 75%: in the core at the same budget 33/75% there gave 0.61% of the pot off on average,
 # 33/125% on the river 0.57, 33/75/125% on the turn 0.62, both of the single-raised menu's 0.68 (one board 1.1-1.8).
 FAST_SPR_SIZES = {"turn": (4.5, {"bet": [0.33, 0.75], "river": [0.75]})}
+# With the core on THREADED_FAST threads or more (core.threads: gto/server.py --threads, worker.js's helpers) Fast's turn
+# plays Accurate's tree, the river inside at 33/75/125% and shallow turns too: threads give 2.5-3x the iterations
+# (README, Threads), and there the river's 75% is worth more than the iterations it costs. Per-combo EVs against the rich
+# reference (% of the pot, the five single-raised turns' mean; scripts/turn_river_reference.py's spots, in the core) at
+# 150 / 200 / 300 / 450 iterations: Accurate's tree 0.31 / 0.21 / 0.12 / 0.07, Fast's 0.38 / 0.35 / 0.34 / 0.34 (it
+# settles there); the four 3bet turns 0.82 / 0.45 / 0.16 / 0.13 against the shallow menu's 0.69 at 200, 0.59 at 450.
+# Accurate's tree costs 1.4x Fast's an iteration in single-raised pots and 2.2x in 3bet pots', so it pays from ~200 of
+# Fast's iterations; on one thread Fast gets 105-240 in the browser's 8 s and ~150 natively in 5 s, and keeps its own.
+THREADED_FAST = 4
 # From the flop the river is played by 32 buckets of river strength (Config.river_strength; README, Accuracy vs
 # speed): a draw enters the river strong on the cards that hit it and weak on the rest, where the river on the turn's
 # boards made it a middling hand and the flop c-bet too little.
@@ -120,7 +130,9 @@ def advisor(speed: str = "fast", depth: int = 2, budget: Optional[float] = None,
     adv.library = default_library() if library else None
     adv.mw_library = mw_library.default_library() if library else None
     adv.spare_prior = speed == "fast"
-    if speed == "fast":
+    if speed == "fast" and core.threads() >= THREADED_FAST:
+        adv.cfg.bet_sizes["river"] = list(SPEEDS["accurate"][0]["bet_sizes"]["river"])
+    elif speed == "fast":
         adv.spr_sizes = {st: (m, {k: list(v) for k, v in d.items()}) for st, (m, d) in FAST_SPR_SIZES.items()}
     return adv
 
