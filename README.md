@@ -978,13 +978,25 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   iterations alone on a Fast turn (Qs8d3c4h, wide ranges, 13 river classes), natively, the library builds paused:
   17.3 ms an iteration on 1 thread, 11.0 on 2, 6.9 on 4, 5.9 on 8 (Accurate 20.3 -> 7.1); a split has as many rows
   as river classes (13 on a rainbow turn), so 4 threads can't beat 13/4 rows a round. In Chrome (the site built
-  locally, 8 threads, the machine busy with an 8-process library build), the turn after a library flop at Accurate
-  with a 15 s budget: 191 iterations, 0.32% of the pot from equilibrium, where the page without isolation (1 thread)
-  ran 80, 1.2%.
+  locally, 8 threads), the turn after a library flop at Accurate with a 15 s budget: 211 iterations, 0.28% of the
+  pot from equilibrium, with the library build paused; 191, 0.32% beside an 8-process library build, where the page
+  without isolation (1 thread) ran 80, 1.2%. With every core already busy (the build, two test runs) threads gain
+  nothing: 153 iterations against 148-152 on one. The machine has 4 performance and 6 efficiency cores, which caps 8
+  threads near 3x. Running a whole pass as one job (the chance nodes and the terminals above them collected as
+  tasks, run, then their results taken on a second walk down) instead of a job per chance node was no faster: 193-202
+  iterations against 211 in Chrome, the same natively.
+  Each thread then got ~1.3x faster (1 thread, side by side on a loaded machine: Fast 19.0 -> 14.1-14.5 ms an
+  iteration, Accurate 24.9 -> 18.4-19.0): a showdown's running sums run as four chains at once (the strength order's
+  quarters, each one's offset added after), each card's card-removal term is taken once a board instead of for each
+  combo holding it, the opponent's total reach is summed in four lanes, and regret matching multiplies by one
+  reciprocal a combo. numpy sums and divides the same way (`solver.quarter_cumsum`), so the two still round alike;
+  that costs numpy ~12% of a turn iteration (four running sums where it took one: 1.3-7x a plain cumsum by row
+  length), in the solves the core doesn't run (locks, sampled rivers). Without the quarters the rest gained ~3%.
   Natively (`cc -O3`, against the BLAS solver on the same loaded machine) a river runs 9.8x numpy's iterations a
-  second and turns 2.8-3.6x; the passes after a solve 3-10x. Where the time goes in the core: river showdowns (the
-  sorted strength order's running sums, then each combo's card-removal corrections), the opponent's card-removal sums
-  at folds and leaves, and regret matching.
+  second and turns 2.8-3.6x; the passes after a solve 3-10x. Where the time goes in the core (a Fast turn, before the
+  per-thread work): river showdowns ~38% (the sorted strength order's running sums, then each combo's card-removal
+  corrections), regret matching ~20%, decisions' sums ~13%, the opponent's card-removal sums at folds and leaves
+  ~10%, the discount ~5%.
   On the flop it runs Fast's model (the browser's Accurate's too: the turn by hand bucket, the river by strength in
   single-raised pots, in the turn's buckets in 3bet pots), whose turn and river are products of each turn board's
   bucket tables with the opponent's bucket reaches (32 x 32 in Fast; summed column by column, as numpy's matmul does

@@ -155,11 +155,27 @@ static inline f32 fbits(i32 w) {
 typedef float v4 __attribute__((vector_size(16)));
 typedef float v4u __attribute__((vector_size(16), aligned(4)));
 
+/* the sum of x[0..m) in 16 lanes (a sum in one register waits on each add before it) */
+static f32 vsum(const f32 *x, i32 m) {
+  i32 m16 = m & ~15, j = 0;
+  v4 s0 = {0, 0, 0, 0}, s1 = s0, s2 = s0, s3 = s0;
+  for (; j < m16; j += 16) {
+    s0 += *(const v4u *)(x + j);
+    s1 += *(const v4u *)(x + j + 4);
+    s2 += *(const v4u *)(x + j + 8);
+    s3 += *(const v4u *)(x + j + 12);
+  }
+  v4 s = (s0 + s1) + (s2 + s3);
+  f32 t = (s[0] + s[1]) + (s[2] + s[3]);
+  for (; j < m; j++) t += x[j];
+  return t;
+}
+
 /* ro: one row of the opponent's reach -> out: the mass of opponent combos sharing no card with each combo
    (Solver.compat_sum: the total, minus each of the combo's cards' combos, plus the combo itself); card: 52 floats */
 static void compat(const f32 *ro, f32 *card, f32 *out) {
   for (int c = 0; c < 52; c++) card[c] = 0;
-  f32 tot = 0, run = 0;
+  f32 tot = vsum(ro, n), run = 0;
   /* the combos come sorted by their first card (gto/cards.py ALL_COMBOS), so its sums run in a register (adding
      through memory, each add waited on the one before) */
   i32 cur = n ? ca[0] : 0;
@@ -171,10 +187,32 @@ static void compat(const f32 *ro, f32 *card, f32 *out) {
     }
     run += ro[j];
     card[cb[j]] += ro[j];
-    tot += ro[j];
   }
   card[cur] += run;
   for (i32 i = 0; i < n; i++) out[i] = tot - card[ca[i]] - card[cb[i]] + ro[i];
+}
+
+/* out[0] = 0, out[j + 1] = out[j] + ro[idx[j]] for j < m: four running sums over the quarters at once (one waits on
+   each add before it), then each quarter's offset */
+static void prefix(const f32 *ro, const i32 *idx, i32 m, f32 *out) {
+  i32 q = m / 4, s1 = q, s2 = 2 * q, s3 = 3 * q;
+  f32 a0 = 0, a1 = 0, a2 = 0, a3 = 0;
+  out[0] = 0;
+  for (i32 j = 0; j < q; j++) {
+    a0 += ro[idx[j]];
+    a1 += ro[idx[s1 + j]];
+    a2 += ro[idx[s2 + j]];
+    a3 += ro[idx[s3 + j]];
+    out[j + 1] = a0;
+    out[s1 + j + 1] = a1;
+    out[s2 + j + 1] = a2;
+    out[s3 + j + 1] = a3;
+  }
+  for (i32 j = s3 + q; j < m; j++) out[j + 1] = a3 += ro[idx[j]];
+  f32 o1 = a0, o2 = o1 + a1, o3 = o2 + a2;
+  for (i32 j = s1 + 1; j <= s2; j++) out[j] += o1;
+  for (i32 j = s2 + 1; j <= s3; j++) out[j] += o2;
+  for (i32 j = s3 + 1; j <= m; j++) out[j] += o3;
 }
 
 /* Ranking.utility for row b: sum over compatible opponent combos of reach * (+1 weaker, -1 stronger) */
@@ -186,16 +224,16 @@ static void ranking(Lane *L, const i32 *R, i32 b, const f32 *ro, f32 *u) {
   const f32 *live = PF(R[10]) + (size_t)b * n;
   size_t mark = L->top;
   f32 *cum = salloc(L, sizeof(f32) * (n + 1)), *cs = salloc(L, sizeof(f32) * (2 * n + 1));
-  cum[0] = 0;
-  for (i32 j = 0; j < n; j++) cum[j + 1] = cum[j] + ro[order[j]];
-  cs[0] = 0;
-  for (i32 j = 0; j < 2 * n; j++) cs[j + 1] = cs[j] + ro[pcombo[j]];
+  f32 *k = salloc(L, sizeof(f32) * 52);   /* each card's term: its pairs' sum before them and to their end */
+  prefix(ro, order, n, cum);
+  prefix(ro, pcombo, 2 * n, cs);
+  for (i32 c = 0; c < 52; c++) k[c] = cs[cend[c]] + cs[cstart[c]];
   f32 total = cum[n];
   for (i32 i = 0; i < n; i++) {
     f32 x = cum[lo[i]];
     x += cum[hi[i]];
-    x += cs[cend[ca[i]]] + cs[cstart[ca[i]]];
-    x += cs[cend[cb[i]]] + cs[cstart[cb[i]]];
+    x += k[ca[i]];
+    x += k[cb[i]];
     x -= cs[plo[i]];
     x -= cs[phi[i]];
     x -= cs[plo[n + i]];
@@ -280,8 +318,9 @@ static void strategy(Lane *L, const f32 *regret, i32 lo, i32 hi, i32 A, i32 W, i
     for (i32 i = 0; i < W; i++) tot[i] = sb[i];
     for (i32 a = 1; a < A; a++)
       for (i32 i = 0; i < W; i++) tot[i] += sb[a * W + i];
+    for (i32 i = 0; i < W; i++) tot[i] = tot[i] == 0 ? 0 : 1 / tot[i];   /* (one division a combo) */
     for (i32 a = 0; a < A; a++)
-      for (i32 i = 0; i < W; i++) sb[a * W + i] = tot[i] == 0 ? uni : sb[a * W + i] / tot[i];
+      for (i32 i = 0; i < W; i++) sb[a * W + i] = tot[i] == 0 ? uni : sb[a * W + i] * tot[i];
   }
   L->top = mark;
 }

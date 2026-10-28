@@ -527,6 +527,26 @@ class Ctx:
         return (L / np.maximum(cnt, 1.0) * self.compat).astype(np.float32)
 
 
+def quarter_cumsum(x: np.ndarray, out: np.ndarray) -> None:
+    """out[:, 0] = 0 and out[:, 1:] = x's running sums along axis 1, summed as the compiled core's prefix() sums them
+    (core/gtocore.c: one running sum per quarter, at once, then each quarter's offset added), so the two round alike."""
+    m = x.shape[1]
+    q = m // 4
+    out[:, 0] = 0
+    if q == 0:
+        np.cumsum(x, axis=1, out=out[:, 1:])
+        return
+    b = (0, q, 2 * q, 3 * q, m)
+    for s, e in zip(b, b[1:]):
+        np.cumsum(x[:, s:e], axis=1, out=out[:, s + 1:e + 1])
+    o1 = out[:, q].copy()
+    o2 = o1 + out[:, 2 * q]
+    o3 = o2 + out[:, 3 * q]
+    out[:, q + 1:2 * q + 1] += o1[:, None]
+    out[:, 2 * q + 1:3 * q + 1] += o2[:, None]
+    out[:, 3 * q + 1:] += o3[:, None]
+
+
 class Ranking:
     """Showdown utilities in O(N) per board instead of an N x N matrix product.
 
@@ -589,11 +609,11 @@ class Ranking:
             return self._sub(sel).utility(ro)
         B, n = self.B, self.n
         # (fancy indexing with intp indices: np.take, and int64 indices on 32-bit Pyodide, are several times slower)
-        cum = np.empty((B, n + 1), dtype=ro.dtype); cum[:, 0] = 0
+        cum = np.empty((B, n + 1), dtype=ro.dtype)
         ro = ro.ravel()
-        np.cumsum(ro[self.fsort].reshape(B, n), axis=1, out=cum[:, 1:])
-        cs = np.empty((B, 2 * n + 1), dtype=ro.dtype); cs[:, 0] = 0
-        np.cumsum(ro[self.pgather].reshape(B, 2 * n), axis=1, out=cs[:, 1:])
+        quarter_cumsum(ro[self.fsort].reshape(B, n), cum)
+        cs = np.empty((B, 2 * n + 1), dtype=ro.dtype)
+        quarter_cumsum(ro[self.pgather].reshape(B, 2 * n), cs)
         cum, total = cum.ravel(), cum[:, n:]
         # wins - losses: weaker reach + (weaker or tied) reach - all of it
         u = cum[self.fwin]
@@ -616,9 +636,9 @@ class Ranking:
         K = ro.shape[2]
         cum = np.zeros((B, n + 1, K), dtype=ro.dtype)
         r2 = ro.reshape(B * n, K)
-        np.cumsum(r2[self.fsort].reshape(B, n, K), axis=1, out=cum[:, 1:])
+        quarter_cumsum(r2[self.fsort].reshape(B, n, K), cum)
         cs = np.zeros((B, 2 * n + 1, K), dtype=ro.dtype)
-        np.cumsum(r2[self.pgather].reshape(B, 2 * n, K), axis=1, out=cs[:, 1:])
+        quarter_cumsum(r2[self.pgather].reshape(B, 2 * n, K), cs)
         total = cum[:, n:, :]
         c2 = cum.reshape(-1, K)
         u = c2[self.fwin] + c2[self.flose]
@@ -775,7 +795,8 @@ class Decision:
 
     def strategy(self, sel=None) -> np.ndarray:
         # regret matching in as few numpy calls as possible (a native solve is call-overhead bound): one
-        # in-place divide, then uniform wherever no regret is positive (rare once a solve is under way)
+        # reciprocal a combo and an in-place multiply (as the compiled core does it), then uniform wherever no regret
+        # is positive (rare once a solve is under way)
         if self.pred is None:
             pos = np.maximum(self.regret if sel is None else self.regret[sel], 0.0)
         else:
@@ -783,7 +804,7 @@ class Decision:
             pos = self.regret + self.pred if sel is None else self.regret[sel] + self.pred[sel]
             np.maximum(pos, 0.0, out=pos)
         tot = pos.sum(axis=1, keepdims=True)
-        np.divide(pos, tot, out=pos)
+        np.multiply(pos, 1 / tot, out=pos)
         zero = tot == 0
         if zero.any():
             np.copyto(pos, np.float32(1.0 / len(self.names)), where=zero)
@@ -793,7 +814,7 @@ class Decision:
         """(B, A, N) average strategy (rows `sel` only if given)."""
         ss = self.ssum if sel is None else self.ssum[sel]
         tot = ss.sum(axis=1, keepdims=True)
-        return np.where(tot > 0, ss / np.where(tot > 0, tot, 1.0), 1.0 / len(self.names))
+        return np.where(tot > 0, ss * (1 / np.where(tot > 0, tot, 1.0)), 1.0 / len(self.names))
 
     def avg_strategy0(self) -> np.ndarray:
         """(A, N) average strategy of the first (or only) batch element."""
