@@ -42,8 +42,10 @@ def _setup(line):
 
 
 def _meta(sid, s):
+    # (the spot's tree: the 3bet pots deal the river, flop_library.RIVER_DEALT_SPR)
     return {"spot": sid, "fp": [fl.range_fp(s["full0"]), fl.range_fp(s["full1"])], "pot": s["pot"],
-            "stack": s["stack"], "tree": fl.tree_key(fl.library_config()), "seats": [s["oop"], s["ip"]]}
+            "stack": s["stack"], "tree": fl.tree_key(fl.library_config(s["pot"], s["stack"])),
+            "seats": [s["oop"], s["ip"]]}
 
 
 def current(path: str, meta: dict) -> bool:
@@ -64,8 +66,8 @@ def solve_entry(job):
     meta = dict(_meta(sid, s), board=name)
     board = parse_cards(name)
     t0 = time.time()
-    sol = solve(board, s["full0"], s["full1"], s["pot"], s["stack"], cfg=fl.library_config(), time_budget=1e9,
-                max_iters=a["min_iters"])
+    sol = solve(board, s["full0"], s["full1"], s["pot"], s["stack"], cfg=fl.library_config(s["pot"], s["stack"]),
+                time_budget=1e9, max_iters=a["min_iters"])
     expl = sol.exploitability()
     while expl > a["target"] and sol.iters < a["max_iters"]:
         sol.extend(1e9, max_iters=min(sol.iters + a["check"], a["max_iters"]))
@@ -159,7 +161,7 @@ def write_index(out: str, spots) -> dict:
                 flops[fn[:-4]] = hashlib.sha1(data).hexdigest()[:10]
         if flops:
             sp = {"id": sid, "label": label, "line": line, "seats": [s["oop"], s["ip"]],
-                  "fp": meta["fp"], "pot": s["pot"], "stack": s["stack"], "flops": flops}
+                  "fp": meta["fp"], "pot": s["pot"], "stack": s["stack"], "tree": meta["tree"], "flops": flops}
             sp["report"] = write_report(out, sp, s)
             write_ranges(out, sp, s)
             idx["spots"].append(sp)

@@ -23,7 +23,8 @@ from gto.solver import solve, Config, MEMBER_FULL
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 build = importlib.import_module("build_flop_library")
 
-SPOT = next(s for s in fl.SPOTS if s[0] == "3bp_btn_co")   # narrow ranges: quick to solve; the caller checks
+SPOT = next(s for s in fl.SPOTS if s[0] == "srp_utg_bb")   # the narrowest single-raised ranges: quick to solve, the river
+# blind (a 3bet pot's dealt river, RIVER_DEALT_SPR, takes ~8x as long)
 CANON = "Kc7d2h"
 BOARD = "Kh7s2d"            # the same flop in other suits
 ITERS = 120
@@ -92,6 +93,13 @@ class TestCanonicalFlops(unittest.TestCase):
         self.assertEqual(fl._key_str(acc), fl._key_str(lk))
         self.assertEqual(fl._key_str(fast["sizes"]), fl._key_str(lk["sizes"]))
         self.assertNotEqual(fl._key_str(fast["model"]), fl._key_str(lk["model"]))
+        # a spot's own: the 3bet pots deal the river (RIVER_DEALT_SPR), the single-raised pots are the default
+        lines = {s[0]: s[2] for s in fl.SPOTS}
+        for sid, dealt in (("srp_btn_bb", None), ("3bp_bb_btn", fl.RIVER_DEALT), ("3bp_btn_co", fl.RIVER_DEALT)):
+            s = fl.spot_setup(lines[sid])
+            k = fl.tree_key(fl.library_config(s["pot"], s["stack"]))
+            self.assertEqual(k["model"].pop("river_dealt", None), dealt)
+            self.assertEqual(fl._key_str(k), fl._key_str(lk))
 
 
 class TestFlopLibrary(unittest.TestCase):
@@ -183,7 +191,8 @@ class TestFlopLibrary(unittest.TestCase):
             f0 = n0.avg_strategy0()[:, m[sol.ctx.active]] @ reach / reach.sum()
             self.assertLess(np.abs(f0 - nd["strat"] @ reach / reach.sum()).max(), 0.006, nd["path"])
             self.assertEqual(list(nd["freqs"]), nd["names"])
-        # a format-1 entry, recoded
+        # a format-1 entry (BTN 3bet vs CO), recoded
+        s = fl.spot_setup(next(x for x in fl.SPOTS if x[0] == "3bp_btn_co")[2])
         with open(os.path.join(os.path.dirname(__file__), "data", "flop_v1_3bp_btn_co_Qc9c2d.bin"), "rb") as f:
             v1 = f.read()
         self.assertEqual(v1[:6], fl.MAGIC_V1)
@@ -278,10 +287,9 @@ class TestFlopLibrary(unittest.TestCase):
     def test_reproduces_live_solve_in_other_suits(self):
         """The entry, read for the flop in other suits, is a live solve of that flop with the same tree and
         iterations, to within the noise of suit order (the turn classes' cards differ, and 120 iterations are far
-        from settled per combo): range frequencies within 6.5 points at every stored node (K72r in 8 suits, 28 pairs:
-        the worst node 2.5 points apart on average, up to 6.0; 2.8 and 5.3 with the showdowns' quartered running sums,
-        solver.quarter_cumsum; every stored node is reached by both players with 10% of their range), and at the root
-        each combo's mix within 0.1 on average."""
+        from settled per combo): range frequencies within 6 points at every stored node (K72r in 8 suits, 28 pairs:
+        the worst node 2.3 points apart on average, up to 4.8; each of the 4 stored nodes is reached by both players
+        with 40% of their range or more), and at the root each combo's mix within 0.1 on average."""
         ls = self._libsol(BOARD)
         self.assertIsNotNone(ls)
         s = self.setup
@@ -294,7 +302,7 @@ class TestFlopLibrary(unittest.TestCase):
             r = a0 if n0.player == 0 else a1
             w = r / r.sum()
             f0, f1 = n0.avg_strategy0() @ w, n1.avg_strategy0() @ w
-            self.assertLess(np.abs(f0 - f1).max(), 0.065, (path, f0, f1))
+            self.assertLess(np.abs(f0 - f1).max(), 0.06, (path, f0, f1))
             if path:
                 continue
             m = (live.r0 if n0.player == 0 else live.r1) > 0
@@ -326,7 +334,8 @@ class TestFlopLibrary(unittest.TestCase):
                 json.dump(bad, f)
             self.assertIsNone(self._libsol(lib=fl.FlopLibrary.from_dir(d)))
             bad = json.loads(json.dumps(idx))
-            bad["tree"]["model"]["version"] = fl.MODEL_VERSION + 1
+            for tree in (bad["tree"], bad["spots"][0]["tree"]):   # (a spot's own tree is the one read)
+                tree["model"]["version"] = fl.MODEL_VERSION + 1
             with open(os.path.join(d, "index.json"), "w") as f:
                 json.dump(bad, f)
             self.assertIsNone(self._libsol(lib=fl.FlopLibrary.from_dir(d)))
@@ -370,8 +379,8 @@ class TestFlopLibrary(unittest.TestCase):
             got = [a["freq"] for a in r["actions"]]
             self.assertLess(np.abs(np.array(got) - want).max(), 0.011, (got, want))
             self.assertTrue(any("precomputed solution" in n for n in r["notes"]))
-            # the in-position 3bettor after the caller checks: stored too (a lead, which the caller hardly ever
-            # makes, isn't: STORE_LINE)
+            # the in-position opener after the big blind checks: stored too (a lead, which the big blind hardly
+            # ever makes, isn't: STORE_LINE)
             ri = adv.advise(dict(base, hero=s["ip"], hole=_hole_in(s["full1"], BOARD, 5),
                                  flop=[{"pos": s["oop"], "action": "check"}]))
             self.assertIn("precomputed", ri)
@@ -443,6 +452,8 @@ class TestShippedLibrary(unittest.TestCase):
             self.assertEqual(sp["fp"], [fl.range_fp(s["full0"]), fl.range_fp(s["full1"])],
                              f"{sp['id']}: the charts changed; rebuild with scripts/build_flop_library.py")
             self.assertEqual((sp["pot"], sp["stack"]), (s["pot"], s["stack"]))
+            self.assertEqual(fl._key_str(sp["tree"]), fl._key_str(fl.tree_key(fl.library_config(s["pot"], s["stack"]))),
+                             f"{sp['id']}: the library's model changed; rebuild with scripts/build_flop_library.py")
             for name in sp["flops"]:
                 size = os.path.getsize(os.path.join(fl.DIR, sp["id"], name + ".bin"))
                 self.assertLess(size, 200_000)

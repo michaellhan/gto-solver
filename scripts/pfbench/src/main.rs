@@ -28,6 +28,7 @@ struct Spec {
     #[serde(default)] root_lock: Option<Lock>,
     #[serde(default)] compress: bool,
     #[serde(default)] trace: bool,
+    #[serde(default)] dump: Vec<Vec<String>>,     // solve: paths of nodes whose equilibrium strategy to output too
 }
 
 fn to_action(a: &Act) -> Action {
@@ -209,6 +210,21 @@ fn main() {
         out["strat"] = json!(rows);
         out["action_evs"] = json!(evs);
         out["root"] = Value::Object(root);
+        // the equilibrium's strategy at other nodes: the acting player's hands, their reach there, the strategy
+        let mut nodes = Vec::new();
+        for path in &spec.dump {
+            goto(&mut game, path);
+            game.cache_normalized_weights();
+            let p = game.current_player();
+            let acts: Vec<String> = game.available_actions().iter().map(act_str).collect();
+            let n = game.private_cards(p).len();
+            let strat = game.strategy();
+            let rows: Vec<Vec<f32>> = (0..acts.len()).map(|k| strat[k * n..(k + 1) * n].to_vec()).collect();
+            nodes.push(json!({"path": path, "player": p, "acts": acts, "strat": rows,
+                              "hands": holes_to_strings(game.private_cards(p)).unwrap(),
+                              "reach": game.normalized_weights(p)}));
+        }
+        out["nodes"] = json!(nodes);
     } else {
         // lock: every node of lock_player fixed at the given strategy; the other plays a best response
         for l in &spec.locks {

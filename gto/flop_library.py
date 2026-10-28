@@ -10,7 +10,8 @@ range aggregates; one value per suit class (combos the flop's own suit permutati
 Lines through a raise aren't stored and are solved live.
 
 Files (gto/static/flop_library/, deployed next to the page): index.json lists the spots (their ranges'
-fingerprints, pot, stack, label) with the tree they were solved on and, per spot, each solved flop's content hash;
+fingerprints, pot, stack, label, the tree its entries were solved on) with the default tree and, per spot, each
+solved flop's content hash;
 <spot>/<flop>.bin is one entry (SPOT_FLOPS: how many flops a spot stores). The browser's worker fetches the index once and an entry only when its spot comes up.
 The library ignores itself where it doesn't apply: another tree (sizes, raises, rake, MODEL_VERSION), other ranges
 (changed charts, other stacks or table sizes, a custom range) or a flop not in it.
@@ -47,10 +48,25 @@ LS = dict(bet_sizes={"flop": [0.33, 0.75], "turn": [0.75], "river": [0.75]},
           raise_sizes={"flop": [0.5], "turn": [0.75], "river": [0.75]})
 
 
-def library_config() -> Config:
+# Pots under this stack-to-pot ratio (the 3bet pots) are solved with the river dealt, by RIVER_DEALT buckets of
+# strength on each card (Config.river_dealt): played blind on the turn's boards, the river cost their flop strategies
+# 0.40% of the pot out of position and 0.29% in position against every card (four flops; the 3-bettor bet three
+# quarters pot with 0-11% of its range where the full game's bets it with 16-55%), dealt 0.10 and 0.15 at 400
+# iterations, the shipped entries (200-300) 0.11 and 0.27, their root mixes 4-17 points per combo from the full game's
+# where the blind river's were 16-55 (README, Precomputed flop library). That is 7-17x the blind river's work, which the 3bet pots' small ranges afford; a
+# single-raised pot's dealt tree takes 3.7x a blind one's time and 6x its memory (BTN vs BB, Kc7d2h, 32 buckets),
+# too much for their 5166 entries.
+RIVER_DEALT_SPR = 8.0
+RIVER_DEALT = 64
+
+
+def library_config(pot: Optional[float] = None, stack: Optional[float] = None) -> Config:
+    """The library's flop model; for a spot's pot and stack, its 3bet pots' (RIVER_DEALT_SPR) with the river dealt."""
+    deal = pot is not None and stack is not None and stack < RIVER_DEALT_SPR * pot
     return Config(n_turns=4, leaf_turns=4, leaf_rivers_flop=8, n_rivers_from_flop=8,
                   bet_sizes={k: list(v) for k, v in LS["bet_sizes"].items()},
-                  raise_sizes={k: list(v) for k, v in LS["raise_sizes"].items()})
+                  raise_sizes={k: list(v) for k, v in LS["raise_sizes"].items()},
+                  river_dealt=RIVER_DEALT if deal else None)
 
 
 # The spots, most common first (6-max, 100bb, no ante or rake, the page's default sizes: 2.5bb opens, 3bb from the
@@ -190,6 +206,8 @@ def tree_key(cfg: Config) -> dict:
         # Fast's flop model: the turn and river by hand buckets (per combo otherwise, as the library is solved)
         model.update(river_buckets=cfg.river_buckets, turn_buckets=bool(cfg.turn_buckets),
                      bucket_river_step=cfg.bucket_river_step)
+    if getattr(cfg, "river_dealt", None):
+        model.update(river_dealt=cfg.river_dealt)      # the river dealt (the library's 3bet pots)
     if getattr(cfg, "river_strength", None):
         # the river by river-strength buckets (solver Config.river_strength; the library's river is on the turn's boards)
         model.update(river_strength=cfg.river_strength, bucket_river_step=cfg.bucket_river_step)
@@ -498,7 +516,8 @@ class LibrarySolution:
     node): the flop street's tree (TreeBuilder, depth 1: the same flop decisions as the full tree) with the stored
     nodes' average strategies, the stored EVs, the stored exploitability."""
 
-    def __init__(self, root, ctx, r0, r1, n_nodes, stored: set, evs: dict, head: dict, label: str, exact: bool):
+    def __init__(self, root, ctx, r0, r1, n_nodes, stored: set, evs: dict, head: dict, label: str, exact: bool,
+                 river_dealt: bool = False):
         self.root, self.names, self.ctx, self.r0, self.r1 = root, root.names, ctx, r0, r1
         self.n_nodes = n_nodes
         self.stored = stored                       # ids of the stored nodes
@@ -507,6 +526,7 @@ class LibrarySolution:
         self.seconds = 0.0
         self._expl = float(head["expl"])
         self.head, self.label, self.exact = head, label, exact
+        self.river_dealt = river_dealt             # solved with the river dealt (the 3bet pots: RIVER_DEALT_SPR)
         self.settled_once = True
 
     def exploitability(self) -> float:
@@ -520,7 +540,8 @@ class LibrarySolution:
 
     def note(self) -> str:
         return (f"flop: precomputed solution ({self.label}, {self.iters} iterations, {self._expl:.2f}% of the pot from "
-                f"equilibrium" + ("" if self.exact else "; Accurate's flop model, every turn rank with the river bet") + ")")
+                f"equilibrium" + ("" if self.exact else "; every turn rank and every river card" if self.river_dealt
+                                  else "; Accurate's flop model, every turn rank with the river bet") + ")")
 
     def info(self) -> dict:
         return {"spot": self.head.get("spot"), "label": self.label, "board": self.head.get("board"),
@@ -573,6 +594,11 @@ class FlopLibrary:
         self.index()
         return self._spots.get((fp0, fp1, round(pot, 2), round(stack, 2)))
 
+    def tree(self, spot: dict) -> dict:
+        """The tree a spot's entries were solved on (tree_key): its own (the 3bet pots deal the river), else the
+        index's."""
+        return spot.get("tree") or self.index().get("tree") or {}
+
     def entry(self, spot: dict, name: str) -> Optional[dict]:
         key = (spot["id"], name)
         if key not in self._entries:
@@ -584,7 +610,7 @@ class FlopLibrary:
                     e = decode(bytes(raw)) if raw else None
                 except Exception:
                     e = None
-            if e is not None and (e["head"].get("fp") != spot["fp"] or e["head"].get("tree") != tree_hash(self.index().get("tree") or {})):
+            if e is not None and (e["head"].get("fp") != spot["fp"] or e["head"].get("tree") != tree_hash(self.tree(spot))):
                 e = None
             if len(self._entries) > 64:
                 self._entries.clear()
@@ -601,11 +627,11 @@ class FlopLibrary:
         idx = self.index()
         if not idx.get("spots"):
             return None
-        tk, lk = tree_key(cfg), idx.get("tree") or {}
-        if _key_str(tk["sizes"]) != _key_str(lk.get("sizes")) or (lk.get("model") or {}).get("version") != MODEL_VERSION:
-            return None
         spot = self.spot(range_fp(full0), range_fp(full1), pot, stack)
         if spot is None:
+            return None
+        tk, lk = tree_key(cfg), self.tree(spot)
+        if _key_str(tk["sizes"]) != _key_str(lk.get("sizes")) or (lk.get("model") or {}).get("version") != MODEL_VERSION:
             return None
         canon, smap = canonical(board)
         e = self.entry(spot, cards_str(canon))
@@ -652,7 +678,7 @@ class FlopLibrary:
             evs[id(n)] = ev
         exact = _key_str(tk["model"]) == _key_str(lk.get("model"))
         return LibrarySolution(root, ctx, r0f[active], r1f[active], tb.n_nodes, stored, evs, e["head"],
-                               spot.get("label", spot["id"]), exact)
+                               spot.get("label", spot["id"]), exact, bool((lk.get("model") or {}).get("river_dealt")))
 
 
 _DEFAULT: Optional[FlopLibrary] = None

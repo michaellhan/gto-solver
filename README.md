@@ -1390,9 +1390,19 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   which plays the same flop game as the native one), two flop sizes, 300-800 iterations, to at most 0.15% of the
   pot from equilibrium (mean 0.107%; paired and trips boards settle slowest, and 17 that the old cap of 500
   iterations left at 0.15-0.54% were solved again) (the live Accurate solve gets ~0.3-0.4% in the server's 30 s and 60-75 iterations in the
-  browser's 60 s). The answer's `precomputed` field (a badge on the page) says which spot and how many iterations;
-  `same_tree` is false in Fast mode, whose own flop model plays the turn and river by hand buckets: converged
-  (300 iterations) on 20 of the library's BTN vs BB flops its c-bet is 2.8 points from the library's on average (up
+  browser's 60 s). The 3bet pots (`RIVER_DEALT_SPR`: a stack under 8 pots) deal the river instead of betting it
+  on the turn's boards: every river card under each turn, played on each card by 64 buckets of strength there
+  (`Config.river_dealt`: each player's range split into 64 equal shares by equity on that card against the
+  other's). Played blind, the river cost their flop strategies 0.40% of the pot out of position and 0.29% in
+  position against every card dealt (the 3-bettor c-bet three quarters pot 0-11% of the time where the full game
+  bets it 16-55%); dealt, 0.10 and 0.15 at 400 iterations (Accuracy vs speed, against postflop-solver). The shipped
+  entries (200-300 iterations, at most 0.15% of the pot from equilibrium) give up 0.11 out of position and 0.27 in
+  position on the same four flops, their root mixes 4-17 points per combo from the full game's where the blind
+  river's were 16-55 (in-position losses move by up to 2x between measurements of one strategy: Qc5h5d's 0.21 and
+  0.42). The answer's `precomputed` field (a badge on the page) says which spot and how many iterations;
+  `same_tree` is false where the live solve's flop model differs: in the 3bet pots for Accurate too (its live flop
+  solve bets the river on the turn's boards; the entries deal it), and in Fast mode, whose own flop model plays the
+  turn and river by hand buckets: converged (300 iterations) on 20 of the library's BTN vs BB flops its c-bet is 2.8 points from the library's on average (up
   to 7, betting more), BB's response to the small c-bet 2.9; at its 2.5 s and 8 s budgets it's further. (The old
   Fast model, the river checked down on random turns, was 5.6 and 8.6 off, up to 15 on dry boards.) Natively the
   answer takes ~0.01 s instead of 2.5 / 30 s; in the browser ~0.03 s instead of 8 / 60 s, and a turn spot saves
@@ -1411,7 +1421,8 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   Every budget runs past 100 (Fast 140-420, Accurate 250-450 natively, 520-870 in the browser; in the compiled core
   the browser's Fast 229-986 on a loaded machine where its tables leave it the time, and Accurate its 1000 in 16-31
   s).
-* **Invalidation**: `index.json` holds each spot's range fingerprints and the tree; an entry whose spot, tree or
+* **Invalidation**: `index.json` holds each spot's range fingerprints and tree (`tree_key` of its
+  `library_config(pot, stack)`: the 3bet pots' deals the river); an entry whose spot, tree or
   `MODEL_VERSION` (bump it when the flop game changes in a way the tree key can't see) no longer matches the code
   is ignored, and a rebuilt index leaves stale entries out (a test checks the shipped index against the charts).
 * **Browser**: the worker fetches `flop_library/index.json` the first time a flop comes up and one entry

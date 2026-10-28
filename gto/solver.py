@@ -101,7 +101,18 @@ class Config:
     # the river stays on the turn's boards: against the river with its card in 3bet pots (3 fixed turns, every river,
     # K72, A83, 765) river strength had the 3-bettor bet three quarters pot with 15-31% of its range where the
     # reference bets it 0-9% (the turn's boards 0%), its c-bet as far off on average (README, Accuracy vs speed).
+    # postflop-solver's full game (every turn and river) bets it 40-55% on AJ3 and Q55, as river strength does, but
+    # there river strength's flop gives up as much as the turn's boards' (0.26 / 0.46% of the pot OOP / IP against
+    # 0.40 / 0.29; scripts/bench_flop_abstraction.py): the library's 3bet pots deal the river (river_dealt).
     river_strength_spr: float = 8.0
+    # river_dealt: with river_play, the river beyond `depth` inside a flop solve is dealt, every card under each turn,
+    # and played on each card by this many buckets of strength there (BucketEntry under the river's chance node,
+    # Ctx.river_card_table: each player's root range split into equal shares by equity on that card against the
+    # other's), instead of on the turn's boards: a draw knows when it got there, and its opponent that the card came.
+    # The library's 3bet pots (flop_library.RIVER_DEALT_SPR): 64 buckets there are 7-17x the blind river's work, the
+    # river per combo (depth 3, every river) 50-90x for 0.01-0.02% of the pot less given up (README, Precomputed flop
+    # library).
+    river_dealt: Optional[int] = None
     # river_classes: from a turn root, the river as one card per class (Ctx.turn_classes on the turn's board: a rank's
     # cards, a suit with two or more board cards apart), each class's subtree standing for its every card through the
     # card swap that maps one onto the other (RiverClasses). With no flush possible in the swapped suits the swap keeps
@@ -140,7 +151,7 @@ class Config:
                       river_play=self.river_play, turn_classes=self.turn_classes, river_buckets=self.river_buckets,
                       turn_buckets=self.turn_buckets, bucket_river_step=self.bucket_river_step,
                       river_strength=self.river_strength, river_strength_spr=self.river_strength_spr,
-                      river_classes=self.river_classes,
+                      river_dealt=self.river_dealt, river_classes=self.river_classes,
                       later_sizes=None if self.later_sizes is None else
                       {k: {st: list(v) for st, v in d.items()} for k, d in self.later_sizes.items()},
                       seed=self.seed, cfr=self.cfr, rake_rate=self.rake_rate, rake_cap=self.rake_cap,
@@ -474,6 +485,57 @@ class Ctx:
              np.stack([kap, kap.T]).astype(np.float32))
         self._stacks[key] = T
         return T
+
+    def river_card_table(self, board: tuple, dead: set, K: int) -> tuple:
+        """Buckets for a river board (Config.river_dealt), as bucket_table's (ids, E, kappa): each player q's root
+        range (self.root_reach) on this board split into K equal shares by equity here against the opponent's; E[q]
+        the bucket pairs' mean showdown (+1 / -1) over their compatible pairs times their compatible share, kappa[q]
+        the share. Computed for every river under the board's turn at once."""
+        key = ("rcard", tuple(board), K)
+        T = self._stacks.get(key)
+        if T is not None:
+            return T
+        n = self.n
+        turn = tuple(board[:4])
+        boards = [turn + (r,) for r in range(52) if r not in dead and r not in turn]
+        rk = Ranking(self, list(self._strengths(boards)))
+        R = len(boards)
+        live = (~rk.blocked).astype(np.float64)                         # (R, n): holds no board card
+        w = [live * self.root_reach[q][None, :] for q in (0, 1)]
+        ids = []
+        for q in (0, 1):
+            eq = rk.utility(w[1 - q]) / np.maximum(self._compat_rows(w[1 - q]), 1e-12)
+            order = np.argsort(np.where(w[q] > 0, eq, np.inf), axis=1, kind="stable")
+            ws = np.take_along_axis(w[q], order, axis=1)
+            cum = np.cumsum(ws, axis=1)
+            b = np.minimum(((cum - ws / 2) / np.maximum(cum[:, -1:], 1e-12) * K).astype(np.intp), K - 1)
+            b[ws <= 0] = K
+            bid = np.empty_like(b)
+            np.put_along_axis(bid, order, b, axis=1)
+            ids.append(bid)
+        # per river: the bucket pairs' showdown sums and compatible masses (opponent buckets as columns), in chunks
+        num, den = np.zeros((R, K, K)), np.zeros((R, K, K))
+        cr = max(1, 4096 // max(n, 1) * 16 // K)
+        for lo in range(0, R, cr):
+            sel = np.arange(lo, min(R, lo + cr))
+            oh = []
+            for q in (0, 1):
+                x = np.zeros((len(sel), n, K + 1), dtype=np.float32)
+                np.put_along_axis(x, ids[q][sel][:, :, None], w[q][sel][:, :, None].astype(np.float32), axis=2)
+                oh.append(x[:, :, :K])
+            ohT = oh[0].transpose(0, 2, 1)
+            num[sel] = np.matmul(ohT, rk._sub(sel).utility_cols(oh[1]))
+            den[sel] = np.matmul(ohT, self._compat_cols(oh[1]))
+        M = [np.stack([np.bincount(ids[q][i], weights=w[q][i], minlength=K + 1)[:K] for i in range(R)]) for q in (0, 1)]
+        mm = M[0][:, :, None] * M[1][:, None, :]
+        ok = mm > 0
+        E = np.where(ok, num / np.where(ok, mm, 1.0), 0.0)
+        kap = np.where(ok, den / np.where(ok, mm, 1.0), 0.0)
+        for i, bd in enumerate(boards):
+            self._stacks[("rcard", bd, K)] = (np.stack([ids[0][i], ids[1][i]]),
+                                              np.stack([E[i], -E[i].T]).astype(np.float32),
+                                              np.stack([kap[i], kap[i].T]).astype(np.float32))
+        return self._stacks[key]
 
     def _flop_leaf(self, board: tuple, dead: set) -> np.ndarray:
         """The flop's equity matrix (a flop all-in): every turn card, each with FLOP_LEAF_RIVERS or more
@@ -848,12 +910,16 @@ class TreeBuilder:
         new_pot = pot + bets[0] + bets[1]
         new_stack = stack - max(bets)
         if len(boards[0]) == 5:
-            return Terminal(boards, "showdown", inv, rake=self._rake(inv), pay=self._pay(inv))
+            return Terminal(boards, self._kind + "leaf" if self._width else "showdown", inv, rake=self._rake(inv),
+                            pay=self._pay(inv))
         if allin or new_stack <= 1e-9 or self._blind:
             return Terminal(boards, self._kind + "leaf" if self._width else "leaf", inv, rake=self._rake(inv),
                             pay=self._pay(inv))
         streets_used = len(boards[0]) - self.root_street_len + 1
         if streets_used >= self.cfg.depth:
+            if self.cfg.river_play and self.cfg.river_dealt and self.root_street_len == 3 and len(boards[0]) == 4 \
+                    and not self._width:
+                return self._river_dealt(boards, new_pot, new_stack, inv)
             if self.cfg.river_play and self.root_street_len == 3 and len(boards[0]) == 4:
                 # the river's betting on the turn's boards; its showdowns are the turn's equity leaves (every river)
                 outer = self._width     # (already by buckets when the turn is: turn_buckets)
@@ -968,6 +1034,21 @@ class TreeBuilder:
         self.n_nodes += 1
         avail = sum(1 for c in range(52) if c not in self.dead and c not in boards[0])
         return Chance(boards, K, masks, child, avail, perm=ctx.class_perm(cls))
+
+    def _river_dealt(self, boards, pot, stack, inv):
+        """The river beyond `depth` inside a flop solve, every card dealt, each card's subtree by buckets of strength
+        there (Config.river_dealt)."""
+        ctx = self.ctx
+        cards = [[c for c in range(52) if c not in self.dead and c not in b] for b in boards]
+        child_boards = [b + (c,) for b, cs in zip(boards, cards) for c in cs]
+        masks = (1.0 - ctx.member[[c for cs in cards for c in cs]]).astype(np.float32)
+        self._width = self.cfg.river_dealt
+        try:
+            child = BucketEntry(child_boards, self._decision(child_boards, pot, stack, (0.0, 0.0), 0, 0, inv, False))
+        finally:
+            self._width = None
+        self.n_nodes += 1
+        return Chance(boards, len(cards[0]), masks, child, len(cards[0]))
 
     def _bucketed_turn(self, child_boards, pot, stack, inv):
         """The turn's subtree under a flop solve's chance node: by river_buckets hand buckets with turn_buckets."""
@@ -1358,7 +1439,9 @@ class Solver:
             key = ("tab", tuple(boards[:T]))
             t = self._btabs.get(key)
             if t is None:
-                tabs = [self.ctx.bucket_table(b, self.dead, self.ctx.cfg.river_buckets) for b in boards[:T]]
+                cfg = self.ctx.cfg
+                tabs = [self.ctx.river_card_table(b, self.dead, cfg.river_dealt) if len(b) == 5 else
+                        self.ctx.bucket_table(b, self.dead, cfg.river_buckets) for b in boards[:T]]
                 t = self._btabs[key] = (T, np.stack([x[0] for x in tabs]), np.stack([x[1] for x in tabs], axis=1),
                                         np.stack([x[2] for x in tabs], axis=1))
             self._btabs[id(node)] = t
@@ -1444,7 +1527,7 @@ class Solver:
     def _bucket_in(self, node: BucketEntry, rs, sel):
         """Per-combo reaches (B, N) each -> bucket masses (B, K) each, and the flat bucket index of every combo
         (for _bucket_out)."""
-        K = self.ctx.cfg.river_buckets
+        K = self._bk(node)
         B, n = rs[0].shape
         key = ("flat", id(node))
         idx = self._btabs.get(key) if sel is None else None
@@ -1475,7 +1558,12 @@ class Solver:
         if idx is None:
             self._bucket_in(node, (r, r), None)
             idx = self._btabs[("flat", id(node))]
-        return self._bucket_mass(idx[q], r, r.shape[0], self.ctx.cfg.river_buckets), idx[q][0]
+        return self._bucket_mass(idx[q], r, r.shape[0], self._bk(node)), idx[q][0]
+
+    def _bk(self, node) -> int:
+        """A bucket entry's width: river_dealt's on river boards, river_buckets' on turn boards."""
+        cfg = self.ctx.cfg
+        return cfg.river_dealt if len(node.boards[0]) == 5 else cfg.river_buckets
 
     @staticmethod
     def _bucket_mass(ix, r, B, K):

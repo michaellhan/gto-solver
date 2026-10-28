@@ -22,10 +22,12 @@ and our root's range frequencies and per-combo mix (half the L1 distance, range-
 with theirs.
 flop: a library entry's stored nodes (the root, IP after a check, OOP facing a c-bet after checking) locked into
 their full game of the library's tree (every turn and river card, where the entry played turn classes and the river
-blind on the turn's boards), per player as above. Their flop game needs ~5 GB (compressed memory) and minutes a solve.
+blind on the turn's boards, or in 3bet pots dealt by buckets), per player as above. Their flop game needs ~5 GB
+(compressed memory) and minutes a solve; scripts/bench_flop_abstraction.py measures other flop models the same way.
 
 Each record is printed and appended to reports/postflop_solver/<mode>.jsonl. Times are wall seconds on this machine;
-theirs use every core (rayon) unless noted, ours what the Advisor uses.
+theirs use --threads (rayon; 6, or RAYON_NUM_THREADS when set; records before their_threads used every core) unless
+noted, ours what the Advisor uses.
 """
 import argparse, json, os, random, subprocess, sys, time
 from types import SimpleNamespace
@@ -42,6 +44,9 @@ OUT = os.path.join(ROOT, "reports", "postflop_solver")
 S = 100           # chips per bb (our bets are in 0.5bb steps)
 HANDS = [cards_str(c) for c in ALL_COMBOS]
 SP = dict((s[0], s[2]) for s in fl.SPOTS)
+# Their solves' threads. Every core (rayon's default) kept ~5-9 of 10 busy and left the machine sluggish; 6 leaves room
+# for other work, or for our single-threaded solves running alongside.
+THREADS = int(os.environ.get("RAYON_NUM_THREADS") or min(6, os.cpu_count() or 6))
 
 
 def chips(x):
@@ -50,8 +55,7 @@ def chips(x):
 
 def run(spec, threads=None):
     env = dict(os.environ)
-    if threads:
-        env["RAYON_NUM_THREADS"] = str(threads)
+    env["RAYON_NUM_THREADS"] = str(threads or THREADS)
     p = subprocess.run([BIN], input=json.dumps(spec), capture_output=True, text=True, env=env)
     if p.returncode:
         raise RuntimeError(p.stderr[-3000:])
@@ -252,7 +256,8 @@ def bench_street(street, n_boards, speeds, target, seed):
                     base = spec(board, f0, f1, pot, stack, sol.root)
                     eq = their_solve(base, target)
                     rec.update(their_iters=eq["iters"], their_secs=round(eq["secs"], 2),
-                               their_expl=round(eq["expl_pct"], 4), their_mem_gb=round(eq["mem_gb"], 3))
+                               their_expl=round(eq["expl_pct"], 4), their_mem_gb=round(eq["mem_gb"], 3),
+                               their_threads=THREADS)
                     one = their_solve(base, max(rec["ours_expl"], target), threads=1)
                     rec.update(their_1t_secs_to_ours=round(one["secs"], 2), their_1t_iters_to_ours=one["iters"])
                     keep = [np.nonzero(sol.r0 > 0)[0], np.nonzero(sol.r1 > 0)[0]]
@@ -304,7 +309,7 @@ def bench_flop(jobs, target):
         t = time.time()
         eq = their_solve(base, target, 2000, compress=True)
         rec.update(their_iters=eq["iters"], their_secs=round(eq["secs"], 1), their_expl=round(eq["expl_pct"], 4),
-                   their_mem_gb=round(eq["mem_gb"], 2))
+                   their_mem_gb=round(eq["mem_gb"], 2), their_threads=THREADS)
         keep = [np.nonzero(ls.r0 > 0)[0], np.nonzero(ls.r1 > 0)[0]]
         nodes = stored_nodes(ls, full)
         rec["ev_loss"], rec["locked"] = ev_losses(base, eq, nodes, active, keep, pot, target, compress=True)
@@ -326,9 +331,11 @@ def summary():
         if not os.path.exists(path):
             continue
         recs = [json.loads(l) for l in open(path)]
+        threads = ", ".join(sorted({f"{r['their_threads']} threads" if "their_threads" in r else "all cores"
+                                    for r in recs}))
         print(f"\n{mode}: {len(recs)} records\n")
         print("| speed | n | ours: iterations, s | ours: % of the pot from equilibrium | their measure of it |"
-              " EV given up, OOP / IP | root frequencies, max diff | mix diff | theirs: s to target (all cores)"
+              f" EV given up, OOP / IP | root frequencies, max diff | mix diff | theirs: s to target ({threads})"
               " | theirs: s to ours (1 core) |")
         print("|---|---|---|---|---|---|---|---|---|---|")
         for speed in sorted({r["speed"] for r in recs}):
@@ -363,7 +370,9 @@ if __name__ == "__main__":
     ap.add_argument("--target", type=float, default=None,
                     help="their solves' exploitability, %% of the pot (river 0.005, turn 0.05, flop 0.15)")
     ap.add_argument("--seed", type=int, default=5)
+    ap.add_argument("--threads", type=int, default=THREADS, help="their solves' threads (rayon)")
     a = ap.parse_intermixed_args()
+    THREADS = a.threads
     if a.mode == "summary":
         sys.exit(summary())
     if not os.path.exists(BIN):

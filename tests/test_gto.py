@@ -1734,6 +1734,30 @@ class TestFlopStrategy(unittest.TestCase):
         self.assertAlmostEqual(sol.for_combo(tuple(hero))["check"][1], 10 * _exact_equity(cards("Kh8d5c"), hero, vr), delta=0.15)
 
 
+
+    def test_river_dealt_by_buckets(self):
+        # river_dealt: the dealt river by strength buckets on each card. Its tables: zero-sum, every combo of the range
+        # live on the card in one of K equal shares by equity (blocked or out of range: K); the game is zero-sum
+        r_oop, r_ip = parse_range("22+, A2s+, K9s+, QTs+, JTs, ATo+, KJo+"), parse_range("44+, A5s+, KTs+, QJs, AJo+, KQo")
+        cfg = Config(river_dealt=8, bet_sizes={"flop": [0.5], "turn": [0.75], "river": [0.75]}, later_sizes=None)
+        sol = solve(cards("Kd7c2h"), r_oop, r_ip, pot=20, stack=80, cfg=cfg, time_budget=1e9, max_iters=30)
+        ctx, s = sol.ctx, sol.solver
+        board = tuple(cards("Kd7c2h5s9h"))
+        ids, E, kap = ctx.river_card_table(board, set(board[:3]), 8)
+        self.assertTrue(np.allclose(E[1], -E[0].T) and np.allclose(kap[1], kap[0].T))
+        self.assertTrue((np.abs(E[0]) <= kap[0] + 1e-6).all() and (kap <= 1 + 1e-6).all())
+        for q, r in ((0, sol.r0), (1, sol.r1)):
+            on = (r > 0) & (ctx.member[list(board)].sum(axis=0) == 0)
+            self.assertTrue((ids[q][on] < 8).all() and (ids[q][~on] == 8).all())
+            mass = np.bincount(ids[q][on], weights=r[on], minlength=8)
+            self.assertLess(np.abs(mass / mass.sum() - 1 / 8).max(), 0.05)
+        a, b = sol.r0[None, :].astype(np.float32), sol.r1[None, :].astype(np.float32)
+        v0 = float((s._cfr(sol.root, 0, a, b, update=False, use_avg=True)[0] * sol.r0).sum())
+        v1 = float((s._cfr(sol.root, 1, a, b, update=False, use_avg=True)[0] * sol.r1).sum())
+        self.assertLess(abs(v0 + v1) / float((s.compat_sum(b)[0] * sol.r0).sum()), 1e-4)
+        self.assertTrue(0 < sol.exploitability() < 100)
+
+
 class TestHeadsUpRuleCalls(unittest.TestCase):
     """Heads-up, an unsettled earlier street's call read by the betting rules (Advisor._walk with trust 0):
     the hands the rules have raising instead are slowplayed at SLOWPLAY, as multiway (_slowplayed); they were
