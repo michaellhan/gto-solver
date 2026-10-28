@@ -230,6 +230,9 @@ class TestSolverMath(unittest.TestCase):
             a = solve(board, r_oop, r_ip, pot=5.5, stack=97.5, cfg=cfg, max_iters=0)
             b = solve(board, r_oop, r_ip, pot=5.5, stack=97.5, cfg=cfg, max_iters=0)
             a.solver.batch_leaves, b.solver.batch_leaves = True, False
+            # (numpy's batch: the core's trims a training pass's leaves to the ranges, so the regrets of combos outside
+            # them differ; it is checked against numpy in tests/test_core.py)
+            a.solver.use_core = False
             for s in (a, b):
                 s.solver.run(s.r0, s.r1, time_budget=1e9, max_iters=1)
             self.assertTrue(any(isinstance(t, Terminal) and t.kind == "leaf" for n in a.solver._nodes for t in n.children))

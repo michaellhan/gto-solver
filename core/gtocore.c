@@ -9,11 +9,12 @@
  * same arithmetic in float32, in the same order where it matters (sums over actions and cards run first to last), so
  * a solve's strategies agree with the Python solver's to float32 rounding.
  *
- *   header  [MAGIC, n, ca, cb, root, r0, r1, regret, ssum, flat_len]
+ *   header  [MAGIC, n, ca, cb, root, r0, r1, regret, ssum, flat_len, nstacks, stacks, trim, live0, live1, l0, l1]
  *   DECISION [1, player, A, B, W, regret, ssum, child_0 .. child_A-1]   regret, ssum: (B, A, W) blocks
  *   FOLD     [2, B, f0, f1]                     u_p = f_p * compat(ro)
  *   SHOWDOWN [3, B, ranking, a0, c0, a1, c1]    u_p = a_p * (sum of ro over weaker - stronger) + c_p * compat(ro)
- *   LEAF     [4, B, M, a0, c0, a1, c1]          the same with M (B, n, n) @ ro (an all-in's equity over the runouts)
+ *   LEAF     [4, B, M, a0, c0, a1, c1, st, j]  the same with M (B, n, n) @ ro (an all-in's equity over the runouts);
+ *                                              st -1, or its products batched: its stack, j its row there (below)
  *   CHANCE   [5, B, K, child, masks, w, norm]   child rows b*K+k; masks, w (B*K, n); norm (B, n)
  *   CLASSES  [6, B, K, child, masks, norm, G, flat, starts, sizes, nG]   river classes (Chance.spread, Chance.gather)
  *   RANKING  [B, n, order, lo, hi, pcombo, plo, phi, cstart, cend, live]  (Ranking: (B, n) / (B, 2n) / (B, 2, n))
@@ -143,6 +144,7 @@ EXPORT(core_source) const char *core_source(void) { return source; }
 static const i32 *P;
 static i32 n;
 static const i32 *ca, *cb;
+static int trim;   /* this pass's batched equity leaves trimmed to the ranges (below) */
 
 #define PF(off) ((f32 *)(base + (u32)(off)))
 #define PI(off) ((i32 *)(base + (u32)(off)))
@@ -286,10 +288,22 @@ static void terminal(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r
     for (i32 b = lo; b < hi; b++) {
       const f32 *r = ro + (size_t)(b - lo) * n;
       f32 *ub = u + (size_t)(b - lo) * n;
-      if (nd[0] == SHOWDOWN)
+      if (nd[0] == SHOWDOWN) {
         ranking(L, P + nd[2], b, r, ub);
-      else
+      } else if (nd[7] >= 0) {   /* its product, from the pass's batch */
+        const i32 *st = PI(P[11]) + 10 * nd[7];
+        i32 lp = trim ? P[15 + p] : n;
+        const f32 *pu = PF(st[5]) + ((size_t)b * st[3] + nd[8]) * lp;
+        if (trim) {
+          const i32 *live = PI(P[13 + p]);
+          for (i32 i = 0; i < n; i++) ub[i] = 0;
+          for (i32 i = 0; i < lp; i++) ub[live[i]] = pu[i];
+        } else {
+          for (i32 i = 0; i < n; i++) ub[i] = pu[i];
+        }
+      } else {
         matvec(PF(nd[2]) + (size_t)b * n * n, r, ub);
+      }
       if (c != 0) {
         compat(r, card, cs);
         for (i32 i = 0; i < n; i++) ub[i] = a * ub[i] + c * cs[i];
@@ -311,16 +325,24 @@ static void strategy(Lane *L, const f32 *regret, i32 lo, i32 hi, i32 A, i32 W, i
   for (i32 b = lo; b < hi; b++) {
     const f32 *r = regret + (size_t)b * A * W;
     f32 *sb = s + (size_t)(b - lo) * A * W;
-    if (avg)
-      for (i32 x = 0; x < A * W; x++) sb[x] = r[x];
-    else
-      for (i32 x = 0; x < A * W; x++) sb[x] = r[x] > 0 ? r[x] : 0;
-    for (i32 i = 0; i < W; i++) tot[i] = sb[i];
-    for (i32 a = 1; a < A; a++)
-      for (i32 i = 0; i < W; i++) tot[i] += sb[a * W + i];
+    for (i32 a = 0; a < A; a++) {
+      const f32 *ra = r + (size_t)a * W;
+      f32 *sa = sb + (size_t)a * W;
+      if (avg)
+        for (i32 i = 0; i < W; i++) sa[i] = ra[i];
+      else
+        for (i32 i = 0; i < W; i++) sa[i] = ra[i] > 0 ? ra[i] : 0;
+      if (a == 0)
+        for (i32 i = 0; i < W; i++) tot[i] = sa[i];
+      else
+        for (i32 i = 0; i < W; i++) tot[i] += sa[i];
+    }
     for (i32 i = 0; i < W; i++) tot[i] = tot[i] == 0 ? 0 : 1 / tot[i];   /* (one division a combo) */
-    for (i32 a = 0; a < A; a++)
-      for (i32 i = 0; i < W; i++) sb[a * W + i] = tot[i] == 0 ? uni : sb[a * W + i] * tot[i];
+    for (i32 a = 0; a < A; a++)   /* (the product taken either way: a load under a condition doesn't vectorize) */
+      for (i32 i = 0; i < W; i++) {
+        f32 v = sb[a * W + i] * tot[i];
+        sb[a * W + i] = tot[i] == 0 ? uni : v;
+      }
   }
   L->top = mark;
 }
@@ -612,6 +634,230 @@ static void cfr(Lane *L, i32 at, int p, i32 lo, i32 hi, const f32 *r0, const f32
   }
 }
 
+/* ------------------------------------------------------------------ batched equity leaves */
+/* A tree of many equity leaves (gto/core.py's LEAF_ROWS_BLAS: the library's flop, every turn line ending in one) runs
+   a pass in two phases, as numpy's Solver._leaf_batch does: a walk down puts the opponent's reach at each leaf row
+   into its matrix stack's rows, each matrix multiplies all of its rows at once (it is read once a pass, where a leaf
+   at a time read it again for each), and the pass reads the leaves' products. The header's stacks: nstacks records
+   [M, S, R, X, U, jlo, jhi, T] (M and T two words each: addresses, natively the solver's own arrays), M (S, n, n), X
+   the reaches and U their products (S, R, n): leaf j's row b is row b * R + j there (a leaf's rows are its stack's
+   matrices, its leaves numbered in program order, so a subtree's are a run of them); jlo..jhi: the leaves the walk
+   reached. A training pass with `trim` multiplies just the combos in each player's range (live0, live1: l0 and l1 of
+   them, the root reaches' nonzero ones): T = M[live0][:, live1] (S, l0, l1), the reaches gathered to the opponent's
+   range (rows lq wide), the products to p's (lp wide). M is antisymmetric (an equity's win minus loss), so player 1's
+   are -(X @ T), and the combos outside p's range get 0 (numpy's trim_leaves: their reach is 0, so their regrets never
+   matter). Evaluations multiply the whole of M. Natively only: in the browser (no BLAS) gto/core.py leaves them one
+   at a time, so the wasm builds go without it. */
+#ifdef __wasm__
+static void batch(i32 at, int p, i32 rows, const f32 *ro) { (void)at, (void)p, (void)rows, (void)ro; }
+#else
+#ifdef __APPLE__
+#define BLAS 1   /* Accelerate (gto/core.py links it): its sgemm runs on the matrix units */
+void cblas_sgemm(int order, int ta, int tb, int m, int nn, int k, float alpha, const float *a, int lda,
+                 const float *b, int ldb, float beta, float *c, int ldc);
+#endif
+static i32 use_blas = 1;
+
+/* 1: products by BLAS where there is one, 0: by the loops below; -1 just asks. Returns whether BLAS runs them. */
+EXPORT(core_gemm) i32 core_gemm(i32 on) {
+  if (on >= 0) use_blas = on;
+#ifdef BLAS
+  return use_blas;
+#else
+  return 0;
+#endif
+}
+
+static inline const f32 *addr(const i32 *w) { return (const f32 *)(uintptr_t)((u64)(u32)w[0] | (u64)(u32)w[1] << 32); }
+
+/* U (R, m) = X (R, k) @ A^T for A (m, k): each output a row of X dotted with a row of A, four rows of each at a time
+   in 16 registers (a load feeds four products), A in blocks of 64 rows that stay in cache while every row of X
+   passes */
+static void gemm_nt(const f32 *X, const f32 *A, f32 *U, i32 R, i32 m, i32 k) {
+#ifdef BLAS
+  if (use_blas) {
+    cblas_sgemm(101, 111, 112, R, m, k, 1.0f, X, k, A, k, 0.0f, U, m);   /* row-major, A transposed */
+    return;
+  }
+#endif
+  i32 k4 = k & ~3;
+  for (i32 i0 = 0; i0 < m; i0 += 64) {
+    i32 i1 = m - i0 < 64 ? m : i0 + 64;
+    for (i32 r = 0; r < R; r += 4) {
+      i32 rr = R - r < 4 ? R - r : 4;
+      for (i32 i = i0; i < i1; i += 4) {
+        i32 ii = i1 - i < 4 ? i1 - i : 4;
+        if (rr == 4 && ii == 4) {
+          v4 acc[4][4];
+          for (int a = 0; a < 4; a++)
+            for (int b = 0; b < 4; b++) acc[a][b] = (v4){0, 0, 0, 0};
+          for (i32 j = 0; j < k4; j += 4) {
+            v4 xv[4], av[4];
+            for (int a = 0; a < 4; a++) xv[a] = *(const v4u *)(X + (size_t)(r + a) * k + j);
+            for (int b = 0; b < 4; b++) av[b] = *(const v4u *)(A + (size_t)(i + b) * k + j);
+            for (int a = 0; a < 4; a++)
+              for (int b = 0; b < 4; b++) acc[a][b] += xv[a] * av[b];
+          }
+          for (int a = 0; a < 4; a++)
+            for (int b = 0; b < 4; b++) {
+              v4 v = acc[a][b];
+              f32 t = (v[0] + v[1]) + (v[2] + v[3]);
+              for (i32 j = k4; j < k; j++) t += X[(size_t)(r + a) * k + j] * A[(size_t)(i + b) * k + j];
+              U[(size_t)(r + a) * m + i + b] = t;
+            }
+        } else {
+          for (int a = 0; a < rr; a++)
+            for (int b = 0; b < ii; b++) {
+              const f32 *x = X + (size_t)(r + a) * k, *y = A + (size_t)(i + b) * k;
+              v4 v = {0, 0, 0, 0};
+              for (i32 j = 0; j < k4; j += 4) v += *(const v4u *)(x + j) * *(const v4u *)(y + j);
+              f32 t = (v[0] + v[1]) + (v[2] + v[3]);
+              for (i32 j = k4; j < k; j++) t += x[j] * y[j];
+              U[(size_t)(r + a) * m + i + b] = t;
+            }
+        }
+      }
+    }
+  }
+}
+
+/* U (R, m) = -(X (R, k) @ A) for A (k, m): four rows of U by 16 columns in 16 registers, a row of A's 16 columns
+   loaded once for the four (each output summed over k first to last), A in blocks of 256 columns */
+static void gemm_nn_neg(const f32 *X, const f32 *A, f32 *U, i32 R, i32 k, i32 m) {
+#ifdef BLAS
+  if (use_blas) {
+    cblas_sgemm(101, 111, 111, R, m, k, -1.0f, X, k, A, m, 0.0f, U, m);
+    return;
+  }
+#endif
+  for (i32 c0 = 0; c0 < m; c0 += 256) {
+    i32 c1 = m - c0 < 256 ? m : c0 + 256;
+    for (i32 r = 0; r < R; r += 4) {
+      i32 rr = R - r < 4 ? R - r : 4;
+      i32 c = c0;
+      for (; c + 16 <= c1 && rr == 4; c += 16) {
+        v4 acc[4][4];
+        for (int a = 0; a < 4; a++)
+          for (int b = 0; b < 4; b++) acc[a][b] = (v4){0, 0, 0, 0};
+        for (i32 j = 0; j < k; j++) {
+          const f32 *y = A + (size_t)j * m + c;
+          v4 av[4];
+          for (int b = 0; b < 4; b++) av[b] = *(const v4u *)(y + 4 * b);
+          for (int a = 0; a < 4; a++) {
+            f32 x = X[(size_t)(r + a) * k + j];
+            v4 xs = {x, x, x, x};
+            for (int b = 0; b < 4; b++) acc[a][b] += xs * av[b];
+          }
+        }
+        for (int a = 0; a < 4; a++)
+          for (int b = 0; b < 4; b++) *(v4u *)(U + (size_t)(r + a) * m + c + 4 * b) = -acc[a][b];
+      }
+      for (int a = 0; a < rr; a++)
+        for (i32 cc = c; cc < c1; cc++) {
+          f32 t = 0;
+          for (i32 j = 0; j < k; j++) t += X[(size_t)(r + a) * k + j] * A[(size_t)j * m + cc];
+          U[(size_t)(r + a) * m + cc] = -t;
+        }
+    }
+  }
+}
+
+/* a node the walk down goes into: one with batched leaves at or below it */
+static int below(i32 at) {
+  i32 t = P[at];
+  return t == DECISION || t == CHANCE || t == CLASSES || (t == LEAF && P[at + 7] >= 0);
+}
+
+/* The walk down (Solver._down with `want`): the opponent's reach ro (rows lo..hi) at node `at`, times the opponent's
+   strategies (cfr's: the regrets', in an evaluation the average) and the chance nodes' masks as cfr multiplies them,
+   into the batched leaves' rows */
+static void down(Lane *L, i32 at, int p, i32 lo, i32 hi, const f32 *ro) {
+  const i32 *nd = P + at;
+  size_t mark = L->top;
+  if (nd[0] == DECISION) {
+    i32 A = nd[2], W = nd[4], any = 0;
+    const i32 *kids = nd + 7;
+    for (i32 a = 0; a < A; a++) any |= below(kids[a]);
+    if (!any) return;
+    if (nd[1] == p) {
+      for (i32 a = 0; a < A; a++)
+        if (below(kids[a])) down(L, kids[a], p, lo, hi, ro);
+      return;
+    }
+    size_t RW = (size_t)(hi - lo) * W;
+    f32 *s = salloc(L, sizeof(f32) * RW * A), *reach = salloc(L, sizeof(f32) * RW);
+    strategy(L, PF(nd[mode == TRAIN ? 5 : 6]), lo, hi, A, W, mode != TRAIN, s);
+    for (i32 a = 0; a < A; a++) {
+      if (!below(kids[a])) continue;
+      for (i32 b = lo; b < hi; b++) {
+        size_t j = (size_t)(b - lo);
+        const f32 *sa = s + (j * A + a) * W, *rb = ro + j * W;
+        f32 *x = reach + j * W;
+        for (i32 i = 0; i < W; i++) x[i] = rb[i] * sa[i];
+      }
+      down(L, kids[a], p, lo, hi, reach);
+    }
+  } else if (nd[0] == CHANCE) {
+    i32 K = nd[2];
+    const f32 *masks = PF(nd[4]);
+    if (!below(nd[3])) return;   /* (a river dealt by buckets) */
+    f32 *c = salloc(L, sizeof(f32) * (size_t)(hi - lo) * K * n);
+    for (i32 b = lo; b < hi; b++)
+      for (i32 k = 0; k < K; k++) {
+        size_t row = ((size_t)(b - lo) * K + k) * n, at = ((size_t)b * K + k) * n, rb = (size_t)(b - lo) * n;
+        for (i32 i = 0; i < n; i++) c[row + i] = ro[rb + i] * masks[at + i];
+      }
+    down(L, nd[3], p, lo * K, hi * K, c);
+  } else if (nd[0] == CLASSES) {
+    i32 K = nd[2];
+    if (!below(nd[3])) return;
+    f32 *c = salloc(L, sizeof(f32) * (size_t)(hi - lo) * K * n), *rp = salloc(L, sizeof(f32) * (n + 1));
+    spread(nd, lo, hi, ro, c, rp);
+    down(L, nd[3], p, lo * K, hi * K, c);
+  } else if (nd[0] == LEAF && nd[7] >= 0) {
+    i32 *st = PI(P[11]) + 10 * nd[7], R = st[3], j = nd[8];
+    i32 lq = trim ? P[16 - p] : n;
+    const i32 *live = PI(P[14 - p]);
+    f32 *X = PF(st[4]);
+    for (i32 b = lo; b < hi; b++) {
+      const f32 *r = ro + (size_t)(b - lo) * n;
+      f32 *x = X + ((size_t)b * R + j) * lq;
+      if (trim)
+        for (i32 i = 0; i < lq; i++) x[i] = r[live[i]];
+      else
+        for (i32 i = 0; i < n; i++) x[i] = r[i];
+    }
+    if (j < st[6]) st[6] = j;
+    if (j >= st[7]) st[7] = j + 1;
+  }
+  L->top = mark;
+}
+
+/* before a pass from node `at` (rows 0..rows): the batched leaves' products for the opponent's reach ro there */
+static void batch(i32 at, int p, i32 rows, const f32 *ro) {
+  i32 *st = PI(P[11]);
+  if (!P[10]) return;
+  trim = P[12] && mode == TRAIN;
+  for (i32 s = 0; s < P[10]; s++) st[10 * s + 6] = st[10 * s + 3], st[10 * s + 7] = 0;
+  down(&M, at, p, 0, rows, ro);
+  i32 l0 = P[15], l1 = P[16], lp = trim ? P[15 + p] : n, lq = trim ? P[16 - p] : n;
+  for (i32 s = 0; s < P[10]; s++, st += 10) {
+    i32 S = st[2], R = st[3], jlo = st[6], jhi = st[7];
+    f32 *X = PF(st[4]), *U = PF(st[5]);
+    for (i32 m = 0; m < S && jlo < jhi; m++) {
+      size_t row = (size_t)m * R + jlo;
+      if (!trim)
+        gemm_nt(X + row * n, addr(st) + (size_t)m * n * n, U + row * n, jhi - jlo, n, n);
+      else if (p == 0)
+        gemm_nt(X + row * lq, addr(st + 8) + (size_t)m * l0 * l1, U + row * lp, jhi - jlo, l0, l1);
+      else
+        gemm_nn_neg(X + row * lq, addr(st + 8) + (size_t)m * l0 * l1, U + row * lp, jhi - jlo, l0, l1);
+    }
+  }
+}
+
+#endif
+
 /* ------------------------------------------------------------------ threads */
 /* A job: a chance node's child on rows lo..lo+rows, handed out `grain` rows at a time. The ticket holds the job's
    number and the next row to take (an odd number while the job is being set up), so a thread only takes rows of the
@@ -834,6 +1080,7 @@ EXPORT(core_eval) i32 core_eval(u32 prog, i32 at, i32 p, u32 r0, u32 r1, u32 out
   if (P[0] != MAGIC) return -1;
   mode = md;
   M.par = at != P[4] || !lane_size;
+  batch(at, p, rows_of(at), PF(p == 0 ? r1 : r0));
   cfr(&M, at, p, 0, rows_of(at), PF(r0), PF(r1), PF(out));
   M.par = 0;
   mode = TRAIN;
@@ -856,6 +1103,7 @@ EXPORT(core_run) i32 core_run(u32 prog, i32 iters, u32 factors) {
     for (int p = 0; p < 2; p++) {
       size_t mark = M.top;
       f32 *u = salloc(&M, sizeof(f32) * B * n);
+      batch(root, p, B, p == 0 ? r1 : r0);
       cfr(&M, root, p, 0, B, r0, r1, u);
       M.top = mark;
     }

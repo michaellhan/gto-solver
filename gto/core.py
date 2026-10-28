@@ -10,10 +10,11 @@ It covers turn and river trees: decisions, folds, showdowns, all-in equity leave
 class (Config.river_classes), rake and a tournament's payoffs; and flop trees whose turn and river are played by hand
 buckets (Config.river_buckets: Fast's flop model, the browser's Accurate's): the bucket and river-strength entries
 (BucketEntry, RiverEntry) with their tables (Ctx.bucket_table, Ctx.river_table, built in the core too: Tables) and
-the bucket games' folds and showdowns. A tree with anything else (sampled cards) or a predictive scheme runs in numpy
-as before, as does a solve while another holds the core (one at a time: its memory is one arena), and natively a tree
-of many equity leaves (LEAF_ROWS_BLAS). The arithmetic is the numpy solver's in float32, so their strategies agree to
-rounding. GTO_CORE=0 turns the core off.
+the bucket games' folds and showdowns; the library's flop (every turn line ending in an equity leaf), whose leaves it
+batches natively as numpy does (LEAF_ROWS_BLAS), and a 3bet pot's with the river dealt by buckets. A tree with
+anything else (sampled cards) or a predictive scheme runs in numpy as before, as does a solve while another holds
+the core (one at a time: its memory is one arena). The arithmetic is the numpy solver's in float32, so their
+strategies agree to rounding. GTO_CORE=0 turns the core off.
 """
 from __future__ import annotations
 import hashlib
@@ -32,10 +33,11 @@ AVG, BR = 1, 2         # evaluate(): both players on their average strategies; p
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "core", "gtocore.c")
 CHUNK_S = 0.1          # seconds of iterations a call (between the budget and should_stop checks)
-# Natively numpy multiplies every equity leaf's matrices by the opponent's reaches in one threaded BLAS product a pass
-# (Solver.batch_leaves), which beats the core's one-thread products once leaves are most of the work: the library's
-# flop (every turn class, the river by equity at 3917 leaf rows of 529 x 529) ran 40 iterations in 17.6 s in the core,
-# 4.6 s in numpy. Trees with more leaf rows than this stay in numpy there (turns have 4-6; the browser has no BLAS).
+# A tree with more equity leaf rows than this (the library's flop: every turn line ends in one, 7228 rows of 854 x 854
+# matrices on srp_sb_bb Tc7d2d; turns have 4-6) batches them natively as numpy does (Solver.batch_leaves, _leaf_batch):
+# a pass first collects the opponent's reach at every leaf, then multiplies each matrix by all of its rows at once
+# (Accelerate's sgemm on macOS), for training just the combos in the two ranges. A leaf at a time read each matrix
+# again (memory-bound: the library's flop took 7x numpy's time). Without BLAS (the browser) the leaves go one at a time.
 LEAF_ROWS_BLAS = 256
 ARENA_MAX = 1 << 30    # bytes a program may take: offsets are 32-bit, and a browser tab's memory runs out sooner
 MAX_CHUNK = 1024       # iterations a call at most (the discount factors' buffer)
@@ -63,7 +65,8 @@ def build_native(out_dir: str = None) -> str:
         os.makedirs(out_dir, exist_ok=True)
         tmp = f"{path}.{os.getpid()}.tmp"
         cc = os.environ.get("CC", "cc")
-        subprocess.run([cc, "-O3", "-shared", "-fPIC", "-o", tmp, SRC], check=True, capture_output=True)
+        blas = ["-framework", "Accelerate"] if sys.platform == "darwin" else []   # (its sgemm: batched leaves)
+        subprocess.run([cc, "-O3", "-shared", "-fPIC", "-o", tmp, SRC] + blas, check=True, capture_output=True)
         os.replace(tmp, path)
     return path
 
@@ -84,6 +87,7 @@ class _Native:
         L.core_eval.argtypes = [ctypes.c_uint32, ctypes.c_int32, ctypes.c_int32] + [ctypes.c_uint32] * 3 + [ctypes.c_int32]
         L.core_threads.restype, L.core_threads.argtypes = ctypes.c_int32, [ctypes.c_int32]
         L.core_table.restype, L.core_table.argtypes = ctypes.c_int32, [ctypes.c_uint32]
+        L.core_gemm.restype, L.core_gemm.argtypes = ctypes.c_int32, [ctypes.c_int32]
         if L.core_version() != MAGIC:
             raise RuntimeError("core version mismatch")
         self.L = L
@@ -216,6 +220,10 @@ class Program:
         self._rank = {}
         self.at = {}             # id(node) -> its record
         self.leaf_rows = 0
+        self.leaves = []         # (record, M, rows) of each equity leaf
+        self.stacks = 0          # matrix stacks whose leaves are batched
+        self.live = None         # with them: each player's range (the root reaches' nonzero combos)
+        self._keep = []          # the solver's arrays the core reads in place (batched leaves' M) and their trims
         self.bytes = 0
         L.reset()
         _gen += 1
@@ -228,15 +236,49 @@ class Program:
         self.r0, self.r1 = L.alloc(4 * self.n), L.alloc(4 * self.n)
         self.reaches(r0, r1)
         self.w = [MAGIC, ctx.n, self._upload(ctx.ca, np.int32), self._upload(ctx.cb, np.int32), 0,
-                  self.r0, self.r1, self.reg, self.ss, solver._regret.size]
+                  self.r0, self.r1, self.reg, self.ss, solver._regret.size] + [0] * 7
         self.w[4] = self._emit(solver.root)
+        self.batch_leaves = solver.batch_leaves
         if solver.batch_leaves and self.leaf_rows > LEAF_ROWS_BLAS:
-            raise Unsupported("equity leaves: numpy's batched BLAS products")
+            self._batch(r0, r1)
+        else:
+            for at, M, _ in self.leaves:
+                self.w[at + 2] = self._upload(M, np.float32)
         words = np.array(self.w, dtype=np.int64)
         self.prog = self._upload(words.astype(np.uint32).view(np.int32), np.int32)
         self.fac = L.alloc(16 * MAX_CHUNK)
         self.ev = L.alloc(12 * self.n)     # an evaluation's reaches and utilities
         self.w = self._rank = self._up = None
+
+    def _batch(self, r0, r1):
+        """The equity leaves' products batched by matrix stack (core/gtocore.c: batched equity leaves): each stack's
+        reach and product rows, its leaves numbered in program order; its matrices read where the solver keeps them
+        (natively: an address), and for training their rows and columns in each player's range."""
+        if not isinstance(self.L, _Native):
+            raise Unsupported("batched leaves in the browser")
+        by = {}
+        for at, M, B in self.leaves:
+            if B != M.shape[0] or M.dtype != np.float32 or not M.flags.c_contiguous:
+                raise Unsupported("a leaf's rows and its matrices")
+            by.setdefault(id(M), (M, []))[1].append(at)
+        self.live = live = [np.flatnonzero(np.ravel(r) > 0) for r in (r0, r1)]
+        table = []
+        for k, (M, ats) in enumerate(by.values()):
+            T = np.ascontiguousarray(M[:, live[0]][:, :, live[1]])
+            self._keep += [M, T]
+            size = 4 * M.shape[0] * len(ats) * self.n
+            self.bytes += 2 * size
+            if self.bytes > ARENA_MAX:
+                raise Unsupported("over ARENA_MAX")
+            X, U = self.L.alloc(size), self.L.alloc(size)
+            self.L.write(X, np.zeros(size // 4, dtype=np.float32))
+            table += [M.ctypes.data & 0xffffffff, M.ctypes.data >> 32, M.shape[0], len(ats), X, U, 0, 0,
+                      T.ctypes.data & 0xffffffff, T.ctypes.data >> 32]
+            for j, at in enumerate(ats):
+                self.w[at + 7], self.w[at + 8] = k, j
+        self.stacks = len(by)
+        self.w[10:17] = [len(by), self._upload(np.array(table, dtype=np.int64).astype(np.uint32).view(np.int32), np.int32),
+                         1, self._upload(live[0], np.int32), self._upload(live[1], np.int32), len(live[0]), len(live[1])]
 
     def _tables(self, solver):
         """The tables the tree's bucket entries, bucket games and equity leaves read (Ctx.bucket_table, river_table,
@@ -267,14 +309,17 @@ class Program:
             self.L.reset()
 
     def valid(self, L, solver) -> bool:
-        """The solver's, and still in the arena."""
-        return self.gen == _gen and self.L is L and self.s() is solver
+        """The solver's, still in the arena, and built for its batch_leaves."""
+        return self.gen == _gen and self.L is L and self.s() is solver and self.batch_leaves == solver.batch_leaves
 
     def reaches(self, r0, r1):
-        for off, r in ((self.r0, r0), (self.r1, r1)):
+        for q, (off, r) in enumerate(((self.r0, r0), (self.r1, r1))):
             r = np.ascontiguousarray(np.ravel(r), dtype=np.float32)
             if r.size != self.n:
                 raise Unsupported("reaches")
+            if self.live is not None and np.count_nonzero(r) != np.count_nonzero(r[self.live[q]]):
+                self.L.write(self.prog + 4 * 12, np.zeros(1, dtype=np.int32))    # (a combo outside the range: untrimmed)
+                self.live = None
             self.L.write(off, r)
 
     def _upload(self, a, dtype, transpose: bool = False) -> int:
@@ -343,7 +388,8 @@ class Program:
                 w += [SHOWDOWN, B, ref] + coef
             else:
                 self.leaf_rows += B
-                w += [LEAF, B, self._upload(s._terminal_M(node), np.float32)] + coef
+                self.leaves.append((at, s._terminal_M(node), B))
+                w += [LEAF, B, 0] + coef + [-1, 0]       # (its matrices: uploaded or batched, after the tree)
             return at
         if isinstance(node, RiverEntry):
             T, X, _, _ = s._rtab(node)              # X (2, T, W, K)
@@ -353,7 +399,7 @@ class Program:
             return at
         if isinstance(node, BucketEntry):
             T, ids, _, _ = s._btab(node)            # ids (T, 2, n)
-            w += [BUCKETS, len(node.boards), s.ctx.cfg.river_buckets, T, 0, self._upload(ids, np.int32)]
+            w += [BUCKETS, len(node.boards), s._bk(node), T, 0, self._upload(ids, np.int32)]
             w[at + 4] = self._emit(node.child)
             return at
         if isinstance(node, Chance):

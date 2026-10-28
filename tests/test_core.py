@@ -10,6 +10,7 @@ from unittest import mock
 import numpy as np
 
 from gto import core, native
+from gto import flop_library as fl
 from gto.cards import cards
 from gto.ranges import parse_range
 from gto.solver import BucketEntry, Config, Decision, Chance, solve
@@ -52,14 +53,17 @@ class TestWasm(unittest.TestCase):
 class TestThreads(unittest.TestCase):
     def test_same_numbers_on_any_number_of_threads(self):
         # a turn by river class: the rows of its river nodes split between threads, each row's arithmetic the same; a
-        # flop by hand buckets: the rows of its turn (the turn's classes, each a bucket game)
-        for board, pot, stack, iters in (("Ks7d2cTh", 20, 90, 30), ("Kd7c2h", 5.5, 97.5, 20)):
-            with self.subTest(board):
+        # flop by hand buckets: the rows of its turn (the turn's classes, each a bucket game); the library's flop: its
+        # turns' rows, their leaves' products batched before the pass
+        for board, pot, stack, iters, cfg in (("Ks7d2cTh", 20, 90, 30, native.config("fast")),
+                                              ("Kd7c2h", 5.5, 97.5, 20, native.config("fast")),
+                                              ("Kd7c2h", 5.5, 97.5, 6, fl.library_config())):
+            with self.subTest(board, cfg=cfg.leaf_turns):
                 got = []
                 try:
                     for t in (1, 3, 8):
                         self.assertEqual(core.threads(t), t)
-                        sol = _solve(board, OOP_T, IP_T, pot, stack, native.config("fast"), iters)
+                        sol = _solve(board, OOP_T, IP_T, pot, stack, cfg, iters)
                         self.assertTrue(sol.solver.use_core and sol.solver._core_ok)
                         arr = np.concatenate([np.r_[d.regret.ravel(), d.ssum.ravel()] for d in _decisions(sol)])
                         got.append((arr.view(np.int32), sol.exploitability()))
@@ -82,31 +86,51 @@ class TestSameAsNumpy(unittest.TestCase):
         ("flop by buckets", "Kd7c2h", OOP_T, IP_T, 5.5, 97.5, native.config("fast"), 20),
         ("flop by buckets, 3bet pot raked", "9h8h6c", OOP_T, IP_T, 20, 40,
          replace(native.config("fast"), rake_rate=0.05, rake_cap=3.0), 20),
+        # the library's flop (every turn line ending in an equity leaf: their products batched, trimmed to the ranges)
+        # and a 3bet pot's (its river dealt, each card by buckets)
+        ("library flop", "Kd7c2h", OOP_T, IP_T, 5.5, 97.5, fl.library_config(), 20),
+        ("library flop, 3bet pot", "9h8h6c", OOP_T, IP_T, 20, 40, fl.library_config(20, 40), 10),
     ]
     # the first iteration's regrets: the largest difference at a node over its largest regret (and 1). A flop's
     # turn and river utilities come through the bucket tables summed in another order than numpy's BLAS: ~1e-4 off
     # at every node, the root's regrets of 249 among them, which is 5e-5 of a turn node whose actions are worth
     # about the same (regrets of 2)
     REGRET_TOL = {"flop by buckets": 1e-4}
+    # the library's products on the core's own loops (no BLAS) summed in another order than numpy's sgemm: 2.2e-5
+    REGRET_TOL_LOOPS = 5e-5
+    # the second iteration's averages: in the 3bet pot's library flop a turn hand all but tied (regrets of -0.015,
+    # 0.004 and 0.012 at a node worth 18) takes its first strategy from regrets 1.4e-5 apart, and its average 3e-4
+    AVG_TOL = {"library flop, 3bet pot": 5e-4}
 
     def test_solve_and_evaluations(self):
-        for name, board, r0, r1, pot, stack, cfg, iters in self.SPOTS:
-            with self.subTest(name):
+        for name, board, r0, r1, pot, stack, cfg, iters, gemm in self._runs():
+            with self.subTest(name, gemm=gemm):
+                core.lib().L.core_gemm(gemm)
                 # the first iteration's regrets the same to rounding, and every node's strategy after the second
                 # but where the first left a hand tied (worth the same to every action: 0.4% of the by-class turn's
                 # slots, 88 on the 8 class among them); later they part as numpy's own native and browser paths do
                 # (a hand indifferent between actions goes one way or the other by rounding, the same nodes by the
                 # same amounts), equally far from equilibrium
-                a, b = (_decisions(_solve(board, r0, r1, pot, stack, cfg, 1, use_core=u)) for u in (True, False))
+                a, b = (_solve(board, r0, r1, pot, stack, cfg, 1, use_core=u) for u in (True, False))
+                if name.startswith("library"):
+                    self.assertIs(core._prog.s(), a.solver)
+                    self.assertGreater(core._prog.stacks, 0)
+                # (a training pass's batched leaves give the combos outside a player's range 0: their regrets differ,
+                # at the nodes played per combo)
+                live = [np.ravel(r) > 0 for r in (b.r0, b.r1)]
+                a, b = _decisions(a), _decisions(b)
                 self.assertEqual(len(a), len(b))
                 scale = [float(np.abs(y.regret).max()) for y in b]     # (regrets weigh in the opponent's combos)
-                self.assertLess(max(float(np.abs(x.regret - y.regret).max()) / (m + 1)
-                                    for x, y, m in zip(a, b, scale)), self.REGRET_TOL.get(name, 1e-5))
+                diff = [np.abs(x.regret - y.regret) for x, y in zip(a, b)]
+                diff = [d[..., live[y.player]] if d.shape[-1] == live[y.player].size else d for d, y in zip(diff, b)]
+                loops = gemm == 0 and name.startswith("library")
+                tol = self.REGRET_TOL.get(name, self.REGRET_TOL_LOOPS if loops else 1e-5)
+                self.assertLess(max(float(d.max()) / (m + 1) for d, m in zip(diff, scale)), tol)
                 tied = [np.abs(y.regret).max(axis=1, keepdims=True) < 1e-5 * m for y, m in zip(b, scale)]
                 a, b = (_solve(board, r0, r1, pot, stack, cfg, 2, use_core=u) for u in (True, False))
                 self.assertIs(core._prog.s(), a.solver)
                 sa, sb = ([np.where(t, 0, n.avg_strategy()) for t, n in zip(tied, _decisions(x))] for x in (a, b))
-                self.assertLess(max(float(np.abs(x - y).max()) for x, y in zip(sa, sb)), 1e-4)
+                self.assertLess(max(float(np.abs(x - y).max()) for x, y in zip(sa, sb)), self.AVG_TOL.get(name, 1e-4))
                 a, b = (_solve(board, r0, r1, pot, stack, cfg, iters, use_core=u) for u in (True, False))
                 self.assertEqual((a.iters, b.iters), (iters, iters))
                 ea, eb = a.exploitability(), b.exploitability()
@@ -125,6 +149,14 @@ class TestSameAsNumpy(unittest.TestCase):
                 self.assertLess(float(np.abs(ev[True][1] - ev[False][1]).max()), tol)
                 self.assertAlmostEqual(ev[True][2], ev[False][2], delta=1e-3)
                 self.assertGreater(ev[True][2], 0)
+
+    def _runs(self):
+        """Each spot, the library's on both of the batched leaves' products (BLAS's and the core's own loops)."""
+        blas = core.lib().L.core_gemm(-1)
+        for spot in self.SPOTS:
+            for gemm in ((1, 0) if blas and spot[0].startswith("library") else (blas,)):
+                yield spot + (gemm,)
+        core.lib().L.core_gemm(1)
 
     def test_evaluation_below_the_root(self):
         sol = _solve("Ks7d2cTh5s", OOP, IP, 20, 90, native.config("fast"), 40)
@@ -203,18 +235,25 @@ class TestProgram(unittest.TestCase):
         self.assertFalse(sol.solver._core_ok)
         self.assertGreater(sol.exploitability(), 0)
 
-    def test_leaf_heavy_trees_stay_with_blas(self):
-        # natively numpy's batched leaf products beat the core on the library's flop; without BLAS the core runs it
-        from gto import flop_library as fl
+    def test_leaf_heavy_trees_batch_their_leaves(self):
+        # natively the library's flop batches its equity leaves by matrix stack, trimmed to the ranges for training
+        # (every turn line ends in one: 24 turn classes' matrices, read in place); without BLAS (the browser's solver)
+        # one leaf at a time
         sol = solve(cards("Kd7c2h"), OOP_T, IP_T, pot=5.5, stack=97.5, cfg=fl.library_config(), max_iters=0)
         S = sol.solver
         self.assertTrue(S.batch_leaves)
-        self.assertIsNone(core._program(core.lib(), S, sol.r0, sol.r1))
-        self.assertFalse(S._core_ok)
-        S.batch_leaves, S._core_ok = False, True       # (as the browser's solver: no BLAS)
+        prog = core._program(core.lib(), S, sol.r0, sol.r1)
+        self.assertGreater(prog.leaf_rows, core.LEAF_ROWS_BLAS)
+        self.assertEqual(prog.stacks, 2)                  # (the flop's all-in leaves, the turns')
+        self.assertEqual([len(x) for x in prog.live], [int((np.ravel(r) > 0).sum()) for r in (sol.r0, sol.r1)])
+        r0 = np.where(np.ravel(sol.r0) > 0, sol.r0, 0.5)   # a combo outside the range: the training untrimmed
+        prog.reaches(r0, sol.r1)
+        self.assertIsNone(prog.live)
+        S.batch_leaves, S._core_ok = False, True          # (as the browser's solver: no BLAS)
+        core._prog = None
         prog = core._program(core.lib(), S, sol.r0, sol.r1)
         self.assertIsNotNone(prog)
-        self.assertGreater(prog.leaf_rows, core.LEAF_ROWS_BLAS)
+        self.assertEqual(prog.stacks, 0)
 
     def test_numpy_runs_what_the_arena_cant_hold(self):
         # over ARENA_MAX, or the arena failing to grow (the browser's memory.grow refused: the core traps)
