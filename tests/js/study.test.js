@@ -350,3 +350,34 @@ test("the runout report: every turn (or river) card by rank and suit, the board'
   assert.match(rough, /class="sy-rough bad">Only 13 iterations: 38\.58% of the pot from equilibrium/);
   assert.match(S.runoutsHtml({ ...RR, solver: { iterations: 90, exploitability_pct: 4.2 } }, "first", "Kd7c2h5s"), /sy-rough meh/);
 });
+
+test("a 3-way node: a toggle per opponent, their ranges and combos, no equity views before the river", () => {
+  const MW = { ...NODE, actor: "BB", opponent: "SB and BTN", position: "2 of 3 to act", multiway: true, range_eq: null,
+    opponent_grid: undefined, opponent_combos: undefined, opponent_eq: undefined, precomputed: null,
+    opponents: [{ seat: "SB", combos: 30, eq: null, grid: { actions: ["in range"], cells: { "72s": { w: 0.25, f: [1], eq: null } } } },
+                { seat: "BTN", combos: 500, eq: null, grid: { actions: ["in range"], cells: { AA: { w: 1, f: [1], eq: null } } } }] };
+  assert.deepEqual(S.oppsOf(MW).map(o => [o.key, o.seat]), [["opp", "SB"], ["opp1", "BTN"]]);
+  assert.deepEqual(S.oppsOf(NODE).map(o => [o.key, o.seat, o.combos]), [["opp", "BB", 300]]);
+  assert.deepEqual(S.oppsOf({ ...NODE, street: "preflop", opponent: null }), []);
+  let h = S.whoHtml(MW, "opp1");
+  assert.deepEqual(h.match(/data-who="[^"]+"/g), ['data-who="me"', 'data-who="opp"', 'data-who="opp1"']);
+  assert.match(h, /data-who="opp1" class="active">BTN</);
+  // a "who" the node lacks (a heads-up node after a 3-way one) shows the actor's
+  assert.match(S.whoHtml(NODE, "opp1"), /data-who="me" class="active">BTN</);
+  assert.deepEqual(S.viewsOf(MW), ["strategy", "ev", "breakdown"]);
+  assert.deepEqual(S.viewsOf({ ...MW, range_eq: 0.4 }), ["strategy", "ev", "equity", "eqr", "breakdown"]);
+  assert.deepEqual(S.viewsOf(NODE), ["strategy", "ev", "equity", "eqr", "breakdown"]);
+  assert.deepEqual(S.viewsOf({ ...NODE, street: "preflop" }), ["strategy"]);
+  // the second opponent's range in the grid and the detail
+  const ui = { view: "strategy", who: "opp1", sel: null, focus: null };
+  assert.equal(cellsOf(S.gridHtml(MW, ui)).filter(c => !/ out/.test(c)).length, 1);
+  assert.match(S.gridHtml(MW, ui), /class="sy-cell pair" data-cls="AA"/);
+  assert.match(S.detailHtml(MW, ui, "72s"), /not in BTN's range here/);
+  assert.match(S.detailHtml(MW, { ...ui, who: "opp" }, "72s"), /1 of 4 combos<\/span><\/div>$/);
+  // the totals: EV without equity, both opponents' combos
+  h = S.actionsHtml(MW, { ...ui, who: "me" });
+  assert.match(h, /BB's range: <b>400<\/b> combos · EV <b>\+4\.00<\/b>bb<br>SB: 30 combos<br>BTN: 500 combos<\/div>$/);
+  assert.doesNotMatch(h, /equity/);
+  h = S.actionsHtml({ ...MW, range_eq: 0.4, opponents: MW.opponents.map((o, i) => ({ ...o, eq: [0.25, 0.35][i] })) }, ui);
+  assert.match(h, /equity <b>40\.0%<\/b> · EQR <b>1\.82<\/b><br>SB: 30 combos · equity 25\.0%<br>BTN: 500 combos · equity 35\.0%/);
+});

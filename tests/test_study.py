@@ -162,10 +162,38 @@ class TestStudy(unittest.TestCase):
         self.assertIn("error", self.study(preflop=PRE, board="Kd7c2h5s", flop=flop, turn=turn[:2], runouts=True,
                                           budget=1.0))
 
-    def test_multiway_after_the_flop(self):
+    def test_three_way(self):
+        """3-way pots after the flop: the 3-player solve's answer (the 3-way library's at its flops' checked-to
+        nodes), each opponent's range, equity on the river only (a share of the pot at showdown); 4+ refused."""
         pre = PRE[:3] + [{"pos": "BTN", "action": "raise", "to": 2.5}, {"pos": "SB", "action": "call"},
                          {"pos": "BB", "action": "call"}]
-        self.assertIn("heads-up", self.study(preflop=pre, board="Kd7c2h")["error"])
+        r = self.study(preflop=pre, board="Kd7c2h")
+        self.assertEqual((r["study"], r["street"], r["actor"], r["position"]), ("node", "flop", "SB", "1 of 3 to act"))
+        self.assertTrue(r["multiway"] and r["precomputed"])
+        self.assertEqual([o["seat"] for o in r["opponents"]], ["BB", "BTN"])
+        self.assertIsNone(r["range_eq"])
+        self.check_totals(r)
+        for o in r["opponents"]:
+            tot = sum(c["w"] * combos(k) for k, c in o["grid"]["cells"].items())
+            self.assertAlmostEqual(tot, o["combos"], delta=0.01 * tot + 1)
+            self.assertIsNone(o["eq"])
+        # the next node: BB's, checked to, from the same solve
+        r2 = self.study(preflop=pre, board="Kd7c2h", flop=[{"pos": "SB", "action": "check"}])
+        self.assertEqual((r2["actor"], [o["seat"] for o in r2["opponents"]]), ("BB", ["SB", "BTN"]))
+        self.assertLess(r2["opponents"][0]["combos"], r["range_combos"])    # SB's checks
+        cc = [{"pos": p, "action": "check"} for p in ("SB", "BB", "BTN")]
+        r = self.study(preflop=pre, board="Kd7c2h5s9c", flop=cc, turn=cc)
+        self.assertEqual((r["study"], r["street"], r["actor"]), ("node", "river", "SB"))
+        self.check_totals(r)
+        eqs = [r["range_eq"]] + [o["eq"] for o in r["opponents"]]
+        self.assertTrue(all(0 < e < 1 for e in eqs))
+        self.assertAlmostEqual(sum(eqs), 1.0, delta=0.1)
+        # (the runout report reads heads-up pots)
+        self.assertIn("heads-up", self.adv.study(dict(players=6, stack=100, preflop=pre, board="Kd7c2h", flop=cc,
+                                                      runouts=True))["error"])
+        pre4 = PRE[:2] + [{"pos": "CO", "action": "raise", "to": 2.5}, {"pos": "BTN", "action": "call"},
+                          {"pos": "SB", "action": "call"}, {"pos": "BB", "action": "call"}]
+        self.assertIn("4 players", self.study(preflop=pre4, board="Kd7c2h")["error"])
 
 
 if __name__ == "__main__":

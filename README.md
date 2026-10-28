@@ -217,9 +217,18 @@ combos and the EV of the hands that take each action; click one to play it and t
 When the betting closes, type the next card(s) or deal random ones; the line above the grid steps back to any earlier
 decision (Backspace steps back one). Fast or Accurate picks the solver's speed for live solves (turns and rivers, or
 flops the library doesn't hold: a Fast turn ~10 s in the browser), and answers already seen come back at once.
-Preflop it shows the charts' mix (no EVs or equities). After the flop it browses heads-up pots only (a pot where 3+
-players saw the flop is refused). The panel is `gto/static/study.js`, loaded when first opened; it asks the solver
-with `"study": true` (see Use from the shell).
+Preflop it shows the charts' mix (no EVs or equities). After the flop it browses heads-up and 3-way pots (a pot where
+4+ players saw the flop is refused). In a 3-way pot the toggle has each opponent (their ranges and combos), and the
+answer is the 3-player solve's: on the [3-way library](#precomputed-3-way-flop-library)'s flops their checked-to
+first decisions are instant (BTN open, SB and BB call on Kd7c2h: 0.4 s), and every other node is solved live from
+there, the ranges narrowed through the solves Study answered from (a Fast 3-way turn or river ~8 s in the browser,
+~100 iterations, 0.1-0.3% of the pot). A 3-way flop the library doesn't hold is solved live too, which Fast's 5 s
+rarely settles (natively on a loaded machine 12-23 iterations, 17-40% of the pot: an error says so) and Accurate's
+30 s takes to 5-6% on most (51 iterations; flagged as rough). Equity (and EQR) only on the river, as a share of the pot at showdown against
+the two other ranges; before it the views are Strategy, EV and Breakdown. A 3-way spot the solver can't take (a bet
+bigger than the shortest stack can call, a solve still over 10% of the pot from equilibrium) is an error, not the
+betting rules. The panel is `gto/static/study.js`, loaded when first opened; it asks the solver with `"study": true`
+(see Use from the shell).
 
 The **All hands** menu beside the views filters the range to one made hand or draw, like GTO Wizard's filters (the
 Breakdown's categories: set, top pair by kicker, middle pair, no made hand, flush draw, open-ended, …, each with its
@@ -487,7 +496,9 @@ each; no draws on the river), the opponent's range in `opponent_grid`, and the s
 `"breakdown": true`). Where nobody acts it says
 what the hand needs: `{"study": "deal", "street": "turn", "allin": false}` (the next street's cards),
 `{"study": "over", "street", "winner"}` (everyone else folded) or `{"study": "over", "street": "river", "showdown": true}`.
-Preflop it is the charts' mix (no EVs); postflop it browses heads-up pots only. With `"runouts": true` on a hand whose flop
+Preflop it is the charts' mix (no EVs); postflop it browses heads-up and 3-way pots. A 3-way node has `"multiway":
+true`, `"opponent"` naming both ("BB and BTN"), `"opponents": [{"seat", "combos", "eq", "grid"}]` in acting order in
+place of `opponent_grid`, and `eq` (`range_eq`) null before the river. With `"runouts": true` on a heads-up hand whose flop
 or turn betting closed (the next card not dealt), it solves that street live and returns the next street's first
 decision on every card: `{"study": "runouts", "street": "turn" | "river", "first": {"actor", "actions", "avg",
 "cards": [{"card", "cards", "f"}]}, "after_check": …}` (`cards` the cards that share a class's mix `f`, `avg` the

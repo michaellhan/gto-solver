@@ -115,8 +115,18 @@
     if (view === "eqr") { const v = eqr(c, res.pot_bb); return v == null ? null : { v, t: (v - 0.4) / 1.2, txt: v.toFixed(2) }; }
     return null;
   }
+  // the opponents' ranges: heads-up the one (key "opp"), 3-way each of the two ("opp", "opp1"); ui.who picks one
+  const oppsOf = (res) => (res.opponents || (res.opponent && res.opponent_grid ? [{ seat: res.opponent, grid: res.opponent_grid, combos: res.opponent_combos, eq: res.opponent_eq }] : []))
+    .map((o, i) => ({ ...o, key: i ? "opp" + i : "opp" }));
+  const oppOf = (res, who) => who && who !== "me" ? oppsOf(res).find(o => o.key === who) || null : null;
+  // the toggle between the actor's range and each opponent's (a "who" the node lacks shows the actor's)
+  const whoHtml = (res, who) => `<span class="segment">${[{ key: "me", seat: res.actor }, ...oppsOf(res)].map(o =>
+    `<button data-who="${o.key}" class="${o.key === (oppOf(res, who) ? who : "me") ? "active" : ""}">${esc(o.seat)}</button>`).join("")}</span>`;
+  // the node's views (3-way before the river no equity: the solve deals the cards to come into its leaves)
+  const viewsOf = (res) => res.street === "preflop" ? ["strategy"]
+    : [...Object.keys(VIEWS).filter(v => res.range_eq != null || (v !== "equity" && v !== "eqr")), "breakdown"];
   function gridHtml(res, ui) {
-    const opp = ui.who === "opp" && res.opponent_grid, g = opp ? res.opponent_grid : res.grid, names = g.actions;
+    const opp = oppOf(res, ui.who), g = opp ? opp.grid : res.grid, names = g.actions;
     const view = opp && ui.view !== "equity" ? "strategy" : ui.view, focus = opp ? null : ui.focus;
     let h = `<div class="sy-grid${view === "strategy" ? "" : " sy-num"}">`;
     for (let i = 0; i < 13; i++) for (let j = 0; j < 13; j++) {
@@ -149,17 +159,18 @@
     h += `</tbody></table><div class="sy-bar">${res.actions.map(a => a.freq > 0.0005 ? `<i style="width:${(a.freq * 100).toFixed(2)}%;background:${color(a.action)}" title="${esc(label(a))} ${pct(a.freq, 1)}"></i>` : "").join("")}</div>`;
     const f = res.filter;
     h += `<div class="sy-tot">` + (f ? `${res.actor}'s <b>${esc(f.label.toLowerCase())}</b>: <b>${num(tot)}</b> of ${num(f.of)} combos (${pct(tot / f.of, 1)})` : `${res.actor}'s range: <b>${num(tot)}</b> combos`)
-      + (res.range_ev_bb != null ? ` · EV <b>${sgn(res.range_ev_bb)}</b>bb · equity <b>${pct(res.range_eq, 1)}</b> · EQR <b>${(res.range_ev_bb / (res.range_eq * res.pot_bb)).toFixed(2)}</b>` : "")
+      + (res.range_ev_bb != null ? ` · EV <b>${sgn(res.range_ev_bb)}</b>bb` : "")
+      + (res.range_ev_bb != null && res.range_eq != null ? ` · equity <b>${pct(res.range_eq, 1)}</b> · EQR <b>${(res.range_ev_bb / (res.range_eq * res.pot_bb)).toFixed(2)}</b>` : "")
       + (f ? ` <button class="ghost sy-unf" data-unfilter title="Show every hand again">✕ All hands</button>` : "")
-      + (res.opponent ? `<br>${res.opponent}: ${num(res.opponent_combos)} combos · equity ${pct(res.opponent_eq, 1)}` : "") + `</div>`;
+      + oppsOf(res).map(o => `<br>${esc(o.seat)}: ${num(o.combos)} combos${o.eq != null ? ` · equity ${pct(o.eq, 1)}` : ""}`).join("") + `</div>`;
     return h;
   }
   // a class's detail: its mix and numbers, then each combo of it (sorted by EV)
   function detailHtml(res, ui, cls) {
     if (!cls) return `<div class="sy-hint">${typeof window === "object" && "ontouchstart" in window ? "Tap" : "Hover or click"} a hand for its combos.</div>`;
-    const opp = ui.who === "opp" && res.opponent_grid, g = opp ? res.opponent_grid : res.grid, c = g.cells[cls], names = g.actions;
+    const opp = oppOf(res, ui.who), g = opp ? opp.grid : res.grid, c = g.cells[cls], names = g.actions;
     const n = combosOf(cls);
-    if (!c || !(c.w > 0)) return `<div class="sy-dh"><b>${cls}</b> <span class="sy-mut">not in ${opp ? res.opponent + "'s" : res.actor + "'s"} range here</span></div>`;
+    if (!c || !(c.w > 0)) return `<div class="sy-dh"><b>${cls}</b> <span class="sy-mut">not in ${esc(opp ? opp.seat : res.actor)}'s range here</span></div>`;
     let h = `<div class="sy-dh"><b>${cls}</b> <span class="sy-mut">${num(c.w * n)} of ${n} combos</span>`;
     if (opp) return h + (c.eq != null ? ` · equity <b>${pct(c.eq, 1)}</b>` : "") + `</div>`;
     h += c.eq != null ? ` · EV <b>${sgn(c.evm)}</b> · eq <b>${pct(c.eq, 1)}</b> · EQR <b>${eqr(c, res.pot_bb).toFixed(2)}</b>` : "";
@@ -453,17 +464,18 @@
         + buildGridHtml(res, paint, ui) + `</div><div class="sy-right"><div class="sy-bpanel">${buildPanelHtml(res, paint, ui)}</div>`
         + `<div class="sy-detail">${buildDetailHtml(res, paint, cls)}</div></div></div><div class="sy-note">${solverHtml(res)}</div>`;
     }
-    const views = pre ? ["strategy"] : [...Object.keys(VIEWS), "breakdown"];
+    const views = viewsOf(res);
     const view = views.includes(ST.view) ? ST.view : "strategy";
     const ui = { ...ST, view }, r = shown(view);
     let h = `<div class="sy-status">${statusHtml(res)}</div><div class="sy-main"><div class="sy-left"><div class="sy-ctl">`
       + `<span class="segment">${views.map(v => `<button data-view="${v}" class="${v === view ? "active" : ""}">${VIEWS[v] || "Breakdown"}</button>`).join("")}</span>`
-      + (res.opponent_grid && view !== "breakdown" ? `<span class="segment">${["me", "opp"].map(w => `<button data-who="${w}" class="${w === ST.who ? "active" : ""}">${esc(w === "me" ? res.actor : res.opponent)}</button>`).join("")}</span>` : "")
-      + (view !== "breakdown" && ST.who !== "opp" ? filterHtml(res, r.filter ? r.filter.key : "") : "")
+      + (oppsOf(res).length && view !== "breakdown" ? whoHtml(res, ST.who) : "")
+      + (view !== "breakdown" && !oppOf(res, ST.who) ? filterHtml(res, r.filter ? r.filter.key : "") : "")
       + buildBtn + `</div>`;
     h += view === "breakdown" ? `<div class="sy-bd"></div>` : gridHtml(r, ui);
     h += `</div><div class="sy-right">${actionsHtml(r, ui)}<div class="sy-detail">${view === "breakdown" ? "" : detailHtml(r, ui, cls)}</div></div></div>`;
-    h += `<div class="sy-note">${solverHtml(res)} ${pre ? "" : `EV: bb won from here relative to folding now. Equity: against ${esc(res.opponent)}'s range with the rest of the board dealt. EQR: EV over equity × pot.`}`
+    h += `<div class="sy-note">${solverHtml(res)} ${pre ? "" : `EV: bb won from here relative to folding now. ${res.range_eq == null ? (res.multiway ? "No equity 3-way before the river." : "")
+      : res.multiway ? `Equity: the share of the pot at showdown against ${esc(res.opponent)}'s ranges. EQR: EV over equity × pot.` : `Equity: against ${esc(res.opponent)}'s range with the rest of the board dealt. EQR: EV over equity × pot.`}`}`
       + `${(res.notes || []).length ? `<br>${res.notes.map(esc).join("<br>")}` : ""}</div>`;
     return h;
   }
@@ -471,7 +483,7 @@
   // answer and filter for the hover's redraws
   let filtered = { res: null, key: null, out: null };
   function shown(view) {
-    const key = view !== "breakdown" && !ST.build && ST.who !== "opp" ? ST.filter : null;
+    const key = view !== "breakdown" && !ST.build && !oppOf(res, ST.who) ? ST.filter : null;
     if (!key) return res;
     if (filtered.res !== res || filtered.key !== key) filtered = { res, key, out: filterRes(res, key) };
     return filtered.out;
@@ -768,7 +780,7 @@
   const api = { fresh, parseLine, fromSpot, fromPayload, streetOf, request, kindOf, play, deal, randomCards, readCards, line, back, label,
                 eqr, cellValue, gridHtml, actionsHtml, detailHtml, lineHtml, statusHtml, solverHtml, classAt, combosOf,
                 passiveOf, blankPaint, brush, scoreBuild, grade, buildGridHtml, buildPanelHtml, buildDetailHtml,
-                catsOf, filterRes, filterHtml, runoutsHtml,
+                catsOf, filterRes, filterHtml, runoutsHtml, oppsOf, whoHtml, viewsOf,
                 open, close, state: ST };
   if (typeof module === "object" && module.exports) module.exports = api; else globalThis.Study = api;
 })();

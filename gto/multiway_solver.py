@@ -1712,15 +1712,21 @@ class MultiwaySolver:
 
     def showdown_share(self, ci: int) -> float:
         """Combo ci's share of the pot against the other two ranges at showdown on the root's board (river)."""
+        s = self.showdown_shares()[ci]
+        return 0.0 if np.isnan(s) else float(s)
+
+    def showdown_shares(self, p: Optional[int] = None) -> np.ndarray:
+        """Each of player p's combos' share of the pot against the others' ranges at showdown on the root's board
+        (river; p the root's player by default); nan where the others' ranges leave a combo no deal."""
         bd = self.root.bd
         t = Terminal(bd, tuple(range(self.np)), 1.0, np.zeros(self.np), 0.0, "show")
-        p = self.root.player
+        p = self.root.player if p is None else p
         R = self.reach0
         win = self._term(t, R, p)[p][0]
         others = [j for j in range(self.np) if j != p]
         m = bd.k_u(R[others[0]])[0][0] if self.np == 2 else \
             self._pw_masses(bd, R)[0][p][0] if self._pw else self._mass(bd, R, *others)[0]
-        return float(win[ci] / m[ci]) if m[ci] > 1e-12 else 0.0
+        return np.where(m > 1e-12, win / np.where(m > 1e-12, m, 1.0), np.nan)
 
     def combo_index(self, hole) -> Optional[int]:
         i = COMBO_INDEX[(min(hole), max(hole))]
