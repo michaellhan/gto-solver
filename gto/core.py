@@ -7,9 +7,12 @@ strategies and best responses (Solver.node_action_evs, exploitability). The last
 memory until another solver's replaces it.
 
 It covers turn and river trees: decisions, folds, showdowns, all-in equity leaves, the river dealt card by card or by
-class (Config.river_classes), rake and a tournament's payoffs. A tree with anything else (a flop solve's hand buckets,
-sampled cards) or a predictive scheme runs in numpy as before, as does a solve while another holds the core (one at a
-time: its memory is one arena), and natively a tree of many equity leaves (LEAF_ROWS_BLAS). The arithmetic is the numpy solver's in float32, so their strategies agree to rounding.
+class (Config.river_classes), rake and a tournament's payoffs; and flop trees whose turn and river are played by hand
+buckets (Config.river_buckets: Fast's flop model, the browser's Accurate's): the bucket and river-strength entries
+(BucketEntry, RiverEntry) with their tables (Ctx.bucket_table, Ctx.river_table) and the bucket games' folds and
+showdowns. A tree with anything else (sampled cards) or a predictive scheme runs in numpy as before, as does a solve
+while another holds the core (one at a time: its memory is one arena), and natively a tree of many equity leaves
+(LEAF_ROWS_BLAS). The arithmetic is the numpy solver's in float32, so their strategies agree to rounding.
 GTO_CORE=0 turns the core off.
 """
 from __future__ import annotations
@@ -24,6 +27,7 @@ import numpy as np
 
 MAGIC = 0x67746f31
 DECISION, FOLD, SHOWDOWN, LEAF, CHANCE, CLASSES = 1, 2, 3, 4, 5, 6
+BUCKETS, RIVER, BFOLD, BLEAF = 7, 8, 9, 10      # a flop solve's turn and river by hand buckets
 AVG, BR = 1, 2         # evaluate(): both players on their average strategies; p's best response
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "core", "gtocore.c")
@@ -197,8 +201,8 @@ class Program:
 
     def __init__(self, L, solver, r0: np.ndarray, r1: np.ndarray):
         global _gen
-        from .solver import Decision, Terminal, Chance, BucketEntry
-        self._types = (Decision, Terminal, Chance, BucketEntry)
+        from .solver import Decision, Terminal, Chance, BucketEntry, RiverEntry
+        self._types = (Decision, Terminal, Chance, BucketEntry, RiverEntry)
         self.L, self.s = L, weakref.ref(solver)
         self.w = []
         self._up = {}
@@ -237,13 +241,13 @@ class Program:
                 raise Unsupported("reaches")
             self.L.write(off, r)
 
-    def _upload(self, a, dtype) -> int:
-        """`a` as `dtype` in the arena (once per array); its offset."""
-        key = (id(a), np.dtype(dtype).str)
+    def _upload(self, a, dtype, transpose: bool = False) -> int:
+        """`a` as `dtype` in the arena (once per array), its last two axes swapped with `transpose`; its offset."""
+        key = (id(a), np.dtype(dtype).str, transpose)
         hit = self._up.get(key)
         if hit is not None:
             return hit[0]
-        arr = np.ascontiguousarray(a, dtype=dtype)
+        arr = np.ascontiguousarray(np.swapaxes(a, -1, -2) if transpose else a, dtype=dtype)
         self.bytes += arr.nbytes
         if self.bytes > ARENA_MAX:
             raise Unsupported("over ARENA_MAX")
@@ -265,7 +269,7 @@ class Program:
         return at
 
     def _record(self, node) -> int:
-        Decision, Terminal, Chance, BucketEntry = self._types
+        Decision, Terminal, Chance, BucketEntry, RiverEntry = self._types
         s, w = self.s(), self.w
         at = len(w)
         if isinstance(node, Decision):
@@ -283,17 +287,20 @@ class Program:
             if node.kind == "fold":
                 w += [FOLD, B] + [_f(_scalar(node.fold_pay(p))) for p in (0, 1)]
                 return at
-            if node.kind not in ("showdown", "leaf"):
+            if node.kind not in ("showdown", "leaf", "bfold", "bleaf", "rfold", "rleaf"):
                 raise Unsupported(node.kind)
-            coef = []
-            for p in (0, 1):
-                if node.pay is not None:
-                    coef += [_f(_scalar(node.pay[2 * p + 1])), _f(_scalar(node.pay[2 * p]))]
-                elif node.rake is None:
-                    coef += [_f(_scalar(node.inv[p])), 0]
-                else:
-                    half = _scalar(node.rake) / 2
-                    coef += [_f(_scalar(node.inv[p]) - half), _f(-half)]
+            if node.kind[0] in "br":
+                # a bucket game's: its tables (the entry's, shared by every node on the same boards)
+                T, _, E, kap = s._btab(node) if node.kind[0] == "b" else s._rtab(node)
+                head = [B, E.shape[-1], T]
+                if node.kind[1:] == "fold":
+                    w += [BFOLD] + head + [self._upload(kap, np.float32, True)] + \
+                        [_f(_scalar(node.fold_pay(p))) for p in (0, 1)]
+                    return at
+                w += [BLEAF] + head + [self._upload(E, np.float32, True), self._upload(kap, np.float32, True)] + \
+                    self._coef(node)
+                return at
+            coef = self._coef(node)
             if len(node.boards[0]) == 5:
                 ref = self._ranking(s.ctx.ranking(node.boards))
                 at = len(w)      # (after the ranking's record, when it was added)
@@ -302,8 +309,17 @@ class Program:
                 self.leaf_rows += B
                 w += [LEAF, B, self._upload(s._terminal_M(node), np.float32)] + coef
             return at
+        if isinstance(node, RiverEntry):
+            T, X, _, _ = s._rtab(node)              # X (2, T, W, K)
+            w += [RIVER, len(node.boards), X.shape[2], X.shape[3], T, 0, self._upload(X, np.float32),
+                  self._upload(X, np.float32, True)]
+            w[at + 5] = self._emit(node.child)
+            return at
         if isinstance(node, BucketEntry):
-            raise Unsupported("hand buckets")
+            T, ids, _, _ = s._btab(node)            # ids (T, 2, n)
+            w += [BUCKETS, len(node.boards), s.ctx.cfg.river_buckets, T, 0, self._upload(ids, np.int32)]
+            w[at + 4] = self._emit(node.child)
+            return at
         if isinstance(node, Chance):
             if node.sample is not None:
                 raise Unsupported("sampled cards")
@@ -321,6 +337,21 @@ class Program:
             w[at + 3] = kid
             return at
         raise Unsupported(type(node).__name__)
+
+    @staticmethod
+    def _coef(node) -> list:
+        """A showdown's or equity leaf's (a_p, c_p) for each player p: u_p = a_p * (its products with the opponent's
+        reach) + c_p * (their compatible mass)."""
+        coef = []
+        for p in (0, 1):
+            if node.pay is not None:
+                coef += [_f(_scalar(node.pay[2 * p + 1])), _f(_scalar(node.pay[2 * p]))]
+            elif node.rake is None:
+                coef += [_f(_scalar(node.inv[p])), 0]
+            else:
+                half = _scalar(node.rake) / 2
+                coef += [_f(_scalar(node.inv[p]) - half), _f(-half)]
+        return coef
 
     def _ranking(self, R) -> int:
         """A Ranking's record (once per ranking)."""

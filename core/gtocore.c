@@ -17,6 +17,14 @@
  *   CHANCE   [5, B, K, child, masks, w, norm]   child rows b*K+k; masks, w (B*K, n); norm (B, n)
  *   CLASSES  [6, B, K, child, masks, norm, G, flat, starts, sizes, nG]   river classes (Chance.spread, Chance.gather)
  *   RANKING  [B, n, order, lo, hi, pcombo, plo, phi, cstart, cend, live]  (Ranking: (B, n) / (B, 2n) / (B, 2, n))
+ * A flop solve's turn and river by hand buckets (Config.river_buckets, river_strength): below an entry the rows are K
+ * buckets wide, row b's tables those of board b % T (T, the period of the entry's boards).
+ *   BUCKETS  [7, B, K, T, child, ids]           BucketEntry: ids (T, 2, n), each combo's bucket by player (K: none)
+ *   RIVER    [8, B, W, K, T, child, X, Xt]      RiverEntry: X (2, T, W, K), Xt its (2, T, K, W) transpose: rows W
+ *                                              wide in, K wide below
+ *   BFOLD    [9, B, K, T, kapt, f0, f1]         u_p = f_p * kap[p] @ ro
+ *   BLEAF    [10, B, K, T, Et, kapt, a0, c0, a1, c1]   u_p = a_p * E[p] @ ro + c_p * kap[p] @ ro
+ *   (kapt, Et: kap and E (2, T, K, K) transposed, each (K, K) matrix's columns contiguous)
  *
  * Every node runs on a range of its rows, lo..hi (a node's rows are its boards; a chance node's child has K rows per
  * row of its own): the reaches and utilities passed between nodes hold just those rows, the program's arrays (regrets,
@@ -48,7 +56,8 @@ extern unsigned char __heap_base;
 #endif
 
 #define MAGIC 0x67746f31   /* "gto1" */
-enum { DECISION = 1, FOLD = 2, SHOWDOWN = 3, LEAF = 4, CHANCE = 5, CLASSES = 6 };
+enum { DECISION = 1, FOLD = 2, SHOWDOWN = 3, LEAF = 4, CHANCE = 5, CLASSES = 6, BUCKETS = 7, RIVER = 8, BFOLD = 9,
+       BLEAF = 10 };
 
 /* ------------------------------------------------------------------ arena */
 static unsigned char *base;
@@ -217,8 +226,14 @@ static void matvec(const f32 *M, const f32 *ro, f32 *u) {
   }
 }
 
+static void bterminal(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *ro, f32 *u);
+
 /* p's utility (rows lo..hi, n) at a terminal; ro: the opponent's reach on those rows */
 static void terminal(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *ro, f32 *u) {
+  if (nd[0] == BFOLD || nd[0] == BLEAF) {
+    bterminal(L, nd, p, lo, hi, ro, u);
+    return;
+  }
   size_t mark = L->top;
   f32 *cs = salloc(L, sizeof(f32) * n), *card = salloc(L, sizeof(f32) * 52);
   if (nd[0] == FOLD) {
@@ -281,7 +296,7 @@ static int mode = TRAIN;
 
 static int is_terminal(i32 at) {
   i32 t = P[at];
-  return t == FOLD || t == SHOWDOWN || t == LEAF;
+  return t == FOLD || t == SHOWDOWN || t == LEAF || t == BFOLD || t == BLEAF;
 }
 
 static void decision(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r0, const f32 *r1, f32 *out) {
@@ -423,12 +438,137 @@ static void classes(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r0
   L->top = mark;
 }
 
+/* ------------------------------------------------------------------ hand buckets (a flop solve's turn and river) */
+/* u = M @ x for an (R, C) matrix given as its transpose Mt (C, R): each of u's entries summed over x first to last
+   (numpy's matmul without BLAS), 32 of them at a time in registers, adding a row of Mt a step. A zero in x adds
+   nothing (+-0 to every sum), so its row is skipped: a bucket a strategy never takes there has no reach. */
+static void tmatvec(const f32 *Mt, const f32 *x, f32 *u, i32 R, i32 C) {
+  i32 r = 0;
+  for (; r + 32 <= R; r += 32) {
+    v4 a0 = {0, 0, 0, 0}, a1 = a0, a2 = a0, a3 = a0, a4 = a0, a5 = a0, a6 = a0, a7 = a0;
+    for (i32 j = 0; j < C; j++) {
+      f32 xj = x[j];
+      if (xj == 0) continue;
+      v4 s = {xj, xj, xj, xj};
+      const f32 *m = Mt + (size_t)j * R + r;
+      a0 += *(const v4u *)(m) * s;
+      a1 += *(const v4u *)(m + 4) * s;
+      a2 += *(const v4u *)(m + 8) * s;
+      a3 += *(const v4u *)(m + 12) * s;
+      a4 += *(const v4u *)(m + 16) * s;
+      a5 += *(const v4u *)(m + 20) * s;
+      a6 += *(const v4u *)(m + 24) * s;
+      a7 += *(const v4u *)(m + 28) * s;
+    }
+    *(v4u *)(u + r) = a0;
+    *(v4u *)(u + r + 4) = a1;
+    *(v4u *)(u + r + 8) = a2;
+    *(v4u *)(u + r + 12) = a3;
+    *(v4u *)(u + r + 16) = a4;
+    *(v4u *)(u + r + 20) = a5;
+    *(v4u *)(u + r + 24) = a6;
+    *(v4u *)(u + r + 28) = a7;
+  }
+  for (; r + 4 <= R; r += 4) {
+    v4 a = {0, 0, 0, 0};
+    for (i32 j = 0; j < C; j++) {
+      f32 xj = x[j];
+      v4 s = {xj, xj, xj, xj};
+      a += *(const v4u *)(Mt + (size_t)j * R + r) * s;
+    }
+    *(v4u *)(u + r) = a;
+  }
+  for (; r < R; r++) {
+    f32 y = 0;
+    for (i32 j = 0; j < C; j++) y += Mt[(size_t)j * R + r] * x[j];
+    u[r] = y;
+  }
+}
+
+/* p's bucket utilities (rows lo..hi, K) at a bucket game's terminal (Solver._bucket_terminal); ro: the opponent's
+   masses on those rows */
+static void bterminal(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *ro, f32 *u) {
+  i32 K = nd[2], T = nd[3];
+  size_t KK = (size_t)K * K, mark = L->top;
+  if (nd[0] == BFOLD) {
+    const f32 *kap = PF(nd[4]) + (size_t)p * T * KK;
+    f32 f = fbits(nd[5 + p]);
+    for (i32 b = lo; b < hi; b++) {
+      f32 *ub = u + (size_t)(b - lo) * K;
+      tmatvec(kap + (size_t)(b % T) * KK, ro + (size_t)(b - lo) * K, ub, K, K);
+      for (i32 i = 0; i < K; i++) ub[i] = f * ub[i];
+    }
+    return;
+  }
+  const f32 *E = PF(nd[4]) + (size_t)p * T * KK, *kap = PF(nd[5]) + (size_t)p * T * KK;
+  f32 a = fbits(nd[6 + 2 * p]), c = fbits(nd[7 + 2 * p]);
+  f32 *cs = salloc(L, sizeof(f32) * K);
+  for (i32 b = lo; b < hi; b++) {
+    const f32 *rb = ro + (size_t)(b - lo) * K;
+    f32 *ub = u + (size_t)(b - lo) * K;
+    tmatvec(E + (size_t)(b % T) * KK, rb, ub, K, K);
+    if (c != 0) {
+      tmatvec(kap + (size_t)(b % T) * KK, rb, cs, K, K);
+      for (i32 i = 0; i < K; i++) ub[i] = a * ub[i] + c * cs[i];
+    } else {
+      for (i32 i = 0; i < K; i++) ub[i] = a * ub[i];
+    }
+  }
+  L->top = mark;
+}
+
+/* BucketEntry: each player's reach summed into its buckets (combos in order), the bucket game below on the same rows,
+   and every combo getting its bucket's utility back (Solver._bucket_in, _bucket_out) */
+static void buckets(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r0, const f32 *r1, f32 *out) {
+  i32 K = nd[2], T = nd[3], child = nd[4];
+  const i32 *ids = PI(nd[5]);
+  size_t mark = L->top, RK = (size_t)(hi - lo) * K;
+  f32 *m[2] = {salloc(L, sizeof(f32) * RK), salloc(L, sizeof(f32) * RK)}, *u = salloc(L, sizeof(f32) * RK);
+  const f32 *r[2] = {r0, r1};
+  for (int q = 0; q < 2; q++)
+    for (i32 b = lo; b < hi; b++) {
+      const i32 *id = ids + ((size_t)(b % T) * 2 + q) * n;
+      const f32 *rb = r[q] + (size_t)(b - lo) * n;
+      f32 *mb = m[q] + (size_t)(b - lo) * K;
+      for (i32 k = 0; k < K; k++) mb[k] = 0;
+      for (i32 i = 0; i < n; i++)
+        if (id[i] < K) mb[id[i]] += rb[i];
+    }
+  cfr(L, child, p, lo, hi, m[0], m[1], u);
+  for (i32 b = lo; b < hi; b++) {
+    const i32 *id = ids + ((size_t)(b % T) * 2 + p) * n;
+    const f32 *ub = u + (size_t)(b - lo) * K;
+    f32 *o = out + (size_t)(b - lo) * n;
+    for (i32 i = 0; i < n; i++) o[i] = id[i] < K ? ub[id[i]] : 0;
+  }
+  L->top = mark;
+}
+
+/* RiverEntry: each player's reach (rows, W) into its river buckets through X (r @ X[q]), the bucket game below on the
+   same rows, and the utilities back through X (X[p] @ u) (Solver._river_in, _river_out) */
+static void river(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r0, const f32 *r1, f32 *out) {
+  i32 W = nd[2], K = nd[3], T = nd[4], child = nd[5];
+  const f32 *X = PF(nd[6]), *Xt = PF(nd[7]);
+  size_t mark = L->top, RK = (size_t)(hi - lo) * K, WK = (size_t)W * K;
+  f32 *m[2] = {salloc(L, sizeof(f32) * RK), salloc(L, sizeof(f32) * RK)}, *u = salloc(L, sizeof(f32) * RK);
+  const f32 *r[2] = {r0, r1};
+  for (int q = 0; q < 2; q++)
+    for (i32 b = lo; b < hi; b++)
+      tmatvec(X + ((size_t)q * T + b % T) * WK, r[q] + (size_t)(b - lo) * W, m[q] + (size_t)(b - lo) * K, K, W);
+  cfr(L, child, p, lo, hi, m[0], m[1], u);
+  for (i32 b = lo; b < hi; b++)
+    tmatvec(Xt + ((size_t)p * T + b % T) * WK, u + (size_t)(b - lo) * K, out + (size_t)(b - lo) * W, W, K);
+  L->top = mark;
+}
+
 static void cfr(Lane *L, i32 at, int p, i32 lo, i32 hi, const f32 *r0, const f32 *r1, f32 *out) {
   const i32 *nd = P + at;
   switch (nd[0]) {
     case DECISION: decision(L, nd, p, lo, hi, r0, r1, out); break;
     case CHANCE: chance(L, nd, p, lo, hi, r0, r1, out); break;
     case CLASSES: classes(L, nd, p, lo, hi, r0, r1, out); break;
+    case BUCKETS: buckets(L, nd, p, lo, hi, r0, r1, out); break;
+    case RIVER: river(L, nd, p, lo, hi, r0, r1, out); break;
     default: terminal(L, nd, p, lo, hi, p == 0 ? r1 : r0, out); break;
   }
 }

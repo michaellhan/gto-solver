@@ -38,6 +38,8 @@ from . import mw_library  # noqa: E402
 # and river by 32 hand buckets per player and turn card (river_buckets, turn_buckets): an iteration costs about
 # what the old fast tree's did (6 random turns, the river checked down: 12-18 ms), so 2.5 s gives 140-210, and
 # against every turn played its c-bet is 3.5 points off on average (was 12), its size split 7 (33), BB's check 2 (6).
+# The compiled core runs it 2.1-4.7x faster than numpy (gto/core.py; README, Compiled core), and then building its
+# bucket and river tables in numpy takes much of the 2.5 s on a loaded machine.
 #
 # From the turn (scripts/turn_river_reference.py: six turn and four river spots against every-river solves run to
 # convergence with a 33/75/125% menu; README Accuracy vs speed), both play the river as one card per class

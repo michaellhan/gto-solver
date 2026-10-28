@@ -7,6 +7,7 @@
 //
 // The repo is mounted at /repo (the working directory); the script path is relative to it.
 import { createRequire } from "module";
+import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -14,6 +15,9 @@ const require = createRequire(path.join(process.cwd(), "noop.js"));
 const { loadPyodide } = require("pyodide");
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const [script, ...args] = process.argv.slice(2);
+// the compiled core as the worker loads it (`from js import gtoCore`; GTO_CORE=0 leaves it out)
+globalThis.gtoCore = process.env.GTO_CORE === "0" ? null :
+  (await WebAssembly.instantiate(fs.readFileSync(path.join(root, "gto", "core.wasm")))).instance.exports;
 const py = await loadPyodide();
 await py.loadPackage(["numpy", "micropip"]);
 await py.pyimport("micropip").install("treys");

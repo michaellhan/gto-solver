@@ -4,6 +4,7 @@ import gc
 import os
 import unittest
 import weakref
+from dataclasses import replace
 from unittest import mock
 
 import numpy as np
@@ -11,7 +12,7 @@ import numpy as np
 from gto import core, native
 from gto.cards import cards
 from gto.ranges import parse_range
-from gto.solver import Config, Decision, Chance, solve
+from gto.solver import BucketEntry, Config, Decision, Chance, solve
 
 OOP = parse_range("22+,A2s+,K5s+,Q8s+,J8s+,T8s+,97s+,86s+,75s+,64s+,54s,A8o+,KTo+,QTo+,JTo")
 IP = parse_range("22+,A2s+,K2s+,Q5s+,J7s+,T7s+,96s+,85s+,74s+,63s+,53s+,43s,A2o+,K8o+,Q9o+,J9o+,T8o+,98o")
@@ -33,7 +34,7 @@ def _decisions(sol):
             out.append(n)
             for c in n.children:
                 walk(c)
-        elif isinstance(n, Chance):
+        elif isinstance(n, (Chance, BucketEntry)):
             walk(n.child)
     walk(sol.root)
     return out
@@ -50,20 +51,23 @@ class TestWasm(unittest.TestCase):
 @unittest.skipUnless(ON, "no C compiler for the native core")
 class TestThreads(unittest.TestCase):
     def test_same_numbers_on_any_number_of_threads(self):
-        # a turn by river class: the rows of its river nodes split between threads, each row's arithmetic the same
-        got = []
-        try:
-            for t in (1, 3, 8):
-                self.assertEqual(core.threads(t), t)
-                sol = _solve("Ks7d2cTh", OOP_T, IP_T, 20, 90, native.config("fast"), 30)
-                self.assertTrue(sol.solver.use_core and sol.solver._core_ok)
-                arr = np.concatenate([np.r_[d.regret.ravel(), d.ssum.ravel()] for d in _decisions(sol)])
-                got.append((arr.view(np.int32), sol.exploitability()))
-        finally:
-            core.threads(1)
-        for arr, ex in got[1:]:
-            np.testing.assert_array_equal(arr, got[0][0])
-            self.assertEqual(ex, got[0][1])
+        # a turn by river class: the rows of its river nodes split between threads, each row's arithmetic the same; a
+        # flop by hand buckets: the rows of its turn (the turn's classes, each a bucket game)
+        for board, pot, stack, iters in (("Ks7d2cTh", 20, 90, 30), ("Kd7c2h", 5.5, 97.5, 20)):
+            with self.subTest(board):
+                got = []
+                try:
+                    for t in (1, 3, 8):
+                        self.assertEqual(core.threads(t), t)
+                        sol = _solve(board, OOP_T, IP_T, pot, stack, native.config("fast"), iters)
+                        self.assertTrue(sol.solver.use_core and sol.solver._core_ok)
+                        arr = np.concatenate([np.r_[d.regret.ravel(), d.ssum.ravel()] for d in _decisions(sol)])
+                        got.append((arr.view(np.int32), sol.exploitability()))
+                finally:
+                    core.threads(1)
+                for arr, ex in got[1:]:
+                    np.testing.assert_array_equal(arr, got[0][0])
+                    self.assertEqual(ex, got[0][1])
 
 
 @unittest.skipUnless(ON, "no C compiler for the native core")
@@ -73,7 +77,17 @@ class TestSameAsNumpy(unittest.TestCase):
         ("turn by river class", "Ks7d2cTh", OOP_T, IP_T, 20, 90, native.config("fast"), 30),
         ("turn raked, all-ins", "Qs8d3c4h", OOP_T, IP_T, 30, 40,
          Config(river_classes=False, n_rivers=None, rake_rate=0.05, rake_cap=3.0), 25),
+        # a flop by hand buckets (Fast's flop model): the turn by bucket, the river by strength; a 3bet pot's river
+        # in the turn's buckets, raked
+        ("flop by buckets", "Kd7c2h", OOP_T, IP_T, 5.5, 97.5, native.config("fast"), 20),
+        ("flop by buckets, 3bet pot raked", "9h8h6c", OOP_T, IP_T, 20, 40,
+         replace(native.config("fast"), rake_rate=0.05, rake_cap=3.0), 20),
     ]
+    # the first iteration's regrets: the largest difference at a node over its largest regret (and 1). A flop's
+    # turn and river utilities come through the bucket tables summed in another order than numpy's BLAS: ~1e-4 off
+    # at every node, the root's regrets of 249 among them, which is 5e-5 of a turn node whose actions are worth
+    # about the same (regrets of 2)
+    REGRET_TOL = {"flop by buckets": 1e-4}
 
     def test_solve_and_evaluations(self):
         for name, board, r0, r1, pot, stack, cfg, iters in self.SPOTS:
@@ -87,7 +101,7 @@ class TestSameAsNumpy(unittest.TestCase):
                 self.assertEqual(len(a), len(b))
                 scale = [float(np.abs(y.regret).max()) for y in b]     # (regrets weigh in the opponent's combos)
                 self.assertLess(max(float(np.abs(x.regret - y.regret).max()) / (m + 1)
-                                    for x, y, m in zip(a, b, scale)), 1e-5)
+                                    for x, y, m in zip(a, b, scale)), self.REGRET_TOL.get(name, 1e-5))
                 tied = [np.abs(y.regret).max(axis=1, keepdims=True) < 1e-5 * m for y, m in zip(b, scale)]
                 a, b = (_solve(board, r0, r1, pot, stack, cfg, 2, use_core=u) for u in (True, False))
                 self.assertIs(core._prog.s(), a.solver)
@@ -147,9 +161,9 @@ class TestProgram(unittest.TestCase):
         self.assertIsNone(ref())
 
     def test_numpy_runs_what_it_doesnt(self):
-        # a flop by hand buckets: numpy, and the tree remembered as one the core doesn't run
-        cfg = Config(river_buckets=8, turn_buckets=True, bucket_river_step=3)
-        sol = solve(cards("Kd7c2h"), OOP_T, IP_T, pot=6, stack=60, cfg=cfg, time_budget=1e9, max_iters=3)
+        # rivers sampled every iteration: numpy, and the tree remembered as one the core doesn't run
+        cfg = Config(river_classes=False, river_sample=4)
+        sol = solve(cards("Ks7d2cTh"), OOP_T, IP_T, pot=20, stack=90, cfg=cfg, time_budget=1e9, max_iters=3)
         self.assertEqual(sol.iters, 3)
         self.assertFalse(sol.solver._core_ok)
         self.assertGreater(sol.exploitability(), 0)

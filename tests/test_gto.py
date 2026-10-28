@@ -205,6 +205,7 @@ class TestSolverMath(unittest.TestCase):
         plain = solve(cards("6s4d3h"), r_oop, r_ip, pot=6.0, stack=97.0, cfg=cfg, max_iters=0)
         self.assertTrue(fast.solver._bgroups)
         fast.solver.batch_leaves = False
+        fast.solver.use_core = False       # (numpy's merge; the core runs the tree too, tests/test_core.py)
         fast.solver.run(fast.r0, fast.r1, time_budget=1e9, max_iters=3)
         self._plain_iterations(plain, 3)
         for x, y in zip(fast.solver._nodes, plain.solver._nodes):

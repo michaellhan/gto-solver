@@ -103,8 +103,8 @@ const ready = (async () => {
   Object.assign(setup, { bundle_cached: cached, pyc_cached: !!pyc });
   py.unpackArchive(buf, "zip", { extractDir: "/app" });
   if (pyc) py.unpackArchive(pyc, "zip", { extractDir: "/app" });
-  // the compiled CFR core (gto/core.py; in the bundle, ~20 KB): turn and river solves run their iterations in it. Where
-  // it can't load (a browser without wasm SIMD) the solver runs in numpy as before.
+  // the compiled CFR core (gto/core.py; in the bundle, ~25 KB): turn, river and flop solves run their iterations in
+  // it. Where it can't load (a browser without wasm SIMD) the solver runs in numpy as before.
   self.gtoCore = await loadCore(py);
   setup.core = !!self.gtoCore;
   setup.threads = self.gtoCore ? self.gtoCore.core_threads(0) : 0;
@@ -129,10 +129,10 @@ const ready = (async () => {
   }, 0);
   lap("imports");
   // Pyodide numpy is 10-30x slower per iteration than native on the flop (its leaf products have no BLAS), ~1.5x on the
-  // turn (vectorised river showdowns), so the browser plays a smaller game. Turn and river solves run their iterations
-  // in the compiled core (gto/core.wasm, above): 5.5-6.7x numpy's iterations on the turn, the river's solve 0.5 s for
-  // numpy's 10-13 (scripts/bench_browser.mjs, README Compiled core). Two flop bet sizes; inside a flop solve one
-  // turn and river size (Config.later_sizes).
+  // turn (vectorised river showdowns), so the browser plays a smaller game. Turn, river and flop solves run their
+  // iterations in the compiled core (gto/core.wasm, above): 5.5-6.7x numpy's iterations on the turn, the river's solve
+  // 0.5 s for numpy's 10-13 (scripts/bench_browser.mjs, README Compiled core), a flop 2-16x (6.6x on average:
+  // scripts/bench_flop_core.py). Two flop bet sizes; inside a flop solve one turn and river size (Config.later_sizes).
   // From the turn (scripts/turn_river_reference.py: 6 turn spots against every-river solves run to convergence with a
   // 33/75/125% menu; README Accuracy vs speed), the river is one card per class (river_classes: 13 cards on a rainbow
   // turn, 22-24 with a flush suit, each standing for its cards through suit swaps; within ~0.1% of the pot of every
@@ -150,8 +150,9 @@ const ready = (async () => {
   // From the flop both play one turn per rank class with the river bet on, the turn and river by hand buckets
   //   (river_buckets, turn_buckets; README, Accuracy vs speed), the river in single-raised pots by 32 buckets of river
   //   strength (river_strength: a draw strong where it hits, weak where it misses). Fast: 32 buckets over every third river, 130-420
-  //   iterations in 8 s (scripts/bench_browser.mjs). Accurate: 64 over every river, 520-870 iterations in 60 s
-  //   (0.03-0.05% of the pot from equilibrium in its game). Against a solve over every turn (12 flops, scripts/bench_solver.py --flop) at 400 iterations
+  //   iterations in 8 s in numpy, 229-986 in the compiled core on a loaded machine (scripts/bench_browser.mjs,
+  //   bench_flop_core.py). Accurate: 64 over every river, 520-870 iterations in 60 s in numpy (0.03-0.05% of the pot
+  //   from equilibrium in its game), its 1000 in 16-31 s in the core (0.01%). Against a solve over every turn (12 flops, scripts/bench_solver.py --flop) at 400 iterations
   //   the c-bet is 2.5 / 1.8 points off on average, the size split 4.1 / 2.3, BB's check 1.6 / 1.3. Accurate played
   //   the turn and river per combo until measured here: 54 iterations in 60 s on a rainbow flop (7.5 points of
   //   c-bet, 12.7 of split, 8.5 of check), ~25-30 on a two-tone one (at 25: 14.4, 18.4, 18.4) where, still 10% of
