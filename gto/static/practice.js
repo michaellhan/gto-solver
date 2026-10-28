@@ -5,7 +5,7 @@
 // stays hidden on your turn and shows once you've acted. Your seat (Your seat): Table (the default: a real ring
 // game, you at one seat, the button moving one seat each hand and every seat's chips carried over), Random, or
 // one position every hand. While you decide, the lines you are likeliest to take are asked for ahead (see ahead()).
-// The running score, the table and your last decisions (Review mistakes) are kept in this browser.
+// The running score, the table and your last decisions (Review mistakes) are kept in this browser; Start over clears them.
 "use strict";
 (() => {
   const ON = "gto-practice", HABITS = "gto-practice-habits", STATE = "gto-practice-state", HAND = "gto-practice-hand", SCORE = "gto-practice-score", SEAT = "gto-practice-seat", REVIEW = "gto-practice-review", DRILL = "gto-practice-drill", HINT = "gto-practice-hint", TABLE = "gto-practice-table";
@@ -123,6 +123,16 @@
   }
   // Reset stacks: every seat back to the starting stack, from a new hand
   function rebuyAll() { if (P.table) { P.table.seats = P.table.seats.map(() => P.table.start); store(TABLE, P.table); } next(); }
+  // Start over (the score's button, or Reset practice in the ⋯ menu): the score, your last decisions, what you
+  // usually do (habits) and the table (every seat's chips, the button) cleared, from a new hand; your seat, the drill
+  // and the setup stay. Asked first.
+  function startOver() {
+    if (typeof confirm === "function" && !confirm("Start practice over? Your score, mistakes and the table's stacks are cleared, and a new hand is dealt.")) return false;
+    P.score = { ...ZERO }; P.review = []; P.habits = {}; P.table = null; P.rev = false; P.pick = null;
+    store(SCORE, P.score); store(REVIEW, P.review); store(HABITS, P.habits); store(TABLE, null);
+    next();
+    return true;
+  }
 
   // ---- dealing
   // the table (stacks, ante, straddle, rake; at the table the starting stack too, though every seat has its own):
@@ -813,7 +823,7 @@
       + `<span><b class="num ${sc.net > 0 ? "pos" : sc.net < 0 ? "neg" : ""}">${sc.hands ? money(Math.round(sc.net * 100) / 100) : "–"}</b> won</span>`
       + `</div><div class="cx-tools">`
       + (P.review.length ? `<button class="small rev" id="pxRev" aria-expanded="${P.rev}">${P.rev ? "Hide mistakes" : "Review mistakes"}${mistakes().length ? `<span class="n">${mistakes().length}</span>` : ""}</button>` : "")
-      + `<button class="small ghost" id="pxReset" title="Reset your practice score and mistakes">Reset</button></div>`;
+      + `<button class="small ghost" id="pxReset" title="Clear your score, mistakes and the table's stacks, and deal a new hand (also Reset practice in the ⋯ menu)">Start over</button></div>`;
   }
   // Review mistakes: of your last REVIEW_KEEP decisions, the REVIEW_SHOW that gave up the most EV (then the
   // rarest in the solver's mix: preflop has no EVs), each opening its verdict
@@ -924,7 +934,7 @@
       P.detail = !P.detail; store("gto-practice-detail", P.detail); renderAll();
       const pa = P.detail && document.getElementById("pAdvice"); if (pa && pa.scrollIntoView) pa.scrollIntoView({ behavior: "smooth", block: "start" });
     });
-    on("pxReset", () => { if (typeof confirm === "function" && !confirm("Reset your practice score and mistakes?")) return; P.score = { ...ZERO }; store(SCORE, P.score); P.review = []; store(REVIEW, P.review); renderAll(); });
+    on("pxReset", startOver);
     on("pxRev", () => { P.rev = !P.rev; P.pick = null; renderAll(); });
     on("pxRebuy", () => { if (typeof confirm === "function" && !confirm("Put every seat back to the starting stack and deal a new hand?")) return; rebuyAll(); });
     on("pxRun2", runOut);
@@ -989,7 +999,7 @@
     return { after: end ? P.table.seats[seatOf(p, h.tbl.btn, S.players)] : null, won: pays[p] || 0 };
   }
 
-  window.Practice = { get on() { return P.on; }, get running() { return P.running; }, set, tick, next, shown, seatView, runLabel, runOut, rebuyAll,
+  window.Practice = { get on() { return P.on; }, get running() { return P.running; }, set, tick, next, shown, seatView, runLabel, runOut, rebuyAll, startOver,
     graded, regraded, rank7, handName, settle, posAt, fromAhead, auto, seeking, state: P, ahead: A,
     ai: { prompt, spot, heroRead, click: aiClick, explain, keyOf, state: AI, md } };
 })();

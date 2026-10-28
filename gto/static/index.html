@@ -630,6 +630,7 @@
       <button id="flopReports" title="The precomputed spots' flop strategy across every flop, by texture; click a flop to load it">Flop reports…</button>
       <button id="swapCols" class="wideonly" title="Put the advice on the left and the table on the right">Advice on the left</button>
       <div class="sep"></div>
+      <button id="resetPractice" class="pxonly" title="Clear your practice score, mistakes and the table's stacks, and deal a new hand">Reset practice…</button>
       <button id="resetLayout" title="Default column widths, table size and panels">Reset layout</button>
       <div class="hint wideonly">Drag the divider between the columns, or the bar under the table, to resize. Click a panel's title to fold it.</div>
     </div>
@@ -2277,6 +2278,8 @@ function loadPractice() {
     s.onload = () => res(window.Practice); s.onerror = () => rej(new Error("could not load practice.js")); document.head.appendChild(s); });
 }
 document.getElementById("practiceBtn").onclick = () => loadPractice().then(P => P.set(!P.on)).catch(e => showErr(String(e)));
+// Reset practice (the ⋯ menu, shown while practising): the score's Start over
+document.getElementById("resetPractice").onclick = () => { document.getElementById("menu").hidden = true; if (practicing()) window.Practice.startOver(); };
 // ---- routes: the URL's view (a back or forward, or the page opened at it), opened without pushing. Practice is on at
 // /practice/ and off at the solver's URL, whatever it was last time (its "gto-practice" is no longer read); a view over
 // the page (reports, drills, session, study, import) leaves Practice as it is.

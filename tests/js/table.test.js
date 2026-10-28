@@ -142,6 +142,36 @@ test("every seat's chips carry over; a short seat rebuys; Reset stacks; the solv
   assert.deepEqual([T(p).start, T(p).seats], [40, [40, 40, 40, 40, 40, 40]]);
 });
 
+test("Start over (and Reset practice in the ⋯ menu): the score, mistakes, habits and the table cleared, a new hand; asked first", async () => {
+  const p = await tablePage(5);
+  for (let k = 0; k < 2; k++) { await playHand(p); p.run("Practice.next()"); await flush(); }
+  const before = p.val("Practice.state");
+  assert.equal(before.score.hands, 2);
+  assert.ok(before.review.length > 0 && Object.keys(before.habits).length > 0);
+  assert.notDeepEqual(T(p).seats, [100, 100, 100, 100, 100, 100]);
+  p.run("renderAll()");
+  assert.match(p.byId("practiceBar").innerHTML, /<button class="small ghost" id="pxReset"[^>]*>Start over<\/button>/);
+  // declined: nothing changes
+  p.ctx.confirm = () => false;
+  assert.equal(p.val("Practice.startOver()"), false);
+  assert.equal(p.val("Practice.state.score.hands"), 2);
+  const seq = T(p).seq, hole = p.val("Practice.state.hand.hole");
+  // from the ⋯ menu: everything cleared in this browser too, a new table (every seat at the setup's stack), Hand 1
+  p.ctx.confirm = () => true;
+  p.click("resetPractice");
+  await flush();
+  const after = p.val("Practice.state");
+  assert.deepEqual([after.score.hands, after.score.decisions, after.score.net, after.review, after.habits], [0, 0, 0, [], {}]);
+  assert.deepEqual([T(p).seats, T(p).seq], [[100, 100, 100, 100, 100, 100], 1]);
+  assert.notEqual(T(p).seq, seq);
+  assert.notDeepEqual(after.hand.hole, hole);
+  assert.equal(after.hand.result, null);
+  for (const k of ["score", "review", "habits"]) assert.deepEqual(JSON.parse(p.storage.get("gto-practice-" + k)), after[k]);
+  assert.deepEqual(JSON.parse(p.storage.get("gto-practice-table")).seats, [100, 100, 100, 100, 100, 100]);
+  assert.equal(p.byId("pxHandNo").textContent, "Hand 1");
+  assert.equal(p.val("Practice.state.seat"), "table");   // (your seat and the drill stay)
+});
+
 // a fixed hand at the table, played to its end: 3-handed, every action given
 function fixed(p, { stacks, actions, hole, hands, board, btn = 0 }) {
   p.run(`S = { ...fresh(3), hero: Practice.posAt(0, ${btn}, 3), stack: 100, ${stacks ? `stacks: ${JSON.stringify(stacks)},` : ""} cards: ${JSON.stringify([...hole, ...board])},

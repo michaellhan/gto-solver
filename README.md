@@ -327,9 +327,11 @@ for its mix), Breakdown and Equity, without the rows the verdict card already gi
 has moved on from, or one from the lists below, has none). At the end the
 opponents' cards are shown at showdown with your result, the verdict on your last decision and the hand's
 decisions with the EV each gave up, and **Next hand** (N) takes the action buttons' place (N does nothing mid-hand). The score
-(hands, how often your action was in the solver's strategy, average EV given up per decision, chips won; **Reset**)
+(hands, how often your action was in the solver's strategy, average EV given up per decision, chips won)
 is kept in the browser, with your last 60 decisions; on a wide screen the eight most recent are listed under it,
-newest first, each opening its spot like a mistake below. **Review mistakes** under the score (with how many) lists the six of them that gave up
+newest first, each opening its spot like a mistake below. **Start over** under the score (or **Reset practice…** in
+the ⋯ menu) clears the score, those decisions and the table's chips and deals a new hand at Hand 1, once you confirm;
+your seat, the drill and the setup stay. **Review mistakes** under the score (with how many) lists the six of them that gave up
 the most EV (then the rarest in the solver's mix: preflop has no EVs; never the solver's top move), each with its hand number, cards and street,
 and a click (or Enter) opens that spot's board, the action before you and its verdict. On a wide screen the Hand
 panel scrolls on its own while practising, its newest line in view, so the table and the action buttons stay on

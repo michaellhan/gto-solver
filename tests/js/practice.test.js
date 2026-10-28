@@ -559,10 +559,11 @@ test("Review mistakes: your decisions that gave up the most EV across hands, eac
   html = p.byId("practiceBar").innerHTML;
   assert.match(html, /<li class="spot">.*<span class="verdict">Good<\/span>.*you <b>folded<\/b>/);
   assert.doesNotMatch(html.split('<li class="spot">')[1], /pxDetail/, "the full analysis is for your last decision only");
-  // kept with the score in this browser; Reset clears both
+  // kept with the score in this browser; Start over clears both
   assert.equal(JSON.parse(p.storage.get("gto-practice-review")).length, 2);
   p.run("confirm = () => true");
-  p.run("Practice.state.review = []; renderAll()");
+  p.run("Practice.startOver()"); await flush();
+  assert.equal(p.storage.get("gto-practice-review"), "[]");
   assert.doesNotMatch(p.byId("practiceBar").innerHTML, /pxRev/);
 });
 
