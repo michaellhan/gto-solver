@@ -186,7 +186,7 @@ filter by high card, suits (rainbow, two-tone, monotone), pairing and connectedn
 groups' averages (each flop weighted by how many of the 22100 flops it stands for; a group row filters to it).
 Clicking a flop loads that hand: the spot's preflop action, the flop, the action up to the node, and you as the player
 to act with the hand that mixes most there, so the precomputed advice appears at once. The data is one small
-`flop_library/<spot>/report.json` per spot (~45 KB, ~12 KB gzipped; ~135 KB on 552 flops, 430 KB / 80 KB gzipped for BTN vs BB's 1755), written with the library's index
+`flop_library/<spot>/report.json` per spot (~45 KB, ~12 KB gzipped; ~135 KB on 552 flops, 430 KB / 80 KB gzipped on all 1755, SB vs BB's 530 / 113 KB), written with the library's index
 (`flop_library.build_report`, see Building below); the panel is `gto/static/reports.js`, loaded when first opened.
 
 **Drills** (in the ⋯ menu) drill one flop decision of the precomputed library, like GTO Wizard's trainer: pick a
@@ -222,9 +222,9 @@ Preflop it shows the charts' mix (no EVs or equities). After the flop it browses
 answer is the 3-player solve's: on the [3-way library](#precomputed-3-way-flop-library)'s flops their checked-to
 first decisions are instant (BTN open, SB and BB call on Kd7c2h: 0.4 s), and every other node is solved live from
 there, the ranges narrowed through the solves Study answered from (a Fast 3-way turn or river ~8 s in the browser,
-~100 iterations, 0.1-0.3% of the pot). A 3-way flop the library doesn't hold is solved live too, which Fast's 5 s
-rarely settles (natively on a loaded machine 12-23 iterations, 17-40% of the pot: an error says so) and Accurate's
-30 s takes to 5-6% on most (51 iterations; flagged as rough). Equity (and EQR) only on the river, as a share of the pot at showdown against
+~100 iterations, 0.1-0.3% of the pot). A 3-way flop the library doesn't hold is solved live too, for at least 15 s
+(`MW_STUDY_FLOP_BUDGET`; the advice's Fast 5 s rarely settles one: natively on a loaded machine 12-23 iterations,
+17-40% of the pot, where 15 s ran 51-77, 1.1-1.9%). Equity (and EQR) only on the river, as a share of the pot at showdown against
 the two other ranges; before it the views are Strategy, EV and Breakdown. A 3-way spot the solver can't take (a bet
 bigger than the shortest stack can call, a solve still over 10% of the pot from equilibrium) is an error, not the
 betting rules. The panel is `gto/static/study.js`, loaded when first opened; it asks the solver with `"study": true`
@@ -1417,18 +1417,20 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
 * **Flops**: canonical flops matched up to suits (the ranges are suit-symmetric, so a stored flop's solve is any
   suit permutation's, its combos permuted); other flops are solved live. Each spot stores a representative set
   (`representative_flops(n)`: the 1755 suit-isomorphic flops sorted by texture and sampled by weight, so each suit
-  pattern, pairing and height gets its share): 184 flops (12.7% of all flops) for the 3bet pots; 552 (38%; it holds
-  the 184) for HJ, UTG and SB vs BB; every flop for BTN and CO vs BB (`SPOT_FLOPS`).
+  pattern, pairing and height gets its share): 184 flops (12.7% of all flops) for the 3bet pots; every flop for the
+  five single-raised pots (`SPOT_FLOPS`).
 * **Coverage** (`scripts/flop_library_coverage.py`: the 6-max 100bb preflop game played by the charts, the flop by
-  the stored strategies): 36% of hands go heads-up to the flop, and the library answers 49.2% of their flop
-  decisions (36.1% before CO vs BB on every flop and SB vs BB on 552, 21.3% before format 2 made room, 9.4% with
-  184 flops everywhere). Of the rest, a flop not stored is 26 points, a spot not in the library 22 (HJ / UTG
-  flatted by the BTN 6.3, CO vs the SB's 3bet 1.2, each other 3bet pot ~1, 4bet pots 1.5 together), a raise 2.7.
-  A flop's entry is worth its spot's share times its suit count, so more flops of the commonest spots beat new
-  spots; by points per MB (`--assume`): BTN vs BB on every flop +12.4 for 4.5 MB, CO vs BB on 1656 (90%) +7.6 for
-  2.8, UTG vs BB on 552 +2.4 for 1.05, SB vs BB on 552 +3.5 for 2.1 (its wide ranges' entries are the biggest), all
-  built; next, on every flop: SB vs BB +8.6 for ~6.9 MB, HJ vs BB +7.8 for ~3.9, UTG vs BB +6.1 for ~3.4 (HJ vs
-  the BTN's flat on 184: +0.3).
+  the stored strategies): 36% of hands go heads-up to the flop, and the library answers 71.6% of their flop
+  decisions (49.2% before HJ, UTG and SB vs BB on every flop, 36.1% before CO vs BB on every flop and SB vs BB on
+  552, 21.3% before format 2 made room, 9.4% with 184 flops everywhere). Of the rest, a spot not in the library is
+  22.3 points (the HJ's open flatted by the CO 2.5, the BTN's by the SB 1.5, the UTG's by the HJ 1.4, the CO's by
+  the SB 1.2, the UTG's by the BTN 1.2; CO vs the SB's 3bet 1.2, each other 3bet pot ~1; 4bet pots 1.5 together),
+  a flop not stored 3.4 (the 3bet pots'), a raise 2.7. A flop's entry is worth its spot's share times its suit
+  count, so more flops of the commonest spots beat new spots; by points per MB (`--assume`): BTN vs BB on every
+  flop +12.4 for 4.5 MB, CO vs BB on 1656 (90%) +7.6 for 2.8, UTG vs BB on 552 +2.4 for 1.05, SB vs BB on 552 +3.5
+  for 2.1, then on every flop SB vs BB +8.6 for 6.0 MB (its wide ranges' entries are the biggest), HJ vs BB +7.8 for
+  3.5, UTG vs BB +6.1 for 3.1, all built; next, on every flop: those five flatted opens +7.4 (the CO's flat of the
+  HJ +2.4 alone), the 3bet pots (those five and the three stored) +8.6.
 * **What is stored**: the flop's first decisions (the root; the in-position player after a check or facing a
   lead; the out-of-position player facing a bet after checking), only where the other player gets there with 5%
   or more of their range (a lead the big blind never makes is the solve's noise, and the advisor solves live
@@ -1444,10 +1446,11 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   against 2-5% between the library's model and every turn played (frequencies: 0.2 points). Recoded from format 1
   without solving (`--recode`): 14.06 -> 8.77 MB (rainbow flops -22%, the rest ~-50%), 1.5-6 KB a flop. Pages
   gzips `.bin` too (`application/octet-stream`, `content-encoding: gzip`), but zlib'd files gain nothing (+0.7%):
-  what's stored is what's downloaded, so the 25 MB cap is on both.
+  what's stored is what's downloaded, so the test's 40 MB cap is on both (the page fetches only the entry a spot
+  needs, 1.5-6 KB).
 * **Tree**: Accurate's flop model (one turn per rank class, the river bet on; the browser's Accurate config,
   which plays the same flop game as the native one), two flop sizes, 300-800 iterations, to at most 0.15% of the
-  pot from equilibrium (mean 0.107%; paired and trips boards settle slowest, and 17 that the old cap of 500
+  pot from equilibrium (mean 0.109%; paired and trips boards settle slowest, and 17 that the old cap of 500
   iterations left at 0.15-0.54% were solved again) (the live Accurate solve gets ~0.3-0.4% in the server's 30 s and 60-75 iterations in the
   browser's 60 s). The 3bet pots (`RIVER_DEALT_SPR`: a stack under 8 pots) deal the river instead of betting it
   on the turn's boards: every river card under each turn, played on each card by 64 buckets of strength there
@@ -1501,11 +1504,16 @@ python scripts/build_flop_library.py --index-only
 python scripts/build_flop_library.py --recode        # format-1 entries to the current format, no solving (~5 min)
 ```
 
-Each entry takes ~40-60 s natively on a rainbow flop and up to twice that two-tone, on an idle core (several
-times that on a loaded machine; 3bet pots ~10-25 s): the whole library (5718 entries) ~16 hours on 5 cores (BTN vs
-BB's other 1203 flops and UTG's 368 took 4 hours; CO vs BB's other 1203 and SB vs BB's 368 3.5 hours on 7). After
-changing the charts or the flop model, run it again (stale entries are re-solved). A spot on every flop is 5.5-7 MB
-(SB vs BB's wide ranges ~10): the test holds the library (20.06 MB) under 25 MB.
+Each entry takes ~40-60 s in numpy on a rainbow flop and up to twice that two-tone, on an idle core, and ~2.3x
+less on the compiled core (`gto/core.py`; several times that on a loaded machine; 3bet pots ~10-25 s): the whole
+library (9327 entries) ~8 hours on 8 processes on the core (SB vs BB's last 282 flops, HJ's and UTG's other 1203
+took 133 minutes; in numpy BTN vs BB's other 1203 flops and UTG's 368 took 4 hours on 5, CO vs BB's other 1203 and
+SB vs BB's 368 3.5 hours on 7). Five of those 2688 (srp_sb_bb KdKcQc and KcQcTc, srp_utg_bb AcQdTh,
+KcTd9d and AcKdQd) ran to 23-73% of the pot after 1000 iterations, a regret sum under float32's smallest normal
+(fixed since) gone NaN, and were solved again with `GTO_CORE=0`: an entry the build leaves over `--target` at
+`--max-iters` is worth a second look.
+After changing the charts or the flop model, run it again (stale entries are re-solved). A spot on every flop is
+4.6-6.8 MB (SB vs BB's wide ranges 9.2): the test holds the library (32.93 MB) under 40 MB.
 
 ### Precomputed 3-way flop library
 

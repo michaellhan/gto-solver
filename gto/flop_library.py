@@ -82,12 +82,12 @@ SPOTS = [
     ("3bp_sb_btn", "SB 3bet vs BTN", "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:r10,BB:f,BTN:c"),
 ]
 # How many representative flops each spot stores (representative_flops(n); an odd multiple of a set holds it: 552 =
-# 3 x 184, 1656 = 3 x 552; 1755 is every flop): the commonest single-raised pots get more, by coverage per MB
+# 3 x 184, 1656 = 3 x 552; 1755 is every flop): the single-raised pots every flop, by coverage per MB
 # (scripts/flop_library_coverage.py --assume; a flop not stored was 53 of the 79 points of heads-up flop decisions
-# the library missed): BTN vs BB on every flop +12.4 points for 4.5 MB, UTG vs BB on 552 +2.4 for 1.05 MB (SB vs BB
-# on 552: +3.5 for 2.1 MB, its ranges' entries the biggest), the rest REP_FLOPS.
+# the library missed): BTN vs BB on every flop +12.4 points for 4.5 MB, then SB vs BB +8.6 for 6.0 MB (its ranges'
+# entries the biggest), HJ vs BB +7.8 for 3.5, UTG vs BB +6.1 for 3.1; the 3bet pots REP_FLOPS.
 REP_FLOPS = 184
-SPOT_FLOPS = {"srp_btn_bb": 1755, "srp_co_bb": 1755, "srp_hj_bb": 552, "srp_utg_bb": 552, "srp_sb_bb": 552}
+SPOT_FLOPS = {"srp_btn_bb": 1755, "srp_co_bb": 1755, "srp_hj_bb": 1755, "srp_utg_bb": 1755, "srp_sb_bb": 1755}
 
 
 def spot_setup(line: str, players: int = 6, stack: float = 100.0) -> dict:

@@ -458,7 +458,8 @@ class TestShippedLibrary(unittest.TestCase):
                 size = os.path.getsize(os.path.join(fl.DIR, sp["id"], name + ".bin"))
                 self.assertLess(size, 200_000)
                 total += size
-        self.assertLess(total, 25e6)
+        # (the page fetches an entry when its spot comes up: the total is the repository's and the deploy's)
+        self.assertLess(total, 40e6)
 
     def test_reports_match_the_index(self):
         """Each shipped spot's report.json (the page's flop reports) is the one the index hashes, holds the index's
@@ -472,7 +473,7 @@ class TestShippedLibrary(unittest.TestCase):
             with open(os.path.join(fl.DIR, sp["id"], "report.json"), "rb") as f:
                 data = f.read()
             self.assertEqual(sp["report"], hashlib.sha1(data).hexdigest()[:10], sp["id"])
-            self.assertLess(len(data), 500_000)   # (~45 KB on 184 flops, ~135 KB on 552, ~430 KB (80 KB gzipped) on all 1755)
+            self.assertLess(len(data), 600_000)   # (~45 KB on 184 flops, ~135 KB on 552, ~430 KB (80 KB gzipped) on all 1755, SB vs BB's 530 (113))
             rep = json.loads(data)
             self.assertEqual({x["f"]: x["hash"] for x in rep["flops"]}, sp["flops"])
             self.assertAlmostEqual(sum(x["w"] for x in rep["flops"]), 22100, delta=1)

@@ -61,6 +61,10 @@ MW_FLOP_BETS = {"flop": [0.33, 0.75], "turn": 0.5, "river": 0.5}
 # checked to 85, 0.44%; a turn 110, 0.15%). (Practice's quick answers leave 3-way flops and turns to the rules.)
 MW_QUICK_BUDGET = 1.8   # Practice's quick answers: a 3-way river's least budget (its tables take ~0.7 s in the browser:
                         # at 1.2 s it ran 4 iterations, 19% of the pot from equilibrium; at 1.5, 7-19, 2-8.5%)
+# Study's 3-way flop (one the 3-way library doesn't hold) gets longer than the advice's: browsing waits for an answer,
+# and Fast's 5 s rarely settled one (natively on a loaded machine 12-23 iterations, 17-40% of the pot from equilibrium,
+# over mw_max_expl: no answer); in 15 s 51-77, 1.1-1.9% (Qs8h3d, Ah9s9d, Tc9c8d, BTN open, SB and BB call)
+MW_STUDY_FLOP_BUDGET = 15.0
 MW_FAST = {"later": "buckets", "buckets": 6, "bucket_river_step": 6}
 MW_FAST_STREETS = {"flop": dict(MW_FAST, bet={"flop": [0.5], "turn": 0.5, "river": 0.5}), "turn": dict(MW_FAST)}
 HU_RESERVE = 1.0   # heads-up solves likewise keep one iteration's time back (the exploitability read after: ~1 iteration)
@@ -3158,6 +3162,8 @@ class Advisor:
         # browser), the iterations, and the gains and EVs read off after them (MW_RESERVE iterations' time)
         # (a solve its budget ran out on isn't run again: a later request for the spot gets the same answer)
         budget = max(self.time_budget, MW_QUICK_BUDGET if getattr(self, "_quick", False) else self.mw_budget or 0.0)
+        if self._study and cur.name == "flop":
+            budget = max(budget, MW_STUDY_FLOP_BUDGET)
         spent = sol.build_seconds + sol.seconds
         left = min(budget - spent, budget - (time.time() - t0))
         self._mw_run(sol, left)
