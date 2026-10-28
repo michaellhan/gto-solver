@@ -1775,7 +1775,7 @@ class Advisor:
         self._breakdown = False   # this request asked for the breakdown (state "breakdown": true)
         self._lib_only = False    # state "library_only": a flop the library holds, else {"skipped": …}, no solve
         self._study = False       # state "study": Study mode's answer (Advisor.study)
-        self._runout_close = None # Study's runout report: the action that closed the flop (Advisor._runouts)
+        self._runout_close = None # Study's runout report: the action that closed the flop or turn (Advisor._runouts)
         self._req_sizes: Dict[str, List[float]] = {}   # the request's custom sizes (state "sizes"), as fractions
 
     # ------------------------------------------------------------ public
@@ -1802,37 +1802,44 @@ class Advisor:
             return self._advise(st)
 
     def _runouts(self, st: dict) -> dict:
-        """Study mode's runout report (state "runouts": true, once a heads-up flop's betting closed): the turn's first
-        decision on every turn card, the first player's mix and the second's after a check, read off a live solve of
-        the flop (the library's entries hold the flop only), whose tree plays the turn under each turn class: the
-        decision that closed the flop is walked to as Study would answer it, and the turn below its closing action
-        read (Advisor._runout_report). The flop solve's view of the turn: one bet size there (Config.later_sizes)
-        and each class's cards alike; a turn dealt and solved on its own can mix in other sizes."""
-        flop = list(st.get("flop") or [])
-        if len(parse_cards(str(st.get("board") or ""))) != 3 or not flop:
-            return {"error": "the runout report needs a flop whose betting is done (and no turn yet)"}
-        self._runout_close = str(flop[-1].get("action"))
+        """Study mode's runout report (state "runouts": true, once a heads-up flop's or turn's betting closed): the
+        next street's first decision on every card, the first player's mix and the second's after a check, read off
+        a live solve of the street that closed (the library's entries hold the flop only), whose tree plays the next
+        street under each card or card class: the decision that closed the street is walked to as Study would answer
+        it, and the street below its closing action read (Advisor._runout_report). The flop solve's view of the
+        turn: one bet size there (Config.later_sizes) and each turn class's cards alike; the turn solve's view of
+        the river: its sizes there. A card dealt and solved on its own can mix in other sizes."""
+        street = {3: "flop", 4: "turn"}.get(len(parse_cards(str(st.get("board") or ""))))
+        line = list(st.get(street) or []) if street else []
+        if not line or st.get("river"):
+            return {"error": "the runout report needs a flop or turn whose betting is done (and the next card not dealt)"}
+        self._runout_close = str(line[-1].get("action"))
         try:
             with np.errstate(all="ignore"):
-                return self._advise(dict(st, flop=flop[:-1]))
+                return self._advise(dict(st, **{street: line[:-1]}))
         finally:
             self._runout_close = None
 
     def _runout_report(self, sol, node, n_r0, n_r1, hero, villain, hero_p, board, expl, notes, t0):
-        """The runout report (Advisor._runouts) from the flop solve at the decision that closed the flop: per turn
-        class (Ctx.turn_classes: a rank's cards, a flush suit's apart) the first turn decision's mix over its player's
-        range there (f), and the second player's after a check; avg: over every turn card. A turn played by hand
-        buckets (Fast's flop model, BucketEntry) is read by the buckets' masses."""
+        """The runout report (Advisor._runouts) from the flop's or turn's solve at the decision that closed the
+        street: per card of the next street (per class where the tree plays one for several: Ctx.turn_classes, a
+        rank's cards, a flush suit's apart) the first decision's mix over its player's range there (f), and the second
+        player's after a check; avg: over every card. A turn played by hand buckets (Fast's flop model, BucketEntry)
+        is read by the buckets' masses."""
         a = match_action(node.names, self._runout_close)
         ch = node.children[a]
+        nxt = "turn" if len(board) == 3 else "river"
         if not isinstance(ch, Chance) or not isinstance(ch.child, (Decision, BucketEntry)):
-            return {"error": "no turn to report on: the flop's betting isn't closed, or nobody can bet any more"}
+            return {"error": f"no {nxt} to report on: the betting isn't closed, or nobody can bet any more"}
         seat = lambda p: hero if p == hero_p else villain
         r = [np.asarray(n_r0, dtype=np.float64).reshape(-1), np.asarray(n_r1, dtype=np.float64).reshape(-1)]
         r[node.player] = r[node.player] * node.avg_strategy()[0, a]
         K = ch.K
-        masks = ch.masks.reshape(K, -1)
-        m = [r[0] * masks, r[1] * masks]     # (K, n): each player's reach on each turn class
+        if ch.perm is not None:              # river classes: a class's reach through its cards' swaps (Chance.spread)
+            m = [ch.spread(x[None, :], np.zeros(1, dtype=np.intp)) for x in r]
+        else:
+            masks = ch.masks.reshape(K, -1)
+            m = [r[0] * masks, r[1] * masks]     # (K, n): each player's reach on each card or class
         dec, rows = ch.child, ch.child.boards
         if isinstance(dec, BucketEntry):
             T, ids = sol.solver._btab(dec)[:2]
@@ -1845,8 +1852,12 @@ class Advisor:
                     np.add.at(out[k], ids[k % T, p], x[k])
                 return out[:, :W]
             m = [to_buckets(0, m[0]), to_buckets(1, m[1])]
-        classes = dict(sol.ctx.turn_classes(tuple(board), set(board)))
-        members = [classes.get(b[3], (b[3],)) for b in rows]
+        i = len(board)                       # (the dealt card's place in a row's board)
+        if ch.umasks is not None or ch.perm is not None:     # a child per class of cards
+            classes = dict(sol.ctx.turn_classes(tuple(board), set(board)))
+            members = [classes.get(b[i], (b[i],)) for b in rows]
+        else:
+            members = [(b[i],) for b in rows]
         n_cards = np.array([len(c) for c in members], dtype=np.float64)
 
         def part(d, mm):
@@ -1858,23 +1869,25 @@ class Advisor:
             wk = n_cards * tot
             avg = (f * wk[:, None]).sum(axis=0) / max(float(wk.sum()), 1e-12)
             return s, {"actor": seat(d.player), "actions": list(d.names), "avg": [round(float(x), 4) for x in avg],
-                       "cards": [{"card": card_str(rows[k][3]), "cards": [card_str(c) for c in members[k]],
+                       "cards": [{"card": card_str(rows[k][i]), "cards": [card_str(c) for c in members[k]],
                                   "f": [round(float(x), 4) for x in f[k]]} for k in range(K)]}
         s1, first = part(dec, m)
         after = None
         if "check" in dec.names:
-            i = dec.names.index("check")
-            nxt = dec.children[i]
-            if isinstance(nxt, Decision):
+            c = dec.names.index("check")
+            then = dec.children[c]
+            if isinstance(then, Decision):
                 m2 = list(m)
-                m2[dec.player] = m[dec.player] * s1[:, i, :]
-                after = part(nxt, m2)[1]
+                m2[dec.player] = m[dec.player] * s1[:, c, :]
+                after = part(then, m2)[1]
         notes = list(notes) + [
             "the flop solve's view of the turn: it plays one bet size there and each turn class's cards alike (a "
-            "rank's cards, a flush suit's apart); a turn dealt is solved on its own, with more sizes"]
-        return {"study": "runouts", "street": "turn", "first": first, "after_check": after,
+            "rank's cards, a flush suit's apart); a turn dealt is solved on its own, with more sizes" if nxt == "turn"
+            else "the turn solve's view of the river: its river sizes (" + ", ".join(dec.names[1:]) + "); a river "
+            "dealt is solved on its own, with its own menu of sizes"]
+        return {"study": "runouts", "street": nxt, "first": first, "after_check": after,
                 "solver": {"iterations": int(sol.iters), "exploitability_pct": round(float(expl), 3),
-                           "turn": "hand buckets" if isinstance(ch.child, BucketEntry) else "every hand"},
+                           "by": "hand buckets" if isinstance(ch.child, BucketEntry) else "every hand"},
                 "notes": notes, "seconds": round(time.time() - t0, 2)}
 
     def _advise(self, state: dict, actor=None) -> dict:
@@ -2742,9 +2755,11 @@ class Advisor:
         hero_p = 0 if hero == oop else 1
         r0, r1 = ranges[oop].copy(), ranges[ip].copy()
         full = (ranges[oop], ranges[ip])   # the ranges entering the flop: they pick a precomputed spot (flop_library)
-        # (the library's solves are in chips: a tournament solves live)
+        # (the library's solves are in chips: a tournament solves live; the flop's runout report reads the turn under a
+        # live flop solve, as the library's entries hold the flop only, while the river's keeps the flop Study answered)
         lib = self.library if self.library is not None and not pool and not optimize and not (locks or {}).get(villain) \
-            and not getattr(self, "_jam", False) and self._runout_close is None and getattr(self, "_icm", None) is None else None
+            and not getattr(self, "_jam", False) and (self._runout_close is None or len(board) > 3) \
+            and getattr(self, "_icm", None) is None else None
         lib_sol = None
         for c in hole:  # villain can't hold hero's cards
             if hero_p == 0:

@@ -187,6 +187,10 @@ test("the actions table, the range's totals, a hand's combos and the status line
   assert.equal(S.solverHtml(NODE), "Precomputed (BTN vs BB): 400 iterations, 0.11% of the pot from equilibrium.");
   assert.match(S.solverHtml({ ...NODE, precomputed: null, solver: { iterations: 90, solve_seconds: 3.456, exploitability_pct: 0.5 } }),
                /^Solved live in 3\.46 s: 90 iterations, 0\.5% of the pot/);
+  assert.doesNotMatch(S.solverHtml({ ...NODE, precomputed: null, solver: { iterations: 90, solve_seconds: 3.456, exploitability_pct: 0.5 } }), /sy-rough/);
+  // a live solve cut short is flagged: 3% of the pot "meh", 10% "bad"
+  assert.match(S.solverHtml({ ...NODE, precomputed: null, solver: { iterations: 12, solve_seconds: 9, exploitability_pct: 4 } }), /<span class="sy-rough meh">Cut short/);
+  assert.match(S.solverHtml({ ...NODE, precomputed: null, solver: { iterations: 12, solve_seconds: 9, exploitability_pct: 24 } }), /sy-rough bad/);
   assert.match(S.solverHtml({ street: "preflop" }), /charts' mix/);
   h = S.lineHtml(S.deal(SPOT, "Kd7c2h"), NODE);
   assert.equal((h.match(/data-step=/g) || []).length, 6);
@@ -307,7 +311,7 @@ test("the filter: one made hand or draw, the grid, the range's totals and the co
   assert.equal((d.match(/<tr title=/g) || []).length, 1);
 });
 
-test("the runout report: every turn card by rank and suit, the board's blank, the mix and the bet share, two players", () => {
+test("the runout report: every turn (or river) card by rank and suit, the board's blank, the mix and the bet share, two players", () => {
   // shaped like Advisor.study's {"runouts": true} on Kd7c2h after check, bet, call: two classes stand for the 49 cards
   const off = new Set(["Kd", "7c", "2h"]), all = [];
   for (const r of "AKQJT98765432") for (const s of "shdc") if (!off.has(r + s)) all.push(r + s);
@@ -315,19 +319,34 @@ test("the runout report: every turn card by rank and suit, the board's blank, th
   const part = (actor, f7, fr) => ({ actor, actions: ["check", "bet 75%"], avg: [0.6, 0.4],
     cards: [{ card: "7d", cards: sevens, f: f7 }, { card: "Qh", cards: rest, f: fr }] });
   const RO = { study: "runouts", street: "turn", first: part("BB", [0.9, 0.1], [1, 0]), after_check: part("BTN", [0.8, 0.2], [0.45, 0.55]),
-               solver: { iterations: 400, exploitability_pct: 0.05, turn: "hand buckets" }, notes: [] };
+               solver: { iterations: 400, exploitability_pct: 0.05, by: "hand buckets" }, notes: [] };
   const h = S.runoutsHtml(RO, "first", "Kd7c2h");
   assert.equal((h.match(/class="sy-roc[" ]/g) || []).length, 52);
   assert.equal((h.match(/class="sy-roc off"/g) || []).length, 3);
-  assert.equal((h.match(/data-turn="/g) || []).length, 49);
-  assert.match(h, /data-turn="7s" title="7s: check 90% · bet 75% 10%/);
+  assert.equal((h.match(/data-card="/g) || []).length, 49);
+  assert.match(h, /data-card="7s" title="7s: check 90% · bet 75% 10%/);
   assert.match(h, /data-rowho="first" class="active">BB</);
   assert.match(h, /data-rowho="after" class="">BTN after a check</);
   assert.match(h, /how often BB bets/);
   assert.match(h, /the turn by hand buckets/);
   const a = S.runoutsHtml(RO, "after", "Kd7c2h");
-  assert.match(a, /data-turn="Ah" title="Ah: check 45% · bet 75% 55%/);
+  assert.match(a, /data-card="Ah" title="Ah: check 45% · bet 75% 55%/);
   assert.match(a, /<span class="sy-rov">55%<\/span>/);
   // no check to follow (the first player bet or there's no second decision): one tab
   assert.doesNotMatch(S.runoutsHtml({ ...RO, after_check: null }, "after", "Kd7c2h"), /data-rowho="after"/);
+  // the river's, off a turn solve: every card its own (48 of them), the board's four blank
+  const rivers = all.filter(c => c !== "5s").map(c => ({ card: c, cards: [c], f: c[0] === "5" ? [0.7, 0.3] : [1, 0] }));
+  const RR = { ...RO, street: "river", first: { actor: "BB", actions: ["check", "bet 50%"], avg: [0.95, 0.05], cards: rivers },
+               after_check: null, solver: { iterations: 300, exploitability_pct: 0.1, by: "every hand" } };
+  const rv = S.runoutsHtml(RR, "first", "Kd7c2h5s");
+  assert.equal((rv.match(/class="sy-roc off"/g) || []).length, 4);
+  assert.equal((rv.match(/data-card="/g) || []).length, 48);
+  assert.match(rv, /data-card="5h" title="5h: check 70% · bet 50% 30%/);
+  assert.match(rv, /live solve of the turn/);
+  assert.doesNotMatch(rv, /hand buckets/);
+  assert.doesNotMatch(rv, /sy-rough/);
+  // a solve cut short says so
+  const rough = S.runoutsHtml({ ...RR, solver: { iterations: 13, exploitability_pct: 38.58, by: "every hand" } }, "first", "Kd7c2h5s");
+  assert.match(rough, /class="sy-rough bad">Only 13 iterations: 38\.58% of the pot from equilibrium/);
+  assert.match(S.runoutsHtml({ ...RR, solver: { iterations: 90, exploitability_pct: 4.2 } }, "first", "Kd7c2h5s"), /sy-rough meh/);
 });

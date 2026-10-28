@@ -146,6 +146,21 @@ class TestStudy(unittest.TestCase):
                        runouts=True, budget=1.0)
         self.assertEqual(r["first"]["actor"], "BB")
         self.assertIn("error", self.study(preflop=PRE, board="Kd7c2h", flop=flop[:2], runouts=True, budget=1.0))
+        # a closed turn's: the river's first decision on every card, off a live solve of the turn
+        turn = [{"pos": "BB", "action": "check"}, {"pos": "BTN", "action": "bet", "to": 5.6}, {"pos": "BB", "action": "call"}]
+        r = self.study(preflop=PRE, board="Kd7c2h5s", flop=flop, turn=turn, runouts=True, budget=1.0)
+        self.assertEqual((r["study"], r["street"], r["first"]["actor"], r["after_check"]["actor"]),
+                         ("runouts", "river", "BB", "BTN"))
+        for part in (r["first"], r["after_check"]):
+            cards_in = sorted(c for k in part["cards"] for c in k["cards"])
+            self.assertEqual(len(cards_in), 48)
+            self.assertEqual(len(set(cards_in)), 48)
+            self.assertFalse({"Kd", "7c", "2h", "5s"} & set(cards_in))
+            for k in part["cards"]:
+                self.assertAlmostEqual(sum(k["f"]), 1.0, delta=0.01)
+            self.assertAlmostEqual(sum(part["avg"]), 1.0, delta=0.01)
+        self.assertIn("error", self.study(preflop=PRE, board="Kd7c2h5s", flop=flop, turn=turn[:2], runouts=True,
+                                          budget=1.0))
 
     def test_multiway_after_the_flop(self):
         pre = PRE[:3] + [{"pos": "BTN", "action": "raise", "to": 2.5}, {"pos": "SB", "action": "call"},

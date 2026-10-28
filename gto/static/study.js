@@ -335,17 +335,25 @@
     if (res.stack_bb != null) bits.push(`${num(res.stack_bb)}bb behind`);
     return bits.join(" · ");
   }
+  // a solve cut short (3% of the pot or more from equilibrium, the page's "fair" and "rough"): flagged where it shows
+  const roughness = (s) => { const x = (s && s.exploitability_pct) || 0; return x < 3 ? "" : x < 10 ? "meh" : "bad"; };
   function solverHtml(res) {
     if (res.street === "preflop") return "Preflop: the charts' mix (an approximation: no EVs or equities).";
-    const s = res.solver || {}, p = res.precomputed;
+    const s = res.solver || {}, p = res.precomputed, r = !p && roughness(s);
     const how = p ? `Precomputed (${esc(p.label)})` : `Solved live in ${num(s.solve_seconds || 0)} s`;
-    return `${how}: ${s.iterations} iterations, ${num(s.exploitability_pct)}% of the pot from equilibrium.`;
+    return `${how}: ${s.iterations} iterations, ${num(s.exploitability_pct)}% of the pot from equilibrium.`
+      + (r ? ` <span class="sy-rough ${r}">Cut short: the numbers can be well off (a busy machine runs fewer iterations; Accurate solves longer).</span>` : "");
   }
 
-  // ---- the runout report (Advisor.study with "runouts": a closed flop's turn, read off the flop's solve): every turn
-  // card, ranks across and suits down, with the first turn decision's mix ("first") or the second player's after a
-  // check ("after"); the board's cards blank, any other a button that deals it
+  // ---- the runout report (Advisor.study with "runouts": a closed flop's turn or a closed turn's river, read off that
+  // street's solve): every card, ranks across and suits down, with the first decision's mix ("first") or the second
+  // player's after a check ("after"); the board's cards blank, any other a button that deals it
   const PASSIVE = new Set(["check", "call", "fold"]);
+  function roughHtml(ro) {
+    const s = ro.solver || {}, r = roughness(s);
+    return !r ? "" : `<div class="sy-rough ${r}">Only ${s.iterations} iterations: ${num(s.exploitability_pct)}% of the pot from equilibrium `
+      + `(a busy machine runs fewer), so the cards' numbers can be well off. Accurate solves longer.</div>`;
+  }
   function runoutsHtml(ro, who = "first", board = "") {
     const part = who === "after" && ro.after_check ? ro.after_check : ro.first;
     const by = {}; for (const c of part.cards) for (const x of c.cards) by[x] = c.f;
@@ -354,19 +362,22 @@
     const tabs = [["first", ro.first.actor], ...(ro.after_check ? [["after", `${ro.after_check.actor} after a check`]] : [])];
     let h = `<div class="sy-ro"><div class="sy-ctl"><span class="segment">${tabs.map(([w, t]) => `<button data-rowho="${w}" class="${w === who ? "active" : ""}">${esc(t)}</button>`).join("")}</span>`
       + `<span class="sy-rokey">${acts.map((n, i) => `<span><i style="background:${color(n)}"></i>${esc(n)} <b>${pct(part.avg[i])}</b></span>`).join("")}</span></div>`
-      + `<div class="sy-rogrid" role="group" aria-label="${esc(part.actor)}'s turn strategy by card">`;
+      + roughHtml(ro)
+      + `<div class="sy-rogrid" role="group" aria-label="${esc(part.actor)}'s ${esc(ro.street)} strategy by card">`;
     for (const su of "shdc") for (const r of RANKS) {
       const c = r + su, f = by[c];
       if (on.has(c) || !f) { h += `<div class="sy-roc off">${cardHtml1(c)}</div>`; continue; }
       const bet = f.reduce((t, v, i) => t + (PASSIVE.has(acts[i]) ? 0 : v), 0);
-      h += `<button class="sy-roc" data-turn="${c}" title="${esc(c)}: ${esc(mix(f))} (click to deal it)" aria-label="${esc(c)}: ${esc(mix(f))}">`
+      h += `<button class="sy-roc" data-card="${c}" title="${esc(c)}: ${esc(mix(f))} (click to deal it)" aria-label="${esc(c)}: ${esc(mix(f))}">`
         + `<span class="sy-rof">${f.map((v, i) => v > 0.0005 ? `<i style="width:${(v * 100).toFixed(1)}%;background:${color(acts[i])}"></i>` : "").join("")}</span>`
         + `<span class="sy-rol">${cardHtml1(c)}</span><span class="sy-rov">${pct(bet)}</span></button>`;
     }
-    const s = ro.solver || {};
-    return h + `</div><div class="sy-note">The number on each card: how often ${esc(part.actor)} bets. Read off a live solve of the flop `
-      + `(${s.iterations} iterations, ${num(s.exploitability_pct || 0)}% of the pot from equilibrium${s.turn === "hand buckets" ? ", the turn by hand buckets" : ""}), `
-      + `which plays one turn bet size and each turn card's class alike (a rank's cards, a flush suit's apart): a turn you deal is solved on its own, with more sizes. Click a card to deal it.</div></div>`;
+    const s = ro.solver || {}, river = ro.street === "river";
+    return h + `</div><div class="sy-note">The number on each card: how often ${esc(part.actor)} bets. Read off a live solve of the ${river ? "turn" : "flop"} `
+      + `(${s.iterations} iterations, ${num(s.exploitability_pct || 0)}% of the pot from equilibrium${s.by === "hand buckets" ? `, the ${esc(ro.street)} by hand buckets` : ""}), `
+      + (river ? `which plays the river with its own few sizes: a river you deal is solved on its own, with its own menu of sizes.`
+        : `which plays one turn bet size and each turn card's class alike (a rank's cards, a flush suit's apart): a turn you deal is solved on its own, with more sizes.`)
+      + ` Click a card to deal it.</div></div>`;
   }
 
   // ---- the panel (browser)
@@ -403,7 +414,7 @@
     if (res && res.study === "node" && ST.brush >= res.grid.actions.length) ST.brush = 0;
     draw();
   }
-  // the runout report at a closed flop: asked for once (it solves the flop), shown under the deal box
+  // the runout report at a closed flop or turn: asked for once (it solves that street), shown under the deal box
   async function runouts() {
     const key = JSON.stringify({ ...request(ST.state, ST.speed), runouts: true }), g = gen;
     ST.ro = { key, busy: true }; draw();
@@ -420,6 +431,7 @@
       + `<span class="segment">${["fast", "accurate"].map(m => `<button data-speed="${m}" class="${m === ST.speed ? "active" : ""}">${m === "fast" ? "Fast" : "Accurate"}</button>`).join("")}</span>`
       + `<button class="ghost" data-back ${back(ST.state) ? "" : "disabled"} title="Back one step (Backspace)">← Back</button></div>`;
   }
+  const prev = (street) => street === "river" ? "turn" : "flop";
   function body() {
     if (err) return `<div class="sy-msg sy-err">${esc(err)}</div>`;
     if (!res) return `<div class="sy-msg"><span class="spinner"></span>Solving…</div>`;
@@ -427,9 +439,9 @@
       const n = res.street === "flop" ? 3 : 1;
       return `<div class="sy-deal"><div>${res.allin ? "Nobody can bet any more. " : ""}Deal the ${res.street}:</div><form data-deal><input name="cards" autocomplete="off" spellcheck="false" placeholder="${n === 3 ? "e.g. Kd7c2h" : "e.g. 5s"}" aria-label="The ${res.street}">`
         + `<button type="submit">Deal</button><button type="button" data-random>Random</button>`
-        + (res.street === "turn" && !res.allin ? `<button type="button" class="ghost" data-runouts title="The turn's strategy on every card, from the flop's solve"${ST.ro ? " disabled" : ""}>Runouts</button>` : "")
+        + (res.street !== "flop" && !res.allin ? `<button type="button" class="ghost" data-runouts title="The ${res.street}'s strategy on every card, from the ${prev(res.street)}'s solve"${ST.ro ? " disabled" : ""}>Runouts</button>` : "")
         + `</form><div class="sy-err" data-dealerr></div>`
-        + (!ST.ro ? "" : ST.ro.busy ? `<div class="sy-msg"><span class="spinner"></span>Solving the flop for its runouts…</div>`
+        + (!ST.ro ? "" : ST.ro.busy ? `<div class="sy-msg"><span class="spinner"></span>Solving the ${prev(res.street)} for its runouts…</div>`
           : ST.ro.err ? `<div class="sy-err">${esc(ST.ro.err)}</div>` : runoutsHtml(ST.ro.res, ST.roWho, ST.state.board)) + `</div>`;
     }
     if (res.study === "over") return `<div class="sy-msg">${res.winner ? `Hand over: everyone else folded, ${esc(res.winner)} wins the pot.` : "Hand over: the river's betting is done, the hands go to showdown."} Step back along the line above to look at another branch.</div>`;
@@ -546,7 +558,7 @@
     if (d.random != null && res && res.study === "deal") return go(deal(ST.state, randomCards(ST.state, res.street === "flop" ? 3 : 1)));
     if (d.runouts != null && res && res.study === "deal") return runouts();
     if (d.rowho) { ST.roWho = d.rowho; return draw(); }
-    if (d.turn && res && res.study === "deal" && res.street === "turn") return go(deal(ST.state, d.turn));
+    if (d.card && res && res.study === "deal" && res.street !== "flop") return go(deal(ST.state, d.card));
     if (d.act != null && res && res.study === "node" && !busy) return go(play(ST.state, res, res.actions[+d.act]));
     if (d.build != null) { ST.build = !ST.build; ST.sel = ST.hover = ST.focus = null; store(); return draw(); }
     if (building()) {
@@ -655,6 +667,7 @@
   .sy-miss button { font-size: 12px; padding: 3px 7px; }
   .sy-miss small { color: var(--muted); }
   .sy-ro { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+  .sy-ro .sy-rough { font-size: 12px; line-height: 1.5; } .sy-rough.meh { color: var(--meh); } .sy-rough.bad { color: var(--bad); }
   .sy-rokey { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--muted); }
   .sy-rokey i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
   .sy-rokey b { color: var(--text); font-weight: 600; }
@@ -690,7 +703,7 @@
       box.setAttribute("aria-modal", "true"); box.setAttribute("aria-label", "Study");
       box.innerHTML = `<div class="sy-card" tabindex="-1"><div class="sy-head"><b>Study</b><span class="sy-sub">the solver's strategy for a whole range, node by node: click an action to play it</span><button class="ghost sy-x" data-close aria-label="Close">✕</button></div><div class="sy-body"></div></div>`;
       document.body.appendChild(box);
-      const data = (t) => { const e = t.closest("[data-close],[data-speed],[data-back],[data-step],[data-view],[data-who],[data-random],[data-act],[data-cls],[data-build],[data-brush],[data-amt],[data-reset],[data-fill],[data-score],[data-retry],[data-newflop],[data-unfilter],[data-runouts],[data-rowho],[data-turn]"); return e && !e.disabled ? e.dataset : null; };
+      const data = (t) => { const e = t.closest("[data-close],[data-speed],[data-back],[data-step],[data-view],[data-who],[data-random],[data-act],[data-cls],[data-build],[data-brush],[data-amt],[data-reset],[data-fill],[data-score],[data-retry],[data-newflop],[data-unfilter],[data-runouts],[data-rowho],[data-card]"); return e && !e.disabled ? e.dataset : null; };
       // (the Breakdown's own buttons are its: its player and parts aren't the panel's)
       box.addEventListener("click", (e) => { if (e.target === box) return close(); if (e.target.closest(".sy-bd")) return; const d = data(e.target); if (d) act(d, e); });
       box.addEventListener("submit", (e) => {
