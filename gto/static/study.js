@@ -342,10 +342,37 @@
     return `${how}: ${s.iterations} iterations, ${num(s.exploitability_pct)}% of the pot from equilibrium.`;
   }
 
+  // ---- the runout report (Advisor.study with "runouts": a closed flop's turn, read off the flop's solve): every turn
+  // card, ranks across and suits down, with the first turn decision's mix ("first") or the second player's after a
+  // check ("after"); the board's cards blank, any other a button that deals it
+  const PASSIVE = new Set(["check", "call", "fold"]);
+  function runoutsHtml(ro, who = "first", board = "") {
+    const part = who === "after" && ro.after_check ? ro.after_check : ro.first;
+    const by = {}; for (const c of part.cards) for (const x of c.cards) by[x] = c.f;
+    const on = new Set(cardsOf(board)), acts = part.actions;
+    const mix = (f) => acts.map((n, i) => `${n} ${pct(f[i])}`).join(" · ");
+    const tabs = [["first", ro.first.actor], ...(ro.after_check ? [["after", `${ro.after_check.actor} after a check`]] : [])];
+    let h = `<div class="sy-ro"><div class="sy-ctl"><span class="segment">${tabs.map(([w, t]) => `<button data-rowho="${w}" class="${w === who ? "active" : ""}">${esc(t)}</button>`).join("")}</span>`
+      + `<span class="sy-rokey">${acts.map((n, i) => `<span><i style="background:${color(n)}"></i>${esc(n)} <b>${pct(part.avg[i])}</b></span>`).join("")}</span></div>`
+      + `<div class="sy-rogrid" role="group" aria-label="${esc(part.actor)}'s turn strategy by card">`;
+    for (const su of "shdc") for (const r of RANKS) {
+      const c = r + su, f = by[c];
+      if (on.has(c) || !f) { h += `<div class="sy-roc off">${cardHtml1(c)}</div>`; continue; }
+      const bet = f.reduce((t, v, i) => t + (PASSIVE.has(acts[i]) ? 0 : v), 0);
+      h += `<button class="sy-roc" data-turn="${c}" title="${esc(c)}: ${esc(mix(f))} (click to deal it)" aria-label="${esc(c)}: ${esc(mix(f))}">`
+        + `<span class="sy-rof">${f.map((v, i) => v > 0.0005 ? `<i style="width:${(v * 100).toFixed(1)}%;background:${color(acts[i])}"></i>` : "").join("")}</span>`
+        + `<span class="sy-rol">${cardHtml1(c)}</span><span class="sy-rov">${pct(bet)}</span></button>`;
+    }
+    const s = ro.solver || {};
+    return h + `</div><div class="sy-note">The number on each card: how often ${esc(part.actor)} bets. Read off a live solve of the flop `
+      + `(${s.iterations} iterations, ${num(s.exploitability_pct || 0)}% of the pot from equilibrium${s.turn === "hand buckets" ? ", the turn by hand buckets" : ""}), `
+      + `which plays one turn bet size and each turn card's class alike (a rank's cards, a flush suit's apart): a turn you deal is solved on its own, with more sizes. Click a card to deal it.</div></div>`;
+  }
+
   // ---- the panel (browser)
   let box = null, index = null, res = null, err = null, busy = false, gen = 0;
   const ST = { state: null, spot: "", speed: typeof SPEED === "string" && SPEED !== "quick" ? SPEED : "fast", view: "strategy", who: "me", sel: null, hover: null, focus: null,
-               build: false, brush: 0, amt: 1, tally: { n: 0, acc: 0 }, filter: null };
+               build: false, brush: 0, amt: 1, tally: { n: 0, acc: 0 }, filter: null, ro: null, roWho: "first" };
   try { const s = JSON.parse(localStorage.getItem("gto-study")) || {}; for (const k of ["state", "spot", "speed", "view", "build"]) if (s[k] != null) ST[k] = s[k]; } catch (e) {}
   const store = () => { try { localStorage.setItem("gto-study", JSON.stringify({ state: ST.state, spot: ST.spot, speed: ST.speed, view: ST.view, build: ST.build })); } catch (e) {} };
   // the range builder's paints, by the answer they're of
@@ -354,13 +381,17 @@
   const paintOf = (r) => { if (!paints.has(r.key)) paints.set(r.key, blankPaint(r)); return paints.get(r.key); };
   const answers = new Map();   // request (JSON) -> its answer's promise
   const ask = (st) => typeof globalThis.studyAsk === "function" ? globalThis.studyAsk(st) : Promise.reject(new Error("no solver"));
-  async function go(state) {
-    ST.state = state; ST.sel = ST.hover = ST.focus = null; err = null; store();
-    const key = JSON.stringify(request(state, ST.speed)), g = ++gen;
+  const answer = (key) => {
     if (!answers.has(key)) answers.set(key, Promise.resolve(ask(JSON.parse(key))).then(r => {
       if (!r || r.cancelled || r.error) answers.delete(key);
       return r || { error: "no answer" };
     }, e => { answers.delete(key); return { error: String(e && e.message || e) }; }));
+    return answers.get(key);
+  };
+  async function go(state) {
+    ST.state = state; ST.sel = ST.hover = ST.focus = null; ST.ro = null; err = null; store();
+    const key = JSON.stringify(request(state, ST.speed)), g = ++gen;
+    answer(key);
     busy = true; draw();
     const r = await answers.get(key);
     if (g !== gen) return;
@@ -370,6 +401,16 @@
     else { err = null; res = r; res.key = key; }
     if (res && res.study === "node" && typeof setColors === "function") setColors(res.actions.map(a => a.action));
     if (res && res.study === "node" && ST.brush >= res.grid.actions.length) ST.brush = 0;
+    draw();
+  }
+  // the runout report at a closed flop: asked for once (it solves the flop), shown under the deal box
+  async function runouts() {
+    const key = JSON.stringify({ ...request(ST.state, ST.speed), runouts: true }), g = gen;
+    ST.ro = { key, busy: true }; draw();
+    const r = await answer(key);
+    if (g !== gen || !ST.ro || ST.ro.key !== key) return;
+    ST.ro = r.error || r.cancelled ? { key, err: r.error || "The request was cancelled." } : { key, res: r };
+    if (ST.ro.res && typeof setColors === "function") setColors([...r.first.actions, ...(r.after_check ? r.after_check.actions : [])]);
     draw();
   }
   function controls() {
@@ -385,7 +426,11 @@
     if (res.study === "deal") {
       const n = res.street === "flop" ? 3 : 1;
       return `<div class="sy-deal"><div>${res.allin ? "Nobody can bet any more. " : ""}Deal the ${res.street}:</div><form data-deal><input name="cards" autocomplete="off" spellcheck="false" placeholder="${n === 3 ? "e.g. Kd7c2h" : "e.g. 5s"}" aria-label="The ${res.street}">`
-        + `<button type="submit">Deal</button><button type="button" data-random>Random</button></form><div class="sy-err" data-dealerr></div></div>`;
+        + `<button type="submit">Deal</button><button type="button" data-random>Random</button>`
+        + (res.street === "turn" && !res.allin ? `<button type="button" class="ghost" data-runouts title="The turn's strategy on every card, from the flop's solve"${ST.ro ? " disabled" : ""}>Runouts</button>` : "")
+        + `</form><div class="sy-err" data-dealerr></div>`
+        + (!ST.ro ? "" : ST.ro.busy ? `<div class="sy-msg"><span class="spinner"></span>Solving the flop for its runouts…</div>`
+          : ST.ro.err ? `<div class="sy-err">${esc(ST.ro.err)}</div>` : runoutsHtml(ST.ro.res, ST.roWho, ST.state.board)) + `</div>`;
     }
     if (res.study === "over") return `<div class="sy-msg">${res.winner ? `Hand over: everyone else folded, ${esc(res.winner)} wins the pot.` : "Hand over: the river's betting is done, the hands go to showdown."} Step back along the line above to look at another branch.</div>`;
     const pre = res.street === "preflop", cls = ST.hover || ST.sel;
@@ -499,6 +544,9 @@
     if (d.unfilter != null) { ST.filter = null; return draw(); }
     if (d.who) { ST.who = d.who; ST.sel = ST.hover = null; return draw(); }
     if (d.random != null && res && res.study === "deal") return go(deal(ST.state, randomCards(ST.state, res.street === "flop" ? 3 : 1)));
+    if (d.runouts != null && res && res.study === "deal") return runouts();
+    if (d.rowho) { ST.roWho = d.rowho; return draw(); }
+    if (d.turn && res && res.study === "deal" && res.street === "turn") return go(deal(ST.state, d.turn));
     if (d.act != null && res && res.study === "node" && !busy) return go(play(ST.state, res, res.actions[+d.act]));
     if (d.build != null) { ST.build = !ST.build; ST.sel = ST.hover = ST.focus = null; store(); return draw(); }
     if (building()) {
@@ -606,6 +654,19 @@
   .sy-miss { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 8px; font-size: 12px; }
   .sy-miss button { font-size: 12px; padding: 3px 7px; }
   .sy-miss small { color: var(--muted); }
+  .sy-ro { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+  .sy-rokey { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--muted); }
+  .sy-rokey i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+  .sy-rokey b { color: var(--text); font-weight: 600; }
+  .sy-rogrid { display: grid; grid-template-columns: repeat(13, minmax(0, 1fr)); gap: 3px; max-width: 760px; }
+  .sy-roc { position: relative; aspect-ratio: 1 / 1.15; background: #111418; border: 0; border-radius: 4px; padding: 0; overflow: hidden; cursor: pointer; font-size: 12px; color: #fff; }
+  .sy-rogrid .sy-roc { min-height: 0; } /* over the touch screens' 40px buttons: the aspect ratio sets the size */
+  .sy-roc:hover { outline: 2px solid #fff; outline-offset: -1px; z-index: 2; }
+  .sy-roc.off { opacity: .3; cursor: default; display: flex; align-items: center; justify-content: center; }
+  .sy-rof { position: absolute; left: 0; right: 0; bottom: 0; height: 100%; display: flex; opacity: .85; pointer-events: none; }
+  .sy-rof i { display: block; height: 100%; }
+  .sy-rol { position: absolute; left: 2px; top: 2px; padding: 0 3px; border-radius: 3px; background: rgba(10, 12, 15, .78); font-weight: 600; pointer-events: none; }
+  .sy-rov { position: absolute; right: 3px; bottom: 2px; font-size: 10px; font-variant-numeric: tabular-nums; text-shadow: 0 0 3px #000; pointer-events: none; }
   @media (max-width: 760px) {
     .sy { padding: 0; }
     .sy-card { max-height: 100dvh; height: 100dvh; border-radius: 0; border: 0; width: 100%; }
@@ -616,6 +677,9 @@
     .sy-v { display: none; }
     .sy-ctl select { font-size: 16px; flex: 1 1 100%; }
     .sy-deal input { font-size: 16px; }
+    .sy-roc { font-size: 9px; }
+    .sy-rol { left: 1px; top: 1px; padding: 0 1px; }
+    .sy-rov { font-size: 8px; right: 1px; bottom: 0; }
   }`;
   async function open() {
     if (!document.getElementById("syStyle")) {
@@ -626,7 +690,7 @@
       box.setAttribute("aria-modal", "true"); box.setAttribute("aria-label", "Study");
       box.innerHTML = `<div class="sy-card" tabindex="-1"><div class="sy-head"><b>Study</b><span class="sy-sub">the solver's strategy for a whole range, node by node: click an action to play it</span><button class="ghost sy-x" data-close aria-label="Close">✕</button></div><div class="sy-body"></div></div>`;
       document.body.appendChild(box);
-      const data = (t) => { const e = t.closest("[data-close],[data-speed],[data-back],[data-step],[data-view],[data-who],[data-random],[data-act],[data-cls],[data-build],[data-brush],[data-amt],[data-reset],[data-fill],[data-score],[data-retry],[data-newflop],[data-unfilter]"); return e && !e.disabled ? e.dataset : null; };
+      const data = (t) => { const e = t.closest("[data-close],[data-speed],[data-back],[data-step],[data-view],[data-who],[data-random],[data-act],[data-cls],[data-build],[data-brush],[data-amt],[data-reset],[data-fill],[data-score],[data-retry],[data-newflop],[data-unfilter],[data-runouts],[data-rowho],[data-turn]"); return e && !e.disabled ? e.dataset : null; };
       // (the Breakdown's own buttons are its: its player and parts aren't the panel's)
       box.addEventListener("click", (e) => { if (e.target === box) return close(); if (e.target.closest(".sy-bd")) return; const d = data(e.target); if (d) act(d, e); });
       box.addEventListener("submit", (e) => {
@@ -691,7 +755,7 @@
   const api = { fresh, parseLine, fromSpot, fromPayload, streetOf, request, kindOf, play, deal, randomCards, readCards, line, back, label,
                 eqr, cellValue, gridHtml, actionsHtml, detailHtml, lineHtml, statusHtml, solverHtml, classAt, combosOf,
                 passiveOf, blankPaint, brush, scoreBuild, grade, buildGridHtml, buildPanelHtml, buildDetailHtml,
-                catsOf, filterRes, filterHtml,
+                catsOf, filterRes, filterHtml, runoutsHtml,
                 open, close, state: ST };
   if (typeof module === "object" && module.exports) module.exports = api; else globalThis.Study = api;
 })();

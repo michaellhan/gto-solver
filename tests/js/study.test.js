@@ -306,3 +306,28 @@ test("the filter: one made hand or draw, the grid, the range's totals and the co
   assert.match(d, /1 of 6 combos/);
   assert.equal((d.match(/<tr title=/g) || []).length, 1);
 });
+
+test("the runout report: every turn card by rank and suit, the board's blank, the mix and the bet share, two players", () => {
+  // shaped like Advisor.study's {"runouts": true} on Kd7c2h after check, bet, call: two classes stand for the 49 cards
+  const off = new Set(["Kd", "7c", "2h"]), all = [];
+  for (const r of "AKQJT98765432") for (const s of "shdc") if (!off.has(r + s)) all.push(r + s);
+  const sevens = all.filter(c => c[0] === "7"), rest = all.filter(c => c[0] !== "7");
+  const part = (actor, f7, fr) => ({ actor, actions: ["check", "bet 75%"], avg: [0.6, 0.4],
+    cards: [{ card: "7d", cards: sevens, f: f7 }, { card: "Qh", cards: rest, f: fr }] });
+  const RO = { study: "runouts", street: "turn", first: part("BB", [0.9, 0.1], [1, 0]), after_check: part("BTN", [0.8, 0.2], [0.45, 0.55]),
+               solver: { iterations: 400, exploitability_pct: 0.05, turn: "hand buckets" }, notes: [] };
+  const h = S.runoutsHtml(RO, "first", "Kd7c2h");
+  assert.equal((h.match(/class="sy-roc[" ]/g) || []).length, 52);
+  assert.equal((h.match(/class="sy-roc off"/g) || []).length, 3);
+  assert.equal((h.match(/data-turn="/g) || []).length, 49);
+  assert.match(h, /data-turn="7s" title="7s: check 90% · bet 75% 10%/);
+  assert.match(h, /data-rowho="first" class="active">BB</);
+  assert.match(h, /data-rowho="after" class="">BTN after a check</);
+  assert.match(h, /how often BB bets/);
+  assert.match(h, /the turn by hand buckets/);
+  const a = S.runoutsHtml(RO, "after", "Kd7c2h");
+  assert.match(a, /data-turn="Ah" title="Ah: check 45% · bet 75% 55%/);
+  assert.match(a, /<span class="sy-rov">55%<\/span>/);
+  // no check to follow (the first player bet or there's no second decision): one tab
+  assert.doesNotMatch(S.runoutsHtml({ ...RO, after_check: null }, "after", "Kd7c2h"), /data-rowho="after"/);
+});

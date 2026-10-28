@@ -26,13 +26,13 @@ from functools import lru_cache
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 import numpy as np
-from .cards import cards as parse_cards, COMBO_INDEX, hand_class, ALL_COMBOS, cards_str
+from .cards import cards as parse_cards, COMBO_INDEX, hand_class, ALL_COMBOS, cards_str, card_str
 from .ranges import N_COMBOS, range_to_text, parse_range
 from . import preflop as pf
 from .pf_classes import push_fold
 # imported where used (exploit, breakdown, like multiway_solver and pf_game): the browser's worker imports this module
 # before its first answer, and a preflop answer or a library flop needs none of them (tests/test_bundle.py)
-from .solver import solve, Config, Solution, Decision, Terminal, Chance, match_action, expand, MEMBER_FULL, _inv_of
+from .solver import solve, Config, Solution, Decision, Terminal, Chance, BucketEntry, match_action, expand, MEMBER_FULL, _inv_of
 
 DEFAULT_OPEN = {"SB": 3.0}
 BVB_3BET = 10.0 / 3.0   # the big blind's default 3bet over a small-blind open, x the open (_default_size)
@@ -1775,6 +1775,7 @@ class Advisor:
         self._breakdown = False   # this request asked for the breakdown (state "breakdown": true)
         self._lib_only = False    # state "library_only": a flop the library holds, else {"skipped": …}, no solve
         self._study = False       # state "study": Study mode's answer (Advisor.study)
+        self._runout_close = None # Study's runout report: the action that closed the flop (Advisor._runouts)
         self._req_sizes: Dict[str, List[float]] = {}   # the request's custom sizes (state "sizes"), as fractions
 
     # ------------------------------------------------------------ public
@@ -1795,8 +1796,86 @@ class Advisor:
         st = {k: v for k, v in state.items() if k not in ("hero", "hole", "opponents", "locks", "jam", "library_only",
                                                            "payouts", "optimize_sizes")}
         st["study"] = True
+        if st.pop("runouts", None):
+            return self._runouts(st)
         with np.errstate(all="ignore"):
             return self._advise(st)
+
+    def _runouts(self, st: dict) -> dict:
+        """Study mode's runout report (state "runouts": true, once a heads-up flop's betting closed): the turn's first
+        decision on every turn card, the first player's mix and the second's after a check, read off a live solve of
+        the flop (the library's entries hold the flop only), whose tree plays the turn under each turn class: the
+        decision that closed the flop is walked to as Study would answer it, and the turn below its closing action
+        read (Advisor._runout_report). The flop solve's view of the turn: one bet size there (Config.later_sizes)
+        and each class's cards alike; a turn dealt and solved on its own can mix in other sizes."""
+        flop = list(st.get("flop") or [])
+        if len(parse_cards(str(st.get("board") or ""))) != 3 or not flop:
+            return {"error": "the runout report needs a flop whose betting is done (and no turn yet)"}
+        self._runout_close = str(flop[-1].get("action"))
+        try:
+            with np.errstate(all="ignore"):
+                return self._advise(dict(st, flop=flop[:-1]))
+        finally:
+            self._runout_close = None
+
+    def _runout_report(self, sol, node, n_r0, n_r1, hero, villain, hero_p, board, expl, notes, t0):
+        """The runout report (Advisor._runouts) from the flop solve at the decision that closed the flop: per turn
+        class (Ctx.turn_classes: a rank's cards, a flush suit's apart) the first turn decision's mix over its player's
+        range there (f), and the second player's after a check; avg: over every turn card. A turn played by hand
+        buckets (Fast's flop model, BucketEntry) is read by the buckets' masses."""
+        a = match_action(node.names, self._runout_close)
+        ch = node.children[a]
+        if not isinstance(ch, Chance) or not isinstance(ch.child, (Decision, BucketEntry)):
+            return {"error": "no turn to report on: the flop's betting isn't closed, or nobody can bet any more"}
+        seat = lambda p: hero if p == hero_p else villain
+        r = [np.asarray(n_r0, dtype=np.float64).reshape(-1), np.asarray(n_r1, dtype=np.float64).reshape(-1)]
+        r[node.player] = r[node.player] * node.avg_strategy()[0, a]
+        K = ch.K
+        masks = ch.masks.reshape(K, -1)
+        m = [r[0] * masks, r[1] * masks]     # (K, n): each player's reach on each turn class
+        dec, rows = ch.child, ch.child.boards
+        if isinstance(dec, BucketEntry):
+            T, ids = sol.solver._btab(dec)[:2]
+            dec = dec.child
+            W = dec.avg_strategy().shape[2]
+
+            def to_buckets(p, x):             # a combo's reach into its bucket on that card (W: dead there)
+                out = np.zeros((K, W + 1))
+                for k in range(K):
+                    np.add.at(out[k], ids[k % T, p], x[k])
+                return out[:, :W]
+            m = [to_buckets(0, m[0]), to_buckets(1, m[1])]
+        classes = dict(sol.ctx.turn_classes(tuple(board), set(board)))
+        members = [classes.get(b[3], (b[3],)) for b in rows]
+        n_cards = np.array([len(c) for c in members], dtype=np.float64)
+
+        def part(d, mm):
+            s = d.avg_strategy()
+            w = mm[d.player]
+            tot = w.sum(axis=1)
+            f = (s * w[:, None, :]).sum(axis=2) / np.maximum(tot, 1e-12)[:, None]
+            # over every turn card: each class by its cards and its player's reach there
+            wk = n_cards * tot
+            avg = (f * wk[:, None]).sum(axis=0) / max(float(wk.sum()), 1e-12)
+            return s, {"actor": seat(d.player), "actions": list(d.names), "avg": [round(float(x), 4) for x in avg],
+                       "cards": [{"card": card_str(rows[k][3]), "cards": [card_str(c) for c in members[k]],
+                                  "f": [round(float(x), 4) for x in f[k]]} for k in range(K)]}
+        s1, first = part(dec, m)
+        after = None
+        if "check" in dec.names:
+            i = dec.names.index("check")
+            nxt = dec.children[i]
+            if isinstance(nxt, Decision):
+                m2 = list(m)
+                m2[dec.player] = m[dec.player] * s1[:, i, :]
+                after = part(nxt, m2)[1]
+        notes = list(notes) + [
+            "the flop solve's view of the turn: it plays one bet size there and each turn class's cards alike (a "
+            "rank's cards, a flush suit's apart); a turn dealt is solved on its own, with more sizes"]
+        return {"study": "runouts", "street": "turn", "first": first, "after_check": after,
+                "solver": {"iterations": int(sol.iters), "exploitability_pct": round(float(expl), 3),
+                           "turn": "hand buckets" if isinstance(ch.child, BucketEntry) else "every hand"},
+                "notes": notes, "seconds": round(time.time() - t0, 2)}
 
     def _advise(self, state: dict, actor=None) -> dict:
         t0 = time.time()
@@ -2665,7 +2744,7 @@ class Advisor:
         full = (ranges[oop], ranges[ip])   # the ranges entering the flop: they pick a precomputed spot (flop_library)
         # (the library's solves are in chips: a tournament solves live)
         lib = self.library if self.library is not None and not pool and not optimize and not (locks or {}).get(villain) \
-            and not getattr(self, "_jam", False) and getattr(self, "_icm", None) is None else None
+            and not getattr(self, "_jam", False) and self._runout_close is None and getattr(self, "_icm", None) is None else None
         lib_sol = None
         for c in hole:  # villain can't hold hero's cards
             if hero_p == 0:
@@ -2805,6 +2884,8 @@ class Advisor:
         if node.player != hero_p:
             notes.append("warning: tree expected the other player to act; reporting that node")
         expl = max(0.0, sol.exploitability())   # how far this street's solve is from equilibrium, % of its pot
+        if self._runout_close is not None:
+            return self._runout_report(sol, node, n_r0, n_r1, hero, villain, hero_p, board, expl, notes, t0)
         exploit = pool or bool(adj)
         if exploit:
             # the best response to the pool (their equilibrium with its leaks) or to your locks, on later streets

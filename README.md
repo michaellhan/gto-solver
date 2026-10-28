@@ -230,6 +230,13 @@ the river, where there are none); **✕ All hands** clears it. In the Breakdown,
 **Show these hands in the grid**. Each combo of the answer carries its category (`"categories"`: the indices are into
 its made-hand and draw lists).
 
+When the flop's betting closes, **Runouts** beside the turn's deal shows the turn's strategy on every card at
+once, like GTO Wizard's runout report: a 13x4 grid of the 49 turn cards (suits down, ranks across), each card filled
+by the first player's mix there with the share that bets in its corner, and a tab for the second player's after a
+check. It is read off one live solve of the flop at the speed picked (Fast ~10 s in the browser), so each card plays
+the flop solve's turn tree: one bet size (75%), and a rank's cards alike apart from a flush suit's (Fast's turn by
+hand buckets). Click a card to deal it; the turn then solves on its own, with its full menu of sizes.
+
 **✎ Build** (or the B key) in Study turns the decision into a range-building drill, like GTO Wizard's range builder:
 the grid shows the acting player's range with every hand at the passive action (fold, else check or call), and you
 paint the strategy yourself. Pick an action (keys 1-9) and a share (100/75/50/25%: the rest of the hand's mix keeps
@@ -476,7 +483,11 @@ each; no draws on the river), the opponent's range in `opponent_grid`, and the s
 `"breakdown": true`). Where nobody acts it says
 what the hand needs: `{"study": "deal", "street": "turn", "allin": false}` (the next street's cards),
 `{"study": "over", "street", "winner"}` (everyone else folded) or `{"study": "over", "street": "river", "showdown": true}`.
-Preflop it is the charts' mix (no EVs); postflop it browses heads-up pots only.
+Preflop it is the charts' mix (no EVs); postflop it browses heads-up pots only. With `"runouts": true` on a hand whose flop
+betting closed (turn not dealt), it solves the flop live and returns the turn's first decision on every card:
+`{"study": "runouts", "street": "turn", "first": {"actor", "actions", "avg", "cards": [{"card", "cards", "f"}]},
+"after_check": …}` (`cards` the turn cards that share a class's mix `f`, `avg` the range's mix over every card;
+`after_check` the same for the second player after a check, or null).
 
 `"opponents": "pool"` (the page's Opponents: Pool toggle) is exploit mode: opponents play like a
 typical player pool instead of GTO. Preflop, hero's calls and raises are re-drawn against the pool's

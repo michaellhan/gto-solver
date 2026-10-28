@@ -121,6 +121,32 @@ class TestStudy(unittest.TestCase):
                            {"pos": "BTN", "action": "check"}], budget=1.0)
         self.assertEqual((river["street"], river["categories"]["draws"]), ("river", []))   # (none on the river)
 
+    def test_runouts(self):
+        """A closed flop's runout report: the turn's first decision on every turn card, and the second player's
+        after a check, read off a live solve of the flop (the library's entries hold the flop only)."""
+        flop = [{"pos": "BB", "action": "check"}, {"pos": "BTN", "action": "bet", "to": 1.8},
+                {"pos": "BB", "action": "call"}]
+        r = self.study(preflop=PRE, board="Kd7c2h", flop=flop, runouts=True, budget=1.0)
+        self.assertEqual((r["study"], r["street"], r["first"]["actor"], r["after_check"]["actor"]),
+                         ("runouts", "turn", "BB", "BTN"))
+        self.assertGreater(r["solver"]["iterations"], 0)
+        for part in (r["first"], r["after_check"]):
+            self.assertEqual(part["actions"][0], "check")
+            cards_in = sorted(c for k in part["cards"] for c in k["cards"])
+            self.assertEqual(len(cards_in), 49)
+            self.assertFalse({"Kd", "7c", "2h"} & set(cards_in))
+            for k in part["cards"]:
+                self.assertIn(k["card"], k["cards"])
+                self.assertAlmostEqual(sum(k["f"]), 1.0, delta=0.01)
+            self.assertAlmostEqual(sum(part["avg"]), 1.0, delta=0.01)
+        bets = {k["card"]: sum(k["f"][1:]) for k in r["after_check"]["cards"]}
+        self.assertLess(bets["7d"], max(bets.values()))   # (the board pairing the caller's 7s: the least barrelled)
+        # a check-through flop has one too; a flop still being bet doesn't
+        r = self.study(preflop=PRE, board="Kd7c2h", flop=[flop[0], {"pos": "BTN", "action": "check"}],
+                       runouts=True, budget=1.0)
+        self.assertEqual(r["first"]["actor"], "BB")
+        self.assertIn("error", self.study(preflop=PRE, board="Kd7c2h", flop=flop[:2], runouts=True, budget=1.0))
+
     def test_multiway_after_the_flop(self):
         pre = PRE[:3] + [{"pos": "BTN", "action": "raise", "to": 2.5}, {"pos": "SB", "action": "call"},
                          {"pos": "BB", "action": "call"}]
