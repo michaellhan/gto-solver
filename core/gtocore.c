@@ -337,7 +337,9 @@ static void strategy(Lane *L, const f32 *regret, i32 lo, i32 hi, i32 A, i32 W, i
       else
         for (i32 i = 0; i < W; i++) tot[i] += sa[i];
     }
-    for (i32 i = 0; i < W; i++) tot[i] = tot[i] == 0 ? 0 : 1 / tot[i];   /* (one division a combo) */
+    /* (one division a combo; a sum under float32's smallest normal counts as none: its reciprocal can overflow, and
+       a zero regret times inf is NaN) */
+    for (i32 i = 0; i < W; i++) tot[i] = tot[i] < 0x1p-126f ? 0 : 1 / tot[i];
     for (i32 a = 0; a < A; a++)   /* (the product taken either way: a load under a condition doesn't vectorize) */
       for (i32 i = 0; i < W; i++) {
         f32 v = sb[a * W + i] * tot[i];

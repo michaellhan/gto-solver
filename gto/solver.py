@@ -38,8 +38,10 @@ def _matvec(M, x):
     return np.matmul(M, x[..., None])[..., 0]
 
 
+TINY = np.float32(2.0 ** -126)   # float32's smallest normal: regret matching takes a sum under it for none (its
+                                 # reciprocal can overflow, and a zero regret times inf is NaN), as the core does
 N_FULL = 1326
-FLOP_LEAF_RIVERS = 4   # a flop all-in's equity: at least this many rivers under every turn card (Ctx._flop_leaf)
+FLOP_LEAF_RIVERS = 4  # a flop all-in's equity: at least this many rivers under every turn card (Ctx._flop_leaf)
 MEMBER_FULL = np.zeros((52, N_FULL))
 for _i, (_a, _b) in enumerate(ALL_COMBOS):
     MEMBER_FULL[_a, _i] = 1.0
@@ -880,7 +882,7 @@ class Decision:
     def strategy(self, sel=None) -> np.ndarray:
         # regret matching in as few numpy calls as possible (a native solve is call-overhead bound): one
         # reciprocal a combo and an in-place multiply (as the compiled core does it), then uniform wherever no regret
-        # is positive (rare once a solve is under way)
+        # is positive (rare once a solve is under way) or the positive ones sum under TINY
         if self.pred is None:
             pos = np.maximum(self.regret if sel is None else self.regret[sel], 0.0)
         else:
@@ -888,8 +890,8 @@ class Decision:
             pos = self.regret + self.pred if sel is None else self.regret[sel] + self.pred[sel]
             np.maximum(pos, 0.0, out=pos)
         tot = pos.sum(axis=1, keepdims=True)
-        np.multiply(pos, 1 / tot, out=pos)
-        zero = tot == 0
+        np.multiply(pos, 1 / np.maximum(tot, TINY), out=pos)
+        zero = tot < TINY
         if zero.any():
             np.copyto(pos, np.float32(1.0 / len(self.names)), where=zero)
         return pos
@@ -898,7 +900,7 @@ class Decision:
         """(B, A, N) average strategy (rows `sel` only if given)."""
         ss = self.ssum if sel is None else self.ssum[sel]
         tot = ss.sum(axis=1, keepdims=True)
-        return np.where(tot > 0, ss * (1 / np.where(tot > 0, tot, 1.0)), 1.0 / len(self.names))
+        return np.where(tot >= TINY, ss * (1 / np.maximum(tot, TINY)), 1.0 / len(self.names))
 
     def avg_strategy0(self) -> np.ndarray:
         """(A, N) average strategy of the first (or only) batch element."""

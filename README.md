@@ -1072,7 +1072,13 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   the walk down), the card-removal sums at folds and leaves ~24%, the decisions' sums and updates ~18%, the rest of
   the folds and leaves ~10%, the products ~10%, the walk down ~7%, the discount ~6%. Regret matching's last loop
   hadn't vectorized (a load under a condition; it now takes the product either way, the same floats): 16% of this
-  iteration (67 -> 56 ms side by side). A single-raised flop with the river dealt (`Config.river_dealt` 32,
+  iteration (67 -> 56 ms side by side). Five of the single-raised pots' 2688 entries (srp_utg_bb AcQdTh among them)
+  ran there to 23-73% of the pot where numpy's solves reach 0.1: rounding (numpy's own two leaf paths part as much)
+  left the sum of a hand's positive regrets at an all-in node its opponent all but never reaches at 5e-41 by
+  iteration 87, under float32's smallest normal, and its reciprocal at inf, a zero regret times it NaN. Regret
+  matching, the core's and numpy's, now takes a sum under 2^-126 for none (uniform), the same floats otherwise; the
+  five are 0.093-0.139% of the pot at 300 iterations, numpy's 0.094-0.140.
+  A single-raised flop with the river dealt (`Config.river_dealt` 32,
   srp_btn_bb JcTd8d, 32M regrets) runs there too: 1.4 s an iteration where numpy takes 3.8 (side by side, loaded),
   in 1.1 GB where numpy took 1.8. A 3bet pot's entry, its river dealt in 64 buckets, gains less: 3bp_bb_btn Kd7c2h
   (200 iterations, idle) 34.5 -> 26.5 s, ~2/3 of the core's time there in the river's bucket games (each card's

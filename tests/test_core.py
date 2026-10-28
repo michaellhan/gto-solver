@@ -171,6 +171,50 @@ class TestSameAsNumpy(unittest.TestCase):
             got = core.evaluate(S, [(node, node.player, r[0], r[1], md)])
             self.assertLess(float(np.abs(got[0] - want).max()), 1e-3)
 
+    def test_sums_under_the_smallest_normal_count_as_none(self):
+        # regret matching takes a sum of positive regrets (or of strategy sums) under float32's smallest normal for
+        # none: its reciprocal overflowed, and a zero regret times inf made the strategy NaN
+        sol = _solve("Ks7d2cTh5s", OOP, IP, 20, 90, native.config("fast"), 5)
+        S, d = sol.solver, sol.root
+        A = len(d.names)
+        c = int(np.flatnonzero(np.ravel([sol.r0, sol.r1][d.player]) > 0)[0])
+        tiny = np.float32(1e-40)
+        self.assertTrue(0 < tiny < np.finfo(np.float32).tiny)
+        d.ssum[0, :, c] = 0
+        d.ssum[0, 0, c] = tiny
+        np.testing.assert_array_equal(d.avg_strategy()[0, :, c], np.float32(1 / A))
+        ev = {}
+        for use in (True, False):
+            S.use_core = use
+            ev[use] = S.exploitability(sol.r0, sol.r1)
+        S.use_core = True
+        self.assertTrue(np.isfinite(ev[True]))
+        self.assertAlmostEqual(ev[True], ev[False], delta=1e-3)
+        d.regret[0, :, c] = 0
+        d.regret[0, 0, c] = tiny
+        np.testing.assert_array_equal(d.strategy()[0, :, c], np.float32(1 / A))
+        sol.extend(1e9, max_iters=6)
+        self.assertIs(core._prog.s(), S)
+        self.assertTrue(np.isfinite(S._regret).all() and np.isfinite(S._ssum).all())
+
+    def test_library_flop_where_its_regrets_shrank_to_denormals(self):
+        # srp_utg_bb AcQdTh's library entry: rounding (numpy's own two leaf paths part as much) left the core's sum of
+        # positive regrets at an all-in node, a hand whose opponent's reach there is all but 0, at 5e-41 by iteration
+        # 87, whose reciprocal is inf: the strategies NaN from there, 73% of the pot from equilibrium at 300 where
+        # numpy's solve is at 0.10
+        s = fl.spot_setup(next(x for x in fl.SPOTS if x[0] == "srp_utg_bb")[2])
+        cfg = fl.library_config(s["pot"], s["stack"])
+        a, b = (_solve("AcQdTh", s["full0"], s["full1"], s["pot"], s["stack"], cfg, 100, use_core=u)
+                for u in (True, False))
+        b.solver.use_core = False
+        for iters in (100, 200):
+            for x in (a, b):
+                x.extend(1e9, max_iters=iters)
+            self.assertEqual((a.iters, b.iters), (iters, iters))
+            self.assertTrue(np.isfinite(a.solver._regret).all())
+            # (0.805 and 0.756% of the pot at 100, 0.204 and 0.202 at 200)
+            self.assertLess(abs(a.exploitability() - b.exploitability()), 0.1)
+
 
 @unittest.skipUnless(ON, "no C compiler for the native core")
 class TestTables(unittest.TestCase):
