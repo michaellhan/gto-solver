@@ -51,6 +51,14 @@ for _i, (_a, _b) in enumerate(ALL_COMBOS):
 CB_FULL = np.array([b for a, b in ALL_COMBOS])
 
 
+def eq_key(eq: np.ndarray) -> np.ndarray:
+    """Equities as hand buckets sort them (Ctx.bucket_table, river_table): to 2^-20, so that ties (every hand that loses
+    to the whole range is at -1) go in combo order however the sums were rounded (numpy's, or the compiled core's:
+    core/gtocore.c t_bucket). A binary grid: a tie at a fraction of a few hundred combos (-123/128) is on it, where a
+    decimal one put it halfway between two steps for the rounding to pick."""
+    return np.rint(eq * 1048576.0)
+
+
 @dataclass
 class Config:
     bet_sizes: Dict[str, List[float]] = field(default_factory=lambda: {
@@ -197,6 +205,7 @@ class Ctx:
         self.active_list = [int(i) for i in active]
         self.root_len = 5
         self.root_reach = None     # (r0, r1) at the root, for river buckets (set by solve)
+        self.tables = None         # the compiled core's table builds while it lays a program out (gto/core.py Tables)
 
     def strength(self, board: tuple) -> np.ndarray:
         return eval_board(tuple(sorted(board)), self.active_list)
@@ -343,21 +352,26 @@ class Ctx:
             return T
         n = self.n
         step = self.cfg.bucket_river_step
-        if step > 1:
-            # every step-th river card (step coprime to 4 keeps the suits and ranks even)
-            avail = [c for c in range(52) if c not in dead and c not in board]
-            L = self._avg_showdown([tuple(board) + (r,) for r in avail[board[-1] % step::step]])
-        else:
-            L = self.leaf_matrix(board, dead)
+        avail = [c for c in range(52) if c not in dead and c not in board]
         live = self.member[list(board)].sum(axis=0) == 0
         w = [np.where(live, self.root_reach[q], 0.0) for q in (0, 1)]
+        # every step-th river card (step coprime to 4 keeps the suits and ranks even); every one is leaf_matrix's
+        # inside a flop solve
+        rivers = avail[board[-1] % step::step] if step > 1 else avail if self.root_len == 3 else None
+        if self.tables is not None and rivers is not None:
+            T = self.tables.bucket_table(self, self._strengths([tuple(board) + (r,) for r in rivers]), w, K)
+            self._stacks[key] = T
+            return T
+        if step > 1:
+            L = self._avg_showdown([tuple(board) + (r,) for r in rivers])
+        else:
+            L = self.leaf_matrix(board, dead)
         ids = np.full((2, n), K, dtype=np.intp)
         orders, ends = [], []
         for q in (0, 1):
-            wo = w[1 - q].astype(np.float32)
-            eq = np.einsum("ij,j->i", L, wo) / np.maximum(np.einsum("ij,j->i", self.compat, w[1 - q]), 1e-12)
+            eq = np.einsum("ij,j->i", L, w[1 - q]) / np.maximum(np.einsum("ij,j->i", self.compat, w[1 - q]), 1e-12)
             idx = np.flatnonzero(w[q] > 0)
-            order = idx[np.argsort(eq[idx], kind="stable")]
+            order = idx[np.argsort(eq_key(eq[idx]), kind="stable")]
             ws = w[q][order]
             cum = np.cumsum(ws)
             # (equal shares of the range; bucket edges evenly spaced in equity, or half and half, were 0.5-0.8 points
@@ -418,6 +432,12 @@ class Ctx:
         avail = [c for c in range(52) if c not in dead and c not in board]
         rivers = avail[board[-1] % step::step] if step > 1 else avail
         boards = [tuple(board) + (r,) for r in rivers]
+        if self.tables is not None:
+            r = [np.where(self.member[list(board)].sum(axis=0) == 0, self.root_reach[q], 0.0) for q in (0, 1)]
+            tids = self.bucket_table(board, dead, outer)[0] if outer else None
+            T = self.tables.river_table(self, self._strengths(boards), r, K, tids, outer)
+            self._stacks[key] = T
+            return T
         rk = Ranking(self, list(self._strengths(boards)))
         R = len(boards)
         live = (~rk.blocked).astype(np.float64)                         # (R, n): holds no board card
@@ -426,7 +446,7 @@ class Ctx:
         for q in (0, 1):
             eq = rk.utility(w[1 - q]) / np.maximum(self._compat_rows(w[1 - q]), 1e-12)
             on = w[q] > 0
-            order = np.argsort(np.where(on, eq, np.inf), axis=1, kind="stable")
+            order = np.argsort(np.where(on, eq_key(eq), np.inf), axis=1, kind="stable")
             ws = np.take_along_axis(w[q], order, axis=1)
             cum = np.cumsum(ws, axis=1)
             b = np.minimum(((cum - ws / 2) / np.maximum(cum[:, -1:], 1e-12) * K).astype(np.intp), K - 1)
@@ -570,6 +590,8 @@ class Ctx:
     def _avg_showdown(self, boards) -> np.ndarray:
         """The showdown matrix averaged over 5-card boards, per pair over the boards neither hand blocks;
         the boards' own matrices aren't kept."""
+        if self.tables is not None:
+            return self.tables.avg_showdown(self, self._strengths(boards))
         # sum over boards of sign(s_i - s_j) = G - G.T, G counting the boards where i beats j: one comparison and
         # one small-integer add per board (a float sign matrix and its masking were ~5x the work). A combo holding
         # a board card has strength NaN there, so it neither beats nor loses to anything.

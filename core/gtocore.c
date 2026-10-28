@@ -870,3 +870,374 @@ EXPORT(core_run) i32 core_run(u32 prog, i32 iters, u32 factors) {
   }
   return iters;
 }
+
+/* ------------------------------------------------------------------ a flop solve's tables */
+/* Ctx._avg_showdown, Ctx.bucket_table and Ctx.river_table for one board (gto/core.py's Tables), built before a
+   program is laid out, in the arena while it's empty. A table's arguments are int32 words at `args` (arrays as
+   offsets):
+     [1, n, R, S, ca, cb, L]                                       _avg_showdown: L (n, n)
+     [2, n, R, S, ca, cb, K, w0, w1, ids, E, kap]                  bucket_table: ids (2, n), E and kap (2, K, K)
+     [3, n, R, S, ca, cb, K, r0, r1, outer, tids, X, E, kap]       river_table: X (2, outer or n, K)
+   S (R, n): the combos' strengths on the R boards (the turn's rivers; -1: holds a board card); ca, cb: each combo's
+   cards; w0, w1, r0, r1 (n) float64: each player's root reach on the combos holding no turn card; tids (2, n): the
+   turn buckets (bucket_table's ids, outer of them); E, kap, X float32. */
+typedef double f64;
+typedef short v8s __attribute__((vector_size(16)));
+#define PD(off) ((f64 *)(base + (u32)(off)))
+
+/* idx[0..m) sorted by key, ties kept in order (numpy's stable argsort); tmp: m ints */
+static void t_sort(i32 *idx, i32 *tmp, const f64 *key, i32 m) {
+  for (i32 w = 1; w < m; w *= 2) {
+    for (i32 lo = 0; lo < m; lo += 2 * w) {
+      i32 mid = lo + w < m ? lo + w : m, hi = lo + 2 * w < m ? lo + 2 * w : m, a = lo, b = mid, o = lo;
+      while (a < mid && b < hi) tmp[o++] = key[idx[b]] < key[idx[a]] ? idx[b++] : idx[a++];
+      while (a < mid) tmp[o++] = idx[a++];
+      while (b < hi) tmp[o++] = idx[b++];
+    }
+    for (i32 x = 0; x < m; x++) idx[x] = tmp[x];
+  }
+}
+
+static inline int t_compat(const i32 *A, const i32 *Bc, i32 i, i32 j) {
+  return A[i] != A[j] && A[i] != Bc[j] && Bc[i] != A[j] && Bc[i] != Bc[j];
+}
+
+/* Ctx._avg_showdown: L[i, j] = (boards where i beats j - boards where j beats i) / max(boards where neither holds a
+   board card, 1), times their compatibility; the counts are exact, so the floats are numpy's. Counted in int16, eight
+   columns at a time, rows a block at a time (the block's counts stay in cache over the boards). */
+static void t_showdown(i32 nn, i32 R, const i32 *S, const i32 *A, const i32 *Bc, f32 *L) {
+  size_t mark = M.top;
+  i32 np = (nn + 7) & ~7, RB = 8;
+  short *s = salloc(&M, 2 * (size_t)R * np), *v = salloc(&M, 2 * (size_t)R * np);
+  short *D = salloc(&M, 2 * (size_t)RB * np), *C = salloc(&M, 2 * (size_t)RB * np);
+  for (i32 r = 0; r < R; r++)
+    for (i32 j = 0; j < np; j++) {
+      i32 x = j < nn ? S[(size_t)r * nn + j] : -1;
+      s[(size_t)r * np + j] = (short)x;
+      v[(size_t)r * np + j] = x >= 0 ? -1 : 0;   /* (-1: counted) */
+    }
+  for (i32 i0 = 0; i0 < nn; i0 += RB) {
+    i32 i1 = i0 + RB < nn ? i0 + RB : nn;
+    for (size_t x = 0; x < (size_t)RB * np; x++) D[x] = C[x] = 0;
+    for (i32 r = 0; r < R; r++) {
+      const v8s *sr = (const v8s *)(s + (size_t)r * np), *vr = (const v8s *)(v + (size_t)r * np);
+      for (i32 i = i0; i < i1; i++) {
+        short si = s[(size_t)r * np + i];
+        if (si < 0) continue;
+        v8s sv = {si, si, si, si, si, si, si, si};
+        v8s *d = (v8s *)(D + (size_t)(i - i0) * np), *c = (v8s *)(C + (size_t)(i - i0) * np);
+        for (i32 k = 0; k < np / 8; k++) {
+          v8s a = sr[k], m = vr[k];
+          d[k] += ((a > sv) - (a < sv)) & m;   /* +1 where i is stronger, -1 weaker (comparisons are -1 / 0) */
+          c[k] -= m;
+        }
+      }
+    }
+    for (i32 i = i0; i < i1; i++) {
+      const short *d = D + (size_t)(i - i0) * np, *c = C + (size_t)(i - i0) * np;
+      f32 *Li = L + (size_t)i * nn;
+      for (i32 j = 0; j < nn; j++)
+        Li[j] = (f32)d[j] / (f32)(c[j] > 1 ? c[j] : 1) * (f32)t_compat(A, Bc, i, j);
+    }
+  }
+  M.top = mark;
+}
+
+/* each combo's bucket (K: none) from its equity key eq (solver.eq_key: the equity to 2^-20, ties in combo order), among
+   the combos with reach w > 0: K equal shares of the reach in order of equity, a combo in the share its reach's
+   midpoint falls in (Ctx.bucket_table, river_table) */
+static void t_bucket(i32 nn, const f64 *eq, const f64 *w, i32 K, i32 *ids, i32 *idx, i32 *tmp) {
+  i32 m = 0;
+  for (i32 i = 0; i < nn; i++) {
+    ids[i] = K;
+    if (w[i] > 0) idx[m++] = i;
+  }
+  t_sort(idx, tmp, eq, m);
+  f64 tot = 0;
+  for (i32 x = 0; x < m; x++) tot += w[idx[x]];
+  tot = tot > 1e-12 ? tot : 1e-12;
+  f64 cum = 0;
+  for (i32 x = 0; x < m; x++) {
+    f64 ws = w[idx[x]];
+    cum += ws;
+    i32 b = (i32)((cum - ws / 2) / tot * K);
+    ids[idx[x]] = b < K - 1 ? b : K - 1;
+  }
+}
+
+static void t_buckets(const i32 *a) {
+  i32 nn = a[1], R = a[2], K = a[6];
+  const i32 *S = PI(a[3]), *A = PI(a[4]), *Bc = PI(a[5]);
+  const f64 *w[2] = {PD(a[7]), PD(a[8])};
+  i32 *ids = PI(a[9]);
+  f32 *E = PF(a[10]), *kap = PF(a[11]);
+  size_t mark = M.top, KK = (size_t)K * K;
+  f32 *L = salloc(&M, sizeof(f32) * (size_t)nn * nn);
+  f64 *eq = salloc(&M, sizeof(f64) * nn), *acc = salloc(&M, sizeof(f64) * K);
+  f64 *W[2] = {salloc(&M, sizeof(f64) * K), salloc(&M, sizeof(f64) * K)};
+  f64 *num = salloc(&M, sizeof(f64) * KK), *pm = salloc(&M, sizeof(f64) * KK), *c1 = salloc(&M, sizeof(f64) * 52 * K);
+  i32 *idx = salloc(&M, sizeof(i32) * nn), *tmp = salloc(&M, sizeof(i32) * nn);
+  t_showdown(nn, R, S, A, Bc, L);
+  /* each player's buckets, by equity against the opponent's root range: (L @ w) / its compatible mass */
+  for (int q = 0; q < 2; q++) {
+    const f64 *wo = w[1 - q];
+    f64 tot = 0, card[52] = {0};
+    for (i32 j = 0; j < nn; j++) {
+      tot += wo[j];
+      card[A[j]] += wo[j];
+      card[Bc[j]] += wo[j];
+    }
+    for (i32 i = 0; i < nn; i++) {
+      if (!(w[q][i] > 0)) continue;
+      const f32 *Li = L + (size_t)i * nn;
+      f64 x = 0;
+      for (i32 j = 0; j < nn; j++) x += (f64)Li[j] * wo[j];
+      f64 cm = tot - card[A[i]] - card[Bc[i]] + wo[i];
+      eq[i] = __builtin_rint(x / (cm > 1e-12 ? cm : 1e-12) * 1048576.0);
+    }
+    t_bucket(nn, eq, w[q], K, ids + (size_t)q * nn, idx, tmp);
+  }
+  const i32 *id0 = ids, *id1 = ids + nn;
+  for (int q = 0; q < 2; q++) {
+    for (i32 k = 0; k < K; k++) W[q][k] = 0;
+    for (i32 i = 0; i < nn; i++)
+      if (ids[(size_t)q * nn + i] < K) W[q][ids[(size_t)q * nn + i]] += w[q][i];
+  }
+  /* the bucket pairs' sums of L and of the compatible pairs, weighted by the root reach */
+  for (size_t x = 0; x < KK; x++) num[x] = pm[x] = 0;
+  for (size_t x = 0; x < 52 * (size_t)K; x++) c1[x] = 0;
+  for (i32 j = 0; j < nn; j++)
+    if (id1[j] < K) {
+      c1[(size_t)A[j] * K + id1[j]] += w[1][j];
+      c1[(size_t)Bc[j] * K + id1[j]] += w[1][j];
+    }
+  for (i32 i = 0; i < nn; i++) {
+    if (id0[i] >= K) continue;
+    const f32 *Li = L + (size_t)i * nn;
+    for (i32 k = 0; k < K; k++) acc[k] = 0;
+    for (i32 j = 0; j < nn; j++)
+      if (id1[j] < K) acc[id1[j]] += (f64)Li[j] * w[1][j];
+    f64 w0 = w[0][i], *nr = num + (size_t)id0[i] * K, *pr = pm + (size_t)id0[i] * K;
+    const f64 *ca_ = c1 + (size_t)A[i] * K, *cb_ = c1 + (size_t)Bc[i] * K;
+    for (i32 k = 0; k < K; k++) {
+      nr[k] += w0 * acc[k];
+      pr[k] += w0 * (W[1][k] - ca_[k] - cb_[k]);
+    }
+    if (id1[i] < K) pr[id1[i]] += w0 * w[1][i];
+  }
+  for (i32 x = 0; x < K; x++)
+    for (i32 y = 0; y < K; y++) {
+      f64 den = W[0][x] * W[1][y];
+      f64 e = den > 0 ? num[(size_t)x * K + y] / den : 0, p = den > 0 ? pm[(size_t)x * K + y] / den : 0;
+      E[(size_t)x * K + y] = (f32)e;
+      E[KK + (size_t)y * K + x] = (f32)-e;
+      kap[(size_t)x * K + y] = (f32)p;
+      kap[KK + (size_t)y * K + x] = (f32)p;
+    }
+  M.top = mark;
+}
+
+/* one board's sweep of the combos in order of strength (ord[from..nn): the live ones, -1s before them) with each
+   combo's reach x: u, the reach weaker less the reach stronger among the combos sharing no card with it (ties: none),
+   and cm, the reach of those combos (Ranking.utility, Solver.compat_sum) */
+static void t_sweep(const i32 *ord, i32 from, i32 nn, const i32 *s, const i32 *A, const i32 *Bc, const f64 *x, f64 *u,
+                    f64 *cm) {
+  f64 T = 0, wk = 0, ct[52] = {0}, cw[52] = {0}, gc[52] = {0};
+  for (i32 t = from; t < nn; t++) {
+    i32 j = ord[t];
+    T += x[j];
+    ct[A[j]] += x[j];
+    ct[Bc[j]] += x[j];
+  }
+  for (i32 t = from; t < nn;) {
+    i32 e = t;
+    f64 g = 0;
+    for (; e < nn && s[ord[e]] == s[ord[t]]; e++) {
+      i32 j = ord[e];
+      g += x[j];
+      gc[A[j]] += x[j];
+      gc[Bc[j]] += x[j];
+    }
+    /* weaker - stronger = 2 weaker + tied - all, each less its share among the combos holding either card */
+    f64 base_ = 2 * wk + g - T;
+    for (i32 h = t; h < e; h++) {
+      i32 i = ord[h], a = A[i], b = Bc[i];
+      u[i] = base_ - (2 * cw[a] + gc[a] - ct[a]) - (2 * cw[b] + gc[b] - ct[b]);
+      cm[i] = T - ct[a] - ct[b] + x[i];
+    }
+    for (i32 h = t; h < e; h++) {
+      i32 j = ord[h];
+      cw[A[j]] += x[j];
+      cw[Bc[j]] += x[j];
+      gc[A[j]] = gc[Bc[j]] = 0;
+    }
+    wk += g;
+    t = e;
+  }
+}
+
+static void t_river(const i32 *a) {
+  i32 nn = a[1], R = a[2], K = a[6], outer = a[9];
+  const i32 *S = PI(a[3]), *A = PI(a[4]), *Bc = PI(a[5]), *tids = outer ? PI(a[10]) : 0;
+  const f64 *rr[2] = {PD(a[7]), PD(a[8])};
+  f32 *X = PF(a[11]), *E = PF(a[12]), *kap = PF(a[13]);
+  size_t mark = M.top, KK = (size_t)K * K, nK = (size_t)nn * K, K52 = (size_t)52 * K;
+  f64 *w[2] = {salloc(&M, sizeof(f64) * nn), salloc(&M, sizeof(f64) * nn)};
+  f64 *u = salloc(&M, sizeof(f64) * nn), *cm = salloc(&M, sizeof(f64) * nn), *key = salloc(&M, sizeof(f64) * nn);
+  i32 *ord = salloc(&M, sizeof(i32) * nn), *idx = salloc(&M, sizeof(i32) * nn), *tmp = salloc(&M, sizeof(i32) * nn);
+  i32 *ids[2] = {salloc(&M, sizeof(i32) * nn), salloc(&M, sizeof(i32) * nn)};
+  f64 *P[2] = {salloc(&M, sizeof(f64) * nK), salloc(&M, sizeof(f64) * nK)};
+  f64 *num = salloc(&M, sizeof(f64) * KK), *den = salloc(&M, sizeof(f64) * KK);
+  f64 *Tk = salloc(&M, sizeof(f64) * K), *wk = salloc(&M, sizeof(f64) * K), *gk = salloc(&M, sizeof(f64) * K);
+  f64 *bk = salloc(&M, sizeof(f64) * K);
+  f64 *ctk = salloc(&M, sizeof(f64) * K52), *cwk = salloc(&M, sizeof(f64) * K52), *gck = salloc(&M, sizeof(f64) * K52);
+  for (int q = 0; q < 2; q++)
+    for (size_t x = 0; x < nK; x++) P[q][x] = 0;
+  for (size_t x = 0; x < KK; x++) num[x] = den[x] = 0;
+  for (i32 r = 0; r < R; r++) {
+    const i32 *s = S + (size_t)r * nn;
+    for (int q = 0; q < 2; q++)
+      for (i32 i = 0; i < nn; i++) w[q][i] = s[i] >= 0 ? rr[q][i] : 0;
+    for (i32 i = 0; i < nn; i++) {
+      ord[i] = i;
+      key[i] = s[i];
+    }
+    t_sort(ord, tmp, key, nn);
+    i32 from = 0;
+    while (from < nn && s[ord[from]] < 0) from++;
+    /* each player's river buckets: K equal shares of its reach by equity against the opponent's */
+    for (int q = 0; q < 2; q++) {
+      t_sweep(ord, from, nn, s, A, Bc, w[1 - q], u, cm);
+      for (i32 i = 0; i < nn; i++)
+        key[i] = s[i] >= 0 ? __builtin_rint(u[i] / (cm[i] > 1e-12 ? cm[i] : 1e-12) * 1048576.0) : 0;
+      t_bucket(nn, key, w[q], K, ids[q], idx, tmp);
+      for (i32 i = 0; i < nn; i++)
+        if (ids[q][i] < K) P[q][(size_t)i * K + ids[q][i]] += 1;
+    }
+    /* the bucket pairs' showdown sums and compatible masses on this river: the sweep with one column of the
+       opponent's reach per bucket */
+    const i32 *id0 = ids[0], *id1 = ids[1];
+    const f64 *w0 = w[0], *w1 = w[1];
+    for (i32 k = 0; k < K; k++) Tk[k] = wk[k] = gk[k] = 0;
+    for (size_t x = 0; x < K52; x++) ctk[x] = cwk[x] = gck[x] = 0;
+    for (i32 t = from; t < nn; t++) {
+      i32 j = ord[t], k = id1[j];
+      if (k >= K) continue;
+      Tk[k] += w1[j];
+      ctk[(size_t)A[j] * K + k] += w1[j];
+      ctk[(size_t)Bc[j] * K + k] += w1[j];
+    }
+    for (i32 t = from; t < nn;) {
+      i32 e = t;
+      for (; e < nn && s[ord[e]] == s[ord[t]]; e++) {
+        i32 j = ord[e], k = id1[j];
+        if (k >= K) continue;
+        gk[k] += w1[j];
+        gck[(size_t)A[j] * K + k] += w1[j];
+        gck[(size_t)Bc[j] * K + k] += w1[j];
+      }
+      for (i32 k = 0; k < K; k++) bk[k] = 2 * wk[k] + gk[k] - Tk[k];
+      for (i32 h = t; h < e; h++) {
+        i32 i = ord[h];
+        if (id0[i] >= K) continue;
+        size_t oa = (size_t)A[i] * K, ob = (size_t)Bc[i] * K;
+        f64 x0 = w0[i], *nr = num + (size_t)id0[i] * K, *dr = den + (size_t)id0[i] * K;
+        for (i32 k = 0; k < K; k++) {
+          nr[k] += x0 * (bk[k] - (2 * cwk[oa + k] + gck[oa + k] - ctk[oa + k]) -
+                         (2 * cwk[ob + k] + gck[ob + k] - ctk[ob + k]));
+          dr[k] += x0 * (Tk[k] - ctk[oa + k] - ctk[ob + k]);
+        }
+        if (id1[i] < K) dr[id1[i]] += x0 * w1[i];
+      }
+      for (i32 h = t; h < e; h++) {
+        i32 j = ord[h], k = id1[j];
+        if (k >= K) continue;
+        cwk[(size_t)A[j] * K + k] += w1[j];
+        cwk[(size_t)Bc[j] * K + k] += w1[j];
+        gck[(size_t)A[j] * K + k] = gck[(size_t)Bc[j] * K + k] = 0;
+      }
+      for (i32 k = 0; k < K; k++) {
+        wk[k] += gk[k];
+        gk[k] = 0;
+      }
+      t = e;
+    }
+  }
+  /* P[q]: the share of the rivers putting each combo in each bucket; A[q] = root reach x P[q] (in place) */
+  for (int q = 0; q < 2; q++)
+    for (i32 i = 0; i < nn; i++) {
+      f64 *p = P[q] + (size_t)i * K, c = 0;
+      for (i32 k = 0; k < K; k++) c += p[k];
+      c = c > 1 ? c : 1;
+      for (i32 k = 0; k < K; k++) p[k] /= c;
+    }
+  if (outer) {
+    f64 *Q = salloc(&M, sizeof(f64) * (size_t)outer * K), *wt = salloc(&M, sizeof(f64) * outer);
+    for (int q = 0; q < 2; q++) {
+      const i32 *t = tids + (size_t)q * nn;
+      for (size_t x = 0; x < (size_t)outer * K; x++) Q[x] = 0;
+      for (i32 b = 0; b < outer; b++) wt[b] = 0;
+      for (i32 i = 0; i < nn; i++) {
+        if (t[i] >= outer) continue;
+        wt[t[i]] += rr[q][i];
+        for (i32 k = 0; k < K; k++) Q[(size_t)t[i] * K + k] += rr[q][i] * P[q][(size_t)i * K + k];
+      }
+      for (i32 b = 0; b < outer; b++)
+        for (i32 k = 0; k < K; k++)
+          X[((size_t)q * outer + b) * K + k] = (f32)(Q[(size_t)b * K + k] / (wt[b] > 1e-300 ? wt[b] : 1e-300));
+    }
+  } else {
+    for (int q = 0; q < 2; q++)
+      for (size_t x = 0; x < nK; x++) X[(size_t)q * nK + x] = (f32)P[q][x];
+  }
+  for (int q = 0; q < 2; q++)
+    for (i32 i = 0; i < nn; i++)
+      for (i32 k = 0; k < K; k++) P[q][(size_t)i * K + k] *= rr[q][i];
+  /* kappa: the compatible share of the opponent's bucket mass as X spreads it, (A0.T @ compat @ A1) / (M0 M1) */
+  f64 *Mq[2] = {Tk, wk}, *c1 = ctk, *row = bk;
+  for (int q = 0; q < 2; q++) {
+    for (i32 k = 0; k < K; k++) Mq[q][k] = 0;
+    for (i32 i = 0; i < nn; i++)
+      for (i32 k = 0; k < K; k++) Mq[q][k] += P[q][(size_t)i * K + k];
+  }
+  for (size_t x = 0; x < K52; x++) c1[x] = 0;
+  for (i32 i = 0; i < nn; i++)
+    for (i32 k = 0; k < K; k++) {
+      c1[(size_t)A[i] * K + k] += P[1][(size_t)i * K + k];
+      c1[(size_t)Bc[i] * K + k] += P[1][(size_t)i * K + k];
+    }
+  f64 *kn = salloc(&M, sizeof(f64) * KK);
+  for (size_t x = 0; x < KK; x++) kn[x] = 0;
+  for (i32 i = 0; i < nn; i++) {
+    const f64 *a1 = P[1] + (size_t)i * K, *a0 = P[0] + (size_t)i * K;
+    const f64 *ca_ = c1 + (size_t)A[i] * K, *cb_ = c1 + (size_t)Bc[i] * K;
+    for (i32 k = 0; k < K; k++) row[k] = Mq[1][k] - ca_[k] - cb_[k] + a1[k];
+    for (i32 x = 0; x < K; x++) {
+      if (a0[x] == 0) continue;
+      f64 *kr = kn + (size_t)x * K;
+      for (i32 k = 0; k < K; k++) kr[k] += a0[x] * row[k];
+    }
+  }
+  for (i32 x = 0; x < K; x++)
+    for (i32 y = 0; y < K; y++) {
+      size_t o = (size_t)x * K + y;
+      f64 mm = Mq[0][x] * Mq[1][y], kp = mm > 0 ? kn[o] / mm : 0;
+      f64 sd = den[o] > 0 ? num[o] / den[o] : 0, e = sd * kp;
+      E[o] = (f32)e;
+      E[KK + (size_t)y * K + x] = (f32)-e;
+      kap[o] = (f32)kp;
+      kap[KK + (size_t)y * K + x] = (f32)kp;
+    }
+  M.top = mark;
+}
+
+/* one table (the arguments above); 0, or -1 on a bad kind */
+EXPORT(core_table) i32 core_table(u32 args) {
+  const i32 *a = PI(args);
+  switch (a[0]) {
+    case 1: t_showdown(a[1], a[2], PI(a[3]), PI(a[4]), PI(a[5]), PF(a[6])); return 0;
+    case 2: t_buckets(a); return 0;
+    case 3: t_river(a); return 0;
+  }
+  return -1;
+}

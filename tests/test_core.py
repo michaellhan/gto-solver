@@ -141,6 +141,39 @@ class TestSameAsNumpy(unittest.TestCase):
 
 
 @unittest.skipUnless(ON, "no C compiler for the native core")
+class TestTables(unittest.TestCase):
+    def test_same_tables_as_numpy(self):
+        # a flop's tables built in the core (gto/core.py Tables) and in numpy: the flop's equity leaf and the turns' leaf
+        # averages the same floats, every bucket the same, the bucket games' E to float32 rounding; Fast's model (every
+        # third river) with a 3bet pot's river in the turn's buckets, and the browser's Accurate (every river)
+        for cfg in (native.config("fast"), replace(native.config("fast"), river_buckets=64, bucket_river_step=1)):
+            sol = solve(cards("Kd7c2h"), OOP_T, IP_T, pot=5.5, stack=97.5, cfg=cfg, time_budget=1e9, max_iters=0)
+            ctx, dead, board = sol.solver.ctx, sol.solver.dead, tuple(cards("Kd7c2h"))
+            got = {}
+            for use in (True, False):
+                ctx._stacks = {k: v for k, v in ctx._stacks.items() if k[0] == "S"}    # (the strengths kept)
+                ctx._leaf = {}
+                ctx.tables = core.Tables(core.lib()) if use else None
+                try:
+                    got[use] = [ctx._flop_leaf(board, dead)]
+                    for t, _ in ctx.turn_classes(board, dead)[:4]:
+                        b = board + (t,)
+                        got[use] += ctx.bucket_table(b, dead, cfg.river_buckets)
+                        for outer in (None, cfg.river_buckets):
+                            got[use] += ctx.river_table(b, dead, cfg.river_strength, outer)
+                finally:
+                    ctx.tables = None
+            self.assertEqual(len(got[True]), 1 + 4 * 9)
+            for i, (a, b) in enumerate(zip(got[True], got[False])):
+                with self.subTest(bucket_river_step=cfg.bucket_river_step, table=i):
+                    self.assertEqual(a.shape, b.shape)
+                    if i % 3 == 2:                               # (E)
+                        self.assertLess(float(np.abs(a - b).max()), 5e-6)
+                    else:
+                        np.testing.assert_array_equal(a, b)
+
+
+@unittest.skipUnless(ON, "no C compiler for the native core")
 class TestProgram(unittest.TestCase):
     def test_another_solve_replaces_it_and_it_comes_back(self):
         a = _solve("Ks7d2cTh5s", OOP, IP, 20, 90, native.config("fast"), 20)

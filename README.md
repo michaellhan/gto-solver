@@ -854,8 +854,9 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
     ~100 (setup, before the budget: 0.6-1.0 s natively, 1.1-1.6 s in Pyodide, against 0.6 and 0.7; the turn
     leaves' showdown sums now take one comparison and a byte add per board, and every board's hand
     strengths one batched evaluator call). The compiled core now runs it (Compiled core, below): an iteration
-    is 7-20 ms in Pyodide and 6-24 ms natively, 2-16x numpy's iterations in the browser's 8 s, and the setup
-    (the bucket and river tables, 2.0-4.4 s in Pyodide) is most of what's left. Against every turn played (12 flops above), at the iterations each gets: c-bet 3.6 points off
+    is 7-20 ms in Pyodide and 6-24 ms natively, 2-16x numpy's iterations in the browser's 8 s, and it builds the
+    bucket and river tables too (the setup 0.2-1.0 s in Pyodide, where numpy's tables made it 0.6-2.6). Against every
+    turn played (12 flops above), at the iterations each gets: c-bet 3.6 points off
     on average (native Fast was 12.2, the browser's 14.5), size split 7.6 (32.6, 35.5), BB's check 2.1
     (6.1, 13.0), its response to the small bet 1.6 (5.0, 6.2). Settled (400 iterations), 32 buckets are 3.0
     off in c-bet where per combo is ~1.4; QQ6 stays near 80% (88%), A74 near 61% (51%). Exploitability in
@@ -1015,15 +1016,23 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   browser's 8 s, the core runs 2.0-15.6x numpy's iterations (geometric mean 6.6x): 9c8d5h 110 -> 986 (0.60 -> 0.015%
   of the pot from equilibrium), QcTd6c 65 -> 469 (1.76 -> 0.032%), QcTc6d 68 -> 475 (1.52 -> 0.035%), Jc5c2c 80 -> 511
   (1.47 -> 0.037%), Tc6d3h 29 -> 273 (11.5 -> 0.10%), Ac9d4h 20 -> 311 (23 -> 0.078%), 3c2d2c 59 -> 117 (2.7 ->
-  0.56%), Ac9d5c 10 -> 45 (94 -> 3.8%). An iteration takes 7-20 ms there; what limits the last two is the setup before
-  it, the bucket and river tables (`Ctx.bucket_table`, `river_table`, the flop all-in's `_flop_leaf`), still numpy:
-  2.0-4.4 s of the 8 (run alone; the river tables about half, the showdown counts of `_avg_showdown` about a third),
-  the next to move. Natively (2.5 s, against the BLAS solver, the same load) 32-215 iterations where numpy ran 10-52
-  (3.1-83% -> 0.15-10.7%; 3.7x), the setup most of the budget there too. The same answers: at 50, 100, 200 and 400
-  iterations (`--checkpoints`, natively) the core is as far from equilibrium as numpy at each (at 400 0.044-0.067% of
-  the pot, numpy 0.043-0.068%), 2.1-4.7x sooner (3.5x), and at 300 the c-bet's frequencies (the check and each size,
-  every flop) are numpy's to 0.2 points. With threads (above) a flop's turn classes are the rows handed out, the
-  numbers the same bit for bit on any number of them.
+  0.56%), Ac9d5c 10 -> 45 (94 -> 3.8%). An iteration takes 7-20 ms there; what limited the last two was the setup
+  before it, the bucket and river tables (`Ctx.bucket_table`, `river_table`, the flop all-in's `_flop_leaf`) in numpy,
+  2.0-4.4 s of the 8 (since built in the core: below). Natively (2.5 s, against the BLAS solver, the same load) 32-215
+  iterations where numpy ran 10-52 (3.1-83% -> 0.15-10.7%; 3.7x), the setup most of the budget there too. The same
+  answers: at 50, 100, 200 and 400 iterations (`--checkpoints`, natively) the core is as far from equilibrium as numpy
+  at each (at 400 0.044-0.067% of the pot, numpy 0.043-0.068%), 2.1-4.7x sooner (3.5x), and at 300 the c-bet's
+  frequencies (the check and each size, every flop) are numpy's to 0.2 points. With threads (above) a flop's turn
+  classes are the rows handed out, the numbers the same bit for bit on any number of them.
+  The core builds those tables too (`gto/core.py` `Tables`, before it lays the tree out: the showdown counts in 16-bit
+  lanes, eight columns at a time; each river's strength order swept once a player for its buckets and once more with a
+  column per opponent bucket for their sums), 7-10x numpy natively, and they are numpy's: every combo in the same
+  buckets (equities to 2^-20, `solver.eq_key`, so that ties, such as every hand at -1, go in combo order however the
+  sums were rounded), the sums to float32 rounding. In Pyodide the setup to the first iteration is 0.17-1.0 s where it
+  was 0.64-2.6 (3.6-5x less; Ac9d5c 0.34 s: the river boards' strengths 0.14, the tables 0.06; at a load of ~20
+  2.4-9.2 s -> 0.6-1.8). In the browser's 8 s that is 1.3-7.5x the iterations at a load of ~18 (2.4x; Jc5c2c 37 ->
+  279, 7.9 -> 0.13% of the pot; QcTc6d 98 -> 442, 0.69 -> 0.045%) and 1.05-1.33x idle (1.16x, at 1300-3300
+  iterations); natively, loaded, 2.5 s run 1.1-2.2x (1.6x).
 * **Browser timings** (`scripts/bench_browser.mjs`: `gto/static/worker.js` itself, its Python setup and request
   handler, run in Pyodide 0.26.4 under Node, a fresh worker a request, wall clock on a 10-core machine shared with
   other jobs, so +-30% in iterations by load). "Bar" is the page's estimate, what its progress bar counts down: the

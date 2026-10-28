@@ -9,11 +9,11 @@ memory until another solver's replaces it.
 It covers turn and river trees: decisions, folds, showdowns, all-in equity leaves, the river dealt card by card or by
 class (Config.river_classes), rake and a tournament's payoffs; and flop trees whose turn and river are played by hand
 buckets (Config.river_buckets: Fast's flop model, the browser's Accurate's): the bucket and river-strength entries
-(BucketEntry, RiverEntry) with their tables (Ctx.bucket_table, Ctx.river_table) and the bucket games' folds and
-showdowns. A tree with anything else (sampled cards) or a predictive scheme runs in numpy as before, as does a solve
-while another holds the core (one at a time: its memory is one arena), and natively a tree of many equity leaves
-(LEAF_ROWS_BLAS). The arithmetic is the numpy solver's in float32, so their strategies agree to rounding.
-GTO_CORE=0 turns the core off.
+(BucketEntry, RiverEntry) with their tables (Ctx.bucket_table, Ctx.river_table, built in the core too: Tables) and
+the bucket games' folds and showdowns. A tree with anything else (sampled cards) or a predictive scheme runs in numpy
+as before, as does a solve while another holds the core (one at a time: its memory is one arena), and natively a tree
+of many equity leaves (LEAF_ROWS_BLAS). The arithmetic is the numpy solver's in float32, so their strategies agree to
+rounding. GTO_CORE=0 turns the core off.
 """
 from __future__ import annotations
 import hashlib
@@ -83,6 +83,7 @@ class _Native:
         L.core_eval.restype = ctypes.c_int32
         L.core_eval.argtypes = [ctypes.c_uint32, ctypes.c_int32, ctypes.c_int32] + [ctypes.c_uint32] * 3 + [ctypes.c_int32]
         L.core_threads.restype, L.core_threads.argtypes = ctypes.c_int32, [ctypes.c_int32]
+        L.core_table.restype, L.core_table.argtypes = ctypes.c_int32, [ctypes.c_uint32]
         if L.core_version() != MAGIC:
             raise RuntimeError("core version mismatch")
         self.L = L
@@ -109,6 +110,9 @@ class _Native:
 
     def threads(self, t: int) -> int:
         return self.L.core_threads(t)
+
+    def table(self, args: int) -> int:
+        return self.L.core_table(args)
 
 
 class _Wasm:
@@ -145,6 +149,9 @@ class _Wasm:
 
     def threads(self, t: int) -> int:
         return int(self.ex.core_threads(t))
+
+    def table(self, args: int) -> int:
+        return int(self.ex.core_table(args))
 
 
 def _load():
@@ -212,6 +219,7 @@ class Program:
         self.bytes = 0
         L.reset()
         _gen += 1
+        self._tables(solver)
         self.gen = _gen
         ctx = solver.ctx
         self.n = ctx.n
@@ -229,6 +237,34 @@ class Program:
         self.fac = L.alloc(16 * MAX_CHUNK)
         self.ev = L.alloc(12 * self.n)     # an evaluation's reaches and utilities
         self.w = self._rank = self._up = None
+
+    def _tables(self, solver):
+        """The tables the tree's bucket entries, bucket games and equity leaves read (Ctx.bucket_table, river_table,
+        _avg_showdown), built in the core while the arena is empty (Tables), before the tree is laid out."""
+        Decision, Terminal, Chance, BucketEntry, RiverEntry = self._types
+        ctx = solver.ctx
+        ctx.tables = Tables(self.L)
+        try:
+            stack = [solver.root]
+            while stack:
+                node = stack.pop()
+                if isinstance(node, Decision):
+                    stack.extend(node.children)
+                elif isinstance(node, Terminal):
+                    if node.kind[0] in "br":
+                        (solver._btab if node.kind[0] == "b" else solver._rtab)(node)
+                    elif node.kind == "leaf" and (len(node.boards[0]) == 3 or
+                                                  len(node.boards[0]) == 4 and ctx.root_len == 3):
+                        solver._terminal_M(node)    # (every runout: no random draws, whose order would change)
+                elif isinstance(node, (Chance, BucketEntry, RiverEntry)):
+                    if isinstance(node, RiverEntry):      # (a BucketEntry too)
+                        solver._rtab(node)
+                    elif isinstance(node, BucketEntry):
+                        solver._btab(node)
+                    stack.append(node.child)
+        finally:
+            ctx.tables = None
+            self.L.reset()
 
     def valid(self, L, solver) -> bool:
         """The solver's, and still in the arena."""
@@ -383,6 +419,70 @@ class Program:
         """The regrets and strategy sums back into the solver's buffers."""
         self.L.read(self.reg, solver._regret)
         self.L.read(self.ss, solver._ssum)
+
+
+class Tables:
+    """A flop solve's tables in the core (Ctx.tables while a Program is being built, the arena empty: each table's
+    inputs, scratch and outputs in it, then released): 7-10x numpy's natively. _avg_showdown's are numpy's floats
+    (exact counts); the bucket and river tables put every combo in numpy's buckets (their equities to 2^-20,
+    solver.eq_key, ties in combo order) and sum in another order, E to float32 rounding (tests/test_core.py)."""
+
+    def __init__(self, L):
+        self.L = L
+
+    def _put(self, a, dtype) -> int:
+        a = np.ascontiguousarray(a, dtype=dtype)
+        off = self.L.alloc(max(a.nbytes, 4))
+        self.L.write(off, a)
+        return off
+
+    def _get(self, off, shape, dtype) -> np.ndarray:
+        out = np.empty(shape, dtype=dtype)
+        self.L.read(off, out)
+        return out
+
+    def _run(self, words):
+        args = self._put(np.array(words, dtype=np.int64).astype(np.int32), np.int32)
+        if self.L.table(args) != 0:
+            raise RuntimeError("core table failed")
+
+    def _start(self, ctx, S):
+        self.L.reset()
+        S = np.asarray(S)
+        if S.size and (S.max() > 32767 or S.min() < -1):
+            raise Unsupported("strengths over int16")
+        return [ctx.n, len(S), self._put(S, np.int32), self._put(ctx.ca, np.int32), self._put(ctx.cb, np.int32)]
+
+    def avg_showdown(self, ctx, S) -> np.ndarray:
+        """Ctx._avg_showdown on boards of strengths S (R, n)."""
+        head = self._start(ctx, S)
+        out = self.L.alloc(4 * ctx.n * ctx.n)
+        self._run([1] + head + [out])
+        return self._get(out, (ctx.n, ctx.n), np.float32)
+
+    def bucket_table(self, ctx, S, w, K: int) -> tuple:
+        """Ctx.bucket_table's (ids, E, kappa) on the rivers of strengths S, w: each player's root reach on the combos
+        holding no turn card."""
+        n = ctx.n
+        head = self._start(ctx, S)
+        ins = [self._put(w[q], np.float64) for q in (0, 1)]
+        ids, E, kap = self.L.alloc(8 * n), self.L.alloc(8 * K * K), self.L.alloc(8 * K * K)
+        self._run([2] + head + [K] + ins + [ids, E, kap])
+        return (self._get(ids, (2, n), np.int32).astype(np.intp), self._get(E, (2, K, K), np.float32),
+                self._get(kap, (2, K, K), np.float32))
+
+    def river_table(self, ctx, S, r, K: int, tids, outer) -> tuple:
+        """Ctx.river_table's (X, E, kappa) on the rivers of strengths S, r: each player's root reach on the combos
+        holding no turn card, tids: the turn buckets (outer of them) or None."""
+        n = ctx.n
+        head = self._start(ctx, S)
+        ins = [self._put(r[q], np.float64) for q in (0, 1)]
+        t = self._put(tids, np.int32) if outer else 0
+        W = outer or n
+        X, E, kap = self.L.alloc(8 * W * K), self.L.alloc(8 * K * K), self.L.alloc(8 * K * K)
+        self._run([3] + head + [K] + ins + [outer or 0, t, X, E, kap])
+        return (self._get(X, (2, W, K), np.float32), self._get(E, (2, K, K), np.float32),
+                self._get(kap, (2, K, K), np.float32))
 
 
 def _program(L, solver, r0, r1, regrets: bool = True):
