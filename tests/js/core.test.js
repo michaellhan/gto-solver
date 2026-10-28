@@ -50,3 +50,77 @@ test("solves and evaluates a hand-written game", async () => {
   assert.deepEqual([...new Float32Array(ex.memory.buffer, base + out, 2)], [1, 1]);
   assert.equal(ex.core_run(regret, 1, fac), -1);                 // not a program
 });
+
+// gto/core-mt.wasm, the same with threads: its memory shared with helpers (worker.js's, here worker_threads), which take
+// rows of each chance node's subtree. A game with a chance node of 40 rows comes out the same, bit for bit, on 1
+// thread and on 4, and the helpers ran some of its rows.
+const HELPER = `const { parentPort, workerData: { mod, memory, i } } = require("node:worker_threads");
+const ex = new WebAssembly.Instance(mod, { env: { memory } }).exports;
+ex.__stack_pointer.value = ex.core_stack(i);
+parentPort.postMessage("ready");
+ex.core_helper(i);`;
+
+// A deterministic game: player 0 folds (+-0.5) or deals one of K cards (masks block some combos on some cards), after
+// which player 1 picks one of two folds; n combos sharing no card.
+function chanceGame(ex, n, K) {
+  ex.core_reset();
+  const base = ex.core_base() >>> 0;
+  const put = (words, Arr) => {
+    const off = ex.core_alloc(words.length * 4) >>> 0;
+    new Arr(ex.memory.buffer, base + off, words.length).set(words);
+    return off;
+  };
+  const f = (x) => new Int32Array(new Float32Array([x]).buffer)[0];
+  const ca = put([...Array(n).keys()].map((i) => 2 * i), Int32Array), cb = put([...Array(n).keys()].map((i) => 2 * i + 1), Int32Array);
+  const r0 = put([...Array(n).keys()].map((i) => 1 + (i % 3)), Float32Array);
+  const r1 = put([...Array(n).keys()].map((i) => 1 + ((i * 7) % 5)), Float32Array);
+  const len = 2 * n + K * 2 * n;
+  const regret = put(new Array(len).fill(0), Float32Array), ssum = put(new Array(len).fill(0), Float32Array);
+  const masks = [];
+  for (let k = 0; k < K; k++) for (let i = 0; i < n; i++) masks.push((i + 2 * k) % 7 === 0 ? 0 : 1);
+  const norm = [...Array(n).keys()].map((i) => masks.filter((_, x) => x % n === i).reduce((a, b) => a + b, 0));
+  const m = put(masks, Float32Array), nm = put(norm, Float32Array);
+  const root = 10, fold = root + 9, ch = fold + 4, dec = ch + 7, fa = dec + 9, fb = fa + 4;
+  const prog = put([MAGIC, n, ca, cb, root, r0, r1, regret, ssum, len,
+                    1, 0, 2, 1, n, regret, ssum, ch, fold,                       // DECISION: player 0, deal or fold
+                    2, 1, f(0.5), f(-0.5),                                      // FOLD
+                    5, 1, K, dec, m, m, nm,                                     // CHANCE: K cards
+                    1, 1, 2, K, n, regret + 8 * n, ssum + 8 * n, fa, fb,        // DECISION: player 1, K rows
+                    2, K, f(1), f(-1),                                          // FOLD
+                    2, K, f(-2), f(2)], Int32Array);
+  const fac = put(new Array(4 * 200).fill(0).map((_, i) => [0, 1, 0.5, 0.9][i % 4]), Float32Array);
+  return { prog, fac, root, read: () => [...new Int32Array(ex.memory.buffer, base + regret, 2 * len)] };
+}
+
+test("core-mt: threads give the same numbers, and the helpers run rows", async () => {
+  const { Worker } = require("node:worker_threads");
+  const mod = await WebAssembly.compile(fs.readFileSync(path.join(ROOT, "gto", "core-mt.wasm")));
+  const memory = new WebAssembly.Memory({ initial: 256, maximum: 32768, shared: true });
+  const ex = Object.assign({}, (await WebAssembly.instantiate(mod, { env: { memory } })).exports, { memory });
+  const sha = crypto.createHash("sha1").update(fs.readFileSync(path.join(ROOT, "core", "gtocore.c"))).digest("hex");
+  assert.equal(Buffer.from(new Uint8Array(memory.buffer, ex.core_source(), 40)).toString(), sha);
+  const runs = [];
+  for (const T of [1, 4]) {
+    assert.equal(ex.core_threads(T), T);
+    const g = chanceGame(ex, 24, 40);
+    assert.equal(ex.core_run(g.prog, 200, g.fac), 200);
+    runs.push(g.read());
+  }
+  assert.equal(ex.core_helped(), 0);   // (no helpers yet: this thread ran every row)
+  const helpers = [1, 2, 3].map((i) => new Worker(HELPER, { eval: true, workerData: { mod, memory, i: i - 1 } }));
+  try {
+    await Promise.all(helpers.map((w) => new Promise((ok) => w.once("message", ok))));
+    // (a run takes milliseconds: on a busy machine it can be over before a helper is scheduled, so again until one ran rows)
+    for (let k = 0; k < 500 && !ex.core_helped(); k++) {
+      const g = chanceGame(ex, 24, 40);
+      assert.equal(ex.core_run(g.prog, 200, g.fac), 200);
+      assert.deepEqual(g.read(), runs[0]);
+      if (k % 10 === 9) await new Promise((ok) => setTimeout(ok, 10));
+    }
+    assert.ok(ex.core_helped() > 0, "the helpers ran no rows");
+  } finally {
+    await Promise.all(helpers.map((w) => w.terminate()));
+  }
+  assert.ok(runs[0].some((x) => x !== 0));
+  assert.deepEqual(runs[1], runs[0]);
+});

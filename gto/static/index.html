@@ -889,6 +889,19 @@ let MODE = null, worker = null, reqId = 0;
 const pending = {};
 // (health.json: the local server answers it {"ok": true}; the static site has the file, {"ok": false}, so the probe
 // never 404s there, which the browser would log as an error on every load)
+// The solver's threads (worker.js) need the page cross-origin isolated, which its service worker (sw.js) arranges: the
+// first visit registers it and loads the page once more under it, the worker waiting meanwhile (its downloads would
+// start over). Once a tab session: a hard reload, or a browser that leaves the page unisolated, just runs unthreaded.
+let isolating = (() => {
+  if (globalThis.crossOriginIsolated || typeof navigator === "undefined" || !navigator.serviceWorker || !globalThis.isSecureContext) return false;
+  if (navigator.serviceWorker.controller) return false;
+  try { if (sessionStorage.getItem("gto-isolate")) return false; sessionStorage.setItem("gto-isolate", "1"); } catch (e) { return false; }
+  const timeout = new Promise((_, no) => setTimeout(no, 4000));
+  Promise.race([navigator.serviceWorker.register("sw.js").then(() => navigator.serviceWorker.ready), timeout]).then(
+    () => location.reload(),
+    () => { isolating = false; if (MODE === "wasm" || (!MODE && location.protocol === "https:")) startWorker(); });
+  return true;
+})();
 // Over https it's the static site (gto/server.py serves http only), so the worker starts without waiting for the probe.
 if (location.protocol === "https:") startWorker();
 const modeReady = (async () => {
@@ -930,7 +943,7 @@ function setStatus(msg) {
 }
 let workerStatus = "";
 function startWorker() {
-  if (worker) return;
+  if (worker || isolating) return;
   worker = new Worker("worker.js?v=" + WORKER_VERSION);   // query busts the 4h GitHub Pages cache on redeploys
   worker.onmessage = (e) => { const m = e.data; if (m.status) { workerStatus = m.status; setStatus(m.status); } if (m.id != null && pending[m.id]) { pending[m.id](m.error ? { error: m.error } : m.result); delete pending[m.id]; } };
   worker.onerror = (e) => { for (const k in pending) { pending[k]({ error: "solver worker failed: " + e.message }); delete pending[k]; } };

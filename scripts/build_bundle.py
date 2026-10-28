@@ -24,10 +24,12 @@ def bundle_files() -> List[Tuple[str, str]]:
     """(name in the zip, source path), sorted by name."""
     import treys
     out = [(f"gto/{os.path.basename(p)}", p) for p in glob.glob(os.path.join(ROOT, "gto", "*.py"))]
-    # the compiled CFR core's module (gto/core.py), which worker.js instantiates from the unpacked bundle
-    wasm = os.path.join(ROOT, "gto", "core.wasm")
-    if os.path.exists(wasm):
-        out.append(("gto/core.wasm", wasm))
+    # the compiled CFR core's modules (gto/core.py), which worker.js instantiates from the unpacked bundle (core-mt.wasm,
+    # with threads, when the page is cross-origin isolated)
+    for name in ("core.wasm", "core-mt.wasm"):
+        wasm = os.path.join(ROOT, "gto", name)
+        if os.path.exists(wasm):
+            out.append((f"gto/{name}", wasm))
     tdir = os.path.dirname(treys.__file__)
     out += [(f"treys/{os.path.basename(p)}", p) for p in glob.glob(os.path.join(tdir, "*.py"))]
     lic = glob.glob(os.path.join(os.path.dirname(tdir), "treys-*.dist-info", "LICENSE*"))

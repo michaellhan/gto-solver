@@ -78,6 +78,7 @@ class _Native:
         L.core_reset.restype, L.core_reset.argtypes = None, []
         L.core_eval.restype = ctypes.c_int32
         L.core_eval.argtypes = [ctypes.c_uint32, ctypes.c_int32, ctypes.c_int32] + [ctypes.c_uint32] * 3 + [ctypes.c_int32]
+        L.core_threads.restype, L.core_threads.argtypes = ctypes.c_int32, [ctypes.c_int32]
         if L.core_version() != MAGIC:
             raise RuntimeError("core version mismatch")
         self.L = L
@@ -101,6 +102,9 @@ class _Native:
 
     def eval(self, prog: int, at: int, p: int, r0: int, r1: int, out: int, md: int) -> int:
         return self.L.core_eval(prog, at, p, r0, r1, out, md)
+
+    def threads(self, t: int) -> int:
+        return self.L.core_threads(t)
 
 
 class _Wasm:
@@ -135,6 +139,9 @@ class _Wasm:
     def eval(self, prog: int, at: int, p: int, r0: int, r1: int, out: int, md: int) -> int:
         return int(self.ex.core_eval(prog, at, p, r0, r1, out, md))
 
+    def threads(self, t: int) -> int:
+        return int(self.ex.core_threads(t))
+
 
 def _load():
     if os.environ.get("GTO_CORE", "1") == "0":
@@ -146,9 +153,11 @@ def _load():
         except Exception:
             return None
     try:
-        return _Native(build_native())
+        L = _Native(build_native())
     except Exception:
         return None
+    L.threads(int(os.environ.get("GTO_THREADS", "1")))
+    return L
 
 
 def lib():
@@ -157,6 +166,16 @@ def lib():
     if _lib is None:
         _lib = _load() or False
     return _lib or None
+
+
+def threads(t: int = 0) -> int:
+    """The core's threads, this one and its helpers (natively GTO_THREADS, else 1; worker.js's in the browser): sets
+    them to t (unless 0) once no solve holds the core, and returns the number. A solve's numbers don't depend on it."""
+    L = lib()
+    if L is None:
+        return 1
+    with _lock:
+        return L.threads(t)
 
 
 def _f(x) -> int:

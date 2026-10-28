@@ -42,8 +42,28 @@ def _decisions(sol):
 class TestWasm(unittest.TestCase):
     def test_module_built_from_the_current_source(self):
         # (python scripts/build_core.py after a change to core/gtocore.c)
-        with open(os.path.join(core.ROOT, "gto", "core.wasm"), "rb") as f:
-            self.assertIn(core.source_hash().encode(), f.read())
+        for name in ("core.wasm", "core-mt.wasm"):
+            with open(os.path.join(core.ROOT, "gto", name), "rb") as f:
+                self.assertIn(core.source_hash().encode(), f.read(), name)
+
+
+@unittest.skipUnless(ON, "no C compiler for the native core")
+class TestThreads(unittest.TestCase):
+    def test_same_numbers_on_any_number_of_threads(self):
+        # a turn by river class: the rows of its river nodes split between threads, each row's arithmetic the same
+        got = []
+        try:
+            for t in (1, 3, 8):
+                self.assertEqual(core.threads(t), t)
+                sol = _solve("Ks7d2cTh", OOP_T, IP_T, 20, 90, native.config("fast"), 30)
+                self.assertTrue(sol.solver.use_core and sol.solver._core_ok)
+                arr = np.concatenate([np.r_[d.regret.ravel(), d.ssum.ravel()] for d in _decisions(sol)])
+                got.append((arr.view(np.int32), sol.exploitability()))
+        finally:
+            core.threads(1)
+        for arr, ex in got[1:]:
+            np.testing.assert_array_equal(arr, got[0][0])
+            self.assertEqual(ex, got[0][1])
 
 
 @unittest.skipUnless(ON, "no C compiler for the native core")

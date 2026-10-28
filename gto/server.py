@@ -22,7 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from .native import advisors   # (first: it holds BLAS to one thread before numpy loads)
 from .advisor import Advisor
 from .solver import Cancelled
-from . import routes
+from . import core, routes
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -83,7 +83,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
         if p in ("/worker.js", "/hh.js", "/practice.js", "/reports.js", "/drills.js", "/breakdown.js", "/session.js",
-                 "/study.js"):
+                 "/study.js", "/sw.js"):
             name = p[1:]
             path = os.path.join(static, name)
             with open(path, "rb") as f:
@@ -139,7 +139,10 @@ def main(argv=None):
                     help="Fast's default seconds per earlier street used for range narrowing (2.5)")
     ap.add_argument("--depth", type=int, default=2)
     ap.add_argument("--open", action="store_true", help="open the review page in the default browser")
+    ap.add_argument("--threads", type=int, default=min(8, os.cpu_count() or 1),
+                    help="threads for the compiled core's solves (gto/core.py; the same answers on any number)")
     args = ap.parse_args(argv)
+    core.threads(args.threads)
     Handler.advisors = advisors(args.depth, args.budget, args.prior_budget)
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f"http://{args.host}:{args.port}/"

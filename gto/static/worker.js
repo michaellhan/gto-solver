@@ -57,6 +57,36 @@ self.libFetch = (path) => {
   }
 };
 
+// The core's threads: core-mt.wasm with its memory shared (a SharedArrayBuffer: the page must be cross-origin isolated,
+// which sw.js arranges) and up to 7 helper workers, each the same module on the same memory waiting in core_helper for
+// rows of a chance node's subtree (core/gtocore.c); a solve's numbers are the same on any number of threads. Without
+// isolation, or where the threaded module won't load, core.wasm alone.
+const HELPERS = Math.min(7, ((self.navigator && navigator.hardwareConcurrency) || 1) - 1);
+const HELPER = `onmessage = async (e) => {
+  const { mod, memory, i } = e.data;
+  const ex = (await WebAssembly.instantiate(mod, { env: { memory } })).exports;
+  ex.__stack_pointer.value = ex.core_stack(i);   // (every instance starts on the same stack)
+  ex.core_helper(i);                              // runs rows of the solves' chance nodes; never returns
+};`;
+async function loadCore(py) {
+  if (self.crossOriginIsolated && HELPERS > 0) {
+    try {
+      const mod = await WebAssembly.compile(py.FS.readFile("/app/gto/core-mt.wasm"));
+      const memory = new WebAssembly.Memory({ initial: 256, maximum: 32768, shared: true });
+      const ex = Object.assign({}, (await WebAssembly.instantiate(mod, { env: { memory } })).exports, { memory });
+      const url = URL.createObjectURL(new Blob([HELPER], { type: "text/javascript" }));
+      for (let i = 0; i < HELPERS; i++) new Worker(url).postMessage({ mod, memory, i });
+      ex.core_threads(HELPERS + 1);
+      return ex;
+    } catch (e) {}
+  }
+  try {
+    return (await WebAssembly.instantiate(py.FS.readFile("/app/gto/core.wasm"))).instance.exports;
+  } catch (e) {
+    return null;
+  }
+}
+
 // The setup, in the stages the page shows; their seconds come back with "Solving…" (setup: for
 // scripts/bench_browser.mjs and the console).
 const ready = (async () => {
@@ -75,12 +105,9 @@ const ready = (async () => {
   if (pyc) py.unpackArchive(pyc, "zip", { extractDir: "/app" });
   // the compiled CFR core (gto/core.py; in the bundle, ~20 KB): turn and river solves run their iterations in it. Where
   // it can't load (a browser without wasm SIMD) the solver runs in numpy as before.
-  try {
-    self.gtoCore = (await WebAssembly.instantiate(py.FS.readFile("/app/gto/core.wasm"))).instance.exports;
-  } catch (e) {
-    self.gtoCore = null;
-  }
+  self.gtoCore = await loadCore(py);
   setup.core = !!self.gtoCore;
+  setup.threads = self.gtoCore ? self.gtoCore.core_threads(0) : 0;
   // the sources get a fixed mtime (a .pyc is valid while its source's mtime and size match) and the startup imports
   // write their bytecode (Pyodide turns that off), which goes to the Cache API once the first request has its answer
   py.runPython("import os, sys, json\n"
