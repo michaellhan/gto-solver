@@ -601,3 +601,37 @@ the direction section 6 found. Not adopted, there or anywhere: the three spots g
 references' noise, their per-hand strategies fail the facts the charts pass, and the library's spots are
 keyed by the ranges the charts replay (a big blind defending the HJ by the solve would orphan srp_hj_bb's 1,755
 entries).
+
+**The other games.** Where the solve can't replace the 100bb charts, it can still say how a game moves them:
+the game's error at 100bb (tight opens, few calls of 3bets, the hand order at a range's edge) is in its solve of
+an ante, a straddle or a bigger table too, and cancels in the difference. `scripts/build_pf_formats.py` solves
+each game whole with the library's values (raked 5% capped at 4bb, the charts' references' rake, so a move is
+measured in the charts' own world: unraked, the big blind's defence against the button moved +34 points with a
+0.125bb ante where raked it moves +24), and `gto/pf_formats.py` adds the per-class difference to the chart at
+each of the charts' heads-up decisions (`gto/pf_format_data.py`, 1% steps, 30 KB for four games):
+
+| game | decisions | time | from equilibrium (bb/hand) |
+|---|---|---|---|
+| 6-max 100bb (the base) | 4,898 | 307 s | 0.0046 |
+| 6-max, at most two to a flop (the 7-8 handed base) | 3,439 | 161 s | 0.0029 |
+| 0.125bb ante | 4,898 | 483 s | 0.0057 |
+| straddle | 1,978 | 132 s | 0.0123 |
+| 7-handed (two to a flop) | 9,125 | 538 s | 0.0043 |
+| 8-handed (two to a flop) | 21,458 | 2,078 s | 0.0073 |
+
+Two corrections were needed. A solve's strategy for a hand that never reaches a decision is arbitrary (no payoff
+depends on it), and differences of two such strategies are noise: the
+3bettor's 72o "continued" against a 4bet in 39 lines with the ante. A move now counts in full only where both
+solves bring at least 5% of the hand's combos to the decision, less below (the 7-handed moves' mean size fell
+from 6.3 to 1.0 points, the ante's from 8.3 to 3.7). And a per-class move can take out hands the chart keeps
+while a weaker one stays (the 8-handed UTG's solve drops 33 and 44, which the 6-max solve opens, but the 6-max
+chart also opens 22, which neither solve does); `preflop.monotone` then adds them back, which raised the 8-handed
+UTG's opens from 15.8 to 17.2%, above the 6-max chart's 18.7 less the move. The moves are pooled along the
+dominance chains instead (pool adjacent violators, combos kept). Against gtopreflop.com's 8-max 100bb opens the
+moved charts are 15.8 / 16.7 / 17.9 / 22.8 / 29.7 / 45.1% from UTG to the button against 13.9 / 15.8 / 18.1 /
+22.2 / 29.2 / 43.7 (0.92 points on average, none outside 2), where the rules' 7+ handed EP chart had UTG and UTG1
+at 11.5% (1.70 points). The 8-handed solve itself opens 12.1 / 13.5 / 15.5 / 18.6 / 23.5 / 37.8, its 6-max
+seats 15.5 / 18.9 / 23.7 / 37.8: the opens it is tight on at 6-max it is tight on 8-handed too, by about as much.
+The ante (6-max 100bb, 0.125bb each) moves the opens from 18.7 / 22.9 / 30.0 / 45.1 / 44.7% to 20.1 / 24.1 /
+33.3 / 48.3 / 52.0 (UTG to the small blind) and the big blind's defence against the button from 55.0% to 71.6%
+(28.4 / 57.9 / 13.7); no published raked solve with antes was found to check them against.

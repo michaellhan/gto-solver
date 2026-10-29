@@ -10,7 +10,9 @@ same decision (scripts/build_pf_formats.py writes those moves to gto/pf_format_d
 
 The solve's own errors at 100bb (docs/preflop_research.md: its opens are tight, it calls 3bets too little) are
 mostly the same in both solves and cancel; what the game changes (a 3bet that commits the stack at 40bb, dead money
-in the pot, more players behind an open) is the solve's. Each dimension is its own set of moves, added together:
+in the pot, more players behind an open) is the solve's. A class's move counts only as far as both solves bring
+it to the decision (build_pf_formats.REACH), and a moved chart is kept in the dominance order by pooling (apply).
+Each dimension is its own set of moves, added together:
   * depth: 6-max games at DEPTHS bb against 100bb (no ante), linear between neighbouring depths; heads-up its own
     (HU_DEPTHS) against heads-up 100bb;
   * ante: 6-max games with an ANTE bb ante against the same depth without, at ANTE_DEPTHS, scaled by the dead money
@@ -44,26 +46,38 @@ _DATA = None
 def _data() -> dict:
     global _DATA
     if _DATA is None:
-        try:
-            from .pf_format_data import DELTAS
-        except ImportError:
-            DELTAS = {}
-        _DATA = {}
-        for dim, sets in DELTAS.items():
-            _DATA[dim] = {}
-            for sub, nodes in sets.items():
-                _DATA[dim][sub] = {k: {a: decode(v) for a, v in acts.items()} for k, acts in nodes.items()}
+        from .pf_format_data import DELTAS
+        _DATA = {dim: {sub: decode(*packed) for sub, packed in sets.items()} for dim, sets in DELTAS.items()}
     return _DATA
 
 
-def encode(d: np.ndarray) -> str:
-    """A per-class move (-1..1) in 0.5% steps, as int8, zlib, base64."""
-    q = np.clip(np.round(np.asarray(d, float) * 200), -127, 127).astype(np.int8)
-    return base64.b64encode(zlib.compress(q.tobytes(), 9)).decode()
+STEP = 100                                          # moves stored in 1% steps
 
 
-def decode(s: str) -> np.ndarray:
-    return np.frombuffer(zlib.decompress(base64.b64decode(s)), dtype=np.int8).astype(np.float64) / 200.0
+def encode(nodes: Dict[str, Dict[str, np.ndarray]]) -> Tuple[str, str]:
+    """One game's moves {line key: {action: per-class move (-1..1)}} as (index, data): the index 'key=rc ...'
+    (each decision's actions, r raise, c call), the data every move in that order in 1% steps, int8, zlib, base64."""
+    index, vecs = [], []
+    for key in sorted(nodes):
+        acts = [a for a in ("raise", "call") if a in nodes[key]]
+        index.append(key + "=" + "".join(a[0] for a in acts))
+        vecs += [np.asarray(nodes[key][a], float) for a in acts]
+    q = np.clip(np.round(np.concatenate(vecs) * STEP), -127, 127).astype(np.int8) if vecs else np.zeros(0, np.int8)
+    return " ".join(index), base64.b64encode(zlib.compress(q.tobytes(), 9)).decode()
+
+
+def decode(index: str, data: str) -> Dict[str, Dict[str, np.ndarray]]:
+    from .pf_classes import CLASSES
+    q = np.frombuffer(zlib.decompress(base64.b64decode(data)), dtype=np.int8).astype(np.float64) / STEP
+    out, i, k = {}, 0, len(CLASSES)
+    for entry in index.split():
+        key, acts = entry.rsplit("=", 1)
+        out[key] = {}
+        for c in acts:
+            out[key]["raise" if c == "r" else "call"] = q[i:i + k]
+            i += k
+    assert i == len(q), "pf_format_data: index and data disagree"
+    return out
 
 
 def line_key(hero: str, actions: List[dict]) -> Optional[str]:
@@ -215,7 +229,7 @@ def label(positions, cover: dict) -> str:
 
 def apply(base: Dict[str, np.ndarray], mv: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
     """The chart (per combo: {action: (1326,)}, fold implicit) moved per class, each action kept in [0, 1] and the
-    continuing total at most 1."""
+    continuing total at most 1, then made monotone without adding to it (isotonic)."""
     from .pf_classes import CLASS_OF
     out = {}
     for a in set(base) | {k for k in mv if k != "fold"}:
@@ -223,4 +237,51 @@ def apply(base: Dict[str, np.ndarray], mv: Dict[str, np.ndarray]) -> Dict[str, n
         out[a] = np.clip(v, 0.0, 1.0)
     tot = sum(out.values())
     scale = np.where(tot > 1.0, 1.0 / np.maximum(tot, 1e-12), 1.0)
-    return {a: v * scale for a, v in out.items()}
+    return isotonic({a: v * scale for a, v in out.items()})
+
+
+def isotonic(acts: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+    """A strategy (per combo, fold implicit) whose continuing frequency breaks the dominance order
+    (preflop.monotone's chains: a hand continuing less than one it dominates) pooled where it does, along each
+    chain (pool adjacent violators, by combos), keeping the continuing combos: a class the chart's move took out
+    below a weaker one the chart keeps (the 8-handed UTG folding 33 and 44 and opening 22) meets it halfway, where
+    preflop.monotone would add the stronger back. A pooled class plays its block's mix."""
+    from .pf_classes import CLASS_INDEX, CLASS_OF, N_IN
+    from .preflop import _dominance_chains
+    names = sorted(acts)
+    A = np.array([np.bincount(CLASS_OF, weights=acts[a], minlength=len(N_IN)) / N_IN for a in names])
+    A0 = A.copy()
+    n = np.asarray(N_IN, float)
+    chains = [[CLASS_INDEX[h] for h in c] for c in _dominance_chains()]
+    for _ in range(3):
+        moved = False
+        for chain in chains:
+            cont = A[:, chain].sum(axis=0)
+            if np.all(np.diff(cont) >= -1e-9):
+                continue
+            blocks = []                       # [start, end): pooled while a stronger block continues less
+            for i in range(len(chain)):
+                blocks.append([i, i + 1])
+                while len(blocks) > 1:
+                    (s0, e0), (s1, e1) = blocks[-2], blocks[-1]
+                    w0, w1 = n[chain[s0:e0]], n[chain[s1:e1]]
+                    if (cont[s1:e1] * w1).sum() / w1.sum() >= (cont[s0:e0] * w0).sum() / w0.sum() - 1e-12:
+                        break
+                    blocks[-2:] = [[s0, e1]]
+            for s0, e0 in blocks:
+                if e0 - s0 > 1:
+                    ix = chain[s0:e0]
+                    A[:, ix] = ((A[:, ix] * n[ix]).sum(axis=1) / n[ix].sum())[:, None]
+                    moved = True
+        if not moved:
+            break
+    changed = np.abs(A - A0).max(axis=0) > 1e-12
+    if not changed.any():
+        return acts
+    out = {}
+    for k, a in enumerate(names):
+        v = np.asarray(acts[a], float).copy()
+        m = changed[CLASS_OF]
+        v[m] = A[k][CLASS_OF][m]
+        out[a] = v
+    return out

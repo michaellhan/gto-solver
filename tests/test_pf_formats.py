@@ -61,7 +61,13 @@ class TestKeys(unittest.TestCase):
 
     def test_encoding(self):
         d = np.linspace(-0.6, 0.6, K)
-        self.assertLess(np.abs(PF.decode(PF.encode(d)) - d).max(), 0.0026)
+        nodes = {"BB|BTN:r": {"raise": d, "call": -d}, "UTG|": {"raise": d[::-1]}}
+        back = PF.decode(*PF.encode(nodes))
+        self.assertEqual(sorted(back), sorted(nodes))
+        self.assertEqual(sorted(back["BB|BTN:r"]), ["call", "raise"])
+        for k, acts in nodes.items():
+            for a, v in acts.items():
+                self.assertLess(np.abs(back[k][a] - v).max(), 0.0051)
 
 
 class TestMoves(unittest.TestCase):
@@ -111,14 +117,58 @@ class TestMoves(unittest.TestCase):
         table's own rules (the 7+ handed EP chart) moved: UTG and UTG1 both from the 6-max UTG chart."""
         T8 = pf.Table(pf.SEATS[8])
         utg6 = pf.strategy_for("UTG", [], pf.Table(pf.SEATS[6]))["raise"]
-        rules = pf.strategy_for("UTG", [], T8)["raise"]
-        self.assertLess(rules.mean(), utg6.mean() - 0.02)        # the EP chart
+        with _Data({}):
+            rules = pf.strategy_for("UTG", [], T8)["raise"]
+        self.assertLess(rules.mean(), utg6.mean() - 0.02)        # the EP chart, without moves
         up = np.full(K, -0.01)
         with _Data({"players": {8.0: {"UTG|": {"raise": up}, "UTG1|": {"raise": 0 * up}}}}):
             got = pf.strategy_for("UTG", [], T8)["raise"]
             self.assertLess(np.abs(got - np.clip(utg6 - 0.01, 0, 1)).max(), 1e-9)
             got1 = pf.strategy_for("UTG1", [F("UTG")], T8)["raise"]
             self.assertLess(np.abs(got1 - utg6).max(), 1e-9)
+
+    def test_moves_keep_the_dominance_order(self):
+        """A move taking out hands the chart keeps below a weaker one it keeps (33 and 44 folded, 22 opened) is
+        pooled along the dominance chain, keeping the combos opened, where preflop.monotone would add them back."""
+        pairs = np.array([len(c) == 2 for c in CLASSES])
+        base = {"raise": pairs[CLASS_OF].astype(float)}
+        ix = {h: CLASSES.index(h) for h in ("22", "33", "44", "55")}
+        mv = np.zeros(K)
+        mv[[ix["33"], ix["44"]]] = -0.8
+        got = PF.apply(base, {"raise": mv})
+        cls = lambda v, h: float(v[CLASS_OF == ix[h]].mean())
+        self.assertAlmostEqual(got["raise"].sum(), base["raise"].sum() - 2 * 6 * 0.8, 6)
+        self.assertAlmostEqual(cls(got["raise"], "22"), (1 + 0.2 + 0.2) / 3, 6)
+        self.assertAlmostEqual(cls(got["raise"], "44"), cls(got["raise"], "22"), 6)
+        self.assertEqual(cls(got["raise"], "55"), 1.0)
+        fixed = pf.monotone(dict(got, fold=1 - got["raise"]))
+        self.assertLess(np.abs(fixed["raise"] - got["raise"]).max(), 1e-9)
+
+    def test_unreached_classes_have_no_move(self):
+        """A solve's strategy for a class that never reaches the decision is arbitrary: the moves leave it out (the
+        big blind facing the 4bet with a hand it never 3bets), and weigh a decision both reach in full."""
+        import os
+        import sys
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
+        import build_pf_formats as B
+        g, base = B.game("2max_40bb"), B.game("2max")
+        g.solve(150)
+        base.solve(150)
+        mv = B.moves(g, base, "hu_depth")
+        dg, db = B.decisions(g), B.decisions(base)
+        key = "BB|SB:r,BB:r,SB:r"                   # the big blind's 3bet range facing the 4bet
+        self.assertIn(key, mv)
+        (sg, rg), (sb, rb) = dg[key], db[key]
+        rare = np.minimum(rg, rb) < B.REACH / 10        # hands it (almost) never 3bets
+        self.assertTrue(rare.any())
+        w = np.clip(np.minimum(rg, rb) / B.REACH, 0, 1)
+        for a, v in mv[key].items():
+            diff = sg.get(a, 0.0) - sb.get(a, 0.0)
+            self.assertLess(np.abs(v - w * diff).max(), 1e-12)
+            self.assertTrue(np.all(np.abs(v[rare]) <= 0.1 * np.abs(diff[rare]) + 1e-12))
+        first = mv["SB|"]["raise"]
+        want = dg["SB|"][0]["raise"] - db["SB|"][0]["raise"]
+        self.assertLess(np.abs(first - want).max(), 1e-12)
 
     def test_advice_prices_from_the_game(self):
         """The advice re-prices a covered decision from the game's own (its depth, its ante), so a spot at its
@@ -140,20 +190,27 @@ class TestMoves(unittest.TestCase):
 
 class TestShipped(unittest.TestCase):
     def test_shipped_moves(self):
-        """The generated moves (gto/pf_format_data.py): every dimension and depth, keys that are chart lines, and
-        charts that stay in range; at 100bb 6-max and heads-up the charts are the hand-written ones."""
+        """The generated moves (gto/pf_format_data.py): games build_pf_formats solves (every depth of a depth
+        dimension), keys that are chart lines, and charts that stay in range; at 100bb 6-max and heads-up the charts
+        are the hand-written ones."""
         from gto.pf_format_data import DELTAS
         if not DELTAS:
             self.skipTest("gto/pf_format_data.py holds no game yet")
+        import os
+        import sys
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
+        import build_pf_formats as B
         PF._DATA = None
         d = PF._data()
-        for dim in ("depth", "ante", "players", "straddle", "hu_depth"):
-            self.assertIn(dim, d)
-        self.assertEqual(sorted(d["depth"]), [x for x in PF.DEPTHS if x != 100.0])
-        self.assertEqual(sorted(d["hu_depth"]), [x for x in PF.HU_DEPTHS if x != 100.0])
+        games = {(dim, sub) for dim, sub, _, _ in B.SETS}
+        self.assertLessEqual({(dim, sub) for dim, sets in d.items() for sub in sets}, games)
+        for dim, grid in (("depth", PF.DEPTHS), ("hu_depth", PF.HU_DEPTHS)):
+            if dim in d:                                # a depth's moves are read between its neighbours
+                self.assertEqual(sorted(d[dim]), [x for x in grid if x != 100.0])
         for dim, sets in d.items():
             for sub, nodes in sets.items():
-                self.assertIn("UTG|" if dim != "hu_depth" else "SB|", nodes, (dim, sub))
+                first = {"hu_depth": "SB|", "straddle": "HJ|"}.get(dim, "UTG|")     # the first seat's open
+                self.assertIn(first, nodes, (dim, sub))
                 for key, mv in nodes.items():
                     hero, seq = key.split("|")
                     acts = [R(x.split(":")[0]) for x in seq.split(",") if x]
