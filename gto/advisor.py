@@ -19,7 +19,9 @@ from __future__ import annotations
 import dataclasses
 import functools
 import hashlib
+import importlib
 import random
+import re
 import time
 import types
 from functools import lru_cache
@@ -766,12 +768,27 @@ def _street_info(board: tuple):
     return sc, rank, _bluff_order(sts, rank, sc)
 
 
+# The preflop boards and their lookups (below) built so far, in order: warm_step() builds them a slice at a time while
+# the browser's worker is idle, where the first multiway preflop spot priced (a big blind facing an open and a call,
+# a 3-way flop's ranges) took 0.5 s for them in Pyodide; whatever is left is built when first needed, the same
+# boards either way (one random sequence, drawn in order).
+_TABLES: dict = {"rng": None, "boards": [], "index": []}
+
+
+def _preflop_boards_upto(k: int) -> None:
+    from .evaluator import eval_board
+    t = _TABLES
+    if t["rng"] is None:
+        t["rng"] = random.Random(1)
+    while len(t["boards"]) < min(k, PREFLOP_BOARDS):
+        t["boards"].append(eval_board(t["rng"].sample(range(52), 5)))
+
+
 @lru_cache(maxsize=1)
 def _preflop_boards():
     """Fixed random boards and every combo's strength on each (-1 = blocked), for preflop equity."""
-    from .evaluator import eval_board
-    rng = random.Random(1)
-    return np.array([eval_board(rng.sample(range(52), 5)) for _ in range(PREFLOP_BOARDS)])
+    _preflop_boards_upto(PREFLOP_BOARDS)
+    return np.array(_TABLES["boards"])
 
 
 def _implied_w(h: str) -> float:
@@ -798,13 +815,10 @@ _CA = np.array([a for a, b in ALL_COMBOS])
 _CB = np.array([b for a, b in ALL_COMBOS])
 
 
-@lru_cache(maxsize=1)
-def _board_index():
-    """Per preflop board, the orders and lookups _beat_share needs that don't depend on the range: every
-    combo by strength, every (card, strength) entry of a combo holding that card, and where each combo's own
-    strength falls in both."""
-    out = []
-    for s in _preflop_boards():
+def _board_index_upto(k: int) -> None:
+    _preflop_boards_upto(k)
+    out = _TABLES["index"]
+    for s in _TABLES["boards"][len(out):min(k, PREFLOP_BOARDS)]:
         o = np.argsort(s, kind="stable")
         ss = s[o]
         keys = np.concatenate([_CA, _CB]) * 8192 + np.concatenate([s, s])
@@ -816,7 +830,47 @@ def _board_index():
             ix += [np.searchsorted(k2, c * 8192, "left"), np.searchsorted(k2, c * 8192 + q, "left"),
                    np.searchsorted(k2, c * 8192 + q, "right"), np.searchsorted(k2, c * 8192 + 8191, "right")]
         out.append((o.astype(np.int16), o2.astype(np.int16), [i.astype(np.int16) for i in ix]))   # (< 2653: 14 MB)
-    return out
+
+
+@lru_cache(maxsize=1)
+def _board_index():
+    """Per preflop board, the orders and lookups _beat_share needs that don't depend on the range: every
+    combo by strength, every (card, strength) entry of a combo holding that card, and where each combo's own
+    strength falls in both."""
+    _board_index_upto(PREFLOP_BOARDS)
+    return list(_TABLES["index"])
+
+
+# the modules an answer imports on first use (the worker's setup imports only what a preflop or library answer needs):
+# 3-way pots, preflop pricing, exploits, the breakdown, tournaments (~0.1 s in Pyodide, compiled on each visit)
+WARM_IMPORTS = ("multiway_solver", "pf_formats", "pf_equity", "pf_game", "pf_eqr", "pf_realize", "pf_libvals",
+                "pf_solve", "breakdown", "exploit", "icm")
+
+
+def warm_step(budget: float = 0.05) -> bool:
+    """Work for idle time (the browser's worker between requests): the preflop equity tables (_preflop_boards,
+    _board_index, _board_index_all) built for about `budget` seconds at a time, so the first multiway preflop spot
+    doesn't wait for them (0.5 s in Pyodide), then WARM_IMPORTS one at a time. True once there is nothing left to
+    do."""
+    t0 = time.time()
+    while time.time() - t0 < budget:
+        t = _TABLES
+        if len(t["boards"]) < PREFLOP_BOARDS:
+            _preflop_boards_upto(len(t["boards"]) + 10)
+        elif len(t["index"]) < PREFLOP_BOARDS:
+            _board_index_upto(len(t["index"]) + 5)
+        elif _board_index_all.cache_info().currsize == 0:
+            _board_index_all()
+        else:
+            i = t.setdefault("imported", 0)
+            if i >= len(WARM_IMPORTS):
+                return True
+            t["imported"] = i + 1
+            try:
+                importlib.import_module(f"{__package__}.{WARM_IMPORTS[i]}")
+            except Exception:   # (imported when an answer needs it, as before)
+                pass
+    return False
 
 
 def _beat_share(bi: int, w: np.ndarray) -> np.ndarray:
@@ -1832,6 +1886,31 @@ class Advisor:
             return self.study(state)
         with np.errstate(all="ignore"):
             return self._advise(state)
+
+    def prefetch(self, state: dict) -> None:
+        """The flop's library lookups for a hand as soon as its flop is known, without reading any entry: a dry run
+        for the browser's worker, whose fetch then records the files asked for and requests them ahead
+        (gto/static/worker.js), so the answer at the flop finds them in hand. The flop before anyone acts, asked as
+        the player first to act ("library_only": nothing is solved). The entries it asked for and didn't get stay
+        unread (they would otherwise be kept as missing)."""
+        board = str(state.get("board") or "")[:6]
+        libs = [x for x in (self.library, self.mw_library) if x is not None and hasattr(x, "_entries")]
+        if len(board) < 6 or not libs:
+            return
+        st = {k: v for k, v in state.items() if k not in ("study", "runouts", "jam", "breakdown", "optimize_sizes")}
+        st.update(board=board, flop=[], turn=[], river=[], library_only=True)
+        before = [set(x._entries) for x in libs]
+        try:
+            res = self.advise(st)
+            m = re.match(r"it is (\w+)'s turn", str(res.get("error", "")))
+            if m:
+                self.advise(dict(st, hero=m.group(1)))
+        except Exception:
+            pass
+        finally:
+            for x, b in zip(libs, before):
+                for k in [k for k, e in x._entries.items() if e is None and k not in b]:
+                    del x._entries[k]
 
     def study(self, state: dict) -> dict:
         """Study mode (the page's solution browser): the hand as recorded, answered for whoever acts next with every

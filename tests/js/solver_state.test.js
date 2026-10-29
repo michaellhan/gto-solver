@@ -107,11 +107,37 @@ test("a solve of a spot you've left doesn't hold up your next turn: it's stopped
   p.workers[0].onmessage && p.workers[0].onmessage({ data: { id: first.id, result: { street: "flop", recommended: "check", actions: [{ action: "check", freq: 1 }] } } });
   await flush();
   assert.match(p.byId("result").innerHTML, /Solving the flop/);
-  // with the same spot still in flight, more renders ask nothing more
-  const n = p.posted.length;
+  // with the same spot still in flight, more renders ask nothing more (the new worker is told the flop once, to
+  // fetch its library entries ahead: prefetchLibrary)
+  const asks = () => p.posted.filter((m) => !m.prefetch).length;
+  const n = asks();
   p.run("renderAll()");
   await flush();
-  assert.equal(p.posted.length, n);
+  assert.equal(asks(), n);
+  assert.equal(p.posted.at(-1).prefetch.board, "Qc8h3d");
+  p.run("renderAll()");
+  await flush();
+  // (told the stopped worker as the hand was dealt, and the new one once)
+  assert.equal(p.posted.filter((m) => m.prefetch && m.prefetch.board === "Qc8h3d").length, 2);
+});
+
+test("once the flop is known the worker is told it, once a flop, to fetch the library's entries for it ahead", async () => {
+  const p = loadPage();
+  await p.ready();
+  const told = () => p.posted.filter((m) => m.prefetch).map((m) => m.prefetch);
+  p.S = state({ cards: FLOP.cards.slice(0, 2), preflop: FLOP.preflop });   // preflop: nothing to fetch
+  await flush();
+  assert.equal(told().length, 0);
+  p.S = state({ ...FLOP, flop: [] });   // the BB to act first: no answer asked yet, the flop told
+  await flush();
+  assert.deepEqual(told(), [p.payload()]);
+  p.S = state(FLOP);   // the hand goes on, an answer asked: the flop not told again
+  await flush();
+  assert.equal(told().length, 1);
+  assert.ok(p.posted.at(-1).state);
+  p.S = state({ ...FLOP, cards: ["Ah", "Kh", "Qc", "8h", "3d", "2s"] });   // another flop (a turn too: the flop's own)
+  await flush();
+  assert.deepEqual(told().map((x) => [x.board, x.flop.length, x.turn.length]), [["Kd7s2c", 0, 0], ["Qc8h3d", 0, 0]]);
 });
 
 test("Quick asks for quick answers, about 2 s by street, and is remembered", async () => {

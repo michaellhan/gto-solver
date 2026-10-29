@@ -11,6 +11,10 @@
 //   node scripts/bench_browser.mjs --list
 //
 // --worker FILE runs an edited copy of worker.js instead (a config to try before changing the page's).
+// --session runs every spot in one worker, one after another, as a page asks them over a session. --idle S waits S
+// seconds after the setup before the first request (the worker warms up while idle); --prefetch S sends the page's
+// prefetch (the flop's library entries fetched ahead) S seconds before each request with a flop; BENCH_NET_MS gives
+// each library file that latency, and each line counts the requests' own synchronous fetches (sync-fetches).
 // Each spot runs in a fresh worker (a child process: no solve cache carried between spots, like a page load);
 // --warm runs Fast then Accurate in the same worker, as when the page is switched to Accurate after a Fast answer
 // (Accurate starts from Fast's solve; the page's bar then counts the Accurate budget less Fast's seconds).
@@ -32,6 +36,8 @@ const STATIC = path.join(ROOT, "gto", "static");
 // the page's budgets in the browser (index.html BUDGETS.wasm): [street, each earlier postflop street]
 // (BENCH_BUDGETS='{"fast":[1.5,0.25]}' tries others, BENCH_STATE='{"quick":true}' adds request fields, e.g. Practice's;
 // children inherit both)
+// BENCH_NET_MS: each library file's request takes this long (the CDN measured 130-670 ms an entry, 0.8-4.9 s the index)
+const NET_MS = +(process.env.BENCH_NET_MS || 0);
 const BUDGETS = { fast: [8, 3], accurate: [60, 12], ...JSON.parse(process.env.BENCH_BUDGETS || "{}") };
 
 const F = (pos) => ({ pos, action: "fold" }), C = (pos) => ({ pos, action: "call" }), X = (pos) => ({ pos, action: "check" });
@@ -39,17 +45,25 @@ const R = (pos, to) => ({ pos, action: "raise", to }), B = (pos, amount) => ({ p
 const SRP = [F("UTG"), F("HJ"), F("CO"), R("BTN", 2.5), F("SB"), C("BB")];
 const MW = [F("UTG"), F("HJ"), R("CO", 2.5), C("BTN"), F("SB"), C("BB")];
 const MW4 = [F("UTG"), R("HJ", 2.5), C("CO"), C("BTN"), F("SB"), C("BB")];
+const CO_BB = [F("UTG"), F("HJ"), R("CO", 2.5), F("BTN"), F("SB"), C("BB")];
+const BB_3BET = [F("UTG"), F("HJ"), F("CO"), R("BTN", 2.5), F("SB"), R("BB", 10), C("BTN")];
 const base = (o) => ({ players: 6, stack: 100, preflop: SRP, flop: [], turn: [], river: [], ...o });
 const SRP_FLOP = [X("BB"), B("BTN", 1.8), C("BB")];                 // a third-pot c-bet called
 const SRP_TURN = [X("BB"), B("BTN", 6), C("BB")];                   // two thirds called
 // name: request state (the page's payload without budget / prior_budget / speed)
 const SPOTS = {
   "preflop": base({ hero: "CO", hole: "AhJd", board: "", preflop: [F("UTG"), F("HJ")] }),
+  "preflop-mw": base({ hero: "BB", hole: "Th9h", board: "", preflop: [F("UTG"), F("HJ"), R("CO", 2.5), C("BTN"), F("SB")] }),  // priced 3-way
   "flop-lib": base({ hero: "BTN", hole: "AsQs", board: "Kc7d4h", flop: [X("BB")] }),          // in the flop library
-  "flop": base({ hero: "BTN", hole: "AsQs", board: "Ks7d2c", flop: [X("BB")] }),              // not in it: solved
+  "flop-lib-co": base({ hero: "BB", hole: "AhQd", board: "Qh9c4d", preflop: CO_BB }),            // in it: CO vs BB, the root
+  "flop-lib-3bp": base({ hero: "BB", hole: "AhQd", board: "Kc7d4h", preflop: BB_3BET }),        // a 3bet pot's root (the
+                                                    // BB's check there is rare: the BTN's answer to it is solved live)
+  "flop-3bp": base({ hero: "BB", hole: "AhQd", board: "Ks7d2c", preflop: BB_3BET }),           // not in it: solved
+  "flop": base({ hero: "BTN", hole: "AsQs", board: "Ks7d2c", flop: [X("BB")] }),              // (in it since BTN vs BB has every flop)
   "flop-2tone": base({ hero: "BB", hole: "JcTc", board: "9h8h6c" }),                          // not in it, two-tone
   "turn-lib": base({ hero: "BB", hole: "QhJh", board: "Kc7d4h9s", flop: SRP_FLOP }),         // the flop narrowed by the library
-  "turn": base({ hero: "BB", hole: "QhJh", board: "Ks7d2cTh", flop: SRP_FLOP }),             // the flop solved to narrow
+  "turn": base({ hero: "BB", hole: "QhJh", board: "Ks7d2cTh", flop: SRP_FLOP }),             // (its flop in the library now)
+  "turn-3bp": base({ hero: "BB", hole: "AhQd", board: "Ks7d2cTh", preflop: BB_3BET, flop: [X("BB"), B("BTN", 6.8), C("BB")] }),  // the flop solved to narrow
   "river": base({ hero: "BB", hole: "QhJh", board: "Ks7d2cTh5s", flop: SRP_FLOP, turn: SRP_TURN }),
   "mw-flop": base({ hero: "BB", hole: "Qh9h", board: "Kh7d2c", preflop: MW }),                // first to act
   "mw-flop-x": base({ hero: "BTN", hole: "AhJd", board: "Kh7d2c", preflop: MW, flop: [X("BB"), X("CO")] }),
@@ -100,7 +114,12 @@ async function startWorker(pyodideDir, bundlePath) {
     loadPyodide: async () => (py = await loadPyodide()),   // the npm package's own files, not the CDN's
     fetch: async (url) => {
       if (/^https?:/.test(url)) return { ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0) };   // the numpy prefetch
-      const f = url.startsWith("solver.zip") ? bundlePath : path.join(ROOT, url.split("?")[0]);
+      if (url.startsWith("flop_library/")) {   // the library's files fetched ahead (BENCH_NET_MS: a CDN's latency)
+        ctx.aheadFetches++;
+        await new Promise((r) => setTimeout(r, NET_MS));
+      }
+      const f = url.startsWith("solver.zip") ? bundlePath : url.startsWith("flop_library/") ? path.join(STATIC, url.split("?")[0])
+        : path.join(ROOT, url.split("?")[0]);
       if (!fs.existsSync(f)) return { ok: false, status: 404 };
       const buf = fs.readFileSync(f);
       return { ok: true, status: 200, text: async () => buf.toString("utf8"),
@@ -109,12 +128,14 @@ async function startWorker(pyodideDir, bundlePath) {
     XMLHttpRequest: class {
       open(method, url) { this.url = url; }
       send() {
+        const t = performance.now();
+        while (performance.now() - t < NET_MS);   // (synchronous: the worker waits)
         const f = path.join(STATIC, this.url.split("?")[0]);
-        if (fs.existsSync(f)) { this.status = 200; this.response = fs.readFileSync(f).buffer.slice(0); ctx.libFetches++; }
+        if (fs.existsSync(f)) { this.status = 200; const b = fs.readFileSync(f); this.response = b.buffer.slice(b.byteOffset, b.byteOffset + b.length); ctx.libFetches++; }
         else this.status = 404;
       }
     },
-    libFetches: 0,
+    libFetches: 0, aheadFetches: 0,
     postMessage: (m) => onMsg && onMsg(m),
   };
   ctx.self = ctx;
@@ -134,22 +155,36 @@ async function startWorker(pyodideDir, bundlePath) {
   const setup = (performance.now() - t0) / 1000;
   const heap = () => py._module.HEAPU8.buffer.byteLength / 2 ** 20;
   let id = 0;
+  const prefetch = (state) => ctx.onmessage({ data: { prefetch: state } });
   const request = (state) => new Promise((res) => {
     const my = ++id;
     onMsg = (m) => { if (m.id === my) res(m); };
     ctx.onmessage({ data: { id: my, state } });
   });
-  return { setup, stages, heap, request, ctx };
+  return { setup, stages, heap, request, prefetch, ctx };
 }
 
-// one spot's requests in one worker; prints JSON lines
-async function runOne(spot, speeds, pyodideDir, bundlePath) {
+// one spot's requests in one worker (--session: every spot's, one after another in the same worker, as a page
+// asks them over a session: the library's index fetched once, the solves kept); prints JSON lines
+async function runOne(spotList, speeds, pyodideDir, bundlePath) {
   const w = await startWorker(pyodideDir, bundlePath);
-  console.log(JSON.stringify({ spot, setup: +w.setup.toFixed(2), stages: w.stages, heap_mb: +w.heap().toFixed(0) }));
+  console.log(JSON.stringify({ spot: spotList.join(","), setup: +w.setup.toFixed(2), stages: w.stages, heap_mb: +w.heap().toFixed(0) }));
+  // --idle S: the first request S seconds after the setup (the time a person takes to act: the worker warms up then)
+  if (arg("idle")) await new Promise((r) => setTimeout(r, 1000 * +arg("idle")));
+  for (const spot of spotList) await runSpot(w, spot, speeds);
+}
+async function runSpot(w, spot, speeds) {
   let fastSeconds = null;
   for (const speed of speeds) {
     const [budget, prior_budget] = BUDGETS[speed];
     const state = { ...SPOTS[spot], budget, prior_budget, speed, ...JSON.parse(process.env.BENCH_STATE || "{}") };
+    // --prefetch S: the page's prefetch as the flop is known, S seconds before the request (the time the hand takes
+    // to reach your decision)
+    if (arg("prefetch") && state.board.length >= 6) {
+      w.prefetch({ ...state, board: state.board.slice(0, 6), flop: [], turn: [], river: [] });
+      await new Promise((r) => setTimeout(r, 1000 * +arg("prefetch")));
+    }
+    const [x0, a0] = [w.ctx.libFetches, w.ctx.aheadFetches];
     const t0 = performance.now();
     const m = await w.request(state);
     const wall = (performance.now() - t0) / 1000;
@@ -159,16 +194,16 @@ async function runOne(spot, speeds, pyodideDir, bundlePath) {
       spot, speed, wall: +wall.toFixed(2), page_budget: est, over_pct: est ? Math.round((wall / est - 1) * 100) : null,
       iterations: s.iterations ?? null, solve_s: s.solve_seconds ?? null, expl_pct: s.exploitability_pct ?? null,
       outside_s: s.solve_seconds != null ? +(wall - s.solve_seconds).toFixed(2) : null,
-      precomputed: !!r.precomputed, heap_mb: +w.heap().toFixed(0), lib_fetches: w.ctx.libFetches,
+      precomputed: !!r.precomputed, heap_mb: +w.heap().toFixed(0), lib_fetches: w.ctx.libFetches - x0, lib_ahead: w.ctx.aheadFetches - a0,
       street: r.street, recommended: r.recommended, error: m.error || r.error || null,
-      notes: (r.notes || []).filter((n) => /equilibrium|solved|iterations|rules/.test(n)).map((n) => n.slice(0, 160)),
+      notes: (r.notes || []).filter((n) => process.env.BENCH_ALL_NOTES || /equilibrium|solved|iterations|rules/.test(n)).map((n) => n.slice(0, 160)),
     }));
     if (speed === "fast") fastSeconds = r.seconds;
   }
 }
 
 if (flag("child")) {
-  await runOne(arg("spot"), arg("speeds").split(","), arg("pyodide"), arg("bundle"));
+  await runOne(arg("spot").split(","), arg("speeds").split(","), arg("pyodide"), arg("bundle"));
   process.exit(0);
 }
 if (flag("list")) {
@@ -181,19 +216,19 @@ const spots = arg("spots", Object.keys(SPOTS).join(",")).split(",");
 const speeds = arg("speeds", "fast,accurate").split(",");
 const bundlePath = buildBundle();
 const rows = [];
-for (const spot of spots) {
-  if (!SPOTS[spot]) { console.error(`unknown spot ${spot} (--list)`); process.exit(2); }
+for (const spot of spots) if (!SPOTS[spot]) { console.error(`unknown spot ${spot} (--list)`); process.exit(2); }
+for (const spot of flag("session") ? [spots.join(",")] : spots) {
   // a fresh worker per spot (and per speed unless --warm)
   for (const group of flag("warm") ? [speeds] : speeds.map((s) => [s])) {
     const p = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--child", "--spot", spot, "--speeds", group.join(","),
-                                           "--pyodide", pyodideDir, "--bundle", bundlePath, ...(arg("worker") ? ["--worker", arg("worker")] : [])], { encoding: "utf8", maxBuffer: 1 << 26 });
+                                           "--pyodide", pyodideDir, "--bundle", bundlePath, ...(arg("worker") ? ["--worker", arg("worker")] : []), ...["prefetch", "idle"].flatMap((k) => (arg(k) ? ["--" + k, arg(k)] : []))], { encoding: "utf8", maxBuffer: 1 << 26 });
     for (const line of p.stdout.split("\n").filter((l) => l.startsWith("{"))) {
       const r = JSON.parse(line);
       if (r.speed) rows.push(r);
       console.log(r.speed ? `${r.spot.padEnd(11)} ${r.speed.padEnd(8)} ${String(r.wall).padStart(6)} s of ~${r.page_budget ?? "-"} ` +
                             `(${r.over_pct == null ? "-" : (r.over_pct > 0 ? "+" : "") + r.over_pct + "%"})  it ${r.iterations ?? "-"}  ` +
                             `expl ${r.expl_pct ?? "-"}%  solve ${r.solve_s ?? "-"} s  outside ${r.outside_s ?? "-"} s  heap ${r.heap_mb} MB` +
-                            `${r.precomputed ? "  library" : ""}${r.error ? "  ERROR " + r.error : ""}` +
+                            `${r.precomputed ? "  library" : ""}${r.lib_fetches ? "  sync-fetches " + r.lib_fetches : ""}${r.error ? "  ERROR " + r.error : ""}` +
                             (r.notes.length ? "\n             " + r.notes.join("\n             ") : "")
                           : `${r.spot}: worker setup ${r.setup} s${r.stages ? " (" + Object.entries(r.stages).filter(([k]) => k !== "total").map(([k, v]) => `${k} ${v}`).join(", ") + ")" : ""}, heap ${r.heap_mb} MB`);
     }

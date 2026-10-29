@@ -1195,6 +1195,28 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   On a loaded machine the gap grows: 8.0 s before, 4.2 s after; the deployed page took 10.9-12.3 s then, 7.4-8.3 s of
   it loading the code (its 16 fetches alone 0.66 s in a row, 0.05 s in parallel). A first visit also downloads
   ~25 MB (Pyodide 13.7, numpy 12.0; micropip and packaging's 0.3 MB are gone), which a slow connection pays once.
+* **Precomputed answers, instant in the browser** (`scripts/instant_coverage.py`: of a 6-max 100bb session's
+  decisions, every seat's, 83.6% are answered from precomputed data: preflop all of them, heads-up flops 74.7% from
+  the flop library, 3-way flops 5.2%, turns and rivers none yet; the turn and river are 13% of the decisions, the
+  flop 12%). The answer itself takes 10-40 ms in Pyodide; what it waited for was the library's files, read
+  synchronously when the request came (the index on a session's first flop, 0.8-4.9 s on a cold CDN; each entry
+  0.13-0.67 s from here), and on the first multiway preflop spot (a big blind facing an open and a call, or a 3-way
+  flop's ranges) the preflop equity tables, 0.5 s. Now the worker fetches both indexes as it starts, beside the
+  runtime; the page tells it the hand's flop as soon as it is dealt, whoever is to act (a `prefetch` message), and
+  `Advisor.prefetch` runs the flop's lookups dry, so the worker fetches the entries they name ahead and a request
+  waits for any still in flight instead of asking again; and while idle the worker builds the equity tables 50 ms at
+  a time (`advisor.warm_step`, then the modules answers import on first use). `scripts/bench_browser.mjs --session
+  --idle 3 --prefetch 1` (one worker, the first request 3 s after its setup, the flop told 1 s before each
+  request with one, `BENCH_NET_MS=300` per library file), first answers in a session, medians of 3, seconds:
+
+  | | preflop | BB vs open and call | BTN vs BB flop | CO vs BB flop | 3bet pot flop | 3-way flop |
+  |---|---|---|---|---|---|---|
+  | before (synchronous fetches) | 0.01 | 0.51 | 0.62 (2 fetches) | 0.31 (1) | 0.31 (1) | 0.64 (2) |
+  | after | 0.01 | 0.10 | 0.01 | 0.01 | 0.01 | 0.01 |
+
+  The same answers (iterations and exploitability are the library's: 0.07-0.13% of the pot). The flop's entries
+  arrive ahead when anyone acts before you; first to act on the flop, the request waits for the entry's one fetch
+  (the index is in hand). The tables cost the same 150 MB of heap as before, now in every session.
 * **Regret minimizer** (`docs/cfr_research.md`, `scripts/bench_solver.py --algos`, exploitability per
   iteration): predictive CFR+ and its discounted form (PCFR+, PDCFR+), the state of the art on many
   non-poker games, are 2-7x more exploitable than DCFR here at 100-200 iterations on every spot (the river,
@@ -1553,8 +1575,9 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   under `old_tree`); an entry whose spot, tree or `MODEL_VERSION` (bump it when the flop game changes in a way the
   tree key can't see) no longer matches the code is ignored, and a rebuilt index leaves stale entries out (a test
   checks the shipped index against the charts).
-* **Browser**: the worker fetches `flop_library/index.json` the first time a flop comes up and one entry
-  (`<spot>/<flop>.bin`, cache-busted by its hash) when its spot does; `scripts/deploy.sh` copies the folder.
+* **Browser**: the worker fetches `flop_library/index.json` as it starts and a flop's entries (`<spot>/<flop>.bin`,
+  cache-busted by its hash) once the page says the flop is dealt (Precomputed answers, instant in the browser);
+  `scripts/deploy.sh` copies the folder.
 
 Building (resumable: entries on disk for the current charts and tree are kept, so re-run the same command after
 a stop; progress lines go to stdout, the index is rewritten every 20 entries, and with it each spot's
@@ -1625,8 +1648,9 @@ betting rules. The commonest 3-way pots' flops are solved offline (`gto/mw_libra
 * **Browser** (`scripts/bench_browser.mjs`, `mw-flop` first to act, `mw-flop-x` checked to twice): answered from the
   library in 0.49-0.57 s at Quick (`BENCH_STATE='{"quick":true}'`), Fast and Accurate alike, most of it the first
   request importing the 3-way solver (Accurate's live solve took its 60 s then, Quick's answer was the rules');
-  `mw-turn` narrows the checked-through flop through it (followed 100%). The worker fetches `mw_index.json` the first
-  time a 3-way flop comes up and one entry when its spot does.
+  `mw-turn` narrows the checked-through flop through it (followed 100%). The worker fetches `mw_index.json` as it
+  starts and a 3-way flop's entry once the flop is dealt (0.01 s an answer then, the preflop equity tables built
+  while the worker was idle).
 
 ```bash
 nohup nice python scripts/build_mw_library.py --jobs 8 > reports/mw_library_build.log &   # every spot (resumable)

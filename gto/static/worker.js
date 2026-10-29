@@ -43,9 +43,32 @@ fetch(PYODIDE + "numpy-1.26.4-cp312-cp312-pyodide_2024_0_wasm32.whl").then((r) =
 importScripts(PYODIDE + "pyodide.js");
 
 // The precomputed flop library (gto/flop_library.py): the Python side asks for its index once and for an entry
-// (<spot>/<flop>.bin, 1.5-6 KB) only when a flop spot it holds comes up. A synchronous request (allowed in a
-// worker) because the solver runs synchronously; a missing or unreadable file is just no library.
+// (<spot>/<flop>.bin, 1.5-6 KB) only when a flop spot it holds comes up. The solver runs synchronously, so it reads
+// them synchronously: from LIB, the files fetched ahead, else by a synchronous request (allowed in a worker); a missing
+// or unreadable file is just no library. Fetched ahead: both indexes (index.json 117 KB gzipped, 0.8-4.9 s on a cold
+// CDN; mw_index.json), requested now beside the runtime, and a flop's entries once the page says the flop is known
+// (a "prefetch" message: Advisor.prefetch's dry run names them, RECORD); a request waits for those still in flight
+// (whenAhead) rather than asking again. A synchronous request blocked the worker for the index on a session's first
+// flop and for each entry (0.13-0.67 s each from here, through the CDN), where the answer itself takes 10-40 ms.
+const LIB = new Map();   // path -> Uint8Array (fetched) or a Promise (in flight)
+function libAhead(path) {
+  if (!LIB.has(path)) {
+    if (LIB.size >= 64) for (const [k, v] of LIB) if (v instanceof Uint8Array && !k.endsWith("index.json")) { LIB.delete(k); break; }   // (one never asked for)
+    const p = fetch(`flop_library/${path}`).then((r) => r.ok ? r.arrayBuffer() : null)
+      .then((b) => { if (b) LIB.set(path, new Uint8Array(b)); else LIB.delete(path); }, () => { LIB.delete(path); });
+    LIB.set(path, p);
+  }
+}
+libAhead("index.json");
+libAhead("mw_index.json");
+async function whenAhead() {   // (until none is in flight: a prefetch can start more while a request waits)
+  for (let p; (p = [...LIB.values()].filter((v) => v instanceof Promise)).length; ) await Promise.all(p);
+}
+let RECORD = null;   // the paths a prefetch's dry run asks for (entries: not read now; the indexes always are)
 self.libFetch = (path) => {
+  const hit = LIB.get(path);
+  if (hit instanceof Uint8Array) { LIB.delete(path); return hit; }   // (Python keeps what it decodes)
+  if (RECORD && !path.endsWith("index.json")) { RECORD.push(path); return null; }
   try {
     const x = new XMLHttpRequest();
     x.open("GET", `flop_library/${path}`, false);
@@ -236,14 +259,42 @@ const ready = (async () => {
   return py;
 })();
 
+// Idle time (no request waiting): Advisor-side work an answer would otherwise wait for (advisor.warm_step: the
+// preflop equity tables, 0.5 s the first time a multiway preflop spot is priced, then the modules answers import on
+// first use), ~50 ms at a time so a request that comes waits at most that.
+let busy = 0, warmDone = false, warmTimer = null;
+function idle() {
+  if (warmDone || warmTimer) return;
+  warmTimer = setTimeout(async () => {
+    warmTimer = null;
+    if (busy) return;
+    try { warmDone = (await ready).runPython("from gto.advisor import warm_step; warm_step(0.05)"); } catch (e) { warmDone = true; }
+    idle();
+  }, 30);
+}
+ready.then(idle, () => {});
+
 // A solve can only be cancelled before it starts (runPython blocks this thread); the page terminates
 // the worker to stop one that is running.
 const cancelled = new Set();
 onmessage = async (e) => {
   if (e.data.cancel != null) { cancelled.add(e.data.cancel); return; }
+  if (e.data.prefetch) {   // the page's hand has a flop: its library entries, fetched ahead (above)
+    try {
+      const py = await ready;
+      await whenAhead();   // (the indexes: the dry run reads them)
+      py.globals.set("state_json", JSON.stringify(e.data.prefetch));
+      RECORD = [];
+      py.runPython("advs['fast'].prefetch(json.loads(state_json))");
+      for (const path of RECORD) libAhead(path);
+    } catch (err) {} finally { RECORD = null; }
+    return;
+  }
   const { id, state, play } = e.data;   // play: {seat, hole}, a practice opponent's move (Advisor.play)
+  busy++;
   try {
     const py = await ready;
+    if (String(state.board || "").length >= 6) await whenAhead();   // (a preflop answer needs no library file)
     if (cancelled.delete(id)) return postMessage({ id, result: { cancelled: true } });
     py.globals.set("state_json", JSON.stringify(state));
     py.globals.set("play_json", JSON.stringify(play || null));
@@ -252,5 +303,8 @@ onmessage = async (e) => {
     postMessage({ id, result: JSON.parse(out) });
   } catch (err) {
     postMessage({ id, error: String(err).split("\n").slice(-3).join(" ") });
+  } finally {
+    busy--;
+    idle();
   }
 };

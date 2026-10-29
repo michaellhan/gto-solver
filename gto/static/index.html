@@ -886,6 +886,7 @@ function syncRoute(replace) {
 
 // ---- backend: the local Python server if present, otherwise the solver runs in the browser (Pyodide worker)
 let MODE = null, worker = null, reqId = 0;
+let prefetched = null;   // the flop the worker was last told about (prefetchLibrary)
 const pending = {};
 // (health.json: the local server answers it {"ok": true}; the static site has the file, {"ok": false}, so the probe
 // never 404s there, which the browser would log as an error on every load)
@@ -945,8 +946,22 @@ let workerStatus = "";
 function startWorker() {
   if (worker || isolating) return;
   worker = new Worker("worker.js?v=" + WORKER_VERSION);   // query busts the 4h GitHub Pages cache on redeploys
+  prefetched = null;
   worker.onmessage = (e) => { const m = e.data; if (m.status) { workerStatus = m.status; setStatus(m.status); } if (m.id != null && pending[m.id]) { pending[m.id](m.error ? { error: m.error } : m.result); delete pending[m.id]; } };
   worker.onerror = (e) => { for (const k in pending) { pending[k]({ error: "solver worker failed: " + e.message }); delete pending[k]; } };
+}
+// Once the hand's flop is known, whoever is to act, the browser's worker is told (a "prefetch": Advisor.prefetch
+// names the flop library's files the flop's answers read, and the worker fetches them ahead), so an answer the
+// library holds needs no request of its own (each took 0.13-0.67 s through the CDN, where the answer takes 10-40 ms)
+function prefetchLibrary() {
+  if (MODE !== "wasm" || boardCards().length < 3 || !S.cards[0] || !S.cards[1]) return;
+  const p = payload(), flop = { ...p, board: p.board.slice(0, 6), flop: [], turn: [], river: [] };
+  const k = JSON.stringify(flop);
+  if (k === prefetched) return;
+  startWorker();
+  if (!worker) return;   // (the page reloads under its service worker first)
+  prefetched = k;
+  worker.postMessage({ prefetch: flop });
 }
 // play: {seat, hole} asks for that seat's GTO move instead (a practice opponent; Advisor.play)
 function callAdvise(state, play) {
@@ -1769,6 +1784,7 @@ function renderAll() {
   document.body.classList.toggle("needcard", needCard(sim));
   document.getElementById("pCards").hidden = !needCard(sim);   // the deck shows while a card is needed, or on request
   renderSetup(); renderSlots(sim); renderPicker(sim); renderTable(sim); renderAction(sim); renderTimeline();
+  prefetchLibrary();
   if (sim.toAct === S.hero && S.cards[0] && S.cards[1] && !sim.handOver && !(practicing() && window.Practice.auto(sim))) analyze(sim);
   else if (!S.cards[0] || !S.cards[1]) resetAdvice();
   updateAdviceState();
