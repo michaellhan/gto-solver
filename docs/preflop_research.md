@@ -608,16 +608,23 @@ an ante, a straddle or a bigger table too, and cancels in the difference. `scrip
 each game whole with the library's values (raked 5% capped at 4bb, the charts' references' rake, so a move is
 measured in the charts' own world: unraked, the big blind's defence against the button moved +34 points with a
 0.125bb ante where raked it moves +24), and `gto/pf_formats.py` adds the per-class difference to the chart at
-each of the charts' heads-up decisions (`gto/pf_format_data.py`, 1% steps, 30 KB for four games):
+each of the charts' heads-up decisions (`gto/pf_format_data.py`, 1% steps, 62 KB for the games adopted):
 
 | game | decisions | time | from equilibrium (bb/hand) |
 |---|---|---|---|
-| 6-max 100bb (the base) | 4,898 | 307 s | 0.0046 |
-| 6-max, at most two to a flop (the 7-8 handed base) | 3,439 | 161 s | 0.0029 |
-| 0.125bb ante | 4,898 | 483 s | 0.0057 |
-| straddle | 1,978 | 132 s | 0.0123 |
-| 7-handed (two to a flop) | 9,125 | 538 s | 0.0043 |
-| 8-handed (two to a flop) | 21,458 | 2,078 s | 0.0073 |
+| 6-max 100bb (the base) | 5,470 | 609 s | 0.0069 |
+| 6-max 20 / 40 / 60bb | 747 / 1,414 / 2,845 | 53 / 103 / 266 s | 0.0014 / 0.0084 / 0.0067 |
+| 6-max 150 / 200bb (not adopted, below) | 6,971 / 6,971 | 510 / 329 s | 0.0095 / 0.0100 |
+| 0.125bb ante at 20 / 40 / 100bb | 747 / 1,414 / 5,470 | 57 / 116 / 611 s | 0.0031 / 0.0078 / 0.0094 |
+| straddle | 2,273 | 193 s | 0.0125 |
+| 6-max, at most two to a flop (the 7-8 handed base) | 3,835 | 202 s | 0.0057 |
+| 7-handed (two to a flop) | 10,676 | 570 s | 0.0061 |
+| 8-handed (two to a flop; before the all-in fix below) | 21,458 | 2,078 s | 0.0073 |
+| heads-up 20 / 40 / 100 / 200bb (200 not adopted) | 3-5 | 0-1 s | 0.0002-0.0005 |
+| heads-up with the small blind's limp, 20 / 40 / 100 / 200bb | 6 / 8 / 10 / 10 | 1-4 s | 0.0006-0.0012 |
+
+(Times on one thread of a loaded machine. The first pass's base, ante and straddle solves had 4,898, 4,898 and
+1,978 decisions, before the fix below.)
 
 Two corrections were needed. A solve's strategy for a hand that never reaches a decision is arbitrary (no payoff
 depends on it), and differences of two such strategies are noise: the
@@ -632,6 +639,60 @@ moved charts are 15.8 / 16.7 / 17.9 / 22.8 / 29.7 / 45.1% from UTG to the button
 22.2 / 29.2 / 43.7 (0.92 points on average, none outside 2), where the rules' 7+ handed EP chart had UTG and UTG1
 at 11.5% (1.70 points). The 8-handed solve itself opens 12.1 / 13.5 / 15.5 / 18.6 / 23.5 / 37.8, its 6-max
 seats 15.5 / 18.9 / 23.7 / 37.8: the opens it is tight on at 6-max it is tight on 8-handed too, by about as much.
-The ante (6-max 100bb, 0.125bb each) moves the opens from 18.7 / 22.9 / 30.0 / 45.1 / 44.7% to 20.1 / 24.1 /
-33.3 / 48.3 / 52.0 (UTG to the small blind) and the big blind's defence against the button from 55.0% to 71.6%
-(28.4 / 57.9 / 13.7); no published raked solve with antes was found to check them against.
+The ante (6-max 100bb, 0.125bb each) moves the opens from 18.7 / 22.9 / 30.0 / 45.1 / 44.7% to 19.4 / 24.2 /
+33.6 / 48.2 / 51.8 (UTG to the small blind) and the big blind's defence against the button from 55.0% to 71.0%
+(29.0 / 57.3 / 13.6); no published raked solve with antes was found to check them against.
+
+**Other depths and heads-up (second part).** Another depth's flops are worth a different share: with less
+behind, a 3bet pot's stack is close to the pot and the player out of position can't be bet off its equity.
+`scripts/pf_depth_values.py` solved BTN vs BB, SB vs BB and BB vs BTN's 3bet pot live at 20, 40 and 200bb on 12
+of the 184 representative flops (150 iterations) and fit k, each share's excess over equity at that depth over
+the library's at 100bb (`build_pf_formats.DEPTH_SCALE`, linear between, 1 at 100): single-raised pots 0.90 /
+0.98 / 0.96 (BTN vs BB) and 0.88 / 0.98 / 0.95 (SB vs BB) at 20 / 40 / 200bb, 3bet pots 0.48 / 0.76 / 1.03,
+4bet pots taken as 3bet pots. `pf_game.LibraryModel(scale=...)` applies it per pot type.
+
+Solving 40bb with the ante found a fault in the tree: after a raise only two players could see a flop, so a
+3bettor facing a cold all-in and a call could only fold. At 40bb with the ante the big blind then jammed any two
+over a button open and a small-blind 3bet, the button called, and the solve 3bet nothing from the small blind.
+A call of an all-in is a showdown, not a pot to play, so now up to three may call one (`pf_game.build`: 11,010
+nodes for 6-max 100bb, 8,847 before); every game was solved again except the 8-handed one, whose solve needs
+about 2.9 GB, over the memory the machine could spare (its moves are the earlier tree's, from the earlier base).
+
+| | opens UTG / HJ / CO / BTN / SB | BB vs BTN open (fold / call / 3bet) | SB vs BTN open |
+|---|---|---|---|
+| 20bb | 19.1 / 23.9 / 28.1 / 36.6 / 43.4 | 47 / 38 / 16 | 84 / 3 / 13 |
+| 40bb | 19.0 / 24.4 / 32.2 / 45.1 / 51.4 | 44 / 43 / 14 | 82 / 5 / 13 |
+| 60bb | 18.4 / 22.9 / 30.1 / 44.8 / 48.1 | 44 / 43 / 13 | 81 / 7 / 12 |
+| 100bb (the charts) | 18.7 / 22.9 / 30.0 / 45.1 / 44.7 | 45 / 43 / 12 | 85 / 4 / 11 |
+| 150bb (solved, not adopted) | 18.6 / 23.1 / 30.0 / 45.5 / 46.3 | 45 / 42 / 13 | 84 / 6 / 10 |
+| 200bb (solved, not adopted) | 18.7 / 23.3 / 30.2 / 46.0 / 47.2 | 44 / 43 / 13 | 84 / 6 / 10 |
+| 20bb, 0.125 ante | 21.2 / 24.8 / 30.0 / 39.4 / 48.3 | 37 / 45 / 18 | 82 / 3 / 15 |
+| 40bb, 0.125 ante | 22.2 / 26.3 / 33.7 / 46.7 / 58.8 | 27 / 59 / 14 | 76 / 10 / 13 |
+
+Deeper than 100bb the moves are not adopted. The deep solves' flops are the library's 100bb values with one
+factor per pot type (1.03 for 3bet pots at 200bb), so a small pair's or suited connector's extra winnings when it
+hits, which grow with the stack behind, are spread over every class of the pot type, and the solve gives the deep
+stack nothing for them per class: moved by the 200bb solve the button calls a big blind's 3bet with 22 37% of the
+time, 55 65% and 77 71% (the 100bb chart 75 / 92 / 100%), and UTG calls a CO 3bet with 77 35% of the time and no smaller pair. The live
+solves at 200bb do show small pairs gaining in 3bet pots (22 +0.10, 44 +0.18 of the pot over equity against
+100bb's on the 12 flops), but 12 flops are too few to fit a factor per class. So deeper than 100bb the advice
+plays the 100bb charts (with the ante's, players' and straddle's moves at 100bb) re-priced by the rules' implied
+odds (Advisor._priced, as before: the button calls that 3bet with 22-77 always at 200bb, and UTG calls a CO 3bet
+with 55), and heads-up 200bb the heads-up 100bb chart with its limps. Opens move by under 2 points either way
+from 100 to 200bb, so little else is lost; no published deep solve was found to settle it.
+
+The shallow references are looser matches than the 100bb ones (`tests/preflop_refs.py` FORMAT_REFS, marked
+uncertain): Poker Academy's 40bb MTT small blind is 9-handed with a big-blind ante and 2.3bb opens, GTO Wizard's
+40bb big blind faces a CO min-open, its heads-up 50bb has a 0.12bb ante. Per reference, the mean error over its
+actions is 3.4 points for the moved charts and 11.4 for the rules: the small blind against a CO open 78.1 / 11.1 /
+10.8 against 72.6 / 14.4 / 13.1 (rules 42.8 / 44.5 / 12.7) and against the button 75.2 / 10.9 / 13.9 against 71.4 /
+11.6 / 17.1 (56.2 / 31.1 / 12.7); the big blind's 3bet of a CO min-open 9.7% against 10.3 (8.0) and its squeeze
+9.3 against 9.8 (7.8); the heads-up small blind first in 0 / 36.9 / 63.1 against 4 / 32 / 64 (21.4 / 0 / 78.6).
+Heads-up the small blind may limp (`sb_limp`; the moves are the limp game's against the heads-up game without a
+limp, so the chart's raises and folds give way to it): first in it folds, limps and raises 6.6 / 66.7 / 26.7% at
+20bb, 14.6 / 21.4 / 64.0 at 40 and 11.7 / 28.9 / 59.4 at 100 (the 200bb solve: 13.5 / 24.3 / 62.2). The big blind against the
+limp keeps the rules (24% raises at 50bb against GTO Wizard's 34): the solve raises 43-51%, because a limped flop
+is valued as a single-raised pot with the limper as aggressor (`LIMP_KEY`), a pot it realizes better in than a
+limped one. The 6-max small blind's limp is not adopted either (the 100bb references raise or fold; the solve
+limps 8.6%). `scripts/preflop_sweep.py` flags nothing at 20-300bb, with 0.125 and 0.2bb antes and raked (606
+lines each), and the 100bb charts are untouched (0.96 points, 0 of 26 spots, 0 of 15 and 0 of 11 facts out).

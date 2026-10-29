@@ -127,6 +127,23 @@ class TestMoves(unittest.TestCase):
             got1 = pf.strategy_for("UTG1", [F("UTG")], T8)["raise"]
             self.assertLess(np.abs(got1 - utg6).max(), 1e-9)
 
+    def test_heads_up_limps(self):
+        """Heads-up the small blind's chart gains the limp game's move at 100bb too (the heads-up charts have no
+        limps): a limp ('call') taken from its raises; the 6-max small blind's chart is untouched."""
+        up = np.full(K, 0.3)
+        data = {"limp": {100.0: {"SB|": {"call": up, "raise": -up}}, 20.0: {}, 40.0: {}, 200.0: {}}}
+        T2 = pf.Table(pf.SEATS[2])
+        with _Data({}):
+            base = pf.strategy_for("SB", [], T2)
+        with _Data(data):
+            mv, cover = PF.moves("SB", [], T2)
+            self.assertEqual(cover, {"depth": 100.0, "ante": 0.0})
+            got = pf.strategy_for("SB", [], T2)
+            self.assertGreater(got["call"].mean(), 0.2)
+            self.assertLess(got["raise"].mean(), base["raise"].mean() - 0.2)
+            six = pf.strategy_for("SB", [F(p) for p in pf.SEATS[6][:4]], pf.Table(pf.SEATS[6]))
+            self.assertNotIn("call", six)
+
     def test_moves_keep_the_dominance_order(self):
         """A move taking out hands the chart keeps below a weaker one it keeps (33 and 44 folded, 22 opened) is
         pooled along the dominance chain, keeping the combos opened, where preflop.monotone would add them back."""
@@ -154,8 +171,14 @@ class TestMoves(unittest.TestCase):
         g, base = B.game("2max_40bb"), B.game("2max")
         g.solve(150)
         base.solve(150)
-        mv = B.moves(g, base, "hu_depth")
         dg, db = B.decisions(g), B.decisions(base)
+        mv = B.moves(dg, db, g.positions, "hu_depth")
+        reach = g._down(g.average())                    # the reach walked per decision is the game's own
+        for k in g.dec:
+            nd = g.nodes_all[k]
+            key = PF.node_key(g.positions[nd.player], nd.line)
+            if key in dg:
+                self.assertLess(np.abs(dg[key][1] - reach[k, nd.player] / g.root_reach[nd.player]).max(), 1e-12)
         key = "BB|SB:r,BB:r,SB:r"                   # the big blind's 3bet range facing the 4bet
         self.assertIn(key, mv)
         (sg, rg), (sb, rb) = dg[key], db[key]
@@ -204,12 +227,12 @@ class TestShipped(unittest.TestCase):
         d = PF._data()
         games = {(dim, sub) for dim, sub, _, _ in B.SETS}
         self.assertLessEqual({(dim, sub) for dim, sets in d.items() for sub in sets}, games)
-        for dim, grid in (("depth", PF.DEPTHS), ("hu_depth", PF.HU_DEPTHS)):
+        for dim, grid in (("depth", PF.DEPTHS), ("hu_depth", PF.HU_DEPTHS), ("limp", PF.HU_DEPTHS)):
             if dim in d:                                # a depth's moves are read between its neighbours
-                self.assertEqual(sorted(d[dim]), [x for x in grid if x != 100.0])
+                self.assertEqual(sorted(d[dim]), [x for x in grid if x != 100.0 or dim == "limp"])
         for dim, sets in d.items():
             for sub, nodes in sets.items():
-                first = {"hu_depth": "SB|", "straddle": "HJ|"}.get(dim, "UTG|")     # the first seat's open
+                first = {"hu_depth": "SB|", "limp": "SB|", "straddle": "HJ|"}.get(dim, "UTG|")   # its first open
                 self.assertIn(first, nodes, (dim, sub))
                 for key, mv in nodes.items():
                     hero, seq = key.split("|")
@@ -226,7 +249,9 @@ class TestShipped(unittest.TestCase):
             self.assertLess(np.abs(tot - 1).max(), 1e-9)
             self.assertTrue(all(v.min() >= -1e-12 for v in s.values()))
         self.assertEqual(PF.moves("BTN", [], pf.Table(pf.SEATS[6])), (None, {}))
-        self.assertEqual(PF.moves("SB", [], pf.Table(pf.SEATS[2])), (None, {}))
+        hu = pf.strategy_for("SB", [], pf.Table(pf.SEATS[2]))       # heads-up the small blind limps (the solve's)
+        self.assertGreater(hu["call"].mean(), 0.15)
+        self.assertNotIn("call", pf.strategy_for("SB", [F(p) for p in pf.SEATS[6][:4]], pf.Table(pf.SEATS[6])))
 
 
 if __name__ == "__main__":

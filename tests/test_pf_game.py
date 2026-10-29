@@ -25,9 +25,14 @@ class TestTree(unittest.TestCase):
         self.assertEqual(g.find([("SB", "raise"), ("BB", "raise")]).line[-1][2], 10.0)
         # a squeeze adds one open per caller
         self.assertEqual(g.find([("CO", "raise"), ("BTN", "call"), ("BB", "raise")]).line[-1][2], 14.5)
-        # the 5bet is all-in, and at most three players see a flop (two in a raised pot)
+        # the 5bet is all-in, and at most three players see a flop (two in a raised pot; three all-in)
         self.assertTrue(all(len(t.active) <= 3 for t in nodes if t.kind == "show"))
-        self.assertTrue(all(len(t.active) == 2 for t in nodes if t.kind == "show" and t.n_raises > 1))
+        self.assertTrue(all(len(t.active) == 2 for t in nodes if t.kind == "show" and t.n_raises > 1 and not t.allin))
+        # facing a cold jam and a call a 3bettor may call too (a three-way all-in), not only fold
+        g40 = G.Game(G.build(G.SIX, stack=40.0), G.SIX, G.flat_model(), stack=40.0)
+        nd = g40.find([("BTN", "raise"), ("SB", "raise"), ("BB", "all-in"), ("BTN", "call")])
+        self.assertEqual((g40.positions[nd.player], nd.names), ("SB", ["fold", "call"]))
+        self.assertEqual(len(nd.children[1].active), 3)
         self.assertTrue(all(t.inv.max() <= 100 for t in nodes if t.kind != "dec"))
 
     def test_zero_sum(self):
@@ -95,8 +100,11 @@ class TestGames(unittest.TestCase):
         jam = [t for t in G.walk(g.root) if t.kind == "show" and t.allin]
         self.assertTrue(jam and all(abs(t.inv.max() - 100.0) < 1e-9 for t in jam))
         g.solve(30)
-        # (the antes come back out of the pots: off zero by card removal, as without them, 0.059 here)
-        self.assertLess(abs(float(g.values().sum())), 0.07)
+        # the antes come back out of the pots: off zero only by card removal, as without them (0.102 and
+        # 0.081 here, three-way all-ins' shares normalised over the ranges; antes kept would be 0.75)
+        g0 = G.Game(G.build(), G.SIX, G.flat_model())
+        g0.solve(30)
+        self.assertLess(abs(float(g.values().sum()) - float(g0.values().sum())), 0.05)
 
     def test_straddle(self):
         """The first seat posts 2bb and acts last; opens are 2.5 straddles; the big blind can fold."""

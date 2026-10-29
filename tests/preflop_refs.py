@@ -241,3 +241,11 @@ fref("40bb BB 3bet vs CO min-open", "BB", "CO raise 2", {"raise": 0.103}, 0.02, 
      uncertain=True)
 fref("40bb BB squeeze CO min-open + BTN call", "BB", "CO raise 2, BTN call", {"raise": 0.098}, 0.02, _GW40,
      stack=40.0, rake=RK, uncertain=True)
+# GTO Wizard's heads-up 50bb (chip EV, 0.12bb ante; https://blog.gtowizard.com/heads-up-exploiting-sbs-preflop-mistakes/):
+# the small blind "only folds 4% of hands", open-raises 64% (so limps ~32%, derived), and the big blind raises 34%
+# of its limps
+_GWHU = "GTO Wizard HU 50bb (chip EV, 0.12bb ante)"
+fref("HU 50bb SB first in", "SB", "", {"fold": 0.04, "call": 0.32, "raise": 0.64}, 0.04, _GWHU, players=2,
+     stack=50.0, ante=0.12, uncertain=True, note="call = limp (32% derived)")
+fref("HU 50bb BB vs SB limp", "BB", "SB call", {"raise": 0.34}, 0.04, _GWHU, players=2, stack=50.0, ante=0.12,
+     uncertain=True)

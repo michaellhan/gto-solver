@@ -422,6 +422,9 @@ class TestPreflop(unittest.TestCase):
     def test_heads_up_mixed_raises_played_as_written(self):
         """Heads-up the big blind 3bets QTs and JTs always and 66 / A5s half the time (as the chart
         writes them), and the button 4bets A5s 40% against the 3bet."""
+        from gto import pf_formats as PF
+        saved, PF._DATA = PF._DATA, {}       # the chart itself (heads-up it is moved by the limp game's solve)
+        self.addCleanup(setattr, PF, "_DATA", saved)
         T = pf.Table(pf.SEATS[2])
         s = pf.strategy_for("BB", [{"pos": "SB", "action": "raise", "to": 2.5}], T)
         for h, r in (("QTs", 1.0), ("JTs", 1.0), ("66", 0.5), ("A5s", 0.5), ("A9o", 0.5)):
@@ -1986,19 +1989,23 @@ class TestExploit(unittest.TestCase):
 
     def test_preflop_lines_read_as_real_ranges(self):
         """Lines whose chart or pool range was face-up: every open-limp (the small blind too, in both modes;
-        heads-up the pool's was T3o and T4o) reads as LIMP; an over-limp keeps at least the limp range less
+        heads-up the pool's was T3o and T4o, now the chart's own limps) reads as LIMP; an over-limp keeps at least the limp range less
         what would iso-raise (the button's chart over-limp was 15 combos); an open-jam is the push/fold range,
         not the whole open; a call of an all-in is by equity against it (the big blind called a 100bb jam
         with its flats, Q2s and 43s, and a 3bet jam was called without AA or KK)."""
-        from gto.advisor import preflop_ranges
+        from gto.advisor import preflop_ranges, preflop_strategy
         from gto.cards import COMBO_INDEX
         idx = lambda h: COMBO_INDEX[tuple(sorted(cards(h)))]
         C = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
         T6 = pf.Table(pf.SEATS[6])
-        for line, T in (([C("SB", "call")], pf.Table(pf.SEATS[2])),
-                        ([C("UTG", "fold"), C("HJ", "fold"), C("CO", "fold"), C("BTN", "fold"), C("SB", "call")], T6)):
-            for pe in (None, "BB"):
-                np.testing.assert_allclose(preflop_ranges(line, T, 100, pe)["SB"], pf.LIMP)
+        for pe in (None, "BB"):
+            np.testing.assert_allclose(preflop_ranges([C("UTG", "fold"), C("HJ", "fold"), C("CO", "fold"), C("BTN", "fold"),
+                                                       C("SB", "call")], T6, 100, pe)["SB"], pf.LIMP)
+            # heads-up the chart limps (the limp game's solve, pf_formats): its own limps, 29% of hands
+            T2 = pf.Table(pf.SEATS[2])
+            hu = preflop_ranges([C("SB", "call")], T2, 100, pe)["SB"]
+            np.testing.assert_allclose(hu, preflop_strategy("SB", [], T2, 100)["call"])
+            self.assertGreater(hu.sum(), 300)
         over = preflop_ranges([C("UTG", "call"), C("HJ", "fold"), C("CO", "fold"), C("BTN", "call")], T6, 100, "BB")["BTN"]
         self.assertGreater(over.sum(), 40)
         self.assertEqual(over[idx("AhAd")], 0.0)
@@ -2204,7 +2211,8 @@ class TestExploit(unittest.TestCase):
 
     def test_multiway_line_filled_out(self):
         """A line the multiway rules leave nearly face-up is filled out (as heads-up streets are): HJ's pot-sized
-        turn bet into two players in a 60bb 3bet pot kept 1.9 combos, and its river check 0.5."""
+        turn bet into two players in a 60bb 3bet pot kept 1.9 combos, and its river check 0.5 (filled out 5.5 from
+        the 100bb charts re-priced, 2.5 from the 60bb chart, whose HJ reaches the turn with 6.9 combos, not 2.7)."""
         R = lambda p, a, x=None: dict({"pos": p, "action": a}, **({"to": x} if a == "raise" else {"amount": x} if x else {}))
         F = lambda *ps: [R(p, "fold") for p in ps]
         st = {"players": 6, "hero": "BTN", "hole": "3h8c", "board": "Qc2dTc9c2c", "stack": 60,
@@ -2213,7 +2221,7 @@ class TestExploit(unittest.TestCase):
               "flop": [R("HJ", "check"), R("CO", "check"), R("BTN", "check")],
               "turn": [R("HJ", "bet", 31.5), R("CO", "fold"), R("BTN", "call")], "river": [R("HJ", "check")]}
         res = Advisor(time_budget=1, prior_budget=0.5).advise(st)
-        self.assertGreater(res["villain_range_combos"], 3)
+        self.assertGreater(res["villain_range_combos"], 2)
         self.assertTrue(any("filled out" in n for n in res["notes"]))
 
     def test_rare_turn_reraise_keeps_solved_range(self):
@@ -2983,26 +2991,29 @@ class TestPublishedBlindFrequencies(unittest.TestCase):
         self.assertTrue(0.09 <= sq <= 0.14, sq)
 
     def test_sb_short_stack_flats(self):
-        # at 40bb the small blind's flat of a CO open holds suited broadways, 77-99 and AQo (Poker Academy's
-        # 40bb solves: JTs, KJs, KTs, 88, AQo call or jam), not only small pairs and A6s-A8s (~45 combos,
-        # the 100bb chart re-priced), at about the 100bb chart's totals
+        # at 40bb the small blind continues against a CO open with suited broadways, 88 and AQo (Poker Academy's
+        # 40bb solves: JTs, KJs, KTs, 88, AQo call or jam): the 40bb game's chart (pf_formats), which in that
+        # solve's own game (9-handed, a big-blind ante, 2.3bb opens) is within 6 points of it per action (the
+        # 100bb chart re-priced with the ante called 44.5% where it calls 14.4)
         from gto.advisor import preflop_strategy, preflop_ranges
         from gto.cards import COMBO_INDEX
+        from tests.preflop_refs import FORMAT_REFS, measure_format
         R, F = self.R, self.F
         T = pf.Table(pf.SEATS[6])
         pre = F("UTG", "HJ") + [R("CO", "raise", 2.5)] + F("BTN")
         s = preflop_strategy("SB", pre, T, 40)
-        call = s["call"]
-        cls = lambda h: float(np.mean([call[i] for c, i in COMBO_INDEX.items() if hand_class(c) == h]))
+        cls = lambda h: float(np.mean([s["call"][i] + s["raise"][i] for c, i in COMBO_INDEX.items() if hand_class(c) == h]))
         for h in ("JTs", "QJs", "KJs", "KTs", "88", "AQo"):
-            self.assertGreater(cls(h), 0.4, h)
-        self.assertTrue(70 <= call.sum() <= 110, call.sum())
-        f, c, r = (float(s[k].sum()) / len(call) for k in ("fold", "call", "raise"))
-        self.assertTrue(0.77 <= f <= 0.84 and 0.11 <= r <= 0.15, (f, c, r))
-        # the flatting range that reaches the flop (BB folds) is the same at a table built at 40bb
+            self.assertGreater(cls(h), 0.75, h)
+        for r in FORMAT_REFS:
+            if r["name"].startswith("40bb MTT SB"):
+                m = measure_format(r)
+                for a, v in r["want"].items():
+                    self.assertLess(abs(m.get(a, 0.0) - v), 0.06, (r["name"], a, m))
+        # the flatting range that reaches the flop (BB folds) is the strategy's calls
         rng = preflop_ranges(pre + [R("SB", "call"), R("BB", "fold")], T, 40)["SB"]
-        self.assertTrue(70 <= rng.sum() <= 110, rng.sum())
-        # 100bb keeps the 100bb chart
+        self.assertLess(abs(rng.sum() - s["call"].sum()), 1.0, (rng.sum(), s["call"].sum()))
+        # 100bb keeps the 100bb chart; the rules' 40bb chart stands behind the game's
         self.assertIs(pf.vs_rfi_chart("SB", "CO"), pf.VS_RFI[("SB", "CO")])
         self.assertIs(pf.vs_rfi_chart("SB", "CO", 40.0), pf.SB_VS_LATE_40)
 

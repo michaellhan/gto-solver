@@ -142,7 +142,13 @@ def build(positions: Sequence[str] = SIX, stack: float = 100.0, sizes: Optional[
                 kids.append(rec(b2, folded, acted | {q}, 0, last, q + 1, line + ((pos[q], "call", cur),)))
         if n_raises > 0:
             in_level = sum(1 for r in live if bets[r] >= cur - 1e-9)
-            if in_level < (max_players if n_raises == 1 else max_players_raised):
+            cap = max_players if n_raises == 1 else max_players_raised
+            if cur >= stack - 1e-9:
+                # calling an all-in: a showdown, not a pot to play, so up to three (else a 3bettor facing a
+                # cold jam and a call could only fold: at 40bb with antes the solve 3bet nothing over a button
+                # open, its 3bet answered by the big blind jamming any two and the button calling)
+                cap = max(cap, 3)
+            if in_level < cap:
                 b2 = list(bets); b2[q] = min(cur, stack)
                 names.append("call")
                 kids.append(rec(b2, folded, acted | {q}, n_raises, last, q + 1, line + ((pos[q], "call", b2[q]),)))

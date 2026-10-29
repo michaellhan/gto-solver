@@ -14,12 +14,18 @@ in the pot, more players behind an open) is the solve's. A class's move counts o
 it to the decision (build_pf_formats.REACH), and a moved chart is kept in the dominance order by pooling (apply).
 Each dimension is its own set of moves, added together:
   * depth: 6-max games at DEPTHS bb against 100bb (no ante), linear between neighbouring depths; heads-up its own
-    (HU_DEPTHS) against heads-up 100bb;
+    (HU_DEPTHS) against heads-up 100bb. Deeper than 100bb plays 100bb's moves (and the rules' implied odds,
+    Advisor._priced, from 100bb): the 150 and 200bb solves weren't adopted, their flops valued by one depth factor
+    per pot type, which can't give small pairs and suited hands the implied odds a deep stack pays them (moved by
+    the 200bb solve the button would call a big blind's 3bet with 22 37% of the time, where the 100bb chart calls
+    75%; docs/preflop_research.md section 9);
   * ante: 6-max games with an ANTE bb ante against the same depth without, at ANTE_DEPTHS, scaled by the dead money
     (ante x players over ANTE x 6, at most 2x);
   * players: 7- and 8-handed 100bb games against the 6-max seats whose charts they play (preflop.chart_key);
     9-handed plays the 8-handed moves of the seat with as many players behind it (at most 7);
-  * straddle: the straddled 6-max 100bb game against the seats whose charts it plays.
+  * straddle: the straddled 6-max 100bb game against the seats whose charts it plays;
+  * limp: heads-up, the game where the small blind may also limp against the one where it raises or folds, at
+    HU_DEPTHS (100bb included: the heads-up charts have no limps), on top of the heads-up depth's.
 The players and straddle moves are added to the 6-max chart of those seats (the 100bb game's chart at the decision
 the table's seats play), not to the table's own chart, whose rules for those games (the 7+ handed EP chart) the
 moves replace; depth and ante moves to the table's own 100bb chart.
@@ -34,8 +40,8 @@ import zlib
 from typing import Dict, List, Optional, Tuple
 import numpy as np
 
-DEPTHS = (20.0, 40.0, 60.0, 100.0, 150.0, 200.0)   # 6-max depths solved (100: the charts' own)
-HU_DEPTHS = (20.0, 40.0, 100.0, 200.0)
+DEPTHS = (20.0, 40.0, 60.0, 100.0)                 # 6-max depths with moves (100: the charts' own; deeper plays 100)
+HU_DEPTHS = (20.0, 40.0, 100.0)
 ANTE = 0.125                                        # the ante solved (bb a player: 12.5% of a big blind)
 ANTE_DEPTHS = (20.0, 40.0, 100.0)
 MIN_DEPTH = 20.0                                    # shallower is push/fold (Advisor._push)
@@ -165,10 +171,10 @@ def moves(hero: str, actions: List[dict], positions) -> Tuple[Optional[Dict[str,
     depth = float(getattr(positions, "depth", 100.0))
     ante = float(getattr(positions, "ante", 0.0) or 0.0)
     straddle = bool(getattr(positions, "straddle", False))
-    if (n in (2, 6) and abs(depth - 100.0) < 1e-9 and ante == 0.0 and not straddle) or depth < MIN_DEPTH:
-        return None, {}
     data = _data()
-    if not data:
+    if not data or depth < MIN_DEPTH or (n == 6 and abs(depth - 100.0) < 1e-9 and ante == 0.0 and not straddle):
+        return None, {}
+    if n == 2 and abs(depth - 100.0) < 1e-9 and "limp" not in data:
         return None, {}
     key = line_key(hero, actions)
     if key is None:
@@ -201,6 +207,11 @@ def moves(hero: str, actions: List[dict], positions) -> Tuple[Optional[Dict[str,
         if m is not None:
             add(m)
             cover["depth"] = min(max(depth, grid[0]), grid[-1])
+    if an is not None and n == 2:
+        m = _interp(data.get("limp", {}), HU_DEPTHS, depth, an)
+        if m is not None:
+            add(m)
+            cover["depth"] = min(max(depth, HU_DEPTHS[0]), HU_DEPTHS[-1])
     if an is not None and ante > 0 and n > 2:
         m = _interp(data.get("ante", {}), ANTE_DEPTHS, depth, an)
         if m is not None:
