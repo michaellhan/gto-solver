@@ -6,11 +6,12 @@ bench_postflop_solver.py's flop mode: the EV that player gives up, in % of the p
   python scripts/bench_flop_abstraction.py solve lib,rd64 3bp_bb_btn:AcJd3h 3bp_bb_btn:Qc5h5d   # ours (cached)
   python scripts/bench_flop_abstraction.py measure lib,rd64,stored 3bp_bb_btn:AcJd3h            # theirs, the losses
 
-Variants (from library_config() without the pot, the single-raised pots' model):
+Variants (from library_config() without the pot: the river blind, old_tree(), the single-raised entries' model
+before they dealt it):
   lib      one turn per rank class (turn_classes), the river bet blind on the turn's boards
   all      every turn card
   rs       the river by 32 river-strength buckets (still on the turn's boards)
-  rdN      the river dealt, N strength buckets on each card (Config.river_dealt; the 3bet pots' entries are rd64)
+  rdN      the river dealt, N strength buckets on each card (Config.river_dealt; the library's entries are rd64)
   rcN      the river dealt per combo, N river cards under each turn class (depth 3; rc48 is every card)
   stored   the library's entry as shipped (needs the flop in the library)
 Ours are solved to --ours (% of the pot, in our own game) or 1200 iterations, checked every 100, or with @N (rd64@200)

@@ -220,7 +220,7 @@ class TestSameAsNumpy(unittest.TestCase):
         # 87, whose reciprocal is inf: the strategies NaN from there, 73% of the pot from equilibrium at 300 where
         # numpy's solve is at 0.10
         s = fl.spot_setup(next(x for x in fl.SPOTS if x[0] == "srp_utg_bb")[2])
-        cfg = fl.library_config(s["pot"], s["stack"])
+        cfg = fl.library_config()          # (the entry's tree then: the river blind)
         a, b = (_solve("AcQdTh", s["full0"], s["full1"], s["pot"], s["stack"], cfg, 100, use_core=u)
                 for u in (True, False))
         b.solver.use_core = False

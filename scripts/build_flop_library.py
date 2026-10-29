@@ -17,7 +17,9 @@ stored node, both players' EV and equity; the page's flop reports), recomputing 
 
 Resumable: an entry already on disk for the current charts and tree is kept, so a stopped run picks up where it was
 (run it again with the same arguments). An entry whose spot's ranges or tree no longer match (the charts or the
-library's config changed) is solved again, and left out of the index until it is. The index is rewritten every
+library's config changed) is solved again, and left out of the index until it is; but for one solved with the river
+blind (flop_library.old_tree(), before every spot dealt it), which the index keeps listing (a spot's "old") until it
+is solved again, and --keep-old leaves for a later run (a spot's flops not on disk first). The index is rewritten every
 --index-every entries and at the end. Progress lines go to stdout (one per entry: spot, flop, iterations,
 exploitability, seconds, bytes).
 """
@@ -52,21 +54,26 @@ def _spot(sp) -> tuple:
 
 
 def _meta(sid, s):
-    # (the spot's tree: the 3bet pots deal the river, flop_library.RIVER_DEALT_SPR)
     return {"spot": sid, "fp": [fl.range_fp(s["full0"]), fl.range_fp(s["full1"])], "pot": s["pot"],
             "stack": s["stack"], "tree": fl.tree_key(fl.library_config(s["pot"], s["stack"])),
             "seats": [s["oop"], s["ip"]]}
 
 
-def current(path: str, meta: dict) -> bool:
-    """Whether the entry at path was built for these ranges and this tree."""
+def old_tree(meta: dict):
+    """The spot's old tree (flop_library.old_tree()) if it isn't the spot's tree now, else None."""
+    old = fl.old_tree()
+    return None if fl.tree_hash(old) == fl.tree_hash(meta["tree"]) else old
+
+
+def current(path: str, meta: dict, tree: dict = None) -> bool:
+    """Whether the entry at path was built for these ranges and this tree (`tree`, else the spot's)."""
     try:
         with open(path, "rb") as f:
             head = fl.decode(f.read())["head"]
     except (OSError, ValueError):
         return False
     return (head.get("format") == fl.FORMAT and head.get("fp") == meta["fp"]
-            and head.get("tree") == fl.tree_hash(meta["tree"]))
+            and head.get("tree") == fl.tree_hash(tree or meta["tree"]))
 
 
 def solve_entry(job):
@@ -151,7 +158,7 @@ def write_index(out: str, spots) -> dict:
     """index.json from the entries on disk that match the current charts and tree (and each spot's report.json).
     A spot of another game than the default carries it ("game": flop_library.Format's fields)."""
     idx = {"format": fl.FORMAT, "tree": fl.tree_key(fl.library_config()), "spots": []}
-    stale = 0
+    stale = n_old = 0
     total = 0
     for sid, label, line, fmt in map(_spot, spots):
         d = os.path.join(out, sid)
@@ -159,15 +166,18 @@ def write_index(out: str, spots) -> dict:
             continue
         s = _setup(line, fmt)
         meta = _meta(sid, s)
-        flops = {}
+        old = old_tree(meta)
+        flops, olds = {}, []
         if os.path.isdir(d):
             for fn in sorted(os.listdir(d)):
                 if not fn.endswith(".bin"):
                     continue
                 p = os.path.join(d, fn)
                 if not current(p, meta):
-                    stale += 1
-                    continue
+                    if old is None or not current(p, meta, old):
+                        stale += 1
+                        continue
+                    olds.append(fn[:-4])
                 with open(p, "rb") as f:
                     data = f.read()
                 total += len(data)
@@ -175,6 +185,9 @@ def write_index(out: str, spots) -> dict:
         if flops:
             sp = {"id": sid, "label": label, "line": line, "seats": [s["oop"], s["ip"]],
                   "fp": meta["fp"], "pot": s["pot"], "stack": s["stack"], "tree": meta["tree"], "flops": flops}
+            if olds:
+                sp["old_tree"], sp["old"] = old, olds
+                n_old += len(olds)
             if fmt != fl.DEFAULT_FORMAT:
                 sp["game"] = fmt.as_dict()
             sp["report"] = write_report(out, sp, s)
@@ -187,7 +200,8 @@ def write_index(out: str, spots) -> dict:
     os.replace(tmp, os.path.join(out, "index.json"))
     n = sum(len(sp["flops"]) for sp in idx["spots"])
     print(f"index: {len(idx['spots'])} spots, {n} flops, {total / 1e6:.2f} MB of entries"
-          + (f" ({stale} stale entries left out)" if stale else ""), flush=True)
+          + (f", {n_old} on the old tree" if n_old else "") + (f" ({stale} stale entries left out)" if stale else ""),
+          flush=True)
     return idx
 
 
@@ -208,6 +222,8 @@ def main(argv=None):
     ap.add_argument("--limit", type=int, default=0, help="solve at most this many entries this run")
     ap.add_argument("--index-every", type=int, default=20)
     ap.add_argument("--index-only", action="store_true")
+    ap.add_argument("--keep-old", action="store_true", help="leave the entries on the old tree (the river blind) for a "
+                    "later run: solve the flops not on disk first")
     ap.add_argument("--recode", action="store_true", help="re-encode format-1 entries (no solving), then the index")
     a = ap.parse_args(argv)
     want = [x for x in a.spots.split(",") if x]
@@ -235,10 +251,12 @@ def main(argv=None):
     n_flops = 0
     for sid, label, line, fmt in spots:
         meta = _meta(sid, _setup(line, fmt))
+        old = old_tree(meta) if a.keep_old else None
         names = names_for(sid)
         n_flops += len(names)
         for nm in names:
-            if not current(os.path.join(a.out, sid, nm + ".bin"), meta):
+            p = os.path.join(a.out, sid, nm + ".bin")
+            if not current(p, meta) and not (old is not None and current(p, meta, old)):
                 jobs.append((sid, line, fmt.as_dict(), nm, a.out, opts))
     if a.limit:
         jobs = jobs[:a.limit]

@@ -991,8 +991,8 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
 
   | spot, flop | entry, % of the pot in its own game | EV given up, OOP / IP | root, ours / theirs |
   |---|---|---|---|
-  | BTN vs BB, Kc7d2h | 0.111 | 0.40 / 0.48 | check 100 / 100 |
-  | BTN vs BB, JcTd8d | 0.089 | 0.29 / 0.17 | check 97 / 100 |
+  | BTN vs BB, Kc7d2h | 0.111 | 0.40 / 0.48; the river dealt (0.050): 0.18 / 0.25 | check 100 / 100 |
+  | BTN vs BB, JcTd8d | 0.089 | 0.29 / 0.17; the river dealt (0.045): 0.04 / 0.07 | check 97 / 100 |
   | CO vs BB, KcTd6h | 0.120 | 0.54 / 0.27 | check 100 / 100 |
   | SB vs BB, 8c6d4c | 0.069 | 0.30 / 0.28 | check 100 / 100 |
   | BB 3bet vs BTN, AcJd3h | 0.064 | 0.30 / 0.26; at 0.03%: 0.31 / 0.26 | bet 33% 89 / 60, 75% 11 / 40 |
@@ -1468,8 +1468,8 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   the same key (the two ranges, pot and stack) and the page fetches it by its id (`srp_btn_bb_40bb`, "BTN vs BB,
   40bb"). The index carries its game (`"game": {"players", "stack", "ante", "straddle"}`), and Study, the drills
   and the flop reports play its hands in that game. Listed: BTN, CO, HJ, UTG and SB vs BB and BB vs BTN's 3bet pot
-  at 40bb and 200bb, built by `--format` (until built they are solved live; a 40bb single-raised pot's stack is 6.8
-  pots, so its entries deal the river, as the 3bet pots' do).
+  at 40bb and 200bb, built by `--format` (until built they are solved live; their entries deal the river, as every
+  spot's do).
 * **Flops**: canonical flops matched up to suits (the ranges are suit-symmetric, so a stored flop's solve is any
   suit permutation's, its combos permuted); other flops are solved live. Each spot stores a representative set
   (`representative_flops(n)`: the 1755 suit-isomorphic flops sorted by texture and sampled by weight, so each suit
@@ -1511,8 +1511,9 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   which plays the same flop game as the native one), two flop sizes, 300-800 iterations, to at most 0.15% of the
   pot from equilibrium (mean 0.109%; paired and trips boards settle slowest, and 17 that the old cap of 500
   iterations left at 0.15-0.54% were solved again) (the live Accurate solve gets ~0.3-0.4% in the server's 30 s and 60-75 iterations in the
-  browser's 60 s). The 3bet pots (`RIVER_DEALT_SPR`: a stack under 8 pots) deal the river instead of betting it
-  on the turn's boards: every river card under each turn, played on each card by 64 buckets of strength there
+  browser's 60 s). Every spot deals the river instead of betting it on the turn's boards (`library_config(pot,
+  stack)`; the 3bet pots since 5c3fba00, then the single-raised pots too): every river card under each turn,
+  played on each card by 64 buckets of strength there
   (`Config.river_dealt`: each player's range split into 64 equal shares by equity on that card against the
   other's). Played blind, the river cost their flop strategies 0.40% of the pot out of position and 0.29% in
   position against every card dealt (the 3-bettor c-bet three quarters pot 0-11% of the time where the full game
@@ -1520,9 +1521,13 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   entries (200-300 iterations, at most 0.15% of the pot from equilibrium) give up 0.11 out of position and 0.27 in
   position on the same four flops, their root mixes 4-17 points per combo from the full game's where the blind
   river's were 16-55 (in-position losses move by up to 2x between measurements of one strategy: Qc5h5d's 0.21 and
-  0.42). The answer's `precomputed` field (a badge on the page) says which spot and how many iterations;
-  `same_tree` is false where the live solve's flop model differs: in the 3bet pots for Accurate too (its live flop
-  solve bets the river on the turn's boards; the entries deal it), and in Fast mode, whose own flop model plays the
+  0.42). In a single-raised pot the blind river cost 0.29 and 0.17 (BTN vs BB, JcTd8d), dealt 0.04 and 0.07; on
+  Kc7d2h 0.40 and 0.48 blind, 0.18 and 0.25 dealt (their game there to 0.14% of the pot); an entry takes 6-7x as long (93-179 s on one core at 300 iterations, 14-28 blind; the same size, 4-9 KB).
+  The entries solved blind before stay in the index until each is solved again: a spot lists them under its
+  `old_tree` (`old_tree()`) and `old`, and the advisor reads each entry by its own tree. The answer's `precomputed`
+  field (a badge on the page) says which spot and how many iterations;
+  `same_tree` is false where the live solve's flop model differs: for an entry that deals the river for Accurate too
+  (its live flop solve bets the river on the turn's boards), and in Fast mode, whose own flop model plays the
   turn and river by hand buckets: converged (300 iterations) on 20 of the library's BTN vs BB flops its c-bet is 2.8 points from the library's on average (up
   to 7, betting more), BB's response to the small c-bet 2.9; at its 2.5 s and 8 s budgets it's further. (The old
   Fast model, the river checked down on random turns, was 5.6 and 8.6 off, up to 15 on dry boards.) Natively the
@@ -1544,9 +1549,10 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   the browser's Fast 229-986 on a loaded machine where its tables leave it the time, and Accurate its 1000 in 16-31
   s).
 * **Invalidation**: `index.json` holds each spot's range fingerprints and tree (`tree_key` of its
-  `library_config(pot, stack)`: the 3bet pots' deals the river); an entry whose spot, tree or
-  `MODEL_VERSION` (bump it when the flop game changes in a way the tree key can't see) no longer matches the code
-  is ignored, and a rebuilt index leaves stale entries out (a test checks the shipped index against the charts).
+  `library_config(pot, stack)`, which deals the river; the flops still on the blind river's tree listed apart, `old`
+  under `old_tree`); an entry whose spot, tree or `MODEL_VERSION` (bump it when the flop game changes in a way the
+  tree key can't see) no longer matches the code is ignored, and a rebuilt index leaves stale entries out (a test
+  checks the shipped index against the charts).
 * **Browser**: the worker fetches `flop_library/index.json` the first time a flop comes up and one entry
   (`<spot>/<flop>.bin`, cache-busted by its hash) when its spot does; `scripts/deploy.sh` copies the folder.
 
@@ -1559,6 +1565,7 @@ a flop, all thirteen spots from scratch ~5 min):
 ```bash
 nohup nice python scripts/build_flop_library.py --jobs 5 > reports/flop_library_build.log &   # every spot, its SPOT_FLOPS
 python scripts/build_flop_library.py --spots srp_btn_bb --flops all                     # all 1755 flops of a spot
+python scripts/build_flop_library.py --spots srp_btn_bb --flops all --keep-old          # the flops not on disk first
 python scripts/build_flop_library.py --spots srp_btn_bb --boards Ks7d2c,Qs8s3d          # given flops
 python scripts/build_flop_library.py --index-only
 python scripts/build_flop_library.py --recode        # format-1 entries to the current format, no solving (~5 min)

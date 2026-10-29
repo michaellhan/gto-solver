@@ -119,9 +119,9 @@ class Config:
     # and played on each card by this many buckets of strength there (BucketEntry under the river's chance node,
     # Ctx.river_card_table: each player's root range split into equal shares by equity on that card against the
     # other's), instead of on the turn's boards: a draw knows when it got there, and its opponent that the card came.
-    # The library's 3bet pots (flop_library.RIVER_DEALT_SPR): 64 buckets there are 7-17x the blind river's work, the
-    # river per combo (depth 3, every river) 50-90x for 0.01-0.02% of the pot less given up (README, Precomputed flop
-    # library).
+    # The library's entries (flop_library.RIVER_DEALT): 64 buckets in a 3bet pot are 7-17x the blind river's work, the
+    # river per combo (depth 3, every river) 50-90x for 0.01-0.02% of the pot less given up; in a single-raised pot
+    # 6-7x, for 0.1-0.25% of the pot less (README, Precomputed flop library).
     river_dealt: Optional[int] = None
     # river_classes: from a turn root, the river as one card per class (Ctx.turn_classes on the turn's board: a rank's
     # cards, a suit with two or more board cards apart), each class's subtree standing for its every card through the

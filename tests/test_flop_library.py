@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 build = importlib.import_module("build_flop_library")
 
 SPOT = next(s for s in fl.SPOTS if s[0] == "srp_utg_bb")   # the narrowest single-raised ranges: quick to solve, the river
-# blind (a 3bet pot's dealt river, RIVER_DEALT_SPR, takes ~8x as long)
+# blind (fl.library_config(); the spot's own tree deals it, 6-7x as long; the entry's header says the spot's tree)
 CANON = "Kc7d2h"
 BOARD = "Kh7s2d"            # the same flop in other suits
 ITERS = 120
@@ -93,13 +93,14 @@ class TestCanonicalFlops(unittest.TestCase):
         self.assertEqual(fl._key_str(acc), fl._key_str(lk))
         self.assertEqual(fl._key_str(fast["sizes"]), fl._key_str(lk["sizes"]))
         self.assertNotEqual(fl._key_str(fast["model"]), fl._key_str(lk["model"]))
-        # a spot's own: the 3bet pots deal the river (RIVER_DEALT_SPR), the single-raised pots are the default
+        # a spot's own: every spot deals the river; the default (the river blind) is the entries solved before
         lines = {s[0]: s[2] for s in fl.SPOTS}
-        for sid, dealt in (("srp_btn_bb", None), ("3bp_bb_btn", fl.RIVER_DEALT), ("3bp_btn_co", fl.RIVER_DEALT)):
+        for sid in ("srp_btn_bb", "3bp_bb_btn", "3bp_btn_co"):
             s = fl.spot_setup(lines[sid])
             k = fl.tree_key(fl.library_config(s["pot"], s["stack"]))
-            self.assertEqual(k["model"].pop("river_dealt", None), dealt)
+            self.assertEqual(k["model"].pop("river_dealt", None), fl.RIVER_DEALT)
             self.assertEqual(fl._key_str(k), fl._key_str(lk))
+        self.assertEqual(fl._key_str(fl.old_tree()), fl._key_str(lk))
 
 
 class TestFlopLibrary(unittest.TestCase):
@@ -135,7 +136,10 @@ class TestFlopLibrary(unittest.TestCase):
         action, 2% of the gap below it)."""
         ls = self._libsol()
         self.assertIsNotNone(ls)
-        self.assertTrue(ls.exact)
+        self.assertTrue(ls.river_dealt)
+        self.assertFalse(ls.exact)                 # (Accurate's model bets the river blind: the entry's header deals it)
+        s = self.setup
+        self.assertTrue(self._libsol(cfg=fl.library_config(s["pot"], s["stack"])).exact)
         self.assertEqual(ls.iters, ITERS)
         paths = fl.stored_paths(self.sol.root, self.sol.r0, self.sol.r1)
         self.assertIn((), paths)
@@ -358,15 +362,50 @@ class TestFlopLibrary(unittest.TestCase):
         # no index at all
         self.assertIsNone(self._libsol(lib=fl.FlopLibrary(lambda p: None)))
 
+    def test_old_entries(self):
+        """An entry solved with the river blind (fl.old_tree(), before every spot dealt it) stays in a rebuilt index,
+        listed under the spot's old_tree, and answers as before until it is solved again (which --keep-old leaves for
+        a later run)."""
+        sid = SPOT[0]
+        self.assertTrue(self._libsol().river_dealt)            # (the fixture's header: the spot's tree, dealt)
+        d = tempfile.mkdtemp()
+        try:
+            shutil.copytree(self.dir, d, dirs_exist_ok=True)
+            meta = build._meta(sid, self.setup)
+            path = os.path.join(d, sid, CANON + ".bin")
+            with open(path, "wb") as f:
+                f.write(fl.encode(self.sol, dict(meta, board=CANON, tree=fl.old_tree())))
+            self.assertFalse(build.current(path, meta))
+            self.assertTrue(build.current(path, meta, build.old_tree(meta)))
+            build.main(["--spots", sid, "--boards", CANON, "--out", d, "--keep-old"])   # nothing to solve
+            with open(os.path.join(d, "index.json")) as f:
+                sp = json.load(f)["spots"][0]
+            self.assertEqual((list(sp["flops"]), sp["old"]), ([CANON], [CANON]))
+            self.assertEqual(fl._key_str(sp["old_tree"]), fl._key_str(fl.old_tree()))
+            self.assertEqual(fl._key_str(sp["tree"]), fl._key_str(meta["tree"]))
+            ls = self._libsol(lib=fl.FlopLibrary.from_dir(d))
+            self.assertIsNotNone(ls)
+            self.assertFalse(ls.river_dealt)
+            self.assertTrue(ls.exact)                          # (the advisor's model here: the river blind)
+            # an entry on neither tree is still left out
+            with open(path, "wb") as f:
+                f.write(fl.encode(self.sol, dict(meta, board=CANON, tree=dict(fl.old_tree(), depth=9))))
+            build.write_index(d, [SPOT])
+            with open(os.path.join(d, "index.json")) as f:
+                self.assertEqual(json.load(f)["spots"], [])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
     def test_advisor_answers_from_library(self):
         """The advisor's flop answer comes from the library where it holds the spot: instantly, at the stored
-        iterations and exploitability, with the stored mix for the hero's hand; on the same tree (Accurate's
-        model) or labelled as Accurate's model for Fast's. A turn spot narrows the flop through it."""
+        iterations and exploitability, with the stored mix for the hero's hand; on the same tree for a model that
+        deals the river as the entry does, else labelled as another model (Accurate's, the river bet on the turn's
+        boards, and Fast's). A turn spot narrows the flop through it."""
         s = self.setup
         hole = _hole_in(s["full0"], BOARD, 3)
         base = {"hero": s["oop"], "hole": hole, "board": BOARD, "preflop": self.pre, "stack": 100}
         fast = Config(n_turns=3, river_play=False, turn_classes=False, **{k: {a: list(b) for a, b in v.items()} for k, v in fl.LS.items()})
-        for cfg, same in ((fl.library_config(), True), (fast, False)):
+        for cfg, same in ((fl.library_config(s["pot"], s["stack"]), True), (fl.library_config(), False), (fast, False)):
             adv = Advisor(cfg, time_budget=1.0, prior_budget=0.5)
             adv.library = self.lib
             t = time.time()
@@ -486,7 +525,7 @@ class TestOtherGames(unittest.TestCase):
         s = fl.spot_setup(line, fmt.players, fmt.stack, fmt.ante, fmt.straddle)
         s100 = fl.spot_setup(line)
         self.assertEqual((s["pot"], s["stack"]), (s100["pot"], 197.5))
-        sol = solve(cards(CANON), s["full0"], s["full1"], s["pot"], s["stack"], cfg=fl.library_config(s["pot"], s["stack"]),
+        sol = solve(cards(CANON), s["full0"], s["full1"], s["pot"], s["stack"], cfg=fl.library_config(),   # (blind: quick)
                     time_budget=1e9, max_iters=40)
         d = tempfile.mkdtemp()
         try:
@@ -532,8 +571,13 @@ class TestShippedLibrary(unittest.TestCase):
             self.assertEqual(sp["fp"], [fl.range_fp(s["full0"]), fl.range_fp(s["full1"])],
                              f"{sp['id']}: the charts changed; rebuild with scripts/build_flop_library.py")
             self.assertEqual((sp["pot"], sp["stack"]), (s["pot"], s["stack"]))
-            self.assertEqual(fl._key_str(sp["tree"]), fl._key_str(fl.tree_key(fl.library_config(s["pot"], s["stack"]))),
-                             f"{sp['id']}: the library's model changed; rebuild with scripts/build_flop_library.py")
+            # (a spot not solved again since every spot deals the river is on the old tree, whole or in part)
+            self.assertIn(fl._key_str(sp["tree"]), (fl._key_str(fl.tree_key(fl.library_config(s["pot"], s["stack"]))),
+                                                    fl._key_str(fl.old_tree())),
+                          f"{sp['id']}: the library's model changed; rebuild with scripts/build_flop_library.py")
+            if "old" in sp:
+                self.assertEqual(fl._key_str(sp["old_tree"]), fl._key_str(fl.old_tree()))
+                self.assertLessEqual(set(sp["old"]), set(sp["flops"]))
             for name in sp["flops"]:
                 size = os.path.getsize(os.path.join(fl.DIR, sp["id"], name + ".bin"))
                 self.assertLess(size, 200_000)

@@ -3,8 +3,7 @@ on the same flops: how the postflop realization the preflop game uses (pf_game.L
 
 For each spot and depth the spot is set up as the advisor plays it there (flop_library.spot_setup at that stack:
 the ranges entering the flop, pot, stack behind), each flop of a systematic subset of the 184 representative flops
-is solved on the library's tree for that pot and stack (flop_library.library_config: the river dealt under
-RIVER_DEALT_SPR) and read as the library is (pf_library_values.entry_values: each combo's pot share, weighted by
+is solved on the library's tree for that pot and stack (flop_library.library_config: the river dealt) and read as the library is (pf_library_values.entry_values: each combo's pot share, weighted by
 how often it meets the flop), and summed per class. The same flops of the 100bb library give the baseline.
 
     python scripts/pf_depth_values.py --spots srp_btn_bb,srp_sb_bb,3bp_bb_btn --depths 20,40,200 --flops 23 \\
