@@ -853,6 +853,10 @@ const DR_VERSION = "1";        // and this with a hash of drills.js (the drills,
 const BD_VERSION = "1";        // and breakdown.js (the advice's Breakdown and Equity views, loaded on first use)
 const SS_VERSION = "1";        // and session.js (the session analyzer, loaded on first use, after hh.js)
 const SY_VERSION = "1";        // and study.js (Study mode, the solution browser, loaded on first use)
+// where the precomputed libraries are (flop_library/: the local server's, gto/static/flop_library); scripts/deploy.sh
+// points it at their own site, ../gto-solver-library/ (scripts/deploy_library.sh). The worker is told it in its URL
+// (relative: worker.js is in the folder the page's URLs resolve against).
+const LIB_BASE = "flop_library/";
 // ---- the views' URLs: the solver is the root (/gto-solver/), the others /practice/, /drills/, /reports/,
 // /session/, /study/ and /import/ under it, and /reports/<spot>/, /drills/<spot>/ a precomputed spot (its id, dashes for
 // underscores). The static site has no rewrites: each URL is a copy of this page with a <base href="../"> that
@@ -949,7 +953,7 @@ function setStatus(msg) {
 let workerStatus = "";
 function startWorker() {
   if (worker || isolating) return;
-  worker = new Worker("worker.js?v=" + WORKER_VERSION);   // query busts the 4h GitHub Pages cache on redeploys
+  worker = new Worker("worker.js?v=" + WORKER_VERSION + "&lib=" + encodeURIComponent(LIB_BASE));   // query busts the 4h GitHub Pages cache on redeploys
   prefetched = null;
   STOP = globalThis.crossOriginIsolated && typeof SharedArrayBuffer === "function" ? new Int32Array(new SharedArrayBuffer(8)) : null;
   if (STOP) worker.postMessage({ stop: STOP.buffer });

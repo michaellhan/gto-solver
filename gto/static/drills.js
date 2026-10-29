@@ -7,6 +7,7 @@
 // encode) is decoded here; the weights entering the flop are <spot>/ranges.json. The pure parts (decoding, the
 // deal, grading, the score, keys) are what the Node tests call.
 (function () {
+  const LIB = typeof LIB_BASE === "string" ? LIB_BASE : "flop_library/";   // where the library is (index.html's LIB_BASE)
   "use strict";
   const RANKS = "23456789TJQKA", SUITS = "cdhs";
   const cardStr = (c) => RANKS[c >> 2] + SUITS[c & 3];
@@ -194,7 +195,7 @@
   try { const s = JSON.parse(localStorage.getItem(KEY)) || {}; Object.assign(ST, { spot: s.spot || null, view: s.view || "vsbet", filter: s.filter || {}, hist: s.hist || {} }); } catch (e) {}
   const store = () => { try { localStorage.setItem(KEY, JSON.stringify({ spot: ST.spot, view: ST.view, filter: ST.filter, hist: ST.hist })); } catch (e) {} };
   const hkey = () => `${ST.spot}/${ST.view}`;
-  const get = async (p, bin) => { const r = await fetch("flop_library/" + p); if (!r.ok) throw new Error(`couldn't load ${p} (${r.status})`); return bin ? r.arrayBuffer() : r.json(); };
+  const get = async (p, bin) => { const r = await fetch(LIB + p); if (!r.ok) throw new Error(`couldn't load ${p} (${r.status})`); return bin ? r.arrayBuffer() : r.json(); };
   const spotOf = (id) => index.spots.find(s => s.id === id);
   async function entry(f) {
     const k = ST.spot + "/" + f;

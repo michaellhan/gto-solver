@@ -4,6 +4,7 @@
 // flops it stands for), sortable and filterable; a click on a flop loads that hand into the page. The pure parts
 // (texture, filter, sort, groups, the HTML, the hand state) are what the Node tests call.
 (function () {
+  const LIB = typeof LIB_BASE === "string" ? LIB_BASE : "flop_library/";   // where the library is (index.html's LIB_BASE)
   "use strict";
   const RANKS = "23456789TJQKA";
   const rv = (c) => RANKS.indexOf(c[0]);
@@ -159,7 +160,7 @@
   const ST = { spot: null, view: "oop", sort: "flop", desc: true, group: "", filter: {} };
   try { Object.assign(ST, JSON.parse(localStorage.getItem("gto-reports")) || {}); } catch (e) {}
   const store = () => { try { localStorage.setItem("gto-reports", JSON.stringify(ST)); } catch (e) {} };
-  const get = async (p) => { const r = await fetch("flop_library/" + p, { cache: "no-cache" }); if (!r.ok) throw new Error(`couldn't load ${p} (${r.status})`); return r.json(); };
+  const get = async (p) => { const r = await fetch(LIB + p, { cache: "no-cache" }); if (!r.ok) throw new Error(`couldn't load ${p} (${r.status})`); return r.json(); };
 
   function controls() {
     const sel = (id, opts, cur) => `<select data-ctl="${id}">${opts.map(([v, t]) => `<option value="${v}"${v === cur ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>`;

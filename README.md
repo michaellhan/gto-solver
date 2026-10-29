@@ -1611,7 +1611,8 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   checks the shipped index against the charts).
 * **Browser**: the worker fetches `flop_library/index.json` as it starts and a flop's entries (`<spot>/<flop>.bin`,
   cache-busted by its hash) once the page says the flop is dealt (Precomputed answers, instant in the browser);
-  `scripts/deploy.sh` copies the folder.
+  the folder is published to its own site, www.michael-han.com/gto-solver-library/ (`scripts/deploy_library.sh`, run
+  by `scripts/deploy.sh`), and the page's `LIB_BASE` points there.
 
 Building (resumable: entries on disk for the current charts and tree are kept, so re-run the same command after
 a stop; progress lines go to stdout, the index is rewritten every 20 entries, and with it each spot's
@@ -1698,8 +1699,13 @@ python scripts/compare_mw_library.py --spot mw_co_btn_bb --boards Kh7d2c,9s8s5d 
 scripts/deploy.sh
 ```
 
-copies the page, the worker, `practice.js`, `reports.js`, `drills.js`, `breakdown.js`, `session.js`, `study.js`, `solver.zip` (the worker's Python code: every `gto/*.py` and treys, `scripts/build_bundle.py`), the `gto` sources and the flop library into the `gto-solver/` folder
-of the michaellhan.github.io repo and pushes. First it runs the checks and aborts
+copies the page, the worker, `practice.js`, `reports.js`, `drills.js`, `breakdown.js`, `session.js`, `study.js`, `solver.zip` (the worker's Python code: every `gto/*.py` and treys, `scripts/build_bundle.py`), the `gto` sources into the `gto-solver/` folder
+of the michaellhan.github.io repo and pushes. The precomputed libraries (`gto/static/flop_library`: the heads-up and
+3-way indexes, entries and reports) go first to their own repo, michaellhan/gto-solver-library, served beside the page
+at /gto-solver-library/ (`scripts/deploy_library.sh`): one commit with no history, force-pushed on each publish and
+skipped when the files are the same, so rebuilt entries don't pile up in a repo's history (copied into the site repo
+they had taken its history to 1.08 GB), and the page's `LIB_BASE` is stamped to point there. It publishes only from a
+checkout at or ahead of origin/main (an older one would take back what was deployed since). First it runs the checks and aborts
 the deploy if either fails: `python -m unittest`, then the quick sanity sweep
 (`scripts/sanity_sweep.py --quick`, about 3 minutes on 10 cores: a fixed, seeded set
 of ~80 preflop nodes and ~110 postflop spots covering every setup, every heads-up
@@ -1715,7 +1721,8 @@ lines and writes `reports/sanity_YYYY-MM-DD.md` (nothing schedules it). It uses 
 else `python3` (`PYTHON=...` overrides). `DRY_RUN=1 scripts/deploy.sh` runs the
 checks and stops before cloning or pushing; `SKIP_CHECKS=1 scripts/deploy.sh`
 skips them, for emergencies only. `BUILD_ONLY=<dir> scripts/deploy.sh` builds the folder as it would be published
-(versions stamped, each view's URL written) into `<dir>/site/gto-solver` without the checks, cloning or pushing, to
+(versions stamped, each view's URL written) into `<dir>/site/gto-solver`, and the library into
+`<dir>/site/gto-solver-library`, without the checks, cloning or pushing, to
 try the static site: `python3 -m http.server -d <dir>/site 8000`, then http://127.0.0.1:8000/gto-solver/practice/.
 
 Tune with `Config` in `gto/solver.py` (`depth`, sizes, sample counts) or the

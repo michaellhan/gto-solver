@@ -6,6 +6,7 @@
 // library's, instant on its flops), the start of a hand, or the hand on the page's table. The pure parts (states,
 // requests, the HTML) are what the Node tests call.
 (function () {
+  const LIB = typeof LIB_BASE === "string" ? LIB_BASE : "flop_library/";   // where the library is (index.html's LIB_BASE)
   "use strict";
   const RANKS = "AKQJT98765432", SUITS = "cdhs", SYM = { s: "♠", h: "♥", d: "♦", c: "♣" };
   const STREETS = ["preflop", "flop", "turn", "river"];
@@ -771,7 +772,7 @@
       box.addEventListener("mouseleave", () => { ST.hover = ST.focus = null; redrawGrid(); });
     }
     box.hidden = false; res = null; err = null; draw();
-    try { index = index || await fetch("flop_library/index.json", { cache: "no-cache" }).then(r => r.ok ? r.json() : null); } catch (e) { index = null; }
+    try { index = index || await fetch(LIB + "index.json", { cache: "no-cache" }).then(r => r.ok ? r.json() : null); } catch (e) { index = null; }
     if (ST.spot === "table") ST.spot = "";
     if (globalThis.STUDY_BUILD) {   // (the menu's Range builder: a random flop of the spot, building)
       globalThis.STUDY_BUILD = false; ST.build = true;

@@ -7,6 +7,14 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"
 # stops there, without the checks, cloning or pushing: to try the static site locally, e.g.
 #   BUILD_ONLY=/tmp/gto scripts/deploy.sh && python3 -m http.server -d /tmp/gto/site 8000   (then /gto-solver/practice/)
 if [ -n "${BUILD_ONLY:-}" ]; then WORK="$BUILD_ONLY"; SKIP_CHECKS=1; mkdir -p "$WORK/site"; else WORK="$(mktemp -d)"; fi
+# Published from an up-to-date checkout only: one behind origin/main would take back what was deployed since.
+if [ -z "${BUILD_ONLY:-}" ] && [ "${DRY_RUN:-0}" != "1" ]; then
+  git -C "$HERE" fetch -q origin main
+  if ! git -C "$HERE" merge-base --is-ancestor origin/main HEAD; then
+    echo "Deploy aborted: this checkout ($(git -C "$HERE" rev-parse --short HEAD)) is behind origin/main; rebase or pull first." >&2
+    exit 1
+  fi
+fi
 
 # Checks before anything is published: the unit tests, the page's JavaScript tests (when node is
 # installed) and the quick sanity sweep (~3 min, rare preflop lines included; exits non-zero
@@ -58,11 +66,15 @@ cp "$HERE/gto/static/index.html" "$HERE/gto/static/worker.js" "$HERE/gto/static/
 # cached from before the bundle (index.html is cached up to 10 minutes, with the old worker's version)
 "$PYTHON" "$HERE/scripts/build_bundle.py" "$WORK/site/gto-solver/solver.zip" >/dev/null
 cp "$HERE"/gto/*.py "$WORK/site/gto-solver/gto/"
-# the precomputed flop library (gto/flop_library.py): index.json and one small file per spot and flop, fetched by the
-# worker only when its spot comes up
+# the precomputed libraries (gto/flop_library.py, gto/mw_library.py: the indexes and one small file per spot and flop,
+# fetched by the worker when its spot comes up) are published first to their own site, gto-solver-library/ beside
+# gto-solver/ (scripts/deploy_library.sh: one commit with no history, so rebuilt entries don't pile up in the site
+# repo's), and the page's LIB_BASE points there. (BUILD_ONLY writes it to <dir>/site/gto-solver-library.)
 if [ -f "$HERE/gto/static/flop_library/index.json" ]; then
-  cp -R "$HERE/gto/static/flop_library" "$WORK/site/gto-solver/"
-  find "$WORK/site/gto-solver/flop_library" -type f ! -name '*.json' ! -name '*.bin' -delete   # (a running build's .tmp files)
+  if [ -n "${BUILD_ONLY:-}" ]; then "$HERE/scripts/deploy_library.sh" "$WORK/site/gto-solver-library"; else "$HERE/scripts/deploy_library.sh" "$WORK/library"; fi
+  sed -i.bak -E 's#^const LIB_BASE = "[^"]*";#const LIB_BASE = "../gto-solver-library/";#' "$WORK/site/gto-solver/index.html"
+  rm "$WORK/site/gto-solver/index.html.bak"
+  grep -q '^const LIB_BASE = "../gto-solver-library/";' "$WORK/site/gto-solver/index.html"
 fi
 # Stamp the worker's cache-busting version with its content hash (and practice.js's, loaded with the same
 # version, and solver.zip's, which the worker fetches as solver.zip?v=<this> and keeps in the Cache API under that

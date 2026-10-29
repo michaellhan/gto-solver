@@ -9,6 +9,7 @@ const T0 = performance.now();
 // revalidate it after 10 minutes). Beside it the Cache API keeps the bytecode the first visit compiled (solver-pyc.zip,
 // made here, never requested): compiling the startup modules took ~0.15 s of their import.
 const VERSION = new URLSearchParams(self.location ? self.location.search : "").get("v") || "dev";
+const LIBRARY = new URLSearchParams(self.location ? self.location.search : "").get("lib") || "flop_library/";   // (the page's LIB_BASE)
 const BUNDLE = `solver.zip?v=${VERSION}`, PYC = `solver-pyc.zip?v=${VERSION}`;
 // Only a deployed version (deploy.sh's 10-hex-digit hash) is cached: a copy served without one could change under it.
 const cacheP = (async () => {
@@ -54,7 +55,7 @@ const LIB = new Map();   // path -> Uint8Array (fetched) or a Promise (in flight
 function libAhead(path) {
   if (!LIB.has(path)) {
     if (LIB.size >= 64) for (const [k, v] of LIB) if (v instanceof Uint8Array && !k.endsWith("index.json")) { LIB.delete(k); break; }   // (one never asked for)
-    const p = fetch(`flop_library/${path}`).then((r) => r.ok ? r.arrayBuffer() : null)
+    const p = fetch(LIBRARY + path).then((r) => r.ok ? r.arrayBuffer() : null)
       .then((b) => { if (b) LIB.set(path, new Uint8Array(b)); else LIB.delete(path); }, () => { LIB.delete(path); });
     LIB.set(path, p);
   }
@@ -71,7 +72,7 @@ self.libFetch = (path) => {
   if (RECORD && !path.endsWith("index.json")) { RECORD.push(path); return null; }
   try {
     const x = new XMLHttpRequest();
-    x.open("GET", `flop_library/${path}`, false);
+    x.open("GET", LIBRARY + path, false);
     x.responseType = "arraybuffer";
     x.send();
     return x.status === 200 ? new Uint8Array(x.response) : null;
