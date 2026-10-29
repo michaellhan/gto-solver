@@ -234,7 +234,7 @@
       const k = kindOf(a.action);
       const p = n >= HABIT_MIN ? 0.5 * a.freq + 0.5 * (h[k] / n) * (byKind[k] > 0 ? a.freq / byKind[k] : 0) : a.freq;
       const rec = k === "pass" ? { action: facing ? "call" : "check" } : a.action === "all-in" ? { action: "all-in" }
-        : a.amount_bb != null ? { action: facing || info.curBet > 0 ? "raise" : "bet", to: Math.round(a.amount_bb * 2) / 2 } : null;
+        : a.amount_bb != null ? { action: facing || info.curBet > 0 ? "raise" : "bet", to: legalTo(a.amount_bb, info) } : null;
       return { rec, p };
     }).filter(c => c.rec && c.p >= AHEAD_MIN).sort((x, y) => y.p - x.p).slice(0, AHEAD_LINES);
   }

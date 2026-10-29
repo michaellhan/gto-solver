@@ -1160,6 +1160,9 @@ function simulate() {
 // still has chips to face it. The smallest raise is to minRaiseTo (all-in for less is always allowed).
 const canRaise = (sim, p) => !sim.cur.locked.has(p) && [...sim.active].some(q => q !== p && !sim.allin.has(q));
 const minRaiseTo = (info) => info.curBet + info.minRaise;
+// a size as act() takes it (gto/advisor.py _legal_to): the nearest half big blind, at least the smallest raise rounded
+// up to a half big blind (after an all-in for an odd amount the smallest raise is one too: rounding alone fell under it)
+const legalTo = (to, info) => Math.max(Math.round(to * 2) / 2, Math.ceil(minRaiseTo(info) * 2 - 1e-9) / 2);
 // Main pot and side pots from each seat's chips in (tot) and the players still in: each all-in player's stake
 // caps what they can win from everyone. [{amount, eligible}], main pot first; one entry without side pots.
 function sidePots(tot, live, allin) {
@@ -1490,8 +1493,8 @@ function renderAction(sim) {
     let k = 0;
     for (const x of res.actions) {
       if (!/^(bet|raise)/.test(x.action) || x.amount_bb == null) continue;
-      const v = Math.round(x.amount_bb * 2) / 2;
-      if (!(v >= minTo - 1e-9 && v < myBet + remaining - 1e-9)) continue;
+      const v = legalTo(x.amount_bb, info);
+      if (!(v < myBet + remaining - 1e-9)) continue;
       const tag = /%$/.test(x.action) ? x.action.replace(/^bet /, "") + " pot" : street === "preflop" ? (info.nRaises === 0 ? "open" : (v / info.curBet).toFixed(1) + "x") : (v / info.curBet).toFixed(1) + "x";
       mk(`${verb} ${fmt(v)}`, "agg", { action: "bet", to: v }, tag + pct(x), String(++k), x);
     }
@@ -1674,6 +1677,8 @@ function renderResult(res, key) {
   let h = `<div class="meta" style="margin:0 0 4px">${res.street} · ${res.hero} ${res.hand}${res.position ? " · " + res.position : ""}${board ? " · " + board : ""}${res.pot_bb ? " · pot " + res.pot_bb + " bb" : ""}</div>`;
   if (heuristic(res)) h += `<div class="verdict"><span class="big">${res.recommended}</span><span class="mix">${res.opponents.length + 1} players in · equity vs field ${(res.equity_vs_field * 100).toFixed(0)}% · heuristic, not a solve</span></div>`;
   else h += `<div class="verdict"><span class="big">${res.recommended}</span>${res.solved ? `<span class="mix">${res.opponents.length + 1} players in · 3-way solve</span>` : ""}${conv ? `<span class="conv ${conv.cls}" title="${convTip(conv)}">${conv.label} · ${conv.x.toFixed(1)}% pot</span>` : ""}${res.precomputed ? `<span class="conv ok" title="${PRE_TIP(res.precomputed)}">precomputed</span>` : ""}${conv && conv.cls === "bad" && SPEED !== "accurate" ? `<button class="link" id="goAccurate">Solve again on Accurate</button>` : ""}</div>`;
+  // the advisor's catch-all (gto/advisor.py Advisor._rules): the solve failed, so the chart, the betting rules or equity answered
+  if (res.fallback) h += `<div class="meta" style="color:var(--meh);margin:0 0 6px">The solver couldn't answer this spot, so this is ${{ chart: "the preflop chart's mix", rules: "the betting rules' answer", equity: "a rough equity estimate" }[res.fallback] || "a fallback"}, not a solve.</div>`;
   const hasEv = res.actions.some(a => a.ev_bb !== undefined);
   h += `<div class="arows${hasEv ? "" : " noev"}"><div class="arow head"><span>Action</span><span>${heuristic(res) ? "" : "Solver mix"}</span><span class="num">${heuristic(res) ? "" : "Freq"}</span>${hasEv ? '<span class="num" title="Expected value of taking this action, in big blinds">EV</span>' : ""}</div>`;
   for (const a of res.actions) {

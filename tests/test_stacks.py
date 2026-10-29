@@ -158,8 +158,11 @@ class TestAdvisorStacks(unittest.TestCase):
         # checking wins the side pot (and whatever BTN bluffs), never the main pot
         self.assertGreater(ev["check"], 90)
         self.assertLess(ev["check"], 100 + 30.5)
-        # a bet faces BTN alone: betting stays available beside the all-in player
-        self.assertTrue(any(k.startswith("bet") for k in ev), ev)
+        # a bet faces BTN alone: betting stays available beside the all-in player (here both sizes are more than the
+        # 40bb hero has left, so the bet is named all-in, 40 into BTN's 40, as the page takes it)
+        bets = [a for a in r["actions"] if a["action"].startswith("bet") or a["action"] == "all-in"]
+        self.assertTrue(bets, ev)
+        self.assertTrue(all(a["amount_bb"] <= 40 + 1e-9 for a in bets), r["actions"])
 
     def test_three_way_solve_plays_each_stack_not_the_shortest(self):
         # a 12bb CO in a 3-way pot: each player bets its own stack as far as another can match it, the CO's 9.5bb

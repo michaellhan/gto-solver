@@ -571,7 +571,8 @@ class TestAdvisor(unittest.TestCase):
 
         def grab(self_, hero, hole, board, ranges, remaining, cur, stk, t0, notes):
             got["ranges"], got["notes"] = dict(ranges), list(notes)
-            return {"stub": True}
+            # (an answer the catch-all takes as one: Advisor.advise would answer a stub with no actions again)
+            return {"stub": True, "actions": [{"action": "check", "freq": 1.0}], "recommended": "check"}
         saved, narrow = A.Advisor._multiway, A._narrow_street
         A.Advisor._multiway = grab
         # (the turn's checks left out: the ranges compared are the flop's)

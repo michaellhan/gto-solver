@@ -45,8 +45,12 @@ a squeeze called twice or 4bet, 4bet and 5bet jams faced, limp-reraises, straddl
 directly from their steps (build_line) rather than by walking the tree. Per line: its last two decision
 nodes and the decision it ends at (5 hands each), the ranges a closed line reaches the flop with
 (thin_range / filled_range), and in its pot a flop spot facing a bet and a turn spot heads-up (face_up,
-ev_is_pot) or both 3-way kinds. The confirm pass re-solves only spots with a flag other than the info
-ones, and the run exits 1 when any such flag remains (--strict does the same for other runs).
+ev_is_pot) or both 3-way kinds. Quick mode and --rare also ask the exotic spots (EXOTIC: ~20 whole page requests
+from scripts/coverage_fuzz.py, 7-9 handed and 5-6 way pots, mixed stacks and all-ins for less, tournaments,
+locks, custom sizes, and the flop library's own spots; flags error, nan, illegal and illegal_option, no_rec,
+fallback and library_miss as that script defines them; ~30 s of CPU). The confirm pass re-solves only spots with
+a flag other than the info ones, and the run exits 1 when any such flag remains (--strict does the same for
+other runs).
 
   python scripts/sanity_sweep.py                       # full sweep (~40 min on 8 cores)
   python scripts/sanity_sweep.py --pre 300 --post 200  # quicker
@@ -567,7 +571,134 @@ def rare_jobs(seed=7, setups=None):
     return pre_jobs, post_jobs
 
 
-def report(flags_pre, flags_post, n_pre, n_post, seconds, out, quick=False, rare=False):
+# Exotic spots (quick mode and --rare): whole page requests from corners of the input space that the setups and lines
+# above don't reach, most of them holes scripts/coverage_fuzz.py found (an answer the page couldn't play, or none):
+# mixed stacks and short all-ins with antes, 7-9 handed and 5-6 way pots after the flop, limp-raises, cold 4bets and
+# 5bets, min and odd sizes, overbets, tournaments, locks, custom sizes and ranges, at the page's Quick budgets. Each is
+# (name, mode, state): the state as index.html sends it (coverage_fuzz.page_state), asked of the browser worker's
+# advisor ("wasm", coverage_fuzz.worker_advisors) or the server's. A spot is flagged when its answer is an error, not
+# finite, recommends (or mixes in) a move the page can't play, folds AA preflop, or came from the catch-all
+# (fallback: a solve that failed, Advisor._fallback). A spot the flop library stores (coverage_fuzz.library_expected) is
+# flagged when its answer didn't come from it (library_miss). Turns in wide limped pots are left out (a Quick one takes
+# ~1 GB).
+_ACT = {"c": "call", "x": "check", "f": "fold", "a": "all-in"}
+
+
+def _acts(line):
+    """'UTG r2.5, HJ c, BB x, SB b3, BTN a, CO f' as the page's action list (r: raise to, b: bet)."""
+    out = []
+    for step in filter(None, (x.strip() for x in line.split(","))):
+        pos, a = step.split()
+        out.append({"pos": pos, "action": _ACT[a]} if a in _ACT else
+                   {"pos": pos, "action": "raise", "to": float(a[1:])} if a[0] == "r" else
+                   {"pos": pos, "action": "bet", "amount": float(a[1:])})
+    return out
+
+
+def _spot(name, mode, hand, pre, flop="", turn="", river="", stack=100.0, speed="quick", budget=1.5, prior_budget=0.3,
+          **kw):
+    """An exotic spot: `hand` is 'HERO HOLE BOARD' (board '-' preflop), the streets' lines as _acts takes them, and
+    the rest of the page's request as keywords (players, stacks, ante, straddle, rake, payouts, sizes, locks, ...)."""
+    hero, hole, board = hand.split()
+    board = "" if board == "-" else board
+    st = {"players": kw.pop("players"), "hero": hero, "hole": hole, "board": board, "stack": stack, **kw,
+          "preflop": _acts(pre), "flop": _acts(flop), "turn": _acts(turn), "river": _acts(river),
+          "budget": budget, "prior_budget": prior_budget, "speed": speed}
+    if board and speed == "quick":
+        st["quick"] = True
+    return name, mode, st
+
+
+EXOTIC = [   # (from scripts/coverage_fuzz.py --seed 1 and 2, hand:request)
+    _spot("a 1bb small blind after a 0.15 ante: its all-in is to 0.85", "server", "SB QdJc -", "BTN r2",   # 81:1
+          players=3, stack=300.0, stacks={"BTN": 8.0, "SB": 1.0, "BB": 2.0}, ante=0.15, rake=0.05, rake_cap=3),
+    _spot("9-handed straddled 5-way river facing a jam (the N-player river solve)", "wasm",   # 230:28
+          "BB 9s9c JhQhQc3cJd", "UTG1 c, UTG2 f, LJ f, HJ f, CO f, BTN c, SB c, BB r13.5, UTG c, UTG1 c, BTN c, SB c",
+          "SB x, BB x, UTG x, UTG1 x, BTN x", "SB x, BB x, UTG x, UTG1 x, BTN x", "SB x, BB x, UTG a, UTG1 c, BTN c, SB c",
+          players=9, budget=0.8, straddle=True),
+    _spot("9-handed 5-way limped flop with an ante, facing a jam (the betting rules)", "server",   # 93:10
+          "UTG 6d2c Kd7d5h", "UTG c, UTG1 c, UTG2 c, LJ f, HJ c, CO f, BTN f, SB f, BB x", "BB a",
+          players=9, stack=223.0, ante=0.2),
+    _spot("8-handed mixed stacks: a turn with side pots facing an all-in (the rules), exploit mode", "wasm",   # 221:16
+          "SB 7d4d 6s8dAs3s", "UTG c, UTG1 a, LJ f, HJ f, CO c, BTN a, SB c, BB c, UTG c, CO c", "SB x, BB x, CO x",
+          "SB x, BB x, CO a", players=8, stack=15.0, rake=0.03, opponents="pool",
+          stacks={"UTG": 1.5, "UTG1": 4.5, "LJ": 4.5, "HJ": 21.7, "CO": 15.0, "BTN": 6.0, "SB": 15.0, "BB": 15.0}),
+    _spot("4-way flop after a bet, a jam and a re-jam: locks, deep mixed stacks (a 4-way solve)", "wasm",   # 19:14
+          "BB 9sQc Jd8hQd", "CO c, BTN r3.5, SB c, BB c, CO c", "SB x, BB x, CO x, BTN b10.5, SB a, BB c, CO c, BTN a",
+          players=4, stacks={"CO": 100.0, "BTN": 176.0, "SB": 164.0, "BB": 230.5},
+          locks={"CO": {"bet": -54, "raise": -13}, "BTN": {"fold": 15, "bluff": -60, "bet": -25, "raise": -30}}),
+    _spot("40bb: a squeeze, a 4bet and a 5bet jam behind two cold calls", "wasm", "CO 3h2h -",   # 151:11
+          "UTG r2.5, HJ f, CO c, BTN c, SB r4, BB r12, UTG f, CO c, BTN c, SB a, BB f", players=6, stack=40.0),
+    _spot("7-handed 200bb with an ante: limp, raise, 3bet, calls, a 4bet jam (Fast)", "server", "BTN KcQs -",   # 136:10
+          "UTG c, LJ r2, HJ f, CO r4.5, BTN c, SB c, BB f, UTG c, LJ a, CO f", players=7, stack=200.0, ante=0.15,
+          speed="fast", budget=2.5, prior_budget=2.5),
+    _spot("straddled 3-way flop with custom sizes, facing a bet", "wasm", "BTN 8c6h 3s7dTh",   # 135:8
+          "CO r4, BTN c, SB c, BB f, HJ f", "SB x, CO b7.5", players=5, stack=40.0, straddle=True,
+          sizes={"river": [150], "turn": [33], "flop": [66, 75], "raise": [66, 125, 150]}),
+    _spot("tournament (ICM) 3-way 4bet pot, flop facing an overbet and a call", "wasm", "UTG 8s9s 5d4c3h",   # 186:15
+          "UTG r3, LJ f, HJ r5, CO c, BTN c, SB f, BB f, UTG r21, HJ f, CO c, BTN c", "UTG x, CO b69.5, BTN c",
+          players=7, stack=141.0, payouts=[65, 35]),
+    _spot("tournament 3-handed, a 1.5bb small blind, button first in", "wasm", "BTN Td2d -", "",   # 228:0
+          players=3, stacks={"BTN": 100.0, "SB": 1.5, "BB": 100.0}, payouts=[100, 50]),
+    _spot("60bb 3bet pot after a cold call, flop facing a bet, exploit mode", "wasm", "SB 9h6c 3sQcJc",   # 160:11
+          "UTG f, HJ r3, CO f, BTN c, SB c, BB r6, HJ f, BTN f, SB c", "SB x, BB b13.5", players=6, stack=60.0,
+          opponents="pool"),
+    _spot("tournament raked heads-up 200bb river facing a big bet", "wasm", "BB 7cTh JsKdQcJc5c",   # 205:10
+          "SB r2.5, BB c", "BB x, SB x", "BB x, SB b4, BB c", "BB x, SB b32.5", players=2, stack=200.0, budget=0.8,
+          rake=0.025, rake_cap=0.5, payouts=[65, 35]),
+    _spot("25bb with an ante, 3-way river facing a jam and a call", "wasm", "BTN 4hAs 6d8dJh9d7h",   # 166:14
+          "HJ f, CO r4.5, BTN c, SB f, BB c", "BB x, CO x, BTN x", "BB x, CO x, BTN x", "BB a, CO c",
+          players=5, stack=25.0, budget=0.8, ante=0.2),
+    _spot("9-handed raked: limp, min-raise, 3bet", "wasm", "UTG1 Kh5s -",   # 6:11
+          "UTG c, UTG1 r2, UTG2 f, LJ r8, HJ f, CO f, BTN f, SB f, BB f, UTG f", players=9, stack=60.0, rake=0.06,
+          rake_cap=10),
+    _spot("9-handed big-ante tournament, raising closed by an all-in for less", "server", "CO JcQc -",   # 24:13
+          "UTG r6.5, UTG1 c, UTG2 r12, LJ r44.5, HJ f, CO r98, BTN c, SB c, BB a, UTG c, UTG1 f, UTG2 c, LJ f",
+          players=9, ante=0.5, payouts=[3, 2, 1], opponents="pool"),
+    _spot("straddled heads-up turn facing a check-raise", "wasm", "BTN JhAs Th7sKs6h",   # 270:11
+          "CO f, BTN r5, SB f, BB c, HJ f", "BB x, BTN b4, BB c", "BB x, BTN b15.5, BB r54", players=5, straddle=True),
+    _spot("heads-up tournament with a field (ICM), limped river, custom raise sizes", "wasm",   # 2:6
+          "BB Ad5c 2s6h8h2dTd", "SB c, BB x", "BB x, SB x", "BB x, SB x", players=2, stack=200.0, budget=0.8,
+          payouts=[50, 30, 20], field={"players": 8, "chips": 480}, sizes={"raise": [50, 66, 150]}),
+    # (seed 2, --harsh: the N-player solve's shortest stack, the 3-way solve's cap, a straddle's option)
+    _spot("5-way river, mixed stacks: a deep player faces a raise over the shortest stack", "wasm",   # 32:25
+          "HJ 4c6s 8h8s6h2sQh", "LJ r5, HJ r8, CO c, BTN c, SB f, BB f, UTG c, LJ c", "UTG x, LJ x, HJ x, BTN x",
+          "UTG x, LJ x, HJ x, BTN x", "UTG x, LJ x, HJ x, BTN b1, UTG c, LJ a, HJ c, BTN c, UTG r144", players=7,
+          budget=0.8, ante=0.5, straddle=True,
+          stacks={"UTG": 184.5, "LJ": 81.0, "HJ": 165.5, "CO": 1.5, "BTN": 86.0, "SB": 132.0, "BB": 26.1}),
+    _spot("3-way flop: the deep player's raise is more than the others can match", "wasm", "CO 5sJc Jh3s2d",   # 141:6
+          "CO r6, BTN c, SB c, BB f", "SB b14.5", players=4, stacks={"CO": 211.5, "BTN": 24.0, "SB": 22.3, "BB": 100.0}),
+    _spot("straddle's option after an all-in for less than the straddle", "server", "HJ 2h6s -",   # 161:4
+          "CO a, BTN c, SB c, BB c", players=5, stack=5.0, ante=0.125, straddle=True, payouts=[100, 50],
+          stacks={"HJ": 12.0, "CO": 2.0, "BTN": 247.5, "SB": 14.5, "BB": 5.0}, field={"players": 66, "chips": 6600}),
+    # the flop library's own spots (library_miss when the answer comes from anywhere else)
+    _spot("flop library: BTN vs BB, BB facing a third-pot c-bet", "server", "BB 7dAc 8cKc8h",   # 51:8
+          "UTG f, HJ f, CO f, BTN r2.5, SB f, BB c", "BB x, BTN b2", players=6),
+    _spot("flop library: HJ vs BB, BB facing a 75% c-bet (the worker)", "wasm", "BB 8hQh 2cKhJc",   # 66:8
+          "UTG f, HJ r2.5, CO f, BTN f, SB f, BB c", "BB x, HJ b4", players=6),
+]
+
+
+def check_exotic(job):
+    name, mode, state = job
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import coverage_fuzz as cf
+    adv = cf.advisors(mode)
+    adv = adv.get(state.get("speed"), adv["fast"])
+    tag = f"exotic: {name}"
+    try:
+        res = adv.advise(state)
+    except Exception as e:   # noqa: BLE001
+        return [("error", {"tag": tag, "state": state, "error": repr(e)})]
+    info = {"tag": tag, "state": state, "actions": res.get("actions"), "notes": res.get("notes"),
+            **{k: res[k] for k in ("error", "fallback", "fallback_reason", "fallback_where") if k in res}}
+    flags = cf.state_flags(res, state) + (["fallback"] if res.get("fallback") else [])
+    if cf.library_expected(state) and not res.get("precomputed"):
+        flags.append("library_miss")   # (a decision the flop library stores, answered some other way)
+    return [(f, info) for f in flags]
+
+
+def report(flags_pre, flags_post, n_pre, n_post, seconds, out, quick=False, rare=False, exotic=0):
     counts = defaultdict(lambda: [0, 0])
     by_tag = defaultdict(lambda: defaultdict(int))
     examples = defaultdict(list)
@@ -588,6 +719,9 @@ def report(flags_pre, flags_post, n_pre, n_post, seconds, out, quick=False, rare
     if rare:
         lines += [f"Includes the {len(RARE_LINES)} rare lines (RARE_LINES: {', '.join(RARE_KINDS)}); "
                   "their closed lines are range checks with no hands.", ""]
+    if exotic:
+        lines += [f"Includes {exotic} exotic spots (EXOTIC: whole page requests from scripts/coverage_fuzz.py), "
+                  "counted with the postflop spots.", ""]
     lines += ["| flag | preflop | postflop | by setup |", "|---|---|---|---|"]
     for name in sorted(counts, key=lambda k: (k in INFO, -sum(counts[k]))):
         tags = ", ".join(f"{t}: {c}" for t, c in sorted(by_tag[name].items(), key=lambda kv: -kv[1]))
@@ -649,7 +783,9 @@ def main():
         fpre = [f for fl in pool.imap_unordered(check_preflop, pre_jobs, chunksize=1 if args.quick else 8) for f in fl]
         print(f"preflop done in {time.time() - t0:.0f}s", flush=True)
         fpost = [f for fl in pool.imap_unordered(check_postflop, post_jobs, chunksize=1 if args.quick else 2) for f in fl]
-    print(f"postflop done in {time.time() - t0:.0f}s: {len(fpost)} flags", flush=True)
+        ex_jobs = EXOTIC if args.quick or args.rare else []
+        fex = [f for fl in pool.imap_unordered(check_exotic, ex_jobs, chunksize=1) for f in fl]
+    print(f"postflop done in {time.time() - t0:.0f}s: {len(fpost)} flags, {len(fex)} on the exotic spots", flush=True)
     if args.confirm > 0:
         # short solves sharing the machine can be far from equilibrium, which looks like a bug (a bet
         # worth exactly the pot, a range near empty): re-run each flagged spot with a longer budget on
@@ -673,8 +809,9 @@ def main():
                  or (json.dumps(ex["state"], sort_keys=True), name) in confirmed]
         print(f"confirm pass ({args.confirm:g}s solves, {len(jobs)} spots): {len(fpost)} of {before} "
               f"postflop flags reproduce", flush=True)
-    counts = report(fpre, fpost, len(pre_jobs), len(post_jobs), time.time() - t0, args.out, quick=args.quick,
-                    rare=args.quick or args.rare)
+    fpost += fex   # (not confirmed: an exotic spot's flags are about the answer's shape, not a short solve's noise)
+    counts = report(fpre, fpost, len(pre_jobs), len(post_jobs) + len(ex_jobs), time.time() - t0, args.out,
+                    quick=args.quick, rare=args.quick or args.rare, exotic=len(ex_jobs))
     print(f"done in {time.time() - t0:.0f}s; report in {args.out}")
     for name, (a, b) in sorted(counts.items(), key=lambda kv: -sum(kv[1])):
         print(f"  {name}{' (info)' if name in INFO else ''}: preflop {a}, postflop {b}")

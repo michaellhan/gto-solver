@@ -1755,7 +1755,10 @@ spot kind on flop, turn and river, 3-way pots and exploit mode, plus ~30 hand-pi
 rare lines over the setups that the quick preflop trees leave out (`RARE_LINES`:
 3bet and 4bet pots, cold 4bets, flat then 4bet, a squeeze called twice or 4bet, 4bet
 and 5bet jams faced, limp-reraises, straddled 3bet pots), with their decision nodes,
-the ranges they reach the flop with and flop and turn spots in their pots; postflop
+the ranges they reach the flop with and flop and turn spots in their pots, and ~20 whole page
+requests from corners the setups don't reach (`EXOTIC`: spots `scripts/coverage_fuzz.py` found or drew, 7-9 handed
+and 5-6 way pots, all-ins for less, tournaments, locks, custom sizes, and the flop library's own spots, flagged
+when the answer isn't one the page can play, came from the catch-all, or missed the library); postflop
 flags are re-solved at a longer budget and it exits non-zero when any flag but the
 info ones, `filled_range` and `unsettled`, reproduces). The full sweep (~40 min) is
 not part of the deploy; `scripts/sanity_sweep.py --full-report` runs it with the rare
@@ -1884,6 +1887,44 @@ their products batched: `core.LEAF_ROWS_BLAS`).
   the river), it pays each side pot to the best hand among the players in it, but the betting rules inside its
   trials don't play for the side pot (an opponent bets and calls as if the whole pot were at stake). The 3- and
   4-way solves play side pots exactly (How it works).
+* Every spot the page can set up gets an answer, not always a solve. Preflop: the charts (push/fold under 20bb). After
+  the flop heads-up: the flop library where it stores the spot (its 6-max 100bb preflop lines at the default sizes, a
+  stored flop, checks and bets within 15% of its sizes, your hand in the stored range; not in exploit mode, against a
+  lock on the opponent, with the size optimizer, a jam request or ICM), else a live solve; 3-way the 3-way library,
+  else a live solve; 4-way flops and turns a live solve in a smaller game (the betting rules at Quick in the browser);
+  rivers of up to six players (five in the browser at Quick and Fast), and any street where only you have chips
+  behind, the N-player solve. The betting rules take the rest: five or more on the flop or turn, six or more on a
+  browser river, a 4+ way pot where you face a bet bigger than the shortest stack behind (the solves play everyone at
+  that stack: your call would be priced at its size), and a 3+ way spot where the smallest raise you can make is more
+  than the solve lets you put in (three: what another player can match). Behind all of it a catch-all
+  (`Advisor.advise`, `Advisor._rules`): an answer that fails anyway (an exception other than a cancel, no actions, a
+  recommendation that isn't one of them, a number that isn't finite) is answered from the chart preflop, else the
+  betting rules, else your equity against random hands priced against the pot, marked `fallback` with the reason and
+  a line on the page; the request's own mistakes (an unknown seat, clashing cards, bad sizes) stay errors, and Study
+  answers preflop from the chart and shows nothing after the flop that it couldn't solve. `scripts/coverage_fuzz.py`
+  checks it: random hands over the page's whole input space (2-9 players, 5-300bb and each seat's own stack, antes, a
+  straddle, rake, tournaments, exploit mode, locks, custom sizes and ranges, limps, min-raises, overbets, all-ins for
+  less; moves by the advice or at random, entered as the page enters them), every decision asked of the browser
+  worker's advisors and the server's at Quick and Fast, Study and practice opponents now and then. It flags an error,
+  a missing or non-finite answer, a recommended or mixed-in move the page can't play, a premium or a set folded, a
+  slow answer, an answer from the catch-all, and on the flop library's own lines a decision it stores that came from
+  elsewhere. Two runs of 300 hands (the second with the odd setups 2.5x as often and a quarter of its hands on the
+  library's lines): 6,628 decisions, answered by the charts 63%, live solves 24%, the betting rules 12% and the flop
+  library 1.4%; the catch-all answered none. The library answered all 92 of the decisions it stores (median 0.009 s,
+  max 0.15 s). Seven holes turned up, now fixed with regression tests (tests/test_coverage.py, tests/js/stacks.test.js),
+  all bets the page couldn't take or prices off: a 1bb small blind's all-in after the ante sized 1.0 of its 0.85; an
+  advised raise after an all-in for less under the smallest raise (on the page too); the 4+ way solves pricing a deeper
+  player's call at the shortest stack (71.5 as 5) and offering raises under the smallest (to 77.5 where it's 144, a
+  0.2bb bet); the rules' raise held to what the deepest opponent can match shown under the smallest (55.88 where it's
+  90, now shown at 90, the same move) and a raise of the whole stack not named all-in (1.55, which the page took as
+  1.5); and a straddle's option after an all-in for less than the straddle answered as facing a jam (call, with
+  nothing to call). The deploy's sanity sweep asks 22 of these spots again (`EXOTIC`). 6 of the 6,628 took over 2.5x
+  their estimate plus 4 s: Quick heads-up turns with wide ranges (a limped pot, a single-raised pot checked through
+  the flop) at 11-14 s against 1.8, and a 3-way flop with a player all-in or a 4-way flop at Quick natively whose
+  solve spent the whole budget building its tables (0 iterations) before the rules answered (6.5-8.8 s against 1.5);
+  they answer within twice their estimate now (Quick keeps to its time and memory). The same cap on a heads-up
+  solve's tree holds the browser's Fast with three custom raise sizes, which could need ~3 GB on a turn, under
+  `MAX_CELLS` (not fuzzed: the fuzz keeps each process under 1 GB). Left: the catch-all is a heuristic.
 * Practice opponents heads-up after the flop read their move off your own solve, whose ranges leave out
   your cards (as your advice does): an edge the size of a blocker. A line of yours the solve rarely
   takes, or a pot that became heads-up mid-street, gets a solve from their seat instead (a few seconds,

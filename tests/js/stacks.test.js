@@ -179,3 +179,18 @@ test("hand text names the stacks", async () => {
   p.S = state({ cards: ["Ah", "Kh"] });
   assert.match(p.run("handText()"), /^GTO Solver hand: 6-handed, 100bb effective, I am BTN/);
 });
+
+test("after an all-in for an odd amount, an advised raise is offered at a size the page takes", () => {
+  // CO's 12.3bb all-in over HJ's 2.5 is a full raise: the smallest raise is to 22.1, so the advice's 22.1 (or 22,
+  // rounded) would be refused; its button is 22.5 (gto/advisor.py _legal_to's rule), and the move goes through
+  const p = page(state({ cards: ["Ah", "Kh"], preflop: acts("UTG f, HJ r2.5, CO a") }), { CO: 12.3 });
+  assert.equal(p.sim().toAct, "BTN");
+  assert.equal(p.val("minRaiseTo(simulate().cur)"), 22.1);
+  p.ctx.__res = JSON.stringify({ street: "preflop", hero: "BTN", hand: "AKs", recommended: "raise", notes: [],
+    actions: [{ action: "fold", freq: 0 }, { action: "call", freq: 0.4, amount_bb: 12.3 }, { action: "raise", freq: 0.6, amount_bb: 22.1 }] });
+  p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
+  const b = p.button("Raise to 22.5");
+  b.click();
+  const { pos, action, to } = p.S.actions.preflop.at(-1);
+  assert.deepEqual({ pos, action, to }, { pos: "BTN", action: "raise", to: 22.5 });
+});

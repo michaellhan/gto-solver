@@ -1310,15 +1310,25 @@ def _mw_applies(remaining, cur, stk) -> bool:
     return min(stk[p] - cur.inv_start[p] for p in remaining if p not in cur.allin) > 1e-9
 
 
-def _mw4_applies(remaining, cur, stk) -> bool:
+def _mw4_applies(remaining, cur, stk, hero) -> bool:
     """Whether the 4-player bucketed solve can take this node: four players live on the flop or turn, at most one of
     them all-in (the other three bet for a side pot), and no bet bigger than the shortest stack behind of those who
-    bet (they play that stack)."""
+    bet (they play that stack; an all-in's bigger only when that stack is yours: _mw_fits)."""
     if len(remaining) != 4 or len(set(remaining) & cur.allin) > 1 or cur.name not in ("flop", "turn"):
         return False
     acting = [p for p in remaining if p not in cur.allin]
     S = min(stk[p] - cur.inv_start[p] for p in acting)
-    return S > 1e-9 and max(cur.bets[p] for p in acting) <= S + 1e-9
+    return S > 1e-9 and max(cur.bets[p] for p in acting) <= S + 1e-9 and _mw_fits(remaining, cur, stk, hero)
+
+
+def _mw_fits(remaining, cur, stk, hero) -> bool:
+    """Whether your price fits a game where everyone with chips plays the shortest stack behind among them (the 4-way
+    and N-player solves, which play every bet at most that stack): no bet, an all-in's included, is bigger than it,
+    or that stack is yours (you can only call it all-in: the rest is a side pot you can't win). A deeper hero facing
+    a bigger one would be priced at the short stack's call (a call of 71.5 played as 5)."""
+    acting = [p for p in remaining if p not in cur.allin]
+    S = min(stk[p] - cur.inv_start[p] for p in acting)
+    return S > 1e-9 and (max(cur.bets[p] for p in remaining) <= S + 1e-9 or stk[hero] - cur.inv_start[hero] <= S + 1e-9)
 
 
 def _nway_applies(remaining, cur, stk, hero, max_players: int) -> bool:
@@ -1331,7 +1341,7 @@ def _nway_applies(remaining, cur, stk, hero, max_players: int) -> bool:
     acting = [p for p in remaining if p not in cur.allin]
     if cur.name != "river" and len(acting) > 1:
         return False
-    return min(stk[p] - cur.inv_start[p] for p in acting) > 1e-9
+    return _mw_fits(remaining, cur, stk, hero)
 
 
 def _river_fix() -> np.ndarray:
@@ -1824,6 +1834,47 @@ def _mw_line(board, hero, hole, stk, streets, street, n) -> tuple:
             before, norm((streets.get(street) or [])[:n]))
 
 
+def _unusable(res) -> Optional[str]:
+    """Why an answer has nothing usable in it (None when it has, or it's an error about the request, a skip or a
+    cancel): no actions, a recommendation that isn't one of them, a number that isn't finite, or an error the solve
+    itself gave (_SOLVE_ERRORS). Advisor.advise's catch-all answers these by the betting rules."""
+    if not isinstance(res, dict):
+        return "no answer"
+    if "error" in res:
+        return f"the solve gave no answer ({res['error']})" if str(res["error"]).startswith(_SOLVE_ERRORS) else None
+    if any(k in res for k in ("skipped", "cancelled")) or res.get("study") in ("deal", "over", "runouts"):
+        return None
+    acts = res.get("actions")
+    if not acts or not isinstance(acts, list):
+        return "an answer with no actions"
+    if res.get("study") == "node":
+        return None   # (Study's range answer: no one hand's pick)
+    if res.get("recommended") not in [a.get("action") for a in acts]:
+        return f"the recommended action ({res.get('recommended')}) isn't one of the answer's actions"
+    for a in acts:
+        for k in ("freq", "ev_bb", "amount_bb"):
+            v = a.get(k)
+            if v is not None and not np.isfinite(v):
+                return f"{a.get('action')}'s {k} is {v}"
+    if not sum(a.get("freq") or 0.0 for a in acts) > 0:
+        return "every action's frequency is 0"
+    return None
+
+
+# errors an answer can carry that are the solve's, not the request's: Advisor.advise answers by the rules instead
+_SOLVE_ERRORS = ("no decision pending",)
+
+
+def _legal_to(st: "StreetState", p: str, to: float, remaining: float) -> float:
+    """A bet or raise-to as the page takes it (index.html act): to the nearest half big blind (half to even, as the
+    rules always sized: the page keeps a half big blind as it is), at least the smallest full raise (the bet plus the
+    last full raise; 1bb to bet) rounded up to a half big blind, at most all-in (an all-in for less always goes).
+    Rounding the size alone could leave it under the smallest raise (1.25 to 1.0) or over the stack (an all-in to 0.85
+    to 1.0)."""
+    lo = np.ceil((st.cur_bet + st.min_raise) * 2 - 1e-9) / 2
+    return float(min(max(round(float(to) * 2) / 2, lo), st.bets[p] + remaining))
+
+
 def _mw_names(names, amounts, behind: float, S: float, pot_now: float) -> List[str]:
     """A multiway solve's action names as the player plays them. The solve plays the player's stack as far as another
     can match it (four or more: everyone at the shortest stack behind), S, so its all-in for a player with more is a
@@ -1924,8 +1975,39 @@ class Advisor:
     def advise(self, state: dict) -> dict:
         if state.get("study"):
             return self.study(state)
-        with np.errstate(all="ignore"):
-            return self._advise(state)
+        # the catch-all: a spot whose solve fails (an exception other than a cancel, or an answer with nothing usable
+        # in it) is answered by the betting rules instead (Advisor._rules), not left with an error
+        try:
+            with np.errstate(all="ignore"):
+                res = self._advise(state)
+            why = _unusable(res)
+        except Cancelled:
+            raise
+        except Exception as e:   # noqa: BLE001
+            why = e
+        return self._fallback(state, why) if why else res
+
+    def _fallback(self, state: dict, why) -> dict:
+        """The catch-all's answer for a spot advise or study couldn't answer (`why`: the exception, or what was wrong
+        with the answer): the same request through Advisor._rules, marked "fallback" (what answered: "rules",
+        "chart" or "equity") with "fallback_reason" (and "fallback_where", the line that raised). A state it can't
+        read either gets an error, as do Study's spots after the flop (it shows a solve or nothing)."""
+        reason = why if isinstance(why, str) else f"{type(why).__name__}: {why}"[:300]
+        if state.get("library_only"):
+            return {"skipped": f"no library answer ({reason})"}
+        try:
+            with np.errstate(all="ignore"):
+                res = self._advise(state, rules=reason)
+        except Cancelled:
+            raise
+        except Exception as e:   # noqa: BLE001
+            res = {"error": f"couldn't answer this spot ({reason}; then {type(e).__name__}: {e})"[:500]}
+        res["fallback_reason"] = reason
+        if isinstance(why, BaseException) and why.__traceback__ is not None:
+            import traceback
+            f = traceback.extract_tb(why.__traceback__)[-1]
+            res["fallback_where"] = f"{f.filename.rsplit('/', 1)[-1]}:{f.lineno} {f.name}"
+        return res
 
     def prefetch(self, state: dict) -> None:
         """The flop's library lookups for a hand as soon as its flop is known, without reading any entry: a dry run
@@ -1962,10 +2044,21 @@ class Advisor:
         st = {k: v for k, v in state.items() if k not in ("hero", "hole", "opponents", "locks", "jam", "library_only",
                                                            "payouts", "optimize_sizes")}
         st["study"] = True
-        if st.pop("runouts", None):
-            return self._runouts(st)
-        with np.errstate(all="ignore"):
-            return self._advise(st)
+        runouts = st.pop("runouts", None)
+        try:
+            if runouts:
+                return self._runouts(st)
+            with np.errstate(all="ignore"):
+                res = self._advise(st)
+            why = _unusable(res)
+        except Cancelled:
+            raise
+        except Exception as e:   # noqa: BLE001
+            if runouts:
+                return {"error": f"the runout report failed ({type(e).__name__})",
+                        "fallback_reason": f"{type(e).__name__}: {e}"[:300]}
+            why = e
+        return self._fallback(st, why) if why else res   # (the catch-all, as advise's)
 
     def _runouts(self, st: dict) -> dict:
         """Study mode's runout report (state "runouts": true, once a heads-up flop's or turn's betting closed): the
@@ -2056,7 +2149,7 @@ class Advisor:
                            "by": "hand buckets" if isinstance(ch.child, BucketEntry) else "every hand"},
                 "notes": notes, "seconds": round(time.time() - t0, 2)}
 
-    def _advise(self, state: dict, actor=None) -> dict:
+    def _advise(self, state: dict, actor=None, rules: Optional[str] = None) -> dict:
         t0 = time.time()
         bb = float(state.get("bb", 1.0))
         n = int(state.get("players", 6))
@@ -2114,12 +2207,171 @@ class Advisor:
             # opponent still in (preflop: who hasn't folded)
             positions = pf.Table(list(positions), positions.ante, positions.straddle, positions.rake, stack, stacks, model)
             stack = _eff_stack(positions, hero, streets["preflop"], stack)
+        if rules is not None:   # (the catch-all: Advisor._fallback)
+            return self._rules(state, t0, hero, hole, board, positions, stack, streets, custom, model, rules)
         positions = pf.at_depth(positions, stack)
         res = self._advise_at(state, actor, t0, hero, hole, board, positions, stack, streets, sizes, custom, locks)
         if model is not None and "actions" in res:
             res["tournament"] = _tournament_info(model, hero, positions, res.get("street"))
             res.setdefault("notes", []).insert(0, res["tournament"]["note"])   # (a practice move's answer has none)
         return res
+
+    def _rules(self, state, t0, hero, hole, board, positions, stack, streets, custom, model, reason) -> dict:
+        """The catch-all's answer (Advisor._fallback), for a spot whose solve failed: preflop the chart's mix for the
+        hand ("chart"), after the flop the betting rules' Monte Carlo against everyone's ranges (Advisor._multiway, as
+        for the pots no solver takes; heads-up too: "rules"), and where either of those fails too, the hand's equity
+        against random hands priced against the pot ("equity"). Each step uses what still works: the charts' ranges
+        narrowed by the rules, else any two cards. In chips (a tournament's prizes aside), at equilibrium (no pool or
+        locks), the default sizes."""
+        try:
+            positions = pf.at_depth(positions, stack)
+        except Exception:   # noqa: BLE001
+            pass
+        study = bool(state.get("study"))
+        n_streets = {0: 1, 3: 2, 4: 3, 5: 4}[len(board)]
+        rep = replay_hand(positions, stack, streets, n_streets)
+        cur = rep[-1]
+        if len(rep) < n_streets or hero not in cur.active or cur.closed or cur.to_act != hero:
+            return {"error": f"no decision of {hero}'s here"}
+        stk = _table_stacks(positions, stack)
+        if study and board:
+            return {"error": f"Study couldn't solve this spot ({reason}); it shows a solve or nothing after the flop"}
+        res, used, failed = None, None, []
+        if not board:
+            try:
+                res, used = self._chart_rules(hero, hole or (0, 1), streets["preflop"], positions, stack, cur, t0), "chart"
+            except Cancelled:
+                raise
+            except Exception as e:   # noqa: BLE001
+                failed.append(f"the chart, {type(e).__name__}")
+        else:
+            notes: List[str] = []
+            try:
+                try:
+                    ranges = dict(preflop_ranges(streets["preflop"], positions, stack))
+                except Exception as e:   # noqa: BLE001
+                    ranges = {}
+                    failed.append(f"the preflop ranges, {type(e).__name__}")
+                for p, r in (custom or {}).items():
+                    if p in rep[0].active:
+                        ranges[p] = r
+                for st in rep[1:-1] + [cur]:
+                    try:
+                        _narrow_street(ranges, board[:{"flop": 3, "turn": 4, "river": 5}[st.name]], st, stk, hero, hole, {})
+                    except Exception as e:   # noqa: BLE001
+                        failed.append(f"narrowing the {st.name}, {type(e).__name__}")
+                        break
+                remaining = [p for p in cur.order if p in cur.active]
+                res, used = self._multiway(hero, hole, board, ranges, remaining, cur, stk, t0, notes), "rules"
+                # (its "not a solve here" note is for the pots no solver takes: the first note says why here)
+                res["notes"] = [n for n in res.get("notes", []) if "not a solve here" not in n]
+            except Cancelled:
+                raise
+            except Exception as e:   # noqa: BLE001
+                failed.append(f"the betting rules, {type(e).__name__}")
+        if res is None or _unusable(res):
+            res, used = self._equity_rules(hero, hole or (0, 1), board, positions, cur, stk, t0), "equity"
+        if study:   # (preflop: the charts' mix for the whole range)
+            if used != "chart":
+                return {"error": f"Study couldn't answer this spot ({reason})"}
+            res = self._study_preflop(hero, streets["preflop"], positions, stack, t0, res)
+        res["fallback"] = used
+        what = {"chart": "the preflop chart's mix for your hand",
+                "rules": "the betting rules (a Monte Carlo against everyone's ranges, as for the pots no solver takes)",
+                "equity": "your equity against random hands, priced against the pot (a rough last resort)"}[used]
+        res.setdefault("notes", []).insert(0, f"the solver couldn't answer this spot ({reason}), so this answer is "
+                                              f"{what}" + (f" (also failed: {', '.join(failed)})" if failed else ""))
+        if model is not None and "actions" in res:
+            try:
+                res["tournament"] = _tournament_info(model, hero, positions, res.get("street"))
+                res["notes"].insert(1, res["tournament"]["note"] + " (the fallback plays chips)")
+            except Exception:   # noqa: BLE001
+                pass
+        return res
+
+    def _chart_rules(self, hero, hole, preflop, positions, stack, st: "StreetState", t0) -> dict:
+        """The catch-all's preflop answer (Advisor._rules): the chart's mix for the hand as the chart has it (no
+        re-pricing for the stacks, rake, jams or locks), its raises at the default size held to a legal one."""
+        full = {k: np.asarray(v, dtype=np.float64) for k, v in pf.strategy_for(hero, preflop, positions).items()}
+        remaining = stack - st.inv_start[hero] - st.bets[hero]
+        to_call = max(0.0, min(st.cur_bet - st.bets[hero], remaining))
+        passive = "call" if to_call > 1e-9 else "check"
+        for k in [k for k in full if k in ("call", "check") and k != passive] + \
+                 (["raise"] if "raise" in full and (not can_raise(st, hero) or remaining <= to_call + 1e-9) else []) + \
+                 (["fold"] if "fold" in full and to_call <= 1e-9 else []):
+            full[passive] = np.minimum(full.get(passive, 0.0) + full.pop(k), 1.0)   # (what can't be done here: the passive move)
+        idx = COMBO_INDEX[(min(hole), max(hole))]
+        size = _legal_to(st, hero, _default_size(st, hero, True), remaining)
+        acts = []
+        for k, v in full.items():
+            a = {"action": k, "freq": round(float(v[idx]), 3)}
+            if k == "raise":
+                a["action"] = "all-in" if size >= st.bets[hero] + remaining - 1e-9 else "raise"
+                a["amount_bb"] = round(float(size), 2)
+            elif k == "call":
+                a["amount_bb"] = round(float(to_call), 2)
+            acts.append(a)
+        if sum(a["freq"] for a in acts) <= 0:
+            acts[0]["freq"] = 1.0
+        names = list(full)
+        try:
+            arriving = preflop_ranges(preflop, positions, stack).get(hero, np.ones(N_COMBOS))
+        except Exception:   # noqa: BLE001
+            arriving = np.ones(N_COMBOS)
+        return {"street": "preflop", "hero": hero, "hand": hand_class(hole), "players": len(positions),
+                "actions": acts, "recommended": max(acts, key=lambda a: a["freq"])["action"], "sampled": self._sample(acts),
+                "pot_bb": round(st.pot_start + sum(st.bets.values()), 2), "to_call_bb": round(to_call, 2),
+                "grid": strategy_grid([full[k] for k in names], names, arriving), "notes": [],
+                "seconds": round(time.time() - t0, 3)}
+
+    def _equity_rules(self, hero, hole, board, positions, st: "StreetState", stk, t0) -> dict:
+        """The catch-all's last resort (Advisor._rules): the hand's equity against a random hand for each opponent
+        still in (Monte Carlo), priced against the pot. Facing a bet: call when the equity pays for it, else fold;
+        otherwise bet 66% of the pot with more than half the pot's equity, else check. EVs as if every bet is
+        called; frequencies 0/1, as the betting rules'."""
+        from .evaluator import eval_boards
+        rng = np.random.default_rng(1)
+        opps = [p for p in st.order if p in st.active and p != hero]
+        dead = set(board) | set(hole)
+        deck = np.array([c for c in range(52) if c not in dead])
+        need = 5 - len(board)
+        n = 300
+        wins = 0.0
+        for _ in range(n):
+            draw = rng.permutation(deck)[:need + 2 * len(opps)]
+            full = list(board) + [int(c) for c in draw[:need]]
+            s = eval_boards([full], [COMBO_INDEX[(min(hole), max(hole))]] +
+                            [COMBO_INDEX[(int(min(draw[need + 2 * i], draw[need + 2 * i + 1])),
+                                          int(max(draw[need + 2 * i], draw[need + 2 * i + 1])))] for i in range(len(opps))])[0]
+            best = s.max()
+            if s[0] >= best:
+                wins += 1.0 / float((s == best).sum())
+        eq = wins / n
+        remaining = max(0.0, stk[hero] - st.inv_start[hero] - st.bets[hero])
+        pot = st.pot_start + sum(st.bets.values())
+        to_call = max(0.0, min(st.cur_bet - st.bets[hero], remaining))
+        acts = []
+        if to_call > 1e-9:
+            acts.append({"action": "fold", "freq": 0.0, "ev_bb": 0.0})
+            acts.append({"action": "call", "freq": 0.0, "ev_bb": round(eq * (pot + to_call) - to_call, 2),
+                         "amount_bb": round(to_call, 2)})
+        else:
+            acts.append({"action": "check", "freq": 0.0, "ev_bb": round(eq * pot, 2)})
+            if can_raise(st, hero) and remaining > 1e-9:
+                to = _legal_to(st, hero, _default_size(st, hero, not board), remaining)
+                add = to - st.bets[hero]
+                acts.append({"action": "all-in" if to >= st.bets[hero] + remaining - 1e-9 else
+                             f"bet {add / max(pot, 1e-9) * 100:.0f}%" if board else "raise",
+                             "freq": 0.0, "ev_bb": round(eq * (pot + 2 * add) - add, 2),
+                             "amount_bb": round(float(to), 2)})
+        best = max(acts, key=lambda a: a["ev_bb"])
+        best["freq"] = 1.0
+        return {"street": st.name, "hero": hero, "hand": hand_class(hole), "board": cards_str(board),
+                "players": len(opps) + 1, "multiway": True, "opponents": opps, "equity_vs_field": round(eq, 3),
+                "pot_bb": round(pot, 2), "to_call_bb": round(to_call, 2), "actions": acts,
+                "recommended": best["action"], "sampled": best["action"],
+                "notes": [f"equity {eq * 100:.0f}% against {len(opps)} random hand{'s' if len(opps) > 1 else ''}"],
+                "seconds": round(time.time() - t0, 2)}
 
     def _advise_at(self, state, actor, t0, hero, hole, board, positions, stack, streets, sizes, custom, locks):
         if not board and state.get("study"):
@@ -2209,7 +2461,10 @@ class Advisor:
         if st.to_act != hero:
             return {"error": f"it is {st.to_act}'s turn, not {hero}'s"}
         aggr = [a["pos"] for a in preflop if a["action"] in ("raise", "all-in", "bet")]
-        if aggr and aggr[-1] in st.allin and aggr[-1] != hero:
+        # (facing a jam: the last all-in is the bet to call. One for less than the bet already in, a 1.875bb stack's
+        # under a straddle, is a short call, not a jam)
+        if aggr and aggr[-1] in st.allin and aggr[-1] != hero and st.bets[aggr[-1]] >= st.cur_bet - 1e-9 \
+                and st.cur_bet > st.bets[hero] + 1e-9:
             return self._vs_jam(hero, hole, preflop, positions, stack, st, t0, pool, locks)
         full = pf.strategy_for(hero, preflop, positions)
         notes = ["preflop: chart approximation"]
@@ -2235,12 +2490,19 @@ class Advisor:
             full[k] = np.minimum(full.get(k, 0.0) + r, 1.0)
             notes.append("you can't raise here (an all-in for less than a full raise doesn't reopen the betting, "
                          "or nobody left has chips to call one): the chart's raises call")
+        # the chart's passive move as the spot has it: with nothing to call (a big blind's or straddle's option, an
+        # all-in for less than the blind before it) its calls and folds check; facing a bet its checks call
+        facing = st.cur_bet > st.bets[hero] + 1e-9
+        moved = [k for k in (("check",) if facing else ("call", "fold")) if k in full]
+        if moved:
+            full = dict(full)
+            k = "call" if facing else "check"
+            full[k] = np.minimum(full.get(k, 0.0) + sum(full.pop(m) for m in moved), 1.0)
         idx = COMBO_INDEX[(min(hole), max(hole))]
         strat = {k: float(v[idx]) for k, v in full.items()}
         remaining = stack - st.inv_start[hero] - st.bets[hero]
         to_call = min(st.cur_bet - st.bets[hero], remaining)
-        size = min(max(_default_size(st, hero, True), st.cur_bet + st.min_raise), st.bets[hero] + remaining)
-        size = round(size * 2) / 2
+        size = _legal_to(st, hero, _default_size(st, hero, True), remaining)
         if "raise" in full and remaining > to_call + 1e-9:
             # all-in instead: the raise is most of the stack, or leaves under JAM_SPR pots behind once called
             pot = st.pot_start + sum(st.bets.values())
@@ -2284,9 +2546,10 @@ class Advisor:
             "notes": notes, "seconds": round(time.time() - t0, 3),
         }
 
-    def _study_preflop(self, hero, preflop, positions, stack, t0):
-        """Study mode preflop: the charts' mix for hero's whole range (no EVs or equities: the charts aren't solves)."""
-        res = self._preflop(hero, (0, 1), preflop, positions, stack, t0)   # (any hand: the grid is the range's)
+    def _study_preflop(self, hero, preflop, positions, stack, t0, res=None):
+        """Study mode preflop: the charts' mix for hero's whole range (no EVs or equities: the charts aren't solves).
+        `res`: the advice to read it from (the catch-all's chart answer), else Advisor._preflop's."""
+        res = res or self._preflop(hero, (0, 1), preflop, positions, stack, t0)   # (any hand: the grid is the range's)
         if "actions" not in res:
             return res
         g = res["grid"]
@@ -3277,7 +3540,7 @@ class Advisor:
         from . import multiway_solver as MW
         fallback_notes, notes = notes, list(notes)
         exact3 = _mw_applies(remaining, cur, stk)
-        four = not exact3 and self.mw4_street_config is not None and _mw4_applies(remaining, cur, stk)
+        four = not exact3 and self.mw4_street_config is not None and _mw4_applies(remaining, cur, stk, hero)
         nway = not exact3 and not four and _nway_applies(remaining, cur, stk, hero, self.mw_nway_max)
         # (the N-player solve off the river is the hand of the only player with chips: nothing to solve but its call)
         if not self.mw_solve_streets or not ((exact3 or four) and cur.name in self.mw_solve_streets
@@ -3299,6 +3562,19 @@ class Advisor:
         # contests the main pot, the others the side pot (MWConfig.inv0). Four or more: everyone the shortest stack
         uneven = max(v for p, v in behind.items() if p not in shoved) - S > 1e-6
         stacks = tuple(float(behind[p]) for p in players) if exact3 and uneven else S
+        # your raise as the solve plays it goes to at most `cap` (everyone the shortest stack, four or more; three, what
+        # another can match). Under the smallest raise you can make, with chips for it, that's no move the page takes (a
+        # raise to 77.5 where the smallest is to 144, an all-in to 77.5 of a 5bb stack's cap): the betting rules, which
+        # play each seat's own stack, answer
+        cap = min(behind[hero], max(behind[q] for q in players if q != hero)) if isinstance(stacks, tuple) else S
+        smallest = cur.cur_bet + cur.min_raise
+        if hero not in shoved and behind[hero] > cap + 1e-9 and cur.cur_bet + 1e-9 < cap \
+                and np.floor(cap * 2 + 0.5) / 2 < smallest - 1e-9 and can_raise(cur, hero):
+            fallback_notes.append(f"the smallest raise you can make (to {smallest:g}) is more than the {len(players)}-way "
+                                  f"solve lets you put in ({cap:g}: " + ("what another player can match" if exact3 else
+                                                                        "everyone plays the shortest stack behind")
+                                  + "), so the betting rules answer")
+            return None
         # (an all-in bet the others can't match in full is played at what they can: the rest comes back; N players at
         # the shortest stack)
         bets = [min(cur.bets[p], S if nway or four else max(behind[q] for q in players if q != p)) for p in players]
@@ -4050,16 +4326,29 @@ class Advisor:
             return {"to": agg_to, "add": hero_add, "opp_add": opp_add, "conts": conts, "k": k_agg,
                     "cont_r": [opp_ranges[i] * conts[i] for i in range(n_opp)], "rr": rr}
 
+        # (a size held to what the deepest opponent can match, under the smallest bet or raise while you have more, is
+        # shown as that smallest one: the same move, nobody can put in more; a raise to 55.88 is a raise to 90. One
+        # that's your whole stack is all-in: the page takes a bet or raise in half big blinds, so a raise to 1.55 was
+        # a raise to 1.5, not above the bet)
+        real_rem = max(0.0, stk[hero] - cur.inv_start[hero] - cur.bets[hero])
+        shown_to = {}
+
+        def shown_as(name, to):
+            v = _legal_to(cur, hero, to, real_rem)
+            name = "all-in" if v >= cur.bets[hero] + real_rem - 1e-9 else name.format(v)
+            shown_to[name] = v
+            return name
+
         if to_call > 1e-9:
             # our raise option keeps the page's default size (the bet plus 75% of the pot after calling,
             # callers' chips included); raises inside the trials go 3x plus the calls. None when an all-in
             # for less than a full raise left the betting closed to us, or nobody has chips to face one.
-            agg_to = min(max(round((cur.cur_bet + 0.75 * (pot + call_amt)) * 2) / 2, cur.cur_bet + cur.min_raise),
-                         cur.bets[hero] + hero_rem)
-            sizes = [(f"raise to {agg_to:g}", agg_to)] if can_raise(cur, hero) else []
+            agg_to = _legal_to(cur, hero, cur.cur_bet + 0.75 * (pot + call_amt), hero_rem)
+            sizes = [(shown_as("raise to {:g}", agg_to), agg_to)] if can_raise(cur, hero) else []
         else:
-            big, small = (min(round(f * pot * 2) / 2, hero_rem) for f in (0.66, SMALL_BET))
-            sizes = ([("bet 33%", small)] if 1e-9 < small < big - 1e-9 else []) + [("bet 66%", big)]
+            big, small = (_legal_to(cur, hero, f * pot, hero_rem) for f in (0.66, SMALL_BET))
+            sizes = ([(shown_as("bet 33%", small), small)] if 1e-9 < small < big - 1e-9 else []) + \
+                [(shown_as("bet 66%", big), big)]
         if getattr(self, "_jam", False) and (to_call <= 1e-9 or can_raise(cur, hero)):
             # a jam request (the page grading your all-in): the rules price all-in too, as its own line or as the size
             # that already puts the stack in
@@ -4392,7 +4681,8 @@ class Advisor:
                              f"; you'd call {n_call / len(faced) * 100:.0f}% of those"
                              f" and check-raise {n_xr / len(faced) * 100:.0f}%")
         for name, a in aggs.items():
-            acts.append({"action": name, "freq": 0.0, "ev_bb": round(ev[name], 2), "amount_bb": round(a["to"], 2)})
+            acts.append({"action": name, "freq": 0.0, "ev_bb": round(ev[name], 2),
+                         "amount_bb": round(shown_to.get(name, a["to"]), 2)})
             notes.append(f"vs {name}: " + ", ".join(f"{opps[i]} continues with {a['k'][i]*100:.0f}%"
                                                     for i in range(n_opp)) + " of their range")
         thin = set()
@@ -4445,12 +4735,17 @@ class Advisor:
         res = None
         with np.errstate(all="ignore"):
             if st.get("board") and st.get("hole") and str(st.get("hero", "")).upper() != seat:
-                res = self._advise(st, actor=(seat, hole))
-            if res is None or "error" in res:
-                # from the seat's own view: a GTO player, so not best-responding to the locks the player practising
-                # set on their opponents (which can name this seat: "you can't lock your own seat" stalled practice)
-                res = self._advise({**{k: v for k, v in st.items() if k != "locks"}, "hero": seat,
-                                    "hole": cards_str(hole)})
+                try:
+                    res = self._advise(st, actor=(seat, hole))
+                except Cancelled:
+                    raise
+                except Exception:   # noqa: BLE001 - (the seat's own advice below, with advise's catch-all)
+                    res = None
+        if res is None or "error" in res or not res.get("actions"):
+            # from the seat's own view: a GTO player, so not best-responding to the locks the player practising
+            # set on their opponents (which can name this seat: "you can't lock your own seat" stalled practice)
+            res = self.advise({**{k: v for k, v in st.items() if k not in ("locks", "study")}, "hero": seat,
+                               "hole": cards_str(hole)})
         if "error" in res:
             return {"error": res["error"]}
         acts = [a for a in res["actions"] if a["freq"] > 0] or res["actions"]
