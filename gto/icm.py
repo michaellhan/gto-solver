@@ -78,6 +78,85 @@ def _mh(s: Tuple[float, ...], pay: Tuple[float, ...]) -> np.ndarray:
     return eq
 
 
+_SUBSETS: Dict[tuple, list] = {}
+
+
+def _subsets(n: int, places: int) -> list:
+    """Malmuth-Harville's dynamic programme over (n, places) as matrices: per place, the sets of players placed above it
+    (membership (n, M)) and every way to place one more (from set, player, to set) as one-hot maps."""
+    key = (n, places)
+    if key not in _SUBSETS:
+        import itertools
+        layers = []
+        cur = [()]
+        for k in range(places):
+            index = {m: j for j, m in enumerate(cur)}
+            nxt = sorted({tuple(sorted(m + (i,))) for m in cur for i in range(n) if i not in m}) if k + 1 < places else []
+            nidx = {m: j for j, m in enumerate(nxt)}
+            src, who, dst = [], [], []
+            for m in cur:
+                for i in range(n):
+                    if i in m:
+                        continue
+                    src.append(index[m]); who.append(i)
+                    dst.append(nidx[tuple(sorted(m + (i,)))] if nxt else 0)
+            T = len(src)
+            mem = np.zeros((n, len(cur)))
+            for j, m in enumerate(cur):
+                mem[list(m), j] = 1.0
+            onehot_who = np.zeros((T, n)); onehot_who[np.arange(T), who] = 1.0
+            onehot_dst = np.zeros((T, max(len(nxt), 1))); onehot_dst[np.arange(T), dst] = 1.0
+            layers.append((mem, np.array(src), np.array(who), onehot_who, onehot_dst))
+            cur = nxt
+        _SUBSETS[key] = layers
+    return _SUBSETS[key]
+
+
+def equities_batch(S, payouts: Sequence[float], chunk: int = 4096) -> np.ndarray:
+    """equities() for many stack vectors at once: S (B, n) -> (B, n), row by row the same numbers (a player with no
+    chips gets the places below everyone still in, shared equally)."""
+    S = np.maximum(np.asarray(S, dtype=float), 0.0)
+    B, n = S.shape
+    if n > MAX_PLAYERS:
+        raise ValueError(f"ICM over {n} players: at most {MAX_PLAYERS}")
+    pay = [float(x) for x in payouts]
+    while pay and pay[-1] <= 0:
+        pay.pop()
+    out = np.zeros((B, n))
+    if not pay or B == 0:
+        return out
+    P = min(len(pay), n)
+    layers = _subsets(n, P)
+    with np.errstate(divide="ignore", over="ignore", invalid="ignore"):   # (matmul's spurious warnings on some BLAS)
+        _mh_batch(S, pay, P, layers, chunk, out)
+    return out
+
+
+def _mh_batch(S, pay, P, layers, chunk, out):
+    B, n = S.shape
+    for a in range(0, B, chunk):
+        s = S[a:a + chunk]
+        alive = s > 1e-12
+        s = np.where(alive, s, 0.0)
+        total = s.sum(axis=1, keepdims=True)
+        eq = np.zeros_like(s)
+        prob = np.ones((len(s), 1))
+        for k in range(P):
+            mem, src, who, oh_who, oh_dst = layers[k]
+            left = total - s @ mem                              # (b, M): chips not yet placed
+            q = prob[:, src] * s[:, who] / np.where(left[:, src] > 1e-12, left[:, src], np.inf)
+            eq += pay[k] * (q @ oh_who)
+            if k + 1 < P:
+                prob = q @ oh_dst
+        k_alive = alive.sum(axis=1)
+        # (fewer players with chips than places: the ones busted share the places below, as equities())
+        for r in np.nonzero((k_alive < len(pay)) & (k_alive < n) & (k_alive > 0))[0]:
+            kk = int(k_alive[r]); dead = ~alive[r]
+            eq[r, dead] = sum(pay[kk:kk + int(dead.sum())]) / dead.sum()
+        eq[k_alive == 0] = 0.0
+        out[a:a + chunk] = eq
+
+
 def field_stacks(others: Sequence[float], groups: int) -> List[float]:
     """The players at other tables, for the model: `groups` stand-ins, each holding the average stack of an equal
     share of them by size (the biggest stacks' stand-in first), when there are more than that."""
@@ -158,6 +237,13 @@ class Model:
         eq = self.after(put, won)
         k = self.scale
         return {p: (eq[p] - self.base[p]) * k for p in self.seats}
+
+    def value_batch(self, put, won) -> np.ndarray:
+        """value() for many outcomes: put, won (B, seats) in self.seats' order -> (B, seats)."""
+        st = np.array([self.stacks[p] for p in self.seats])[None, :] - np.asarray(put) + np.asarray(won)
+        vals = np.concatenate([np.maximum(st, 0.0), np.broadcast_to(np.array(self.field, dtype=float), (len(st), len(self.field)))], axis=1)
+        eq = equities_batch(vals, self.payouts)[:, :len(self.seats)]
+        return (eq - np.array([self.base[p] for p in self.seats])[None, :]) * self.scale
 
     def showdown(self, put: Dict[str, float], a: str, b: str):
         """a and b all in against each other with every seat's chips in `put` (the others' dead): (a's values when a
@@ -254,6 +340,92 @@ class HUPayoffs:
             w1 = self._end(inv, 1)    # player 1 wins
             self._memo[k] = ((w0[0] + w1[0]) / 2, (w0[0] - w1[0]) / 2, (w0[1] + w1[1]) / 2, (w1[1] - w0[1]) / 2)
         return self._memo[k]
+
+
+class MWPayoffs:
+    """A multiway postflop solve's terminals in a tournament (multiway_solver MWConfig.icm), in chip equivalents as
+    HUPayoffs'. A pot contested by three or four players has more outcomes than a share can weigh: who wins when a
+    player loses, and with a player all-in for less who takes the side pot. Each terminal's value is kept linear in
+    the solver's shares (so the CFR's contractions stay as they are) by pricing every outcome at its prize equity and
+    averaging over the orders of the live players' hands: player p's value is
+        wJ m + sum_k w_k s_k
+    with m the deals' weight and s_k p's share of pot layer k (the main pot, then the side pots, MultiwaySolver._layers:
+    p wins layer k when its hand beats every other live hand whose chips reach it). Winning layer k means winning
+    every layer above it p's chips reach, so the outcomes are "p's best layer won is k" (k = 0, 1, ...) or none:
+    G_k is p's prize value of the first, averaged over the orders of the hands that give it, wJ = G_none and
+    w_k = G_k - G_{k+1} (exact in chips: w_k is layer k's chips, wJ minus p's chips in). A player not live gets the
+    mean over every order. What it leaves out is the bystander's part of a loss: which of the others wins when p
+    loses is taken as even. (Values count from the start of the hand; the solver moves each player's to its own
+    origin: MultiwaySolver._icm_setup.)
+
+    seats: the solve's players (its order), by seat name; contrib: every seat's chips in at the solve's root (before
+    its street; the folded seats' dead money with this street's bets), so a seat's chips in at a terminal are its
+    contrib plus the solver's c (the root street's bets on)."""
+
+    def __init__(self, model: Model, seats: Sequence[str], contrib: Dict[str, float]):
+        self.model, self.seats = model, tuple(seats)
+        self.contrib = {p: float(contrib.get(p, 0.0)) for p in model.seats}
+        self.key = (model.key, self.seats, tuple(sorted((p, round(v, 4)) for p, v in self.contrib.items())))
+        pos = {p: i for i, p in enumerate(model.seats)}
+        self._ix = np.array([pos[p] for p in self.seats])
+        self._put0 = np.array([self.contrib[p] for p in model.seats])
+        self._memo: Dict[tuple, np.ndarray] = {}
+        self.evals = 0          # outcomes priced (each one ICM over the table)
+
+    def __repr__(self):
+        return f"MWPayoffs({self.key!r})"
+
+    def weights(self, states) -> List[np.ndarray]:
+        """Per state (live, c, layers): live the players contesting the pot (solver indices), c each player's chips in
+        from the root street's start, layers [(chips, players)] the pot's layers (MultiwaySolver._layers): W (np, 1 +
+        len(layers)), each player's wJ then w_k (a player not live: wJ only, the mean over the orders)."""
+        import itertools
+        npl = len(self.seats)
+        keys, todo = [], {}
+        for live, c, layers in states:
+            k = (tuple(live), tuple(round(float(x), 6) for x in c),
+                 tuple((round(float(a), 6), tuple(e)) for a, e in layers))
+            keys.append(k)
+            if k not in self._memo and k not in todo:
+                todo[k] = (tuple(live), [float(x) for x in c], [(float(a), tuple(e)) for a, e in layers])
+        if todo:
+            puts, wons, index = [], [], []
+            for k, (live, c, layers) in todo.items():
+                put = self._put0.copy()
+                put[self._ix] += np.asarray(c)
+                tot = sum(a for a, _ in layers)
+                sc = put.sum() / tot if tot > 1e-12 else 0.0     # (the layers' chips are the seats' in, as HUPayoffs)
+                perms = list(itertools.permutations(live))
+                for perm in perms:
+                    won = np.zeros(len(put))
+                    for amt, elig in layers:
+                        w = next(x for x in perm if x in elig)
+                        won[self._ix[w]] += amt * sc
+                    puts.append(put); wons.append(won)
+                index.append((k, live, layers, perms))
+            V = self.model.value_batch(np.array(puts), np.array(wons))[:, self._ix]     # (outcomes, np)
+            self.evals += len(V)
+            at = 0
+            for k, live, layers, perms in index:
+                Vk = V[at:at + len(perms)]
+                at += len(perms)
+                L = len(layers)
+                W = np.zeros((npl, 1 + L))
+                W[:, 0] = Vk.mean(axis=0)
+                for p in live:
+                    top = max(j for j, (_, e) in enumerate(layers) if p in e)
+                    # p's best layer won in each order: the first whose other players all rank below p
+                    best = []
+                    for perm in perms:
+                        above = set(perm[:perm.index(p)])
+                        best.append(next((j for j in range(top + 1) if not above & set(layers[j][1])), top + 1))
+                    best = np.array(best)
+                    G = [float(Vk[best == j, p].mean()) if (best == j).any() else 0.0 for j in range(top + 2)]
+                    W[p, 0] = G[top + 1]
+                    for j in range(top + 1):
+                        W[p, 1 + j] = G[j] - G[j + 1]
+                self._memo[k] = W
+        return [self._memo[k] for k in keys]
 
 
 def parse_payouts(spec) -> List[float]:

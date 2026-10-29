@@ -2802,15 +2802,15 @@ class Advisor:
             if pool:
                 notes.append("exploit mode applies heads-up after the flop: this multiway pot is played at equilibrium "
                              "(the pool's leaks only shape the ranges preflop)")
-            if getattr(self, "_icm", None) is not None:
-                notes.append("tournament: this multiway pot is played in chips (ICM applies preflop and to heads-up "
-                             "pots after the flop)")
             n_notes = len(notes)
             res = self._multiway_solve(hero, hole, board, ranges, remaining, cur, stk, t0, notes,
                                        line=_mw_line(board, hero, hole, stk, streets, cur.name, len(streets.get(cur.name) or [])),
                                        positions=positions)
             if res is not None:
                 return res
+            if getattr(self, "_icm", None) is not None:
+                notes.append("tournament: the betting rules play this multiway pot in chips (the 3- and 4-way solves "
+                             "pay prize equity)")
             if self._study:   # (Study shows a solve or nothing: not the betting rules)
                 why = notes[n_notes] if len(notes) > n_notes else (
                     f"the {len(remaining)}-way solver plays {len(remaining)} players with chips and no bet bigger than the "
@@ -3211,6 +3211,15 @@ class Advisor:
                                **{**street_cfg, **(self.mw_config or {})})
         if getattr(self, "_jam", False):
             mcfg.root_jam = True   # (a jam request: all-in offered however deep, at your decision: the solve's root)
+        model = getattr(self, "_icm", None)
+        if model is not None:
+            # a tournament: every outcome paid in prize equity (icm.MWPayoffs), each seat's chips in at the root
+            # (the folded seats' dead, this street's bets with them) plus the solve's
+            from .icm import MWPayoffs
+            contrib = {q: float(cur.inv_start.get(q, 0.0)) + (0.0 if q in remaining else float(cur.bets.get(q, 0.0)))
+                       for q in model.seats}
+            mcfg.icm = MWPayoffs(model, players, contrib)
+            mcfg.rake_rate = 0.0
         if (exact3 or four) and (shoved or isinstance(stacks, tuple)):
             # (the pots layered by each seat's chips in: before this street, inv0, and the folded seats', dead)
             mcfg.inv0 = tuple(float(cur.inv_start[p]) for p in players)
@@ -3343,6 +3352,9 @@ class Advisor:
         elif max(behind.values()) - S > 0.05 * S:
             notes.append(f"stacks differ: everyone plays the shortest stack behind ({S:.1f} bb)")
         notes.append(f"best-response gains (% pot): " + ", ".join(f"{p} {g:.2f}" for p, g in zip(players, gains)))
+        if mcfg.icm is not None:
+            notes.append(f"tournament: the {len(players)}-way solve pays every outcome in prize equity (ICM), EVs in chip "
+                         f"equivalents; who wins when you lose is taken as even among the others")
         if self._study:
             return self._study_mw_node(sol, root, sol.reach0, players, hp, shown, strat, evs, to_call, S_h - bets[hp], board,
                                        cur, positions or [], {
@@ -4381,7 +4393,7 @@ class Advisor:
         """The 3-way library's solve of this flop (mw_library.LibraryMWSolution) when it holds the spot: the three
         players' ranges entering the flop (`entering`), the pot and the stack behind, no rake and no custom sizes."""
         if self.mw_library is None or len(flop) != 3 or len(st.players_start) != 3 or self.cfg.rake_rate > 0 \
-                or self._req_sizes:
+                or self._req_sizes or getattr(self, "_icm", None) is not None:   # (solved in chips)
             return None
         players = [p for p in st.order if p in st.players_start]
         if any(p not in entering for p in players):
@@ -4489,6 +4501,11 @@ class Advisor:
         rs = [ranges.get(p, np.ones(N_COMBOS)) for p in players]
         mcfg = MW.MWConfig(rake_rate=self.cfg.rake_rate, rake_cap=self.cfg.rake_cap,
                            **{**self.mw_street_config.get(st.name, {}), **(self.mw_config or {})})
+        model = getattr(self, "_icm", None)
+        if model is not None:     # (a tournament's street narrows by its prize payoffs too: see _multiway_solve)
+            from .icm import MWPayoffs
+            mcfg.icm = MWPayoffs(model, players, {q: float(st.inv_start.get(q, 0.0)) for q in model.seats})
+            mcfg.rake_rate = 0.0
         key = (tuple(board), tuple(_range_key(r) for r in rs), round(st.pot_start, 2), stacks, "start", repr(mcfg))
         sol = self._mw_cache.get(key)
         if sol is None:

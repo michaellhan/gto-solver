@@ -25,6 +25,9 @@
  *   BDEC  [4, q, A, regret, ssum, fold, leafc, sig, flag, child_0 ..]  regret, ssum, sig (C, A, K); fold: its index or -1
  *   BTERM [5, live, side, net, fm, c_0 ..]                       fm: the main pot's share (an all-in player), or -1
  *   BEXIT [6, child]                                             the next street's subtree
+ *   BTERMW [7, live, side, wJ_0, wA_0, wS_0, wJ_1 ..]             a tournament's terminal: p's value is wJ_p times the
+ *                                                                deals' weight plus wA_p (wS_p) times its share of
+ *                                                                the main (side) pot (MultiwaySolver._icm_setup)
  * (c: each player's chips in, as floats; arrs: here one run of every decision's regrets and one of their sums)
  * tens: per player p, J's tensor at [p] and live set L's shares at [np + L * np + p] (offsets; 0 none); ids (np, C, n)
  * each combo's bucket; masks, wmask (C, n); arrs (narr, 3): every decision's regret, ssum and length (the discount);
@@ -53,8 +56,8 @@ extern unsigned char __heap_base;
 #include <sys/mman.h>
 #endif
 
-#define MAGIC 0x6d776331 /* "mwc1" */
-enum { RDEC = 1, RFOLD = 2, REXIT = 3, BDEC = 4, BTERM = 5, BEXIT = 6 };
+#define MAGIC 0x6d776332 /* "mwc2" */
+enum { RDEC = 1, RFOLD = 2, REXIT = 3, BDEC = 4, BTERM = 5, BEXIT = 6, BTERMW = 7 };
 enum { ALT = 0, BR = 1, EV = 2 };
 
 /* ------------------------------------------------------------------ arena */
@@ -536,23 +539,46 @@ static void combine(int mode, int mine, int A, int rows, int w, const f32 *restr
 /* ------------------------------------------------------------------ the bucket world */
 static void term(const i32 *w, const f32 *X, f32 *v, int p, const Fold *fd) {
   int live = w[1], side = w[2];
-  f32 net = fbits(w[3]), fm = fbits(w[4]);
-  f32 wJ = -fbits(w[5 + p]), wA = 0, wS = 0;
+  f32 wJ, wA = 0, wS = 0;
   int kA = -2, kS = -2;
-  if (live >> p & 1) {
-    f32 fa = fm >= 0 ? fm : 1, fs = fm >= 0 ? 1 - fm : 0;
-    if (pop(live) > 1) {
-      kA = live;
-      wA = net * fa;
-    } else {
-      wJ += net * fa;
-    }
-    if (fs != 0 && (side >> p & 1)) {
-      if (pop(side) > 1) {
-        kS = side;
-        wS = net * fs;
+  if (w[0] == BTERMW) {
+    const i32 *pw = w + 3 + 3 * p;
+    wJ = fbits(pw[0]);
+    if (live >> p & 1) {
+      f32 a = fbits(pw[1]), s = fbits(pw[2]);
+      if (pop(live) > 1) {
+        kA = live;
+        wA = a;
       } else {
-        wJ += net * fs;
+        wJ += a;
+      }
+      if (s != 0 && (side >> p & 1)) {
+        if (pop(side) > 1) {
+          kS = side;
+          wS = s;
+        } else {
+          wJ += s;
+        }
+      }
+    }
+  } else {
+    wJ = -fbits(w[5 + p]);
+    if (live >> p & 1) {
+      f32 net = fbits(w[3]), fm = fbits(w[4]);
+      f32 fa = fm >= 0 ? fm : 1, fs = fm >= 0 ? 1 - fm : 0;
+      if (pop(live) > 1) {
+        kA = live;
+        wA = net * fa;
+      } else {
+        wJ += net * fa;
+      }
+      if (fs != 0 && (side >> p & 1)) {
+        if (pop(side) > 1) {
+          kS = side;
+          wS = net * fs;
+        } else {
+          wJ += net * fs;
+        }
       }
     }
   }
@@ -614,7 +640,8 @@ static void bwalk(int node, const f32 *X, f32 *v, int mode, int p, const Fold *f
   const i32 *w = W + node;
   switch (w[0]) {
   case BDEC: bdec(w, X, v, mode, p, fd); break;
-  case BTERM: term(w, X, v, p, fd); break;
+  case BTERM:
+  case BTERMW: term(w, X, v, p, fd); break;
   case BEXIT: bwalk(w[1], X, v, mode, p, fd); break;
   default: __builtin_trap();
   }

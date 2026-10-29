@@ -21,8 +21,8 @@ import weakref
 
 import numpy as np
 
-MAGIC = 0x6d776331
-RDEC, RFOLD, REXIT, BDEC, BTERM, BEXIT = 1, 2, 3, 4, 5, 6
+MAGIC = 0x6d776332
+RDEC, RFOLD, REXIT, BDEC, BTERM, BEXIT, BTERMW = 1, 2, 3, 4, 5, 6, 7
 ALT, BR, EV = 0, 1, 2
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "core", "mwcore.c")
@@ -297,11 +297,17 @@ class Program:
         if isinstance(node, MW.Terminal):
             if len(node.live) != 1 or node.bd.B != 1:
                 raise Unsupported("a root-street showdown")
+            if node.W is not None:    # (a tournament's: each player's value, as minus its chips in)
+                v = node.W[:, 0].copy()
+                v[node.live[0]] += node.W[node.live[0], 1]
+                w += [RFOLD, node.live[0], _f(0.0)] + [_f(-x) for x in v]
+                return at
             w += [RFOLD, node.live[0], _f(node.pot - node.rake)] + [_f(x) for x in node.c]
             return at
         if isinstance(node, MW.Exit):
             g, i = self._exit[id(node)]
-            w += [REXIT, _mask(node.live), 0] + [_f(x) for x in node.c]
+            # (a player folded on the root street: minus its chips in, or a tournament's minus its fold's value)
+            w += [REXIT, _mask(node.live), 0] + [_f(-node.F[p] if p in node.F else x) for p, x in enumerate(node.c)]
             w[at + 2] = self._bucket(g.tree, i)
             return at
         raise Unsupported(type(node).__name__)
@@ -314,7 +320,8 @@ class Program:
             A = len(node.children)
             reg, ss, sg = self._arrays(node)
             blk = 4 * C * A * self.K
-            leafc = self._bits(node.leaf, "c")[node.player][r] if node.fold is not None else 0
+            leafc = 0 if node.fold is None else self._bits(node.leaf, "c")[node.player][r] if node.leaf.W is None \
+                else _f(-node.leaf.W[node.player, 0, r])
             w += [BDEC, node.player, A, reg + i * blk, ss + i * blk, -1 if node.fold is None else node.fold,
                   leafc, sg + i * blk, self._flag()] + [0] * A
             for a, ch in enumerate(node.children):
@@ -322,6 +329,9 @@ class Program:
                 w[at + 9 + a] = kid
             return at
         if isinstance(node, MW.BTerminal):
+            if node.W is not None:    # (a tournament's weights per player: the deals' weight's, the main pot's, the side's)
+                w += [BTERMW, _mask(node.live), _mask(node.side)] + self._bits(node, "W")[:, :, r].reshape(-1).tolist()
+                return at
             # (a player all-in for less: the main pot's share of the row's pot, and the side pot's players)
             fm = float(node.fm[r]) if node.fm is not None else -1.0
             w += [BTERM, _mask(node.live), _mask(node.side), self._bits(node, "net")[r], _f(fm)] + \

@@ -846,3 +846,183 @@ class TestNWay(unittest.TestCase):
                 # the root's player may raise; nobody else does
                 raisers = {d.player for d in s.decisions if any(nm.startswith("raise") for nm in d.names)}
                 self.assertLessEqual(raisers, {s.root.player})
+
+
+class TestTournament(unittest.TestCase):
+    """A tournament's payoffs (MWConfig.icm, gto/icm.py MWPayoffs): every terminal pays each player the prize equity
+    of its outcomes in chip equivalents, linear in the solver's shares (the outcomes averaged over the orders of the
+    live hands), so the passes (numpy's and the compiled core's) stay contractions."""
+    SEATS = ("BB", "CO", "BTN")
+
+    @staticmethod
+    def _pay(seats, behind, contrib_each, payouts, short=8.0):
+        """The solve's seats with contrib_each in and `behind` chips behind, the small blind (`short`) out of the pot."""
+        from gto import icm
+        contrib = {s: contrib_each for s in seats}
+        stacks = {s: contrib_each + b for s, b in zip(seats, behind)}
+        stacks["SB"], contrib["SB"] = short, 0.5
+        return icm.MWPayoffs(icm.Model(stacks, payouts), seats, contrib)
+
+    def test_batched_equities_are_icm(self):
+        from gto import icm
+        rng = np.random.default_rng(1)
+        for n, pay in ((3, [50, 30, 20]), (6, [50, 30, 20]), (9, [30, 20, 14, 10, 8, 6, 5, 4, 3]), (5, [60, 40])):
+            S = rng.uniform(0, 30, (60, n))
+            S[rng.random((60, n)) < 0.2] = 0.0      # (busted players: the places below everyone left, shared)
+            np.testing.assert_allclose(icm.equities_batch(S, pay), [icm.equities(x, pay) for x in S], atol=1e-9)
+
+    def test_weights(self):
+        # winner-take-all: chips (from the start of the hand): a pot, a main and a side pot, a lone winner; a folded
+        # player's chips in
+        P = self._pay(self.SEATS, (22.5,) * 3, 2.5, [100.0])
+        W = P.weights([((0, 1, 2), (5, 5, 5), [(23.0, (0, 1, 2))]),
+                       ((0, 1, 2), (3, 8, 8), [(17.0, (0, 1, 2)), (10.0, (1, 2))]),
+                       ((1,), (2, 4, 1), [(15.0, (1,))])])
+        np.testing.assert_allclose(W[0], [[-7.5, 23.0]] * 3, atol=1e-9)
+        np.testing.assert_allclose(W[1], [[-5.5, 17, 0], [-10.5, 17, 10], [-10.5, 17, 10]], atol=1e-9)
+        np.testing.assert_allclose(W[2], [[-4.5, 0], [0, 8.5], [-3.5, 0]], atol=1e-9)
+        # on a bubble, averaged over the orders of the live hands the weights pay each player its exact prize value
+        import itertools
+        P = self._pay(self.SEATS, (17.5, 17.5, 17.5), 7.5, [50, 30, 20])
+        for live, c, layers in (((0, 1, 2), (6, 6, 6), [(41.0, (0, 1, 2))]),
+                                ((0, 2), (6, 0, 6), [(35.0, (0, 2))]),
+                                ((0, 1, 2), (3, 10, 10), [(32.0, (0, 1, 2)), (14.0, (1, 2))])):
+            W = P.weights([(live, c, layers)])[0]
+            put = P._put0.copy(); put[P._ix] += c
+            got, want = np.zeros(3), np.zeros(3)
+            perms = list(itertools.permutations(live))
+            for perm in perms:
+                won = np.zeros(len(put))
+                wins = np.zeros((3, len(layers)))
+                for k, (amt, elig) in enumerate(layers):
+                    w = next(x for x in perm if x in elig)
+                    won[P._ix[w]] += amt
+                    wins[w, k] = 1.0
+                want += P.model.value_batch(put[None], won[None])[0, P._ix]
+                got += W[:, 0] + (W[:, 1:] * wins).sum(axis=1)
+            np.testing.assert_allclose(got / len(perms), want / len(perms), atol=1e-9)
+            for q in range(3):
+                if q not in live:      # (a folded player: the mean over the orders)
+                    self.assertAlmostEqual(float(W[q, 0]), float(want[q] / len(perms)), places=9)
+
+    def _solves(self, board, rs, pot, stack, cfgkw, seats, iters, core, payouts, **kw):
+        npl = len(rs)
+        behind = stack if isinstance(stack, tuple) else (stack,) * npl
+        out = []
+        for P in (None, self._pay(seats, behind, (pot - 0.5) / npl, payouts)):
+            s = MultiwaySolver(cards(board), rs, pot, stack, cfg=MWConfig(icm=P, **cfgkw), **kw)
+            if not core:
+                s._mwc_off = True
+            out.append(s.run(iters=iters))
+        return out
+
+    def test_winner_take_all_solves_are_chips(self):
+        """Prize equity in a winner-take-all is chips: the same strategies, best-response gains and EVs (a river per
+        combo, turns by buckets in numpy and the core, a side pot, four players)."""
+        R3, R4 = _ranges(), _ranges4()
+        cases = [("river", "Kh7d2c9s4h", R3, 8.0, 97.5, {}, self.SEATS, False),
+                 ("turn numpy", "Kh7d2c9s", R3, 8.0, 97.5, dict(later="buckets", buckets=8), self.SEATS, False),
+                 ("side pot numpy", "Kh7d2c9s", R3, 20.0, (8.0, 60.0, 60.0), dict(later="buckets", buckets=8), self.SEATS,
+                  False)]
+        if _core_on():
+            cases += [("turn core", "Kh7d2c9s", R3, 8.0, 97.5, dict(later="buckets", buckets=8), self.SEATS, True),
+                      ("four core", "Kh7d2c9s", R4, 10.5, 95.0, dict(later="buckets", max_raises=1, root_raise=True,
+                                                                     bet=dict(A.MW4_BETS), buckets=8),
+                       ("BB", "HJ", "CO", "BTN"), True)]
+        for name, board, rs, pot, stack, cfgkw, seats, core in cases:
+            with self.subTest(name):
+                a, b = self._solves(board, rs, pot, stack, cfgkw, seats, 8, core, [100.0])
+                for da, db in zip(a.decisions, b.decisions):
+                    np.testing.assert_allclose(da.ssum, db.ssum, atol=1e-3 * max(float(da.ssum.max()), 1e-6))
+                pot_r = a.root_pot()
+                np.testing.assert_allclose(a.br_gains() / pot_r, b.br_gains() / pot_r, atol=1e-6)
+                np.testing.assert_allclose(a.action_evs() / pot_r, b.action_evs() / pot_r, atol=1e-6)
+                np.testing.assert_allclose(a.values() / pot_r, b.values() / pot_r, atol=1e-6)
+
+    @unittest.skipUnless(_core_on(), "no C compiler for the multiway core")
+    def test_core_agrees_with_numpy_in_prizes(self):
+        R3, R4 = _ranges(), _ranges4()
+        for name, board, rs, pot, stack, cfgkw, seats, kw in (
+                ("turn", "Kh7d2c9s", R3, 8.0, 22.5, dict(later="buckets", buckets=8), self.SEATS, {}),
+                ("facing a bet and a call", "Kh7d2c9s", R3, 8.0, 22.5, dict(later="buckets", buckets=8), self.SEATS,
+                 dict(bets=[0.0, 4.0, 4.0], to_act=0, pending={0})),
+                ("side pots", "Kh7d2c9s", R3, 20.0, (8.0, 30.0, 30.0), dict(later="buckets", buckets=8), self.SEATS, {}),
+                ("flop", "Kh7d2c", R3, 8.0, 22.5, dict(later="buckets", buckets=6, bucket_river_step=4), self.SEATS, {}),
+                ("four", "Kh7d2c9s", R4, 10.5, 20.0, dict(later="buckets", max_raises=1, root_raise=True,
+                                                         bet=dict(A.MW4_BETS), buckets=8), ("BB", "HJ", "CO", "BTN"), {})):
+            with self.subTest(name):
+                npl = len(rs)
+                behind = stack if isinstance(stack, tuple) else (stack,) * npl
+                P = self._pay(seats, behind, (pot - 0.5) / npl, [50, 30, 20])
+                mk = lambda: MultiwaySolver(cards(board), rs, pot, stack, cfg=MWConfig(icm=P, **cfgkw), **kw)
+                a = mk()
+                a._mwc_off = True
+                a.run(iters=3)
+                b = mk()
+                for da, db in zip(a.decisions, b.decisions):
+                    db.regret[...] = da.regret
+                    db.ssum[...] = da.ssum
+                b.iters = a.iters
+                a.run(iters=1)
+                b.run(iters=1)
+                self.assertIsNotNone(getattr(b, "_mwc", None))
+                for da, db in zip(a.decisions, b.decisions):
+                    self.assertLess(np.abs(da.regret - db.regret).max(), 2e-3 * max(np.abs(da.regret).max(), 1e-6))
+                pot_r = a.root_pot()
+                np.testing.assert_allclose(a.br_gains() / pot_r, b.br_gains() / pot_r, atol=2e-4)
+                np.testing.assert_allclose(a.values() / pot_r, b.values() / pot_r, atol=2e-4)
+                ea = a.action_evs()
+                self.assertLess(np.abs(ea - b.action_evs()).max() / pot_r, 2e-4)
+                if kw:      # (EVs count from folding now: the fold's is 0)
+                    self.assertLess(float(np.abs(ea[0]).max()), 1e-6)
+
+    def test_prizes_against_the_exact_game(self):
+        """On a bubble 3-way river (thinned ranges, every deal summed: scripts/bench_mw_icm.py) the prize solve gives up
+        almost nothing in exact prize equity where the chip solve gives up percents of the pot, and plays the all-in
+        less."""
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+        import bench_mw_icm as B
+        from gto import icm
+        from gto.evaluator import eval_board
+        board = cards("Kh7d2c9s4h")
+        Rp = A.preflop_ranges(B.PRE, pf.Table(pf.SEATS[6]), 100.0)
+        st = eval_board(board)
+        rs = [B.thin(np.asarray(Rp[p]), st, 25) for p in B.SEATS]
+        contrib = {s: 7.5 for s in B.SEATS}
+        contrib["SB"] = 0.5
+        P = icm.MWPayoffs(icm.Model({"BB": 25.0, "CO": 25.0, "BTN": 25.0, "SB": 8.0}, [50, 30, 20]), B.SEATS, contrib)
+        chips = MultiwaySolver(board, rs, 23.0, 17.5, cfg=MWConfig()).run(iters=200)
+        prizes = MultiwaySolver(board, rs, 23.0, 17.5, cfg=MWConfig(icm=P)).run(iters=200)
+        _, gc = B.Exact(chips, P, board, prizes.icm_base).report()
+        v, gp = B.Exact(prizes, P, board, prizes.icm_base).report()
+        self.assertGreater(float(gc.mean()) / 23.0 * 100, 1.0)
+        self.assertLess(float(gp.mean()) / 23.0 * 100, 0.1)
+        np.testing.assert_allclose(prizes.values() / 23.0, v / 23.0, atol=0.005)
+        jam = lambda s: s.range_freqs().get("all-in", 0.0)
+        self.assertLess(jam(prizes), jam(chips))
+
+
+class TestTournamentAdvice(unittest.TestCase):
+    def test_a_tournament_3way_flop_is_solved_in_prizes(self):
+        """A 3-way flop on the bubble is solved in prize equity (the note says so; EVs from folding now, its own 0),
+        and a library spot's flop is solved live, not read from the chip library."""
+        from gto import native
+        R = lambda pos, action, to=None: {"pos": pos, "action": action, **({"to": to} if to is not None else {})}
+        adv = native.advisor("fast")
+        st = {"players": 4, "bb": 1, "stacks": {"CO": 40, "BTN": 25, "SB": 8, "BB": 25}, "hero": "BB", "hole": "Qh9h",
+              "board": "Kh7d2c", "preflop": [R("CO", "raise", 2), R("BTN", "call"), R("SB", "fold"), R("BB", "call")],
+              "payouts": [50, 30, 20]}
+        st["flop"] = [{"pos": "BB", "action": "check"}, {"pos": "CO", "action": "bet", "amount": 2.0},
+                      {"pos": "BTN", "action": "call"}]
+        r = adv.advise(st)
+        self.assertTrue(r.get("solved"), r.get("notes"))
+        self.assertTrue(any("prize equity" in n and "3-way" in n for n in r["notes"]), r["notes"])
+        ev = {a["action"]: a["ev_bb"] for a in r["actions"]}
+        self.assertEqual(ev["fold"], 0.0)
+        pre = [R("UTG", "fold"), R("HJ", "fold"), R("CO", "raise", 2.5), R("BTN", "call"), R("SB", "fold"), R("BB", "call")]
+        lib = {"players": 6, "hero": "BB", "hole": "Qh9h", "board": "Kc7d2h", "preflop": pre, "flop": []}
+        self.assertTrue(adv.advise(lib).get("precomputed"))
+        r = adv.advise(dict(lib, payouts=[50, 30, 20], budget=10))   # (Fast's 5 s left 17 iterations on a loaded machine)
+        self.assertTrue(r.get("solved"), r.get("notes")); self.assertFalse(r.get("precomputed"))
+        self.assertTrue(any("prize equity" in n for n in r["notes"]), r["notes"])

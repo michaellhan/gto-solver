@@ -614,7 +614,22 @@ over what winning one gains, against each opponent) and a note naming the model.
   payoff, as with rake. Bubble pressure makes the bigger bets and all-ins rarer (the river all-in of a bubble
   solve below the chip solve's). The precomputed flop libraries (solved in chips) are skipped, so a tournament
   flop solves live, and solves are cached apart from the chip game's.
-* Multiway pots after the flop (3-way solves and the rules) stay in chips; the notes say so.
+* 3- and 4-way pots after the flop are solved in prize equity too: every outcome, side pots included, pays each
+  player the chip equivalent of the prizes they end with (multiway_solver MWConfig.icm, icm.MWPayoffs; in the
+  compiled core as well). A pot of three or four has more outcomes than a share of it can weigh (who wins when a
+  player loses, who takes a side pot), so each terminal's value is kept linear in the solver's shares by pricing
+  every order of the live hands and averaging: what that leaves out is the bystander's part of a loss, taken as
+  even among the others. A player who folds on a later street is paid the pot as it stood. Winner-take-all is
+  exactly chips (tested). Against the exact prize game (scripts/bench_mw_icm.py: a 3-way river, Kh7d2c9s4h, 60
+  combos a player, every deal priced on its own: who wins, every seat's stack after, Malmuth-Harville over the
+  table; 600 iterations, 23 in the pot): on the bubble (4 left, 50/30/20, the small blind's 8bb folded, three
+  25bb stacks) the chip solve's strategies give up 3.3-5.5% of the pot to best responses in prizes and the prize
+  solve's 0.002-0.015%, its values within 0.02% of the pot of the exact game's; with the big blind the 12bb short
+  stack, 0.8-2.2% against 0.004-0.33% (the short stack shoves 13% of the time instead of 21%; values within 0.6%
+  of the pot, where the bystander's part counts); 6 left at a final table (40/25/15/10/6/4) 1.3-2.1% against
+  0.009-0.025%. The 3-way library (solved in chips) is skipped, so a tournament's 3-way flop solves live. Pots
+  the solves don't play (five or more players, a solve that didn't settle) get the betting rules, in chips; the
+  notes say which.
 
 ### Custom sizes and ranges
 
@@ -1694,8 +1709,10 @@ their products batched: `core.LEAF_ROWS_BLAS`).
   or the blinds' next orbit, isn't counted), at most 12 players modelled (stand-ins for a bigger field). Preflop
   the charts are chip charts re-priced by a risk premium and the commitment factor ICM_COMMIT (1.0, judgment
   fit to the published shape: 2.5 cut the big blind's defence of a button min-raise to 31%), and push/fold
-  equilibria run in prize equity. After the flop only heads-up pots are played in prizes; multiway pots stay
-  in chips.
+  equilibria run in prize equity. After the flop heads-up, 3- and 4-way solves play prize equity; in a 3- or
+  4-way pot who wins when a player loses is taken as even among the others (0.002-0.33% of the pot given up
+  against the exact prize game on a 3-way river), and pots left to the betting rules (five or more players)
+  stay in chips.
 * Exploit mode's pool is fitted to public population data where any was found (flop and river
   folds, turn folds and river bluffs from 500nl+ regulars, preflop frequencies, one flop spot's raise
   frequency, and the small blind's open-limps); folds to big flop bets and the turn's shape at small
