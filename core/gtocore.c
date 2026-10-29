@@ -9,7 +9,8 @@
  * same arithmetic in float32, in the same order where it matters (sums over actions and cards run first to last), so
  * a solve's strategies agree with the Python solver's to float32 rounding.
  *
- *   header  [MAGIC, n, ca, cb, root, r0, r1, regret, ssum, flat_len, nstacks, stacks, trim, live0, live1, l0, l1]
+ *   header  [MAGIC, n, ca, cb, root, r0, r1, regret, ssum, flat_len, nstacks, stacks, trim, live0, live1, l0, l1,
+ *            ngames, games]
  *   DECISION [1, player, A, B, W, regret, ssum, child_0 .. child_A-1]   regret, ssum: (B, A, W) blocks
  *   FOLD     [2, B, f0, f1]                     u_p = f_p * compat(ro)
  *   SHOWDOWN [3, B, ranking, a0, c0, a1, c1]    u_p = a_p * (sum of ro over weaker - stronger) + c_p * compat(ro)
@@ -20,7 +21,9 @@
  *   RANKING  [B, n, order, lo, hi, pcombo, plo, phi, cstart, cend, live]  (Ranking: (B, n) / (B, 2n) / (B, 2, n))
  * A flop solve's turn and river by hand buckets (Config.river_buckets, river_strength): below an entry the rows are K
  * buckets wide, row b's tables those of board b % T (T, the period of the entry's boards).
- *   BUCKETS  [7, B, K, T, child, ids]           BucketEntry: ids (T, 2, n), each combo's bucket by player (K: none)
+ *   BUCKETS  [7, B, K, T, child, ids, game, lists]   BucketEntry: ids (T, 2, n), each combo's bucket by player (K:
+ *                                              none); game: a deferred game's reaches and utilities (below), or 0;
+ *                                              lists (T, 2, K + 1 + n) with it: each bucket's combos (starts, combos)
  *   RIVER    [8, B, W, K, T, child, X, Xt]      RiverEntry: X (2, T, W, K), Xt its (2, T, K, W) transpose: rows W
  *                                              wide in, K wide below
  *   BFOLD    [9, B, K, T, kapt, f0, f1]         u_p = f_p * kap[p] @ ro
@@ -104,8 +107,14 @@ static void *salloc(Lane *L, size_t bytes) {
   return base + at;
 }
 
-static size_t lane_size;   /* bytes a helper's chunk of rows may take: 0 until a serial iteration measured them */
-static size_t measured;
+/* bytes a helper's chunk of rows may take: 0 until a serial pass measured them. [0] a whole pass's (a training pass,
+   an evaluation: the same scratch), [1] a deferred training pass's (below: its chunks a row at a time, less) */
+static size_t lane_size[2], measured[2];
+static int deferring;   /* (which: 1 in a deferred training pass) */
+static void sized(void) {
+  for (int k = 0; k < 2; k++)
+    if (!lane_size[k] && measured[k]) lane_size[k] = (measured[k] + 63) & ~(size_t)63;
+}
 
 /* Frees the arena (natively its pages go back to the system). */
 EXPORT(core_reset) void core_reset(void) {
@@ -116,7 +125,7 @@ EXPORT(core_reset) void core_reset(void) {
   }
 #endif
   M.top = M.peak = 0;
-  lane_size = measured = 0;
+  lane_size[0] = lane_size[1] = measured[0] = measured[1] = 0;
 }
 
 /* `bytes` in the arena; returns its offset. */
@@ -356,6 +365,16 @@ static void split(Lane *L, i32 child, int p, i32 lo, i32 hi, const f32 *c0, cons
    BR: p best-responds to the opponent's average strategy (Solver._best_response) */
 enum { TRAIN = 0, AVG = 1, BR = 2 };
 static int mode = TRAIN;
+/* a training pass over deferred bucket games (below): COLLECT walks down storing their reaches, READ is the pass
+   proper, reading their utilities. Natively only: the browser never solves a dealt river (the wasm builds leave them
+   out) */
+enum { WHOLE = 0, COLLECT = 1, READ = 2 };
+static int phase = WHOLE;
+#ifdef __wasm__
+#define DEFER 0
+#else
+#define DEFER 1
+#endif
 
 static int is_terminal(i32 at) {
   i32 t = P[at];
@@ -368,6 +387,28 @@ static void decision(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r
   const i32 *kids = nd + 7;
   size_t RW = (size_t)(hi - lo) * W, mark = L->top;
   f32 *s = salloc(L, sizeof(f32) * RW * A);
+  if (phase == COLLECT) {
+    /* down only: the opponent's strategies into its reach, as below */
+    const f32 *ro = p == 0 ? r1 : r0;
+    f32 *reach = player == p ? 0 : salloc(L, sizeof(f32) * RW);
+    if (player != p) strategy(L, regret, lo, hi, A, W, 0, s);
+    for (i32 a = 0; a < A; a++) {
+      if (is_terminal(kids[a])) continue;
+      if (player == p) {
+        cfr(L, kids[a], p, lo, hi, r0, r1, out);
+        continue;
+      }
+      for (i32 b = lo; b < hi; b++) {
+        size_t j = (size_t)(b - lo);
+        const f32 *sa = s + (j * A + a) * W, *rb = ro + j * W;
+        f32 *x = reach + j * W;
+        for (i32 i = 0; i < W; i++) x[i] = rb[i] * sa[i];
+      }
+      cfr(L, kids[a], p, lo, hi, p == 0 ? r0 : reach, p == 0 ? reach : r1, out);
+    }
+    L->top = mark;
+    return;
+  }
   if (!(mode == BR && player == p)) strategy(L, mode == TRAIN ? regret : ssum, lo, hi, A, W, mode != TRAIN, s);
   if (player == p) {
     const f32 *ro = p == 0 ? r1 : r0, *rp = p == 0 ? r0 : r1;
@@ -431,8 +472,62 @@ static void decision(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r
   L->top = mark;
 }
 
+/* a dealt river's chance node in a deferred pass (its child a deferred game's entry): COLLECT sums each player's reach
+   on each card into the card's buckets (the entry's sums of the reaches chance() would pass it), READ takes each
+   combo's utility on each card from its bucket and sums them over the cards as chance() does */
+static void dealt(const i32 *nd, const i32 *bk, int p, i32 lo, i32 hi, const f32 *r0, const f32 *r1, f32 *out) {
+  i32 K = nd[2], B = bk[1], KB = bk[2], T = bk[3];
+  const f32 *w = PF(nd[5]), *norm = PF(nd[6]);
+  const i32 *ids = PI(bk[5]);
+  f32 *g = PF(bk[6]);
+  if (phase == COLLECT) {
+    /* (by the entry's lists: each bucket's combos in order, its sum in a register; a combo in a bucket isn't blocked
+       by the card, its mask 1: gto/core.py checks) */
+    const f32 *r[2] = {r0, r1};
+    for (int q = 0; q < 2; q++)
+      for (i32 b = lo; b < hi; b++) {
+        const f32 *rb = r[q] + (size_t)(b - lo) * n;
+        for (i32 k = 0; k < K; k++) {
+          i32 row = b * K + k;
+          const i32 *at = PI(bk[7]) + ((size_t)(row % T) * 2 + q) * (KB + 1 + n), *cs = at + KB + 1;
+          f32 *mb = g + ((size_t)q * B + row) * KB;
+          for (i32 j = 0; j < KB; j++) {
+            f32 x = 0;
+            for (i32 e = at[j]; e < at[j + 1]; e++) x += rb[cs[e]];
+            mb[j] = x;
+          }
+        }
+      }
+    return;
+  }
+  const f32 *u = g + (size_t)2 * B * KB;
+  for (i32 b = lo; b < hi; b++) {
+    f32 *o = out + (size_t)(b - lo) * n;
+    for (i32 k = 0; k < K; k++) {
+      i32 row = b * K + k;
+      const i32 *id = ids + ((size_t)(row % T) * 2 + p) * n;
+      const f32 *ub = u + (size_t)row * KB, *wb = w + (size_t)row * n;
+      if (k == 0)
+        for (i32 i = 0; i < n; i++) {
+          f32 x = id[i] < KB ? ub[id[i]] : 0;
+          o[i] = x * wb[i];
+        }
+      else
+        for (i32 i = 0; i < n; i++) {
+          f32 x = id[i] < KB ? ub[id[i]] : 0;
+          o[i] += x * wb[i];
+        }
+    }
+    for (i32 i = 0; i < n; i++) o[i] = o[i] / norm[(size_t)b * n + i];
+  }
+}
+
 static void chance(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r0, const f32 *r1, f32 *out) {
   i32 K = nd[2], child = nd[3];
+  if (phase != WHOLE && P[child] == BUCKETS && P[child + 6]) {
+    dealt(nd, P + child, p, lo, hi, r0, r1, out);
+    return;
+  }
   const f32 *masks = PF(nd[4]), *w = PF(nd[5]), *norm = PF(nd[6]);
   size_t mark = L->top, rows = (size_t)(hi - lo) * K;
   f32 *c0 = salloc(L, sizeof(f32) * rows * n), *c1 = salloc(L, sizeof(f32) * rows * n);
@@ -446,6 +541,10 @@ static void chance(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r0,
       }
     }
   split(L, child, p, lo * K, hi * K, c0, c1, u);
+  if (phase == COLLECT) {
+    L->top = mark;
+    return;
+  }
   for (i32 b = lo; b < hi; b++) {
     f32 *o = out + (size_t)(b - lo) * n;
     const f32 *ub = u + (size_t)(b - lo) * K * n, *wb = w + (size_t)b * K * n;
@@ -489,7 +588,7 @@ static void classes(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r0
   spread(nd, lo, hi, r0, c0, rp);
   spread(nd, lo, hi, r1, c1, rp);
   split(L, child, p, lo * K, hi * K, c0, c1, u);
-  for (i32 b = lo; b < hi; b++) {
+  for (i32 b = lo; b < hi && phase != COLLECT; b++) {
     const f32 *ub = u + (size_t)(b - lo) * K * n, *m = masks + (size_t)b * K * n;
     for (size_t x = 0; x < (size_t)K * n; x++) um[x] = ub[x] * m[x];
     f32 *o = out + (size_t)(b - lo) * n;
@@ -548,6 +647,50 @@ static void tmatvec(const f32 *Mt, const f32 *x, f32 *u, i32 R, i32 C) {
   }
 }
 
+/* tmatvec's u = M @ x over x's nonzero entries alone, listed (their indices nz, values v, m of them): the same sums,
+   without a branch an entry (most of a bucket game's reaches are 0, at no pattern) */
+static void smatvec(const f32 *Mt, const i32 *nz, const f32 *v, i32 m, f32 *u, i32 R) {
+  i32 r = 0;
+  for (; r + 32 <= R; r += 32) {
+    v4 a0 = {0, 0, 0, 0}, a1 = a0, a2 = a0, a3 = a0, a4 = a0, a5 = a0, a6 = a0, a7 = a0;
+    for (i32 k = 0; k < m; k++) {
+      f32 xj = v[k];
+      v4 s = {xj, xj, xj, xj};
+      const f32 *mt = Mt + (size_t)nz[k] * R + r;
+      a0 += *(const v4u *)(mt) * s;
+      a1 += *(const v4u *)(mt + 4) * s;
+      a2 += *(const v4u *)(mt + 8) * s;
+      a3 += *(const v4u *)(mt + 12) * s;
+      a4 += *(const v4u *)(mt + 16) * s;
+      a5 += *(const v4u *)(mt + 20) * s;
+      a6 += *(const v4u *)(mt + 24) * s;
+      a7 += *(const v4u *)(mt + 28) * s;
+    }
+    *(v4u *)(u + r) = a0;
+    *(v4u *)(u + r + 4) = a1;
+    *(v4u *)(u + r + 8) = a2;
+    *(v4u *)(u + r + 12) = a3;
+    *(v4u *)(u + r + 16) = a4;
+    *(v4u *)(u + r + 20) = a5;
+    *(v4u *)(u + r + 24) = a6;
+    *(v4u *)(u + r + 28) = a7;
+  }
+  for (; r + 4 <= R; r += 4) {
+    v4 a = {0, 0, 0, 0};
+    for (i32 k = 0; k < m; k++) {
+      f32 xj = v[k];
+      v4 s = {xj, xj, xj, xj};
+      a += *(const v4u *)(Mt + (size_t)nz[k] * R + r) * s;
+    }
+    *(v4u *)(u + r) = a;
+  }
+  for (; r < R; r++) {
+    f32 y = 0;
+    for (i32 k = 0; k < m; k++) y += Mt[(size_t)nz[k] * R + r] * v[k];
+    u[r] = y;
+  }
+}
+
 /* p's bucket utilities (rows lo..hi, K) at a bucket game's terminal (Solver._bucket_terminal); ro: the opponent's
    masses on those rows */
 static void bterminal(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *ro, f32 *u) {
@@ -580,11 +723,23 @@ static void bterminal(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *
   L->top = mark;
 }
 
+/* A dealt river (Config.river_dealt) is a bucket game on every card under each turn, the same cards' tables (each row's
+   E and kap, 32 KB a player at 64 buckets) under every turn line: a pass reaching them one entry at a time read every
+   row's again at each of its terminals (all the rows at once: megabytes, out of cache) and again at each entry. So a
+   training pass over a tree whose bucket games are just decisions and bucket terminals (gto/core.py's deferred games,
+   the header's ngames records at games) runs in three phases: a COLLECT walk down stores each game's bucket reaches,
+   the games are played a row at a time, every game on the row before the next row (the row's tables read once a
+   pass, from cache at every terminal; games()), and the READ pass proper takes each game's utilities where the walk
+   would have played it. Each row of each game gets the same arithmetic as in one walk. A game's storage: its reaches
+   m0, m1 and p's utilities u, (B, K) each. Elsewhere (evaluations) a game is played BROWS rows at a time. */
+#define BROWS 2
+
 /* BucketEntry: each player's reach summed into its buckets (combos in order), the bucket game below on the same rows,
    and every combo getting its bucket's utility back (Solver._bucket_in, _bucket_out) */
 static void buckets(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r0, const f32 *r1, f32 *out) {
   i32 K = nd[2], T = nd[3], child = nd[4];
   const i32 *ids = PI(nd[5]);
+  if (phase == COLLECT) return;   /* (no deferred game below an entry) */
   size_t mark = L->top, RK = (size_t)(hi - lo) * K;
   f32 *m[2] = {salloc(L, sizeof(f32) * RK), salloc(L, sizeof(f32) * RK)}, *u = salloc(L, sizeof(f32) * RK);
   const f32 *r[2] = {r0, r1};
@@ -597,7 +752,11 @@ static void buckets(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r0
       for (i32 i = 0; i < n; i++)
         if (id[i] < K) mb[id[i]] += rb[i];
     }
-  cfr(L, child, p, lo, hi, m[0], m[1], u);
+  for (i32 c = lo; c < hi; c += BROWS) {   /* (a few rows at a time: their tables stay in cache through the game) */
+    i32 e = hi - c < BROWS ? hi : c + BROWS;
+    size_t o = (size_t)(c - lo) * K;
+    cfr(L, child, p, c, e, m[0] + o, m[1] + o, u + o);
+  }
   for (i32 b = lo; b < hi; b++) {
     const i32 *id = ids + ((size_t)(b % T) * 2 + p) * n;
     const f32 *ub = u + (size_t)(b - lo) * K;
@@ -860,6 +1019,220 @@ static void batch(i32 at, int p, i32 rows, const f32 *ro) {
 
 #endif
 
+/* The deferred games on a row play their terminals' products together: a walk down keeps each decision's strategies
+   and each terminal's opponent reach, then each row's table (E or kap) multiplies all of the reaches that read it at
+   once (read once, not once a terminal; tmatvec's sums, without its skipped zeros: they add nothing), and the walk back
+   up takes the utilities and updates as decision() does. (Over GMAX terminals or decisions: played as cfr() would.) */
+#define GMAX 64
+typedef struct {
+  i32 on, nt, nd, over, tc, dc;
+  const i32 *t[GMAX];        /* each terminal's record, its opponent reach (rows, K), its products */
+  const f32 *ro[GMAX];
+  f32 *u[GMAX], *cs[GMAX];
+  f32 *s[GMAX];              /* each decision's strategies */
+} Game;
+
+static void gdown(Lane *L, Game *G, i32 at, int p, i32 lo, i32 hi, const f32 *ro) {
+  const i32 *nd = P + at;
+  if (nd[0] != DECISION) {
+    if (G->nt == GMAX) {
+      G->over = 1;
+      return;
+    }
+    G->t[G->nt] = nd, G->ro[G->nt++] = ro;
+    return;
+  }
+  i32 player = nd[1], A = nd[2], W = nd[4];
+  size_t RW = (size_t)(hi - lo) * W;
+  if (G->nd == GMAX) {
+    G->over = 1;
+    return;
+  }
+  f32 *s = G->s[G->nd++] = salloc(L, sizeof(f32) * RW * A);
+  strategy(L, PF(nd[5]), lo, hi, A, W, 0, s);
+  for (i32 a = 0; a < A; a++) {
+    if (player == p) {
+      gdown(L, G, nd[7 + a], p, lo, hi, ro);
+      continue;
+    }
+    f32 *reach = salloc(L, sizeof(f32) * RW);
+    for (i32 b = lo; b < hi; b++) {
+      size_t j = (size_t)(b - lo);
+      const f32 *sa = s + (j * A + a) * W, *rb = ro + j * W;
+      f32 *x = reach + j * W;
+      for (i32 i = 0; i < W; i++) x[i] = rb[i] * sa[i];
+    }
+    gdown(L, G, nd[7 + a], p, lo, hi, reach);
+  }
+}
+
+/* every game's terminals' products on row b, those reading the same table (E or kap) together, over each reach's
+   nonzero entries */
+static void gprod(Lane *L, Game *G, i32 ng, int p, i32 b) {
+  size_t mark = L->top;
+  i32 m = 0;
+  for (i32 g = 0; g < ng; g++) m += 2 * G[g].nt;
+  const f32 **tab = salloc(L, sizeof(f32 *) * m), **x = salloc(L, sizeof(f32 *) * m), **keys = salloc(L, sizeof(f32 *) * m);
+  f32 **y = salloc(L, sizeof(f32 *) * m);
+  i32 *key = salloc(L, sizeof(i32) * m), K = 0, nk = 0;
+  m = 0;
+  for (i32 g = 0; g < ng; g++)
+    for (i32 t = 0; t < G[g].nt; t++) {
+      const i32 *nd = G[g].t[t];
+      i32 T = nd[3];
+      size_t KK = (size_t)nd[2] * nd[2], at = (size_t)p * T * KK + (size_t)(b % T) * KK;
+      K = nd[2];
+      G[g].u[t] = salloc(L, sizeof(f32) * K), G[g].cs[t] = 0;
+      tab[m] = PF(nd[4]) + at, x[m] = G[g].ro[t], y[m++] = G[g].u[t];
+      if (nd[0] == BLEAF && fbits(nd[7 + 2 * p]) != 0) {
+        G[g].cs[t] = salloc(L, sizeof(f32) * K);
+        tab[m] = PF(nd[5]) + at, x[m] = G[g].ro[t], y[m++] = G[g].cs[t];
+      }
+    }
+  for (i32 i = 0; i < m; i++) {
+    i32 k = 0;
+    while (k < nk && keys[k] != tab[i]) k++;
+    if (k == nk) keys[nk++] = tab[i];
+    key[i] = k;
+  }
+  i32 *nz = salloc(L, sizeof(i32) * K);
+  f32 *v = salloc(L, sizeof(f32) * K);
+  for (i32 k = 0; k < nk; k++)
+    for (i32 i = 0; i < m; i++) {
+      if (key[i] != k) continue;
+      i32 c = 0;
+      for (i32 j = 0; j < K; j++) {
+        nz[c] = j, v[c] = x[i][j];
+        c += x[i][j] != 0;
+      }
+      smatvec(keys[k], nz, v, c, y[i], K);
+    }
+  L->top = mark;
+}
+
+/* the walk back up: p's utilities (rows lo..hi, W) at node `at`, updating p's regrets and strategy sums (rp: p's
+   reach, the game's: p's own actions don't change it) */
+static void gup(Lane *L, Game *G, i32 at, int p, i32 lo, i32 hi, const f32 *rp, f32 *out) {
+  const i32 *nd = P + at;
+  if (nd[0] != DECISION) {
+    i32 t = G->tc++, K = nd[2];
+    const f32 *u = G->u[t], *cs = G->cs[t];
+    size_t RK = (size_t)(hi - lo) * K;
+    if (nd[0] == BFOLD) {
+      f32 f = fbits(nd[5 + p]);
+      for (size_t i = 0; i < RK; i++) out[i] = f * u[i];
+    } else if (cs) {
+      f32 a = fbits(nd[6 + 2 * p]), c = fbits(nd[7 + 2 * p]);
+      for (size_t i = 0; i < RK; i++) out[i] = a * u[i] + c * cs[i];
+    } else {
+      f32 a = fbits(nd[6 + 2 * p]);
+      for (size_t i = 0; i < RK; i++) out[i] = a * u[i];
+    }
+    return;
+  }
+  i32 player = nd[1], A = nd[2], W = nd[4];
+  f32 *regret = PF(nd[5]), *ssum = PF(nd[6]);
+  const i32 *kids = nd + 7;
+  size_t RW = (size_t)(hi - lo) * W, mark = L->top;
+  const f32 *s = G->s[G->dc++];
+  if (player != p) {
+    f32 *u = salloc(L, sizeof(f32) * RW);
+    for (i32 a = 0; a < A; a++) {
+      gup(L, G, kids[a], p, lo, hi, rp, a == 0 ? out : u);
+      if (a > 0)
+        for (size_t x = 0; x < RW; x++) out[x] += u[x];
+    }
+    L->top = mark;
+    return;
+  }
+  f32 *ut = salloc(L, sizeof(f32) * RW * A);
+  for (i32 a = 0; a < A; a++) gup(L, G, kids[a], p, lo, hi, rp, ut + a * RW);
+  for (i32 b = lo; b < hi; b++) {
+    size_t j = (size_t)(b - lo);
+    f32 *nu0 = out + j * W;
+    for (i32 a = 0; a < A; a++) {
+      const f32 *sa = s + (j * A + a) * W, *ua = ut + a * RW + j * W;
+      if (a == 0)
+        for (i32 i = 0; i < W; i++) nu0[i] = sa[i] * ua[i];
+      else
+        for (i32 i = 0; i < W; i++) nu0[i] += sa[i] * ua[i];
+    }
+    for (i32 a = 0; a < A; a++) {
+      f32 *rg = regret + ((size_t)b * A + a) * W, *ss = ssum + ((size_t)b * A + a) * W;
+      const f32 *sa = s + (j * A + a) * W, *ua = ut + a * RW + j * W, *nu = out + j * W;
+      const f32 *rb = rp + j * W;
+      for (i32 i = 0; i < W; i++) {
+        rg[i] += ua[i] - nu[i];
+        ss[i] += rb[i] * sa[i];
+      }
+    }
+  }
+  L->top = mark;
+}
+
+/* asks for row b of every decision's regrets (and p's strategy sums) in the game below `at` ahead of its walks: the
+   games' decisions are hundreds of streams, more than the hardware follows */
+static void ahead(i32 at, i32 b, int p) {
+  const i32 *nd = P + at;
+  if (nd[0] != DECISION || b >= nd[3]) return;
+  i32 A = nd[2], W = nd[4];
+  size_t len = sizeof(f32) * A * W;
+  const char *r = (const char *)(PF(nd[5]) + (size_t)b * A * W), *s = (const char *)(PF(nd[6]) + (size_t)b * A * W);
+  if (nd[1] == p)
+    for (size_t x = 0; x < len; x += 128) __builtin_prefetch(r + x, 1, 3), __builtin_prefetch(s + x, 1, 3);
+  else
+    for (size_t x = 0; x < len; x += 128) __builtin_prefetch(r + x, 0, 3);
+  for (i32 a = 0; a < A; a++) ahead(nd[7 + a], b, p);
+}
+
+/* the deferred bucket games on rows lo..hi (a game's rows: below its B), a row at a time: every game walked down on
+   the row, their terminals' products, every game walked back up */
+static void games(Lane *L, int p, i32 lo, i32 hi) {
+  const i32 *at = PI(P[18]);
+  i32 ng = P[17];
+  for (i32 b = lo; b < hi; b++) {
+    for (i32 x = 0; x < ng && b + 2 < hi; x++) ahead(P[at[x] + 4], b + 2, p);
+    size_t mark = L->top;
+    Game *G = salloc(L, sizeof(Game) * ng);
+    for (i32 x = 0; x < ng; x++) {
+      const i32 *nd = P + at[x];
+      i32 B = nd[1], K = nd[2];
+      f32 *g = PF(nd[6]);
+      G[x].nt = G[x].nd = G[x].over = G[x].tc = G[x].dc = 0, G[x].on = b < B;
+      if (!G[x].on) continue;
+      gdown(L, &G[x], nd[4], p, b, b + 1, g + ((size_t)(p == 0 ? B : 0) + b) * K);
+      if (G[x].over || !G[x].nt) {
+        cfr(L, nd[4], p, b, b + 1, g + (size_t)b * K, g + ((size_t)B + b) * K, g + ((size_t)2 * B + b) * K);
+        G[x].nt = G[x].on = 0;
+      }
+    }
+    gprod(L, G, ng, p, b);
+    for (i32 x = 0; x < ng; x++) {
+      const i32 *nd = P + at[x];
+      i32 B = nd[1], K = nd[2];
+      f32 *g = PF(nd[6]);
+      if (G[x].on) gup(L, &G[x], nd[4], p, b, b + 1, g + ((size_t)(p == 0 ? 0 : B) + b) * K, g + ((size_t)2 * B + b) * K);
+    }
+    L->top = mark;
+  }
+}
+
+/* a job's rows lo..hi (from row r of its arrays): a chance node's child, or (child -1) the deferred games */
+static void run(Lane *L, i32 child, int p, i32 lo, i32 hi, i32 r, const f32 *c0, const f32 *c1, f32 *u) {
+  if (DEFER && child < 0) {
+    games(L, p, lo, hi);
+  } else if (phase != WHOLE) {
+    /* (a deferred pass's walks a row at a time: a card's dealt rivers' masks and buckets, read under every line, stay
+       in cache) */
+    for (i32 x = lo; x < hi; x++) {
+      size_t o = (size_t)(r + x - lo) * n;
+      cfr(L, child, p, x, x + 1, c0 + o, c1 + o, u + o);
+    }
+  } else {
+    cfr(L, child, p, lo, hi, c0 + (size_t)r * n, c1 + (size_t)r * n, u + (size_t)r * n);
+  }
+}
+
 /* ------------------------------------------------------------------ threads */
 /* A job: a chance node's child on rows lo..lo+rows, handed out `grain` rows at a time. The ticket holds the job's
    number and the next row to take (an odd number while the job is being set up), so a thread only takes rows of the
@@ -907,7 +1280,7 @@ static void take(Lane *L, u32 seq, i32 child, int p, i32 lo, i32 rows, i32 grain
     if (__sync_val_compare_and_swap(&J.ticket, t, t + (u32)grain) != t) continue;   /* (no expected value in memory) */
     i32 e = rows - r < grain ? rows : r + grain;
     size_t mark = L->top;
-    cfr(L, child, p, lo + r, lo + e, c0 + (size_t)r * n, c1 + (size_t)r * n, u + (size_t)r * n);
+    run(L, child, p, lo + r, lo + e, r, c0, c1, u);
     L->top = mark;
     if (L != &M) __atomic_fetch_add(&helped, e - r, __ATOMIC_RELAXED);
     __atomic_fetch_add(&J.done, e - r, __ATOMIC_RELEASE);
@@ -1013,7 +1386,7 @@ EXPORT(core_threads) i32 core_threads(i32 t) {
 #endif
   if (t != nthreads) {
     nthreads = t;
-    lane_size = measured = 0;   /* (the chunks change with the number) */
+    lane_size[0] = lane_size[1] = measured[0] = measured[1] = 0;   /* (the chunks change with the number) */
   }
   return nthreads;
 }
@@ -1024,18 +1397,18 @@ EXPORT(core_threads) i32 core_threads(i32 t) {
 static void split(Lane *L, i32 child, int p, i32 lo, i32 hi, const f32 *c0, const f32 *c1, f32 *u) {
   i32 rows = hi - lo;
   if (L->par || nthreads < 2 || rows < 2) {
-    cfr(L, child, p, lo, hi, c0, c1, u);
+    run(L, child, p, lo, hi, 0, c0, c1, u);
     return;
   }
   i32 grain = (rows + 2 * nthreads - 1) / (2 * nthreads);
-  if (!lane_size) {
+  if (!lane_size[deferring]) {
     L->par = 1;
     for (i32 r = 0; r < rows; r += grain) {
       i32 e = rows - r < grain ? rows : r + grain;
       size_t mark = L->top;
       L->peak = mark;
-      cfr(L, child, p, lo + r, lo + e, c0 + (size_t)r * n, c1 + (size_t)r * n, u + (size_t)r * n);
-      if (L->peak - mark > measured) measured = L->peak - mark;
+      run(L, child, p, lo + r, lo + e, r, c0, c1, u);
+      if (L->peak - mark > measured[deferring]) measured[deferring] = L->peak - mark;
       L->top = mark;
     }
     L->par = 0;
@@ -1044,11 +1417,11 @@ static void split(Lane *L, i32 child, int p, i32 lo, i32 hi, const f32 *c0, cons
 #ifdef THREADS
   i32 helpers = nthreads - 1;
   size_t mark = L->top;
-  unsigned char *lanes = salloc(L, lane_size * helpers);
+  unsigned char *lanes = salloc(L, lane_size[deferring] * helpers);
   u32 seq = (u32)(__atomic_load_n(&J.ticket, __ATOMIC_RELAXED) >> 32) + 2;
   __atomic_store_n(&J.ticket, ((u64)(seq - 1) << 32) | 0xffffffffu, __ATOMIC_SEQ_CST);
   ST(J.child, child), ST(J.p, p), ST(J.lo, lo), ST(J.rows, rows), ST(J.grain, grain), ST(J.helpers, helpers);
-  ST(J.c0, c0), ST(J.c1, c1), ST(J.u, u), ST(J.lanes, (size_t)(lanes - base)), ST(J.lane, lane_size);
+  ST(J.c0, c0), ST(J.c1, c1), ST(J.u, u), ST(J.lanes, (size_t)(lanes - base)), ST(J.lane, lane_size[deferring]);
   ST(J.done, 0);
   __atomic_store_n(&J.ticket, (u64)seq << 32, __ATOMIC_SEQ_CST);
   wake();
@@ -1076,15 +1449,16 @@ static i32 rows_of(i32 at) { return P[at] == DECISION ? P[at + 3] : P[at + 1]; }
 
 /* p's utilities (rows, n) at the node record `at` for reaches r0, r1 (rows, n) each: md AVG on the average strategies,
    BR p's best response (Solver.node_action_evs, _best_response). Returns 0, or -1 on a bad program. (Threaded from
-   the root, whose chance nodes the lanes were measured on; below it, serially.) */
+   the root, whose chance nodes the lanes are measured on, serially the first time; below it, serially.) */
 EXPORT(core_eval) i32 core_eval(u32 prog, i32 at, i32 p, u32 r0, u32 r1, u32 out, i32 md) {
   load(prog);
   if (P[0] != MAGIC) return -1;
   mode = md;
-  M.par = at != P[4] || !lane_size;
+  M.par = at != P[4];
   batch(at, p, rows_of(at), PF(p == 0 ? r1 : r0));
   cfr(&M, at, p, 0, rows_of(at), PF(r0), PF(r1), PF(out));
   M.par = 0;
+  sized();
   mode = TRAIN;
   return 0;
 }
@@ -1096,8 +1470,12 @@ EXPORT(core_run) i32 core_run(u32 prog, i32 iters, u32 factors) {
   load(prog);
   if (P[0] != MAGIC) return -1;
   mode = TRAIN;
-  i32 root = P[4], B = rows_of(root);
+  i32 root = P[4], B = rows_of(root), GB = 0;
   const f32 *r0 = PF(P[5]), *r1 = PF(P[6]);
+  for (i32 x = 0; x < P[17]; x++) {
+    i32 b = P[PI(P[18])[x] + 1];
+    GB = b > GB ? b : GB;
+  }
   f32 *regret = PF(P[7]), *ssum = PF(P[8]);
   size_t len = (u32)P[9];
   const f32 *fac = PF(factors);
@@ -1106,10 +1484,22 @@ EXPORT(core_run) i32 core_run(u32 prog, i32 iters, u32 factors) {
       size_t mark = M.top;
       f32 *u = salloc(&M, sizeof(f32) * B * n);
       batch(root, p, B, p == 0 ? r1 : r0);
-      cfr(&M, root, p, 0, B, r0, r1, u);
+      if (DEFER && P[17]) {
+        deferring = 1;
+        phase = COLLECT;
+        cfr(&M, root, p, 0, B, r0, r1, u);
+        phase = WHOLE;
+        split(&M, -1, p, 0, GB, 0, 0, 0);
+        phase = READ;
+        cfr(&M, root, p, 0, B, r0, r1, u);
+        phase = WHOLE;
+        deferring = 0;
+      } else {
+        cfr(&M, root, p, 0, B, r0, r1, u);
+      }
       M.top = mark;
     }
-    if (!lane_size && measured) lane_size = (measured + 63) & ~(size_t)63;
+    sized();
     f32 mode = fac[4 * t], pos = fac[4 * t + 1], neg = fac[4 * t + 2], sf = fac[4 * t + 3];
     if (mode != 0) {
       for (size_t x = 0; x < len; x++) regret[x] = (regret[x] > 0 ? regret[x] : 0) * pos;

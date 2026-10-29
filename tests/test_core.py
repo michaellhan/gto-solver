@@ -41,6 +41,21 @@ def _decisions(sol):
     return out
 
 
+def _chances(sol):
+    out = []
+
+    def walk(n):
+        if isinstance(n, Decision):
+            for c in n.children:
+                walk(c)
+        elif isinstance(n, (Chance, BucketEntry)):
+            if isinstance(n, Chance):
+                out.append(n)
+            walk(n.child)
+    walk(sol.root)
+    return out
+
+
 class TestWasm(unittest.TestCase):
     def test_module_built_from_the_current_source(self):
         # (python scripts/build_core.py after a change to core/gtocore.c)
@@ -54,10 +69,12 @@ class TestThreads(unittest.TestCase):
     def test_same_numbers_on_any_number_of_threads(self):
         # a turn by river class: the rows of its river nodes split between threads, each row's arithmetic the same; a
         # flop by hand buckets: the rows of its turn (the turn's classes, each a bucket game); the library's flop: its
-        # turns' rows, their leaves' products batched before the pass
+        # turns' rows, their leaves' products batched before the pass; a 3bet pot's: its dealt rivers' deferred games,
+        # their rows split between threads
         for board, pot, stack, iters, cfg in (("Ks7d2cTh", 20, 90, 30, native.config("fast")),
                                               ("Kd7c2h", 5.5, 97.5, 20, native.config("fast")),
-                                              ("Kd7c2h", 5.5, 97.5, 6, fl.library_config())):
+                                              ("Kd7c2h", 5.5, 97.5, 6, fl.library_config()),
+                                              ("9h8h6c", 20, 40, 4, fl.library_config(20, 40))):
             with self.subTest(board, cfg=cfg.leaf_turns):
                 got = []
                 try:
@@ -298,6 +315,24 @@ class TestProgram(unittest.TestCase):
         prog = core._program(core.lib(), S, sol.r0, sol.r1)
         self.assertIsNotNone(prog)
         self.assertEqual(prog.stacks, 0)
+
+    def test_dealt_rivers_defer_their_games(self):
+        # a 3bet pot's library flop: every dealt river's bucket game deferred (each turn line's, row by row together),
+        # the same numbers as each game played where the walk reaches it
+        got = []
+        for defer in (True, False):
+            with mock.patch.object(core, "DEFER_GAMES", defer):
+                core._prog = None
+                sol = _solve("9h8h6c", OOP_T, IP_T, 20, 40, fl.library_config(20, 40), 5)
+                self.assertTrue(sol.solver.use_core and sol.solver._core_ok)
+                entries = sum(isinstance(n.child, BucketEntry) for n in _chances(sol))
+                self.assertGreater(entries, 10)
+                self.assertEqual(len(core._prog.games), entries if defer else 0)
+                arr = np.concatenate([np.r_[d.regret.ravel(), d.ssum.ravel()] for d in _decisions(sol)])
+                got.append((arr.view(np.int32), sol.exploitability()))
+        core._prog = None
+        np.testing.assert_array_equal(got[0][0], got[1][0])
+        self.assertEqual(got[0][1], got[1][1])
 
     def test_numpy_runs_what_the_arena_cant_hold(self):
         # over ARENA_MAX, or the arena failing to grow (the browser's memory.grow refused: the core traps)

@@ -11,7 +11,8 @@ class (Config.river_classes), rake and a tournament's payoffs; and flop trees wh
 buckets (Config.river_buckets: Fast's flop model, the browser's Accurate's): the bucket and river-strength entries
 (BucketEntry, RiverEntry) with their tables (Ctx.bucket_table, Ctx.river_table, built in the core too: Tables) and
 the bucket games' folds and showdowns; the library's flop (every turn line ending in an equity leaf), whose leaves it
-batches natively as numpy does (LEAF_ROWS_BLAS), and a 3bet pot's with the river dealt by buckets. A tree with
+batches natively as numpy does (LEAF_ROWS_BLAS), and a 3bet pot's with the river dealt by buckets (each card's bucket
+games deferred: DEFER_GAMES). A tree with
 anything else (sampled cards) or a predictive scheme runs in numpy as before, as does a solve while another holds
 the core (one at a time: its memory is one arena). The arithmetic is the numpy solver's in float32, so their
 strategies agree to rounding. GTO_CORE=0 turns the core off.
@@ -41,6 +42,9 @@ CHUNK_S = 0.1          # seconds of iterations a call (between the budget and sh
 LEAF_ROWS_BLAS = 256
 ARENA_MAX = 1 << 30    # bytes a program may take: offsets are 32-bit, and a browser tab's memory runs out sooner
 MAX_CHUNK = 1024       # iterations a call at most (the discount factors' buffer)
+# a dealt card's bucket games played deferred (core/gtocore.c), every line's on a row together: natively (the browser
+# never solves a dealt river, and the wasm builds leave them out)
+DEFER_GAMES = sys.platform != "emscripten"
 
 _lib = None            # the loaded core; False: none
 _lock = threading.Lock()
@@ -206,6 +210,13 @@ def _scalar(x) -> float:
     return float(a[0])
 
 
+def _bucket_lists(ids: np.ndarray, K: int) -> np.ndarray:
+    """ids (T, 2, n) as each (row, player)'s lists of its buckets' combos: (T, 2, K + 1 + n), each bucket's start then
+    the combos (in order within a bucket; those in no bucket last)."""
+    starts = np.stack([np.count_nonzero(ids < k, axis=-1) for k in range(K + 1)], axis=-1)
+    return np.concatenate([starts, np.argsort(ids, axis=-1, kind="stable")], axis=-1).astype(np.int32)
+
+
 class Program:
     """A solver's tree as the core's program, its arrays in the core's arena (the arena is reset first). r0, r1: (n,)
     reaches at the root. (It holds the solver weakly: a solve the Advisor's cache drops is freed.)"""
@@ -217,12 +228,14 @@ class Program:
         self.L, self.s = L, weakref.ref(solver)
         self.w = []
         self._up = {}
+        self._lists = {}         # each ids array's bucket lists (the entries on the same boards share them)
         self._rank = {}
         self.at = {}             # id(node) -> its record
         self.leaf_rows = 0
         self.leaves = []         # (record, M, rows) of each equity leaf
         self.stacks = 0          # matrix stacks whose leaves are batched
         self.live = None         # with them: each player's range (the root reaches' nonzero combos)
+        self.games = []          # the deferred bucket games' entries (records)
         self._keep = []          # the solver's arrays the core reads in place (batched leaves' M) and their trims
         self.bytes = 0
         L.reset()
@@ -236,8 +249,10 @@ class Program:
         self.r0, self.r1 = L.alloc(4 * self.n), L.alloc(4 * self.n)
         self.reaches(r0, r1)
         self.w = [MAGIC, ctx.n, self._upload(ctx.ca, np.int32), self._upload(ctx.cb, np.int32), 0,
-                  self.r0, self.r1, self.reg, self.ss, solver._regret.size] + [0] * 7
+                  self.r0, self.r1, self.reg, self.ss, solver._regret.size] + [0] * 9
         self.w[4] = self._emit(solver.root)
+        if self.games:
+            self.w[17:19] = [len(self.games), self._upload(np.array(self.games, dtype=np.int32), np.int32)]
         self.batch_leaves = solver.batch_leaves
         if solver.batch_leaves and self.leaf_rows > LEAF_ROWS_BLAS:
             self._batch(r0, r1)
@@ -248,7 +263,7 @@ class Program:
         self.prog = self._upload(words.astype(np.uint32).view(np.int32), np.int32)
         self.fac = L.alloc(16 * MAX_CHUNK)
         self.ev = L.alloc(12 * self.n)     # an evaluation's reaches and utilities
-        self.w = self._rank = self._up = None
+        self.w = self._rank = self._up = self._lists = None
 
     def _batch(self, r0, r1):
         """The equity leaves' products batched by matrix stack (core/gtocore.c: batched equity leaves): each stack's
@@ -344,12 +359,12 @@ class Program:
             raise Unsupported("not a view of the flat buffers")
         return off + d
 
-    def _emit(self, node) -> int:
-        at = self._record(node)
+    def _emit(self, node, dealt=None) -> int:
+        at = self._record(node, dealt)
         self.at[id(node)] = at
         return at
 
-    def _record(self, node) -> int:
+    def _record(self, node, dealt=None) -> int:
         Decision, Terminal, Chance, BucketEntry, RiverEntry = self._types
         s, w = self.s(), self.w
         at = len(w)
@@ -399,7 +414,18 @@ class Program:
             return at
         if isinstance(node, BucketEntry):
             T, ids, _, _ = s._btab(node)            # ids (T, 2, n)
-            w += [BUCKETS, len(node.boards), s._bk(node), T, 0, self._upload(ids, np.int32)]
+            B, K = len(node.boards), s._bk(node)
+            # (deferred under a dealt card whose mask is 1 on every combo in a bucket: core/gtocore.c's dealt() sums
+            # the reaches without it)
+            n = ids.shape[2]
+            ok = DEFER_GAMES and dealt is not None and dealt.shape == (B, n) and \
+                bool(np.all(np.broadcast_to(dealt[:, None], (B, 2, n))[ids[np.arange(B) % T] < K] == 1))
+            w += [BUCKETS, B, K, T, 0, self._upload(ids, np.int32), self._game(node.child, B, K) if ok else 0, 0]
+            if w[at + 6]:
+                self.games.append(at)
+                if id(ids) not in self._lists:
+                    self._lists[id(ids)] = (ids, _bucket_lists(ids, K))
+                w[at + 7] = self._upload(self._lists[id(ids)][1], np.int32)
             w[at + 4] = self._emit(node.child)
             return at
         if isinstance(node, Chance):
@@ -415,10 +441,29 @@ class Program:
                 wt = node.masks if node.umasks is None else node.umasks
                 w += [CHANCE, B, node.K, 0, self._upload(node.masks, np.float32), self._upload(wt, np.float32),
                       self._upload(node.norm, np.float32)]
-            kid = self._emit(node.child)
+            kid = self._emit(node.child, node.masks if node.perm is None else None)   # (a dealt card's entry: deferred?)
             w[at + 3] = kid
             return at
         raise Unsupported(type(node).__name__)
+
+    def _game(self, node, B: int, K: int) -> int:
+        """A bucket game played deferred (core/gtocore.c: under a dealt card, a game of just decisions and bucket
+        terminals, as a dealt river's): its storage, each player's reaches and the utilities (B, K) each; or 0."""
+        Decision, Terminal = self._types[:2]
+        stack = [node]
+        while stack:
+            x = stack.pop()
+            if isinstance(x, Decision):
+                stack.extend(x.children)
+            elif not (isinstance(x, Terminal) and x.kind in ("bfold", "bleaf")):
+                return 0
+        size = 12 * B * K
+        self.bytes += size
+        if self.bytes > ARENA_MAX:
+            raise Unsupported("over ARENA_MAX")
+        off = self.L.alloc(size)
+        self.L.write(off, np.zeros(size // 4, dtype=np.float32))
+        return off
 
     @staticmethod
     def _coef(node) -> list:
