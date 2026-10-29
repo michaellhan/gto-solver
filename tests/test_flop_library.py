@@ -459,7 +459,7 @@ class TestShippedLibrary(unittest.TestCase):
                 self.assertLess(size, 200_000)
                 total += size
         # (the page fetches an entry when its spot comes up: the total is the repository's and the deploy's)
-        self.assertLess(total, 40e6)
+        self.assertLess(total, 60e6)
 
     def test_reports_match_the_index(self):
         """Each shipped spot's report.json (the page's flop reports) is the one the index hashes, holds the index's

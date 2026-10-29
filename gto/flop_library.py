@@ -80,14 +80,21 @@ SPOTS = [
     ("srp_hj_bb", "HJ vs BB single-raised pot", "UTG:f,HJ:r2.5,CO:f,BTN:f,SB:f,BB:c"),
     ("srp_utg_bb", "UTG vs BB single-raised pot", "UTG:r2.5,HJ:f,CO:f,BTN:f,SB:f,BB:c"),
     ("3bp_sb_btn", "SB 3bet vs BTN", "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:r10,BB:f,BTN:c"),
+    ("srp_hj_co", "HJ vs CO single-raised pot", "UTG:f,HJ:r2.5,CO:c,BTN:f,SB:f,BB:f"),
+    ("srp_btn_sb", "BTN vs SB single-raised pot", "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:c,BB:f"),
+    ("srp_utg_hj", "UTG vs HJ single-raised pot", "UTG:r2.5,HJ:c,CO:f,BTN:f,SB:f,BB:f"),
+    ("srp_co_sb", "CO vs SB single-raised pot", "UTG:f,HJ:f,CO:r2.5,BTN:f,SB:c,BB:f"),
+    ("srp_utg_btn", "UTG vs BTN single-raised pot", "UTG:r2.5,HJ:f,CO:f,BTN:c,SB:f,BB:f"),
 ]
 # How many representative flops each spot stores (representative_flops(n); an odd multiple of a set holds it: 552 =
-# 3 x 184, 1656 = 3 x 552; 1755 is every flop): the single-raised pots every flop, by coverage per MB
+# 3 x 184, 1656 = 3 x 552; 1755 is every flop): the opens the big blind calls every flop, by coverage per MB
 # (scripts/flop_library_coverage.py --assume; a flop not stored was 53 of the 79 points of heads-up flop decisions
 # the library missed): BTN vs BB on every flop +12.4 points for 4.5 MB, then SB vs BB +8.6 for 6.0 MB (its ranges'
-# entries the biggest), HJ vs BB +7.8 for 3.5, UTG vs BB +6.1 for 3.1; the 3bet pots REP_FLOPS.
+# entries the biggest), HJ vs BB +7.8 for 3.5, UTG vs BB +6.1 for 3.1; the opens flatted behind or by the small
+# blind 552 (+2.9 for 6.6 MB, every flop +4.3 more); the 3bet pots REP_FLOPS.
 REP_FLOPS = 184
-SPOT_FLOPS = {"srp_btn_bb": 1755, "srp_co_bb": 1755, "srp_hj_bb": 1755, "srp_utg_bb": 1755, "srp_sb_bb": 1755}
+SPOT_FLOPS = {"srp_btn_bb": 1755, "srp_co_bb": 1755, "srp_hj_bb": 1755, "srp_utg_bb": 1755, "srp_sb_bb": 1755,
+              "srp_hj_co": 552, "srp_btn_sb": 552, "srp_utg_hj": 552, "srp_co_sb": 552, "srp_utg_btn": 552}
 
 
 def spot_setup(line: str, players: int = 6, stack: float = 100.0) -> dict:
