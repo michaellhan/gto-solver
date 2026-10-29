@@ -1438,11 +1438,13 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   ranges' entries are the biggest), HJ vs BB +7.8 for 3.5, UTG vs BB +6.1 for 3.1, the five flatted opens on 552
   +2.9 for 6.6, all built; next: the 3bet pots on 552 (five more of them: the SB's and the BB's 3bet of the CO,
   the HJ's of the UTG, the CO's of the HJ, the BB's of the SB), the flatted opens on every flop +4.3 for ~14 MB.
-* **What is stored**: the flop's first decisions (the root; the in-position player after a check or facing a
-  lead; the out-of-position player facing a bet after checking), only where the other player gets there with 5%
-  or more of their range (a lead the big blind never makes is the solve's noise, and the advisor solves live
-  behind a line under 10% anyway). Per combo: the average strategy in 1% steps and every action's EV (the best
-  to 1% of the pot, the others as a gap below it, 1% steps then 4%), plus range totals.
+* **What is stored**: the flop's first decisions (the root; the in-position player after a check or facing a lead;
+  the out-of-position player facing a bet after checking) and the decisions facing a raise of those bets (a
+  check-raise, a lead raised: entries built since 2026-10-29; 1-2 more nodes a flop, entries 26-45% bigger), only
+  where the other player gets there with 5% or more of their range, and a raise only of a stored bet (a lead the big
+  blind never makes is the solve's noise, and the advisor solves live behind a line under 10% anyway). Per combo: the
+  average strategy in 1% steps and every action's EV (the best to 1% of the pot, the others as a gap below it, 1%
+  steps then 4%), plus range totals.
 * **Format 2** (`flop_library.pack`, `FORMAT`; `drills.js` reads it too, and every reader ignores another format's
   index): one value per suit class, the combos the flop's own suit permutations map to each other (AhKh and AsKs on
   K♣7♣2♦; two-tone flops store 832 of 1326, monotone 416, rainbow all), their strategies averaged by reach and
@@ -1477,9 +1479,10 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   answer takes ~0.01 s instead of 2.5 / 30 s; in the browser ~0.03 s instead of 8 / 60 s, and a turn spot saves
   the earlier flop solve too (BTN vs BB, J75 c-bet called: 8.2 s for the turn in Fast mode, 11.5 s before; measured on the old Fast model).
 * **Lines**: the advisor walks the actual flop action through the stored nodes (sizes taken more than 15% off the
-  tree's, more raises than it allows, or a line through a raise fall back to the live solve). Turn and river spots
-  narrow the flop's ranges through it as well, instead of the earlier street's short solve. The entry ignores the
-  hero's cards in the villain's range (the live solve drops them): an edge the size of a blocker.
+  tree's, more raises than it allows, or a line through a re-raise fall back to the live solve, as does a raise in an
+  entry built before raises were stored). The spots' reports and drills keep to the first decisions. Turn and river
+  spots narrow the flop's ranges through it as well, instead of the earlier street's short solve. The entry ignores
+  the hero's cards in the villain's range (the live solve drops them): an edge the size of a blocker.
 * **Flops not stored** are solved live from scratch, never answered from another flop. A warm start from the
   spot's most similar stored flop (same pairing and suit pattern, nearest ranks; strategies carried over by card
   substitution and seeded as regrets) was measured and left out (`scripts/bench_library_warm.py`, 12 unstored BTN vs

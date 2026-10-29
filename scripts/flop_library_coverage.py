@@ -9,7 +9,8 @@ that ends heads-up to the flop is a spot (its two ranges, pot and stack, as the 
 * node coverage: the share of the spot's flop decisions (by how often each is reached, players' strategies from
   the stored entries; a spot without entries borrows the averages of its kind, single raised or 3bet) that are
   stored nodes: the root, in position after a check, out of position facing a bet after checking, in position
-  facing a lead. A raise and anything after it is a live solve.
+  facing a lead, and (in entries built since they were stored) facing a raise of one of those bets. A re-raise and
+  anything after it is a live solve.
 
 A heads-up flop decision is answered when its spot, flop and node are all stored. Sizes off the tree (more than
 15% from 33/75%) also fall back to a live solve; this assumes the tree's sizes.
@@ -106,7 +107,7 @@ def node_profile(lib, spot):
             for act, f in n["freqs"].items():
                 if f <= 0 or act in ("fold", "call") or (act == "check" and path):
                     continue
-                if act.startswith("raise") or act.startswith("all"):
+                if (act.startswith("raise") or act.startswith("all")) and path + (act,) not in nodes:
                     d += reach * f * RERAISE   # facing the raise, and a re-raise behind it now and then
                 else:
                     visit(path + (act,), reach * f)
@@ -217,20 +218,20 @@ def main(argv=None):
         ans = g["prob"] * s * fs
         tot_dec += dec
         tot_ans += ans
-        rows.append((g, sp, d, s, fs, dec, ans, n_raises))
+        rows.append((g, sp, d, s, fs, dec, ans, sp is not None or bool(n_assumed)))   # (stored, or --assume'd)
     print(f"heads-up flop decisions answered by the library: {tot_ans / tot_dec * 100:.1f}%")
     print(f"{'share':>6} {'cum':>6}  {'pot':>5} {'stack':>5} {'lib':<11} {'flops':>5} {'nodes':>5}  line")
     cum = 0.0
-    for g, sp, d, s, fs, dec, ans, nr in rows[:a.top]:
+    for g, sp, d, s, fs, dec, ans, have in rows[:a.top]:
         cum += dec / tot_dec
         best = max(g["lines"])[1]
         print(f"{dec / tot_dec * 100:5.1f}% {cum * 100:5.1f}%  {g['setup']['pot']:5.1f} {g['setup']['stack']:5.1f} "
-              f"{(sp['id'] if sp else '-'):<11} {fs * 100:4.1f}% {s / d * 100:4.0f}%  {best}"
+              f"{(sp['id'] if sp else 'assumed' if have else '-'):<11} {fs * 100:4.1f}% {s / d * 100:4.0f}%  {best}"
               + (f" (+{len(g['lines']) - 1} lines)" if len(g["lines"]) > 1 else ""))
     # what's missing, by kind
-    miss_spot = sum(dec for g, sp, d, s, fs, dec, ans, nr in rows if sp is None) / tot_dec
-    miss_flop = sum(dec * s / d * (1 - fs) for g, sp, d, s, fs, dec, ans, nr in rows if sp) / tot_dec
-    miss_node = sum(dec * (1 - s / d) for g, sp, d, s, fs, dec, ans, nr in rows if sp) / tot_dec
+    miss_spot = sum(dec for g, sp, d, s, fs, dec, ans, have in rows if not have) / tot_dec
+    miss_flop = sum(dec * s / d * (1 - fs) for g, sp, d, s, fs, dec, ans, have in rows if have) / tot_dec
+    miss_node = sum(dec * (1 - s / d) for g, sp, d, s, fs, dec, ans, have in rows if have) / tot_dec
     if a.fixtures:
         n, hit = fixtures()
         print(f"page's random hands: {hit} of {n} heads-up flop decisions from the library")

@@ -5,9 +5,10 @@ A spot is the two players' ranges entering the flop (as the preflop charts repla
 stack; its flops are canonical under suit isomorphism (the ranges are suit-symmetric, so a flop's solve is any
 suit-permuted flop's, with its combos permuted). Per spot and flop an entry stores the flop's first decisions (the
 root, the in-position player after a check, the out-of-position player facing a bet after checking, the in-position
-player facing a lead): each combo's average strategy (in 1/Q steps) and its EV per action (in 1% of the pot), plus
-range aggregates; one value per suit class (combos the flop's own suit permutations map to each other, pack()).
-Lines through a raise aren't stored and are solved live.
+player facing a lead) and the player facing a raise of those bets: each combo's average strategy (in 1/Q steps) and
+its EV per action (in 1% of the pot), plus range aggregates; one value per suit class (combos the flop's own suit
+permutations map to each other, pack()). Lines through a re-raise aren't stored and are solved live, as are the
+raises of entries built before they were stored (stored_paths).
 
 Files (gto/static/flop_library/, deployed next to the page): index.json lists the spots (their ranges'
 fingerprints, pot, stack, label, the tree its entries were solved on) with the default tree and, per spot, each
@@ -231,24 +232,36 @@ def _key_str(d) -> str:
 # ----------------------------------------------------------------------------- encoding
 def stored_paths(root: Decision, r0=None, r1=None) -> List[tuple]:
     """The flop decisions an entry stores: the root, its decision children (in position after a check, or facing
-    a lead) and the out-of-position player's decisions facing a bet after checking; with the reaches r0, r1, only
-    those the other player gets to with STORE_LINE of their range (the advisor solves live past a line the solve
-    rarely takes, RARE_LINE: a lead the big blind never makes is the solve's noise)."""
+    a lead), the out-of-position player's decisions facing a bet after checking, and the decisions facing a raise
+    of any of those bets (a check-raise, a lead raised); with the reaches r0, r1, only those the other player gets
+    to with STORE_LINE of their range (the advisor solves live past a line the solve rarely takes, RARE_LINE: a lead
+    the big blind never makes is the solve's noise), a raise only of a bet that is stored."""
     out = [()]
     for nm, c in zip(root.names, root.children):
         if isinstance(c, Decision):
             out.append((nm,))
             if nm == "check":
                 out += [(nm, n2) for n2, c2 in zip(c.names, c.children) if isinstance(c2, Decision) and n2 != "check"]
+    for path in [p for p in out if p and p[-1] != "check"]:        # (facing a bet: its raises)
+        n = node_at(root, path)
+        out += [path + (n3,) for n3, c3 in zip(n.names, n.children)
+                if isinstance(c3, Decision) and n3 not in ("fold", "call")]
     if r0 is None:
         return out
     keep = []
     for path in out:
+        if raised(path) and path[:-1] not in keep:
+            continue
         n, a0, a1 = node_at(root, path), *_reaches(root, path, r0, r1)
         other, start = (a1, r1) if n.player == 0 else (a0, r0)
         if other.sum() >= STORE_LINE * max(start.sum(), 1e-12):
             keep.append(path)
     return keep
+
+
+def raised(path: Sequence[str]) -> bool:
+    """A stored node facing a raise (a line with two bets in it): entries store these, the spots' reports don't."""
+    return sum(a != "check" for a in path) >= 2
 
 
 def node_at(root: Decision, path: Sequence[str]) -> Decision:
@@ -750,12 +763,15 @@ def flop_report(e: dict, full0: np.ndarray, full1: np.ndarray, pot: float) -> di
     """One flop's line in its spot's report, from its decoded entry and the spot's ranges entering the flop: f (the
     canonical flop), n {path ('|'-joined): range frequencies in the node's action order}, ev [oop, ip] (bb, at the
     root: out of position's range average, in position the pot less it, as there's no rake), eq [oop, ip] (range
-    equity), h {path: a hand of the acting player to load: its range's most mixed full-weight combo}."""
+    equity), h {path: a hand of the acting player to load: its range's most mixed full-weight combo}. The nodes
+    facing a raise are left out (the page's views are the first decisions)."""
     board = parse_cards(e["head"]["board"])
     bm = np.prod([1.0 - MEMBER_FULL[c] for c in board], axis=0)
     w = [full0 * bm, full1 * bm]
     out = {"f": e["head"]["board"], "n": {}, "h": {}}
     for nd in e["nodes"]:
+        if raised(nd["path"]):
+            continue
         key = "|".join(nd["path"])
         fr = [nd["freqs"][nm] for nm in nd["names"]]
         out["n"][key] = [round(x / sum(fr), 3) for x in fr]
@@ -788,6 +804,8 @@ def build_report(spot: dict, full0: np.ndarray, full1: np.ndarray, read: Callabl
             e = decode(read(nm))
             for nd in e["nodes"]:
                 k = "|".join(nd["path"])
+                if raised(nd["path"]):
+                    continue
                 if nodes.setdefault(k, nd["names"]) != nd["names"]:
                     raise ValueError(f"{spot['id']} {nm}: node {k!r} has actions {nd['names']}, others {nodes[k]}")
             x = dict(flop_report(e, full0, full1, spot["pot"]), hash=h)

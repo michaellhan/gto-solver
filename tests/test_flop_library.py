@@ -140,6 +140,7 @@ class TestFlopLibrary(unittest.TestCase):
         paths = fl.stored_paths(self.sol.root, self.sol.r0, self.sol.r1)
         self.assertIn((), paths)
         self.assertIn(("check",), paths)
+        self.assertTrue(any(fl.raised(p) for p in paths), paths)    # (the big blind's check-raises)
         pos = {c: i for i, c in enumerate(self.sol.ctx.active)}
         cols = np.array([pos[c] for c in ls.ctx.active])
         for path in paths:
@@ -253,8 +254,9 @@ class TestFlopLibrary(unittest.TestCase):
         line = rep["flops"][0]
         with open(os.path.join(self.dir, sid, CANON + ".bin"), "rb") as f:
             e = fl.decode(f.read())
-        self.assertEqual(set(line["n"]), {"|".join(nd["path"]) for nd in e["nodes"]})
-        for nd in e["nodes"]:
+        self.assertEqual(set(line["n"]), {"|".join(nd["path"]) for nd in e["nodes"] if not fl.raised(nd["path"])})
+        self.assertTrue(any(fl.raised(nd["path"]) for nd in e["nodes"]))     # (stored, not reported)
+        for nd in (nd for nd in e["nodes"] if not fl.raised(nd["path"])):
             k = "|".join(nd["path"])
             self.assertEqual(rep["nodes"][k], nd["names"])
             fr = line["n"][k]
@@ -385,6 +387,15 @@ class TestFlopLibrary(unittest.TestCase):
                                  flop=[{"pos": s["oop"], "action": "check"}]))
             self.assertIn("precomputed", ri)
             self.assertEqual([a["action"] for a in ri["actions"]][0], "check")
+            # and its c-bet check-raised: the stored node facing the raise
+            path = max((p for p in fl.stored_paths(self.sol.root, self.sol.r0, self.sol.r1) if fl.raised(p)),
+                       key=lambda p: fl._reaches(self.sol.root, p, self.sol.r0, self.sol.r1)[0].sum())
+            bet = float(path[1].split()[1][:-1]) / 100 * s["pot"]
+            flop = [{"pos": s["oop"], "action": "check"}, {"pos": s["ip"], "action": "bet", "amount": round(bet, 2)},
+                    {"pos": s["oop"], "action": "raise", "to": float(path[2].split()[-1])}]
+            rr = adv.advise(dict(base, hero=s["ip"], hole=_hole_in(s["full1"], BOARD, 5), flop=flop))
+            self.assertIn("precomputed", rr, rr.get("notes"))
+            self.assertEqual([a["action"] for a in rr["actions"]][:2], ["fold", "call"])
         # without the library the same spot is solved live: the budget, fewer iterations
         adv = Advisor(fl.library_config(), time_budget=1.0, prior_budget=0.5)
         t = time.time()
