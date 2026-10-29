@@ -8,6 +8,7 @@ import gto.advisor as A
 from gto import preflop as pf
 from gto.cards import ALL_COMBOS, cards
 from gto.evaluator import eval_board
+import gto.multiway_solver as MW
 from gto.multiway_solver import MWConfig, MultiwaySolver, Terminal
 from gto.solver import Config, solve
 
@@ -21,9 +22,24 @@ def _ranges():
     return [R["BB"], R["CO"], R["BTN"]]
 
 
-def _brute(s: MultiwaySolver, term: Terminal, board, allin=None, main=0.0):
-    """Every player's terminal values by the triple loop over compatible hands (with `allin`, the player all-in: the
-    main pot `main` among everyone live, the rest among the others live)."""
+PRE4 = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "raise", "to": 2.5}, {"pos": "CO", "action": "call"},
+        {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
+X4 = [{"pos": p, "action": "check"} for p in ("BB", "HJ", "CO", "BTN")]
+
+
+def _ranges4():
+    R = A.preflop_ranges(PRE4, pf.Table(pf.SEATS[6]), 100.0)
+    return [R["BB"], R["HJ"], R["CO"], R["BTN"]]
+
+
+def _cfg4(**kw):
+    """The advisor's 4-way game (advisor.MW4_BETS: one bet a street, no raise but the root player's)."""
+    return MWConfig(later="buckets", max_raises=1, root_raise=True, bet=dict(A.MW4_BETS), **kw)
+
+
+def _brute(s: MultiwaySolver, term: Terminal, board, pots=None):
+    """Every player's terminal values by the triple loop over compatible hands (`pots`: [(chips, who contests them)],
+    else the whole pot among everyone live)."""
     st = eval_board(board)
     act = s.hands.active
     R = s.reach0[:, 0, :]
@@ -49,11 +65,7 @@ def _brute(s: MultiwaySolver, term: Terminal, board, allin=None, main=0.0):
                         best = max(hs[j] for j in live)
                         return 0.0 if hs[p] < best else 1.0 / sum(1 for j in live if hs[j] == best)
                     net = term.pot - term.rake
-                    if allin is not None and allin in term.live and len(term.live) > 1:
-                        fm = min(1.0, main / term.pot)
-                        won = net * (fm * share(term.live) + (1 - fm) * share(tuple(j for j in term.live if j != allin)))
-                    else:
-                        won = net * share(term.live)
+                    won = net * sum(amt / term.pot * share(lv) for amt, lv in (pots or [(term.pot, term.live)]))
                     tot += R[q, iq] * R[r, ir] * (won - term.c[p])
             out[p, ih] = tot
     return out
@@ -83,18 +95,21 @@ class TestCardRemoval(unittest.TestCase):
                 self.assertLess(np.abs(got - want).max(), 1e-3 * np.abs(want).max())
 
     def test_side_pot_terminals_match_the_triple_loop(self):
-        # player 2 all-in at the root for a main pot of 12: everyone live contests it, the side pot the others live
+        # player 2 all-in for 4 over a pot of 18, the others in for 9: a main pot of 30 that everyone live contests
+        # and a side pot of 10 between the others live (the third player's alone when the second folded)
         s, bd = self.s, self.s.root.bd
-        s.cfg.allin, s.cfg.main = (2,), 12.0
+        s.cfg.allin = (2,)
         try:
-            for live in [(0, 1, 2), (0, 2), (1, 2)]:
-                t = Terminal(bd, live, 30.0, np.array([5.0, 7.0, 0.0]), 0.6, "show")
+            for live, pots in [((0, 1, 2), [(30.0, (0, 1, 2)), (10.0, (0, 1))]), ((0, 2), [(30.0, (0, 2)), (10.0, (0,))]),
+                               ((1, 2), [(30.0, (1, 2)), (10.0, (1,))])]:
+                t = Terminal(bd, live, 40.0, np.array([9.0, 9.0, 4.0]), 0.6, "show")
                 with self.subTest(live=live):
+                    self.assertEqual(s._layers(live, t.c, t.pot), pots)
                     got = s._term(t, s.reach0)[:, 0]
-                    want = _brute(s, t, self.board, allin=2, main=12.0)
+                    want = _brute(s, t, self.board, pots)
                     self.assertLess(np.abs(got - want).max(), 1e-3 * np.abs(want).max())
         finally:
-            s.cfg.allin, s.cfg.main = (), 0.0
+            s.cfg.allin = ()
 
     def test_pairwise_is_an_approximation(self):
         s, bd = self.s, self.s.root.bd
@@ -255,6 +270,152 @@ class TestLaterStreetsByBuckets(unittest.TestCase):
         # (iterations can run faster than the first 5 timed on a loaded machine, so the count is loose; time is the bound)
         self.assertLess(s.iters, 5 + 12 * 2)
         self.assertGreater(s.build_seconds, 0.0)
+
+
+def _core_on():
+    from gto import mwcore
+    return mwcore.lib() is not None
+
+
+@unittest.skipUnless(_core_on(), "no C compiler for the multiway core")
+class TestCore(unittest.TestCase):
+    """gto/mwcore.py: a bucketed solve's iterations and its evaluation passes in C, the numpy solver's arithmetic in
+    float32. An iteration from the same regrets and sums agrees to rounding; over several, regret matching's kinks (a
+    regret near 0 on a hand the range hardly holds, positive in one and not the other) carry rounding into different,
+    as good, strategies, so they are compared an iteration at a time."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.rs = _ranges()
+
+    def _pair(self, board, iters, rs=None, pot=8.0, stack=97.5, **kw):
+        """A numpy solve `iters` iterations in, and the core's from its arrays; then one more iteration each."""
+        a = MultiwaySolver(cards(board), rs or self.rs, pot, stack, **kw)
+        a._mwc_off = True
+        a.run(iters=iters)
+        b = MultiwaySolver(cards(board), rs or self.rs, pot, stack, **kw)
+        for da, db in zip(a.decisions, b.decisions):
+            db.regret[...] = da.regret
+            db.ssum[...] = da.ssum
+        b.iters = a.iters
+        a.run(iters=1)
+        b.run(iters=1)
+        self.assertIsNone(getattr(a, "_mwc", None))
+        self.assertIsNotNone(getattr(b, "_mwc", None))
+        return a, b
+
+    def _same(self, a, b, tol=2e-3):
+        for da, db in zip(a.decisions, b.decisions):
+            for x, y in ((da.regret, db.regret), (da.ssum, db.ssum)):
+                self.assertLess(np.abs(x - y).max(), tol * max(np.abs(x).max(), 1e-6))
+        pot = a.root_pot()
+        np.testing.assert_allclose(a.br_gains() / pot, b.br_gains() / pot, atol=2e-4)
+        np.testing.assert_allclose(a.values() / pot, b.values() / pot, atol=2e-4)
+        ea, eb = a.action_evs(), b.action_evs()
+        self.assertLess(np.abs(ea - eb).max() / pot, 2e-4)
+
+    def test_turn_and_flop_agree_with_numpy(self):
+        for board, kw in (("Kh7d2c9s", dict(cfg=MWConfig(later="buckets", buckets=8))),
+                          ("Kh7d2c", dict(cfg=MWConfig(later="buckets", buckets=6, bucket_river_step=4,
+                                                       bet={"flop": [0.33, 0.75], "turn": 0.5, "river": 0.5}))),
+                          # checked to the last player; and facing a bet and a call
+                          ("Ts9s4h", dict(to_act=2, pending={2}, cfg=MWConfig(later="buckets", buckets=6,
+                                                                              bucket_river_step=4)))):
+            with self.subTest(board):
+                self._same(*self._pair(board, 3, **kw))
+
+    def test_all_in_player_and_two_players_agree(self):
+        # a player all-in for less (its main pot and the others' side pot), and a heads-up bucketed turn
+        a, b = self._pair("Kh7d2c9s", 3, pot=40.0, stack=77.5,
+                          cfg=MWConfig(allin=(2,), later="buckets", buckets=8))
+        self._same(a, b)
+        a, b = self._pair("Kh7d2c9s", 3, rs=self.rs[:2], cfg=MWConfig(later="buckets", buckets=8))
+        self._same(a, b)
+        # stacks that differ: a player all-in for less below the root (its main pot, a side pot per row)
+        a, b = self._pair("Kh7d2c9s", 3, pot=20.0, stack=(8.0, 60.0, 60.0), cfg=MWConfig(later="buckets", buckets=8))
+        self.assertTrue(any(t.fm is not None for g in a.levels[0] for t in MW._bterminals(g.tree)))
+        self._same(a, b)
+
+    def test_four_players_agree(self):
+        # 4-way flop and turn: the tensors over three others' buckets, the root street's deals pairwise
+        for board, kw in (("Kh7d2c9s", dict(buckets=8)), ("Kh7d2c", dict(buckets=6, bucket_river_step=4))):
+            with self.subTest(board):
+                self._same(*self._pair(board, 3, rs=_ranges4(), pot=10.5, cfg=_cfg4(**kw)))
+        # a player all-in: the three others bet for a side pot (the kernel's third tensor)
+        self._same(*self._pair("Kh7d2c9s", 3, rs=_ranges4(), pot=30.0, stack=85.0, cfg=_cfg4(buckets=8, allin=(3,))))
+
+    def test_another_solve_replaces_the_program(self):
+        # one program lives in the core at a time: a solver whose program was replaced lays its tree out again from
+        # its arrays and carries on where it was
+        cfg = MWConfig(later="buckets", buckets=6)
+        a = MultiwaySolver(cards("Kh7d2c9s"), self.rs, 8.0, 97.5, cfg=cfg).run(iters=6)
+        ref = MultiwaySolver(cards("Kh7d2c9s"), self.rs, 8.0, 97.5, cfg=cfg).run(iters=3)
+        b = MultiwaySolver(cards("Qs8h3d2c"), self.rs, 8.0, 97.5, cfg=cfg).run(iters=2)
+        ref.run(iters=3)
+        self.assertFalse(ref._mwc.valid(ref._mwc.L, ref) and b._mwc.valid(b._mwc.L, b))
+        for da, db in zip(a.decisions, ref.decisions):
+            np.testing.assert_array_equal(da.regret, db.regret)
+            np.testing.assert_array_equal(da.ssum, db.ssum)
+        np.testing.assert_array_equal(a.br_gains(), ref.br_gains())
+
+    def test_converges_as_numpy_does(self):
+        s = MultiwaySolver(cards("Kh7d2c9s"), self.rs, 8.0, 97.5, cfg=MWConfig(later="buckets", buckets=8))
+        g6 = s.run(iters=6).br_gains()
+        g100 = s.run(iters=94).br_gains()
+        self.assertTrue(np.all(g100 < g6))
+        self.assertLess(g100.max() / s.root_pot() * 100, 1.0)
+        self.assertAlmostEqual(float(s.values().sum()), 8.0, delta=0.08)
+
+    def test_wasm_built_from_the_current_source(self):
+        # (python scripts/build_core.py after a change to core/mwcore.c)
+        from gto import mwcore
+        with open(mwcore.WASM, "rb") as f:
+            self.assertTrue(mwcore.source_hash().encode() in f.read(), "rebuild gto/mwcore.wasm")
+
+
+class TestFourWay(unittest.TestCase):
+    """4+ players with the later streets by hand buckets (BucketTables._class_n): the root street per combo with pairwise
+    card removal (_term_pw), the tensors over every player's buckets."""
+
+    def test_turn_and_flop_settle_and_stay_constant_sum(self):
+        rs = _ranges4()
+        for board, kw, iters, bound in (("Kh7d2c9s", dict(buckets=8), 60, 0.5),
+                                        ("Kh7d2c", dict(buckets=6, bucket_river_step=4), 60, 1.5)):
+            with self.subTest(board):
+                s = MultiwaySolver(cards(board), rs, 10.5, 97.5, cfg=_cfg4(**kw))
+                self.assertEqual(s.tabs.np, 4)
+                g5 = s.run(iters=5).br_gains()
+                g = s.run(iters=iters - 5).br_gains()
+                self.assertTrue(np.all(g < g5))
+                self.assertLess(g.max() / s.root_pot() * 100, bound)
+                # (the root street's pairwise deals against the tables' scaled to them: within half a percent)
+                self.assertAlmostEqual(float(s.values().sum()), 10.5, delta=0.05)
+                # the deals' weight below the root is the root's (the tables scaled to it), every class's showdown
+                # shares adding up to it
+                tb = s.tabs
+                J = tb.tp[(("J",), 0)]
+                for lv in ((0, 1, 2, 3), (0, 2, 3), (1, 3)):
+                    tot = sum(_canon4(tb.tp[(("S", lv), p)], p) for p in lv)
+                    np.testing.assert_allclose(tot, _canon4(J, 0), rtol=1e-4, atol=1e-9 * J.max())
+
+
+    def test_a_player_all_in(self):
+        # the BTN all-in preflop and called: the other three bet the turn and river for a side pot, the main pot (the
+        # pot at the root) to the best of the four
+        s = MultiwaySolver(cards("Kh7d2c9s"), _ranges4(), 30.0, 85.0, cfg=_cfg4(buckets=8, allin=(3,))).run(iters=100)
+        self.assertEqual(sorted({d.player for d in s.decisions}), [0, 1, 2])
+        sides = {t.side for lvl in s.levels for g in lvl for t in MW._bterminals(g.tree) if t.fm is not None}
+        self.assertIn((0, 1, 2), sides)
+        self.assertAlmostEqual(float(s.values().sum()), 30.0, delta=0.3)
+        g = s.br_gains() / s.root_pot() * 100
+        self.assertEqual(float(g[3]), 0.0)
+        self.assertLess(float(g.mean()), 0.5)
+
+
+def _canon4(T, p):
+    """A player's tensor (C, K_o0, K_o1, K_o2, K_p) back to (C, K_0, K_1, K_2, K_3)."""
+    o = [j for j in range(4) if j != p] + [p]
+    return np.transpose(T, [0] + [1 + o.index(k) for k in range(4)])
 
 
 class TestFlopAgainstPublished(unittest.TestCase):
@@ -435,9 +596,11 @@ class TestAdvisor(unittest.TestCase):
         self.assertTrue(r["multiway"])
         self.assertFalse(r.get("solved", False))
 
-    def test_four_way_river_is_solved_its_turn_uses_the_betting_rules(self):
+    def test_four_way_river_turn_and_flop_are_solved(self):
         adv = A.Advisor(time_budget=2.0)
         adv.mw_trials = 200
+        adv.mw4_street_config = {"flop": {"later": "buckets", "buckets": 6, "bucket_river_step": 4},
+                                 "turn": {"later": "buckets", "buckets": 8}}
         pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "raise", "to": 2.5},
                {"pos": "CO", "action": "call"}, {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"},
                {"pos": "BB", "action": "call"}]
@@ -449,15 +612,43 @@ class TestAdvisor(unittest.TestCase):
         self.assertEqual(r["position"], "1 of 4 to act")
         self.assertLess(r["solver"]["exploitability_pct"], 1.0)
         self.assertTrue(any("4-player CFR" in n for n in r["notes"]))
-        # the turn: the rules (dealt-out later streets did worse than them, 3-way)
+        # the turn and (where the speed solves it) the flop: the 4-player solve, the later streets by hand buckets
         r = adv.advise(dict(st, board="Kh7d2c9s", turn=[]))
-        self.assertTrue(r["multiway"])
-        self.assertFalse(r.get("solved", False))
+        self.assertTrue(r["multiway"] and r["solved"], r.get("notes"))
+        self.assertTrue(any("4-player CFR" in n and "8 hand buckets" in n for n in r["notes"]), r["notes"])
+        self.assertLess(r["solver"]["exploitability_pct"], 1.0)
+        self.assertEqual([a["action"] for a in r["actions"]], ["check", "bet 50%"])
+        flop = dict(st, board="Kh7d2c", flop=[])
+        self.assertFalse(adv.advise(flop).get("solved", False))     # (the default solves turns and rivers)
+        adv.mw_solve_streets = ("flop", "turn", "river")
+        adv.time_budget = 6.0
+        r = adv.advise(flop)
+        self.assertTrue(r["solved"], r.get("notes"))
+        self.assertLess(r["solver"]["exploitability_pct"], 3.0)
+        adv.time_budget = 2.0
         # facing a bet with players behind: fold, call, and the only raise in the tree, hero's
         r = adv.advise(dict(st, hero="CO", hole="Ks8s", river=[{"pos": "BB", "action": "bet", "amount": 5},
                                                                {"pos": "HJ", "action": "call"}]))
         self.assertTrue(r["solved"])
         self.assertEqual([a["action"].split()[0] for a in r["actions"]], ["fold", "call", "raise"])
+
+    def test_four_way_with_a_player_all_in_is_solved(self):
+        # the 15bb CO shoves over the HJ's open and three call: on the turn the other three bet for the side pot (the
+        # 4-player solve with a player all-in), where the betting rules answered before
+        adv = A.Advisor(time_budget=2.0)
+        adv.mw4_street_config = {"flop": {"later": "buckets", "buckets": 6, "bucket_river_step": 4},
+                                 "turn": {"later": "buckets", "buckets": 8}}
+        F = lambda p: {"pos": p, "action": "fold"}
+        X = lambda p: {"pos": p, "action": "check"}
+        pre = [F("UTG"), {"pos": "HJ", "action": "raise", "to": 2.5}, {"pos": "CO", "action": "all-in"},
+               {"pos": "BTN", "action": "call"}, F("SB"), {"pos": "BB", "action": "call"}, {"pos": "HJ", "action": "call"}]
+        r = adv.advise({"players": 6, "stack": 100, "stacks": {"CO": 15}, "hero": "HJ", "hole": "7s7c",
+                        "board": "Kh7d2c9s", "preflop": pre, "flop": [X("BB"), X("HJ"), X("BTN")], "turn": [X("BB")]})
+        self.assertTrue(r.get("solved"), r.get("notes"))
+        self.assertTrue(any("4-player CFR" in n for n in r["notes"]), r["notes"])
+        self.assertTrue(any(n.startswith("CO is all-in: the main pot (60.5 bb) goes to the best of the four hands")
+                            for n in r["notes"]), r["notes"])
+        self.assertLess(r["solver"]["exploitability_pct"], 1.0)
 
     def test_jam_request_offers_all_in_at_the_root_only(self):
         # (the page grading your all-in asks again with "jam": all-in at your decision however deep, the tree below as
@@ -475,6 +666,24 @@ class TestAdvisor(unittest.TestCase):
         self.assertLess(r["solver"]["nodes"], 120)
         self.assertLess(r["solver"]["exploitability_pct"], 1.0)
         self.assertLess(acts["all-in"]["ev_bb"], max(a["ev_bb"] for a in r["actions"]) - 1.0)
+
+    def test_a_bet_over_the_short_stack_is_solved_with_side_pots(self):
+        # the 25bb BB checks the turn and the CO bets 30, more than the BB has behind: each player bets its own stack
+        # (the BB's call all-in for less plays for the main pot), where everyone played the shortest stack before and
+        # a bet over it was left to the betting rules
+        adv = A.Advisor(time_budget=3.0)
+        F = lambda p: {"pos": p, "action": "fold"}
+        X = lambda p: {"pos": p, "action": "check"}
+        pre = [F("UTG"), F("HJ"), {"pos": "CO", "action": "raise", "to": 2.5}, {"pos": "BTN", "action": "call"}, F("SB"),
+               {"pos": "BB", "action": "call"}]
+        r = adv.advise({"players": 6, "stack": 100, "stacks": {"BB": 25}, "hero": "BTN", "hole": "KsQs",
+                        "board": "Kh7d2c3s", "preflop": pre, "flop": [X("BB"), X("CO"), X("BTN")],
+                        "turn": [X("BB"), {"pos": "CO", "action": "bet", "amount": 30}]})
+        self.assertTrue(r.get("solved"), r.get("notes"))
+        self.assertEqual(r["stack_bb"], 97.5)
+        self.assertTrue(any(n.startswith("stacks differ: each player bets their own stack (BB 22.5, CO 97.5, BTN 97.5")
+                            for n in r["notes"]), r["notes"])
+        self.assertLess(r["solver"]["exploitability_pct"], 1.0)
 
     def test_two_all_in_and_one_left_with_chips(self):
         # two betting with two all-in on the river (layered pots), and a player alone with chips facing two all-ins on
@@ -509,8 +718,8 @@ class TestAllIn(unittest.TestCase):
         R = _ranges()
         # BTN (2) all-in for 20 over a 8bb pot: the main pot 8 + 3 x 20 = 68 at the flop... here the river's root:
         # main 40, the pot 40, BB and CO 77.5 behind to bet for the side pot
-        for board, cfg in (("Kh7d2c9s4h", MWConfig(allin=(2,), main=40.0)),
-                           ("Kh7d2c9s", MWConfig(allin=(2,), main=40.0, later="buckets", buckets=8))):
+        for board, cfg in (("Kh7d2c9s4h", MWConfig(allin=(2,))),
+                           ("Kh7d2c9s", MWConfig(allin=(2,), later="buckets", buckets=8))):
             with self.subTest(board=board):
                 s = MultiwaySolver(cards(board), R, 40.0, 77.5, cfg=cfg).run(iters=60)
                 self.assertNotIn(2, [d.player for d in s.decisions])     # the all-in player never acts
@@ -521,6 +730,63 @@ class TestAllIn(unittest.TestCase):
                 # the root offers the bets to its first player, and a fold leaves the main pot to the others
                 self.assertEqual(s.root.player, 0)
                 self.assertIn("check", s.root.names)
+
+
+class TestSidePots(unittest.TestCase):
+    """Stacks that differ (MultiwaySolver's `stack` per player): a player all-in for less, at the root or below it,
+    contests the main pot; the players with more in the side pot too (MultiwaySolver._layers)."""
+
+    @staticmethod
+    def _at(s, path):
+        node = s.root
+        for nm in path:
+            node = node.children[node.names.index(nm)]
+        return node
+
+    def test_a_short_stack_all_in_below_the_root(self):
+        R = _ranges()
+        s = MultiwaySolver(cards("Kh7d2c9s4h"), R, 20.0, (8.0, 60.0, 60.0))
+        self.assertEqual(s.root.names, ["check", "all-in"])
+        # the short stack's all-in raised and re-raised: a main pot of 20 + 3 x 8 between all three, the rest between
+        # the two deep players
+        t = self._at(s, ["all-in", "raise to 35", "all-in", "call"])
+        self.assertEqual(s._layers(t.live, t.c, t.pot), [(44.0, (0, 1, 2)), (104.0, (1, 2))])
+        # the raise nobody matched comes back: a pot of 36 between the short stack and the raiser
+        t = self._at(s, ["all-in", "raise to 35", "fold"])
+        self.assertEqual((t.live, t.pot, list(t.c)), ((0, 1), 36.0, [8.0, 8.0, 0.0]))
+        # a call all-in for less, then the third player folds the raise behind it: the main pot to the best of the two
+        # live, the folded player's chips over the short stack's (and the raiser's matching them) the raiser's alone
+        t = self._at(s, ["check", "bet 50%", "raise to 40", "call", "fold"])
+        self.assertEqual(s._layers(t.live, t.c, t.pot), [(44.0, (0, 2)), (4.0, (2,))])
+        for d in s.decisions:     # (all-in, the short stack never acts again)
+            if d.player == 0:
+                self.assertEqual(d.c[0], 0.0)
+        s.run(iters=40)
+        self.assertAlmostEqual(float(s.values().sum()), 20.0, places=4)    # constant-sum
+        self.assertLess(float((s.br_gains() / s.root_pot() * 100).mean()), 1.0)
+        # the deepest player bets only what another can match
+        s = MultiwaySolver(cards("Kh7d2c9s4h"), R, 20.0, (60.0, 30.0, 8.0))
+        self.assertEqual(s.stacks, (30.0, 30.0, 8.0))
+
+    def test_an_all_in_this_street_shares_the_main_pot_with_its_callers(self):
+        # player 2 all-in for 20 into 20 on the river: the calls of it are the main pot's (a main pot fixed at the
+        # root's chips gave a call and a fold behind it to the side pot, the caller's alone)
+        s = MultiwaySolver(cards("Kh7d2c9s4h"), _ranges(), 20.0, 60.0, bets=[0.0, 0.0, 20.0], to_act=0,
+                           pending={0, 1}, cfg=MWConfig(allin=(2,)))
+        t = self._at(s, ["call", "fold"])
+        self.assertEqual(s._layers(t.live, t.c, t.pot), [(60.0, (0, 2))])
+        t = self._at(s, ["all-in", "call"])
+        self.assertEqual(s._layers(t.live, t.c, t.pot), [(80.0, (0, 1, 2)), (80.0, (0, 1))])
+        s.run(iters=30)
+        self.assertAlmostEqual(float(s.values().sum()), 20.0, places=4)     # (chips in count from the root street)
+
+    def test_turn_by_buckets_with_a_short_stack(self):
+        s = MultiwaySolver(cards("Kh7d2c9s"), _ranges(), 20.0, (8.0, 60.0, 60.0),
+                           cfg=MWConfig(later="buckets", buckets=8)).run(iters=60)
+        sides = {t.side for g in s.levels[0] for t in MW._bterminals(g.tree) if t.fm is not None}
+        self.assertEqual(sides, {(1, 2), (1,), (2,)})
+        self.assertAlmostEqual(float(s.values().sum()), 20.0, delta=0.4)
+        self.assertLess(float((s.br_gains() / s.root_pot() * 100).mean()), 1.0)
 
 
 class TestNWay(unittest.TestCase):

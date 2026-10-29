@@ -11,7 +11,7 @@ for _v in ("VECLIB_MAXIMUM_THREADS", "OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", 
     os.environ.setdefault(_v, "1")
 
 from typing import Dict, Optional  # noqa: E402
-from .advisor import Advisor, MW_FAST_STREETS  # noqa: E402
+from .advisor import Advisor, MW_FAST_STREETS, MW4_FAST_STREETS  # noqa: E402
 from .solver import Config          # noqa: E402
 from .flop_library import default_library  # noqa: E402
 from . import mw_library  # noqa: E402
@@ -101,16 +101,15 @@ def config(speed: str = "fast", depth: int = 2) -> Config:
                   raise_sizes={k: list(v) for k, v in sizes["raise_sizes"].items()}, depth=depth, **kw)
 
 
-# 3-way pots solved by the 3-player solver (Advisor.mw_solve_streets; the rest use the betting rules). A river iteration
-# costs 30-90 ms here (by machine load), so fast's 2.5 s runs 25-80 (0.1-1% of the pot from equilibrium). Turns and flops
-# bet the later streets by 16 hand buckets a player (Advisor.mw_street_config, README 3-way pots): a turn iteration costs
-# 0.1-0.2 s, a flop one 0.1-0.4 s (two flop bet sizes, 33/75%; by machine load) after 0.6-1.7 s of tables, so this game waits
-# for accurate's 30 s, which covers the tables and the read-off too (turn 150-300 iterations; flop unloaded 200-290 checked
-# to, 0.15-0.25% of the pot from equilibrium, 100 for the first to act's bigger tree, 0.8%; one size ran 260-370 and 150). An earlier 3-way flop is narrowed through your advice's
-# solve of it; a solve of it from its start (Advisor.mw_prior_solve) stays off: in 12 s it runs 40-65 iterations, 4-6% of
-# the pot from equilibrium, which narrowing would follow 0-20%.
-# Fast solves 3-way flops and turns too, in a smaller game (advisor.MW_FAST_STREETS) and 5 s (MW_FAST_BUDGET; 2.5 s ran a
-# flop first to act 22 iterations, 17% of the pot from equilibrium): 49-98 iterations on a flop, 132 on a turn.
+# 3-way pots solved by the 3-player solver (Advisor.mw_solve_streets; the rest use the betting rules), and 4-way flops
+# and turns by the 4-player solve. Flops and turns bet the later streets by hand buckets (Advisor.mw_street_config,
+# README 3-way pots), their iterations in the compiled multiway core (gto/mwcore.py). Measured on a quiet machine
+# (CO opens, BTN and BB call; Kh8d3c): Accurate's 30 s settle a flop first to act at 400 iterations, 0.05% of the pot
+# from equilibrium, in 21-25 s (its 16 buckets, the flop 33/75%), a turn in 7 s. An earlier 3-way flop is narrowed
+# through your advice's solve of it; a solve of it from its start (Advisor.mw_prior_solve) stays off.
+# Fast solves them too, in a smaller flop game (advisor.MW_FAST_STREETS) and 5 s (MW_FAST_BUDGET; 2.5 s ran a flop
+# first to act 22 iterations in numpy, 17% of the pot from equilibrium): a flop first to act 111-125 iterations,
+# 0.7-1.05%; checked to twice 400, 0.03%; a turn 248, 0.1%; a 4-way flop (Kh7d2c, HJ opens, three call) 200, 0.04%.
 MW_STREETS = {"fast": ("flop", "turn", "river"), "accurate": ("flop", "turn", "river")}
 MW_FAST_BUDGET = 5.0
 
@@ -126,6 +125,7 @@ def advisor(speed: str = "fast", depth: int = 2, budget: Optional[float] = None,
     adv.mw_solve_streets = MW_STREETS[speed]
     if speed == "fast":
         adv.mw_street_config = {st: dict(c) for st, c in MW_FAST_STREETS.items()}
+        adv.mw4_street_config = {st: dict(c) for st, c in MW4_FAST_STREETS.items()}
         adv.mw_budget = MW_FAST_BUDGET
     adv.library = default_library() if library else None
     adv.mw_library = mw_library.default_library() if library else None

@@ -108,6 +108,13 @@ const ready = (async () => {
   self.gtoCore = await loadCore(py);
   setup.core = !!self.gtoCore;
   setup.threads = self.gtoCore ? self.gtoCore.core_threads(0) : 0;
+  // the multiway core (gto/mwcore.py, ~115 KB): 3- and 4-way flop and turn solves' iterations, one thread
+  try {
+    self.mwCore = (await WebAssembly.instantiate(py.FS.readFile("/app/gto/mwcore.wasm"))).instance.exports;
+  } catch (e) {
+    self.mwCore = null;
+  }
+  setup.mwcore = !!self.mwCore;
   // the sources get a fixed mtime (a .pyc is valid while its source's mtime and size match) and the startup imports
   // write their bytecode (Pyodide turns that off), which goes to the Cache API once the first request has its answer
   py.runPython("import os, sys, json\n"
@@ -192,19 +199,29 @@ const ready = (async () => {
              // ~4 KB), at every speed, Practice's quick answers included
              + "from gto.mw_library import MWLibrary; mwlib = MWLibrary(lib._fetch); "
              + "advs['fast'].mw_library = advs['accurate'].mw_library = mwlib; "
-             // 3-way pots (measured, scripts/bench_browser.mjs): the 3-player solver on the river in Fast (0.13-0.16 s an
-             // iteration: 41-48 in 8 s, 0.3-0.4% of the pot from equilibrium); Fast's turns and flops in a smaller game
-             // (advisor.MW_FAST_STREETS: 6 buckets, every sixth river, the flop betting half the pot) in its 8 s: a flop
-             // first to act 51 iterations, 2.6% of the pot; checked to 85, 0.44%; a turn 110, 0.15%. Accurate's in its 60 s, the
-             // later streets bet by 12 hand buckets with the turn's tables over every third river, the flop betting a third or
-             // three quarters of the pot (numpy has no BLAS here: a flop iteration 0.34 s checked to, 161 in the 60 s, 0.27%;
-             // 0.7-0.95 s first to act, 56-77, 3-6%; the 60 s cover the tables and the gains and EVs read off after). Turns
-             // (0.18 s) and rivers stop once settled (advisor.MW_SETTLED): 200 iterations in 34 s, 100 in 15 s, 0.07%.
-             + "from gto.advisor import MW_FAST_STREETS; advs['fast'].mw_solve_streets = ('flop', 'turn', 'river'); "
+             // 3-way pots (measured, scripts/bench_browser.mjs): the 3-player solver on every street, its iterations in
+             // the multiway core (gto/mwcore.wasm; numpy took 0.7-0.95 s a first-to-act flop iteration here, 56-77 in
+             // Accurate's 60 s, 3-6% of the pot from equilibrium). Accurate plays native's game (advisor.MW_LATER, 16
+             // hand buckets on the later streets, the flop betting a third or three quarters of the pot, the turn
+             // 33/75/125%): a flop first to act (Kh8d3c, CO opens, BTN and BB call) 400 iterations in 13 s, 0.05% of the
+             // pot. Fast a smaller flop game (advisor.MW_FAST_STREETS: 12 buckets, every third river) in its 8 s: 203
+             // iterations, 0.25%; checked to twice 400, 0.03%; a turn 400, 0.04%. Quick's 1.8 s (advisor.MW_QUICK_FLOP,
+             // MW_QUICK_TURN): a flop 114 iterations, 0.43%; a turn 87, 0.58%. Without the core (it failed to load)
+             // Accurate keeps the old smaller game (12 buckets, every third river), Fast 6 buckets, and 4-way flops and
+             // turns are left to the rules. Rivers and turns stop once settled (advisor.MW_SETTLED). 4-way flops and
+             // turns: the 4-player solve (advisor.MW4_STREETS; Fast MW4_FAST_STREETS), in the core too: a flop (Kh7d2c,
+             // HJ opens, CO, BTN and BB call) Fast 200 iterations in 3.8 s, 0.03% of the pot; a turn 100 in 0.4 s, 0.04%.
+             // Quick's 4-way flop is the rules' (mw4_quick_flop: its tables took 1.6 s, then 15 iterations, 9.4%).
+             + "from gto.advisor import MW_FAST_STREETS, MW4_FAST_STREETS; from gto import mwcore as _mwc; "
+             + "advs['fast'].mw_solve_streets = advs['accurate'].mw_solve_streets = ('flop', 'turn', 'river'); "
              + "advs['fast'].mw_street_config = {s: dict(c) for s, c in MW_FAST_STREETS.items()}; "
-             + "advs['accurate'].mw_solve_streets = ('flop', 'turn', 'river'); "
-             + "advs['accurate'].mw_street_config = {s: {'later': 'buckets', 'buckets': 12, 'bucket_river_step': 3} for s in ('flop', 'turn')}; "
-             + "advs['accurate'].mw_street_config['flop']['bet'] = {'flop': [0.33, 0.75], 'turn': 0.5, 'river': 0.5}; "
+             + "advs['fast'].mw4_street_config = {s: dict(c) for s, c in MW4_FAST_STREETS.items()}; "
+             + "_slow = _mwc.lib() is None; "
+             + "advs['accurate'].mw_street_config = {s: dict(advs['accurate'].mw_street_config[s], buckets=12, bucket_river_step=3) for s in ('flop', 'turn')} if _slow else advs['accurate'].mw_street_config; "
+             + "advs['fast'].mw_street_config = {s: dict(c, buckets=6, bucket_river_step=6) for s, c in advs['fast'].mw_street_config.items()} if _slow else advs['fast'].mw_street_config; "
+             + "advs['fast'].mw4_street_config = None if _slow else advs['fast'].mw4_street_config; "
+             + "advs['accurate'].mw4_street_config = None if _slow else advs['accurate'].mw4_street_config; "
+             + "advs['fast'].mw4_quick_flop = None; "
              // 4+ way rivers (and two all-in) by the N-player solve (scripts/bench_browser.mjs): 4-way 2.5 s at Fast, 50
              // iterations, 0.08% of the pot from equilibrium (Quick 1.8 s, 0.27%); 5-way 7.6 s, 0.1% (Quick 5 iterations,
              // 5.4%); 6-way ~3 s an iteration, so Fast leaves it to the rules and Accurate's 60 s solve it

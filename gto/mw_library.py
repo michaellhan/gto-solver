@@ -45,6 +45,13 @@ SPOTS = [
     # (the CO's cold call over a HJ open is the BTN's: one game, matched by its ranges either way)
     ("mw_hj_ip_bb", "HJ open, CO or BTN and BB call", "UTG:f,HJ:r2.5,CO:f,BTN:c,SB:f,BB:c"),
     ("mw_utg_btn_bb", "UTG open, BTN and BB call", "UTG:r2.5,HJ:f,CO:f,BTN:c,SB:f,BB:c"),
+    # listed for the build, stored once built (a spot without entries is left out of the index): of the flops seen
+    # 3-way, UTG opens, HJ or CO and BB call 10.2% (one game: the HJ's and the CO's calls are the same range); CO opens,
+    # SB and BB call 8.3%; HJ opens, SB and BB call 4.3%; UTG opens, SB and BB call 3.9% (the four above: 63.8%)
+    ("mw_utg_ip_bb", "UTG open, HJ or CO and BB call", "UTG:r2.5,HJ:c,CO:f,BTN:f,SB:f,BB:c"),
+    ("mw_co_sb_bb", "CO open, SB and BB call", "UTG:f,HJ:f,CO:r2.5,BTN:f,SB:c,BB:c"),
+    ("mw_hj_sb_bb", "HJ open, SB and BB call", "UTG:f,HJ:r2.5,CO:f,BTN:f,SB:c,BB:c"),
+    ("mw_utg_sb_bb", "UTG open, SB and BB call", "UTG:r2.5,HJ:f,CO:f,BTN:f,SB:c,BB:c"),
 ]
 REP_FLOPS = 184
 SPOT_FLOPS: Dict[str, int] = {}
@@ -170,10 +177,11 @@ class LibraryMWSolution:
     """A 3-way flop solve read from the library, shaped like multiway_solver.MultiwaySolver for the advisor (its
     answer, practice opponents' moves and narrowing through the flop's stored lines: Advisor._mw_walk,
     _mw_actor_move): the stored decisions as multiway_solver.Decision nodes (their average strategies; a line the
-    entry doesn't hold is UNSTORED), reach0, the stored EVs, the stored best-response gains."""
+    entry doesn't hold is UNSTORED), reach0, the stored EVs, the stored best-response gains, and the chips behind
+    (`stacks`: the spot's, everyone the same)."""
 
     def __init__(self, nodes: Dict[tuple, object], evs: Dict[int, np.ndarray], active, reach0, head: dict, label: str,
-                 seats: List[str]):
+                 seats: List[str], stack: Optional[float] = None):
         self.nodes, self._evs = nodes, evs
         self.root = nodes[()]
         self.hands = _Hands(active)
@@ -185,6 +193,7 @@ class LibraryMWSolution:
         self.out_of_time, self.settled = False, True
         self._gains = np.array(head.get("gains") or [head["expl"]] * self.np, dtype=np.float64)
         self.pot_start = float(head["pot"])
+        self.stacks = (float(stack if stack is not None else head.get("stack", 0.0)),) * self.np
 
     def root_pot(self):
         return self.pot_start
@@ -344,7 +353,7 @@ class MWLibrary:
                 par.children[par.names.index(path[-1])] = d
         reach0 = np.stack([r[active] for r in rf])[:, None, :]
         return LibraryMWSolution(nodes, evs, active, reach0, e["head"], spot.get("label", spot["id"]),
-                                 spot.get("seats") or [])
+                                 spot.get("seats") or [], spot.get("stack"))
 
 
 _DEFAULT: Optional[MWLibrary] = None

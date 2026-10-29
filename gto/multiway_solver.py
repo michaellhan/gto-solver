@@ -32,6 +32,7 @@ reported like the heads-up solver's, relative to folding now.
 """
 from __future__ import annotations
 
+import itertools
 import random
 import time
 from dataclasses import dataclass, field
@@ -76,14 +77,13 @@ class MWConfig:
     buckets: int = 16            # hand buckets per player and card below the root street
     classes: bool = True         # the next card as one per class (a rank; a suit with two or more board cards apart)
     bucket_river_step: int = 1   # from a flop: the turn's showdown tensors average every step-th river card
-    # allin: a player all-in at the root (its index; at most one): it never acts, and a showdown pays the main pot
-    # (`main` chips, everyone live contesting it) by everyone's hands and the rest of the pot, the side pot, between
-    # the players who still bet (a fold there gives up both)
+    # allin: the players all-in at the root (their indices; three players: at most one, more is pairwise): they never
+    # act. A player all-in for less, at the root or below it (stacks differ: MultiwaySolver's `stack` per player),
+    # contests the pot up to its stake: a showdown pays each layer of the pot (MultiwaySolver._layers: the main pot,
+    # everyone live, and the side pot, the players with more in; a fold gives up both) to the best hand among the live
+    # players whose chips reach it, from every seat's chips in (inv0: each player's before the root street, dead: the
+    # chips of seats folded before it; none given, everyone live had the same in before the root street)
     allin: tuple = ()
-    main: float = 0.0
-    # Four or more players (any number all-in), or three with more than one all-in: the pots are layered by the
-    # all-in players' stakes from every seat's chips in (inv0: each player's before the root street, dead: the chips
-    # of seats folded before it); each pot goes to the best hand among the live players whose chips reach it
     inv0: tuple = ()
     dead: tuple = ()
     # root_raise: the root's player may raise once more than max_raises allows (four or more betting play max_raises 1,
@@ -272,10 +272,11 @@ class Boards:
 
 # ------------------------------------------------------------------ tree
 class Terminal:
-    __slots__ = ("bd", "live", "pot", "c", "rake", "kind")
+    __slots__ = ("bd", "live", "pot", "c", "rake", "kind", "lay")
 
     def __init__(self, bd, live, pot, c, rake, kind):
         self.bd, self.live, self.pot, self.c, self.rake, self.kind = bd, live, pot, c, rake, kind
+        self.lay = None
 
 
 class Chance:
@@ -315,14 +316,23 @@ def bet_sizes(cfg, street) -> list:
     return sorted(b) if isinstance(b, (list, tuple)) else [b]
 
 
+def _per(stack, npl):
+    """Each player's chips behind (a number: everyone's the same)."""
+    return tuple(stack) if isinstance(stack, (tuple, list)) else (stack,) * npl
+
+
 def _actions(cfg, npl, street, pot_start, stack, bets, c, p, n_raises, pending, folded):
     """Player p's actions at a node: [(name, amount (chips this street after it; a call: its size; else None),
     bets, contributions, folded, pending after it, raised)]. The street's bet sizes (MWConfig.bet: one or a list), one
     raise (to the bet plus raise_frac of the pot after calling), all-in at allin_spr pots behind or less, at most
-    max_raises bets and raises a street."""
+    max_raises bets and raises a street. `stack`: each player's chips behind at the street's start (or one number for
+    everyone); p puts in at most what another player still in can match (its all-in), and a player whose bet is its
+    stack is all-in: it no longer acts."""
+    stk = _per(stack, npl)
     pot_now = pot_start + sum(bets)
     top = max(bets)
-    rem = stack - bets[p]
+    cap = min(stk[p], max((stk[i] for i in range(npl) if i != p and i not in folded), default=stk[p]))
+    rem = cap - bets[p]
     out = []
 
     def act(name, amt, new_bet, raised, fold=False):
@@ -332,13 +342,13 @@ def _actions(cfg, npl, street, pot_start, stack, bets, c, p, n_raises, pending, 
             nc[p] += new_bet - bets[p]; nb[p] = new_bet
         npend = set(pending) - {p}
         if raised:
-            npend = {i for i in range(npl) if i != p and i not in nf and nb[i] < stack - 1e-9 and i not in cfg.allin}
+            npend = {i for i in range(npl) if i != p and i not in nf and nb[i] < stk[i] - 1e-9 and i not in cfg.allin}
         out.append((name, amt, nb, nc, nf, npend, int(raised)))
 
-    others_can = any(i != p and i not in folded and i not in cfg.allin and bets[i] < stack - 1e-9 for i in range(npl))
+    others_can = any(i != p and i not in folded and i not in cfg.allin and bets[i] < stk[i] - 1e-9 for i in range(npl))
     if top <= bets[p] + 1e-9:
         act("check", None, bets[p], False)
-        if others_can:
+        if others_can and rem > 1e-9:
             allin, seen = rem <= cfg.allin_spr * pot_now, set()
             for f in bet_sizes(cfg, street):
                 amt = max(round(f * pot_now * 2) / 2, 1.0)
@@ -348,20 +358,21 @@ def _actions(cfg, npl, street, pot_start, stack, bets, c, p, n_raises, pending, 
                     seen.add(amt)
                     act(f"bet {int(round(f * 100))}%", bets[p] + amt, bets[p] + amt, True)
             if allin:
-                act("all-in", stack, stack, True)
+                act("all-in", cap, cap, True)
     else:
+        call = min(top, stk[p])
         act("fold", None, bets[p], False, fold=True)
-        act("call", min(top, stack) - bets[p], min(top, stack), False)
+        act("call", call - bets[p], call, False)
         if rem > top - bets[p] + 1e-9 and others_can:
             allin = rem <= cfg.allin_spr * pot_now
             if n_raises < cfg.max_raises:
                 to = top + round(cfg.raise_frac * (pot_now + top - bets[p]) * 2) / 2
-                if to < stack - 1e-9:
+                if to < cap - 1e-9:
                     act(f"raise to {to:g}", to, to, True)
                 else:
                     allin = True
             if allin:
-                act("all-in", stack, stack, True)
+                act("all-in", cap, cap, True)
     return out
 
 
@@ -374,15 +385,23 @@ def _next_player(npl, p, pending):
 
 
 def _street_end(npl, pot_start, stack, bets, c, folded):
-    """(live, pot, contributions, chips behind) when a street closes; a lone live player gets the uncalled chips back."""
+    """(live, pot, contributions, each player's chips behind) when a street closes: the top bet's chips that nobody
+    matched (a lone live player's, or a bet over a call all-in for less) go back to its bettor."""
+    stk = _per(stack, npl)
     live = tuple(i for i in range(npl) if i not in folded)
-    c2 = list(c)
-    if len(live) == 1:
-        w = live[0]
-        back = max(bets[w] - max(bets[i] for i in range(npl) if i != w), 0.0)
-        c2[w] -= back
-        return live, pot_start + sum(bets) - back, c2, stack - max(bets)
-    return live, pot_start + sum(bets), c2, stack - max(bets)
+    c2, nb = list(c), list(bets)
+    w = max(range(npl), key=lambda i: bets[i])
+    back = max(bets[w] - max(bets[i] for i in range(npl) if i != w), 0.0) if npl > 1 else 0.0
+    if back > 1e-12:
+        c2[w] -= back; nb[w] -= back
+    else:
+        back = 0.0
+    return live, pot_start + sum(bets) - back, c2, tuple(stk[i] - nb[i] for i in range(npl))
+
+
+def _acting(cfg, live, behind):
+    """The live players with chips behind to bet (not all-in)."""
+    return tuple(i for i in live if i not in cfg.allin and behind[i] > 1e-9)
 
 
 class Exit:
@@ -413,43 +432,43 @@ class Builder:
 
     def build(self, board, pot_start, stack, bets, to_act, n_raises, pending):
         """The tree from a node in the middle of a street: `bets` this street per player, `stack` each player's
-        chips behind at the street's start (the same for all), `pending` the players still to act."""
+        chips behind at the street's start (one number: the same for all), `pending` the players still to act. A
+        player all-in at the root (MWConfig.allin) has its bet behind it; nobody has more than another can match."""
+        stk = list(_per(stack, self.np))
+        for a in self.cfg.allin:
+            stk[a] = bets[a]
+        stk = tuple(min(stk[p], max(stk[q] for q in range(self.np) if q != p)) for p in range(self.np))
+        self.stacks = stk
         c = list(bets)
         self._at_root = True
-        return self._decision([tuple(board)], pot_start, stack, list(bets), c, to_act, n_raises,
+        return self._decision([tuple(board)], pot_start, stk, list(bets), c, to_act, n_raises,
                               set(pending), frozenset())
 
     def _next(self, p, pending):
         return _next_player(self.np, p, pending)
 
     def _close(self, boards, pot_start, stack, bets, c, folded):
-        live = [i for i in range(self.np) if i not in folded]
         street_len = len(boards[0])
-        # (with a player all-in, one player left who bets has nobody to bet against: the cards are dealt out)
-        alone = len([i for i in live if i not in self.cfg.allin]) < 2
+        # (uncalled chips go back to their bettor: a lone winner's, or a bet over a call all-in for less)
+        live, pot, c2, behind = _street_end(self.np, pot_start, stack, bets, c, folded)
+        # (fewer than two live players with chips behind (the rest all-in) have nobody to bet against: the cards are
+        # dealt out)
+        alone = len(_acting(self.cfg, live, behind)) < 2
         if self.cfg.later == "buckets" and street_len < 5 and len(live) > 1:
-            lv, pot, c2, behind = _street_end(self.np, pot_start, stack, bets, c, folded)
             if alone:
-                behind = 0.0
-            e = Exit(lv, folded, pot, c2, behind)
+                behind = (0.0,) * self.np
+            e = Exit(live, folded, pot, c2, behind)
             self.exits.append(e)
             self.n_nodes += 1
             return e
         if len(live) == 1:
-            # uncalled chips go back to the winner
-            w = live[0]
-            back = bets[w] - max(bets[i] for i in range(self.np) if i != w)
-            c2 = list(c); c2[w] -= max(back, 0.0)
-            pot = pot_start + sum(bets) - max(back, 0.0)
-            return self._terminal(boards, tuple(live), pot, c2, "fold")
-        pot = pot_start + sum(bets)
-        behind = stack - max(bets)
+            return self._terminal(boards, live, pot, c2, "fold")
         if street_len == 5:
-            return self._terminal(boards, tuple(live), pot, list(c), "show")
-        if behind <= 1e-9 or alone or street_len - self.root_len + 1 >= self.cfg.depth:
+            return self._terminal(boards, live, pot, c2, "show")
+        if alone or street_len - self.root_len + 1 >= self.cfg.depth:
             # all-in, or the last street the tree bets on: the rest is dealt out (an equity leaf)
-            return self._runout(boards, tuple(live), pot, list(c))
-        return self._chance(boards, pot, behind, list(c), folded)
+            return self._runout(boards, live, pot, c2)
+        return self._chance(boards, pot, behind, c2, folded)
 
     def _terminal(self, boards, live, pot, c, kind):
         self.n_nodes += 1
@@ -482,7 +501,7 @@ class Builder:
 
     def _chance(self, boards, pot, behind, c, folded):
         k = self.cfg.turns if len(boards[0]) == 3 else self._k_rivers()
-        pending = {i for i in range(self.np) if i not in folded and i not in self.cfg.allin}
+        pending = set(_acting(self.cfg, [i for i in range(self.np) if i not in folded], behind))
         first = min(pending)
         return self._chance_node(boards, lambda cb: self._decision(cb, pot, behind, [0.0] * self.np, c, first, 0,
                                                                    set(pending), folded), k)
@@ -576,12 +595,13 @@ class _TX:            # ... the street's end with another street to come
 
 
 def _template(cfg, npl, street, pot, c, behind, folded):
-    """One line's later street from its start, as plain numbers: everyone live acts from the first, each with
-    `behind` chips; a street that closes with two or more live ends in a showdown on the river (or all-in), else in
-    a _TX to the next street."""
+    """One line's later street from its start, as plain numbers: everyone live with chips acts from the first, each
+    with its `behind` chips; a street that closes with two or more live ends in a showdown on the river (or with
+    fewer than two left to bet: all-in), else in a _TX to the next street."""
+    behind = _per(behind, npl)
     live = tuple(i for i in range(npl) if i not in folded)
-    acting = tuple(i for i in live if i not in cfg.allin)
-    if behind <= 1e-9 or len(acting) < 2:
+    acting = _acting(cfg, live, behind)
+    if len(acting) < 2:
         return _TT(live, pot, list(c), "show")
 
     def dec(bets, cc, p, n_raises, pending, fl):
@@ -593,7 +613,7 @@ def _template(cfg, npl, street, pot, c, behind, folded):
                 lv2, pot2, c2, b2 = _street_end(npl, pot, behind, nb, nc, nf)
                 if len(lv2) == 1:
                     kid = _TT(lv2, pot2, c2, "fold")
-                elif street == "river" or b2 <= 1e-9:
+                elif street == "river" or len(_acting(cfg, lv2, b2)) < 2:
                     kid = _TT(lv2, pot2, c2, "show")
                 else:
                     kid = _TX(lv2, frozenset(nf), pot2, c2, b2)
@@ -647,11 +667,21 @@ class BDecision(Decision):
 
 
 class BTerminal:
-    __slots__ = ("live", "pot", "c", "net", "kind", "X", "V", "fctx")
+    __slots__ = ("live", "pot", "c", "net", "kind", "X", "V", "fctx", "fm", "side")
 
     def __init__(self, live, pot, c, net, kind):
         self.live, self.pot, self.c, self.net, self.kind = live, pot, c, net, kind
         self.X = self.V = self.fctx = None
+        self.fm, self.side = None, live      # the main pot's share per row and the side pot's players (_split)
+
+
+def _bterminals(node):
+    """The later-street subtree's terminals (not its exits' streets)."""
+    if isinstance(node, BTerminal):
+        return [node]
+    if isinstance(node, BDecision):
+        return [t for ch in node.children for t in _bterminals(ch)]
+    return []
 
 
 def _first_term(node):
@@ -757,7 +787,7 @@ class BucketTables:
             else:
                 sd = [base]
             wt = R0 * masks[t] * (1.0 - mem[:, rep])
-            ids, tens = self._class(s, base, sd, wt, K)
+            ids, tens = (self._class if npl <= 3 else self._class_n)(s, base, sd, wt, K)
             self.ids[:, t] = ids[:, image[t]]
             for k in keys:
                 T[k][t] = tens[k]
@@ -766,27 +796,30 @@ class BucketTables:
         for i in range(npl):
             for t, (rep, _) in enumerate(cls):
                 Wb[i, t] = np.bincount(self.ids[i, t], weights=R0[i] * masks[t] * (1.0 - mem[:, rep]), minlength=K)[:K]
-        den = Wb[0][:, :, None] * Wb[1][:, None, :]
-        if npl == 3:
-            den = den[..., None] * Wb[2][:, None, None, :]
+        den = Wb[0]
+        for i in range(1, npl):
+            den = den[..., None] * Wb[i].reshape((C,) + (1,) * i + (K,))
         inv = np.where(den > 0, 1.0 / np.where(den > 0, den, 1.0), 0.0)
         self.OH = [np.eye(K)[self.ids[i]] for i in range(npl)]                 # (C, n, K) one-hot
         # the deals' total weight below the root scaled to the root's own (exact) mass: pairwise removal and the
         # classes move it a few percent
         X0 = self.to_buckets(s.reach0)
         Jt = T[("J",)] * inv
-        if npl == 3:
-            M_b = float((np.einsum("tabc,ta,tb,tc->t", Jt, X0[0], X0[1], X0[2]) * w).sum())
-        else:
-            M_b = float((np.einsum("tab,ta,tb->t", Jt, X0[0], X0[1]) * w).sum())
+        ax = "abcdefgh"[:npl]
+        M_b = float((np.einsum(f"t{ax}," + ",".join(f"t{x}" for x in ax) + "->t", Jt, *X0[:npl]) * w).sum())
         kappa = s.total_mass() / M_b if M_b > 0 else 1.0
         self.kappa = kappa
         inv *= kappa
         self.perm = {}
+        self.tp = {}     # the compiled core's (gto/mwcore.py): per player p, (C, K_o0, K_o1, K_p), p's buckets innermost
         for k in keys:
             Tk = T[k] * inv
             for p in (range(npl) if k[0] == "J" else [k[2]]):
                 o = [j for j in range(npl) if j != p]
+                self.tp[(k[:2], p)] = np.ascontiguousarray(np.transpose(Tk, (0,) + tuple(j + 1 for j in o) + (p + 1,)),
+                                                           dtype=np.float32)
+                if npl > 3:      # (contract_n: tp only)
+                    continue
                 if npl == 3:     # (t, a_r, a_p a_q): the buckets of r (either other player) first (contract, reduce)
                     for r in o:
                         q = o[0] if r == o[1] else o[1]
@@ -900,6 +933,77 @@ class BucketTables:
             out[("S", (i, j), j)] = sj
         return ids, out
 
+    def _class_n(self, s, base, sd, wt, K):
+        """_class for four or more players: a hand's share of a pot against the others' buckets is the product of its
+        heads-up shares against each (weaker + tied / 2: the others' hands independent given its own, each pair of them
+        overlap-corrected per combo on the class's board, as _term_pw), a folded player's hand only blocking cards;
+        bucketed by that share against everyone's whole range (over every river from a flop root)."""
+        h, npl, n = s.hands, s.np, s.hands.n
+        bd = Boards(h, sd)
+        bb = Boards(h, [base])
+        rm = 1.0 - h.mem[:, [b[4] for b in sd]].T if len(base) == 4 else np.ones((1, n))   # (R, n): the river's live
+        x = [wt[i][None, :] * rm for i in range(npl)]
+        kle = [bd.k_le(xi) for xi in x]
+        ku = [bd.k_u(xi)[0] for xi in x]
+        Rb = wt[:, None, :]
+        kub = [bb.k_u(Rb[i]) for i in range(npl)]
+        rho = {(q, r): MultiwaySolver._ratio(MultiwaySolver._mass(bb, Rb, q, r, kub[q], kub[r]), kub[q][0], kub[r][0])[0]
+               for q in range(npl) for r in range(q + 1, npl)}
+        corr = []
+        for p in range(npl):
+            c = np.ones(n)
+            for (q, r), v in rho.items():
+                if p not in (q, r):
+                    c = c * v
+            corr.append(c)
+        ids = np.zeros((npl, n), dtype=np.intp)
+        for i in range(npl):
+            num, den = rm.copy(), rm.copy()
+            for o in range(npl):
+                if o != i:
+                    num = num * (kle[o][0] + 0.5 * kle[o][1])
+                    den = den * ku[o]
+            num, den = num.sum(axis=0), den.sum(axis=0)
+            ids[i] = self._buckets(np.where(den > 0, num / np.where(den > 0, den, 1.0), 0.0), wt[i], K)
+        OH = [np.eye(K)[ids[i]] for i in range(npl)]                           # (n, K)
+        Wk, Uk, Ub = [], [], []
+        for i in range(npl):
+            xb = x[i][:, :, None] * OH[i][None]                                  # (R, n, K)
+            kl, ke = bd.k_le_multi(xb)
+            Wk.append(kl + 0.5 * ke); Uk.append(bd.k_u_multi(xb))
+            Ub.append(bb.k_u_multi((wt[i][:, None] * OH[i])[None])[0])          # (n, K) on the base board
+        sets = _live_sets(npl)
+        persp = {}
+        for p in range(npl):
+            o = [j for j in range(npl) if j != p]
+            hwB = wt[p] * corr[p]
+            hwR = hwB[None, :] * rm
+            mine = [lv for lv in sets if p in lv]
+            J = np.zeros((K,) * npl)
+            S = {lv: np.zeros((K,) * npl) for lv in mine}
+            for a in range(K):
+                idx = np.flatnonzero((ids[p] == a) & (wt[p] > 0))
+                if not len(idx):
+                    continue
+                J[a] = _outer_sum([Ub[o[0]][idx] * hwB[idx, None]] + [Ub[j][idx] for j in o[1:]])
+                hR = hwR[:, idx].reshape(-1, 1)
+                for lv in mine:
+                    fs = [(Wk[j] if j in lv else Uk[j])[:, idx, :].reshape(-1, K) for j in o]
+                    fs[0] = fs[0] * hR
+                    S[lv][a] = _outer_sum(fs)
+            axes = [p] + o
+            perm = [axes.index(k) for k in range(npl)]
+            persp[p] = {"J": np.transpose(J, perm), **{lv: np.transpose(S[lv], perm) for lv in mine}}
+        Jc = sum(persp[p]["J"] for p in range(npl)) / npl
+        out = {("J",): Jc}
+        for lv in sets:
+            parts = [persp[p][lv] for p in lv]
+            tot = sum(parts)
+            ok = tot > 0
+            for p, X in zip(lv, parts):
+                out[("S", lv, p)] = np.where(ok, X * Jc / np.where(ok, tot, 1.0), Jc / len(lv))
+        return ids, out
+
     # -- the root's per-combo reach into buckets and the buckets' values back
     def to_buckets(self, R):
         """(np, 1, n) per combo -> (np, C, K) per class and bucket."""
@@ -919,6 +1023,15 @@ class BucketTables:
         rows = X.shape[1]
         nb = rows // C
         o = [j for j in range(self.np) if j != p]
+        if self.np > 3:
+            # (C, K_o0, .., K_p): summed over each other player's reach in turn
+            T = self.tp[(key, p)]
+            X = X.astype(np.float32)
+            Xo = [X[j].reshape(nb, C, K).transpose(1, 0, 2) for j in o]       # (C, nb, K)
+            Y = np.matmul(Xo[0], T.reshape(C, K, -1))                         # (C, nb, K^(np-1))
+            for Xj in Xo[1:]:
+                Y = np.matmul(Xj[:, :, None, :], Y.reshape(C, nb, K, -1))[:, :, 0]
+            return Y.transpose(1, 0, 2).reshape(rows, K).astype(np.float64)
         T = self.perm[(key, p, o[-1])]
         X = X.astype(np.float32)        # (the tensors are float32: half the arithmetic of a float64 product)
         Xq = X[o[0]].reshape(nb, C, K).transpose(1, 0, 2)                      # (C, nb, K)
@@ -957,9 +1070,19 @@ def _bexits(node):
 
 
 def _live_sets(npl):
+    """The sets of two or more players a pot can be contested by (largest first)."""
     if npl == 3:
         return [(0, 1, 2), (0, 1), (0, 2), (1, 2)]
-    return [(0, 1)]
+    return [lv for k in range(npl, 1, -1) for lv in itertools.combinations(range(npl), k)]
+
+
+def _outer_sum(fs):
+    """sum over rows of the outer product of the rows of fs ((rows, K) each): shape (K,) * len(fs)."""
+    K = fs[0].shape[1]
+    P = fs[0]
+    for f in fs[1:-1]:
+        P = (P[:, :, None] * f[:, None, :]).reshape(P.shape[0], -1)
+    return (P.T @ fs[-1]).reshape((K,) * len(fs))
 
 
 # ------------------------------------------------------------------ solver
@@ -980,7 +1103,6 @@ class MultiwaySolver:
         self.np = len(ranges)
         assert 2 <= self.np <= MAX_PLAYERS
         # (four or more players: the streets after the root's dealt out, equity leaves; no hand buckets)
-        assert self.np <= 3 or self.cfg.later == "deal", "4+ players: later='deal' only"
         dead_all = set(board) | set(dead)
         bm = np.ones(N_FULL)
         for x in dead_all:
@@ -1004,12 +1126,15 @@ class MultiwaySolver:
         # pairwise terminals (_term_pw): four or more players, or three with two all-in (layered pots); else exact
         self._pw = self.np > 3 or len(self.cfg.allin) > 1
         assert not self.cfg.allin or self.np >= 3, "allin: three players or more"
-        assert not self._pw or self.cfg.later == "deal", "pairwise terminals: later='deal' only"
+        # (4+ players by buckets: at most one all-in, a main pot and a side pot, as the bucket terminals play them)
+        assert not self._pw or self.cfg.later == "deal" or (self.np > 3 and len(self.cfg.allin) <= 1), \
+            "pairwise terminals by buckets: four or more players, at most one all-in"
         self.pot_start, self.stack = pot, stack
         b = Builder(self.hands, self.cfg, self.np, dead_all - set(board))
         b.root_len = len(self.board)
         self.builder = b
         self.root = b.build(self.board, pot, stack, bets, to_act, n_raises, pending)
+        self.stacks = b.stacks           # (each player's chips behind at the root, as the tree plays them)
         self.root_bd = b.boards([self.board])
         self.decisions = b.decisions
         self.iters = 0
@@ -1045,6 +1170,8 @@ class MultiwaySolver:
             for mem in groups.values():
                 lvl.append(_Group(_zip([t for _, _, t in mem], C, K, cfg, sink), [(e, j) for e, j, _ in mem],
                                   _tlive(mem[0][2])))
+                for t in _bterminals(lvl[-1].tree):
+                    self._split(t)
             self.levels.append(lvl)
             self.decisions.extend(sink)
             self.builder.n_nodes += len(sink)
@@ -1198,10 +1325,11 @@ class MultiwaySolver:
                     m = tb.apply(MJ, t.X[q])
                     if p in t.live:
                         win = tb.apply(MS, t.X[q]) if len(t.live) > 1 else m
-                        # (with a player all-in: the side pot is p's alone here, the other bettor having folded)
-                        fm = self._main_share(t)
+                        # (with a player all-in for less: the side pot is p's alone here or not p's, the third
+                        # player having folded)
+                        fm = t.fm
                         if fm is not None:
-                            win = fm[:, None] * win + (1.0 - fm[:, None]) * (m if p not in self.cfg.allin else 0.0)
+                            win = fm[:, None] * win + (1.0 - fm[:, None]) * (m if p in t.side else 0.0)
                         t.V = t.net[:, None] * win - t.c[p][:, None] * m
                     else:
                         t.V = -t.c[p][:, None] * m
@@ -1217,13 +1345,12 @@ class MultiwaySolver:
         cut = np.cumsum([0] + rows)
         Xall = np.concatenate([t.X for t in terms], axis=1)
         mJ = tb.contract(("J",), p, Xall)
-        a = self.cfg.allin[0] if self.cfg.allin else None
-        # each terminal's pots by who contests them: the whole pot by its live players, or with a player all-in the
-        # main pot by everyone live and the side pot by the players who still bet
-        side = lambda t: tuple(j for j in t.live if j != a)
+        # each terminal's pots by who contests them: the whole pot by its live players, or with a player all-in for
+        # less the main pot by everyone live and the side pot by the players with more in (_split)
+        side = lambda t: t.side
         wins = {}
         for key, sel in (("all", lambda t: t.live), ("side", side)):
-            if key == "side" and a is None:
+            if key == "side" and all(t.fm is None for t in terms):
                 break
             for lv in {sel(t) for t in terms if len(sel(t)) > 1 and p in sel(t)}:
                 ix = [i for i, t in enumerate(terms) if sel(t) == lv]
@@ -1237,7 +1364,7 @@ class MultiwaySolver:
             m = mJ[cut[i]:cut[i + 1]]
             if p in t.live:
                 win = wins[("all", i)] if len(t.live) > 1 else m
-                fm = self._main_share(t)
+                fm = t.fm
                 if fm is not None:
                     sv = side(t)
                     ws = (wins[("side", i)] if len(sv) > 1 else m) if p in sv else 0.0
@@ -1250,14 +1377,25 @@ class MultiwaySolver:
             res.append(v)
         return res
 
-    def _main_share(self, t):
-        """A bucketed terminal's main pot as a share of its pot, per row, when a player all-in at the root contests it
-        (MWConfig.allin), else None."""
-        a = self.cfg.allin[0] if self.cfg.allin else None
-        if a is None or a not in t.live or len(t.live) < 2:
-            return None
-        pot = np.asarray(t.pot, dtype=np.float64)
-        return np.minimum(1.0, self.cfg.main / np.maximum(pot, 1e-12))
+    def _split(self, t):
+        """A bucketed terminal's pots (t.fm, t.side): with a player all-in for less on some row, the main pot's share
+        of each row's pot (1 where nobody is) and the players who contest the side pot; else (None, its live)."""
+        if len(t.live) < 2 or t.pot is None or not self.cfg.allin and len(set(self.stacks)) <= 1:
+            return
+        fm, side, memo = np.ones(len(t.pot)), None, {}
+        for r in range(len(t.pot)):
+            key = (tuple(t.c[:, r]), float(t.pot[r]))
+            lay = memo.get(key)
+            if lay is None:
+                lay = memo[key] = self._layers(t.live, t.c[:, r], float(t.pot[r]))
+            if len(lay) == 1:
+                continue
+            if len(lay) > 2 or (side is not None and lay[1][1] != side):
+                raise ValueError(f"a bucketed terminal with three pots or two side pots: {lay}")
+            side = lay[1][1]
+            fm[r] = lay[0][0] / float(t.pot[r])
+        if side is not None:
+            t.fm, t.side = fm, side
 
     def _pass(self, R, mode, p=None, node=None):
         """A walk from `node` (the root), the later streets (if any) evaluated first."""
@@ -1345,14 +1483,12 @@ class MultiwaySolver:
                     + kl + ke / 3.0, m
             return win * self._ratio(m, KU(q)[0], KU(r)[0]), m
 
-        # the pots and who contests each: the whole pot by the live players, or with a player all-in at the root
-        # (MWConfig.allin) the main pot by everyone live and the side pot by the players who still bet
-        a = self.cfg.allin[0] if self.cfg.allin else None
-        if a is not None and a in node.live and len(node.live) > 1 and node.pot > 1e-12:
-            fm = min(1.0, self.cfg.main / node.pot)
-            pots = [(net * fm, node.live), (net * (1.0 - fm), tuple(i for i in node.live if i != a))]
-        else:
-            pots = [(net, node.live)]
+        # the pots and who contests each: the whole pot by the live players, or with a player all-in for less the
+        # main pot by everyone live and the side pot by the players with more in (_layers)
+        if node.lay is None:
+            node.lay = self._layers(node.live, node.c, node.pot) if len(node.live) > 1 and node.pot > 1e-12 \
+                else [(node.pot, node.live)]
+        pots = [(net, node.live)] if len(node.lay) == 1 else [(net * amt / node.pot, lv) for amt, lv in node.lay]
         wins = [{} for _ in pots]
         for k, (_, live) in enumerate(pots):
             if not exact and npl == 3 and len(live) >= 2:
@@ -1375,25 +1511,29 @@ class MultiwaySolver:
 
     # -- four or more players: pairwise terminals and layered pots
     def _layers(self, live, c, pot):
-        """[(chips, players who contest them)]: the pot layered by the stakes of the live players all-in (each seat's
-        chips in: MWConfig.inv0 plus this street's `c`, and the dead seats'), the top layer the live players'."""
-        cfg = self.cfg
-        if not cfg.allin or not cfg.inv0:
+        """[(chips, players who contest them)]: the pot layered by the live players' stakes, each seat's chips in
+        (MWConfig.inv0, each player's before the root street (none given: the same for everyone), plus `c`, its chips
+        from the root street's start, and the dead seats' MWConfig.dead): each layer goes to the best hand among the
+        live players whose chips reach it. One layer, the whole pot, when every live player has the same in (or nobody
+        can be all-in for less: nobody all-in at the root and the stacks the same)."""
+        cfg, npl = self.cfg, self.np
+        if not cfg.allin and len(set(getattr(self, "stacks", ()))) <= 1:
             return [(pot, tuple(live))]
-        tot = [cfg.inv0[i] + c[i] for i in range(self.np)]
-        chips = tot + list(cfg.dead)
-        levels = sorted({tot[a] for a in cfg.allin if a in live} | {max(tot[i] for i in live)})
+        inv0 = cfg.inv0 or (0.0,) * npl
+        tot = [float(inv0[i]) + float(c[i]) for i in range(npl)]
+        levels = []
+        for x in sorted(tot[i] for i in live):
+            if not levels or x > levels[-1] + 1e-9:
+                levels.append(x)
+        if len(levels) == 1:
+            return [(pot, tuple(live))]
+        chips = tot + [float(x) for x in cfg.dead]
         out, prev = [], 0.0
         for lev in levels:
-            amt = sum(min(t, lev) - min(t, prev) for t in chips)
-            elig = tuple(i for i in live if tot[i] >= lev - 1e-9)
-            if amt > 1e-12 and elig:
-                out.append([amt, elig])
+            out.append([sum(min(t, lev) - min(t, prev) for t in chips), tuple(i for i in live if tot[i] >= lev - 1e-9)])
             prev = lev
-        rest = pot - sum(a for a, _ in out)      # (chips above the top stake: rounding, or a dead seat's)
-        if out:
-            out[0][0] += rest
-        return [tuple(x) for x in out] or [(pot, tuple(live))]
+        out[0][0] += pot - sum(a for a, _ in out)    # (the chips not counted per seat: before the root street, antes)
+        return [tuple(x) for x in out if x[0] > 1e-12] or [(pot, tuple(live))]
 
     def _pw_rho(self):
         """Per pair of players (j, k), per combo h of any other: the share of the j x k hand pairs compatible with h that
@@ -1599,9 +1739,19 @@ class MultiwaySolver:
             d.ssum *= np.float32(sf)
         self._ver = [v + 1 for v in self._ver]      # (every player's regrets changed)
 
+    def _core(self):
+        """The compiled core's program for this solve (gto/mwcore.py: a bucketed 2- or 3-player solve), or None."""
+        if not self.levels:
+            return None
+        from . import mwcore
+        return mwcore.program(self)
+
     def run(self, iters=1000, time_budget=None, min_iters=5, should_stop=None, reserve=0.0):
         """`time_budget` (seconds): no iteration starts that would end past it (by the mean iteration so far), with
         `reserve` more iterations' time kept back for what follows (br_gains and action_evs cost about two)."""
+        prog = self._core()
+        if prog is not None:
+            return self._run_core(prog, iters, time_budget, min_iters, should_stop, reserve)
         t0 = time.time()
         start = self.iters
         self._tmemo.clear(); self._smemo.clear()     # (kept within a run: its reaches are this run's root reaches')
@@ -1633,6 +1783,43 @@ class MultiwaySolver:
         self.seconds += time.time() - t0
         return self
 
+    def _run_core(self, prog, iters, time_budget, min_iters, should_stop, reserve):
+        """run() in the compiled core: iterations in chunks of about mwcore.CHUNK_S seconds, the budget and should_stop
+        checked between them (the same rule as run's: no iteration starts that would end past the budget), the regrets
+        and sums back in the solver's arrays after."""
+        from . import mwcore
+        t0 = time.time()
+        start = self.iters
+        per = None
+        try:
+            while self.iters - start < iters:
+                if should_stop is not None and should_stop():
+                    break
+                done = self.iters - start
+                el = time.time() - t0
+                if time_budget is not None and done >= min_iters and \
+                        el + (el / max(done, 1)) * (1.0 + reserve) > time_budget:
+                    self.out_of_time = True
+                    break
+                k = 1 if per is None else max(1, min(mwcore.MAX_CHUNK, int(mwcore.CHUNK_S / max(per, 1e-6))))
+                k = min(k, iters - done)
+                if time_budget is not None and per is not None and done >= min_iters:
+                    k = max(1, min(k, int((time_budget - el) / per - 1.0 - reserve)))
+                c0 = time.time()
+                prog.run(k, self.iters)
+                self.iters += k
+                dt = (time.time() - c0) / k
+                per = dt if per is None else 0.5 * per + 0.5 * dt
+                if time_budget is not None and self.iters - start >= min_iters and time.time() - t0 > time_budget:
+                    self.out_of_time = True
+                    break
+        finally:
+            prog.pull()
+        self._ver = [v + self.iters - start for v in self._ver]
+        self._gains_memo = None
+        self.seconds += time.time() - t0
+        return self
+
     # -- diagnostics and results
     def total_mass(self):
         """Total weight of the deals (sum over compatible hand tuples of the reach products)."""
@@ -1646,8 +1833,13 @@ class MultiwaySolver:
 
     def values(self):
         """Each player's expected value (bb, relative to the root street's start) under the average strategies."""
-        v = self._pass(self.reach0, "avg")
         m = self.total_mass()
+        prog = self._core()
+        if prog is not None:
+            R = self.reach0[:, 0, :]
+            from .mwcore import EV
+            return np.array([(prog.eval(self.root, EV, p, R) * R[p]).sum() for p in range(self.np)]) / m
+        v = self._pass(self.reach0, "avg")
         return np.array([(v[p][0] * self.reach0[p][0]).sum() for p in range(self.np)]) / m
 
     def br_gains(self):
@@ -1663,12 +1855,17 @@ class MultiwaySolver:
     def _br_gains(self):
         v = self.values()
         m = self.total_mass()
+        prog = self._core()
         out = []
         for p in range(self.np):
             if p in self.cfg.allin:   # (no decisions: nothing to gain)
                 out.append(0.0)
                 continue
-            br = self._pass(self.reach0, "br", p)
+            if prog is not None:
+                from .mwcore import BR
+                br = prog.eval(self.root, BR, p, self.reach0[:, 0, :])[None, :]
+            else:
+                br = self._pass(self.reach0, "br", p)
             out.append(float((br[0] * self.reach0[p][0]).sum()) / m - v[p])
         return np.array(out)
 
@@ -1694,6 +1891,14 @@ class MultiwaySolver:
         else:
             mass = self._mass_exact(bd, R, *others)
         evs = []
+        prog = self._core()
+        if prog is not None and node is not None and R.shape[1] == 1:
+            from .mwcore import EV, Unsupported
+            try:
+                _, kids = prog.eval(node, EV, p, R[:, 0, :], kids=True)
+                return np.where(mass > 1e-12, kids / np.where(mass > 1e-12, mass, 1.0), 0.0) + node.c[p]
+            except Unsupported:   # (a node the program doesn't hold: numpy's pass)
+                pass
         if self.levels:
             self._later(node, R, "avg", None)
         for ch in node.children:

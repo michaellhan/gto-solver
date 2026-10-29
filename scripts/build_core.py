@@ -1,6 +1,7 @@
 """Builds the compiled CFR core's browser modules from core/gtocore.c (gto/core.py; the native library is built from
 the same source on first use): gto/core.wasm, and gto/core-mt.wasm, the same with threads (shared memory, which
-worker.js gives it and its helper workers when the page is cross-origin isolated: gto/static/sw.js). It needs clang with the wasm32 target and wasm-ld: on a Mac Homebrew's
+worker.js gives it and its helper workers when the page is cross-origin isolated: gto/static/sw.js); and
+gto/mwcore.wasm, the multiway core (core/mwcore.c, gto/mwcore.py). It needs clang with the wasm32 target and wasm-ld: on a Mac Homebrew's
 llvm and lld (brew install llvm lld), found there or through $WASM_CC. The module carries the source's sha1
 (core_source), which tests/test_core.py checks against the source, so a change to the C needs this run again:
 
@@ -14,7 +15,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-from gto import core  # noqa: E402
+from gto import core, mwcore  # noqa: E402
 
 OUT = os.path.join(ROOT, "gto", "core.wasm")
 OUT_MT = os.path.join(ROOT, "gto", "core-mt.wasm")
@@ -51,6 +52,13 @@ def main():
     os.replace(tmp, OUT_MT)
     for p in (OUT, OUT_MT):
         print(f"{p}: {os.path.getsize(p)} bytes, source {sha}")
+    # the multiway core (gto/mwcore.py): one thread; bulk memory for the copies and fills clang emits
+    msha = mwcore.source_hash()
+    tmp = mwcore.WASM + ".tmp"
+    subprocess.run(cc[:5] + ["-mbulk-memory", f'-DCORE_SOURCE="{msha}"'] + cc[6:] + ["-o", tmp, mwcore.SRC],
+                   check=True, env=env)
+    os.replace(tmp, mwcore.WASM)
+    print(f"{mwcore.WASM}: {os.path.getsize(mwcore.WASM)} bytes, source {msha}")
 
 
 if __name__ == "__main__":

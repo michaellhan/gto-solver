@@ -161,10 +161,11 @@ class TestAdvisorStacks(unittest.TestCase):
         # a bet faces BTN alone: betting stays available beside the all-in player
         self.assertTrue(any(k.startswith("bet") for k in ev), ev)
 
-    def test_three_way_solve_short_stack_caps_the_bet_not_an_allin(self):
-        # a 12bb CO in a 3-way pot: the solve plays everyone at its 9.5bb behind, so the deep players' "all-in" there is
-        # a 9.5bb bet (recorded as all-in, the page put 97.5bb in, which the BB then faced outside the solve); the short
-        # CO's own all-in stays one
+    def test_three_way_solve_plays_each_stack_not_the_shortest(self):
+        # a 12bb CO in a 3-way pot: each player bets its own stack as far as another can match it, the CO's 9.5bb
+        # behind contesting the main pot (it was everyone at the CO's 9.5bb, the deep players' "all-in" a 9.5bb bet):
+        # the BTN's menu is the deep players' (half the pot; no all-in, 12 pots behind); the short CO's all-in is its
+        # whole stack
         adv = Advisor(Config(depth=1), time_budget=1e9)
         adv.mw_max_iters = 20
         pre = F("UTG", "HJ") + [R("CO", "raise", 2.5), R("BTN", "call")] + F("SB") + [R("BB", "call")]
@@ -173,34 +174,30 @@ class TestAdvisorStacks(unittest.TestCase):
               "turn": [R("BB", "check"), R("CO", "check"), R("BTN", "check")], "river": [R("BB", "check"), R("CO", "check")]}
         r = adv.advise(st)
         self.assertTrue(r.get("solved"), r.get("notes"))
-        names = [a["action"] for a in r["actions"]]
-        self.assertNotIn("all-in", names)
-        cap = [a for a in r["actions"] if a["amount_bb"] == 9.5]
-        self.assertEqual(len(cap), 1)
-        self.assertTrue(cap[0]["action"].startswith("bet "), names)
-        self.assertIn(cap[0]["action"], r["range_action_freq"])
-        # practice: the move is recorded as that bet, and replays as one (the BB to act next, facing 9.5)
+        self.assertEqual([a["action"] for a in r["actions"]], ["check", "bet 50%"])
+        self.assertEqual(r["stack_bb"], 97.5)
+        # practice: the move is the solve's (a bet of half the pot, 4bb)
         for s in range(8):
             m = adv.play(st, "BTN", "AsKd", seed=s)
             self.assertIn(m["action"], ("check", "bet"))
             if m["action"] == "bet":
-                self.assertLessEqual(m["to"], 9.5)
+                self.assertAlmostEqual(m["to"], 4.0)
+        # a bet of the CO's stack (off the solve's menu) is faced as made
         st_bet = dict(st, river=st["river"] + [R("BTN", "bet", 9.5)])
         r2 = adv.advise(dict(st_bet, hero="BB", hole="QcJc"))
         self.assertNotIn("error", r2)
         self.assertAlmostEqual(r2["to_call_bb"], 9.5)
-        # the same for a practice opponent's move read off the BB's own solve of the river
+        # a practice opponent's move is read off the BB's own solve of the river
         bb = dict(st, hero="BB", hole="QcJc", river=[])
         self.assertTrue(adv.advise(bb).get("solved"))
         n = len(adv._mw_cache)
         m = adv.play(dict(bb, river=st["river"]), "BTN", "AsKd", seed=1)
         self.assertEqual(len(adv._mw_cache), n)
-        self.assertNotIn("all-in", [a["action"] for a in m["actions"]])
-        self.assertTrue(any(a["action"].startswith("bet ") and a["amount_bb"] == 9.5 for a in m["actions"]), m)
-        # the short stack's all-in is its whole stack
+        self.assertEqual([a["action"] for a in m["actions"]], ["check", "bet 50%"])
         r3 = adv.advise(dict(st, hero="CO", hole="QdQc", river=[R("BB", "check")]))
         self.assertTrue(r3.get("solved"))
         self.assertIn("all-in", [a["action"] for a in r3["actions"]])
+        self.assertEqual(r3["stack_bb"], 9.5)
 
     def test_multiway_incomplete_raise_no_raise_option(self):
         # flop: hero (BB) bets 4, CO raises to 8, the 12bb BTN jams to 9.5: hero may raise (CO's raise was full)...

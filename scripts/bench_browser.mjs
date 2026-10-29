@@ -38,6 +38,7 @@ const F = (pos) => ({ pos, action: "fold" }), C = (pos) => ({ pos, action: "call
 const R = (pos, to) => ({ pos, action: "raise", to }), B = (pos, amount) => ({ pos, action: "bet", amount });
 const SRP = [F("UTG"), F("HJ"), F("CO"), R("BTN", 2.5), F("SB"), C("BB")];
 const MW = [F("UTG"), F("HJ"), R("CO", 2.5), C("BTN"), F("SB"), C("BB")];
+const MW4 = [F("UTG"), R("HJ", 2.5), C("CO"), C("BTN"), F("SB"), C("BB")];
 const base = (o) => ({ players: 6, stack: 100, preflop: SRP, flop: [], turn: [], river: [], ...o });
 const SRP_FLOP = [X("BB"), B("BTN", 1.8), C("BB")];                 // a third-pot c-bet called
 const SRP_TURN = [X("BB"), B("BTN", 6), C("BB")];                   // two thirds called
@@ -55,6 +56,8 @@ const SPOTS = {
   "mw-turn": base({ hero: "BB", hole: "Qh9h", board: "Kh7d2c9s", preflop: MW, flop: [X("BB"), X("CO"), X("BTN")] }),
   "mw-river": base({ hero: "BB", hole: "Qh9h", board: "Kh7d2c9s4h", preflop: MW, flop: [X("BB"), X("CO"), X("BTN")],
                      turn: [X("BB"), X("CO"), X("BTN")] }),
+  "mw4-flop": base({ hero: "BB", hole: "Qh9h", board: "Kh7d2c", preflop: MW4 }),               // 4-way, first to act
+  "mw4-turn": base({ hero: "BB", hole: "Qh9h", board: "Kh7d2c9s", preflop: MW4, flop: [X("BB"), X("HJ"), X("CO"), X("BTN")] }),
   "exploit": base({ hero: "BB", hole: "QhJh", board: "Ks7d2cTh", flop: SRP_FLOP, opponents: "pool" }),
   "lock": base({ hero: "BB", hole: "QhJh", board: "Ks7d2cTh", flop: SRP_FLOP, locks: { BTN: { fold: 15, bluff: 30 } } }),
   "raked": base({ hero: "BTN", hole: "AsQs", board: "Kc7d4h", flop: [X("BB")], rake: 0.05, rake_cap: 3 }),
@@ -118,15 +121,17 @@ async function startWorker(pyodideDir, bundlePath) {
   vm.createContext(ctx);
   const src = fs.readFileSync(arg("worker", path.join(STATIC, "worker.js")), "utf8");
   const t0 = performance.now();
+  // Python's `from js import ...` reads Node's global, not the sandbox's: the library's fetch and the cores the setup
+  // instantiates are read through to the sandbox's from the start (the setup asks for the multiway core, gto/mwcore.py
+  // lib(), and keeps the answer: set only after it, the bench ran every multiway solve in numpy)
+  for (const k of ["libFetch", "gtoCore", "mwCore"]) Object.defineProperty(globalThis, k, { get: () => ctx[k], configurable: true });
   vm.runInContext(src, ctx, { filename: "worker.js" });
-  globalThis.libFetch = ctx.libFetch;   // Python's `from js import ...` reads Node's global, not the sandbox's
   // the setup has run once the worker reports it is solving
   let stages = null;
   await new Promise((res, rej) => {
     onMsg = (m) => { if (m.status === "Solving…") { stages = m.setup || null; res(); } if (m.error) rej(new Error(m.error)); };
   });
   const setup = (performance.now() - t0) / 1000;
-  globalThis.gtoCore = ctx.gtoCore;   // (the compiled core the setup instantiated, for `from js import gtoCore`)
   const heap = () => py._module.HEAPU8.buffer.byteLength / 2 ** 20;
   let id = 0;
   const request = (state) => new Promise((res) => {

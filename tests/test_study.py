@@ -164,7 +164,8 @@ class TestStudy(unittest.TestCase):
 
     def test_three_way(self):
         """3-way pots after the flop: the 3-player solve's answer (the 3-way library's at its flops' checked-to
-        nodes), each opponent's range, equity on the river only (a share of the pot at showdown); 4+ refused."""
+        nodes), each opponent's range, equity on the river only (a share of the pot at showdown); 4-way by the
+        4-player solve, 5+ refused."""
         pre = PRE[:3] + [{"pos": "BTN", "action": "raise", "to": 2.5}, {"pos": "SB", "action": "call"},
                          {"pos": "BB", "action": "call"}]
         r = self.study(preflop=pre, board="Kd7c2h")
@@ -193,7 +194,13 @@ class TestStudy(unittest.TestCase):
                                                       runouts=True))["error"])
         pre4 = PRE[:2] + [{"pos": "CO", "action": "raise", "to": 2.5}, {"pos": "BTN", "action": "call"},
                           {"pos": "SB", "action": "call"}, {"pos": "BB", "action": "call"}]
-        self.assertIn("4 players", self.study(preflop=pre4, board="Kd7c2h")["error"])
+        r = self.study(preflop=pre4, board="Kd7c2h")
+        self.assertEqual((r["study"], r["street"], r["actor"], r["position"]), ("node", "flop", "SB", "1 of 4 to act"))
+        self.assertEqual([o["seat"] for o in r["opponents"]], ["BB", "CO", "BTN"])
+        self.check_totals(r)
+        pre5 = PRE[:1] + [{"pos": "HJ", "action": "raise", "to": 2.5}, {"pos": "CO", "action": "call"},
+                          {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "call"}, {"pos": "BB", "action": "call"}]
+        self.assertIn("5 players", self.study(preflop=pre5, board="Kd7c2h")["error"])
 
 
 if __name__ == "__main__":

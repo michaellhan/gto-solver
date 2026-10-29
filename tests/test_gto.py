@@ -1198,9 +1198,10 @@ class TestTableSizes(unittest.TestCase):
         adv.advise(dict(st, hole="7s6s"))
         self.assertLess(time.process_time() - c, 6.0)
 
-    def test_quick_answers_leave_a_3way_flop_to_the_rules(self):
-        # Practice's quick answers (~2 s) solve 3-way pots on the river only: a 3-way flop's tables alone take
-        # about a second in the browser, so the betting rules answer it, at once and without a solve
+    def test_quick_answers_solve_a_3way_flop_in_a_small_game(self):
+        # Practice's quick answers (~2 s) solve a 3-way flop in the smallest game (advisor.MW_QUICK_FLOP: 6 hand
+        # buckets, the flop betting half the pot; the browser's 1.8 s ran 114 iterations, 0.43% of the pot), and a
+        # 4-way one where Advisor.mw4_quick_flop allows (natively); the browser's (None) leaves it to the rules at once
         adv = Advisor(Config(depth=1), time_budget=4.0, prior_budget=2.0)
         adv.mw_trials = MW_TRIALS
         adv.mw_solve_streets = ("flop", "turn", "river")
@@ -1208,7 +1209,18 @@ class TestTableSizes(unittest.TestCase):
                {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
         st = {"players": 6, "hero": "BB", "hole": "AsKd", "board": "Kh7c2d", "preflop": pre, "flop": [], "quick": True}
         res = adv.advise(st)
+        self.assertTrue(res["multiway"]); self.assertTrue(res["solved"])
+        self.assertEqual(res["solver"]["tree_actions"], ["check", "bet 50%"])
+        self.assertTrue(any("by 6 hand buckets" in n for n in res["notes"]), res["notes"])
+        self.assertLess(res["solver"]["exploitability_pct"], 2.0)
+        pre4 = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "raise", "to": 2.5},
+                {"pos": "CO", "action": "call"}, {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"},
+                {"pos": "BB", "action": "call"}]
+        adv.mw4_quick_flop = None
+        adv._mw_cache.clear()
+        res = adv.advise(dict(st, preflop=pre4))
         self.assertTrue(res["multiway"]); self.assertNotIn("solved", res)
+        self.assertTrue(any("leaves a 4-way flop to the betting rules" in n for n in res["notes"]), res["notes"])
         self.assertEqual(adv._mw_cache, {})
 
     def test_quick_answers_narrow_an_unsolved_earlier_street_by_the_rules(self):

@@ -55,18 +55,43 @@ SMALL_BET = 0.33
 MW_LATER = {"later": "buckets", "buckets": 16}   # 3-way flop and turn solves: the later streets by hand buckets
 # 3-way flop solves bet a third or three quarters of the pot (the heads-up flop menu; the turn and river inside one size)
 MW_FLOP_BETS = {"flop": [0.33, 0.75], "turn": 0.5, "river": 0.5}
-# Fast's 3-way flop and turn solves: a smaller game (6 hand buckets, the turn's tables over every sixth river, the flop
-# betting half the pot), so they settle in seconds where MW_LATER's needs Accurate's minute in the browser (measured,
-# scripts/bench_browser.mjs, 8 s: a flop first to act 51 iterations, 2.6% of the pot from equilibrium in its game;
-# checked to 85, 0.44%; a turn 110, 0.15%). (Practice's quick answers leave 3-way flops and turns to the rules.)
-MW_QUICK_BUDGET = 1.8   # Practice's quick answers: a 3-way river's least budget (its tables take ~0.7 s in the browser:
-                        # at 1.2 s it ran 4 iterations, 19% of the pot from equilibrium; at 1.5, 7-19, 2-8.5%)
+# 3-way turn solves bet the heads-up turn menu, a third, three quarters or 125% of the pot (the river inside half): with
+# the compiled core (gto/mwcore.py) a turn iteration costs 8 ms one size, 25-48 ms three, in the browser. Checked to
+# on Kh8d3c9s (CO opens, BTN and BB call) the button bets 125% 30% of its range where it can (its bet 50%: 37%; with
+# 33/75 75% 36%), and its value is 1.3% of the pot more (natively 300 iterations: 0.03-0.2% from equilibrium)
+MW_TURN_BETS = {"flop": 0.33, "turn": [0.33, 0.75, 1.25], "river": 0.5}
+MW_QUICK_BUDGET = 1.8   # Practice's quick answers: a 3-way pot's least budget (a river's tables take ~0.7 s in the
+                        # browser: at 1.2 s it ran 4 iterations, 19% of the pot from equilibrium; at 1.5, 7-19, 2-8.5%)
+# a quick answer's 3-way turn: 8 buckets (in the browser's 1.8 s, the compiled core: 87 iterations, 0.58% of the pot
+# from equilibrium; 16 buckets in numpy ran 25, 7.1%)
+MW_QUICK_TURN = {"later": "buckets", "buckets": 8, "bet": MW_TURN_BETS}
+# a quick answer's 3-way flop the library doesn't hold (and natively a 4-way flop, Advisor.mw4_quick_flop): the smallest
+# game, 6 hand buckets, the turn's tables over every sixth river, the flop betting half the pot (a pot with a player
+# all-in keeps the street's own game: two bettors, small enough). In the browser's 1.8 s a flop first to act (Kh8d3c, CO
+# opens, BTN and BB call) ran 114 iterations, 0.43% of the pot from equilibrium; checked to twice 200, 0.07%. Natively
+# 88-128, 0.31-0.79%; a 4-way flop (Kh7d2c) 41, 1.07% (in the browser its tables took 1.6 s: 15 iterations, 9.4%)
+MW_QUICK_FLOP = {"later": "buckets", "buckets": 6, "bucket_river_step": 6, "bet": {"flop": [0.5], "turn": 0.5, "river": 0.5}}
+MW4_QUICK_FLOP = {"later": "buckets", "buckets": 6, "bucket_river_step": 6}
 # Study's 3-way flop (one the 3-way library doesn't hold) gets longer than the advice's: browsing waits for an answer,
 # and Fast's 5 s rarely settled one (natively on a loaded machine 12-23 iterations, 17-40% of the pot from equilibrium,
 # over mw_max_expl: no answer); in 15 s 51-77, 1.1-1.9% (Qs8h3d, Ah9s9d, Tc9c8d, BTN open, SB and BB call)
 MW_STUDY_FLOP_BUDGET = 15.0
-MW_FAST = {"later": "buckets", "buckets": 6, "bucket_river_step": 6}
-MW_FAST_STREETS = {"flop": dict(MW_FAST, bet={"flop": [0.5], "turn": 0.5, "river": 0.5}), "turn": dict(MW_FAST)}
+# Fast's 3-way flop and turn solves: the flop in a smaller game than Accurate's (12 hand buckets, the turn's tables over
+# every third river, the flop betting a third or three quarters of the pot: against the 32-bucket game played out to
+# 400 iterations, its values 2.2-3.1% of the pot apart where 16 buckets on every river are 1.8-2.2 and 6 on every sixth
+# 5.3-10.9; scripts/bench_mw_abstraction.py), the turn Accurate's. Measured (scripts/bench_browser.mjs; native 5 s,
+# gto/native.py): a flop first to act (Kh8d3c, CO opens, BTN and BB call) in the browser's 8 s 203 iterations, 0.25% of
+# the pot from equilibrium, natively 111-125, 0.7-1.05%; checked to twice 400, 0.03%; a turn 248-400, 0.04-0.1%
+MW_FAST_STREETS = {"flop": {"later": "buckets", "buckets": 12, "bucket_river_step": 3, "bet": MW_FLOP_BETS},
+                   "turn": dict(MW_LATER, bet=MW_TURN_BETS)}
+# 4-way flops and turns (nobody all-in): the 4-player solve, the later streets by hand buckets (the root street per combo,
+# card removal pair by pair: MultiwaySolver._term_pw), one bet a street and no raise but the player advised's
+# (root_raise), as the N-player river solve
+MW4_BETS = {"flop": 0.33, "turn": 0.5, "river": 0.5}
+MW4_STREETS = {"flop": {"later": "buckets", "buckets": 8, "bucket_river_step": 3},
+               "turn": {"later": "buckets", "buckets": 16}}
+MW4_FAST_STREETS = {"flop": {"later": "buckets", "buckets": 6, "bucket_river_step": 4},
+                    "turn": {"later": "buckets", "buckets": 8}}
 HU_RESERVE = 1.0   # heads-up solves likewise keep one iteration's time back (the exploitability read after: ~1 iteration)
 MW_SETTLED = 0.1   # a 3-way solve stops once its players' mean best-response gain is under this (% of the pot)...
 MW_CHECKS = (25, 50, 100, 200, 400, 700)   # ...checked at these iterations (about two iterations' time each). The
@@ -1193,9 +1218,18 @@ def _beats_note(hole, board, bettor: str, r: np.ndarray) -> Optional[str]:
 
 def _mw_applies(remaining, cur, stk) -> bool:
     """Whether the 3-way solver can take this node (Advisor._multiway_solve), whatever streets it's set to solve:
-    three players live, at most one of them all-in (the other two bet for a side pot: MWConfig.allin), and no bet
-    bigger than the shortest stack behind of the two who bet."""
+    three players live, at most one of them all-in (the other two bet for a side pot: MWConfig.allin), the two who bet
+    with chips behind (each plays its own stack: a call all-in for less plays for the main pot)."""
     if len(remaining) != 3 or len(set(remaining) & cur.allin) > 1:
+        return False
+    return min(stk[p] - cur.inv_start[p] for p in remaining if p not in cur.allin) > 1e-9
+
+
+def _mw4_applies(remaining, cur, stk) -> bool:
+    """Whether the 4-player bucketed solve can take this node: four players live on the flop or turn, at most one of
+    them all-in (the other three bet for a side pot), and no bet bigger than the shortest stack behind of those who
+    bet (they play that stack)."""
+    if len(remaining) != 4 or len(set(remaining) & cur.allin) > 1 or cur.name not in ("flop", "turn"):
         return False
     acting = [p for p in remaining if p not in cur.allin]
     S = min(stk[p] - cur.inv_start[p] for p in acting)
@@ -1706,9 +1740,10 @@ def _mw_line(board, hero, hole, stk, streets, street, n) -> tuple:
 
 
 def _mw_names(names, amounts, behind: float, S: float, pot_now: float) -> List[str]:
-    """A 3-way solve's action names as the player plays them. The solve plays everyone at the shortest stack behind
-    (S), so its all-in for a player with more is a bet (or raise) to S, not their whole stack: recorded as all-in on
-    the page, a deep player's all-in put 97.5 bb in where the solve bet 9.5 (a short stack's cap)."""
+    """A multiway solve's action names as the player plays them. The solve plays the player's stack as far as another
+    can match it (four or more: everyone at the shortest stack behind), S, so its all-in for a player with more is a
+    bet (or raise) to S, not their whole stack: recorded as all-in on the page, a deep player's all-in put 97.5 bb in
+    where the solve bet 9.5 (a short stack's cap)."""
     out = list(names)
     facing = bool(names) and names[0] == "fold"   # (fold is offered only facing a bet; else nothing is in this street)
     for i, (nm, amt) in enumerate(zip(names, amounts)):
@@ -1742,13 +1777,20 @@ class Advisor:
         self.mw_config: Optional[dict] = None
         # per street MWConfig overrides: from the flop and turn the later streets are bet on by hand buckets (dealt out
         # as equity leaves, a flop solve bet half as often as published solves: README, 3-way pots)
-        self.mw_street_config: Dict[str, dict] = {"flop": dict(MW_LATER, bet=MW_FLOP_BETS), "turn": dict(MW_LATER)}
+        self.mw_street_config: Dict[str, dict] = {"flop": dict(MW_LATER, bet=MW_FLOP_BETS),
+                                                  "turn": dict(MW_LATER, bet=MW_TURN_BETS)}
         self.mw_max_iters: int = 1000
         self.mw_budget: Optional[float] = None   # a 3-way solve's budget when longer than time_budget (native Fast's 2.5 s)
         self.mw_max_expl: float = 10.0   # a solve further than this from equilibrium (% pot) hands over to the rules
         # the N-player solve (four or more in, or two all-in): at most this many players (the browser's numpy takes 5-way
         # rivers past its budget: gto/static/worker.js lowers it)
         self.mw_nway_max: int = 6
+        # 4-way flops and turns (_mw4_applies): the 4-player solve's game per street (MW4_STREETS; Fast MW4_FAST_STREETS),
+        # on the streets in mw_solve_streets
+        self.mw4_street_config: Dict[str, dict] = {s: dict(c) for s, c in MW4_STREETS.items()}
+        # ...and a quick answer's 4-way flop (None: the betting rules; the browser's, where its tables alone take the
+        # budget: gto/static/worker.js)
+        self.mw4_quick_flop: Optional[dict] = dict(MW4_QUICK_FLOP)
         # an earlier 3-way street with no solve from your advice on it: solve it from its start (prior_budget) to narrow
         # the ranges through (_mw_walk); off: the rules narrow it (native Accurate on: its 12 s settle a flop enough)
         self.mw_prior_solve = False
@@ -2715,10 +2757,10 @@ class Advisor:
         if self._lib_only and len(cur.players_start) > 2:
             return {"skipped": "multiway: not a flop-library spot"}
         mw_streets = [st for st in rep[1:] if len(st.players_start) > 2]
-        big = [st for st in mw_streets if len(st.players_start) > 3]
+        big = [st for st in mw_streets if len(st.players_start) > 4]
         if self._study and big:
-            return {"error": f"Study mode browses heads-up and 3-way pots after the flop: {len(big[0].players_start)} "
-                             f"players saw the {big[0].name}"}
+            return {"error": f"Study mode browses heads-up, 3-way and 4-way pots after the flop: "
+                             f"{len(big[0].players_start)} players saw the {big[0].name}"}
         slow: Dict[str, np.ndarray] = {}
         by_rules = []
         for st in mw_streets:
@@ -2771,8 +2813,9 @@ class Advisor:
                 return res
             if self._study:   # (Study shows a solve or nothing: not the betting rules)
                 why = notes[n_notes] if len(notes) > n_notes else (
-                    "the 3-way solver plays three players with chips and no bet bigger than the shortest stack can call")
-                return {"error": f"Study can't solve this 3-way spot: {why}"}
+                    f"the {len(remaining)}-way solver plays {len(remaining)} players with chips and no bet bigger than the "
+                    f"shortest stack can call" if len(remaining) <= 4 else "it solves at most 4-way pots before the river")
+                return {"error": f"Study can't solve this {len(remaining)}-way spot: {why}"}
             return self._multiway(hero, hole, board, ranges, remaining, cur, stk, t0, notes)
         villain = live_opps[0]
         post = cur.order
@@ -3107,23 +3150,31 @@ class Advisor:
         from . import multiway_solver as MW
         fallback_notes, notes = notes, list(notes)
         exact3 = _mw_applies(remaining, cur, stk)
-        nway = not exact3 and _nway_applies(remaining, cur, stk, hero, self.mw_nway_max)
+        four = not exact3 and self.mw4_street_config is not None and _mw4_applies(remaining, cur, stk)
+        nway = not exact3 and not four and _nway_applies(remaining, cur, stk, hero, self.mw_nway_max)
         # (the N-player solve off the river is the hand of the only player with chips: nothing to solve but its call)
-        if not self.mw_solve_streets or not (exact3 and cur.name in self.mw_solve_streets
+        if not self.mw_solve_streets or not ((exact3 or four) and cur.name in self.mw_solve_streets
                                              or nway and (cur.name != "river" or "river" in self.mw_solve_streets)):
             return None
-        # (quick: rivers only, but a pot with a player all-in on any street: two bettors, solved in the browser in 1.4-1.6
-        # s on a flop or turn, 100 iterations, 0.05% of the pot from equilibrium)
-        if getattr(self, "_quick", False) and cur.name != "river" and not set(remaining) & cur.allin:
+        # (quick: rivers and turns (MW_QUICK_TURN), and a pot with a player all-in on any street: two bettors, solved in
+        # the browser in 1.4-1.6 s on a flop or turn, 100 iterations, 0.05% of the pot from equilibrium)
+        quick = getattr(self, "_quick", False)
+        if four and quick and cur.name == "flop" and self.mw4_quick_flop is None:
+            fallback_notes.append("a quick answer leaves a 4-way flop to the betting rules (Fast and Accurate solve it)")
             return None
         players = [p for p in cur.order if p in remaining]          # postflop acting order
         behind = {p: stk[p] - cur.inv_start[p] for p in players}
-        # a player all-in (at most one, _mw_applies) doesn't act: the others bet for the side pot, at the shorter stack
-        # behind of the two; the main pot (everyone's chips up to the all-in's) goes to the best of the three
+        # a player all-in (at most one, _mw_applies) doesn't act: the others bet for the side pot; the main pot
+        # (everyone's chips up to the all-in's) goes to the best of the three
         shoved = [p for p in players if p in cur.allin]
         S = min(v for p, v in behind.items() if p not in shoved)
-        # (N players: an all-in bet the others can't match in full is played at what they can: the rest comes back)
-        bets = [min(cur.bets[p], S) if nway else cur.bets[p] for p in players]
+        # 3-way: each player bets its own stack (the deepest only what another can match); a player all-in for less
+        # contests the main pot, the others the side pot (MWConfig.inv0). Four or more: everyone the shortest stack
+        uneven = max(v for p, v in behind.items() if p not in shoved) - S > 1e-6
+        stacks = tuple(float(behind[p]) for p in players) if exact3 and uneven else S
+        # (an all-in bet the others can't match in full is played at what they can: the rest comes back; N players at
+        # the shortest stack)
+        bets = [min(cur.bets[p], S if nway or four else max(behind[q] for q in players if q != p)) for p in players]
         dead_bets = sum(b for q, b in cur.bets.items() if q not in remaining)
         pot0 = cur.pot_start + dead_bets
         hp = players.index(hero)
@@ -3135,7 +3186,13 @@ class Advisor:
         pending = {i for i, p in enumerate(players) if p not in cur.acted}
         pending.add(hp)
         n_act = len(players) - len(shoved)
-        if nway:
+        if four:
+            # 4-way flops and turns: the later streets by hand buckets (MW4_STREETS), one bet a street, no raises but
+            # yours; card removal pairwise on this street, as the N-player solve's
+            mcfg = MW.MWConfig(rake_rate=self.cfg.rake_rate, rake_cap=self.cfg.rake_cap, bet=MW4_BETS, max_raises=1,
+                               root_raise=True, **(self.mw4_quick_flop if quick and cur.name == "flop" else
+                                                   self.mw4_street_config.get(cur.name, {})))
+        elif nway:
             # Four or more in (or three, two of them all-in): pairwise card removal (the others' hands independent
             # given yours, their overlap corrected), the pots layered by the all-in players' stakes, a bet of half the
             # pot; with four or more betting one bet a street and no raises but yours (MWConfig.root_raise: a raise
@@ -3148,25 +3205,36 @@ class Advisor:
             for a in shoved:
                 pending.discard(players.index(a))
         else:
+            street_cfg = MW_QUICK_TURN if quick and cur.name == "turn" else MW_QUICK_FLOP if quick and cur.name == "flop" \
+                and not shoved else self.mw_street_config.get(cur.name, {})
             mcfg = MW.MWConfig(rake_rate=self.cfg.rake_rate, rake_cap=self.cfg.rake_cap,
-                               **{**self.mw_street_config.get(cur.name, {}), **(self.mw_config or {})})
+                               **{**street_cfg, **(self.mw_config or {})})
         if getattr(self, "_jam", False):
             mcfg.root_jam = True   # (a jam request: all-in offered however deep, at your decision: the solve's root)
+        if (exact3 or four) and (shoved or isinstance(stacks, tuple)):
+            # (the pots layered by each seat's chips in: before this street, inv0, and the folded seats', dead)
+            mcfg.inv0 = tuple(float(cur.inv_start[p]) for p in players)
+            mcfg.dead = tuple(float(cur.inv_start[q] + cur.bets[q]) for q in cur.inv_start if q not in remaining)
         if shoved and not nway:
             a = shoved[0]
             cap = cur.inv_start[a] + cur.bets[a]
             mcfg.allin = (players.index(a),)
-            mcfg.main = float(sum(min(cur.inv_start[q] + cur.bets[q], cap) for q in cur.inv_start))
+            # (the main pot once the others match the all-in)
+            main = cap * len(remaining) + sum(min(cur.inv_start[q] + cur.bets[q], cap) for q in cur.inv_start
+                                              if q not in remaining)
             pending.discard(players.index(a))
-            notes.append(f"{a} is all-in: the main pot ({mcfg.main:.1f} bb) goes to the best of the three hands, the rest "
-                         f"(the side pot) to the better of yours and {next(q for q in players if q not in (hero, a))}'s")
+            rest = [q for q in players if q not in (hero, a)]
+            notes.append(f"{a} is all-in: the main pot ({main:.1f} bb) goes to the best of the {['', '', 'two', 'three', 'four'][len(players)]} hands, "
+                         f"the side pot to the " + (f"better of yours and {rest[0]}'s" if len(rest) == 1 else
+                                                   f"best of yours, {', '.join(rest[:-1])}'s and {rest[-1]}'s"))
         inc = () if hi is None or any(r[hi] > 0 for r in rs) else (hi,)    # (a hand nobody's range holds still gets solved)
-        key = (tuple(board), tuple(_range_key(r) for r in rs), round(pot0, 2), round(S, 2), tuple(round(b, 2) for b in bets),
+        key = (tuple(board), tuple(_range_key(r) for r in rs), round(pot0, 2),
+               tuple(round(x, 2) for x in stacks) if isinstance(stacks, tuple) else round(S, 2), tuple(round(b, 2) for b in bets),
                hp, cur.n_raises, tuple(sorted(pending)), repr(mcfg), inc)
         sol = self._mw_cache.get(key)
         if sol is None:
-            sol = MW.MultiwaySolver(board, rs, pot0, S, bets=bets, to_act=hp, n_raises=cur.n_raises, pending=pending,
-                                    cfg=mcfg, include=inc)
+            sol = MW.MultiwaySolver(board, rs, pot0, stacks, bets=bets, to_act=hp, n_raises=cur.n_raises,
+                                    pending=pending, cfg=mcfg, include=inc)
             self._mw_cache[key] = sol
         # the budget covers the whole answer: the tree and bucket tables (a flop's take 1-2 s natively, a few in the
         # browser), the iterations, and the gains and EVs read off after them (MW_RESERVE iterations' time)
@@ -3181,10 +3249,13 @@ class Advisor:
         root = sol.root
         if not isinstance(root, MW.Decision) or root.player != hp:
             return None
-        if getattr(self, "_jam", False) and "all-in" not in _mw_names(root.names, root.amounts, behind[hero], S, root.pot_now):
-            # a jam request the solve can't price (it plays everyone at the shortest stack: a 0.6bb one left no jam
-            # against the deep player): the betting rules, which play each seat's own stack, price it
-            fallback_notes.append("the 3-way solve plays everyone at the shortest stack, so the betting rules price your all-in")
+        S_h = sol.stacks[hp]          # (your chips behind as the solve plays them: at most what another can match)
+        if getattr(self, "_jam", False) and "all-in" not in _mw_names(root.names, root.amounts, behind[hero], S_h,
+                                                                      root.pot_now):
+            # a jam request the solve can't price (four or more play everyone at the shortest stack: a 0.6bb one left
+            # no jam against the deep player): the betting rules, which play each seat's own stack, price it
+            fallback_notes.append(f"the {len(players)}-way solve plays everyone at the shortest stack, so the betting "
+                                  f"rules price your all-in")
             return None
         gains = sol.br_gains() / sol.root_pot() * 100        # each player's best-response gain, % of the pot
         # (the mean over the players who bet: an all-in player has no decisions, nothing to gain)
@@ -3199,7 +3270,7 @@ class Advisor:
             self._mw_lines[line] = (sol, players, expl)   # practice opponents and later streets read it (_mw_walk)
         strat = root.avg_strategy()[0]
         evs = sol.action_evs()
-        shown = _mw_names(root.names, root.amounts, behind[hero], S, root.pot_now)
+        shown = _mw_names(root.names, root.amounts, behind[hero], S_h, root.pot_now)
         if not self._study:   # (Study: no cards of the actor's own; the whole range's answer, _study_mw_node)
             ci = sol.combo_index(hole)
             mine = sol.hand_strategy(ci, hp)
@@ -3242,6 +3313,9 @@ class Advisor:
             street_note["flop"] = (f"the turn and river bet on too, by {mcfg.buckets} hand buckets a player on one turn card "
                                    f"per rank class, the river played on the turn's boards without its card")
         sizes = MW.bet_sizes(mcfg, cur.name)
+        if four:
+            street_note[cur.name] += ("; card removal between the hands taken pair by pair (each opponent's hand "
+                                      "independent of the others' given yours, their overlap corrected)")
         if nway:
             street_note = {s_: "the cards to come dealt out: nobody else has chips to bet" for s_ in ("flop", "turn")}
             street_note["river"] = ("card removal between the hands taken pair by pair (each opponent's hand independent "
@@ -3262,11 +3336,15 @@ class Advisor:
                      + f", {raises} and all-in; {street_note[cur.name]}")
         if (cur.acted or cur.n_raises) and not any(n.startswith(f"{cur.name}: 3-way, ranges narrowed") for n in notes):
             notes.append("this street's earlier actions narrow the ranges by the betting rules; the solve starts from here")
-        if max(behind.values()) - S > 0.05 * S:
+        if isinstance(stacks, tuple):
+            notes.append("stacks differ: each player bets their own stack (" + ", ".join(
+                f"{p} {x:.1f}" for p, x in zip(players, sol.stacks)) + " bb behind, as far as another can match it); "
+                "a player all-in for less plays for the main pot, the others for the side pot too")
+        elif max(behind.values()) - S > 0.05 * S:
             notes.append(f"stacks differ: everyone plays the shortest stack behind ({S:.1f} bb)")
         notes.append(f"best-response gains (% pot): " + ", ".join(f"{p} {g:.2f}" for p, g in zip(players, gains)))
         if self._study:
-            return self._study_mw_node(sol, root, sol.reach0, players, hp, shown, strat, evs, to_call, S - bets[hp], board,
+            return self._study_mw_node(sol, root, sol.reach0, players, hp, shown, strat, evs, to_call, S_h - bets[hp], board,
                                        cur, positions or [], {
                                            "iterations": sol.iters, "solve_seconds": round(sol.seconds, 2),
                                            "nodes": sol.builder.n_nodes, "active_combos": sol.hands.n,
@@ -3276,7 +3354,7 @@ class Advisor:
         out = {"street": cur.name, "hero": hero, "hand": hand_class(hole), "board": cards_str(board),
                "players": len(players), "multiway": True, "solved": True, "opponents": opps,
                "position": f"{hp + 1} of {len(players)} to act",
-               "pot_bb": round(root.pot_now, 2), "to_call_bb": round(to_call, 2), "stack_bb": round(S - bets[hp], 2),
+               "pot_bb": round(root.pot_now, 2), "to_call_bb": round(to_call, 2), "stack_bb": round(S_h - bets[hp], 2),
                "actions": acts, "recommended": best, "sampled": sampled,
                "grid": strategy_grid([sf[a] for a in range(len(root.names))], shown, hero_r),
                "range_action_freq": {name: round(float((sf[a] * w).sum()), 3) for a, name in enumerate(shown)},
@@ -4405,16 +4483,17 @@ class Advisor:
         None (someone all-in at its start)."""
         from . import multiway_solver as MW
         players = [p for p in st.order if p in st.players_start]
-        S = min(stk[p] - st.inv_start[p] for p in players)
-        if S <= 1e-9:
+        stacks = tuple(round(float(stk[p] - st.inv_start[p]), 2) for p in players)    # (each its own: side pots)
+        if min(stacks) <= 1e-9:
             return None
         rs = [ranges.get(p, np.ones(N_COMBOS)) for p in players]
         mcfg = MW.MWConfig(rake_rate=self.cfg.rake_rate, rake_cap=self.cfg.rake_cap,
                            **{**self.mw_street_config.get(st.name, {}), **(self.mw_config or {})})
-        key = (tuple(board), tuple(_range_key(r) for r in rs), round(st.pot_start, 2), round(S, 2), "start", repr(mcfg))
+        key = (tuple(board), tuple(_range_key(r) for r in rs), round(st.pot_start, 2), stacks, "start", repr(mcfg))
         sol = self._mw_cache.get(key)
         if sol is None:
-            sol = self._mw_cache[key] = MW.MultiwaySolver(board, rs, st.pot_start, S, cfg=mcfg)
+            sol = self._mw_cache[key] = MW.MultiwaySolver(board, rs, st.pot_start,
+                                                          stacks if len(set(stacks)) > 1 else stacks[0], cfg=mcfg)
         self._mw_run(sol, self.prior_budget - sol.build_seconds - sol.seconds)
         self._keep("_mw_cache", key, sol)
         gains = sol.br_gains() / sol.root_pot() * 100
@@ -4462,8 +4541,8 @@ class Advisor:
         # its range gives it no weight) the regret-matching one, which still learns from its counterfactual values
         mix = node.avg_strategy()[0][:, ci] if R[q, 0, ci] > 1e-12 and node.ssum[0, :, ci].sum() > 0 \
             else node.strategy()[0][:, ci]
-        S = min(stk[p] - cur.inv_start[p] for p in players if p not in cur.allin)   # (the players who bet: as solved)
-        names = _mw_names(node.names, node.amounts, stk[seat] - cur.inv_start[seat], S, node.pot_now)
+        # (the seat's chips behind as solved: at most what another can match)
+        names = _mw_names(node.names, node.amounts, stk[seat] - cur.inv_start[seat], sol.stacks[q], node.pot_now)
         return {"street": cur.name, "solved": True,
                 "actions": [{"action": nm, "freq": round(float(mix[a]), 3),
                              "amount_bb": None if node.amounts[a] is None else round(float(node.amounts[a]), 2)}
