@@ -446,6 +446,73 @@ class TestFlopLibrary(unittest.TestCase):
             self.assertNotIn("precomputed", r)
 
 
+class TestOtherGames(unittest.TestCase):
+    """Spots of another game than 6-max 100bb (flop_library.Format, FORMAT_SPOTS): ids and labels carrying the game,
+    the line played at that table, the spot as the advisor plays it there, and an entry the advisor finds in that game
+    only (keyed by the two ranges, the pot and the stack) and the page loads in it (the index's "game")."""
+
+    def test_formats(self):
+        for tag in ("", "40bb", "8max", "a0.125", "9max_60bb_a0.125", "straddle", "2max_50bb"):
+            self.assertEqual(fl.Format.parse(tag).tag, tag)
+        self.assertEqual(fl.Format.parse("default"), fl.DEFAULT_FORMAT)
+        self.assertEqual(fl.Format(stack=40, ante=0.125).label, "40bb, 0.125bb ante")
+        with self.assertRaises(ValueError):
+            fl.Format.parse("40xx")
+        spots = fl.all_spots()
+        ids = [s[0] for s in spots]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertEqual([s[:3] for s in spots[:len(fl.SPOTS)]], [tuple(s) for s in fl.SPOTS])
+        base = {s[0]: s for s in fl.SPOTS}
+        for tag, which in fl.FORMAT_SPOTS.items():
+            fmt = fl.Format.parse(tag)
+            got = fl.all_spots([tag])
+            self.assertEqual([s[0] for s in got], [f"{b}_{tag}" for b in which])
+            for (sid, label, line, f), b in zip(got, which):
+                self.assertEqual(f, fmt)
+                self.assertEqual(label, f"{base[b][1]}, {fmt.label}")
+        # the line at another table: the same raises and calls, the extra seats folding in turn; a seat the table
+        # doesn't have is refused
+        line = dict((s[0], s[2]) for s in fl.SPOTS)["srp_btn_bb"]
+        self.assertEqual(fl.format_line(line, fl.DEFAULT_FORMAT), line)
+        eight = fl.format_line(line, fl.Format(players=8))
+        self.assertEqual(eight.split(",")[-3:], ["BTN:r2.5", "SB:f", "BB:c"])
+        self.assertEqual(len(eight.split(",")), 8)
+        self.assertEqual(fl.format_line(line, fl.Format(stack=40)), line)
+        with self.assertRaises(ValueError):
+            fl.format_line(dict((s[0], s[2]) for s in fl.SPOTS)["srp_utg_bb"], fl.Format(players=3))
+
+    def test_other_game_entry(self):
+        sid, label, line, fmt = next(s for s in fl.all_spots(["200bb"]) if s[0] == "srp_utg_bb_200bb")
+        s = fl.spot_setup(line, fmt.players, fmt.stack, fmt.ante, fmt.straddle)
+        s100 = fl.spot_setup(line)
+        self.assertEqual((s["pot"], s["stack"]), (s100["pot"], 197.5))
+        sol = solve(cards(CANON), s["full0"], s["full1"], s["pot"], s["stack"], cfg=fl.library_config(s["pot"], s["stack"]),
+                    time_budget=1e9, max_iters=40)
+        d = tempfile.mkdtemp()
+        try:
+            os.makedirs(os.path.join(d, sid))
+            with open(os.path.join(d, sid, CANON + ".bin"), "wb") as f:
+                f.write(fl.encode(sol, dict(build._meta(sid, s), board=CANON)))
+            idx = build.write_index(d, fl.all_spots())
+            self.assertEqual([sp["id"] for sp in idx["spots"]], [sid])
+            sp = idx["spots"][0]
+            self.assertEqual((sp["label"], sp["line"], sp["game"]), (label, line, fmt.as_dict()))
+            with open(os.path.join(d, sid, "report.json")) as f:
+                self.assertEqual(json.load(f)["game"], fmt.as_dict())
+            lib = fl.FlopLibrary.from_dir(d)
+            self.assertEqual(lib.spot(sp["fp"][0], sp["fp"][1], s["pot"], s["stack"])["id"], sid)
+            # the advisor finds it in that game, and not at 100bb
+            adv = Advisor(fl.library_config(), time_budget=0.3, prior_budget=0.2)
+            adv.library = lib
+            base = {"hero": s["oop"], "hole": _hole_in(s["full0"], BOARD, 3), "board": BOARD, "preflop": parse_actions(line)}
+            r = adv.advise(dict(base, stack=200))
+            self.assertIn("precomputed", r, r.get("notes"))
+            self.assertEqual(r["solver"]["iterations"], 40)
+            self.assertNotIn("precomputed", adv.advise(dict(base, stack=100)))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
 class TestShippedLibrary(unittest.TestCase):
     def test_index_matches_the_charts(self):
         """The shipped library (gto/static/flop_library) was built for the current charts and tree: every spot in
@@ -456,10 +523,12 @@ class TestShippedLibrary(unittest.TestCase):
         with open(path) as f:
             idx = json.load(f)
         self.assertEqual(fl._key_str(idx["tree"]), fl._key_str(fl.tree_key(fl.library_config())))
-        lines = {s[0]: s[2] for s in fl.SPOTS}
+        spots = {s[0]: s for s in fl.all_spots()}
         total = 0
         for sp in idx["spots"]:
-            s = fl.spot_setup(lines[sp["id"]])
+            _, _, line, fmt = spots[sp["id"]]
+            self.assertEqual(sp.get("game"), None if fmt == fl.DEFAULT_FORMAT else fmt.as_dict())
+            s = fl.spot_setup(line, fmt.players, fmt.stack, fmt.ante, fmt.straddle)
             self.assertEqual(sp["fp"], [fl.range_fp(s["full0"]), fl.range_fp(s["full1"])],
                              f"{sp['id']}: the charts changed; rebuild with scripts/build_flop_library.py")
             self.assertEqual((sp["pot"], sp["stack"]), (s["pot"], s["stack"]))

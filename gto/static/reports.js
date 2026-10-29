@@ -149,7 +149,9 @@
     if (view === "vsbet" && nd) flop.push({ pos: ip, action: "bet", to: Math.round(parseFloat(nd.bet.match(/[\d.]+/)[0]) / 100 * rep.pot * 100) / 100 });
     const hand = nd ? fl.h[nd.key] : null;
     const hole = hand ? [hand.slice(0, 2), hand.slice(2, 4)] : [null, null];
-    return { players: 6, hero: VIEWS[view].player ? ip : oop, stack: 100, cards: [...hole, ...cardsOf(f), null, null], actions: { preflop: pre, flop, turn: [], river: [] } };
+    const g = rep.game || {};     // (a spot of another game than 6-max 100bb: {players, stack, ante, straddle})
+    return { players: g.players || 6, hero: VIEWS[view].player ? ip : oop, stack: g.stack || 100, ...(g.ante ? { ante: g.ante } : {}),
+             ...(g.straddle ? { straddle: true } : {}), cards: [...hole, ...cardsOf(f), null, null], actions: { preflop: pre, flop, turn: [], river: [] } };
   }
 
   // ---- the panel (browser)

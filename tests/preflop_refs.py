@@ -22,13 +22,13 @@ def ref(name, hero, line, want, tol, source, of="hands", table=6, rake=None, unc
                      table=table, rake=rake, uncertain=uncertain, note=note))
 
 
-def _line(s: str, T):
+def _line(s: str, T, stack: float = 100.0):
     from gto.advisor import replay_hand
     acts = []
     for a in (s.split(", ") if s else []):
         w = a.split()
         d = {"pos": w[0], "action": w[1], **({"to": float(w[2])} if len(w) > 2 else {})}
-        while (st := replay_hand(T, 100, {"preflop": acts}, 1)[0]).to_act != d["pos"]:
+        while (st := replay_hand(T, stack, {"preflop": acts}, 1)[0]).to_act != d["pos"]:
             acts.append({"pos": st.to_act, "action": "fold"})
         acts.append(d)
     return acts
@@ -196,3 +196,48 @@ def measure_raked_hand(h) -> float:
     m = parse_range(hand) > 0
     v = 1.0 - s["fold"] if action == "continue" else s.get(action, np.zeros(pf.N_COMBOS))
     return float(v[m].mean())
+
+
+# ---- other games (gto/pf_formats.py's charts: another depth, antes, more players), through the advice in that game ----
+FORMAT_REFS: list = []
+
+
+def fref(name, hero, line, want, tol, source, players=6, stack=100.0, ante=0.0, rake=None, of="hands",
+         uncertain=False, note=""):
+    FORMAT_REFS.append(dict(name=name, hero=hero, line=line, want=want, tol=tol, source=source, of=of,
+                            players=players, stack=stack, ante=ante, rake=rake, uncertain=uncertain, note=note))
+
+
+def measure_format(r: dict) -> dict:
+    """The advice's fold/call/raise shares in format reference r (its table, stack and ante)."""
+    from gto import preflop as pf
+    from gto.advisor import preflop_strategy, preflop_ranges, replay_hand
+    T = pf.Table(pf.SEATS[r["players"]], r["ante"], False, r["rake"], r["stack"])
+    pre = _line(r["line"], T, r["stack"])
+    while (st := replay_hand(T, r["stack"], {"preflop": pre}, 1)[0]).to_act != r["hero"]:
+        pre.append({"pos": st.to_act, "action": "fold"})
+    s = preflop_strategy(r["hero"], pre, T, r["stack"])
+    w = preflop_ranges(pre, T, r["stack"])[r["hero"]] if r["of"] == "range" else np.ones(pf.N_COMBOS)
+    out = {k: float((w * v).sum() / w.sum()) for k, v in s.items()}
+    out.setdefault("fold", 0.0)
+    return out
+
+
+# gtopreflop.com's 8-max 100bb raked solve (5% capped at 4bb, 2.5bb opens): opens by seat
+for _p, _v in (("UTG", 0.139), ("UTG1", 0.158), ("LJ", 0.181), ("HJ", 0.222), ("CO", 0.292), ("BTN", 0.437)):
+    fref(f"8-max {_p} open", _p, "", {"raise": _v}, 0.02, GTOPRE, players=8, rake=RK)
+# Poker Academy's 40bb MTT solves (9-handed, 2.3bb opens, a 1bb big-blind ante: 1/9bb a player here, chip EV;
+# https://poker.academy/blog/post/40bb-is-it-too-big-to-3bet-all-in): the SB against a CO / BTN open, 3bet and jam
+# together as the raise
+_PA40 = "Poker Academy 40bb MTT (9-handed, 2.3bb opens, 1bb BB ante, chip EV)"
+fref("40bb MTT SB vs CO open", "SB", "CO raise 2.3", {"fold": 0.726, "call": 0.144, "raise": 0.131}, 0.04, _PA40,
+     players=9, stack=40.0, ante=1 / 9, uncertain=True, note="3bet 11.3 + jam 1.8")
+fref("40bb MTT SB vs BTN open", "SB", "BTN raise 2.3", {"fold": 0.714, "call": 0.116, "raise": 0.171}, 0.04, _PA40,
+     players=9, stack=40.0, ante=1 / 9, uncertain=True, note="3bet 13.0 + jam 4.1")
+# GTO Wizard's NL500 cash at 40bb (https://blog.gtowizard.com/how-to-construct-a-squeezing-range/): the big blind
+# 3bets 10.3% of hands against a CO min-open, squeezes 9.8% when the BTN calls
+_GW40 = "GTO Wizard NL500 40bb (CO min-open)"
+fref("40bb BB 3bet vs CO min-open", "BB", "CO raise 2", {"raise": 0.103}, 0.02, _GW40, stack=40.0, rake=RK,
+     uncertain=True)
+fref("40bb BB squeeze CO min-open + BTN call", "BB", "CO raise 2, BTN call", {"raise": 0.098}, 0.02, _GW40,
+     stack=40.0, rake=RK, uncertain=True)

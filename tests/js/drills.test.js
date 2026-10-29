@@ -240,4 +240,8 @@ test("the solver's state for a problem: the preflop line, the flop action to the
   assert.deepEqual(st.actions.flop, [{ pos: "BB", action: "check" }, { pos: "BTN", action: "bet", to: 4.13 }]);
   assert.deepEqual(st.actions.preflop.slice(3), [{ pos: "BTN", action: "raise", to: 2.5 }, { pos: "SB", action: "fold" }, { pos: "BB", action: "call" }]);
   assert.deepEqual(D.stateFor(REP, { ...pr, hero: "BTN", path: ["check"] }).actions.flop, [{ pos: "BB", action: "check" }]);
+  assert.deepEqual([st.players, st.stack, st.ante, st.straddle], [6, 100, undefined, undefined]);
+  // a spot of another game (flop_library.Format: the report's "game") is played in that game
+  const g = D.stateFor({ ...REP, game: { players: 6, stack: 200, ante: 0, straddle: true } }, pr);
+  assert.deepEqual([g.players, g.stack, g.ante, g.straddle], [6, 200, undefined, true]);
 });

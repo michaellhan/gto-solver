@@ -2052,6 +2052,10 @@ class Advisor:
             return self._vs_jam(hero, hole, preflop, positions, stack, st, t0, pool, locks)
         full = pf.strategy_for(hero, preflop, positions)
         notes = ["preflop: chart approximation"]
+        cover = pf.format_chart(hero, preflop, positions)[1] if isinstance(positions, pf.Table) else {}
+        if cover:
+            from .pf_formats import label
+            notes = [f"preflop: the {label(positions, cover)} chart (the 100bb chart moved by solves of this game)"]
         if "call" in full:
             full = self._priced(hero, preflop, positions, stack, st, full, notes, pool)
         elif getattr(positions, "icm", None) is not None:
@@ -2252,9 +2256,15 @@ class Advisor:
 
         std_line = [{"pos": a["pos"], "action": "fold"} if a["action"] == "call" and a["pos"] != hero
                     else {"pos": a["pos"], "action": a["action"]} for a in preflop]
-        # the chart's own spot: its depth (100bb, or a short-stack chart's: pf.spot_depth), no antes
+        # the chart's own spot: its depth (100bb, or a short-stack chart's: pf.spot_depth), no antes; the game's own
+        # where the table's game has its charts (pf.format_chart: their depth and ante)
         cs = pf.spot_depth(hero, preflop, positions)
-        table = pf.Table(positions, 0.0, getattr(positions, "straddle", False), depth=cs)
+        ante_std = 0.0
+        if isinstance(positions, pf.Table):
+            cover = pf.format_chart(hero, preflop, positions)[1]
+            if cover:
+                cs, ante_std = cover["depth"], cover["ante"]
+        table = pf.Table(positions, ante_std, getattr(positions, "straddle", False), depth=cs)
         std = replay_hand(table, cs, {"preflop": std_line}, 1)[0]
         if std.closed or std.to_act != hero:
             return full

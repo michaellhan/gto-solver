@@ -103,6 +103,9 @@ test("the hand state for a flop at each view", () => {
   const vb = R.stateFor(REP, "Ac4d3h", "vsbet");
   assert.deepEqual([vb.hero, vb.cards.slice(0, 2), vb.actions.flop], ["BB", ["Ks", "7d"],
     [{ pos: "BB", action: "check" }, { pos: "BTN", action: "bet", to: 4.13 }]]);
+  // a spot of another game (flop_library.Format: the index's and report's "game") is loaded in that game
+  const g = R.stateFor({ ...REP, game: { players: 6, stack: 40, ante: 0.125, straddle: false } }, "Ac4d3h", "oop");
+  assert.deepEqual([g.players, g.stack, g.ante, g.straddle], [6, 40, 0.125, undefined]);
 });
 
 // click-to-load in the page: the hand replaces the page's, the hero is to act at the flop node

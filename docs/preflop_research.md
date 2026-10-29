@@ -566,3 +566,38 @@ the cutoff 47% at 27.6bb and 6% at 24bb. Moving the default 4bet to the publishe
 own line (64% folds, against the export's 47%) unless the chart widens, and changes every recommended 4bet
 size; with one published spot it was left. Open: a 4bet-response reference per seat pair, which none of the
 public libraries publishes.
+
+## 9. Fourth pass: the flop library's values, and the other games (2026-10)
+
+**The flop library as the realization.** The library (README: Precomputed flop library) holds, for 13 heads-up
+spots, every combo's EV at the flop's first decision on 552-1755 flops each, from solves to 0.15% of the pot
+(Accurate's tree; the 3bet pots with the river dealt). `scripts/pf_library_values.py` reads them into
+`gto/pf_libvals.py`: per spot, each class's mean share of the pot over the flops it meets, weighted by how
+often it meets each (for both players, 86 KB), the shares of each entry's two players adding to the pot within
+0.0014-0.017 bb. `pf_game.LibraryModel` turns a spot into pairs S[i, j] = eq[i, j] + a[i] - c[j] (class i of the
+aggressor against class j of the caller), a and c solved so each class's share against the other's range is
+the library's; a class outside the spot's range (which the library can't value) takes the measured model's
+excess (section 6), joined to the library's at the range's weakest 30%; a flop between seats with no spot of
+its own takes the stored spot of the same pot type and position with the same caller, else the same
+aggressor; 4bet pots the measured model. `scripts/pf_solve_library.py` solves the 6-max 100bb game with it
+(5% rake capped at 4bb, 1,500 iterations, ~0.0004-0.004 bb/hand from equilibrium):
+
+| model | mean error | spots outside | hand facts off | where it misses |
+|---|---|---|---|---|
+| the charts | **0.96** | **0** | **0** | |
+| section 7's best (measured model, round 0, three-way factors) | 2.42 | 10 | 6 | |
+| the library's values | 3.81 | 16 | 13 | BTN opens 39.3%; openers flat a 3bet 5-10% (published 17-24), 4bet 26-28% (18-19) |
+| ... with the river correction (advisor._river_fix: full in single-raised pots, half in 3bet pots) | 3.14 | 15 | 12 | BTN opens 37.5%, BTN opens A2o 97% and not A4o; UTG folds 22-44; BB 3bets the SB 24% (16.2) |
+
+Spot by spot it is as close as the charts or closer in three: the big blind against a HJ open (73.9 / 19.8 / 6.2
+against 74.4 / 19.6 / 5.9; the charts 72.8 / 21.0 / 6.2), the button's 3bet of a CO open (10.4% against 11.2;
+the charts 12.2) and the button against a small-blind 3bet (72.3 / 13.6 / 14.1 against 75.7 / 13.9 / 10.4; the
+charts 71.9 / 16.5 / 11.7), each within the references' own spread (raked solves of one spot differ by about a
+point). Its hand order is the trouble: a class the library holds is valued by what its combos earned on the
+flops, one it doesn't by the measured model, and the two meet at the range's edge only on average, so the
+classes just outside a range are mis-valued (the button opens A2o and folds A4o, the reverse of every published
+chart; UTG folds 44). It also calls 3bets less than the published solves and 4bets more in every seat pair,
+the direction section 6 found. Not adopted, there or anywhere: the three spots gain less than the
+references' noise, their per-hand strategies fail the facts the charts pass, and the library's spots are
+keyed by the ranges the charts replay (a big blind defending the HJ by the solve would orphan srp_hj_bb's 1,755
+entries).

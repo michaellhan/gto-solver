@@ -3,6 +3,7 @@ players through the charts and their adjustments, and flag errors, frequencies t
 AA/KK folding, 72o continuing, and a hand continuing less often than one it dominates. -v prints each line's continue rate.
 
     python scripts/preflop_sweep.py [-v] [--rake 0.05 4]     # --rake: rate and cap (bb) the table plays with
+    python scripts/preflop_sweep.py --stack 40 --ante 0.125   # another game (gto/pf_formats.py's charts)
 """
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -18,9 +19,11 @@ RAKE = None
 if "--rake" in sys.argv:
     _i = sys.argv.index("--rake")
     RAKE = (float(sys.argv[_i + 1]), float(sys.argv[_i + 2]))
+STACK = float(sys.argv[sys.argv.index("--stack") + 1]) if "--stack" in sys.argv else 100.0
+ANTE = float(sys.argv[sys.argv.index("--ante") + 1]) if "--ante" in sys.argv else 0.0
 issues, table = [], []
-def check(n, label, line, hero, stack=100):
-    T = pf.Table(pf.SEATS[n], rake=RAKE)
+def check(n, label, line, hero, stack=STACK):
+    T = pf.Table(pf.SEATS[n], ANTE, False, RAKE, stack)
     st = replay_hand(T, stack, {"preflop": line}, 1)[0]
     if st.closed or st.to_act != hero:
         issues.append(f"{n}h {label}: not hero's turn ({st.to_act})"); return
@@ -56,7 +59,7 @@ for n in range(2, 10):
             pre = [R(p, "fold") for p in seats[:j]] + [R(o, "raise", 2.5)] + [R(p, "fold") for p in seats[j+1:i]]
             check(n, f"{h} vs {o} open", pre, h)
             # opener faces h's 3bet
-            size = 10 if h in ("SB", "BB") else 7.5
+            size = min(10 if h in ("SB", "BB") else 7.5, STACK)
             pre3 = pre + [R(h, "raise", size)] + [R(p, "fold") for p in seats[i+1:]]
             check(n, f"{o} open vs {h} 3bet", pre3, o)
             # cold: a later seat k faces o open + h 3bet
@@ -65,7 +68,9 @@ for n in range(2, 10):
                 prec = pre + [R(h, "raise", size)] + [R(p, "fold") for p in seats[i+1:k]]
                 check(n, f"{c} cold vs {o} open {h} 3bet", prec, c)
             # 3bettor faces 4bet
-            pre4 = pre3 + [R(o, "raise", 22)] + [R(p, "fold") for p in seats[j+1:i] if False]
+            if size >= STACK:
+                continue
+            pre4 = pre3 + [R(o, "raise", min(22, STACK))] + [R(p, "fold") for p in seats[j+1:i] if False]
             check(n, f"{h} 3bet vs {o} 4bet", pre4, h)
 print("issues:", len(issues)); print("\n".join(issues))
 print("lines checked:", len(table))

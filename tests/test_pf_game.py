@@ -81,6 +81,64 @@ class TestTreeOptions(unittest.TestCase):
         self.assertEqual(m.share((2, True, "BTN", "BB"))[0, 0], 0.3)
 
 
+class TestGames(unittest.TestCase):
+    """Other games (gto/pf_formats.py's solves): antes, a straddle, 7-9 handed tables, other depths."""
+
+    def test_antes(self):
+        """An ante is dead money: in every terminal's chips (folded seats lose it), out of the stack before the
+        betting; the sizes are the same."""
+        g = G.Game(G.build(ante=0.125), G.SIX, G.flat_model())
+        walk = g.find([("UTG", "fold"), ("HJ", "fold"), ("CO", "fold"), ("BTN", "fold"), ("SB", "fold")])
+        self.assertEqual(walk.kind, "fold")
+        self.assertAlmostEqual(walk.inv.sum(), 1.5 + 6 * 0.125)
+        self.assertEqual(g.find([("CO", "raise")]).line[-1][2], 2.5)
+        jam = [t for t in G.walk(g.root) if t.kind == "show" and t.allin]
+        self.assertTrue(jam and all(abs(t.inv.max() - 100.0) < 1e-9 for t in jam))
+        g.solve(30)
+        # (the antes come back out of the pots: off zero by card removal, as without them, 0.059 here)
+        self.assertLess(abs(float(g.values().sum())), 0.07)
+
+    def test_straddle(self):
+        """The first seat posts 2bb and acts last; opens are 2.5 straddles; the big blind can fold."""
+        g = G.Game(G.build(straddle=True), G.SIX, G.flat_model())
+        self.assertEqual(g.positions[g.root.player], "HJ")
+        nd = g.find([("HJ", "raise")])
+        self.assertEqual(nd.line[-1][2], 5.0)
+        last = g.find([("HJ", "raise"), ("BB", "fold")])
+        self.assertEqual(g.positions[last.player], "UTG")
+        self.assertEqual(last.names, ["fold", "call", "raise"])
+        # folded to the big blind, it faces the straddle's 2bb: fold or raise (it used to have only the raise)
+        bb = g.find([("HJ", "fold"), ("CO", "fold"), ("BTN", "fold"), ("SB", "fold")])
+        self.assertEqual((g.positions[bb.player], bb.names), ("BB", ["fold", "raise"]))
+        # unstraddled, the big blind's walk is a terminal and checking behind a limp is free
+        g = G.Game(G.build(sb_limp=True), G.SIX, G.flat_model())
+        self.assertEqual(g.find([("SB", "call")]).names, ["call", "raise"])
+
+    def test_seats_and_depths(self):
+        """7-9 handed seats act postflop after the blinds in seating order; shallow, raises that put in 40% of the
+        stack are all-in."""
+        from gto.preflop import SEATS
+        self.assertEqual(G.post_rank(G.SIX), [G.POST_ORDER.index(p) for p in G.SIX])
+        self.assertEqual(G.post_rank(SEATS[8]), [2, 3, 4, 5, 6, 7, 0, 1])
+        self.assertEqual(G.post_rank(["SB", "BB"]), [1, 0])
+        g = G.Game(G.build(SEATS[8], max_players=2), SEATS[8], G.flat_model())
+        self.assertEqual(g.find([("UTG1", "raise")]).line[-1][2], 2.5)
+        g = G.Game(G.build(stack=20), G.SIX, G.flat_model(), stack=20)
+        self.assertEqual(g.find([("CO", "raise"), ("BB", "all-in")]).line[-1][2], 20.0)
+        self.assertEqual(g.find([("CO", "raise"), ("BTN", "raise")]).line[-1][2], 7.5)
+
+    def test_library_model_depth_scale(self):
+        """LibraryModel's scale plays another depth: each share's excess over equity times k."""
+        m = G.library_model()
+        if m is None:
+            self.skipTest("no gto/pf_libvals.py")
+        k = (1, True, "BTN", "BB")
+        eq = equity_matrix()
+        s = G.LibraryModel(scale={1: 0.5}).share(k)
+        self.assertLess(np.abs(s - (eq + 0.5 * (m.share(k) - eq))).max(), 1e-9)
+        self.assertLess(np.abs(G.LibraryModel(scale={2: 0.5}).share(k) - m.share(k)).max(), 1e-12)
+
+
 class TestSolve(unittest.TestCase):
     def test_heads_up_converges(self):
         g = G.Game(G.build(["SB", "BB"]), ["SB", "BB"], G.flat_model())

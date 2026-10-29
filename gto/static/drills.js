@@ -182,7 +182,9 @@
     });
     const [oop, ip] = rep.seats, flop = [];
     for (const x of pr.path) flop.push(x === "check" ? { pos: flop.length ? ip : oop, action: "check" } : { pos: flop.length ? ip : oop, action: "bet", to: potAt(rep, [x]).bet });
-    return { players: 6, hero: pr.hero, stack: 100, cards: [...pr.hand, ...pr.board, null, null], actions: { preflop: pre, flop, turn: [], river: [] } };
+    const g = rep.game || {};     // (a spot of another game than 6-max 100bb: {players, stack, ante, straddle})
+    return { players: g.players || 6, hero: pr.hero, stack: g.stack || 100, ...(g.ante ? { ante: g.ante } : {}), ...(g.straddle ? { straddle: true } : {}),
+             cards: [...pr.hand, ...pr.board, null, null], actions: { preflop: pre, flop, turn: [], river: [] } };
   }
 
   // ---- the panel (browser)

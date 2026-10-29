@@ -32,6 +32,10 @@ test("a spot's preflop line and the page's hand become states", () => {
     { pos: "BTN", action: "raise", to: 2.5 }, { pos: "SB", action: "fold" }, { pos: "BB", action: "call" }]);
   assert.deepEqual(S.parseLine(""), []);
   assert.deepEqual(SPOT, { players: 6, stack: 100, board: "", preflop: S.parseLine(LINE), flop: [], turn: [], river: [] });
+  // a spot of another game (the index's "game": flop_library.Format) starts in that game
+  assert.deepEqual(S.fromSpot({ id: "srp_btn_bb_40bb_a0.125", line: LINE, game: { players: 6, stack: 40, ante: 0.125, straddle: false } }),
+                   { players: 6, stack: 40, ante: 0.125, board: "", preflop: S.parseLine(LINE), flop: [], turn: [], river: [] });
+  assert.deepEqual(S.fromSpot({ id: "x", line: LINE, game: { players: 8, stack: 100, ante: 0, straddle: true } }).straddle, true);
   // the table's hand: without hero, hole cards or the advice's settings; streets copied
   const p = { hero: "BTN", hole: "AsKs", players: 6, stack: 100, ante: 0.1, board: "Kd7c2h", preflop: SPOT.preflop,
               flop: [{ pos: "BB", action: "check" }], speed: "fast", locks: { BB: {} }, stacks: null };

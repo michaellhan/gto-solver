@@ -28,7 +28,12 @@
     const [pos, a] = t.split(":");
     return a[0] === "r" ? { pos, action: "raise", to: parseFloat(a.slice(1)) } : { pos, action: { f: "fold", c: "call", x: "check" }[a[0]] };
   });
-  const fromSpot = (sp) => ({ ...fresh(), preflop: parseLine(sp.line) });
+  // (a spot of another game than 6-max 100bb carries it: {players, stack, ante, straddle})
+  const fromSpot = (sp) => {
+    const g = sp.game || {};
+    return { ...fresh(g.players || 6, g.stack || 100), ...(g.ante ? { ante: g.ante } : {}), ...(g.straddle ? { straddle: true } : {}),
+             preflop: parseLine(sp.line) };
+  };
   // the page's own hand (its advice payload) without hero, hole cards and the advice's own settings
   const SETUP = ["players", "stack", "stacks", "ante", "straddle", "rake", "rake_cap", "board", ...STREETS];
   const fromPayload = (p) => Object.fromEntries(SETUP.filter(k => p[k] != null).map(k => [k, STREETS.includes(k) ? (p[k] || []).map(a => ({ ...a })) : p[k]]));

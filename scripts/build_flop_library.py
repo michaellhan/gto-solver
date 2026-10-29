@@ -7,6 +7,10 @@ the pot from equilibrium (checked every --check iterations from --min-iters, at 
     python scripts/build_flop_library.py --spots srp_btn_bb --boards Ks7d2c,Qs8s3d   # given flops
     python scripts/build_flop_library.py --index-only                   # rewrite index.json from the entries
     python scripts/build_flop_library.py --recode                       # format-1 entries to format 2, unsolved
+    python scripts/build_flop_library.py --format 40bb --flops 184 --jobs 5   # another game's spots (FORMAT_SPOTS)
+
+Spots of another game (flop_library.FORMAT_SPOTS: a stack depth, ante, table size or straddle; ids like
+srp_btn_bb_40bb) are built only when named, by --format TAG or --spots; the index lists every game's spots on disk.
 
 Each index rewrite also writes <spot>/report.json (flop_library.build_report: per flop, the range frequencies at each
 stored node, both players' EV and equity; the page's flop reports), recomputing only the flops whose entries changed.
@@ -35,10 +39,16 @@ from gto.solver import solve  # noqa: E402
 _SETUPS = {}
 
 
-def _setup(line):
-    if line not in _SETUPS:
-        _SETUPS[line] = fl.spot_setup(line)
-    return _SETUPS[line]
+def _setup(line, fmt=fl.DEFAULT_FORMAT):
+    """The spot a line leads to in a game (flop_library.Format), as the advisor plays it."""
+    if (line, fmt) not in _SETUPS:
+        _SETUPS[(line, fmt)] = fl.spot_setup(line, fmt.players, fmt.stack, fmt.ante, fmt.straddle)
+    return _SETUPS[(line, fmt)]
+
+
+def _spot(sp) -> tuple:
+    """(id, label, line, Format) of a spot (flop_library.all_spots'; SPOTS' (id, label, line) is the default game's)."""
+    return tuple(sp) if len(sp) > 3 else (*sp, fl.DEFAULT_FORMAT)
 
 
 def _meta(sid, s):
@@ -61,8 +71,8 @@ def current(path: str, meta: dict) -> bool:
 
 def solve_entry(job):
     """Solves one (spot, flop) and writes its entry. Returns a progress line."""
-    sid, line, name, out, a = job
-    s = _setup(line)
+    sid, line, fmt, name, out, a = job
+    s = _setup(line, fl.Format(**fmt))
     meta = dict(_meta(sid, s), board=name)
     board = parse_cards(name)
     t0 = time.time()
@@ -86,12 +96,12 @@ def recode(out: str, spots) -> None:
     """Re-encodes every format-1 entry on disk in the current format (flop_library.recode: from its stored values,
     without solving again), in place; an entry for other ranges than the spot's now is left as it is (stale)."""
     n = before = after = 0
-    for sid, label, line in spots:
-        s = _setup(line)
-        fp = [fl.range_fp(s["full0"]), fl.range_fp(s["full1"])]
+    for sid, label, line, fmt in map(_spot, spots):
         d = os.path.join(out, sid)
         if not os.path.isdir(d):
             continue
+        s = _setup(line, fmt)
+        fp = [fl.range_fp(s["full0"]), fl.range_fp(s["full1"])]
         for fn in sorted(os.listdir(d)):
             if not fn.endswith(".bin"):
                 continue
@@ -138,14 +148,17 @@ def write_ranges(out: str, sp: dict, s: dict) -> None:
 
 
 def write_index(out: str, spots) -> dict:
-    """index.json from the entries on disk that match the current charts and tree (and each spot's report.json)."""
+    """index.json from the entries on disk that match the current charts and tree (and each spot's report.json).
+    A spot of another game than the default carries it ("game": flop_library.Format's fields)."""
     idx = {"format": fl.FORMAT, "tree": fl.tree_key(fl.library_config()), "spots": []}
     stale = 0
     total = 0
-    for sid, label, line in spots:
-        s = _setup(line)
-        meta = _meta(sid, s)
+    for sid, label, line, fmt in map(_spot, spots):
         d = os.path.join(out, sid)
+        if not os.path.isdir(d):
+            continue
+        s = _setup(line, fmt)
+        meta = _meta(sid, s)
         flops = {}
         if os.path.isdir(d):
             for fn in sorted(os.listdir(d)):
@@ -162,6 +175,8 @@ def write_index(out: str, spots) -> dict:
         if flops:
             sp = {"id": sid, "label": label, "line": line, "seats": [s["oop"], s["ip"]],
                   "fp": meta["fp"], "pot": s["pot"], "stack": s["stack"], "tree": meta["tree"], "flops": flops}
+            if fmt != fl.DEFAULT_FORMAT:
+                sp["game"] = fmt.as_dict()
             sp["report"] = write_report(out, sp, s)
             write_ranges(out, sp, s)
             idx["spots"].append(sp)
@@ -179,6 +194,8 @@ def write_index(out: str, spots) -> dict:
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--spots", default="", help="comma separated spot ids (default: all, most common first)")
+    ap.add_argument("--format", default="", help="comma separated game tags (flop_library.FORMAT_SPOTS: 40bb, ...): "
+                    "their spots (default: the default game's; with --spots, the named spots of every game)")
     ap.add_argument("--flops", default="", help="how many representative flops per spot, or 'all' (1755); default: "
                     "the spot's flop_library.SPOT_FLOPS, else REP_FLOPS")
     ap.add_argument("--boards", default="", help="comma separated flops instead (any suits: each is canonicalized)")
@@ -194,13 +211,19 @@ def main(argv=None):
     ap.add_argument("--recode", action="store_true", help="re-encode format-1 entries (no solving), then the index")
     a = ap.parse_args(argv)
     want = [x for x in a.spots.split(",") if x]
-    spots = [s for s in fl.SPOTS if not want or s[0] in want]
+    tags = [x for x in a.format.split(",") if x]
+    unknown = [t for t in tags if t not in fl.FORMAT_SPOTS and t != "default"]
+    if unknown:
+        ap.error(f"unknown game {unknown}; known: {list(fl.FORMAT_SPOTS)}")
+    every = fl.all_spots()
+    pick = [t if t != "default" else "" for t in tags] or ([""] if not want else None)
+    spots = [s for s in fl.all_spots(pick) if not want or s[0] in want]
     if want and len(spots) != len(want):
-        ap.error(f"unknown spot in {want}; known: {[s[0] for s in fl.SPOTS]}")
+        ap.error(f"unknown spot in {want}; known: {[s[0] for s in every]}")
     if a.recode:
         recode(a.out, spots)
     if a.index_only or a.recode:
-        write_index(a.out, fl.SPOTS)
+        write_index(a.out, every)
         return
     def names_for(sid):
         if a.boards:
@@ -210,13 +233,13 @@ def main(argv=None):
     jobs = []
     opts = {"min_iters": a.min_iters, "max_iters": a.max_iters, "check": a.check, "target": a.target}
     n_flops = 0
-    for sid, label, line in spots:
-        meta = _meta(sid, _setup(line))
+    for sid, label, line, fmt in spots:
+        meta = _meta(sid, _setup(line, fmt))
         names = names_for(sid)
         n_flops += len(names)
         for nm in names:
             if not current(os.path.join(a.out, sid, nm + ".bin"), meta):
-                jobs.append((sid, line, nm, a.out, opts))
+                jobs.append((sid, line, fmt.as_dict(), nm, a.out, opts))
     if a.limit:
         jobs = jobs[:a.limit]
     print(f"{len(jobs)} entries to solve ({len(spots)} spots, {n_flops} flops, the rest on disk), "
@@ -231,8 +254,8 @@ def main(argv=None):
                 print(f"[{done}/{len(jobs)} {el / 60:.0f} min, ~{el / done * (len(jobs) - done) / 60:.0f} min left] {msg}",
                       flush=True)
                 if done % a.index_every == 0:
-                    write_index(a.out, fl.SPOTS)
-    write_index(a.out, fl.SPOTS)
+                    write_index(a.out, every)
+    write_index(a.out, every)
 
 
 if __name__ == "__main__":

@@ -678,6 +678,31 @@ def _actions_at(hero: str, actions: List[dict], positions: Optional[List[str]] =
     return {"call": VS_5BET["call"]}
 
 
+def format_chart(hero: str, actions: List[dict], positions) -> Tuple[Optional[Dict[str, np.ndarray]], dict]:
+    """The chart of the table's game (gto/pf_formats.py: another depth, ante, table size or a straddle) at this
+    decision, and what it covers ({"depth", "ante"}: the game the chart is for), or (None, {}) where the charts'
+    own (100bb, no ante) and their rules apply. Played on the line without other players' flats of the raise
+    (a squeeze is the same chart, re-drawn for the callers by the advice: Advisor._priced)."""
+    if positions is None or not isinstance(positions, Table):
+        return None, {}
+    from . import pf_formats
+    std = pf_formats.std_actions(hero, actions)
+    if std is None:
+        return None, {}
+    mv, cover = pf_formats.moves(hero, std, positions)
+    if mv is None:
+        return None, {}
+    if cover.get("base") == "6max":     # a table size or straddle: the 6-max chart of the seats it plays
+        m = lambda p: _norm(chart_key(p, positions))
+        base = _actions_at(m(hero), [dict(a, pos=m(a["pos"])) for a in std if a["action"] != "fold"],
+                           Table(SEATS[6], 0.0, False, None, 100.0))
+    else:
+        base = _actions_at(hero, std, Table(list(positions), 0.0, positions.straddle, None, 100.0))
+    if "check" in base:
+        return None, {}
+    return pf_formats.apply(base, mv), cover
+
+
 def strategy_for(hero: str, actions: List[dict], positions: Optional[List[str]] = None) -> Dict[str, np.ndarray]:
     """Full mixed strategy (including fold) per combo for hero at this point."""
     key = (hero, tuple((a["pos"], a["action"], a.get("to"), a.get("amount")) for a in actions),
@@ -686,7 +711,9 @@ def strategy_for(hero: str, actions: List[dict], positions: Optional[List[str]] 
     if key not in _STRAT_CACHE:
         if len(_STRAT_CACHE) > 4096:
             _STRAT_CACHE.clear()
-        acts = _actions_at(hero, actions, positions)
+        acts = format_chart(hero, actions, positions)[0]
+        if acts is None:
+            acts = _actions_at(hero, actions, positions)
         total = sum(acts.values())
         scale = np.where(total > 1, 1.0 / np.maximum(total, 1e-12), 1.0)
         acts = {k: v * scale for k, v in acts.items()}

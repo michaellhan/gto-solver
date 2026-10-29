@@ -37,6 +37,16 @@ POST_ORDER = ["SB", "BB", "UTG", "HJ", "CO", "BTN"]     # postflop action order 
 BLINDS = ("SB", "BB")
 
 
+def post_rank(positions: Sequence[str]) -> List[int]:
+    """Each seat's place in the postflop order (0 acts first): the blinds, then the rest in seating order; heads-up
+    the small blind (the button) acts last."""
+    pos = list(positions)
+    if len(pos) == 2:
+        return [1, 0]
+    rest = [p for p in pos if p not in BLINDS]
+    return [0 if p == "SB" else 1 if p == "BB" else 2 + rest.index(p) for p in pos]
+
+
 @dataclass
 class Sizes:
     open: float = 2.5          # raise first in, bb (the small blind: sb_open)
@@ -69,20 +79,26 @@ class Node:
 
 
 def build(positions: Sequence[str] = SIX, stack: float = 100.0, sizes: Optional[Sizes] = None,
-          max_players: int = 3, max_players_raised: int = 2, sb_limp: bool = False) -> Node:
-    """The preflop tree for `positions` in preflop order (the last two the blinds). `sb_limp`: the small
-    blind first in may also complete (limp); the big blind then checks or raises (Sizes.iso), and the small
-    blind facing that folds, calls or re-raises (Sizes.limp_3bet)."""
+          max_players: int = 3, max_players_raised: int = 2, sb_limp: bool = False, ante: float = 0.0,
+          straddle: bool = False) -> Node:
+    """The preflop tree for `positions` in seating order (the last two the blinds; heads-up SB, BB). `sb_limp`:
+    the small blind first in may also complete (limp); the big blind then checks or raises (Sizes.iso), and the
+    small blind facing that folds, calls or re-raises (Sizes.limp_3bet). `ante`: each player's ante, bb (dead
+    money: in every terminal's chips, out of the stack before the betting). `straddle`: the first seat posts 2bb
+    and acts last preflop; opens are then Sizes.open times the straddle."""
     sizes = sizes or Sizes()
     n = len(positions)
     pos = list(positions)
     sb, bb = (n - 2, n - 1) if n > 2 else (0, 1)    # heads-up the button is the small blind
+    straddle = bool(straddle) and n >= 3
+    stack = stack - ante                           # (the betting's: what is left after the ante)
+    rank = post_rank(pos)
 
     def raise_to(p, cur, n_raises, last, callers, bets):
         if n_raises == 0:
-            if p == bb:                          # over a small-blind limp
+            if p == bb and not straddle:         # over a small-blind limp
                 return sizes.iso
-            return sizes.sb_open if p == sb else sizes.open
+            return (sizes.sb_open if p == sb else sizes.open) * cur
         if n_raises == 1:
             if p == sb and last == bb and abs(bets[sb] - 1.0) < 1e-9:
                 return cur * sizes.limp_3bet
@@ -94,7 +110,7 @@ def build(positions: Sequence[str] = SIX, stack: float = 100.0, sizes: Optional[
                 x = sizes.ip_3bet
             return cur * x + callers * cur
         if n_raises == 2:
-            ip = (POST_ORDER.index(pos[p]) > POST_ORDER.index(pos[last])) if n > 2 else p == sb
+            ip = rank[p] > rank[last]
             x = (sizes.four_x_ip if ip else sizes.four_x_oop) or sizes.four_x
             return cur * x + callers * cur
         return stack
@@ -102,24 +118,23 @@ def build(positions: Sequence[str] = SIX, stack: float = 100.0, sizes: Optional[
     def rec(bets, folded, acted, n_raises, last, p, line):
         live = [q for q in range(n) if q not in folded]
         if len(live) == 1:
-            return Node("fold", inv=np.array(bets), active=tuple(live), n_raises=n_raises, line=line)
+            return Node("fold", inv=np.array(bets) + ante, active=tuple(live), n_raises=n_raises, line=line)
         cur = max(bets)
         # who acts next: from p on, a live player not all-in who hasn't acted since the last raise or is behind
         order = [(p + k) % n for k in range(n)]
         nxt = next((q for q in order if q not in folded and bets[q] < stack - 1e-9
                     and (q not in acted or bets[q] < cur - 1e-9)), None)
         if nxt is None:
-            return Node("show", inv=np.array(bets), active=tuple(live), n_raises=n_raises, aggressor=last,
+            return Node("show", inv=np.array(bets) + ante, active=tuple(live), n_raises=n_raises, aggressor=last,
                         allin=cur >= stack - 1e-9, line=line)
         q = nxt
         names, kids = [], []
-        # fold (not when checking is free: only the big blind's walk, which the fold terminal covers)
-        if bets[q] < cur - 1e-9 or n_raises == 0:
-            if n_raises > 0 or q != bb:
-                names.append("fold")
-                kids.append(rec(bets, folded | {q}, acted | {q}, n_raises, last, q + 1, line + ((pos[q], "fold", 0.0),)))
-        if n_raises == 0 and sb_limp and q in (sb, bb) and all(x in folded for x in range(n) if x not in (sb, bb)) \
-                and bets[q] < cur + 1e-9:
+        # fold (not when checking is free: the big blind behind a limp; a straddle's big blind faces 2bb)
+        if bets[q] < cur - 1e-9:
+            names.append("fold")
+            kids.append(rec(bets, folded | {q}, acted | {q}, n_raises, last, q + 1, line + ((pos[q], "fold", 0.0),)))
+        if n_raises == 0 and sb_limp and not straddle and q in (sb, bb) \
+                and all(x in folded for x in range(n) if x not in (sb, bb)) and bets[q] < cur + 1e-9:
             # the small blind completes, or the big blind checks behind a limp (named "call": a flop at 1bb each)
             if q == sb or sb in acted:
                 b2 = list(bets); b2[q] = cur
@@ -146,6 +161,9 @@ def build(positions: Sequence[str] = SIX, stack: float = 100.0, sizes: Optional[
     bets[sb] += 0.5
     bets[bb] += 1.0
     first = 0 if n > 2 else sb
+    if straddle:
+        bets[0] += 2.0
+        first = 1
     return rec(bets, frozenset(), frozenset(), 0, -1, first, ())
 
 
@@ -287,6 +305,150 @@ def measured_model() -> Optional[EQRModel]:
     return EQRModel.from_tables(ex, {k: np.asarray(v) for k, v in W.items()})
 
 
+def spot_key_of(line: str, seats: Sequence[str]) -> tuple:
+    """(pot type, aggressor in position, aggressor's seat, caller's seat) of a flop library spot: its preflop line
+    as the CLI writes it ('UTG:f,HJ:r2.5,...') and its seats [oop, ip]."""
+    acts = [a.split(":") for a in line.split(",") if a]
+    raisers = [p for p, a in acts if a.startswith("r")]
+    aggr = raisers[-1]
+    caller = seats[0] if seats[1] == aggr else seats[1]
+    return (min(len(raisers), 3), aggr == seats[1], aggr, caller)
+
+
+def _edge_offset(x_lib: np.ndarray, x_mod: np.ndarray, rng: np.ndarray, eq: np.ndarray, share: float = 0.3) -> float:
+    """The mean gap between the library's and the model's excess over the range's weakest classes (the bottom
+    `share` of its combos by equity against the opponent): where the range ends and the model takes over."""
+    idx = np.nonzero(rng > 0)[0]
+    if len(idx) == 0:
+        return 0.0
+    order = idx[np.argsort(eq[idx])]
+    cum = np.cumsum(rng[order])
+    sel = order[: max(1, int(np.searchsorted(cum, share * cum[-1])) + 1)]
+    w = rng[sel]
+    return float((w * (x_lib[sel] - x_mod[sel])).sum() / w.sum())
+
+
+class LibraryModel(EQRModel):
+    """Pot shares measured by the flop library (gto/pf_libvals.py, scripts/pf_library_values.py): per stored spot each
+    hand class's mean share of the pot over the spot's flops, against the range it met there, for both players.
+    Per spot the shares become pairs S[i, j] = eq[i, j] + a[i] - c[j] (the aggressor's class i against the caller's
+    class j: all-in equity plus each side's excess; a constant-sum pair), a and c solved so each class's share against
+    the other player's range is the library's. A class outside the spot's range has no library value: its excess
+    is the measured model's (`fallback`, measured_model(): every class measured at a tiny weight, so it has
+    counterfactual values), shifted by the gap between the two models over the range's weakest classes (where it
+    leaves off). `river_fix` (per class, realization) adds advisor._river_fix's correction times the equity, scaled
+    per pot type by `river_scale`.
+    A flop between seats with no spot of its own takes the stored spot of the same pot type and position with the
+    same caller, else the same aggressor, else any; a pot type without any (4bet pots) the fallback model.
+    `scale` {pot type: k} plays another stack depth: every share's excess over equity times k (depth_scale: the
+    excess measured at that depth against 100bb's on the same flops, scripts/pf_depth_values.py)."""
+    by_spot = True
+
+    def __init__(self, spots: Optional[dict] = None, fallback: Optional[EQRModel] = None,
+                 river_fix: Optional[np.ndarray] = None, river_scale: Optional[Dict[int, float]] = None,
+                 scale: Optional[Dict[int, float]] = None):
+        super().__init__(share_fn=self._pick)
+        self.scale = scale or {}
+        if spots is None:
+            from .pf_libvals import SPOTS as spots
+        self.fallback = fallback or measured_model() or flat_model()
+        self.river_fix, self.river_scale = river_fix, river_scale or {1: 1.0, 2: 0.0}
+        self.spots = {}
+        for sid, v in spots.items():
+            self.spots[spot_key_of(v["line"], v["seats"])] = (sid, v)
+        self._S: Dict[tuple, np.ndarray] = {}
+        self.fit_info: Dict[str, dict] = {}
+
+    def match(self, key: tuple):
+        if key in self.spots:
+            return key
+        for test in (lambda k: k[3] == key[3], lambda k: k[2] == key[2], lambda k: True):
+            for k in self.spots:
+                if k[:2] == key[:2] and test(k):
+                    return k
+        return None
+
+    def _pick(self, key):
+        k = self.match(key) if len(key) >= 4 else None
+        if k is None:
+            S = self.fallback.share(key[:2])
+        else:
+            if k not in self._S:
+                self._S[k] = self._fit(k)
+            S = self._S[k]
+        x = self.scale.get(key[0], 1.0)
+        if x != 1.0:
+            eq = equity_matrix()
+            S = np.clip(eq + x * (S - eq), -3.0, 4.0)
+        return S
+
+    def _fit(self, k: tuple) -> np.ndarray:
+        sid, v = self.spots[k]
+        eq = equity_matrix()
+        aggr_side = "ip" if k[1] else "oop"
+        call_side = "oop" if k[1] else "ip"
+        ma, mc = np.asarray(v[aggr_side]["share"]), np.asarray(v[call_side]["share"])
+        ra, rc = np.asarray(v[aggr_side]["range"], float), np.asarray(v[call_side]["range"], float)
+        ina, inc = np.asarray(v[aggr_side]["w"]) > 0, np.asarray(v[call_side]["w"]) > 0
+        P = PAIR_COMPAT * rc[None, :]                      # aggressor class i against the caller's range
+        Q = PAIR_COMPAT * ra[:, None]                      # caller class j against the aggressor's range
+        Pn = P / np.maximum(P.sum(1, keepdims=True), 1e-12)
+        Qn = Q / np.maximum(Q.sum(0, keepdims=True), 1e-12)
+        ea = (Pn * eq).sum(1)                              # aggressor's equity against the caller's range
+        ec = (Qn * (1 - eq)).sum(0)                        # caller's equity against the aggressor's range
+        if self.river_fix is not None:
+            sc = self.river_scale.get(k[0], 0.0)
+            ma = ma + sc * self.river_fix * ea
+            mc = mc + sc * self.river_fix * ec
+        # the fallback model's excess against the same ranges (every class)
+        Sm = self.fallback.share(k[:2])
+        xa_m = (Pn * (Sm - eq)).sum(1)
+        xc_m = (Qn * (eq - Sm)).sum(0)
+        a = np.where(ina, ma - ea, xa_m)
+        c = np.zeros(K)
+        da = dc = 0.0
+        with np.errstate(all="ignore"):     # macOS Accelerate's matmul raises spurious warnings
+            a, c, da, dc = self._solve_ac(a, c, ma, mc, ea, ec, xa_m, xc_m, Pn, Qn, ra, rc, ina, inc)
+        S = np.clip(eq + a[:, None] - c[None, :], -3.0, 4.0)
+        fa, fc = (Pn * S).sum(1), (Qn * (1 - S)).sum(0)
+        self.fit_info[sid] = {"key": k, "resid_aggr": float(np.abs(fa - ma)[ina].max()),
+                              "resid_caller": float(np.abs(fc - mc)[inc].max()),
+                              "edge_aggr": da, "edge_caller": dc,
+                              "realize_aggr": float((ra * ina * fa).sum() / max((ra * ina * ea).sum(), 1e-12)),
+                              "realize_caller": float((rc * inc * fc).sum() / max((rc * inc * ec).sum(), 1e-12))}
+        return S
+
+    @staticmethod
+    def _solve_ac(a, c, ma, mc, ea, ec, xa_m, xc_m, Pn, Qn, ra, rc, ina, inc):
+        """Gauss-Seidel on the two sides' class excesses (see LibraryModel)."""
+        da = dc = 0.0
+        for _ in range(500):
+            cbar = Pn @ c
+            a_in = ma - ea + cbar
+            abar = Qn.T @ np.where(ina, a_in, a)
+            c_in = mc - ec + abar
+            # outside the ranges: the model's excess (relative to the other side's mean), joined at the range's edge
+            da = _edge_offset(a_in - cbar, xa_m, ra * ina, ea)
+            dc = _edge_offset(c_in - abar, xc_m, rc * inc, ec)
+            a_new = np.where(ina, a_in, xa_m + da + cbar)
+            c_new = np.where(inc, c_in, xc_m + dc + abar)
+            g = float((rc * c_new).sum() / max(rc.sum(), 1e-12))   # (a + g, c + g is the same pair: fix g)
+            a_new, c_new = a_new - g, c_new - g
+            done = max(np.abs(a_new - a).max(), np.abs(c_new - c).max()) < 1e-10
+            a, c = a_new, c_new
+            if done:
+                break
+        return a, c, da, dc
+
+
+def library_model(**kw) -> Optional[EQRModel]:
+    """The flop library's model (LibraryModel), or None without gto/pf_libvals.py."""
+    try:
+        return LibraryModel(**kw)
+    except ImportError:
+        return None
+
+
 def realization(model: EQRModel, n_raises: int, aggr_ip: bool, role: str, opp: np.ndarray) -> np.ndarray:
     """Per class: pot share over all-in equity after a call that sees a flop, against the opponent's class
     weights `opp` (role "caller": the hand called the last raise; "aggr": its raise was called)."""
@@ -340,7 +502,7 @@ class Game:
         self.root, self.positions, self.model, self.stack, self.rake = root, list(positions), model, stack, rake
         self.root_reach = np.tile(PRIOR, (len(self.positions), 1)) if root_reach is None else np.asarray(root_reach, float)
         n = self.n = len(self.positions)
-        self.post_rank = ([POST_ORDER.index(p) for p in self.positions] if n > 2 else [1, 0])  # HU: SB has position
+        self.post_rank = post_rank(self.positions)               # (heads-up the SB has position)
         # breadth-first order
         nodes, parent, act, depth = [root], [-1], [-1], [0]
         i = 0
@@ -564,13 +726,15 @@ class Game:
         return (V[0] * self.root_reach).sum(1)
 
     def exploitability(self, per_seat: bool = False):
-        """What each seat gains by best-responding to the others' average strategies, bb per hand (summed)."""
+        """What each seat gains by best-responding to the others' average strategies, bb per hand (summed). Both
+        values on the best response's reaches (the seat's own left out): a three-way flop's shares are normalised
+        over all three players' reaches (_term_values), so values() differs from them by up to ~0.05 bb a seat."""
         s = self.average()
-        base = self.values(s)
         gains = []
         for p in range(self.n):
-            V = self._up(self._down(s, skip=p), s, br=p)
-            gains.append(float((V[0, p] * self.root_reach[p]).sum()) - base[p])
+            reach = self._down(s, skip=p)
+            V0, V = self._up(reach, s), self._up(reach, s, br=p)
+            gains.append(float(((V[0, p] - V0[0, p]) * self.root_reach[p]).sum()))
         return gains if per_seat else sum(gains)
 
     # -------------------------------------------------------------- reading the result

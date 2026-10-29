@@ -24,6 +24,7 @@ import json
 import os
 import struct
 import zlib
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 import numpy as np
@@ -98,14 +99,120 @@ SPOT_FLOPS = {"srp_btn_bb": 1755, "srp_co_bb": 1755, "srp_hj_bb": 1755, "srp_utg
               "srp_hj_co": 552, "srp_btn_sb": 552, "srp_utg_hj": 552, "srp_co_sb": 552, "srp_utg_btn": 552}
 
 
-def spot_setup(line: str, players: int = 6, stack: float = 100.0) -> dict:
-    """The flop spot a preflop line leads to, as the advisor replays it: {oop, ip, full0, full1 (their ranges
-    entering the flop), pot, stack (effective, behind)}."""
+# ----------------------------------------------------------------------------- formats
+# The spots above are 6-max at 100bb without antes (the page's default game). A spot of another format (stack depth,
+# ante, table size, straddle) is the same preflop line played in that game: its own ranges (the charts as the advice
+# plays them there), pot and stack, so the advisor finds it by the same key (the two ranges' fingerprints, the pot and
+# the stack: FlopLibrary.spot) and the page fetches it by its id like any other. Its id and label carry the format.
+@dataclass(frozen=True)
+class Format:
+    """A game the library's spots are solved in: players at the table, the stack (bb, everyone's), the ante (bb a
+    player, dead money) and whether the first seat straddles 2bb."""
+    players: int = 6
+    stack: float = 100.0
+    ante: float = 0.0
+    straddle: bool = False
+
+    @property
+    def tag(self) -> str:
+        """'' for the default game, else what sets it apart: '40bb', '8max', 'a0.125', 'straddle', joined by '_'."""
+        parts = ([f"{self.players}max"] if self.players != 6 else []) + \
+            ([f"{self.stack:g}bb"] if self.stack != 100.0 else []) + \
+            ([f"a{self.ante:g}"] if self.ante else []) + (["straddle"] if self.straddle else [])
+        return "_".join(parts)
+
+    @property
+    def label(self) -> str:
+        parts = ([f"{self.players}-max" if self.players > 2 else "heads-up"] if self.players != 6 else []) + \
+            ([f"{self.stack:g}bb"] if self.stack != 100.0 else []) + \
+            ([f"{self.ante:g}bb ante"] if self.ante else []) + (["straddled"] if self.straddle else [])
+        return ", ".join(parts)
+
+    @classmethod
+    def parse(cls, tag: str) -> "Format":
+        """The format a tag names ('' or 'default' is the default game)."""
+        kw: dict = {}
+        for p in [x for x in (tag or "").split("_") if x and x != "default"]:
+            if p.endswith("max"):
+                kw["players"] = int(p[:-3])
+            elif p.endswith("bb"):
+                kw["stack"] = float(p[:-2])
+            elif p.startswith("a"):
+                kw["ante"] = float(p[1:])
+            elif p == "straddle":
+                kw["straddle"] = True
+            else:
+                raise ValueError(f"unknown format part {p!r} in {tag!r}")
+        return cls(**kw)
+
+    def as_dict(self) -> dict:
+        return {"players": self.players, "stack": self.stack, "ante": self.ante, "straddle": self.straddle}
+
+    def table(self):
+        """The game's table (preflop.Table) at its depth."""
+        from . import preflop as pf
+        return pf.at_depth(pf.Table(pf.SEATS[self.players], self.ante, self.straddle, None), self.stack)
+
+
+DEFAULT_FORMAT = Format()
+# Other formats' spots: per format tag, which of SPOTS it holds (each is that spot's preflop line played in the format:
+# format_line). Built on request (scripts/build_flop_library.py --format TAG); until then the advisor solves them live.
+FORMAT_SPOTS: Dict[str, List[str]] = {
+    "40bb": ["srp_btn_bb", "srp_co_bb", "srp_sb_bb", "srp_hj_bb", "srp_utg_bb", "3bp_bb_btn"],
+    "200bb": ["srp_btn_bb", "srp_co_bb", "srp_sb_bb", "srp_hj_bb", "srp_utg_bb", "3bp_bb_btn"],
+}
+
+
+def format_line(line: str, fmt: Format) -> str:
+    """A spot's preflop line (the default game's, as SPOTS writes it) in another format: its raises and calls by the
+    same seats at the same sizes, everyone else folding in that table's order."""
+    if fmt == DEFAULT_FORMAT:
+        return line
+    from .advisor import replay_hand, _norm_actions
+    from .cli import parse_actions
+    table = fmt.table()
+    want = [a for a in _norm_actions(parse_actions(line), 1.0) if a["action"] != "fold"]
+    acts = []
+    for a in want:
+        if a["pos"] not in table:
+            raise ValueError(f"{line}: no {a['pos']} at a {fmt.players}-handed table")
+        while (st := replay_hand(table, fmt.stack, {"preflop": acts}, 1)[0]).to_act != a["pos"]:
+            if st.closed or st.to_act is None:
+                raise ValueError(f"{line}: {a['pos']} doesn't act in {fmt.tag or 'the default game'}")
+            acts.append({"pos": st.to_act, "action": "fold"})
+        acts.append(a)
+    while not (st := replay_hand(table, fmt.stack, {"preflop": acts}, 1)[0]).closed and st.to_act is not None:
+        acts.append({"pos": st.to_act, "action": "fold"})
+    code = {"fold": "f", "call": "c", "check": "x"}
+    return ",".join(f"{a['pos']}:{code[a['action']]}" if a["action"] in code else f"{a['pos']}:r{a['to']:g}"
+                    for a in acts)
+
+
+def all_spots(formats: Optional[Sequence[str]] = None) -> List[tuple]:
+    """(id, label, line, Format) of every spot: SPOTS in the default game, then FORMAT_SPOTS's (id and label carrying
+    the format). `formats`: only these tags ('' the default game)."""
+    out = []
+    if formats is None or "" in formats:
+        out += [(sid, label, line, DEFAULT_FORMAT) for sid, label, line in SPOTS]
+    base = {s[0]: s for s in SPOTS}
+    for tag, ids in FORMAT_SPOTS.items():
+        if formats is not None and tag not in formats:
+            continue
+        fmt = Format.parse(tag)
+        for b in ids:
+            sid, label, line = base[b]
+            out.append((f"{sid}_{tag}", f"{label}, {fmt.label}", format_line(line, fmt), fmt))
+    return out
+
+
+def spot_setup(line: str, players: int = 6, stack: float = 100.0, ante: float = 0.0, straddle: bool = False) -> dict:
+    """The flop spot a preflop line leads to, as the advisor replays it in a game (players, stack, ante, straddle:
+    Format): {oop, ip, full0, full1 (their ranges entering the flop), pot, stack (effective, behind)}."""
     from . import preflop as pf
     from .advisor import preflop_ranges, replay_hand, _norm_actions
     from .cli import parse_actions
     acts = _norm_actions(parse_actions(line), 1.0)
-    positions = pf.at_depth(pf.Table(pf.SEATS[players], 0.0, False, None), stack)
+    positions = pf.at_depth(pf.Table(pf.SEATS[players], ante, straddle, None), stack)
     ranges = preflop_ranges(acts, positions, stack)
     cur = replay_hand(positions, stack, {"preflop": acts, "flop": [], "turn": [], "river": []}, 2)[-1]
     live = [p for p in cur.order if p in cur.active]
@@ -812,6 +919,7 @@ def build_report(spot: dict, full0: np.ndarray, full1: np.ndarray, read: Callabl
         x["w"] = round(wts[nm], 3)
         flops.append(x)
     return {"format": REPORT_FORMAT, "id": spot["id"], "label": spot.get("label", spot["id"]), "line": spot.get("line"),
-            "seats": spot.get("seats"), "pot": spot["pot"], "stack": spot["stack"], "nodes": nodes, "flops": flops}
+            "seats": spot.get("seats"), "pot": spot["pot"], "stack": spot["stack"], "nodes": nodes, "flops": flops,
+            **({"game": spot["game"]} if spot.get("game") else {})}
 
 
