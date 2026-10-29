@@ -424,6 +424,8 @@ class TestPreflop(unittest.TestCase):
         writes them), and the button 4bets A5s 40% against the 3bet."""
         from gto import pf_formats as PF
         saved, PF._DATA = PF._DATA, {}       # the chart itself (heads-up it is moved by the limp game's solve)
+        pf._STRAT_CACHE.clear()              # (strategies cached by earlier tests have the moves in)
+        self.addCleanup(pf._STRAT_CACHE.clear)
         self.addCleanup(setattr, PF, "_DATA", saved)
         T = pf.Table(pf.SEATS[2])
         s = pf.strategy_for("BB", [{"pos": "SB", "action": "raise", "to": 2.5}], T)
