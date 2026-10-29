@@ -42,6 +42,11 @@ CHUNK_S = 0.1          # seconds of iterations a call (between the budget and sh
 LEAF_ROWS_BLAS = 256
 ARENA_MAX = 1 << 30    # bytes a program may take: offsets are 32-bit, and a browser tab's memory runs out sooner
 MAX_CHUNK = 1024       # iterations a call at most (the discount factors' buffer)
+# run()'s chunk clock: the browser's time.time() is Date.now(), whole milliseconds, so a small river's first iteration
+# (~0.3 ms) read as 0 s, its chunk size divided by it, and the ZeroDivisionError, taken for the core failing, turned the
+# core off for the worker's session: every later solve ran in numpy. perf_counter is performance.now() there.
+_clock = time.perf_counter
+PER_MIN = 1e-7         # (and an iteration's seconds are at least this, whatever the clock)
 # a dealt card's bucket games played deferred (core/gtocore.c), every line's on a row together: natively (the browser
 # never solves a dealt river, and the wasm builds leave them out)
 DEFER_GAMES = sys.platform != "emscripten"
@@ -54,6 +59,12 @@ _prog = None           # that program
 
 class Unsupported(Exception):
     """A tree the core doesn't run (Solver.run runs it in numpy)."""
+
+
+class CoreError(RuntimeError):
+    """The core itself failed: a trap in the browser's module (its memory refusing to grow, an access out of bounds),
+    or a run or table build that didn't finish. run() turns the core off for the session on this only: an error in
+    our own Python around it (the clock read as 0 s once divided by) is no reason to."""
 
 
 def source_hash() -> str:
@@ -132,34 +143,44 @@ class _Wasm:
         self.ex = ex
         self.base = 0
 
+    @staticmethod
+    def _js(f, *a):
+        """An export or the memory called: what it raises (a JsException: the module trapped) as CoreError."""
+        try:
+            return f(*a)
+        except Exception as e:
+            raise CoreError(f"the core failed: {e!r}") from e
+
     def reset(self):
-        self.ex.core_reset()
-        self.base = int(self.ex.core_base()) & 0xffffffff
+        self._js(self.ex.core_reset)
+        self.base = int(self._js(self.ex.core_base)) & 0xffffffff
 
     def alloc(self, nbytes: int) -> int:
-        return int(self.ex.core_alloc(nbytes)) & 0xffffffff
+        return int(self._js(self.ex.core_alloc, nbytes)) & 0xffffffff
 
     def _view(self, off: int, nbytes: int):
         from js import Uint8Array      # (the memory's buffer changes when it grows: a fresh view every time)
-        return Uint8Array.new(self.ex.memory.buffer, self.base + off, nbytes)
+        return self._js(Uint8Array.new, self.ex.memory.buffer, self.base + off, nbytes)
 
     def write(self, off: int, a: np.ndarray):
-        self._view(off, a.nbytes).assign(a.reshape(-1).view(np.uint8))
+        v = self._view(off, a.nbytes)
+        self._js(v.assign, a.reshape(-1).view(np.uint8))
 
     def read(self, off: int, out: np.ndarray):
-        self._view(off, out.nbytes).assign_to(out.reshape(-1).view(np.uint8))
+        v = self._view(off, out.nbytes)
+        self._js(v.assign_to, out.reshape(-1).view(np.uint8))
 
     def run(self, prog: int, iters: int, factors: int) -> int:
-        return int(self.ex.core_run(prog, iters, factors))
+        return int(self._js(self.ex.core_run, prog, iters, factors))
 
     def eval(self, prog: int, at: int, p: int, r0: int, r1: int, out: int, md: int) -> int:
-        return int(self.ex.core_eval(prog, at, p, r0, r1, out, md))
+        return int(self._js(self.ex.core_eval, prog, at, p, r0, r1, out, md))
 
     def threads(self, t: int) -> int:
-        return int(self.ex.core_threads(t))
+        return int(self._js(self.ex.core_threads, t))
 
     def table(self, args: int) -> int:
-        return int(self.ex.core_table(args))
+        return int(self._js(self.ex.core_table, args))
 
 
 def _load():
@@ -498,7 +519,7 @@ class Program:
         f = np.array(factors, dtype=np.float32).reshape(-1)
         self.L.write(self.fac, f)
         if self.L.run(self.prog, k, self.fac) != k:
-            raise RuntimeError("core run failed")
+            raise CoreError("core run failed")
 
     def upload(self, solver, regrets: bool = True):
         """The solver's strategy sums (and regrets) into the arena (numpy may have run since)."""
@@ -535,7 +556,7 @@ class Tables:
     def _run(self, words):
         args = self._put(np.array(words, dtype=np.int64).astype(np.int32), np.int32)
         if self.L.table(args) != 0:
-            raise RuntimeError("core table failed")
+            raise CoreError("core table failed")
 
     def _start(self, ctx, S):
         self.L.reset()
@@ -644,7 +665,7 @@ def run(solver, r0, r1, t0: float, time_budget: float, max_iters: int, min_iters
         prog = _program(L, solver, r0, r1)
         if prog is None:
             return False
-        t1 = time.time()
+        t1 = _clock()
         per = None
         try:
             while solver.iters < max_iters:
@@ -667,15 +688,20 @@ def run(solver, r0, r1, t0: float, time_budget: float, max_iters: int, min_iters
                     solver.iters += 1
                     factors.append(solver._factors())
                 prog.iterate(k, factors)
-                per = (time.time() - t1) / (solver.iters - start)
+                per = max((_clock() - t1) / (solver.iters - start), PER_MIN)
                 if max_per is not None and solver.iters - start == 1 and per > max_per:
                     raise TooSlow(per)
         except (Cancelled, TooSlow):
             raise
-        except Exception:
-            # (the core failed mid-run: its iterations are dropped and numpy runs the solve)
+        except CoreError:
+            # (the core failed mid-run: its iterations are dropped, numpy runs the solve, and every later one)
             solver.iters = start
             _lib = False
+            return False
+        except Exception:
+            # (our own Python around it failed, not the core: numpy runs this solve from its iterations before,
+            # the regrets uploaded again next time, and the core stays on)
+            solver.iters = start
             return False
         prog.download(solver)
         if per is not None:

@@ -2039,7 +2039,7 @@ class MultiwaySolver:
                 c0 = time.time()
                 prog.run(k, self.iters)
                 self.iters += k
-                dt = (time.time() - c0) / k
+                dt = max((time.time() - c0) / k, 1e-7)   # (the browser's clock is whole milliseconds: core.run's note)
                 per = dt if per is None else 0.5 * per + 0.5 * dt
                 if time_budget is not None and self.iters - start >= min_iters and time.time() - t0 > time_budget:
                     self.out_of_time = True

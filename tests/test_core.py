@@ -368,6 +368,48 @@ class TestProgram(unittest.TestCase):
                 self.assertEqual(sol.iters, 5)
                 self.assertAlmostEqual(sol.exploitability(), want, places=4)
 
+    def test_an_iteration_under_the_clocks_resolution(self):
+        """A first iteration the clock reads as 0 s (the browser's time.time() is whole milliseconds; a small river's
+        iteration ~0.3 ms) runs on in the core: it had divided by it, and the error, taken for the core failing, turned
+        the core off for the session (core._lib False: every later solve in numpy)."""
+        with mock.patch.object(core, "_clock", lambda: 1.0):
+            sol = _solve("Ks7d2cTh5s", OOP, IP, 20, 90, native.config("fast"), 40)
+        self.assertIsNotNone(core.lib())
+        self.assertEqual(sol.iters, 40)
+        self.assertEqual(sol.solver.per_iter, core.PER_MIN)   # (run in the core: it sets per_iter)
+        self.assertTrue(sol.solver._core_ok)
+
+    def test_an_error_of_ours_in_run_leaves_the_core_on(self):
+        """A Python error around the core in run() (here the factors' upload, once) runs that solve in numpy and leaves
+        the core on: the next solve runs in it. A failure of the core itself (a run that didn't finish: CoreError)
+        turns it off for the session, as a trap in the browser's module does."""
+        want = _solve("Ks7d2cTh5s", OOP, IP, 20, 90, native.config("fast"), 5, use_core=False).exploitability()
+        real, calls = core.Program.iterate, []
+
+        def once(prog, k, factors):
+            calls.append(k)
+            if len(calls) == 1:
+                raise ValueError("ours")
+            return real(prog, k, factors)
+        with mock.patch.object(core.Program, "iterate", once):
+            sol = _solve("Ks7d2cTh5s", OOP, IP, 20, 90, native.config("fast"), 5)
+        self.assertEqual(calls, [1])                    # (numpy ran the rest: the core wasn't asked again)
+        self.assertEqual(sol.iters, 5)
+        self.assertAlmostEqual(sol.exploitability(), want, places=4)
+        self.assertIsNotNone(core.lib())
+        self.assertTrue(sol.solver._core_ok)
+        nxt = _solve("Ks7d2cTh5s", OOP, IP, 20, 90, native.config("fast"), 5)
+        self.assertIsNotNone(getattr(nxt.solver, "per_iter", None))   # (run in the core)
+        L = core.lib()
+        try:
+            with mock.patch.object(type(L), "run", return_value=0):
+                sol = _solve("Ks7d2cTh5s", OOP, IP, 20, 90, native.config("fast"), 5)
+            self.assertIsNone(core.lib())
+            self.assertEqual(sol.iters, 5)
+            self.assertAlmostEqual(sol.exploitability(), want, places=4)
+        finally:
+            core._lib = L
+
     def test_busy_core_numpy_runs(self):
         with core._lock:
             sol = _solve("Ks7d2cTh5s", OOP, IP, 20, 90, native.config("fast"), 5)

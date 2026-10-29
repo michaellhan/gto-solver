@@ -1293,6 +1293,25 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   estimate, up to 13.6 s), 17 were cut; none is flagged (the fuzz's checks: a move the page can't play, an error, the
   catch-all) and none is over twice its estimate, the slowest 3.45 s against 1.8 (a rare line solved again from its
   node: two budgets).
+* **The browser keeps its compiled core all session** (`core._clock`, `core.PER_MIN`, `core.CoreError`). `core.run`
+  timed its chunks of iterations with `time.time()`, which in Pyodide is `Date.now()`: whole milliseconds. A small
+  river's first iteration (0.2-0.3 ms: a limped pot's or a single-raised pot's narrowed river, 0.1M cells) read as 0 s
+  whenever it didn't cross a millisecond tick, the chunk size was divided by it, and the ZeroDivisionError, caught as
+  if the core had failed, switched the core off for the worker: every later solve of the session (the next hands,
+  Practice's look-aheads, Study) ran in numpy, 5-7x fewer iterations a second. `scripts/bench_browser.mjs --session`
+  (Pyodide, one worker, Fast: a limped pot's flop, turn and river, then a BTN vs BB turn) lost it in 7 of 14 sessions:
+  the river's own solve 1.66 s where the core takes 0.1, and the turn after it 11.3-11.4 s, 82-84 iterations, 1.25-1.3%
+  of the pot from equilibrium, where it takes 4.45 s, 200 iterations, 0.23%. With the fix 7 of 7 sessions kept it.
+  Now the chunks are timed with `time.perf_counter` (`performance.now()` there: microseconds), an iteration is never
+  taken for less than 0.1 us, and only the core's own failures turn it off: a trap in the browser's module (its memory
+  refusing to grow, an access out of bounds) or a run or table build that didn't finish (`CoreError`). An error in the
+  Python around it runs that one solve in numpy, from the iterations it had, and leaves the core on. The 3- and 4-way
+  solver's chunk clock gets the same floor. Natively the clock is microseconds, so the native numbers (the coverage
+  fuzz's browser-advisor mode included) are unaffected, and so are single requests on a fresh or idle worker, whose
+  solves before the turn's take over a millisecond an iteration: Quick's table above didn't move (main and the fix
+  taken in turn: the same iterations within 2 and seconds within 0.04; more iterations than the table's, the machine
+  quieter now: BTN vs BB 1.86 s, 75-77, 1.0-1.1%; the 6-max limped pot 1.87-1.89 s, 52-53, 6.0-6.2%). The settled-stop
+  table's "river after the hand's turn" (0.52 s, 300 iterations) had run its river in numpy: 0.10 s in the core.
 * **Regret minimizer** (`docs/cfr_research.md`, `scripts/bench_solver.py --algos`, exploitability per
   iteration): predictive CFR+ and its discounted form (PCFR+, PDCFR+), the state of the art on many
   non-poker games, are 2-7x more exploitable than DCFR here at 100-200 iterations on every spot (the river,
