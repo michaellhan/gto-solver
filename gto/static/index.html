@@ -886,6 +886,10 @@ function syncRoute(replace) {
 
 // ---- backend: the local Python server if present, otherwise the solver runs in the browser (Pyodide worker)
 let MODE = null, worker = null, reqId = 0;
+// A cross-origin isolated page stops a running solve through memory it shares with the worker (STOP: every request up
+// to the id in [0] is stopped, and the one in [1]; worker.js reads it between chunks of iterations, ~0.1 s), so the
+// worker keeps its solves, library entries and tables; elsewhere stopping one restarts the worker (cancelSolve).
+let STOP = null;
 let prefetched = null;   // the flop the worker was last told about (prefetchLibrary)
 const pending = {};
 // (health.json: the local server answers it {"ok": true}; the static site has the file, {"ok": false}, so the probe
@@ -947,6 +951,8 @@ function startWorker() {
   if (worker || isolating) return;
   worker = new Worker("worker.js?v=" + WORKER_VERSION);   // query busts the 4h GitHub Pages cache on redeploys
   prefetched = null;
+  STOP = globalThis.crossOriginIsolated && typeof SharedArrayBuffer === "function" ? new Int32Array(new SharedArrayBuffer(8)) : null;
+  if (STOP) worker.postMessage({ stop: STOP.buffer });
   worker.onmessage = (e) => { const m = e.data; if (m.status) { workerStatus = m.status; setStatus(m.status); } if (m.id != null && pending[m.id]) { pending[m.id](m.error ? { error: m.error } : m.result); delete pending[m.id]; } };
   worker.onerror = (e) => { for (const k in pending) { pending[k]({ error: "solver worker failed: " + e.message }); delete pending[k]; } };
 }
@@ -967,13 +973,25 @@ function prefetchLibrary() {
 function callAdvise(state, play) {
   if (MODE === "server") return fetch(play ? "play" : "advise", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(play ? { state, ...play } : state) }).then(r => r.json());
   startWorker();
-  return new Promise(res => { const id = ++reqId; pending[id] = res; worker.postMessage(play ? { id, state, play } : { id, state }); });
+  const id = ++reqId, p = new Promise(res => { pending[id] = res; worker.postMessage(play ? { id, state, play } : { id, state }); });
+  p.reqId = id;   // (stopRequests(id))
+  return p;
+}
+// Stop the browser's requests in flight, or the one `id` (callAdvise's reqId): they answer {cancelled: true} at once
+// where the page shares a stop flag with the worker (the one running stops within ~0.1 s, the worker keeping what it
+// holds). True when it could.
+function stopRequests(id) {
+  if (MODE !== "wasm" || !STOP || !worker) return false;
+  if (id == null) Atomics.store(STOP, 0, reqId); else Atomics.store(STOP, 1, id);
+  for (const k in pending) if (id == null || +k === id) { pending[k]({ cancelled: true }); delete pending[k]; }
+  return true;
 }
 // Stop the solve in flight; its analyze() call then returns without showing anything.
 async function cancelSolve() {
   if (!solving) return;
   solveGen++; solving = false;
   if (MODE === "server") { try { await fetch("cancel", { method: "POST" }); } catch (e) {} return; }
+  if (stopRequests()) return;
   if (workerStatus === "Solving…") {
     // the runtime is up, so the solve is running and blocks the worker: restart it (the runtime reloads from cache)
     worker.onmessage = worker.onerror = null;   // a dying worker can still raise an error; it must not fail the next solve

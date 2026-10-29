@@ -2155,8 +2155,9 @@ def _class_closure(active: np.ndarray, classes) -> np.ndarray:
 def solve(board: Sequence[int], r_oop: np.ndarray, r_ip: np.ndarray, pot: float, stack: float,
           bets=(0.0, 0.0), to_act: int = 0, n_raises: int = 0, cfg: Optional[Config] = None,
           time_budget: float = 3.0, max_iters: int = 1000, dead: Sequence[int] = (), should_stop=None,
-          warm: Optional[Solution] = None, reserve: Optional[float] = None) -> Solution:
+          warm: Optional[Solution] = None, reserve: Optional[float] = None, horizon: Optional[int] = None) -> Solution:
     """`warm`: an earlier solve of the same spot (possibly with a different card sampling) to start from.
+    `horizon`: the schedule's length (Solver.horizon) when the solve is run in pieces (max_iters the first piece).
     `reserve` (iterations, see Solver.run): when given, the budget also covers building the tree (the Accurate
     flop's takes ~1-1.5 s in Pyodide) and that many iterations' time after the solve."""
     t_start = time.time()
@@ -2177,6 +2178,7 @@ def solve(board: Sequence[int], r_oop: np.ndarray, r_ip: np.ndarray, pot: float,
     r0, r1 = r0f[active], r1f[active]
     ctx.root_reach = (r0, r1)
     s = Solver(ctx, root, dead_set)
+    s.horizon = horizon
     if warm is not None:
         # DCFR's iteration count starts over: carrying it on would weight the copied average strategy
         # (from a different tree, and slightly different ranges) like hundreds of iterations of this one

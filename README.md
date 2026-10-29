@@ -314,9 +314,11 @@ dock say "Solving your spot…" and the (large) action buttons are disabled; eac
 or call, 1-3 the sizes, R a size of your own, A all-in). Once it is solved the page looks ahead while you decide: the
 lines you're likeliest to take (below) are played on (the opponents' replies drawn as they will be, the next street
 dealt) up to the next request that takes a solve, your own next spot or an opponent's move on a new street, and the
-answer is used if you take that line, so the wait for it goes into your thinking time. A local server stops a
-look-ahead your move made useless; the browser's solver can't stop one, so there it looks ahead only at Fast, where a
-wrong guess costs at most one quick answer's ~2 s. Until your first decision a dashed card says where
+answer is used if you take that line, so the wait for it goes into your thinking time. A look-ahead your move made
+useless is stopped: by a local server, and in the browser where the page and its solver share a stop flag (a
+cross-origin isolated page, as the site is under its service worker), within ~0.1 s, its solve kept to go on from
+there if asked again. A browser that can't stop one looks ahead only at Fast, where a wrong guess costs at most one
+quick answer's ~2 s. Until your first decision a dashed card says where
 the verdict will be; right after each decision the coach shows
 its verdict (Best move, Good, Inaccuracy, Mistake) in colour on a card tinted to match, the EV it gave up and the
 solver's mix as a bar (each action of 20% or more named in it) with its frequencies (your move among them, at 0%
@@ -1217,6 +1219,38 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   The same answers (iterations and exploitability are the library's: 0.07-0.13% of the pot). The flop's entries
   arrive ahead when anyone acts before you; first to act on the flop, the request waits for the entry's one fetch
   (the index is in hand). The tables cost the same 150 MB of heap as before, now in every session.
+* **Fast stops once settled; the river reads the hand's turn solve** (`Advisor.hu_settled`, `advisor.HU_CHECKS`,
+  `HU_SETTLED_FROM`). The browser's Fast ran each heads-up street's solve for its whole budget however settled it
+  was: a 3bet pot's turn on to 1000 iterations, 0.01% of the pot from equilibrium, a river to 0.01-0.02%. Now it reads
+  the exploitability at 50, 100, 150, 200, 300, 400, 600 and 800 iterations and stops at the first under its target,
+  0.3% of the pot on one thread and 0.2 with threads (Accurate's turn tree there: ~300 iterations, 0.12% of the pot
+  off per combo against the rich reference on the five single-raised turns, 0.07 at 450). Not before the 300th:
+  per-combo EVs settle after the exploitability does. Against the rich reference (`scripts/turn_river_reference.py`,
+  natively, % of the pot off per combo), the four rivers at 100 iterations (0.15-0.45% from equilibrium) are 0.21-0.99
+  off where the 1000th is 0.11-0.60, and a 3bet pot's turn at 150 (Th9h4c-2s, 0.27%) 1.60 against 0.68; at 300 the
+  rivers are 0.16-0.61 and the four 3bet turns 0.45-0.69 in one thread's shallow menu (0.47-0.68 at 1000) and
+  0.11-0.28 in Accurate's tree (0.12-0.28), all within 0.1 of the 1000th's. A deeper turn on one thread may stop
+  from the 200th: Fast's own menu leaves it 0.34 off however long it runs (0.35 at 200). A settled solve asked again
+  isn't run on; Accurate and the local server run their budgets as before. The river's ranges came through a second
+  solve of the turn (3 s of the river's budget, 14-36 iterations: 6-37% of the pot from equilibrium, so mostly the
+  betting rules), its ranges with the river card dead, so the turn advice's solve wasn't found; now they come
+  through the hand's turn solve. `scripts/bench_browser.mjs` (one worker, one thread, Fast, before and after taken
+  in turn on a loaded machine), seconds, iterations, % of the pot from equilibrium:
+
+  | | 3bet pot turn | river after the hand's turn | river asked cold |
+  |---|---|---|---|
+  | before | 11.3 (723, 0.01) | 14.1 (607, 0.02) | 14.1 (673, 0.02) |
+  | after | 5.0 (300, 0.06) | 0.52 (300, 0.06) | 3.5 (300, 0.07) |
+
+  With the browser's threaded settings (Accurate's turn tree; the bench's core on one thread) the river after the
+  hand's turn went 4.2 -> 0.29 s. A single-raised turn on one thread stops at 200 iterations, 0.23-0.25%, in 7.9-8.1
+  s where it ran 11.1 s to 288-311 (0.11-0.13%) on a quieter machine; loaded, it gets 124-140 iterations in its 11 s
+  and runs them all, as before. The page can also stop the worker's solve now: where it is cross-origin isolated
+  (the site, under its service worker) the page and the worker share a stop flag (`stopRequests`, a
+  SharedArrayBuffer the core's chunks read every ~0.1 s), so Stop, the hand, speed or opponents changed mid-solve,
+  or a Practice look-ahead your move made useless stops it within ~0.1 s and the worker keeps its runtime, solves, library entries
+  and tables (before, the page restarted the worker: its 2-4 s setup again, and everything it held gone). A solve
+  stopped part way stays cached and goes on from there if asked again, and Practice looks ahead at Accurate too.
 * **Regret minimizer** (`docs/cfr_research.md`, `scripts/bench_solver.py --algos`, exploitability per
   iteration): predictive CFR+ and its discounted form (PCFR+, PDCFR+), the state of the art on many
   non-poker games, are 2-7x more exploitable than DCFR here at 100-200 iterations on every spot (the river,

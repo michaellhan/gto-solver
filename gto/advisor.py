@@ -34,7 +34,8 @@ from . import preflop as pf
 from .pf_classes import push_fold
 # imported where used (exploit, breakdown, like multiway_solver and pf_game): the browser's worker imports this module
 # before its first answer, and a preflop answer or a library flop needs none of them (tests/test_bundle.py)
-from .solver import solve, Config, Solution, Decision, Terminal, Chance, BucketEntry, match_action, expand, MEMBER_FULL, _inv_of
+from .solver import solve, Config, Solution, Decision, Terminal, Chance, BucketEntry, match_action, expand, MEMBER_FULL, _inv_of, \
+    Cancelled
 
 DEFAULT_OPEN = {"SB": 3.0}
 BVB_3BET = 10.0 / 3.0   # the big blind's default 3bet over a small-blind open, x the open (_default_size)
@@ -95,6 +96,15 @@ MW4_STREETS = {"flop": {"later": "buckets", "buckets": 8, "bucket_river_step": 3
 MW4_FAST_STREETS = {"flop": {"later": "buckets", "buckets": 6, "bucket_river_step": 4},
                     "turn": {"later": "buckets", "buckets": 8}}
 HU_RESERVE = 1.0   # heads-up solves likewise keep one iteration's time back (the exploitability read after: ~1 iteration)
+HU_CHECKS = (50, 100, 150, 200, 300, 400, 600, 800)   # a heads-up street's solve, with Advisor.hu_settled set, stops at
+                   # the first of these iterations where it is that close to equilibrium (an exploitability read each,
+                   # about one iteration's time)...
+HU_SETTLED_FROM = {"flop": 300, "turn": 300, "shallow": 300, "river": 300}   # ...from this one on (Advisor.hu_settled_from):
+                   # per-combo EVs settle after the exploitability does. Against the rich reference
+                   # (scripts/turn_river_reference.py, % of the pot off per combo): a river at 100 iterations, 0.15% of
+                   # the pot from equilibrium, 0.99 where 300 and 1000 iterations are 0.61 and 0.60; a 3bet pot's turn
+                   # (shallow: Advisor.spr_sizes) at 150, 0.27%, 1.60 against 0.69 and 0.68. "turn" is a deeper one: the
+                   # browser's one-thread Fast plays its own menu there, 0.35 off at 200 and 0.34 from 300 on (worker.js)
 MW_SETTLED = 0.1   # a 3-way solve stops once its players' mean best-response gain is under this (% of the pot)...
 MW_CHECKS = (25, 50, 100, 200, 400, 700)   # ...checked at these iterations (about two iterations' time each). The
                    # browser's Accurate ran a 3-way river 60 s to 386 iterations, 0.01% of the pot, and a turn 330, 0.03%
@@ -1823,6 +1833,11 @@ class Advisor:
         self.cache_mb = CACHE_MB
         self._held: Dict[tuple, int] = {}
         self.should_stop = None   # callable; when it returns true the running solve raises solver.Cancelled
+        # a heads-up solve (the street advised on, or an earlier one narrowing its ranges) stops once its
+        # exploitability is under this, % of the pot (read at HU_CHECKS), instead of running its whole budget; None
+        # runs the budget
+        self.hu_settled: Optional[float] = None
+        self.hu_settled_from: Dict[str, int] = dict(HU_SETTLED_FROM)   # (by street; "shallow": spr_sizes' turn)
         self.mw_rake_rules = True   # multiway: our in-trial calls, leads and raises count the rake (off: payouts only)
         self.mw_trials: Optional[int] = None   # multiway: play at least this many trials (whole passes), no time caps or early stop (tests)
         # 3-way pots: the streets solved by the 3-player solver (gto/multiway_solver.py; others, and 4+ players off the river, use the
@@ -2935,6 +2950,11 @@ class Advisor:
             # narrow through earlier streets that were also heads-up between these two
             for st in rep[1:-1]:
                 sub_board = board[:{"flop": 3, "turn": 4, "river": 5}[st.name]]
+                # the next street's board: its ranges leave out the cards dealt by then, not later ones, so they are
+                # the ranges that street's own advice solved with, and its solve is found in the cache (the river's
+                # turn was solved again for its narrowing, its ranges short of the river card's combos: 3 s of the
+                # browser's 3.4 s river)
+                nxt_board = board[:len(sub_board) + 1]
                 if st.players_start != remaining:
                     continue   # multiway: narrowed above
                 spare += self.prior_budget
@@ -2962,13 +2982,11 @@ class Advisor:
                         _narrow_street(rs, sub_board, st, stk, hero, hole, slow_rules, check_whole=True)
                         notes.append(f"{st.name}: ranges narrowed by simple betting rules (a quick answer: the street "
                                      f"isn't solved)")
-                        r0 = _post_floor(r0, rs[oop], board, oop, st.name, notes)
-                        r1 = _post_floor(r1, rs[ip], board, ip, st.name, notes)
+                        r0 = _post_floor(r0, rs[oop], nxt_board, oop, st.name, notes)
+                        r1 = _post_floor(r1, rs[ip], nxt_board, ip, st.name, notes)
                         continue
                     sol = self._solve_cached(sub_board, r0, r1, st.pot_start, eff, self.prior_budget, cfg=cfg)
-                    if getattr(sol, "expl_at", (None,))[0] != sol.iters:
-                        sol.expl_at = (sol.iters, sol.exploitability())
-                    expl = sol.expl_at[1]
+                    expl = self._expl(sol)
                     trust = trust_of(expl, st.name)
                     if trust < 1.0:
                         notes.append(f"{st.name}: the solve that narrows ranges is {expl:.1f}% of the pot from "
@@ -2977,8 +2995,8 @@ class Advisor:
                     node, c0, c1 = self._walk(sol, st.actions, oop, ip, st.pot_start, eff, notes, st.name, self.prior_smoothing,
                                               board=sub_board, rules=(0, 1),
                                               lock=mk_lock(sol), trust=trust, slow=slow_hu)
-                r0 = _post_floor(r0, expand(sol.ctx, c0), board, oop, st.name, notes)
-                r1 = _post_floor(r1, expand(sol.ctx, c1), board, ip, st.name, notes)
+                r0 = _post_floor(r0, expand(sol.ctx, c0), nxt_board, oop, st.name, notes)
+                r1 = _post_floor(r1, expand(sol.ctx, c1), nxt_board, ip, st.name, notes)
             eff = min(stk[oop] - cur.inv_start[oop], stk[ip] - cur.inv_start[ip])
             cfg = self._cfg_with_real_sizes(cur, oop, ip, eff)
             r0, r1 = self._with_hero(r0, r1, hero_p, hole, notes)
@@ -3045,7 +3063,7 @@ class Advisor:
             return self._actor_move(sol, node, n_r0, n_r1, actor[1], 1 - hero_p, cur.name)
         if node.player != hero_p:
             notes.append("warning: tree expected the other player to act; reporting that node")
-        expl = max(0.0, sol.exploitability())   # how far this street's solve is from equilibrium, % of its pot
+        expl = max(0.0, self._expl(sol))   # how far this street's solve is from equilibrium, % of its pot
         if self._runout_close is not None:
             return self._runout_report(sol, node, n_r0, n_r1, hero, villain, hero_p, board, expl, notes, t0)
         exploit = pool or bool(adj)
@@ -4706,31 +4724,90 @@ class Advisor:
 
     def _solve_cached(self, board, r0, r1, pot, stack, budget, bets=(0.0, 0.0), to_act=0, n_raises=0, cfg=None,
                       settle=False):
+        """A heads-up solve, from the cache when it holds this spot and ranges (run on while it has had under 80% of
+        `budget`), else a new one, warm from warm_from's solve of the spot. With hu_settled set it stops at the first
+        of HU_CHECKS where it is that close to equilibrium; one settled already isn't run on. A solve stopped part
+        way (should_stop: Cancelled) stays cached, and the spot asked again goes on from where it stopped."""
         cfg = cfg or self.cfg
         key = self._solve_key(board, r0, r1, pot, stack, bets, to_act, n_raises, cfg)
         spot = key[2:]
         sol = self._cache.get(key)
+        target = self.hu_settled
+        n = len(board)
+        street = ("flop" if n == 3 else "river" if n == 5 else
+                  "shallow" if stack <= self.spr_sizes.get("turn", (0.0, {}))[0] * pot else "turn")
+        first = max(self.hu_settled_from.get(street, HU_CHECKS[0]), HU_CHECKS[0])   # (the first check it may stop at)
+        t0 = time.time()
         if sol is None:
             # Same spot solved by warm_from (ranges can differ a little: they come from its own earlier
             # streets): start from it and count its time against the budget, as extend() does below.
             warm = self.warm_from._by_spot.get(spot) if self.warm_from is not None else None
             # (the budget covers the tree's build and the exploitability read after the iterations: the browser's
             # Accurate flop answered 4.5 s past its 60 s, a two-tone one 9 s)
+            left = max(budget - warm.seconds, 0.2 * budget) if warm else budget
             sol = solve(board, r0, r1, pot, stack, bets=bets, to_act=to_act, n_raises=n_raises, cfg=cfg,
-                        time_budget=max(budget - warm.seconds, 0.2 * budget) if warm else budget,
-                        should_stop=self.should_stop, warm=warm, reserve=HU_RESERVE)
+                        time_budget=left, should_stop=self.should_stop, warm=warm, reserve=HU_RESERVE,
+                        max_iters=min(c for c in HU_CHECKS if c >= first) if target is not None else 1000, horizon=1000)
             if warm is not None:
                 sol.seconds += warm.seconds
             self._cache[key] = sol
             self._by_spot[spot] = sol
             self._keep("_cache", key, sol)
+            if target is not None:
+                self._hu_run(sol, left - (time.time() - t0), target, first)
         else:
             self._keep("_cache", key, None)
-            if sol.seconds < budget * 0.8 and sol.iters < 1000:
-                sol.extend(budget - sol.seconds, should_stop=self.should_stop, reserve=HU_RESERVE)        # keep going from the stored regrets instead of restarting
+            if getattr(sol, "stopped", False):   # (stopped part way: its iterations and root mix as they are now)
+                sol.stopped = False
+                sol.iters = sol.solver.iters
+                sol._refresh()
+            if getattr(sol, "settled_at", None) is not None and (target is None or sol.settled_at <= target):
+                pass        # (settled already)
+            elif sol.seconds < budget * 0.8 and sol.iters < 1000:
+                if target is not None:
+                    self._hu_run(sol, budget - sol.seconds, target, first)
+                else:       # keep going from the stored regrets instead of restarting
+                    try:
+                        sol.extend(budget - sol.seconds, should_stop=self.should_stop, reserve=HU_RESERVE)
+                    except Cancelled:
+                        sol.stopped = True
+                        raise
         if settle:
             self._settle(sol, budget)
         return sol
+
+    @staticmethod
+    def _expl(sol: Solution) -> float:
+        """sol.exploitability(), read once per iteration count."""
+        if getattr(sol, "expl_at", (None,))[0] != sol.iters:
+            sol.expl_at = (sol.iters, sol.exploitability())
+        return sol.expl_at[1]
+
+    def _hu_run(self, sol: Solution, left: float, target: float, first: int = HU_CHECKS[0]) -> None:
+        """Runs a heads-up solve on for at most `left` seconds, stopping at the first of HU_CHECKS from `first` on
+        where its exploitability is under `target` (% of the pot): sol.settled_at = target then. (Its pieces run the
+        solver directly: Solution.extend's EV pass after each would cost about an iteration a piece.)"""
+        t0 = time.time()
+        checks = [c for c in HU_CHECKS if c >= first]
+        while sol.iters < 1000:
+            if sol.iters in checks and self._expl(sol) < target:
+                sol.settled_at = target
+                break
+            rem = left - (time.time() - t0)
+            nxt = min([c for c in checks if c > sol.iters] + [1000])
+            if rem <= 0:
+                break
+            try:
+                _, secs = sol.solver.run(sol.r0, sol.r1, time_budget=rem, max_iters=nxt, min_iters=1,
+                                         should_stop=self.should_stop, reserve=HU_RESERVE)
+            except Cancelled:
+                sol.stopped = True
+                raise
+            sol.iters = sol.solver.iters
+            sol.seconds += secs
+            if sol.iters < nxt:
+                break       # (out of time)
+        sol._refresh()
 
     def _keep(self, store: str, key, sol) -> None:
         """A solve in self.<store> (_cache or _mw_cache) just used: the most recent now, its arrays counted when `sol`
@@ -4752,10 +4829,14 @@ class Advisor:
         once. Limped pots, turn probes and short-stack check-raises stopped at 10 iterations 27-55% of the
         pot from settled, showing confident mixes (an all-in 75% at +15 beside a call at +22). Whether it ran."""
         if getattr(self, "_quick", False) or getattr(sol, "settled_once", False) or sol.iters >= 1000 \
-                or sol.exploitability() < SETTLE_EXPL:
+                or self._expl(sol) < SETTLE_EXPL:
             return False
         sol.settled_once = True
-        sol.extend(self.time_budget if budget is None else budget, should_stop=self.should_stop, reserve=HU_RESERVE)
+        try:
+            sol.extend(self.time_budget if budget is None else budget, should_stop=self.should_stop, reserve=HU_RESERVE)
+        except Cancelled:
+            sol.stopped = True
+            raise
         return True
 
     def _optimize_sizes(self, board, r0, r1, st: StreetState, eff, cfg: Config, hero_p, notes):

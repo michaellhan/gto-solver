@@ -121,6 +121,50 @@ test("a solve of a spot you've left doesn't hold up your next turn: it's stopped
   assert.equal(p.posted.filter((m) => m.prefetch && m.prefetch.board === "Qc8h3d").length, 2);
 });
 
+test("cross-origin isolated, a solve of a spot you've left is stopped through memory shared with the worker, which keeps running", async () => {
+  const p = loadPage({ isolated: true });
+  await p.ready();
+  const told = p.posted.filter((m) => m.stop);
+  assert.equal(told.length, 1);
+  assert.equal(Object.prototype.toString.call(told[0].stop), "[object SharedArrayBuffer]");
+  const flag = new Int32Array(told[0].stop);
+  const asks = () => p.posted.filter((m) => m.state);
+  p.S = state(FLOP);
+  await flush();
+  const first = asks().at(-1);
+  p.workers[0].onmessage({ data: { status: "Solving…" } });
+  assert.deepEqual([...flag], [0, 0]);
+  p.click("newhand");
+  p.S = state({ cards: ["9s", "9d", "Qc", "8h", "3d"], preflop: acts("UTG f, HJ f, CO f, BTN r2.5, SB f, BB c"), flop: acts("BB x") });
+  await flush(); await flush();
+  const asked = asks().at(-1);
+  assert.deepEqual(asked.state, p.payload());
+  assert.equal(flag[0], first.id);              // every request up to the one left is stopped...
+  assert.ok(asked.id > flag[0]);                // ...not the new one
+  assert.equal(p.workers.length, 1);
+  assert.equal(p.workers[0].terminated, false); // (not restarted: it keeps the hand's solves)
+  assert.match(p.byId("result").innerHTML, /Solving the flop/);
+  // the stopped request's answer, when it comes, is dropped; the new one's is shown
+  p.workers[0].onmessage({ data: { id: first.id, result: { cancelled: true } } });
+  await flush();
+  assert.match(p.byId("result").innerHTML, /Solving the flop/);
+  p.workers[0].onmessage({ data: { id: asked.id, result: { street: "flop", hero: "BTN", hand: "99", recommended: "check", actions: [{ action: "check", freq: 1 }] } } });
+  await flush();
+  assert.match(p.byId("result").innerHTML, /<span class="big">check<\/span>/);
+  // one request alone (Practice's look-ahead): stopRequests(id)
+  const a = p.run("window.__a = callAdvise({ x: 1 }); __a.reqId"), b = p.run("window.__b = callAdvise({ x: 2 }); __b.reqId");
+  assert.equal(p.run(`stopRequests(${a})`), true);
+  assert.deepEqual([flag[0], flag[1]], [first.id, a]);
+  assert.equal((await p.run("__a")).cancelled, true);
+  p.workers[0].onmessage({ data: { id: b, result: { ok: 1 } } });
+  assert.equal((await p.run("__b")).ok, 1);
+  // not isolated: no flag, and stopping a running solve restarts the worker (the test above)
+  const q = loadPage();
+  await q.ready();
+  assert.equal(q.posted.filter((m) => m.stop).length, 0);
+  assert.equal(q.run("stopRequests()"), false);
+});
+
 test("once the flop is known the worker is told it, once a flop, to fetch the library's entries for it ahead", async () => {
   const p = loadPage();
   await p.ready();

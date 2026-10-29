@@ -15,8 +15,8 @@ const ADVICE = { street: "flop", hero: "BTN", hand: "AKs", recommended: "call",
 
 // a page in browser (worker) mode with practice.js loaded and a seeded Math.random; a random seat each hand
 // unless storage says otherwise (the table, the default, has its own tests in table.test.js)
-async function practicePage(seed = 7, storage) {
-  const p = loadPage({ storage: { "gto-practice-seat": '"random"', ...storage } });
+async function practicePage(seed = 7, storage, opts = {}) {
+  const p = loadPage({ ...opts, storage: { "gto-practice-seat": '"random"', ...storage } });
   await p.ready();
   p.run(`Math.random = (() => { let s = ${seed}; return () => (s = (s * 16807) % 2147483647) / 2147483647; })();`);
   vm.runInContext(PRACTICE, p.ctx, { filename: "practice.js" });
@@ -519,6 +519,31 @@ test("looking ahead follows your likeliest moves: the solver's mix blended with 
   assert.ok(f.val("Practice.state.hand.result"));
 });
 
+test("cross-origin isolated, the browser looks ahead at Accurate too, and stops a look-ahead you went another way from", async () => {
+  const mineAhead = (p, street) => p.posted.filter(m => m.state && m.state[street].some(a => a.pos === p.S.hero));
+  // not isolated, Accurate doesn't look ahead (a wrong guess would hold the next request up for a whole solve)
+  const q = await practicePage(11, { "gto-speed": "accurate" }), dq = new Set();
+  await toMyTurn(q, dq, (m) => m.play ? passive(m) : EVEN);
+  await flush(); await flush();
+  assert.equal(mineAhead(q, q.sim().current).length, 0);
+  const p = await practicePage(11, { "gto-speed": "accurate" }, { isolated: true }), done = new Set();
+  const flag = new Int32Array(p.posted.find(m => m.stop).stop);
+  await toMyTurn(p, done, (m) => m.play ? passive(m) : EVEN);
+  await flush(); await flush();
+  const street = p.sim().current, ahead = mineAhead(p, street);
+  assert.ok(ahead.length >= 1, "a look-ahead goes out at Accurate");
+  assert.ok(!done.has(ahead[0].id));
+  // you bet or raise instead of checking or calling: the look-ahead is stopped, the worker not restarted
+  const c = p.sim().cur;
+  assert.equal(p.act({ action: "bet", to: Math.max(3, c.curBet * 3), clamp: true }), null);
+  for (let i = 0; i < 5 && flag[1] !== ahead[0].id; i++) await flush();
+  assert.equal(flag[1], ahead[0].id);
+  assert.equal(flag[0], 0, "nothing else stopped");
+  assert.equal(p.workers.length, 1);
+  assert.equal(p.workers[0].terminated, false);
+  assert.ok(p.posted.some(m => m.play && m.id > ahead[0].id && m.state[street].some(a => a.pos === p.S.hero && /bet|raise/.test(a.action))),
+            "the opponent's reply to your bet is asked");
+});
 
 test("Review mistakes: your decisions that gave up the most EV across hands, each opening its verdict; the dock's one-line verdict", async () => {
   const p = await practicePage(11);

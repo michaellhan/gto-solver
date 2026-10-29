@@ -211,9 +211,10 @@
   // time you take to decide. Your likeliest moves: the solver's mix for your hand, blended half and half with what you
   // usually do in that kind of spot (habits: fold / check or call / bet or raise, facing a bet or not) once you've
   // decided it a few times; up to AHEAD_LINES of them, each at least AHEAD_MIN likely, a fold never (it ends your hand).
-  // A local server cancels a look-ahead your move made useless; the browser's solver can't stop one, so there it
-  // looks ahead only at Fast or Quick, where Practice's answers take about 2 s (a wrong guess makes the next request wait
-  // that long at most).
+  // A look-ahead your move made useless is stopped: by the local server, or by the browser's worker where the page
+  // shares a stop flag with it (stopRequests: cross-origin isolated, as the site is under its service worker). A
+  // browser that can't stop one looks ahead only at Fast or Quick, where Practice's answers take about 2 s (a wrong
+  // guess makes the next request wait that long at most).
   const AHEAD_LINES = 2, AHEAD_MIN = 0.2, HABIT_MIN = 5;
   const A = { key: null, gen: 0, moves: new Map(), out: null };   // out: {k, p} the look-ahead request in flight
   const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -243,15 +244,15 @@
     try { return f(); } finally { S.actions = keep[0]; S.cards = keep[1]; save(); }
   }
   function ask(k, req, play) {
-    const p = callAdvise(req, play).catch(e => ({ error: String(e) }));
-    A.out = { k, p }; p.then(() => { if (A.out && A.out.p === p) A.out = null; });
+    const c = callAdvise(req, play), p = c.catch(e => ({ error: String(e) }));
+    A.out = { k, p, id: c.reqId }; p.then(() => { if (A.out && A.out.p === p) A.out = null; });
     return p;
   }
   async function ahead() {
     const key = JSON.stringify(payload());
     if (A.key === key || !lastResult || lastResult.error) return;
     A.key = key; const gen = ++A.gen;
-    if (MODE !== "server" && SPEED === "accurate") return;
+    if (MODE !== "server" && !STOP && SPEED === "accurate") return;
     const sim0 = simulate();
     for (const c of likely(lastResult, sim0)) {
       if (gen !== A.gen) return;
@@ -302,8 +303,10 @@
     const o = A.out;
     if (!o) return null;
     if (o.k === k) { const r = await o.p; if (r.error || r.cancelled) return null; A.moves.delete(k); return r; }
-    A.gen++;   // you went another way: the look-ahead stops (a local server's solve now; the browser's runs out)
+    A.gen++;   // you went another way: the look-ahead stops (a local server's solve now, the browser's where it can stop
+    // one; else it runs out)
     if (MODE === "server") { try { await fetch("cancel", { method: "POST" }); } catch (e) {} await o.p; }
+    else if (o.id != null && stopRequests(o.id)) await o.p;
     return null;
   }
   // an action's sound: a knock for a check, chips for a call, more for a bet or raise, a stack for an all-in

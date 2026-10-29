@@ -210,6 +210,15 @@ const ready = (async () => {
              // Fast's turn also gets the narrowing flop's 3 s when that flop costs nothing (from the library or the hand's
              // flop advice; Advisor.spare_prior, as natively): the page's bar counts them anyway
              + "advs['fast'].spare_prior = True; "
+             // Fast's heads-up solves stop once settled (Advisor.hu_settled: the first of advisor.HU_CHECKS where the
+             //   solve is that close to equilibrium, % of the pot, from the 300th iteration on: advisor.HU_SETTLED_FROM)
+             //   instead of running the whole budget. With threads (Accurate's turn tree) at 0.2: ~300 iterations, which
+             //   against the rich reference on the five single-raised turns is 0.12% of the pot off per combo (0.07 at
+             //   450, 0.21 at 200; README, Accuracy vs speed). On one thread Fast's own tree, whose menu leaves it 0.34
+             //   off however long it runs (0.35 at 200), at 0.3, from the 200th: ~200 iterations. A river or a 3bet
+             //   pot's turn settles at 300 of its ~1000, within 0.1 of the 1000th's per-combo EVs.
+             + `advs['fast'].hu_settled = ${THREADED ? 0.2 : 0.3}; `
+             + (THREADED ? "" : "advs['fast'].hu_settled_from['turn'] = 200; ")
              // a shallow turn (at most 4.5 x the pot behind: a 3bet pot's) bets 33/75% in Fast, not 33/125% (gto/native.py
              // FAST_SPR_SIZES: four 3bet turns 1.96% of the pot off per combo -> 0.80 at 8 s, frequencies 6.8 points -> 2.0);
              // with threads Accurate's tree there too
@@ -253,6 +262,17 @@ const ready = (async () => {
              // river hold ~380 MB here, Accurate's turn and river ~470; kept without bound the heap reached its 2 GB in 12
              // answers over 5 hands and every later solve failed for want of memory
              + "advs['accurate']._held = advs['fast']._held; advs['fast'].cache_mb = advs['accurate'].cache_mb = 700");
+  // a solve stops when the page says so (stopNow, below): Advisor.should_stop, read between the core's chunks of
+  // iterations (~0.1 s); the request then answers {cancelled: true}
+  py.globals.set("stop_now", stopNow);
+  py.runPython("from gto.solver import Cancelled\n"
+             + "for _a in advs.values(): _a.should_stop = lambda: bool(stop_now())\n"
+             + "def answer(st, pl):\n"
+             + "    adv = advs.get(st.get('speed'), advs['fast'])\n"
+             + "    try:\n"
+             + "        return json.dumps(adv.play(st, pl['seat'], pl['hole'], pl.get('seed')) if pl else adv.advise(st))\n"
+             + "    except Cancelled:\n"
+             + "        return json.dumps({'cancelled': True})");
   lap("advisors");
   setup.total = +((performance.now() - T0) / 1000).toFixed(2);
   postMessage({ status: "Solving…", setup });
@@ -274,11 +294,18 @@ function idle() {
 }
 ready.then(idle, () => {});
 
-// A solve can only be cancelled before it starts (runPython blocks this thread); the page terminates
-// the worker to stop one that is running.
+// Stopping a request. Before it starts: a "cancel" message (the page's, while the runtime loads). Once it runs it
+// blocks this thread, so messages wait: where the page is cross-origin isolated it hands over a SharedArrayBuffer
+// ("stop": every request up to the id in STOP[0] is stopped, and the one in STOP[1]), which the running solve reads
+// between chunks of iterations (stopNow, Advisor.should_stop) and stops within ~0.1 s, the worker keeping its solves,
+// library entries and tables; elsewhere the page terminates the worker (the runtime reloads from cache, ~1.5 s, and
+// the hand's earlier streets are solved again).
 const cancelled = new Set();
+let STOP = null, CUR = 0;   // (CUR: the request running)
+function stopNow() { return STOP !== null && (Atomics.load(STOP, 0) >= CUR || Atomics.load(STOP, 1) === CUR); }
 onmessage = async (e) => {
   if (e.data.cancel != null) { cancelled.add(e.data.cancel); return; }
+  if (e.data.stop) { STOP = new Int32Array(e.data.stop); return; }
   if (e.data.prefetch) {   // the page's hand has a flop: its library entries, fetched ahead (above)
     try {
       const py = await ready;
@@ -295,12 +322,11 @@ onmessage = async (e) => {
   try {
     const py = await ready;
     if (String(state.board || "").length >= 6) await whenAhead();   // (a preflop answer needs no library file)
-    if (cancelled.delete(id)) return postMessage({ id, result: { cancelled: true } });
+    CUR = id;
+    if (cancelled.delete(id) || stopNow()) return postMessage({ id, result: { cancelled: true } });
     py.globals.set("state_json", JSON.stringify(state));
     py.globals.set("play_json", JSON.stringify(play || null));
-    const out = py.runPython("st = json.loads(state_json); pl = json.loads(play_json); adv = advs.get(st.get('speed'), advs['fast']); "
-                           + "json.dumps(adv.play(st, pl['seat'], pl['hole'], pl.get('seed')) if pl else adv.advise(st))");
-    postMessage({ id, result: JSON.parse(out) });
+    postMessage({ id, result: JSON.parse(py.runPython("answer(json.loads(state_json), json.loads(play_json))")) });
   } catch (err) {
     postMessage({ id, error: String(err).split("\n").slice(-3).join(" ") });
   } finally {

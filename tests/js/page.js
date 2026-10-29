@@ -71,7 +71,8 @@ class El {
 
 // Options: hash (location.hash), path (location.pathname, default /gto-solver/: e.g. /gto-solver/practice/), search,
 // scripts (file name -> source run instead of gto/static's file when the page loads that script), protocol (location.protocol, default http:), storage (initial localStorage entries), server (true: /health answers ok,
-// so the page uses the local server's budgets and POSTs to /advise instead of the worker).
+// so the page uses the local server's budgets and POSTs to /advise instead of the worker), isolated (true: the page is
+// cross-origin isolated, so it can share a SharedArrayBuffer with its worker).
 function loadPage(opts = {}) {
   const els = new Map();
   const byId = (id) => { if (!els.has(id)) els.set(id, new El("div", id)); return els.get(id); };
@@ -105,7 +106,7 @@ function loadPage(opts = {}) {
 
   class FakeWorker {
     constructor(url) { this.url = url; this.onmessage = null; this.onerror = null; this.terminated = false; workers.push(this); }
-    postMessage(m) { posted.push(JSON.parse(JSON.stringify(m))); }
+    postMessage(m) { posted.push(m.stop ? { stop: m.stop } : JSON.parse(JSON.stringify(m))); }   // (the stop flag: shared, as is)
     terminate() { this.terminated = true; }
   }
   // the header's speed and opponents toggles (static markup in the page)
@@ -164,6 +165,7 @@ function loadPage(opts = {}) {
   }
   const ctx = {
     document, location, console,
+    ...(opts.isolated ? { crossOriginIsolated: true } : {}),
     history: {
       replaceState: (_s, _t, url) => { replaced.push(url); goTo(url); },
       pushState: (_s, _t, url) => { pushed.push(url); goTo(url); },
