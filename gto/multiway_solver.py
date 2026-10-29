@@ -55,6 +55,15 @@ for _i, (_a, _b) in enumerate(ALL_COMBOS):
     _PAIR[_a, _b] = _PAIR[_b, _a] = _i
 
 
+class BuildTooSlow(Exception):
+    """The tree and bucket tables were still building at the solve's deadline (MultiwaySolver's `deadline`): a quick
+    answer's 3-way flop with a wide range or a 4-way limped flop spent its whole budget building and ran no
+    iteration, so the betting rules answer at once instead."""
+    def __init__(self, seconds: float):
+        super().__init__(f"the tables were still building after {seconds:.2f} s")
+        self.seconds = seconds
+
+
 @dataclass
 class MWConfig:
     bet: Dict[str, float] = field(default_factory=lambda: {"flop": 0.33, "turn": 0.5, "river": 0.5})
@@ -796,7 +805,9 @@ class BucketTables:
         self.ids = np.zeros((npl, C, n), dtype=np.intp)
         keys = [("J",)] + [("S", lv, p) for lv in _live_sets(npl) for p in lv]
         T = {k: np.zeros((C,) + (K,) * npl) for k in keys}
+        t_cls = time.time()
         for t, (rep, _) in enumerate(cls):
+            s.check_deadline(t / C, t_cls)
             base = tuple(s.board) + (rep,)
             if len(base) == 4:
                 rv = [c for c in range(52) if c not in dead and c != rep]
@@ -1107,15 +1118,16 @@ def _outer_sum(fs):
 class MultiwaySolver:
     def __init__(self, board, ranges: Sequence[np.ndarray], pot: float, stack: float, bets=None, to_act=0,
                  n_raises=0, pending=None, cfg: Optional[MWConfig] = None, dead: Sequence[int] = (),
-                 include: Sequence[int] = ()):
+                 include: Sequence[int] = (), deadline: Optional[float] = None):
         """`ranges`: one (1326,) weight vector per player, in postflop acting order. `pot`: the chips in the
         middle at the start of this street; `stack`: each player's chips behind at the start of this street
         (one number: the solver plays equal stacks); `bets`: chips each put in this street so far; `to_act`:
         who acts at the root; `pending`: who still has to act on this street (default everyone from to_act on
         when nobody has bet, else everyone who hasn't matched the top bet). `include`: combos (indices into the 1326)
         to solve even with no weight in any range (a hand's strategy is then the regret-matching one: see
-        hand_strategy)."""
+        hand_strategy). `deadline` (a time.time()): the bucket tables still building then raise BuildTooSlow."""
         t_init = time.time()
+        self.deadline, self._t_init = deadline, t_init
         self.cfg = cfg or MWConfig()
         self.board = tuple(board)
         self.np = len(ranges)
@@ -1174,6 +1186,15 @@ class MultiwaySolver:
             self._icm_setup()
         self.build_seconds = time.time() - t_init     # the tree and the bucket tables (part of a solve's budget)
 
+    def check_deadline(self, done: float = 0.0, since: float = 0.0):
+        """BuildTooSlow past the deadline, or once `done` (a share of a step begun at `since`, a quarter at least)
+        says the step ends past it."""
+        if self.deadline is None:
+            return
+        now = time.time()
+        if now > self.deadline or done >= 0.25 and now + (now - since) * (1.0 - done) / done > self.deadline:
+            raise BuildTooSlow(now - self._t_init)
+
     # -- later streets by hand buckets
     def _build_later(self, pot):
         cfg = self.cfg
@@ -1183,6 +1204,7 @@ class MultiwaySolver:
         street = NEXT_STREET[STREET[len(self.board)]]
         members = [(e, 0, _template(cfg, self.np, street, e.pot, e.c, e.behind, e.folded)) for e in self.builder.exits]
         while members:
+            self.check_deadline()
             groups: Dict[tuple, list] = {}
             for m in members:
                 groups.setdefault(_sig(m[2]), []).append(m)

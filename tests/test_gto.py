@@ -1228,6 +1228,22 @@ class TestTableSizes(unittest.TestCase):
         self.assertTrue(any("leaves a 4-way flop to the betting rules" in n for n in res["notes"]), res["notes"])
         self.assertEqual(adv._mw_cache, {})
 
+    def test_quick_answers_leave_a_multiway_flop_whose_tables_run_late_to_the_rules(self):
+        # a quick answer's 3- or 4-way tree and tables not done by advisor.MW_QUICK_BUILD of its budget (or on course
+        # not to be: multiway_solver.BuildTooSlow) leave no time to iterate: the betting rules answer, nothing kept
+        from unittest import mock
+        adv = Advisor(Config(depth=1), time_budget=4.0, prior_budget=2.0)
+        adv.mw_trials = MW_TRIALS
+        adv.mw_solve_streets = ("flop", "turn", "river")
+        pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
+               {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
+        st = {"players": 6, "hero": "BB", "hole": "AsKd", "board": "Kh7c2d", "preflop": pre, "flop": [], "quick": True}
+        with mock.patch("gto.advisor.MW_QUICK_BUILD", 0.0):
+            res = adv.advise(st)
+        self.assertTrue(res["multiway"]); self.assertNotIn("solved", res)
+        self.assertTrue(any("tables take longer than a quick answer's" in n for n in res["notes"]), res["notes"])
+        self.assertEqual(adv._mw_cache, {})
+
     def test_quick_answers_narrow_an_unsolved_earlier_street_by_the_rules(self):
         # A quick answer doesn't solve an earlier heads-up street to narrow ranges (its 10 least iterations took 2-4 s
         # and were trusted 0%): a limped flop checked through is narrowed by the rules, its checks whole; one already

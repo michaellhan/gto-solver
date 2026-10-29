@@ -265,6 +265,27 @@ class TestTables(unittest.TestCase):
                     else:
                         np.testing.assert_array_equal(a, b)
 
+    def test_turn_roots_leaf_over_every_river(self):
+        # a turn solve's equity leaf (an all-in on the turn) over every river by _avg_showdown, in the core's tables
+        # (built while it lays the program out) and in numpy: the floats the rivers' showdown matrices summed gave
+        board = tuple(cards("Ks7d2cTh"))
+        sol = solve(board, OOP_T, IP_T, pot=20, stack=90, cfg=native.config("fast"), time_budget=1e9, max_iters=0)
+        ctx, dead = sol.solver.ctx, sol.solver.dead
+        avail = [c for c in range(52) if c not in dead and c not in board]
+        ref = np.zeros((ctx.n, ctx.n), dtype=np.float32)
+        for c in avail:
+            ref += ctx.showdown_matrix(board + (c,))
+        h = ctx.member[avail].sum(axis=0)
+        ref /= np.maximum(len(avail) - h[:, None] - h[None, :], 1.0).astype(np.float32)
+        for use in (True, False):
+            ctx._leaf = {}
+            ctx.tables = core.Tables(core.lib()) if use else None
+            try:
+                with self.subTest(core=use):
+                    np.testing.assert_array_equal(ctx.leaf_matrix(board, dead), ref)
+            finally:
+                ctx.tables = None
+
 
 @unittest.skipUnless(ON, "no C compiler for the native core")
 class TestProgram(unittest.TestCase):

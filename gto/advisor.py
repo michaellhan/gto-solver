@@ -35,7 +35,7 @@ from .pf_classes import push_fold
 # imported where used (exploit, breakdown, like multiway_solver and pf_game): the browser's worker imports this module
 # before its first answer, and a preflop answer or a library flop needs none of them (tests/test_bundle.py)
 from .solver import solve, Config, Solution, Decision, Terminal, Chance, BucketEntry, match_action, expand, MEMBER_FULL, _inv_of, \
-    Cancelled
+    Cancelled, TreeTooBig, TooSlow, tree_cells
 
 DEFAULT_OPEN = {"SB": 3.0}
 BVB_3BET = 10.0 / 3.0   # the big blind's default 3bet over a small-blind open, x the open (_default_size)
@@ -75,6 +75,8 @@ MW_QUICK_TURN = {"later": "buckets", "buckets": 8, "bet": MW_TURN_BETS}
 # 88-128, 0.31-0.79%; a 4-way flop (Kh7d2c) 41, 1.07% (in the browser its tables took 1.6 s: 15 iterations, 9.4%)
 MW_QUICK_FLOP = {"later": "buckets", "buckets": 6, "bucket_river_step": 6, "bet": {"flop": [0.5], "turn": 0.5, "river": 0.5}}
 MW4_QUICK_FLOP = {"later": "buckets", "buckets": 6, "bucket_river_step": 6}
+MW_RULES_MIN_S = 0.4    # the betting rules' trials take at least this long (400 trials: ~0.3 s natively)
+MW_QUICK_BUILD = 0.75   # a quick answer's multiway tree and tables done by this share of its budget, or the rules answer
 # Study's 3-way flop (one the 3-way library doesn't hold) gets longer than the advice's: browsing waits for an answer,
 # and Fast's 5 s rarely settled one (natively on a loaded machine 12-23 iterations, 17-40% of the pot from equilibrium,
 # over mw_max_expl: no answer); in 15 s 51-77, 1.1-1.9% (Qs8h3d, Ah9s9d, Tc9c8d, BTN open, SB and BB call)
@@ -105,6 +107,25 @@ HU_SETTLED_FROM = {"flop": 300, "turn": 300, "shallow": 300, "river": 300}   # .
                    # the pot from equilibrium, 0.99 where 300 and 1000 iterations are 0.61 and 0.60; a 3bet pot's turn
                    # (shallow: Advisor.spr_sizes) at 150, 0.27%, 1.60 against 0.69 and 0.68. "turn" is a deeper one: the
                    # browser's one-thread Fast plays its own menu there, 0.35 off at 200 and 0.34 from 300 on (worker.js)
+# A heads-up tree's size in cells (solver.TreeBuilder.cells: its decisions' boards x actions x width) sets a solve's
+# memory, 20-27 bytes a cell at the peak (a limped turn's 13.75M cells: 472 MB of heap in Pyodide, 527 MB natively;
+# before the turn's equity leaf was built from the rivers' strengths, ~47 with 48 showdown matrices kept: a limped 200bb
+# turn with three raise sizes peaked at 2.1 GB), and part of an iteration's time: 5-8 ns a cell on a big tree (that
+# turn: 72 ms an iteration in Pyodide, 116 natively), 12-30 on a 2.7M-cell one with an iteration's other costs (34-84 ms
+# in Pyodide, 13-47 natively). Quick's 1.5 s turn ran Solver.run's 10-iteration floor in 3-14 s at 0.7-2.1 GB in limped
+# pots and a wide single-raised one, 42-85% of the pot from equilibrium. A new solve's tree is counted first
+# (solver.tree_cells, no arrays) and cut (Advisor._trim_cfg, TRIMS) to the first level under Advisor.max_cells (memory:
+# ~0.6 GB of tree; Accurate's limped turns are ~20M, its single-raised ones 7.6M) and, on the turn and river, under what
+# runs CAP_ITERS iterations in the budget at Advisor.cell_s seconds a cell (CELL_S, lowered by the big trees solved
+# here); a tree whose first iteration says the floor would take over SLOW x the budget (solver.TooSlow) sets cell_s
+# from it and is cut to the budget left.
+MAX_CELLS = 24_000_000
+CELL_S = 8e-9
+CAP_ITERS = 30     # (at 10, the floor, a limped turn's uncut tree ran 19 iterations in Quick's budget: 38% of the pot
+                   # from equilibrium; cut to fit 30, 41 iterations, 8.0% in its own game)
+SLOW = 2.0
+TRIMS = ("one raise size", "one raise size, and one bet size on the later streets",
+         "one bet size and one raise size a street", "one bet size and one raise size a street, and one raise")
 MW_SETTLED = 0.1   # a 3-way solve stops once its players' mean best-response gain is under this (% of the pot)...
 MW_CHECKS = (25, 50, 100, 200, 400, 700)   # ...checked at these iterations (about two iterations' time each). The
                    # browser's Accurate ran a 3-way river 60 s to 386 iterations, 0.01% of the pot, and a turn 330, 0.03%
@@ -1838,6 +1859,10 @@ class Advisor:
         # runs the budget
         self.hu_settled: Optional[float] = None
         self.hu_settled_from: Dict[str, int] = dict(HU_SETTLED_FROM)   # (by street; "shallow": spr_sizes' turn)
+        # a new heads-up solve's tree is cut to fit (MAX_CELLS): at most this many cells, and on the turn and river
+        # what CAP_ITERS iterations at cell_s seconds a cell (updated from the solves run here) fit in its budget
+        self.max_cells: Optional[int] = MAX_CELLS
+        self.cell_s = CELL_S
         self.mw_rake_rules = True   # multiway: our in-trial calls, leads and raises count the rake (off: payouts only)
         self.mw_trials: Optional[int] = None   # multiway: play at least this many trials (whole passes), no time caps or early stop (tests)
         # 3-way pots: the streets solved by the 3-player solver (gto/multiway_solver.py; others, and 4+ players off the river, use the
@@ -3022,6 +3047,7 @@ class Advisor:
             # library or from this hand's flop advice costs nothing), so a request never takes longer than cold
             spare = max(0.0, spare - (time.time() - t_prior)) if self.spare_prior else 0.0
             sol = self._solve_cached(board, r0, r1, cur.pot_start, eff, self.time_budget + spare, cfg=cfg)
+            self._trim_note(sol, cur.name, notes)
             # The villain's actions this street are exact unless the solve rarely takes them: then
             # smooth as on earlier streets, so we aren't advised against a sliver of a range.
             walk = lambda: self._walk(sol, cur.actions, oop, ip, cur.pot_start, eff, list(notes), cur.name,
@@ -3042,6 +3068,7 @@ class Advisor:
                 sol = self._solve_cached(board, expand(sol.ctx, n_r0), expand(sol.ctx, n_r1), cur.pot_start, eff,
                                          self.time_budget, bets=bets_now, to_act=hero_p,
                                          n_raises=cur.n_raises, settle=True, cfg=self._icm_cfg(self.cfg, cur, oop, ip, bets_now))
+                self._trim_note(sol, cur.name, notes)
                 node, n_r0, n_r1 = sol.root, sol.r0.copy(), sol.r1.copy()
                 notes.append(f"{cur.name}: {', '.join(rare_lines)}'s line is rare in the solve, so solved again from here"
                              + (" against their rule-based range" if widened else ""))
@@ -3055,6 +3082,7 @@ class Advisor:
             sol = self._solve_cached(board, r0, r1, cur.pot_start, eff, self.time_budget,
                                      bets=bets_now, to_act=hero_p, n_raises=cur.n_raises,
                                      settle=True, cfg=self._icm_cfg(self.cfg, cur, oop, ip, bets_now))
+            self._trim_note(sol, cur.name, notes)
             node, n_r0, n_r1 = sol.root, sol.r0.copy(), sol.r1.copy()
             notes.append(f"{cur.name}: pot became heads-up this street; solved from here")
         if not isinstance(node, Decision):
@@ -3160,7 +3188,9 @@ class Advisor:
             "solver": {"iterations": sol.iters, "solve_seconds": round(sol.seconds, 2), "nodes": sol.n_nodes,
                        "active_combos": sol.ctx.n, "tree_actions": node.names,
                        # how far this street's solve is from equilibrium, % of the street's starting pot
-                       "exploitability_pct": round(expl, 2)},
+                       "exploitability_pct": round(expl, 2),
+                       # (the tree's size: solver.TreeBuilder.cells, MAX_CELLS)
+                       **({"cells": sol.cells} if getattr(sol, "cells", None) else {})},
             "widened": widened,
             **({"precomputed": lib_sol.info()} if lib_sol is not None else {}),
             **({"locked": {villain: adj}} if adj else {}),
@@ -3337,17 +3367,27 @@ class Advisor:
         key = (tuple(board), tuple(_range_key(r) for r in rs), round(pot0, 2),
                tuple(round(x, 2) for x in stacks) if isinstance(stacks, tuple) else round(S, 2), tuple(round(b, 2) for b in bets),
                hp, cur.n_raises, tuple(sorted(pending)), repr(mcfg), inc)
-        sol = self._mw_cache.get(key)
-        if sol is None:
-            sol = MW.MultiwaySolver(board, rs, pot0, stacks, bets=bets, to_act=hp, n_raises=cur.n_raises,
-                                    pending=pending, cfg=mcfg, include=inc)
-            self._mw_cache[key] = sol
         # the budget covers the whole answer: the tree and bucket tables (a flop's take 1-2 s natively, a few in the
         # browser), the iterations, and the gains and EVs read off after them (MW_RESERVE iterations' time)
         # (a solve its budget ran out on isn't run again: a later request for the spot gets the same answer)
         budget = max(self.time_budget, MW_QUICK_BUDGET if getattr(self, "_quick", False) else self.mw_budget or 0.0)
         if self._study and cur.name == "flop":
             budget = max(budget, MW_STUDY_FLOP_BUDGET)
+        sol = self._mw_cache.get(key)
+        if sol is None:
+            # a quick answer's tables still building at MW_QUICK_BUILD of its budget (or on course to) leave too little
+            # time to iterate: the betting rules answer then (a 3-way flop with a player all-in and a random range took
+            # 8.8 s in the browser to run no iteration, a 4-way limped flop 7.8 s natively to run 7, 22% of the pot
+            # from equilibrium)
+            try:
+                sol = MW.MultiwaySolver(board, rs, pot0, stacks, bets=bets, to_act=hp, n_raises=cur.n_raises,
+                                        pending=pending, cfg=mcfg, include=inc,
+                                        deadline=t0 + MW_QUICK_BUILD * budget if quick and not self._study else None)
+            except MW.BuildTooSlow:
+                fallback_notes.append(f"the {len(players)}-way solve's tables take longer than a quick answer's "
+                                      f"{budget:.1f} s here, so the betting rules answer (Fast and Accurate solve it)")
+                return None
+            self._mw_cache[key] = sol
         spent = sol.build_seconds + sol.seconds
         left = min(budget - spent, budget - (time.time() - t0))
         self._mw_run(sol, left)
@@ -3602,6 +3642,9 @@ class Advisor:
         seat = {i: cur.order.index(opps[i]) for i in range(n_opp)}       # acting order on later streets
         seat["hero"] = cur.order.index(hero)
         accurate = self.time_budget >= 20
+        # (the trials take what's left of the request's budget, at least MW_RULES_MIN_S: after a multiway solve that
+        # didn't settle, a quick answer's 1.5 s of trials made it 2-4x its estimate)
+        rules_left = max(MW_RULES_MIN_S, self.time_budget - (time.time() - t0))
 
         # Runouts, shared by the strength rankings and the trials: from the flop every turn with a few
         # rivers each, from the turn every river.
@@ -4125,6 +4168,7 @@ class Advisor:
         # Trials reuse the runouts, each pass with fresh opponent hands, and every action is scored on
         # the same trials. Stop once the gap between the two best actions is clear of the noise.
         min_trials, max_seconds = (1200, 5.0) if accurate else (400, 1.5)
+        max_seconds = min(max_seconds, rules_left)
         everyone = [(i, chk_r.get(i, opp_ranges[i])) for i in range(n_opp)]   # nobody bet: the check ranges
         # per trial; "chk" holds (what we face after checking, value if we call, value if we check-raise):
         # None (nobody bets), (bettor, size, players between who called) or (bettor, size, "raise", the
@@ -4745,9 +4789,40 @@ class Advisor:
             # (the budget covers the tree's build and the exploitability read after the iterations: the browser's
             # Accurate flop answered 4.5 s past its 60 s, a two-tone one 9 s)
             left = max(budget - warm.seconds, 0.2 * budget) if warm else budget
-            sol = solve(board, r0, r1, pot, stack, bets=bets, to_act=to_act, n_raises=n_raises, cfg=cfg,
-                        time_budget=left, should_stop=self.should_stop, warm=warm, reserve=HU_RESERVE,
-                        max_iters=min(c for c in HU_CHECKS if c >= first) if target is not None else 1000, horizon=1000)
+            cap = self._cells_cap(n, left)
+            level, full, use, slow = 0, None, cfg, False
+            while True:   # (a tree past the cap is cut, TRIMS, until it fits)
+                rest = max(left - (time.time() - t0), 0.0)
+                try:
+                    if cap is not None:   # (counted first: a tree past the cap costs a walk, not its arrays)
+                        tree_cells(board, r0, r1, pot, stack, bets=bets, to_act=to_act, n_raises=n_raises, cfg=use,
+                                   max_cells=cap)
+                    sol = solve(board, r0, r1, pot, stack, bets=bets, to_act=to_act, n_raises=n_raises, cfg=use,
+                                time_budget=rest, should_stop=self.should_stop, warm=warm, reserve=HU_RESERVE,
+                                max_cells=cap, max_iters=min(c for c in HU_CHECKS if c >= first) if target is not None
+                                else 1000, horizon=1000,
+                                max_per=SLOW * left / 10 if n >= 4 and not (warm or slow) and level < len(TRIMS)
+                                else None)
+                    break
+                except (TreeTooBig, TooSlow) as e:
+                    full = full or e.cells
+                    if isinstance(e, TooSlow):
+                        # (this device is slower than cell_s: its first iteration says by how much)
+                        self.cell_s, slow = e.per / max(e.cells, 1), True
+                        cap = min(cap or e.cells, self._cells_cap(n, max(left - (time.time() - t0), 0.5 * left)))
+                    level += 1
+                    if level > len(TRIMS):
+                        raise
+                    if level == len(TRIMS):
+                        cap = self.max_cells   # (the smallest tree runs whatever its time: within memory)
+                    use = self._trim_cfg(cfg, ("flop", "turn", "river")[n - 3], level)
+            if level:
+                sol.trimmed = (level, full, cap)
+            per = getattr(sol.solver, "per_iter", None)
+            if n >= 4 and per and getattr(sol, "cells", 0) > 1e6:
+                # (this device's speed, as it runs now; a small tree's iteration is mostly its other costs, so a cell
+                # looks dearer there than CELL_S: it doesn't raise cell_s, which only TooSlow does)
+                self.cell_s = 0.5 * self.cell_s + 0.5 * min(per / sol.cells, CELL_S)
             if warm is not None:
                 sol.seconds += warm.seconds
             self._cache[key] = sol
@@ -4928,7 +5003,50 @@ class Advisor:
                 n_aggr += 1
         # past the cap the tree offers only all-in, so a 3bet that isn't one would be read as a jam
         cfg.max_raises = max(cfg.max_raises, n_aggr)
+        cfg.keep_sizes = {"bet": [cfg.bet_sizes[st.name][i] for i in sorted(fixed["bet"])],
+                          "raise": [cfg.raise_sizes[st.name][i] for i in sorted(fixed["raise"])], "aggr": n_aggr}
         return self._icm_cfg(cfg, st, oop, ip)
+
+    @staticmethod
+    def _trim_note(sol: Solution, street: str, notes: List[str]) -> None:
+        """The note for a solve whose tree was cut to fit (_solve_cached: sol.trimmed)."""
+        if getattr(sol, "trimmed", None):
+            level, full, _ = sol.trimmed
+            notes.append(f"{street}: solved in a smaller game than the full one, to fit this speed's time and memory: "
+                         f"{TRIMS[level - 1]} (the sizes your hand has used are kept; the full game is {full / 1e6:.1f}M+ "
+                         f"cells), so the sizes offered are fewer")
+
+    @staticmethod
+    def _trim_cfg(cfg: Config, street: str, level: int) -> Config:
+        """cfg cut for a tree past its cap (TRIMS[level - 1]): 1, every street's raises at one size; 2, also the later
+        streets' bets; 3, also this street's bets; 4, also one raise a street. The size kept is the one nearest 75%
+        pot, or the ones the hand's actions took this street (Config.keep_sizes)."""
+        c = cfg.copy()
+        keep = cfg.keep_sizes or {}
+        order = ("flop", "turn", "river")
+
+        def one(sizes, kept):
+            return sorted(set(kept)) if kept else [min(sizes, key=lambda x: abs(x - 0.75))] if sizes else sizes
+        if level >= 1:
+            for st in c.raise_sizes:
+                c.raise_sizes[st] = one(c.raise_sizes[st], keep.get("raise") if st == street else None)
+        if level >= 2:
+            for st in c.bet_sizes:
+                if st in order and order.index(st) > order.index(street):
+                    c.bet_sizes[st] = one(c.bet_sizes[st], None)
+        if level >= 3 and street in c.bet_sizes:
+            c.bet_sizes[street] = one(c.bet_sizes[street], keep.get("bet"))
+        if level >= 4:
+            c.max_raises = max(1, keep.get("aggr", 0))
+        return c
+
+    def _cells_cap(self, n_board: int, budget: float) -> Optional[int]:
+        """A new heads-up solve's most cells (MAX_CELLS): max_cells, and on the turn and river the tree whose CAP_ITERS
+        iterations at cell_s fit in `budget`."""
+        caps = [c for c in (self.max_cells,) if c]
+        if n_board >= 4 and self.cell_s > 0:
+            caps.append(int(budget / (CAP_ITERS * self.cell_s)))
+        return min(caps) if caps else None
 
     def _icm_cfg(self, cfg: Config, st: StreetState, oop: str, ip: str, bets=(0.0, 0.0)) -> Config:
         """cfg with a tournament's payoffs (Config.icm: gto/icm.py HUPayoffs) for a heads-up solve of oop and ip from

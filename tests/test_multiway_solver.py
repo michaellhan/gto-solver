@@ -219,6 +219,13 @@ class TestLaterStreetsByBuckets(unittest.TestCase):
                 self.assertAlmostEqual(mass[0] / mass[2], 1.0, places=5)
                 self.assertAlmostEqual(tot / mass[0], 1.0, places=5)
 
+    def test_a_build_past_its_deadline_stops(self):
+        # (a quick answer's: advisor.MW_QUICK_BUILD)
+        import time
+        with self.assertRaises(MW.BuildTooSlow):
+            MultiwaySolver(cards("Kh7d2c9s"), self.rs, 8.0, 97.5, cfg=MWConfig(later="buckets", buckets=8),
+                           deadline=time.time())
+
     def test_values_add_up_to_the_pot(self):
         # (exactly at the root's reaches, which the deals' weight below is scaled to; within 1% after play)
         self.assertAlmostEqual(float(self.turn.values().sum()), 8.0, delta=0.08)

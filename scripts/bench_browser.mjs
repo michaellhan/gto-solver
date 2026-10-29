@@ -192,7 +192,7 @@ async function runSpot(w, spot, speeds) {
     const est = pageBudget(state, speed, fastSeconds);
     console.log(JSON.stringify({
       spot, speed, wall: +wall.toFixed(2), page_budget: est, over_pct: est ? Math.round((wall / est - 1) * 100) : null,
-      iterations: s.iterations ?? null, solve_s: s.solve_seconds ?? null, expl_pct: s.exploitability_pct ?? null,
+      iterations: s.iterations ?? null, solve_s: s.solve_seconds ?? null, expl_pct: s.exploitability_pct ?? null, cells: s.cells ?? null,
       outside_s: s.solve_seconds != null ? +(wall - s.solve_seconds).toFixed(2) : null,
       precomputed: !!r.precomputed, heap_mb: +w.heap().toFixed(0), lib_fetches: w.ctx.libFetches - x0, lib_ahead: w.ctx.aheadFetches - a0,
       street: r.street, recommended: r.recommended, error: m.error || r.error || null,
@@ -228,6 +228,7 @@ for (const spot of flag("session") ? [spots.join(",")] : spots) {
       console.log(r.speed ? `${r.spot.padEnd(11)} ${r.speed.padEnd(8)} ${String(r.wall).padStart(6)} s of ~${r.page_budget ?? "-"} ` +
                             `(${r.over_pct == null ? "-" : (r.over_pct > 0 ? "+" : "") + r.over_pct + "%"})  it ${r.iterations ?? "-"}  ` +
                             `expl ${r.expl_pct ?? "-"}%  solve ${r.solve_s ?? "-"} s  outside ${r.outside_s ?? "-"} s  heap ${r.heap_mb} MB` +
+                            `${r.cells ? "  cells " + (r.cells / 1e6).toFixed(1) + "M" : ""}` +
                             `${r.precomputed ? "  library" : ""}${r.lib_fetches ? "  sync-fetches " + r.lib_fetches : ""}${r.error ? "  ERROR " + r.error : ""}` +
                             (r.notes.length ? "\n             " + r.notes.join("\n             ") : "")
                           : `${r.spot}: worker setup ${r.setup} s${r.stages ? " (" + Object.entries(r.stages).filter(([k]) => k !== "total").map(([k, v]) => `${k} ${v}`).join(", ") + ")" : ""}, heap ${r.heap_mb} MB`);

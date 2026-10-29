@@ -140,6 +140,9 @@ class Config:
     # root_allin: every decision on the root street offers all-in, however deep (not just at allin_spr pots or less),
     # so a jam there is priced and can be graded (a 15x-pot flop jam had no action in the tree to grade against)
     root_allin: bool = False
+    # keep_sizes: the root street's sizes the hand's actions took ({"bet": [...], "raise": [...], "aggr": raises made}),
+    # kept when a tree over its cap is cut (Advisor._trim_cfg); it doesn't change the tree itself
+    keep_sizes: Optional[dict] = None
     # icm: a tournament's payoffs (gto/icm.py HUPayoffs): every terminal pays prize equity (in chip equivalents) instead
     # of chips. The game is then not zero-sum (the players outside the pot gain when either busts). None = chips.
     icm: Optional[object] = None
@@ -165,7 +168,9 @@ class Config:
                       later_sizes=None if self.later_sizes is None else
                       {k: {st: list(v) for st, v in d.items()} for k, d in self.later_sizes.items()},
                       seed=self.seed, cfr=self.cfr, rake_rate=self.rake_rate, rake_cap=self.rake_cap,
-                      root_allin=self.root_allin, icm=self.icm)
+                      root_allin=self.root_allin, icm=self.icm,
+                      keep_sizes=None if self.keep_sizes is None else {k: (list(v) if isinstance(v, list) else v)
+                                                                       for k, v in self.keep_sizes.items()})
 
     def sizes_key(self) -> tuple:
         return (tuple((k, tuple(v)) for k, v in sorted(self.bet_sizes.items())),
@@ -197,7 +202,7 @@ class Ctx:
         self.card_perm = np.concatenate([np.arange(self.n), np.arange(self.n)])[np.argsort(self.cab, kind="stable")]
         self.card_starts = np.concatenate([[0], np.cumsum(counts)[:-1]]).astype(np.intp)
         self.cab_held = np.searchsorted(held, self.cab).astype(np.intp)
-        self.compat = 1.0 - np.clip(self.member.T @ self.member, 0, 1)
+        self._compat = None
         self.cfg = cfg
         self.rng = random.Random(cfg.seed)
         self._M: Dict[tuple, np.ndarray] = {}
@@ -208,6 +213,15 @@ class Ctx:
         self.root_len = 5
         self.root_reach = None     # (r0, r1) at the root, for river buckets (set by solve)
         self.tables = None         # the compiled core's table builds while it lays a program out (gto/core.py Tables)
+
+    @property
+    def compat(self) -> np.ndarray:
+        """(n, n): 1 where two combos share no card. Made on first use: an n x n product over the 52 cards, ~0.1-0.2 s
+        for a limped pot's 1,126 combos in Pyodide (no BLAS), which a combo space only counted (tree_cells, solve()'s
+        river-class closure) never uses."""
+        if self._compat is None:
+            self._compat = 1.0 - np.clip(self.member.T @ self.member, 0, 1)
+        return self._compat
 
     def strength(self, board: tuple) -> np.ndarray:
         return eval_board(tuple(sorted(board)), self.active_list)
@@ -330,6 +344,13 @@ class Ctx:
                 lr = self.cfg.leaf_rivers_flop if self.root_len == 3 else self.cfg.leaf_rivers
                 k = len(avail) if lr is None else min(lr, len(avail))
                 picks = avail if k >= len(avail) else sorted(self.rng.sample(avail, k))
+                if k >= len(avail):
+                    # every river: the same numbers by _avg_showdown (a count of wins a pair, in the core where it
+                    # lays a program out) without a float showdown matrix a river, each kept: 48 of 5 MB for a
+                    # limped pot's 1,126 combos, 0.6 s natively of a turn solve's setup and ~1.3 s in Pyodide
+                    L = self._avg_showdown([board + (c,) for c in picks])
+                    self._leaf[key] = L
+                    return L
             L = np.zeros((self.n, self.n), dtype=np.float32)
             for c in picks:
                 L += self.leaf_matrix(board + (c,), dead)
@@ -908,13 +929,25 @@ class Decision:
 
 
 # ----------------------------------------------------------------- builder
+class TreeTooBig(Exception):
+    """A tree past solve()'s max_cells: its decisions' boards x actions x width (combos or buckets), each a cell of
+    the regrets, the strategy sums and the core's copies of them, so its memory and an iteration's time."""
+
+    def __init__(self, cells: int, cap: int):
+        super().__init__(f"the game tree has over {cells / 1e6:.1f}M cells, past {cap / 1e6:.1f}M")
+        self.cells, self.cap = cells, cap
+
+
 class TreeBuilder:
-    def __init__(self, ctx: Ctx, dead: Sequence[int]):
+    def __init__(self, ctx: Ctx, dead: Sequence[int], max_cells: Optional[int] = None, dry: bool = False):
         self.ctx = ctx
         self.cfg = ctx.cfg
         self.rng = random.Random(self.cfg.seed + 1)
         self.dead = set(dead)
         self.n_nodes = 0
+        self.cells = 0             # decisions' boards x actions x width so far (TreeTooBig past max_cells)
+        self.max_cells = max_cells
+        self.dry = dry             # count the cells only (tree_cells): no arrays, masks or payoffs, the nodes None
         self.root_street_len = 0
         self.root_spr = 0.0
         self._blind = False       # building a river played without its card (river_play)
@@ -971,7 +1004,7 @@ class TreeBuilder:
     def _pay(self, inv, folder=None):
         """A tournament's payoffs at a terminal where the players have inv in (Terminal.pay), or None (chips)."""
         icm = self.cfg.icm
-        if icm is None:
+        if icm is None or self.dry:
             return None
         return icm.fold(inv, folder) if folder is not None else icm.showdown(inv)
 
@@ -1008,15 +1041,18 @@ class TreeBuilder:
                 cs = cs[:k]
             cards.append(cs)
         K = min(len(cs) for cs in cards)
-        masks = np.ones((len(boards) * K, self.ctx.n), dtype=np.float32)
+        masks = None if self.dry else np.ones((len(boards) * K, self.ctx.n), dtype=np.float32)
         for bi, b in enumerate(boards):
             for ki in range(K):
                 c = cards[bi][ki]
                 child_boards.append(b + (c,))
-                masks[bi * K + ki] = 1.0 - self.ctx.member[c]
+                if masks is not None:
+                    masks[bi * K + ki] = 1.0 - self.ctx.member[c]
         child = self._bucketed_turn(child_boards, pot, stack, inv) if len(boards[0]) == 3 else \
             self._decision(child_boards, pot, stack, (0.0, 0.0), 0, 0, inv, False)
         self.n_nodes += 1
+        if self.dry:
+            return None
         avail = sum(1 for c in range(52) if c not in self.dead and c not in boards[0])
         return Chance(boards, K, masks, child, avail, sample)
 
@@ -1028,16 +1064,20 @@ class TreeBuilder:
         cls = [ctx.turn_classes(b, self.dead) for b in boards]
         K = len(cls[0])
         child_boards = []
-        masks = np.ones((len(boards) * K, ctx.n), dtype=np.float32)
-        umasks = np.ones_like(masks)
+        masks = None if self.dry else np.ones((len(boards) * K, ctx.n), dtype=np.float32)
+        umasks = None if self.dry else np.ones_like(masks)
         for bi, b in enumerate(boards):
             for ki, (c, cards_) in enumerate(cls[bi]):
                 child_boards.append(b + (c,))
+                if self.dry:
+                    continue
                 live = (len(cards_) - ctx.member[list(cards_)].sum(axis=0)) * (1.0 - ctx.member[c])
                 masks[bi * K + ki] = live / len(cards_)
                 umasks[bi * K + ki] = live
         child = self._bucketed_turn(child_boards, pot, stack, inv)
         self.n_nodes += 1
+        if self.dry:
+            return None
         avail = sum(1 for c in range(52) if c not in self.dead and c not in boards[0])
         return Chance(boards, K, masks, child, avail, umasks=umasks)
 
@@ -1048,14 +1088,17 @@ class TreeBuilder:
             raise ValueError("river classes need one turn board")
         cls = ctx.turn_classes(boards[0], self.dead)
         K = len(cls)
-        masks = np.ones((len(boards) * K, ctx.n), dtype=np.float32)
+        masks = None if self.dry else np.ones((len(boards) * K, ctx.n), dtype=np.float32)
         child_boards = []
         for bi, b in enumerate(boards):
             for ki, (c, _) in enumerate(cls):
                 child_boards.append(b + (c,))
-                masks[bi * K + ki] = 1.0 - ctx.member[c]
+                if masks is not None:
+                    masks[bi * K + ki] = 1.0 - ctx.member[c]
         child = self._decision(child_boards, pot, stack, (0.0, 0.0), 0, 0, inv, False)
         self.n_nodes += 1
+        if self.dry:
+            return None
         avail = sum(1 for c in range(52) if c not in self.dead and c not in boards[0])
         return Chance(boards, K, masks, child, avail, perm=ctx.class_perm(cls))
 
@@ -1065,13 +1108,15 @@ class TreeBuilder:
         ctx = self.ctx
         cards = [[c for c in range(52) if c not in self.dead and c not in b] for b in boards]
         child_boards = [b + (c,) for b, cs in zip(boards, cards) for c in cs]
-        masks = (1.0 - ctx.member[[c for cs in cards for c in cs]]).astype(np.float32)
+        masks = None if self.dry else (1.0 - ctx.member[[c for cs in cards for c in cs]]).astype(np.float32)
         self._width = self.cfg.river_dealt
         try:
             child = BucketEntry(child_boards, self._decision(child_boards, pot, stack, (0.0, 0.0), 0, 0, inv, False))
         finally:
             self._width = None
         self.n_nodes += 1
+        if self.dry:
+            return None
         return Chance(boards, len(cards[0]), masks, child, len(cards[0]))
 
     def _bucketed_turn(self, child_boards, pot, stack, inv):
@@ -1164,6 +1209,11 @@ class TreeBuilder:
                     names.append("all-in")
                     kids.append(self._decision(boards, pot, stack, nb, o, n_raises + 1, ninv, False))
         self.n_nodes += 1
+        self.cells += len(boards) * len(names) * (self._width or self.ctx.n)
+        if self.max_cells is not None and self.cells > self.max_cells:
+            raise TreeTooBig(self.cells, self.max_cells)   # (built bottom up: what's allocated so far is under the cap)
+        if self.dry:
+            return None
         return Decision(boards, p, names, kids, pot_total, bets, self._width or self.ctx.n, self._blind, bool(self._width))
 
 
@@ -1871,9 +1921,10 @@ class Solver:
             r *= np.where(r > 0, np.float32(pos_f), np.float32(neg_f))     # (a float64 factor array: twice the traffic)
         self._ssum *= np.float32(ss_f)
 
-    def run(self, r0, r1, time_budget=3.0, max_iters=1000, min_iters=10, should_stop=None, reserve=None):
+    def run(self, r0, r1, time_budget=3.0, max_iters=1000, min_iters=10, should_stop=None, reserve=None,
+            max_per=None):
         """r0, r1: (N,) root reaches. Adds iterations until the budget is spent.
-        Raises Cancelled as soon as should_stop() is true.
+        Raises Cancelled as soon as should_stop() is true, and TooSlow when the first iteration takes over max_per s.
         `reserve` (iterations): when given, no iteration starts that would end past the budget (by the mean
         iteration so far) with this many iterations' time kept back for what follows (an exploitability costs
         about one); else iterations run until one ends past the budget (up to one iteration over)."""
@@ -1887,7 +1938,8 @@ class Solver:
         t0 = time.time()
         start = self.iters
         # the compiled core (gto/core.py) runs the iterations of the trees it covers, numpy the rest
-        if self.use_core and core.run(self, r0b[0], r1b[0], t0, time_budget, max_iters, min_iters, should_stop, reserve):
+        if self.use_core and core.run(self, r0b[0], r1b[0], t0, time_budget, max_iters, min_iters, should_stop, reserve,
+                                      max_per):
             return self.iters, time.time() - t0
         self._own.clear()       # (the traverser's reaches are this run's root reaches')
         while self.iters < max_iters:
@@ -1910,6 +1962,8 @@ class Solver:
                 self._cin.clear()
             self.iters += 1
             self._discount()
+            if max_per is not None and self.iters - start == 1 and time.time() - t0 > max_per:
+                raise TooSlow(time.time() - t0)
             if self.iters - start >= min_iters and time.time() - t0 > time_budget:
                 break
         return self.iters, time.time() - t0
@@ -2132,6 +2186,15 @@ class Cancelled(Exception):
     """A solve was stopped early through its should_stop callback."""
 
 
+class TooSlow(Exception):
+    """Solver.run's first iteration took longer than its max_per (seconds): the tree is too big for the budget.
+    solve() adds the tree's cells (TreeBuilder.cells)."""
+
+    def __init__(self, per: float):
+        super().__init__(f"an iteration takes {per:.2f} s")
+        self.per, self.cells = per, 0
+
+
 def expand(ctx: Ctx, v: np.ndarray) -> np.ndarray:
     out = np.zeros(N_FULL)
     out[ctx.active] = v
@@ -2152,17 +2215,8 @@ def _class_closure(active: np.ndarray, classes) -> np.ndarray:
     return np.flatnonzero(have)
 
 
-def solve(board: Sequence[int], r_oop: np.ndarray, r_ip: np.ndarray, pot: float, stack: float,
-          bets=(0.0, 0.0), to_act: int = 0, n_raises: int = 0, cfg: Optional[Config] = None,
-          time_budget: float = 3.0, max_iters: int = 1000, dead: Sequence[int] = (), should_stop=None,
-          warm: Optional[Solution] = None, reserve: Optional[float] = None, horizon: Optional[int] = None) -> Solution:
-    """`warm`: an earlier solve of the same spot (possibly with a different card sampling) to start from.
-    `horizon`: the schedule's length (Solver.horizon) when the solve is run in pieces (max_iters the first piece).
-    `reserve` (iterations, see Solver.run): when given, the budget also covers building the tree (the Accurate
-    flop's takes ~1-1.5 s in Pyodide) and that many iterations' time after the solve."""
-    t_start = time.time()
-    cfg = cfg or Config()
-    board = tuple(board)
+def _spot(board: tuple, r_oop: np.ndarray, r_ip: np.ndarray, cfg: Config, dead: Sequence[int]):
+    """A solve's combos (Ctx), its active combos, the reaches with the board's cards out, and the dead cards."""
     bm = np.ones(N_FULL)
     for c in list(board) + list(dead):
         bm *= 1.0 - MEMBER_FULL[c]
@@ -2172,8 +2226,37 @@ def solve(board: Sequence[int], r_oop: np.ndarray, r_ip: np.ndarray, pot: float,
         active = _class_closure(active, Ctx(active, cfg).turn_classes(board, set(dead) | set(board)))
     ctx = Ctx(active, cfg)
     ctx.root_len = len(board)
-    dead_set = set(dead) | set(board)
-    tb = TreeBuilder(ctx, dead=list(dead_set))
+    return ctx, active, r0f, r1f, set(dead) | set(board)
+
+
+def tree_cells(board: Sequence[int], r_oop: np.ndarray, r_ip: np.ndarray, pot: float, stack: float,
+               bets=(0.0, 0.0), to_act: int = 0, n_raises: int = 0, cfg: Optional[Config] = None,
+               dead: Sequence[int] = (), max_cells: Optional[int] = None) -> int:
+    """The cells (TreeBuilder.cells) of the tree solve() would build, counted without building it (no arrays: a
+    few ms where the build takes ~0.1 s a million cells in Pyodide); TreeTooBig past max_cells."""
+    board = tuple(board)
+    ctx, _, _, _, dead_set = _spot(board, r_oop, r_ip, cfg or Config(), dead)
+    tb = TreeBuilder(ctx, dead=list(dead_set), max_cells=max_cells, dry=True)
+    tb.build(board, pot, stack, bets, to_act, n_raises)
+    return tb.cells
+
+
+def solve(board: Sequence[int], r_oop: np.ndarray, r_ip: np.ndarray, pot: float, stack: float,
+          bets=(0.0, 0.0), to_act: int = 0, n_raises: int = 0, cfg: Optional[Config] = None,
+          time_budget: float = 3.0, max_iters: int = 1000, dead: Sequence[int] = (), should_stop=None,
+          warm: Optional[Solution] = None, reserve: Optional[float] = None, horizon: Optional[int] = None,
+          max_cells: Optional[int] = None, max_per: Optional[float] = None) -> Solution:
+    """`warm`: an earlier solve of the same spot (possibly with a different card sampling) to start from.
+    `max_cells`: TreeTooBig, before the tree is all built, when its cells (TreeBuilder.cells) pass this.
+    `max_per`: TooSlow (with the tree's cells) when the first iteration takes longer than this (seconds).
+    `horizon`: the schedule's length (Solver.horizon) when the solve is run in pieces (max_iters the first piece).
+    `reserve` (iterations, see Solver.run): when given, the budget also covers building the tree (the Accurate
+    flop's takes ~1-1.5 s in Pyodide) and that many iterations' time after the solve."""
+    t_start = time.time()
+    cfg = cfg or Config()
+    board = tuple(board)
+    ctx, active, r0f, r1f, dead_set = _spot(board, r_oop, r_ip, cfg, dead)
+    tb = TreeBuilder(ctx, dead=list(dead_set), max_cells=max_cells)
     root = tb.build(board, pot, stack, bets, to_act, n_raises)
     r0, r1 = r0f[active], r1f[active]
     ctx.root_reach = (r0, r1)
@@ -2185,8 +2268,14 @@ def solve(board: Sequence[int], r_oop: np.ndarray, r_ip: np.ndarray, pot: float,
         warm_start(root, ctx, warm.root, warm.ctx)
     if reserve is not None:
         time_budget = max(time_budget - (time.time() - t_start), 0.0)
-    iters, secs = s.run(r0, r1, time_budget=time_budget, max_iters=max_iters, should_stop=should_stop, reserve=reserve)
+    try:
+        iters, secs = s.run(r0, r1, time_budget=time_budget, max_iters=max_iters, should_stop=should_stop,
+                            reserve=reserve, max_per=max_per)
+    except TooSlow as e:
+        e.cells = tb.cells
+        raise
     sol = Solution(root, root.names, None, None, iters, secs, tb.n_nodes, ctx, r0, r1, s)
+    sol.cells = tb.cells
     sol._refresh()
     return sol
 

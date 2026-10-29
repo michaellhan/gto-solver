@@ -92,7 +92,7 @@ the main pot and side pots.
 Whenever it becomes your turn the advice panel solves the spot. The **Quick / Fast /
 Accurate** toggle in the header (remembered between visits) picks the solve
 time: Quick is about 2 s either way (the requests Practice makes at Fast, below: `QUICK_BUDGETS`, `"quick": true`;
-rough on the turn; 3-way flops and turns solved in a smaller game, a 4-way flop left to the betting rules in the browser); Fast is 8 s in the browser and 2.5 s against the local server (2.5 s per earlier street too); Accurate
+rough on the turn, whose game is cut to fewer sizes when the whole one doesn't fit those 2 s, which the answer says; 3-way flops and turns solved in a smaller game, a 4-way flop left to the betting rules in the browser, and one whose tables can't be built in time anywhere); Fast is 8 s in the browser and 2.5 s against the local server (2.5 s per earlier street too); Accurate
 is about 60 s in the browser and 30 s locally (12 s per earlier street), with more time for the earlier
 streets used to narrow ranges. River spots are solid either way; turn spots need
 Accurate to get close to a full solver (see Accuracy vs speed below).
@@ -1251,6 +1251,48 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   or a Practice look-ahead your move made useless stops it within ~0.1 s and the worker keeps its runtime, solves, library entries
   and tables (before, the page restarted the worker: its 2-4 s setup again, and everything it held gone). A solve
   stopped part way stays cached and goes on from there if asked again, and Practice looks ahead at Accurate too.
+* **Quick keeps to its time and memory** (`advisor.MAX_CELLS`, `CELL_S`, `CAP_ITERS`, `TRIMS`, `solver.tree_cells`,
+  `TooSlow`, `advisor.MW_QUICK_BUILD`, `multiway_solver.BuildTooSlow`). The coverage fuzz found Quick answers at 2-8x
+  their estimate. Heads-up turns with wide ranges took 11-14 s against 1.8 s and up to 2.1 GB: a limped 200bb tournament
+  pot with three raise sizes, a plain HJ vs BB single-raised turn after the flop checked through, and limped 55bb pots
+  with custom sizes. A 3-way flop with a player all-in and a 4-way limped flop took 6.5-8.8 s against 1.5, building
+  tables they then didn't iterate. Solver.run's 10-iteration floor ran whatever the tree was, and every turn solve kept
+  48 float showdown matrices (one a river) for its all-in leaves. Now:
+  - The turn's equity leaf over every river is `_avg_showdown` on the rivers' hand strengths, in the compiled core
+    while it lays the program out: the same floats (tested bitwise against the sum of the 48 matrices), 0.6-0.9 s ->
+    0.07-0.14 s natively, and ~250 MB less on a limped pot's 1,128 combos.
+  - A new heads-up solve's tree is counted first, without its arrays (cells: its decisions' boards x actions x
+    combos), and cut until it fits under 24M cells for memory (20-27 bytes a cell: ~0.6 GB; Accurate's limped turns
+    are ~20M, so Fast's and Accurate's usual trees aren't cut) and, on the turn and river, under what runs 30
+    iterations in the budget at 8 ns a cell (a big tree's rate: a limped turn's 13.75M cells take 72 ms an iteration in
+    Pyodide; at the floor's 10 that tree ran 19 iterations in Quick's budget, 38% of the pot from equilibrium). The cuts,
+    in order: every street's raises to one size; the later streets' bets too; this street's; one raise a street. The
+    sizes the hand has used are kept, and the answer says its game is smaller and offers fewer sizes. A first iteration
+    showing the floor would take twice the budget sets the device's speed from it and cuts again.
+  - A quick answer's 3- or 4-way tree and tables not built by 75% of its budget (or on course not to be, a quarter of
+    the way through) go to the betting rules at once, and the rules' trials take what's left of the budget (at least
+    0.4 s), where they took up to 1.5 s after the solve.
+
+  `scripts/bench_browser.mjs` in Pyodide (one thread, Quick's 1.5 s, a fresh worker's first request / a worker idle
+  6 s; seconds, iterations, % of the pot from equilibrium in the game solved, heap):
+
+  | turn | before | after |
+  |---|---|---|
+  | limped 200bb tournament pot, raises 50/66/150% (cut to one raise size, one bet size later) | 8-12 s at 2.1 GB (the fuzz), 62% | 2.65 / 2.0 s, 25-31, 8-11%, 328 MB |
+  | 6-max limped pot (the same cut) | 1.96 s, 10-19, 42-85%, 566 MB | 1.89 / 1.89 s, 33-36, 12-13%, 227-328 MB |
+  | BTN vs BB single-raised (not cut) | 2.2-3.2 s, 10, 55%, 328-393 MB | 1.94 / 1.89 s, 42-64, 1.7-4.2%, 190-273 MB |
+  | HJ vs BB single-raised, flop checked through (cut to one raise size, one bet size later) | | 1.91 / 1.88 s, 55-60, 1.4-1.6%, 190-273 MB |
+  | the same facing a raise war's all-in (its turn solved first to narrow the ranges) | 11.8 s at 1.95 GB (the fuzz) | 2.0 / 1.99 s, 472-566 MB |
+
+  The fuzz's slow records asked again natively in the worker's configuration (and the server's): the HJ vs BB all-in
+  3.79 s, 1074 MB -> 1.78-1.84 s, 555-658 MB; the limped 55bb pots 3.10-3.94 s, 843-1108 MB, 42-46% -> 1.82 s,
+  171-175 MB, 47-156 iterations, 0.14-1.44%; the 4-way limped flop 3.7-6.3 s (7 iterations, 22%, then the rules) ->
+  1.68-2.28 s by the rules at once. The 3-way flop with a player all-in (8.8 s in the fuzz) had solved natively in
+  1.81 s, 71 iterations; its tables pass the 75% mark natively too now, so the rules answer it in 1.48-1.60 s. Of 52
+  Quick heads-up turns and rivers asked again (the fuzz's slowest 36 and 16 at random; 20 of them over twice their
+  estimate, up to 13.6 s), 17 were cut; none is flagged (the fuzz's checks: a move the page can't play, an error, the
+  catch-all) and none is over twice its estimate, the slowest 3.45 s against 1.8 (a rare line solved again from its
+  node: two budgets).
 * **Regret minimizer** (`docs/cfr_research.md`, `scripts/bench_solver.py --algos`, exploitability per
   iteration): predictive CFR+ and its discounted form (PCFR+, PDCFR+), the state of the art on many
   non-poker games, are 2-7x more exploitable than DCFR here at 100-200 iterations on every spot (the river,

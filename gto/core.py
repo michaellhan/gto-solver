@@ -310,8 +310,8 @@ class Program:
                 elif isinstance(node, Terminal):
                     if node.kind[0] in "br":
                         (solver._btab if node.kind[0] == "b" else solver._rtab)(node)
-                    elif node.kind == "leaf" and (len(node.boards[0]) == 3 or
-                                                  len(node.boards[0]) == 4 and ctx.root_len == 3):
+                    elif node.kind == "leaf" and (len(node.boards[0]) == 3 or len(node.boards[0]) == 4 and
+                                                  (ctx.root_len == 3 or ctx.cfg.leaf_rivers is None)):
                         solver._terminal_M(node)    # (every runout: no random draws, whose order would change)
                 elif isinstance(node, (Chance, BucketEntry, RiverEntry)):
                     if isinstance(node, RiverEntry):      # (a BucketEntry too)
@@ -630,10 +630,11 @@ def evaluate(solver, jobs):
         _lock.release()
 
 
-def run(solver, r0, r1, t0: float, time_budget: float, max_iters: int, min_iters: int, should_stop, reserve) -> bool:
-    """Solver.run's iterations in the core, with its budget rules (`reserve` included). False, with nothing run, when
-    there's no core, it's busy, or the tree has something it doesn't run."""
-    from .solver import Cancelled
+def run(solver, r0, r1, t0: float, time_budget: float, max_iters: int, min_iters: int, should_stop, reserve,
+        max_per=None) -> bool:
+    """Solver.run's iterations in the core, with its budget rules (`reserve` and `max_per` included). False, with
+    nothing run, when there's no core, it's busy, or the tree has something it doesn't run."""
+    from .solver import Cancelled, TooSlow
     global _lib
     L = lib()
     if L is None or solver.predictive or not _lock.acquire(blocking=False):
@@ -667,7 +668,9 @@ def run(solver, r0, r1, t0: float, time_budget: float, max_iters: int, min_iters
                     factors.append(solver._factors())
                 prog.iterate(k, factors)
                 per = (time.time() - t1) / (solver.iters - start)
-        except Cancelled:
+                if max_per is not None and solver.iters - start == 1 and per > max_per:
+                    raise TooSlow(per)
+        except (Cancelled, TooSlow):
             raise
         except Exception:
             # (the core failed mid-run: its iterations are dropped and numpy runs the solve)
@@ -675,6 +678,8 @@ def run(solver, r0, r1, t0: float, time_budget: float, max_iters: int, min_iters
             _lib = False
             return False
         prog.download(solver)
+        if per is not None:
+            solver.per_iter = per   # (an iteration's seconds, the program's setup left out: Advisor.cell_s)
         return True
     finally:
         _lock.release()
