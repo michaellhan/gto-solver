@@ -1755,7 +1755,13 @@ their products batched: `core.LEAF_ROWS_BLAS`).
   the flop, half after), no raise but yours, everyone at the shortest stack behind, this street's card removal pair
   by pair. No 4-way flop library is built: 4-way flops are 0.10% of the flops seen in 6-max 100bb (3-way 4.2%,
   heads-up 95.7%), so a 4-way flop is never instant, and in the browser a quick answer leaves it to the betting
-  rules. Five or more players on the flop or turn stay with the rules.
+  rules. Five or more players on the flop or turn stay with the rules (their rivers are solved): 5-way flops are
+  0.0016% of the flops seen (about 1 in 60,000; 6-way three lines of the charts' preflop tree, none measurable),
+  and the same game for five doesn't fit. Its tree is 5,805 decisions on a flop where 4-way's is 820, and 1,625 on
+  a turn against 196. The tables over bucket quintuples outgrow 1 GB on a flop even in Fast's smallest game (6
+  buckets, every fourth river). A turn in 6 buckets takes 0.61 s an iteration in numpy natively and 675 MB, where
+  100 iterations inside Fast's browser budget need about 60 ms an iteration. The compiled core has no 5-player
+  kernel (a 4-way turn there takes 10 ms an iteration; the 3-way core gained 12-13x over numpy natively).
 * Heads-up, the betting rules that stand in for an unsettled earlier street's solve price a call by the bet's
   size alone (`_keep`: a quarter less folding than a balanced defence), not by the bettor's range, and keep some of
   every hand they rule out (`NARROW_SOFT`, up to `OFF_RULE_MAX` of the range), so the caller's range errs wide, and
