@@ -96,7 +96,7 @@ def do_measure(variants, target, job):
     base = B.spec(board, f0, f1, pot, stack, full)
     ef = os.path.join(DIR, f"eq_{sid}_{flop_s}.json")
     eq = json.load(open(ef)) if os.path.exists(ef) else None
-    if eq is None or eq.get("target") != target:
+    if eq is None or eq["expl_pct"] > target:   # (a tighter one cached is kept)
         eq = B.their_solve(base, target, 3000, compress=True)
         eq = {k: eq[k] for k in ("root", "acts", "strat", "player", "ev_cur", "iters", "expl_pct", "secs")}
         eq["target"] = target

@@ -937,27 +937,32 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   river card where our turn plays river classes), solves it again on one core to the exploitability ours reached,
   and once per player solves it with every decision of that player on the street locked to ours, the rest (the river
   after a turn) at equilibrium: the EV that player gives up by our strategy, in % of the pot. Medians (range), wall
-  seconds on a 10-core laptop (4 performance cores):
+  seconds on a 10-core laptop (4 performance cores). Measured again with the compiled core (2026-10-29, two flops a
+  spot, the library build paused, other jobs running; the table before it, NumPy's, in git history):
 
-  | street, speed | n | ours: iterations, s | ours: % of the pot from equilibrium | EV given up, OOP / IP | root mix diff, points | theirs, all cores: s to 0.005% (river), 0.05% (turn) | theirs, 1 core: s to ours |
+  | street, speed | n | ours: iterations, s | ours: % of the pot from equilibrium | EV given up, OOP / IP | root mix diff, points | theirs, 6 threads: s to 0.005% (river), 0.05% (turn) | theirs, 1 core: s to ours |
   |---|---|---|---|---|---|---|---|
-  | river, Fast | 16 | 1000, 2.0 | 0.014 (0.005-0.024) | 0.008 / 0.008 (max 0.018) | 2.5 (0.2-5.7) | 0.30 (0.06-1.27) | 0.15 (0.05-0.60) |
-  | river, Accurate | 16 | 1000, 2.1 | 0.012 (0.005-0.024) | 0.006 / 0.007 (max 0.023) | 2.2 (0.6-4.1) | 0.28 (0.05-0.61) | 0.15 (0.04-0.31) |
-  | turn, Fast, single-raised | 12 | 96 (82-110), 4.9 | 0.46 (0.32-0.88) | 0.093 / 0.075 (max 0.34) | 4.3 (0.0-23.5) | 1.6 (0.9-2.1) | 1.9 (1.3-2.4) |
-  | turn, Accurate, single-raised | 12 | 182 (143-213), 29.7 | 0.40 (0.18-0.60) | 0.044 / 0.044 (max 0.13) | 2.4 (0.0-18.8) | 9.4 (5.2-21.4) | 13.8 (8.7-21.9) |
-  | turn, Fast, 3bet pot | 3 | 327 (322-355), 5.0 | 0.038 (0.034-0.045) | under 0.01 | 1.5 (1.1-2.5) | 0.4 (0.3-0.5) | 1.7 (1.5-2.3) |
-  | turn, Accurate, 3bet pot | 3 | 802 (791-867), 29.9 | 0.014 (0.010-0.015) | under 0.01 | 2.2 (1.7-2.9) | 1.3 (1.1-1.4) | 6.6 (5.4-6.7) |
+  | river, Fast | 10 | 1000, 0.17 (0.06-0.34) | 0.014 (0.003-0.018) | 0.008 / 0.009 (max 0.016) | 2.8 (1.0-4.3) | 0.39 (0.05-0.89) | 0.18 (0.05-0.48) |
+  | river, Accurate | 10 | 1000, 0.21 (0.06-0.28) | 0.013 (0.004-0.031) | 0.006 / 0.010 (max 0.028) | 3.2 (0.9-6.4) | 0.55 (0.06-0.88) | 0.23 (0.06-0.36) |
+  | turn, Fast, single-raised | 8 | 81 (54-105), 4.8 | 0.93 (0.61-2.72) | 0.19 / 0.25 (max 0.50) | 9.6 (0.0-23.3) | 13.9 (11.0-27.2) | 9.1 (4.5-11.4) |
+  | turn, Accurate, single-raised | 8 | 334 (205-435), 29.8 | 0.14 (0.06-0.41) | 0.010 / 0.010 (max 0.076) | 1.0 (0.0-13.0) | 25.6 (12.9-33.8) | 40.7 (24.5-61.1) |
+  | turn, Fast, 3bet pot | 3 | 863 (579-1000), 4.9 | 0.007 (0.004-0.029) | under 0.005 | 1.3 (0.1-7.3) | 0.7 (0.2-1.8) | 2.2 (0.9-6.8) |
+  | turn, Accurate, 3bet pot | 3 | 1000 (992-1000), 14.8 | 0.008 (0.005-0.019) | under 0.005 | 2.5 (0.0-6.4) | 3.3 (0.7-7.7) | 10.2 (2.0-22.3) |
 
   Rivers are exact: their best responses to our whole river strategy measure it at our own number to 4 decimals (the
-  two codes' exploitability agree), each player gives up under 0.025% of the pot, the root's range frequencies are
-  within 0.7 points. On the turn our strategy gives up 0.04-0.09% of the pot (0.34 at worst, a Fast turn checked
-  through on a wide range); its exploitability in our game overstates what it costs in play by 5-10x. The two turns
-  where beta 0 swung late (Regret minimizer, below) answered at 0.99 and 1.48% of the pot and gave up 0.18-0.34; with
-  the beta step 0.23 and 0.23, giving up 0.01-0.05. Their code is faster: on one core it needs as many river
-  iterations as ours (~900) in 0.15 s where ours takes 2 s (ours is NumPy, bound by per-call overhead on small
-  arrays), and reaches our turn accuracy in ~2.5x less time on single-raised turns (as many iterations, each ~2.5x
-  cheaper) and 3-4.5x less on 3bet pots (half the iterations at Accurate's 0.014%); on all cores it solves a turn to
-  0.05% in 0.3-21 s.
+  two codes' exploitability agree), each player gives up under 0.03% of the pot, the root's range frequencies are
+  within a few points. On one core their code now needs as long as ours for our river accuracy (0.18-0.23 s against
+  our 0.17-0.21 s for 1000 iterations; NumPy took 2 s, 13x theirs), 1.9x as long on single-raised turns at Fast (9.1 s
+  against 4.8) and 1.4x at Accurate (40.7 against 29.8): about as many iterations, each 1.5-2x cheaper here, as our
+  river classes play 13-24 cards where theirs deals 44 (per card theirs is still 1.5-2x cheaper). On 3bet turns theirs
+  gets there in 2.2-2.9x less time, but ours runs on to its budget or 1000 iterations at 0.004-0.03% of the pot (150-570
+  of their iterations, 579-1000 of ours), where neither player gives up anything measurable. Fast single-raised turns
+  are the weak cell: Fast's menu (33/75/125%, the river inside at 33/125%) costs 2.6x the old one-size tree an
+  iteration, so on this loaded machine 5 s ran 54-105 iterations (the old tree in NumPy 82-110), 0.6-2.7% of the pot
+  in our game, and gives up 0.19 / 0.25% of the pot (max 0.50) where the one-size tree gave up 0.09 / 0.08 against
+  the same every-card game (the menu's own gain, 0.6-1.5 -> 0.3-0.6% of the pot per combo against the rich
+  reference, is measured there: gto/native.py). The two turns where beta 0 swung late (Regret minimizer, below)
+  answered at 0.99 and 1.48% of the pot and gave up 0.18-0.34; with the beta step 0.23 and 0.23, giving up 0.01-0.05.
 
   Flops: a library entry's stored decisions (the root, IP after a check, OOP facing a c-bet after checking) locked
   into their full game of the library's tree (every turn and river card, where the entry plays turn classes and the
