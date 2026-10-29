@@ -34,8 +34,8 @@ from . import preflop as pf
 from .pf_classes import push_fold
 # imported where used (exploit, breakdown, like multiway_solver and pf_game): the browser's worker imports this module
 # before its first answer, and a preflop answer or a library flop needs none of them (tests/test_bundle.py)
-from .solver import solve, Config, Solution, Decision, Terminal, Chance, BucketEntry, match_action, expand, MEMBER_FULL, _inv_of, \
-    Cancelled, TreeTooBig, TooSlow, tree_cells
+from .solver import solve, Config, Solution, Decision, Terminal, Chance, BucketEntry, RiverEntry, match_action, expand, \
+    MEMBER_FULL, _inv_of, Cancelled, TreeTooBig, TooSlow, tree_cells
 
 DEFAULT_OPEN = {"SB": 3.0}
 BVB_3BET = 10.0 / 3.0   # the big blind's default 3bet over a small-blind open, x the open (_default_size)
@@ -1889,6 +1889,157 @@ def _mw_names(names, amounts, behind: float, S: float, pot_now: float) -> List[s
     return out
 
 
+# ----------------------------------------------------------------------------- instant answers
+class _NoInstant(Exception):
+    """Advisor.instant: the answer needs a solve, or is quick anyway (nothing to answer ahead of it)."""
+
+
+@dataclass
+class InstantSpot:
+    """A heads-up street the hero acts on, for Advisor.instant's sources: the cards, the street's real actions so far
+    (`actions`, the page's), the pot at its start and the effective stack (chips), hero's seat (0 = OOP), `own`: the
+    street's own solve when one is cached (one stopped part way, or short of its budget), `prev`: (solution, the node
+    the previous street's line ends at, the tree's names of the actions taken there) when that street was walked
+    through a live solve or the flop library this request, else None."""
+    street: str
+    board: tuple
+    hole: tuple
+    hero_p: int
+    oop: str
+    ip: str
+    actions: list
+    pot: float
+    eff: float
+    behind: float
+    own: Optional[Solution] = None
+    prev: Optional[tuple] = None
+    own_earlier: bool = False   # `own` is the street's solve from an earlier decision, its tree without a size since taken
+
+
+def _swap_combo(hole, a: int, b: int) -> int:
+    """The index of `hole`'s image under the swap of cards a and b (a class's played card and the card dealt)."""
+    x, y = [b if c == a else a if c == b else c for c in hole]
+    return COMBO_INDEX[(min(x, y), max(x, y))]
+
+
+def _read_line(node, row: int, col: int, spot: InstantSpot):
+    """Walks the street's real actions (spot.actions) down a solve's tree from `node` (the street's first decision;
+    batch row `row`, hero's column `col`: their combo or bucket) by the tree's nearest actions; at hero's decision
+    reached: (that decision, hero's average mix there, the real bets then), else None."""
+    bets = [0.0, 0.0]
+    for a in spot.actions:
+        if not isinstance(node, Decision):
+            return None
+        p = 0 if a["pos"] == spot.oop else 1
+        if p != node.player:
+            return None
+        name = Advisor._tree_action_name(node, a, p, bets, spot.pot, spot.eff)
+        k = match_action(node.names, name)
+        act = a["action"]
+        amt = a.get("to") if a.get("to") is not None else a.get("amount")
+        if act in ("bet", "raise") and amt is not None:
+            bets[p] = float(amt)
+        elif act == "all-in":
+            bets[p] = spot.eff
+        elif act == "call":
+            bets[p] = min(bets[1 - p], spot.eff)
+        node = node.children[k]
+    if not isinstance(node, Decision) or node.player != spot.hero_p:
+        return None
+    s = node.avg_strategy()[row][:, col]
+    return node, np.asarray(s, dtype=np.float64), bets
+
+
+def _real_actions(node: Decision, strat, bets, spot: InstantSpot) -> List[dict]:
+    """Hero's actions at a tree decision `node` read for the hand's real pot and stack: a bet as its share of the pot,
+    a raise scaled by the pots' ratio (to the real bets), each amount at most hero's stack."""
+    p = spot.hero_p
+    pt = spot.pot + bets[0] + bets[1]
+    cap = bets[p] + spot.behind
+    scale = pt / max(node.pot_now, 1e-9)
+    out = []
+    for a, name in enumerate(node.names):
+        amt = None
+        if name == "call":
+            amt = round(min(bets[1 - p], cap) - bets[p], 2)
+        elif name == "all-in":
+            amt = round(cap, 2)
+        elif name.startswith("bet"):
+            amt = round(min(bets[p] + float(name.split()[-1].rstrip("%")) / 100.0 * pt, cap), 2)
+        elif name.startswith("raise"):
+            amt = round(min(max(bets) + (float(name.split()[-1]) - max(node.bets)) * scale, cap), 2)
+            name = f"raise to {amt:g}"
+        out.append({"action": name, "freq": round(float(strat[a]), 3), "amount_bb": amt})
+    return out
+
+
+def instant_from_own(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
+    """The street's own solve, cached short of its budget (a request stopped part way, a quick answer's), at hero's
+    decision: its tree and mix as they stand (from HU_CHECKS[0] iterations on)."""
+    sol = spot.own
+    if sol is None or sol.solver.iters < HU_CHECKS[0] or not hole_col(sol, spot.hole):
+        return None
+    got = _read_line(sol.root, 0, hole_col(sol, spot.hole)[0], spot)
+    if got is None:
+        return None
+    node, strat, bets = got
+    label = (f"this street's solve from your earlier decision ({sol.solver.iters} iterations; the sizes since read at "
+             f"its nearest)" if spot.own_earlier else f"this street's solve so far ({sol.solver.iters} iterations)")
+    return {"actions": _real_actions(node, strat, bets, spot), "source": "solve", "label": label,
+            "iterations": int(sol.solver.iters)}
+
+
+def hole_col(sol: Solution, hole, combo: Optional[int] = None):
+    """[hero's column in sol's combos] (`combo`: that combo's instead), or [] when the solve doesn't hold it."""
+    i = COMBO_INDEX[(min(hole), max(hole))] if combo is None else combo
+    return [int(x) for x in np.nonzero(sol.ctx.active == i)[0][:1]]
+
+
+def instant_from_prev(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
+    """The previous street's live solve (the flop's, or the turn's), which plays this street under it: a flop solve the
+    turn by card class (Ctx.turn_classes: a rank's cards alike, a flush suit's apart) and hand buckets, one bet size
+    (Config.later_sizes); a turn solve the river by card class, per combo, at its river sizes. The card dealt is read
+    as its class's played card, hero's combo through the swap of the two (Config.river_classes, solver.lift_classes).
+    Not the flop library's solves (their entries hold the flop only)."""
+    if spot.prev is None:
+        return None
+    sol, ch, _ = spot.prev
+    if not isinstance(sol, Solution) or hasattr(sol, "stored") or not isinstance(ch, Chance) or len(ch.boards) != 1:
+        return None
+    dec, card = ch.child, spot.board[-1]
+    rows = dec.boards
+    if len(rows) != ch.K or isinstance(dec, RiverEntry):
+        return None
+    if ch.umasks is not None or ch.perm is not None:
+        classes = sol.ctx.turn_classes(tuple(ch.boards[0]), sol.solver.dead)
+        if [c for c, _ in classes] != [b[-1] for b in rows]:
+            return None
+        k = next((i for i, (_, cs) in enumerate(classes) if card in cs), None)
+    else:
+        k = next((i for i, b in enumerate(rows) if b[-1] == card), None)
+    if k is None:
+        return None
+    col = hole_col(sol, spot.hole, _swap_combo(spot.hole, rows[k][-1], card))
+    if not col:
+        return None
+    col = col[0]
+    if isinstance(dec, BucketEntry):
+        T, ids = sol.solver._btab(dec)[:2]
+        dec = dec.child
+        col = int(ids[k % T, spot.hero_p][col])
+        if col >= dec.avg_strategy().shape[2]:
+            return None   # (dead on the class's played card)
+    got = _read_line(dec, k, col, spot)
+    if got is None:
+        return None
+    node, strat, bets = got
+    nxt = spot.street
+    how = ("by card class and hand buckets, one bet size" if node.bucketed else "by card class, its river sizes")
+    return {"actions": _real_actions(node, strat, bets, spot), "source": "prev",
+            "label": f"the {STREETS[STREETS.index(nxt) - 1]} solve's view of the {nxt} ({how})",
+            "iterations": int(sol.iters)}
+
+
 # ----------------------------------------------------------------------------- advisor
 class Advisor:
     def __init__(self, cfg: Optional[Config] = None, time_budget: float = 4.0, prior_budget: float = 2.0,
@@ -1968,6 +2119,9 @@ class Advisor:
         self._study = False       # state "study": Study mode's answer (Advisor.study)
         self._runout_close = None # Study's runout report: the action that closed the flop or turn (Advisor._runouts)
         self._req_sizes: Dict[str, List[float]] = {}   # the request's custom sizes (state "sizes"), as fractions
+        # Advisor.instant's sources, tried in order: each (advisor, InstantSpot) -> {"actions", "source", "label"} or None
+        self.instant_sources = [instant_from_own, instant_from_prev]
+        self._instant = False     # an Advisor.instant request: nothing is solved (_NoInstant where it would be)
 
     # ------------------------------------------------------------ public
     _icm = None   # the tournament's prize model while a request is answered (_advise), else None
@@ -2008,6 +2162,28 @@ class Advisor:
             f = traceback.extract_tb(why.__traceback__)[-1]
             res["fallback_where"] = f"{f.filename.rsplit('/', 1)[-1]}:{f.lineno} {f.name}"
         return res
+
+    def instant(self, state: dict) -> Optional[dict]:
+        """An approximate answer at once, for the browser to show while the request itself solves (the worker posts it
+        first, the full answer replaces it): a heads-up street whose own solve would take seconds, read off what is in
+        hand already by instant_sources (the street's own solve stopped part way; the previous street's live solve,
+        which plays this street under it; stored turns later), with "approximate": {source, label} and no EVs. Nothing
+        is solved: None where the answer needs a solve before anything can be read (an earlier street not solved yet),
+        is quick anyway (preflop, a library flop, a street solved already), isn't heads-up, or asks for more than the
+        equilibrium (exploit mode, locks, custom ranges or sizes, a tournament, Study, a jam, the breakdown)."""
+        if len(str(state.get("board") or "")) < 6 or state.get("opponents") == "pool" or any(
+                state.get(k) for k in ("study", "runouts", "jam", "breakdown", "optimize_sizes", "locks", "library_only",
+                                       "payouts", "ranges", "sizes")):
+            return None
+        self._instant = True
+        try:
+            with np.errstate(all="ignore"):
+                res = self._advise(state)
+        except _NoInstant:
+            return None
+        finally:
+            self._instant = False
+        return res if isinstance(res, dict) and res.get("approximate") else None
 
     def prefetch(self, state: dict) -> None:
         """The flop's library lookups for a hand as soon as its flop is known, without reading any entry: a dry run
@@ -3129,6 +3305,9 @@ class Advisor:
                          f"{'your' if p == hero else 'their'} range is the hands that take its last action")
         if self._runout_close is not None and len(cur.active) > 2:
             return {"error": f"the runout report reads heads-up pots: {len(cur.active)} players are in"}
+        if self._instant and (actor or pool or optimize or locks or custom or self._runout_close is not None
+                              or any(len(st.players_start) > 2 for st in rep[1:])):
+            raise _NoInstant()   # (heads-up from the flop at equilibrium only)
         # a 3-way flop's first decision the 3-way library holds: its precomputed solve answers (no narrowing needed)
         if len(cur.players_start) == 3 and actor is None and not pool and not optimize and not self._jam \
                 and getattr(self, "_icm", None) is None:
@@ -3234,6 +3413,7 @@ class Advisor:
         spare, t_prior = 0.0, time.time()   # earlier streets' budgets (prior_budget each) left unspent
         slow_hu: Dict[int, np.ndarray] = {}   # per player, the combos a call by the rules slowplayed (_slowplayed)
         slow_rules: Dict[str, np.ndarray] = {}   # ...the same by seat, for a street the rules narrow alone (quick)
+        walked: Dict[str, tuple] = {}   # street -> (solve, node its line ends at, tree names taken): InstantSpot.prev
         if hu_from_start:
             # narrow through earlier streets that were also heads-up between these two
             for st in rep[1:-1]:
@@ -3248,8 +3428,10 @@ class Advisor:
                 spare += self.prior_budget
                 eff = min(stk[oop] - st.inv_start[oop], stk[ip] - st.inv_start[ip])
                 cfg = self._cfg_with_real_sizes(st, oop, ip, eff)
+                taken: List[str] = []
                 hit = self._from_library(lib, full, sub_board, r0, r1, st, eff, cfg, oop, ip, notes,
-                                         smoothing=self.prior_smoothing, board=sub_board, rules=(0, 1), slow=slow_hu) \
+                                         smoothing=self.prior_smoothing, board=sub_board, rules=(0, 1), slow=slow_hu,
+                                         taken=taken) \
                     if lib is not None and st.name == "flop" else None
                 if hit is not None:
                     sol, node, c0, c1 = hit
@@ -3283,9 +3465,11 @@ class Advisor:
                         notes.append(f"{st.name}: the solve that narrows ranges is {expl:.1f}% of the pot from "
                                      f"equilibrium ({sol.iters} iterations), so ranges follow it {trust * 100:.0f}% and "
                                      "simple betting rules the rest")
+                    taken = []
                     node, c0, c1 = self._walk(sol, st.actions, oop, ip, st.pot_start, eff, notes, st.name, self.prior_smoothing,
                                               board=sub_board, rules=(0, 1),
-                                              lock=mk_lock(sol), trust=trust, slow=slow_hu)
+                                              lock=mk_lock(sol), trust=trust, slow=slow_hu, taken=taken)
+                walked[st.name] = (sol, node, taken)
                 r0 = _post_floor(r0, expand(sol.ctx, c0), nxt_board, oop, st.name, notes)
                 r1 = _post_floor(r1, expand(sol.ctx, c1), nxt_board, ip, st.name, notes)
             eff = min(stk[oop] - cur.inv_start[oop], stk[ip] - cur.inv_start[ip])
@@ -3304,6 +3488,11 @@ class Advisor:
                     lib_sol, node, n_r0, n_r1 = hit
                     notes.extend(n2)
                     notes.append(lib_sol.note())
+        if self._instant:
+            if lib_sol is not None or not hu_from_start:
+                raise _NoInstant()   # (a library flop is instant anyway; a pot heads-up from this street on solves first)
+            return self._instant_answer(cur, board, hole, hero, villain, hero_p, oop, ip, eff, cfg, r0, r1, walked,
+                                        hero_remaining, to_call, len(positions), t0)
         if lib_sol is None and self._lib_only:
             return {"skipped": "not a flop-library spot"}
         if lib_sol is not None:
@@ -5004,6 +5193,41 @@ class Advisor:
                              "amount_bb": None if node.amounts[a] is None else round(float(node.amounts[a]), 2)}
                             for a, nm in enumerate(names)]}
 
+    def _instant_answer(self, cur, board, hole, hero, villain, hero_p, oop, ip, eff, cfg, r0, r1, walked, behind, to_call,
+                        n_players, t0) -> dict:
+        """Advisor.instant's answer at the street advised on (heads-up from its start, its ranges narrowed through the
+        earlier streets' solves as they stand): the first of instant_sources that reads one, else _NoInstant; and
+        _NoInstant when the street's own solve is cached and its answer quick (settled, or run its budget)."""
+        own = self._cache.get(self._solve_key(board, r0, r1, cur.pot_start, eff, cfg=cfg))
+        if own is not None and not getattr(own, "stopped", False) and (
+                getattr(own, "settled_at", None) is not None or own.iters >= 1000 or own.seconds >= 0.8 * self.time_budget):
+            raise _NoInstant()
+        earlier = False
+        if own is None:   # (facing a size off the tree your advice on this street solved: that solve, at its nearest)
+            c = self._hand_cfg(board, r0, r1, cur, oop, ip, eff, cfg)
+            if c is not cfg:
+                own, earlier = self._cache.get(self._solve_key(board, r0, r1, cur.pot_start, eff, cfg=c)), True
+        spot = InstantSpot(cur.name, tuple(board), tuple(hole), hero_p, oop, ip, list(cur.actions), cur.pot_start, eff,
+                           behind, own, walked.get(STREETS[STREETS.index(cur.name) - 1]), earlier)
+        got = next((g for g in (src(self, spot) for src in self.instant_sources) if g), None)
+        if got is None:
+            raise _NoInstant()
+        acts = got["actions"]
+        best = max(acts, key=lambda a: a["freq"])["action"]
+        bets = max(cur.bets[oop], cur.bets[ip])
+        notes = [f"approximate, at once: {got['label']}; this {cur.name}'s own solve replaces it"]
+        if got["source"] == "solve":   # (read off a solve cut to fit Quick: its game has fewer sizes, said plainly)
+            self._trim_note(own, cur.name, notes)
+        elif got["source"] == "prev":
+            self._trim_note(spot.prev[0], STREETS[STREETS.index(cur.name) - 1], notes)
+        return {"street": cur.name, "hero": hero, "villain": villain, "position": "OOP" if hero_p == 0 else "IP",
+                "players": n_players, "hand": hand_class(hole), "board": cards_str(board),
+                "pot_bb": round(cur.pot_start + cur.bets[oop] + cur.bets[ip], 2),
+                "to_call_bb": round(min(to_call, behind), 2), "stack_bb": round(min(eff - bets, behind), 2),
+                "actions": acts, "recommended": best,
+                "approximate": {"source": got["source"], "label": got["label"], "iterations": got.get("iterations")},
+                "notes": notes, "seconds": round(time.time() - t0, 3)}
+
     def _actor_move(self, sol: Solution, node: Decision, n_r0, n_r1, hole, p: int, street: str) -> dict:
         """The mix of player p (to act at `node`) for `hole`, from hero's solve; an error (play then asks
         from p's own seat) when hero's line this street is rare in the solve (its subtree barely converged:
@@ -5080,6 +5304,10 @@ class Advisor:
                   "shallow" if stack <= self.spr_sizes.get("turn", (0.0, {}))[0] * pot else "turn")
         first = max(self.hu_settled_from.get(street, HU_CHECKS[0]), HU_CHECKS[0])   # (the first check it may stop at)
         t0 = time.time()
+        if self._instant:   # (as it stands: an instant answer solves nothing)
+            if sol is None:
+                raise _NoInstant()
+            return sol
         if sol is None:
             # Same spot solved by warm_from (ranges can differ a little: they come from its own earlier
             # streets): start from it and count its time against the budget, as extend() does below.
@@ -5380,7 +5608,8 @@ class Advisor:
         return cfg
 
     def _walk(self, sol: Solution, acts: List[dict], oop, ip, pot, stack, notes, street, smoothing=0.0, only=None,
-              widened=None, board=None, rules=None, lock=None, rare_lines=None, visited=None, trust=1.0, slow=None):
+              widened=None, board=None, rules=None, lock=None, rare_lines=None, visited=None, trust=1.0, slow=None,
+              taken=None):
         """Follow real actions through the solved tree, narrowing ranges. Smoothing mixes each
         strategy with uniform so a line the solve rarely takes doesn't shrink a range to nothing.
         With `only` (0 = OOP, 1 = IP) and `board`, that player's actions are exact unless the solve
@@ -5392,7 +5621,7 @@ class Advisor:
         actions stay smoothed: a short prior solve can be far from equilibrium, and a line it rarely
         takes (a turn call it folds two pair to) would leave the range a sliver.
         `lock` (exploit mode) narrows its player's range by how the pool plays instead of the solve.
-        `visited` (a list) gets every node an action was taken at.
+        `visited` (a list) gets every node an action was taken at; `taken` the tree's names of the actions taken.
         `trust` (with `rules` and `board`): the weight the solve's strategy gets on `rules`' other actions,
         the rest going to the rules' range for the action (softened, as multiway), for a solve that hasn't
         settled (trust_of). A call by the rules keeps the hands they have raising at SLOWPLAY when the player
@@ -5513,6 +5742,8 @@ class Advisor:
                 r1 = r1 * s
             if node.names[k] != name:
                 notes.append(f"{street}: mapped '{name}' to tree action '{node.names[k]}'")
+            if taken is not None:
+                taken.append(node.names[k])
             act = a["action"]
             if act in ("bet", "raise"):
                 amt = a.get("to") if a.get("to") is not None else a.get("amount")
@@ -5526,7 +5757,8 @@ class Advisor:
             node = node.children[k]
         return node, r0, r1
 
-    def _tree_action_name(self, node: Decision, a: dict, p: int, bets, pot, stack: float = float("inf")) -> str:
+    @staticmethod
+    def _tree_action_name(node: Decision, a: dict, p: int, bets, pot, stack: float = float("inf")) -> str:
         act = a["action"]
         if act in ("check", "fold", "call", "all-in"):
             return act

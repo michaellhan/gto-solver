@@ -894,6 +894,7 @@ let MODE = null, worker = null, reqId = 0;
 // to the id in [0] is stopped, and the one in [1]; worker.js reads it between chunks of iterations, ~0.1 s), so the
 // worker keeps its solves, library entries and tables; elsewhere stopping one restarts the worker (cancelSolve).
 let STOP = null;
+const partials = {};   // callAdvise's onPartial by request id
 let prefetched = null;   // the flop the worker was last told about (prefetchLibrary)
 const pending = {};
 // (health.json: the local server answers it {"ok": true}; the static site has the file, {"ok": false}, so the probe
@@ -957,7 +958,12 @@ function startWorker() {
   prefetched = null;
   STOP = globalThis.crossOriginIsolated && typeof SharedArrayBuffer === "function" ? new Int32Array(new SharedArrayBuffer(8)) : null;
   if (STOP) worker.postMessage({ stop: STOP.buffer });
-  worker.onmessage = (e) => { const m = e.data; if (m.status) { workerStatus = m.status; setStatus(m.status); } if (m.id != null && pending[m.id]) { pending[m.id](m.error ? { error: m.error } : m.result); delete pending[m.id]; } };
+  worker.onmessage = (e) => {
+    const m = e.data;
+    if (m.status) { workerStatus = m.status; setStatus(m.status); }
+    if (m.partial) { if (m.id != null && pending[m.id] && partials[m.id]) partials[m.id](m.partial); return; }
+    if (m.id != null && pending[m.id]) { pending[m.id](m.error ? { error: m.error } : m.result); delete pending[m.id]; delete partials[m.id]; }
+  };
   worker.onerror = (e) => { for (const k in pending) { pending[k]({ error: "solver worker failed: " + e.message }); delete pending[k]; } };
 }
 // Once the hand's flop is known, whoever is to act, the browser's worker is told (a "prefetch": Advisor.prefetch
@@ -973,11 +979,14 @@ function prefetchLibrary() {
   prefetched = k;
   worker.postMessage({ prefetch: flop });
 }
-// play: {seat, hole} asks for that seat's GTO move instead (a practice opponent; Advisor.play)
-function callAdvise(state, play) {
+// play: {seat, hole} asks for that seat's GTO move instead (a practice opponent; Advisor.play). onPartial (the browser's
+// worker): called with an approximate answer, where one is in hand at once, before the request's own (Advisor.instant;
+// partials, by request id)
+function callAdvise(state, play, onPartial) {
   if (MODE === "server") return fetch(play ? "play" : "advise", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(play ? { state, ...play } : state) }).then(r => r.json());
   startWorker();
-  const id = ++reqId, p = new Promise(res => { pending[id] = res; worker.postMessage(play ? { id, state, play } : { id, state }); });
+  const early = !play && !!onPartial;
+  const id = ++reqId, p = new Promise(res => { pending[id] = res; if (early) partials[id] = onPartial; worker.postMessage(play ? { id, state, play } : early ? { id, state, early } : { id, state }); });
   p.reqId = id;   // (stopRequests(id))
   return p;
 }
@@ -987,7 +996,7 @@ function callAdvise(state, play) {
 function stopRequests(id) {
   if (MODE !== "wasm" || !STOP || !worker) return false;
   if (id == null) Atomics.store(STOP, 0, reqId); else Atomics.store(STOP, 1, id);
-  for (const k in pending) if (id == null || +k === id) { pending[k]({ cancelled: true }); delete pending[k]; }
+  for (const k in pending) if (id == null || +k === id) { pending[k]({ cancelled: true }); delete pending[k]; delete partials[k]; }
   return true;
 }
 // Stop the solve in flight; its analyze() call then returns without showing anything.
@@ -1621,7 +1630,10 @@ async function analyze(sim) {
   }, 100);
   let res;
   // (practice: the answer the look-ahead already asked for, else once its request is out of the way)
-  try { res = (practicing() && await window.Practice.fromAhead(key)) || await callAdvise(JSON.parse(key)); }
+  // (an approximate answer may come first: shown under the progress bar until this one replaces it; not in Practice,
+  // which grades your move against the answer)
+  const early = practicing() ? null : (r) => { if (gen === solveGen && solving) renderEarly(r); };
+  try { res = (practicing() && await window.Practice.fromAhead(key)) || await callAdvise(JSON.parse(key), null, early); }
   catch (e) { res = { error: "Request failed: " + e }; }
   clearInterval(tick);
   if (gen !== solveGen) return;                                         // cancelled here; a newer solve owns the panel
@@ -1666,6 +1678,24 @@ function gtoSource(res, key) {
   const from = pool ? "the pool's ranges" : res.locked ? "the ranges your lock leaves" : "";
   return from ? `the equilibrium of this same solve, which starts from ${from} into the flop: the GTO setting's advice, on the charts' ranges, can differ`
     : "the equilibrium of this same solve";
+}
+// An approximate answer while the solve runs (Advisor.instant: e.g. the flop's solve read for the turn): the verdict
+// and the mix, labelled, under the progress bar; not the answer graded, reviewed or recorded (lastResult stays)
+function renderEarly(res) {
+  const el = document.getElementById("result");
+  if (!el || !res || !res.actions || !res.approximate) return;
+  let box = el.querySelector("#early");
+  if (!box) { box = document.createElement("div"); box.id = "early"; el.appendChild(box); }
+  setColors(res.actions.map(a => a.action));
+  const label = res.approximate.label;
+  let h = `<div class="verdict"><span class="big">${res.recommended}</span><span class="conv meh" title="Approximate: ${label}">approximate</span></div>`;
+  h += `<div class="arows noev"><div class="arow head"><span>Action</span><span>Solver mix</span><span class="num">Freq</span></div>`;
+  for (const a of res.actions) h += `<div class="arow ${a.action === res.recommended ? "best" : ""}"><span class="name">${a.action}${amtOf(a) != null ? `<small>${amtOf(a)} bb</small>` : ""}</span><div class="bar"><div style="width:${(a.freq * 100).toFixed(1)}%;background:${COLORS(a.action)}"></div></div><span class="num">${(a.freq * 100).toFixed(1)}%</span></div>`;
+  h += `</div><div class="meta">Approximate, at once: ${label}. The ${res.street}'s own solve, running above, replaces it.`;
+  // (a solve cut to fit Quick's time and memory: its game has fewer sizes, and the box says so)
+  for (const n of res.notes || []) if (n.includes("smaller game")) h += `<br>${n}`;
+  h += `</div>`;
+  box.innerHTML = h;
 }
 function renderResult(res, key) {
   lastResult = res; resultKey = key;

@@ -386,3 +386,45 @@ test("an all-in nobody can match more of is graded as the call (or check) it is"
   assert.deepEqual(p.val('gradedMove(simulate(), { action: "all-in" })'), { action: "call" });
   assert.deepEqual(p.val('gradedMove(simulate(), { action: "bet", to: 5 })'), { action: "bet", to: 5 });
 });
+
+test("an approximate answer the worker has at once is shown under the progress bar, then replaced by the request's own", async () => {
+  const p = loadPage();
+  await p.ready();
+  const asks = () => p.posted.filter((m) => m.state);
+  p.S = state(FLOP);
+  await flush();
+  const ask = asks().at(-1);
+  assert.equal(ask.early, true);   // (the page's own advice asks for one)
+  p.workers[0].onmessage({ data: { status: "Solving…" } });
+  const result = p.byId("result");
+  const approx = { street: "flop", hero: "BTN", recommended: "bet 75%", approximate: { source: "prev", label: "the preflop's view" },
+                   actions: [{ action: "check", freq: 0.4, amount_bb: null }, { action: "bet 75%", freq: 0.6, amount_bb: 4.13 }] };
+  p.workers[0].onmessage({ data: { id: ask.id, partial: approx } });
+  await flush();
+  const box = result.children.at(-1);
+  assert.equal(box.id, "early");
+  assert.match(box.innerHTML, /<span class="big">bet 75%<\/span><span class="conv meh"[^>]*>approximate<\/span>/);
+  assert.match(box.innerHTML, /60\.0%/);
+  assert.match(box.innerHTML, /<small>4\.13 bb<\/small>/);
+  assert.match(result.innerHTML, /Solving the flop/);   // (the progress stays above it)
+  assert.equal(p.run("lastResult"), null);                // not an answer to grade or record
+  // read off a solve cut to fit Quick: the box says its game is smaller
+  const cut = "flop: solved in a smaller game than the full one, to fit this speed's time and memory: one raise size";
+  p.workers[0].onmessage({ data: { id: ask.id, partial: { ...approx, notes: ["approximate, at once: x", cut] } } });
+  await flush();
+  assert.equal(result.children.filter((c) => c.id === "early").length, 1);
+  assert.ok(result.children.at(-1).innerHTML.includes("<br>" + cut));
+  assert.doesNotMatch(result.children.at(-1).innerHTML, /approximate, at once: x/);
+  p.workers[0].onmessage({ data: { id: ask.id, result: { street: "flop", hero: "BTN", hand: "AKs", recommended: "check", actions: [{ action: "check", freq: 1 }] } } });
+  await flush();
+  assert.equal(result.children.length, 0);
+  assert.match(result.innerHTML, /<span class="big">check<\/span>/);
+  assert.doesNotMatch(result.innerHTML, /approximate/);
+  // a partial for a request no longer pending is dropped
+  p.workers[0].onmessage({ data: { id: ask.id, partial: approx } });
+  await flush();
+  assert.equal(result.children.length, 0);
+  // a practice opponent's move (play) and Practice's own asks don't ask for one
+  p.run("callAdvise({ x: 1 }, { seat: 'BB', hole: 'AhAd' }, () => {})");
+  assert.equal(asks().at(-1).early, undefined);
+});

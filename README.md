@@ -96,6 +96,9 @@ rough on the turn, whose game is cut to fewer sizes when the whole one doesn't f
 is about 60 s in the browser and 30 s locally (12 s per earlier street), with more time for the earlier
 streets used to narrow ranges. River spots are solid either way; turn spots need
 Accurate to get close to a full solver (see Accuracy vs speed below).
+While a heads-up turn or river solves in the browser, an approximate answer read off the solve before it (a live
+flop's for the turn, the turn's for the river, or the street's own from your earlier decision) shows at once under
+the progress bar, marked approximate, until the answer replaces it.
 The panel shows the recommended action with its size (preflop: 2.5bb
 opens, 3bb from the small blind, 3x or 4x 3-bets, 2.3x 4-bets, then all-in; over limpers
 3x (4x from the blinds) plus 1bb a limper, and a squeeze adds one bet per caller;
@@ -1318,6 +1321,42 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   taken in turn: the same iterations within 2 and seconds within 0.04; more iterations than the table's, the machine
   quieter now: BTN vs BB 1.86 s, 75-77, 1.0-1.1%; the 6-max limped pot 1.87-1.89 s, 52-53, 6.0-6.2%). The settled-stop
   table's "river after the hand's turn" (0.52 s, 300 iterations) had run its river in numpy: 0.10 s in the core.
+* **An approximate answer at once while the solve runs** (`Advisor.instant`, `instant_sources`: `instant_from_own`,
+  `instant_from_prev`; the worker's `early` request, the page's `renderEarly`). A heads-up turn after a live flop
+  solve (a limped pot, a 3bet pot's flop not in the library) waits for its own solve, Fast's 6.7 s on a limped
+  pot's turn in the browser, with only the progress bar to look at, while the worker already holds a solve that
+  plays the street. Now the worker first reads an answer off what it holds and posts it before the request's solve:
+  this street's own solve, stopped part way or made for your earlier decision on it (facing a bet off the tree your
+  advice solved: the sizes since read at their nearest), else the previous street's live solve, which plays this street
+  under it (the flop's by card class and hand buckets at one bet size; the turn's for the river by card class at its
+  river sizes). The page shows it under the progress bar, the verdict and the mix with "approximate" and where it
+  came from (and a cut solve's "smaller game" note), until the answer replaces it; nothing is solved for it, it has
+  no EVs, and it isn't graded, reviewed or recorded. `scripts/bench_browser.mjs --session --early` (Pyodide, one
+  thread, a fresh worker and one idle 6 s, Fast and Quick; seconds to the approximate answer / to the answer):
+
+  | spot | Fast | Quick |
+  |---|---|---|
+  | limped pot's turn, after the flop's solve | 0.002 / 6.67-6.69 (the same verdict) | 0.002 / 1.85-1.86 (the same) |
+  | facing a 60% bet off the tree your turn advice solved | 0.002 / 6.65-6.66 (raise to 11.89 / raise to 11) | 0.002 / 1.87 (call / raise) |
+  | limped pot's river, after the turn's solve | 0.002 / 0.11-0.12 (check / bet 33%) | 0.002 / 0.11 (the same) |
+  | 3bet pot's turn, after the flop's solve | 0.052-0.055 / 1.01 (the same) | 0.053-0.056 / 1.01-1.02 (the same) |
+
+  EV given up playing the approximate mix instead of the turn's own solve (10 s, natively in the worker's Fast
+  configuration; four limped pots' flops, Ks7d2c, Jh9h4c, 8c6d5s and Ad5d3c, each with a 2h and a Td turn; the small
+  blind's whole range, each combo's approximate mix priced by the solve's EVs per action against its own mix; % of
+  the pot):
+
+  | the flop's solve | first to act: mean (worst) | facing 75% of the pot: mean (worst) |
+  |---|---|---|
+  | Fast's (300-400 iterations) | 0.06 (0.43) | 1.43 (2.62) |
+  | Quick's (39-135) | 0.43 (1.60) | 1.56 (2.68) |
+
+  First to act it is close; facing a bet the flop solve's one bet size and hand buckets cost 1.4-1.6% of the pot,
+  so it stays marked approximate and the answer replaces it. Not
+  offered where the answer is quick anyway or needs more than the equilibrium: preflop, library flops and the turns
+  after them (the entries hold the flop's play only), a street solved already, multiway pots, Practice (it grades
+  your move against the answer), exploit mode, locks, custom sizes or ranges, tournaments, Study, the breakdown, a
+  jam request.
 * **Regret minimizer** (`docs/cfr_research.md`, `scripts/bench_solver.py --algos`, exploitability per
   iteration): predictive CFR+ and its discounted form (PCFR+, PDCFR+), the state of the art on many
   non-poker games, are 2-7x more exploitable than DCFR here at 100-200 iterations on every spot (the river,

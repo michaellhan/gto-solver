@@ -21,6 +21,8 @@
 // numpy is read from the pyodide package's directory; the solver's code from solver.zip, built here as deploy.sh
 // builds it (scripts/build_bundle.py, with the repo's .venv Python or $PYTHON). Each spot's first line gives the
 // worker's setup by stage, the worker's own timings (runtime, numpy, imports, advisors).
+// --early asks as the page does for its own advice (early: an approximate answer first where one is in hand at once,
+// Advisor.instant) and reports when it came (early_s) and what it said.
 // Times are wall clock on this machine: a browser tab is single-threaded too, but other load moves them.
 import { spawnSync, execFileSync } from "child_process";
 import os from "os";
@@ -66,9 +68,11 @@ const SPOTS = {
   "turn": base({ hero: "BB", hole: "QhJh", board: "Ks7d2cTh", flop: SRP_FLOP }),             // (its flop in the library now)
   "turn-3bp": base({ hero: "BB", hole: "AhQd", board: "Ks7d2cTh", preflop: BB_3BET, flop: [X("BB"), B("BTN", 6.8), C("BB")] }),  // the flop solved to narrow
   // a limped pot asked street by street (--session flop-limp,turn-limp,river-limp: each street's narrowing reads the
-  // solve the one before made)
+  // solve the one before made, and its approximate answer, --early, is read off it)
   "flop-limp": base({ hero: "SB", hole: "QhJh", board: "Ks7d2c", preflop: LIMP }),
   "turn-limp": base({ hero: "SB", hole: "QhJh", board: "Ks7d2cTh", preflop: LIMP, flop: [X("SB"), B("BB", 1.5), C("SB")] }),
+  "turn-limp-f": base({ hero: "SB", hole: "QhJh", board: "Ks7d2cTh", preflop: LIMP, flop: [X("SB"), B("BB", 1.5), C("SB")],
+                        turn: [X("SB"), B("BB", 3)] }),   // facing 60%, off the tree turn-limp's advice solved
   "river-limp": base({ hero: "SB", hole: "QhJh", board: "Ks7d2cTh5s", preflop: LIMP, flop: [X("SB"), B("BB", 1.5), C("SB")],
                        turn: [X("SB"), B("BB", 3), C("SB")] }),
   "river": base({ hero: "BB", hole: "QhJh", board: "Ks7d2cTh5s", flop: SRP_FLOP, turn: SRP_TURN }),
@@ -163,10 +167,15 @@ async function startWorker(pyodideDir, bundlePath) {
   const heap = () => py._module.HEAPU8.buffer.byteLength / 2 ** 20;
   let id = 0;
   const prefetch = (state) => ctx.onmessage({ data: { prefetch: state } });
-  const request = (state) => new Promise((res) => {
-    const my = ++id;
-    onMsg = (m) => { if (m.id === my) res(m); };
-    ctx.onmessage({ data: { id: my, state } });
+  const request = (state, early) => new Promise((res) => {
+    const my = ++id, t0 = performance.now();
+    let part = null;
+    onMsg = (m) => {
+      if (m.id !== my) return;
+      if (m.partial) part = { early_s: +((performance.now() - t0) / 1000).toFixed(3), ...m.partial };
+      else res({ ...m, part });
+    };
+    ctx.onmessage({ data: early ? { id: my, state, early: true } : { id: my, state } });
   });
   return { setup, stages, heap, request, prefetch, ctx };
 }
@@ -193,7 +202,7 @@ async function runSpot(w, spot, speeds) {
     }
     const [x0, a0] = [w.ctx.libFetches, w.ctx.aheadFetches];
     const t0 = performance.now();
-    const m = await w.request(state);
+    const m = await w.request(state, flag("early"));
     const wall = (performance.now() - t0) / 1000;
     const r = m.result || {}, s = r.solver || {};
     const est = pageBudget(state, speed, fastSeconds);
@@ -203,6 +212,8 @@ async function runSpot(w, spot, speeds) {
       outside_s: s.solve_seconds != null ? +(wall - s.solve_seconds).toFixed(2) : null,
       precomputed: !!r.precomputed, heap_mb: +w.heap().toFixed(0), lib_fetches: w.ctx.libFetches - x0, lib_ahead: w.ctx.aheadFetches - a0,
       street: r.street, recommended: r.recommended, error: m.error || r.error || null,
+      early: m.part ? { s: m.part.early_s, recommended: m.part.recommended, source: m.part.approximate.source,
+                        label: m.part.approximate.label } : null,
       notes: (r.notes || []).filter((n) => process.env.BENCH_ALL_NOTES || /equilibrium|solved|iterations|rules/.test(n)).map((n) => n.slice(0, 160)),
     }));
     if (speed === "fast") fastSeconds = r.seconds;
@@ -228,7 +239,7 @@ for (const spot of flag("session") ? [spots.join(",")] : spots) {
   // a fresh worker per spot (and per speed unless --warm)
   for (const group of flag("warm") ? [speeds] : speeds.map((s) => [s])) {
     const p = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--child", "--spot", spot, "--speeds", group.join(","),
-                                           "--pyodide", pyodideDir, "--bundle", bundlePath, ...(arg("worker") ? ["--worker", arg("worker")] : []), ...["prefetch", "idle"].flatMap((k) => (arg(k) ? ["--" + k, arg(k)] : []))], { encoding: "utf8", maxBuffer: 1 << 26 });
+                                           "--pyodide", pyodideDir, "--bundle", bundlePath, ...(arg("worker") ? ["--worker", arg("worker")] : []), ...["prefetch", "idle"].flatMap((k) => (arg(k) ? ["--" + k, arg(k)] : [])), ...(flag("early") ? ["--early"] : [])], { encoding: "utf8", maxBuffer: 1 << 26 });
     for (const line of p.stdout.split("\n").filter((l) => l.startsWith("{"))) {
       const r = JSON.parse(line);
       if (r.speed) rows.push(r);
@@ -237,6 +248,7 @@ for (const spot of flag("session") ? [spots.join(",")] : spots) {
                             `expl ${r.expl_pct ?? "-"}%  solve ${r.solve_s ?? "-"} s  outside ${r.outside_s ?? "-"} s  heap ${r.heap_mb} MB` +
                             `${r.cells ? "  cells " + (r.cells / 1e6).toFixed(1) + "M" : ""}` +
                             `${r.precomputed ? "  library" : ""}${r.lib_fetches ? "  sync-fetches " + r.lib_fetches : ""}${r.error ? "  ERROR " + r.error : ""}` +
+                            (r.early ? `\n             approximate at ${r.early.s} s: ${r.early.recommended} (${r.early.label}); the answer: ${r.recommended}` : "") +
                             (r.notes.length ? "\n             " + r.notes.join("\n             ") : "")
                           : `${r.spot}: worker setup ${r.setup} s${r.stages ? " (" + Object.entries(r.stages).filter(([k]) => k !== "total").map(([k, v]) => `${k} ${v}`).join(", ") + ")" : ""}, heap ${r.heap_mb} MB`);
     }

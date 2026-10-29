@@ -273,7 +273,15 @@ const ready = (async () => {
              + "    try:\n"
              + "        return json.dumps(adv.play(st, pl['seat'], pl['hole'], pl.get('seed')) if pl else adv.advise(st))\n"
              + "    except Cancelled:\n"
-             + "        return json.dumps({'cancelled': True})");
+             + "        return json.dumps({'cancelled': True})\n"
+             // a request marked "early" (the page's own advice): an approximate answer first where one is in hand at once
+             // (Advisor.instant: the previous street's solve read for this street, ~0.1 s), posted before the solve
+             + "def early(st):\n"
+             + "    try:\n"
+             + "        r = advs.get(st.get('speed'), advs['fast']).instant(st)\n"
+             + "    except Exception:\n"
+             + "        r = None\n"
+             + "    return json.dumps(r) if r else ''");
   lap("advisors");
   setup.total = +((performance.now() - T0) / 1000).toFixed(2);
   postMessage({ status: "Solving…", setup });
@@ -318,7 +326,8 @@ onmessage = async (e) => {
     } catch (err) {} finally { RECORD = null; }
     return;
   }
-  const { id, state, play } = e.data;   // play: {seat, hole}, a practice opponent's move (Advisor.play)
+  // play: {seat, hole}, a practice opponent's move (Advisor.play); early: post an approximate answer first ({id, partial})
+  const { id, state, play, early } = e.data;
   busy++;
   try {
     const py = await ready;
@@ -327,6 +336,10 @@ onmessage = async (e) => {
     if (cancelled.delete(id) || stopNow()) return postMessage({ id, result: { cancelled: true } });
     py.globals.set("state_json", JSON.stringify(state));
     py.globals.set("play_json", JSON.stringify(play || null));
+    if (early && !play) {
+      const r = py.runPython("early(json.loads(state_json))");
+      if (r) postMessage({ id, partial: JSON.parse(r) });
+    }
     postMessage({ id, result: JSON.parse(py.runPython("answer(json.loads(state_json), json.loads(play_json))")) });
   } catch (err) {
     postMessage({ id, error: String(err).split("\n").slice(-3).join(" ") });

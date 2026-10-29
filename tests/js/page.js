@@ -53,8 +53,11 @@ class El {
   append(...xs) { for (const x of xs) if (typeof x === "string") this._html += x; else this.children.push(x); }
   insertAdjacentHTML(_, h) { this._html += h; }
   addEventListener(t, f) { (this.listeners[t] = this.listeners[t] || []).push(f); }
-  // the fold titles ("h2[data-fold]") are the only appended descendants the page looks up by selector
-  querySelector(sel) { return sel === "h2[data-fold]" ? [...this.walk()].find(e => e.tagName === "H2" && "fold" in e.dataset) || null : null; }
+  // appended descendants the page looks up by selector: the fold titles ("h2[data-fold]") and by id ("#early")
+  querySelector(sel) {
+    if (sel.startsWith("#")) return [...this.walk()].find(e => e.id === sel.slice(1)) || null;
+    return sel === "h2[data-fold]" ? [...this.walk()].find(e => e.tagName === "H2" && "fold" in e.dataset) || null : null;
+  }
   querySelectorAll(sel) { return sel === "button" ? [...this.walk()].filter(e => e.tagName === "BUTTON") : []; }
   focus() {} blur() {} click() { if (this.onclick) this.onclick({ target: this }); }
   setAttribute(k, v) { this[k] = String(v); }
