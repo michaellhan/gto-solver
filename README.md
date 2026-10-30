@@ -1783,6 +1783,19 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   - `test_eval_boards_kept_across_solves` takes a paired flop's runouts, then another flop's with the same ranks in
     other suits, 64 boards a call as `Solver._strengths` asks. The second adds no row, and trips, full houses, quads
     and flushes come out as `eval_board`'s.
+* **The root's EVs worked out once** (`Solution.fresh`, `evs_at`; `Advisor._hu_run`, `Advisor.advise`). A Fast turn's
+  answer worked out its root's action EVs (`Solver.node_action_evs`, a pass over the tree on the average strategies)
+  three times on the same solve: in `solve()`'s `_refresh`, again in `_hu_run`'s, and again for the answer. Now the
+  `Solution` notes the iteration count its root's mix and EVs were worked out at (`evs_at`). `_hu_run` refreshes
+  only if iterations ran since then, and the answer at a solve's root, with the solve's own ranges, reads them. The
+  numbers are the same.
+  `node_action_evs` calls per answer, natively: `turn` and `turn-x` 3 -> 1, `turn-limp` 5 -> 3, `turn-2tone` 5 -> 2,
+  `flop-limp` 3 -> 2. The answers are the same, all but the sampled action, which is random.
+  In the browser on 8 threads, an evaluation of a Fast turn's root takes 13 ms (`turn`; 14-16 on `turn-x`), so an
+  answer saves 26-30 ms.
+  Tests: `tests/test_settled.py` `test_the_roots_evs_worked_out_once`. A river's answer evaluates its root once, at
+  its iteration count. Its EVs are a fresh evaluation's bit for bit, and so are the answer's. An iteration on makes
+  them stale.
 * **The multiway core on threads** (`core/mwcore.c` `pass`, `rwalk`, `job`, `helper`, `mw_threads`;
   `gto/mwcore-mt.wasm`). The multiway core (3- and 4-way flop and turn solves, How it works) ran on one thread in the
   browser while the heads-up core had helpers. Now a pass runs its root-street leaves as one job: a walk down

@@ -2210,12 +2210,19 @@ class Solution:
         return self
 
     def _refresh(self):
+        """The root's mix and EVs (strategy, evs) from the solve as it stands; evs_at: its iteration count then."""
         A = len(self.names)
         active = self.ctx.active
         evs = self.solver.node_action_evs(self.root, self.r0, self.r1)
         strat = self.root.avg_strategy0()
         self.strategy = np.zeros((A, N_FULL)); self.evs = np.zeros((A, N_FULL))
         self.strategy[:, active] = strat; self.evs[:, active] = evs
+        self.evs_at = self.solver.iters
+
+    def fresh(self) -> bool:
+        """strategy and evs are the solve's as it stands: _refresh'ed since its last iterations (a root's EVs cost
+        about half a serial iteration: 20-30 ms on a Fast turn)."""
+        return getattr(self, "evs_at", None) == self.solver.iters
 
 
 def warm_start(dst: Decision, dst_ctx: Ctx, src: Decision, src_ctx: Ctx):

@@ -158,6 +158,35 @@ class TestSettled(unittest.TestCase):
         self.assertGreater(res["solver"]["iterations"], HU_CHECKS[0])
         self.assertIn(res["recommended"], [a["action"] for a in res["actions"]])
 
+    def test_the_roots_evs_worked_out_once(self):
+        """An answer at its solve's root reads the root's EVs as the solve left them (Solution.fresh: worked out at
+        its last iterations) instead of working them out again (Solver.node_action_evs: 20-30 ms on a Fast turn),
+        and they are the numbers a fresh evaluation gives, bit for bit. Iterations on make them stale."""
+        import numpy as np
+        from unittest import mock
+        from gto.cards import COMBO_INDEX, cards
+        from gto.solver import Solver
+        adv = native.advisor("fast", budget=10, prior_budget=0.5)
+        real, calls = Solver.node_action_evs, []
+
+        def nae(self, *a):
+            calls.append((self, self.iters))
+            return real(self, *a)
+        with mock.patch.object(Solver, "node_action_evs", nae):
+            res = adv.advise(RIVER)
+        sol = cached(adv, 5)
+        self.assertEqual([it for s, it in calls if s is sol.solver], [sol.iters])
+        self.assertTrue(sol.fresh())
+        fresh = sol.solver.node_action_evs(sol.root, sol.r0, sol.r1)
+        np.testing.assert_array_equal(sol.evs[:, sol.ctx.active], fresh)
+        h = cards(RIVER["hole"])
+        ci = list(sol.ctx.active).index(COMBO_INDEX[(min(h), max(h))])
+        self.assertEqual([a["ev_bb"] for a in res["actions"]], [round(float(x), 2) for x in fresh[:, ci]])
+        sol.solver.run(sol.r0, sol.r1, time_budget=1e9, max_iters=sol.solver.iters + 1, min_iters=1)
+        self.assertFalse(sol.fresh())
+        sol._refresh()
+        self.assertTrue(sol.fresh())
+
 
 if __name__ == "__main__":
     unittest.main()

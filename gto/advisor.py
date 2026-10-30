@@ -3728,6 +3728,10 @@ class Advisor:
                 notes.append(f"locked: {villain} {describe_lock(adj)} (on {'the pool' if pool else 'GTO'}); the advice is "
                              "your best response to that, and EVs assume you keep best-responding on later streets")
                 notes.extend(_next_lock_notes(node, nxt, lock, n_r1 if hero_p == 0 else n_r0, villain, adj))
+        elif node is sol.root and isinstance(sol, Solution) and sol.fresh() and np.array_equal(n_r0, sol.r0) and \
+                np.array_equal(n_r1, sol.r1):
+            evs = sol.evs[:, sol.ctx.active]    # (the root's, as the solve stands: worked out once, _refresh)
+            strat = node.avg_strategy0()
         else:
             evs = sol.solver.node_action_evs(node, n_r0, n_r1)
             strat = node.avg_strategy0()
@@ -5640,7 +5644,8 @@ class Advisor:
             sol.seconds += secs
             if sol.iters < nxt:
                 break       # (out of time)
-        sol._refresh()
+        if not sol.fresh():     # (settled where it stood, as solve() left it: its root's EVs already worked out)
+            sol._refresh()
 
     def _keep(self, store: str, key, sol) -> None:
         """A solve in self.<store> (_cache or _mw_cache) just used: the most recent now, its arrays counted when `sol`
