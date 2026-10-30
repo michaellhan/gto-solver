@@ -112,6 +112,11 @@ static void *salloc(Lane *L, size_t bytes) {
 /* bytes a helper's chunk of rows may take: 0 until a serial pass measured them. [0] a whole pass's (a training pass,
    an evaluation: the same scratch), [1] a deferred training pass's (below: its chunks a row at a time, less) */
 static size_t lane_size[2], measured[2];
+/* 1 while split() runs a chance node's chunks serially to measure them: terminal() sums every row then, reached or not
+   (unreached), so the lanes hold the sums' scratch. A row unreached in that pass can be reached later: the first
+   iteration's second pass meets the first player's regret-matched zeros, and skipped the deepest showdowns' ranking()
+   on every row of a limped turn, whose lanes then came 16 bytes short of a chunk's on the next iteration (a trap). */
+static int measuring;
 static int deferring;   /* (which: 1 in a deferred training pass) */
 static void sized(void) {
   for (int k = 0; k < 2; k++)
@@ -340,7 +345,7 @@ EXPORT(core_skip) i32 core_skip(i32 on) {
   return skip_on;
 }
 static int unreached(const f32 *r) {
-  if (!skip_on) return 0;
+  if (!skip_on || measuring) return 0;
   const u32a *w = (const u32a *)r;
   i32 i = 0;
   for (; i + 16 <= n; i += 16) {
@@ -1505,6 +1510,9 @@ static void *run_helper(void *i) {
 #endif
 #endif
 
+/* the helpers' lanes as sized (0: not yet), k 0 a whole pass's and 1 a deferred pass's (a test's: sized for the sums) */
+EXPORT(core_lanes) u32 core_lanes(i32 k) { return (u32)lane_size[k & 1]; }
+
 /* the rows of jobs the helpers have run (so a test, or the page, can tell they're running) */
 EXPORT(core_helped) i32 core_helped(void) {
 #ifdef THREADS
@@ -1550,6 +1558,7 @@ static void split(Lane *L, i32 child, int p, i32 lo, i32 hi, const f32 *c0, cons
   i32 grain = (rows + 2 * nthreads - 1) / (2 * nthreads);
   if (!lane_size[deferring]) {
     L->par = 1;
+    measuring = 1;
     for (i32 r = 0; r < rows; r += grain) {
       i32 e = rows - r < grain ? rows : r + grain;
       size_t mark = L->top;
@@ -1558,6 +1567,7 @@ static void split(Lane *L, i32 child, int p, i32 lo, i32 hi, const f32 *c0, cons
       if (L->peak - mark > measured[deferring]) measured[deferring] = L->peak - mark;
       L->top = mark;
     }
+    measuring = 0;
     L->par = 0;
     return;
   }

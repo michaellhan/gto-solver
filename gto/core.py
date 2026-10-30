@@ -105,6 +105,7 @@ class _Native:
         L.core_gemm.restype, L.core_gemm.argtypes = ctypes.c_int32, [ctypes.c_int32]
         L.core_fuse.restype, L.core_fuse.argtypes = ctypes.c_int32, [ctypes.c_int32]
         L.core_skip.restype, L.core_skip.argtypes = ctypes.c_int32, [ctypes.c_int32]
+        L.core_lanes.restype, L.core_lanes.argtypes = ctypes.c_uint32, [ctypes.c_int32]
         if L.core_version() != MAGIC:
             raise RuntimeError("core version mismatch")
         self.L = L

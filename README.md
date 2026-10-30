@@ -1549,6 +1549,20 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   bucketed, so only the flop's and turn's folds can skip (one process at the build's settings, BTN vs BB Kc7d2h
   49.5-52.4 s -> 49.8-51.8, a 3bet pot's 13.1-13.4 -> 13.2-13.6; the entries decode to the same strategies, EVs,
   masks and reports).
+
+  The helpers' lanes are sized by a serial pass over a chance node's chunks in the first iteration, and that pass now
+  sums every row (`measuring`). It had skipped the rows nobody reached there too: the second player's pass meets the
+  first's regret-matched zeros, and on a tree cut to one bet and one raise size a street (TRIMS' third level) the
+  deepest showdowns went unreached on every row, so the lanes came 16 bytes short of a later chunk's. That chunk
+  trapped in a helper: natively the process ended; in the browser the helper's worker died holding its rows and the
+  solve spun on them, out of reach of the page's stop (read between chunks of iterations), so the worker answered
+  nothing more until the page was reloaded. It hit Quick's limped turns, and Practice's at Fast, on 8 threads every
+  time (their 1.5 s budget trims a limped turn's 10.9M cells), the Advisor's limped turn and river spots at a 1 s
+  budget, and any device slow enough to trim them at Fast. Swept natively on the core before (686 trees of four turns,
+  two rivers and a flop, four ranges, four trees and TRIMS' levels, 12 iterations each): 28 trapped on 8 threads, 28
+  on 4 and 20 on 2, all turns at that level (28 of its 112); full trees didn't. Now none of the 686 on 2, 4 or 8
+  threads, and none of 65 requests (13 of the bench's spots at budgets of 1, 3 and 8 s on 8 threads, and at Quick's on
+  4 and 8). The lanes are the same with the skip on as off (`core_lanes`), and so are the floats.
 * **Regret minimizer** (`docs/cfr_research.md`, `scripts/bench_solver.py --algos`, exploitability per
   iteration): predictive CFR+ and its discounted form (PCFR+, PDCFR+), the state of the art on many
   non-poker games, are 2-7x more exploitable than DCFR here at 100-200 iterations on every spot (the river,

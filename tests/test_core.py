@@ -152,6 +152,70 @@ class TestThreads(unittest.TestCase):
                     np.testing.assert_array_equal(x, y)
                 self.assertEqual(got[0][2], got[1][2])
 
+    def test_lanes_hold_the_sums(self):
+        # A helper runs its chunk of a chance node's rows in a lane of its own, sized by a serial pass over the chunks
+        # in the first iteration. That pass sums every terminal row, reached or not: its second player's pass meets
+        # the first's regret-matched zeros, and skipping the showdowns nobody reached there sized the lanes short of
+        # a later chunk's (a trap in a helper: natively the process ends, in the browser the solve never answers).
+        # The lanes the same with the skip on as off on 2, 4 and 8 threads, over turns full and trimmed (TRIMS'
+        # third level trapped 28 of 112 such turns on 8 threads), a shallow 3bet pot's and a flop by hand buckets
+        # (a river splits no rows), and each solve run on; and a limped turn advised at a 1 s budget (its tree
+        # trimmed), which trapped every time. In a child process: a trap ends it.
+        import json
+        import subprocess
+        import sys
+        p = subprocess.run([sys.executable, "-c", "import tests.test_core as t; t._lanes_child()"], cwd=core.ROOT,
+                           capture_output=True, text=True, timeout=900,
+                           env=dict(os.environ, PYTHONPATH=core.ROOT, GTO_THREADS="1"))
+        self.assertEqual(p.returncode, 0, p.stderr[-3000:])
+        rows = [json.loads(x) for x in p.stdout.splitlines() if x.startswith("{")]
+        self.assertEqual(len(rows), 3 * len(_lane_spots()) + 1)
+        for r in rows[:-1]:
+            self.assertGreater(r["lanes"][0][0], 0, r)
+            self.assertEqual(r["lanes"][0], r["lanes"][1], r)
+        self.assertTrue(rows[-1]["solver"]["iterations"] > 0, rows[-1])
+
+
+def _lane_spots():
+    btn = fl.spot_setup(next(s for s in fl.SPOTS if s[0] == "srp_btn_bb")[2])
+    bb3 = fl.spot_setup(next(s for s in fl.SPOTS if s[0] == "3bp_bb_btn")[2])
+    fast = native.config("fast")
+    threaded = native.config("fast")
+    threaded.bet_sizes["river"] = list(native.SPEEDS["accurate"][0]["bet_sizes"]["river"])
+    shallow = native.config("fast")
+    shallow.bet_sizes.update({k: list(v) for k, v in native.FAST_SPR_SIZES["turn"][1].items()})
+    return (("Ks7d2cTh", OOP, IP, 9.1, 95.5, fast, 3), ("JcTd8d4h", btn["full0"], btn["full1"], 5.5, 97.5, threaded, 3),
+            ("Ks7d2cTh", btn["full0"], btn["full1"], 5.5, 97.5, threaded, 0),
+            ("9h8h6c5s", bb3["full0"], bb3["full1"], 20, 40, shallow, 0), ("Kd7c2h", OOP_T, IP_T, 5.5, 97.5, fast, 0))
+
+
+def _lanes_child():
+    """test_lanes_hold_the_sums' solves (a child process): a line of JSON each, the lanes after two iterations with
+    the skip off and after twenty with it on; then the limped turn's request."""
+    import json
+    from gto.advisor import Advisor
+    L = core.lib().L
+    spots = _lane_spots()
+    for t in (2, 4, 8):
+        core.threads(t)
+        for i, (board, r0, r1, pot, stack, cfg, trim) in enumerate(spots):
+            cfg = Advisor._trim_cfg(cfg, ("flop", "turn", "river")[len(board) // 2 - 3], trim) if trim else cfg
+            lanes = []
+            for on, iters in ((0, 2), (1, 20)):
+                L.core_skip(on)
+                sol = solve(cards(board), r0, r1, pot, stack, cfg=cfg, time_budget=1e9, max_iters=iters)
+                assert sol.solver.use_core and sol.solver._core_ok
+                lanes.append([int(L.core_lanes(k)) for k in (0, 1)])
+            print(json.dumps({"spot": i, "threads": t, "lanes": lanes}), flush=True)
+    core.threads(8)
+    F, X = (lambda p: {"pos": p, "action": "fold"}), (lambda p: {"pos": p, "action": "check"})
+    C, B = (lambda p: {"pos": p, "action": "call"}), (lambda p, a: {"pos": p, "action": "bet", "amount": a})
+    adv = native.advisor("fast", budget=1.0, prior_budget=1.0)
+    res = adv.advise({"players": 6, "stack": 100, "hero": "SB", "hole": "QhJh", "board": "Ks7d2cTh",
+                      "preflop": [F("UTG"), F("HJ"), F("CO"), F("BTN"), C("SB"), X("BB")],
+                      "flop": [X("SB"), B("BB", 1.5), C("SB")], "turn": [], "river": []})
+    print(json.dumps({"solver": res.get("solver"), "error": res.get("error")}), flush=True)
+
 
 @unittest.skipUnless(ON, "no C compiler for the native core")
 class TestSameAsNumpy(unittest.TestCase):
