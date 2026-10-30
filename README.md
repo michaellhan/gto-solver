@@ -209,8 +209,14 @@ Clicking a flop loads that hand: the spot's preflop action, the flop, the action
 to act with the hand that mixes most there, so the precomputed advice appears at once. The data is one small
 `flop_library/<spot>/report.json` per spot (~45 KB, ~12 KB gzipped; ~135 KB on 552 flops, 430 KB / 80 KB gzipped on all 1755, SB vs BB's 530 / 113 KB), written with the library's index
 (`flop_library.build_report`, see Building below); the panel is `gto/static/reports.js`, loaded when first opened.
-Each flop's **Turns** button opens its turn report in Study (below), on the view's flop line: checked through for out
-of position's first decision, else in position's most common bet after a check, called.
+Each flop's **Turns** button opens its turn report in Study (below) on a line the flop library's stored turns hold:
+the most reached flop line through the view's decision (any line for out of position's first decision; one that
+starts with a check for in position's; check, a bet and a response facing a bet, the view's own bet size first),
+named in the report's header with how often the flop solve takes it (3bet CO vs HJ on 9c6d6c, where HJ always checks:
+"check, bet 12.5, call", 30% of the time, for every view; SB vs BB on Kc7d2h: "check, bet 6.6, call", 44%). Where
+no held line goes through the view (or the flop has no turn file: the single-raised spots), Study stays on the
+view's own line (checked through for out of position, else in position's most common bet after a check, called)
+and offers **Solve the flop** first, saying why.
 
 **Turn and river reports** (Study, at a closed flop or turn: **Turn report** / **River report** beside the next card's
 deal, or a flop's **Turns** in the flop reports) are the next street's first decision on every card, like GTO

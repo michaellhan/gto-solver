@@ -127,6 +127,17 @@
   const lineLabel = (ln) => ln.flop.map(a => `${a.action === "all-in" ? "all-in" : a.action}${a.to != null ? " " + a.to : ""}`).join(", ");
   const linesSelect = (lines, cur) => `<select data-ctl="roline" aria-label="Flop line">${lines.map((ln, i) =>
     `<option value="${i}"${i === cur ? " selected" : ""}>Flop: ${esc(lineLabel(ln))} (${pct(ln.share, 0)}%)</option>`).join("")}</select>`;
+  // the flop line a flop report's view opens the turn report on (reports.js's Turns): the most reached of the lines
+  // held that pass through the view's decision: out of position's first (any line), in position's after a check (a
+  // check first), out of position's facing a bet after a check (check, a bet, a response: the view's own size first,
+  // else any); -1 where none does
+  function pickLine(lines, view, bet) {
+    const through = (p) => view === "ip" ? p[0] === "check" && p.length > 1
+      : view === "vsbet" ? p[0] === "check" && /^bet /.test(p[1] || "") && p.length > 2 : p.length > 0;
+    const best = (want) => (lines || []).reduce((b, ln, i) => want(ln.path || []) && (b < 0 || ln.share > lines[b].share) ? i : b, -1);
+    const i = view === "vsbet" && bet ? best(p => through(p) && p[1] === bet) : -1;
+    return i >= 0 ? i : best(through);
+  }
 
   // what the numbers are, under the table
   function noteHtml(ro) {
@@ -169,6 +180,6 @@
   }
 
   const api = { cardClass, CLASSES, GROUPS, LABELS, partOf, rows, filter, sort, sortKey, average, groups, html, controlsHtml,
-                lineLabel, linesSelect, noteHtml, style };
+                lineLabel, linesSelect, pickLine, noteHtml, style };
   if (typeof module === "object" && module.exports) module.exports = api; else globalThis.Runouts = api;
 })();

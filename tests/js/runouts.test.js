@@ -125,3 +125,97 @@ test("Study's report: the table or the cards, the solve offered when nothing's i
   assert.match(l, /don't hold this flop line/);
   assert.match(l, /<option value="0">Flop: check, bet 12.5, call \(30%\)<\/option>/);
 });
+
+// the flop reports' Turns: the lines a library flop's stored turns hold (Advisor._store_lines), most reached first
+const HJ_CO = [
+  { flop: [{ pos: "HJ", action: "check" }, { pos: "CO", action: "bet", to: 12.38 }, { pos: "HJ", action: "call" }], share: 0.3047, path: ["check", "bet 75%", "call"] },
+  { flop: [{ pos: "HJ", action: "check" }, { pos: "CO", action: "bet", to: 5.45 }, { pos: "HJ", action: "call" }], share: 0.2413, path: ["check", "bet 33%", "call"] },
+  { flop: [{ pos: "HJ", action: "check" }, { pos: "CO", action: "bet", to: 5.45 }, { pos: "HJ", action: "raise", to: 19.5 }, { pos: "CO", action: "call" }], share: 0.0287,
+    path: ["check", "bet 33%", "raise to 19.5", "call"] }];
+
+test("a view's line: the most reached held line through its decision, the bet faced first, -1 where none", () => {
+  assert.equal(R.pickLine(HJ_CO, "oop"), 0);
+  assert.equal(R.pickLine(HJ_CO, "ip"), 0);
+  assert.equal(R.pickLine(HJ_CO, "vsbet", "bet 75%"), 0);
+  assert.equal(R.pickLine(HJ_CO, "vsbet", "bet 33%"), 1);   // (the view's own bet before a more reached line's)
+  assert.equal(R.pickLine(HJ_CO, "vsbet", "bet 50%"), 0);   // (a size no line holds: any bet after a check)
+  assert.equal(R.pickLine(HJ_CO, "vsbet"), 0);
+  // out of position's bets: its first decision only; checked through: in position's after a check, not facing a bet
+  const L = [{ share: 0.4, path: ["bet 33%", "call"] }, { share: 0.2, path: ["check", "check"] }, { share: 0.1, path: ["check", "bet 75%", "raise to 30", "call"] }];
+  assert.deepEqual(["oop", "ip", "vsbet"].map(v => R.pickLine(L, v, "bet 33%")), [0, 1, 2]);
+  assert.deepEqual(["oop", "ip", "vsbet"].map(v => R.pickLine(L.slice(0, 1), v)), [0, -1, -1]);
+  assert.deepEqual(["oop", "ip", "vsbet"].map(v => R.pickLine(L.slice(0, 2), v)), [0, 1, -1]);
+  assert.equal(R.pickLine([], "oop"), -1);
+  assert.equal(R.pickLine(undefined, "ip"), -1);
+  // (unsorted lines: the most reached still)
+  assert.equal(R.pickLine([HJ_CO[2], HJ_CO[1], HJ_CO[0]], "ip"), 2);
+});
+
+test("the report's header names the line; with no line through the view, the solve comes first", () => {
+  const state = { board: "9c6d6c", flop: HJ_CO[0].flop, turn: [], river: [] };
+  const h = S.roHeadHtml({ street: "turn" }, state);
+  assert.equal(h, `<div class="sy-rohead">The turn report after the flop's <b>HJ check, CO bet 12.38, HJ call</b></div>`);
+  assert.match(S.roHeadHtml({ street: "turn" }, state, { label: "CO's decision after a check", share: 0.3047 }),
+    /<b>HJ check, CO bet 12.38, HJ call<\/b>: the most reached flop line through CO's decision after a check that the flop library's stored turns hold \(30% of the time\)/);
+  assert.match(S.roHeadHtml({ street: "river" }, { ...state, turn: [{ pos: "HJ", action: "check" }, { pos: "CO", action: "check" }] }),
+    /The river report after the turn's <b>HJ check, CO check<\/b>/);
+  // none through the view: the stored turns hold others (still offered), or the library holds no turns for the flop
+  const n = S.skippedHtml({ skipped: "not solved yet", lines: HJ_CO.slice(0, 1) }, "turn", "fast", { label: "HJ facing a bet after a check" });
+  assert.match(n, /hold no flop line through HJ facing a bet after a check: solve the flop for this line's turn report/);
+  assert.ok(n.indexOf("data-rosolve") < n.indexOf("data-ctl=\"roline\""));
+  assert.match(S.skippedHtml({ skipped: "not solved yet" }, "turn", "fast", { label: "HJ's first decision" }),
+    /The flop library doesn't hold this flop's turns: solve the flop for the turn report\..*data-rosolve>Solve the flop/);
+});
+
+// Study in a page of its own (a fake DOM: the panel's body), opened from the flop reports' Turns (STUDY_AT), against
+// a solver that holds the stored turns' lines `lines` on 9c6d6c
+async function studyAt(at, lines) {
+  const vm = require("node:vm"), fs = require("node:fs");
+  const body = { innerHTML: "", querySelector: () => null, insertAdjacentHTML() {} };
+  const el = () => ({ dataset: {}, style: {}, hidden: true, innerHTML: "", setAttribute() {}, addEventListener() {}, appendChild: (c) => c,
+                      focus() {}, contains: () => true, querySelector: (s) => s === ".sy-body" ? body : s === ".sy-card" ? { focus() {} } : null });
+  const asked = [];
+  const ctx = vm.createContext({ console, setInterval, clearInterval, setTimeout, clearTimeout,
+    document: { getElementById: () => null, createElement: el, head: { appendChild() {} }, body: { appendChild() {} }, activeElement: null },
+    localStorage: { getItem: () => null, setItem() {} }, fetch: async () => ({ ok: false }), addEventListener() {},
+    studyAsk: async (q) => {
+      asked.push(q);
+      if (!q.runouts) return { study: "deal", street: "turn" };
+      const i = lines.findIndex(l => JSON.stringify(l.flop) === JSON.stringify(q.flop));
+      return i < 0 ? { study: "runouts", street: "turn", skipped: "not solved yet", ...(lines.length ? { lines } : {}) }
+        : { ...RO, seats: ["HJ", "CO"], source: "store", lines, line: i };
+    } });
+  ctx.window = ctx;
+  for (const f of ["runouts.js", "study.js"]) vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "..", "gto", "static", f), "utf8"), ctx, { filename: f });
+  ctx.STUDY_AT = { state: { players: 6, stack: 100, board: "9c6d6c", preflop: [], flop: [{ pos: "HJ", action: "check" }, { pos: "CO", action: "check" }], turn: [], river: [] },
+                   spot: "3bp_co_hj", report: true, ...at };
+  await ctx.Study.open();
+  return { html: body.innerHTML, asked, state: JSON.parse(JSON.stringify(ctx.Study.state)) };   // (out of the page's realm)
+}
+
+test("Turns in Study: the most reached held line through the view, named; else the view's own line with the solve first", async () => {
+  // HJ never checks back here: checked through isn't held; HJ's first decision lands on the most reached line
+  const a = await studyAt({ view: "oop", label: "HJ's first decision" }, HJ_CO);
+  assert.deepEqual(a.state.ro.res && a.state.ro.res.line, 0);
+  assert.deepEqual(a.state.state.flop, HJ_CO[0].flop);
+  assert.match(a.html, /The turn report after the flop's <b>HJ check, CO bet 12.38, HJ call<\/b>: the most reached flop line through HJ's first decision that the flop library's stored turns hold \(30% of the time\)/);
+  assert.match(a.html, /class="ro-t"/);
+  assert.deepEqual(a.asked.map(q => [q.runouts || "node", q.flop.length]), [["node", 2], ["held", 2], ["node", 3], ["held", 3]]);   // (nothing solved)
+  // facing the 33% bet: that bet's line, though the 75% one is reached more
+  const b = await studyAt({ view: "vsbet", bet: "bet 33%", label: "HJ facing bet 33% after a check" }, HJ_CO);
+  assert.equal(b.state.ro.res.line, 1);
+  assert.match(b.html, /<b>HJ check, CO bet 5.45, HJ call<\/b>: the most reached flop line through HJ facing bet 33% after a check/);
+  // Study already on the line: no move, the report at once
+  const c = await studyAt({ view: "ip", label: "CO's decision after a check", state: { players: 6, stack: 100, board: "9c6d6c", preflop: [], flop: HJ_CO[0].flop, turn: [], river: [] } }, HJ_CO);
+  assert.equal(c.state.ro.res.line, 0);
+  assert.equal(c.asked.length, 2);
+  // no line through the view (CO only bets after HJ's bet here): the line Study opened at, its solve first, the others offered
+  const d = await studyAt({ view: "ip", label: "CO's decision after a check" }, [{ flop: [{ pos: "HJ", action: "bet", to: 5.45 }, { pos: "CO", action: "call" }], share: 0.4, path: ["bet 33%", "call"] }]);
+  assert.ok(d.state.ro.skipped && d.state.ro.none);
+  assert.deepEqual(d.state.state.flop, [{ pos: "HJ", action: "check" }, { pos: "CO", action: "check" }]);
+  assert.match(d.html, /hold no flop line through CO's decision after a check: solve the flop for this line's turn report.*data-rosolve>Solve the flop.*or a line they hold/);
+  // a flop without stored turns: the solve
+  const e = await studyAt({ view: "oop", label: "HJ's first decision" }, []);
+  assert.match(e.html, /The flop library doesn't hold this flop's turns: solve the flop for the turn report/);
+  assert.doesNotMatch(e.html, /data-ctl="roline"/);
+});

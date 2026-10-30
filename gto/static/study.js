@@ -414,11 +414,23 @@
     return `<div class="sy-ro"><div class="sy-ctl sy-rotop">${views}<span class="segment">${tabs.map(([w, t]) => `<button data-rowho="${w}" class="${w === who ? "active" : ""}">${esc(t)}</button>`).join("")}</span>`
       + R.controlsHtml(ro, ui) + `</div>` + roughHtml(ro) + R.html(ro, { ...ui, who }, board) + `<div class="sy-note">${R.noteHtml(ro)}</div></div>`;
   }
+  // the report's header: the line of the street that closed, which the report follows, and (the flop reports' Turns)
+  // why Study picked it: pick {label: the view's decision, share: how often the flop solve takes the line}
+  function roHeadHtml(ro, state, pick) {
+    const st = ro.street === "river" ? "turn" : "flop", acts = (state && state[st]) || [];
+    const txt = acts.map(a => `${a.pos} ${a.action}${a.to != null ? " " + a.to : ""}`).join(", ");
+    return `<div class="sy-rohead">The ${ro.street} report after the ${st}'s <b>${esc(txt || "line")}</b>`
+      + (pick ? `: the most reached ${st} line through ${esc(pick.label)} that the flop library's stored turns hold (${Math.round(pick.share * 100)}% of the time)` : "") + `</div>`;
+  }
   // a report not in hand ({"skipped"}): solve the street for it, or (a library flop's stored turns) one of the flop
-  // lines they hold
-  function skippedHtml(sk, street, speed) {
+  // lines they hold; none {label}: opened for a view (the flop reports' Turns) that no line held goes through, the
+  // solve offered first
+  function skippedHtml(sk, street, speed, none) {
     const prevSt = street === "river" ? "turn" : "flop", R = globalThis.Runouts;
-    return `<div class="sy-roskip"><div>The ${street} report reads ${street === "river" ? "the turn's solve" : "a solve of the flop"}, which isn't in hand yet${sk.lines ? " (the flop library's stored turns don't hold this flop line)" : ""}.</div>`
+    const why = !none ? `The ${street} report reads ${street === "river" ? "the turn's solve" : "a solve of the flop"}, which isn't in hand yet${sk.lines ? " (the flop library's stored turns don't hold this flop line)" : ""}.`
+      : sk.lines ? `The flop library's stored turns hold no flop line through ${esc(none.label)}: solve the flop for this line's turn report.`
+      : `The flop library doesn't hold this flop's turns: solve the flop for the turn report.`;
+    return `<div class="sy-roskip"><div>${why}</div>`
       + `<div class="sy-ctl"><button type="button" data-rosolve>Solve the ${prevSt} (${speed === "accurate" ? "Accurate" : "Fast"}, ~${Math.round(estimate(street, speed))} s)</button>`
       + (sk.lines && R ? `<span class="sy-or">or a line they hold:</span><select data-ctl="roline" aria-label="Flop line"><option value="" selected>Pick a flop line…</option>`
         + sk.lines.map((ln, i) => `<option value="${i}">Flop: ${esc(R.lineLabel(ln))} (${Math.round(ln.share * 100)}%)</option>`).join("") + `</select>` : "")
@@ -507,6 +519,23 @@
     if (!x) return;
     return go({ ...ST.state, flop: x.flop.map(a => ({ ...a })), turn: [], river: [] }).then(() => { if (res && res.study === "deal") return runouts(); });
   }
+  // the flop reports' Turns (STUDY_AT {view, bet, label}): the turn report on the most reached flop line through the
+  // view's decision that the stored turns hold (Runouts.pickLine; the held report's or the skipped answer's lines);
+  // where none does, the line Study was opened at, its solve offered first
+  async function reportFor(at) {
+    const key = JSON.stringify({ ...request(ST.state, ST.speed), runouts: "held" }), g = gen;
+    let r;
+    try { await loadRo(); r = await answer(key); } catch (e) { return runouts(); }
+    if (g !== gen) return;
+    if (r.skipped) answers.delete(key);
+    const i = r.error ? -1 : globalThis.Runouts.pickLine(r.lines, at.view, at.bet), moved = i >= 0 && i !== (r.skipped ? -1 : r.line);
+    if (moved) { const ln = r.lines[i]; await go({ ...ST.state, flop: ln.flop.map(a => ({ ...a })), turn: [], river: [] }); if (!(res && res.study === "deal")) return; }
+    await runouts();
+    if (gen !== g + (moved ? 1 : 0) || !ST.ro) return;
+    if (i >= 0 && ST.ro.res && ST.ro.res.lines) ST.ro.pick = { label: at.label, share: ST.ro.res.lines[ST.ro.res.line].share };
+    else if (i < 0 && ST.ro.skipped) ST.ro.none = { label: at.label };
+    draw();
+  }
   function controls() {
     const spots = (index && index.spots || []).map(s => [s.id, s.label]);
     const opts = [["", "New hand (6-max, 100bb)"], ...spots, ["table", "The hand on the table"]];
@@ -526,8 +555,8 @@
         + `</form><div class="sy-err" data-dealerr></div>`
         + (!ST.ro ? "" : ST.ro.busy ? (ST.ro.solve ? `<div class="sy-msg"><span class="spinner"></span>Solving the ${prev(res.street)} for the ${res.street} report… <span class="num" data-rotime></span></div><div class="prog"><div data-robar></div></div>`
             : `<div class="sy-msg"><span class="spinner"></span>Opening the ${res.street} report…</div>`)
-          : ST.ro.err ? `<div class="sy-err">${esc(ST.ro.err)}</div>` : ST.ro.skipped ? skippedHtml(ST.ro.skipped, res.street, ST.speed)
-          : reportHtml(ST.ro.res, { ...ST.rui, who: ST.roWho }, ST.state.board)) + `</div>`;
+          : ST.ro.err ? `<div class="sy-err">${esc(ST.ro.err)}</div>` : ST.ro.skipped ? skippedHtml(ST.ro.skipped, res.street, ST.speed, ST.ro.none)
+          : roHeadHtml(ST.ro.res, ST.state, ST.ro.pick) + reportHtml(ST.ro.res, { ...ST.rui, who: ST.roWho }, ST.state.board)) + `</div>`;
     }
     if (res.study === "over") return `<div class="sy-msg">${res.winner ? `Hand over: everyone else folded, ${esc(res.winner)} wins the pot.` : "Hand over: the river's betting is done, the hands go to showdown."} Step back along the line above to look at another branch.</div>`;
     const pre = res.street === "preflop", cls = ST.hover || ST.sel;
@@ -776,6 +805,7 @@
   .sy-miss small { color: var(--muted); }
   .sy-ro { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
   .sy-rotop { flex-wrap: wrap; }
+  .sy-rohead { margin-top: 8px; font-size: 13px; line-height: 1.5; color: var(--muted); } .sy-rohead b { color: var(--text); font-weight: 600; }
   .sy-roskip { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; font-size: 13px; color: var(--muted); }
   .sy-or { font-size: 12px; color: var(--muted); }
   .sy-ro .sy-rough { font-size: 12px; line-height: 1.5; } .sy-rough.meh { color: var(--meh); } .sy-rough.bad { color: var(--bad); }
@@ -874,8 +904,8 @@
       const at = globalThis.STUDY_AT; globalThis.STUDY_AT = null; ST.build = false;
       if (at.spot) ST.spot = at.spot;
       await go(at.state);
-      if (at.report && res && res.study === "deal") await runouts();
-      const t = box.querySelector("select, button"); if (t) t.focus(); return;
+      if (at.report && res && res.study === "deal") await (at.view ? reportFor(at) : runouts());
+      const t = box.querySelector("[data-rosolve]") || box.querySelector("select, button"); if (t) t.focus(); return;
     }
     if (globalThis.STUDY_BUILD) {   // (the menu's Range builder: a random flop of the spot, building)
       globalThis.STUDY_BUILD = false; ST.build = true;
@@ -889,7 +919,7 @@
   const api = { fresh, parseLine, fromSpot, fromPayload, streetOf, request, kindOf, play, deal, randomCards, readCards, line, back, label,
                 eqr, cellValue, gridHtml, actionsHtml, detailHtml, lineHtml, statusHtml, solverHtml, classAt, combosOf,
                 passiveOf, blankPaint, brush, scoreBuild, grade, buildGridHtml, buildPanelHtml, buildDetailHtml,
-                catsOf, filterRes, filterHtml, runoutsHtml, reportHtml, skippedHtml, estimate, oppsOf, whoHtml, viewsOf,
+                catsOf, filterRes, filterHtml, runoutsHtml, reportHtml, roHeadHtml, skippedHtml, estimate, oppsOf, whoHtml, viewsOf,
                 open, close, state: ST };
   if (typeof module === "object" && module.exports) module.exports = api; else globalThis.Study = api;
 })();

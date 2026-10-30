@@ -122,7 +122,26 @@ test("a flop's Turns: Study at the flop with the view's line closed, for its tur
   // a button on every flop's row, not the summary's or the groups'
   const h = R.html(REP, { view: "vsbet", sort: "flop", desc: true, group: "pair", filter: {} });
   assert.deepEqual([...h.matchAll(/data-turns="(\w+)"/g)].map(m => m[1]), ["Ac4d3h", "Kc7d7h", "9c8c7c"]);
-  assert.match(h, /title="The turn report: every turn card after check, bet 75%, call, in Study">Turns<\/button>/);
+  assert.match(h, /title="The turn report in Study: every turn card after the most reached flop line through BB facing bet 75% after a check">Turns<\/button>/);
+  // the view Study picks the line for (Runouts.pickLine): the decision, and facing a bet the bet the view shows
+  assert.deepEqual(R.turnView(REP, "Ac4d3h", "oop"), { view: "oop", label: "BB's first decision" });
+  assert.deepEqual(R.turnView(REP, "Ac4d3h", "ip"), { view: "ip", label: "BTN's decision after a check" });
+  assert.deepEqual(R.turnView(REP, "Ac4d3h", "vsbet"), { view: "vsbet", bet: "bet 75%", label: "BB facing bet 75% after a check" });
+  assert.deepEqual(R.turnView(REP, "Kc7d7h", "vsbet"), { view: "vsbet", label: "BB facing a bet after a check" });
+});
+
+test("a flop's Turns opens Study there for the view (STUDY_AT)", async () => {
+  const p = loadPage();
+  vm.runInContext(fs.readFileSync(RP_JS, "utf8"), p.ctx, { filename: "reports.js" });
+  await p.ready();
+  p.run("FlopReports")._set({ spots: [] }, REP);
+  Object.assign(p.run("FlopReports").state, { view: "vsbet", spot: "srp_btn_bb" });
+  p.run("globalThis.openView = (v) => { globalThis.opened = v; }");
+  await p.run("FlopReports").act({ turns: "Ac4d3h" });
+  assert.equal(p.val("opened"), "study");
+  const at = JSON.parse(JSON.stringify(p.val("STUDY_AT")));
+  assert.deepEqual([at.spot, at.report, at.view, at.bet, at.label], ["srp_btn_bb", true, "vsbet", "bet 75%", "BB facing bet 75% after a check"]);
+  assert.deepEqual(at.state.flop, [{ pos: "BB", action: "check" }, { pos: "BTN", action: "bet", to: 4.13 }, { pos: "BB", action: "call" }]);
 });
 
 // click-to-load in the page: the hand replaces the page's, the hero is to act at the flop node

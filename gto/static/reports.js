@@ -134,7 +134,7 @@
       body += `<tr class="rp-grp" data-group="${st.group}:${g.g}" tabindex="0"><td class="rp-f">${esc(g.label)}<small>${pct(g.w / tot, 1)}%</small></td><td class="rp-b">${bar(g.freqs, cols)}</td>${nums(g)}<td class="rp-tu"></td></tr>`;
     for (const r of rs)
       body += `<tr data-flop="${r.f}" tabindex="0" title="Load this flop${r.bet ? ` (facing ${esc(r.bet)})` : ""}"><td class="rp-f"><span class="rp-cards">${flopHtml(r.f)}</span>${r.bet ? `<small>vs ${esc(r.bet.replace("bet ", ""))}</small>` : ""}</td><td class="rp-b">${bar(r.freqs, cols)}</td>${nums({ freqs: r.freqs, ev: r.ev, eq: r.eq })}`
-        + `<td class="rp-tu"><button class="ghost" data-turns="${r.f}" title="The turn report: every turn card after ${esc(turnLine(rep, r.f, st.view).text)}, in Study">Turns</button></td></tr>`;
+        + `<td class="rp-tu"><button class="ghost" data-turns="${r.f}" title="The turn report in Study: every turn card after the most reached flop line through ${esc(turnView(rep, r.f, st.view).label)}">Turns</button></td></tr>`;
     return `<table class="rp-t"><thead>${head}</thead><tbody>${body}</tbody></table>`;
   }
 
@@ -157,9 +157,10 @@
              ...(g.straddle ? { straddle: true } : {}), cards: [...hole, ...cardsOf(f), null, null], actions: { preflop: pre, flop, turn: [], river: [] } };
   }
 
-  // The flop line a flop's turn report (its Turns button) follows from the view: out of position's first decision,
-  // checked through; in position's after a check and out of position facing a bet, that bet (the view's, the most
-  // common after a check) called. {flop: Study's flop actions, text}
+  // The flop line Study opens a flop's turn report at (its Turns button), from the view: out of position's first
+  // decision, checked through; in position's after a check and out of position facing a bet, that bet (the view's,
+  // the most common after a check) called. Study moves to the most reached line through the view that the flop
+  // library's stored turns hold (turnView); this one is solved where none does. {flop: Study's flop actions, text}
   function turnLine(rep, f, view) {
     const fl = rep.flops.find(x => x.f === f), [oop, ip] = rep.seats;
     const nd = fl && view !== "oop" ? nodeOf(rep, fl, "vsbet") : null;
@@ -167,6 +168,15 @@
       return { flop: [{ pos: oop, action: "check" }, { pos: ip, action: "check" }], text: "check, check" };
     const to = Math.round(parseFloat(nd.bet.match(/[\d.]+/)[0]) / 100 * rep.pot * 100) / 100;
     return { flop: [{ pos: oop, action: "check" }, { pos: ip, action: "bet", to }, { pos: oop, action: "call" }], text: `check, ${nd.bet}, call` };
+  }
+  // the view a flop's turn report is opened for (study.js's STUDY_AT): Study lands on the most reached flop line the
+  // stored turns hold through its decision (Runouts.pickLine), else on turnLine's with its solve offered.
+  // {view, bet: the bet faced (vsbet), label}
+  function turnView(rep, f, view) {
+    const fl = rep.flops.find(x => x.f === f), [oop, ip] = rep.seats;
+    const nd = fl && view === "vsbet" ? nodeOf(rep, fl, "vsbet") : null, bet = nd && nd.bet ? nd.bet : null;
+    const label = view === "ip" ? `${ip}'s decision after a check` : view === "vsbet" ? `${oop} facing ${bet || "a bet"} after a check` : `${oop}'s first decision`;
+    return { view: VIEWS[view] ? view : "oop", ...(bet ? { bet } : {}), label };
   }
   // Study's state for a flop's turn report: the spot's preflop line, the canonical flop, turnLine's flop action
   function studyStateFor(rep, f, view) {
@@ -212,9 +222,9 @@
     if (d.view) { ST.view = d.view; }
     else if (d.sort) { if (ST.sort === d.sort) ST.desc = !ST.desc; else { ST.sort = d.sort; ST.desc = true; } }
     else if (d.group) { const [k, v] = d.group.split(":"); ST.filter = { ...ST.filter, [k]: v }; ST.group = ""; }
-    else if (d.turns) {   // (Study at that flop with the view's line, its turn report open: study.js's STUDY_AT)
+    else if (d.turns) {   // (Study at that flop, its turn report open on a line through the view: study.js's STUDY_AT)
       const st = studyStateFor(rep, d.turns, ST.view); close();
-      globalThis.STUDY_AT = { state: st, spot: ST.spot, report: true };
+      globalThis.STUDY_AT = { state: st, spot: ST.spot, report: true, ...turnView(rep, d.turns, ST.view) };
       return typeof globalThis.openView === "function" && globalThis.openView("study");
     }
     else if (d.flop) { const st = stateFor(rep, d.flop, ST.view); close(); return window.loadHandState && window.loadHandState(st, `${rep.label}, ${d.flop}`); }
@@ -297,7 +307,7 @@
     const t = box.querySelector("select, button"); if (t) t.focus();
   }
 
-  const api = { texture, rows, columns, nodeOf, filter, sort, average, groups, html, stateFor, turnLine, studyStateFor, VIEWS, LABELS,
+  const api = { texture, rows, columns, nodeOf, filter, sort, average, groups, html, stateFor, turnLine, turnView, studyStateFor, VIEWS, LABELS,
                 open, close, act, state: ST, _set: (i, r) => { index = i; rep = r; } };
   if (typeof module === "object" && module.exports) module.exports = api; else globalThis.FlopReports = api;
 })();
