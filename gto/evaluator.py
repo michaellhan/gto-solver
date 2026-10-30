@@ -8,6 +8,7 @@ The same ranks as evaluating every subset of every combo, about 8x faster.
 Strength is 7463 - treys rank, so higher is better; combos overlapping the board get -1.
 """
 from __future__ import annotations
+import threading
 from itertools import combinations
 from typing import Sequence
 import numpy as np
@@ -86,18 +87,50 @@ def eval_board(board: Sequence[int], combos: Sequence[int] = None) -> np.ndarray
     return out
 
 
+# each hole rank pair's best five without a flush (treys rank) on a board's five ranks, a row per multiset of them
+# (6188 in all) once it has come up: a flop's runouts have 91 between them (their boards ~1200), so eval_boards looks
+# up a row where it searched the treys table (searchsorted, 3549 a board) for every board. Rows are only added,
+# under the lock (their slots in order); a row is written before its slot is.
+_PLAIN = np.zeros((6188, 169), dtype=np.int16)
+_SLOT: dict = {}
+_LOCK = threading.Lock()
+
+
+def _plain(br: np.ndarray):
+    """(nb, 5) board ranks -> the rows of _PLAIN they read (adding those not there yet) and each board's of them."""
+    rs = np.sort(br, axis=1)
+    key = (((rs[:, 0] * 13 + rs[:, 1]) * 13 + rs[:, 2]) * 13 + rs[:, 3]) * 13 + rs[:, 4]
+    uk, first, inv = np.unique(key, return_index=True, return_inverse=True)
+    uk = uk.tolist()
+    if any(k not in _SLOT for k in uk):
+        with _LOCK:
+            miss = [i for i, k in enumerate(uk) if k not in _SLOT]
+            if miss:
+                ub = rs[first[miss]]
+                nu = len(ub)
+                # the 21 five-card subsets of the hole ranks and the board's (a rank pair no real combo can hold, five
+                # of a kind, is clipped; its combos are blocked)
+                seven = np.concatenate([np.broadcast_to(_PAIRS, (nu, 169, 2)), np.broadcast_to(ub[:, None, :], (nu, 169, 5))],
+                                       axis=2)
+                prod = np.prod(_RANK_PRIME[seven[:, :, _SUBSETS]], axis=-1)                # (nu, 169, 21)
+                at = len(_SLOT)
+                _PLAIN[at:at + nu] = _uv[np.minimum(np.searchsorted(_uk, prod), len(_uk) - 1)].min(axis=-1)
+                for j, i in enumerate(miss):
+                    _SLOT[uk[i]] = at + j
+    return np.array([_SLOT[k] for k in uk], dtype=np.intp), np.ravel(inv)
+
+
 def eval_boards(boards: Sequence[Sequence[int]], combos: Sequence[int] = None) -> np.ndarray:
     """eval_board for many 5-card boards at once: (boards, combos) strengths, the same numbers. One call does
-    every board's lookups together (in Pyodide a board's ~20 small numpy calls cost more than their arithmetic)."""
+    every board's lookups together (in Pyodide a board's ~20 small numpy calls cost more than their arithmetic), the
+    part without a flush once per multiset of the boards' ranks (_plain)."""
     B = np.sort(np.asarray(boards, dtype=np.int64).reshape(-1, 5), axis=1)
     nb = len(B)
     idx = np.arange(1326) if combos is None else np.asarray(list(combos), dtype=np.int64)
     br, bs = _RANK[B], _SUIT_I[B]                                               # (nb, 5)
-    seven = np.concatenate([np.broadcast_to(_PAIRS, (nb, 169, 2)), np.broadcast_to(br[:, None, :], (nb, 169, 5))], axis=2)
-    prod = np.prod(_RANK_PRIME[seven[:, :, _SUBSETS]], axis=-1)                # (nb, 169, 21)
-    plain = _uv[np.minimum(np.searchsorted(_uk, prod), len(_uk) - 1)].min(axis=-1).reshape(nb, 169)
+    rows, inv = _plain(br)
     ra, rb = _CRA[idx], _CRB[idx]
-    ranks = plain[:, ra * 13 + rb]                                              # (nb, n)
+    ranks = _PLAIN[rows][:, ra * 13 + rb].astype(np.int64)[inv]                 # (nb, n)
     for s in range(4):
         on = bs == s
         has = on.sum(axis=1) >= 3
@@ -107,7 +140,7 @@ def eval_boards(boards: Sequence[Sequence[int]], combos: Sequence[int] = None) -
         bits = suited[:, None] | np.where(_CSA[idx] == s, 1 << ra, 0)[None, :] | np.where(_CSB[idx] == s, 1 << rb, 0)[None, :]
         ranks[has] = np.minimum(ranks[has], _FLUSH[bits])
     out = (7463 - ranks).astype(np.int32)
-    a, b = _CA[idx], _CB[idx]
-    blocked = (a[None, :, None] == B[:, None, :]).any(axis=2) | (b[None, :, None] == B[:, None, :]).any(axis=2)
-    out[blocked] = -1
+    held = np.zeros((nb, 52), dtype=bool)                                       # each board's cards
+    held[np.arange(nb)[:, None], B] = True
+    out[held[:, _CA[idx]] | held[:, _CB[idx]]] = -1
     return out

@@ -42,6 +42,65 @@ class TestCardsRanges(unittest.TestCase):
         self.assertGreater(st[i_aa], st[i_kk])
         self.assertEqual(st[ALL_COMBOS.index(tuple(sorted(cards("AhAc"))))], -1)
 
+    def test_eval_boards(self):
+        """eval_boards, many boards at once, against treys' own 7-card evaluation (strength 7463 - its rank) and
+        eval_board, on boards of every kind (flushes, straights, the wheel, pairs to quads), in one call or in chunks
+        and in either order: its part without a flush is kept per multiset of a board's ranks (evaluator._plain)
+        once worked out."""
+        from treys import Card, Evaluator
+        from gto.cards import card_str
+        from gto.evaluator import eval_boards
+        ev = Evaluator()
+        rng = np.random.default_rng(3)
+        boards = [cards(b) for b in ("AhKhQhJhTh", "AhAdAcAs2h", "7c7d7h2s2c", "5h4h3h2hAh", "9s8s7d6c5h", "KcKd2h2s9c",
+                                     "Ks7d2cTh4s", "Ks7d2cTh4h")]
+        boards += [[int(c) for c in rng.choice(52, 5, replace=False)] for _ in range(30)]
+        combos = np.sort(rng.choice(1326, 200, replace=False))
+        S = eval_boards(boards, combos)
+        for b, s in zip(boards, S):
+            hb = [Card.new(card_str(c)) for c in b]
+            want = [-1 if set(ALL_COMBOS[ci]) & set(b) else
+                    7463 - ev.evaluate(hb, [Card.new(card_str(c)) for c in ALL_COMBOS[ci]]) for ci in combos]
+            self.assertEqual(s.tolist(), want, b)
+            np.testing.assert_array_equal(eval_board(b, combos), s)
+        np.testing.assert_array_equal(np.concatenate([eval_boards(boards[i:i + 7], combos)
+                                                      for i in range(0, len(boards), 7)]), S)
+        np.testing.assert_array_equal(eval_boards(boards[::-1], combos), S[::-1])
+        self.assertEqual(eval_boards([], combos).shape, (0, len(combos)))
+
+    def test_eval_boards_kept_across_solves(self):
+        """Two solves' showdowns, as Solver._strengths asks for them (a flop's runouts, 64 boards a call): a paired
+        flop's, then another flop's of the same ranks in other suits. The second's every board reads a row the first's
+        added (evaluator._plain: none added), and both come out as eval_board's, a board at a time without the rows:
+        boards with trips, two pair, a full house, quads and flushes among them."""
+        from gto import evaluator as E
+        from gto.evaluator import eval_boards
+        combos = np.arange(0, 1326, 3)
+
+        def runouts(flop):
+            f = list(cards(flop))
+            rest = [c for c in range(52) if c not in f]
+            return [f + [t, r] for i, t in enumerate(rest) for r in rest[i + 1:]]
+
+        def strengths(boards):
+            return np.concatenate([eval_boards(boards[i:i + 64], combos) for i in range(0, len(boards), 64)])
+
+        def check(boards, S):
+            ranks = [sorted(E._RANK[b].tolist()) for b in boards]
+            many = [i for i, r in enumerate(ranks) if max(r.count(x) for x in r) >= 3]          # trips, boats, quads
+            flush = [i for i, b in enumerate(boards) if max(E._SUIT_I[b].tolist().count(s) for s in range(4)) >= 3]
+            self.assertTrue(many and flush)
+            for i in sorted(set(many[::5] + flush[::40] + list(range(0, len(boards), 50)))):
+                np.testing.assert_array_equal(eval_board(boards[i], combos), S[i], boards[i])
+
+        first, second = runouts("9s9d4c"), runouts("9h9c4d")
+        check(first, strengths(first))
+        rows = len(E._SLOT)
+        S2 = strengths(second)
+        self.assertEqual(len(E._SLOT), rows)       # (every multiset of its ranks the first's)
+        check(second, S2)
+        self.assertFalse(np.array_equal(S2, strengths(first)))     # (the suits' flushes and blockers their own)
+
 
 class TestSolverMath(unittest.TestCase):
     def test_flop_allin_equity_near_exact(self):

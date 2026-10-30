@@ -1760,6 +1760,29 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   Tests: `tests/test_core.py` `TestWindows` (combos outside a range: their regrets, sums and EVs 0, the rest within
   rounding, core and numpy; off; none where they leave out little), `tests/test_study.py` (Study's combos and grid
   only in the range, our hand outside it). `core.wasm` 60 -> 65 KB, `core-mt.wasm` 83 -> 91 KB.
+* **A board's ranks ranked once** (`gto/evaluator.py` `eval_boards`, `_plain`). A program's showdowns (and numpy's
+  tables) rank every combo on every five-card board the tree deals: on a flop solved live, its runouts and each turn's
+  rivers, about 1200 boards. `eval_boards` ranked each one the same way. For each of the 169 pairs of hole ranks it
+  took the 21 five-card subsets as prime products and searched treys' table for them (`searchsorted`, 3549 a board),
+  then applied the board's flushes and blockers. Without a flush, though, a hand's rank depends only on its two ranks
+  and the multiset of the board's ranks, and a flop's runouts have 91 of those between them (6188 exist).
+  Now each multiset's 169 ranks are worked out the first time it comes up and kept as a row (`_PLAIN`, int16, 2 MB
+  when all 6188 are there; rows are only added, under a lock). Every board reads its row, and the flushes and blockers
+  are applied as before. The numbers are the same. A turn solved after its flop, and the next hand's flop with the
+  same ranks, read the rows that solve added.
+  Browser bench on 8 threads (Fast, BTN vs BB's turn files, a fresh worker per spot, two runs each alternating with
+  the code before, in a quiet hold), seconds to the answer:
+  - `flop-limp` 0.79 / 0.81 -> 0.70 / 0.71 (the flop's `Program._tables` 0.274 / 0.287 -> 0.190 / 0.190)
+  - `flop-limp-ip` 0.79 / 0.79 -> 0.71 / 0.71 (0.280 / 0.280 -> 0.200 / 0.194)
+  - `turn-limp`'s flop tables 0.276 -> 0.190, and its turn's 0.018 -> 0.006 (the flop's rows)
+  - `turn`'s tables 0.028 -> 0.018
+  Iterations and exploitability are unchanged (600 at 0.13% of the pot, 300 at 0.16 and 0.12).
+  Tests: `tests/test_gto.py`.
+  - `test_eval_boards` checks against treys' own 7-card evaluation and `eval_board` on boards of every kind: flushes,
+    straights, the wheel, and two pair through quads. It also covers one call, chunks and the reverse order.
+  - `test_eval_boards_kept_across_solves` takes a paired flop's runouts, then another flop's with the same ranks in
+    other suits, 64 boards a call as `Solver._strengths` asks. The second adds no row, and trips, full houses, quads
+    and flushes come out as `eval_board`'s.
 * **The multiway core on threads** (`core/mwcore.c` `pass`, `rwalk`, `job`, `helper`, `mw_threads`;
   `gto/mwcore-mt.wasm`). The multiway core (3- and 4-way flop and turn solves, How it works) ran on one thread in the
   browser while the heads-up core had helpers. Now a pass runs its root-street leaves as one job: a walk down
