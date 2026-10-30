@@ -49,8 +49,8 @@
   const M = { on: false, n: 2, tables: [], focus: 0, focusAt: -1e9, pin: false, err: "", custom: false, dock: null,
     drill: Object.keys(DRILLS).includes(read(DRILL)) ? read(DRILL) : "lib", seat: read(SEAT) || "random",
     score: { ...ZERO, ...(sc0.score || {}) }, review: Array.isArray(sc0.review) ? sc0.review : [], rev: false, pick: null, lastId: sc0.lastId || null,
-    spare: [], flight: null, adv: new Map(), moves: new Map(), bad: new Set(), seen: new Map(), lib: null, libState: "", seq: 0, timer: null, skel: 0, savedAt: -1e9, saveTimer: null,
-    met: { waits: [], solves: [], you: 0, solve: 0, pause: 0, t: null, state: null, stops: 0 } };
+    spare: [], flight: null, adv: new Map(), moves: new Map(), charts: new Map(), bad: new Set(), seen: new Map(), lib: null, libState: "", seq: 0, timer: null, skel: 0, savedAt: -1e9, saveTimer: null,
+    met: { waits: [], solves: [], you: 0, solve: 0, pause: 0, t: null, state: null, stops: 0, charted: 0 } };
 
   function newTable(i, s) {
     const st = s && s.st ? cleanState(s.st) : null, h = s && s.hand;
@@ -117,6 +117,32 @@
     return M.lib.some(s => s.toks.join() === line && s.flops.has(name));
   }
 
+  // ---- preflop played for you (Instant flops and the drills, in the standard game): every seat's move drawn here from
+  // the charts' mix at its node, as the solver's draw does (Advisor.play: the chart's mix for that hand), so dealing
+  // until a hand reaches the spot asks the solver once per preflop node all session (Study's answer there: each hand
+  // class's mix, Advisor._study_preflop) instead of once per seat per hand; a node it can't answer, or a hand its
+  // answer doesn't hold, is asked per seat as before
+  const chartKey = (req) => JSON.stringify([req.players, req.stack, req.preflop]);
+  const chartReq = (req) => ({ players: req.players, stack: req.stack, board: "", preflop: clone(req.preflop), flop: [], turn: [], river: [],
+                               study: true, speed: req.speed || "fast" });
+  const classOf = (h) => {
+    const [a, b] = R13.indexOf(h[0][0]) >= R13.indexOf(h[1][0]) ? h : [h[1], h[0]];
+    return a[0] === b[0] ? a[0] + b[0] : a[0] + b[0] + (a[1] === b[1] ? "s" : "o");
+  };
+  // a seat's move from a chart answer, in Advisor.play's shape ({pos, action, to, name, freq, street, actions}), or null
+  function chartMove(ch, seat, hole) {
+    const c = ch && ch.actor === seat && ch.grid && ch.grid.cells[classOf(hole)];
+    if (!c || !Array.isArray(c.f) || c.f.length !== ch.actions.length) return null;
+    const acts = ch.actions.map((a, i) => ({ action: a.action, amount_bb: a.amount_bb, freq: c.f[i] }));
+    const live = acts.filter(a => a.freq > 0), from = live.length ? live : acts;
+    let r = Math.random() * from.reduce((s, a) => s + a.freq, 0), pick = from[from.length - 1];
+    for (const a of from) { r -= a.freq; if (r <= 0) { pick = a; break; } }
+    const out = { pos: seat, action: pick.action, name: pick.action, freq: pick.freq, street: "preflop", actions: acts };
+    if (/^(bet|raise)/.test(pick.action)) { out.action = pick.action.split(" ")[0]; out.to = r2(+pick.amount_bb); }
+    return out;
+  }
+  const charting = (t, sim) => autoPre(t, sim) && libGame();
+
   // ---- dealing: a random seat (or the one picked) each hand, the setup's stacks, ante, straddle, rake and the rest
   function deal(t) {
     const page = S, n = page.players, seats = SEATS[n], d = drillNow();
@@ -180,7 +206,7 @@
   // ---- a table's next step: as far as it goes without asking the solver (deal, the next street, an opponent's move or
   // your advice already in hand), then the request it waits on: { t, kind: "you" | "opp", key, req, play, est }, or null
   function step(t) {
-    for (let k = 0; k < 64; k++) {
+    for (let k = 0; k < 4096; k++) {   // (a drill's deals drawn here: up to DRILL_TRIES hands of a few moves each)
       if (t.err) return null;
       if (!t.hand || !t.st || (t.hand.result && now() >= t.nextAt && !t.jams.length)) {
         if (drillNow() === "lib" && !M.lib) { loadLib(); return null; }   // (the library's index first)
@@ -208,8 +234,15 @@
           M.met.waits.push({ s: (t.since - t.turnAt) / 1000, street: sim.current, table: t.id + 1 });
           return "ready";
         }
-        const mk = key + "|" + p, m = M.moves.get(mk);
-        if (!m) return { t, kind: "opp", key: mk, req, play: { seat: p, hole: (p === S.hero ? t.hand.hole : t.hand.hands[p]).join("") }, street: sim.current, est: estimate(t, req) };
+        const mk = key + "|" + p, hole = p === S.hero ? t.hand.hole : t.hand.hands[p];
+        let m = M.moves.get(mk);
+        if (!m && charting(t, sim)) {   // (preflop played for you: the node's chart, asked once)
+          const ck = chartKey(req), ch = M.charts.get(ck);
+          if (ch === undefined) return { t, kind: "chart", key: "chart|" + ck, ck, req: chartReq(req), street: "preflop", est: 0.05 };
+          m = chartMove(ch, p, hole);
+          if (m) M.met.charted++;
+        }
+        if (!m) return { t, kind: "opp", key: mk, req, play: { seat: p, hole: hole.join("") }, street: sim.current, est: estimate(t, req) };
         M.moves.delete(mk);
         const e = act({ ...X().move(m), auto: p === S.hero });
         if (e) { t.err = `${SEAT_LABEL(p, S.players)}'s move (${m.name || m.action}) was rejected: ${e}`; return "stuck"; }
@@ -283,7 +316,7 @@
   // 5 the other tables' look-aheads; then yours before an opponent's (look-aheads: the quickest, then your likeliest
   // line: each line's next request before a line's one after), then the longest waiting
   const group = (j) => j.ahead ? j.g : j.kind === "jam" ? 2 : j.est < INSTANT ? 1 : j.est < SHORT ? 2 : 4;
-  const KIND = { you: 0, opp: 1, jam: 2 };
+  const KIND = { you: 0, opp: 1, chart: 1, jam: 2 };
   const age = (j) => { if (!M.seen.has(j.key)) M.seen.set(j.key, now()); return M.seen.get(j.key); };
   const byPriority = (a, b) => group(a) - group(b) || (a.ahead && b.ahead ? a.est - b.est || a.rank - b.rank : KIND[a.kind] - KIND[b.kind])
     || age(a) - age(b) || a.t.id - b.t.id;
@@ -318,6 +351,10 @@
   function took(j, res, s) {
     M.seen.delete(j.key);
     if (res.cancelled) return;
+    if (j.kind === "chart") {   // (a node it can't answer: its seats asked one by one)
+      M.charts.set(j.ck, !res.error && res.study === "node" && res.street === "preflop" && res.grid && Array.isArray(res.actions) ? res : null);
+      return trim(M.charts);
+    }
     if (res.error) {
       if (j.ahead) { M.bad.add(j.key); if (M.bad.size > 500) M.bad.clear(); }
       else if (j.kind === "jam") j.t.jams = j.t.jams.filter(x => x !== j.jam);
@@ -802,7 +839,7 @@
     const tot = M.met.you + M.met.solve + M.met.pause;
     return { decisions: w.length, instant: w.filter(s => s < 0.05).length, median: q(0.5), p90: q(0.9), max: w.length ? r2(w[w.length - 1]) : null,
       youMs: Math.round(M.met.you), solveMs: Math.round(M.met.solve), pauseMs: Math.round(M.met.pause), solveShare: tot ? r2(M.met.solve / tot) : null,
-      stops: M.met.stops, solves: M.met.solves.length, waits: M.met.waits.slice(-200) };
+      stops: M.met.stops, solves: M.met.solves.length, charted: M.met.charted, charts: M.charts.size, waits: M.met.waits.slice(-200) };
   }
 
   window.MultiTable = { get on() { return M.on; }, start, stop, tick, key, startOver, pump, act: heroAct, pick, skip, metrics,

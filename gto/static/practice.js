@@ -902,9 +902,21 @@
   }
   const loadMt = () => loadJs("multitable.js?v=" + MT_VERSION, () => window.MultiTable);
   // n tables: above 1 the multi-table view starts (or takes the new count); 1 goes back to this table's hand
+  // Going from the one table to several: what it asked the solver and no longer needs (your spot's advice, an
+  // opponent's move, a look-ahead) is stopped first, so the tables' first requests don't wait behind it: the local
+  // server's solve, or the browser's requests where the page shares a stop flag with the worker (their solves kept).
+  // The one table asks again when it's back.
+  function quietOne() {
+    A.gen++; A.key = null; A.out = null;
+    if (MODE === "server") return fetch("cancel", { method: "POST" }).catch(() => {});
+    if (typeof stopRequests === "function") stopRequests();
+    return Promise.resolve();
+  }
   function setTables(n) {
+    const was = P.tables;
     P.tables = [2, 3, 4].includes(n) ? n : 1; store(TABLES, P.tables);
-    if (P.tables > 1) return loadMt().then(() => { if (P.on && P.tables > 1) window.MultiTable.start(P.tables); })
+    const quiet = P.on && was === 1 && P.tables > 1 && !mt() ? quietOne() : null;
+    if (P.tables > 1) return Promise.all([loadMt(), quiet]).then(() => { if (P.on && P.tables > 1) window.MultiTable.start(P.tables); })
       .catch(e => { P.error = "Couldn't load multi-table practice: " + (e && e.message || e); renderAll(); });
     if (mt()) window.MultiTable.stop();
     renderAll();

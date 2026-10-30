@@ -474,3 +474,88 @@ test("waits are measured: per decision, the seconds from your turn to its button
   assert.deepEqual(mt.waits.map(w => w.s), [0.5, 1.2]);
   assert.equal(mt.median, 1.2);
 });
+
+// Study's preflop answer at a node (Advisor._study_preflop): whoever is next on the BTN-vs-BB line, every hand class
+// playing the line's move there (drop: classes left out)
+const RK = "AKQJT98765432", CLASSES = [];
+for (let i = 0; i < 13; i++) for (let j = 0; j < 13; j++) CLASSES.push(i === j ? RK[i] + RK[j] : i < j ? RK[i] + RK[j] + "s" : RK[j] + RK[i] + "o");
+const BTN_BB = { UTG: "fold", HJ: "fold", CO: "fold", BTN: "raise 2.5", SB: "fold", BB: "call" };
+function chartOf(m, drop = () => false) {
+  const seat = SEATS6[m.state.preflop.length], mv = BTN_BB[seat];
+  const actions = ["fold", "call", "raise 2.5"].map(a => ({ action: a, amount_bb: a === "raise 2.5" ? 2.5 : null, freq: a === mv ? 1 : 0 }));
+  const cells = Object.fromEntries(CLASSES.filter(c => !drop(seat, c)).map(c => [c, { w: 1, f: actions.map(a => a.freq) }]));
+  return { study: "node", street: "preflop", actor: seat, actions, grid: { actions: actions.map(a => a.action), cells } };
+}
+async function libPage(seed = 5) {
+  const idx = JSON.parse(fs.readFileSync(path.join(STATIC, "flop_library", "index.json"), "utf8"));
+  const p = loadPage({ storage: { "gto-practice-seat": '"random"', "gto-practice-tables": "2", "gto-mt-drill": '"lib"' } });
+  await p.ready();
+  p.run(`Math.random = (() => { let s = ${seed}; return () => (s = (s * 16807) % 2147483647) / 2147483647; })();`);
+  vm.runInContext(PRACTICE, p.ctx, { filename: "practice.js" });
+  vm.runInContext(MT, p.ctx, { filename: "multitable.js" });
+  p.ctx.__idx = idx;
+  p.run("MultiTable.OPT.pause = 0; MultiTable.setLib(__idx)");
+  p.run("Practice.set(true)"); await flush();
+  return p;
+}
+const flopCheck = (m) => ({ pos: m.play.seat, action: "check" });
+
+test("Instant flops: preflop drawn in the page from each node's chart (asked once a node), not seat by seat; a hand or node a chart can't answer asked per seat", async () => {
+  const p = await libPage(), done = new Set();
+  for (let i = 0; i < 200 && !T(p).every(t => t.ready); i++) await answerAll(p, done, (m) => m.state.study ? chartOf(m) : m.play ? flopCheck(m) : ADVICE);
+  for (const t of T(p)) {
+    assert.ok(t.ready, `table ${t.id + 1} waits for you`);
+    assert.ok(["BTN", "BB"].includes(t.hand.hero));
+    assert.deepEqual(t.st.actions.preflop.map(a => `${a.pos} ${a.action}${a.to ? a.to : ""}`), ["UTG fold", "HJ fold", "CO fold", "BTN raise2.5", "SB fold", "BB call"]);
+  }
+  const asked = p.posted.filter(m => m.state);
+  const charts = asked.filter(m => m.state.study), pre = asked.filter(m => m.play && !m.state.board);
+  assert.equal(pre.length, 0);                                                     // (no seat asked preflop)
+  assert.deepEqual(charts.map(m => m.state.preflop.length), [0, 1, 2, 3, 4, 5]);   // (the line's six nodes, once each)
+  assert.deepEqual(charts[3].state, { players: 6, stack: 100, board: "", preflop: charts[3].state.preflop, flop: [], turn: [], river: [], study: true, speed: "fast" });
+  const mt = p.val("MultiTable.metrics()");
+  assert.ok(mt.charted >= 12 && mt.charts === 6, JSON.stringify(mt));
+  // a chart without a seat's hand class (left out at its node) or a node that fails: that seat asked for its move
+  const q = await libPage(9), qd = new Set();
+  const drop = (seat, c) => seat === "BTN" && c === "AA";
+  for (let i = 0; i < 200 && !T(q).every(t => t.ready); i++)
+    await answerAll(q, qd, (m) => m.state.study ? (m.state.preflop.length === 1 ? { error: "no chart" } : chartOf(m, drop))
+      : m.play && !m.state.board ? { pos: m.play.seat, action: BTN_BB[m.play.seat].split(" ")[0], ...(m.play.seat === "BTN" ? { to: 2.5 } : {}) }
+      : m.play ? flopCheck(m) : ADVICE);
+  assert.ok(T(q).every(t => t.ready));
+  const qa = q.posted.filter(m => m.state);
+  const hj = qa.filter(m => m.play && !m.state.board && m.play.seat === "HJ"), btn = qa.filter(m => m.play && !m.state.board && m.play.seat === "BTN");
+  assert.ok(hj.length > 0, "HJ's node (its chart failed) asked per seat");
+  assert.ok(btn.every(m => ["Ah", "Ad", "Ac", "As"].filter(c => m.play.hole.includes(c)).length === 2), "BTN asked only holding aces");
+  assert.equal(qa.filter(m => m.state.study && m.state.preflop.length === 1).length, 1);   // (the failed chart not asked again)
+  assert.equal(qa.filter(m => m.play && !m.state.board && !["HJ", "BTN"].includes(m.play.seat)).length, 0);
+});
+
+test("going from one table to several first stops what the one table asked and no longer needs", async () => {
+  // the browser, cross-origin isolated: Practice's move request in flight is stopped (answers cancelled) before the
+  // tables' first requests
+  const p = loadPage({ storage: { "gto-practice-seat": '"UTG"', "gto-mt-drill": '"any"' }, isolated: true });
+  await p.ready();
+  vm.runInContext(PRACTICE, p.ctx, { filename: "practice.js" });
+  p.run("Practice.set(true)"); await flush(8);
+  const before = p.posted.filter(m => m.id != null && m.state);
+  assert.ok(before.length >= 1);
+  const last = before.at(-1).id;
+  p.run("Practice.setTables(2)"); await flush(8);
+  assert.ok(p.val("Atomics.load(STOP, 0)") >= last, "the one table's requests stopped");
+  assert.ok(p.posted.filter(m => m.id != null && m.state && m.id > last).length >= 1, "the tables asked after");
+  assert.equal(p.val("MultiTable.on"), true);
+  // the local server: its solve stopped (POST cancel) before the tables' first request
+  const s = loadPage({ storage: { "gto-practice-seat": '"UTG"', "gto-mt-drill": '"any"' }, server: true });
+  await s.ready();
+  vm.runInContext(PRACTICE, s.ctx, { filename: "practice.js" });
+  s.run("Practice.set(true)"); await flush(8);
+  const n0 = s.fetched.length;
+  s.run("Practice.setTables(2)"); await flush(8);
+  const after = s.fetched.slice(n0);
+  assert.ok(after.indexOf("cancel") >= 0 && after.indexOf("cancel") < after.findIndex(u => u === "play" || u === "advise"), after.join(" "));
+  // 2 to 3 tables, or not practising: nothing stopped
+  const n1 = s.fetched.length;
+  s.run("Practice.setTables(3)"); await flush(8);
+  assert.ok(!s.fetched.slice(n1).includes("cancel"));
+});

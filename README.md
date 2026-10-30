@@ -453,12 +453,19 @@ double press doesn't land at the next table. **S** sends the table in front to t
 table (or its tab) brings it forward until you act there, and **N** deals the finished tables at once (otherwise
 1.6 s after a hand ends). **Spots**: **Instant flops**, the default, plays preflop for you and deals each table
 until a heads-up flop the [flop library](#precomputed-flop-library) holds for its preflop line, with you in it, so
-preflop and the flop answer at once and only turns (~2 s at Fast) and rivers (~1 s) are solved; it needs the
+preflop and the flop answer at once and only turns (~2 s at Fast) and rivers (~1 s) are solved. The preflop it plays
+for you (and for the drills) is drawn in the page, every seat's move from the charts' mix at its node as the solver
+draws it: the page asks for a node's chart once a session (Study's preflop answer: each hand class's mix) instead of
+asking for each seat's move every hand (a node it can't answer, or a hand its chart leaves out, is asked seat by seat
+as before); it needs the
 standard game (6 players, 100bb, no ante, straddle, rake, tournament or advanced settings) and is Any hand otherwise,
 which the note under the pickers says. **Any hand**, **Raised pot**, **3-bet pot** and **Blind vs blind** are as at one
 table; **Seat** deals a random seat each hand or one position. The setup (players, stacks, ante, rake, payouts) is
-the page's, changed at 1 table. Solves: the solver answers one request at a time (the browser's worker, or the local
-server's lock), so one is in flight and the next is picked by what it unblocks: instant answers first (a preflop
+the page's, changed at 1 table. Going from one table to several first stops what the one table had asked and no
+longer needs (your spot's advice, an opponent's move, a look-ahead: the local server's solve, the browser's requests
+where the page shares a stop flag with its worker), so the tables' first requests don't wait behind it. Solves: the
+solver answers one request at a time (the browser's worker, or the local server's lock), so one is in flight and
+the next is picked by what it unblocks: instant answers first (a preflop
 chart, a library flop, a street already solved, such as an opponent's reply heads-up), then the other tables'
 short solves (your spot, an opponent's move: ~2 s at Fast), then the look-ahead at the table in front (your likeliest
 moves played on to the next request, as at one table, the quickest first), then long solves (Accurate's), then the
@@ -480,7 +487,10 @@ it's solved), a tap switching table, and the dock stays at the bottom of the scr
 61 of the 62 spots answered before their table came up (the other in 0.07 s), never a moment with no table to act
 at; acting every 0.6 s on 4 tables of Any hand: 114 hands and 144 decisions in 112 s, 140 of 147 spots answered
 ahead, six waits of 0.2-1.6 s (live flops) and a turn of 6.3 s (queued behind the other tables' solves), no table to
-act at 5% of the time. In the browser the quick answers take about as long (they're budgeted in time: a turn 1.9 s
+act at 5% of the time. Drawing preflop from the charts cut the requests: acting every 2 s on 4 tables of Instant
+flops (from one table switched to four), the page asked the local server 176 times in 120 s, 31 of them preflop (a
+chart for each node met; 570 seat moves drawn from them), where it had asked 755 times, 564 of them a preflop seat's
+move; 61 of 64 spots answered before their table came up (58 before), the longest wait 0.62 s (1.91). In the browser the quick answers take about as long (they're budgeted in time: a turn 1.9 s
 in Pyodide, above). `MultiTable.metrics()` in the console gives a session's numbers.
 
 ## Explain with AI proxy
