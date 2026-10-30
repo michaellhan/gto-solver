@@ -1,9 +1,10 @@
 """Builds the compiled CFR core's browser modules from core/gtocore.c (gto/core.py; the native library is built from
 the same source on first use): gto/core.wasm, and gto/core-mt.wasm, the same with threads (shared memory, which
 worker.js gives it and its helper workers when the page is cross-origin isolated: gto/static/sw.js); and
-gto/mwcore.wasm, the multiway core (core/mwcore.c, gto/mwcore.py). It needs clang with the wasm32 target and wasm-ld: on a Mac Homebrew's
-llvm and lld (brew install llvm lld), found there or through $WASM_CC. The module carries the source's sha1
-(core_source), which tests/test_core.py checks against the source, so a change to the C needs this run again:
+gto/mwcore.wasm and gto/mwcore-mt.wasm, the multiway core (core/mwcore.c, gto/mwcore.py) alone and with threads. It
+needs clang with the wasm32 target and wasm-ld: on a Mac Homebrew's llvm and lld (brew install llvm lld), found there
+or through $WASM_CC. The modules carry their source's sha1 (core_source, mw_source), which tests/test_core.py and
+tests/test_multiway_solver.py check against the source, so a change to the C needs this run again:
 
     python scripts/build_core.py         # prints the modules' sizes and the source's sha1
 """
@@ -52,13 +53,17 @@ def main():
     os.replace(tmp, OUT_MT)
     for p in (OUT, OUT_MT):
         print(f"{p}: {os.path.getsize(p)} bytes, source {sha}")
-    # the multiway core (gto/mwcore.py): one thread; bulk memory for the copies and fills clang emits
+    # the multiway core (gto/mwcore.py): bulk memory for the copies and fills clang emits; and with threads, as above
+    # (its helpers on their own stacks: mw_stack)
     msha = mwcore.source_hash()
-    tmp = mwcore.WASM + ".tmp"
-    subprocess.run(cc[:5] + ["-mbulk-memory", f'-DCORE_SOURCE="{msha}"'] + cc[6:] + ["-o", tmp, mwcore.SRC],
-                   check=True, env=env)
-    os.replace(tmp, mwcore.WASM)
-    print(f"{mwcore.WASM}: {os.path.getsize(mwcore.WASM)} bytes, source {msha}")
+    mcc = cc[:5] + ["-mbulk-memory", f'-DCORE_SOURCE="{msha}"'] + cc[6:]
+    for out, extra in ((mwcore.WASM, []),
+                       (mwcore.WASM_MT, ["-matomics", "-Wl,--import-memory", "-Wl,--shared-memory",
+                                         f"-Wl,--max-memory={MAX_MT}", "-Wl,--export=__stack_pointer"])):
+        tmp = out + ".tmp"
+        subprocess.run(mcc + extra + ["-o", tmp, mwcore.SRC], check=True, env=env)
+        os.replace(tmp, out)
+        print(f"{out}: {os.path.getsize(out)} bytes, source {msha}")
 
 
 if __name__ == "__main__":

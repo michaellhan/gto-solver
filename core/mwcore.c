@@ -2,8 +2,9 @@
  * streets are bet on by hand buckets (MWConfig.later = "buckets": every flop and turn solve the advisor runs), and the
  * passes after a solve (each player's value on the average strategies, its best response, an action's EVs). gto/mwcore.py
  * lays the solver's tree out as a program and runs it; the same source builds natively (a shared library, ctypes) and
- * for the browser (gto/mwcore.wasm, instantiated by gto/static/worker.js beside Pyodide), with no libc: everything
- * lives in one arena, the inputs copied in by gto/mwcore.py and a pass's scratch above them (stack order).
+ * for the browser (gto/mwcore.wasm, instantiated by gto/static/worker.js beside Pyodide, and gto/mwcore-mt.wasm, the
+ * same with threads: below), with no libc: everything lives in one arena, the inputs copied in by gto/mwcore.py and a
+ * pass's scratch above them (stack order; a helper thread's in a lane of its own).
  *
  * The passes are MultiwaySolver._pass's (modes alt, br; and avg for one player), on the same tree, in float32: the root
  * street per combo (its decisions, its folds, its Exits into the bucket world), and below it every root line's later
@@ -47,13 +48,25 @@ typedef float f32;
 typedef double f64;
 typedef int32_t i32;
 typedef uint32_t u32;
+typedef uint64_t u64;
 
 #ifdef __wasm__
 #define EXPORT(name) __attribute__((export_name(#name)))
 extern unsigned char __heap_base;
+#ifdef __wasm_atomics__
+#define THREADS 1
+#endif
 #else
 #define EXPORT(name) __attribute__((visibility("default")))
 #include <sys/mman.h>
+#include <pthread.h>
+#include <sched.h>
+#define THREADS 1
+#endif
+#ifdef THREADS
+#define MAXT 16   /* this thread and its helpers, at most */
+#else
+#define MAXT 1
 #endif
 
 #define MAGIC 0x6d776332 /* "mwc2" */
@@ -62,7 +75,6 @@ enum { ALT = 0, BR = 1, EV = 2 };
 
 /* ------------------------------------------------------------------ arena */
 static unsigned char *base;
-static size_t top;
 
 #ifdef __wasm__
 static void ensure(size_t end) {
@@ -84,12 +96,26 @@ static void ensure(size_t end) {
 }
 #endif
 
-static void *salloc(size_t bytes) {
-  size_t at = (top + 63) & ~(size_t)63;
-  ensure(at + bytes);
-  top = at + bytes;
+/* A thread's scratch: allocated up to top, a helper's within its lane (at most lim); id: the thread (its XM, YM) */
+typedef struct {
+  size_t top, lim;
+  int id;
+} Lane;
+static Lane M;   /* the calling thread's: the arena itself */
+
+static void *salloc(Lane *L, size_t bytes) {
+  size_t at = (L->top + 63) & ~(size_t)63;
+  if (L->lim) {
+    if (at + bytes > L->lim) __builtin_trap();
+  } else {
+    ensure(at + bytes);
+  }
+  L->top = at + bytes;
   return base + at;
 }
+
+static u32 lane_prog;   /* the program the helpers' lanes are sized for (lane_bytes; 0: none yet) */
+static size_t lane_bytes;
 
 EXPORT(mw_reset) void mw_reset(void) {
 #ifndef __wasm__
@@ -98,10 +124,11 @@ EXPORT(mw_reset) void mw_reset(void) {
     touched = 0;
   }
 #endif
-  top = 0;
+  M.top = 0;
+  lane_prog = 0;
 }
 
-EXPORT(mw_alloc) u32 mw_alloc(u32 bytes) { return (u32)((unsigned char *)salloc(bytes) - base); }
+EXPORT(mw_alloc) u32 mw_alloc(u32 bytes) { return (u32)((unsigned char *)salloc(&M, bytes) - base); }
 
 EXPORT(mw_base) uintptr_t mw_base(void) {
   ensure(0);
@@ -595,14 +622,14 @@ static void term(const i32 *w, const f32 *X, f32 *v, int p, const Fold *fd) {
   contract(T0, T1, T2, wJ, wA, wS, p, X, v);
 }
 
-static void bwalk(int node, const f32 *X, f32 *v, int mode, int p, const Fold *fd);
+static void bwalk(Lane *L, int node, const f32 *X, f32 *v, int mode, int p, const Fold *fd);
 
-static void bdec(const i32 *w, const f32 *X, f32 *v, int mode, int p, const Fold *fd) {
+static void bdec(Lane *L, const i32 *w, const f32 *X, f32 *v, int mode, int p, const Fold *fd) {
   int q = w[1], A = w[2], fold = w[5];
   f32 *reg = PF(w[3]), *ssum = PF(w[4]);
-  size_t mark = top, ck = (size_t)C * K;
+  size_t mark = L->top, ck = (size_t)C * K;
   const f32 *sig = strategy(mode, reg, ssum, PF(w[7]), w[8], C, A, K);
-  f32 *Xc = salloc(sizeof(f32) * ck * NP), *va = salloc(sizeof(f32) * ck * A);
+  f32 *Xc = salloc(L, sizeof(f32) * ck * NP), *va = salloc(L, sizeof(f32) * ck * A);
   for (int a = 0; a < A; a++) {
     for (size_t j = 0; j < ck * NP; j++) Xc[j] = X[j];
     f32 *xq = Xc + (size_t)q * ck;
@@ -617,32 +644,32 @@ static void bdec(const i32 *w, const f32 *X, f32 *v, int mode, int p, const Fold
         continue;
       }
       if (!fd && NP == 3) {
-        size_t m2 = top;
+        size_t m2 = L->top;
         Fold nf;
         nf.f = q;
         nf.q = 3 - p - q;
-        nf.MJ = salloc(sizeof(f32) * ck * K);
-        nf.MS = salloc(sizeof(f32) * ck * K);
+        nf.MJ = salloc(L, sizeof(f32) * ck * K);
+        nf.MS = salloc(L, sizeof(f32) * ck * K);
         reduce(tensor(-1, p), tensor((1 << p) | (1 << nf.q), p), p, q, xq, nf.MJ, nf.MS);
-        bwalk(kid, Xc, vo, mode, p, &nf);
-        top = m2;
+        bwalk(L, kid, Xc, vo, mode, p, &nf);
+        L->top = m2;
         continue;
       }
     }
-    bwalk(kid, Xc, vo, mode, p, fd);
+    bwalk(L, kid, Xc, vo, mode, p, fd);
   }
   combine(mode, q == p, A, C, K, va, sig, reg, ssum, X + (size_t)p * ck, v);
   if (mode == ALT && q == p) FLAGS[w[8]] = 0;
-  top = mark;
+  L->top = mark;
 }
 
-static void bwalk(int node, const f32 *X, f32 *v, int mode, int p, const Fold *fd) {
+static void bwalk(Lane *L, int node, const f32 *X, f32 *v, int mode, int p, const Fold *fd) {
   const i32 *w = W + node;
   switch (w[0]) {
-  case BDEC: bdec(w, X, v, mode, p, fd); break;
+  case BDEC: bdec(L, w, X, v, mode, p, fd); break;
   case BTERM:
   case BTERMW: term(w, X, v, p, fd); break;
-  case BEXIT: bwalk(w[1], X, v, mode, p, fd); break;
+  case BEXIT: bwalk(L, w[1], X, v, mode, p, fd); break;
   default: __builtin_trap();
   }
 }
@@ -663,15 +690,15 @@ static void compat(const f32 *x, f64 *card, f64 *out) {
 /* The exact joint mass (MultiwaySolver._mass): per combo h, the sum of x(i) y(j) over the pairs of combos sharing no
    card with h or with each other: sum over i compatible with h of x(i) U_y(h + i), U_y(S) the y-reach of the combos
    sharing no card with the four cards S by inclusion-exclusion (y's total, minus each card's, plus each pair's) */
-static f64 XM[52 * 52], YM[52 * 52];
-static void mass3(const f32 *x, const f32 *y, f32 *m) {
-  size_t mark = top;
-  f64 *Cx = salloc(sizeof(f64) * 52), *Cy = salloc(sizeof(f64) * 52), *Cz = salloc(sizeof(f64) * 52),
-      *Cw = salloc(sizeof(f64) * 52);
-  f64 *Kx = salloc(sizeof(f64) * N), *Ky = salloc(sizeof(f64) * N), *Kz = salloc(sizeof(f64) * N),
-      *Kw = salloc(sizeof(f64) * N);
-  f32 *z = salloc(sizeof(f32) * N), *ww = salloc(sizeof(f32) * N);
-  f64 *X = XM, *Y = YM; /* (zero but for the combos' entries, set here and cleared after) */
+static f64 XM[MAXT][52 * 52], YM[MAXT][52 * 52];   /* (a thread's own) */
+static void mass3(Lane *L, const f32 *x, const f32 *y, f32 *m) {
+  size_t mark = L->top;
+  f64 *Cx = salloc(L, sizeof(f64) * 52), *Cy = salloc(L, sizeof(f64) * 52), *Cz = salloc(L, sizeof(f64) * 52),
+      *Cw = salloc(L, sizeof(f64) * 52);
+  f64 *Kx = salloc(L, sizeof(f64) * N), *Ky = salloc(L, sizeof(f64) * N), *Kz = salloc(L, sizeof(f64) * N),
+      *Kw = salloc(L, sizeof(f64) * N);
+  f32 *z = salloc(L, sizeof(f32) * N), *ww = salloc(L, sizeof(f32) * N);
+  f64 *X = XM[L->id], *Y = YM[L->id]; /* (zero but for the combos' entries, set here and cleared after) */
   compat(x, Cx, Kx);
   compat(y, Cy, Ky);
   for (int i = 0; i < N; i++) {
@@ -694,25 +721,25 @@ static void mass3(const f32 *x, const f32 *y, f32 *m) {
     m[i] = (f32)(Kx[i] * Ky[i] - Kz[i] + Kw[i] + d);
   }
   for (int i = 0; i < N; i++) X[CA[i] * 52 + CB[i]] = X[CB[i] * 52 + CA[i]] = Y[CA[i] * 52 + CB[i]] = Y[CB[i] * 52 + CA[i]] = 0;
-  top = mark;
+  L->top = mark;
 }
 
-static void kmass(const f32 *x, f32 *m) {
-  size_t mark = top;
-  f64 *Cx = salloc(sizeof(f64) * 52), *Kx = salloc(sizeof(f64) * N);
+static void kmass(Lane *L, const f32 *x, f32 *m) {
+  size_t mark = L->top;
+  f64 *Cx = salloc(L, sizeof(f64) * 52), *Kx = salloc(L, sizeof(f64) * N);
   compat(x, Cx, Kx);
   for (int i = 0; i < N; i++) m[i] = (f32)Kx[i];
-  top = mark;
+  L->top = mark;
 }
 
 /* p's deals' weight per combo: the others' compatible reach (four players: pairwise, MultiwaySolver._pw_masses: the
    product of the others' one-sided masses times p's overlap correction, scaled so its total is player 0's, the factor
    held to [0.5, 2]) */
-static void deal_mass(const f32 *R, int p, f32 *m) {
+static void deal_mass(Lane *L, const f32 *R, int p, f32 *m) {
   if (NP == 4) {
-    size_t mark = top;
-    f32 *ku = salloc(sizeof(f32) * 4 * N), *m0 = salloc(sizeof(f32) * N);
-    for (int j = 0; j < 4; j++) kmass(R + (size_t)j * N, ku + (size_t)j * N);
+    size_t mark = L->top;
+    f32 *ku = salloc(L, sizeof(f32) * 4 * N), *m0 = salloc(L, sizeof(f32) * N);
+    for (int j = 0; j < 4; j++) kmass(L, R + (size_t)j * N, ku + (size_t)j * N);
     f64 tot[2] = {0, 0};
     for (int r = 0; r < 2; r++) {
       int q = r == 0 ? 0 : p;
@@ -729,14 +756,14 @@ static void deal_mass(const f32 *R, int p, f32 *m) {
     sc = sc < 0.5 ? 0.5 : sc > 2.0 ? 2.0 : sc;
     if (p != 0)
       for (int h = 0; h < N; h++) m[h] = (f32)(m[h] * sc);
-    top = mark;
+    L->top = mark;
     return;
   }
   if (NP == 2) {
-    kmass(R + (size_t)(1 - p) * N, m);
+    kmass(L, R + (size_t)(1 - p) * N, m);
   } else {
     int o0 = p == 0 ? 1 : 0, o1 = p == 2 ? 1 : 2;
-    mass3(R + (size_t)o0 * N, R + (size_t)o1 * N, m);
+    mass3(L, R + (size_t)o0 * N, R + (size_t)o1 * N, m);
   }
 }
 
@@ -775,39 +802,21 @@ static void from_buckets(const f32 *V, int p, f32 *v) {
   }
 }
 
-static void rwalk(int node, const f32 *R, f32 *v, int mode, int p, f32 *kids) {
-  const i32 *w = W + node;
-  size_t mark = top;
-  switch (w[0]) {
-  case RDEC: {
-    int q = w[1], A = w[2];
-    f32 *reg = PF(w[3]), *ssum = PF(w[4]);
-    const f32 *sig = strategy(mode, reg, ssum, PF(w[5]), w[6], 1, A, N);
-    f32 *Rc = salloc(sizeof(f32) * NP * N), *va = salloc(sizeof(f32) * A * N);
-    for (int a = 0; a < A; a++) {
-      for (size_t j = 0; j < (size_t)NP * N; j++) Rc[j] = R[j];
-      for (int h = 0; h < N; h++) Rc[(size_t)q * N + h] *= sig[(size_t)a * N + h];
-      rwalk(w[7 + a], Rc, va + (size_t)a * N, mode, p, 0);
-    }
-    combine(mode, q == p, A, 1, N, va, sig, reg, ssum, R + (size_t)p * N, v);
-    if (mode == ALT && q == p) FLAGS[w[6]] = 0;
-    if (kids)
-      for (size_t j = 0; j < (size_t)A * N; j++) kids[j] = va[j];
-    break;
-  }
-  case RFOLD: {
+/* A root-street leaf: p's values v (n) for the reaches R (np, n) there: a fold's, or an Exit's (the bucket subtree
+   below it, from each player's reach per class and bucket) */
+static void leaf(Lane *L, const i32 *w, const f32 *R, f32 *v, int mode, int p) {
+  size_t mark = L->top;
+  if (w[0] == RFOLD) {
     f32 net = fbits(w[2]);
-    f32 *m = salloc(sizeof(f32) * N);
-    deal_mass(R, p, m);
+    f32 *m = salloc(L, sizeof(f32) * N);
+    deal_mass(L, R, p, m);
     f32 k = (p == w[1] ? net : 0) - fbits(w[3 + p]);
     for (int h = 0; h < N; h++) v[h] = k * m[h];
-    break;
-  }
-  case REXIT: {
+  } else if (w[0] == REXIT) {
     int live = w[1];
     f32 cp = fbits(w[3 + p]);
     size_t ck = (size_t)C * K;
-    f32 *X = salloc(sizeof(f32) * ck * NP), *vb = salloc(sizeof(f32) * ck);
+    f32 *X = salloc(L, sizeof(f32) * ck * NP), *vb = salloc(L, sizeof(f32) * ck);
     to_buckets(R, X);
     if (!(live >> p & 1)) {
       contract(tensor(-1, p), 0, 0, -cp, 0, 0, p, X, vb);
@@ -815,19 +824,278 @@ static void rwalk(int node, const f32 *R, f32 *v, int mode, int p, f32 *kids) {
       Fold fd;
       fd.f = __builtin_ctz((unsigned)(7 & ~live));
       fd.q = 3 - p - fd.f;
-      fd.MJ = salloc(sizeof(f32) * ck * K);
-      fd.MS = salloc(sizeof(f32) * ck * K);
+      fd.MJ = salloc(L, sizeof(f32) * ck * K);
+      fd.MS = salloc(L, sizeof(f32) * ck * K);
       reduce(tensor(-1, p), tensor(live, p), p, fd.f, X + (size_t)fd.f * ck, fd.MJ, fd.MS);
-      bwalk(w[2], X, vb, mode, p, &fd);
+      bwalk(L, w[2], X, vb, mode, p, &fd);
     } else {
-      bwalk(w[2], X, vb, mode, p, 0);
+      bwalk(L, w[2], X, vb, mode, p, 0);
     }
     from_buckets(vb, p, v);
-    break;
+  } else {
+    __builtin_trap();
   }
-  default: __builtin_trap();
+  L->top = mark;
+}
+
+/* With helper threads (mw_threads) a pass runs its root-street leaves as one job: a walk down (COLLECT) keeps each
+   leaf's reaches (a task), the job runs every task in some thread's own scratch (a lane), and the pass proper (READ)
+   takes their values where the leaves are. A leaf's subtree is its own: its decisions' regrets, sums, kept strategies
+   and flags are its own records' (mwcore.py: a root Exit's block of its group), the tensors are only read, and a
+   fold's deal masses use the thread's own XM, YM; so the tasks write nothing in common, and each one's arithmetic is
+   the serial pass's: the floats are the same on any number of threads. The root street's decisions are walked twice,
+   their strategies kept from the first (the same ones), and updated on READ's walk, after their children's values, as
+   the serial pass does. */
+enum { WHOLE, COLLECT, READ };
+static int phase;
+typedef struct {
+  i32 node;
+  f32 *R, *v;   /* the reaches there (np, n), its values (n) */
+} Task;
+static Task *tasks;
+static i32 ntasks, maxtasks, task_next;
+static f32 *task_area;
+
+static void rwalk(Lane *L, int node, const f32 *R, f32 *v, int mode, int p, f32 *kids) {
+  const i32 *w = W + node;
+  if (w[0] != RDEC) {
+    if (phase == COLLECT) {
+      if (ntasks == maxtasks) __builtin_trap();
+      Task *t = &tasks[ntasks++];
+      t->node = node;
+      t->R = task_area, t->v = task_area + (size_t)NP * N;
+      task_area += (size_t)(NP + 1) * N;
+      for (size_t j = 0; j < (size_t)NP * N; j++) t->R[j] = R[j];
+    } else if (phase == READ) {
+      if (task_next >= ntasks || tasks[task_next].node != node) __builtin_trap();   /* (the walks differ: a bug) */
+      const f32 *tv = tasks[task_next++].v;
+      for (int h = 0; h < N; h++) v[h] = tv[h];
+    } else {
+      leaf(L, w, R, v, mode, p);
+    }
+    return;
   }
-  top = mark;
+  size_t mark = L->top;
+  int q = w[1], A = w[2];
+  f32 *reg = PF(w[3]), *ssum = PF(w[4]);
+  const f32 *sig = strategy(mode, reg, ssum, PF(w[5]), w[6], 1, A, N);
+  f32 *Rc = salloc(L, sizeof(f32) * NP * N), *va = salloc(L, sizeof(f32) * A * N);
+  for (int a = 0; a < A; a++) {
+    for (size_t j = 0; j < (size_t)NP * N; j++) Rc[j] = R[j];
+    for (int h = 0; h < N; h++) Rc[(size_t)q * N + h] *= sig[(size_t)a * N + h];
+    rwalk(L, w[7 + a], Rc, va + (size_t)a * N, mode, p, 0);
+  }
+  if (phase != COLLECT) {
+    combine(mode, q == p, A, 1, N, va, sig, reg, ssum, R + (size_t)p * N, v);
+    if (mode == ALT && q == p) FLAGS[w[6]] = 0;
+    if (kids)
+      for (size_t j = 0; j < (size_t)A * N; j++) kids[j] = va[j];
+  }
+  L->top = mark;
+}
+
+static i32 leaves(i32 node) {
+  const i32 *w = W + node;
+  if (w[0] != RDEC) return 1;
+  i32 m = 0;
+  for (int a = 0; a < w[2]; a++) m += leaves(w[7 + a]);
+  return m;
+}
+
+/* the bytes a task can take (a helper's lane holds the largest): bdec's scratch on a subtree's deepest line, each step
+   with a fold's reduction (more than any line takes); an Exit's own; a fold's deal masses (mass3's, kmass's: more than
+   either). salloc's alignment: 64 bytes an allocation. Exact sizes depend on the tree alone, not on the reaches. */
+static size_t need_b(i32 node) {
+  const i32 *w = W + node;
+  size_t ck = (size_t)C * K, al = 64;
+  if (w[0] == BEXIT) return need_b(w[1]);
+  if (w[0] != BDEC) return 0;
+  size_t kid = 0;
+  for (int a = 0; a < w[2]; a++) {
+    size_t k = need_b(w[9 + a]);
+    if (k > kid) kid = k;
+  }
+  return 4 * al + 4 * ck * NP + 4 * ck * (size_t)w[2] + 2 * 4 * ck * K + kid;
+}
+static size_t need(i32 node) {
+  const i32 *w = W + node;
+  size_t ck = (size_t)C * K, al = 64, n = (size_t)N;
+  if (w[0] == REXIT) return 4 * al + 4 * ck * NP + 4 * ck + 2 * 4 * ck * K + need_b(w[2]);
+  if (w[0] == RFOLD) return 16 * al + 4 * n + 4 * 5 * n + 8 * 52 * 4 + 8 * 4 * n + 4 * 2 * n;
+  size_t m = 0;
+  for (int a = 0; a < w[2]; a++) {
+    size_t k = need(w[7 + a]);
+    if (k > m) m = k;
+  }
+  return m;
+}
+
+/* ------------------------------------------------------------------ threads */
+/* A job: the pass's tasks, handed out one at a time. The ticket holds the job's number and the next task to take (an
+   odd number while the job is being set up), so a thread only takes tasks of the job it read; done counts the tasks
+   finished. Natively the helpers are pthreads (mw_threads starts them); in the browser, workers sharing the module's
+   memory (mwcore-mt.wasm), each in mw_helper. As gtocore.c's (core/gtocore.c: its threads, the same scheme). */
+static i32 nthreads = 1;   /* this thread and its helpers */
+static i32 dead, fail_i, fail_n, helped;
+
+#ifdef THREADS
+static struct {
+  u64 ticket;
+  i32 done, gen, sleepers;
+  i32 mode, p, rows, helpers;
+  size_t lanes, lane;
+} J;
+
+#define LD(x) __atomic_load_n(&(x), __ATOMIC_RELAXED)
+#define ST(x, v) __atomic_store_n(&(x), (v), __ATOMIC_RELAXED)
+
+static inline void relax(void) {
+#if defined(__aarch64__)
+  __asm__ volatile("yield");
+#elif defined(__x86_64__)
+  __builtin_ia32_pause();
+#endif
+}
+
+#ifndef __wasm__
+static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t cv = PTHREAD_COND_INITIALIZER;
+static i32 started;
+#endif
+static Lane hl[MAXT];   /* the helpers' lanes */
+
+/* this thread's share of job `seq`: tasks while there are any */
+static void take(Lane *L, u32 seq, int mode, int p, i32 rows) {
+  for (;;) {
+    u64 t = __atomic_load_n(&J.ticket, __ATOMIC_ACQUIRE);
+    i32 r = (i32)(u32)t;
+    if ((u32)(t >> 32) != seq || r >= rows) return;
+    if (__sync_val_compare_and_swap(&J.ticket, t, t + 1) != t) continue;
+    if (LD(fail_n) && L == &hl[LD(fail_i) & (MAXT - 1)] && __atomic_sub_fetch(&fail_n, 1, __ATOMIC_RELAXED) == 0)
+      __builtin_trap();   /* (mw_fail: a test's helper failing with a task held) */
+    Task *k = &tasks[r];
+    leaf(L, W + k->node, k->R, k->v, mode, p);
+    if (L != &M) __atomic_fetch_add(&helped, 1, __ATOMIC_RELAXED);
+    __atomic_fetch_add(&J.done, 1, __ATOMIC_RELEASE);
+  }
+}
+
+/* blocks until the ticket's job number isn't `last` (after spinning a while: jobs come every few milliseconds) */
+static void await_job(u32 last) {
+  for (int spin = 0; spin < 1 << 16; spin++) {
+    if ((u32)(__atomic_load_n(&J.ticket, __ATOMIC_ACQUIRE) >> 32) != last) return;
+    relax();
+  }
+#ifdef __wasm__
+  i32 g = __atomic_load_n(&J.gen, __ATOMIC_SEQ_CST);
+  __atomic_fetch_add(&J.sleepers, 1, __ATOMIC_SEQ_CST);
+  if ((u32)(__atomic_load_n(&J.ticket, __ATOMIC_SEQ_CST) >> 32) == last)
+    __builtin_wasm_memory_atomic_wait32(&J.gen, g, -1);
+  __atomic_fetch_sub(&J.sleepers, 1, __ATOMIC_SEQ_CST);
+#else
+  pthread_mutex_lock(&mu);
+  __atomic_fetch_add(&J.sleepers, 1, __ATOMIC_SEQ_CST);
+  while ((u32)(__atomic_load_n(&J.ticket, __ATOMIC_SEQ_CST) >> 32) == last) pthread_cond_wait(&cv, &mu);
+  __atomic_fetch_sub(&J.sleepers, 1, __ATOMIC_SEQ_CST);
+  pthread_mutex_unlock(&mu);
+#endif
+}
+
+static void wake(void) {
+  __atomic_fetch_add(&J.gen, 1, __ATOMIC_SEQ_CST);
+  if (!__atomic_load_n(&J.sleepers, __ATOMIC_SEQ_CST)) return;
+#ifdef __wasm__
+  __builtin_wasm_memory_atomic_notify(&J.gen, 0xffffffffu);
+#else
+  pthread_mutex_lock(&mu);
+  pthread_cond_broadcast(&cv);
+  pthread_mutex_unlock(&mu);
+#endif
+}
+
+/* helper i: takes tasks of every job it sees, in its lane */
+static void helper(i32 i) {
+  u32 last = 0;
+  for (;;) {
+    await_job(last);
+    u64 t = __atomic_load_n(&J.ticket, __ATOMIC_ACQUIRE);
+    u32 seq = (u32)(t >> 32);
+    if (seq & 1) continue;   /* being set up */
+    i32 mode = LD(J.mode), p = LD(J.p), rows = LD(J.rows), helpers = LD(J.helpers);
+    size_t lanes = LD(J.lanes), lane = LD(J.lane);
+    __atomic_thread_fence(__ATOMIC_ACQUIRE);
+    if ((u32)(__atomic_load_n(&J.ticket, __ATOMIC_RELAXED) >> 32) != seq) continue;   /* (read across two jobs) */
+    last = seq;
+    if (i >= helpers) continue;
+    Lane *L = &hl[i];
+    L->top = lanes + (size_t)i * lane, L->lim = lanes + (size_t)(i + 1) * lane, L->id = i + 1;
+    take(L, seq, mode, p, rows);
+  }
+}
+
+#ifdef __wasm__
+/* a browser helper's loop (worker.js's helpers call it once; it never returns), on a stack of its own (mw_stack) */
+static unsigned char stacks[MAXT][65536] __attribute__((aligned(16)));
+EXPORT(mw_stack) u32 mw_stack(i32 i) { return (u32)(uintptr_t)stacks[i < 0 || i >= MAXT ? 0 : i] + 65536; }
+EXPORT(mw_helper) void mw_helper(i32 i) { helper(i); }
+#else
+static void *run_helper(void *i) {
+  helper((i32)(intptr_t)i);
+  return 0;
+}
+#endif
+
+/* the tasks as a job: this thread takes tasks too (in the arena), then waits for the rest */
+static void job(int mode, int p) {
+  i32 helpers = nthreads - 1;
+  size_t mark = M.top;
+  unsigned char *lanes = salloc(&M, lane_bytes * (size_t)helpers);
+  u32 seq = (u32)(__atomic_load_n(&J.ticket, __ATOMIC_RELAXED) >> 32) + 2;
+  __atomic_store_n(&J.ticket, ((u64)(seq - 1) << 32) | 0xffffffffu, __ATOMIC_SEQ_CST);
+  ST(J.mode, mode), ST(J.p, p), ST(J.rows, ntasks), ST(J.helpers, helpers);
+  ST(J.lanes, (size_t)(lanes - base)), ST(J.lane, lane_bytes);
+  ST(J.done, 0);
+  __atomic_store_n(&J.ticket, (u64)seq << 32, __ATOMIC_SEQ_CST);
+  wake();
+  take(&M, seq, mode, p, ntasks);
+  for (int spin = 0; __atomic_load_n(&J.done, __ATOMIC_ACQUIRE) < ntasks; spin++) {
+    relax();
+    if (LD(dead)) __builtin_trap();   /* (a helper failed holding a task: it won't come) */
+#ifndef __wasm__
+    if (spin > 1 << 12) sched_yield();
+#endif
+  }
+  M.top = mark;
+}
+#endif
+
+/* a pass from the root-street node `at`: with helpers its leaves as a job (above), else depth first */
+static void pass(i32 at, const f32 *R, f32 *v, int mode, int p, f32 *kids) {
+#ifdef THREADS
+  if (nthreads > 1 && W[at] == RDEC) {
+    u32 prog = (u32)((const unsigned char *)W - base);
+    if (lane_prog != prog) {
+      lane_bytes = (need(W[5]) + 63) & ~(size_t)63;
+      lane_prog = prog;
+    }
+    size_t mark = M.top;
+    i32 nt = leaves(at);
+    tasks = salloc(&M, sizeof(Task) * (size_t)nt);
+    task_area = salloc(&M, sizeof(f32) * (size_t)nt * (size_t)(NP + 1) * N);
+    maxtasks = nt, ntasks = task_next = 0;
+    phase = COLLECT;
+    rwalk(&M, at, R, v, mode, p, kids);
+    phase = WHOLE;
+    job(mode, p);
+    phase = READ;
+    rwalk(&M, at, R, v, mode, p, kids);
+    phase = WHOLE;
+    if (task_next != ntasks) __builtin_trap();
+    M.top = mark;
+    return;
+  }
+#endif
+  rwalk(&M, at, R, v, mode, p, kids);
 }
 
 /* ------------------------------------------------------------------ entry points */
@@ -837,7 +1105,7 @@ static void rwalk(int node, const f32 *R, f32 *v, int mode, int p, f32 *kids) {
 EXPORT(mw_eval) i32 mw_eval(u32 prog, i32 at, i32 mode, i32 p, u32 R, u32 out, u32 kids) {
   load(prog);
   if (W[0] != MAGIC) return -1;
-  rwalk(at, PF(R), PF(out), mode, p, kids ? PF(kids) : 0);
+  pass(at, PF(R), PF(out), mode, p, kids ? PF(kids) : 0);
   return 0;
 }
 
@@ -852,10 +1120,10 @@ EXPORT(mw_run) i32 mw_run(u32 prog, i32 iters, u32 factors) {
   for (int it = 0; it < iters; it++) {
     for (int p = 0; p < NP; p++) {
       if (ALLIN >> p & 1) continue;
-      size_t mark = top;
-      f32 *v = salloc(sizeof(f32) * N);
-      rwalk(W[5], R0, v, ALT, p, 0);
-      top = mark;
+      size_t mark = M.top;
+      f32 *v = salloc(&M, sizeof(f32) * N);
+      pass(W[5], R0, v, ALT, p, 0);
+      M.top = mark;
     }
     f32 pos = fac[2 * it], sf = fac[2 * it + 1];
     for (int a = 0; a < narr; a++) {
@@ -868,3 +1136,41 @@ EXPORT(mw_run) i32 mw_run(u32 prog, i32 iters, u32 factors) {
   }
   return iters;
 }
+
+/* this thread and t - 1 helpers (natively started here, in the browser by worker.js); returns the number (t 0: just
+   that). A solve's numbers don't depend on it. */
+EXPORT(mw_threads) i32 mw_threads(i32 t) {
+  if (t < 1) return nthreads;
+#ifdef THREADS
+  if (t > MAXT) t = MAXT;
+#ifndef __wasm__
+  for (; started < t - 1; started++) {
+    pthread_t th;
+    if (pthread_create(&th, 0, run_helper, (void *)(intptr_t)started) != 0) break;
+    pthread_detach(th);
+  }
+  if (t > started + 1) t = started + 1;
+#endif
+#else
+  t = 1;
+#endif
+  nthreads = t;
+  return nthreads;
+}
+
+/* the address of the word a failed helper sets (worker.js: its number + 1; the job waiting on its task traps on it),
+   and for tests: i > 0 sets it to i */
+EXPORT(mw_dead) u32 mw_dead(i32 i) {
+  if (i > 0) __atomic_store_n(&dead, i, __ATOMIC_SEQ_CST);
+  return (u32)(uintptr_t)&dead;
+}
+
+/* tests: helper i traps holding the task of its nth from now (n 0: none) */
+EXPORT(mw_fail) i32 mw_fail(i32 i, i32 n) {
+  __atomic_store_n(&fail_i, i, __ATOMIC_RELAXED);
+  __atomic_store_n(&fail_n, n, __ATOMIC_RELAXED);
+  return n;
+}
+
+/* the tasks the helpers have run (so a test, or the page, can tell they're running) */
+EXPORT(mw_helped) i32 mw_helped(void) { return __atomic_load_n(&helped, __ATOMIC_RELAXED); }

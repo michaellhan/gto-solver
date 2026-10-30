@@ -155,7 +155,7 @@ test("core-mt: a helper that fails ends the solve's wait instead of hanging it (
   const mod = await WebAssembly.compile(fs.readFileSync(path.join(ROOT, "gto", "core-mt.wasm")));
   for (const T of [2, 8]) {
     const memory = new WebAssembly.Memory({ initial: 256, maximum: 32768, shared: true });
-    const helpers = [...Array(T - 1).keys()].map((i) => new Worker(HELPER_PAGE, { eval: true, workerData: { mod, memory, i } }));
+    const helpers = [...Array(T - 1).keys()].map((i) => new Worker(HELPER_PAGE, { eval: true, workerData: { mod, memory, i, pre: "core_" } }));
     for (const w of helpers) w.on("error", () => {});   // (a helper's own error goes nowhere in the browser either)
     const solver = new Worker(SOLVER, { eval: true, workerData: { mod, memory, T } });
     let timer;

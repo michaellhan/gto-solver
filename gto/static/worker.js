@@ -87,33 +87,38 @@ self.libFetch = (path) => {
 // rows of a chance node's subtree (core/gtocore.c); a solve's numbers are the same on any number of threads. Without
 // isolation, or where the threaded module won't load, core.wasm alone. A helper that fails (a trap: core_helper throws)
 // marks itself in the core's memory (core_dead), where the solve waiting on its rows reads it: that solve's core_run
-// throws in turn, and numpy runs the solve (gto/core.py) instead of the worker waiting for good.
+// throws in turn, and numpy runs the solve (gto/core.py) instead of the worker waiting for good. The multiway core the
+// same way (mwcore-mt.wasm, its own memory and helpers, in mw_helper: a pass's root-street leaves, core/mwcore.c).
 const HELPERS = Math.min(7, ((self.navigator && navigator.hardwareConcurrency) || 1) - 1);
 const HELPER = `onmessage = async (e) => {
-  const { mod, memory, i } = e.data;
+  const { mod, memory, i, pre } = e.data;         // (pre: the module's exports' prefix, core_ or mw_)
   const ex = (await WebAssembly.instantiate(mod, { env: { memory } })).exports;
-  ex.__stack_pointer.value = ex.core_stack(i);   // (every instance starts on the same stack)
-  const dead = new Int32Array(memory.buffer, ex.core_dead(0), 1);
+  ex.__stack_pointer.value = ex[pre + "stack"](i);   // (every instance starts on the same stack)
+  const dead = new Int32Array(memory.buffer, ex[pre + "dead"](0), 1);
   try {
-    ex.core_helper(i);                            // runs rows of the solves' chance nodes; returns only by failing
+    ex[pre + "helper"](i);                        // runs the solves' jobs; returns only by failing
   } catch (err) {
     Atomics.store(dead, 0, i + 1);
   }
 };`;
-async function loadCore(py) {
+let helperURL = null;
+async function threaded(py, file, pre) {
+  const mod = await WebAssembly.compile(py.FS.readFile(file));
+  const memory = new WebAssembly.Memory({ initial: 256, maximum: 32768, shared: true });
+  const ex = Object.assign({}, (await WebAssembly.instantiate(mod, { env: { memory } })).exports, { memory });
+  helperURL = helperURL || URL.createObjectURL(new Blob([HELPER], { type: "text/javascript" }));
+  for (let i = 0; i < HELPERS; i++) new Worker(helperURL).postMessage({ mod, memory, i, pre });
+  ex[pre + "threads"](HELPERS + 1);
+  return ex;
+}
+async function loadCore(py, file, pre) {
   if (self.crossOriginIsolated && HELPERS > 0) {
     try {
-      const mod = await WebAssembly.compile(py.FS.readFile("/app/gto/core-mt.wasm"));
-      const memory = new WebAssembly.Memory({ initial: 256, maximum: 32768, shared: true });
-      const ex = Object.assign({}, (await WebAssembly.instantiate(mod, { env: { memory } })).exports, { memory });
-      const url = URL.createObjectURL(new Blob([HELPER], { type: "text/javascript" }));
-      for (let i = 0; i < HELPERS; i++) new Worker(url).postMessage({ mod, memory, i });
-      ex.core_threads(HELPERS + 1);
-      return ex;
+      return await threaded(py, file.replace(".wasm", "-mt.wasm"), pre);
     } catch (e) {}
   }
   try {
-    return (await WebAssembly.instantiate(py.FS.readFile("/app/gto/core.wasm"))).instance.exports;
+    return (await WebAssembly.instantiate(py.FS.readFile(file))).instance.exports;
   } catch (e) {
     return null;
   }
@@ -137,16 +142,14 @@ const ready = (async () => {
   if (pyc) py.unpackArchive(pyc, "zip", { extractDir: "/app" });
   // the compiled CFR core (gto/core.py; in the bundle, ~25 KB): turn, river and flop solves run their iterations in
   // it. Where it can't load (a browser without wasm SIMD) the solver runs in numpy as before.
-  self.gtoCore = await loadCore(py);
+  self.gtoCore = await loadCore(py, "/app/gto/core.wasm", "core_");
   setup.core = !!self.gtoCore;
   setup.threads = self.gtoCore ? self.gtoCore.core_threads(0) : 0;
-  // the multiway core (gto/mwcore.py, ~115 KB): 3- and 4-way flop and turn solves' iterations, one thread
-  try {
-    self.mwCore = (await WebAssembly.instantiate(py.FS.readFile("/app/gto/mwcore.wasm"))).instance.exports;
-  } catch (e) {
-    self.mwCore = null;
-  }
+  // the multiway core (gto/mwcore.py, ~120 KB): 3- and 4-way flop and turn solves' iterations, with the same helpers'
+  // number of threads
+  self.mwCore = await loadCore(py, "/app/gto/mwcore.wasm", "mw_");
   setup.mwcore = !!self.mwCore;
+  setup.mwthreads = self.mwCore && self.mwCore.mw_threads ? self.mwCore.mw_threads(0) : 0;
   // the sources get a fixed mtime (a .pyc is valid while its source's mtime and size match) and the startup imports
   // write their bytecode (Pyodide turns that off), which goes to the Cache API once the first request has its answer
   py.runPython("import os, sys, json\n"

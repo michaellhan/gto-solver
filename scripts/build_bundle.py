@@ -26,7 +26,7 @@ def bundle_files() -> List[Tuple[str, str]]:
     out = [(f"gto/{os.path.basename(p)}", p) for p in glob.glob(os.path.join(ROOT, "gto", "*.py"))]
     # the compiled CFR core's modules (gto/core.py), which worker.js instantiates from the unpacked bundle (core-mt.wasm,
     # with threads, when the page is cross-origin isolated), and the multiway core's (gto/mwcore.py)
-    for name in ("core.wasm", "core-mt.wasm", "mwcore.wasm"):
+    for name in ("core.wasm", "core-mt.wasm", "mwcore.wasm", "mwcore-mt.wasm"):
         wasm = os.path.join(ROOT, "gto", name)
         if os.path.exists(wasm):
             out.append((f"gto/{name}", wasm))

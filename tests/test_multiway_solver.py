@@ -373,11 +373,46 @@ class TestCore(unittest.TestCase):
         self.assertLess(g100.max() / s.root_pot() * 100, 1.0)
         self.assertAlmostEqual(float(s.values().sum()), 8.0, delta=0.08)
 
+    def test_threads_change_nothing(self):
+        # helper threads run a pass's root-street leaves (each Exit's bucket subtree, each fold's deal masses), each
+        # writing records of its own: regrets, sums, best-response gains, values and action EVs the same, bit for bit,
+        # on 1 thread and on 4 (3-way flop and turn, a player all-in, 4-way)
+        from gto import mwcore
+        L = mwcore.lib()
+        cases = (("Kh7d2c9s", self.rs, 8.0, 97.5, MWConfig(later="buckets", buckets=8)),
+                 ("Kh7d2c", self.rs, 8.0, 97.5, MWConfig(later="buckets", buckets=6, bucket_river_step=4,
+                                                         bet={"flop": [0.33, 0.75], "turn": 0.5, "river": 0.5})),
+                 ("Kh7d2c9s", self.rs, 40.0, 77.5, MWConfig(allin=(2,), later="buckets", buckets=8)),
+                 ("Kh7d2c9s", _ranges4(), 10.5, 97.5, _cfg4(buckets=8)))
+        was = mwcore.threads()
+        try:
+            for board, rs, pot, stack, cfg in cases:
+                with self.subTest(board, players=len(rs), allin=cfg.allin):
+                    got = []
+                    for t in (1, 4):
+                        self.assertEqual(mwcore.threads(t), t)
+                        s = MultiwaySolver(cards(board), rs, pot, stack, cfg=cfg).run(iters=4)
+                        self.assertIsNotNone(s._mwc)
+                        got.append([d.regret.copy() for d in s.decisions] + [d.ssum.copy() for d in s.decisions]
+                                   + [s.br_gains(), s.values(), s.action_evs()])
+                    for x, y in zip(*got):
+                        np.testing.assert_array_equal(x, y)
+            # the helpers ran some of the leaves (on a busy machine a pass can be over before one is scheduled: again
+            # until one has)
+            for _ in range(50):
+                if L.L.mw_helped() > 0:
+                    break
+                MultiwaySolver(cards("Kh7d2c9s"), self.rs, 8.0, 97.5, cfg=cases[0][4]).run(iters=4)
+            self.assertGreater(L.L.mw_helped(), 0)
+        finally:
+            mwcore.threads(was)
+
     def test_wasm_built_from_the_current_source(self):
         # (python scripts/build_core.py after a change to core/mwcore.c)
         from gto import mwcore
-        with open(mwcore.WASM, "rb") as f:
-            self.assertTrue(mwcore.source_hash().encode() in f.read(), "rebuild gto/mwcore.wasm")
+        for path in (mwcore.WASM, mwcore.WASM_MT):
+            with open(path, "rb") as f:
+                self.assertTrue(mwcore.source_hash().encode() in f.read(), f"rebuild {path}")
 
 
 class TestFourWay(unittest.TestCase):

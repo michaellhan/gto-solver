@@ -5,7 +5,9 @@ which worker.js instantiates before the solver loads: js.mwCore). Python still b
 and reads strategies off it; the core takes the tree, the tables, the reaches, the regrets and the strategy sums, runs
 iterations in chunks (the time budget and should_stop checked between them), and the regrets and sums come back to the
 solver's arrays after each run. It also runs the passes after a solve: each player's value on the average strategies,
-its best response, and a root-street node's action EVs.
+its best response, and a root-street node's action EVs. With helper threads (threads(): natively GTO_THREADS, in the
+browser worker.js's helper workers on mwcore-mt.wasm's shared memory) a pass runs its root-street leaves (each Exit's
+bucket subtree, each fold's deal masses) on them, with the same floats on any number of threads.
 
 The arithmetic is the numpy solver's in float32, so their strategies agree to rounding (tests/test_multiway_solver.py).
 One program at a time lives in the core's arena: another solver's replaces it, and a solver whose program is gone lays
@@ -27,6 +29,7 @@ ALT, BR, EV = 0, 1, 2
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "core", "mwcore.c")
 WASM = os.path.join(ROOT, "gto", "mwcore.wasm")
+WASM_MT = os.path.join(ROOT, "gto", "mwcore-mt.wasm")
 CHUNK_S = 0.1          # seconds of iterations a call (between the budget and should_stop checks)
 MAX_CHUNK = 256        # iterations a call at most (the discount factors' buffer)
 MAX_K = 32             # hand buckets at most (the kernels' accumulators)
@@ -38,6 +41,11 @@ _gen = 0
 
 class Unsupported(Exception):
     """A solve the core doesn't run (MultiwaySolver.run runs it in numpy)."""
+
+
+class Failed(RuntimeError):
+    """The core itself failed (in the browser a trap: a helper's, its memory refusing to grow): it's off for the session
+    then, and numpy runs the solve (MultiwaySolver._run_core) and every later one. Natively a trap ends the process."""
 
 
 def source_hash() -> str:
@@ -69,6 +77,7 @@ class _Native:
         L.mw_run.restype, L.mw_run.argtypes = ctypes.c_int32, [ctypes.c_uint32, ctypes.c_int32, ctypes.c_uint32]
         L.mw_eval.restype = ctypes.c_int32
         L.mw_eval.argtypes = [ctypes.c_uint32, ctypes.c_int32, ctypes.c_int32, ctypes.c_int32] + [ctypes.c_uint32] * 3
+        L.mw_threads.restype, L.mw_threads.argtypes = ctypes.c_int32, [ctypes.c_int32]
         if L.mw_version() != MAGIC:
             raise RuntimeError("mwcore version mismatch")
         self.L = L
@@ -93,6 +102,9 @@ class _Native:
 
     def eval(self, prog: int, at: int, mode: int, p: int, R: int, out: int, kids: int) -> int:
         return self.L.mw_eval(prog, at, mode, p, R, out, kids)
+
+    def threads(self, t: int) -> int:
+        return self.L.mw_threads(t)
 
 
 class _Wasm:
@@ -122,11 +134,23 @@ class _Wasm:
     def read(self, off: int, out: np.ndarray):
         self._view(off, out.nbytes).assign_to(out.reshape(-1).view(np.uint8))
 
+    @staticmethod
+    def _js(f, *a):
+        """An export called: what it raises (a JsException: the module trapped) as Failed."""
+        try:
+            return f(*a)
+        except Exception as e:
+            raise Failed(f"the multiway core failed: {e!r}") from e
+
     def run(self, prog: int, iters: int, factors: int) -> int:
-        return int(self.ex.mw_run(prog, iters, factors))
+        return int(self._js(self.ex.mw_run, prog, iters, factors))
 
     def eval(self, prog: int, at: int, mode: int, p: int, R: int, out: int, kids: int) -> int:
-        return int(self.ex.mw_eval(prog, at, mode, p, R, out, kids))
+        return int(self._js(self.ex.mw_eval, prog, at, mode, p, R, out, kids))
+
+    def threads(self, t: int) -> int:
+        f = getattr(self.ex, "mw_threads", None)
+        return int(f(t)) if f is not None else 1
 
 
 def _load():
@@ -142,6 +166,7 @@ def _load():
         L = _Native(build_native())
     except Exception:
         return None
+    L.threads(int(os.environ.get("GTO_THREADS", "1")))
     return L
 
 
@@ -151,6 +176,19 @@ def lib():
     if _lib is None:
         _lib = _load() or False
     return _lib or None
+
+
+def threads(t: int = 0) -> int:
+    """The core's threads, this one and its helpers (natively GTO_THREADS, else 1; worker.js's in the browser): sets them
+    to t (unless 0) and returns the number. A solve's numbers don't depend on it."""
+    L = lib()
+    return 1 if L is None else L.threads(t)
+
+
+def off():
+    """The core off for the session (it failed: Failed)."""
+    global _lib
+    _lib = False
 
 
 def _f(x) -> int:
@@ -376,7 +414,11 @@ class Program:
         t = np.arange(t0 + 1, t0 + iters + 1, dtype=np.float64)
         fac = np.stack([t ** a / (t ** a + 1), (t / (t + 1)) ** g], axis=1).astype(np.float32)
         self.L.write(self.fac, fac)
-        return self.L.run(self.prog, iters, self.fac)
+        try:
+            return self.L.run(self.prog, iters, self.fac)
+        except Failed:
+            off()
+            raise
 
     def eval(self, node, mode: int, p: int, R: np.ndarray, kids: bool = False):
         """p's values (n) at a root-street node for reaches R (np, n) there; with kids, each action's (A, n) too."""
@@ -387,8 +429,12 @@ class Program:
         A = len(node.children) if kids else 0
         if A > 16:
             raise Unsupported("actions")
-        if self.L.eval(self.prog, at, mode, p, self.R, self.out, self.kids if A else 0) != 0:
-            raise RuntimeError("mwcore: bad program")
+        try:
+            if self.L.eval(self.prog, at, mode, p, self.R, self.out, self.kids if A else 0) != 0:
+                raise RuntimeError("mwcore: bad program")
+        except Failed:
+            off()
+            raise
         v = np.zeros(self.n, dtype=np.float32)
         self.L.read(self.out, v)
         if not A:

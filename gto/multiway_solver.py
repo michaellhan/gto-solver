@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import itertools
 import random
+import sys
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence
@@ -1115,6 +1116,12 @@ def _outer_sum(fs):
 
 
 # ------------------------------------------------------------------ solver
+def mwcore_failed():
+    """mwcore.Failed: the compiled core failed (imported when needed, as the core is)."""
+    from .mwcore import Failed
+    return Failed
+
+
 class MultiwaySolver:
     def __init__(self, board, ranges: Sequence[np.ndarray], pot: float, stack: float, bets=None, to_act=0,
                  n_raises=0, pending=None, cfg: Optional[MWConfig] = None, dead: Sequence[int] = (),
@@ -1982,7 +1989,14 @@ class MultiwaySolver:
         `reserve` more iterations' time kept back for what follows (br_gains and action_evs cost about two)."""
         prog = self._core()
         if prog is not None:
-            return self._run_core(prog, iters, time_budget, min_iters, should_stop, reserve)
+            t0 = time.time()
+            try:
+                return self._run_core(prog, iters, time_budget, min_iters, should_stop, reserve)
+            except mwcore_failed():
+                # (the core failed, and it's off now: numpy runs the solve from where this run started, in what's left
+                # of the budget)
+                if time_budget is not None:
+                    time_budget = max(time_budget - (time.time() - t0), 0.0)
         t0 = time.time()
         start = self.iters
         self._tmemo.clear(); self._smemo.clear()     # (kept within a run: its reaches are this run's root reaches')
@@ -2022,6 +2036,7 @@ class MultiwaySolver:
         t0 = time.time()
         start = self.iters
         per = None
+        ok = False
         try:
             while self.iters - start < iters:
                 if should_stop is not None and should_stop():
@@ -2044,8 +2059,13 @@ class MultiwaySolver:
                 if time_budget is not None and self.iters - start >= min_iters and time.time() - t0 > time_budget:
                     self.out_of_time = True
                     break
+            ok = True
         finally:
-            prog.pull()
+            if ok or not isinstance(sys.exc_info()[1], mwcore.Failed):
+                prog.pull()
+            else:   # (a failed run's arena isn't read: its iterations are dropped, the solver's arrays as they were)
+                self.iters = start
+                self.seconds += time.time() - t0
         self._ver = [v + self.iters - start for v in self._ver]
         self._gains_memo = None
         self.seconds += time.time() - t0
@@ -2069,7 +2089,10 @@ class MultiwaySolver:
         if prog is not None:
             R = self.reach0[:, 0, :]
             from .mwcore import EV
-            return np.array([(prog.eval(self.root, EV, p, R) * R[p]).sum() for p in range(self.np)]) / m
+            try:
+                return np.array([(prog.eval(self.root, EV, p, R) * R[p]).sum() for p in range(self.np)]) / m
+            except mwcore_failed():
+                pass   # (off now: numpy's pass)
         v = self._pass(self.reach0, "avg")
         return np.array([(v[p][0] * self.reach0[p][0]).sum() for p in range(self.np)]) / m
 
@@ -2094,8 +2117,11 @@ class MultiwaySolver:
                 continue
             if prog is not None:
                 from .mwcore import BR
-                br = prog.eval(self.root, BR, p, self.reach0[:, 0, :])[None, :]
-            else:
+                try:
+                    br = prog.eval(self.root, BR, p, self.reach0[:, 0, :])[None, :]
+                except mwcore_failed():
+                    prog = None   # (off now: numpy's pass)
+            if prog is None:
                 br = self._pass(self.reach0, "br", p)
             out.append(float((br[0] * self.reach0[p][0]).sum()) / m - v[p])
         return np.array(out)
@@ -2128,7 +2154,7 @@ class MultiwaySolver:
             try:
                 _, kids = prog.eval(node, EV, p, R[:, 0, :], kids=True)
                 return np.where(mass > 1e-12, kids / np.where(mass > 1e-12, mass, 1.0), 0.0) + self._fold_base(node)
-            except Unsupported:   # (a node the program doesn't hold: numpy's pass)
+            except (Unsupported, mwcore_failed()):   # (a node the program doesn't hold, or the core failed: numpy's pass)
                 pass
         if self.levels:
             self._later(node, R, "avg", None)
