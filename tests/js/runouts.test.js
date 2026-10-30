@@ -129,11 +129,15 @@ test("Study's report: the table or the cards, the solve offered when nothing's i
   assert.match(c, /data-roview="cards" class="active">Cards/);
   assert.match(c, /class="sy-rogrid"/);
   assert.doesNotMatch(c, /class="ro-t"/);
-  // nothing in hand: a solve of the street, at the speed's budget (a river's: the turn's and the flop's)
+  // nothing in hand: a solve of the street, its seconds as measured in the browser (here unthreaded: not isolated)
   const k = S.skippedHtml({ skipped: "not solved yet" }, "turn", "fast");
-  assert.match(k, /data-rosolve>Solve the flop \(Fast, ~8 s\)/);
-  assert.match(S.skippedHtml({ skipped: "not solved yet" }, "river", "accurate"), /Solve the turn \(Accurate, ~72 s\)/);
-  assert.equal(S.estimate("river", "fast"), 11);
+  assert.match(k, /data-rosolve>Solve the flop \(Fast, ~3 s\)/);
+  assert.match(S.skippedHtml({ skipped: "not solved yet" }, "river", "accurate"), /Solve the turn \(Accurate, ~31 s\)/);
+  assert.equal(S.estimate("river", "fast"), 7.5);
+  // threaded (the site, cross-origin isolated): 8 threads as measured, between by the part threads split
+  assert.deepEqual([1, 2, 4, 8, 16].map(n => S.estimate("river", "accurate", n)), [31, 17.6, 10.9, 7.5, 7.5]);
+  assert.deepEqual(["turn", "river"].map(st => S.estimate(st, "fast", 8)), [1.5, 3]);
+  assert.equal(S.estimate("turn", "accurate", 8), 1.5);
   // a library flop's stored turns that don't hold the line: the lines they do
   const l = S.skippedHtml({ skipped: "not solved yet", lines: [{ flop: [{ pos: "HJ", action: "check" }, { pos: "CO", action: "bet", to: 12.5 }, { pos: "HJ", action: "call" }], share: 0.3047 }] }, "turn", "fast");
   assert.match(l, /don't hold this flop line/);

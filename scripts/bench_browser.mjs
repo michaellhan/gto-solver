@@ -30,6 +30,10 @@
 // time to the answer is counted from it; --presolve runs the page's presolve meanwhile (Advisor.presolve: the
 // worker solves the street from where the opponent is to act, stopped through the shared stop flag at G s, as the
 // page does when the move is entered), else the worker idles through the gap as it does today.
+// The ro-* spots are Study's turn and river reports (study.js runouts(): {"study": true, "runouts": true}, no hero, at
+// the speed's budget) solved cold in a fresh worker, as Study's Solve the flop / Solve the turn does, timed against
+// the speed's budget (the street's, a river report's plus the flop's); the solves stop well inside it, and Study's
+// estimate (study.js RO_SECONDS) is the slowest of these, at 1 and 8 threads.
 // Times are wall clock on this machine: a browser tab is single-threaded too, but other load moves them.
 import { spawnSync, execFileSync } from "child_process";
 import { Worker as Thread } from "worker_threads";
@@ -136,6 +140,17 @@ const SPOTS = {
   "exploit": base({ hero: "BB", hole: "QhJh", board: "Ks7d2cTh", flop: SRP_FLOP, opponents: "pool" }),
   "lock": base({ hero: "BB", hole: "QhJh", board: "Ks7d2cTh", flop: SRP_FLOP, locks: { BTN: { fold: 15, bluff: 30 } } }),
   "raked": base({ hero: "BTN", hole: "AsQs", board: "Kc7d4h", flop: [X("BB")], rake: 0.05, rake_cap: 3 }),
+  // Study's reports (no hero): the turn report on a library flop (its entry holds the flop only: the flop solved for
+  // it), checked through, a 3bet pot, a limped pot (no library); the river report (the turn solved, the flop to narrow)
+  "ro-turn": base({ board: "Ks7d2c", flop: SRP_FLOP, study: true, runouts: true }),
+  "ro-turn-x": base({ board: "Ks7d2c", flop: [X("BB"), X("BTN")], study: true, runouts: true }),
+  "ro-turn-3bp": base({ board: "Ks7d2c", preflop: BB_3BET, flop: [X("BB"), B("BTN", 6.8), C("BB")], study: true, runouts: true }),
+  "ro-turn-limp": base({ board: "Ks7d2c", preflop: LIMP, flop: [X("SB"), B("BB", 1.5), C("SB")], study: true, runouts: true }),
+  "ro-turn-2tone": base({ board: "9h8h6c", flop: [X("BB"), B("BTN", 1.8), C("BB")], study: true, runouts: true }),
+  "ro-river": base({ board: "Ks7d2cTh", flop: SRP_FLOP, turn: SRP_TURN, study: true, runouts: true }),
+  "ro-river-x": base({ board: "Ks7d2cTh", flop: [X("BB"), X("BTN")], turn: [X("BB"), X("BTN")], study: true, runouts: true }),
+  "ro-river-3bp": base({ board: "Ks7d2cTh", preflop: BB_3BET, flop: [X("BB"), B("BTN", 6.8), C("BB")], turn: [X("BB"), B("BTN", 15), C("BB")],
+                         study: true, runouts: true }),
 };
 const STREET_IDX = { 0: 0, 3: 1, 4: 2, 5: 3 };
 const STREET_OF = { 6: "flop", 8: "turn", 10: "river" };
@@ -146,8 +161,9 @@ function arg(name, dflt) {
 }
 const flag = (name) => process.argv.includes("--" + name);
 
-// the page's estimate (index.html analyze(): the bar's "of ~N s")
+// the page's estimate (index.html analyze(): the bar's "of ~N s"; a report: study.js estimate())
 function pageBudget(state, speed, fastSeconds) {
+  if (state.runouts) return state.board.length === 8 ? BUDGETS[speed][0] + BUDGETS[speed][1] : BUDGETS[speed][0];
   const street = STREET_IDX[state.board.length / 2];
   if (street === 0) return null;
   const [b, p] = BUDGETS[speed];
@@ -330,7 +346,8 @@ async function runSpot(w, spot, speeds) {
       iterations: s.iterations ?? null, solve_s: s.solve_seconds ?? null, expl_pct: s.exploitability_pct ?? null, cells: s.cells ?? null,
       outside_s: s.solve_seconds != null ? +(wall - s.solve_seconds).toFixed(2) : null,
       precomputed: !!r.precomputed, heap_mb: +w.heap().toFixed(0), lib_fetches: w.ctx.libFetches - x0, lib_ahead: w.ctx.aheadFetches - a0,
-      street: r.street, recommended: r.recommended, error: m.error || r.error || null,
+      street: r.street, recommended: r.recommended ?? (r.study === "runouts" ? `${r.street} report: ${(r.first || {}).actor} ${((r.first || {}).actions || []).join("/")}, ${(r.cards || []).length} cards` : undefined),
+      error: m.error || r.error || (r.skipped ? "skipped: " + r.skipped : null),
       restarts: process.env.BENCH_FAIL || process.env.BENCH_MWFAIL ? w.restarts() : null,
       early: m.part ? { s: m.part.early_s, recommended: m.part.recommended, source: m.part.approximate.source,
                         label: m.part.approximate.label } : null,

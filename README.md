@@ -232,9 +232,16 @@ hold strategies only, so the EV columns are "—"; a file built with the flop so
 each turn class's range EVs and gives each action's EV for the hands that take it in its bar's tip; a line they don't
 hold offers the lines they do), or the solve Study's own answer made (a
 river report after Study answered the turn: 0.02 s natively; a flop solved live). Otherwise **Solve the flop** /
-**Solve the turn** solves that street at the speed picked, with a progress bar against the speed's budget (Fast: 2.5 s
-a street on the local server, 8 s in the browser, and a river report's flop too where it isn't in hand: K72r's turn
-report took 1.2 s on the server, a Q84 river report 6.8 s). Like Study, it reads
+**Solve the turn** solves that street at the speed picked, with a progress bar against the time it should take: on
+the local server the speed's budget (Fast: 2.5 s a street, and a river report's flop too where it isn't in hand:
+K72r's turn report took 1.2 s, a Q84 river report 6.8 s); in the browser, where the solves stop well inside their
+budgets (Fast 8 s, a river report 11; Accurate 60 and 72) once they reach the exploitability target, the time they
+took (`scripts/bench_browser.mjs`'s ro-* spots, each solved cold in a fresh worker, 8 threads as the site runs / 1
+where the page isn't cross-origin isolated): Fast turn reports 0.3-1.2 s / 0.5-2.3 s (single-raised, 3bet, limped
+and two-tone flops), river reports 0.7-3.0 s / 1.3-7.1 s (after a bet, checked through, a 3bet pot); Accurate a turn
+report 1.3 s / 3.5 s, a river report 7.2 s / 30.5 s. The button and the bar say the slowest of those, rounded up (~2
+s and ~3 s at Fast on 8 threads, ~31 s for an unthreaded Accurate river report), in between for 2-7 threads. Like
+Study, it reads
 the equilibrium: tournament payouts, locks and exploit settings are left out. The pure parts (`gto/runouts.py`'s
 equities, `gto/static/runouts.js`, loaded when one first opens) are tested from Python and Node.
 

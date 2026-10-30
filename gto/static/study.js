@@ -436,11 +436,23 @@
         + sk.lines.map((ln, i) => `<option value="${i}">Flop: ${esc(R.lineLabel(ln))} (${Math.round(ln.share * 100)}%)</option>`).join("") + `</select>` : "")
       + `</div></div>`;
   }
-  // the seconds a report's solve takes: the speed's budget for the street (a river's: the turn's, and the flop's to
-  // narrow ranges if it isn't in hand)
-  function estimate(street, speed) {
-    const b = typeof globalThis.studyBudget === "function" ? globalThis.studyBudget(speed) : speed === "accurate" ? [60, 12] : [8, 3];
-    return street === "river" ? b[0] + b[1] : b[0];
+  // the seconds a report's solve takes. In the browser, as measured (scripts/bench_browser.mjs's ro-* spots: a turn
+  // report on single-raised, 3bet, limped and two-tone flops, river reports after a bet and checked through, solved
+  // cold in a fresh worker), the slowest spot rounded up, [1 thread, 8 threads]: the solves stop well inside their
+  // budgets (Fast 8 s, a river's 11; Accurate 60, 72) once the exploitability target is met; between, as
+  // t1 - p + p / n (p the part that threads split). The worker's threads: up to 8 where the page is cross-origin
+  // isolated (the site, under its service worker), else 1. On the local server: the speed's budget for the street (a
+  // river's: the turn's, and the flop's to narrow ranges if it isn't in hand).
+  const RO_SECONDS = { fast: { turn: [2.5, 1.5], river: [7.5, 3] }, accurate: { turn: [4, 1.5], river: [31, 7.5] } };
+  const studyThreads = () => globalThis.crossOriginIsolated ? Math.max(1, Math.min(8, (globalThis.navigator && navigator.hardwareConcurrency) || 1)) : 1;
+  function estimate(street, speed, threads = studyThreads()) {
+    if (typeof MODE === "string" && MODE === "server" && typeof globalThis.studyBudget === "function") {
+      const b = globalThis.studyBudget(speed);
+      return street === "river" ? b[0] + b[1] : b[0];
+    }
+    const [t1, t8] = RO_SECONDS[speed === "accurate" ? "accurate" : "fast"][street === "river" ? "river" : "turn"];
+    const par = (t1 - t8) * 8 / 7;
+    return Math.round((t1 - par + par / Math.max(1, Math.min(8, threads))) * 10) / 10;
   }
 
   // ---- the panel (browser)
