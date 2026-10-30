@@ -152,11 +152,46 @@ class TestThreads(unittest.TestCase):
                     np.testing.assert_array_equal(x, y)
                 self.assertEqual(got[0][2], got[1][2])
 
+    def test_first_chance_nodes_in_one_job(self):
+        # With helpers a training pass runs the rows of every first chance node (none above it) as one job: a walk
+        # down keeps each node's reaches, the job masks or spreads each row and runs it, the thread finishing a node's
+        # last row sums its utilities, and the pass proper takes them (core_subs). The same floats bit for bit as a
+        # job a node, on 2, 4 and 8 threads: a turn by river class full and trimmed (TRIMS' third level), a raked turn
+        # dealing every river, a flop by hand buckets and the library's flop (its leaves batched before the pass); its
+        # lanes measured (core_lanes(2)). A 3bet pot's library flop (deferred games) runs a job a node either way.
+        from gto.advisor import Advisor
+        fast = native.config("fast")
+        dealt = Config(river_classes=False, n_rivers=None, rake_rate=0.05, rake_cap=3.0)
+        spots = (("Ks7d2cTh", 20, 90, 20, fast), ("Ks7d2cTh", 9.1, 95.5, 20, Advisor._trim_cfg(fast, "turn", 3)),
+                 ("Qs8d3c4h", 30, 40, 15, dealt), ("Kd7c2h", 5.5, 97.5, 6, fast),
+                 ("Kd7c2h", 5.5, 97.5, 4, fl.library_config()))
+        L = core.lib().L
+        for board, pot, stack, iters, cfg in spots:
+            with self.subTest(board, pot=pot):
+                got = []
+                try:
+                    for t in (2, 4, 8):
+                        self.assertEqual(core.threads(t), t)
+                        for on in (1, 0):
+                            self.assertEqual(L.core_subs(on), on)
+                            sol = _solve(board, OOP_T, IP_T, pot, stack, cfg, iters)
+                            self.assertTrue(sol.solver.use_core and sol.solver._core_ok)
+                            if on:
+                                self.assertGreater(L.core_lanes(2), 0)
+                            got.append(np.concatenate([np.r_[d.regret.ravel(), d.ssum.ravel()]
+                                                       for d in _decisions(sol)]).view(np.int32))
+                finally:
+                    L.core_subs(1)
+                    core.threads(1)
+                for g in got[1:]:
+                    np.testing.assert_array_equal(g, got[0])
+
     def test_lanes_hold_the_sums(self):
-        # A helper runs its chunk of a chance node's rows in a lane of its own, sized by a serial pass over the chunks
-        # in the first iteration. That pass sums every terminal row, reached or not: its second player's pass meets
-        # the first's regret-matched zeros, and skipping the showdowns nobody reached there sized the lanes short of
-        # a later chunk's (a trap in a helper: natively the process ends, in the browser the solve never answers).
+        # A helper runs its rows of a training pass's job (every first chance node's: subs) in a lane of its own, sized
+        # by a serial pass over them in the second iteration (the first runs a job a node, sizing a whole pass's lanes
+        # for the evaluations). That pass sums every terminal row, reached or not: its second player's pass meets the
+        # first's regret-matched zeros, and skipping the showdowns nobody reached there sized the lanes short of a
+        # later chunk's (a trap in a helper: natively the process ends, in the browser the solve never answers).
         # The lanes the same with the skip on as off on 2, 4 and 8 threads, over turns full and trimmed (TRIMS'
         # third level trapped 28 of 112 such turns on 8 threads), a shallow 3bet pot's and a flop by hand buckets
         # (a river splits no rows), and each solve run on; and a limped turn advised at a 1 s budget (its tree
@@ -171,7 +206,7 @@ class TestThreads(unittest.TestCase):
         rows = [json.loads(x) for x in p.stdout.splitlines() if x.startswith("{")]
         self.assertEqual(len(rows), 3 * len(_lane_spots()) + 1)
         for r in rows[:-1]:
-            self.assertGreater(r["lanes"][0][0], 0, r)
+            self.assertGreater(r["lanes"][0][2], 0, r)
             self.assertEqual(r["lanes"][0], r["lanes"][1], r)
         self.assertTrue(rows[-1]["solver"]["iterations"] > 0, rows[-1])
 
@@ -205,7 +240,7 @@ def _lanes_child():
                 L.core_skip(on)
                 sol = solve(cards(board), r0, r1, pot, stack, cfg=cfg, time_budget=1e9, max_iters=iters)
                 assert sol.solver.use_core and sol.solver._core_ok
-                lanes.append([int(L.core_lanes(k)) for k in (0, 1)])
+                lanes.append([int(L.core_lanes(k)) for k in (0, 1, 2)])
             print(json.dumps({"spot": i, "threads": t, "lanes": lanes}), flush=True)
     core.threads(8)
     F, X = (lambda p: {"pos": p, "action": "fold"}), (lambda p: {"pos": p, "action": "check"})

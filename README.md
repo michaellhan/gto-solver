@@ -1055,7 +1055,8 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   nothing: 153 iterations against 148-152 on one. The machine has 4 performance and 6 efficiency cores, which caps 8
   threads near 3x. Running a whole pass as one job (the chance nodes and the terminals above them collected as
   tasks, run, then their results taken on a second walk down) instead of a job per chance node was no faster: 193-202
-  iterations against 211 in Chrome, the same natively.
+  iterations against 211 in Chrome, the same natively. (A task there was a whole chance node; one job of every first
+  chance node's rows is faster: The first chance nodes in one job, below.)
   Each thread then got ~1.3x faster (1 thread, side by side on a loaded machine: Fast 19.0 -> 14.1-14.5 ms an
   iteration, Accurate 24.9 -> 18.4-19.0): a showdown's running sums run as four chains at once (the strength order's
   quarters, each one's offset added after), each card's card-removal term is taken once a board instead of for each
@@ -1608,6 +1609,42 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   of a 75% bet only, played on a class's card: a start, not an answer, so the stopping rules are unchanged. The
   turn file is read before the solve (the approximate answer reads it first, and the worker fetches it with the
   flop's entry).
+* **The first chance nodes in one job** (`core/gtocore.c` `subs_job`, `subs_run`, `plan`, `core_subs`). On threads a
+  training pass ran a job per chance node: on a turn, each line's river split into its classes' rows (13 on a rainbow
+  turn), the helpers taking rows while the thread that set the job up spread the reaches, waited for the last rows and
+  summed them, then the next line's. Profiled natively (the threaded browser's tree after a library flop), 19-25% of a
+  turn iteration on 4 and 8 threads ran on that one thread (2.3-3.1 ms of 10-15): setting up 13 jobs a pass, each
+  class's spread and sums (1.5-2.1 ms), and at 8 threads 2.5-2.7 ms waiting for each job's last rows. Now a training
+  pass walks down to its first chance nodes (those with none above them) and keeps each one's reaches, runs every row of
+  all of them as one job (169 rows on these turns: 13 lines, 13 classes each; the thread that finishes a node's last row
+  sums it), and walks down again to take the sums where the nodes are. The serial share comes to 10-15% (0.85-1.3 ms:
+  mostly the second walk), the wait to 0.1-0.5 ms. The same floats bit for bit: a row's arithmetic and a node's sums are
+  the same functions' as a job a node, each row in a helper's lane of its own (sized by a serial pass over the rows in
+  the second iteration, `core_lanes(2)`). The first iteration still runs a job a node: it measures a whole pass's lanes
+  (`core_lanes(0)`), which the evaluations after a solve use (measured on the first evaluation alone, a later one's came
+  16 bytes short and trapped on a limped turn at a 1 s budget). Checked against the core before on the lanes fix's 686
+  trees (four turns, two rivers and a flop, four ranges, full trees and TRIMS' levels) on 2, 4 and 8 threads: regrets
+  and strategy sums equal, and the passes after (EVs, best responses, exploitability); and 65 requests at budgets of 1,
+  3 and 8 s and Quick's, none failing. One thread is unchanged (no helpers, no subs); `core_subs(0)` runs a job a node
+  (the tests). `core-mt.wasm` 63 -> 76 KB (22 -> 27 KB gzipped); the heap unchanged.
+  Natively, ms an iteration from the 100th (medians of 3, alternating, beside the library's 3bet pot build):
+
+  | turn | 2 threads | 4 threads | 8 threads |
+  |---|---|---|---|
+  | after a third-pot c-bet called (`turn`) | 15.2 -> 11.8 | 9.4 -> 7.4 | 8.2 -> 6.9 |
+  | the flop checked through (`turn-x`) | 17.4 -> 13.8 | 12.7 -> 8.1 | 11.1 -> 7.0 |
+  | limped (SB vs BB, `turn-limp`) | 19.5 -> 16.0 | 14.6 -> 11.6 | 12.2 -> 9.2 |
+
+  In the browser bench, Fast, BTN vs BB's turn files (`BENCH_LIB`), a fresh worker per spot, two runs each,
+  alternating (seconds to the answer, before -> after; the same iterations and exploitability):
+
+  | request | 8 threads (the live page's) | 4 threads | iterations, % of the pot |
+  |---|---|---|---|
+  | `turn` | 3.28 / 3.22 -> 2.27 / 2.34 | 3.67 / 3.66 -> 3.12 / 2.99 | 300, 0.12 |
+  | `turn-x` | 3.72 / 3.91 -> 2.79 / 2.81 | 4.22 / 4.41 -> 3.60 / 3.79 | 300, 0.18 |
+  | `turn-limp` | 5.81 / 6.06 -> 4.59 / 4.62 | 6.53 / 6.80 -> 5.76 / 5.88 | 300, 0.16 |
+
+  The Accurate turn at a 15 s budget on 8 threads: 10.35 / 10.50 -> 7.74 / 7.67 s, 1000 iterations, 0.02%.
 * **Regret minimizer** (`docs/cfr_research.md`, `scripts/bench_solver.py --algos`, exploitability per
   iteration): predictive CFR+ and its discounted form (PCFR+, PDCFR+), the state of the art on many
   non-poker games, are 2-7x more exploitable than DCFR here at 100-200 iterations on every spot (the river,

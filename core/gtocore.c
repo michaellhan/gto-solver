@@ -36,8 +36,8 @@
  * row of its own): the reaches and utilities passed between nodes hold just those rows, the program's arrays (regrets,
  * masks, rankings) are indexed by the row itself. Rows never mix below a chance node, so with threads (core_threads)
  * the first chance node on the way down hands its child's rows out in chunks, to this thread and its helpers, each
- * with its own scratch: every row gets the same arithmetic whichever thread runs it, and a solve's numbers don't
- * depend on how many threads ran it.
+ * with its own scratch (a training pass: every first chance node's rows in one job, subs below): every row gets the
+ * same arithmetic whichever thread runs it, and a solve's numbers don't depend on how many threads ran it.
  */
 #include <stddef.h>
 #include <stdint.h>
@@ -110,8 +110,9 @@ static void *salloc(Lane *L, size_t bytes) {
 }
 
 /* bytes a helper's chunk of rows may take: 0 until a serial pass measured them. [0] a whole pass's (a training pass,
-   an evaluation: the same scratch), [1] a deferred training pass's (below: its chunks a row at a time, less) */
-static size_t lane_size[2], measured[2];
+   an evaluation: the same scratch), [1] a deferred training pass's (below: its chunks a row at a time, less), [2] a
+   training pass's rows of every first chance node at once (subs, below: a row and its reaches, and a node's sums) */
+static size_t lane_size[3], measured[3];
 /* 1 while split() runs a chance node's chunks serially to measure them: terminal() sums every row then, reached or not
    (unreached), so the lanes hold the sums' scratch. A row unreached in that pass can be reached later: the first
    iteration's second pass meets the first player's regret-matched zeros, and skipped the deepest showdowns' ranking()
@@ -119,7 +120,7 @@ static size_t lane_size[2], measured[2];
 static int measuring;
 static int deferring;   /* (which: 1 in a deferred training pass) */
 static void sized(void) {
-  for (int k = 0; k < 2; k++)
+  for (int k = 0; k < 3; k++)
     if (!lane_size[k] && measured[k]) lane_size[k] = (measured[k] + 63) & ~(size_t)63;
 }
 
@@ -132,7 +133,7 @@ EXPORT(core_reset) void core_reset(void) {
   }
 #endif
   M.top = M.peak = 0;
-  lane_size[0] = lane_size[1] = measured[0] = measured[1] = 0;
+  for (int k = 0; k < 3; k++) lane_size[k] = measured[k] = 0;
 }
 
 /* `bytes` in the arena; returns its offset. */
@@ -674,65 +675,151 @@ static void dealt(const i32 *nd, const i32 *bk, int p, i32 lo, i32 hi, const f32
   }
 }
 
+/* A training pass with helper threads runs the rows of its first chance nodes (those with none above them) as one job,
+   not a job a node: a walk down (COLLECT) keeps each node's reaches here (a sub), the job runs every sub's rows (a
+   row: its reaches masked or spread into its child's row, as chance() and classes() do, then the child), the thread
+   finishing a sub's last row gathers its utilities, and the pass proper (READ) takes them where the node is. A row's
+   arithmetic and a node's sums are chance()'s and classes()'s (the same functions), so the floats are those of a job a
+   node (and of one thread). What changes: a pass waits on its threads once, not once a node (each wait for the job's
+   last rows), and the spreads and sums run on them. Above the subs only decisions and terminals (plan()); a decision
+   there is walked twice, its strategies worked out again (COLLECT's discount nothing, fused: read's). A program's
+   first iteration still runs a job a node: it measures the lanes of a whole pass (lane_size[0]), which the evaluations
+   after a solve use (an evaluation's pass differs a little from a training pass, so the first evaluation's measure
+   alone held a later one's 16 bytes short); the subs run from the second. */
+typedef struct {
+  const i32 *nd;
+  i32 lo, hi, row0, left;     /* its rows, its first row in the job, its rows still to run */
+  f32 *r0, *r1, *u, *out;     /* reaches (hi - lo, n + 1: a 0 after a row's n), its child's utilities, the sums */
+} Sub;
+static Sub *subs;
+static i32 nsubs, maxsubs, sub_rows, sub_next;   /* kept, room for, their rows, READ's next */
+static f32 *sub_area, *sub_end;
+static int subs_on = 1, subbing;   /* subbing: this pass runs them */
+
+/* 1: a training pass runs its first chance nodes' rows as one job (with helpers), 0: a job a node (the same floats:
+   tests); -1 just asks */
+EXPORT(core_subs) i32 core_subs(i32 on) {
+  if (on >= 0) subs_on = on;
+  return subs_on;
+}
+
+static f32 *carve(size_t m) {
+  f32 *x = sub_area;
+  sub_area += (m + 15) & ~(size_t)15;
+  if (sub_area > sub_end) __builtin_trap();
+  return x;
+}
+
+/* a first chance node on COLLECT's walk: its reaches kept; on READ's: its utilities */
+static void sub(const i32 *nd, i32 lo, i32 hi, const f32 *r0, const f32 *r1, f32 *out) {
+  size_t B = (size_t)(hi - lo), rows = B * (size_t)nd[2];
+  if (phase == READ) {
+    if (sub_next >= nsubs) __builtin_trap();
+    Sub *s = &subs[sub_next++];
+    if (s->nd != nd || s->lo != lo || s->hi != hi) __builtin_trap();   /* (the walks differ: a bug) */
+    for (size_t x = 0; x < B * n; x++) out[x] = s->out[x];
+    return;
+  }
+  if (nsubs == maxsubs) __builtin_trap();
+  Sub *s = &subs[nsubs++];
+  s->nd = nd, s->lo = lo, s->hi = hi, s->row0 = sub_rows, s->left = (i32)rows;
+  sub_rows += (i32)rows;
+  s->r0 = carve(B * (n + 1)), s->r1 = carve(B * (n + 1)), s->u = carve(rows * n), s->out = carve(B * n);
+  for (size_t j = 0; j < B; j++) {
+    f32 *x0 = s->r0 + j * (n + 1), *x1 = s->r1 + j * (n + 1);
+    for (i32 i = 0; i < n; i++) x0[i] = r0[j * n + i], x1[i] = r1[j * n + i];
+    x0[n] = x1[n] = 0;
+  }
+}
+
+/* a chance node's child row b*K + k: each player's reach (row b) times the card's masks */
+static void masked(const i32 *nd, i32 b, i32 k, const f32 *r0, const f32 *r1, f32 *c0, f32 *c1) {
+  const f32 *m = PF(nd[4]) + ((size_t)b * nd[2] + k) * n;
+  for (i32 i = 0; i < n; i++) {
+    c0[i] = r0[i] * m[i];
+    c1[i] = r1[i] * m[i];
+  }
+}
+
+/* a chance node's row b: its child's utilities ub (K rows) summed over the cards by their weights */
+static void chance_out(const i32 *nd, i32 b, const f32 *ub, f32 *o) {
+  i32 K = nd[2];
+  const f32 *wb = PF(nd[5]) + (size_t)b * K * n, *norm = PF(nd[6]) + (size_t)b * n;
+  for (i32 i = 0; i < n; i++) o[i] = ub[i] * wb[i];
+  for (i32 k = 1; k < K; k++)
+    for (i32 i = 0; i < n; i++) o[i] += ub[(size_t)k * n + i] * wb[(size_t)k * n + i];
+  for (i32 i = 0; i < n; i++) o[i] = o[i] / norm[i];
+}
+
 static void chance(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r0, const f32 *r1, f32 *out) {
   i32 K = nd[2], child = nd[3];
+  if (subbing && phase != WHOLE && !L->par) {
+    sub(nd, lo, hi, r0, r1, out);
+    return;
+  }
   if (phase != WHOLE && P[child] == BUCKETS && P[child + 6]) {
     dealt(nd, P + child, p, lo, hi, r0, r1, out);
     return;
   }
-  const f32 *masks = PF(nd[4]), *w = PF(nd[5]), *norm = PF(nd[6]);
   size_t mark = L->top, rows = (size_t)(hi - lo) * K;
   f32 *c0 = salloc(L, sizeof(f32) * rows * n), *c1 = salloc(L, sizeof(f32) * rows * n);
   f32 *u = salloc(L, sizeof(f32) * rows * n);
   for (i32 b = lo; b < hi; b++)
     for (i32 k = 0; k < K; k++) {
-      size_t row = ((size_t)(b - lo) * K + k) * n, at = ((size_t)b * K + k) * n, rb = (size_t)(b - lo) * n;
-      for (i32 i = 0; i < n; i++) {
-        c0[row + i] = r0[rb + i] * masks[at + i];
-        c1[row + i] = r1[rb + i] * masks[at + i];
-      }
+      size_t row = ((size_t)(b - lo) * K + k) * n, rb = (size_t)(b - lo) * n;
+      masked(nd, b, k, r0 + rb, r1 + rb, c0 + row, c1 + row);
     }
   split(L, child, p, lo * K, hi * K, c0, c1, u);
   if (phase == COLLECT) {
     L->top = mark;
     return;
   }
-  for (i32 b = lo; b < hi; b++) {
-    f32 *o = out + (size_t)(b - lo) * n;
-    const f32 *ub = u + (size_t)(b - lo) * K * n, *wb = w + (size_t)b * K * n;
-    for (i32 i = 0; i < n; i++) o[i] = ub[i] * wb[i];
-    for (i32 k = 1; k < K; k++)
-      for (i32 i = 0; i < n; i++) o[i] += ub[(size_t)k * n + i] * wb[(size_t)k * n + i];
-    for (i32 i = 0; i < n; i++) o[i] = o[i] / norm[(size_t)b * n + i];
-  }
+  for (i32 b = lo; b < hi; b++) chance_out(nd, b, u + (size_t)(b - lo) * K * n, out + (size_t)(b - lo) * n);
   L->top = mark;
+}
+
+/* Chance.spread of a reach row rp (n + 1 floats, the last 0) into class k of row b: dst (n) */
+static void spread_row(const i32 *nd, i32 b, i32 k, const f32 *rp, f32 *dst) {
+  i32 K = nd[2], nG = nd[10];
+  const f32 *masks = PF(nd[4]), *sizes = PF(nd[9]);
+  const i32 *G = PI(nd[6]), *starts = PI(nd[8]);
+  i32 e0 = starts[k], e1 = k + 1 < K ? starts[k + 1] : nG;
+  for (i32 i = 0; i < n; i++) dst[i] = rp[G[(size_t)e0 * n + i]];
+  for (i32 e = e0 + 1; e < e1; e++)
+    for (i32 i = 0; i < n; i++) dst[i] += rp[G[(size_t)e * n + i]];
+  const f32 *m = masks + ((size_t)b * K + k) * n;
+  for (i32 i = 0; i < n; i++) dst[i] *= m[i] / sizes[k];
 }
 
 /* Chance.spread of one player's reach (rows lo..hi) into the class rows c; rp: n + 1 floats */
 static void spread(const i32 *nd, i32 lo, i32 hi, const f32 *r, f32 *c, f32 *rp) {
-  i32 K = nd[2], nG = nd[10];
-  const f32 *masks = PF(nd[4]), *sizes = PF(nd[9]);
-  const i32 *G = PI(nd[6]), *starts = PI(nd[8]);
+  i32 K = nd[2];
   for (i32 b = lo; b < hi; b++) {
     for (i32 i = 0; i < n; i++) rp[i] = r[(size_t)(b - lo) * n + i];
     rp[n] = 0;
-    for (i32 k = 0; k < K; k++) {
-      f32 *dst = c + ((size_t)(b - lo) * K + k) * n;
-      i32 e0 = starts[k], e1 = k + 1 < K ? starts[k + 1] : nG;
-      for (i32 i = 0; i < n; i++) dst[i] = rp[G[(size_t)e0 * n + i]];
-      for (i32 e = e0 + 1; e < e1; e++)
-        for (i32 i = 0; i < n; i++) dst[i] += rp[G[(size_t)e * n + i]];
-      const f32 *m = masks + ((size_t)b * K + k) * n;
-      for (i32 i = 0; i < n; i++) dst[i] *= m[i] / sizes[k];
-    }
+    for (i32 k = 0; k < K; k++) spread_row(nd, b, k, rp, c + ((size_t)(b - lo) * K + k) * n);
   }
+}
+
+/* Chance.gather of row b's class utilities ub (K rows) into o (n); um: K * n floats of scratch */
+static void classes_out(const i32 *nd, i32 b, const f32 *ub, f32 *um, f32 *o) {
+  i32 K = nd[2], nG = nd[10];
+  const f32 *m = PF(nd[4]) + (size_t)b * K * n, *norm = PF(nd[5]) + (size_t)b * n;
+  const i32 *flat = PI(nd[7]);
+  for (size_t x = 0; x < (size_t)K * n; x++) um[x] = ub[x] * m[x];
+  for (i32 i = 0; i < n; i++) o[i] = um[flat[i]];
+  for (i32 e = 1; e < nG; e++)
+    for (i32 i = 0; i < n; i++) o[i] += um[flat[(size_t)e * n + i]];
+  for (i32 i = 0; i < n; i++) o[i] = o[i] / norm[i];
 }
 
 /* river classes: Chance.spread into the class subtrees, Chance.gather back */
 static void classes(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r0, const f32 *r1, f32 *out) {
-  i32 K = nd[2], child = nd[3], nG = nd[10];
-  const f32 *masks = PF(nd[4]), *norm = PF(nd[5]);
-  const i32 *flat = PI(nd[7]);
+  if (subbing && phase != WHOLE && !L->par) {
+    sub(nd, lo, hi, r0, r1, out);
+    return;
+  }
+  i32 K = nd[2], child = nd[3];
   size_t mark = L->top, rows = (size_t)(hi - lo) * K;
   f32 *c0 = salloc(L, sizeof(f32) * rows * n), *c1 = salloc(L, sizeof(f32) * rows * n);
   f32 *u = salloc(L, sizeof(f32) * rows * n), *rp = salloc(L, sizeof(f32) * (n + 1));
@@ -740,16 +827,44 @@ static void classes(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r0
   spread(nd, lo, hi, r0, c0, rp);
   spread(nd, lo, hi, r1, c1, rp);
   split(L, child, p, lo * K, hi * K, c0, c1, u);
-  for (i32 b = lo; b < hi && phase != COLLECT; b++) {
-    const f32 *ub = u + (size_t)(b - lo) * K * n, *m = masks + (size_t)b * K * n;
-    for (size_t x = 0; x < (size_t)K * n; x++) um[x] = ub[x] * m[x];
-    f32 *o = out + (size_t)(b - lo) * n;
-    for (i32 i = 0; i < n; i++) o[i] = um[flat[i]];
-    for (i32 e = 1; e < nG; e++)
-      for (i32 i = 0; i < n; i++) o[i] += um[flat[(size_t)e * n + i]];
-    for (i32 i = 0; i < n; i++) o[i] = o[i] / norm[(size_t)b * n + i];
-  }
+  for (i32 b = lo; b < hi && phase != COLLECT; b++)
+    classes_out(nd, b, u + (size_t)(b - lo) * K * n, um, out + (size_t)(b - lo) * n);
   L->top = mark;
+}
+
+/* subs' rows lo..hi of the pass's job (on a lane with par set) */
+static void subs_run(Lane *L, int p, i32 lo, i32 hi) {
+  for (i32 g = lo; g < hi; g++) {
+    i32 a = 0, z = nsubs - 1;   /* (the last sub starting at or before g) */
+    while (a < z) {
+      i32 m = (a + z + 1) / 2;
+      if (subs[m].row0 <= g) a = m; else z = m - 1;
+    }
+    Sub *s = &subs[a];
+    const i32 *nd = s->nd;
+    i32 K = nd[2], x = g - s->row0, j = x / K, k = x % K, b = s->lo + j;
+    size_t mark = L->top;
+    f32 *c0 = salloc(L, sizeof(f32) * n), *c1 = salloc(L, sizeof(f32) * n);
+    const f32 *q0 = s->r0 + (size_t)j * (n + 1), *q1 = s->r1 + (size_t)j * (n + 1);
+    if (nd[0] == CHANCE) {
+      masked(nd, b, k, q0, q1, c0, c1);
+    } else {
+      spread_row(nd, b, k, q0, c0);
+      spread_row(nd, b, k, q1, c1);
+    }
+    cfr(L, nd[3], p, b * K + k, b * K + k + 1, c0, c1, s->u + (size_t)x * n);
+    if (__atomic_sub_fetch(&s->left, 1, __ATOMIC_ACQ_REL) == 0) {   /* (its last row: every row's utilities seen) */
+      f32 *um = nd[0] == CLASSES ? salloc(L, sizeof(f32) * K * n) : 0;
+      for (i32 r = 0; r < s->hi - s->lo; r++) {
+        const f32 *ub = s->u + (size_t)r * K * n;
+        if (nd[0] == CHANCE)
+          chance_out(nd, s->lo + r, ub, s->out + (size_t)r * n);
+        else
+          classes_out(nd, s->lo + r, ub, um, s->out + (size_t)r * n);
+      }
+    }
+    L->top = mark;
+  }
 }
 
 /* ------------------------------------------------------------------ hand buckets (a flop solve's turn and river) */
@@ -1369,9 +1484,13 @@ static void games(Lane *L, int p, i32 lo, i32 hi) {
   }
 }
 
-/* a job's rows lo..hi (from row r of its arrays): a chance node's child, or (child -1) the deferred games */
+#define SUBS -2
+/* a job's rows lo..hi (from row r of its arrays): a chance node's child, (child -1) the deferred games, or (SUBS) the
+   pass's subs */
 static void run(Lane *L, i32 child, int p, i32 lo, i32 hi, i32 r, const f32 *c0, const f32 *c1, f32 *u) {
-  if (DEFER && child < 0) {
+  if (child == SUBS) {
+    subs_run(L, p, lo, hi);
+  } else if (DEFER && child < 0) {
     games(L, p, lo, hi);
   } else if (phase != WHOLE) {
     /* (a deferred pass's walks a row at a time: a card's dealt rivers' masks and buckets, read under every line, stay
@@ -1532,8 +1651,9 @@ EXPORT(core_fail) i32 core_fail(i32 i, i32 n) {
   return n;
 }
 
-/* the helpers' lanes as sized (0: not yet), k 0 a whole pass's and 1 a deferred pass's (a test's: sized for the sums) */
-EXPORT(core_lanes) u32 core_lanes(i32 k) { return (u32)lane_size[k & 1]; }
+/* the helpers' lanes as sized (0: not yet), k 0 a whole pass's, 1 a deferred pass's and 2 a pass's subs' (a test's:
+   sized for the sums) */
+EXPORT(core_lanes) u32 core_lanes(i32 k) { return (u32)lane_size[k < 0 || k > 2 ? 0 : k]; }
 
 /* the rows of jobs the helpers have run (so a test, or the page, can tell they're running) */
 EXPORT(core_helped) i32 core_helped(void) {
@@ -1563,10 +1683,39 @@ EXPORT(core_threads) i32 core_threads(i32 t) {
 #endif
   if (t != nthreads) {
     nthreads = t;
-    lane_size[0] = lane_size[1] = measured[0] = measured[1] = 0;   /* (the chunks change with the number) */
+    for (int k = 0; k < 3; k++) lane_size[k] = measured[k] = 0;   /* (the chunks change with the number) */
   }
   return nthreads;
 }
+
+#ifdef THREADS
+/* rows lo..lo+rows of a chance node's child (or SUBS) as a job, grain rows at a time, each helper in a lane of `lane`
+   bytes: this thread takes rows too, then waits for the rest */
+static void job(Lane *L, i32 child, int p, i32 lo, i32 rows, i32 grain, const f32 *c0, const f32 *c1, f32 *u,
+                size_t lane) {
+  i32 helpers = nthreads - 1;
+  size_t mark = L->top;
+  unsigned char *lanes = salloc(L, lane * helpers);
+  u32 seq = (u32)(__atomic_load_n(&J.ticket, __ATOMIC_RELAXED) >> 32) + 2;
+  __atomic_store_n(&J.ticket, ((u64)(seq - 1) << 32) | 0xffffffffu, __ATOMIC_SEQ_CST);
+  ST(J.child, child), ST(J.p, p), ST(J.lo, lo), ST(J.rows, rows), ST(J.grain, grain), ST(J.helpers, helpers);
+  ST(J.c0, c0), ST(J.c1, c1), ST(J.u, u), ST(J.lanes, (size_t)(lanes - base)), ST(J.lane, lane);
+  ST(J.done, 0);
+  __atomic_store_n(&J.ticket, (u64)seq << 32, __ATOMIC_SEQ_CST);
+  wake();
+  L->par = 1;
+  take(L, seq, child, p, lo, rows, grain, c0, c1, u);
+  L->par = 0;
+  for (int spin = 0; __atomic_load_n(&J.done, __ATOMIC_ACQUIRE) < rows; spin++) {
+    relax();
+    if (LD(dead)) __builtin_trap();   /* (a helper failed holding rows: they won't come) */
+#ifndef __wasm__
+    if (spin > 1 << 12) sched_yield();
+#endif
+  }
+  L->top = mark;
+}
+#endif
 
 /* a chance node's child on rows lo..hi: the first chance node on the way down (not already in a job's rows) runs it
    in chunks, one chunk at a time while measuring the scratch a chunk takes (an iteration, serially, once a program),
@@ -1594,27 +1743,28 @@ static void split(Lane *L, i32 child, int p, i32 lo, i32 hi, const f32 *c0, cons
     return;
   }
 #ifdef THREADS
-  i32 helpers = nthreads - 1;
-  size_t mark = L->top;
-  unsigned char *lanes = salloc(L, lane_size[deferring] * helpers);
-  u32 seq = (u32)(__atomic_load_n(&J.ticket, __ATOMIC_RELAXED) >> 32) + 2;
-  __atomic_store_n(&J.ticket, ((u64)(seq - 1) << 32) | 0xffffffffu, __ATOMIC_SEQ_CST);
-  ST(J.child, child), ST(J.p, p), ST(J.lo, lo), ST(J.rows, rows), ST(J.grain, grain), ST(J.helpers, helpers);
-  ST(J.c0, c0), ST(J.c1, c1), ST(J.u, u), ST(J.lanes, (size_t)(lanes - base)), ST(J.lane, lane_size[deferring]);
-  ST(J.done, 0);
-  __atomic_store_n(&J.ticket, (u64)seq << 32, __ATOMIC_SEQ_CST);
-  wake();
-  L->par = 1;
-  take(L, seq, child, p, lo, rows, grain, c0, c1, u);
-  L->par = 0;
-  for (int spin = 0; __atomic_load_n(&J.done, __ATOMIC_ACQUIRE) < rows; spin++) {
-    relax();
-    if (LD(dead)) __builtin_trap();   /* (a helper failed holding rows: they won't come) */
-#ifndef __wasm__
-    if (spin > 1 << 12) sched_yield();
+  job(L, child, p, lo, rows, grain, c0, c1, u, lane_size[deferring]);
 #endif
+}
+
+/* the pass's subs' rows: a job of them a row at a time (serially the first time, measuring the lanes) */
+static void subs_job(int p) {
+  if (!lane_size[2]) {
+    M.par = 1;
+    measuring = 1;
+    for (i32 r = 0; r < sub_rows; r++) {
+      size_t mark = M.top;
+      M.peak = mark;
+      run(&M, SUBS, p, r, r + 1, r, 0, 0, 0);
+      if (M.peak - mark > measured[2]) measured[2] = M.peak - mark;
+      M.top = mark;
+    }
+    measuring = 0;
+    M.par = 0;
+    return;
   }
-  L->top = mark;
+#ifdef THREADS
+  job(&M, SUBS, p, 0, sub_rows, 1, 0, 0, 0, lane_size[2]);
 #endif
 }
 
@@ -1643,6 +1793,22 @@ EXPORT(core_eval) i32 core_eval(u32 prog, i32 at, i32 p, u32 r0, u32 r1, u32 out
   return 0;
 }
 
+/* the first chance nodes below `at` (subs): counts them and the floats they keep (sub()); 0 if anything above them
+   but decisions and terminals */
+static int plan(i32 at, i32 *ns, size_t *nf) {
+  const i32 *nd = P + at;
+  if (nd[0] == DECISION) {
+    for (i32 a = 0; a < nd[2]; a++)
+      if (!is_terminal(nd[7 + a]) && !plan(nd[7 + a], ns, nf)) return 0;
+    return 1;
+  }
+  if (nd[0] != CHANCE && nd[0] != CLASSES) return 0;
+  size_t B = (size_t)nd[1], K = (size_t)nd[2], up = 15;
+  *ns += 1;
+  *nf += 2 * ((B * (n + 1) + up) & ~up) + ((B * K * n + up) & ~up) + ((B * n + up) & ~up);
+  return 1;
+}
+
 /* `iters` training iterations of the program at `prog` (both players' passes, then the discount: factors holds
    [mode, pos, neg, ssum] per iteration, mode 1 flooring the regrets at 0 first). Returns the iterations run, or -1 on
    a bad program. */
@@ -1660,6 +1826,9 @@ EXPORT(core_run) i32 core_run(u32 prog, i32 iters, u32 factors) {
   size_t len = (u32)P[9];
   const f32 *fac = PF(factors);
   int fuse = fuse_on && P[17] == 0;   /* (a deferred game's decisions are walked twice a pass: discounted after) */
+  i32 ns = 0;
+  size_t nf = 0;
+  int sub_on = subs_on && nthreads > 1 && P[17] == 0 && plan(root, &ns, &nf) && ns > 0;
   for (i32 t = 0; t < iters; t++) {
     d_mode = fac[4 * t], d_pos = fac[4 * t + 1], d_neg = fac[4 * t + 2], d_sf = fac[4 * t + 3];
     fused = fuse;
@@ -1677,6 +1846,20 @@ EXPORT(core_run) i32 core_run(u32 prog, i32 iters, u32 factors) {
         cfr(&M, root, p, 0, B, r0, r1, u);
         phase = WHOLE;
         deferring = 0;
+      } else if (sub_on && lane_size[0]) {
+        subs = salloc(&M, sizeof(Sub) * ns);
+        sub_area = salloc(&M, sizeof(f32) * nf);
+        sub_end = sub_area + nf;
+        maxsubs = ns, nsubs = sub_rows = sub_next = 0;
+        subbing = 1;
+        phase = COLLECT;
+        cfr(&M, root, p, 0, B, r0, r1, u);
+        phase = WHOLE;
+        subs_job(p);
+        phase = READ;
+        cfr(&M, root, p, 0, B, r0, r1, u);
+        phase = WHOLE;
+        subbing = 0;
       } else {
         cfr(&M, root, p, 0, B, r0, r1, u);
       }
