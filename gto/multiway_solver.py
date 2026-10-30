@@ -1972,8 +1972,8 @@ class MultiwaySolver:
         self._ver = [v + 1 for v in self._ver]      # (every player's regrets changed)
 
     def _core(self):
-        """The compiled core's program for this solve (gto/mwcore.py: a bucketed 2- or 3-player solve), or None."""
-        if not self.levels:
+        """The compiled core's program for this solve (gto/mwcore.py: a bucketed solve, or a 3-way river), or None."""
+        if not self.levels and len(self.board) != 5:
             return None
         from . import mwcore
         return mwcore.program(self)

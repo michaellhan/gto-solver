@@ -379,6 +379,22 @@ class TestCore(unittest.TestCase):
         # a player all-in: the three others bet for a side pot (the kernel's third tensor)
         self._same(*self._pair("Kh7d2c9s", 3, rs=_ranges4(), pot=30.0, stack=85.0, cfg=_cfg4(buckets=8, allin=(3,))))
 
+    def test_river_agrees_with_numpy(self):
+        # a 3-way river root (no later streets): its showdowns per combo in the core (RSHOW, exact card removal by
+        # inclusion-exclusion over the cards two of the others' hands could share), the numpy solver's arithmetic: a
+        # player all-in for less (a main pot and a side pot), stacks that differ, rake, the last player to act, and
+        # boards where many hands tie (the board plays: one tie group; a full house on the board)
+        for board, kw in (("Kh7d2c9s4h", {}),
+                          ("Kh7d2c9s4h", dict(pot=40.0, stack=77.5, cfg=MWConfig(allin=(2,)))),
+                          ("Kh7d2c9s4h", dict(pot=20.0, stack=(8.0, 60.0, 60.0))),
+                          ("Ts9s4h4c2d", dict(cfg=MWConfig(rake_rate=0.05, rake_cap=3.0))),
+                          ("Kh7d2c9s4h", dict(to_act=2, pending={2})),
+                          ("AhKhQhJhTh", {}), ("7c7d7h2s2d", {})):
+            with self.subTest(board, **{k: str(v) for k, v in kw.items()}):
+                a, b = self._pair(board, 3, **kw)
+                self.assertTrue(b._mwc.river)
+                self._same(a, b)
+
     def test_another_solve_replaces_the_program(self):
         # one program lives in the core at a time: a solver whose program was replaced lays its tree out again from
         # its arrays and carries on where it was
@@ -402,16 +418,18 @@ class TestCore(unittest.TestCase):
         self.assertAlmostEqual(float(s.values().sum()), 8.0, delta=0.08)
 
     def test_threads_change_nothing(self):
-        # helper threads run a pass's root-street leaves (each Exit's bucket subtree, each fold's deal masses), each
-        # writing records of its own: regrets, sums, best-response gains, values and action EVs the same, bit for bit,
-        # on 1 thread and on 4 (3-way flop and turn, a player all-in, 4-way)
+        # helper threads run a pass's root-street leaves (each Exit's bucket subtree, each fold's deal masses, each
+        # river showdown), each writing records of its own: regrets, sums, best-response gains, values and action EVs
+        # the same, bit for bit, on 1 thread and on 4 (3-way flop and turn, a player all-in, 4-way, a 3-way river with
+        # side pots)
         from gto import mwcore
         L = mwcore.lib()
         cases = (("Kh7d2c9s", self.rs, 8.0, 97.5, MWConfig(later="buckets", buckets=8)),
                  ("Kh7d2c", self.rs, 8.0, 97.5, MWConfig(later="buckets", buckets=6, bucket_river_step=4,
                                                          bet={"flop": [0.33, 0.75], "turn": 0.5, "river": 0.5})),
                  ("Kh7d2c9s", self.rs, 40.0, 77.5, MWConfig(allin=(2,), later="buckets", buckets=8)),
-                 ("Kh7d2c9s", _ranges4(), 10.5, 97.5, _cfg4(buckets=8)))
+                 ("Kh7d2c9s", _ranges4(), 10.5, 97.5, _cfg4(buckets=8)),
+                 ("Kh7d2c9s4h", self.rs, 20.0, (8.0, 60.0, 60.0), MWConfig()))
         was = mwcore.threads()
         try:
             for board, rs, pot, stack, cfg in cases:
@@ -1040,7 +1058,8 @@ class TestTournament(unittest.TestCase):
                  ("side pot numpy", "Kh7d2c9s", R3, 20.0, (8.0, 60.0, 60.0), dict(later="buckets", buckets=8), self.SEATS,
                   False)]
         if _core_on():
-            cases += [("turn core", "Kh7d2c9s", R3, 8.0, 97.5, dict(later="buckets", buckets=8), self.SEATS, True),
+            cases += [("river core", "Kh7d2c9s4h", R3, 8.0, 97.5, {}, self.SEATS, True),
+                      ("turn core", "Kh7d2c9s", R3, 8.0, 97.5, dict(later="buckets", buckets=8), self.SEATS, True),
                       ("four core", "Kh7d2c9s", R4, 10.5, 95.0, dict(later="buckets", max_raises=1, root_raise=True,
                                                                      bet=dict(A.MW4_BETS), buckets=8),
                        ("BB", "HJ", "CO", "BTN"), True)]
@@ -1062,6 +1081,8 @@ class TestTournament(unittest.TestCase):
                 ("facing a bet and a call", "Kh7d2c9s", R3, 8.0, 22.5, dict(later="buckets", buckets=8), self.SEATS,
                  dict(bets=[0.0, 4.0, 4.0], to_act=0, pending={0})),
                 ("side pots", "Kh7d2c9s", R3, 20.0, (8.0, 30.0, 30.0), dict(later="buckets", buckets=8), self.SEATS, {}),
+                ("river", "Kh7d2c9s4h", R3, 8.0, 22.5, {}, self.SEATS, {}),
+                ("river side pots", "Kh7d2c9s4h", R3, 20.0, (8.0, 30.0, 30.0), {}, self.SEATS, {}),
                 ("flop", "Kh7d2c", R3, 8.0, 22.5, dict(later="buckets", buckets=6, bucket_river_step=4), self.SEATS, {}),
                 ("four", "Kh7d2c9s", R4, 10.5, 20.0, dict(later="buckets", max_raises=1, root_raise=True,
                                                          bet=dict(A.MW4_BETS), buckets=8), ("BB", "HJ", "CO", "BTN"), {})):

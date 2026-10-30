@@ -1,13 +1,14 @@
 """The multiway core (core/mwcore.c): MultiwaySolver.run's training iterations in C for the solves whose later streets
-are bet on by hand buckets (MWConfig.later = "buckets": every 3-way flop and turn the advisor solves), natively (a
-shared library built from the source on first use with the system's C compiler) and in the browser (gto/mwcore.wasm,
-which worker.js instantiates before the solver loads: js.mwCore). Python still builds the tree and the bucket tables
-and reads strategies off it; the core takes the tree, the tables, the reaches, the regrets and the strategy sums, runs
-iterations in chunks (the time budget and should_stop checked between them), and the regrets and sums come back to the
-solver's arrays after each run. It also runs the passes after a solve: each player's value on the average strategies,
-its best response, and a root-street node's action EVs. With helper threads (threads(): natively GTO_THREADS, in the
-browser worker.js's helper workers on mwcore-mt.wasm's shared memory) a pass runs its root-street leaves (each Exit's
-bucket subtree, each fold's deal masses) on them, with the same floats on any number of threads.
+are bet on by hand buckets (MWConfig.later = "buckets": every 3- and 4-way flop and turn the advisor solves) and for
+3-way rivers (their showdowns per combo, exact), natively (a shared library built from the source on first use with the
+system's C compiler) and in the browser (gto/mwcore.wasm, which worker.js instantiates before the solver loads:
+js.mwCore). Python still builds the tree and the bucket tables and reads strategies off it; the core takes the tree, the
+tables, the reaches, the regrets and the strategy sums, runs iterations in chunks (the time budget and should_stop
+checked between them), and the regrets and sums come back to the solver's arrays after each run. It also runs the
+passes after a solve: each player's value on the average strategies, its best response, and a root-street node's action
+EVs. With helper threads (threads(): natively GTO_THREADS, in the browser worker.js's helper workers on mwcore-mt.wasm's
+shared memory) a pass runs its root-street leaves (each Exit's bucket subtree, each fold's deal masses, each river
+showdown) on them, with the same floats on any number of threads.
 
 The arithmetic is the numpy solver's in float32, so their strategies agree to rounding (tests/test_multiway_solver.py).
 One program at a time lives in the core's arena: another solver's replaces it, and a solver whose program is gone lays
@@ -24,7 +25,7 @@ import weakref
 import numpy as np
 
 MAGIC = 0x6d776332
-RDEC, RFOLD, REXIT, BDEC, BTERM, BEXIT, BTERMW = 1, 2, 3, 4, 5, 6, 7
+RDEC, RFOLD, REXIT, BDEC, BTERM, BEXIT, BTERMW, RSHOW = 1, 2, 3, 4, 5, 6, 7, 8
 ALT, BR, EV = 0, 1, 2
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "core", "mwcore.c")
@@ -234,17 +235,22 @@ def _mask(players) -> int:
 
 
 class Program:
-    """A MultiwaySolver's tree (bucket mode) as the core's program, its arrays in the core's arena (reset first)."""
+    """A MultiwaySolver's tree as the core's program, its arrays in the core's arena (reset first): a bucketed solve's
+    (its later streets by hand buckets), or a 3-way river's (the root street's showdowns per combo, exact)."""
 
     def __init__(self, L, s):
         global _gen
         from . import multiway_solver as MW
         self.MW = MW
         cfg = s.cfg
-        if s.tabs is None or not s.levels or not cfg.alternate or s.np not in (2, 3, 4) \
-                or (s._pw and s.np != 4):
+        self.river = not s.levels
+        if self.river:
+            if s.np != 3 or s._pw or len(s.board) != 5 or not cfg.exact or not cfg.alternate or cfg.allin and \
+                    len(cfg.allin) > 1:
+                raise Unsupported("not a 3-way river")
+        elif s.tabs is None or not cfg.alternate or s.np not in (2, 3, 4) or (s._pw and s.np != 4):
             raise Unsupported("not a bucketed 2-, 3- or 4-player solve")
-        if s.tabs.K > MAX_K or len(cfg.allin) > 1:
+        elif s.tabs.K > MAX_K or len(cfg.allin) > 1:
             raise Unsupported("buckets or all-ins")
         self.L, self.s = L, weakref.ref(s)
         L.reset()
@@ -252,7 +258,8 @@ class Program:
         self.gen = _gen
         self.bytes = 0
         tb = s.tabs
-        self.np, self.n, self.K, self.C = s.np, s.hands.n, tb.K, tb.C
+        self.np, self.n = s.np, s.hands.n
+        self.K, self.C = (0, 0) if self.river else (tb.K, tb.C)
         self.nflag = 0                # records with a current strategy kept (its flag: 1 while it's current)
         self.at = {}                  # id(root-street node) -> its record
         self._bitc = {}
@@ -267,17 +274,60 @@ class Program:
         self._dec = {id(d): (self.reg + int(o), self.ssum + int(o), sig + int(o)) for d, o in zip(self.decs, starts)}
         self.push(flags=False)
         self.w = [MAGIC, s.np, self.n, self.K, self.C, 0,
-                  self._up(s.hands.ca, np.int32), self._up(s.hands.cb, np.int32),
-                  self._up(tb.masks, np.float32), self._up(tb.wmask, np.float32),
-                  self._up(np.ascontiguousarray(tb.ids), np.int32), 0, 0, 0,
-                  _mask(cfg.allin), self._up(s.reach0[:, 0, :], np.float32), 0, 0, 0, 0, 0, 0]
+                  self._up(s.hands.ca, np.int32), self._up(s.hands.cb, np.int32), 0, 0, 0, 0, 0, 0,
+                  _mask(cfg.allin), self._up(s.reach0[:, 0, :], np.float32)] + [0] * 10
         if s.np == 4:      # (the root street's deals' weight: pairwise, each player's overlap correction)
             self.w[21] = self._up(np.concatenate([s._pw_corr(p) for p in range(4)]), np.float32)
+        if self.river:
+            self._river(s)
+        else:
+            self._buckets(s)
+        self.w[5] = self._root(s.root)
+        # (the discount: one run of regrets and one of sums)
+        arrs = np.array([[self.reg, self.ssum, self.total]], dtype=np.int64)
+        self.w[12] = 1
+        self.flags = self._up(np.zeros(max(self.nflag, 1), dtype=np.int32), np.int32)
+        self.w[19] = self.flags
+        self.w[20] = self.nflag
+        self.w[13] = self._up(arrs.astype(np.uint32).view(np.int32), np.int32)
+        words = np.array(self.w, dtype=np.int64)
+        self.prog = self._up(words.astype(np.uint32).view(np.int32), np.int32)
+        self.fac = L.alloc(8 * MAX_CHUNK)
+        self.R = L.alloc(4 * s.np * self.n)
+        self.out = L.alloc(4 * self.n)
+        self.kids = L.alloc(4 * self.n * 16)
+        self.w = self._bitc = None
+
+    def _river(self, s):
+        """A river root's showdown tables (the header's str, ord, gend, sm): each combo's strength on the board, the
+        combos by strength and each one's tie group's end in that order, the strengths as a 52 x 52 card-pair matrix."""
+        bd, h = s.root_bd, s.hands
+        st = bd.s[0]
+        if bd.B != 1 or st.min() < 0 or st.max() >= 2 ** 31:
+            raise Unsupported("a board's strengths")
+        st = st.astype(np.int64)
+        order = np.argsort(st, kind="stable")
+        gend = np.searchsorted(st[order], st[order], "right")
+        sm = np.full((52, 52), -1, dtype=np.int64)
+        sm[h.ca, h.cb] = st
+        sm[h.cb, h.ca] = st
+        self.w[22] = self._up(st, np.int32)
+        self.w[23] = self._up(order, np.int32)
+        self.w[24] = self._up(gend, np.int32)
+        self.w[25] = self._up(sm, np.int32)
+
+    def _buckets(self, s):
+        """A bucketed solve's tables: the classes' masks, each combo's bucket, the showdown tensors, the root Exits'
+        blocks."""
+        tb, npl = s.tabs, s.np
+        self.w[8] = self._up(tb.masks, np.float32)
+        self.w[9] = self._up(tb.wmask, np.float32)
+        self.w[10] = self._up(np.ascontiguousarray(tb.ids), np.int32)
         # each player's combos per class sorted by bucket (to_buckets sums a bucket's run): the order, each bucket's
         # start, and the class's mask in that order
         ids = np.asarray(tb.ids)
         perm = np.argsort(ids, axis=2, kind="stable")
-        seg = np.zeros((npl := s.np, self.C, self.K + 1), dtype=np.int32)
+        seg = np.zeros((npl, self.C, self.K + 1), dtype=np.int32)
         for i in range(npl):
             for t in range(self.C):
                 seg[i, t] = np.searchsorted(ids[i, t][perm[i, t]], np.arange(self.K + 1))
@@ -298,21 +348,6 @@ class Program:
             for g in lvl:
                 for i, (bx, j) in enumerate(g.blocks):
                     self._bx[(id(bx), j)] = (g, i)
-        self.w[5] = self._root(s.root)
-        # (the discount: one run of regrets and one of sums)
-        arrs = np.array([[self.reg, self.ssum, self.total]], dtype=np.int64)
-        self.w[12] = 1
-        self.flags = self._up(np.zeros(max(self.nflag, 1), dtype=np.int32), np.int32)
-        self.w[19] = self.flags
-        self.w[20] = self.nflag
-        self.w[13] = self._up(arrs.astype(np.uint32).view(np.int32), np.int32)
-        words = np.array(self.w, dtype=np.int64)
-        self.prog = self._up(words.astype(np.uint32).view(np.int32), np.int32)
-        self.fac = L.alloc(8 * MAX_CHUNK)
-        self.R = L.alloc(4 * npl * self.n)
-        self.out = L.alloc(4 * self.n)
-        self.kids = L.alloc(4 * self.n * 16)
-        self.w = self._bitc = None
 
     # -- layout
     def _up(self, a, dtype) -> int:
@@ -362,6 +397,24 @@ class Program:
             for a, ch in enumerate(node.children):
                 kid = self._root(ch)
                 w[at + 7 + a] = kid
+            return at
+        if isinstance(node, MW.Terminal) and len(node.live) > 1 and self.river and node.bd.B == 1:
+            # a river's showdown: per player its weight on the deals' weight and on its share of each pot (chips: minus
+            # its chips in, and each pot less the rake; a tournament's Terminal.W), the pots layered by the players'
+            # stakes (MultiwaySolver._term)
+            if node.lay is None:
+                node.lay = s._lay(node.live, node.c, node.pot)
+            net = node.pot - node.rake
+            pots = [(net, node.live)] if len(node.lay) == 1 else [(net * amt / node.pot, lv) for amt, lv in node.lay]
+            if node.W is not None:
+                b = node.W[:, 0]
+                a = [node.W[:, 1 + k] for k in range(len(pots))]
+            else:
+                b = [-x for x in node.c]
+                a = [[x] * s.np for x, _ in pots]
+            w += [RSHOW, _mask(node.live), len(pots)] + [_f(x) for x in b]
+            for (_, lv), ak in zip(pots, a):
+                w += [_mask(lv)] + [_f(x) for x in ak]
             return at
         if isinstance(node, MW.Terminal):
             if len(node.live) != 1 or node.bd.B != 1:
