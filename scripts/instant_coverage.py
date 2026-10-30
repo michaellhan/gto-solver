@@ -13,10 +13,20 @@ of yours, and Practice for each opponent's move; with the seats rotating, both h
 * turn and river: how often the flop's betting reaches the turn with chips behind comes from the same walks (a
   call of an all-in reaches no further decision); the decisions a turn has, and how often it reaches the river,
   from --turns native Fast turn solves of the commonest spots (their turn and river streets walked by range
-  frequencies; cached in --turn-json). Nothing precomputed answers a turn or river today.
+  frequencies; cached in --turn-json). A flop with a turn file (flop_library.encode_turns: the index's "turns", or
+  assumed) answers the turn's first decision and the in-position player's after a check (the profile's
+  turn_first) on the flop lines it stores (TURN_LINE of the pairs or more, by the entry's walk); nothing answers a
+  river.
+
+--assume projects a build (';' separated, a spot id of flop_library.all_spots() or mw_library.SPOTS, or a preflop
+line as printed): id=n (n representative flops), id=n,turns (and turn files on the flops it adds), id=turns (turn
+files on every flop it stores: the spot solved again). --candidate NAME ASSUME, repeated: each one's instant
+decisions per 100 hands over the --assume'd baseline.
 
     python scripts/instant_coverage.py                      # uses the cached turn profile if present
     python scripts/instant_coverage.py --turns 12           # solves 12 turns natively first (~1 min of CPU)
+    python scripts/instant_coverage.py --candidate flatted "srp_hj_co=1755,turns;srp_btn_sb=1755,turns" \
+        --candidate btn_bb_turns "srp_btn_bb=turns"
 """
 from __future__ import annotations
 import argparse
@@ -33,7 +43,7 @@ from gto import mw_library as mwl  # noqa: E402
 from gto import preflop as pf  # noqa: E402
 from gto.advisor import preflop_strategy, preflop_ranges, replay_hand, _default_size  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from flop_library_coverage import _line_str, RERAISE  # noqa: E402
+from flop_library_coverage import _line_str, RERAISE, rep_share  # noqa: E402
 
 AGGR = ("bet", "raise", "all-in")
 
@@ -79,9 +89,15 @@ def enumerate_preflop(players=6, stack=100.0, min_prob=2e-5):
 
 
 def hu_entry_profile(e):
-    """(decisions, stored decisions, P(the turn with chips behind)) a flop, from an entry's range frequencies."""
+    """(decisions, stored decisions, P(the turn with chips behind), P(the turn on a stored line a turn file holds:
+    TURN_LINE of the pairs or more)) a flop, from an entry's range frequencies."""
     nodes = {tuple(n["path"]): n for n in e["nodes"]}
-    d = s = t = 0.0
+    d = s = t = tl = 0.0
+
+    def turn(r):
+        nonlocal t, tl
+        t += r
+        tl += r if r >= fl.TURN_LINE else 0.0
 
     def visit(path, reach):
         nonlocal d, s, t
@@ -95,10 +111,11 @@ def hu_entry_profile(e):
             if f <= 0 or act == "fold":
                 continue
             if act == "call":
-                t += 0.0 if path and path[-1] == "all-in" else reach * f
+                if not (path and path[-1] == "all-in"):
+                    turn(reach * f)
             elif act == "check":
                 if path:
-                    t += reach * f          # checked through
+                    turn(reach * f)          # checked through
                 else:
                     visit(path + (act,), reach * f)
             elif (act.startswith("raise") or act.startswith("all")) and path + (act,) not in nodes:
@@ -107,7 +124,7 @@ def hu_entry_profile(e):
             else:
                 visit(path + (act,), reach * f)
     visit((), 1.0)
-    return d, s, t
+    return d, s, t, tl
 
 
 def mw_entry_profile(e):
@@ -179,7 +196,7 @@ def turn_profile(n_turns, seed=1):
         r.update(spot=sid, board=state["board"], line=line, iters=sol.iters)
         print(json.dumps(r), file=sys.stderr)
         rows.append(r)
-    keys = ("turn_decisions", "p_river", "river_decisions")
+    keys = ("turn_decisions", "turn_first", "p_river", "river_decisions")
     return {**{k: float(np.mean([r[k] for r in rows])) for k in keys}, "n": len(rows), "rows": rows}
 
 
@@ -209,15 +226,15 @@ def spot_state(sid, sp, board, line):
 
 
 def walk_turn(sol, Decision, Chance):
-    """Turn and river decisions per turn reached and P(the river), by range frequencies (river classes weighed
-    alike, card removal ignored)."""
+    """Turn and river decisions per turn reached (turn_first: the first and in position after a check, which a turn
+    file holds) and P(the river), by range frequencies (river classes weighed alike, card removal ignored)."""
     r0, r1 = sol.r0.astype(np.float64), sol.r1.astype(np.float64)
-    out = {"turn_decisions": 0.0, "p_river": 0.0, "river_decisions": 0.0}
+    out = {"turn_decisions": 0.0, "turn_first": 0.0, "p_river": 0.0, "river_decisions": 0.0}
 
     def strat(n, b):
         return n.avg_strategy()[b].astype(np.float64)
 
-    def visit(n, a0, a1, b, river):
+    def visit(n, a0, a1, b, river, path=()):
         if isinstance(n, Chance):
             if river:
                 return
@@ -229,12 +246,14 @@ def walk_turn(sol, Decision, Chance):
         if not isinstance(n, Decision):
             return
         out["turn_decisions"] += reach(a0, a1)
+        if path in ((), ("check",)):
+            out["turn_first"] += reach(a0, a1)
         s = strat(n, b)
         for k, c in enumerate(n.children):
             if n.player == 0:
-                visit(c, a0 * s[k], a1, b, river)
+                visit(c, a0 * s[k], a1, b, river, path + (n.names[k],))
             else:
-                visit(c, a0, a1 * s[k], b, river)
+                visit(c, a0, a1 * s[k], b, river, path + (n.names[k],))
 
     def visit_river(n, a0, a1, b, w):
         if not isinstance(n, Decision):
@@ -263,6 +282,9 @@ def main(argv=None):
     ap.add_argument("--turns", type=int, default=0, help="native Fast turn solves to measure the turn and river with")
     ap.add_argument("--turn-json", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".work",
                                                          "turn_profile.json"))
+    ap.add_argument("--assume", default="", help="the baseline's builds (see above)")
+    ap.add_argument("--candidate", nargs=2, action="append", default=[], metavar=("NAME", "ASSUME"),
+                    help="a build to weigh against the baseline (repeatable)")
     a = ap.parse_args(argv)
     if a.turns:
         tp = turn_profile(a.turns)
@@ -281,19 +303,22 @@ def main(argv=None):
     mlib = mwl.MWLibrary.from_dir() if hasattr(mwl.MWLibrary, "from_dir") else mwl.default_library()
     weights = fl.all_flops()
 
-    # per heads-up spot: (decisions, stored, P(turn)) averaged over its stored flops by flop weight
+    # per heads-up spot: (decisions, stored, P(turn), P(turn on a line a turn file holds)) averaged over its stored
+    # flops by flop weight, the share of the flops it stores, and of those with turn files
+    def share(names):
+        return sum(weights[fl.canonical(fl.parse_cards(n))[0]] for n in names) / 22100.0
     hu_prof = {}
     for s in lib.index().get("spots", []):
-        acc = np.zeros(4)
+        acc = np.zeros(5)
         for name in s.get("flops", {}):
             e = lib.entry(s, name)
             if e is None:
                 continue
             w = weights[fl.canonical(fl.parse_cards(name))[0]]
             acc += w * np.array([*hu_entry_profile(e), 1.0])
-        if acc[3] > 0:
-            hu_prof[s["id"]] = (acc[:3] / acc[3], sum(weights[fl.canonical(fl.parse_cards(n))[0]]
-                                                       for n in s.get("flops", {})) / 22100.0)
+        if acc[4] > 0:
+            turns = s.get("turns")
+            hu_prof[s["id"]] = (acc[:4] / acc[4], share(s["flops"]), share(s["flops"] if turns is True else turns or ()))
     kind_avg = {k: np.mean([v[0] for i, v in hu_prof.items() if i.startswith(k)], axis=0) for k in ("srp", "3bp")}
     mw_prof = {}
     for s in mlib.index().get("spots", []):
@@ -305,51 +330,68 @@ def main(argv=None):
             w = weights[fl.canonical(fl.parse_cards(name))[0]]
             acc += w * np.array([*mw_entry_profile(e), 1.0])
         if acc[3] > 0:
-            mw_prof[s["id"]] = (acc[:3] / acc[3], sum(weights[fl.canonical(fl.parse_cards(n))[0]]
-                                                       for n in s.get("flops", {})) / 22100.0)
+            mw_prof[s["id"]] = (acc[:3] / acc[3], share(s["flops"]))
     mw_avg = np.mean([v[0] for v in mw_prof.values()], axis=0) if mw_prof else np.array([4.0, 1.5, 0.6])
+    td = tp["turn_decisions"] if tp else None
+    tf = tp.get("turn_first") if tp else None
+    if tf is None:
+        print("(the turn profile has no turn_first: --turns N measures it; turn files count nothing meanwhile)")
+        tf = 0.0
 
-    tot = defaultdict(float)     # street -> decisions per hand; (street, 'inst') -> answered instantly
-    p_flop = defaultdict(float)
-    for prob, line, s, n_live in lines:
-        if s["allin"]:
-            continue                                  # all-in preflop: no decision after it
-        if n_live == 2:
-            sp = lib.spot(fl.range_fp(s["ranges"][0]), fl.range_fp(s["ranges"][1]), s["pot"], s["stack"])
-            kind = "srp" if sum(":r" in x for x in line.split(",")) <= 1 else "3bp"
-            prof, fs = hu_prof.get(sp["id"], (kind_avg[kind], 0.0)) if sp else (kind_avg[kind], 0.0)
-            d, st, t = prof
-            p_flop["hu"] += prob
-            tot["flop hu"] += prob * d
-            tot["flop hu", "inst"] += prob * st * fs
-            tot["p_turn"] += prob * t
-            tot["turn"] += prob * t * (tp["turn_decisions"] if tp else d)
-            tot["river"] += prob * t * (tp["p_river"] * tp["river_decisions"] if tp else t * d)
-        elif n_live == 3:
-            sp = mlib.spot([fl.range_fp(r) for r in s["ranges"]], s["pot"], s["stack"]) \
-                if hasattr(mlib, "spot") else None
-            prof, fs = mw_prof.get(sp["id"], (mw_avg, 0.0)) if sp else (mw_avg, 0.0)
-            d, st, t = prof
-            p_flop["3-way"] += prob
-            tot["flop 3-way"] += prob * d
-            tot["flop 3-way", "inst"] += prob * st * fs
-            # (a 3-way turn: a heads-up turn's decisions times 1.5, the same share reaching the river)
-            tot["turn"] += prob * t * 1.5 * (tp["turn_decisions"] if tp else 2.0)
-            tot["river"] += prob * t * 1.5 * (tp["p_river"] * tp["river_decisions"] if tp else 1.2)
-        else:
-            p_flop["4+"] += prob
-            d = 4.0 * (n_live / 4)
-            tot["flop 4+"] += prob * d
-            tot["turn"] += prob * 0.6 * d
-            tot["river"] += prob * 0.4 * d
-    tot["preflop"] = pre_dec
-    tot["preflop", "inst"] = pre_dec
+    def evaluate(layers):
+        """Decisions per hand by street, and those answered at once, with the assumptions `layers` (in order)."""
+        tot = defaultdict(float)     # street -> decisions per hand; (street, 'inst') -> answered instantly
+        p_flop = defaultdict(float)
+        for prob, line, s, n_live in lines:
+            if s["allin"]:
+                continue                                  # all-in preflop: no decision after it
+            if n_live == 2:
+                fp0, fp1 = fl.range_fp(s["ranges"][0]), fl.range_fp(s["ranges"][1])
+                sp = lib.spot(fp0, fp1, s["pot"], s["stack"])
+                kind = "srp" if sum(":r" in x for x in line.split(",")) <= 1 else "3bp"
+                prof, fs, ft = hu_prof.get(sp["id"], (kind_avg[kind], 0.0, 0.0)) if sp else (kind_avg[kind], 0.0, 0.0)
+                fs, ft = _apply(layers, ("hu", fp0, fp1, round(s["pot"], 2), round(s["stack"], 2)), fs, ft)
+                d, st, t, tl = prof
+                p_flop["hu"] += prob
+                tot["flop hu"] += prob * d
+                tot["flop hu", "inst"] += prob * st * fs
+                tot["p_turn"] += prob * t
+                tot["turn"] += prob * t * (td if tp else d)
+                tot["turn", "inst"] += prob * tl * ft * tf
+                tot["river"] += prob * t * (tp["p_river"] * tp["river_decisions"] if tp else t * d)
+            elif n_live == 3:
+                fps = tuple(fl.range_fp(r) for r in s["ranges"])
+                sp = mlib.spot(list(fps), s["pot"], s["stack"]) if hasattr(mlib, "spot") else None
+                prof, fs = mw_prof.get(sp["id"], (mw_avg, 0.0)) if sp else (mw_avg, 0.0)
+                fs, _ = _apply(layers, ("mw", fps, round(s["pot"], 2), round(s["stack"], 2)), fs, 0.0)
+                d, st, t = prof
+                p_flop["3-way"] += prob
+                tot["flop 3-way"] += prob * d
+                tot["flop 3-way", "inst"] += prob * st * fs
+                # (a 3-way turn: a heads-up turn's decisions times 1.5, the same share reaching the river)
+                tot["turn"] += prob * t * 1.5 * (td if tp else 2.0)
+                tot["river"] += prob * t * 1.5 * (tp["p_river"] * tp["river_decisions"] if tp else 1.2)
+            else:
+                p_flop["4+"] += prob
+                d = 4.0 * (n_live / 4)
+                tot["flop 4+"] += prob * d
+                tot["turn"] += prob * 0.6 * d
+                tot["river"] += prob * 0.4 * d
+        tot["preflop"] = pre_dec
+        tot["preflop", "inst"] = pre_dec
+        return tot, p_flop
+
+    resolve = _resolver(a.players, a.stack)
+    base = [parse_assume(a.assume, resolve)] if a.assume else []
+    tot, p_flop = evaluate(base)
     print(f"{a.players}-max {a.stack:g}bb, every seat by the charts: a flop seen in "
           f"{sum(p_flop.values()) * 100:.1f}% of hands (heads-up {p_flop['hu'] * 100:.1f}%, 3-way "
-          f"{p_flop['3-way'] * 100:.1f}%, 4+ {p_flop['4+'] * 100:.1f}%)")
+          f"{p_flop['3-way'] * 100:.1f}%, 4+ {p_flop['4+'] * 100:.1f}%)" + (f"; assumed: {a.assume}" if a.assume else ""))
     if tp:
-        print(f"turn profile ({tp['n']} native Fast turns): {tp['turn_decisions']:.2f} decisions a turn, the river "
-              f"reached {tp['p_river'] * 100:.0f}% of the time, {tp['river_decisions']:.2f} decisions a river")
+        print(f"turn profile ({tp['n']} native Fast turns): {tp['turn_decisions']:.2f} decisions a turn"
+              + (f" ({tp['turn_first']:.2f} the first and in position after a check)" if "turn_first" in tp else "")
+              + f", the river reached {tp['p_river'] * 100:.0f}% of the time, {tp['river_decisions']:.2f} decisions "
+              "a river")
     streets = ["preflop", "flop hu", "flop 3-way", "flop 4+", "turn", "river"]
     all_d = sum(tot[k] for k in streets)
     all_i = sum(tot[k, "inst"] for k in streets)
@@ -364,7 +406,68 @@ def main(argv=None):
     print(f"heads-up flop decisions answered by the library: {tot['flop hu', 'inst'] / hu * 100:.1f}% "
           f"(scripts/flop_library_coverage.py's measure); the turn reached from a heads-up flop "
           f"{tot['p_turn'] / p_flop['hu'] * 100:.0f}% of the time")
+    if a.candidate:
+        print(f"\ninstant decisions per 100 hands each candidate adds (all {all_i * 100:.1f} of {all_d * 100:.1f} now):")
+        print(f"{'candidate':<24} {'all':>6} {'flop':>6} {'turn':>6}")
+        for name, text in a.candidate:
+            ct, _ = evaluate(base + [parse_assume(text, resolve)])
+            gain = {k: (ct[k, "inst"] - tot[k, "inst"]) * 100 for k in streets}
+            print(f"{name:<24} {sum(gain.values()):6.2f} {gain['flop hu'] + gain['flop 3-way']:6.2f} "
+                  f"{gain['turn']:6.2f}")
 
+
+_REP = {}
+
+
+def _apply(layers, key, fs, ft):
+    """(flop share, turn-file share) of a spot after the assumptions: each layer's {key: (n flops or None, turns)},
+    turns 'new' (on the flops the layer adds), 'all' (every flop it stores) or None."""
+    for layer in layers:
+        x = layer.get(key)
+        if x is None:
+            continue
+        n, turns = x
+        if n and n not in _REP:
+            _REP[n] = rep_share(n)
+        f2 = max(fs, _REP[n]) if n else fs
+        ft = ft + (f2 - fs) if turns == "new" else f2 if turns == "all" else ft
+        fs = f2
+    return fs, ft
+
+
+def _resolver(players, stack):
+    """name -> the key a game's enumerated lines carry: a spot id (flop_library.all_spots(), in its game, or
+    mw_library.SPOTS) or a preflop line, heads-up or 3-way to the flop."""
+    hu_ids = {sid: (line, fmt) for sid, _, line, fmt in fl.all_spots()}
+    mw_ids = {sid: line for sid, _, line in mwl.SPOTS}
+
+    def resolve(name):
+        if name in mw_ids:
+            m = mwl.spot_setup(mw_ids[name], players, stack)
+            return ("mw", tuple(fl.range_fp(r) for r in m["ranges"]), round(m["pot"], 2), round(m["stack"], 2))
+        line, fmt = hu_ids.get(name, (name, None))
+        try:
+            if fmt is not None:
+                s = fl.spot_setup(line, fmt.players, fmt.stack, fmt.ante, fmt.straddle)
+            else:
+                s = fl.spot_setup(line, players, stack)
+        except Exception:
+            m = mwl.spot_setup(line, players, stack)
+            return ("mw", tuple(fl.range_fp(r) for r in m["ranges"]), round(m["pot"], 2), round(m["stack"], 2))
+        return ("hu", fl.range_fp(s["full0"]), fl.range_fp(s["full1"]), round(s["pot"], 2), round(s["stack"], 2))
+    return resolve
+
+
+def parse_assume(text, resolve):
+    """--assume's ';' separated name=n, name=n,turns or name=turns -> {key: (n or None, 'new' / 'all' / None)}."""
+    out = {}
+    for x in filter(None, (y.strip() for y in text.split(";"))):
+        name, v = x.rsplit("=", 1)
+        parts = v.split(",")
+        n = int(parts[0]) if parts[0].isdigit() else None
+        turns = ("new" if n else "all") if "turns" in parts else None
+        out[resolve(name.strip())] = (n, turns)
+    return out
 
 if __name__ == "__main__":
     main()

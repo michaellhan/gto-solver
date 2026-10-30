@@ -1203,7 +1203,9 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
 * **Precomputed answers, instant in the browser** (`scripts/instant_coverage.py`: of a 6-max 100bb session's
   decisions, every seat's, 83.6% are answered from precomputed data: preflop all of them, heads-up flops 74.7% from
   the flop library, 3-way flops 5.2%, turns and rivers none yet; the turn and river are 13% of the decisions, the
-  flop 12%). The answer itself takes 10-40 ms in Pyodide; what it waited for was the library's files, read
+  flop 12%; `--assume` and `--candidate` weigh a build before it runs, a flop with turn files answering the turn's
+  first decision and the in-position player's after a check, 69% of a turn's decisions in 12 native Fast turns).
+  The answer itself takes 10-40 ms in Pyodide; what it waited for was the library's files, read
   synchronously when the request came (the index on a session's first flop, 0.8-4.9 s on a cold CDN; each entry
   0.13-0.67 s from here), and on the first multiway preflop spot (a big blind facing an open and a call, or a 3-way
   flop's ranges) the preflop equity tables, 0.5 s. Now the worker fetches both indexes as it starts, beside the
