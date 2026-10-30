@@ -433,6 +433,50 @@ localStorage and sent only to api.anthropic.com (the site is static, nothing of 
 removes it. A refused key (401), a rate limit (429) or no network say so in the card with **Try again**; each
 explanation is kept in memory for its decision, so opening it again costs nothing. The page loads `practice.js` the first time Practice is turned on.
 
+**Tables** (1-4, under the spots) plays several tables at once, as on a multi-tabling site; 1 is the table above,
+unchanged. With 2-4 a view of their own takes the place of the page's table and coach (`multitable.js`, loaded the
+first time; the page's own hand waits as it was): the tables in a grid (two columns, three for 3 tables on a screen
+1300px or wider), each a compact felt with its own hand, seats, stacks, board, pot and your cards, your made hand and
+the verdict on your last decision there, and what it's doing in its header ("Your turn", "BTN is thinking…",
+"Solving your spot…", "Dealing an instant flop…", "Next hand…"). The table that needs you is outlined in front and
+gets the action dock under the grid (its buttons and keys as at one table: F, C or X, 1-9 the sizes, R a size of
+your own, A all-in); tables waiting for you queue in the order they started waiting, each header showing its place.
+After each move the table that has waited longest comes forward (the one you acted at, if it's waiting again at once,
+goes behind the others); for 0.35 s after the table in front changes by itself, keys and buttons are ignored, so a
+double press doesn't land at the next table. **S** sends the table in front to the back of the queue, a click on a
+table (or its tab) brings it forward until you act there, and **N** deals the finished tables at once (otherwise
+1.6 s after a hand ends). **Spots**: **Instant flops**, the default, plays preflop for you and deals each table
+until a heads-up flop the [flop library](#precomputed-flop-library) holds for its preflop line, with you in it, so
+preflop and the flop answer at once and only turns (~2 s at Fast) and rivers (~1 s) are solved; it needs the
+standard game (6 players, 100bb, no ante, straddle, rake, tournament or advanced settings) and is Any hand otherwise,
+which the note under the pickers says. **Any hand**, **Raised pot**, **3-bet pot** and **Blind vs blind** are as at one
+table; **Seat** deals a random seat each hand or one position. The setup (players, stacks, ante, rake, payouts) is
+the page's, changed at 1 table. Solves: the solver answers one request at a time (the browser's worker, or the local
+server's lock), so one is in flight and the next is picked by what it unblocks: instant answers first (a preflop
+chart, a library flop, a street already solved, such as an opponent's reply heads-up), then the other tables'
+short solves (your spot, an opponent's move: ~2 s at Fast), then the look-ahead at the table in front (your likeliest
+moves played on to the next request, as at one table, the quickest first), then long solves (Accurate's), then the
+other waiting tables' look-aheads; within a group your spot before an opponent's move, then the longest waiting. A
+table waiting on a solve shows a spinner and never holds up the others. A look-ahead or a long solve gives way to an
+instant or short request where it can be stopped (the local server; the browser where the page shares a stop flag
+with its worker), its solve kept to go on from there; one that no table needs any more (its hand ended, you took
+another line, fewer tables, Start over) is stopped the same way. At Accurate (up to a minute a solve in the
+browser, 30 s on the local server) the note says tables wait longer and Fast suits several. Every decision is
+graded as at one table, into one session score for all tables (hands, accuracy, bb lost per decision, won), a row
+per table (its hands, accuracy, bb lost per decision, won and last hand), the verdict card on your last decision
+("Table 3 · last decision", with Details and the AI buttons), the recent decisions of every table ("T2 #5 turn") and
+**Review mistakes** across all tables (from the last 60 decisions); **Start over** clears the session and deals every
+table again. Each table's hand and the session are kept in this browser over a reload (`gto-mt`, `gto-mt-score`; the
+spots, seat and table count as `gto-mt-drill`, `gto-mt-seat`, `gto-practice-tables`). On a phone one table shows at
+a time under a strip of tabs, one per table (lit with its place in the queue when it waits for you, a spinner while
+it's solved), a tap switching table, and the dock stays at the bottom of the screen. Measured on the local server
+(one thread, Fast) with a player acting every 2 s on 4 tables of Instant flops: 22 hands and 58 decisions in 126 s,
+61 of the 62 spots answered before their table came up (the other in 0.07 s), never a moment with no table to act
+at; acting every 0.6 s on 4 tables of Any hand: 114 hands and 144 decisions in 112 s, 140 of 147 spots answered
+ahead, six waits of 0.2-1.6 s (live flops) and a turn of 6.3 s (queued behind the other tables' solves), no table to
+act at 5% of the time. In the browser the quick answers take about as long (they're budgeted in time: a turn 1.9 s
+in Pyodide, above). `MultiTable.metrics()` in the console gives a session's numbers.
+
 ## Explain with AI proxy
 
 `cloudflare/explain-proxy/` is a small Cloudflare Worker that lets Practice mode's **Explain with AI** work for
@@ -2621,7 +2665,7 @@ python scripts/compare_mw_library.py --spot mw_co_btn_bb --boards Kh7d2c,9s8s5d 
 scripts/deploy.sh
 ```
 
-copies the page, the worker, `practice.js`, `reports.js`, `drills.js`, `breakdown.js`, `session.js`, `study.js`, `solver.zip` (the worker's Python code: every `gto/*.py` and treys, `scripts/build_bundle.py`), the `gto` sources into the `gto-solver/` folder
+copies the page, the worker, `practice.js`, `multitable.js`, `reports.js`, `drills.js`, `breakdown.js`, `session.js`, `study.js`, `solver.zip` (the worker's Python code: every `gto/*.py` and treys, `scripts/build_bundle.py`), the `gto` sources into the `gto-solver/` folder
 of the michaellhan.github.io repo and pushes. The precomputed libraries (`gto/static/flop_library`: the heads-up and
 3-way indexes, entries and reports) go first to their own repo, michaellhan/gto-solver-library, served beside the page
 at /gto-solver-library/ (`scripts/deploy_library.sh`): one commit with no history, force-pushed on each publish and

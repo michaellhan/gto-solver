@@ -246,6 +246,9 @@
   .cx-seats button.rnd { flex-grow: 1.6; }
   .cx-seats button.cur:not([aria-checked="true"]) { color: var(--accent); box-shadow: inset 0 0 0 1px rgba(242,181,68,.45); }   /* (Random: this hand's seat) */
   .cx-seats button:focus-visible { outline-offset: -2px; }
+  .cx-tables { display: flex; align-items: center; gap: 10px; }   /* Tables: 1-4 (2-4: multitable.js's view) */
+  .cx-tables .lbl { font-size: 12px; color: var(--muted); }
+  .cx-tables .cx-seats { flex: 1; max-width: 220px; }
   .cx-now { display: flex; align-items: center; gap: 14px; padding: 12px; min-height: 84px; border-radius: 10px; background: var(--panel2); border: 1px solid var(--line); transition: border-color .15s, box-shadow .15s; }
   .cx-now.mine { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(242,181,68,.10); }
   .cx-now.err { border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
@@ -756,6 +759,7 @@
       <h2 id="pxSeatLbl">Your seat <span class="right num" id="pxHandNo"></span></h2>
       <div class="cx-seats" id="pxSeat" role="radiogroup" aria-labelledby="pxSeatLbl" title="Practice from one seat, or a random seat each hand"></div>
       <div class="cx-seats" id="pxDrill" role="radiogroup" aria-label="Spots to practise" title="Every hand, or only one kind of pot (its preflop played for you)"></div>
+      <div class="cx-tables"><span class="lbl" id="pxTablesLbl">Tables</span><div class="cx-seats" id="pxTables" role="radiogroup" aria-labelledby="pxTablesLbl" title="Play one table, or two to four at once"></div></div>
       <div id="practiceBar" hidden></div>
     </section>
     <section class="panel" id="pAdvice">
@@ -911,6 +915,9 @@ let OPP = "gto";
 try { if (localStorage.getItem("gto-opponents") === "pool") OPP = "pool"; } catch (e) {}
 // practice mode: random hands against GTO opponents (gto/static/practice.js, loaded on first use)
 const practicing = () => !!(window.Practice && window.Practice.on);
+// Practice on 2-4 tables (multitable.js): each table keeps its own hand and asks the solver itself; the page's own
+// hand (the one-table Practice hand) waits, unsolved, and the keys go to the tables
+const multiTabling = () => practicing() && window.Practice.state.tables > 1;
 const WORKER_VERSION = "14";   // scripts/deploy.sh replaces this with a hash of worker.js
 const HH_VERSION = "1";        // and this with a hash of hh.js (the hand-history importer, loaded on first use)
 const RP_VERSION = "1";        // and this with a hash of reports.js (the flop reports, loaded on first use)
@@ -920,6 +927,7 @@ const SS_VERSION = "1";        // and session.js (the session analyzer, loaded o
 const SY_VERSION = "1";        // and study.js (Study mode, the solution browser, loaded on first use)
 const RO_VERSION = "1";        // and runouts.js (Study's turn and river reports, loaded when one first opens)
 const SP_VERSION = "1";        // and simple.js (the one-size view: the advice's Simple tab and Study's, loaded on first use)
+const MT_VERSION = "1";        // and multitable.js (Practice on 2-4 tables at once, loaded the first time Tables goes above 1)
 // where the precomputed libraries are (flop_library/: the local server's, gto/static/flop_library); scripts/deploy.sh
 // points it at their own site, ../gto-solver-library/ (scripts/deploy_library.sh). The worker is told it in its URL
 // (relative: worker.js is in the folder the page's URLs resolve against).
@@ -1986,9 +1994,9 @@ function renderAll() {
   document.body.classList.toggle("needcard", needCard(sim));
   document.getElementById("pCards").hidden = !needCard(sim);   // the deck shows while a card is needed, or on request
   renderSetup(); renderSlots(sim); renderPicker(sim); renderTable(sim); renderAction(sim); renderTimeline();
-  prefetchLibrary();
+  if (!multiTabling()) prefetchLibrary();
   presolveFor(sim);
-  if (sim.toAct === S.hero && S.cards[0] && S.cards[1] && !sim.handOver && !(practicing() && window.Practice.auto(sim))) analyze(sim);
+  if (sim.toAct === S.hero && S.cards[0] && S.cards[1] && !sim.handOver && !(practicing() && window.Practice.auto(sim)) && !multiTabling()) analyze(sim);
   else if (!S.cards[0] || !S.cards[1]) resetAdvice();
   updateAdviceState();
   syncRoute();   // (Practice turned on or off: its URL)
@@ -2346,6 +2354,7 @@ function sfx(name, delay = 0) {
 // ---- keyboard: cards are typed as rank+suit while a card is needed, otherwise keys pick actions
 document.addEventListener("keydown", (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey || /input|textarea|select/i.test(e.target.tagName)) return;
+  if (multiTabling() && !overlay) { if (window.MultiTable) window.MultiTable.key(e); return; }   // (the table in front's keys)
   const k = e.key, low = k.toLowerCase();
   if (k === "Escape") { pendingRank = null; selSlot = null; showDeck = false; const cb = document.getElementById("customBox"); if (cb) cb.classList.remove("open"); renderAll(); return; }
   if (low === "n") { e.preventDefault(); document.getElementById("newhand").click(); return; }

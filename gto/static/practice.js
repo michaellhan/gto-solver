@@ -6,9 +6,10 @@
 // game, you at one seat, the button moving one seat each hand and every seat's chips carried over), Random, or
 // one position every hand. While you decide, the lines you are likeliest to take are asked for ahead (see ahead()).
 // The running score, the table and your last decisions (Review mistakes) are kept in this browser; Start over clears them.
+// Tables (1-4): above one, multitable.js (loaded the first time) plays that many tables at once in its own view.
 "use strict";
 (() => {
-  const ON = "gto-practice", HABITS = "gto-practice-habits", STATE = "gto-practice-state", HAND = "gto-practice-hand", SCORE = "gto-practice-score", SEAT = "gto-practice-seat", REVIEW = "gto-practice-review", DRILL = "gto-practice-drill", HINT = "gto-practice-hint", TABLE = "gto-practice-table";
+  const ON = "gto-practice", HABITS = "gto-practice-habits", STATE = "gto-practice-state", HAND = "gto-practice-hand", SCORE = "gto-practice-score", SEAT = "gto-practice-seat", REVIEW = "gto-practice-review", DRILL = "gto-practice-drill", HINT = "gto-practice-hint", TABLE = "gto-practice-table", TABLES = "gto-practice-tables";
   const read = (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } };
   const store = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
   const ZERO = { hands: 0, decisions: 0, best: 0, good: 0, evDecisions: 0, evLost: 0, net: 0 };
@@ -19,7 +20,8 @@
   const P = { on: false, hand: read(HAND), score: { ...ZERO, ...(read(SCORE) || {}) }, habits: read(HABITS) || {}, busy: false, status: "", error: "",
     seat: read(SEAT) || "table", table: read(TABLE), more: !!read("gto-practice-more"), detail: !!read("gto-practice-detail"),
     review: Array.isArray(read(REVIEW)) ? read(REVIEW) : [], rev: false, pick: null,
-    drill: read(DRILL) || "any", tries: 0, hint: !!read(HINT), range: null };
+    drill: read(DRILL) || "any", tries: 0, hint: !!read(HINT), range: null, tables: [2, 3, 4].includes(read(TABLES)) ? read(TABLES) : 1 };
+  // tables: how many tables at once (above 1: multitable.js's view, mt() while it's on)
   // range: { id, res, label } for your last decision, kept in memory while its solve is the page's advice (lastResult):
   // how the solver plays your whole range there (the advice panel's Grid, Breakdown and Equity, nothing else)
   P.running = !!(P.hand && P.hand.run && !P.hand.run.done);   // (a run-out after your fold, resumed after a reload)
@@ -127,6 +129,7 @@
   // usually do (habits) and the table (every seat's chips, the button) cleared, from a new hand; your seat, the drill
   // and the setup stay. Asked first.
   function startOver() {
+    if (mt()) return window.MultiTable.startOver();   // (several tables: their session's own Start over)
     if (typeof confirm === "function" && !confirm("Start practice over? Your score, mistakes and the table's stacks are cleared, and a new hand is dealt.")) return false;
     P.score = { ...ZERO }; P.review = []; P.habits = {}; P.table = null; P.rev = false; P.pick = null;
     store(SCORE, P.score); store(REVIEW, P.review); store(HABITS, P.habits); store(TABLE, null);
@@ -646,11 +649,12 @@
       + (aiKey() ? `<button class="link" data-ai="forget" data-k="${k}">Forget key</button>` : "") + `</div></div>`;
     return out;
   }
-  // re-render the coach (at most every 50 ms while an answer streams in)
+  // re-render the coach (at most every 50 ms while an answer streams in; several tables: their view's side)
+  const coach = () => { if (mt()) window.MultiTable.render(); else if (P.on) bar(simulate()); };
   function redraw(now) {
-    if (now) { clearTimeout(AI.timer); AI.timer = null; if (P.on) bar(simulate()); return; }
+    if (now) { clearTimeout(AI.timer); AI.timer = null; coach(); return; }
     if (AI.timer) return;
-    AI.timer = setTimeout(() => { AI.timer = null; if (P.on) bar(simulate()); }, 50);
+    AI.timer = setTimeout(() => { AI.timer = null; coach(); }, 50);
   }
   // an error answer from the API as one line for the card
   function aiError(status, msg) {
@@ -885,7 +889,26 @@
       (v) => { P.seat = v; store(SEAT, P.seat); next(); }, ours() ? S.hero : null, [...(P.drill === "any" ? [] : ["table"]), ...POS.filter(p => !pool.includes(p))]);
     radios(document.getElementById("pxDrill"), Object.entries(DRILLS).map(([k, l]) => [k, l, DRILL_TIP[k]]), P.drill,
       (v) => { P.drill = v; store(DRILL, v); next(); });
+    tablesPicker(document.getElementById("pxTables"));
     const n = document.getElementById("pxHandNo"); n.textContent = `Hand ${P.score.hands + (P.hand && P.hand.result ? 0 : 1)}`;
+  }
+  // ---- Tables: 1 (this file's own table) or 2-4 at once (multitable.js, loaded the first time: its own view in
+  // place of the page's table and coach, every table's hand and the session kept in this browser; this table's hand
+  // waits as it was)
+  const mt = () => !!(window.MultiTable && window.MultiTable.on);
+  const TABLES_TIP = { 1: "One table: the hand on the page", 2: "Two tables at once", 3: "Three tables at once", 4: "Four tables at once" };
+  function tablesPicker(box) {
+    if (box) radios(box, [1, 2, 3, 4].map(n => [String(n), String(n), TABLES_TIP[n]]), String(P.tables), (v) => setTables(+v));
+  }
+  const loadMt = () => loadJs("multitable.js?v=" + MT_VERSION, () => window.MultiTable);
+  // n tables: above 1 the multi-table view starts (or takes the new count); 1 goes back to this table's hand
+  function setTables(n) {
+    P.tables = [2, 3, 4].includes(n) ? n : 1; store(TABLES, P.tables);
+    if (P.tables > 1) return loadMt().then(() => { if (P.on && P.tables > 1) window.MultiTable.start(P.tables); })
+      .catch(e => { P.error = "Couldn't load multi-table practice: " + (e && e.message || e); renderAll(); });
+    if (mt()) window.MultiTable.stop();
+    renderAll();
+    return Promise.resolve();
   }
   // a phone: the coach sits under the table, often below the fold, so the action dock carries one line for it: the
   // verdict on your last decision (the result once the hand is over); a tap brings the coach's card into view.
@@ -958,6 +981,8 @@
     Promise.resolve().then(f).catch(e => { P.error = String(e); }).then(() => { P.busy = false; renderAll(); });
   }
   function tick(sim) {
+    // (several tables: this table's hand waits, also while multitable.js loads)
+    if (P.on && P.tables > 1) { if (mt()) return window.MultiTable.tick(); return bar(sim); }
     bar(sim);
     if (!P.on) return;
     if (P.busy || P.error) return;
@@ -987,8 +1012,10 @@
     document.body.classList.toggle("practice", P.on);
     const b = document.getElementById("practiceBtn"); b.classList.toggle("active", P.on); b.textContent = P.on ? "Exit practice" : "Practice";
     if (P.on) document.getElementById("toast").hidden = true;   // e.g. an import's "Review whole hand", for the hand dealt over
+    if (!P.on && mt()) window.MultiTable.stop();
     if (P.on && !ours()) deal();
     renderAll();
+    if (P.on && P.tables > 1) setTables(P.tables);   // (the multi-table view, as it was left)
   }
   // a seat's cards once the hand is over (shown at showdown; everyone's after Show hands or Run it out)
   const shown = (p) => P.on && P.hand && P.hand.result && (P.hand.run || P.hand.result.shown.includes(p)) && ours() ? P.hand.hands[p] : null;
@@ -1002,7 +1029,10 @@
     return { after: end ? P.table.seats[seatOf(p, h.tbl.btn, S.players)] : null, won: pays[p] || 0 };
   }
 
-  window.Practice = { get on() { return P.on; }, get running() { return P.running; }, set, tick, next, shown, seatView, runLabel, runOut, rebuyAll, startOver,
-    graded, regraded, rank7, handName, settle, posAt, fromAhead, auto, seeking, state: P, ahead: A,
-    ai: { prompt, spot, heroRead, click: aiClick, explain, keyOf, state: AI, md } };
+  window.Practice = { get on() { return P.on; }, get running() { return P.running && !mt(); }, set, tick, next, shown, seatView, runLabel, runOut, rebuyAll, startOver,
+    graded, regraded, rank7, handName, settle, posAt, fromAhead, auto, seeking, state: P, ahead: A, setTables,
+    ai: { prompt, spot, heroRead, click: aiClick, explain, keyOf, state: AI, md },
+    // for multitable.js: the grading, the verdict cards, the showdown and the look-ahead's likely lines
+    mt: { likely, habit, spot, feedback, verdict, settle, says, handName, rank7, money, big, ACT, YOU, mixOf, lostCls, ICON, pct, why,
+      seatsFor, DRILLS, DRILL_TIP, DRILL_TRIES, CATS, move, heard, radios, aiClick, AHEAD_LINES } };
 })();
