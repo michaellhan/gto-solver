@@ -2207,8 +2207,11 @@ def instant_from_near(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
     """A flop of a library spot that the library doesn't store (the flatted opens' and the 3bet pots' other 1203): its
     decisions read off the spot's stored flops most like it (gto/flop_approx.py: the same pairing and suit pattern, the
     ranks nearest, each carried over by card substitution and their mixes averaged), on the line the hand took (sizes
-    at the tree's nearest); not once the flop's own solve in hand has run NEAR_UNTIL iterations (instant_from_own reads
-    that). None where hero's decision isn't one an entry stores or no stored flop holds an image of hero's combo."""
+    at the tree's nearest); a heads-up pot the library holds no spot for (the HJ's and UTG's opens 3bet by the blinds
+    or flatted by the SB, the BTN's 3bet of the UTG) off the spot whose ranges are nearest, where one covers it
+    (flop_approx.near_spot: its entry of the flop where it stores it, else those most like it); not once the flop's
+    own solve in hand has run NEAR_UNTIL iterations (instant_from_own reads that). None where hero's decision isn't
+    one an entry stores or no stored flop holds an image of hero's combo."""
     if spot.street != "flop" or spot.near is None:
         return None
     if spot.own is not None and spot.own.solver.iters >= NEAR_UNTIL:
@@ -2226,9 +2229,13 @@ def instant_from_near(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
     if id(node) not in sol.stored or not sol.known[id(node)][col[0]]:
         return None
     flops = ", ".join(nm for nm, _ in sol.near)
-    return {"actions": _real_actions(node, strat, bets, spot), "source": "near",
-            "label": f"the precomputed solves of the most similar flops ({flops}), by card substitution",
-            "iterations": None}
+    if sol.other:   # (a pot the library holds no spot for: the nearest spot's)
+        what = (f"the precomputed solve of this flop in the library's {sol.label}" if sol.near[0][1] == 0 else
+                f"the library's {sol.label} on the most similar flops ({flops}), by card substitution")
+        label = f"{what}, the spot whose ranges are nearest this pot's"
+    else:
+        label = f"the precomputed solves of the most similar flops ({flops}), by card substitution"
+    return {"actions": _real_actions(node, strat, bets, spot), "source": "near", "label": label, "iterations": None}
 
 
 # the stored turn answers before the turn's own solve in hand until that has run this many iterations: EV given up

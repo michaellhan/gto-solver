@@ -1,7 +1,8 @@
 """Advisor.instant on a library spot's flop that the library doesn't store: its decisions read off the spot's stored
 flops most like it (gto/flop_approx.py: same pairing and suit pattern, nearest ranks, card substitution, averaged),
 marked approximate (advisor.instant_from_near); the flop's own solve still answers the request. The stored flops it
-reads are prefetched once the flop is known (Advisor.prefetch). On the shipped library."""
+reads are prefetched once the flop is known (Advisor.prefetch). A heads-up pot the library holds no spot for is read
+off the spot whose ranges are nearest (flop_approx.near_spot). On the shipped library."""
 import unittest
 from unittest import mock
 
@@ -39,15 +40,19 @@ class _Lib(unittest.TestCase):
         cls.setup = fl.spot_setup(LINE)
         cls.hand = {"players": 6, "stack": 100, "preflop": parse_actions(LINE), "board": BOARD, "turn": [], "river": []}
 
-    def expected(self, board, hole, path):
+    def expected(self, board, hole, path, spot=None):
         """The mix instant_from_near should give `hole` at the stored node `path`: its images' stored mixes on the K
-        nearest stored flops, averaged with weights 1 / (1 + distance)."""
+        nearest stored flops, averaged with weights 1 / (1 + distance); `spot` another spot's (near_spot), whose
+        entry of the flop, where it stores it, is the one read."""
         b = parse_cards(board)
         canon, smap = fl.canonical(b)
         c = [x // 4 * 4 + smap[x % 4] for x in parse_cards(hole)]
         tot, wsum, names = 0.0, 0.0, None
-        for nm, m, d in fa.neighbours(sorted(self.spot["flops"]), list(canon), fa.K):
-            e = self.lib.entry(self.spot, nm)
+        sp = spot or self.spot
+        nb = fa.neighbours(sorted(sp["flops"]), list(canon), fa.K + 1)
+        nb = nb[:1] if spot is not None and nb[0][2] == 0 else [x for x in nb if x[2] > 0][:fa.K]
+        for nm, m, d in nb:
+            e = self.lib.entry(sp, nm)
             nd = next((n for n in e["nodes"] if n["path"] == list(path)), None)
             if nd is None:
                 continue
@@ -183,6 +188,79 @@ class TestInstantFromNear(_Lib):
         for nm in ("KcJd5h", "KcJd7h", "KcQd6h"):
             self.assertIn(f"{SID}/{nm}.bin?v={self.spot['flops'][nm]}", asked)
         self.assertFalse([k for k, e in rec._entries.items() if e is None])
+
+
+
+HJ_BB3 = "UTG:f,HJ:r2.5,CO:f,BTN:f,SB:f,BB:r10,HJ:c"     # (BB 3bets the HJ: no spot of its own; read off 3bp_bb_co)
+
+
+class TestNearSpot(_Lib):
+    """A heads-up pot the library holds no spot for, read off the spot whose ranges are nearest (near_spot): the
+    same pot and stack, each range covered by NEAR_COVER, the least distance."""
+
+    def test_which_spot(self):
+        lines = {HJ_BB3: "3bp_bb_co", "UTG:r2.5,HJ:f,CO:f,BTN:f,SB:f,BB:r10,UTG:c": "3bp_bb_co",
+                 "UTG:f,HJ:r2.5,CO:f,BTN:f,SB:r10,BB:f,HJ:c": "3bp_sb_co",
+                 "UTG:r2.5,HJ:f,CO:f,BTN:r7.5,SB:f,BB:f,UTG:c": "3bp_co_hj",
+                 "UTG:f,HJ:r2.5,CO:f,BTN:f,SB:c,BB:f": "srp_co_sb",
+                 "UTG:f,HJ:f,CO:r2.5,BTN:c,SB:f,BB:f": None,                       # (srp_hj_co covers 80%)
+                 "UTG:f,HJ:f,CO:r2.5,BTN:r7.5,SB:f,BB:f,CO:r20,BTN:c": None}       # (a 4bet pot: no pot like it)
+        for line, sid in lines.items():
+            st = fl.spot_setup(line)
+            self.assertIsNone(self.lib.spot(fl.range_fp(st["full0"]), fl.range_fp(st["full1"]), st["pot"], st["stack"]))
+            sp = fa.near_spot(self.lib, st["full0"], st["full1"], st["pot"], st["stack"])
+            self.assertEqual(sp and sp["id"], sid, line)
+            if sp is not None:
+                ss = fl.spot_setup(sp["line"])
+                for t, u in ((st["full0"], ss["full0"]), (st["full1"], ss["full1"])):
+                    self.assertGreaterEqual(fa.range_cover(t, u), fa.NEAR_COVER)
+
+    def test_instant(self):
+        """The 3bettor first to act: on a flop the nearest spot stores, its entry's mix (the spot named); on one it
+        doesn't, its K stored flops most like it; the caller after a check."""
+        sp = next(s for s in self.lib.index()["spots"] if s["id"] == "3bp_bb_co")
+        st = fl.spot_setup(HJ_BB3)
+        hand = {"players": 6, "stack": 100, "preflop": parse_actions(HJ_BB3), "turn": [], "river": []}
+        self.assertGreater(st["full0"][COMBO_INDEX[tuple(sorted(parse_cards("AhKd")))]], 0)
+        adv = advisor()
+        for board, stored in (("KhJd5c", True), ("KhJd6c", False)):
+            self.assertEqual(fl.cards_str(fl.canonical(parse_cards(board))[0]) in sp["flops"], stored)
+            with mock.patch.object(A, "solve", side_effect=AssertionError("solved")):
+                res = adv.instant(dict(hand, board=board, hero="BB", hole="AhKd", flop=[]))
+            self.assertEqual(res["approximate"]["source"], "near")
+            self.assertIn("the library's BB 3bet vs CO", res["approximate"]["label"])
+            self.assertEqual("precomputed solve of this flop" in res["approximate"]["label"], stored)
+            names, mix = self.expected(board, "AhKd", [], spot=sp)
+            self.assertEqual([a["action"] for a in res["actions"]], names)
+            self.assertTrue(np.allclose([a["freq"] for a in res["actions"]], mix, atol=0.0006))
+            bet = next(a for a in res["actions"] if a["action"] == "bet 33%")
+            self.assertAlmostEqual(bet["amount_bb"], round(0.33 * st["pot"], 2), places=2)
+            self.assertTrue(any("this flop's own solve replaces it" in n for n in res["notes"]))
+        res = adv.instant(dict(hand, board="KhJd6c", hero="HJ", hole="QhQd", flop=[X("BB")]))
+        names, mix = self.expected("KhJd6c", "QhQd", ["check"], spot=sp)
+        self.assertTrue(np.allclose([a["freq"] for a in res["actions"]], mix, atol=0.0006))
+
+    def test_none_without_one(self):
+        """A pot no spot covers: no approximate answer."""
+        line = "UTG:f,HJ:f,CO:r2.5,BTN:c,SB:f,BB:f"
+        hand = {"players": 6, "stack": 100, "preflop": parse_actions(line), "board": BOARD, "turn": [], "river": [],
+                "hero": "CO", "hole": "AhQd", "flop": []}
+        self.assertIsNone(advisor().instant(hand))
+
+    def test_prefetched(self):
+        """The prefetch names the nearest spot's entry of the flop for the browser to fetch ahead."""
+        asked = []
+
+        def fetch(p, real=self.lib._fetch):
+            if p.startswith("index"):
+                return real(p)
+            asked.append(p)
+            return None
+        sp = next(s for s in self.lib.index()["spots"] if s["id"] == "3bp_bb_co")
+        adv = advisor(fl.FlopLibrary(fetch))
+        adv.prefetch({"players": 6, "stack": 100, "preflop": parse_actions(HJ_BB3), "board": "KhJd5c", "turn": [],
+                      "river": [], "hero": "BB", "hole": "AhKd", "flop": []})
+        self.assertIn(f"3bp_bb_co/KcJd5h.bin?v={sp['flops']['KcJd5h']}", asked)
 
 
 if __name__ == "__main__":

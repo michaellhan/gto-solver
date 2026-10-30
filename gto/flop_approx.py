@@ -6,7 +6,9 @@ nothing to show. Here its stored decisions are read off the K stored flops most 
 pairing and suit pattern, the ranks nearest), each carried over by card substitution (`card_map`: the target flop's
 cards onto the stored flop's, the other ranks in order, the suits as the two patterns pair them, so a combo's image
 is the hand it plays like there: KcJd6h from KcJd5h plays a 6 as the 5, a 5 as the 6, 54 as 64), and their
-strategies averaged per combo (`predict`). Numpy only (the browser's worker runs it); nothing is solved.
+strategies averaged per combo (`predict`). A heads-up pot the library holds no spot for is read off the spot whose
+ranges are nearest, where one covers it (`near_spot`), its entry of the same flop where it stores it. Numpy only (the
+browser's worker runs it); nothing is solved.
 """
 from __future__ import annotations
 import itertools
@@ -79,10 +81,12 @@ K = 3                      # stored flops an answer reads (bench: 1 / 2 / 3 / 4 
 MAX_DIST = 6               # ... at most this far (summed rank gaps): a trips board read off 4h4d4c for AhAdAc gave up 9-24%
 
 
-def sources(lib, spot: dict, canon: Sequence[int], k: Optional[int] = None, max_dist: Optional[int] = None) -> list:
+def sources(lib, spot: dict, canon: Sequence[int], k: Optional[int] = None, max_dist: Optional[int] = None,
+            same: bool = False) -> list:
     """[(decoded entry, card map, weight, name, distance)] of the spot's stored flops most like the canonical flop
     `canon` (not itself), weight 1 / (1 + distance), k (K) of them at most max_dist (MAX_DIST) away; the entries
-    fetched through the library (lib.entry)."""
+    fetched through the library (lib.entry). same: another spot's (near_spot), whose own entry for the flop, where
+    it stores it, is the one source."""
     k = K if k is None else k
     max_dist = MAX_DIST if max_dist is None else max_dist
     out = []
@@ -90,6 +94,9 @@ def sources(lib, spot: dict, canon: Sequence[int], k: Optional[int] = None, max_
         if len(out) == k or d > max_dist:
             break
         if d == 0:
+            if same:
+                e = lib.entry(spot, nm)
+                return [(e, m, 1.0, nm, 0)] if e is not None else []
             continue
         e = lib.entry(spot, nm)
         if e is not None:
@@ -97,17 +104,82 @@ def sources(lib, spot: dict, canon: Sequence[int], k: Optional[int] = None, max_
     return out
 
 
+# A heads-up pot the library holds no spot for (the HJ's or the UTG's open flatted by the SB, the 3bet pots of the UTG
+# and the HJ) is read off the library spot whose ranges are nearest, where one covers it (near_spot): the same pot and
+# stack (so the same tree), each player's range there holding at least NEAR_COVER of theirs here (by weight) and the
+# two ranges' L1 distances (each normalized) summing to at most NEAR_SPOT_DIST. scripts/bench_flop_approx.py's
+# protocol "spot" (a stored spot read off another): the pairs inside both gave up 0.01-0.38% of the pot per flop
+# (the source's entry of the same flop), those under 0.9 0.36-1.77.
+NEAR_COVER = 0.9
+NEAR_SPOT_DIST = 2.0
+_SETUPS: Dict[str, Optional[dict]] = {}
+_NEAR: Dict[tuple, Optional[str]] = {}
+
+
+def _spot_ranges(spot: dict) -> Optional[dict]:
+    """A library spot's ranges entering the flop (flop_library.spot_setup of its line), None where they no longer
+    match the fingerprints the index holds (the charts changed since it was built)."""
+    from . import flop_library as fl
+    line = spot.get("line")
+    if line not in _SETUPS:
+        try:
+            st = fl.spot_setup(line) if line else None
+        except Exception:
+            st = None
+        if st is not None and list(spot.get("fp") or ()) != [fl.range_fp(st["full0"]), fl.range_fp(st["full1"])]:
+            st = None
+        _SETUPS[line] = st
+    return _SETUPS[line]
+
+
+def range_cover(t: np.ndarray, s: np.ndarray) -> float:
+    """The share of range t's weight on combos range s holds."""
+    tot = float(t.sum())
+    return float((t * (s > 0)).sum()) / tot if tot > 0 else 0.0
+
+
+def range_dist(t: np.ndarray, s: np.ndarray) -> float:
+    """L1 distance of the two ranges, each normalized to 1 (0 to 2)."""
+    return float(np.abs(t / max(float(t.sum()), 1e-12) - s / max(float(s.sum()), 1e-12)).sum())
+
+
+def near_spot(lib, full0: np.ndarray, full1: np.ndarray, pot: float, stack: float) -> Optional[dict]:
+    """The library spot nearest a heads-up pot it holds no spot for (ranges full0 out of position, full1 in position
+    entering the flop; pot and stack): the same pot and stack, covering each range by NEAR_COVER, the ranges'
+    summed distance least and at most NEAR_SPOT_DIST; None where none is."""
+    from . import flop_library as fl
+    key = (fl.range_fp(full0), fl.range_fp(full1), round(pot, 2), round(stack, 2))
+    if key not in _NEAR:
+        best = None
+        for sp in lib.index().get("spots", []):
+            if round(float(sp["pot"]), 2) != key[2] or round(float(sp["stack"]), 2) != key[3]:
+                continue
+            st = _spot_ranges(sp)
+            if st is None:
+                continue
+            if min(range_cover(full0, st["full0"]), range_cover(full1, st["full1"])) < NEAR_COVER:
+                continue
+            d = range_dist(full0, st["full0"]) + range_dist(full1, st["full1"])
+            if d <= NEAR_SPOT_DIST and (best is None or d < best[0]):
+                best = (d, sp["id"])
+        _NEAR[key] = best and best[1]
+    sid = _NEAR[key]
+    return next((sp for sp in lib.index().get("spots", []) if sp["id"] == sid), None) if sid else None
+
+
 class ApproxSolution:
     """A flop not stored, read off stored flops like it (approx_solution), shaped for the advisor's walk like
     flop_library.LibrarySolution: the flop street's tree with the predicted nodes' strategies, `stored` their ids;
     no EVs, nothing solved."""
 
-    def __init__(self, root, ctx, r0, r1, stored: set, known: dict, near: List[Tuple[str, int]], label: str):
+    def __init__(self, root, ctx, r0, r1, stored: set, known: dict, near: List[Tuple[str, int]], label: str,
+                 other: bool = False):
         self.root, self.names, self.ctx, self.r0, self.r1 = root, root.names, ctx, r0, r1
         self.stored = stored
         self.known = known                         # id(node) -> (n,) bool: the combos some source holds an image of
         self.near = near                           # [(stored flop in the hand's suits, distance)]
-        self.label = label
+        self.label = label                         # the library spot read
+        self.other = other                         # ...another spot's (near_spot): the hand's isn't in the library
         self.iters = 0
 
     def covers(self, nodes) -> bool:
@@ -117,11 +189,13 @@ class ApproxSolution:
 def approx_solution(lib, full0: np.ndarray, full1: np.ndarray, board: Sequence[int], r0: np.ndarray, r1: np.ndarray,
                     pot: float, stack: float, cfg, fetch_only: bool = False) -> Optional[ApproxSolution]:
     """The flop decisions a library entry would store, for a flop of a library spot the library doesn't store, read
-    off the spot's K stored flops most like it (sources, predict), or None: not a library spot (the ranges entering
-    the flop `full0`, `full1`, pot and stack), another tree (cfg's sizes), a stored flop (the library answers) or no
-    stored flop near enough. r0, r1: the ranges the advisor solves with. Each combo plays its images' average mix;
-    one no source holds has NaN (the answer for it: none). fetch_only: only read the sources' entries (None; the
-    advisor's prefetch, which names them for the browser to fetch ahead)."""
+    off the spot's K stored flops most like it (sources, predict), or for a heads-up pot the library holds no spot
+    for, off the nearest spot's (near_spot: its entry of the flop where it stores it, else its K most like it); or
+    None: no library spot near (the ranges entering the flop `full0`, `full1`, pot and stack), another tree (cfg's
+    sizes), a stored flop (the library answers) or no stored flop near enough. r0, r1: the ranges the advisor solves
+    with. Each combo plays its images' average mix; one no source holds has NaN (the answer for it: none).
+    fetch_only: only read the sources' entries (None; the advisor's prefetch, which names them for the browser to
+    fetch ahead)."""
     from types import SimpleNamespace
     from . import flop_library as fl
     from .solver import Decision, TreeBuilder, MEMBER_FULL
@@ -131,15 +205,18 @@ def approx_solution(lib, full0: np.ndarray, full1: np.ndarray, board: Sequence[i
     if not idx.get("spots"):
         return None
     spot = lib.spot(fl.range_fp(full0), fl.range_fp(full1), pot, stack)
-    if spot is None:
-        return None
+    other = spot is None
+    if other:
+        spot = near_spot(lib, full0, full1, pot, stack)
+        if spot is None:
+            return None
     tk, lk = fl.tree_key(cfg), lib.tree(spot)
     if fl._key_str(tk["sizes"]) != fl._key_str(lk.get("sizes")) or (lk.get("model") or {}).get("version") != fl.MODEL_VERSION:
         return None
     canon, smap = fl.canonical(board)
-    if fl.cards_str(canon) in spot.get("flops", {}):
+    if not other and fl.cards_str(canon) in spot.get("flops", {}):
         return None
-    src = sources(lib, spot, list(canon))
+    src = sources(lib, spot, list(canon), same=other)
     if not src or fetch_only:
         return None
     pred = predict([(e, m, w) for e, m, w, _, _ in src])
@@ -172,7 +249,8 @@ def approx_solution(lib, full0: np.ndarray, full1: np.ndarray, board: Sequence[i
         inv[b] = a
     near = [(fl.cards_str(sorted((c // 4 * 4 + inv[c % 4] for c in parse_cards(nm)), reverse=True)), d)
             for _, _, _, nm, d in src]
-    return ApproxSolution(root, ctx, r0f[active], r1f[active], stored, known, near, spot.get("label", spot["id"]))
+    return ApproxSolution(root, ctx, r0f[active], r1f[active], stored, known, near, spot.get("label", spot["id"]),
+                          other)
 
 
 def predict(sources: Sequence[Tuple[dict, np.ndarray, float]]) -> Dict[tuple, dict]:

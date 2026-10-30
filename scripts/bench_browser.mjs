@@ -67,6 +67,7 @@ const CO_BB = [F("UTG"), F("HJ"), R("CO", 2.5), F("BTN"), F("SB"), C("BB")];
 const LIMP = [F("UTG"), F("HJ"), F("CO"), F("BTN"), C("SB"), X("BB")];   // (a limped pot: not in the flop library, solved live)
 const BB_3BET = [F("UTG"), F("HJ"), F("CO"), R("BTN", 2.5), F("SB"), R("BB", 10), C("BTN")];
 const HJ_CO = [F("UTG"), R("HJ", 2.5), C("CO"), F("BTN"), F("SB"), F("BB")];   // (the flop library's on 552 flops)
+const BB_3BET_HJ = [F("UTG"), R("HJ", 2.5), F("CO"), F("BTN"), F("SB"), R("BB", 10), C("HJ")];   // (no spot: 3bp_bb_co's)
 const base = (o) => ({ players: 6, stack: 100, preflop: SRP, flop: [], turn: [], river: [], ...o });
 const SRP_FLOP = [X("BB"), B("BTN", 1.8), C("BB")];                 // a third-pot c-bet called
 const SRP_TURN = [X("BB"), B("BTN", 6), C("BB")];                   // two thirds called
@@ -84,6 +85,7 @@ const SPOTS = {
   "flop-near": base({ hero: "HJ", hole: "AhQd", board: "KhJd6c", preflop: HJ_CO }),
   "flop-near-ip": base({ hero: "CO", hole: "JhTh", board: "KhJd6c", preflop: HJ_CO, flop: [X("HJ")] }),
   "flop-near-3bp": base({ hero: "BB", hole: "AhKd", board: "Qh8d5c", preflop: BB_3BET }),
+  "flop-near-other": base({ hero: "BB", hole: "AhKd", board: "KhJd5c", preflop: BB_3BET_HJ }),   // (read off 3bp_bb_co's KcJd5h)
   "flop-2tone": base({ hero: "BB", hole: "JcTc", board: "9h8h6c" }),                          // not in it, two-tone
   "turn-lib": base({ hero: "BB", hole: "QhJh", board: "Kc7d4h9s", flop: SRP_FLOP }),         // the flop narrowed by the library
   "turn": base({ hero: "BB", hole: "QhJh", board: "Ks7d2cTh", flop: SRP_FLOP }),             // (its flop in the library now)

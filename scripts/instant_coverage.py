@@ -9,7 +9,8 @@ of yours, and Practice for each opponent's move; with the seats rotating, both h
   flop_library_coverage.node_profile), answered where the spot, the flop and the node are stored; the flops a
   spot doesn't store (and the spots the library doesn't hold) are live solves with the spot's average profile, a
   library spot's answered approximately at once meanwhile ("+approx": read off its stored flops most like it,
-  gto/flop_approx.py, at the nodes the spot's entries store);
+  gto/flop_approx.py, at the nodes the spot's entries store), and a pot the library holds no spot for off the
+  nearest spot's (flop_approx.near_spot: its stored flops, else those most like it);
 * flop, 3-way: the first decisions the 3-way library stores (first to act, checked to once and twice), by walking
   its entries; anything facing a bet is live (counted as two decisions a bet), and 4+ way flops are live;
 * turn and river: how often the flop's betting reaches the turn with chips behind comes from the same walks (a
@@ -358,6 +359,17 @@ def main(argv=None):
         print("(the turn profile has no turn_first: --turns N measures it; turn files count nothing meanwhile)")
         tf = 0.0
 
+    near_memo2 = {}
+
+    def near_spot(fp0, fp1, s):
+        """The library spot flop_approx.near_spot reads a pot it holds no spot for off (its id), or None."""
+        key = (fp0, fp1, round(s["pot"], 2), round(s["stack"], 2))
+        if key not in near_memo2:
+            from gto import flop_approx as fa
+            ns = fa.near_spot(lib, np.asarray(s["ranges"][0]), np.asarray(s["ranges"][1]), s["pot"], s["stack"])
+            near_memo2[key] = ns["id"] if ns is not None and ns["id"] in hu_prof else None
+        return near_memo2[key]
+
     def evaluate(layers):
         """Decisions per hand by street, and those answered at once, with the assumptions `layers` (in order)."""
         tot = defaultdict(float)     # street -> decisions per hand; (street, 'inst') -> answered instantly
@@ -377,6 +389,12 @@ def main(argv=None):
                 tot["flop hu", "inst"] += prob * st * fs
                 if sp:   # (a library spot's flop not stored: an approximate answer at once, gto/flop_approx.py)
                     tot["flop hu", "approx"] += prob * st * (1.0 - fs) * fn
+                else:    # (a pot the library holds no spot for: the nearest spot's flops, flop_approx.near_spot)
+                    ns = near_spot(fp0, fp1, s)
+                    if ns is not None:
+                        _, nfs, _, nfn = hu_prof[ns]
+                        tot["flop hu", "approx"] += prob * st * (nfs + (1.0 - nfs) * nfn)
+                        tot["flop hu", "other"] += prob * st * (nfs + (1.0 - nfs) * nfn)
                 tot["p_turn"] += prob * t
                 tot["turn"] += prob * t * (td if tp else d)
                 tot["turn", "inst"] += prob * tl * ft * tf
@@ -433,7 +451,9 @@ def main(argv=None):
     print(f"...and approximately at once (a library spot's flop not stored, read off its stored flops most like it: "
           f"gto/flop_approx.py): {tot['flop hu', 'approx'] / hu * 100:.1f}% more, "
           f"{(tot['flop hu', 'inst'] + tot['flop hu', 'approx']) / hu * 100:.1f}% in all; "
-          f"{tot['flop hu', 'approx'] * 100:.1f} decisions per 100 hands")
+          f"{tot['flop hu', 'approx'] * 100:.1f} decisions per 100 hands; {tot['flop hu', 'other'] / hu * 100:.1f} "
+          f"points ({tot['flop hu', 'other'] * 100:.1f} decisions) in pots the library holds no spot for, read off "
+          "the nearest spot's (flop_approx.near_spot)")
     if a.candidate:
         print(f"\ninstant decisions per 100 hands each candidate adds (all {all_i * 100:.1f} of {all_d * 100:.1f} now):")
         print(f"{'candidate':<24} {'all':>6} {'flop':>6} {'turn':>6}")

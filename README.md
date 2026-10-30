@@ -1743,7 +1743,56 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   Fast tree natively, one thread, the same measure at the stored decisions): the approximation 0.41-0.42 (mean), the
   solve 0.63-0.70 at 20 iterations, 0.32-0.35 at 30, 0.21 at 40, 0.12-0.13 at 60, 0.07-0.09 from 100 on (its tree's
   own distance from the library's); better than the approximation on 40-44% of the flops at 30 iterations, 50-59% at
-  40, 68-81% at 60: hence `NEAR_UNTIL`.
+  40, 68-81% at 60: hence `NEAR_UNTIL`. With the opponent free to adapt (`scripts/bench_flop_approx_lock.py`: 24
+  stored flops of six spots solved in the browser's Accurate tree, numpy, 300 iterations, then again with one
+  player's stored flop decisions locked and everything else free: that player's EV lost, % of the pot) the
+  approximation loses 0.27 a player more than the flop's own entry locked the same way (median 0.20, 90th percentile
+  0.60; in Fast's tree 0.28, 0.19, 0.62), in line with the measure above; the entry itself loses 0.94 there (1.08
+  in Fast's), what a strategy from the library's tree costs played in another: the measure's floor. In the browser
+  (`scripts/bench_browser.mjs --early`, one thread, the compiled core) the answer comes at 0.02 s and the flop's Fast
+  solve at 0.4-1.1 s (flop-near, flop-near-ip, flop-near-3bp).
+* **A pot the library holds no spot for** (`flop_approx.near_spot`, `NEAR_COVER`, `NEAR_SPOT_DIST`). The HJ's and
+  the UTG's opens flatted by the SB or 3bet by either blind, and the BTN's 3bet of the UTG, have no spot of their own
+  (4.5% of the heads-up flop decisions): their flops were solved live with nothing shown meanwhile. They're now read
+  off the library spot whose ranges are nearest, marked approximate and named: one with the same pot and stack (so
+  the same tree) whose ranges each hold at least 90% of this pot's by weight (`NEAR_COVER`), the least summed
+  distance between them (each normalized, L1, at most 2: `NEAR_SPOT_DIST`). The blinds' 3bets of the HJ and the UTG
+  are read off their 3bets of the CO (`3bp_bb_co`, `3bp_sb_co`: cover 1.00, distance 0.92-1.23), the SB's flat of
+  either off its flat of the CO (`srp_co_sb`: 0.92, 1.39-1.63), the BTN's 3bet of the UTG off the CO's of the HJ
+  (`3bp_co_hj`: 0.98, 0.29). The CO's open flatted by the BTN has none (the nearest, the HJ's flatted by the CO,
+  covers 80%), nor do the 4bet pots. It reads that spot's entry of the flop where it stores it, else its three
+  stored flops most like it (as above), until the flop's own solve has run 50 iterations; the prefetch names the
+  entries, and the first such pot sets up the candidates' ranges once (~0.15 s natively). In the browser
+  (flop-near-other) the answer comes at 0.02 s, the Fast solve at 0.45 s. `scripts/instant_coverage.py`: heads-up
+  flop decisions answered at once 87.5% -> 91.9% (4.1 more decisions per 100 hands).
+
+  EV given up, holding out whole spots (for each library spot, the spot `near_spot` picks with it left out of the
+  index; 60 of its stored flops, the measure above priced by its own entries; per flop mean / median / 90th
+  percentile, first decisions in brackets; "met": the two by how often the picked spot stores the flop, 38% of the
+  time for those on 552 flops):
+
+  | held out <- read off (cover, distance) | its entry of the flop | its three most like it | met |
+  |---|---|---|---|
+  | UTG vs BB <- HJ vs BB (1.00, 0.63) | 0.009 / 0.008 / 0.02 (0.003) | 0.085 / 0.067 / 0.19 (0.011) | 0.009 |
+  | CO vs BB <- BTN vs BB (0.99, 1.04) | 0.085 / 0.074 / 0.19 (0.010) | 0.139 / 0.124 / 0.24 (0.018) | 0.085 |
+  | HJ vs BB <- UTG vs BB (0.92, 0.63) | 0.269 / 0.235 / 0.46 (0.010) | 0.312 / 0.280 / 0.47 (0.017) | 0.269 |
+  | UTG vs BTN <- HJ vs CO (1.00, 0.34) | 0.011 / 0.004 / 0.03 (0.008) | 0.251 / 0.108 / 0.43 (0.041) | 0.159 |
+  | HJ vs CO <- UTG vs BTN (0.93, 0.34) | 0.117 / 0.118 / 0.24 (0.008) | 0.318 / 0.193 / 0.73 (0.041) | 0.241 |
+  | UTG vs HJ <- UTG vs BTN (0.94, 0.49) | 0.326 / 0.158 / 0.66 (0.056) | 0.438 / 0.307 / 0.71 (0.094) | 0.395 |
+  | CO vs SB <- BTN vs SB (0.91, 1.06) | 0.383 / 0.254 / 0.80 (0.036) | 0.378 / 0.312 / 0.71 (0.062) | 0.379 |
+  | HJ 3bet vs UTG <- CO 3bet vs HJ (0.95, 0.73) | 0.053 / 0.026 / 0.11 (0.016) | 0.149 / 0.093 / 0.39 (0.038) | 0.113 |
+  | SB 3bet vs CO <- SB 3bet vs BTN (0.94, 0.92) | 0.325 / 0.277 / 0.65 (0.020) | 0.343 / 0.301 / 0.52 (0.044) | 0.336 |
+  | BB 3bet vs CO <- BB 3bet vs BTN (0.95, 1.16) | 0.334 / 0.228 / 0.69 (0.026) | 0.442 / 0.368 / 0.77 (0.057) | 0.401 |
+
+  The bar it clears: per flop a mean under 0.45% of the pot and a 90th percentile under 0.8, first decisions under
+  0.1, about the flop's live solve at 30 iterations (0.32-0.35, above); a library spot's own flops not stored are
+  0.22 (above). The other eight spots have no pick (BTN vs BB, SB vs BB, BTN vs SB, the BB's 3bet of the BTN and of
+  the SB, the SB's of the BTN, the BTN's of the CO, the CO's of the HJ), and the pairs under 90% cover measured gave
+  up more: 1.77 (the SB's 3bet of the BTN read off its 3bet of the CO, cover 0.73), 1.47 (the BB's, 0.75), 1.20 (HJ
+  vs CO off UTG vs HJ, 0.78), 1.04 (BTN vs SB off CO vs SB, 0.73), 0.66 (the CO's 3bet of the HJ off the HJ's of the
+  UTG, 0.80), 0.36 (the BTN's of the CO off the CO's of the HJ, 0.77): hence `NEAR_COVER`. Ranking the candidates
+  by cover before distance would read HJ vs BB off CO vs BB (0.095 against 0.269) and pick the same spot for every
+  pot met; distance alone was kept.
 * **Your hand out of your range** (`Advisor._as_advised`). A hand the line's range doesn't hold (a preflop call or
   check the charts never make: the big blind flatting aces against the button, which it 3bets, or checking KQs
   behind a limp, which it raises) is solved on each street as a near-zero-weight combo (`_with_hero`). The next
@@ -2522,9 +2571,10 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   decisions (74.5% before the eight 3bet pots on 552, 71.6% before the five flatted opens on 552, 49.2% before HJ,
   UTG and SB vs BB on every flop, 36.1% before CO vs BB on every flop and SB vs BB on 552, 21.3% before format 2
   made room, 9.4% with 184 flops everywhere). Of the rest, a spot not in the library is 9.5 points (the other 3bet
-  pots ~0.6 each: the BTN's and the SB's 3bet of the UTG, the BB's and the SB's of the HJ; 4bet pots), a flop not
+  pots ~0.6 each: the BTN's and the SB's 3bet of the UTG, the BB's and the SB's of the HJ; 4bet pots; 4.5 of them
+  answered approximately at once off the spot whose ranges are nearest, `flop_approx.near_spot`), a flop not
   stored 10.2 (the flatted opens' and the 3bet pots': answered approximately at once from the stored flops most like
-  it, `scripts/instant_coverage.py` 77.2% -> 87.5% with them), a raise 3.2. A flop's
+  it, `scripts/instant_coverage.py` 77.2% -> 87.5% with them, 91.9% with both), a raise 3.2. A flop's
   entry is worth its spot's share times its suit count, so more flops of the commonest spots beat new spots; by
   points per MB (`--assume`): BTN vs BB on every flop +12.4 for 4.5 MB, CO vs BB on 1656 (90%) +7.6 for 2.8, UTG vs
   BB on 552 +2.4 for 1.05, SB vs BB on 552 +3.5 for 2.1, then on every flop SB vs BB +8.6 for 6.0 MB (its wide
