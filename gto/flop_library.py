@@ -88,6 +88,11 @@ SPOTS = [
     ("srp_utg_hj", "UTG vs HJ single-raised pot", "UTG:r2.5,HJ:c,CO:f,BTN:f,SB:f,BB:f"),
     ("srp_co_sb", "CO vs SB single-raised pot", "UTG:f,HJ:f,CO:r2.5,BTN:f,SB:c,BB:f"),
     ("srp_utg_btn", "UTG vs BTN single-raised pot", "UTG:r2.5,HJ:f,CO:f,BTN:c,SB:f,BB:f"),
+    ("3bp_sb_co", "SB 3bet vs CO", "UTG:f,HJ:f,CO:r2.5,BTN:f,SB:r10,BB:f,CO:c"),
+    ("3bp_hj_utg", "HJ 3bet vs UTG", "UTG:r2.5,HJ:r7.5,CO:f,BTN:f,SB:f,BB:f,UTG:c"),
+    ("3bp_bb_co", "BB 3bet vs CO", "UTG:f,HJ:f,CO:r2.5,BTN:f,SB:f,BB:r10,CO:c"),
+    ("3bp_co_hj", "CO 3bet vs HJ", "UTG:f,HJ:r2.5,CO:r7.5,BTN:f,SB:f,BB:f,HJ:c"),
+    ("3bp_bb_sb", "BB 3bet vs SB", "UTG:f,HJ:f,CO:f,BTN:f,SB:r3,BB:r10,SB:c"),
 ]
 # How many representative flops each spot stores (representative_flops(n); an odd multiple of a set holds it: 552 =
 # 3 x 184, 1656 = 3 x 552; 1755 is every flop): the opens the big blind calls every flop, by coverage per MB
@@ -97,7 +102,9 @@ SPOTS = [
 # blind 552 (+2.9 for 6.6 MB, every flop +4.3 more); the 3bet pots REP_FLOPS.
 REP_FLOPS = 184
 SPOT_FLOPS = {"srp_btn_bb": 1755, "srp_co_bb": 1755, "srp_hj_bb": 1755, "srp_utg_bb": 1755, "srp_sb_bb": 1755,
-              "srp_hj_co": 552, "srp_btn_sb": 552, "srp_utg_hj": 552, "srp_co_sb": 552, "srp_utg_btn": 552}
+              "srp_hj_co": 552, "srp_btn_sb": 552, "srp_utg_hj": 552, "srp_co_sb": 552, "srp_utg_btn": 552,
+              "3bp_bb_btn": 552, "3bp_btn_co": 552, "3bp_sb_btn": 552, "3bp_sb_co": 552, "3bp_hj_utg": 552,
+              "3bp_bb_co": 552, "3bp_co_hj": 552, "3bp_bb_sb": 552}
 
 
 # ----------------------------------------------------------------------------- formats

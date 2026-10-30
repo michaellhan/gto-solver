@@ -1440,8 +1440,9 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   The stored turn beats the solve's 50th iteration first to act (28 of 29 turns) and is about even with it in
   position (16 of 29), behind its 100th (13 and 5 of 29): `STORE_UNTIL`. On the classes' played cards 0.03 / 0.06,
   on the other cards 0.04 / 0.09. With the opponent free to adapt (flop-core's measure: Precomputed flop library,
-  Turns) it gives up 0.5-0.8% of the pot, so it stays marked approximate. No turn files are shipped yet: the builds
-  write them from here, and `scripts/instant_coverage.py` counts 28.3 more instant decisions per 100 hands with them on
+  Turns) it gives up 0.5-0.8% of the pot, so it stays marked approximate. The first turn files ship with the 3bet
+  pots on 552 (1,599, 15.2 MB: every BB vs SB and CO vs HJ flop and 495 of BB vs CO's, the entries solved since the
+  builds write them); the single-raised spots' come with their re-solves, and `scripts/instant_coverage.py` counts 28.3 more instant decisions per 100 hands with them on
   the 13 spots the library holds (680.1 -> 708.4 of 813.5, 83.6% -> 87.1%; 46% of the turn's decisions).
 * **Your hand out of your range** (`Advisor._as_advised`). A hand the line's range doesn't hold (a preflop call or
   check the charts never make: the big blind flatting aces against the button, which it 3bets, or checking KQs
@@ -2046,8 +2047,8 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
 
 * **Spots** (`flop_library.SPOTS`, most common first): 6-max, 100bb, no ante or rake, the page's default sizes:
   BTN, CO, HJ, UTG and SB vs BB single-raised pots; the HJ's open flatted by the CO, the BTN's by the SB, the
-  UTG's by the HJ, the CO's by the SB and the UTG's by the BTN; BB vs BTN and SB vs BTN 3bet pots, and BTN 3bets
-  CO. A spot is matched by the two ranges entering the flop (as the charts replay them: other table sizes, stacks
+  UTG's by the HJ, the CO's by the SB and the UTG's by the BTN; eight 3bet pots: the BB's and the SB's 3bet of the
+  BTN, the BTN's, the SB's and the BB's of the CO, the HJ's of the UTG, the CO's of the HJ and the BB's of the SB. A spot is matched by the two ranges entering the flop (as the charts replay them: other table sizes, stacks
   or charts simply don't match), the pot and the stack; heads-up from the flop only, not in exploit mode, with locks on the
   villain, custom ranges or Optimize sizes.
 * **Other games** (`flop_library.Format`, `FORMAT_SPOTS`): a spot of another stack depth, ante, table size or
@@ -2062,21 +2063,24 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
 * **Flops**: canonical flops matched up to suits (the ranges are suit-symmetric, so a stored flop's solve is any
   suit permutation's, its combos permuted); other flops are solved live. Each spot stores a representative set
   (`representative_flops(n)`: the 1755 suit-isomorphic flops sorted by texture and sampled by weight, so each suit
-  pattern, pairing and height gets its share): 184 flops (12.7% of all flops) for the 3bet pots; 552 (38%; it holds
-  the 184) for the opens flatted behind or by the small blind (the HJ's by the CO, the BTN's by the SB, the UTG's
-  by the HJ, the CO's by the SB, the UTG's by the BTN); every flop for the opens the big blind calls (`SPOT_FLOPS`).
+  pattern, pairing and height gets its share): 552 flops (38% of all flops; it holds the 184, 12.7%, that the first
+  three 3bet pots stored before) for the eight 3bet pots and the opens flatted behind or by the small blind (the HJ's
+  by the CO, the BTN's by the SB, the UTG's by the HJ, the CO's by the SB, the UTG's by the BTN); every flop for the
+  opens the big blind calls (`SPOT_FLOPS`).
 * **Coverage** (`scripts/flop_library_coverage.py`: the 6-max 100bb preflop game played by the charts, the flop by
-  the stored strategies): 36% of hands go heads-up to the flop, and the library answers 74.5% of their flop
-  decisions (71.6% before the five flatted opens on 552, 49.2% before HJ, UTG and SB vs BB on every flop, 36.1%
-  before CO vs BB on every flop and SB vs BB on 552, 21.3% before format 2 made room, 9.4% with 184 flops
-  everywhere). Of the rest, a spot not in the library is 14.6 points (CO vs the SB's 3bet 1.2, each other 3bet pot
-  ~1; 4bet pots 1.5 together), a flop not stored 7.8 (the flatted opens' and the 3bet pots'), a raise 3.1. A flop's
+  the stored strategies): 36% of hands go heads-up to the flop, and the library answers 77.2% of their flop
+  decisions (74.5% before the eight 3bet pots on 552, 71.6% before the five flatted opens on 552, 49.2% before HJ,
+  UTG and SB vs BB on every flop, 36.1% before CO vs BB on every flop and SB vs BB on 552, 21.3% before format 2
+  made room, 9.4% with 184 flops everywhere). Of the rest, a spot not in the library is 9.5 points (the other 3bet
+  pots ~0.6 each: the BTN's and the SB's 3bet of the UTG, the BB's and the SB's of the HJ; 4bet pots), a flop not
+  stored 10.2 (the flatted opens' and the 3bet pots'), a raise 3.2. A flop's
   entry is worth its spot's share times its suit count, so more flops of the commonest spots beat new spots; by
   points per MB (`--assume`): BTN vs BB on every flop +12.4 for 4.5 MB, CO vs BB on 1656 (90%) +7.6 for 2.8, UTG vs
   BB on 552 +2.4 for 1.05, SB vs BB on 552 +3.5 for 2.1, then on every flop SB vs BB +8.6 for 6.0 MB (its wide
   ranges' entries are the biggest), HJ vs BB +7.8 for 3.5, UTG vs BB +6.1 for 3.1, the five flatted opens on 552
-  +2.9 for 6.6, all built; next: the 3bet pots on 552 (five more of them: the SB's and the BB's 3bet of the CO,
-  the HJ's of the UTG, the CO's of the HJ, the BB's of the SB), the flatted opens on every flop +4.3 for ~14 MB.
+  +2.9 for 6.6, the eight 3bet pots on 552 (five of them new: the SB's and the BB's 3bet of the CO, the HJ's of
+  the UTG, the CO's of the HJ, the BB's of the SB) +2.7 for 8.8, all built; next: the flatted opens on every flop
+  +4.3 for ~14 MB.
 * **What is stored**: the flop's first decisions (the root; the in-position player after a check or facing a lead;
   the out-of-position player facing a bet after checking) and the decisions facing a raise of those bets (a
   check-raise, a lead raised: entries built since 2026-10-29; 1-2 more nodes a flop, entries 26-45% bigger), only
