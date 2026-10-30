@@ -2714,7 +2714,14 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   0.07 -> 0.09, 10-12 of the 12 flops worse (the browser's bucketed Accurate the same, Fast at 120 0.50 -> 0.58).
   Every budget runs past 100 (Fast 140-420, Accurate 250-450 natively, 520-870 in the browser; in the compiled core
   the browser's Fast 229-986 on a loaded machine where its tables leave it the time, and Accurate its 1000 in 16-31
-  s).
+  s). So was seeding it from the approximate answer (the three stored flops most like it, above;
+  `scripts/bench_flop_seed.py`: 104 stored flops of the flatted opens and the 3bet pots in Fast's tree and 78 in
+  Accurate's, natively, one thread; geometric mean exploitability, % of the pot, cold -> its mixes seeded as regrets
+  at the pot's size, `regret:1`): at 100 iterations 0.45 -> 0.41 (3bet pots, Fast), 0.76 -> 0.72 (single-raised),
+  0.47 -> 0.37 and 0.73 -> 0.67 (Accurate); at 300 3-9% lower, at 600 even, and 14-23 of 30-64 flops worse than cold
+  at 300. Fast stops at 300 once settled (0.4-0.8 s natively, 0.4-1.1 s in the browser's compiled core) and Accurate
+  runs its budget, so it saves no time. Seeding the strategy sums instead changes nothing (the average restarts at
+  the first iteration); three times the pot (`regret:3`) is about the same.
 * **Invalidation**: `index.json` holds each spot's range fingerprints and tree (`tree_key` of its
   `library_config(pot, stack)`, which deals the river; the flops still on the blind river's tree listed apart, `old`
   under `old_tree`); an entry whose spot, tree or `MODEL_VERSION` (bump it when the flop game changes in a way the
