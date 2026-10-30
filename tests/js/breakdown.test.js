@@ -106,7 +106,7 @@ function page(server) {
 
 test("the advice panel: Grid / Breakdown / Equity tabs postflop, the grid inside its own view", () => {
   const p = page(), h = p.byId("result").innerHTML;
-  assert.match(h, /class="segment vtabs"><button data-v="grid" class="active">Grid<\/button><button data-v="breakdown" class="">Breakdown<\/button><button data-v="equity" class="">Equity<\/button><\/div><div class="bdview" hidden><\/div><div class="gridview">/);
+  assert.match(h, /class="segment vtabs"><button data-v="grid" class="active">Grid<\/button><button data-v="breakdown" class="">Breakdown<\/button><button data-v="equity" class="">Equity<\/button><button data-v="simple" class="">Simple<\/button><\/div><div class="bdview" hidden><\/div><div class="gridview">/);
   // 3-way solves: no equity tab; the betting rules' answers and preflop: no tabs
   p.ctx.__res = JSON.stringify({ ...RES, multiway: true, solved: true, opponents: ["BB", "CO"] });
   p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");

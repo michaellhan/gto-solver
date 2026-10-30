@@ -12,6 +12,7 @@ Game state (all money in big blinds unless `bb` is given, then chips / bb):
   "sizes": {"flop": [33, 75], "raise": [60]},   # optional: postflop bet sizes per street, % of the pot
   "ranges": {"BB": "22+,A2s+,KTo+"},            # optional: a player's range entering the flop
   "optimize_sizes": true                        # optional: pick this street's bet sizes from a wide menu
+  "one_size": "all"                             # optional: the one-size view instead (Advisor._one_size_view)
 }
 Actions: fold, check, call, bet (amount), raise (to), all-in.
 """
@@ -223,6 +224,25 @@ SIZE_PCT = (5.0, 500.0)  # custom sizes are held to this range, % of the pot
 OPT_SIZES = [0.25, 0.33, 0.5, 0.75, 1.0, 1.5, 2.0]  # optimize_sizes: the wide menu the first solve picks from
 OPT_KEEP = 0.03     # ...a size stays when either player's first bet uses it with this share of their range
 OPT_SHARE = 0.35    # ...that solve's share of the time budget (the advice's solve gets the rest: same total)
+# The one-size view (state "one_size"; Advisor._one_size_view): at a heads-up decision where the player can bet, the
+# street solved from there with one bet size at that decision, for each of these, and with all of them to mix freely
+# (the full menu); the rest of the tree is the advice's. A quarter pot to 1.5 pots: the sizes single-size strategies
+# use (a range bet small, a polar range big), closer together where a few points of pot move the EV most; the river
+# twice the pot too (a polar river's one size is the biggest: the advice's own river bets up to 250%). Plus all-in
+# where the tree offers it (the stack at most allin_spr pots: a 3bet pot's turn and river). A size reaching the stack
+# is the all-in.
+ONE_SIZES = (0.25, 0.33, 0.5, 0.75, 1.0, 1.25, 1.5)
+ONE_SIZES_RIVER = ONE_SIZES + (2.0,)
+ONE_SIZE_ALLIN = 1000.0   # (the all-in candidate: a bet of this many pots reaches any stack)
+# ...each solve stops at the first of HU_CHECKS where it is this close to equilibrium (% of the pot; expl_target when
+# lower), or at its budget (the request's): the EV given up is the difference of two such solves' values, so sizes
+# closer than this are a tie. Half of Fast's 0.2 (at 0.2 most of a turn's sizes tied): a page's turn 1.3-16 s for
+# every size, with threads (scripts/bench_browser.mjs --one-size)
+ONE_SIZE_SETTLED = {"flop": 0.1, "turn": 0.1, "river": 0.05}
+ONE_SIZE_CACHE = 256    # rows kept per advisor (a few KB each: a grid and the numbers), least recently used out first
+ONE_SIZE_DEF = ("best = the size whose one-size strategy keeps the most EV for the player betting: each game is solved "
+                "from this decision with the same ranges, the opponent adapting; EV given up = the range's EV with "
+                "every candidate size to mix freely minus with that size alone, in % of the pot")
 STREET_OF = {0: "preflop", 3: "flop", 4: "turn", 5: "river"}
 STREETS = ["preflop", "flop", "turn", "river"]
 
@@ -1843,7 +1863,7 @@ def _unusable(res) -> Optional[str]:
         return "no answer"
     if "error" in res:
         return f"the solve gave no answer ({res['error']})" if str(res["error"]).startswith(_SOLVE_ERRORS) else None
-    if any(k in res for k in ("skipped", "cancelled")) or res.get("study") in ("deal", "over", "runouts"):
+    if any(k in res for k in ("skipped", "cancelled", "one_size")) or res.get("study") in ("deal", "over", "runouts"):
         return None
     acts = res.get("actions")
     if not acts or not isinstance(acts, list):
@@ -1864,6 +1884,13 @@ def _unusable(res) -> Optional[str]:
 
 # errors an answer can carry that are the solve's, not the request's: Advisor.advise answers by the rules instead
 _SOLVE_ERRORS = ("no decision pending",)
+
+
+def _one_size_failed(why) -> dict:
+    """A one-size request (state "one_size") whose answer failed: an error (the betting rules' advice doesn't answer
+    it)."""
+    reason = why if isinstance(why, str) else f"{type(why).__name__}: {why}"
+    return {"error": f"the one-size view couldn't be worked out here ({reason})"[:500]}
 
 
 def _legal_to(st: "StreetState", p: str, to: float, remaining: float) -> float:
@@ -2208,6 +2235,10 @@ class Advisor:
         self._runout_held = False # ...from what's in hand only: the library's stored turns, cached solves (_NotHeld)
         self._runout_lines = None # ...the stored turn's flop lines, where the file is there but not for this line
         self._req_sizes: Dict[str, List[float]] = {}   # the request's custom sizes (state "sizes"), as fractions
+        self._one_size = None     # state "one_size": the one-size view's request (Advisor._one_size_view), else None
+        # ...its solves stop this close to equilibrium (% of the pot, by street; the lower expl_target where set)
+        self.one_size_settled: Dict[str, float] = dict(ONE_SIZE_SETTLED)
+        self._one_rows: Dict[tuple, dict] = {}   # its rows solved here, by spot and size (ONE_SIZE_CACHE, oldest first)
         # Advisor.instant's sources, tried in order: each (advisor, InstantSpot) -> {"actions", "source", "label"} or None
         self.instant_sources = [instant_from_store, instant_from_own, instant_from_prev]
         self._instant = False     # an Advisor.instant request: nothing is solved (_NoInstant where it would be)
@@ -2228,6 +2259,8 @@ class Advisor:
             raise
         except Exception as e:   # noqa: BLE001
             why = e
+        if why and state.get("one_size") is not None:
+            return _one_size_failed(why)   # (the view or nothing: not the betting rules' advice)
         if why:
             return self._fallback(state, why)
         self._flag_short(state, res)
@@ -2283,7 +2316,7 @@ class Advisor:
         locks, custom ranges or sizes, a tournament, Study, a jam, the breakdown)."""
         if len(str(state.get("board") or "")) < 6 or state.get("opponents") == "pool" or any(
                 state.get(k) for k in ("study", "runouts", "jam", "breakdown", "optimize_sizes", "locks", "library_only",
-                                       "payouts", "ranges", "sizes")):
+                                       "payouts", "ranges", "sizes")) or state.get("one_size") is not None:
             return None
         self._instant = True
         try:
@@ -2306,7 +2339,7 @@ class Advisor:
         (not a flop the library holds). {"presolved": street, "iterations"}, else None."""
         if len(str(state.get("board") or "")) < 6 or state.get("opponents") == "pool" or any(
                 state.get(k) for k in ("study", "runouts", "jam", "breakdown", "optimize_sizes", "locks", "library_only",
-                                       "payouts", "ranges", "sizes")):
+                                       "payouts", "ranges", "sizes")) or state.get("one_size") is not None:
             return None
         seat = str(seat or "").upper()
         if not seat or seat == str(state.get("hero") or "").upper():
@@ -2334,7 +2367,8 @@ class Advisor:
         libs = [x for x in (self.library, self.mw_library) if x is not None and hasattr(x, "_entries")]
         if len(board) < 6 or not libs:
             return
-        st = {k: v for k, v in state.items() if k not in ("study", "runouts", "jam", "breakdown", "optimize_sizes")}
+        st = {k: v for k, v in state.items() if k not in ("study", "runouts", "jam", "breakdown", "optimize_sizes",
+                                                           "one_size")}
         st.update(board=board, flop=[], turn=[], river=[], library_only=True)
         before = [set(x._entries) for x in libs]
         try:
@@ -2382,6 +2416,8 @@ class Advisor:
                 return {"error": f"the runout report failed ({type(e).__name__})",
                         "fallback_reason": f"{type(e).__name__}: {e}"[:300]}
             why = e
+        if why and st.get("one_size") is not None:
+            return _one_size_failed(why)
         return self._fallback(st, why) if why else res   # (the catch-all, as advise's)
 
     def _runouts(self, st: dict, held: bool = False) -> dict:
@@ -2813,6 +2849,8 @@ class Advisor:
                 "seconds": round(time.time() - t0, 2)}
 
     def _advise_at(self, state, actor, t0, hero, hole, board, positions, stack, streets, sizes, custom, locks):
+        if not board and state.get("one_size") is not None and actor is None:
+            return {"error": "the one-size view is for bets after the flop: preflop is the charts' raise sizes"}
         if not board and state.get("study"):
             return self._study_preflop(hero, streets["preflop"], positions, stack, t0)
         if not board:
@@ -2851,6 +2889,9 @@ class Advisor:
         # the Breakdown view (gto/breakdown.py) on the advice's own spot; not for a practice opponent's move
         self._breakdown = bool(state.get("breakdown")) and actor is None
         self._req_sizes = sizes   # (optimize_sizes puts a street's custom sizes in its wide menu)
+        # the one-size view (Advisor._one_size_view) in place of the advice: "all", "full", "list" or a size ("50%",
+        # 50, "all-in"); not for a practice opponent's move or a presolve
+        self._one_size = state.get("one_size") if actor is None else None
         # the page's session analyzer in its "flop-library spots only" scope: a flop the library holds, never a solve
         self._lib_only = bool(state.get("library_only")) and actor is None
         if self._lib_only and len(board) != 3:
@@ -2866,6 +2907,7 @@ class Advisor:
         finally:
             self.time_budget, self.prior_budget, self.cfg, self.root_sizes, self.spr_sizes = saved
             self._breakdown = self._lib_only = self._jam = self._study = False
+            self._one_size = None
 
     # ------------------------------------------------------------ preflop
     def _preflop(self, hero, hole, preflop, positions, stack, t0, pool=False, locks=None):
@@ -3575,7 +3617,7 @@ class Advisor:
             return {"skipped": "multiway"}   # (a presolve: heads-up from the flop only, as an instant answer)
         # a 3-way flop's first decision the 3-way library holds: its precomputed solve answers (no narrowing needed)
         if len(cur.players_start) == 3 and actor is None and not pool and not optimize and not self._jam \
-                and getattr(self, "_icm", None) is None:
+                and getattr(self, "_icm", None) is None and self._one_size is None:
             res = self._mw_from_library(hero, hole, board, ranges, cur, stk, streets, t0, notes, locks, positions)
             if res is not None:
                 return res
@@ -3614,6 +3656,8 @@ class Advisor:
 
         live_opps = [p for p in remaining if p != hero]
         if len(live_opps) != 1 or cur.allin & set(remaining) - {hero} and len(remaining) > 2:
+            if self._one_size is not None and not actor:
+                return {"error": f"the one-size view is for heads-up pots: {len(remaining)} players are in"}
             if self._lib_only:
                 return {"skipped": "multiway: not a flop-library spot"}
             if actor:
@@ -3828,6 +3872,9 @@ class Advisor:
             return {"error": "no decision pending at this point in the tree", "notes": notes}
         if actor:
             return self._actor_move(sol, node, n_r0, n_r1, actor[1], 1 - hero_p, cur.name)
+        if self._one_size is not None:
+            return self._one_size_view(sol, node, n_r0, n_r1, cur, board, hole, hero, villain, hero_p, oop, ip, eff,
+                                       pool or bool(adj), notes, t0)
         if node.player != hero_p:
             notes.append("warning: tree expected the other player to act; reporting that node")
         expl = max(0.0, self._expl(sol))   # how far this street's solve is from equilibrium, % of its pot
@@ -5809,6 +5856,156 @@ class Advisor:
             raise
         return True
 
+    def _one_size_view(self, sol, node, n_r0, n_r1, cur: StreetState, board, hole, hero, villain, hero_p, oop, ip, eff,
+                       exploit, notes, t0) -> dict:
+        """The one-size view (state "one_size"), in place of the advice at a heads-up decision where the player to act
+        (hero; Study's actor) can bet: the street solved again from this decision, with the ranges the advice's walk
+        reached it with (Study's and the advice's own), once with one bet size there for each candidate
+        (one_size_candidates: ONE_SIZES, the river's ONE_SIZES_RIVER, all-in where the tree offers it) and once with
+        every candidate to mix freely (the full menu, "full"); the rest of the tree (the opponent's bets, raises, the
+        later streets) is the advice's (_cfg_with_real_sizes), cut alike for every size when the full menu's tree is
+        past the advice's cap. Each solve stops once settled (one_size_settled) or at the request's budget. A row per
+        solve: the root's actions and the range's frequency of each, the range's EV (bb relative to folding now,
+        weighted by hand pairs: the game's value), the grid, hero's hand (with cards), its iterations and
+        exploitability. "one_size": "all" solves the full menu and every size and adds each one's EV given up against
+        the full menu (loss_pct, % of the pot) and the best (one_size_summary); "full" or a size ("50%", 50, "all-in";
+        one that isn't a candidate is solved too, 5-500%) solves that one; "list" none. Rows solved here are kept
+        (ONE_SIZE_CACHE), so asking again answers at once, and a request answers with every row it has kept for the
+        spot ("rows"). At equilibrium only: not against the pool or locks, nor with tournament payouts."""
+        want = self._one_size
+        street = cur.name
+        if exploit:
+            return {"error": "the one-size view is at equilibrium: it isn't worked out against the pool or your locks"}
+        if getattr(self, "_icm", None) is not None:
+            return {"error": "the one-size view is in chips: it isn't worked out with tournament payouts"}
+        if node.player != hero_p:
+            return {"error": "no decision of yours here"}
+        if "check" not in node.names:
+            return {"error": "the one-size view is for a decision where you can bet: here you face a bet (and raise "
+                             "sizes aren't part of it)"}
+        bets = tuple(float(b) for b in node.bets)
+        behind = eff - bets[hero_p]
+        if behind <= 1e-9:
+            return {"error": "no chips behind to bet"}
+        pot = float(node.pot_now)
+        base = self._cfg_with_real_sizes(cur, oop, ip, eff)
+        base.keep_sizes, base.root_allin, base.root_bets = None, False, None
+        cands = one_size_candidates(pot, behind, base.allin_spr, river=street == "river")
+        frac = dict(cands)
+        if want not in ("all", "full", "list"):
+            try:
+                pct = float(str(want).strip().rstrip("%")) if str(want).strip() != "all-in" else None
+            except ValueError:
+                return {"error": f"one_size: {want!r} is not a size (\"50%\", 50, \"all-in\", \"full\", \"all\" or \"list\")"}
+            if pct is None:
+                want = "all-in"
+                frac.setdefault("all-in", ONE_SIZE_ALLIN)
+            else:
+                if not SIZE_PCT[0] <= pct <= SIZE_PCT[1]:
+                    return {"error": f"one_size: sizes are {SIZE_PCT[0]:g}-{SIZE_PCT[1]:g}% of the pot"}
+                f = pct / 100.0
+                amt = max(round(f * pot * 2) / 2, 1.0)
+                want = "all-in" if amt >= behind - 1e-9 else f"{int(round(pct))}%"
+                frac.setdefault(want, f)
+        todo = (["full"] + [c for c, _ in cands]) if want == "all" else [] if want == "list" else [want]
+        R0, R1 = expand(sol.ctx, n_r0), expand(sol.ctx, n_r1)
+        target = self.one_size_settled[street] if self.expl_target is None else \
+            min(self.one_size_settled[street], self.expl_target)
+        spot = (self._solve_key(board, R0, R1, cur.pot_start, eff, bets, hero_p, cur.n_raises, base), target)
+        full_menu = [frac[c] for c, _ in cands]
+        level = self._one_size_trim(board, R0, R1, cur, eff, bets, hero_p, base, full_menu)
+        cfg0 = base if not level else self._trim_cfg(base, street, level)
+        for label in todo:
+            key = (spot, label)
+            if key in self._one_rows:
+                self._one_rows[key] = self._one_rows.pop(key)   # (the most recently used last)
+                continue
+            cfg = cfg0.copy()
+            cfg.root_bets = full_menu if label == "full" else [frac[label]]
+            t1 = time.time()
+            s1 = self._one_size_solve(board, R0, R1, cur, eff, bets, hero_p, cfg, target)
+            row = self._one_size_row(s1, label, hero_p, hole, time.time() - t1)
+            del s1
+            self._one_rows[key] = row
+            while len(self._one_rows) > ONE_SIZE_CACHE:
+                del self._one_rows[next(iter(self._one_rows))]
+        known = {lab: r for (sp, lab), r in self._one_rows.items() if sp == spot}
+        labels = [c for c, _ in cands]
+        rows = [known[c] for c in labels if c in known] + \
+            [r for lab, r in known.items() if lab not in labels and lab != "full"]   # (sizes asked that aren't candidates)
+        full = known.get("full")
+        out = {"street": street, "actor": hero, "opponent": villain, "position": "OOP" if hero_p == 0 else "IP",
+               "board": cards_str(board), "pot_bb": round(pot, 2), "stack_bb": round(behind, 2),
+               "candidates": [c for c, _ in cands], "asked": want, "definition": ONE_SIZE_DEF, "target_pct": target,
+               "full": full, **one_size_summary(full, rows, pot)}
+        if hole:
+            out["hand"] = hand_class(hole)
+            out["hole"] = cards_str(hole)
+        more = []
+        if level:
+            more.append(f"{street}: every size's tree is cut alike to fit this speed's time and memory: {TRIMS[level - 1]}")
+        rest = base.bet_sizes.get(street, [])
+        more.append(f"{street}: one size at {'your' if hole else hero + chr(39) + 's'} decision only; the rest of the tree "
+                    f"is the advice's ({villain}'s bets {', '.join(f'{int(round(x * 100))}%' for x in rest)}"
+                    f"{', and the later streets' if street != 'river' else ''})")
+        return {"one_size": out, "street": street, "hero": hero, "villain": villain,
+                "notes": [n for n in notes if "to tree action" not in n] + more, "seconds": round(time.time() - t0, 2)}
+
+    def _one_size_trim(self, board, R0, R1, cur: StreetState, eff, bets, to_act, base: Config, full_menu) -> int:
+        """The TRIMS level the one-size view's trees are cut to: the full menu's tree (the biggest) at the cap a new
+        solve of the street has here (_cells_cap: memory, and on the turn and river the request's time), else 0."""
+        cap = self._cells_cap(len(board), self.time_budget)
+        if cap is None:
+            return 0
+        for level in range(len(TRIMS) + 1):
+            cfg = base if not level else self._trim_cfg(base, cur.name, level)
+            cfg = cfg.copy()
+            cfg.root_bets = list(full_menu)
+            try:
+                tree_cells(board, R0, R1, cur.pot_start, eff, bets=bets, to_act=to_act, n_raises=cur.n_raises,
+                           cfg=cfg, max_cells=cap if level < len(TRIMS) else self.max_cells)
+                return level
+            except TreeTooBig:
+                continue
+        return len(TRIMS)
+
+    def _one_size_solve(self, board, R0, R1, cur: StreetState, eff, bets, to_act, cfg: Config, target: float):
+        """A one-size view's solve from the decision: settled at `target` (% of the pot, read at HU_CHECKS) or the
+        request's budget, whichever comes first. Not kept in the advice's cache (_cache): the view keeps its rows."""
+        t0 = time.time()
+        sol = solve(board, R0, R1, cur.pot_start, eff, bets=bets, to_act=to_act, n_raises=cur.n_raises, cfg=cfg,
+                    time_budget=self.time_budget, max_iters=HU_CHECKS[0], horizon=1000, should_stop=self.should_stop,
+                    reserve=HU_RESERVE)
+        self._hu_run(sol, self.time_budget - (time.time() - t0), target, HU_CHECKS[0])
+        return sol
+
+    def _one_size_row(self, sol: Solution, label: str, p: int, hole, secs: float) -> dict:
+        """A one-size solve's row (_one_size_view) for the player p acting at its root."""
+        root, ctx = sol.root, sol.ctx
+        names, act = list(root.names), ctx.active
+        A = len(names)
+        w = np.asarray(sol.r0 if p == 0 else sol.r1, dtype=np.float64)
+        o = sol.r1 if p == 0 else sol.r0
+        cs = np.asarray(sol.solver.compat_sum(np.asarray(o, dtype=np.float32)[None, :])[0], dtype=np.float64)
+        if not sol.fresh():
+            sol._refresh()
+        strat, evs = sol.strategy[:, act], sol.evs[:, act]
+        pw = w * cs
+        ev = float((pw * (strat * evs).sum(axis=0)).sum() / max(float(pw.sum()), 1e-12))
+        freq = (strat * w[None, :]).sum(axis=1) / max(float(w.sum()), 1e-12)
+        sf = np.zeros((A, N_COMBOS)); sf[:, act] = strat
+        row = {"size": label, "actions": names, "freq": [round(float(f), 4) for f in freq],
+               "amounts": [self._amount(n, root, p) for n in names], "ev_bb": round(ev, 4),
+               "grid": strategy_grid([sf[a] for a in range(A)], names, expand(ctx, w)),
+               "iterations": int(sol.iters), "exploitability_pct": round(max(0.0, float(self._expl(sol))), 3),
+               "seconds": round(secs, 2)}
+        if hole:
+            ci = np.nonzero(act == COMBO_INDEX[(min(hole), max(hole))])[0]
+            if len(ci):
+                row["hand"] = {"freq": [round(float(x), 3) for x in strat[:, ci[0]]],
+                               "ev": [round(float(x), 2) for x in evs[:, ci[0]]]}
+        return row
+
     def _optimize_sizes(self, board, r0, r1, st: StreetState, eff, cfg: Config, hero_p, notes):
         """optimize_sizes: solve this street once with OPT_SIZES (one street deep and one raise: the size is
         chosen here, and the smaller tree buys iterations), keep the sizes either player's first bet uses
@@ -6264,3 +6461,36 @@ def strategy_grid(strats: List[np.ndarray], names: List[str], weights: np.ndarra
 
 def state_board(board) -> str:
     return cards_str(board)
+
+
+def one_size_candidates(pot: float, behind: float, allin_spr: float, river: bool = False) -> List[Tuple[str, float]]:
+    """The one-size view's sizes at a decision with `pot` in the middle and `behind` to bet: (label, fraction of the
+    pot) for each of ONE_SIZES (ONE_SIZES_RIVER on the river), and all-in where the tree offers it (behind at most
+    allin_spr pots), as the tree builds them (solver.TreeBuilder._decision): a bet rounds to half a big blind (at least
+    1), one that reaches the stack is the all-in, and sizes that come out the same bet are one."""
+    out, seen = [], set()
+    for f in (ONE_SIZES_RIVER if river else ONE_SIZES) + ((ONE_SIZE_ALLIN,) if behind <= allin_spr * pot else ()):
+        amt = max(round(f * pot * 2) / 2, 1.0)
+        label = "all-in" if amt >= behind - 1e-9 else f"{int(round(f * 100))}%"
+        key = label if label == "all-in" else amt
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((label, f))
+    return out
+
+
+def one_size_summary(full: Optional[dict], rows: List[dict], pot: float) -> dict:
+    """The one-size view's verdict over the rows solved so far (each {"size", "ev_bb", "exploitability_pct", ...}) and
+    the full menu's row: each row's EV given up against the full menu (loss_pct, % of the pot; None without it), the
+    best size (the highest EV: the least given up) and the sizes tied with it (within the precision of the two solves,
+    the larger of their exploitabilities)."""
+    rows = [dict(r) for r in rows]
+    for r in rows:
+        r["loss_pct"] = None if full is None else round((full["ev_bb"] - r["ev_bb"]) / max(pot, 1e-9) * 100, 3)
+    if not rows:
+        return {"rows": rows, "best": None, "tied": []}
+    top = max(rows, key=lambda r: r["ev_bb"])
+    tol = lambda r: max(r.get("exploitability_pct") or 0.0, top.get("exploitability_pct") or 0.0) / 100 * pot
+    tied = [r["size"] for r in rows if r is not top and top["ev_bb"] - r["ev_bb"] <= tol(r)]
+    return {"rows": rows, "best": top["size"], "tied": tied}

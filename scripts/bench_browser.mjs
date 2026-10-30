@@ -22,6 +22,8 @@
 // builds it (scripts/build_bundle.py, with the repo's .venv Python or $PYTHON). Each spot's first line gives the
 // worker's setup by stage, the worker's own timings (runtime, numpy, imports, advisors).
 // --hole CARDS gives hero those cards in every spot (one out of your range for the line: the spots' comments).
+// --one-size: after a spot's Fast advice, the Simple view's requests as the page sends them (simple.js: "one_size":
+// "full", then each candidate size, one solve a request at Fast's budget), each timed, and the best size.
 // --early asks as the page does for its own advice (early: an approximate answer first where one is in hand at once,
 // Advisor.instant) and reports when it came (early_s) and what it said.
 // --gap G: the opponent's move (the spot's last action, theirs) is entered G seconds after it became their turn, and the
@@ -328,7 +330,26 @@ async function runSpot(w, spot, speeds) {
       notes: (r.notes || []).filter((n) => process.env.BENCH_ALL_NOTES || /equilibrium|solved|iterations|rules/.test(n)).map((n) => n.slice(0, 160)),
     }));
     if (speed === "fast") fastSeconds = r.seconds;
+    if (speed === "fast" && flag("one-size")) await runOneSize(w, spot, state);
   }
+}
+// the Simple view's requests after the advice (--one-size): the full menu first (it names the candidates), then each
+async function runOneSize(w, spot, state) {
+  const seq = [], t0 = performance.now();
+  let o = null;
+  for (let label = "full"; label;) {
+    const t = performance.now();
+    const m = await w.request({ ...state, one_size: label });
+    const r = m.result || {};
+    if (!r.one_size) { seq.push({ size: label, error: r.error || m.error || "no answer" }); break; }
+    o = r.one_size;
+    const row = label === "full" ? o.full : o.rows.find((x) => x.size === label);
+    seq.push({ size: label, wall: +((performance.now() - t) / 1000).toFixed(2), it: row.iterations, expl: row.exploitability_pct });
+    label = o.candidates.find((c) => !seq.some((x) => x.size === c)) || null;
+  }
+  const loss = o && o.rows.find((x) => x.size === o.best);
+  console.log(JSON.stringify({ spot, one_size: seq, total: +((performance.now() - t0) / 1000).toFixed(1), best: o && o.best,
+                               tied: o && o.tied, loss_pct: loss ? loss.loss_pct : null, heap_mb: +w.heap().toFixed(0) }));
 }
 
 if (flag("child")) {
@@ -350,10 +371,16 @@ for (const spot of flag("session") ? [spots.join(",")] : spots) {
   // a fresh worker per spot (and per speed unless --warm)
   for (const group of flag("warm") ? [speeds] : speeds.map((s) => [s])) {
     const p = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--child", "--spot", spot, "--speeds", group.join(","),
-                                           "--pyodide", pyodideDir, "--bundle", bundlePath, ...(arg("worker") ? ["--worker", arg("worker")] : []), ...["prefetch", "idle", "gap", "hole"].flatMap((k) => (arg(k) ? ["--" + k, arg(k)] : [])), ...["early", "presolve"].flatMap((k) => (flag(k) ? ["--" + k] : []))], { encoding: "utf8", maxBuffer: 1 << 26 });
+                                           "--pyodide", pyodideDir, "--bundle", bundlePath, ...(arg("worker") ? ["--worker", arg("worker")] : []), ...["prefetch", "idle", "gap", "hole"].flatMap((k) => (arg(k) ? ["--" + k, arg(k)] : [])), ...["early", "presolve", "one-size"].flatMap((k) => (flag(k) ? ["--" + k] : []))], { encoding: "utf8", maxBuffer: 1 << 26 });
     for (const line of p.stdout.split("\n").filter((l) => l.startsWith("{"))) {
       const r = JSON.parse(line);
-      if (r.speed) rows.push(r);
+      if (r.speed || r.one_size) rows.push(r);
+      if (r.one_size) {
+        console.log(`${r.spot.padEnd(11)} simple   ${String(r.total).padStart(6)} s  best ${r.best}${r.tied && r.tied.length ? " (tied " + r.tied.join(", ") + ")" : ""}`
+                    + ` gives up ${r.loss_pct}% of the pot  heap ${r.heap_mb} MB\n             `
+                    + r.one_size.map((x) => x.error ? `${x.size}: ERROR ${x.error}` : `${x.size} ${x.wall} s (${x.it} it, ${x.expl}%)`).join(", "));
+        continue;
+      }
       console.log(r.speed ? `${r.spot.padEnd(11)} ${r.speed.padEnd(8)} ${String(r.wall).padStart(6)} s of ~${r.page_budget ?? "-"} ` +
                             `(${r.over_pct == null ? "-" : (r.over_pct > 0 ? "+" : "") + r.over_pct + "%"})  it ${r.iterations ?? "-"}  ` +
                             `expl ${r.expl_pct ?? "-"}%  solve ${r.solve_s ?? "-"} s  outside ${r.outside_s ?? "-"} s  heap ${r.heap_mb} MB` +

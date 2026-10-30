@@ -128,9 +128,12 @@
   // the toggle between the actor's range and each opponent's (a "who" the node lacks shows the actor's)
   const whoHtml = (res, who) => `<span class="segment">${[{ key: "me", seat: res.actor }, ...oppsOf(res)].map(o =>
     `<button data-who="${o.key}" class="${o.key === (oppOf(res, who) ? who : "me") ? "active" : ""}">${esc(o.seat)}</button>`).join("")}</span>`;
-  // the node's views (3-way before the river no equity: the solve deals the cards to come into its leaves)
+  // the node's views (3-way before the river no equity: the solve deals the cards to come into its leaves); Simple, the
+  // one-size view (simple.js), heads-up where the actor can bet
   const viewsOf = (res) => res.street === "preflop" ? ["strategy"]
-    : [...Object.keys(VIEWS).filter(v => res.range_eq != null || (v !== "equity" && v !== "eqr")), "breakdown"];
+    : [...Object.keys(VIEWS).filter(v => res.range_eq != null || (v !== "equity" && v !== "eqr")), "breakdown",
+       ...(!res.multiway && (res.actions || []).some(a => a.action === "check") ? ["simple"] : [])];
+  const viewName = (v) => VIEWS[v] || (v === "simple" ? "Simple" : "Breakdown");
   function gridHtml(res, ui) {
     const opp = oppOf(res, ui.who), g = opp ? opp.grid : res.grid, names = g.actions;
     const view = opp && ui.view !== "equity" ? "strategy" : ui.view, focus = opp ? null : ui.focus;
@@ -449,8 +452,11 @@
     return answers.get(key);
   };
   async function go(state) {
+    const stops = [], stopFn = simpleStopFn();   // (the one-size view's solves stopped before the next node's ask)
+    if (simpleApi()) simpleApi().stop(null, p => { if (stopFn) stops.push(stopFn(p)); });
     ST.state = state; ST.sel = ST.hover = ST.focus = null; ST.ro = null; err = null; store();
     const key = JSON.stringify(request(state, ST.speed)), g = ++gen;
+    if (stops.length) { await Promise.all(stops); if (g !== gen) return; }
     answer(key);
     busy = true; draw();
     const r = await answers.get(key);
@@ -536,10 +542,12 @@
     const view = views.includes(ST.view) ? ST.view : "strategy";
     const ui = { ...ST, view }, r = shown(view);
     let h = `<div class="sy-status">${statusHtml(res)}</div><div class="sy-main"><div class="sy-left"><div class="sy-ctl">`
-      + `<span class="segment">${views.map(v => `<button data-view="${v}" class="${v === view ? "active" : ""}">${VIEWS[v] || "Breakdown"}</button>`).join("")}</span>`
-      + (oppsOf(res).length && view !== "breakdown" ? whoHtml(res, ST.who) : "")
-      + (view !== "breakdown" && !oppOf(res, ST.who) ? filterHtml(res, r.filter ? r.filter.key : "") : "")
-      + buildBtn + `</div>`;
+      + `<span class="segment">${views.map(v => `<button data-view="${v}" class="${v === view ? "active" : ""}">${viewName(v)}</button>`).join("")}</span>`
+      + (oppsOf(res).length && view !== "breakdown" && view !== "simple" ? whoHtml(res, ST.who) : "")
+      + (view !== "breakdown" && view !== "simple" && !oppOf(res, ST.who) ? filterHtml(res, r.filter ? r.filter.key : "") : "")
+      + (view === "simple" ? "" : buildBtn) + `</div>`;
+    // (Simple: the one-size panel in the grid's place, the node's actions beside it to play on)
+    if (view === "simple") return h + `<div class="sy-simple"></div></div><div class="sy-right">${actionsHtml(r, ui)}</div></div><div class="sy-note">${solverHtml(res)}</div>`;
     h += view === "breakdown" ? `<div class="sy-bd"></div>` : gridHtml(r, ui);
     h += `</div><div class="sy-right">${actionsHtml(r, ui)}<div class="sy-detail">${view === "breakdown" ? "" : detailHtml(r, ui, cls)}</div></div></div>`;
     h += `<div class="sy-note">${solverHtml(res)} ${pre ? "" : `EV: bb won from here relative to folding now. ${res.range_eq == null ? (res.multiway ? "No equity 3-way before the river." : "")
@@ -565,6 +573,8 @@
     if (dim) b.querySelector(".sy-stage").insertAdjacentHTML("afterbegin", `<div class="sy-wait"><span class="spinner"></span>Solving…</div>`);
     const bd = b.querySelector(".sy-bd");
     if (bd && res && !busy) showBreakdown(bd);
+    const sp = b.querySelector(".sy-simple");
+    if (sp && res && !busy) showSimple(sp);
     const inp = b.querySelector("[data-deal] input"); if (inp && !busy && !("ontouchstart" in window)) inp.focus();
     // (a redraw drops the focused button: the panel keeps the focus, so its keys still work)
     if (!box.hidden && !box.contains(document.activeElement)) box.querySelector(".sy-card").focus({ preventScroll: true });
@@ -576,6 +586,18 @@
     el.innerHTML = `<div class="sy-msg"><span class="spinner"></span>Loading…</div>`;
     const p = typeof loadJs === "function" ? loadJs("breakdown.js?v=" + (typeof BD_VERSION === "string" ? BD_VERSION : "1"), () => window.Breakdown) : Promise.reject(new Error("no loader"));
     p.then(go2, () => { el.innerHTML = `<div class="sy-msg sy-err">Couldn't load the breakdown (breakdown.js).</div>`; });
+  }
+  // the Simple view (simple.js, the page's one-size view): asked at Fast whatever the panel's speed, one solve a request;
+  // a step to another node stops its solves (go), and coming back carries on
+  const simpleStopFn = () => typeof simpleStop === "function" ? simpleStop : null;
+  const simpleApi = () => typeof window === "object" && window.Simple || null;
+  function showSimple(el) {
+    const go2 = () => window.Simple.show(el, res, res.key, (st) => ask({ ...st, speed: "fast" }),
+      { stop: simpleStopFn(), mode: typeof MODE === "string" ? MODE : "wasm" });
+    if (window.Simple) return go2();
+    el.innerHTML = `<div class="sy-msg"><span class="spinner"></span>Loading…</div>`;
+    const p = typeof loadJs === "function" ? loadJs("simple.js?v=" + (typeof SP_VERSION === "string" ? SP_VERSION : "1"), () => window.Simple) : Promise.reject(new Error("no loader"));
+    p.then(go2, () => { el.innerHTML = `<div class="sy-msg sy-err">Couldn't load the one-size view (simple.js).</div>`; });
   }
   // hover, focus and a hand picked: the cells (in place: a tap's click lands on the cell it started on) and the detail
   function redrawGrid() {
@@ -660,6 +682,7 @@
   }
   function close() {
     gen++; busy = false;
+    if (simpleApi()) simpleApi().stop(null, simpleStopFn());
     if (box) box.hidden = true; const m = document.getElementById("menuBtn"); if (m) m.focus();
     if (globalThis.viewClosed) globalThis.viewClosed("study");
   }
@@ -731,6 +754,7 @@
   .sy-deal form { display: flex; gap: 6px; flex-wrap: wrap; }
   .sy-deal input { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; font: inherit; width: 150px; text-transform: none; }
   .sy-bd { min-height: 200px; }
+  .sy-simple { min-height: 200px; }
   .sy-build { touch-action: none; user-select: none; -webkit-user-select: none; }
   .sy-build .sy-cell { cursor: crosshair; }
   .sy-build.scored .sy-cell { cursor: pointer; }
@@ -792,7 +816,7 @@
       document.body.appendChild(box);
       const data = (t) => { const e = t.closest("[data-close],[data-speed],[data-back],[data-step],[data-view],[data-who],[data-random],[data-act],[data-cls],[data-build],[data-brush],[data-amt],[data-reset],[data-fill],[data-score],[data-retry],[data-newflop],[data-unfilter],[data-runouts],[data-rowho],[data-card],[data-rosolve],[data-roview],[data-rosort],[data-rogroup]"); return e && !e.disabled ? e.dataset : null; };
       // (the Breakdown's own buttons are its: its player and parts aren't the panel's)
-      box.addEventListener("click", (e) => { if (e.target === box) return close(); if (e.target.closest(".sy-bd")) return; const d = data(e.target); if (d) act(d, e); });
+      box.addEventListener("click", (e) => { if (e.target === box) return close(); if (e.target.closest(".sy-bd,.sy-simple")) return; const d = data(e.target); if (d) act(d, e); });
       box.addEventListener("submit", (e) => {
         e.preventDefault();
         if (!res || res.study !== "deal") return;

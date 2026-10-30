@@ -207,7 +207,7 @@ test("the route table is the one gto/routes.py reads, and deploy.sh writes each 
   const deploy = fs.readFileSync(path.join(ROOT, "scripts", "deploy.sh"), "utf8");
   const gen = deploy.indexOf('-m gto.routes "$WORK/site/gto-solver"');
   assert.ok(gen > 0, "deploy.sh doesn't run gto.routes on the site folder");
-  for (const v of ["WORKER", "HH", "RP", "DR", "BD", "SS", "SY", "RO"]) assert.ok(deploy.indexOf(`const ${v}_VERSION = \\"$`) < gen, `${v}_VERSION is stamped after the routes' pages are copied`);
+  for (const v of ["WORKER", "HH", "RP", "DR", "BD", "SS", "SY", "RO", "SP"]) assert.ok(deploy.indexOf(`const ${v}_VERSION = \\"$`) < gen, `${v}_VERSION is stamped after the routes' pages are copied`);
   const lib = deploy.indexOf('const LIB_BASE = "../gto-solver-library/"');   // (the library's own site, scripts/deploy_library.sh)
   assert.ok(lib > 0 && lib < gen, "LIB_BASE isn't stamped before the routes' pages are copied");
   assert.ok(gen < deploy.indexOf("git add -A"));

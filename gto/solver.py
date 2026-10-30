@@ -157,6 +157,11 @@ class Config:
     # icm: a tournament's payoffs (gto/icm.py HUPayoffs): every terminal pays prize equity (in chip equivalents) instead
     # of chips. The game is then not zero-sum (the players outside the pot gain when either busts). None = chips.
     icm: Optional[object] = None
+    # root_bets: the root decision's bets, exactly (fractions of the pot; one that reaches the stack is the all-in),
+    # in place of its street's bet sizes and the all-in a low stack-to-pot ratio adds; every other decision keeps the
+    # street's. Advisor's one-size view (state "one_size") solves a decision with one size there, or with every
+    # candidate, the rest of the tree as the advice's. None = the street's sizes.
+    root_bets: Optional[List[float]] = None
 
     def rake(self, pot: float) -> float:
         """Rake in bb taken from a final pot of `pot` bb."""
@@ -180,6 +185,7 @@ class Config:
                       {k: {st: list(v) for st, v in d.items()} for k, d in self.later_sizes.items()},
                       seed=self.seed, cfr=self.cfr, rake_rate=self.rake_rate, rake_cap=self.rake_cap,
                       root_allin=self.root_allin, icm=self.icm,
+                      root_bets=None if self.root_bets is None else list(self.root_bets),
                       keep_sizes=None if self.keep_sizes is None else {k: (list(v) if isinstance(v, list) else v)
                                                                        for k, v in self.keep_sizes.items()})
 
@@ -189,7 +195,8 @@ class Config:
                 None if self.later_sizes is None else
                 tuple((k, tuple((st, tuple(v)) for st, v in sorted(d.items()))) for k, d in sorted(self.later_sizes.items()))) + \
             ((("rake", self.rake_rate, self.rake_cap),) if self.rake_rate > 0 else ()) + \
-            (("root_allin",) if self.root_allin else ()) + ((("icm", self.icm.key),) if self.icm is not None else ())
+            (("root_allin",) if self.root_allin else ()) + ((("icm", self.icm.key),) if self.icm is not None else ()) + \
+            ((("root_bets", tuple(self.root_bets)),) if self.root_bets is not None else ())
 
 
 def street_of(board_len: int) -> str:
@@ -965,6 +972,7 @@ class TreeBuilder:
         self._blind = False       # building a river played without its card (river_play)
         self._width = None        # ... by river_buckets hand buckets (its nodes' width) instead of per combo
         self._kind = "b"          # bucket terminals' kind prefix: "r" below a RiverEntry (river_strength)
+        self._root_bets = None    # Config.root_bets, until the root decision has read it
 
     def build(self, board, pot, stack, bets=(0.0, 0.0), to_act=0, n_raises=0, inv=None):
         board = tuple(board)
@@ -973,6 +981,7 @@ class TreeBuilder:
         if inv is None:
             inv = (pot / 2 + bets[0], pot / 2 + bets[1])
         checked = (to_act == 1 and bets[0] == bets[1] and bets[0] == 0 and n_raises == 0)
+        self._root_bets = self.cfg.root_bets
         return self._decision([board], pot, stack, bets, to_act, n_raises, inv, checked=checked)
 
     def _street_over(self, boards, pot, stack, bets, inv, allin):
@@ -1150,6 +1159,7 @@ class TreeBuilder:
 
     def _decision(self, boards, pot, stack, bets, p, n_raises, inv, checked):
         cfg = self.cfg
+        root_bets, self._root_bets = self._root_bets, None   # (the root's only: read before its children are built)
         street = "river" if self._blind else street_of(len(boards[0]))
         o = 1 - p
         b_me, b_op = bets[p], bets[o]
@@ -1171,7 +1181,7 @@ class TreeBuilder:
             else:
                 kids.append(self._decision(boards, pot, stack, bets, o, n_raises, inv, checked=True))
             offered_allin = False
-            for frac in self._sizes("bet", street):
+            for frac in self._sizes("bet", street) if root_bets is None else root_bets:
                 amt = max(round(frac * pot_total * 2) / 2, 1.0)
                 if amt >= remaining - 1e-9:
                     if not offered_allin and remaining > 0:
@@ -1186,7 +1196,8 @@ class TreeBuilder:
                 nb, ninv = with_bet(b_me + amt)
                 names.append(name)
                 kids.append(self._decision(boards, pot, stack, nb, o, n_raises + 1, ninv, False))
-            if not offered_allin and remaining > 0 and (remaining <= cfg.allin_spr * pot_total or jam_ok):
+            if not offered_allin and remaining > 0 and (remaining <= cfg.allin_spr * pot_total or jam_ok) \
+                    and root_bets is None:
                 nb, ninv = with_bet(b_me + remaining)
                 names.append("all-in")
                 kids.append(self._decision(boards, pot, stack, nb, o, n_raises + 1, ninv, False))
