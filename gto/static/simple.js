@@ -36,8 +36,9 @@
                                     rows: {}, cur: null, p: null, error: null, secs: [], sel: null, userStopped: false });
     return runs.get(k);
   }
-  // the next solve a run needs: the full menu first (its answer names the candidates), then each size in order
-  const nextOf = (run) => !run.full ? "full" : (run.candidates || []).find((c) => !run.rows[c]) || null;
+  // the next solve a run needs: the full menu first (its answer names the candidates and the order to solve them in:
+  // the sizes the full menu bets most first, so the solves of the sizes clearly behind them stop early), then each size
+  const nextOf = (run) => !run.full ? "full" : ((run.meta && run.meta.order) || run.candidates || []).find((c) => !run.rows[c]) || null;
   const doneOf = (run) => (run.full ? 1 : 0) + (run.candidates || []).filter((c) => run.rows[c]).length;
   const totalOf = (run) => run.candidates ? run.candidates.length + 1 : N_SIZES[run.street || "turn"] + 1;
   // an answer's one_size into the run: its spot, the candidates, the full menu's row and every size's row it has
@@ -182,7 +183,9 @@
     if (full) h += `<tr data-size="full" class="os-full${sel === "full" ? " sel" : ""}" tabindex="0"><td>Every size, mixed</td><td class="n">${pct(betShare(full))}</td><td class="n">${evs(full.ev_bb)}</td><td class="n">—</td></tr>`;
     const known = new Set(sum.rows.map((r) => r.size));
     for (const r of sum.rows) {
-      const loss = r.loss_pct == null ? "—" : `${r.loss_pct < 0 ? "0.00" : r.loss_pct.toFixed(2)}%`;
+      // (a size whose solve stopped once it was clearly behind the best: its EV given up as precise as it was then)
+      const loss = r.loss_pct == null ? "—" : r.cut ? `<span title="Stopped once clearly behind the best: within ${r.exploitability_pct}% of the pot">≈${Math.max(0, r.loss_pct).toFixed(1)}%</span>`
+        : `${r.loss_pct < 0 ? "0.00" : r.loss_pct.toFixed(2)}%`;
       h += `<tr data-size="${esc(r.size)}" class="${r.size === sum.best ? "best" : ""}${sum.tied.includes(r.size) ? " tied" : ""}${sel === r.size ? " sel" : ""}" tabindex="0">`
         + `<td><i style="background:${colorOf("bet " + r.size)}"></i>${esc(sizeName(r.size))}${r.size === sum.best ? ' <span class="os-tag">best</span>' : ""}</td>`
         + `<td class="n">${pct(betShare(r))}</td><td class="n">${evs(r.ev_bb)}</td><td class="n">${loss}</td></tr>`;
@@ -199,7 +202,8 @@
     }
     h += `<div class="os-note">Each size is a solve of the ${esc(m.street || run.street || "street")} from this decision with the same ranges, the opponent adapting to it; only this decision's bet changes (the rest of the tree is the advice's). `
       + `Best: the size that keeps the most EV for the player betting. Gives up: the range's EV with every size to mix freely less with that size alone, in % of the pot`
-      + `${m.target_pct != null ? `; each solve is within ${m.target_pct}% of the pot of equilibrium, so sizes closer than that are a tie` : ""}.</div>`;
+      + `${m.target_pct != null ? `; each solve is within ${m.target_pct}% of the pot of equilibrium, so sizes closer than that are a tie` : ""}`
+      + `${sum.rows.some((r) => r.cut) ? "; ≈: a size whose solve stopped early, once it was clearly behind the best" : ""}.</div>`;
     return h;
   }
 

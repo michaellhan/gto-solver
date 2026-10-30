@@ -2120,6 +2120,9 @@ class Solver:
         v0 = float((u[0][0] * r0).sum())
         v1 = float((u[1][0] * r1).sum())
         pairs = float((self.compat_sum(r1[None, :])[0] * r0).sum())
+        # (each best response's value a pair, chips net: in a zero-sum game player p's value is at most br[p] and at
+        # least -br[1 - p], the one-size view's bounds: Advisor._one_size_run)
+        self.br_values = (self.iters, v0 / max(pairs, 1e-12), v1 / max(pairs, 1e-12), raked)
         if raked:
             # raked (or a tournament's payoffs), the game isn't zero-sum: each best response gains over what its player gets now,
             # and the two now sum to minus the rake the average strategies pay (0 without rake)

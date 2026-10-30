@@ -64,6 +64,28 @@ test("the verdict: ties within the solves' precision, no losses before the full 
   assert.equal(S.nextOf(run), null);
 });
 
+test("the order: after the full menu, the sizes in the answer's order (the likely best first), else the candidates'", () => {
+  const run = S.runOf(JSON.stringify({ order: 1 }));
+  S.merge(run, { ...META, full: FULL, rows: [] });
+  assert.equal(S.nextOf(run), "33%");
+  S.merge(run, { ...META, order: ["150%", "75%", "33%"], full: FULL, rows: [] });
+  assert.equal(S.nextOf(run), "150%");
+  S.merge(run, { ...META, order: ["150%", "75%", "33%"], full: FULL, rows: [row("150%", 2.95)] });
+  assert.equal(S.nextOf(run), "75%");
+});
+
+test("a size stopped early, clearly behind the best: its loss approximate, and the note says why", () => {
+  const run = S.runOf(JSON.stringify({ cut: 1 }), "turn");
+  S.merge(run, { ...META, full: FULL, rows: [row("75%", 2.99), row("150%", 2.95)] });
+  run.status = "done";
+  assert.doesNotMatch(S.panelHtml(run), /≈/);
+  S.merge(run, { ...META, full: FULL, rows: [{ ...row("33%", 2.77, 0.42), cut: true }] });
+  const h = S.panelHtml(run);
+  assert.match(h, /<td class="n"><span title="Stopped once clearly behind the best: within 0\.42% of the pot">≈2\.3%<\/span><\/td><\/tr>/);
+  assert.match(h, /; ≈: a size whose solve stopped early, once it was clearly behind the best\.<\/div>/);
+  assert.equal(S.summarize(run).best, "75%");
+});
+
 test("stopping: the request in flight is stopped, what's in hand stays, the run carries on from there", async () => {
   S.runs.clear();
   const sv = solver(), stopped = [];

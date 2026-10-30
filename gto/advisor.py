@@ -235,11 +235,20 @@ OPT_SHARE = 0.35    # ...that solve's share of the time budget (the advice's sol
 ONE_SIZES = (0.25, 0.33, 0.5, 0.75, 1.0, 1.25, 1.5)
 ONE_SIZES_RIVER = ONE_SIZES + (2.0,)
 ONE_SIZE_ALLIN = 1000.0   # (the all-in candidate: a bet of this many pots reaches any stack)
-# ...each solve stops at the first of HU_CHECKS where it is this close to equilibrium (% of the pot; expl_target when
+# ...each solve stops at the first of its checks (below) where it is this close to equilibrium (% of the pot; expl_target when
 # lower), or at its budget (the request's): the EV given up is the difference of two such solves' values, so sizes
 # closer than this are a tie. Half of Fast's 0.2 (at 0.2 most of a turn's sizes tied): a page's turn 1.3-16 s for
 # every size, with threads (scripts/bench_browser.mjs --one-size)
 ONE_SIZE_SETTLED = {"flop": 0.1, "turn": 0.1, "river": 0.05}
+# ...read at HU_CHECKS, and the full menu's at each of these (an exploitability read each, about one iteration's
+# time: HU_CHECKS' gaps past 300 cost a solve settled at 410 iterations 190 more). Not the sizes': a size's
+# exploitability is its tie's tolerance (one_size_summary), and read this finely its solve stops nearer the target,
+# which tied one more size on two spots of scripts/bench_one_size.py's twelve (0.041 and 0.018% of the pot apart, the
+# targets 0.05 and 0.02); the full menu's sets only the EV given up
+ONE_SIZE_CHECKS = (50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 600, 700, 800, 900)
+# ...and a size whose solve shows it can't be the best nor tied with it stops there (ONE_SIZE_CUT x the target under
+# the best's lower bound: Advisor._one_size_run), its EV given up as precise as it is then
+ONE_SIZE_CUT = 2.0
 ONE_SIZE_CACHE = 256    # rows kept per advisor (a few KB each: a grid and the numbers), least recently used out first
 ONE_SIZE_DEF = ("best = the size whose one-size strategy keeps the most EV for the player betting: each game is solved "
                 "from this decision with the same ranges, the opponent adapting; EV given up = the range's EV with "
@@ -2405,6 +2414,7 @@ class Advisor:
         # ...its solves stop this close to equilibrium (% of the pot, by street; the lower expl_target where set)
         self.one_size_settled: Dict[str, float] = dict(ONE_SIZE_SETTLED)
         self._one_rows: Dict[tuple, dict] = {}   # its rows solved here, by spot and size (ONE_SIZE_CACHE, oldest first)
+        self.one_size_cut = True    # (a size clearly behind the best stops early: ONE_SIZE_CUT)
         # Advisor.instant's sources, tried in order: each (advisor, InstantSpot) -> {"actions", "source", "label"} or None
         self.instant_sources = [instant_from_store, instant_from_near, instant_from_own, instant_from_prev]
         self._instant = False     # an Advisor.instant request: nothing is solved (_NoInstant where it would be)
@@ -6068,7 +6078,9 @@ class Advisor:
         (one_size_candidates: ONE_SIZES, the river's ONE_SIZES_RIVER, all-in where the tree offers it) and once with
         every candidate to mix freely (the full menu, "full"); the rest of the tree (the opponent's bets, raises, the
         later streets) is the advice's (_cfg_with_real_sizes), cut alike for every size when the full menu's tree is
-        past the advice's cap. Each solve stops once settled (one_size_settled) or at the request's budget. A row per
+        past the advice's cap. Each solve stops once settled (one_size_settled), once clearly behind the best size
+        solved before it ("cut": _one_size_run; "all" solves the sizes in one_size_order, the full menu's favourites
+        first) or at the request's budget. A row per
         solve: the root's actions and the range's frequency of each, the range's EV (bb relative to folding now,
         weighted by hand pairs: the game's value), the grid, hero's hand (with cards), its iterations and
         exploitability. "one_size": "all" solves the full menu and every size and adds each one's EV given up against
@@ -6119,20 +6131,28 @@ class Advisor:
         full_menu = [frac[c] for c, _ in cands]
         level = self._one_size_trim(board, R0, R1, cur, eff, bets, hero_p, base, full_menu)
         cfg0 = base if not level else self._trim_cfg(base, street, level)
-        for label in todo:
+        i = 0
+        while i < len(todo):
+            label = todo[i]
+            i += 1
             key = (spot, label)
             if key in self._one_rows:
                 self._one_rows[key] = self._one_rows.pop(key)   # (the most recently used last)
-                continue
-            cfg = cfg0.copy()
-            cfg.root_bets = full_menu if label == "full" else [frac[label]]
-            t1 = time.time()
-            s1 = self._one_size_solve(board, R0, R1, cur, eff, bets, hero_p, cfg, target)
-            row = self._one_size_row(s1, label, hero_p, hole, time.time() - t1)
-            del s1
-            self._one_rows[key] = row
-            while len(self._one_rows) > ONE_SIZE_CACHE:
-                del self._one_rows[next(iter(self._one_rows))]
+            else:
+                cfg = cfg0.copy()
+                cfg.root_bets = full_menu if label == "full" else [frac[label]]
+                cut = self._one_size_bar(spot, target, pot) if label != "full" and self.one_size_cut else None
+                t1 = time.time()
+                s1 = self._one_size_solve(board, R0, R1, cur, eff, bets, hero_p, cfg, target, cut=cut,
+                                          checks=ONE_SIZE_CHECKS if label == "full" else HU_CHECKS)
+                row = self._one_size_row(s1, label, hero_p, hole, time.time() - t1)
+                del s1
+                self._one_rows[key] = row
+                while len(self._one_rows) > ONE_SIZE_CACHE:
+                    del self._one_rows[next(iter(self._one_rows))]
+            if label == "full" and want == "all":
+                # (the sizes in the order the full menu suggests: the likely best first, so the rest can stop early)
+                todo = todo[:i] + one_size_order([c for c, _ in cands], self._one_rows[key])
         known = {lab: r for (sp, lab), r in self._one_rows.items() if sp == spot}
         labels = [c for c, _ in cands]
         rows = [known[c] for c in labels if c in known] + \
@@ -6141,7 +6161,10 @@ class Advisor:
         out = {"street": street, "actor": hero, "opponent": villain, "position": "OOP" if hero_p == 0 else "IP",
                "board": cards_str(board), "pot_bb": round(pot, 2), "stack_bb": round(behind, 2),
                "candidates": [c for c, _ in cands], "asked": want, "definition": ONE_SIZE_DEF, "target_pct": target,
-               "full": full, **one_size_summary(full, rows, pot)}
+               "full": None if full is None else {k: v for k, v in full.items() if not k.startswith("_")},
+               **one_size_summary(full, rows, pot)}
+        if full is not None:
+            out["order"] = one_size_order(out["candidates"], full)
         if hole:
             out["hand"] = hand_class(hole)
             out["hole"] = cards_str(hole)
@@ -6173,15 +6196,75 @@ class Advisor:
                 continue
         return len(TRIMS)
 
-    def _one_size_solve(self, board, R0, R1, cur: StreetState, eff, bets, to_act, cfg: Config, target: float):
-        """A one-size view's solve from the decision: settled at `target` (% of the pot, read at HU_CHECKS) or the
-        request's budget, whichever comes first. Not kept in the advice's cache (_cache): the view keeps its rows."""
+    def _one_size_solve(self, board, R0, R1, cur: StreetState, eff, bets, to_act, cfg: Config, target: float,
+                        cut=None, checks=HU_CHECKS):
+        """A one-size view's solve from the decision: settled at `target` (% of the pot, read at `checks`: the full
+        menu's ONE_SIZE_CHECKS), out of contention (`cut`: _one_size_run) or at the request's budget, whichever comes
+        first. Not kept in the advice's cache (_cache): the view keeps its rows. (Starting a size's solve from the full menu's regrets, or the full
+        menu's from the advice's, saved nothing: a turn's 150% solve 0.092% of the pot from equilibrium at 300
+        iterations cold, 0.102% seeded; its full menu 0.19 cold, 0.17 seeded.)"""
         t0 = time.time()
         sol = solve(board, R0, R1, cur.pot_start, eff, bets=bets, to_act=to_act, n_raises=cur.n_raises, cfg=cfg,
-                    time_budget=self.time_budget, max_iters=HU_CHECKS[0], horizon=1000, should_stop=self.should_stop,
-                    reserve=HU_RESERVE)
-        self._hu_run(sol, self.time_budget - (time.time() - t0), target, HU_CHECKS[0])
+                    time_budget=self.time_budget, max_iters=checks[0], horizon=1000,
+                    should_stop=self.should_stop, reserve=HU_RESERVE)
+        self._one_size_run(sol, self.time_budget - (time.time() - t0), target, to_act, cut, checks)
         return sol
+
+    def _one_size_run(self, sol: Solution, left: float, target: float, p: int, cut=None, checks=HU_CHECKS) -> None:
+        """Runs a one-size solve on for at most `left` seconds, stopping at the first of `checks` where it is
+        within `target` (% of the pot) of equilibrium (sol.settled_at), or, given `cut` (bb: _one_size_bar), where
+        what the player p betting can get at best (its best response's value against the opponent's average strategy,
+        an upper bound on the game's value) is under it: the size can't be the best nor tied with it (sol.cut_at, its
+        iterations). Each read leaves sol.bounds: (the lower, the upper bound on p's value, bb relative to folding
+        now), from the two best responses (a zero-sum game's; None with rake or a tournament's payoffs)."""
+        t0 = time.time()
+        inv = _inv_of(sol.root, p, sol.ctx.cfg.icm)
+        while sol.iters < 1000:
+            if sol.iters in checks:
+                e = self._expl(sol)
+                br = getattr(sol.solver, "br_values", None)
+                sol.bounds = None if br is None or br[0] != sol.iters or br[3] else \
+                    (-br[2 - p] + inv, br[1 + p] + inv)
+                if e < target:
+                    sol.settled_at = target
+                    break
+                if cut is not None and sol.bounds is not None and sol.bounds[1] < cut(e):
+                    sol.cut_at = sol.iters
+                    break
+            rem = left - (time.time() - t0)
+            nxt = min([c for c in checks if c > sol.iters] + [1000])
+            if rem <= 0:
+                break
+            t1 = time.time()
+            try:
+                _, secs = sol.solver.run(sol.r0, sol.r1, time_budget=rem, max_iters=nxt, min_iters=1,
+                                         should_stop=self.should_stop, reserve=HU_RESERVE)
+            except Cancelled:
+                sol.stopped = True
+                sol.seconds += time.time() - t1
+                raise
+            sol.iters = sol.solver.iters
+            sol.seconds += secs
+            if sol.iters < nxt:
+                break       # (out of time)
+        if not sol.fresh():
+            sol._refresh()
+
+    def _one_size_bar(self, spot, target: float, pot: float):
+        """The one-size view's cut for a size's solve (_one_size_run), from the best of the spot's sizes solved so far
+        (the highest EV; None before any): a function of the solve's exploitability e (% of the pot) giving the bar
+        (bb) its upper bound must be under to stop: ONE_SIZE_CUT x the target under the best's lower bound, so its game
+        is worth less than the best's even once both are settled, and more than e under the best's EV, so the verdict
+        (one_size_summary: tied within the larger exploitability) doesn't count it tied either."""
+        rows = [r for (sp, lab), r in self._one_rows.items() if sp == spot and lab != "full"]
+        if not rows:
+            return None
+        top = max(rows, key=lambda r: r["ev_bb"])
+        lo = top.get("_lo")
+        if lo is None:
+            lo = top["ev_bb"] - 2 * (top.get("exploitability_pct") or 0.0) / 100 * pot
+        bar = lo - ONE_SIZE_CUT * target / 100 * pot
+        return lambda e: min(bar, top["ev_bb"] - max(e, top.get("exploitability_pct") or 0.0) / 100 * pot)
 
     def _one_size_row(self, sol: Solution, label: str, p: int, hole, secs: float) -> dict:
         """A one-size solve's row (_one_size_view) for the player p acting at its root."""
@@ -6203,6 +6286,10 @@ class Advisor:
                "grid": strategy_grid([sf[a] for a in range(A)], names, expand(ctx, w)),
                "iterations": int(sol.iters), "exploitability_pct": round(max(0.0, float(self._expl(sol))), 3),
                "seconds": round(secs, 2)}
+        if getattr(sol, "cut_at", None) is not None:
+            row["cut"] = True   # (stopped once clearly behind the best: _one_size_run)
+        if getattr(sol, "bounds", None) is not None and sol.iters == sol.solver.br_values[0]:
+            row["_lo"] = round(float(sol.bounds[0]), 4)   # (its game's value is at least this: the next sizes' bar)
         if hole:
             ci = np.nonzero(act == COMBO_INDEX[(min(hole), max(hole))])[0]
             if len(ci):
@@ -6684,12 +6771,31 @@ def one_size_candidates(pot: float, behind: float, allin_spr: float, river: bool
     return out
 
 
+def one_size_order(labels: List[str], full: dict) -> List[str]:
+    """The order the one-size view solves its sizes in (the answer's "order"; the page asks them so): the sizes the
+    full menu's range bets most first, then the rest nearest the sizes it bets (in log size, weighted by how much),
+    all-in as the biggest, so the likely best is in early and the sizes clearly behind it can stop early
+    (_one_size_run). Which size is best doesn't depend on it."""
+    share = {}
+    for n, f in zip(full.get("actions", ()), full.get("freq", ())):
+        if n != "check":
+            share[n[4:] if n.startswith("bet ") else n] = float(f)
+    size = lambda c: 10.0 if c == "all-in" else float(c.rstrip("%")) / 100
+
+    def away(c):
+        tot = sum(share.values())
+        if tot <= 0:
+            return 0.0
+        return sum(f * abs(np.log(size(c) / size(k))) for k, f in share.items() if k in labels) / tot
+    return sorted(labels, key=lambda c: (-round(share.get(c, 0.0), 3), away(c), size(c)))
+
+
 def one_size_summary(full: Optional[dict], rows: List[dict], pot: float) -> dict:
     """The one-size view's verdict over the rows solved so far (each {"size", "ev_bb", "exploitability_pct", ...}) and
     the full menu's row: each row's EV given up against the full menu (loss_pct, % of the pot; None without it), the
     best size (the highest EV: the least given up) and the sizes tied with it (within the precision of the two solves,
     the larger of their exploitabilities)."""
-    rows = [dict(r) for r in rows]
+    rows = [{k: v for k, v in r.items() if not k.startswith("_")} for r in rows]
     for r in rows:
         r["loss_pct"] = None if full is None else round((full["ev_bb"] - r["ev_bb"]) / max(pot, 1e-9) * 100, 3)
     if not rows:

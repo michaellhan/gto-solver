@@ -137,7 +137,7 @@ table of every size with its bet share, EV and the **EV it gives up** against mi
 within the solves' precision of the best marked tied), and the picked size's strategy: the range's check and bet
 frequencies, your hand's mix and EVs, and the 13x13 grid (click a row for another size's). Always at Fast. On the
 turn and river it starts when the tab opens, one size at a time with progress ("2 of 8 done · about 6 s left") and a
-Stop button (Continue picks up from there): a turn takes 2-25 s for every size in the browser, a river under a second.
+Stop button (Continue picks up from there): a turn takes 1-22 s for every size in the browser, a river under a second.
 On the flop it waits for **Find the best size**, with its estimate (live flops take 1-3 s in all): the library's
 flops answer the advice at once, and solving every flop you look at would only load the machine. Answers are kept
 (by the page and the solver), so opening the tab again or coming back to the spot is instant; new advice stops its
@@ -946,6 +946,19 @@ every size).
   turn, 0.05% on the river; half of Fast's 0.2, at which most of a turn's sizes tied) or at Fast's time budget, and a
   size whose EV is within the larger exploitability of its solve and the best's is reported **tied** with the best.
   The page always asks at Fast, whatever speed is picked.
+* **Speed**: the full menu's solve is read every 50 iterations to 500, then every 100 (`ONE_SIZE_CHECKS`: a read
+  costs about an iteration, and the advice's `HU_CHECKS`, 400, 600, 800, ran a solve settled at 410 iterations to
+  600); the sizes' at `HU_CHECKS`, since a size's exploitability is its tie's tolerance and read more finely its solve
+  stops nearer the target (one more size came out tied on two spots of the twelve below). After the full menu the
+  sizes go in the order it suggests (the answer's `"order"`, `one_size_order`: the sizes it bets most first, then the
+  rest nearest them), and a size whose solve shows it can't be the best nor tied with it stops early: in a zero-sum
+  game the two best responses bound the game's value (the bettor gets at most its best response's value against the
+  opponent's average strategy, at least minus the opponent's), and once a size's upper bound is `ONE_SIZE_CUT` (2) x
+  the target under the best size's lower bound, and more than the larger exploitability under the best's EV, the
+  verdict can't count it best or tied. Its row says `"cut": true` and the page shows its EV given up as approximate
+  (≈, to 0.1%). Starting a size's solve from the full menu's regrets, or the full menu's from the advice's, saved
+  nothing (a turn's 150% solve 0.092% of the pot from equilibrium at 300 iterations cold, 0.102% so started) and is
+  not done.
 * **Flops** are opt-in: on the page **Find the best size** starts them, with the estimate. The library's flop entries
   store two sizes, which can't say which of seven is best, so the flop is solved live (the advice's Fast flop model:
   1-3 s in all in the browser); doing it for every flop browsed would load the machine for answers rarely read.
@@ -954,9 +967,10 @@ every size).
   a request each, so it shows progress and stops between sizes or mid-solve (the server's `POST /cancel`, the worker's
   stop flag) without losing what's done. The answer: `{"one_size": {"street", "actor", "opponent", "position",
   "board", "pot_bb", "stack_bb", "candidates", "asked", "definition", "target_pct", "full", "rows", "best", "tied",
-  "hand", "hole"}, "notes", "seconds"}`; `full` and each row `{"size", "actions", "freq" (the range's), "amounts",
-  "ev_bb", "grid", "iterations", "exploitability_pct", "seconds", "hand": {"freq", "ev"}}`, the rows with `loss_pct`
-  (the EV given up) once the full menu is in. With `"study": true` it is for whoever acts, their whole range (no
+  "order", "hand", "hole"}, "notes", "seconds"}`; `full` and each row `{"size", "actions", "freq" (the range's),
+  "amounts", "ev_bb", "grid", "iterations", "exploitability_pct", "seconds", "cut", "hand": {"freq", "ev"}}`, the rows
+  with `loss_pct` (the EV given up) once the full menu is in, and `order` (the sizes in the order to solve them) with
+  it. The page asks the sizes in that order. With `"study": true` it is for whoever acts, their whole range (no
   `hand`). An error preflop, facing a bet, all-in, multiway, against the pool or locks, with tournament payouts or bounties, or for
   a size out of range.
 * **Cache**: the solver keeps every row it solved (`ONE_SIZE_CACHE`, the 256 used last; a few KB each), by spot (the
@@ -967,32 +981,37 @@ every size).
 
 Measured (`scripts/bench_one_size.py`, Study's request at each decision: the page's Fast trees natively on one thread,
 each solve settled to 0.1% of the pot on the flop, 0.05% on the turn, 0.02% on the river; single-raised BTN vs BB,
-3bet CO vs BTN, 100bb):
+3bet CO vs BTN, 100bb; the EVs given up with every size settled, Seconds the view's solves with the speed-ups and,
+in brackets, without: the same best size and ties on every spot, the sizes stopped early within 0.1% of the pot of
+their settled EV given up):
 
-| Spot (player betting) | Best single size: gives up | Next best | Worst | Full menu's mix | Seconds |
+| Spot (player betting) | Best single size: gives up | Next best | Worst | Full menu's mix | Seconds (before) |
 |---|---|---|---|---|---|
-| K72r flop, BTN after a check | 25%: 0.07% (33% tied) | 33%: 0.14 | 150%: 1.22 | check 24, 25% 47, 33% 16, 75% 12 | 4 |
-| T94 two-tone flop, 3bet pot, BTN | 33%: 0.00 | 25%: 0.19 | 150%: 1.88 | check 46, 25% 8, 33% 42, 50% 5 | 2 |
-| K72r 3 turn, c-bet called, BTN | 150%: 0.15 | 125%: 0.45 | 25%: 2.06 | check 60, 50% 15, 150% 25 | 40 |
-| K72 two-spade 4s turn (flush in), BTN | 75%: 0.04 | 100%: 0.09 | 25%: 0.83 | check 61, 50% 12, 75% 16, 100% 6, 150% 6 | 71 |
-| Q83 A turn (overcard), BTN | 150%: 0.19 | 100%: 0.40 | 25%: 2.46 | check 46, 50% 8, 75% 17, 150% 29 | 45 |
-| Q83 5 turn, flop checked, BB first | 50%: 0.005 | 75%: 0.08 | 150%: 0.45 | check 67, 33% 6, 50% 21, 75% 3, 150% 3 | 127 |
-| K72 4 turn, 3bet pot, BTN | 75%: 0.03 | 100%: 0.21 | 25%: 2.93 | check 35, 50% 3, 75% 42, 100% 21 | 8 |
-| A85 8 turn (pairs), 3bet pot, BTN | 75%: 0.45 (33%, 50% tied) | 33%: 0.45 | 150%: 1.14 | check 32, 25% 18, 33% 25, 50-100% 25 | 6 |
-| K72 3 5 river, bet-bet, BTN | 200%: 1.04 | 150%: 1.16 | 25%: 8.73 | check 24, 50-100% 27, 150% 8, 200% 40 | 6 |
-| K72 4 9s river (flush in), BTN | 125%: 0.32 | 150%: 0.35 | 25%: 2.81 | check 52, 33-75% 24, 100-200% 24 | 11 |
-| K72 3 9 river, turn checked, BB first | 100%: 0.23 | 125%: 0.29 | 25%: 0.95 | check 65, 25-75% 18, 100-150% 18 | 1 |
-| Q83 5 J river, checked to it, BB first | 50%: 0.38 | 75%: 0.40 | 200%: 1.18 | check 56, 25-50% 26, 75-200% 17 | 10 |
+| K72r flop, BTN after a check | 25%: 0.07% (33% tied) | 33%: 0.14 | 150%: 1.22 | check 24, 25% 47, 33% 16, 75% 12 | 3.3 (3.8) |
+| T94 two-tone flop, 3bet pot, BTN | 33%: 0.00 | 25%: 0.19 | 150%: 1.88 | check 46, 25% 8, 33% 42, 50% 5 | 1.6 (1.9) |
+| K72r 3 turn, c-bet called, BTN | 150%: 0.15 | 125%: 0.45 | 25%: 2.06 | check 60, 50% 15, 150% 25 | 25 (40) |
+| K72 two-spade 4s turn (flush in), BTN | 75%: 0.04 | 100%: 0.09 | 25%: 0.83 | check 61, 50% 12, 75% 16, 100% 6, 150% 6 | 49 (61) |
+| Q83 A turn (overcard), BTN | 150%: 0.19 | 100%: 0.40 | 25%: 2.46 | check 46, 50% 8, 75% 17, 150% 29 | 29 (39) |
+| Q83 5 turn, flop checked, BB first | 50%: 0.005 | 75%: 0.08 | 150%: 0.45 | check 67, 33% 6, 50% 21, 75% 3, 150% 3 | 99 (127) |
+| K72 4 turn, 3bet pot, BTN | 75%: 0.03 | 100%: 0.21 | 25%: 2.93 | check 35, 50% 3, 75% 42, 100% 21 | 3.8 (6.5) |
+| A85 8 turn (pairs), 3bet pot, BTN | 75%: 0.45 (33%, 50% tied) | 33%: 0.45 | 150%: 1.14 | check 32, 25% 18, 33% 25, 50-100% 25 | 3.6 (4.7) |
+| K72 3 5 river, bet-bet, BTN | 200%: 1.04 | 150%: 1.16 | 25%: 8.73 | check 24, 50-100% 27, 150% 8, 200% 40 | 0.10 (0.15) |
+| K72 4 9s river (flush in), BTN | 125%: 0.32 | 150%: 0.35 | 25%: 2.81 | check 52, 33-75% 24, 100-200% 24 | 0.11 (0.14) |
+| K72 3 9 river, turn checked, BB first | 100%: 0.23 | 125%: 0.29 | 25%: 0.95 | check 65, 25-75% 18, 100-150% 18 | 0.4 (0.6) |
+| Q83 5 J river, checked to it, BB first | 50%: 0.38 | 75%: 0.40 | 200%: 1.18 | check 56, 25-50% 26, 75-200% 17 | 0.4 (0.6) |
 
 The best single size gives up a median 0.17% of the pot on these spots: 0-0.07% on the flops, 0.005-0.45% on the
 turns (median 0.10%), 0.23-1.04% on the rivers, the most where the full menu splits a polar range over several sizes
 (the bet-bet river overbets 200% with 40% of the range and bets 50-100% with 27%). Which size matters far more than
 having a menu: a quarter pot gives up 2-3% on the bet-called turns and 8.7% on that river, and the best size runs
 from 25% (a dry flop) to 200% (a polar river). In the browser (`scripts/bench_browser.mjs --one-size`, the page's
-Fast with 8 threads and the targets above: 0.1% on the turn, 0.05% on the river) the whole view took 1.7-25 s on four
-turns (8.1 s a single-raised turn in position: the full menu 4.4 s, then 0.4-0.7 s a size), 0.7-3 s on three flops,
-0.1-0.5 s on rivers; at those targets more sizes come out tied (a turn where the BB bets first: six of seven within
-0.1% of the pot), which is the answer: there, any of them will do.
+Fast with 8 threads and the targets above: 0.1% on the turn, 0.05% on the river) the whole view takes 1.1-22 s on four
+turns (without the speed-ups 1.7-24 s; the same best size and ties on all eight spots): a single-raised turn in
+position 4.9 s (was 7.2: the full menu 3.0 s, then 150% and 125% 0.4 s each and five sizes stopped after 0.2-0.3 s),
+a 3bet pot's 1.1 (1.7), a 40bb turn 7.9 (9.2), 0.5-2.4 s on three flops (0.6-2.7), 0.4 s on a river. At those
+targets more sizes come out tied (a turn where the BB bets first after the flop checked through: all seven within 0.1%
+of the pot), which is the answer: there, any of them will do. A tie can't stop early (its tolerance is the solves'
+precision), so that turn still takes 22 s (was 24).
 
 ## How it works
 

@@ -81,6 +81,59 @@ class TestRootBets(unittest.TestCase):
         self.assertFalse(any(k and k[0] == "root_bets" for k in cfg.sizes_key() if isinstance(k, tuple)))
 
 
+class TestCut(unittest.TestCase):
+    """The view's speed-ups (README, One bet size: Speed): the full menu's solve is read at ONE_SIZE_CHECKS, its
+    favourite sizes go first (one_size_order), and a size clearly behind the best stops early (_one_size_run's cut),
+    none of which changes which size is best or tied."""
+    BOARD = cards("KsQd7c4h2s")
+    VALUE = ["KhKd", "KhKc", "KdKc"]
+    AIR = [a + b for a in ("9s", "9h", "9d", "9c") for b in ("8s", "8h", "8d", "8c")]
+    CATCH = [q + j for q in ("Qh", "Qc", "Qs") for j in ("Jh", "Jd", "Jc", "Js")]
+
+    def solve(self, adv, sizes, cut=None, target=0.05):
+        cfg = adv.cfg.copy()
+        cfg.root_bets = list(sizes)
+        cur = SimpleNamespace(pot_start=10.0, n_raises=0, name="river")
+        return adv._one_size_solve(self.BOARD, rng(*self.VALUE, *self.AIR), rng(*self.CATCH), cur, 100.0, (0.0, 0.0), 0,
+                                   cfg, target, cut=cut)
+
+    def test_bounds_and_cut(self):
+        adv = advisor("fast")
+        s = self.solve(adv, [2.0])
+        lo, hi = s.bounds
+        row = adv._one_size_row(s, "200%", 0, (), 0.0)
+        self.assertLessEqual(lo, row["ev_bb"] + 1e-3)
+        self.assertGreaterEqual(hi, row["ev_bb"] - 1e-3)
+        self.assertLess(hi - lo, 4 * row["exploitability_pct"] / 100 * 10.0 + 1e-3)
+        # a quarter pot gives up ~7% of the pot here: against the 200% row it stops at the first read
+        adv._one_rows = {(("spot",), "200%"): row}
+        bar = adv._one_size_bar(("spot",), 0.05, 10.0)
+        s25 = self.solve(adv, [0.25], cut=bar)
+        self.assertEqual(s25.cut_at, A.HU_CHECKS[0])
+        r25 = adv._one_size_row(s25, "25%", 0, (), 0.0)
+        self.assertTrue(r25["cut"])
+        self.assertNotIn("cut", row)
+        self.assertGreater(r25["exploitability_pct"], 0.05)
+        out = A.one_size_summary(None, [row, r25], 10.0)
+        self.assertEqual((out["best"], out["tied"]), ("200%", []))
+        self.assertNotIn("_lo", out["rows"][0])
+        # 150% gives up 1% of the pot to 200% (3/19 of the pot x 2/3 less 1.5/2.5): behind by far more than the
+        # target, it stops early too; a size as good as the best (the best's again) is never cut, and settles
+        s150 = self.solve(adv, [1.5], cut=bar)
+        self.assertIsNotNone(s150.cut_at)
+        again = self.solve(adv, [2.0], cut=bar)
+        self.assertIsNone(getattr(again, "cut_at", None))
+        self.assertEqual(again.settled_at, 0.05)
+
+    def test_order(self):
+        labels = ["25%", "33%", "50%", "75%", "100%", "125%", "150%"]
+        full = {"actions": ["check", "bet 25%", "bet 50%", "bet 150%"], "freq": [0.6, 0.0, 0.15, 0.25]}
+        self.assertEqual(A.one_size_order(labels, full), ["150%", "50%", "125%", "100%", "75%", "33%", "25%"])
+        self.assertEqual(A.one_size_order(["25%", "75%", "all-in"], {"actions": ["check", "all-in"], "freq": [0.5, 0.5]}),
+                         ["all-in", "75%", "25%"])
+        self.assertEqual(A.one_size_order(labels, {"actions": ["check"], "freq": [1.0]}), labels)
+
+
 class TestKnownAnswer(unittest.TestCase):
     def test_polar_river(self):
         """The nuts or nothing against bluff-catchers on the river: the bettor's value grows with the bet (value
