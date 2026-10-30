@@ -2,11 +2,13 @@
 with their whole range: per hand class and combo the mix, EVs and equities, and what the hand needs next where
 nobody acts."""
 import unittest
+from unittest import mock
 
 import numpy as np
 
+from gto import solver as solver_mod
 from gto.breakdown import draw_category, made_category
-from gto.cards import cards
+from gto.cards import COMBO_INDEX, cards
 from gto.native import advisor
 
 PRE = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "fold"},
@@ -120,6 +122,43 @@ class TestStudy(unittest.TestCase):
         river = self.study(preflop=PRE, board="Kd7c2h5s9d", flop=flop, turn=[{"pos": "BB", "action": "check"},
                            {"pos": "BTN", "action": "check"}], budget=1.0)
         self.assertEqual((river["street"], river["categories"]["draws"]), ("river", []))   # (none on the river)
+
+    def test_only_combos_in_the_range(self):
+        """A solve leaves a combo out of a player's arithmetic where its range has no weight (Solver._support): its
+        strategy is uniform and its EVs 0 there, so no answer may show one. Study lists the actor's combos in its range
+        at the node (each in the solve's window), the grid and the breakdown weigh by it, and a hand of ours outside
+        our range is solved at a near-zero weight (Advisor._with_hero), its mix and EVs worked out."""
+        flop = [{"pos": "BB", "action": "check"}, {"pos": "BTN", "action": "bet", "to": 1.8},
+                {"pos": "BB", "action": "call"}]
+        st = dict(preflop=PRE, board="Kd7c2h5s", flop=flop, turn=[{"pos": "BB", "action": "check"}], budget=1.0)
+        # (a turn's windows hold its river classes' images, too many to leave out by default: WINDOW_MAX; and a
+        # new advisor, whose solves are its own)
+        p = mock.patch.object(solver_mod, "WINDOW_MAX", 1.0)
+        p.start()
+        self.addCleanup(p.stop)
+        adv = advisor("fast")
+        r = adv.advise(dict({"players": 6, "stack": 100, "study": True, "breakdown": True}, **st))
+        sol = list(adv._cache.values())[-1]
+        S, active = sol.solver, list(sol.ctx.active)
+        self.assertIsNotNone(S._perm)                          # (some combos left out)
+        listed = 0
+        for cls, rows in r["combos"].items():
+            for row in rows:
+                i = active.index(COMBO_INDEX[tuple(sorted(cards(row[0])))])
+                self.assertTrue(S._win[1][i], row[0])           # (BTN: the turn solve's player 1)
+                listed += 1
+        self.assertGreater(listed, 50)
+        self.assertLessEqual(set(r["combos"]), set(r["grid"]["cells"]))
+        self.assertAlmostEqual(r["breakdown"]["hero"]["combos"], r["range_combos"], delta=0.2)
+        # our hand outside our range: 7h2d isn't in BTN's opens
+        adv = advisor("fast")
+        a = adv.advise(dict({"players": 6, "stack": 100, "hero": "BTN", "hole": "7h2d"}, **st))
+        self.assertTrue(any("isn't in your range" in n for n in a["notes"]), a["notes"])
+        sol = list(adv._cache.values())[-1]
+        i = list(sol.ctx.active).index(COMBO_INDEX[tuple(sorted(cards("7h2d")))])
+        self.assertTrue(sol.solver._win[1][i])
+        self.assertAlmostEqual(sum(x["freq"] for x in a["actions"]), 1.0, delta=0.01)
+        self.assertTrue(any(abs(x["ev_bb"]) > 0.05 for x in a["actions"]))
 
     def test_runouts(self):
         """A closed flop's runout report: the turn's first decision on every turn card, and the second player's

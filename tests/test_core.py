@@ -11,7 +11,8 @@ import numpy as np
 
 from gto import core, native
 from gto import flop_library as fl
-from gto.cards import ALL_COMBOS, cards
+from gto import solver as solver_mod
+from gto.cards import ALL_COMBOS, COMBO_INDEX, cards
 from gto.ranges import parse_range
 from gto.solver import BucketEntry, Config, Decision, Chance, solve
 
@@ -463,7 +464,8 @@ class TestSameAsNumpy(unittest.TestCase):
     # at every node, the root's regrets of 249 among them, which is 5e-5 of a turn node whose actions are worth
     # about the same (regrets of 2)
     REGRET_TOL = {"flop by buckets": 1e-4}
-    # the library's products on the core's own loops (no BLAS) summed in another order than numpy's sgemm: 2.2e-5
+    # the library's products summed in another order than numpy's sgemm, on the core's own loops (no BLAS), or by BLAS
+    # with the combos laid out by window (Solver._perm: 1.5e-5 on the 3bet pot's): 2.2e-5
     REGRET_TOL_LOOPS = 5e-5
     # the second iteration's averages: in the 3bet pot's library flop a turn hand all but tied (regrets of -0.015,
     # 0.004 and 0.012 at a node worth 18) takes its first strategy from regrets 1.4e-5 apart, and its average 3e-4
@@ -490,7 +492,7 @@ class TestSameAsNumpy(unittest.TestCase):
                 scale = [float(np.abs(y.regret).max()) for y in b]     # (regrets weigh in the opponent's combos)
                 diff = [np.abs(x.regret - y.regret) for x, y in zip(a, b)]
                 diff = [d[..., live[y.player]] if d.shape[-1] == live[y.player].size else d for d, y in zip(diff, b)]
-                loops = gemm == 0 and name.startswith("library")
+                loops = name.startswith("library")
                 tol = self.REGRET_TOL.get(name, self.REGRET_TOL_LOOPS if loops else 1e-5)
                 self.assertLess(max(float(d.max()) / (m + 1) for d, m in zip(diff, scale)), tol)
                 tied = [np.abs(y.regret).max(axis=1, keepdims=True) < 1e-5 * m for y, m in zip(b, scale)]
@@ -596,19 +598,100 @@ class TestSameAsNumpy(unittest.TestCase):
         # srp_utg_bb AcQdTh's library entry: rounding (numpy's own two leaf paths part as much) left the core's sum of
         # positive regrets at an all-in node, a hand whose opponent's reach there is all but 0, at 5e-41 by iteration
         # 87, whose reciprocal is inf: the strategies NaN from there, 73% of the pot from equilibrium at 300 where
-        # numpy's solve is at 0.10
+        # numpy's solve is at 0.10. (Compared from 200 iterations: at 100 rounding alone moves it 0.67-0.81, the
+        # ranges nudged by an ulp; 0.19-0.20 at 200)
         s = fl.spot_setup(next(x for x in fl.SPOTS if x[0] == "srp_utg_bb")[2])
         cfg = fl.library_config()          # (the entry's tree then: the river blind)
         a, b = (_solve("AcQdTh", s["full0"], s["full1"], s["pot"], s["stack"], cfg, 100, use_core=u)
                 for u in (True, False))
         b.solver.use_core = False
-        for iters in (100, 200):
+        for iters in (100, 200, 300):
             for x in (a, b):
                 x.extend(1e9, max_iters=iters)
             self.assertEqual((a.iters, b.iters), (iters, iters))
             self.assertTrue(np.isfinite(a.solver._regret).all())
-            # (0.805 and 0.756% of the pot at 100, 0.204 and 0.202 at 200)
-            self.assertLess(abs(a.exploitability() - b.exploitability()), 0.1)
+            # (0.632 and 0.756% of the pot at 100, 0.194 and 0.202 at 200, 0.096 and 0.102 at 300)
+            if iters > 100:
+                self.assertLess(abs(a.exploitability() - b.exploitability()), 0.1)
+
+
+@unittest.skipUnless(ON, "no C compiler for the native core")
+class TestWindows(unittest.TestCase):
+    """Each player's combos alone (Solver._support; the core lays them out as windows): a combo with no weight in a
+    player's range never has reach, so it's left out of that player's arithmetic, its regrets, sums and EVs 0, the
+    rest the same to rounding; numpy leaves out the same. (Whatever their size here: WINDOW_MAX 1.)"""
+
+    def setUp(self):
+        p = mock.patch.object(solver_mod, "WINDOW_MAX", 1.0)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_combos_outside_a_range(self):
+        # a turn by river class, OOP's narrow range against IP's wider one, and a hand OOP never holds at 1e-3 (the
+        # Advisor's _with_hero for a hand outside its range): kept, with its EVs
+        r0 = OOP_T.copy()
+        hand = COMBO_INDEX[tuple(sorted(cards("7h2d")))]
+        self.assertEqual(r0[hand], 0)
+        r0[hand] = 1e-3
+        pot = 20
+        wins = []
+        for use_core in (True, False):
+            with self.subTest(use_core=use_core):
+                a = _solve("Ks7d2cTh", r0, IP_T, pot, 90, native.config("fast"), 30, use_core=use_core)
+                S = a.solver
+                if use_core:
+                    self.assertIs(core._prog.s(), S)
+                    self.assertIsNotNone(core._prog.perm)
+                win = S._win
+                wins.append(win)
+                rr = (np.ravel(a.r0) > 0, np.ravel(a.r1) > 0)
+                for q in (0, 1):
+                    self.assertTrue(win[q][rr[q]].all())                # (the ranges, and their images by class)
+                self.assertLess(win[0].mean(), 0.75)
+                ci = int(np.flatnonzero(S.ctx.active == hand)[0])
+                self.assertTrue(win[0][ci])
+                for d in _decisions(a):
+                    if not d.bucketed:
+                        self.assertFalse(d.regret[..., ~win[d.player]].any())
+                        self.assertFalse(d.ssum[..., ~win[d.player]].any())
+                p = S.root.player
+                ev, br, ex = (S.node_action_evs(S.root, a.r0, a.r1), S.node_action_br_evs(S.root, a.r0, a.r1),
+                              S.exploitability(a.r0, a.r1))
+                self.assertFalse(ev[:, ~win[p]].any())
+                self.assertFalse(br[:, ~win[p]].any())
+                # in the range, the EVs of the same sums worked out on every combo (the windows off)
+                keep = (S._win, S._wmask, S._perm, S._wins)
+                S._win = S._wmask = S._perm = S._wins = None
+                try:
+                    ev1, br1, ex1 = (S.node_action_evs(S.root, a.r0, a.r1), S.node_action_br_evs(S.root, a.r0, a.r1),
+                                     S.exploitability(a.r0, a.r1))
+                finally:
+                    S._win, S._wmask, S._perm, S._wins = keep
+                m = rr[p]
+                self.assertLess(float(np.abs(ev[:, m] - ev1[:, m]).max()), 1e-4 * pot)
+                self.assertLess(float(np.abs(br[:, m] - br1[:, m]).max()), 1e-4 * pot)
+                self.assertTrue(np.abs(ev1[:, ci]).max() > 0.1)          # (the 1e-3 hand's, worked out)
+                self.assertAlmostEqual(ex, ex1, delta=1e-4)
+        self.assertTrue(np.array_equal(*wins))
+
+    def test_off(self):
+        a = _solve("Ks7d2cTh", OOP_T, IP_T, 20, 90, native.config("fast"), 5)
+        with mock.patch.object(core, "lib", return_value=core.lib()):
+            S = a.solver
+            self.assertIsNotNone(S._win)
+            S.windows = False
+            S.run(a.r0, a.r1, time_budget=1e9, max_iters=6)
+            self.assertIsNone(S._win)
+            self.assertIsNone(core._prog.perm)
+
+    def test_none_where_they_leave_out_little(self):
+        # the players' combos over WINDOW_MAX of the tree's on average: no windows (here 0.51 and 1 of them, 0.75)
+        a = _solve("Ks7d2cTh", OOP_T, IP_T, 20, 90, native.config("fast"), 5)
+        self.assertAlmostEqual(float(a.solver._win.mean()), 0.754, delta=0.01)
+        with mock.patch.object(solver_mod, "WINDOW_MAX", 0.7):
+            b = _solve("Ks7d2cTh", OOP_T, IP_T, 20, 90, native.config("fast"), 5)
+            self.assertIsNone(b.solver._win)
+            self.assertIsNone(core._prog.perm)
 
 
 @unittest.skipUnless(ON, "no C compiler for the native core")
@@ -699,14 +782,22 @@ class TestProgram(unittest.TestCase):
         # natively the library's flop batches its equity leaves by matrix stack, trimmed to the ranges for training
         # (every turn line ends in one: 24 turn classes' matrices, read in place); without BLAS (the browser's solver)
         # one leaf at a time
-        sol = solve(cards("Kd7c2h"), OOP_T, IP_T, pot=5.5, stack=97.5, cfg=fl.library_config(), max_iters=0)
+        with mock.patch.object(solver_mod, "WINDOW_MAX", 1.0):
+            sol = solve(cards("Kd7c2h"), OOP_T, IP_T, pot=5.5, stack=97.5, cfg=fl.library_config(), max_iters=0)
         S = sol.solver
+        self.assertIsNotNone(S._perm)
         self.assertTrue(S.batch_leaves)
         prog = core._program(core.lib(), S, sol.r0, sol.r1)
         self.assertGreater(prog.leaf_rows, core.LEAF_ROWS_BLAS)
         self.assertEqual(prog.stacks, 2)                  # (the flop's all-in leaves, the turns')
+        # (each player's window: its range, on a flop)
         self.assertEqual([len(x) for x in prog.live], [int((np.ravel(r) > 0).sum()) for r in (sol.r0, sol.r1)])
-        r0 = np.where(np.ravel(sol.r0) > 0, sol.r0, 0.5)   # a combo outside the range: the training untrimmed
+        r0 = np.where(np.ravel(sol.r0) > 0, sol.r0, 0.5)   # a combo outside the range: an evaluation there is numpy's
+        self.assertIsNone(core.evaluate(S, [(S.root, 0, r0, sol.r1, core.AVG)]))
+        S.windows = False                                  # (without windows, the training untrimmed)
+        S._windows(sol.r0, sol.r1)
+        prog = core._program(core.lib(), S, sol.r0, sol.r1)
+        self.assertEqual([len(x) for x in prog.live], [int((np.ravel(r) > 0).sum()) for r in (sol.r0, sol.r1)])
         prog.reaches(r0, sol.r1)
         self.assertIsNone(prog.live)
         S.batch_leaves, S._core_ok = False, True          # (as the browser's solver: no BLAS)

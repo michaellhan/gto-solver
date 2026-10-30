@@ -10,14 +10,16 @@
  * a solve's strategies agree with the Python solver's to float32 rounding.
  *
  *   header  [MAGIC, n, ca, cb, root, r0, r1, regret, ssum, flat_len, nstacks, stacks, trim, live0, live1, l0, l1,
- *            ngames, games]
+ *            ngames, games, a0, b0, a1, b1]   a_q..b_q: player q's window (below)
  *   DECISION [1, player, A, B, W, regret, ssum, child_0 .. child_A-1]   regret, ssum: (B, A, W) blocks
  *   FOLD     [2, B, f0, f1]                     u_p = f_p * compat(ro)
  *   SHOWDOWN [3, B, ranking, a0, c0, a1, c1]    u_p = a_p * (sum of ro over weaker - stronger) + c_p * compat(ro)
  *   LEAF     [4, B, M, a0, c0, a1, c1, st, j]  the same with M (B, n, n) @ ro (an all-in's equity over the runouts);
  *                                              st -1, or its products batched: its stack, j its row there (below)
  *   CHANCE   [5, B, K, child, masks, w, norm]   child rows b*K+k; masks, w (B*K, n); norm (B, n)
- *   CLASSES  [6, B, K, child, masks, norm, G, flat, starts, sizes, nG]   river classes (Chance.spread, Chance.gather)
+ *   CLASSES  [6, B, K, child, masks, norm, G, flat, starts, sizes, nG]   river classes (Chance.spread, Chance.gather):
+ *                                              G, flat (2, nG, n), player q's [q]: its images outside q's window
+ *                                              n in G, the combo itself in flat
  *   RANKING  [B, n, oi, pi, rec, kslots, total, live]   a Ranking's tables as ranking() reads them (gto/core.py
  *                                              _ranking): oi (B, n4), pi (B, m4) uint16, rec (B, n, 8) uint16,
  *                                              kslots (2, 52), total a slot, live (B, n)
@@ -38,6 +40,13 @@
  * the first chance node on the way down hands its child's rows out in chunks, to this thread and its helpers, each
  * with its own scratch (a training pass: every first chance node's rows in one job, subs below): every row gets the
  * same arithmetic whichever thread runs it, and a solve's numbers don't depend on how many threads ran it.
+ *
+ * Each player's combos are a window, a_q..b_q (gto/core.py lays the combos out in three runs: those in player 0's
+ * range alone, those in both, those in player 1's alone, a range closed under the river classes' swaps), and a combo
+ * outside a player's range never has reach. So a vector of player q's (its reach, its utilities, its strategies, its
+ * regrets) is worked out on q's window alone: a sum over the opponent's combos runs over its window, a combo's own
+ * value over its player's. A reach is +0 outside its window (written so: the showdowns' running sums and the bucket
+ * sums read it whole); a utility or strategy outside its window is never read. Rows of W != n (buckets) have no window.
  */
 #include <stddef.h>
 #include <stdint.h>
@@ -170,10 +179,44 @@ EXPORT(core_source) const char *core_source(void) { return source; }
 static const i32 *P;
 static i32 n;
 static const i32 *ca, *cb;
+static i32 wa[2], wb[2];   /* each player's window: its combos wa[q]..wb[q] */
 static int trim;   /* this pass's batched equity leaves trimmed to the ranges (below) */
 
 #define PF(off) ((f32 *)(base + (u32)(off)))
 #define PI(off) ((i32 *)(base + (u32)(off)))
+
+/* player q's window in a row W wide (a row of buckets, W != n: all of it) */
+static inline i32 wlo(int q, i32 W) { return W == n ? wa[q] : 0; }
+static inline i32 whi(int q, i32 W) { return W == n ? wb[q] : W; }
+/* a reach of player q's (n wide) +0 outside q's window */
+static void wzero(f32 *x, int q) {
+  for (i32 i = 0; i < wa[q]; i++) x[i] = 0;
+  for (i32 i = wb[q]; i < n; i++) x[i] = 0;
+}
+/* x = r * s on player q's window of a row W wide, +0 outside it */
+static void wmul(f32 *x, const f32 *r, const f32 *s, int q, i32 W) {
+  i32 a = wlo(q, W), b = whi(q, W);
+  for (i32 i = a; i < b; i++) x[i] = r[i] * s[i];
+  if (W == n) wzero(x, q);
+}
+
+/* rows of len floats at buf, each laid out again in place by perm (len int32): inverse 0, x[j] = old x[perm[j]] (the
+   solver's order to the windows': gto/core.py's upload); 1, x[perm[j]] = old x[j] (back: download). No copy of the
+   buffer, and several times numpy's gather */
+EXPORT(core_permute) i32 core_permute(u32 buf, i32 rows, i32 len, u32 perm, i32 inverse) {
+  static f32 tmp[1326];
+  if (len > 1326) return -1;
+  f32 *x = PF(buf);
+  const i32 *pm = PI(perm);
+  for (i32 r = 0; r < rows; r++, x += len) {
+    if (inverse)
+      for (i32 j = 0; j < len; j++) tmp[pm[j]] = x[j];
+    else
+      for (i32 j = 0; j < len; j++) tmp[j] = x[pm[j]];
+    for (i32 j = 0; j < len; j++) x[j] = tmp[j];
+  }
+  return 0;
+}
 static inline f32 fbits(i32 w) {
   union { i32 i; f32 f; } u;
   u.i = w;
@@ -203,15 +246,17 @@ static f32 vsum(const f32 *x, i32 m) {
 #define G4(a, ix) ((v4){(a)[(ix)[0]], (a)[(ix)[1]], (a)[(ix)[2]], (a)[(ix)[3]]})
 
 /* ro: one row of the opponent's reach -> out: f times the mass of opponent combos sharing no card with each combo
-   (Solver.compat_sum: the total, minus each of the combo's cards' combos, plus the combo itself); card: 52 floats.
-   (Four combos at a time on the way out, each combo's arithmetic the same, the cards' sums gathered.) */
-static void compat(const f32 *ro, f32 *card, f32 f, f32 *out) {
+   (Solver.compat_sum: the total, minus each of the combo's cards' combos, plus the combo itself) for p's combos, the
+   sums over the opponent's; card: 52 floats. (Four combos at a time on the way out, each combo's arithmetic the
+   same, the cards' sums gathered.) */
+static void compat(const f32 *ro, f32 *card, f32 f, f32 *out, int p) {
+  i32 qa = wa[1 - p], qb = wb[1 - p];
   for (int c = 0; c < 52; c++) card[c] = 0;
-  f32 tot = vsum(ro, n), run = 0;
-  /* the combos come sorted by their first card (gto/cards.py ALL_COMBOS), so its sums run in a register (adding
-     through memory, each add waited on the one before) */
-  i32 cur = n ? ca[0] : 0;
-  for (i32 j = 0; j < n; j++) {
+  f32 tot = vsum(ro + qa, qb - qa), run = 0;
+  /* the combos come sorted by their first card (gto/cards.py ALL_COMBOS; each of a window's runs, gto/core.py), so
+     its sums run in a register (adding through memory, each add waited on the one before) */
+  i32 cur = qb > qa ? ca[qa] : 0;
+  for (i32 j = qa; j < qb; j++) {
     if (ca[j] != cur) {
       card[cur] += run;
       cur = ca[j];
@@ -222,14 +267,14 @@ static void compat(const f32 *ro, f32 *card, f32 f, f32 *out) {
   }
   card[cur] += run;
   v4 T = {tot, tot, tot, tot}, F = {f, f, f, f};
-  i32 i = 0;
-  for (; i + 4 <= n; i += 4) {
+  i32 i = wa[p], e = wb[p];
+  for (; i + 4 <= e; i += 4) {
     v4 x = T - G4(card, ca + i);
     x -= G4(card, cb + i);
     x += *(const v4u *)(ro + i);
     *(v4u *)(out + i) = F * x;
   }
-  for (; i < n; i++) out[i] = f * (tot - card[ca[i]] - card[cb[i]] + ro[i]);
+  for (; i < e; i++) out[i] = f * (tot - card[ca[i]] - card[cb[i]] + ro[i]);
 }
 
 /* The prefix sums of a row of reaches in two orders at once, cum over n entries and cs over 2n (Ranking.utility's
@@ -275,7 +320,7 @@ static void prefixes(const f32 *ro, const u64 *oi, const u64 *pi, f32 *cum, f32 
    where the combo holds a board card), times a with `scaled`. Each combo's sum adds the same terms in the same order
    as numpy's, four combos at a time: its record (8 uint16: the sums to its weaker and its weaker-or-tied combos, its
    cards, and the sums to the same two in each card's list of pairs, as slots) in two u64, the terms gathered. */
-static void ranking(Lane *L, const i32 *R, i32 b, const f32 *ro, f32 *u, int scaled, f32 a) {
+static void ranking(Lane *L, const i32 *R, i32 b, const f32 *ro, f32 *u, int scaled, f32 a, int p) {
   i32 n4 = (n + 3) & ~3, m4 = (2 * n + 3) & ~3;
   const u64 *oi = (const u64 *)(PI(R[2])) + (size_t)b * n4 / 4, *pi = (const u64 *)(PI(R[3])) + (size_t)b * m4 / 4;
   const u64 *rec = (const u64 *)(PI(R[4])) + (size_t)b * 2 * n;
@@ -288,8 +333,8 @@ static void ranking(Lane *L, const i32 *R, i32 b, const f32 *ro, f32 *u, int sca
   for (i32 c = 0; c < 52; c++) k[c] = cs[kend[c]] + cs[kstart[c]];
   f32 total = cum[R[6]];
   v4 T = {total, total, total, total}, S = {a, a, a, a};
-  i32 i = 0;
-  for (; i + 4 <= n; i += 4) {
+  i32 i = wa[p], e = wb[p];   /* (the sums run over every combo, the opponent's reach +0 outside its window) */
+  for (; i + 4 <= e; i += 4) {
     const u64 *r = rec + 2 * i;
     u64 a0 = r[0], a1 = r[2], a2 = r[4], a3 = r[6], b0 = r[1], b1 = r[3], b2 = r[5], b3 = r[7];
     v4 x = {cum[U16(a0, 0)], cum[U16(a1, 0)], cum[U16(a2, 0)], cum[U16(a3, 0)]};
@@ -305,7 +350,7 @@ static void ranking(Lane *L, const i32 *R, i32 b, const f32 *ro, f32 *u, int sca
     if (scaled) x *= S;
     *(v4u *)(u + i) = x;
   }
-  for (; i < n; i++) {
+  for (; i < e; i++) {
     u64 r0 = rec[2 * i], r1 = rec[2 * i + 1];
     f32 x = cum[U16(r0, 0)];
     x += cum[U16(r0, 16)];
@@ -323,9 +368,9 @@ static void ranking(Lane *L, const i32 *R, i32 b, const f32 *ro, f32 *u, int sca
   L->top = mark;
 }
 
-/* a row m of an (n, n) matrix dotted with ro: four 4-wide accumulators */
-static inline f32 dot(const f32 *m, const f32 *ro) {
-  i32 n16 = n & ~15, j = 0;
+/* m dotted with ro, len entries: four 4-wide accumulators */
+static inline f32 dot(const f32 *m, const f32 *ro, i32 len) {
+  i32 n16 = len & ~15, j = 0;
   v4 s0 = {0, 0, 0, 0}, s1 = s0, s2 = s0, s3 = s0;
   for (; j < n16; j += 16) {
     s0 += *(const v4u *)(m + j) * *(const v4u *)(ro + j);
@@ -335,13 +380,14 @@ static inline f32 dot(const f32 *m, const f32 *ro) {
   }
   v4 s = (s0 + s1) + (s2 + s3);
   f32 x = (s[0] + s[1]) + (s[2] + s[3]);
-  for (; j < n; j++) x += m[j] * ro[j];
+  for (; j < len; j++) x += m[j] * ro[j];
   return x;
 }
 
-/* u = M @ ro for one (n, n) matrix */
-static void matvec(const f32 *M, const f32 *ro, f32 *u) {
-  for (i32 i = 0; i < n; i++) u[i] = dot(M + (size_t)i * n, ro);
+/* u = M @ ro for one (n, n) matrix: p's rows, each over the opponent's window */
+static void matvec(const f32 *M, const f32 *ro, f32 *u, int p) {
+  i32 qa = wa[1 - p], ql = wb[1 - p] - qa;
+  for (i32 i = wa[p]; i < wb[p]; i++) u[i] = dot(M + (size_t)i * n + qa, ro + qa, ql);
 }
 
 /* A training pass with subs (below) takes the products of its equity leaves above them (an all-in called on the turn:
@@ -385,25 +431,25 @@ EXPORT(core_skip) i32 core_skip(i32 on) {
   if (on >= 0) skip_on = on;
   return skip_on;
 }
-static int unreached(const f32 *r) {
+static int unreached(const f32 *r, int q) {   /* (r: player q's, +0 outside its window) */
   if (!skip_on || measuring) return 0;
   const u32a *w = (const u32a *)r;
-  i32 i = 0;
-  for (; i + 16 <= n; i += 16) {
+  i32 i = wa[q], e = wb[q];
+  for (; i + 16 <= e; i += 16) {
     u32 x = 0;
     for (i32 j = 0; j < 16; j++) x |= w[i + j];
     if (x) return 0;
   }
   u32 x = 0;
-  for (; i < n; i++) x |= w[i];
+  for (; i < e; i++) x |= w[i];
   return x == 0;
 }
 
-/* whether two rows of n floats are the same bit for bit */
-static int same(const f32 *x, const f32 *y) {
+/* whether two reaches of player q's are the same bit for bit (on its window: +0 outside it) */
+static int same(const f32 *x, const f32 *y, int q) {
   const u32a *a = (const u32a *)x, *b = (const u32a *)y;
   u32 d = 0;
-  for (i32 i = 0; i < n; i++) d |= a[i] ^ b[i];
+  for (i32 i = wa[q]; i < wb[q]; i++) d |= a[i] ^ b[i];
   return d == 0;
 }
 
@@ -416,48 +462,49 @@ static void terminal(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r
   }
   size_t mark = L->top;
   f32 *cs = salloc(L, sizeof(f32) * n), *card = salloc(L, sizeof(f32) * 52);
+  i32 oa = wa[p], ob = wb[p];   /* (p's window: its utilities) */
   if (nd[0] == FOLD) {
     f32 f = fbits(nd[2 + p]);
     for (i32 b = lo; b < hi; b++) {
       const f32 *r = ro + (size_t)(b - lo) * n;
       f32 *ub = u + (size_t)(b - lo) * n;
-      if (!unreached(r)) {
-        compat(r, card, f, ub);
+      if (!unreached(r, 1 - p)) {
+        compat(r, card, f, ub, p);
         continue;
       }
       f32 z = f * 0.0f;
-      for (i32 i = 0; i < n; i++) ub[i] = z;
+      for (i32 i = oa; i < ob; i++) ub[i] = z;
     }
   } else {
     f32 a = fbits(nd[3 + 2 * p]), c = fbits(nd[4 + 2 * p]);
     for (i32 b = lo; b < hi; b++) {
       const f32 *r = ro + (size_t)(b - lo) * n;
       f32 *ub = u + (size_t)(b - lo) * n;
-      int none = nd[0] == SHOWDOWN || nd[7] < 0 ? unreached(r) : 0;
+      int none = nd[0] == SHOWDOWN || nd[7] < 0 ? unreached(r, 1 - p) : 0;
       const Leaf *lf = 0;
       if (leafing && leafy(nd)) {
         if (leaf_next >= nleaves) __builtin_trap();
         lf = &leaves[leaf_next++];
         if (lf->nd != nd || lf->b != b) __builtin_trap();   /* (the walks differ: a bug) */
-        if (!lf->on || !same(lf->x, r)) lf = 0;
+        if (!lf->on || !same(lf->x, r, 1 - p)) lf = 0;
       }
       if (nd[0] == SHOWDOWN && none) {
         const f32 *live = PF(P[nd[2] + 7]) + (size_t)b * n;
-        for (i32 i = 0; i < n; i++) ub[i] = 0.0f * live[i];
+        for (i32 i = oa; i < ob; i++) ub[i] = 0.0f * live[i];
         if (c == 0) {
-          for (i32 i = 0; i < n; i++) ub[i] *= a;
+          for (i32 i = oa; i < ob; i++) ub[i] *= a;
           continue;
         }
-        for (i32 i = 0; i < n; i++) cs[i] = 1.0f * 0.0f;
-        for (i32 i = 0; i < n; i++) ub[i] = a * ub[i] + c * cs[i];
+        for (i32 i = oa; i < ob; i++) cs[i] = 1.0f * 0.0f;
+        for (i32 i = oa; i < ob; i++) ub[i] = a * ub[i] + c * cs[i];
         continue;
       }
       if (nd[0] == SHOWDOWN && c == 0) {   /* (a times it as it's written) */
-        ranking(L, P + nd[2], b, r, ub, 1, a);
+        ranking(L, P + nd[2], b, r, ub, 1, a, p);
         continue;
       }
       if (nd[0] == SHOWDOWN) {
-        ranking(L, P + nd[2], b, r, ub, 0, 1);
+        ranking(L, P + nd[2], b, r, ub, 0, 1, p);
       } else if (nd[7] >= 0) {   /* its product, from the pass's batch */
         const i32 *st = PI(P[11]) + 10 * nd[7];
         i32 lp = trim ? P[15 + p] : n;
@@ -470,18 +517,18 @@ static void terminal(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r
           for (i32 i = 0; i < n; i++) ub[i] = pu[i];
         }
       } else if (none) {
-        for (i32 i = 0; i < n; i++) ub[i] = 0;
+        for (i32 i = oa; i < ob; i++) ub[i] = 0;
       } else if (lf) {
-        for (i32 i = 0; i < n; i++) ub[i] = lf->u[i];
+        for (i32 i = oa; i < ob; i++) ub[i] = lf->u[i];
         leaves_taken++;
       } else {
-        matvec(PF(nd[2]) + (size_t)b * n * n, r, ub);
+        matvec(PF(nd[2]) + (size_t)b * n * n, r, ub, p);
       }
       if (c != 0) {
-        compat(r, card, 1, cs);
-        for (i32 i = 0; i < n; i++) ub[i] = a * ub[i] + c * cs[i];
+        compat(r, card, 1, cs, p);
+        for (i32 i = oa; i < ob; i++) ub[i] = a * ub[i] + c * cs[i];
       } else {
-        for (i32 i = 0; i < n; i++) ub[i] = a * ub[i];
+        for (i32 i = oa; i < ob; i++) ub[i] = a * ub[i];
       }
     }
   }
@@ -512,11 +559,12 @@ static void discount(f32 *r, size_t m) {
 /* Regret matching (Decision.strategy): rows lo..hi of the (B, A, W) regrets -> their strategies; with `avg`, the
    strategy sums -> the average strategy (Decision.avg_strategy). (Every loop runs over a row's combos innermost, so it
    vectorizes; the sums over actions still add them first to last.) dw: these regrets again, to discount rows
-   lo..hi of them once read (the second pass's, fused), or 0 */
-static void strategy(Lane *L, const f32 *regret, i32 lo, i32 hi, i32 A, i32 W, int avg, f32 *s, f32 *dw) {
+   lo..hi of them once read (the second pass's, fused), or 0. q: the player acting (its window) */
+static void strategy(Lane *L, const f32 *regret, i32 lo, i32 hi, i32 A, i32 W, int avg, f32 *s, f32 *dw, int q) {
   f32 uni = (f32)(1.0 / A);
   size_t mark = L->top;
   f32 *tot = salloc(L, sizeof(f32) * W);
+  i32 x0 = wlo(q, W), x1 = whi(q, W);
   for (i32 b = lo; b < hi; b++) {
     const f32 *r = regret + (size_t)b * A * W;
     f32 *sb = s + (size_t)(b - lo) * A * W;
@@ -524,20 +572,20 @@ static void strategy(Lane *L, const f32 *regret, i32 lo, i32 hi, i32 A, i32 W, i
       const f32 *ra = r + (size_t)a * W;
       f32 *sa = sb + (size_t)a * W;
       if (avg)
-        for (i32 i = 0; i < W; i++) sa[i] = ra[i];
+        for (i32 i = x0; i < x1; i++) sa[i] = ra[i];
       else
-        for (i32 i = 0; i < W; i++) sa[i] = ra[i] > 0 ? ra[i] : 0;
-      if (dw) discount(dw + ((size_t)b * A + a) * W, W);
+        for (i32 i = x0; i < x1; i++) sa[i] = ra[i] > 0 ? ra[i] : 0;
+      if (dw) discount(dw + ((size_t)b * A + a) * W + x0, (size_t)(x1 - x0));
       if (a == 0)
-        for (i32 i = 0; i < W; i++) tot[i] = sa[i];
+        for (i32 i = x0; i < x1; i++) tot[i] = sa[i];
       else
-        for (i32 i = 0; i < W; i++) tot[i] += sa[i];
+        for (i32 i = x0; i < x1; i++) tot[i] += sa[i];
     }
     /* (one division a combo; a sum under float32's smallest normal counts as none: its reciprocal can overflow, and
        a zero regret times inf is NaN) */
-    for (i32 i = 0; i < W; i++) tot[i] = tot[i] < 0x1p-126f ? 0 : 1 / tot[i];
+    for (i32 i = x0; i < x1; i++) tot[i] = tot[i] < 0x1p-126f ? 0 : 1 / tot[i];
     for (i32 a = 0; a < A; a++)   /* (the product taken either way: a load under a condition doesn't vectorize) */
-      for (i32 i = 0; i < W; i++) {
+      for (i32 i = x0; i < x1; i++) {
         f32 v = sb[a * W + i] * tot[i];
         sb[a * W + i] = tot[i] == 0 ? uni : v;
       }
@@ -547,8 +595,9 @@ static void strategy(Lane *L, const f32 *regret, i32 lo, i32 hi, i32 A, i32 W, i
 
 static void cfr(Lane *L, i32 at, int p, i32 lo, i32 hi, const f32 *r0, const f32 *r1, f32 *out);
 static void split(Lane *L, i32 child, int p, i32 lo, i32 hi, const f32 *c0, const f32 *c1, f32 *u);
-static void keep(const i32 *nd, i32 lo, i32 hi, const f32 *x, i32 W);
+static void keep(const i32 *nd, i32 lo, i32 hi, const f32 *x, i32 W, int p);
 static int subbing;   /* this pass runs its subs (below) */
+static int pass_p;    /* a training pass's player (its subs' and leaves' windows) */
 
 /* TRAIN: a training pass (Solver._cfr, update=True); AVG: both players on their average strategies, no update (use_avg);
    BR: p best-responds to the opponent's average strategy (Solver._best_response) */
@@ -576,25 +625,24 @@ static void decision(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r
   const i32 *kids = nd + 7;
   size_t RW = (size_t)(hi - lo) * W, mark = L->top;
   f32 *s = salloc(L, sizeof(f32) * RW * A);
+  i32 oa = wlo(p, W), ob = whi(p, W);   /* (p's window: its utilities, strategies and regrets) */
   if (phase == COLLECT) {
     /* down only: the opponent's strategies into its reach, as below */
     const f32 *ro = p == 0 ? r1 : r0;
     f32 *reach = player == p ? 0 : salloc(L, sizeof(f32) * RW);
-    if (player != p) strategy(L, regret, lo, hi, A, W, 0, s, 0);
+    if (player != p) strategy(L, regret, lo, hi, A, W, 0, s, 0, player);
     for (i32 a = 0; a < A; a++) {
       if (is_terminal(kids[a])) {
         if (!subbing || !leaves_on || !leafy(P + kids[a])) continue;
         if (player == p) {   /* (an equity leaf: its opponent reach, as the pass proper passes it) */
-          keep(P + kids[a], lo, hi, ro, W);
+          keep(P + kids[a], lo, hi, ro, W, p);
           continue;
         }
         for (i32 b = lo; b < hi; b++) {
           size_t j = (size_t)(b - lo);
-          const f32 *sa = s + (j * A + a) * W, *rb = ro + j * W;
-          f32 *x = reach + j * W;
-          for (i32 i = 0; i < W; i++) x[i] = rb[i] * sa[i];
+          wmul(reach + j * W, ro + j * W, s + (j * A + a) * W, player, W);
         }
-        keep(P + kids[a], lo, hi, reach, W);
+        keep(P + kids[a], lo, hi, reach, W, p);
         continue;
       }
       if (player == p) {
@@ -603,9 +651,7 @@ static void decision(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r
       }
       for (i32 b = lo; b < hi; b++) {
         size_t j = (size_t)(b - lo);
-        const f32 *sa = s + (j * A + a) * W, *rb = ro + j * W;
-        f32 *x = reach + j * W;
-        for (i32 i = 0; i < W; i++) x[i] = rb[i] * sa[i];
+        wmul(reach + j * W, ro + j * W, s + (j * A + a) * W, player, W);
       }
       cfr(L, kids[a], p, lo, hi, p == 0 ? r0 : reach, p == 0 ? reach : r1, out);
     }
@@ -614,7 +660,7 @@ static void decision(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r
   }
   if (!(mode == BR && player == p)) {
     f32 *dw = fused && p == 1 && player == 0 ? regret : 0;   /* (player 0's regrets: read for the last time) */
-    strategy(L, mode == TRAIN ? regret : ssum, lo, hi, A, W, mode != TRAIN, s, dw);
+    strategy(L, mode == TRAIN ? regret : ssum, lo, hi, A, W, mode != TRAIN, s, dw, player);
   }
   if (player == p) {
     const f32 *ro = p == 0 ? r1 : r0, *rp = p == 0 ? r0 : r1;
@@ -626,9 +672,14 @@ static void decision(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r
         cfr(L, kids[a], p, lo, hi, r0, r1, ut + a * RW);
     }
     if (mode == BR) {
-      for (size_t x = 0; x < RW; x++) out[x] = ut[x];
-      for (i32 a = 1; a < A; a++)
-        for (size_t x = 0; x < RW; x++) out[x] = ut[a * RW + x] > out[x] ? ut[a * RW + x] : out[x];
+      for (i32 b = lo; b < hi; b++) {
+        size_t j = (size_t)(b - lo) * W;
+        for (i32 i = oa; i < ob; i++) out[j + i] = ut[j + i];
+        for (i32 a = 1; a < A; a++) {
+          const f32 *ua = ut + a * RW + j;
+          for (i32 i = oa; i < ob; i++) out[j + i] = ua[i] > out[j + i] ? ua[i] : out[j + i];
+        }
+      }
       L->top = mark;
       return;
     }
@@ -638,9 +689,9 @@ static void decision(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r
       for (i32 a = 0; a < A; a++) {
         const f32 *sa = s + (j * A + a) * W, *ua = ut + a * RW + j * W;
         if (a == 0)
-          for (i32 i = 0; i < W; i++) nu0[i] = sa[i] * ua[i];
+          for (i32 i = oa; i < ob; i++) nu0[i] = sa[i] * ua[i];
         else
-          for (i32 i = 0; i < W; i++) nu0[i] += sa[i] * ua[i];
+          for (i32 i = oa; i < ob; i++) nu0[i] += sa[i] * ua[i];
       }
       if (mode != TRAIN) continue;
       for (i32 a = 0; a < A; a++) {
@@ -648,7 +699,7 @@ static void decision(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r
         const f32 *sa = s + (j * A + a) * W, *ua = ut + a * RW + j * W, *nu = out + j * W;
         const f32 *rb = rp + j * W;
         if (!fused) {
-          for (i32 i = 0; i < W; i++) {
+          for (i32 i = oa; i < ob; i++) {
             rg[i] += ua[i] - nu[i];
             ss[i] += rb[i] * sa[i];
           }
@@ -656,18 +707,18 @@ static void decision(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r
         }
         f32 pos = d_pos, neg = d_neg, sf = d_sf;
         if (p == 0)   /* (player 0's regrets: discounted as the second pass reads them) */
-          for (i32 i = 0; i < W; i++) {
+          for (i32 i = oa; i < ob; i++) {
             rg[i] += ua[i] - nu[i];
             ss[i] = (ss[i] + rb[i] * sa[i]) * sf;
           }
         else if (d_mode != 0)
-          for (i32 i = 0; i < W; i++) {
+          for (i32 i = oa; i < ob; i++) {
             f32 v = rg[i] + (ua[i] - nu[i]);
             rg[i] = (v > 0 ? v : 0) * pos;
             ss[i] = (ss[i] + rb[i] * sa[i]) * sf;
           }
         else
-          for (i32 i = 0; i < W; i++) {
+          for (i32 i = oa; i < ob; i++) {
             f32 v = rg[i] + (ua[i] - nu[i]);
             rg[i] = v * (v > 0 ? pos : neg);
             ss[i] = (ss[i] + rb[i] * sa[i]) * sf;
@@ -681,9 +732,7 @@ static void decision(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r
     for (i32 a = 0; a < A; a++) {
       for (i32 b = lo; b < hi; b++) {
         size_t j = (size_t)(b - lo);
-        const f32 *sa = s + (j * A + a) * W, *rb = ro + j * W;
-        f32 *x = reach + j * W;
-        for (i32 i = 0; i < W; i++) x[i] = rb[i] * sa[i];
+        wmul(reach + j * W, ro + j * W, s + (j * A + a) * W, player, W);
       }
       f32 *dst = a == 0 ? out : u;
       if (is_terminal(kids[a]))
@@ -693,7 +742,10 @@ static void decision(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r
       else
         cfr(L, kids[a], p, lo, hi, reach, r1, dst);
       if (a > 0)
-        for (size_t x = 0; x < RW; x++) out[x] += u[x];
+        for (i32 b = lo; b < hi; b++) {
+          size_t j = (size_t)(b - lo) * W;
+          for (i32 i = oa; i < ob; i++) out[j + i] += u[j + i];
+        }
     }
   }
   L->top = mark;
@@ -728,6 +780,7 @@ static void dealt(const i32 *nd, const i32 *bk, int p, i32 lo, i32 hi, const f32
     return;
   }
   const f32 *u = g + (size_t)2 * B * KB;
+  i32 oa = wa[p], ob = wb[p];
   for (i32 b = lo; b < hi; b++) {
     f32 *o = out + (size_t)(b - lo) * n;
     for (i32 k = 0; k < K; k++) {
@@ -735,17 +788,17 @@ static void dealt(const i32 *nd, const i32 *bk, int p, i32 lo, i32 hi, const f32
       const i32 *id = ids + ((size_t)(row % T) * 2 + p) * n;
       const f32 *ub = u + (size_t)row * KB, *wb = w + (size_t)row * n;
       if (k == 0)
-        for (i32 i = 0; i < n; i++) {
+        for (i32 i = oa; i < ob; i++) {
           f32 x = id[i] < KB ? ub[id[i]] : 0;
           o[i] = x * wb[i];
         }
       else
-        for (i32 i = 0; i < n; i++) {
+        for (i32 i = oa; i < ob; i++) {
           f32 x = id[i] < KB ? ub[id[i]] : 0;
           o[i] += x * wb[i];
         }
     }
-    for (i32 i = 0; i < n; i++) o[i] = o[i] / norm[(size_t)b * n + i];
+    for (i32 i = oa; i < ob; i++) o[i] = o[i] / norm[(size_t)b * n + i];
   }
 }
 
@@ -791,7 +844,8 @@ static void sub(const i32 *nd, i32 lo, i32 hi, const f32 *r0, const f32 *r1, f32
     if (sub_next >= nsubs) __builtin_trap();
     Sub *s = &subs[sub_next++];
     if (s->nd != nd || s->lo != lo || s->hi != hi) __builtin_trap();   /* (the walks differ: a bug) */
-    for (size_t x = 0; x < B * n; x++) out[x] = s->out[x];
+    for (size_t j = 0; j < B; j++)
+      for (i32 i = wa[pass_p]; i < wb[pass_p]; i++) out[j * n + i] = s->out[j * n + i];
     return;
   }
   if (nsubs == maxsubs) __builtin_trap();
@@ -799,22 +853,24 @@ static void sub(const i32 *nd, i32 lo, i32 hi, const f32 *r0, const f32 *r1, f32
   s->nd = nd, s->lo = lo, s->hi = hi, s->row0 = sub_rows, s->left = (i32)rows;
   sub_rows += (i32)rows;
   s->r0 = carve(B * (n + 1)), s->r1 = carve(B * (n + 1)), s->u = carve(rows * n), s->out = carve(B * n);
-  for (size_t j = 0; j < B; j++) {
+  for (size_t j = 0; j < B; j++) {   /* (each player's window: masked() and spread_row() read no more) */
     f32 *x0 = s->r0 + j * (n + 1), *x1 = s->r1 + j * (n + 1);
-    for (i32 i = 0; i < n; i++) x0[i] = r0[j * n + i], x1[i] = r1[j * n + i];
+    for (i32 i = wa[0]; i < wb[0]; i++) x0[i] = r0[j * n + i];
+    for (i32 i = wa[1]; i < wb[1]; i++) x1[i] = r1[j * n + i];
     x0[n] = x1[n] = 0;
   }
 }
 
-/* an equity leaf's rows lo..hi on COLLECT's walk: each row's opponent reach x (W = n a row) kept */
-static void keep(const i32 *nd, i32 lo, i32 hi, const f32 *x, i32 W) {
+/* an equity leaf's rows lo..hi on COLLECT's walk: each row's opponent reach x (W = n a row) kept (its window: dot() and
+   same() read no more) */
+static void keep(const i32 *nd, i32 lo, i32 hi, const f32 *x, i32 W, int p) {
   if (W != n) __builtin_trap();
   for (i32 b = lo; b < hi; b++) {
     if (nleaves == maxleaves) __builtin_trap();
     Leaf *l = &leaves[nleaves++];
     const f32 *r = x + (size_t)(b - lo) * n;
-    l->nd = nd, l->b = b, l->x = carve(n), l->u = carve(n), l->on = !unreached(r);
-    for (i32 i = 0; i < n; i++) l->x[i] = r[i];
+    l->nd = nd, l->b = b, l->x = carve(n), l->u = carve(n), l->on = !unreached(r, 1 - p);
+    for (i32 i = wa[1 - p]; i < wb[1 - p]; i++) l->x[i] = r[i];
   }
 }
 
@@ -832,7 +888,7 @@ static void leaf_tasks(void) {
     i32 first = m;
     for (i32 y = x; y < nleaves; y++)
       if (leaves[y].on && leaf_matrix(&leaves[y]) == M0) lorder[m++] = y;
-    for (i32 r = 0; r < n; r += LCHUNK) {
+    for (i32 r = wa[pass_p]; r < wb[pass_p]; r += LCHUNK) {   /* (p's rows: its utilities) */
       i32 *t = ltask + 3 * nltask++;
       t[0] = first, t[1] = m, t[2] = r;
     }
@@ -843,12 +899,12 @@ static void leaf_tasks(void) {
 static void leaf_task(i32 t) {
   const i32 *k = ltask + 3 * t;
   const f32 *M0 = leaf_matrix(&leaves[lorder[k[0]]]);
-  i32 e = n - k[2] < LCHUNK ? n : k[2] + LCHUNK;
+  i32 ob = wb[pass_p], e = ob - k[2] < LCHUNK ? ob : k[2] + LCHUNK, qa = wa[1 - pass_p], ql = wb[1 - pass_p] - qa;
   for (i32 i = k[2]; i < e; i++) {
-    const f32 *m = M0 + (size_t)i * n;
+    const f32 *m = M0 + (size_t)i * n + qa;
     for (i32 y = k[0]; y < k[1]; y++) {
       Leaf *l = &leaves[lorder[y]];
-      l->u[i] = dot(m, l->x);
+      l->u[i] = dot(m, l->x + qa, ql);
     }
   }
 }
@@ -856,20 +912,18 @@ static void leaf_task(i32 t) {
 /* a chance node's child row b*K + k: each player's reach (row b) times the card's masks */
 static void masked(const i32 *nd, i32 b, i32 k, const f32 *r0, const f32 *r1, f32 *c0, f32 *c1) {
   const f32 *m = PF(nd[4]) + ((size_t)b * nd[2] + k) * n;
-  for (i32 i = 0; i < n; i++) {
-    c0[i] = r0[i] * m[i];
-    c1[i] = r1[i] * m[i];
-  }
+  wmul(c0, r0, m, 0, n);
+  wmul(c1, r1, m, 1, n);
 }
 
-/* a chance node's row b: its child's utilities ub (K rows) summed over the cards by their weights */
-static void chance_out(const i32 *nd, i32 b, const f32 *ub, f32 *o) {
-  i32 K = nd[2];
+/* a chance node's row b: its child's utilities ub (K rows) summed over the cards by their weights (p's) */
+static void chance_out(const i32 *nd, i32 b, const f32 *ub, f32 *o, int p) {
+  i32 K = nd[2], oa = wa[p], ob = wb[p];
   const f32 *wb = PF(nd[5]) + (size_t)b * K * n, *norm = PF(nd[6]) + (size_t)b * n;
-  for (i32 i = 0; i < n; i++) o[i] = ub[i] * wb[i];
+  for (i32 i = oa; i < ob; i++) o[i] = ub[i] * wb[i];
   for (i32 k = 1; k < K; k++)
-    for (i32 i = 0; i < n; i++) o[i] += ub[(size_t)k * n + i] * wb[(size_t)k * n + i];
-  for (i32 i = 0; i < n; i++) o[i] = o[i] / norm[i];
+    for (i32 i = oa; i < ob; i++) o[i] += ub[(size_t)k * n + i] * wb[(size_t)k * n + i];
+  for (i32 i = oa; i < ob; i++) o[i] = o[i] / norm[i];
 }
 
 static void chance(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r0, const f32 *r1, f32 *out) {
@@ -895,43 +949,48 @@ static void chance(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r0,
     L->top = mark;
     return;
   }
-  for (i32 b = lo; b < hi; b++) chance_out(nd, b, u + (size_t)(b - lo) * K * n, out + (size_t)(b - lo) * n);
+  for (i32 b = lo; b < hi; b++) chance_out(nd, b, u + (size_t)(b - lo) * K * n, out + (size_t)(b - lo) * n, p);
   L->top = mark;
 }
 
-/* Chance.spread of a reach row rp (n + 1 floats, the last 0) into class k of row b: dst (n) */
-static void spread_row(const i32 *nd, i32 b, i32 k, const f32 *rp, f32 *dst) {
-  i32 K = nd[2], nG = nd[10];
+/* Chance.spread of player q's reach row rp (n + 1 floats, the last 0) into class k of row b: dst (n). (G is each
+   player's: an image outside q's window, with no reach, is n there, so a combo in it reads no more than it) */
+static void spread_row(const i32 *nd, i32 b, i32 k, const f32 *rp, f32 *dst, int q) {
+  i32 K = nd[2], nG = nd[10], x0 = wa[q], x1 = wb[q];
   const f32 *masks = PF(nd[4]), *sizes = PF(nd[9]);
-  const i32 *G = PI(nd[6]), *starts = PI(nd[8]);
+  const i32 *G = PI(nd[6]) + (size_t)q * nG * n, *starts = PI(nd[8]);
   i32 e0 = starts[k], e1 = k + 1 < K ? starts[k + 1] : nG;
-  for (i32 i = 0; i < n; i++) dst[i] = rp[G[(size_t)e0 * n + i]];
+  for (i32 i = x0; i < x1; i++) dst[i] = rp[G[(size_t)e0 * n + i]];
   for (i32 e = e0 + 1; e < e1; e++)
-    for (i32 i = 0; i < n; i++) dst[i] += rp[G[(size_t)e * n + i]];
+    for (i32 i = x0; i < x1; i++) dst[i] += rp[G[(size_t)e * n + i]];
   const f32 *m = masks + ((size_t)b * K + k) * n;
-  for (i32 i = 0; i < n; i++) dst[i] *= m[i] / sizes[k];
+  for (i32 i = x0; i < x1; i++) dst[i] *= m[i] / sizes[k];
+  wzero(dst, q);
 }
 
-/* Chance.spread of one player's reach (rows lo..hi) into the class rows c; rp: n + 1 floats */
-static void spread(const i32 *nd, i32 lo, i32 hi, const f32 *r, f32 *c, f32 *rp) {
+/* Chance.spread of player q's reach (rows lo..hi) into the class rows c; rp: n + 1 floats */
+static void spread(const i32 *nd, i32 lo, i32 hi, const f32 *r, f32 *c, f32 *rp, int q) {
   i32 K = nd[2];
   for (i32 b = lo; b < hi; b++) {
-    for (i32 i = 0; i < n; i++) rp[i] = r[(size_t)(b - lo) * n + i];
+    for (i32 i = wa[q]; i < wb[q]; i++) rp[i] = r[(size_t)(b - lo) * n + i];
     rp[n] = 0;
-    for (i32 k = 0; k < K; k++) spread_row(nd, b, k, rp, c + ((size_t)(b - lo) * K + k) * n);
+    for (i32 k = 0; k < K; k++) spread_row(nd, b, k, rp, c + ((size_t)(b - lo) * K + k) * n, q);
   }
 }
 
-/* Chance.gather of row b's class utilities ub (K rows) into o (n); um: K * n floats of scratch */
-static void classes_out(const i32 *nd, i32 b, const f32 *ub, f32 *um, f32 *o) {
-  i32 K = nd[2], nG = nd[10];
+/* Chance.gather of row b's class utilities ub (K rows) into o (n), p's; um: K * n floats of scratch. (flat is each
+   player's: an image outside p's window, of a combo with no reach, is the combo itself there, as one outside the
+   combos is: its utility is never used) */
+static void classes_out(const i32 *nd, i32 b, const f32 *ub, f32 *um, f32 *o, int p) {
+  i32 K = nd[2], nG = nd[10], oa = wa[p], ob = wb[p];
   const f32 *m = PF(nd[4]) + (size_t)b * K * n, *norm = PF(nd[5]) + (size_t)b * n;
-  const i32 *flat = PI(nd[7]);
-  for (size_t x = 0; x < (size_t)K * n; x++) um[x] = ub[x] * m[x];
-  for (i32 i = 0; i < n; i++) o[i] = um[flat[i]];
+  const i32 *flat = PI(nd[7]) + (size_t)p * nG * n;
+  for (i32 k = 0; k < K; k++)
+    for (i32 i = oa; i < ob; i++) um[(size_t)k * n + i] = ub[(size_t)k * n + i] * m[(size_t)k * n + i];
+  for (i32 i = oa; i < ob; i++) o[i] = um[flat[i]];
   for (i32 e = 1; e < nG; e++)
-    for (i32 i = 0; i < n; i++) o[i] += um[flat[(size_t)e * n + i]];
-  for (i32 i = 0; i < n; i++) o[i] = o[i] / norm[i];
+    for (i32 i = oa; i < ob; i++) o[i] += um[flat[(size_t)e * n + i]];
+  for (i32 i = oa; i < ob; i++) o[i] = o[i] / norm[i];
 }
 
 /* river classes: Chance.spread into the class subtrees, Chance.gather back */
@@ -945,11 +1004,11 @@ static void classes(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r0
   f32 *c0 = salloc(L, sizeof(f32) * rows * n), *c1 = salloc(L, sizeof(f32) * rows * n);
   f32 *u = salloc(L, sizeof(f32) * rows * n), *rp = salloc(L, sizeof(f32) * (n + 1));
   f32 *um = salloc(L, sizeof(f32) * K * n);
-  spread(nd, lo, hi, r0, c0, rp);
-  spread(nd, lo, hi, r1, c1, rp);
+  spread(nd, lo, hi, r0, c0, rp, 0);
+  spread(nd, lo, hi, r1, c1, rp, 1);
   split(L, child, p, lo * K, hi * K, c0, c1, u);
   for (i32 b = lo; b < hi && phase != COLLECT; b++)
-    classes_out(nd, b, u + (size_t)(b - lo) * K * n, um, out + (size_t)(b - lo) * n);
+    classes_out(nd, b, u + (size_t)(b - lo) * K * n, um, out + (size_t)(b - lo) * n, p);
   L->top = mark;
 }
 
@@ -974,8 +1033,8 @@ static void subs_run(Lane *L, int p, i32 lo, i32 hi) {
     if (nd[0] == CHANCE) {
       masked(nd, b, k, q0, q1, c0, c1);
     } else {
-      spread_row(nd, b, k, q0, c0);
-      spread_row(nd, b, k, q1, c1);
+      spread_row(nd, b, k, q0, c0, 0);
+      spread_row(nd, b, k, q1, c1, 1);
     }
     cfr(L, nd[3], p, b * K + k, b * K + k + 1, c0, c1, s->u + (size_t)x * n);
     if (__atomic_sub_fetch(&s->left, 1, __ATOMIC_ACQ_REL) == 0) {   /* (its last row: every row's utilities seen) */
@@ -983,9 +1042,9 @@ static void subs_run(Lane *L, int p, i32 lo, i32 hi) {
       for (i32 r = 0; r < s->hi - s->lo; r++) {
         const f32 *ub = s->u + (size_t)r * K * n;
         if (nd[0] == CHANCE)
-          chance_out(nd, s->lo + r, ub, s->out + (size_t)r * n);
+          chance_out(nd, s->lo + r, ub, s->out + (size_t)r * n, p);
         else
-          classes_out(nd, s->lo + r, ub, um, s->out + (size_t)r * n);
+          classes_out(nd, s->lo + r, ub, um, s->out + (size_t)r * n, p);
       }
     }
     L->top = mark;
@@ -1141,7 +1200,7 @@ static void buckets(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r0
       const f32 *rb = r[q] + (size_t)(b - lo) * n;
       f32 *mb = m[q] + (size_t)(b - lo) * K;
       for (i32 k = 0; k < K; k++) mb[k] = 0;
-      for (i32 i = 0; i < n; i++)
+      for (i32 i = wa[q]; i < wb[q]; i++)   /* (+0 outside the window: the same sums) */
         if (id[i] < K) mb[id[i]] += rb[i];
     }
   for (i32 c = lo; c < hi; c += BROWS) {   /* (a few rows at a time: their tables stay in cache through the game) */
@@ -1153,7 +1212,7 @@ static void buckets(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r0
     const i32 *id = ids + ((size_t)(b % T) * 2 + p) * n;
     const f32 *ub = u + (size_t)(b - lo) * K;
     f32 *o = out + (size_t)(b - lo) * n;
-    for (i32 i = 0; i < n; i++) o[i] = id[i] < K ? ub[id[i]] : 0;
+    for (i32 i = wa[p]; i < wb[p]; i++) o[i] = id[i] < K ? ub[id[i]] : 0;
   }
   L->top = mark;
 }
@@ -1166,9 +1225,12 @@ static void river(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r0, 
   size_t mark = L->top, RK = (size_t)(hi - lo) * K, WK = (size_t)W * K;
   f32 *m[2] = {salloc(L, sizeof(f32) * RK), salloc(L, sizeof(f32) * RK)}, *u = salloc(L, sizeof(f32) * RK);
   const f32 *r[2] = {r0, r1};
-  for (int q = 0; q < 2; q++)
+  for (int q = 0; q < 2; q++) {   /* (tmatvec skips a reach's zeros: over q's window, the same sums) */
+    i32 x0 = wlo(q, W), x1 = whi(q, W);
     for (i32 b = lo; b < hi; b++)
-      tmatvec(X + ((size_t)q * T + b % T) * WK, r[q] + (size_t)(b - lo) * W, m[q] + (size_t)(b - lo) * K, K, W);
+      tmatvec(X + ((size_t)q * T + b % T) * WK + (size_t)x0 * K, r[q] + (size_t)(b - lo) * W + x0,
+              m[q] + (size_t)(b - lo) * K, K, x1 - x0);
+  }
   cfr(L, child, p, lo, hi, m[0], m[1], u);
   for (i32 b = lo; b < hi; b++)
     tmatvec(Xt + ((size_t)p * T + b % T) * WK, u + (size_t)(b - lo) * K, out + (size_t)(b - lo) * W, W, K);
@@ -1199,8 +1261,9 @@ static void cfr(Lane *L, i32 at, int p, i32 lo, i32 hi, const f32 *r0, const f32
    them, the root reaches' nonzero ones): T = M[live0][:, live1] (S, l0, l1), the reaches gathered to the opponent's
    range (rows lq wide), the products to p's (lp wide). M is antisymmetric (an equity's win minus loss), so player 1's
    are -(X @ T), and the combos outside p's range get 0 (numpy's trim_leaves: their reach is 0, so their regrets never
-   matter). Evaluations multiply the whole of M. Natively only: in the browser (no BLAS) gto/core.py leaves them one
-   at a time, so the wasm builds go without it. */
+   matter). Evaluations multiply the whole of M, or with trim 2 (the combos laid out by window: M is the solver's, in its
+   own order) T as well. Natively only: in the browser (no BLAS) gto/core.py leaves them one at a time, so the wasm
+   builds go without it. */
 #ifdef __wasm__
 static void batch(i32 at, int p, i32 rows, const f32 *ro) { (void)at, (void)p, (void)rows, (void)ro; }
 #else
@@ -1339,14 +1402,12 @@ static void down(Lane *L, i32 at, int p, i32 lo, i32 hi, const f32 *ro) {
     }
     size_t RW = (size_t)(hi - lo) * W;
     f32 *s = salloc(L, sizeof(f32) * RW * A), *reach = salloc(L, sizeof(f32) * RW);
-    strategy(L, PF(nd[mode == TRAIN ? 5 : 6]), lo, hi, A, W, mode != TRAIN, s, 0);
+    strategy(L, PF(nd[mode == TRAIN ? 5 : 6]), lo, hi, A, W, mode != TRAIN, s, 0, 1 - p);
     for (i32 a = 0; a < A; a++) {
       if (!below(kids[a])) continue;
       for (i32 b = lo; b < hi; b++) {
         size_t j = (size_t)(b - lo);
-        const f32 *sa = s + (j * A + a) * W, *rb = ro + j * W;
-        f32 *x = reach + j * W;
-        for (i32 i = 0; i < W; i++) x[i] = rb[i] * sa[i];
+        wmul(reach + j * W, ro + j * W, s + (j * A + a) * W, 1 - p, W);
       }
       down(L, kids[a], p, lo, hi, reach);
     }
@@ -1358,14 +1419,14 @@ static void down(Lane *L, i32 at, int p, i32 lo, i32 hi, const f32 *ro) {
     for (i32 b = lo; b < hi; b++)
       for (i32 k = 0; k < K; k++) {
         size_t row = ((size_t)(b - lo) * K + k) * n, at = ((size_t)b * K + k) * n, rb = (size_t)(b - lo) * n;
-        for (i32 i = 0; i < n; i++) c[row + i] = ro[rb + i] * masks[at + i];
+        wmul(c + row, ro + rb, masks + at, 1 - p, n);
       }
     down(L, nd[3], p, lo * K, hi * K, c);
   } else if (nd[0] == CLASSES) {
     i32 K = nd[2];
     if (!below(nd[3])) return;
     f32 *c = salloc(L, sizeof(f32) * (size_t)(hi - lo) * K * n), *rp = salloc(L, sizeof(f32) * (n + 1));
-    spread(nd, lo, hi, ro, c, rp);
+    spread(nd, lo, hi, ro, c, rp, 1 - p);
     down(L, nd[3], p, lo * K, hi * K, c);
   } else if (nd[0] == LEAF && nd[7] >= 0) {
     i32 *st = PI(P[11]) + 10 * nd[7], R = st[3], j = nd[8];
@@ -1390,7 +1451,7 @@ static void down(Lane *L, i32 at, int p, i32 lo, i32 hi, const f32 *ro) {
 static void batch(i32 at, int p, i32 rows, const f32 *ro) {
   i32 *st = PI(P[11]);
   if (!P[10]) return;
-  trim = P[12] && mode == TRAIN;
+  trim = P[12] == 2 || (P[12] && mode == TRAIN);   /* (2: evaluations too, the combos laid out by window) */
   for (i32 s = 0; s < P[10]; s++) st[10 * s + 6] = st[10 * s + 3], st[10 * s + 7] = 0;
   down(&M, at, p, 0, rows, ro);
   i32 l0 = P[15], l1 = P[16], lp = trim ? P[15 + p] : n, lq = trim ? P[16 - p] : n;
@@ -1441,7 +1502,7 @@ static void gdown(Lane *L, Game *G, i32 at, int p, i32 lo, i32 hi, const f32 *ro
     return;
   }
   f32 *s = G->s[G->nd++] = salloc(L, sizeof(f32) * RW * A);
-  strategy(L, PF(nd[5]), lo, hi, A, W, 0, s, 0);
+  strategy(L, PF(nd[5]), lo, hi, A, W, 0, s, 0, player);
   for (i32 a = 0; a < A; a++) {
     if (player == p) {
       gdown(L, G, nd[7 + a], p, lo, hi, ro);
@@ -1913,6 +1974,7 @@ static void load(u32 prog) {
   n = P[1];
   ca = PI(P[2]);
   cb = PI(P[3]);
+  wa[0] = P[19], wb[0] = P[20], wa[1] = P[21], wb[1] = P[22];
 }
 
 static i32 rows_of(i32 at) { return P[at] == DECISION ? P[at + 3] : P[at + 1]; }
@@ -1983,6 +2045,7 @@ EXPORT(core_run) i32 core_run(u32 prog, i32 iters, u32 factors) {
     for (int p = 0; p < 2; p++) {
       size_t mark = M.top;
       f32 *u = salloc(&M, sizeof(f32) * B * n);
+      pass_p = p;
       batch(root, p, B, p == 0 ? r1 : r0);
       if (DEFER && P[17]) {
         lane_k = 1;

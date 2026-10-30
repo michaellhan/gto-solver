@@ -1705,6 +1705,61 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   on that turn full and trimmed. The floats match one thread's, and no lane grew. On the core before, it trapped on
   the first: full tree, 2 threads, evaluate-only. A lane set to 3/4 of its measure, the subs' in a training pass and
   then the whole pass's in an evaluation, grows to what its helpers held, with the same floats.
+* **Each player's combos alone** (`Solver._support`, `_windows`, `WINDOW_MAX`; `gto/core.py` `Program` windows;
+  `core/gtocore.c` `wa`/`wb`). A solve's combos are both players' (the tree's `ctx.active`), and every iteration worked
+  out every one of them for each player, though a combo with no weight in a player's range never has reach there: its
+  strategy changes nothing and its regrets matter to no answer. Now a solve works out each player's combos alone: those
+  with weight in its range (anything above 0, so the Advisor's near-zero hand of ours outside our range, `_with_hero`,
+  and locked and exploit-mode ranges stay in) and, under a turn's river classes, their images by the class's card swap
+  (a class subtree's combo stands for its images on the class's other cards, so it has reach there). The compiled core
+  lays the combos out as each player's window (`[only the first's | both | only the second's | neither]`, `Solver._perm`;
+  the regrets and sums by window on upload and back on download, the cards, rankings, classes and buckets by window
+  in the program) and runs a player's strategies, regrets, utilities, showdowns and folds over its own window, the
+  opponent's sums over the opponent's (its reach +0 outside); numpy leaves out the same combos (its regret updates
+  masked), so the fallback answers the same. Outside a player's window its regrets, sums and EVs are 0, and no answer
+  shows one: every reader of a combo's mix or EV weighs it by its reach at the node (Study's combos and grid, the
+  breakdown, the advice, drills and reports), which is 0 there; an evaluation with reach outside the windows runs in
+  numpy. Where the windows leave out little, none: over 0.8 of the tree's combos on average (`WINDOW_MAX`). A turn's
+  windows hold every river class's images of the ranges (0.95 / 0.81 of the combos on the Advisor's turn after a
+  c-bet, ranges 0.70 / 0.56: a suited hand's swap is offsuit), the same ms an iteration as without, and laying the
+  buffers out by window costs each upload and download a little (`core_permute`, in place a row at a time: +4.6 and
+  +8.6 ms natively on a limped turn's 31 MB of regrets and sums); those turns (and two-tone ones, 0.93 / 0.82),
+  rivers after a checked turn (0.94 / 0.76) and a 40bb flop (0.93 / 0.75) run as before, bit for bit. A limped pot's
+  windows are its ranges (SB 0.42-0.56, BB 0.76-0.82), a 3bet pot's 0.75 / 0.66.
+  Checked on the lanes fix's 686 sweep trees (four turns, two rivers and a flop, four ranges, full and TRIMS'
+  levels), every one with its windows (`WINDOW_MAX` 1 for it): regrets and strategy sums the same bit for bit on 1,
+  2, 4 and 8 threads. After an iteration from the same start the windows move the in-range regrets by at most
+  4.4e-5 of a node's largest (median 2.2e-6) and the sums by 2.8e-7, inside the core's own distance from numpy
+  (2.0e-4, 3.1e-7), and the root's EVs by at most 0.0002% of the pot (numpy's 0.0006%); numpy with its windows and
+  without is the same bit for bit, and every EV outside a player's window is 0. Exploitability after 100 iterations:
+  0.528% of the pot on average with the windows, 0.536 without, 0.541 without and one range nudged by an ulp; case by
+  case on against off spreads as the nudge does (median 2.3% of the value, 90th percentile 14%; the nudge's 2.1%,
+  13%): DCFR's rounding chaos this early, not a bias. On the Advisor's own spots, six ulp nudges of a range each, on / off (mean, % of the pot): `flop-limp` 0.1263
+  / 0.1263 and `flop-limp-x` 0.1335 / 0.1335 (600 iterations), `turn-limp` 0.164 / 0.164 (300), `turn-3bp` 0.065 /
+  0.065 (300) and 0.0208 / 0.0212 (600).
+  In the browser bench on 8 threads (Fast, BTN vs BB's turn files, a fresh worker per spot, two runs each, alternating
+  with the windows off, in a quiet hold; seconds to the answer, the same iterations and exploitability):
+
+  | request | off -> on | the solve | iterations, % of the pot |
+  |---|---|---|---|
+  | `turn-limp` | 3.95 / 4.26 -> 3.20 / 3.48 | 2.72 / 3.02 -> 2.13 / 2.36 | 300, 0.16 |
+  | `flop-limp` (solved live) | 1.03 / 1.03 -> 0.93 / 0.92 | 0.93 / 0.93 -> 0.83 / 0.82 | 600, 0.12 -> 0.13 |
+  | `flop-limp-ip` | 1.03 / 1.08 -> 0.91 / 0.91 | 0.93 / 0.97 -> 0.81 / 0.82 | 600, 0.13 |
+  | `turn-3bp` | 0.91 / 0.91 -> 0.85 / 0.86 | 0.52 / 0.51 -> 0.44 / 0.45 | 300, 0.06 -> 0.07 |
+  | `turn` (no windows) | 2.13 / 2.14 -> 2.14 / 2.10 | 1.96 / 1.97 -> 1.97 / 1.94 | 300, 0.12 |
+
+  Natively, ms an iteration from the 100th (two runs each, alternating, in a quiet hold): `turn-limp` 6.93 -> 6.30 on 8
+  threads, `flop-limp` 0.88 -> 0.74 (3.17 -> 2.59 on 1), `flop-limp-x` 0.90 -> 0.73 (3.10 -> 2.44 on 1). Accurate
+  warm-starts from Fast's solve: their windows are the same (the same ranges' zeros: `turn-limp`, `flop-limp`,
+  `flop-limp-x`, `flop-3bp`), so nothing it copies is lost. Not done: a turn's windows per river class. Each class's
+  subtree needs only the ranges plus the swaps of its own cards (0.68 / 0.55 of the combos on average on the
+  Advisor's turn, against 0.95 / 0.81 for all of them at once), but one order of the combos can't make every class's
+  window contiguous: it takes a layout per class (its own order, windows, cards, rankings and buckets; the class
+  gather composed with each layout's order; numpy masked per row). Its bound, the windows set to the ranges alone (not
+  a correct solve), natively on 8 threads: 1.2x on `turn` and `turn-limp`, 1.06x on two-tone.
+  Tests: `tests/test_core.py` `TestWindows` (combos outside a range: their regrets, sums and EVs 0, the rest within
+  rounding, core and numpy; off; none where they leave out little), `tests/test_study.py` (Study's combos and grid
+  only in the range, our hand outside it). `core.wasm` 60 -> 65 KB, `core-mt.wasm` 83 -> 91 KB.
 * **The multiway core on threads** (`core/mwcore.c` `pass`, `rwalk`, `job`, `helper`, `mw_threads`;
   `gto/mwcore-mt.wasm`). The multiway core (3- and 4-way flop and turn solves, How it works) ran on one thread in the
   browser while the heads-up core had helpers. Now a pass runs its root-street leaves as one job: a walk down

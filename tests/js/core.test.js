@@ -34,8 +34,9 @@ test("solves and evaluates a hand-written game", async () => {
   const ca = put([0, 2], Int32Array), cb = put([1, 3], Int32Array);
   const r0 = put([1, 1], Float32Array), r1 = put([1, 1], Float32Array);
   const regret = put([0, 0, 0, 0], Float32Array), ssum = put([0, 0, 0, 0], Float32Array);
-  const prog = put([MAGIC, 2, ca, cb, 10, r0, r1, regret, ssum, 4,
-                    1, 0, 2, 1, 2, regret, ssum, 19, 23,      // DECISION: player 0, 2 actions, 1 board, 2 combos
+  // (the header's 23 words: the root at 23, words 19-22 each player's window of the combos, here all of them)
+  const prog = put([MAGIC, 2, ca, cb, 23, r0, r1, regret, ssum, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 2,
+                    1, 0, 2, 1, 2, regret, ssum, 32, 36,      // DECISION: player 0, 2 actions, 1 board, 2 combos
                     2, 1, f(1), f(-1),                          // FOLD: player 0 wins 1
                     2, 1, f(-1), f(1)], Int32Array);           // FOLD: player 0 loses 1
   const fac = put(new Array(40).fill(0).map((_, i) => (i % 4 === 0 ? 0 : 1)), Float32Array);   // no discounting
@@ -44,9 +45,9 @@ test("solves and evaluates a hand-written game", async () => {
   // uniform on the first iteration, then all on the winning fold
   assert.deepEqual([...ss], [9.5, 9.5, 0.5, 0.5]);
   const out = ex.core_alloc(8) >>> 0;
-  assert.equal(ex.core_eval(prog, 10, 0, r0, r1, out, 1), 0);    // average strategies: 0.95 - 0.05
+  assert.equal(ex.core_eval(prog, 23, 0, r0, r1, out, 1), 0);    // average strategies: 0.95 - 0.05
   assert.deepEqual([...new Float32Array(ex.memory.buffer, base + out, 2)].map((x) => +x.toFixed(5)), [0.9, 0.9]);
-  assert.equal(ex.core_eval(prog, 10, 0, r0, r1, out, 2), 0);    // best response
+  assert.equal(ex.core_eval(prog, 23, 0, r0, r1, out, 2), 0);    // best response
   assert.deepEqual([...new Float32Array(ex.memory.buffer, base + out, 2)], [1, 1]);
   assert.equal(ex.core_run(regret, 1, fac), -1);                 // not a program
 });
@@ -80,8 +81,8 @@ function chanceGame(ex, n, K) {
   for (let k = 0; k < K; k++) for (let i = 0; i < n; i++) masks.push((i + 2 * k) % 7 === 0 ? 0 : 1);
   const norm = [...Array(n).keys()].map((i) => masks.filter((_, x) => x % n === i).reduce((a, b) => a + b, 0));
   const m = put(masks, Float32Array), nm = put(norm, Float32Array);
-  const root = 10, fold = root + 9, ch = fold + 4, dec = ch + 7, fa = dec + 9, fb = fa + 4;
-  const prog = put([MAGIC, n, ca, cb, root, r0, r1, regret, ssum, len,
+  const root = 23, fold = root + 9, ch = fold + 4, dec = ch + 7, fa = dec + 9, fb = fa + 4;
+  const prog = put([MAGIC, n, ca, cb, root, r0, r1, regret, ssum, len, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, n, 0, n,
                     1, 0, 2, 1, n, regret, ssum, ch, fold,                       // DECISION: player 0, deal or fold
                     2, 1, f(0.5), f(-0.5),                                      // FOLD
                     5, 1, K, dec, m, m, nm,                                     // CHANCE: K cards

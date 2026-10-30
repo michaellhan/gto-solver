@@ -112,6 +112,8 @@ class _Native:
         L.core_lanes_grown.restype, L.core_lanes_grown.argtypes = ctypes.c_uint32, [ctypes.c_int32, ctypes.c_uint32]
         L.core_leaves.restype, L.core_leaves.argtypes = ctypes.c_int32, [ctypes.c_int32]
         L.core_leaves_taken.restype, L.core_leaves_taken.argtypes = ctypes.c_uint32, []
+        L.core_permute.restype = ctypes.c_int32
+        L.core_permute.argtypes = [ctypes.c_uint32, ctypes.c_int32, ctypes.c_int32, ctypes.c_uint32, ctypes.c_int32]
         if L.core_version() != MAGIC:
             raise RuntimeError("core version mismatch")
         self.L = L
@@ -141,6 +143,9 @@ class _Native:
 
     def table(self, args: int) -> int:
         return self.L.core_table(args)
+
+    def permute(self, buf: int, rows: int, len_: int, perm: int, inverse: int) -> int:
+        return self.L.core_permute(buf, rows, len_, perm, inverse)
 
 
 class _Wasm:
@@ -190,6 +195,9 @@ class _Wasm:
 
     def table(self, args: int) -> int:
         return int(self._js(self.ex.core_table, args))
+
+    def permute(self, buf: int, rows: int, len_: int, perm: int, inverse: int) -> int:
+        return int(self._js(self.ex.core_permute, buf, rows, len_, perm, inverse))
 
     def reload(self) -> "_Wasm":
         """The module started again (worker.js: a new instance on a fresh memory, with new helpers, the old ones
@@ -296,6 +304,21 @@ def _quarters(idx: np.ndarray, m: int) -> np.ndarray:
     return out
 
 
+def _ranking_tables_perm(R, perm, inv):
+    """_ranking_tables with the combos laid out by window (Program: combo j of the core is perm[j] of the solver's,
+    inv the other way): the orders' entries renamed, each combo's record and live flag moved (the slots are positions in
+    the orders, which keep their sequence: the running sums add the same reaches in the same order)."""
+    hit = getattr(R, "_corep", None)
+    if hit is not None and hit[0] is perm:
+        return hit[1]
+    oi, pi, rec, kslots, total = _ranking_tables(R)
+    n = R.n
+    t = (_quarters(inv[R.order], n), _quarters(inv[R.pcombo], 2 * n), np.ascontiguousarray(rec[:, perm]), kslots,
+         total, np.ascontiguousarray(R.live[:, perm]))
+    R._corep = (perm, t)
+    return t
+
+
 def _ranking_tables(R):
     """A Ranking's tables as the core's ranking() reads them (kept on it): the two orders its prefix sums run in
     (_quarters), each combo's record (8 uint16: the slots, _slots, of the sums to its weaker and weaker-or-tied combos,
@@ -333,6 +356,18 @@ class Program:
         self.leaves = []         # (record, M, rows) of each equity leaf
         self.stacks = 0          # matrix stacks whose leaves are batched
         self.live = None         # with them: each player's range (the root reaches' nonzero combos)
+        # each player's combos (Solver._support) laid out as windows (Solver._perm, _wins): the core's combo j the
+        # solver's perm[j] (None: the solver's order, whole windows)
+        self.win, self.perm, self.inv = solver._win, solver._perm, None
+        ctx = solver.ctx
+        self.wins = [0, ctx.n, 0, ctx.n] if self.perm is None else list(solver._wins)
+        if self.perm is not None:
+            self.inv = np.empty(ctx.n + 1, dtype=np.intp)       # (n: none, in the class tables)
+            self.inv[self.perm] = np.arange(ctx.n)
+            self.inv[ctx.n] = ctx.n
+        self._pc = {}            # id(solver array) -> its columns laid out by window (_cols)
+        self.runs = []           # (start, end) of the flat buffers' combo-wide stretches (their rows laid out so)
+        self._rows = set()
         self.games = []          # the deferred bucket games' entries (records)
         self._keep = []          # the solver's arrays the core reads in place (batched leaves' M) and their trims
         self.bytes = 0
@@ -342,13 +377,18 @@ class Program:
         self.gen = _gen
         ctx = solver.ctx
         self.n = ctx.n
-        self.reg = self._upload(solver._regret, np.float32)
-        self.ss = self._upload(solver._ssum, np.float32)
+        self.bytes += 2 * solver._regret.nbytes
+        if self.bytes > ARENA_MAX:
+            raise Unsupported("over ARENA_MAX")
+        self.reg, self.ss = L.alloc(solver._regret.nbytes), L.alloc(solver._ssum.nbytes)
         self.r0, self.r1 = L.alloc(4 * self.n), L.alloc(4 * self.n)
+        self.pm = 0 if self.perm is None else self._upload(self.perm, np.int32)   # (core_permute's)
         self.reaches(r0, r1)
-        self.w = [MAGIC, ctx.n, self._upload(ctx.ca, np.int32), self._upload(ctx.cb, np.int32), 0,
-                  self.r0, self.r1, self.reg, self.ss, solver._regret.size] + [0] * 9
+        self.w = [MAGIC, ctx.n, self._upload(self._cols(ctx.ca), np.int32), self._upload(self._cols(ctx.cb), np.int32),
+                  0, self.r0, self.r1, self.reg, self.ss, solver._regret.size] + [0] * 9 + self.wins
         self.w[4] = self._emit(solver.root)
+        self._stretches(solver)
+        self.upload(solver)
         if self.games:
             self.w[17:19] = [len(self.games), self._upload(np.array(self.games, dtype=np.int32), np.int32)]
         self.batch_leaves = solver.batch_leaves
@@ -356,12 +396,71 @@ class Program:
             self._batch(r0, r1)
         else:
             for at, M, _ in self.leaves:
-                self.w[at + 2] = self._upload(M, np.float32)
+                self.w[at + 2] = self._upload_m(M)
         words = np.array(self.w, dtype=np.int64)
         self.prog = self._upload(words.astype(np.uint32).view(np.int32), np.int32)
         self.fac = L.alloc(16 * MAX_CHUNK)
         self.ev = L.alloc(12 * self.n)     # an evaluation's reaches and utilities
-        self.w = self._rank = self._up = self._lists = None
+        self.w = self._rank = self._up = self._lists = self._pc = self._rows = None
+
+    def _cols(self, a):
+        """`a` with its last axis (combos) laid out by window (once per array: the copy kept, so it uploads once)."""
+        if self.perm is None:
+            return a
+        hit = self._pc.get(id(a))
+        if hit is None:
+            hit = self._pc[id(a)] = (np.ascontiguousarray(a[..., self.perm]), a)
+        return hit[0]
+
+    def _upload_m(self, M) -> int:
+        """An equity leaf's matrices (B, n, n), both axes laid out by window (a matrix at a time)."""
+        if self.perm is None:
+            return self._upload(M, np.float32)
+        key = (id(M), "m")
+        hit = self._up.get(key)
+        if hit is not None:
+            return hit[0]
+        size = 4 * M[0].size
+        self.bytes += size * M.shape[0]
+        if self.bytes > ARENA_MAX:
+            raise Unsupported("over ARENA_MAX")
+        off = self.L.alloc(size * M.shape[0])
+        ix = np.ix_(self.perm, self.perm)
+        for b in range(M.shape[0]):
+            self.L.write(off + b * size, np.ascontiguousarray(M[b][ix], dtype=np.float32))
+        self._up[key] = (off, M)
+        return off
+
+    def _stretches(self, solver):
+        """The flat buffers' combo-wide stretches (the decisions' (B, A, n) blocks, merged where they touch): upload and
+        download lay their rows out by window."""
+        if self.perm is None:
+            return
+        runs = []
+        for s0, e0 in sorted(self._rows):
+            if runs and s0 < runs[-1][1]:
+                raise Unsupported("overlapping blocks")
+            if runs and s0 == runs[-1][1]:
+                runs[-1][1] = e0
+            else:
+                runs.append([s0, e0])
+        self.runs = [tuple(r) for r in runs]
+
+    def _put(self, off: int, flat: np.ndarray):
+        """A flat buffer into the arena, its combo-wide stretches' rows laid out by window there (core_permute)."""
+        self.L.write(off, flat)
+        self._permute(off, 0)
+
+    def _get(self, off: int, flat: np.ndarray):
+        """The arena's buffer back into `flat` in the solver's order (the arena's laid out again as it was)."""
+        self._permute(off, 1)
+        self.L.read(off, flat)
+        self._permute(off, 0)
+
+    def _permute(self, off: int, inverse: int):
+        for s0, e0 in self.runs:
+            if self.L.permute(off + 4 * s0, (e0 - s0) // self.n, self.n, self.pm, inverse) != 0:
+                raise CoreError("core permute failed")
 
     def _batch(self, r0, r1):
         """The equity leaves' products batched by matrix stack (core/gtocore.c: batched equity leaves): each stack's
@@ -374,7 +473,15 @@ class Program:
             if B != M.shape[0] or M.dtype != np.float32 or not M.flags.c_contiguous:
                 raise Unsupported("a leaf's rows and its matrices")
             by.setdefault(id(M), (M, []))[1].append(at)
-        self.live = live = [np.flatnonzero(np.ravel(r) > 0) for r in (r0, r1)]
+        if self.perm is None:
+            self.live = live = [np.flatnonzero(np.ravel(r) > 0) for r in (r0, r1)]
+            lists, trim = live, 1
+        else:
+            # (laid out by window: each player's range is its window, and evaluations, whose reaches stay in them, use
+            # the trimmed matrices too)
+            a0, b0, a1, b1 = self.wins
+            self.live = live = [self.perm[a0:b0], self.perm[a1:b1]]
+            lists, trim = [np.arange(a0, b0), np.arange(a1, b1)], 2
         table = []
         for k, (M, ats) in enumerate(by.values()):
             T = np.ascontiguousarray(M[:, live[0]][:, :, live[1]])
@@ -391,7 +498,8 @@ class Program:
                 self.w[at + 7], self.w[at + 8] = k, j
         self.stacks = len(by)
         self.w[10:17] = [len(by), self._upload(np.array(table, dtype=np.int64).astype(np.uint32).view(np.int32), np.int32),
-                         1, self._upload(live[0], np.int32), self._upload(live[1], np.int32), len(live[0]), len(live[1])]
+                         trim, self._upload(lists[0], np.int32), self._upload(lists[1], np.int32), len(live[0]),
+                         len(live[1])]
 
     def _tables(self, solver):
         """The tables the tree's bucket entries, bucket games and equity leaves read (Ctx.bucket_table, river_table,
@@ -423,14 +531,18 @@ class Program:
 
     def valid(self, L, solver) -> bool:
         """The solver's, still in the arena, and built for its batch_leaves."""
-        return self.gen == _gen and self.L is L and self.s() is solver and self.batch_leaves == solver.batch_leaves
+        return self.gen == _gen and self.L is L and self.s() is solver and self.batch_leaves == solver.batch_leaves \
+            and (self.win is solver._win or self.win is not None and solver._win is not None and
+                 np.array_equal(self.win, solver._win))
 
     def reaches(self, r0, r1):
         for q, (off, r) in enumerate(((self.r0, r0), (self.r1, r1))):
             r = np.ascontiguousarray(np.ravel(r), dtype=np.float32)
             if r.size != self.n:
                 raise Unsupported("reaches")
-            if self.live is not None and np.count_nonzero(r) != np.count_nonzero(r[self.live[q]]):
+            if self.perm is not None:
+                r = r[self.perm]        # (in the windows: Solver.run's, from which they're made; _evaluate's, checked)
+            if self.perm is None and self.live is not None and np.count_nonzero(r) != np.count_nonzero(r[self.live[q]]):
                 self.L.write(self.prog + 4 * 12, np.zeros(1, dtype=np.int32))    # (a combo outside the range: untrimmed)
                 self.live = None
             self.L.write(off, r)
@@ -470,7 +582,13 @@ class Program:
             if node.pred is not None:
                 raise Unsupported("predictive")
             A = len(node.children)
-            w += [DECISION, node.player, A, node.B, node.regret.shape[2], self._view(node.regret, s._regret, self.reg),
+            W = node.regret.shape[2]
+            if self.perm is not None and W == self.n:
+                if node.bucketed:
+                    raise Unsupported("as many buckets as combos")      # (the core tells rows by their width)
+                o = (self._view(node.regret, s._regret, self.reg) - self.reg) // 4
+                self._rows.add((o, o + node.regret.size))
+            w += [DECISION, node.player, A, node.B, W, self._view(node.regret, s._regret, self.reg),
                   self._view(node.ssum, s._ssum, self.ss)] + [0] * A
             for a, c in enumerate(node.children):
                 kid = self._emit(c)
@@ -506,6 +624,12 @@ class Program:
             return at
         if isinstance(node, RiverEntry):
             T, X, _, _ = s._rtab(node)              # X (2, T, W, K)
+            if self.perm is not None and X.shape[2] == self.n:
+                if node.outer:
+                    raise Unsupported("as many buckets as combos")
+                if id(X) not in self._pc:
+                    self._pc[id(X)] = (np.ascontiguousarray(X[:, :, self.perm]), X)
+                X = self._pc[id(X)][0]
             w += [RIVER, len(node.boards), X.shape[2], X.shape[3], T, 0, self._upload(X, np.float32),
                   self._upload(X, np.float32, True)]
             w[at + 5] = self._emit(node.child)
@@ -518,11 +642,12 @@ class Program:
             n = ids.shape[2]
             ok = DEFER_GAMES and dealt is not None and dealt.shape == (B, n) and \
                 bool(np.all(np.broadcast_to(dealt[:, None], (B, 2, n))[ids[np.arange(B) % T] < K] == 1))
-            w += [BUCKETS, B, K, T, 0, self._upload(ids, np.int32), self._game(node.child, B, K) if ok else 0, 0]
+            w += [BUCKETS, B, K, T, 0, self._upload(self._cols(ids), np.int32), self._game(node.child, B, K) if ok else 0,
+                  0]
             if w[at + 6]:
                 self.games.append(at)
                 if id(ids) not in self._lists:
-                    self._lists[id(ids)] = (ids, _bucket_lists(ids, K))
+                    self._lists[id(ids)] = (ids, _bucket_lists(self._cols(ids), K))
                 w[at + 7] = self._upload(self._lists[id(ids)][1], np.int32)
             w[at + 4] = self._emit(node.child)
             return at
@@ -532,17 +657,41 @@ class Program:
             B = len(node.boards)
             if node.perm is not None:
                 G, flat, starts, sizes = node.perm
-                w += [CLASSES, B, node.K, 0, self._upload(node.masks, np.float32), self._upload(node.norm, np.float32),
-                      self._upload(G, np.int32), self._upload(flat, np.int32), self._upload(starts, np.int32),
-                      self._upload(sizes, np.float32), len(G)]
+                G2, F2 = self._classes(G, flat)
+                w += [CLASSES, B, node.K, 0, self._upload(self._cols(node.masks), np.float32),
+                      self._upload(self._cols(node.norm), np.float32), self._upload(G2, np.int32),
+                      self._upload(F2, np.int32), self._upload(starts, np.int32), self._upload(sizes, np.float32), len(G)]
             else:
                 wt = node.masks if node.umasks is None else node.umasks
-                w += [CHANCE, B, node.K, 0, self._upload(node.masks, np.float32), self._upload(wt, np.float32),
-                      self._upload(node.norm, np.float32)]
+                w += [CHANCE, B, node.K, 0, self._upload(self._cols(node.masks), np.float32),
+                      self._upload(self._cols(wt), np.float32), self._upload(self._cols(node.norm), np.float32)]
             kid = self._emit(node.child, node.masks if node.perm is None else None)   # (a dealt card's entry: deferred?)
             w[at + 3] = kid
             return at
         raise Unsupported(type(node).__name__)
+
+    def _classes(self, G, flat):
+        """A river-class node's G and flat (Ctx.class_perm) as each player's (2, nG, n), laid out by window: an image
+        outside the player's window is n in G (no reach) and the combo itself in flat (its utility isn't worked out
+        there; Solver._flat does the same)."""
+        hit = self._pc.get(id(G))
+        if hit is not None:
+            return hit[0]
+        n = self.n
+        if self.perm is None:
+            out = (np.stack([G, G]), np.stack([flat, flat]))
+        else:
+            Gp = self.inv[G[:, self.perm]]                       # (nG, n) images' positions, n: none
+            base = (flat[:, :1] // n) * n                        # (each row's class times n)
+            a0, b0, a1, b1 = self.wins
+            Gs, Fs = [], []
+            for a, b in ((a0, b0), (a1, b1)):
+                inw = (Gp >= a) & (Gp < b)
+                Gs.append(np.where(inw, Gp, n))
+                Fs.append(base + np.where(inw, Gp, np.arange(n)[None, :]))
+            out = (np.stack(Gs), np.stack(Fs))
+        self._pc[id(G)] = (out, G)
+        return out
 
     def _game(self, node, B: int, K: int) -> int:
         """A bucket game played deferred (core/gtocore.c: under a dealt card, a game of just decisions and bucket
@@ -586,9 +735,13 @@ class Program:
         w = self.w
         at = len(w)
         up = self._upload
-        oi, pi, rec, kslots, total = _ranking_tables(R)
+        if self.perm is None:
+            oi, pi, rec, kslots, total = _ranking_tables(R)
+            live = R.live
+        else:
+            oi, pi, rec, kslots, total, live = _ranking_tables_perm(R, self.perm, self.inv)
         w += [R.order.shape[0], self.n, up(oi, np.uint16), up(pi, np.uint16), up(rec, np.uint16), up(kslots, np.int32),
-              total, up(R.live, np.float32)]
+              total, up(live, np.float32)]
         self._rank[id(R)] = at
         return at
 
@@ -601,13 +754,13 @@ class Program:
     def upload(self, solver, regrets: bool = True):
         """The solver's strategy sums (and regrets) into the arena (numpy may have run since)."""
         if regrets:
-            self.L.write(self.reg, solver._regret)
-        self.L.write(self.ss, solver._ssum)
+            self._put(self.reg, solver._regret)
+        self._put(self.ss, solver._ssum)
 
     def download(self, solver):
         """The regrets and strategy sums back into the solver's buffers."""
-        self.L.read(self.reg, solver._regret)
-        self.L.read(self.ss, solver._ssum)
+        self._get(self.reg, solver._regret)
+        self._get(self.ss, solver._ssum)
 
 
 class Tables:
@@ -720,10 +873,16 @@ def evaluate(solver, jobs):
 
 
 def _evaluate(L, solver, jobs):
+    win = solver._win
+    if win is not None:
+        # (a combo outside a player's window has no strategy there: numpy, whose utilities are the same in them)
+        for _, _, r0, r1, _ in jobs:
+            if np.ravel(r0).size != win.shape[1] or np.any(np.ravel(r0)[~win[0]]) or np.any(np.ravel(r1)[~win[1]]):
+                return None
     prog = _program(L, solver, jobs[0][2], jobs[0][3], regrets=False)
     if prog is None:
         return None
-    n, out = prog.n, []
+    n, out, perm = prog.n, [], prog.perm
     for node, p, r0, r1, md in jobs:
         at = prog.at.get(id(node))
         if at is None:
@@ -732,11 +891,16 @@ def _evaluate(L, solver, jobs):
             r = np.ascontiguousarray(np.ravel(r), dtype=np.float32)
             if r.size != n:
                 return None
-            L.write(off, r)
+            L.write(off, r if perm is None else r[perm])
         if L.eval(prog.prog, at, p, prog.ev, prog.ev + 4 * n, prog.ev + 8 * n, md) != 0:
             return None
         u = np.empty((1, n), dtype=np.float32)
         L.read(prog.ev + 8 * n, u)
+        if perm is not None:
+            v = np.zeros((1, n), dtype=np.float32)
+            v[0, perm] = u[0]
+            v[0, ~win[p]] = 0       # (not worked out: outside p's window)
+            u = v
         out.append(u)
     return out
 

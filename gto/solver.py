@@ -15,6 +15,7 @@ Speed tricks (pure Python + numpy):
   (turn_classes)
 """
 from __future__ import annotations
+import os
 import random
 import sys
 import time
@@ -38,6 +39,16 @@ def _matvec(M, x):
     return np.matmul(M, x[..., None])[..., 0]
 
 
+# Each player's combos are worked on alone (Solver._support: those in its range, with their river-class images): a combo
+# outside a player's range has no reach, so its strategies never change anything, and its regrets, sums and EVs stay 0
+# (the compiled core lays each player's combos out as a window: gto/core.py, core/gtocore.c). GTO_WINDOWS=0: off
+WINDOWS = os.environ.get("GTO_WINDOWS", "1") != "0"
+# ... where that leaves out enough to pay: the two players' combos over 0.8 of the tree's on average, none. A turn's
+# windows hold every river class's images of the ranges (0.95 / 0.81 of the combos on the Advisor's turns after a
+# c-bet, ranges 0.70 / 0.56), the same ms an iteration natively on 8 threads, and laying the buffers out by window
+# costs each upload and download a little (core_permute: +4.6 / +8.6 ms on a limped turn's 31 MB); a limped turn's
+# windows (0.56 / 0.82) 1.10x, live flops' (0.42 / 0.76) 1.19-1.23x
+WINDOW_MAX = 0.8
 TINY = np.float32(2.0 ** -126)   # float32's smallest normal: regret matching takes a sum under it for none (its
                                  # reciprocal can overflow, and a zero regret times inf is NaN), as the core does
 N_FULL = 1326
@@ -842,13 +853,14 @@ class Chance:
         R *= (self.masks.reshape(-1, self.K, n)[rows] / sizes[None, :, None]).astype(R.dtype, copy=False)
         return R.reshape(B * self.K, n)
 
-    def gather(self, u, rows) -> np.ndarray:
+    def gather(self, u, rows, flat=None) -> np.ndarray:
         """River classes: (B * K, N) class subtree utilities -> (B, N): a combo's utility sums, over every river card
-        c, its image's utility in c's class (the image under the swap), divided by the avail - 4 runouts of a pair."""
+        c, its image's utility in c's class (the image under the swap), divided by the avail - 4 runouts of a pair.
+        `flat`: the player's in place of perm[1] (Solver._flat)."""
         n = u.shape[1]
         B = len(rows)
         u = u.reshape(B, self.K * n) * self.masks.reshape(-1, self.K * n)[rows]
-        return u[:, self.perm[1]].sum(axis=1) / self.norm[rows]
+        return u[:, self.perm[1] if flat is None else flat].sum(axis=1) / self.norm[rows]
 
     def weights(self, rows=None) -> np.ndarray:
         """(B, K, N) weights of each child's utility, for batch rows `rows` (None = all)."""
@@ -1377,6 +1389,14 @@ class Solver:
         self._p = None              # the training pass's player
         self.use_core = True        # run() in the compiled core when it covers the tree (gto/core.py)
         self._core_ok = True        # False: the tree has something the core doesn't run
+        self.windows = WINDOWS      # each player's combos alone (_support)
+        self._win = None            # with them, the last run's: (2, n) bool, each player's combos
+        self._wmask = None          # the same as float32, for the regrets' updates
+        self._wflat = {}            # with them: each river-class node's flat (Ctx.class_perm) by player (_flat)
+        # and the combos laid out by them: [player 0's alone | both's | player 1's alone | neither's], perm[j] the
+        # combo at j, player q's window wins[2q]..wins[2q+1] (the compiled core's layout; numpy's trimmed leaves take
+        # their combos in its order, so their products sum in the core's order); None: every combo both players'
+        self._perm = self._wins = None
 
     def _child_reach(self, node, q, r, fn):
         """fn(r), player q's reach into node's children, through the memo (training passes, every row only)."""
@@ -1450,6 +1470,72 @@ class Solver:
                 if self.predictive:
                     n.pred = m.pred[off:off + n.B]
                 off += n.B
+
+    def _support(self, r0, r1) -> np.ndarray:
+        """Each player's combos, (2, n) bool: those in its range (root reach > 0) and their images under the river
+        classes' swaps (Ctx.class_perm: a class subtree's combo stands for its images on the class's other cards, so it
+        has reach there, solve() adds them to the combos). A combo outside them never has reach."""
+        m0 = np.stack([np.ravel(r0) > 0, np.ravel(r1) > 0])
+        m = m0.copy()
+        n = self.ctx.n
+        seen, stack = set(), [self.root]
+        while stack:
+            x = stack.pop()
+            if isinstance(x, Decision):
+                stack.extend(x.children)
+            elif isinstance(x, (Chance, BucketEntry)):
+                stack.append(x.child)
+                G = x.perm[0] if isinstance(x, Chance) and x.perm is not None else None
+                if G is not None and id(G) not in seen:
+                    seen.add(id(G))
+                    for q in (0, 1):
+                        img = G[:, m0[q]]     # (each row a swap: its images are the combos it gives reach)
+                        m[q, img[img < n]] = True
+        return m
+
+    def _windows(self, r0, r1):
+        """Each player's combos for this run's reaches (_support), when `windows`: a change clears the regrets and
+        sums of the combos outside them (a warm start's or a seed's), which then stay 0."""
+        w = self._support(r0, r1) if self.windows else None
+        if w is None or w.mean() > WINDOW_MAX:
+            self._win = self._wmask = self._perm = self._wins = None
+            return
+        if self._win is not None and np.array_equal(w, self._win):
+            return
+        self._win, self._wmask, self._wflat = w, w.astype(np.float32), {}
+        self._perm = self._wins = None
+        if not w.all():
+            w0, w1 = w
+            parts = [np.flatnonzero(w0 & ~w1), np.flatnonzero(w0 & w1), np.flatnonzero(~w0 & w1),
+                     np.flatnonzero(~w0 & ~w1)]
+            self._perm = np.concatenate(parts).astype(np.intp)
+            a, b = len(parts[0]), len(parts[1])
+            self._wins = (0, a + b, a, a + b + len(parts[2]))
+        for node in self._nodes:
+            if not node.bucketed:
+                out = ~w[node.player]
+                node.regret[..., out] = 0
+                node.ssum[..., out] = 0
+                if node.pred is not None:
+                    node.pred[..., out] = 0
+
+    def _flat(self, node, p):
+        """A river-class node's flat for p's utilities (Chance.gather) with windows: an image outside p's combos is the
+        combo itself, as in the compiled core, which doesn't work utilities out there (it is only so for a combo outside
+        p's range, an image's: a combo in it has its images in, _support; its regrets above the cards are then the
+        core's too)."""
+        if self._win is None:
+            return None
+        G, flat = node.perm[:2]
+        hit = self._wflat.get(id(flat))
+        if hit is None:
+            n = self.ctx.n
+            fs = []
+            for q in (0, 1):
+                inw = np.append(self._win[q], False)[G]
+                fs.append((flat // n) * n + np.where(inw, G, np.arange(n)[None, :]))
+            hit = self._wflat[id(flat)] = (fs, flat)
+        return hit[0][p]
 
     def compat_sum(self, ro):
         """ro: (B, N) -> (B, N) mass of opponent combos sharing no card with each combo."""
@@ -1730,7 +1816,7 @@ class Solver:
                 else:
                     c0, c1 = node.spread(r0, rows), node.spread(r1, rows)
                 u = self._cfr(node.child, p, c0, c1, update, use_avg, csel, strats, done if sel is None else None)
-                return node.gather(u, rows)
+                return node.gather(u, rows, self._flat(node, p))
             if node.sample is not None and self.sampling:
                 ks = np.array(sorted(self.rng.sample(range(K), node.sample)))
             else:
@@ -1774,6 +1860,8 @@ class Solver:
             if update:
                 rp = r0 if p == 0 else r1
                 utils -= node_util[:, None, :]          # the instantaneous regrets
+                if self._wmask is not None and not node.bucketed:
+                    utils *= self._wmask[p]             # (none outside p's combos: _support)
                 if sel is None:
                     node.regret += utils
                     node.ssum += rp[:, None, :] * strat
@@ -1929,8 +2017,13 @@ class Solver:
         iteration so far) with this many iterations' time kept back for what follows (an exploitability costs
         about one); else iterations run until one ends past the budget (up to one iteration over)."""
         r0b, r1b = r0[None, :].astype(np.float32), r1[None, :].astype(np.float32)
+        self._windows(r0, r1)
         if self.trim_leaves:
-            live = (np.flatnonzero(r0 > 0), np.flatnonzero(r1 > 0))
+            if self._perm is not None:      # (each player's window, in the core's order)
+                a0, b0, a1, b1 = self._wins
+                live = (self._perm[a0:b0], self._perm[a1:b1])
+            else:
+                live = (np.flatnonzero(r0 > 0), np.flatnonzero(r1 > 0))
             if self._live is None or any(not np.array_equal(a, b) for a, b in zip(live, self._live)):
                 self._live, self._trimmed = live, {}
         if self.horizon is None and max_iters > self.iters:
@@ -1985,7 +2078,8 @@ class Solver:
             B, K, n = r0.shape[0], node.K, self.ctx.n
             if node.perm is not None:
                 rows = np.arange(B)
-                return node.gather(self._best_response(node.child, p, node.spread(r0, rows), node.spread(r1, rows), lock), rows)
+                return node.gather(self._best_response(node.child, p, node.spread(r0, rows), node.spread(r1, rows), lock),
+                                   rows, self._flat(node, p))
             m3 = node.masks.reshape(B, K, n)
             u = self._best_response(node.child, p, (r0[:, None, :] * m3).reshape(B * K, n),
                                     (r1[:, None, :] * m3).reshape(B * K, n), lock)
@@ -2044,6 +2138,12 @@ class Solver:
                 evs[a] = np.where(cs > 1e-12, u / np.where(cs > 1e-12, cs, 1.0), 0.0) + inv_p
         finally:
             self.sampling = True
+        return self._drop(evs, p)
+
+    def _drop(self, evs, p):
+        """0 for the combos outside p's (_support: the compiled core doesn't compute them, and numpy matches it)."""
+        if self._win is not None:
+            evs[:, ~self._win[p]] = 0
         return evs
 
     def node_action_br_evs(self, node: Decision, r0, r1, lock=None):
@@ -2059,7 +2159,7 @@ class Solver:
             u = got[a][0] if got else \
                 self._best_response(child, p, r0[None, :].astype(np.float32), r1[None, :].astype(np.float32), lock)[0]
             evs[a] = np.where(cs > 1e-12, u / np.where(cs > 1e-12, cs, 1.0), 0.0) + inv_p
-        return evs
+        return self._drop(evs, p)
 
 
 def _inv_of(node, p: int, icm=None) -> float:
