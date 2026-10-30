@@ -161,3 +161,34 @@ class TestSettled(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestApproximate(unittest.TestCase):
+    def test_an_answer_far_over_its_target_says_so(self):
+        """A heads-up turn or river answer more than OVER_TARGET times its speed's expl_target from equilibrium (its
+        solve ran short: a busy device, or numpy after the compiled core failed, 5-7% on the browser's Fast turn) is
+        marked approximate, with the target and a note; within it, or with no target, it is a normal answer. Quick's
+        answers and multiway solves aren't marked."""
+        from gto.advisor import OVER_TARGET
+        adv = native.advisor("fast", budget=2, prior_budget=0.5)
+        res = adv.advise(RIVER)
+        x = res["solver"]["exploitability_pct"]
+        self.assertGreater(x, 0)
+        self.assertNotIn("approximate", res["solver"])
+        adv.expl_target = x / OVER_TARGET   # (exactly at it: within)
+        res = adv.advise(RIVER)
+        self.assertEqual(res["solver"]["exploitability_pct"], x)   # (the cached solve)
+        self.assertNotIn("approximate", res["solver"])
+        adv.expl_target = x / OVER_TARGET / 2
+        res = adv.advise(RIVER)
+        self.assertIs(res["solver"]["approximate"], True)
+        self.assertEqual(res["solver"]["target_pct"], adv.expl_target)
+        self.assertEqual(sum(n.startswith("Approximate:") for n in res["notes"]), 1)
+        for name, state, got in (("quick", dict(RIVER, quick=True), dict(street="river")),
+                                 ("preflop", RIVER, dict(street="preflop")),
+                                 ("multiway", RIVER, dict(street="river", multiway=True))):
+            with self.subTest(name):
+                got = dict(got, solver={"exploitability_pct": 100.0}, notes=[])
+                adv._flag_short(state, got)
+                self.assertNotIn("approximate", got["solver"])
+                self.assertEqual(got["notes"], [])

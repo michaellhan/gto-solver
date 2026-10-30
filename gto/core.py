@@ -53,6 +53,8 @@ DEFER_GAMES = sys.platform != "emscripten"
 
 _lib = None            # the loaded core; False: none
 _lock = threading.Lock()
+RESTARTS = 3           # the times a session starts the core again after it failed (restart), then it's off: numpy
+_restarts = 0
 _gen = 0               # programs built: each resets the arena, so only the latest is still there
 _prog = None           # that program
 
@@ -62,9 +64,10 @@ class Unsupported(Exception):
 
 
 class CoreError(RuntimeError):
-    """The core itself failed: a trap in the browser's module (its memory refusing to grow, an access out of bounds),
-    or a run or table build that didn't finish. run() turns the core off for the session on this only: an error in
-    our own Python around it (the clock read as 0 s once divided by) is no reason to."""
+    """The core itself failed: a trap in the browser's module (its memory refusing to grow, an access out of bounds, a
+    helper that failed), or a run or table build that didn't finish. run() and evaluate() start the core again on this
+    only (restart), and run what failed again in it once, else turn it off for the session: an error in our own Python
+    around it (the clock read as 0 s once divided by) is no reason to."""
 
 
 def source_hash() -> str:
@@ -185,6 +188,11 @@ class _Wasm:
     def table(self, args: int) -> int:
         return int(self._js(self.ex.core_table, args))
 
+    def reload(self) -> "_Wasm":
+        """The module started again (worker.js: a new instance on a fresh memory, with new helpers, the old ones
+        ended)."""
+        return _Wasm(self._js(self.ex.reload))
+
 
 def _load():
     if os.environ.get("GTO_CORE", "1") == "0":
@@ -209,6 +217,28 @@ def lib():
     if _lib is None:
         _lib = _load() or False
     return _lib or None
+
+
+def restart() -> bool:
+    """After the core failed (CoreError): in the browser the module started again, a new instance on a fresh memory with
+    new helpers (worker.js reload), so that the caller can run what failed again in it. Nothing the failed call wrote
+    reaches the retry: the arena of a run or evaluation that failed is never read back (Program.download, the outputs),
+    so the solver's arrays are as they were before it, and the program is laid out again from them. False, and the
+    core off for the session (numpy runs every solve), natively (a trap there ends the process: a CoreError is a run
+    that didn't finish), after RESTARTS, or when the new instance fails."""
+    global _lib, _prog, _restarts
+    _prog = None
+    L = _lib
+    if not L or not hasattr(L, "reload") or _restarts >= RESTARTS:
+        _lib = False
+        return False
+    _restarts += 1
+    try:
+        _lib = L.reload()
+    except Exception:
+        _lib = False
+        return False
+    return True
 
 
 def threads(t: int = 0) -> int:
@@ -665,8 +695,8 @@ def _program(L, solver, r0, r1, regrets: bool = True):
 def evaluate(solver, jobs):
     """Each job (node, p, r0, r1, md): p's utilities (1, n) at `node` (of one board) for reaches r0, r1 (n,) there: md
     AVG with both players on their average strategies (Solver._cfr with use_avg), BR with p best-responding to the
-    opponent's (Solver._best_response). None when the core can't (numpy runs them), or failed (CoreError: it's off
-    then, as after a run that failed)."""
+    opponent's (Solver._best_response). None when the core can't (numpy runs them), or failed (CoreError: started
+    again and the jobs run again in it once, as after a run that failed; else it's off)."""
     global _lib
     L = lib()
     if L is None or not solver.use_core or solver.predictive or any(len(j[0].boards) != 1 for j in jobs):
@@ -674,30 +704,38 @@ def evaluate(solver, jobs):
     if not _lock.acquire(blocking=False):
         return None
     try:
-        prog = _program(L, solver, jobs[0][2], jobs[0][3], regrets=False)
-        if prog is None:
-            return None
-        n, out = prog.n, []
-        for node, p, r0, r1, md in jobs:
-            at = prog.at.get(id(node))
-            if at is None:
-                return None
-            for off, r in ((prog.ev, r0), (prog.ev + 4 * n, r1)):
-                r = np.ascontiguousarray(np.ravel(r), dtype=np.float32)
-                if r.size != n:
+        for again in (False, True):
+            try:
+                return _evaluate(L, solver, jobs)
+            except CoreError:
+                if again or not restart():
+                    _lib = False
                     return None
-                L.write(off, r)
-            if L.eval(prog.prog, at, p, prog.ev, prog.ev + 4 * n, prog.ev + 8 * n, md) != 0:
-                return None
-            u = np.empty((1, n), dtype=np.float32)
-            L.read(prog.ev + 8 * n, u)
-            out.append(u)
-        return out
-    except CoreError:
-        _lib = False
-        return None
+                L = _lib
     finally:
         _lock.release()
+
+
+def _evaluate(L, solver, jobs):
+    prog = _program(L, solver, jobs[0][2], jobs[0][3], regrets=False)
+    if prog is None:
+        return None
+    n, out = prog.n, []
+    for node, p, r0, r1, md in jobs:
+        at = prog.at.get(id(node))
+        if at is None:
+            return None
+        for off, r in ((prog.ev, r0), (prog.ev + 4 * n, r1)):
+            r = np.ascontiguousarray(np.ravel(r), dtype=np.float32)
+            if r.size != n:
+                return None
+            L.write(off, r)
+        if L.eval(prog.prog, at, p, prog.ev, prog.ev + 4 * n, prog.ev + 8 * n, md) != 0:
+            return None
+        u = np.empty((1, n), dtype=np.float32)
+        L.read(prog.ev + 8 * n, u)
+        out.append(u)
+    return out
 
 
 def run(solver, r0, r1, t0: float, time_budget: float, max_iters: int, min_iters: int, should_stop, reserve,
@@ -711,47 +749,53 @@ def run(solver, r0, r1, t0: float, time_budget: float, max_iters: int, min_iters
         return False
     try:
         start = solver.iters
-        prog = _program(L, solver, r0, r1)
-        if prog is None:
-            return False
-        t1 = _clock()
-        per = None
-        try:
-            while solver.iters < max_iters:
-                if should_stop is not None and should_stop():
-                    prog.download(solver)
-                    raise Cancelled()
-                done = solver.iters - start
-                el = time.time() - t0
-                if done >= min_iters and per is not None:
-                    if reserve is not None and el + per * (1.0 + reserve) > time_budget:
-                        break
-                    if reserve is None and el > time_budget:
-                        break
-                k = 1 if per is None else min(max_iters - solver.iters, MAX_CHUNK, max(1, int(CHUNK_S / per)))
-                if per is not None:
-                    left = time_budget - el - (per * reserve if reserve is not None else 0.0)
-                    k = min(k, max(1, min_iters - done, int(left / per)))
-                factors = []
-                for _ in range(k):
-                    solver.iters += 1
-                    factors.append(solver._factors())
-                prog.iterate(k, factors)
-                per = max((_clock() - t1) / (solver.iters - start), PER_MIN)
-                if max_per is not None and solver.iters - start == 1 and per > max_per:
-                    raise TooSlow(per)
-        except (Cancelled, TooSlow):
-            raise
-        except CoreError:
-            # (the core failed mid-run: its iterations are dropped, numpy runs the solve, and every later one)
-            solver.iters = start
-            _lib = False
-            return False
-        except Exception:
-            # (our own Python around it failed, not the core: numpy runs this solve from its iterations before,
-            # the regrets uploaded again next time, and the core stays on)
-            solver.iters = start
-            return False
+        for again in (False, True):
+            prog = _program(L, solver, r0, r1)
+            if prog is None:
+                return False
+            t1 = _clock()
+            per = None
+            try:
+                while solver.iters < max_iters:
+                    if should_stop is not None and should_stop():
+                        prog.download(solver)
+                        raise Cancelled()
+                    done = solver.iters - start
+                    el = time.time() - t0
+                    if done >= min_iters and per is not None:
+                        if reserve is not None and el + per * (1.0 + reserve) > time_budget:
+                            break
+                        if reserve is None and el > time_budget:
+                            break
+                    k = 1 if per is None else min(max_iters - solver.iters, MAX_CHUNK, max(1, int(CHUNK_S / per)))
+                    if per is not None:
+                        left = time_budget - el - (per * reserve if reserve is not None else 0.0)
+                        k = min(k, max(1, min_iters - done, int(left / per)))
+                    factors = []
+                    for _ in range(k):
+                        solver.iters += 1
+                        factors.append(solver._factors())
+                    prog.iterate(k, factors)
+                    per = max((_clock() - t1) / (solver.iters - start), PER_MIN)
+                    if max_per is not None and solver.iters - start == 1 and per > max_per:
+                        raise TooSlow(per)
+                break
+            except (Cancelled, TooSlow):
+                raise
+            except CoreError:
+                # (the core failed mid-run: its iterations are dropped, the solver's arrays as they were before the
+                # run. Started again (restart), the run starts over in it from them, in what's left of the budget,
+                # once; else numpy runs the solve, and every later one)
+                solver.iters = start
+                if again or not restart():
+                    _lib = False
+                    return False
+                L = _lib
+            except Exception:
+                # (our own Python around it failed, not the core: numpy runs this solve from its iterations before,
+                # the regrets uploaded again next time, and the core stays on)
+                solver.iters = start
+                return False
         prog.download(solver)
         if per is not None:
             solver.per_iter = per   # (an iteration's seconds, the program's setup left out: Advisor.cell_s)

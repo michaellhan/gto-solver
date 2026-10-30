@@ -1724,10 +1724,13 @@ function setColors(names) {
 // an advice row's amount, unless its name already says it ("raise to 24.5", not "raise to 24.5 24.5 bb")
 const amtOf = (a) => { if (a.amount_bb == null) return null; const m = /(\d+(?:\.\d+)?)(?:bb)?$/.exec(a.action); return m && Math.abs(+m[1] - a.amount_bb) < 0.01 ? null : a.amount_bb; };
 const COLORS = (n) => n === "fold" ? "var(--fold)" : n === "in range" ? "var(--accent)" : n === "check" || n === "call" ? "var(--passive)" : n === "all-in" ? "var(--allin)" : CMAP[n] || "var(--agg1)";
-// Convergence of the solve, from exploitability in % of the pot (0 = exact equilibrium of the tree).
+// Convergence of the solve, from exploitability in % of the pot (0 = exact equilibrium of the tree); "approximate" where
+// it is over 10 times what answers at its speed reach (solver.approximate, gto/advisor.py _flag_short: the solve ran
+// short, on a busy device or in numpy after the compiled solver failed)
 function convergence(res) {
   const x = res && res.solver && res.solver.exploitability_pct;
   if (x == null) return null;
+  if (res.solver.approximate) return { cls: "bad", label: "approximate", x, target: res.solver.target_pct };
   return x < 3 ? { cls: "ok", label: "converged", x } : x < 10 ? { cls: "meh", label: "fair", x } : { cls: "bad", label: "rough", x };
 }
 // optimize_sizes: hero's mix over the wide menu of the first solve, and the sizes the advice was solved with
@@ -1735,7 +1738,7 @@ const SIZE_USAGE = (r) => Object.entries(r.size_usage).map(([k, v]) => `${k} ${(
   + (r.sizes_custom ? ` (your sizes ${r.sizes_custom.join(", ")} were in the menu${r.sizes_custom.every(s => !r.sizes_kept || !r.sizes_kept.includes(s)) ? ", not kept" : ""})` : "");
 // a flop answer read from the precomputed library (gto/flop_library.py) instead of solved live
 const PRE_TIP = (p) => `Solved offline (${p.label}, ${p.iterations} iterations)${p.same_tree ? "" : " with Accurate's flop model"}: instant, at either speed.`;
-const convTip = (c) => `Exploitability ${c.x.toFixed(1)}% of the pot: a perfect counter-strategy would win that much from this solve. Under 3% is close to a full solver.`;
+const convTip = (c) => `Exploitability ${c.x.toFixed(1)}% of the pot: a perfect counter-strategy would win that much from this solve. ${c.target != null ? `Answers at this speed are ${c.target}% or less: this solve ran short, so its mix and EVs are a rough guide.` : "Under 3% is close to a full solver."}`;
 
 // Where the GTO % under an exploit's mix (the pool, your locks) comes from: preflop the chart; after it the
 // equilibrium of the same solve the exploit is built on. Against the pool, or a player you locked (whose preflop

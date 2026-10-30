@@ -1573,14 +1573,14 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   of rows it held unfinished, and the solve waited on them inside the core for good, out of reach of the page's stop.
   Now worker.js's helper catches it and marks itself in the core's memory (`core_dead`), the wait on the job's rows
   traps on that, and the solve's `core_run` throws: `CoreError`, and numpy runs the solve and the session's later
-  ones, as after any failure of the core (the passes after a solve too, `core.evaluate`, which let it through). In the
-  browser bench (`BENCH_THREADS`, new: the worker's helpers as Node worker threads running worker.js's own helper
-  script; `BENCH_FAIL`, new: `core_fail`, a test's, fails a helper holding rows), helper 0 failing on its first chunk
-  on 2 threads and on 8: BTN vs BB's Fast turn answered in 12.2 / 11.9 s by numpy (36-39 iterations, 4.9-6.9% of the
-  pot from equilibrium; 5.1 s and 300 iterations, 0.15%, in the core), and the limped turn and a river after it
-  answered too. And a stopped request that can't read the stop no longer holds the requests after it: the page pings
-  the worker after a stop and restarts one that hasn't answered in 15 s (`STUCK_S`; a stop takes ~0.1 s), posting the
-  requests still waiting to the new one.
+  ones, as after any failure of the core (the passes after a solve too, `core.evaluate`, which let it through; now the
+  core starts again first: The core starts again after a trap, below). In the browser bench (`BENCH_THREADS`, new: the
+  worker's helpers as Node worker threads running worker.js's own helper script; `BENCH_FAIL`, new: `core_fail`, a
+  test's, fails a helper holding rows), helper 0 failing on its first chunk on 2 threads and on 8: BTN vs BB's Fast
+  turn answered in 12.2 / 11.9 s by numpy (36-39 iterations, 4.9-6.9% of the pot from equilibrium; 5.1 s and 300
+  iterations, 0.15%, in the core), and the limped turn and a river after it answered too. And a stopped request that
+  can't read the stop no longer holds the requests after it: the page pings the worker after a stop and restarts one
+  that hasn't answered in 15 s (`STUCK_S`; a stop takes ~0.1 s), posting the requests still waiting to the new one.
 * **The turn solve starts from the stored turn** (`Advisor._store_seed`, `STORE_SEED`, `solve(seed=...)`,
   `flop_library.turn_strategies`). After a library flop whose entry has a turn file, the turn's own solve (the
   request's, the presolve's and the river's narrowing) no longer starts from zero regrets: at the turn's first decision
@@ -1693,6 +1693,38 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   (the tree and its tables built in numpy, the earlier street's narrowing, the passes after the solve) now takes as long
   or longer: 0.9 s of `mw-turn`'s 2.6, 1.7 of `mw4-flop`'s 2.8. A flop in the 3-way library answers at once either way
   (0.5 s), and the 3-way river, solved in numpy, takes as long as before (`mw-river` 6.6 s, 100 iterations, 0.09%).
+* **The core starts again after a trap** (`core.restart`, `mwcore.restart`, `RESTARTS`; `gto/static/worker.js`
+  `start`, `reload`; `Advisor.expl_target`, `advisor.OVER_TARGET`). A trap in the browser's compiled core (a helper
+  that failed, the memory refusing to grow) turned it off for the worker: that solve and every later one ran in numpy,
+  a Fast turn in 12 s at 4.9-6.9% of the pot from equilibrium where the core answers in 2.3 s at 0.15% (A helper that
+  fails, above). Now the worker starts the module again (`reload`: a new instance on a fresh memory with new helpers,
+  the old ones ended) and the run starts over in it, once, from the solver's arrays as they were before it, in what's
+  left of the budget; the passes after a solve the same (`core.evaluate`; the multiway core's values, best responses
+  and EVs). Nothing the failed call wrote reaches the retry: a failed run's arena is never read back
+  (`Program.download` only after a run that finished or was stopped, `MultiwaySolver._run_core` the same), a pass's
+  output is read only after it returned, and the program is laid out again in the new memory (`Program.valid`), so the
+  answer is the same floats as a run that didn't fail (the tests: failing on the first chunk or a later one, in a run
+  or a pass, heads-up and 3-way). Failing again in the new instance, or after `RESTARTS` (3) restarts a session, the
+  core is off and numpy answers, as before. Natively a trap ends the process: nothing changes there. In the browser
+  bench, helper 0 failing on its first chunk (`BENCH_FAIL`) or task (`BENCH_MWFAIL`, new), a worker's session of
+  requests:
+
+  | session, Fast (seconds, iterations, % of the pot) | before: the core off, numpy | now: the core started again |
+  |---|---|---|
+  | heads-up helper 0 fails, 8 threads: `turn` | 11.9 s, 36-39, 4.9-6.9% | 2.38 s, 300, 0.15% (2.33 s without) |
+  | then `turn-limp`, `river` | in numpy | 4.10 s, 300, 0.16%; 0.09 s, 300, 0.05% |
+  | heads-up helper 0 fails, 2 threads: `turn` | 12.2 s in numpy | 2.53 s, 200, 0.23% (a smaller tree on 2 threads) |
+  | the multiway core's helper 0 fails, 8 threads: `mw-turn` | in numpy | 2.61 s, 400, 0.04% (2.57 s without) |
+
+  (The bench prints each core's restarts with `BENCH_FAIL` or `BENCH_MWFAIL`: one each, and both still on.)
+
+  An answer that ran short now says so. A heads-up answer after the flop more than `OVER_TARGET` (10) times its speed's
+  `expl_target` from equilibrium (Fast's settled stop, 0.2% of the pot on threads and 0.3 without; Accurate 0.1) is
+  marked approximate: the badge reads "approximate" where 4.9-6.9% read "fair" (and under 3% "converged"), its tip
+  gives the speed's target, and a note says the solve ran short (a busy or slow device, a big tree, or the compiled
+  solver failed and the slower one answered) and to take its mix and EVs as a rough guide. The threaded page's Fast
+  flops answer at 0.03-0.4%, turns at 0.12-0.18%, so 2% is far past them; numpy's Fast flops were at 2.4-7.1%. Not
+  multiway solves (a 3-way flop at Accurate 0.7-1.9%; one over 10% goes to the betting rules), nor Quick's answers.
 * **Regret minimizer** (`docs/cfr_research.md`, `scripts/bench_solver.py --algos`, exploitability per
   iteration): predictive CFR+ and its discounted form (PCFR+, PDCFR+), the state of the art on many
   non-poker games, are 2-7x more exploitable than DCFR here at 100-200 iterations on every spot (the river,

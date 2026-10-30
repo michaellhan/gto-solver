@@ -392,6 +392,11 @@ test("convergence labels", () => {
   const c = (x) => p.val(`convergence({ solver: { exploitability_pct: ${x} } })`);
   assert.equal(c(1).cls, "ok"); assert.equal(c(3).cls, "meh"); assert.equal(c(9.9).cls, "meh"); assert.equal(c(10).cls, "bad");
   assert.equal(p.val("convergence({})"), null);
+  // a solve that ran short (solver.approximate: gto/advisor.py _flag_short), under 3% all the same
+  const a = p.val("convergence({ solver: { exploitability_pct: 2.4, approximate: true, target_pct: 0.2 } })");
+  assert.deepEqual([a.cls, a.label, a.target], ["bad", "approximate", 0.2]);
+  assert.match(p.val("convTip(" + JSON.stringify(a) + ")"), /Answers at this speed are 0.2% or less: this solve ran short/);
+  assert.match(p.val("convTip(convergence({ solver: { exploitability_pct: 1 } }))"), /Under 3% is close to a full solver/);
 });
 
 test("bet sizes are shaded light to dark by size", () => {

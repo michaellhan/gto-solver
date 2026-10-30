@@ -98,6 +98,7 @@ MW4_STREETS = {"flop": {"later": "buckets", "buckets": 8, "bucket_river_step": 3
 MW4_FAST_STREETS = {"flop": {"later": "buckets", "buckets": 6, "bucket_river_step": 4},
                     "turn": {"later": "buckets", "buckets": 8}}
 HU_RESERVE = 1.0   # heads-up solves likewise keep one iteration's time back (the exploitability read after: ~1 iteration)
+OVER_TARGET = 10   # an answer more than this many times its advisor's expl_target from equilibrium is approximate
 HU_CHECKS = (50, 100, 150, 200, 300, 400, 600, 800)   # a heads-up street's solve, with Advisor.hu_settled set, stops at
                    # the first of these iterations where it is that close to equilibrium (an exploitability read each,
                    # about one iteration's time)...
@@ -2138,6 +2139,11 @@ class Advisor:
         # runs the budget
         self.hu_settled: Optional[float] = None
         self.hu_settled_from: Dict[str, int] = dict(HU_SETTLED_FROM)   # (by street; "shallow": spr_sizes' turn)
+        # what this speed's heads-up answers after the flop reach, % of the pot from equilibrium: one over OVER_TARGET
+        # times it says so ("approximate" and a note: _flag_short); None flags nothing. Its solve ran short: a busy or
+        # slow device, a big tree, or the compiled core failed and numpy answered (the browser's 5-7% on a Fast turn,
+        # against its 0.2)
+        self.expl_target: Optional[float] = None
         # a new heads-up solve's tree is cut to fit (MAX_CELLS): at most this many cells, and on the turn and river
         # what CAP_ITERS iterations at cell_s seconds a cell (updated from the solves run here) fit in its budget
         self.max_cells: Optional[int] = MAX_CELLS
@@ -2216,7 +2222,27 @@ class Advisor:
             raise
         except Exception as e:   # noqa: BLE001
             why = e
-        return self._fallback(state, why) if why else res
+        if why:
+            return self._fallback(state, why)
+        self._flag_short(state, res)
+        return res
+
+    def _flag_short(self, state: dict, res: dict):
+        """A heads-up answer after the flop over OVER_TARGET times expl_target from equilibrium (a solve's, not Quick's:
+        its smaller game and 1.5 s are rough by design): "approximate" (solver.approximate, the target in
+        solver.target_pct) and a note. (Not a multiway solve's: a 3-way flop at Accurate 0.7-1.9% and one over 10% left
+        to the betting rules.)"""
+        sv = res.get("solver") if isinstance(res, dict) else None
+        x = sv.get("exploitability_pct") if isinstance(sv, dict) else None
+        t = self.expl_target
+        if t is None or x is None or state.get("quick") or res.get("multiway") or \
+                res.get("street") not in ("flop", "turn", "river") or x <= OVER_TARGET * t:
+            return
+        sv["approximate"], sv["target_pct"] = True, t
+        res.setdefault("notes", []).append(
+            f"Approximate: this solve ran short, {x:.1f}% of the pot from equilibrium where answers at this speed are "
+            f"{t}% or less (a busy or slow device, a big tree, or the compiled solver failed and the slower one "
+            f"answered), so take its mix and EVs as a rough guide.")
 
     def _fallback(self, state: dict, why) -> dict:
         """The catch-all's answer for a spot advise or study couldn't answer (`why`: the exception, or what was wrong

@@ -44,8 +44,9 @@ class Unsupported(Exception):
 
 
 class Failed(RuntimeError):
-    """The core itself failed (in the browser a trap: a helper's, its memory refusing to grow): it's off for the session
-    then, and numpy runs the solve (MultiwaySolver._run_core) and every later one. Natively a trap ends the process."""
+    """The core itself failed (in the browser a trap: a helper's, its memory refusing to grow). MultiwaySolver starts it
+    again (restart) and runs what failed again in it once; else it's off for the session, and numpy runs the solve and
+    every later one. Natively a trap ends the process."""
 
 
 def source_hash() -> str:
@@ -152,6 +153,11 @@ class _Wasm:
         f = getattr(self.ex, "mw_threads", None)
         return int(f(t)) if f is not None else 1
 
+    def reload(self) -> "_Wasm":
+        """The module started again (worker.js: a new instance on a fresh memory, with new helpers, the old ones
+        ended)."""
+        return _Wasm(self._js(self.ex.reload))
+
 
 def _load():
     if os.environ.get("GTO_MWCORE", "1") == "0":
@@ -185,8 +191,33 @@ def threads(t: int = 0) -> int:
     return 1 if L is None else L.threads(t)
 
 
+RESTARTS = 3           # the times a session starts the core again after it failed (restart), then it's off: numpy
+_restarts = 0
+
+
+def restart() -> bool:
+    """After the core failed (Failed): in the browser the module started again, a new instance on a fresh memory with
+    new helpers (worker.js reload), so that the caller can run what failed again in it. Nothing the failed call wrote
+    reaches the retry: the arena of a run or evaluation that failed is never read back (MultiwaySolver._run_core pulls
+    nothing, an evaluation's output isn't read), so the solver's arrays are as they were before it, and its program is
+    laid out again from them (another core: Program.valid). False, and the core off for the session (numpy runs every
+    solve), natively, after RESTARTS, or when the new instance fails."""
+    global _lib, _restarts
+    L = _lib
+    if not L or not hasattr(L, "reload") or _restarts >= RESTARTS:
+        _lib = False
+        return False
+    _restarts += 1
+    try:
+        _lib = L.reload()
+    except Exception:
+        _lib = False
+        return False
+    return True
+
+
 def off():
-    """The core off for the session (it failed: Failed)."""
+    """The core off for the session (it failed again in a new instance): numpy runs every solve."""
     global _lib
     _lib = False
 
@@ -414,11 +445,7 @@ class Program:
         t = np.arange(t0 + 1, t0 + iters + 1, dtype=np.float64)
         fac = np.stack([t ** a / (t ** a + 1), (t / (t + 1)) ** g], axis=1).astype(np.float32)
         self.L.write(self.fac, fac)
-        try:
-            return self.L.run(self.prog, iters, self.fac)
-        except Failed:
-            off()
-            raise
+        return self.L.run(self.prog, iters, self.fac)
 
     def eval(self, node, mode: int, p: int, R: np.ndarray, kids: bool = False):
         """p's values (n) at a root-street node for reaches R (np, n) there; with kids, each action's (A, n) too."""
@@ -429,12 +456,8 @@ class Program:
         A = len(node.children) if kids else 0
         if A > 16:
             raise Unsupported("actions")
-        try:
-            if self.L.eval(self.prog, at, mode, p, self.R, self.out, self.kids if A else 0) != 0:
-                raise RuntimeError("mwcore: bad program")
-        except Failed:
-            off()
-            raise
+        if self.L.eval(self.prog, at, mode, p, self.R, self.out, self.kids if A else 0) != 0:
+            raise RuntimeError("mwcore: bad program")
         v = np.zeros(self.n, dtype=np.float32)
         self.L.read(self.out, v)
         if not A:

@@ -203,11 +203,12 @@ async function startWorker(pyodideDir, bundlePath) {
       Worker: class {
         constructor(url) { this.src = blobs.get(String(url)); }
         postMessage(d) {
-          const t = new Thread(`const { workerData } = require("worker_threads");\n${this.src}\nonmessage({ data: workerData });`,
+          const t = this.t = new Thread(`const { workerData } = require("worker_threads");\n${this.src}\nonmessage({ data: workerData });`,
             { eval: true, workerData: d });
           t.on("error", () => {});   // (a helper's error goes nowhere in the browser either)
           t.unref();
         }
+        terminate() { if (this.t) this.t.terminate(); }
       },
     });
   }
@@ -227,9 +228,14 @@ async function startWorker(pyodideDir, bundlePath) {
   });
   const setup = (performance.now() - t0) / 1000;
   // BENCH_FAIL "i,n": the core's helper i fails holding the rows of its nth chunk (core_fail, a test's: what a trap in
-  // a helper does), from the first request on
+  // a helper does), from the first request on; BENCH_MWFAIL the multiway core's (mw_fail: the task of its nth). Only the
+  // instance the worker started: one started again after a failure (reload) runs clean.
   if (process.env.BENCH_FAIL && ctx.gtoCore && ctx.gtoCore.core_fail) ctx.gtoCore.core_fail(...process.env.BENCH_FAIL.split(",").map(Number));
+  if (process.env.BENCH_MWFAIL && ctx.mwCore && ctx.mwCore.mw_fail) ctx.mwCore.mw_fail(...process.env.BENCH_MWFAIL.split(",").map(Number));
   const heap = () => py._module.HEAPU8.buffer.byteLength / 2 ** 20;
+  // (with BENCH_FAIL or BENCH_MWFAIL: the times each core was started again, and whether it is still on)
+  const restarts = () => py.runPython("from gto import core, mwcore\n"
+    + "f'core {core._restarts}{\"\" if core.lib() else \" off\"}, mwcore {mwcore._restarts}{\"\" if mwcore.lib() else \" off\"}'");
   let id = 0;
   const prefetch = (state) => ctx.onmessage({ data: { prefetch: state } });
   // the page's stop flag, shared with the worker, and a thread that sets it on time while the worker's Python blocks
@@ -270,7 +276,7 @@ async function startWorker(pyodideDir, bundlePath) {
     };
     ctx.onmessage({ data: early ? { id: my, state, early: true } : { id: my, state } });
   });
-  return { setup, stages, heap, request, prefetch, presolve, ctx };
+  return { setup, stages, heap, request, prefetch, presolve, restarts, ctx };
 }
 
 // one spot's requests in one worker (--session: every spot's, one after another in the same worker, as a page
@@ -316,6 +322,7 @@ async function runSpot(w, spot, speeds) {
       outside_s: s.solve_seconds != null ? +(wall - s.solve_seconds).toFixed(2) : null,
       precomputed: !!r.precomputed, heap_mb: +w.heap().toFixed(0), lib_fetches: w.ctx.libFetches - x0, lib_ahead: w.ctx.aheadFetches - a0,
       street: r.street, recommended: r.recommended, error: m.error || r.error || null,
+      restarts: process.env.BENCH_FAIL || process.env.BENCH_MWFAIL ? w.restarts() : null,
       early: m.part ? { s: m.part.early_s, recommended: m.part.recommended, source: m.part.approximate.source,
                         label: m.part.approximate.label } : null,
       notes: (r.notes || []).filter((n) => process.env.BENCH_ALL_NOTES || /equilibrium|solved|iterations|rules/.test(n)).map((n) => n.slice(0, 160)),
@@ -352,6 +359,7 @@ for (const spot of flag("session") ? [spots.join(",")] : spots) {
                             `expl ${r.expl_pct ?? "-"}%  solve ${r.solve_s ?? "-"} s  outside ${r.outside_s ?? "-"} s  heap ${r.heap_mb} MB` +
                             `${r.cells ? "  cells " + (r.cells / 1e6).toFixed(1) + "M" : ""}` +
                             `${r.precomputed ? "  library" : ""}${r.lib_fetches ? "  sync-fetches " + r.lib_fetches : ""}${r.error ? "  ERROR " + r.error : ""}` +
+                            `${r.restarts ? "  restarts: " + r.restarts : ""}` +
                             (r.early ? `\n             approximate at ${r.early.s} s: ${r.early.recommended} (${r.early.label}); the answer: ${r.recommended}` : "") +
                             (r.gap != null ? `\n             the move ${r.gap} s in; ${r.presolve ? `presolve ${r.presolve.presolved ? "ran its budget, " + r.presolve.iterations + " iterations" : r.presolve.cancelled ? "stopped" : "skipped"} (${r.presolve.s} s)` : "no presolve"}; answered ${r.wall} s after it: ${r.recommended}` : "") +
                             (r.notes.length ? "\n             " + r.notes.join("\n             ") : "")

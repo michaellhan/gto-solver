@@ -85,10 +85,12 @@ self.libFetch = (path) => {
 // The core's threads: core-mt.wasm with its memory shared (a SharedArrayBuffer: the page must be cross-origin isolated,
 // which sw.js arranges) and up to 7 helper workers, each the same module on the same memory waiting in core_helper for
 // rows of a chance node's subtree (core/gtocore.c); a solve's numbers are the same on any number of threads. Without
-// isolation, or where the threaded module won't load, core.wasm alone. A helper that fails (a trap: core_helper throws)
-// marks itself in the core's memory (core_dead), where the solve waiting on its rows reads it: that solve's core_run
-// throws in turn, and numpy runs the solve (gto/core.py) instead of the worker waiting for good. The multiway core the
-// same way (mwcore-mt.wasm, its own memory and helpers, in mw_helper: a pass's root-street leaves, core/mwcore.c).
+// isolation, or where the threaded module won't load, core.wasm alone. The multiway core the same way (mwcore-mt.wasm,
+// its own memory and helpers, in mw_helper: a pass's root-street leaves, core/mwcore.c). A helper that fails (a trap:
+// core_helper throws) marks itself in the core's memory (core_dead), where the solve waiting on its rows reads it: that
+// solve's core_run throws in turn instead of the worker waiting for good. Then gto/core.py (gto/mwcore.py) starts the
+// core again (reload: a new instance on a fresh memory with new helpers, the old ones ended) and runs the solve again
+// in it, from the solver's arrays as they were before the failed run; numpy runs it if it fails again.
 const HELPERS = Math.min(7, ((self.navigator && navigator.hardwareConcurrency) || 1) - 1);
 const HELPER = `onmessage = async (e) => {
   const { mod, memory, i, pre } = e.data;         // (pre: the module's exports' prefix, core_ or mw_)
@@ -102,23 +104,36 @@ const HELPER = `onmessage = async (e) => {
   }
 };`;
 let helperURL = null;
-async function threaded(py, file, pre) {
-  const mod = await WebAssembly.compile(py.FS.readFile(file));
-  const memory = new WebAssembly.Memory({ initial: 256, maximum: 32768, shared: true });
-  const ex = Object.assign({}, (await WebAssembly.instantiate(mod, { env: { memory } })).exports, { memory });
-  helperURL = helperURL || URL.createObjectURL(new Blob([HELPER], { type: "text/javascript" }));
-  for (let i = 0; i < HELPERS; i++) new Worker(helperURL).postMessage({ mod, memory, i, pre });
-  ex[pre + "threads"](HELPERS + 1);
+// the module started (its exports, the memory among them, and reload()); `name`: the global it's kept in
+function start(mod, pre, mt, name) {
+  let ex, helpers = [];
+  if (mt) {
+    const memory = new WebAssembly.Memory({ initial: 256, maximum: 32768, shared: true });
+    ex = Object.assign({}, new WebAssembly.Instance(mod, { env: { memory } }).exports, { memory });
+    helperURL = helperURL || URL.createObjectURL(new Blob([HELPER], { type: "text/javascript" }));
+    for (let i = 0; i < HELPERS; i++) {
+      const w = new Worker(helperURL);
+      w.postMessage({ mod, memory, i, pre });
+      helpers.push(w);
+    }
+    ex[pre + "threads"](HELPERS + 1);
+  } else {
+    ex = Object.assign({}, new WebAssembly.Instance(mod).exports);
+  }
+  ex.reload = () => {
+    for (const w of helpers) w.terminate();
+    return (self[name] = start(mod, pre, mt, name));
+  };
   return ex;
 }
-async function loadCore(py, file, pre) {
+async function loadCore(py, file, pre, name) {
   if (self.crossOriginIsolated && HELPERS > 0) {
     try {
-      return await threaded(py, file.replace(".wasm", "-mt.wasm"), pre);
+      return start(await WebAssembly.compile(py.FS.readFile(file.replace(".wasm", "-mt.wasm"))), pre, true, name);
     } catch (e) {}
   }
   try {
-    return (await WebAssembly.instantiate(py.FS.readFile(file))).instance.exports;
+    return start(await WebAssembly.compile(py.FS.readFile(file)), pre, false, name);
   } catch (e) {
     return null;
   }
@@ -142,12 +157,12 @@ const ready = (async () => {
   if (pyc) py.unpackArchive(pyc, "zip", { extractDir: "/app" });
   // the compiled CFR core (gto/core.py; in the bundle, ~25 KB): turn, river and flop solves run their iterations in
   // it. Where it can't load (a browser without wasm SIMD) the solver runs in numpy as before.
-  self.gtoCore = await loadCore(py, "/app/gto/core.wasm", "core_");
+  self.gtoCore = await loadCore(py, "/app/gto/core.wasm", "core_", "gtoCore");
   setup.core = !!self.gtoCore;
   setup.threads = self.gtoCore ? self.gtoCore.core_threads(0) : 0;
   // the multiway core (gto/mwcore.py, ~120 KB): 3- and 4-way flop and turn solves' iterations, with the same helpers'
   // number of threads
-  self.mwCore = await loadCore(py, "/app/gto/mwcore.wasm", "mw_");
+  self.mwCore = await loadCore(py, "/app/gto/mwcore.wasm", "mw_", "mwCore");
   setup.mwcore = !!self.mwCore;
   setup.mwthreads = self.mwCore && self.mwCore.mw_threads ? self.mwCore.mw_threads(0) : 0;
   // the sources get a fixed mtime (a .pyc is valid while its source's mtime and size match) and the startup imports
@@ -231,6 +246,10 @@ const ready = (async () => {
              //   pot's turn settles at 300 of its ~1000, within 0.1 of the 1000th's per-combo EVs.
              + `advs['fast'].hu_settled = ${THREADED ? 0.2 : 0.3}; `
              + (THREADED ? "" : "advs['fast'].hu_settled_from['turn'] = 200; ")
+             // a heads-up answer after the flop 10 times further from equilibrium than a speed's are (advisor.OVER_TARGET:
+             // Fast's settled stop, Accurate's 0.1% of the pot) says it's approximate: its solve ran short (the device
+             // busy or slow, a big tree, or the compiled core failed twice and numpy answered: 5-7% on a Fast turn)
+             + `advs['fast'].expl_target = ${THREADED ? 0.2 : 0.3}; advs['accurate'].expl_target = 0.1; `
              // a shallow turn (at most 4.5 x the pot behind: a 3bet pot's) bets 33/75% in Fast, not 33/125% (gto/native.py
              // FAST_SPR_SIZES: four 3bet turns 1.96% of the pot off per combo -> 0.80 at 8 s, frequencies 6.8 points -> 2.0);
              // with threads Accurate's tree there too

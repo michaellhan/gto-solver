@@ -279,6 +279,34 @@ class TestLaterStreetsByBuckets(unittest.TestCase):
         self.assertGreater(s.build_seconds, 0.0)
 
 
+class _MWFlaky:
+    """The native multiway core as the browser's module fails: its `at`th call of `what` ("run" or "eval") raises
+    mwcore.Failed (a trap there), and reload() gives another (worker.js: a new instance), whose `then`th call fails."""
+
+    def __init__(self, L, what, at, then=None):
+        self.L, self.what, self.at, self.then, self.calls = L, what, at, then, 0
+
+    def __getattr__(self, k):
+        return getattr(self.L, k)
+
+    def _call(self, name, *a):
+        if name == self.what:
+            self.calls += 1
+            if self.calls == self.at:
+                from gto import mwcore
+                raise mwcore.Failed("the multiway core failed: unreachable")
+        return getattr(self.L, name)(*a)
+
+    def run(self, *a):
+        return self._call("run", *a)
+
+    def eval(self, *a):
+        return self._call("eval", *a)
+
+    def reload(self):
+        return _MWFlaky(self.L, self.what, self.then)
+
+
 def _core_on():
     from gto import mwcore
     return mwcore.lib() is not None
@@ -406,6 +434,50 @@ class TestCore(unittest.TestCase):
             self.assertGreater(L.L.mw_helped(), 0)
         finally:
             mwcore.threads(was)
+
+    def test_a_failed_run_starts_the_core_again(self):
+        # As the heads-up core's (tests/test_core.py): in the browser a trap in a run or a pass starts the core again
+        # (mwcore.restart: worker.js reload, a new instance on a fresh memory with new helpers), and the run starts
+        # over in it from the solver's arrays as they were before it, or the pass runs again: the same floats as a run
+        # that didn't fail. Failing again in the new instance, numpy runs the solve and the core is off.
+        from gto import mwcore
+        L = mwcore.lib()
+        cfg = MWConfig(later="buckets", buckets=8)
+        go = lambda: MultiwaySolver(cards("Kh7d2c9s"), self.rs, 8.0, 97.5, cfg=cfg).run(iters=12)
+        want = go()
+        flat = lambda s: [a.copy() for d in s.decisions for a in (d.regret, d.ssum)]
+        try:
+            for at in (1, 2):
+                with self.subTest(failing_chunk=at):
+                    first = mwcore._lib = _MWFlaky(L, "run", at)
+                    mwcore._restarts = 0
+                    s = go()
+                    self.assertEqual((mwcore._restarts, first.calls, s.iters), (1, at, 12))
+                    self.assertIsInstance(mwcore.lib(), _MWFlaky)
+                    self.assertIsNot(mwcore.lib(), first)
+                    for x, y in zip(flat(s), flat(want)):
+                        np.testing.assert_array_equal(x, y)
+                    np.testing.assert_array_equal(s.br_gains(), want.br_gains())
+            with self.subTest("a pass"):
+                s = go()
+                mwcore._lib, mwcore._restarts = _MWFlaky(L, "eval", 2), 0
+                s._gains_memo = None
+                np.testing.assert_array_equal(s.br_gains(), want.br_gains())
+                np.testing.assert_array_equal(s.action_evs(), want.action_evs())
+                self.assertEqual(mwcore._restarts, 1)
+                self.assertGreater(mwcore.lib().calls, 0)   # (the passes ran on in the new instance)
+            with self.subTest("again in the new instance"):
+                a = MultiwaySolver(cards("Kh7d2c9s"), self.rs, 8.0, 97.5, cfg=cfg)
+                a._mwc_off = True
+                a.run(iters=12)
+                mwcore._lib, mwcore._restarts = _MWFlaky(L, "run", 2, then=1), 0
+                s = go()
+                self.assertIsNone(mwcore.lib())
+                self.assertEqual(s.iters, 12)
+                for x, y in zip(flat(s), flat(a)):
+                    np.testing.assert_array_equal(x, y)   # (numpy ran the solve from the start)
+        finally:
+            mwcore._lib, mwcore._restarts = L, 0
 
     def test_wasm_built_from_the_current_source(self):
         # (python scripts/build_core.py after a change to core/mwcore.c)

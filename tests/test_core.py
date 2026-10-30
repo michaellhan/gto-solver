@@ -22,6 +22,33 @@ IP_T = parse_range("22+,A2s+,K9s+,Q9s+,J9s+,T8s+,97s+,87s,76s,ATo+,KJo+,QJo")
 ON = core.lib() is not None
 
 
+class _Flaky:
+    """The native core as the browser's module fails: its `at`th call of `what` ("run" or "eval") raises CoreError (a
+    trap there), and reload() gives another (worker.js: a new instance), whose `then`th call fails (None: none)."""
+
+    def __init__(self, L, what, at, then=None):
+        self.L, self.what, self.at, self.then, self.calls = L, what, at, then, 0
+
+    def __getattr__(self, k):
+        return getattr(self.L, k)
+
+    def _call(self, name, *a):
+        if name == self.what:
+            self.calls += 1
+            if self.calls == self.at:
+                raise core.CoreError("the core failed: unreachable")
+        return getattr(self.L, name)(*a)
+
+    def run(self, *a):
+        return self._call("run", *a)
+
+    def eval(self, *a):
+        return self._call("eval", *a)
+
+    def reload(self):
+        return _Flaky(self.L, self.what, self.then)
+
+
 def _solve(board, r0, r1, pot, stack, cfg, iters, use_core=True):
     with mock.patch.object(core, "lib", return_value=core.lib() if use_core else None):
         return solve(cards(board), r0, r1, pot, stack, cfg=cfg, time_budget=1e9, max_iters=iters)
@@ -571,7 +598,8 @@ class TestProgram(unittest.TestCase):
     def test_an_error_of_ours_in_run_leaves_the_core_on(self):
         """A Python error around the core in run() (here the factors' upload, once) runs that solve in numpy and leaves
         the core on: the next solve runs in it. A failure of the core itself (a run that didn't finish: CoreError)
-        turns it off for the session, as a trap in the browser's module does."""
+        turns it off for the session natively, with no new instance to start (in the browser it starts again:
+        test_a_failed_run_starts_the_core_again)."""
         want = _solve("Ks7d2cTh5s", OOP, IP, 20, 90, native.config("fast"), 5, use_core=False).exploitability()
         real, calls = core.Program.iterate, []
 
@@ -601,8 +629,8 @@ class TestProgram(unittest.TestCase):
 
     def test_a_failed_pass_after_the_solve_turns_the_core_off(self):
         """The core failing in the passes after a solve (core.evaluate: in the browser, say, a helper that failed
-        holding rows, which the thread waiting on them traps on) runs them in numpy and turns the core off, as a
-        failed run does: the answer still comes, and the next solve runs in numpy."""
+        holding rows, which the thread waiting on them traps on) runs them in numpy and, natively, turns the core off,
+        as a failed run does: the answer still comes, and the next solve runs in numpy."""
         sol = _solve("Ks7d2cTh5s", OOP, IP, 20, 90, native.config("fast"), 5)
         want = sol.exploitability()
         L = core.lib()
@@ -616,6 +644,59 @@ class TestProgram(unittest.TestCase):
             self.assertIsNone(getattr(nxt.solver, "per_iter", None))   # (numpy ran it)
         finally:
             core._lib = L
+
+    def test_a_failed_run_starts_the_core_again(self):
+        """In the browser a trap in a run (a helper that failed, the memory refusing to grow) starts the core again
+        (core.restart: worker.js reload, a new instance on a fresh memory with new helpers) and runs the solve again in
+        it, from the solver's arrays as they were before the run (a failed run's arena is never read back): the same
+        floats as a run that didn't fail, failing on its first chunk or a later one. Failing again in the new instance,
+        or once RESTARTS are used up, numpy runs the solve and the core is off, as after a failure before."""
+        cfg = native.config("fast")
+        go = lambda: solve(cards("Ks7d2cTh"), OOP_T, IP_T, 20, 90, cfg=cfg, time_budget=1e9, max_iters=40)
+        L = core.lib()
+        core._prog = None
+        want = go()
+        with mock.patch.object(core, "lib", return_value=None):
+            want_np = go().exploitability()
+        flat = lambda sol: np.concatenate([np.r_[d.regret.ravel(), d.ssum.ravel()] for d in _decisions(sol)]).view(np.int32)
+        try:
+            for at in (1, 2):
+                with self.subTest(failing_chunk=at):
+                    first = core._lib = _Flaky(L, "run", at)
+                    core._restarts = 0
+                    sol = go()
+                    self.assertEqual(core._restarts, 1)
+                    self.assertIsInstance(core.lib(), _Flaky)
+                    self.assertIsNot(core.lib(), first)
+                    self.assertEqual(first.calls, at)
+                    self.assertEqual(sol.iters, 40)
+                    self.assertIsNotNone(getattr(sol.solver, "per_iter", None))   # (run in the core)
+                    np.testing.assert_array_equal(flat(sol), flat(want))
+                    self.assertEqual(sol.exploitability(), want.exploitability())
+            for name, restarts, then in (("again in the new instance", 0, 1), ("restarts used up", core.RESTARTS, None)):
+                with self.subTest(name):
+                    core._lib, core._restarts = _Flaky(L, "run", 2, then=then), restarts
+                    sol = go()
+                    self.assertIsNone(core.lib())
+                    self.assertEqual(sol.iters, 40)
+                    self.assertIsNone(getattr(sol.solver, "per_iter", None))   # (numpy ran it)
+                    self.assertEqual(sol.exploitability(), want_np)
+        finally:
+            core._lib, core._restarts, core._prog = L, 0, None
+
+    def test_a_failed_pass_after_the_solve_starts_the_core_again(self):
+        """The passes after a solve (core.evaluate) the same: the core started again and the passes run in it."""
+        sol = _solve("Ks7d2cTh5s", OOP, IP, 20, 90, native.config("fast"), 5)
+        L = core.lib()
+        want = sol.exploitability()
+        try:
+            core._lib, core._restarts, core._prog = _Flaky(L, "eval", 1), 0, None
+            self.assertEqual(sol.exploitability(), want)
+            self.assertEqual(core._restarts, 1)
+            self.assertIsInstance(core.lib(), _Flaky)
+            self.assertGreater(core.lib().calls, 0)   # (the passes ran in the new instance)
+        finally:
+            core._lib, core._restarts, core._prog = L, 0, None
 
     def test_busy_core_numpy_runs(self):
         with core._lock:

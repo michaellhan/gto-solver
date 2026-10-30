@@ -154,3 +154,83 @@ test("mwcore-mt: a helper that fails ends the solve's wait instead of hanging it
     }
   }
 });
+
+// After a trap the core starts again (gto/core.py and gto/mwcore.py restart: worker.js's start, ex.reload): a new
+// instance on a fresh memory, the old helpers terminated and new ones started on it, and the page's handle (self.mwCore)
+// the new one. Helper 0 of the first fails, its solve throws; the reloaded one solves clean, its helpers running leaves,
+// the same numbers as one thread. (In a worker thread of its own, so that a wait for good fails at the time limit.)
+const RELOAD = `const { parentPort, workerData: { mod, page, start } } = require("node:worker_threads");
+${mwGame.toString()}
+const { Worker: Thread } = require("node:worker_threads");
+let made = 0, terminated = 0;
+// a browser Worker on worker_threads: the helper script run with what start posts it
+class Worker {
+  constructor(url) { made++; }
+  postMessage(data) { this.t = new Thread(page, { eval: true, workerData: data }); this.t.on("error", () => {}); }
+  terminate() { terminated++; if (this.t) this.t.terminate(); }
+}
+const self = globalThis, HELPERS = 3, HELPER = "";
+const URL = { createObjectURL: () => "blob:helper" }, Blob = class {};
+let helperURL = null;
+const go = new Function("Worker", "self", "HELPERS", "HELPER", "URL", "Blob", "helperURL",
+  start + "\\nreturn start;")(Worker, self, HELPERS, HELPER, URL, Blob, helperURL);
+const pause = new Int32Array(new SharedArrayBuffer(4));
+const ref = (() => {   // one thread
+  const memory = new WebAssembly.Memory({ initial: 256, maximum: 32768, shared: true });
+  const ex = Object.assign({}, new WebAssembly.Instance(mod, { env: { memory } }).exports, { memory });
+  ex.mw_threads(1);
+  const g = mwGame(ex, 12);
+  g.run();
+  return g.read();
+})();
+const first = self.mwCore = go(mod, "mw_", true, "mwCore");
+first.mw_fail(0, 1);
+let threw = null, runs = 0;
+for (; runs < 2000 && !threw; runs++) {
+  try { mwGame(first, 12).run(); } catch (e) { threw = String(e); }
+  if (runs % 10 === 9) Atomics.wait(pause, 0, 0, 5);
+}
+const dead = Atomics.load(new Int32Array(first.memory.buffer, first.mw_dead(0), 1), 0);
+const helpersBefore = made;
+const second = first.reload();
+const out = { threw, dead, helpersBefore, terminated, made, handle: self.mwCore === second,
+              fresh: second.memory !== first.memory && second.memory.buffer !== first.memory.buffer, same: true };
+for (let k = 0; k < 500 && (k < 3 || !second.mw_helped()); k++) {
+  const g = mwGame(second, 12);
+  if (g.run() !== 40) out.same = false;
+  const got = g.read();
+  if (got.length !== ref.length || got.some((x, i) => x !== ref[i])) out.same = false;
+  if (k % 10 === 9) Atomics.wait(pause, 0, 0, 5);
+}
+out.helped = second.mw_helped();
+out.dead2 = Atomics.load(new Int32Array(second.memory.buffer, second.mw_dead(0), 1), 0);
+parentPort.postMessage(out);`;
+
+test("worker.js's start: a reload is a new instance on a fresh memory with new helpers, and it solves clean", async () => {
+  const { Worker } = require("node:worker_threads");
+  const src = fs.readFileSync(path.join(ROOT, "gto", "static", "worker.js"), "utf8");
+  const start = src.match(/^function start\(mod[\s\S]*?\n}\n/m)[0];
+  const mod = await WebAssembly.compile(fs.readFileSync(path.join(ROOT, "gto", "mwcore-mt.wasm")));
+  const solver = new Worker(RELOAD, { eval: true, workerData: { mod, page: helperPage(), start } });
+  let timer;
+  try {
+    const got = await Promise.race([
+      new Promise((ok, no) => { solver.once("message", ok); solver.once("error", no); }),
+      new Promise((ok) => { timer = setTimeout(() => ok({ hung: true }), 90000); }),
+    ]);
+    assert.ok(!got.hung, "a solve waited for good");
+    assert.match(got.threw || "", /unreachable/, "the first instance's failing helper failed no solve");
+    assert.equal(got.dead, 1);
+    assert.equal(got.helpersBefore, 3);
+    assert.equal(got.terminated, 3);     // (the first instance's helpers)
+    assert.equal(got.made, 6);           // (and three new ones)
+    assert.ok(got.handle, "self.mwCore isn't the new instance");
+    assert.ok(got.fresh, "the new instance shares the old memory");
+    assert.ok(got.same, "the new instance's solves differ from one thread's");
+    assert.ok(got.helped > 0, "the new helpers ran no leaves");
+    assert.equal(got.dead2, 0);
+  } finally {
+    clearTimeout(timer);
+    await solver.terminate();
+  }
+});

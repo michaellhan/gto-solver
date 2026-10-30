@@ -1116,12 +1116,6 @@ def _outer_sum(fs):
 
 
 # ------------------------------------------------------------------ solver
-def mwcore_failed():
-    """mwcore.Failed: the compiled core failed (imported when needed, as the core is)."""
-    from .mwcore import Failed
-    return Failed
-
-
 class MultiwaySolver:
     def __init__(self, board, ranges: Sequence[np.ndarray], pot: float, stack: float, bets=None, to_act=0,
                  n_raises=0, pending=None, cfg: Optional[MWConfig] = None, dead: Sequence[int] = (),
@@ -1984,19 +1978,44 @@ class MultiwaySolver:
         from . import mwcore
         return mwcore.program(self)
 
+    def _core_eval(self, node, mode, p, R, kids=False):
+        """A pass at a root-street node in the compiled core (mwcore.Program.eval), or None without the core. When the
+        core fails (mwcore.Failed) it's started again (mwcore.restart: the program laid out again from the solver's
+        arrays, which the failed pass didn't touch) and the pass run again in it once; else None: numpy's pass."""
+        from . import mwcore
+        for again in (False, True):
+            prog = self._core()
+            if prog is None:
+                return None
+            try:
+                return prog.eval(node, mode, p, R, kids=kids)
+            except mwcore.Failed:
+                if again:
+                    mwcore.off()
+                if again or not mwcore.restart():
+                    return None
+
     def run(self, iters=1000, time_budget=None, min_iters=5, should_stop=None, reserve=0.0):
         """`time_budget` (seconds): no iteration starts that would end past it (by the mean iteration so far), with
         `reserve` more iterations' time kept back for what follows (br_gains and action_evs cost about two)."""
         prog = self._core()
         if prog is not None:
-            t0 = time.time()
-            try:
-                return self._run_core(prog, iters, time_budget, min_iters, should_stop, reserve)
-            except mwcore_failed():
-                # (the core failed, and it's off now: numpy runs the solve from where this run started, in what's left
-                # of the budget)
-                if time_budget is not None:
-                    time_budget = max(time_budget - (time.time() - t0), 0.0)
+            from . import mwcore
+            for again in (False, True):
+                t0 = time.time()
+                try:
+                    return self._run_core(prog, iters, time_budget, min_iters, should_stop, reserve)
+                except mwcore.Failed:
+                    # (the core failed: the run's iterations are dropped, the solver's arrays as they were before it.
+                    # Started again (mwcore.restart) the run starts over in it from them, once; else numpy runs the
+                    # solve from there. Either in what's left of the budget)
+                    if time_budget is not None:
+                        time_budget = max(time_budget - (time.time() - t0), 0.0)
+                    if again:
+                        mwcore.off()
+                    prog = self._core() if not again and mwcore.restart() else None
+                    if prog is None:
+                        break
         t0 = time.time()
         start = self.iters
         self._tmemo.clear(); self._smemo.clear()     # (kept within a run: its reaches are this run's root reaches')
@@ -2085,14 +2104,17 @@ class MultiwaySolver:
     def values(self):
         """Each player's expected value (bb, relative to the root street's start) under the average strategies."""
         m = self.total_mass()
-        prog = self._core()
-        if prog is not None:
-            R = self.reach0[:, 0, :]
+        if self._core() is not None:
             from .mwcore import EV
-            try:
-                return np.array([(prog.eval(self.root, EV, p, R) * R[p]).sum() for p in range(self.np)]) / m
-            except mwcore_failed():
-                pass   # (off now: numpy's pass)
+            R = self.reach0[:, 0, :]
+            out = []
+            for p in range(self.np):
+                v = self._core_eval(self.root, EV, p, R)
+                if v is None:   # (the core failed: numpy's pass)
+                    break
+                out.append((v * R[p]).sum())
+            else:
+                return np.array(out) / m
         v = self._pass(self.reach0, "avg")
         return np.array([(v[p][0] * self.reach0[p][0]).sum() for p in range(self.np)]) / m
 
@@ -2109,20 +2131,20 @@ class MultiwaySolver:
     def _br_gains(self):
         v = self.values()
         m = self.total_mass()
-        prog = self._core()
+        core = self._core() is not None
         out = []
         for p in range(self.np):
             if p in self.cfg.allin:   # (no decisions: nothing to gain)
                 out.append(0.0)
                 continue
-            if prog is not None:
+            br = None
+            if core:
                 from .mwcore import BR
-                try:
-                    br = prog.eval(self.root, BR, p, self.reach0[:, 0, :])[None, :]
-                except mwcore_failed():
-                    prog = None   # (off now: numpy's pass)
-            if prog is None:
+                br = self._core_eval(self.root, BR, p, self.reach0[:, 0, :])
+            if br is None:   # (no core, or it failed: numpy's pass)
                 br = self._pass(self.reach0, "br", p)
+            else:
+                br = br[None, :]
             out.append(float((br[0] * self.reach0[p][0]).sum()) / m - v[p])
         return np.array(out)
 
@@ -2148,14 +2170,15 @@ class MultiwaySolver:
         else:
             mass = self._mass_exact(bd, R, *others)
         evs = []
-        prog = self._core()
-        if prog is not None and node is not None and R.shape[1] == 1:
+        if self._core() is not None and node is not None and R.shape[1] == 1:
             from .mwcore import EV, Unsupported
             try:
-                _, kids = prog.eval(node, EV, p, R[:, 0, :], kids=True)
+                got = self._core_eval(node, EV, p, R[:, 0, :], kids=True)
+            except Unsupported:   # (a node the program doesn't hold: numpy's pass)
+                got = None
+            if got is not None:   # (else the core failed: numpy's pass)
+                kids = got[1]
                 return np.where(mass > 1e-12, kids / np.where(mass > 1e-12, mass, 1.0), 0.0) + self._fold_base(node)
-            except (Unsupported, mwcore_failed()):   # (a node the program doesn't hold, or the core failed: numpy's pass)
-                pass
         if self.levels:
             self._later(node, R, "avg", None)
         for ch in node.children:
