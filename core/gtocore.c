@@ -18,7 +18,9 @@
  *                                              st -1, or its products batched: its stack, j its row there (below)
  *   CHANCE   [5, B, K, child, masks, w, norm]   child rows b*K+k; masks, w (B*K, n); norm (B, n)
  *   CLASSES  [6, B, K, child, masks, norm, G, flat, starts, sizes, nG]   river classes (Chance.spread, Chance.gather)
- *   RANKING  [B, n, order, lo, hi, pcombo, plo, phi, cstart, cend, live]  (Ranking: (B, n) / (B, 2n) / (B, 2, n))
+ *   RANKING  [B, n, oi, pi, rec, kslots, total, live]   a Ranking's tables as ranking() reads them (gto/core.py
+ *                                              _ranking): oi (B, n4), pi (B, m4) uint16, rec (B, n, 8) uint16,
+ *                                              kslots (2, 52), total a slot, live (B, n)
  * A flop solve's turn and river by hand buckets (Config.river_buckets, river_strength): below an entry the rows are K
  * buckets wide, row b's tables those of board b % T (T, the period of the entry's boards).
  *   BUCKETS  [7, B, K, T, child, ids, game, lists]   BucketEntry: ids (T, 2, n), each combo's bucket by player (K:
@@ -182,9 +184,13 @@ static f32 vsum(const f32 *x, i32 m) {
   return t;
 }
 
-/* ro: one row of the opponent's reach -> out: the mass of opponent combos sharing no card with each combo
-   (Solver.compat_sum: the total, minus each of the combo's cards' combos, plus the combo itself); card: 52 floats */
-static void compat(const f32 *ro, f32 *card, f32 *out) {
+/* four floats gathered: a[ix[0..3]] */
+#define G4(a, ix) ((v4){(a)[(ix)[0]], (a)[(ix)[1]], (a)[(ix)[2]], (a)[(ix)[3]]})
+
+/* ro: one row of the opponent's reach -> out: f times the mass of opponent combos sharing no card with each combo
+   (Solver.compat_sum: the total, minus each of the combo's cards' combos, plus the combo itself); card: 52 floats.
+   (Four combos at a time on the way out, each combo's arithmetic the same, the cards' sums gathered.) */
+static void compat(const f32 *ro, f32 *card, f32 f, f32 *out) {
   for (int c = 0; c < 52; c++) card[c] = 0;
   f32 tot = vsum(ro, n), run = 0;
   /* the combos come sorted by their first card (gto/cards.py ALL_COMBOS), so its sums run in a register (adding
@@ -200,57 +206,104 @@ static void compat(const f32 *ro, f32 *card, f32 *out) {
     card[cb[j]] += ro[j];
   }
   card[cur] += run;
-  for (i32 i = 0; i < n; i++) out[i] = tot - card[ca[i]] - card[cb[i]] + ro[i];
-}
-
-/* out[0] = 0, out[j + 1] = out[j] + ro[idx[j]] for j < m: four running sums over the quarters at once (one waits on
-   each add before it), then each quarter's offset */
-static void prefix(const f32 *ro, const i32 *idx, i32 m, f32 *out) {
-  i32 q = m / 4, s1 = q, s2 = 2 * q, s3 = 3 * q;
-  f32 a0 = 0, a1 = 0, a2 = 0, a3 = 0;
-  out[0] = 0;
-  for (i32 j = 0; j < q; j++) {
-    a0 += ro[idx[j]];
-    a1 += ro[idx[s1 + j]];
-    a2 += ro[idx[s2 + j]];
-    a3 += ro[idx[s3 + j]];
-    out[j + 1] = a0;
-    out[s1 + j + 1] = a1;
-    out[s2 + j + 1] = a2;
-    out[s3 + j + 1] = a3;
+  v4 T = {tot, tot, tot, tot}, F = {f, f, f, f};
+  i32 i = 0;
+  for (; i + 4 <= n; i += 4) {
+    v4 x = T - G4(card, ca + i);
+    x -= G4(card, cb + i);
+    x += *(const v4u *)(ro + i);
+    *(v4u *)(out + i) = F * x;
   }
-  for (i32 j = s3 + q; j < m; j++) out[j + 1] = a3 += ro[idx[j]];
-  f32 o1 = a0, o2 = o1 + a1, o3 = o2 + a2;
-  for (i32 j = s1 + 1; j <= s2; j++) out[j] += o1;
-  for (i32 j = s2 + 1; j <= s3; j++) out[j] += o2;
-  for (i32 j = s3 + 1; j <= m; j++) out[j] += o3;
+  for (; i < n; i++) out[i] = f * (tot - card[ca[i]] - card[cb[i]] + ro[i]);
 }
 
-/* Ranking.utility for row b: sum over compatible opponent combos of reach * (+1 weaker, -1 stronger) */
-static void ranking(Lane *L, const i32 *R, i32 b, const f32 *ro, f32 *u) {
-  const i32 *order = PI(R[2]) + (size_t)b * n, *lo = PI(R[3]) + (size_t)b * n, *hi = PI(R[4]) + (size_t)b * n;
-  const i32 *pcombo = PI(R[5]) + (size_t)b * 2 * n;
-  const i32 *plo = PI(R[6]) + (size_t)b * 2 * n, *phi = PI(R[7]) + (size_t)b * 2 * n;
-  const i32 *cstart = PI(R[8]), *cend = PI(R[9]);
-  const f32 *live = PF(R[10]) + (size_t)b * n;
+/* The prefix sums of a row of reaches in two orders at once, cum over n entries and cs over 2n (Ranking.utility's
+   quarter_cumsum): each order's sum runs in four quarters, each quarter's running sum from 0 and then the quarters'
+   totals before it added, as numpy sums them. The quarters' sums advance side by side in one vector (both orders'
+   chains together: each add waits on the one before), so the sums land interleaved: the sum to p (p of the order's
+   entries) at slot(p), 0 for p = 0, 1 + 4 j + l for the j-th sum of quarter l (p = l q + j + 1, q a quarter's
+   length), p itself in the tail past the quarters (gto/core.py's _slots). oi, pi: each order's entries, its quarters
+   interleaved likewise (four uint16 to a u64), then its tail. */
+#define U16(x, s) ((u32)((x) >> (s)) & 0xffff)
+static void prefixes(const f32 *ro, const u64 *oi, const u64 *pi, f32 *cum, f32 *cs) {
+  i32 q1 = n / 4, q2 = (2 * n) / 4, j = 0;
+  v4 A = {0, 0, 0, 0}, C = A;
+  cum[0] = 0;
+  cs[0] = 0;
+  for (; j < q1; j++) {
+    u64 x = oi[j], y = pi[j];
+    A += (v4){ro[U16(x, 0)], ro[U16(x, 16)], ro[U16(x, 32)], ro[U16(x, 48)]};
+    C += (v4){ro[U16(y, 0)], ro[U16(y, 16)], ro[U16(y, 32)], ro[U16(y, 48)]};
+    *(v4u *)(cum + 1 + 4 * j) = A;
+    *(v4u *)(cs + 1 + 4 * j) = C;
+  }
+  for (; j < q2; j++) {
+    u64 y = pi[j];
+    C += (v4){ro[U16(y, 0)], ro[U16(y, 16)], ro[U16(y, 32)], ro[U16(y, 48)]};
+    *(v4u *)(cs + 1 + 4 * j) = C;
+  }
+  const uint16_t *ot = (const uint16_t *)oi, *pt = (const uint16_t *)pi;
+  f32 a3 = A[3], c3 = C[3];
+  for (i32 t = 4 * q1; t < n; t++) cum[t + 1] = a3 += ro[ot[t]];
+  for (i32 t = 4 * q2; t < 2 * n; t++) cs[t + 1] = c3 += ro[pt[t]];
+  /* each quarter's sums plus the quarters' before it (adding 0 to the first: its sums are +0 or more, unchanged) */
+  f32 o1 = A[0], o2 = o1 + A[1], o3 = o2 + A[2];
+  f32 p1 = C[0], p2 = p1 + C[1], p3 = p2 + C[2];
+  v4 off = {0, o1, o2, o3}, poff = {0, p1, p2, p3};
+  for (j = 0; j < q1; j++) *(v4u *)(cum + 1 + 4 * j) += off;
+  for (i32 t = 4 * q1; t < n; t++) cum[t + 1] += o3;
+  for (j = 0; j < q2; j++) *(v4u *)(cs + 1 + 4 * j) += poff;
+  for (i32 t = 4 * q2; t < 2 * n; t++) cs[t + 1] += p3;
+}
+
+/* Ranking.utility for row b: sum over compatible opponent combos of reach * (+1 weaker, -1 stronger), times live (0
+   where the combo holds a board card), times a with `scaled`. Each combo's sum adds the same terms in the same order
+   as numpy's, four combos at a time: its record (8 uint16: the sums to its weaker and its weaker-or-tied combos, its
+   cards, and the sums to the same two in each card's list of pairs, as slots) in two u64, the terms gathered. */
+static void ranking(Lane *L, const i32 *R, i32 b, const f32 *ro, f32 *u, int scaled, f32 a) {
+  i32 n4 = (n + 3) & ~3, m4 = (2 * n + 3) & ~3;
+  const u64 *oi = (const u64 *)(PI(R[2])) + (size_t)b * n4 / 4, *pi = (const u64 *)(PI(R[3])) + (size_t)b * m4 / 4;
+  const u64 *rec = (const u64 *)(PI(R[4])) + (size_t)b * 2 * n;
+  const i32 *kend = PI(R[5]), *kstart = kend + 52;
+  const f32 *live = PF(R[7]) + (size_t)b * n;
   size_t mark = L->top;
   f32 *cum = salloc(L, sizeof(f32) * (n + 1)), *cs = salloc(L, sizeof(f32) * (2 * n + 1));
   f32 *k = salloc(L, sizeof(f32) * 52);   /* each card's term: its pairs' sum before them and to their end */
-  prefix(ro, order, n, cum);
-  prefix(ro, pcombo, 2 * n, cs);
-  for (i32 c = 0; c < 52; c++) k[c] = cs[cend[c]] + cs[cstart[c]];
-  f32 total = cum[n];
-  for (i32 i = 0; i < n; i++) {
-    f32 x = cum[lo[i]];
-    x += cum[hi[i]];
-    x += k[ca[i]];
-    x += k[cb[i]];
-    x -= cs[plo[i]];
-    x -= cs[phi[i]];
-    x -= cs[plo[n + i]];
-    x -= cs[phi[n + i]];
+  prefixes(ro, oi, pi, cum, cs);
+  for (i32 c = 0; c < 52; c++) k[c] = cs[kend[c]] + cs[kstart[c]];
+  f32 total = cum[R[6]];
+  v4 T = {total, total, total, total}, S = {a, a, a, a};
+  i32 i = 0;
+  for (; i + 4 <= n; i += 4) {
+    const u64 *r = rec + 2 * i;
+    u64 a0 = r[0], a1 = r[2], a2 = r[4], a3 = r[6], b0 = r[1], b1 = r[3], b2 = r[5], b3 = r[7];
+    v4 x = {cum[U16(a0, 0)], cum[U16(a1, 0)], cum[U16(a2, 0)], cum[U16(a3, 0)]};
+    x += (v4){cum[U16(a0, 16)], cum[U16(a1, 16)], cum[U16(a2, 16)], cum[U16(a3, 16)]};
+    x += (v4){k[U16(a0, 32)], k[U16(a1, 32)], k[U16(a2, 32)], k[U16(a3, 32)]};
+    x += (v4){k[U16(a0, 48)], k[U16(a1, 48)], k[U16(a2, 48)], k[U16(a3, 48)]};
+    x -= (v4){cs[U16(b0, 0)], cs[U16(b1, 0)], cs[U16(b2, 0)], cs[U16(b3, 0)]};
+    x -= (v4){cs[U16(b0, 16)], cs[U16(b1, 16)], cs[U16(b2, 16)], cs[U16(b3, 16)]};
+    x -= (v4){cs[U16(b0, 32)], cs[U16(b1, 32)], cs[U16(b2, 32)], cs[U16(b3, 32)]};
+    x -= (v4){cs[U16(b0, 48)], cs[U16(b1, 48)], cs[U16(b2, 48)], cs[U16(b3, 48)]};
+    x -= T;
+    x *= *(const v4u *)(live + i);
+    if (scaled) x *= S;
+    *(v4u *)(u + i) = x;
+  }
+  for (; i < n; i++) {
+    u64 r0 = rec[2 * i], r1 = rec[2 * i + 1];
+    f32 x = cum[U16(r0, 0)];
+    x += cum[U16(r0, 16)];
+    x += k[U16(r0, 32)];
+    x += k[U16(r0, 48)];
+    x -= cs[U16(r1, 0)];
+    x -= cs[U16(r1, 16)];
+    x -= cs[U16(r1, 32)];
+    x -= cs[U16(r1, 48)];
     x -= total;
-    u[i] = x * live[i];
+    x *= live[i];
+    if (scaled) x *= a;
+    u[i] = x;
   }
   L->top = mark;
 }
@@ -287,18 +340,18 @@ static void terminal(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r
   f32 *cs = salloc(L, sizeof(f32) * n), *card = salloc(L, sizeof(f32) * 52);
   if (nd[0] == FOLD) {
     f32 f = fbits(nd[2 + p]);
-    for (i32 b = lo; b < hi; b++) {
-      f32 *ub = u + (size_t)(b - lo) * n;
-      compat(ro + (size_t)(b - lo) * n, card, cs);
-      for (i32 i = 0; i < n; i++) ub[i] = f * cs[i];
-    }
+    for (i32 b = lo; b < hi; b++) compat(ro + (size_t)(b - lo) * n, card, f, u + (size_t)(b - lo) * n);
   } else {
     f32 a = fbits(nd[3 + 2 * p]), c = fbits(nd[4 + 2 * p]);
     for (i32 b = lo; b < hi; b++) {
       const f32 *r = ro + (size_t)(b - lo) * n;
       f32 *ub = u + (size_t)(b - lo) * n;
+      if (nd[0] == SHOWDOWN && c == 0) {   /* (a times it as it's written) */
+        ranking(L, P + nd[2], b, r, ub, 1, a);
+        continue;
+      }
       if (nd[0] == SHOWDOWN) {
-        ranking(L, P + nd[2], b, r, ub);
+        ranking(L, P + nd[2], b, r, ub, 0, 1);
       } else if (nd[7] >= 0) {   /* its product, from the pass's batch */
         const i32 *st = PI(P[11]) + 10 * nd[7];
         i32 lp = trim ? P[15 + p] : n;
@@ -314,7 +367,7 @@ static void terminal(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r
         matvec(PF(nd[2]) + (size_t)b * n * n, r, ub);
       }
       if (c != 0) {
-        compat(r, card, cs);
+        compat(r, card, 1, cs);
         for (i32 i = 0; i < n; i++) ub[i] = a * ub[i] + c * cs[i];
       } else {
         for (i32 i = 0; i < n; i++) ub[i] = a * ub[i];

@@ -238,6 +238,47 @@ def _bucket_lists(ids: np.ndarray, K: int) -> np.ndarray:
     return np.concatenate([starts, np.argsort(ids, axis=-1, kind="stable")], axis=-1).astype(np.int32)
 
 
+def _slots(p, m: int) -> np.ndarray:
+    """Where core/gtocore.c's prefixes() puts the sum to p of an order's m entries: 0 at 0; the order's four quarters
+    (q entries each) sum side by side, so the j-th sum of quarter l (p = l q + j + 1) is at 1 + 4 j + l; the tail past
+    the quarters in place."""
+    q = m // 4
+    p = np.asarray(p, dtype=np.int64)
+    if q == 0:
+        return p
+    j = p - 1
+    return np.where(p == 0, 0, np.where(p <= 4 * q, 1 + 4 * (j % q) + j // q, p))
+
+
+def _quarters(idx: np.ndarray, m: int) -> np.ndarray:
+    """An order's entries (B, m) as prefixes() reads them: the four quarters' interleaved (entry j of each quarter
+    side by side), then the tail; uint16, each row padded to a multiple of 4 (read four at a time)."""
+    B, q = idx.shape[0], m // 4
+    out = np.zeros((B, (m + 3) & ~3), dtype=np.uint16)
+    out[:, :4 * q] = idx[:, :4 * q].reshape(B, 4, q).transpose(0, 2, 1).reshape(B, 4 * q)
+    out[:, 4 * q:m] = idx[:, 4 * q:m]
+    return out
+
+
+def _ranking_tables(R):
+    """A Ranking's tables as the core's ranking() reads them (kept on it): the two orders its prefix sums run in
+    (_quarters), each combo's record (8 uint16: the slots, _slots, of the sums to its weaker and weaker-or-tied combos,
+    its two cards, and the slots of the same two sums in each of its cards' lists of pairs), each card's two slots
+    (the ends of its list, then its starts) and the total's."""
+    t = getattr(R, "_core", None)
+    if t is None:
+        n, B = R.n, R.order.shape[0]
+        if 2 * n + 1 > 0xffff:
+            raise Unsupported("over uint16")
+        rec = np.stack([_slots(R.lo, n), _slots(R.hi, n), np.broadcast_to(R.ca, (B, n)), np.broadcast_to(R.cb, (B, n)),
+                        _slots(R.plo[:, 0], 2 * n), _slots(R.phi[:, 0], 2 * n), _slots(R.plo[:, 1], 2 * n),
+                        _slots(R.phi[:, 1], 2 * n)], axis=-1).astype(np.uint16)
+        t = R._core = (_quarters(R.order, n), _quarters(R.pcombo, 2 * n), rec,
+                       np.concatenate([_slots(R.cend, 2 * n), _slots(R.cstart, 2 * n)]).astype(np.int32),
+                       int(_slots(n, n)))
+    return t
+
+
 class Program:
     """A solver's tree as the core's program, its arrays in the core's arena (the arena is reset first). r0, r1: (n,)
     reaches at the root. (It holds the solver weakly: a solve the Advisor's cache drops is freed.)"""
@@ -502,16 +543,16 @@ class Program:
         return coef
 
     def _ranking(self, R) -> int:
-        """A Ranking's record (once per ranking)."""
+        """A Ranking's record (once per ranking): its tables as ranking() reads them (_ranking_tables)."""
         hit = self._rank.get(id(R))
         if hit is not None:
             return hit
         w = self.w
         at = len(w)
         up = self._upload
-        w += [R.order.shape[0], self.n, up(R.order, np.int32), up(R.lo, np.int32), up(R.hi, np.int32),
-              up(R.pcombo, np.int32), up(R.plo, np.int32), up(R.phi, np.int32), up(R.cstart, np.int32),
-              up(R.cend, np.int32), up(R.live, np.float32)]
+        oi, pi, rec, kslots, total = _ranking_tables(R)
+        w += [R.order.shape[0], self.n, up(oi, np.uint16), up(pi, np.uint16), up(rec, np.uint16), up(kslots, np.int32),
+              total, up(R.live, np.float32)]
         self._rank[id(R)] = at
         return at
 

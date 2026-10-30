@@ -1475,6 +1475,33 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   narrowed by a turn solved again in 3 s, 121 iterations) and the new one -0.03 (0.00); limped turns 0.027 (0.11)
   against 0.006 (0.03); the rest equal. The answer is the street's own solve, as for a hand in range, so it isn't
   marked approximate.
+* **The showdowns' sums, packed** (`core/gtocore.c` `ranking`, `prefixes`, `compat`; `gto/core.py`
+  `_ranking_tables`). A river showdown's value for each combo reads eight running sums (its rank's two ends in the
+  strength order, each card's two in the card order) and two card terms. The core read them through eight int32
+  index tables, one combo at a time, and built the two orders' running sums one after the other. Now each combo's
+  eight indices are 16-bit slots in two 64-bit words, four combos are summed at once (each lane gathers its own
+  terms), the two orders' sums advance in one loop, and they are laid out quarter by quarter, so the four quarters'
+  sums the core already ran side by side are stored with one vector write. A fold's card-removal sums write four
+  combos at a time too. Each combo adds the same terms in the same order, so a solve's regrets and strategy sums
+  are the same bit for bit: natively, in `core.wasm` and in `core-mt.wasm` on two threads, on four turns (BTN vs BB
+  after the library's flop, limped, a 3bet pot, a two-tone board) in Fast's tree and the threaded browser's, two of
+  them raked, with the floor of DCFR+ too, at 30-200 iterations. Exploitability is unchanged.
+  Natively, one thread, an iteration took 23.9 ms and now takes 19.5 (BTN vs BB), limped 36.4 -> 29.5, the 3bet
+  pot 3.4 -> 2.8, two-tone 38.4 -> 29.5: 1.23-1.30x (1.15-1.27x in the threaded browser's tree). In Pyodide
+  (`core.wasm`) it is 1.00-1.18x faster (the 3bet pot's small turn unchanged), as wasm's gathers cost more. In
+  the browser (`scripts/bench_browser.mjs`, Pyodide, one thread, the library builds paused, two runs each, before
+  -> after), Fast:
+
+  | request | seconds to the answer | iterations, % of the pot |
+  |---|---|---|
+  | turn after a library flop (BTN vs BB) | 4.89-5.08 -> 4.40-4.41 | 200, 0.23 |
+  | limped turn | 9.01-9.18 -> 8.12-8.19 | 200, 0.26 |
+  | 3-way turn (the multiway core: unchanged) | 7.51-7.62 -> 7.49-7.52 | 400, 0.04 |
+
+  The library's entries are unchanged, and so is their build time. Their river is dealt in buckets, so it has none
+  of these showdowns, only the folds' sums: one process at the build's settings, BTN vs BB Kc7d2h took 72.5 s and
+  now takes 70.5 (300 iterations, 0.110%), a 3bet pot's 17.8 and now 18.1 (200, 0.148%). Both entries decode to
+  the same strategies, masks and reports.
 * **Regret minimizer** (`docs/cfr_research.md`, `scripts/bench_solver.py --algos`, exploitability per
   iteration): predictive CFR+ and its discounted form (PCFR+, PDCFR+), the state of the art on many
   non-poker games, are 2-7x more exploitable than DCFR here at 100-200 iterations on every spot (the river,

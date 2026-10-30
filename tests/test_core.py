@@ -175,6 +175,34 @@ class TestSameAsNumpy(unittest.TestCase):
                 yield spot + (gemm,)
         core.lib().L.core_gemm(1)
 
+    def test_showdowns_on_any_number_of_combos(self):
+        # a showdown's tables (gto/core.py _ranking_tables) lay the running sums out in four quarters, a remainder
+        # after them: rivers of 1 to 323 combos (each remainder), the first iteration's regrets the same as numpy's
+        # to rounding, and the passes after 20 iterations on one solver's sums (a raked river's showdowns add the
+        # card-removal sums). (The solves themselves part after a few iterations in games this small, where a hand
+        # is often tied between actions, as numpy's own native and browser paths do.)
+        nz = np.nonzero(OOP * IP > 0)[0]
+        for m in (1, 2, 3, 4, 5, 6, 7, 8, 9, 22, 41, 103, 210):
+            for rake in (0.0, 0.05):
+                with self.subTest(combos=m, rake=rake):
+                    r0, r1 = np.zeros(1326), np.zeros(1326)
+                    r0[nz[:m]], r1[nz[-m:]] = 1.0, 0.5 + (np.arange(m) % 3) / 4
+                    cfg = replace(native.config("fast"), rake_rate=rake, rake_cap=3.0 if rake else None)
+                    a, b = (_solve("2c3d8hTs5s", r0, r1, 10, 50, cfg, 1, use_core=u) for u in (True, False))
+                    self.assertIs(core._prog.s(), a.solver)
+                    for x, y in zip(_decisions(a), _decisions(b)):
+                        self.assertLess(float(np.abs(x.regret - y.regret).max()) / (np.abs(y.regret).max() + 1), 1e-5)
+                    a = _solve("2c3d8hTs5s", r0, r1, 10, 50, cfg, 20)
+                    S, ev = a.solver, {}
+                    for use in (True, False):
+                        S.use_core = use
+                        ev[use] = (S.node_action_evs(S.root, a.r0, a.r1), S.node_action_br_evs(S.root, a.r0, a.r1),
+                                   S.exploitability(a.r0, a.r1))
+                    S.use_core = True
+                    self.assertLess(float(np.abs(ev[True][0] - ev[False][0]).max()), 2e-5 * 10)
+                    self.assertLess(float(np.abs(ev[True][1] - ev[False][1]).max()), 2e-5 * 10)
+                    self.assertAlmostEqual(ev[True][2], ev[False][2], delta=1e-4)
+
     def test_evaluation_below_the_root(self):
         sol = _solve("Ks7d2cTh5s", OOP, IP, 20, 90, native.config("fast"), 40)
         S = sol.solver
