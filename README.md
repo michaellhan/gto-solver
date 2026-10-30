@@ -1502,6 +1502,30 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   of these showdowns, only the folds' sums: one process at the build's settings, BTN vs BB Kc7d2h took 72.5 s and
   now takes 70.5 (300 iterations, 0.110%), a 3bet pot's 17.8 and now 18.1 (200, 0.148%). Both entries decode to
   the same strategies, masks and reports.
+* **The discount in the passes** (`core/gtocore.c` `core_run`, `decision`, `strategy`). DCFR discounts every
+  regret and strategy sum once an iteration (`Solver._factors`). The core did it in a pass of its own after the
+  iteration's two, one more trip through every regret and sum (40 MB on BTN vs BB's turn after the library's flop)
+  that the passes had just left. Now each is discounted at its last touch in the iteration: player 0's regrets as
+  the second pass reads them for player 0's strategy, player 1's regrets and every strategy sum as its owner's pass
+  adds to them. They are the same products of the same floats, so a solve's regrets and sums are the same bit for
+  bit: natively, in `core.wasm` and in `core-mt.wasm` on two threads, with DCFR's two factors and DCFR+'s floor, on
+  turns in Fast's tree and the threaded browser's, a raked turn dealing every river, and a flop by hand buckets.
+  Exploitability is unchanged. A program with deferred games (natively, a 3bet pot's library flop: its dealt
+  rivers' bucket games) walks their decisions twice in a pass, so it keeps the pass after (`core_fuse(0)` keeps it
+  everywhere, for the tests). Natively, one thread, the library builds paused, an iteration took 16.1 ms and now
+  takes 15.1 (BTN vs BB), limped 24.8 -> 22.9, the 3bet pot 2.6 -> 2.3, two-tone 24.5 -> 23.2: 1.06-1.11x
+  (1.02-1.07x in the threaded browser's tree). In the browser (`scripts/bench_browser.mjs`, Pyodide, one thread, the
+  library builds paused, two runs each, before -> after), Fast:
+
+  | request | seconds to the answer | iterations, % of the pot |
+  |---|---|---|
+  | turn after a library flop (BTN vs BB) | 4.45-4.47 -> 4.26-4.28 | 200, 0.23 |
+  | limped turn | 8.35 -> 8.00-8.09 | 200, 0.26 |
+  | 3-way turn (the multiway core: not this code) | 7.49-7.52, as before | 400, 0.04 |
+
+  The library's build is unchanged: a single-raised flop's time is in its leaves' products and a 3bet pot's keeps
+  the pass after (one process at the build's settings, BTN vs BB Kc7d2h 52.5-52.6 s -> 52.0-52.6, a 3bet pot's
+  Kc7d2h 13.4 -> 13.4-13.5). Both entries decode to the same strategies, EVs, masks and reports.
 * **Regret minimizer** (`docs/cfr_research.md`, `scripts/bench_solver.py --algos`, exploitability per
   iteration): predictive CFR+ and its discounted form (PCFR+, PDCFR+), the state of the art on many
   non-poker games, are 2-7x more exploitable than DCFR here at 100-200 iterations on every spot (the river,

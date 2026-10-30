@@ -90,6 +90,31 @@ class TestThreads(unittest.TestCase):
                     np.testing.assert_array_equal(arr, got[0][0])
                     self.assertEqual(ex, got[0][1])
 
+    def test_discount_in_the_passes(self):
+        # the DCFR discount applied in the iteration's passes (each regret and strategy sum at its last touch) or in
+        # a pass of its own after them: the same floats, bit for bit; DCFR's two factors and DCFR+'s floor, a turn
+        # by river class on 3 threads, a raked turn, a flop by hand buckets, and the library's 3bet pot (its dealt
+        # rivers' deferred games walk their decisions twice a pass: discounted after the iteration either way)
+        fast = native.config("fast")
+        spots = (("Ks7d2cTh", 20, 90, 30, fast, 3), ("Ks7d2cTh", 20, 90, 30, replace(fast, cfr="dcfr+"), 1),
+                 ("Qs8d3c4h", 30, 40, 20, Config(river_classes=False, n_rivers=None, rake_rate=0.05, rake_cap=3.0), 1),
+                 ("Kd7c2h", 5.5, 97.5, 10, fast, 1), ("9h8h6c", 20, 40, 3, fl.library_config(20, 40), 1))
+        for board, pot, stack, iters, cfg, t in spots:
+            with self.subTest(board, cfr=cfg.cfr):
+                got = []
+                try:
+                    core.threads(t)
+                    for on in (1, 0):
+                        self.assertEqual(core.lib().L.core_fuse(on), on)
+                        sol = _solve(board, OOP_T, IP_T, pot, stack, cfg, iters)
+                        self.assertTrue(sol.solver.use_core and sol.solver._core_ok)
+                        got.append(np.concatenate([np.r_[d.regret.ravel(), d.ssum.ravel()]
+                                                   for d in _decisions(sol)]).view(np.int32))
+                finally:
+                    core.lib().L.core_fuse(1)
+                    core.threads(1)
+                np.testing.assert_array_equal(got[0], got[1])
+
 
 @unittest.skipUnless(ON, "no C compiler for the native core")
 class TestSameAsNumpy(unittest.TestCase):

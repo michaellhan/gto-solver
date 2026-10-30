@@ -377,10 +377,32 @@ static void terminal(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r
   L->top = mark;
 }
 
+/* The DCFR discount of a training iteration (core_run's factors [mode, pos, neg, ssum]): with `fused`, applied in the
+   iteration's own passes, each regret and strategy sum at its last touch (player 0's regrets as the second pass reads
+   them, player 1's and every strategy sum as its owner's pass updates them), the same products as a pass over the
+   arrays after the iteration */
+static int fused, fuse_on = 1;
+static f32 d_mode, d_pos, d_neg, d_sf;
+
+/* 1: the discount in the passes where a program allows it, 0: after each iteration (the same floats: tests); -1 just
+   asks */
+EXPORT(core_fuse) i32 core_fuse(i32 on) {
+  if (on >= 0) fuse_on = on;
+  return fuse_on;
+}
+static void discount(f32 *r, size_t m) {
+  f32 pos = d_pos, neg = d_neg;
+  if (d_mode != 0)
+    for (size_t x = 0; x < m; x++) r[x] = (r[x] > 0 ? r[x] : 0) * pos;
+  else
+    for (size_t x = 0; x < m; x++) r[x] *= r[x] > 0 ? pos : neg;
+}
+
 /* Regret matching (Decision.strategy): rows lo..hi of the (B, A, W) regrets -> their strategies; with `avg`, the
    strategy sums -> the average strategy (Decision.avg_strategy). (Every loop runs over a row's combos innermost, so it
-   vectorizes; the sums over actions still add them first to last.) */
-static void strategy(Lane *L, const f32 *regret, i32 lo, i32 hi, i32 A, i32 W, int avg, f32 *s) {
+   vectorizes; the sums over actions still add them first to last.) dw: these regrets again, to discount rows
+   lo..hi of them once read (the second pass's, fused), or 0 */
+static void strategy(Lane *L, const f32 *regret, i32 lo, i32 hi, i32 A, i32 W, int avg, f32 *s, f32 *dw) {
   f32 uni = (f32)(1.0 / A);
   size_t mark = L->top;
   f32 *tot = salloc(L, sizeof(f32) * W);
@@ -394,6 +416,7 @@ static void strategy(Lane *L, const f32 *regret, i32 lo, i32 hi, i32 A, i32 W, i
         for (i32 i = 0; i < W; i++) sa[i] = ra[i];
       else
         for (i32 i = 0; i < W; i++) sa[i] = ra[i] > 0 ? ra[i] : 0;
+      if (dw) discount(dw + ((size_t)b * A + a) * W, W);
       if (a == 0)
         for (i32 i = 0; i < W; i++) tot[i] = sa[i];
       else
@@ -444,7 +467,7 @@ static void decision(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r
     /* down only: the opponent's strategies into its reach, as below */
     const f32 *ro = p == 0 ? r1 : r0;
     f32 *reach = player == p ? 0 : salloc(L, sizeof(f32) * RW);
-    if (player != p) strategy(L, regret, lo, hi, A, W, 0, s);
+    if (player != p) strategy(L, regret, lo, hi, A, W, 0, s, 0);
     for (i32 a = 0; a < A; a++) {
       if (is_terminal(kids[a])) continue;
       if (player == p) {
@@ -462,7 +485,10 @@ static void decision(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r
     L->top = mark;
     return;
   }
-  if (!(mode == BR && player == p)) strategy(L, mode == TRAIN ? regret : ssum, lo, hi, A, W, mode != TRAIN, s);
+  if (!(mode == BR && player == p)) {
+    f32 *dw = fused && p == 1 && player == 0 ? regret : 0;   /* (player 0's regrets: read for the last time) */
+    strategy(L, mode == TRAIN ? regret : ssum, lo, hi, A, W, mode != TRAIN, s, dw);
+  }
   if (player == p) {
     const f32 *ro = p == 0 ? r1 : r0, *rp = p == 0 ? r0 : r1;
     f32 *ut = salloc(L, sizeof(f32) * RW * A);   /* (A, rows, W): each action's utilities contiguous */
@@ -494,10 +520,31 @@ static void decision(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r
         f32 *rg = regret + ((size_t)b * A + a) * W, *ss = ssum + ((size_t)b * A + a) * W;
         const f32 *sa = s + (j * A + a) * W, *ua = ut + a * RW + j * W, *nu = out + j * W;
         const f32 *rb = rp + j * W;
-        for (i32 i = 0; i < W; i++) {
-          rg[i] += ua[i] - nu[i];
-          ss[i] += rb[i] * sa[i];
+        if (!fused) {
+          for (i32 i = 0; i < W; i++) {
+            rg[i] += ua[i] - nu[i];
+            ss[i] += rb[i] * sa[i];
+          }
+          continue;
         }
+        f32 pos = d_pos, neg = d_neg, sf = d_sf;
+        if (p == 0)   /* (player 0's regrets: discounted as the second pass reads them) */
+          for (i32 i = 0; i < W; i++) {
+            rg[i] += ua[i] - nu[i];
+            ss[i] = (ss[i] + rb[i] * sa[i]) * sf;
+          }
+        else if (d_mode != 0)
+          for (i32 i = 0; i < W; i++) {
+            f32 v = rg[i] + (ua[i] - nu[i]);
+            rg[i] = (v > 0 ? v : 0) * pos;
+            ss[i] = (ss[i] + rb[i] * sa[i]) * sf;
+          }
+        else
+          for (i32 i = 0; i < W; i++) {
+            f32 v = rg[i] + (ua[i] - nu[i]);
+            rg[i] = v * (v > 0 ? pos : neg);
+            ss[i] = (ss[i] + rb[i] * sa[i]) * sf;
+          }
       }
     }
   } else {
@@ -1000,7 +1047,7 @@ static void down(Lane *L, i32 at, int p, i32 lo, i32 hi, const f32 *ro) {
     }
     size_t RW = (size_t)(hi - lo) * W;
     f32 *s = salloc(L, sizeof(f32) * RW * A), *reach = salloc(L, sizeof(f32) * RW);
-    strategy(L, PF(nd[mode == TRAIN ? 5 : 6]), lo, hi, A, W, mode != TRAIN, s);
+    strategy(L, PF(nd[mode == TRAIN ? 5 : 6]), lo, hi, A, W, mode != TRAIN, s, 0);
     for (i32 a = 0; a < A; a++) {
       if (!below(kids[a])) continue;
       for (i32 b = lo; b < hi; b++) {
@@ -1102,7 +1149,7 @@ static void gdown(Lane *L, Game *G, i32 at, int p, i32 lo, i32 hi, const f32 *ro
     return;
   }
   f32 *s = G->s[G->nd++] = salloc(L, sizeof(f32) * RW * A);
-  strategy(L, PF(nd[5]), lo, hi, A, W, 0, s);
+  strategy(L, PF(nd[5]), lo, hi, A, W, 0, s, 0);
   for (i32 a = 0; a < A; a++) {
     if (player == p) {
       gdown(L, G, nd[7 + a], p, lo, hi, ro);
@@ -1532,7 +1579,10 @@ EXPORT(core_run) i32 core_run(u32 prog, i32 iters, u32 factors) {
   f32 *regret = PF(P[7]), *ssum = PF(P[8]);
   size_t len = (u32)P[9];
   const f32 *fac = PF(factors);
+  int fuse = fuse_on && P[17] == 0;   /* (a deferred game's decisions are walked twice a pass: discounted after) */
   for (i32 t = 0; t < iters; t++) {
+    d_mode = fac[4 * t], d_pos = fac[4 * t + 1], d_neg = fac[4 * t + 2], d_sf = fac[4 * t + 3];
+    fused = fuse;
     for (int p = 0; p < 2; p++) {
       size_t mark = M.top;
       f32 *u = salloc(&M, sizeof(f32) * B * n);
@@ -1553,13 +1603,10 @@ EXPORT(core_run) i32 core_run(u32 prog, i32 iters, u32 factors) {
       M.top = mark;
     }
     sized();
-    f32 mode = fac[4 * t], pos = fac[4 * t + 1], neg = fac[4 * t + 2], sf = fac[4 * t + 3];
-    if (mode != 0) {
-      for (size_t x = 0; x < len; x++) regret[x] = (regret[x] > 0 ? regret[x] : 0) * pos;
-    } else {
-      for (size_t x = 0; x < len; x++) regret[x] *= regret[x] > 0 ? pos : neg;
-    }
-    for (size_t x = 0; x < len; x++) ssum[x] *= sf;
+    fused = 0;
+    if (fuse) continue;
+    discount(regret, len);
+    for (size_t x = 0; x < len; x++) ssum[x] *= d_sf;
   }
   return iters;
 }
