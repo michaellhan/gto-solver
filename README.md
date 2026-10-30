@@ -953,6 +953,10 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   (within 4% of exact; 4 sampled turns had flush draws up to 24% off).
 * `Solution.exploitability()` reports how far a solve is from equilibrium in
   % of the pot (it plays a best response for each side against the other).
+* Per-combo EV errors against a reference count the actions each combo plays (its mean frequency over 5%) or its EV
+  at its own mix, not every action: equilibrium doesn't pin the EV of an action a combo never takes. Two solves of the
+  same turn run to 1500 iterations from different starts agree to 0.01-0.04% of the pot on those, and differ by up to
+  1.0% on the unplayed actions, so a maximum over every action favors whichever start the reference's own run shares.
 * **Against postflop-solver on the Advisor's own spots** (`scripts/bench_postflop_solver.py`, records in
   `reports/postflop_solver/`). [postflop-solver](https://github.com/b-inary/postflop-solver) is b-inary's open-source
   Rust solver (DCFR, every turn and river card dealt, multithreaded; the engine behind WASM Postflop and Desktop
@@ -1576,6 +1580,34 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   answered too. And a stopped request that can't read the stop no longer holds the requests after it: the page pings
   the worker after a stop and restarts one that hasn't answered in 15 s (`STUCK_S`; a stop takes ~0.1 s), posting the
   requests still waiting to the new one.
+* **The turn solve starts from the stored turn** (`Advisor._store_seed`, `STORE_SEED`, `solve(seed=...)`,
+  `flop_library.turn_strategies`). After a library flop whose entry has a turn file, the turn's own solve (the
+  request's, the presolve's and the river's narrowing) no longer starts from zero regrets: at the turn's first decision
+  and in position after a check, each combo the file stores gets regrets of the pot x the opponent's reach compatible
+  with it x its stored mix (each stored action at the live tree's nearest; in position the opponent's reach is the
+  first player's times its stored check), so the first iteration plays the stored mix. Nothing else is seeded: the
+  strategy sums start at zero and every other node and combo (your hand out of your range among them) starts as
+  before. On a checked-through flop the threaded browser's settled stop (0.2% of the pot from the 300th) now fires at
+  the 300th where it took the 400th. In the browser, Fast, 4 threads (`BENCH_THREADS`), BTN vs BB's turn files
+  (`BENCH_LIB`), a fresh worker per spot, two runs each, alternating:
+
+  | request | seconds to the answer | iterations, % of the pot from equilibrium |
+  |---|---|---|
+  | BB first on Ks7d2cTh, the flop checked through (`turn-x`, new) | 4.28 / 4.27 -> 3.25 / 3.29 | 400 -> 300, 0.14 -> 0.18 |
+  | BTN after BB's check there (`turn-x-ip`, new) | 4.20 / 4.21 -> 3.21 / 3.21 | 400 -> 300, 0.13 -> 0.17 |
+  | BB first after a third-pot c-bet called (`turn`) | 2.89 / 2.91 -> 2.86 / 2.85 | 300 either way, 0.14 -> 0.12 |
+
+  Measured natively over 30 turns of four BTN vs BB flops (checked through and a third-pot c-bet called; the threaded
+  tree, against each turn solved to 1000 iterations): the stop fires at the 300th on 28 of 30 turns where it did on 13
+  (mean 357 -> 307 iterations), there 0.142 -> 0.160% of the pot from equilibrium on average (worst 0.190 -> 0.199),
+  each combo's EVs over the actions it plays 0.269 -> 0.175% of the pot off the reference's (worst 0.628 -> 0.370),
+  its EV at its own mix 0.218 -> 0.131, EV given up by the mixes (B3's measure) 0.0017 / 0.0015 -> 0.0012 / 0.0009,
+  hands out of the ranges 0.293 -> 0.257. At the same 300 iterations: 0.206 -> 0.161% from equilibrium. On one thread
+  (Fast's own tree, 0.3% from the 200th; 24 turns) the stop comes at 212 iterations on average where it came at 250,
+  0.197 -> 0.228% from equilibrium, EVs over the played actions 0.420 -> 0.286 off. A stored turn is a 5% step mix
+  of a 75% bet only, played on a class's card: a start, not an answer, so the stopping rules are unchanged. The
+  turn file is read before the solve (the approximate answer reads it first, and the worker fetches it with the
+  flop's entry).
 * **Regret minimizer** (`docs/cfr_research.md`, `scripts/bench_solver.py --algos`, exploitability per
   iteration): predictive CFR+ and its discounted form (PCFR+, PDCFR+), the state of the art on many
   non-poker games, are 2-7x more exploitable than DCFR here at 100-200 iterations on every spot (the river,

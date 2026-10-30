@@ -95,6 +95,10 @@ const SPOTS = {
   "river-limp-ip": base({ hero: "BB", hole: "Kc6c", board: "Ks7d2cTh5s", preflop: LIMP, flop: [X("SB"), B("BB", 1.5), C("SB")],
                           turn: [X("SB"), B("BB", 3.75), C("SB")], river: [X("SB")] }),
   "turn-ip": base({ hero: "BTN", hole: "AsQs", board: "Ks7d2cTh", flop: SRP_FLOP, turn: [X("BB")] }),    // after a library flop
+  // the flop checked through (a library flop's commonest line: its stored turn starts the turn's solve, the turn file
+  // served with BENCH_LIB)
+  "turn-x": base({ hero: "BB", hole: "QhJh", board: "Ks7d2cTh", flop: [X("BB"), X("BTN")] }),
+  "turn-x-ip": base({ hero: "BTN", hole: "AsQs", board: "Ks7d2cTh", flop: [X("BB"), X("BTN")], turn: [X("BB")] }),
   // one hand street by street with your hand out of your range for its line (--hole: yours in every spot of the run):
   // --session flop-bb,turn,river --hole AhAd (the big blind 3bets aces rather than calls), flop-limp-ip,turn-limp-ip,
   // river-limp-ip --hole KhQh, flop-3bp-ip,turn-3bp-ip,river-3bp-ip --hole AhKh, flop-40,turn-40,river-40 --hole AhAd;

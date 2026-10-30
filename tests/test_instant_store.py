@@ -2,6 +2,7 @@
 (flop_library's turn files), answer the turn's first decision and in position after a check at once
 (advisor.instant_from_store), marked approximate; the turn's own solve still answers the request. Prefetched with the
 entry once the flop is known (Advisor.prefetch)."""
+import functools
 import importlib
 import os
 import shutil
@@ -36,13 +37,20 @@ def advisor(lib):
     return a
 
 
-class TestInstantFromStore(unittest.TestCase):
+@functools.lru_cache(maxsize=None)
+def _flop_solve():
+    s = fl.spot_setup(SPOT[2])
+    return s, solve(parse_cards(CANON), s["full0"], s["full1"], s["pot"], s["stack"], cfg=fl.library_config(),
+                    time_budget=1e9, max_iters=60)
+
+
+class _Store(unittest.TestCase):
+    """The fixture: the flop's entry written with its turn file (libs[0]) and without (libs[1])."""
     @classmethod
     def setUpClass(cls):
         sid, _, line = SPOT
-        cls.setup = s = fl.spot_setup(line)
-        sol = solve(parse_cards(CANON), s["full0"], s["full1"], s["pot"], s["stack"], cfg=fl.library_config(),
-                    time_budget=1e9, max_iters=60)
+        s, sol = _flop_solve()
+        cls.setup = s
         meta = dict(build._meta(sid, s), board=CANON)
         cls.dirs = []
         cls.libs = []
@@ -83,6 +91,8 @@ class TestInstantFromStore(unittest.TestCase):
         got = [h for h in got if not set(parse_cards(h)) & board]
         return got[k]
 
+
+class TestInstantFromStore(_Store):
     def test_first_to_act_and_after_a_check(self):
         """The big blind first on the turn after the flop checks through, and the opener after its check: the stored
         mix of the hand's combo (through the suit map), the bet at the hand's own pot, nothing solved, marked
@@ -190,6 +200,115 @@ class TestInstantFromStore(unittest.TestCase):
             self.assertIn(f"{SPOT[0]}/{CANON}.bin?v={h}", asked)
             self.assertEqual(f"{SPOT[0]}/{CANON}.turn.bin?v={h}" in asked, want, asked)
             self.assertFalse([k for k, e in rec._entries.items() if e is None])
+
+
+class TestStoreSeed(_Store):
+    """The turn's own solve after a library flop starts from the flop solve's stored turn (Advisor._store_seed,
+    STORE_SEED): its first iteration plays the stored mix; nothing else is seeded."""
+
+    def turn_solves(self, lib, state):
+        """The turn solves a request makes: [(args, kwargs, first)], `first` (kwargs' seed's only) the root's and
+        in-position-after-a-check node's strategies before the first iteration, its regrets after the seed, and the
+        solver."""
+        seen = []
+
+        def spy(*a, **kw):
+            rec = None
+            if len(a[0]) == 4:
+                rec = [a, kw, None]
+                seen.append(rec)
+                if kw.get("seed") is not None:
+                    inner = kw["seed"]
+
+                    def wrapped(root, s):
+                        inner(root, s)
+                        ip = root.children[root.names.index("check")]
+                        rec[2] = {"oop": (root, root.strategy()[0].copy(), root.regret[0].copy()),
+                                  "ip": (ip, ip.strategy()[0].copy(), ip.regret[0].copy()), "s": s}
+                    kw = dict(kw, seed=wrapped)
+            return solve(*a, **kw)
+        adv = advisor(lib)
+        with mock.patch.object(A, "solve", side_effect=spy):
+            res = adv.advise(state)
+        return seen, res
+
+    def state(self, hero_p, hole, turn="9c"):
+        oop, ip = self.setup["oop"], self.setup["ip"]
+        return dict(self.hand, hero=(oop, ip)[hero_p], hole=hole, flop=[X(oop), X(ip)],
+                    turn=[] if hero_p == 0 else [X(oop)], board=BOARD + turn)
+
+    def test_the_first_iteration_plays_the_stored_mix(self):
+        """At the turn's first decision and in position after a check, each stored combo (on the hand's own suits)
+        plays its stored mix, each stored action at the live tree's nearest; the turn file has a 75% bet only."""
+        seen, _ = self.turn_solves(self.lib, self.state(0, self.hole_in(0, "9c", 3)))
+        self.assertEqual(len(seen), 1)
+        first = seen[0][2]
+        self.assertIsNotNone(first)
+        act = list(first["s"].ctx.active)
+        checked = 0
+        for p, d, at in ((0, "oop", []), (1, "ip", ["check"])):
+            nd, strat, _ = first[d]
+            for k in range(0, 40, 4):
+                hole = self.hole_in(p, "9c", k)
+                names, mix, _ = self.stored(["check", "check"], at, hole, "9c")
+                want = np.zeros(len(nd.names))
+                for a, name in enumerate(names):
+                    want[A.match_action(nd.names, name)] += mix[a]
+                col = act.index(COMBO_INDEX[tuple(sorted(parse_cards(hole)))])
+                self.assertTrue(np.allclose(strat[:, col], want / want.sum(), atol=1e-5), (d, hole, strat[:, col], want))
+                checked += 1
+            self.assertIn("bet 33%", nd.names)   # (the live tree's sizes, not the file's)
+        self.assertEqual(checked, 20)
+
+    def test_no_more_exploitable_at_300_iterations(self):
+        """The same turn solved 300 iterations from the seed and from zero regrets: the seeded one is no further from
+        equilibrium."""
+        seen, _ = self.turn_solves(self.lib, self.state(0, self.hole_in(0, "9c", 3)))
+        a, kw, _ = seen[0]
+        self.assertIsNotNone(kw["seed"])
+        run = dict(kw, time_budget=1e9, max_iters=300, max_per=None, reserve=None, should_stop=None)
+        warm = solve(*a, **run).exploitability()
+        cold = solve(*a, **dict(run, seed=None)).exploitability()
+        self.assertLessEqual(warm, cold, (warm, cold))
+
+    def test_off_without_a_turn_file(self):
+        """No seed from an entry without a turn file, on a flop the library doesn't hold, or on a flop line the turn
+        file doesn't hold; the river's narrowing solve of the turn is seeded as the turn's own is."""
+        oop, ip = self.setup["oop"], self.setup["ip"]
+        st = self.state(0, self.hole_in(0, "9c", 3))
+        seen, _ = self.turn_solves(self.libs[1], st)
+        self.assertEqual([kw["seed"] for _, kw, _ in seen], [None])
+        seen, _ = self.turn_solves(self.lib, dict(st, board="Qh8s3d9c", hole="AcKd"))
+        self.assertEqual([kw["seed"] for _, kw, _ in seen], [None])
+        t = dict(self.turns, lines=[ln for ln in self.turns["lines"] if ln["path"] != ["check", "check"]])
+        with mock.patch.object(self.lib, "turns", return_value=t):
+            seen, _ = self.turn_solves(self.lib, st)
+        self.assertEqual([kw["seed"] for _, kw, _ in seen], [None])
+        river = dict(st, turn=[X(oop), X(ip)], river=[X(oop)], hero=ip, hole=self.hole_in(1, "9c", 3),
+                     board=BOARD + "9c3s")
+        seen, _ = self.turn_solves(self.lib, river)
+        self.assertEqual(len(seen), 1)
+        self.assertIsNotNone(seen[0][1]["seed"])
+        self.assertIsNotNone(seen[0][2])
+
+    def test_a_hand_out_of_range_is_still_solved(self):
+        """Your hand out of your range (not in the turn file): its regrets start at zero (only the stored combos are
+        seeded) and it is answered from the solve as any other."""
+        full = self.setup["full1"]
+        bd = set(parse_cards(BOARD + "9c"))
+        i = next(i for i, c in enumerate(ALL_COMBOS) if full[i] <= 0 and not set(c) & bd)
+        hole = cards_str(sorted(ALL_COMBOS[i], reverse=True))
+        seen, res = self.turn_solves(self.lib, self.state(1, hole))
+        first = seen[0][2]
+        self.assertIsNotNone(first)
+        col = list(first["s"].ctx.active).index(i)
+        nd, strat, reg = first["ip"]
+        self.assertTrue(np.all(reg[:, col] == 0.0))
+        self.assertTrue(np.any(reg != 0.0))
+        self.assertTrue(np.allclose(strat[:, col], 1.0 / len(nd.names)))
+        self.assertNotIn("approximate", res)
+        self.assertGreater(res["solver"]["iterations"], 0)
+        self.assertAlmostEqual(sum(a["freq"] for a in res["actions"]), 1.0, delta=0.01)
 
 
 if __name__ == "__main__":

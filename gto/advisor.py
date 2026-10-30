@@ -26,7 +26,7 @@ import time
 import types
 from functools import lru_cache
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 import numpy as np
 from .cards import cards as parse_cards, COMBO_INDEX, hand_class, ALL_COMBOS, cards_str, card_str
 from .ranges import N_COMBOS, range_to_text, parse_range
@@ -2045,6 +2045,31 @@ def instant_from_prev(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
 # the pot) the stored turn 0.04 first to act / 0.08 in position after a check, the solve at 50 iterations 0.09 / 0.06,
 # at 100 0.02 / 0.02 (README, Accuracy vs speed: "The turn after a library flop")
 STORE_UNTIL = 100
+# A live turn solve after a library flop starts from the flop solve's stored turn where the entry's turn file holds the
+# line the hand took (Advisor._store_seed): at the turn's first decision and in position after a check each stored
+# combo's regrets are STORE_SEED x the pot x the opponent's reach compatible with it x its stored mix (each stored
+# action at the live tree's nearest), so the first iteration plays the stored mix; nothing else is seeded. On the
+# threaded browser's tree (30 turns of four BTN vs BB flops, natively) the settled stop (0.2% of the pot from the
+# 300th) fires at 300 on 28 of 30 turns where a cold start did on 13 (mean 357 -> 307 iterations): there 0.142 ->
+# 0.160% of the pot from equilibrium, each combo's EVs over the actions it plays 0.269 -> 0.175% of the pot off the
+# 1000th's, B3's given-up 0.0017 / 0.0015 -> 0.0012 / 0.0009 (README, "The turn solve starts from the stored turn")
+STORE_SEED = 1.0
+
+
+def _turn_file(lib, sol, flop) -> Optional[tuple]:
+    """(the decoded turn file, the hand's flop's suit map) beside the library entry `sol` (a LibrarySolution) was read
+    from, or None: not a library flop, the index lists no turn file for it, or it isn't the entry's."""
+    head = getattr(sol, "head", None)
+    if lib is None or not hasattr(lib, "turns") or not hasattr(sol, "stored") or not isinstance(head, dict):
+        return None
+    from . import flop_library as fl
+    canon, smap = fl.canonical(flop)
+    name = cards_str(canon)
+    sp = next((s for s in lib.index().get("spots", ()) if s.get("id") == head.get("spot")), None)
+    if name != head.get("board") or sp is None:
+        return None
+    t = lib.turns(sp, name)
+    return None if t is None else (t, smap)
 
 
 def instant_from_store(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
@@ -2062,24 +2087,17 @@ def instant_from_store(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
     if spot.own is not None and spot.own.solver.iters >= STORE_UNTIL:
         return None   # (the turn's own solve, a presolve's or one stopped part way, is the closer read by now)
     sol, _, taken = spot.prev
-    head = getattr(sol, "head", None)
-    if not hasattr(sol, "stored") or not isinstance(head, dict):
-        return None
     if not spot.actions:
         at = ()
     elif len(spot.actions) == 1 and spot.actions[0]["action"] == "check" and spot.actions[0]["pos"] == spot.oop:
         at = ("check",)
     else:
         return None
+    got = _turn_file(lib, sol, spot.board[:3])
+    if got is None:
+        return None
     from . import flop_library as fl
-    canon, smap = fl.canonical(spot.board[:3])
-    name = cards_str(canon)
-    sp = next((s for s in lib.index().get("spots", ()) if s.get("id") == head.get("spot")), None)
-    if name != head.get("board") or sp is None:
-        return None
-    t = lib.turns(sp, name)
-    if t is None:
-        return None
+    t, smap = got
     mp = lambda c: c // 4 * 4 + smap[c % 4]
     nd = fl.turn_node(t, taken, at, mp(spot.board[3]))
     if nd is None or nd["player"] != spot.hero_p:
@@ -3561,7 +3579,9 @@ class Advisor:
                         r0 = _post_floor(r0, rs[oop], nxt_board, oop, st.name, notes)
                         r1 = _post_floor(r1, rs[ip], nxt_board, ip, st.name, notes)
                         continue
-                    sol = self._solve_cached(sub_board, s0, s1, st.pot_start, eff, self.prior_budget, cfg=cfg)
+                    sol = self._solve_cached(sub_board, s0, s1, st.pot_start, eff, self.prior_budget, cfg=cfg,
+                                             seed=self._store_seed(walked.get("flop"), sub_board)
+                                             if st.name == "turn" else None)
                     expl = self._expl(sol)
                     trust = trust_of(expl, st.name)
                     if trust < 1.0:
@@ -3608,7 +3628,8 @@ class Advisor:
             # spare_prior: the street advised on also gets what the narrowing solves didn't spend (a flop from the
             # library or from this hand's flop advice costs nothing), so a request never takes longer than cold
             spare = max(0.0, spare - (time.time() - t_prior)) if self.spare_prior else 0.0
-            sol = self._solve_cached(board, r0, r1, cur.pot_start, eff, self.time_budget + spare, cfg=cfg)
+            sol = self._solve_cached(board, r0, r1, cur.pot_start, eff, self.time_budget + spare, cfg=cfg,
+                                     seed=self._store_seed(walked.get("flop"), board) if cur.name == "turn" else None)
             if actor and actor[1] is None:   # (a presolve: the street's solve is what it came for)
                 return {"presolved": cur.name, "iterations": int(sol.iters)}
             self._trim_note(sol, cur.name, notes)
@@ -5405,12 +5426,58 @@ class Advisor:
         # seeded an Accurate one at its lower c-bet frequencies and did worse in the same time than a cold start)
         return (_range_key(r0), _range_key(r1)) + spot
 
+    def _store_seed(self, flop_walk, board) -> Optional[Callable]:
+        """solve()'s `seed` for the turn's own solve after a library flop (STORE_SEED): the entry's stored turn on the
+        line the flop's walk took (`flop_walk`: walked["flop"], (sol, node, taken)), or None where there is none (not
+        a library flop, no turn file, a line it doesn't hold). The seed sets the regrets at the turn's first decision
+        and in position after a check, each stored combo's; a node the file doesn't hold, a tree with no check there
+        or one played on several boards is left as it is."""
+        if flop_walk is None or len(board) != 4:
+            return None
+        sol, _, taken = flop_walk
+        got = _turn_file(self.library, sol, board[:3])
+        if got is None:
+            return None
+        t, smap = got
+        if not any(list(ln.get("path", ())) == list(taken) for ln in t.get("lines", ())):
+            return None
+        from . import flop_library as fl
+
+        def seed(root, s):
+            if not isinstance(root, Decision) or root.player != 0 or "check" not in root.names \
+                    or root.regret.shape[0] != 1:
+                return
+            act = s.ctx.active
+            r0, r1 = s.ctx.root_reach
+            k = root.names.index("check")
+            share = None
+            for at, nd in (((), root), (("check",), root.children[k])):
+                if not isinstance(nd, Decision) or nd.regret.shape[0] != 1:
+                    return
+                st = fl.turn_strategies(t, taken, at, board[3], smap)
+                if st is None or st["player"] != nd.player:
+                    return
+                mix = st["strat"][:, act]
+                ok = ~np.isnan(mix[0])
+                live = np.zeros((len(nd.names), len(act)))
+                for a, name in enumerate(st["names"]):
+                    live[match_action(nd.names, name)] += np.nan_to_num(mix[a])
+                if share is None:
+                    opp = r1
+                    share = np.where(ok, live[k], 1.0 / len(nd.names))   # (OOP's check share: IP's opponent's reach)
+                else:
+                    opp = r0 * share
+                mass = s.compat_sum(np.asarray(opp, dtype=np.float32)[None])[0]
+                nd.regret[0][:, ok] = (STORE_SEED * root.pot_now * mass[ok] * live[:, ok]).astype(np.float32)
+        return seed
+
     def _solve_cached(self, board, r0, r1, pot, stack, budget, bets=(0.0, 0.0), to_act=0, n_raises=0, cfg=None,
-                      settle=False):
+                      settle=False, seed=None):
         """A heads-up solve, from the cache when it holds this spot and ranges (run on while it has had under 80% of
-        `budget`), else a new one, warm from warm_from's solve of the spot. With hu_settled set it stops at the first
-        of HU_CHECKS where it is that close to equilibrium; one settled already isn't run on. A solve stopped part
-        way (should_stop: Cancelled) stays cached, and the spot asked again goes on from where it stopped."""
+        `budget`), else a new one, warm from warm_from's solve of the spot (else from `seed`: _store_seed). With
+        hu_settled set it stops at the first of HU_CHECKS where it is that close to equilibrium; one settled already
+        isn't run on. A solve stopped part way (should_stop: Cancelled) stays cached, and the spot asked again goes
+        on from where it stopped."""
         cfg = cfg or self.cfg
         key = self._solve_key(board, r0, r1, pot, stack, bets, to_act, n_raises, cfg)
         spot = key[2:]
@@ -5443,7 +5510,7 @@ class Advisor:
                     sol = solve(board, r0, r1, pot, stack, bets=bets, to_act=to_act, n_raises=n_raises, cfg=use,
                                 time_budget=rest, should_stop=self.should_stop, warm=warm, reserve=HU_RESERVE,
                                 max_cells=cap, max_iters=min(c for c in HU_CHECKS if c >= first) if target is not None
-                                else 1000, horizon=1000,
+                                else 1000, horizon=1000, seed=seed,
                                 max_per=SLOW * left / 10 if n >= 4 and not (warm or slow) and level < len(TRIMS)
                                 else None)
                     break

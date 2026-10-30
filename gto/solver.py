@@ -2245,8 +2245,10 @@ def solve(board: Sequence[int], r_oop: np.ndarray, r_ip: np.ndarray, pot: float,
           bets=(0.0, 0.0), to_act: int = 0, n_raises: int = 0, cfg: Optional[Config] = None,
           time_budget: float = 3.0, max_iters: int = 1000, dead: Sequence[int] = (), should_stop=None,
           warm: Optional[Solution] = None, reserve: Optional[float] = None, horizon: Optional[int] = None,
-          max_cells: Optional[int] = None, max_per: Optional[float] = None) -> Solution:
+          max_cells: Optional[int] = None, max_per: Optional[float] = None, seed=None) -> Solution:
     """`warm`: an earlier solve of the same spot (possibly with a different card sampling) to start from.
+    `seed(root, solver)`: else sets starting regrets before the first iteration (Advisor._store_seed: a library
+    flop's stored turn).
     `max_cells`: TreeTooBig, before the tree is all built, when its cells (TreeBuilder.cells) pass this.
     `max_per`: TooSlow (with the tree's cells) when the first iteration takes longer than this (seconds).
     `horizon`: the schedule's length (Solver.horizon) when the solve is run in pieces (max_iters the first piece).
@@ -2266,6 +2268,8 @@ def solve(board: Sequence[int], r_oop: np.ndarray, r_ip: np.ndarray, pot: float,
         # DCFR's iteration count starts over: carrying it on would weight the copied average strategy
         # (from a different tree, and slightly different ranges) like hundreds of iterations of this one
         warm_start(root, ctx, warm.root, warm.ctx)
+    elif seed is not None:
+        seed(root, s)
     if reserve is not None:
         time_budget = max(time_budget - (time.time() - t_start), 0.0)
     t_run = time.time()

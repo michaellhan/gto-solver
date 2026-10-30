@@ -795,6 +795,24 @@ def turn_node(t: dict, path: Sequence[str], at: Sequence[str], card: int) -> Opt
     return {"names": nd["names"], "player": nd["player"], "played": played, "combos": idx, "strat": st}
 
 
+def turn_strategies(t: dict, path: Sequence[str], at: Sequence[str], card: int, smap: Sequence[int]) -> Optional[dict]:
+    """turn_node for every combo at once, on the hand's own suits: `card` the turn and `smap` canonical()'s suit map of
+    the hand's flop (its suits to the entry's). {'names', 'player', 'played', 'strat' (A, 1326): each combo's stored
+    mix (its image's on the entry's flop), NaN where the file stores none}, or None where it doesn't hold the node.
+    (A live turn solve after a library flop starts from these: advisor.Advisor._store_seed.)"""
+    nd = turn_node(t, path, at, card // 4 * 4 + smap[card % 4])
+    if nd is None:
+        return None
+    img = combo_map(smap)                                   # (1326,) each combo's image on the entry's flop
+    out = np.full((len(nd["names"]), len(ALL_COMBOS)), np.nan)
+    stored = np.asarray(nd["combos"], dtype=np.int64)
+    if len(stored):
+        j = np.minimum(np.searchsorted(stored, img), len(stored) - 1)
+        ok = stored[j] == img
+        out[:, ok] = nd["strat"][:, j[ok]]
+    return {"names": nd["names"], "player": nd["player"], "played": nd["played"], "strat": out}
+
+
 # ----------------------------------------------------------------------------- the advisor's view
 class _Evs:
     """Stands in for Solution.solver: the stored EVs at stored nodes."""
