@@ -3259,6 +3259,9 @@ class Advisor:
                         cfg = dataclasses.replace(cfg, **self.prior_model)
                     if cfg.root_allin:
                         cfg = dataclasses.replace(cfg, root_allin=False)   # (a jam request: the street advised on only)
+                    # (the hand's own solve of this street, made before a later action took a size off its tree)
+                    cfg = self._hand_cfg(sub_board, r0, r1, st, oop, ip, eff, cfg, adjust=lambda c: dataclasses.replace(
+                        c, **(self.prior_model or {}), **({"root_allin": False} if c.root_allin else {})))
                     if getattr(self, "_quick", False) and \
                             self._cache.get(self._solve_key(sub_board, r0, r1, st.pot_start, eff, cfg=cfg)) is None:
                         # A quick answer has no time to solve an earlier street (0.3 s: the 10 iterations a solve
@@ -5246,6 +5249,23 @@ class Advisor:
                      + f": kept {', '.join(label(n) for n in keep)} (used by {OPT_KEEP:.0%}+ of a range)")
         return out, {"size_usage": {label(n): round(float(f), 3) for n, f in mine.items()},
                      "sizes_kept": [label(n) for n in keep], **({"sizes_custom": custom} if custom else {})}
+
+    def _hand_cfg(self, board, r0, r1, st: StreetState, oop: str, ip: str, stack: float, cfg: Config, adjust=None):
+        """The config a solve of this street the hand made already was built with, when `cfg` (the street's real sizes,
+        _cfg_with_real_sizes) has none cached: the hand's advice on the street before a later action took a size off
+        that tree (a turn bet of 50% where its advice solved 33/75/125%) is the same street, its ranges, and settled, and
+        its walk reads the action at the nearest size; a second solve of it with the size in (the river's narrowing:
+        3 s of a limped river's 3.2, 38 iterations, where the advice's was settled at 200) would be shorter and worse.
+        The longest earlier line's first; `adjust` (Config -> Config) as the caller's cfg was; else `cfg`."""
+        adjust = adjust or (lambda c: c)
+        if self._cache.get(self._solve_key(board, r0, r1, st.pot_start, stack, cfg=cfg)) is not None:
+            return cfg
+        for k in range(len(st.actions) - 1, -1, -1):
+            c = adjust(self._cfg_with_real_sizes(dataclasses.replace(st, actions=st.actions[:k]), oop, ip, stack))
+            if c.sizes_key() != cfg.sizes_key() and \
+                    self._cache.get(self._solve_key(board, r0, r1, st.pot_start, stack, cfg=c)) is not None:
+                return c
+        return cfg
 
     def _cfg_with_real_sizes(self, st: StreetState, oop: str, ip: str, stack: float) -> Config:
         """Tree config for this street where the bet/raise sizes actually taken replace the

@@ -1251,6 +1251,12 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   or a Practice look-ahead your move made useless stops it within ~0.1 s and the worker keeps its runtime, solves, library entries
   and tables (before, the page restarted the worker: its 2-4 s setup again, and everything it held gone). A solve
   stopped part way stays cached and goes on from there if asked again, and Practice looks ahead at Accurate too.
+  The river's narrowing still solved the turn again when their turn bet was off the tree the turn's advice solved (a
+  limped pot's BB betting 60% where it has 33/75/125%): the sizes the hand took go into the narrowing's tree, so its
+  key missed the advice's solve, and the second solve took 3.1 s of the river's 4.75 in Pyodide (`--session` with the
+  limped pot's flop, turn and river; natively 3 s of 3.2, 38 iterations where the advice's had settled at 200). Now `Advisor._hand_cfg` finds the hand's
+  own solve of the street from an earlier decision (each earlier point of the street's action, the latest first), and
+  the narrowing walks it at the size nearest the bet ("turn: mapped 'bet 49%'"): that river 0.11 s, natively 0.13.
 * **Quick keeps to its time and memory** (`advisor.MAX_CELLS`, `CELL_S`, `CAP_ITERS`, `TRIMS`, `solver.tree_cells`,
   `TooSlow`, `advisor.MW_QUICK_BUILD`, `multiway_solver.BuildTooSlow`). The coverage fuzz found Quick answers at 2-8x
   their estimate. Heads-up turns with wide ranges took 11-14 s against 1.8 s and up to 2.1 GB: a limped 200bb tournament

@@ -93,6 +93,17 @@ class TestSettled(unittest.TestCase):
         self.assertNotIn("error", res)
         self.assertLess(time.time() - t, 2.5)
 
+    def test_through_a_size_off_the_turn_solves_tree(self):
+        """Their turn bet off the tree the turn's advice solved (49% where it has 33/75/125%): the river's narrowing walks
+        that solve at its nearest size (Advisor._hand_cfg) instead of solving the turn again with the size in."""
+        adv = native.advisor("fast", budget=1, prior_budget=1)
+        adv.advise(TURN)
+        turn = cached(adv, 4)
+        res = adv.advise(dict(RIVER, turn=[X("BB"), B("BTN", 4.5), C("BB")]))
+        self.assertIs(cached(adv, 4), turn)
+        self.assertNotIn("error", res)
+        self.assertTrue(any(n.startswith("turn: mapped 'bet 49%'") for n in res["notes"]), res["notes"])
+
     def test_stopped_part_way_and_asked_again(self):
         """A solve stopped part way raises Cancelled and stays cached; asked again, the spot goes on from where it
         stopped (its iterations and root mix brought up to date) and answers."""
