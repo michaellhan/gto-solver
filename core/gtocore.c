@@ -330,7 +330,31 @@ static void matvec(const f32 *M, const f32 *ro, f32 *u) {
 
 static void bterminal(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *ro, f32 *u);
 
-/* p's utility (rows lo..hi, n) at a terminal; ro: the opponent's reach on those rows */
+/* whether a row of reaches is all +0 (no opponent combo gets there; a reach is a product of nonnegative factors, so
+   never -0): its terminals' sums are then +0 throughout, and terminal() writes what they come to without them */
+typedef u32 u32a __attribute__((may_alias));
+static int skip_on = 1;
+/* 1: terminal() skips the sums on a row nobody reaches, 0: it sums them (the same floats: tests); -1 just asks */
+EXPORT(core_skip) i32 core_skip(i32 on) {
+  if (on >= 0) skip_on = on;
+  return skip_on;
+}
+static int unreached(const f32 *r) {
+  if (!skip_on) return 0;
+  const u32a *w = (const u32a *)r;
+  i32 i = 0;
+  for (; i + 16 <= n; i += 16) {
+    u32 x = 0;
+    for (i32 j = 0; j < 16; j++) x |= w[i + j];
+    if (x) return 0;
+  }
+  u32 x = 0;
+  for (; i < n; i++) x |= w[i];
+  return x == 0;
+}
+
+/* p's utility (rows lo..hi, n) at a terminal; ro: the opponent's reach on those rows. (A row it doesn't reach: a
+   fold's f (tot - card - card + ro) is f * +0, a showdown's sums +0 times live times a, a leaf's product +0.) */
 static void terminal(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *ro, f32 *u) {
   if (nd[0] == BFOLD || nd[0] == BLEAF) {
     bterminal(L, nd, p, lo, hi, ro, u);
@@ -340,12 +364,33 @@ static void terminal(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r
   f32 *cs = salloc(L, sizeof(f32) * n), *card = salloc(L, sizeof(f32) * 52);
   if (nd[0] == FOLD) {
     f32 f = fbits(nd[2 + p]);
-    for (i32 b = lo; b < hi; b++) compat(ro + (size_t)(b - lo) * n, card, f, u + (size_t)(b - lo) * n);
+    for (i32 b = lo; b < hi; b++) {
+      const f32 *r = ro + (size_t)(b - lo) * n;
+      f32 *ub = u + (size_t)(b - lo) * n;
+      if (!unreached(r)) {
+        compat(r, card, f, ub);
+        continue;
+      }
+      f32 z = f * 0.0f;
+      for (i32 i = 0; i < n; i++) ub[i] = z;
+    }
   } else {
     f32 a = fbits(nd[3 + 2 * p]), c = fbits(nd[4 + 2 * p]);
     for (i32 b = lo; b < hi; b++) {
       const f32 *r = ro + (size_t)(b - lo) * n;
       f32 *ub = u + (size_t)(b - lo) * n;
+      int none = nd[0] == SHOWDOWN || nd[7] < 0 ? unreached(r) : 0;
+      if (nd[0] == SHOWDOWN && none) {
+        const f32 *live = PF(P[nd[2] + 7]) + (size_t)b * n;
+        for (i32 i = 0; i < n; i++) ub[i] = 0.0f * live[i];
+        if (c == 0) {
+          for (i32 i = 0; i < n; i++) ub[i] *= a;
+          continue;
+        }
+        for (i32 i = 0; i < n; i++) cs[i] = 1.0f * 0.0f;
+        for (i32 i = 0; i < n; i++) ub[i] = a * ub[i] + c * cs[i];
+        continue;
+      }
       if (nd[0] == SHOWDOWN && c == 0) {   /* (a times it as it's written) */
         ranking(L, P + nd[2], b, r, ub, 1, a);
         continue;
@@ -363,6 +408,8 @@ static void terminal(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r
         } else {
           for (i32 i = 0; i < n; i++) ub[i] = pu[i];
         }
+      } else if (none) {
+        for (i32 i = 0; i < n; i++) ub[i] = 0;
       } else {
         matvec(PF(nd[2]) + (size_t)b * n * n, r, ub);
       }

@@ -11,7 +11,7 @@ import numpy as np
 
 from gto import core, native
 from gto import flop_library as fl
-from gto.cards import cards
+from gto.cards import ALL_COMBOS, cards
 from gto.ranges import parse_range
 from gto.solver import BucketEntry, Config, Decision, Chance, solve
 
@@ -114,6 +114,43 @@ class TestThreads(unittest.TestCase):
                     core.lib().L.core_fuse(1)
                     core.threads(1)
                 np.testing.assert_array_equal(got[0], got[1])
+
+    def test_rows_nobody_reaches(self):
+        # a terminal's row the opponent's reach is all +0 on skips the sums (a fold's card-removal sums, a showdown's
+        # running sums, a leaf's product) and writes the zeros they come to: the same floats bit for bit as summing
+        # them, in training, the average strategies' EVs and the best responses. Rows that go unreached as a solve
+        # settles (a turn on 3 threads, all-in leaves on a short stack, a raked turn dealing every river, a flop), and
+        # an opponent of four combos holding the ace of clubs, its river unreached from the first iteration
+        fast = native.config("fast")
+        dealt = Config(river_classes=False, n_rivers=None, rake_rate=0.05, rake_cap=3.0)
+        ace = cards("Ac")[0]
+        few = np.zeros(1326)
+        few[[i for i, (a, b) in enumerate(ALL_COMBOS) if ace in (a, b) and cards("Kc")[0] // 4 in (a // 4, b // 4)]] = 1
+        self.assertEqual(int(few.sum()), 4)
+        spots = (("Ks7d2cTh", 20, 90, 100, fast, IP_T, 3), ("Ks7d2cTh", 20, 25, 100, fast, IP_T, 1),
+                 ("Qs8d3c4h", 30, 40, 60, dealt, IP_T, 1), ("Qs8d3c4h", 30, 40, 20, dealt, few, 1),
+                 ("Kd7c2h", 5.5, 97.5, 10, fast, IP_T, 1))
+        for board, pot, stack, iters, cfg, r1, t in spots:
+            with self.subTest(board, stack=stack, combos=int((r1 > 0).sum())):
+                got = []
+                try:
+                    core.threads(t)
+                    for on in (1, 0):
+                        self.assertEqual(core.lib().L.core_skip(on), on)
+                        sol = _solve(board, OOP_T, r1, pot, stack, cfg, iters)
+                        S = sol.solver
+                        self.assertTrue(S.use_core and S._core_ok)
+                        ev = [S.node_action_evs(S.root, sol.r0, sol.r1), S.node_action_br_evs(S.root, sol.r0, sol.r1)]
+                        got.append((np.concatenate([np.r_[d.regret.ravel(), d.ssum.ravel()]
+                                                    for d in _decisions(sol)]).view(np.int32),
+                                    [np.asarray(x) for x in ev], S.exploitability(sol.r0, sol.r1)))
+                finally:
+                    core.lib().L.core_skip(1)
+                    core.threads(1)
+                np.testing.assert_array_equal(got[0][0], got[1][0])
+                for x, y in zip(got[0][1], got[1][1]):
+                    np.testing.assert_array_equal(x, y)
+                self.assertEqual(got[0][2], got[1][2])
 
 
 @unittest.skipUnless(ON, "no C compiler for the native core")

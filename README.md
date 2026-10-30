@@ -1526,6 +1526,29 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   The library's build is unchanged: a single-raised flop's time is in its leaves' products and a 3bet pot's keeps
   the pass after (one process at the build's settings, BTN vs BB Kc7d2h 52.5-52.6 s -> 52.0-52.6, a 3bet pot's
   Kc7d2h 13.4 -> 13.4-13.5). Both entries decode to the same strategies, EVs, masks and reports.
+* **Terminals nobody reaches** (`core/gtocore.c` `terminal`, `unreached`). As a solve settles, whole rows of a
+  terminal go unreached: the opponent never takes the line on that river card, so its reach there is +0 on every
+  combo (a reach is a product of nonnegative factors, never -0). By the 200th iteration that is 13% of the fold and
+  showdown rows on BTN vs BB's turn and 20% limped (5-8% over the first 100). Their sums come to zeros: a fold's
+  card-removal sums f x (+0), a showdown's running sums +0 times each combo's live flag times its factor (and the
+  rake's card-removal term likewise), a leaf's product +0. The core now checks a row's reach first (the bits of 16
+  floats at a time, ORed) and on a row that is all +0 writes those zeros without the sums. The same floats bit for
+  bit: regrets and strategy sums natively, in `core.wasm` and in `core-mt.wasm` on two threads, on four turns in
+  Fast's tree and the threaded browser's, two raked turns, DCFR+'s floor, at 60-200 iterations;
+  and the passes after a solve (EVs, best responses, exploitability) the same. `core_skip(0)` sums every row (the
+  tests). Natively, one thread, the library builds paused, 200 iterations: an iteration 15.0 -> 14.3 ms (BTN vs BB),
+  limped 22.6 -> 21.2, the 3bet pot 2.29 -> 2.22, two-tone 23.0 -> 21.4 (1.03-1.07x). In the browser, Fast (five
+  runs each, alternating, median and range, before -> after):
+
+  | request | seconds to the answer | iterations, % of the pot |
+  |---|---|---|
+  | turn after a library flop (BTN vs BB) | 4.27 (4.22-4.36) -> 4.00 (3.96-4.43) | 200, 0.23 |
+  | limped turn | 7.94 (7.88-8.06) -> 7.39 (7.37-8.01) | 200, 0.26 |
+
+  The library's build is unchanged: its flop's lines end in batched leaves and its later streets' terminals are
+  bucketed, so only the flop's and turn's folds can skip (one process at the build's settings, BTN vs BB Kc7d2h
+  49.5-52.4 s -> 49.8-51.8, a 3bet pot's 13.1-13.4 -> 13.2-13.6; the entries decode to the same strategies, EVs,
+  masks and reports).
 * **Regret minimizer** (`docs/cfr_research.md`, `scripts/bench_solver.py --algos`, exploitability per
   iteration): predictive CFR+ and its discounted form (PCFR+, PDCFR+), the state of the art on many
   non-poker games, are 2-7x more exploitable than DCFR here at 100-200 iterations on every spot (the river,
