@@ -21,6 +21,7 @@
 // numpy is read from the pyodide package's directory; the solver's code from solver.zip, built here as deploy.sh
 // builds it (scripts/build_bundle.py, with the repo's .venv Python or $PYTHON). Each spot's first line gives the
 // worker's setup by stage, the worker's own timings (runtime, numpy, imports, advisors).
+// --hole CARDS gives hero those cards in every spot (one out of your range for the line: the spots' comments).
 // --early asks as the page does for its own advice (early: an approximate answer first where one is in hand at once,
 // Advisor.instant) and reports when it came (early_s) and what it said.
 // --gap G: the opponent's move (the spot's last action, theirs) is entered G seconds after it became their turn, and the
@@ -94,6 +95,16 @@ const SPOTS = {
   "river-limp-ip": base({ hero: "BB", hole: "Kc6c", board: "Ks7d2cTh5s", preflop: LIMP, flop: [X("SB"), B("BB", 1.5), C("SB")],
                           turn: [X("SB"), B("BB", 3.75), C("SB")], river: [X("SB")] }),
   "turn-ip": base({ hero: "BTN", hole: "AsQs", board: "Ks7d2cTh", flop: SRP_FLOP, turn: [X("BB")] }),    // after a library flop
+  // one hand street by street with your hand out of your range for its line (--hole: yours in every spot of the run):
+  // --session flop-bb,turn,river --hole AhAd (the big blind 3bets aces rather than calls), flop-limp-ip,turn-limp-ip,
+  // river-limp-ip --hole KhQh, flop-3bp-ip,turn-3bp-ip,river-3bp-ip --hole AhKh, flop-40,turn-40,river-40 --hole AhAd;
+  // turn,river --hole Jh9h calls the library flop's c-bet it folds
+  "flop-bb": base({ hero: "BB", hole: "QhJh", board: "Ks7d2c" }),                              // first to act, in the library
+  "river-3bp-ip": base({ hero: "BTN", hole: "AsQs", board: "Ks7d2cTh5s", preflop: BB_3BET, flop: [X("BB"), B("BTN", 6.8), C("BB")],
+                         turn: [X("BB"), B("BTN", 15), C("BB")], river: [X("BB")] }),
+  "flop-40": base({ stack: 40, hero: "BB", hole: "QhJh", board: "Ks7d2c" }),                   // 40bb: solved live
+  "turn-40": base({ stack: 40, hero: "BB", hole: "QhJh", board: "Ks7d2cTh", flop: SRP_FLOP }),
+  "river-40": base({ stack: 40, hero: "BB", hole: "QhJh", board: "Ks7d2cTh5s", flop: SRP_FLOP, turn: SRP_TURN }),
   "flop-3bp-ip": base({ hero: "BTN", hole: "AsQs", board: "Ks7d2c", preflop: BB_3BET, flop: [X("BB")] }),
   "turn-3bp-ip": base({ hero: "BTN", hole: "AsQs", board: "Ks7d2cTh", preflop: BB_3BET, flop: [X("BB"), B("BTN", 6.8), C("BB")],
                         turn: [X("BB")] }),
@@ -248,7 +259,8 @@ async function runSpot(w, spot, speeds) {
   let fastSeconds = null;
   for (const speed of speeds) {
     const [budget, prior_budget] = BUDGETS[speed];
-    const state = { ...SPOTS[spot], budget, prior_budget, speed, ...JSON.parse(process.env.BENCH_STATE || "{}") };
+    const state = { ...SPOTS[spot], ...(arg("hole") ? { hole: arg("hole") } : {}), budget, prior_budget, speed,
+                    ...JSON.parse(process.env.BENCH_STATE || "{}") };
     // --prefetch S: the page's prefetch as the flop is known, S seconds before the request (the time the hand takes
     // to reach your decision)
     if (arg("prefetch") && state.board.length >= 6) {
@@ -304,7 +316,7 @@ for (const spot of flag("session") ? [spots.join(",")] : spots) {
   // a fresh worker per spot (and per speed unless --warm)
   for (const group of flag("warm") ? [speeds] : speeds.map((s) => [s])) {
     const p = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--child", "--spot", spot, "--speeds", group.join(","),
-                                           "--pyodide", pyodideDir, "--bundle", bundlePath, ...(arg("worker") ? ["--worker", arg("worker")] : []), ...["prefetch", "idle", "gap"].flatMap((k) => (arg(k) ? ["--" + k, arg(k)] : [])), ...["early", "presolve"].flatMap((k) => (flag(k) ? ["--" + k] : []))], { encoding: "utf8", maxBuffer: 1 << 26 });
+                                           "--pyodide", pyodideDir, "--bundle", bundlePath, ...(arg("worker") ? ["--worker", arg("worker")] : []), ...["prefetch", "idle", "gap", "hole"].flatMap((k) => (arg(k) ? ["--" + k, arg(k)] : [])), ...["early", "presolve"].flatMap((k) => (flag(k) ? ["--" + k] : []))], { encoding: "utf8", maxBuffer: 1 << 26 });
     for (const line of p.stdout.split("\n").filter((l) => l.startsWith("{"))) {
       const r = JSON.parse(line);
       if (r.speed) rows.push(r);

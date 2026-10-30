@@ -3541,11 +3541,14 @@ class Advisor:
                         cfg = dataclasses.replace(cfg, **self.prior_model)
                     if cfg.root_allin:
                         cfg = dataclasses.replace(cfg, root_allin=False)   # (a jam request: the street advised on only)
+                    # (your hand out of your range here: the ranges with it in, as the street's own advice solved, so
+                    # that solve is the one read, not a second without it: Advisor._as_advised)
+                    s0, s1 = self._as_advised(r0, r1, hero_p, hole)
                     # (the hand's own solve of this street, made before a later action took a size off its tree)
-                    cfg = self._hand_cfg(sub_board, r0, r1, st, oop, ip, eff, cfg, adjust=lambda c: dataclasses.replace(
+                    cfg = self._hand_cfg(sub_board, s0, s1, st, oop, ip, eff, cfg, adjust=lambda c: dataclasses.replace(
                         c, **(self.prior_model or {}), **({"root_allin": False} if c.root_allin else {})))
                     if getattr(self, "_quick", False) and \
-                            self._cache.get(self._solve_key(sub_board, r0, r1, st.pot_start, eff, cfg=cfg)) is None:
+                            self._cache.get(self._solve_key(sub_board, s0, s1, st.pot_start, eff, cfg=cfg)) is None:
                         # A quick answer has no time to solve an earlier street (0.3 s: the 10 iterations a solve
                         # runs at least took 2-4 s natively on a limped flop, more in the browser, and ended 20-90% of
                         # the pot from equilibrium, which the narrowing then trusts 0%: 88% of flop narrowing solves at
@@ -3558,7 +3561,7 @@ class Advisor:
                         r0 = _post_floor(r0, rs[oop], nxt_board, oop, st.name, notes)
                         r1 = _post_floor(r1, rs[ip], nxt_board, ip, st.name, notes)
                         continue
-                    sol = self._solve_cached(sub_board, r0, r1, st.pot_start, eff, self.prior_budget, cfg=cfg)
+                    sol = self._solve_cached(sub_board, s0, s1, st.pot_start, eff, self.prior_budget, cfg=cfg)
                     expl = self._expl(sol)
                     trust = trust_of(expl, st.name)
                     if trust < 1.0:
@@ -3569,6 +3572,8 @@ class Advisor:
                     node, c0, c1 = self._walk(sol, st.actions, oop, ip, st.pot_start, eff, notes, st.name, self.prior_smoothing,
                                               board=sub_board, rules=(0, 1),
                                               lock=mk_lock(sol), trust=trust, slow=slow_hu, taken=taken)
+                    if s0 is not r0 or s1 is not r1:   # (and out again for the next street: _with_hero puts it back)
+                        (c0 if hero_p == 0 else c1)[sol.ctx.active == COMBO_INDEX[(min(hole), max(hole))]] = 0.0
                 walked[st.name] = (sol, node, taken)
                 r0 = _post_floor(r0, expand(sol.ctx, c0), nxt_board, oop, st.name, notes)
                 r1 = _post_floor(r1, expand(sol.ctx, c1), nxt_board, ip, st.name, notes)
@@ -5365,6 +5370,13 @@ class Advisor:
         r = r.copy(); r[i] = 1e-3
         notes.append("your hand isn't in your range for this line, so it was solved as a near-zero-weight combo")
         return (r, r1) if hero_p == 0 else (r0, r)
+
+    def _as_advised(self, r0, r1, hero_p, hole):
+        """The ranges an earlier street's advice solved with, for its narrowing: your hand in at a near-zero weight
+        where its range there doesn't hold it (_with_hero), so the next street reads that solve (cached) instead of
+        solving the street again without it (3.1 s of a limped river's 3.25 at Fast in the browser). Without it the solve
+        is the same but for that one combo's weight (1e-3 of a combo's), and the walk takes it out again after."""
+        return self._with_hero(r0, r1, hero_p, hole, [])
 
     def _from_library(self, lib, full, flop, r0, r1, st: StreetState, eff, cfg: Config, oop, ip, notes, **walk_kw):
         """(solution, node, r0, r1) walked from the library's solve of this flop (flop_library.LibrarySolution)

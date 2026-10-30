@@ -91,12 +91,13 @@ class TestPresolve(unittest.TestCase):
 
     def test_a_move_off_its_tree_is_never_read(self):
         """The small blind leads a size the presolve's tree doesn't hold: the instant answer doesn't read the
-        presolve's turn at its nearest size (as it does your own earlier advice's on the street; the flop's view has
-        no turn lead, so there's none), and the advice solves the turn with the size in."""
+        presolve's turn at its nearest size (as it does your own earlier advice's on the street; the flop solve's view
+        of the turn answers instead, at its one bet size: QJs, which the big blind raises preflop, is in that solve
+        as a near-zero-weight combo), and the advice solves the turn with the size in."""
         adv = advisor()
         adv.presolve(PRE, "SB")
         pre = set(turn_solves(adv))
-        self.assertIsNone(adv.instant(OFF))
+        self.assertEqual(adv.instant(OFF)["approximate"]["source"], "prev")
         held = set(adv._presolved)
         adv._presolved.clear()   # (as if your own advice had made it: read)
         self.assertEqual(adv.instant(OFF)["approximate"]["source"], "solve")

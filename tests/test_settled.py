@@ -16,6 +16,7 @@ SRP = [F("UTG"), F("HJ"), F("CO"), R("BTN", 2.5), F("SB"), C("BB")]
 TURN = {"players": 6, "stack": 100, "preflop": SRP, "flop": [X("BB"), B("BTN", 1.8), C("BB")], "turn": [], "river": [],
         "hero": "BB", "hole": "QhJh", "board": "Ks7d2cTh"}
 RIVER = dict(TURN, turn=[X("BB"), B("BTN", 6), C("BB")], board="Ks7d2cTh5s")
+LIMP = [F("UTG"), F("HJ"), F("CO"), F("BTN"), C("SB"), X("BB")]
 
 
 def cached(adv, n_board):
@@ -103,6 +104,30 @@ class TestSettled(unittest.TestCase):
         self.assertIs(cached(adv, 4), turn)
         self.assertNotIn("error", res)
         self.assertTrue(any(n.startswith("turn: mapped 'bet 49%'") for n in res["notes"]), res["notes"])
+
+    def test_your_hand_out_of_your_range(self):
+        """Your hand out of your range for the line (the big blind checking KQs behind a limp, which it raises): each
+        street's advice solves with it in at a near-zero weight (Advisor._with_hero), and the next street's narrowing
+        walks that solve (Advisor._as_advised) instead of solving the street again without it. One solve a street;
+        the hand is still out of its range (the note); the turn's approximate answer is read off the flop's solve,
+        which holds the hand (advisor.instant_from_prev)."""
+        adv = native.advisor("fast", budget=1, prior_budget=1)
+        flop = {"players": 6, "stack": 100, "preflop": LIMP, "flop": [X("SB")], "turn": [], "river": [], "hero": "BB",
+                "hole": "KhQh", "board": "Ks7d2c"}
+        turn = dict(flop, flop=[X("SB"), B("BB", 1.5), C("SB")], turn=[X("SB")], board="Ks7d2cTh")
+        river = dict(turn, turn=[X("SB"), B("BB", 3.75), C("SB")], river=[X("SB")], board="Ks7d2cTh5s")
+        out = lambda r: any("isn't in your range" in n for n in r["notes"])
+        self.assertTrue(out(adv.advise(flop)))
+        f = cached(adv, 3)
+        self.assertEqual(adv.instant(turn)["approximate"]["source"], "prev")
+        self.assertTrue(out(adv.advise(turn)))
+        t = cached(adv, 4)
+        self.assertIs(cached(adv, 3), f)
+        res = adv.advise(river)
+        self.assertNotIn("error", res)
+        self.assertTrue(out(res), res["notes"])
+        self.assertIs(cached(adv, 3), f)
+        self.assertIs(cached(adv, 4), t)
 
     def test_stopped_part_way_and_asked_again(self):
         """A solve stopped part way raises Cancelled and stays cached; asked again, the spot goes on from where it

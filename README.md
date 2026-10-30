@@ -1438,6 +1438,43 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   Turns) it gives up 0.5-0.8% of the pot, so it stays marked approximate. No turn files are shipped yet: the builds
   write them from here, and `scripts/instant_coverage.py` counts 28.3 more instant decisions per 100 hands with them on
   the 13 spots the library holds (680.1 -> 708.4 of 813.5, 83.6% -> 87.1%; 46% of the turn's decisions).
+* **Your hand out of your range** (`Advisor._as_advised`). A hand the line's range doesn't hold (a preflop call or
+  check the charts never make: the big blind flatting aces against the button, which it 3bets, or checking KQs
+  behind a limp, which it raises) is solved on each street as a near-zero-weight combo (`_with_hero`). The next
+  street's narrowing looked the street's solve up by the ranges without it, didn't find the advice's, and solved the
+  street again at the earlier streets' budget. It now reads the advice's own solve, your hand in, and takes the hand
+  out again after the walk, so it is still out of its range on the next street, as before. Fast in the browser
+  (`scripts/bench_browser.mjs --session --hole`, new: one hand street by street in one worker; Pyodide, one thread;
+  seconds to the answer, today -> now, two runs; an in-range hand's in brackets):
+
+  | spot (your hand) | turn | river |
+  |---|---|---|
+  | limped pot, the big blind checks behind (KhQh) | 10.70-11.09 -> 8.95-9.27 (9.23) | 3.23-3.25 -> 0.13-0.16 (0.15) |
+  | BTN vs BB, a library flop, BB flats (AhAd; one run) | 5.57 -> 5.63 (5.87) | 3.13 -> 0.12 (0.12) |
+  | 3bet pot, the flop solved live, BTN flats (AhKh) | 1.72-1.82 -> 1.23-1.34 (1.18) | 1.22-1.41 -> 0.05-0.06 (0.05) |
+  | 40bb, BB flats (AhAd) | 3.97-4.13 -> 3.25-3.26 (3.30) | 3.08 -> 0.07 (0.05) |
+
+  The approximate answer (B3) now comes for such a hand too, at 0.002-0.03 s on these turns and rivers: the earlier
+  street's solve it reads holds the hand (before, nothing was cached for it to read). Nothing else solved a street
+  twice: a library flop's narrowing reads the library (by the ranges without your hand), a multiway street's the
+  hand's own solve by its line, and a hand that takes a line its strategy doesn't on a later street (a call of a
+  c-bet it folds) keeps its smoothed weight, so it stays in its range (Jh9h on Ks7d2c: the river 0.13 s either way).
+  Still slower than an in-range hand: a library flop's own decision (the entries don't hold the hand: solved live, 1.2
+  s against 0.04 here), and the stored turn (its files hold the range's hands only). The hand's answer on the turn and
+  river, natively at the browser's budgets over four flops each (Ks7d2c, 9h8h4c, Ad5d3c, Qc6s2h): priced by today's
+  EVs per action (B3's measure), % of the pot, mean (worst):
+
+  | | turn | river |
+  |---|---|---|
+  | limped | -0.004 (0.00) | 0.011 (0.05) |
+  | BTN vs BB | 0.000 (0.00) | 0.008 (0.12) |
+  | 3bet pot, 40bb | 0.00 (0.00) | 0.00 (0.00) |
+
+  Against a reference (today's way with budgets of 20 s, settled at 0.1%): on BTN vs BB's rivers today's answer gave
+  up 0.84% (3.25 worst: aces on Ks7d2cTh5s betting a third 66% where the reference checks, the button's turn range
+  narrowed by a turn solved again in 3 s, 121 iterations) and the new one -0.03 (0.00); limped turns 0.027 (0.11)
+  against 0.006 (0.03); the rest equal. The answer is the street's own solve, as for a hand in range, so it isn't
+  marked approximate.
 * **Regret minimizer** (`docs/cfr_research.md`, `scripts/bench_solver.py --algos`, exploitability per
   iteration): predictive CFR+ and its discounted form (PCFR+, PDCFR+), the state of the art on many
   non-poker games, are 2-7x more exploitable than DCFR here at 100-200 iterations on every spot (the river,
@@ -1682,7 +1719,8 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   (more actions to separate; the time caps are unchanged).
 * If your hand isn't in your range for the line you took (a preflop call the charts
   never make, say), it is added to the solve as a near-zero-weight combo so it
-  still gets a strategy and EVs without changing anyone else's play.
+  still gets a strategy and EVs without changing anyone else's play; the next street
+  narrows the ranges through that same solve (Accuracy vs speed, "Your hand out of your range").
 * If a preflop line leaves a player with fewer than 8 combos (a flat the charts never
   4bet from, then a 4bet; a cold call of a 3bet, then a call of the 4bet), the hands
   that take the last such action from scratch are mixed in, weighing 1 - combos / 8
