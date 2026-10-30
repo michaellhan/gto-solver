@@ -90,7 +90,7 @@ function chanceGame(ex, n, K) {
                     2, K, f(1), f(-1),                                          // FOLD
                     2, K, f(-2), f(2)], Int32Array);
   const fac = put(new Array(4 * 200).fill(0).map((_, i) => [0, 1, 0.5, 0.9][i % 4]), Float32Array);
-  return { prog, fac, root, read: () => [...new Int32Array(ex.memory.buffer, base + regret, 2 * len)] };
+  return { prog, fac, root, ch, r0, r1, read: () => [...new Int32Array(ex.memory.buffer, base + regret, 2 * len)] };
 }
 
 test("core-mt: threads give the same numbers, and the helpers run rows", async () => {
@@ -147,30 +147,68 @@ for (; runs < 2000 && !threw; runs++) {
 }
 parentPort.postMessage({ runs, threw, dead: Atomics.load(dead, 0), helped: ex.core_helped() });`;
 
-test("core-mt: a helper that fails ends the solve's wait instead of hanging it (worker.js's helper)", async () => {
+// worker.js's helper script, run as the page runs it, and `script` (a worker solving or evaluating on T threads that
+// makes helper 0 fail): what it posted, or { hung: true } if it waited for good (past a minute).
+async function withFailingHelper(script, T) {
   const { Worker } = require("node:worker_threads");
   const src = fs.readFileSync(path.join(ROOT, "gto", "static", "worker.js"), "utf8");
   const helper = src.match(/const HELPER = `([\s\S]*?)`;/)[1];
   // (the page's helper is a browser worker: its onmessage, called here with what worker.js posts it)
   const HELPER_PAGE = `const { workerData } = require("node:worker_threads");\n${helper}\nonmessage({ data: workerData });`;
   const mod = await WebAssembly.compile(fs.readFileSync(path.join(ROOT, "gto", "core-mt.wasm")));
+  const memory = new WebAssembly.Memory({ initial: 256, maximum: 32768, shared: true });
+  const helpers = [...Array(T - 1).keys()].map((i) => new Worker(HELPER_PAGE, { eval: true, workerData: { mod, memory, i, pre: "core_" } }));
+  for (const w of helpers) w.on("error", () => {});   // (a helper's own error goes nowhere in the browser either)
+  const solver = new Worker(script, { eval: true, workerData: { mod, memory, T } });
+  let timer;
+  try {
+    return await Promise.race([
+      new Promise((ok, no) => { solver.once("message", ok); solver.once("error", no); }),
+      new Promise((ok) => { timer = setTimeout(() => ok({ hung: true }), 60000); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    await Promise.all([solver, ...helpers].map((w) => w.terminate()));
+  }
+}
+
+test("core-mt: a helper that fails ends the solve's wait instead of hanging it (worker.js's helper)", async () => {
   for (const T of [2, 8]) {
-    const memory = new WebAssembly.Memory({ initial: 256, maximum: 32768, shared: true });
-    const helpers = [...Array(T - 1).keys()].map((i) => new Worker(HELPER_PAGE, { eval: true, workerData: { mod, memory, i, pre: "core_" } }));
-    for (const w of helpers) w.on("error", () => {});   // (a helper's own error goes nowhere in the browser either)
-    const solver = new Worker(SOLVER, { eval: true, workerData: { mod, memory, T } });
-    let timer;
-    try {
-      const got = await Promise.race([
-        new Promise((ok, no) => { solver.once("message", ok); solver.once("error", no); }),
-        new Promise((ok) => { timer = setTimeout(() => ok({ hung: true }), 60000); }),
-      ]);
-      assert.ok(!got.hung, `${T} threads: the solve waited for good on the failed helper's rows`);
-      assert.match(got.threw || "", /unreachable/, `${T} threads: no run failed (${got.runs} runs, ${got.helped} rows helped)`);
-      assert.equal(got.dead, 1, `${T} threads: helper 0 marked itself`);
-    } finally {
-      clearTimeout(timer);
-      await Promise.all([solver, ...helpers].map((w) => w.terminate()));
-    }
+    const got = await withFailingHelper(SOLVER, T);
+    assert.ok(!got.hung, `${T} threads: the solve waited for good on the failed helper's rows`);
+    assert.match(got.threw || "", /unreachable/, `${T} threads: no run failed (${got.runs} runs, ${got.helped} rows helped)`);
+    assert.equal(got.dead, 1, `${T} threads: helper 0 marked itself`);
+  }
+});
+
+// The same in an evaluation below the root (Solver.node_action_evs evaluates a node's children: on the helpers once an
+// evaluation at the root has sized its kind's lanes), of a program no training pass has run: helper 0 fails holding
+// rows of the chance node's, and the evaluation throws (core.py: CoreError) instead of waiting for good.
+const EVALUATOR = `const { parentPort, workerData: { mod, memory, T } } = require("node:worker_threads");
+const MAGIC = ${MAGIC};
+${chanceGame.toString()}
+const ex = Object.assign({}, new WebAssembly.Instance(mod, { env: { memory } }).exports, { memory });
+ex.core_threads(T);
+const pause = new Int32Array(new SharedArrayBuffer(4));
+const dead = new Int32Array(memory.buffer, ex.core_dead(0), 1);
+const g = chanceGame(ex, 24, 40);
+const out = ex.core_alloc(4 * 24) >>> 0;
+const root = ex.core_eval(g.prog, g.root, 0, g.r0, g.r1, out, 1), sized = ex.core_lanes(3);
+let runs = 0, threw = null;
+ex.core_fail(0, 1);
+for (; runs < 2000 && !threw; runs++) {
+  try { ex.core_eval(g.prog, g.ch, 0, g.r0, g.r1, out, 1); } catch (e) { threw = String(e); }
+  if (runs % 10 === 9) Atomics.wait(pause, 0, 0, 5);   // (the helpers scheduled)
+}
+parentPort.postMessage({ root, sized, runs, threw, dead: Atomics.load(dead, 0), helped: ex.core_helped() });`;
+
+test("core-mt: a helper that fails in an evaluation below the root ends its wait too", async () => {
+  for (const T of [2, 8]) {
+    const got = await withFailingHelper(EVALUATOR, T);
+    assert.ok(!got.hung, `${T} threads: the evaluation waited for good on the failed helper's rows`);
+    assert.equal(got.root, 0);
+    assert.ok(got.sized > 0, `${T} threads: the root's evaluation sized no lane`);
+    assert.match(got.threw || "", /unreachable/, `${T} threads: no evaluation failed (${got.runs} runs, ${got.helped} rows helped)`);
+    assert.equal(got.dead, 1, `${T} threads: helper 0 marked itself`);
   }
 });

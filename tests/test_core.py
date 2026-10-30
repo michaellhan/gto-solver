@@ -303,6 +303,33 @@ class TestThreads(unittest.TestCase):
             else:
                 self.assertEqual((r["same"], r["grew"]), (True, True), r)
 
+    def test_evaluations_below_the_root(self):
+        # An evaluation below the root (a node's action EVs: Solver.node_action_evs evaluates each child) runs its
+        # chance nodes' rows on the helpers once the lanes are sized (a subtree's chance nodes are the root's, a chunk
+        # of their rows the same scratch), serially before (measured there they'd leave out the rest of the tree).
+        # Every evaluation at the root's children, of a program built to evaluate (lanes unsized) and of one after
+        # an iteration, on 2, 4 and 8 threads, a turn full and trimmed: the same floats as one thread's, before and
+        # after the root's evaluations size the lanes; on the helpers only once sized; no lane grown. In a child
+        # process: a trap ends it.
+        import json
+        import subprocess
+        import sys
+        p = subprocess.run([sys.executable, "-c", "import tests.test_core as t; t._below_child()"], cwd=core.ROOT,
+                           capture_output=True, text=True, timeout=900,
+                           env=dict(os.environ, PYTHONPATH=core.ROOT, GTO_THREADS="1"))
+        self.assertEqual(p.returncode, 0, p.stderr[-3000:])
+        rows = [json.loads(x) for x in p.stdout.splitlines() if x.startswith("{")]
+        self.assertEqual(len(rows), 2 * 3 * 2, rows)
+        for r in rows:
+            self.assertTrue(r["same"], r)
+            self.assertEqual(r["grown"], 0, r)
+            first, again = r["helped"]
+            if r["kind"] == "evaluate-only":
+                self.assertEqual(first, 0, r)     # (serially: no lanes yet)
+            else:
+                self.assertGreater(first, 0, r)
+            self.assertGreater(again, 0, r)
+
 
 def _lane_spots():
     btn = fl.spot_setup(next(s for s in fl.SPOTS if s[0] == "srp_btn_bb")[2])
@@ -439,6 +466,58 @@ def _evals_child():
             all(np.array_equal(got[1][e], want[1][e]) for e in evals)
         print(json.dumps({"tree": name, "lanes": lanes, "same": bool(same), "grew": all(grew), "each": grew}),
               flush=True)
+    core.threads(1)
+
+
+def _below_child():
+    """test_evaluations_below_the_root's (a child process): a line of JSON a tree, thread count and kind of program."""
+    import json
+    from gto.advisor import Advisor
+    L = core.lib().L
+    fast = native.config("fast")
+    evals = [(md, p) for md in (core.AVG, core.BR) for p in (0, 1)]
+    for name, cfg in (("full", fast), ("trimmed", Advisor._trim_cfg(fast, "turn", 3))):
+        core.threads(1)
+        A = solve(cards("Ks7d2cTh"), OOP, IP, 9.1, 95.5, cfg=cfg, time_budget=1e9, max_iters=4)
+        saved = [x.copy() for d in _decisions(A) for x in (d.regret, d.ssum)]
+        st = (A.solver.iters, A.solver.horizon)
+        a, b = A.r0[None, :].astype(np.float32), A.r1[None, :].astype(np.float32)
+
+        def ready(kind):
+            """A as it was, its program built for an evaluation alone or by one more iteration (lanes sized)"""
+            for x, y in zip([x for d in _decisions(A) for x in (d.regret, d.ssum)], saved):
+                x[...] = y
+            A.solver.iters, A.solver.horizon = st
+            core._prog = None
+            if kind == "solve":
+                A.solver.run(A.r0, A.r1, time_budget=1e9, max_iters=st[0] + 1, min_iters=1)
+
+        def evaluate(nodes):
+            out = []
+            for md, p in evals:
+                u = core.evaluate(A.solver, [(c, p, a, b, md) for c in nodes])
+                assert u is not None and core._lib is not False, (md, p)
+                out += [x.view(np.int32).copy() for x in u]
+            return out
+
+        ref = {}
+        for kind in ("evaluate-only", "solve"):
+            ready(kind)
+            ref[kind] = evaluate(A.root.children), evaluate([A.root])
+        for t in (2, 4, 8):
+            core.threads(t)
+            for kind in ("evaluate-only", "solve"):
+                ready(kind)
+                h0 = L.core_helped()
+                first = evaluate(A.root.children)      # (evaluate-only: before any lane is sized)
+                h1 = L.core_helped()
+                root = evaluate([A.root])
+                h2 = L.core_helped()
+                again = evaluate(A.root.children)
+                h3 = L.core_helped()
+                same = all(np.array_equal(x, y) for x, y in zip(first + again + root, ref[kind][0] * 2 + ref[kind][1]))
+                print(json.dumps({"tree": name, "threads": t, "kind": kind, "same": bool(same), "helped":
+                                  [int(h1 - h0), int(h3 - h2)], "grown": int(L.core_lanes_grown(-1, 0))}), flush=True)
     core.threads(1)
 
 

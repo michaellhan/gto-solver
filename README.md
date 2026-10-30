@@ -1796,6 +1796,30 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   Tests: `tests/test_settled.py` `test_the_roots_evs_worked_out_once`. A river's answer evaluates its root once, at
   its iteration count. Its EVs are a fresh evaluation's bit for bit, and so are the answer's. An iteration on makes
   them stale.
+* **Evaluations below the root on the helpers** (`core/gtocore.c` `core_eval`). A node's action EVs evaluate each of
+  its children (`node_action_evs`, `node_action_br_evs`, Study's every node, the exploit modes' best responses). Below
+  the root that ran on one thread, because lanes measured there would leave out the rest of the tree.
+  Once a kind's lanes are sized, by a training pass or by that kind's first evaluation at the root, an evaluation
+  below the root hands its chance nodes' rows to the helpers too. A subtree's chance nodes are the root's, and a chunk
+  of their rows needs the same scratch, so the lanes fit (a lane that came short grows as before). Every row gets the
+  same arithmetic, so the floats are the same on any number of threads.
+  In the browser on 8 threads, the Fast turn root's remaining evaluation took 13 -> 5.4 ms on `turn` and 14-16 ->
+  5.9-6.0 on `turn-x`.
+  With the root's EVs worked out once, in the same hold:
+  - `node_action_evs` per answer: `turn` 39-40 ms (3 calls) -> 5.4 (1); `turn-x` 43-47 -> 5.9-6.0; `turn-limp`
+    54.5-55.1 (5) -> 13.0-13.1 (3)
+  - the answer's time outside the solve: `turn` 0.13 / 0.13 -> 0.10 / 0.10 s; `turn-x` 0.14 / 0.15 -> 0.11 / 0.11
+  - whole answers with the cached ranks too: `turn` 1.69 / 1.77 -> 1.68 / 1.71; `turn-x` 1.97 / 2.06 -> 1.99 / 2.00
+    (each within its iterations' own run-to-run spread, 0.08 s); `turn-limp` 2.69 / 2.69 -> 2.53 / 2.55
+  The same iterations and exploitability.
+  Tests:
+  - `tests/test_core.py` `test_evaluations_below_the_root` evaluates a turn's root children, then the root, then the
+    children again, full and trimmed, on 2, 4 and 8 threads. It does this for a program built to evaluate (no lanes
+    sized yet) and for one after an iteration. The floats are one thread's. The helpers ran rows once lanes were
+    sized and none before, and no lane grew. On the core before, the helpers ran none.
+  - `tests/js/core.test.js`: a helper that traps holding rows of an evaluation below the root (`core_fail`, worker.js's
+    own helper script, on 2 and 8 threads). The evaluation throws (`CoreError`) instead of waiting for good. On the
+    core before, no evaluation below the root reached a helper.
 * **The multiway core on threads** (`core/mwcore.c` `pass`, `rwalk`, `job`, `helper`, `mw_threads`;
   `gto/mwcore-mt.wasm`). The multiway core (3- and 4-way flop and turn solves, How it works) ran on one thread in the
   browser while the heads-up core had helpers. Now a pass runs its root-street leaves as one job: a walk down

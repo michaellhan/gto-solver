@@ -1981,13 +1981,15 @@ static i32 rows_of(i32 at) { return P[at] == DECISION ? P[at + 3] : P[at + 1]; }
 
 /* p's utilities (rows, n) at the node record `at` for reaches r0, r1 (rows, n) each: md AVG on the average strategies,
    BR p's best response (Solver.node_action_evs, _best_response). Returns 0, or -1 on a bad program. (Threaded from
-   the root, whose chance nodes the lanes are measured on, serially the first time; below it, serially.) */
+   the root, whose chance nodes the lanes are measured on, serially the first time; below it once they're sized: a
+   subtree's chance nodes are the root's and a chunk of their rows takes the same scratch, so its lanes fit. Below it
+   before, serially: measured there, they would leave out the rest of the tree.) */
 EXPORT(core_eval) i32 core_eval(u32 prog, i32 at, i32 p, u32 r0, u32 r1, u32 out, i32 md) {
   load(prog);
   if (P[0] != MAGIC) return -1;
   mode = md;
-  M.par = at != P[4];
   lane_k = lane_size[0] ? 0 : 3 + 2 * (md == BR) + (p != 0);
+  M.par = at != P[4] && !lane_size[lane_k];
   batch(at, p, rows_of(at), PF(p == 0 ? r1 : r0));
   cfr(&M, at, p, 0, rows_of(at), PF(r0), PF(r1), PF(out));
   M.par = 0;
