@@ -97,8 +97,9 @@ is about 60 s in the browser and 30 s locally (12 s per earlier street), with mo
 streets used to narrow ranges. River spots are solid either way; turn spots need
 Accurate to get close to a full solver (see Accuracy vs speed below).
 While a heads-up turn or river solves in the browser, an approximate answer read off the solve before it (a live
-flop's for the turn, the turn's for the river, or the street's own from your earlier decision) shows at once under
-the progress bar, marked approximate, until the answer replaces it. In position, the street is solved while your
+flop's for the turn, the turn's for the river, or the street's own from your earlier decision; after a library flop,
+its precomputed solve's own turn, where the library has stored it) shows at once under the progress bar, marked
+approximate, until the answer replaces it. In position, the street is solved while your
 opponent is to act, so the time you take entering their move counts toward the answer (a limped pot's turn answers
 in 3.2-3.4 s with the move entered 4 s in, against 7.0-7.3 s otherwise).
 The panel shows the recommended action with its size (preflop: 2.5bb
@@ -1357,8 +1358,8 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
 
   First to act it is close; facing a bet the flop solve's one bet size and hand buckets cost 1.4-1.6% of the pot,
   so it stays marked approximate and the answer replaces it. Not
-  offered where the answer is quick anyway or needs more than the equilibrium: preflop, library flops and the turns
-  after them (the entries hold the flop's play only), a street solved already, multiway pots, Practice (it grades
+  offered where the answer is quick anyway or needs more than the equilibrium: preflop, library flops (and the turns
+  after them, except from a stored turn: below), a street solved already, multiway pots, Practice (it grades
   your move against the answer), exploit mode, locks, custom sizes or ranges, tournaments, Study, the breakdown, a
   jam request.
 * **The street solved while your opponent is to act** (`Advisor.presolve`; the worker's `presolve` request; the
@@ -1396,6 +1397,47 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   fast as today everywhere; also off the tree with the move entered 0.25 s in, the presolve stopped once its tree
   was built (8.49-9.29 s, against 8.39-9.53). The 3bet pot's flop keeps 0.35 s: the opponent's check is rare there,
   so the advice solves again from it against their rule-based range, which the presolve can't know ahead.
+* **The turn after a library flop** (`instant_from_store`, `STORE_UNTIL`; the library's turn files:
+  `FlopLibrary.turns`, `turn_node`; `Advisor.prefetch`). A turn after a flop the library answered had nothing to
+  show until its own solve answered (5.4-6.2 s at Fast in the browser here): the approximate answer reads the
+  previous street's live solve, and a library flop has none. Where the spot's entry has a turn file (the index's
+  `"turns"`), its flop solve's own turn strategy now answers at once, marked approximate: the turn's first decision
+  and the in-position player's after a check, on the flop line the hand took (its sizes at their nearest, as the
+  library's flop answer reads them), the card dealt read as its class's played card, the bet 75% of the hand's own
+  pot (the flop solve's one turn size). The turn's own solve still answers the request and replaces it, with B3's
+  exclusions. The worker fetches the turn file with the flop's entry once the flop is known (none fetched where the
+  index lists none). It is read before the turn's own solve in hand (a presolve's, or a request's stopped part way)
+  until that has run 100 iterations, then the solve is. `scripts/bench_browser.mjs --early` (`BENCH_LIB`, new: a
+  library folder served first; here BTN vs BB's Kc7d2h, JcTd8d, 8c6d4c and Ac9d4d built with turn files; Pyodide,
+  one thread, a fresh worker per spot, idle 6 s, the flop told 3 s ahead, 300 ms a library file; two runs; seconds to
+  the approximate answer / the answer):
+
+  | spot | today | with the stored turn |
+  |---|---|---|
+  | BB first on the turn after a third-pot c-bet called (QhJh, Ks7d2cTh) | none / 5.42-6.24 | 0.015 (check) / 5.73-5.79 (check) |
+  | BTN after BB's check (AsQs) | none / 5.49-5.65 | 0.015-0.017 (bet 75%) / 5.52-5.60 (bet 125%) |
+  | the same, BB's check entered 2 s in (the presolve, B2) | | 0.007 (bet 75%, the stored turn) / 3.61 |
+  | ... entered 4 s in | | 0.003 (bet 125%, the turn's solve at 147 iterations) / 1.55 |
+
+  Without the flop told ahead the stored turn waits for both files (0.63 s at 300 ms each). EV given up, the
+  approximate answer's measure above (each combo's mix priced by the turn's own solve's EVs per action; here the
+  browser's Fast tree solved to 600 iterations natively, 0.05% of the pot from equilibrium; 29 turns of the four
+  flops after a check-through and after a third-pot c-bet called, five cards each where the library's flop answer
+  holds the line; the acting player's whole range; % of the pot, mean (worst)):
+
+  | | BB first | BTN after a check |
+  |---|---|---|
+  | the stored turn | 0.04 (0.17) | 0.08 (0.27) |
+  | the turn's own solve at 50 iterations | 0.09 (0.19) | 0.06 (0.12) |
+  | ... at 100 | 0.02 (0.06) | 0.02 (0.05) |
+  | ... at 200 | 0.006 (0.03) | 0.007 (0.03) |
+
+  The stored turn beats the solve's 50th iteration first to act (28 of 29 turns) and is about even with it in
+  position (16 of 29), behind its 100th (13 and 5 of 29): `STORE_UNTIL`. On the classes' played cards 0.03 / 0.06,
+  on the other cards 0.04 / 0.09. With the opponent free to adapt (flop-core's measure: Precomputed flop library,
+  Turns) it gives up 0.5-0.8% of the pot, so it stays marked approximate. No turn files are shipped yet: the builds
+  write them from here, and `scripts/instant_coverage.py` counts 28.3 more instant decisions per 100 hands with them on
+  the 13 spots the library holds (680.1 -> 708.4 of 813.5, 83.6% -> 87.1%; 46% of the turn's decisions).
 * **Regret minimizer** (`docs/cfr_research.md`, `scripts/bench_solver.py --algos`, exploitability per
   iteration): predictive CFR+ and its discounted form (PCFR+, PDCFR+), the state of the art on many
   non-poker games, are 2-7x more exploitable than DCFR here at 100-200 iterations on every spot (the river,
@@ -1741,11 +1783,11 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   more nodes, up to 66% more time and a rebuild of every entry, so the library keeps bets of 33/75% and a 50% raise.
 * **Turns** (`<spot>/<flop>.turn.bin` beside each entry, `encode_turns`, GTOTN1; written by the builds from here,
   none shipped yet): the flop solve's own turn strategies, for an answer at once on the turn after a library flop
-  (`FlopLibrary.turns`, `turn_node`; the advisor doesn't answer from them yet). Per flop line that 1% or more of the
-  hand pairs take to the turn (BTN vs BB on Kc7d2h: five lines, 66% of the pairs), the turn's first decision and
-  the in-position player's after a check; per turn class (one card a rank, a flush suit's apart: 13 on a rainbow
-  flop, 26 two-tone, 23 monotone) the played card's strategies for the acting player's combos that reach the line
-  (0.5% of its most reached): strategies only, in 5% steps, at the flop solve's turn sizes (75% bets and raises).
+  (`FlopLibrary.turns`, `turn_node`; the advisor's approximate answer there, `instant_from_store`: Accuracy vs
+  speed, "The turn after a library flop"). Per flop line that 1% or more of the hand pairs take to the turn (BTN vs
+  BB on Kc7d2h: five lines, 66% of the pairs), the turn's first decision and the in-position player's after a check;
+  per turn class (one card a rank, a flush suit's apart: 13 on a rainbow flop, 26 two-tone, 23 monotone) the played
+  card's strategies for the acting player's combos that reach the line (0.5% of its most reached): strategies only, in 5% steps, at the flop solve's turn sizes (75% bets and raises).
   Another card of a class reads the played card's: each combo the same combo's, and one holding the played card that
   of its image holding the turn card. ~10 KB a rainbow flop, ~18 KB on average (~360 MB for 20,000 entries,
   committed with the entries). Against a live Accurate turn (33/75/125%, 400 iterations; BTN vs BB on Kc7d2h, its

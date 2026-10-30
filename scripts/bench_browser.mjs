@@ -45,6 +45,14 @@ const STATIC = path.join(ROOT, "gto", "static");
 // children inherit both)
 // BENCH_NET_MS: each library file's request takes this long (the CDN measured 130-670 ms an entry, 0.8-4.9 s the index)
 const NET_MS = +(process.env.BENCH_NET_MS || 0);
+// BENCH_LIB: a flop library folder whose files are served before gto/static/flop_library's (an index with entries and
+// turn files built locally, scripts/build_flop_library.py --out)
+const LIB_DIR = process.env.BENCH_LIB || "";
+function libFile(url) {
+  const rel = url.split("?")[0];
+  const f = LIB_DIR && path.join(LIB_DIR, rel.replace(/^flop_library\//, ""));
+  return f && fs.existsSync(f) ? f : path.join(STATIC, rel);
+}
 const BUDGETS = { fast: [8, 3], accurate: [60, 12], ...JSON.parse(process.env.BENCH_BUDGETS || "{}") };
 
 const F = (pos) => ({ pos, action: "fold" }), C = (pos) => ({ pos, action: "call" }), X = (pos) => ({ pos, action: "check" });
@@ -148,7 +156,7 @@ async function startWorker(pyodideDir, bundlePath) {
         ctx.aheadFetches++;
         await new Promise((r) => setTimeout(r, NET_MS));
       }
-      const f = url.startsWith("solver.zip") ? bundlePath : url.startsWith("flop_library/") ? path.join(STATIC, url.split("?")[0])
+      const f = url.startsWith("solver.zip") ? bundlePath : url.startsWith("flop_library/") ? libFile(url)
         : path.join(ROOT, url.split("?")[0]);
       if (!fs.existsSync(f)) return { ok: false, status: 404 };
       const buf = fs.readFileSync(f);
@@ -160,7 +168,7 @@ async function startWorker(pyodideDir, bundlePath) {
       send() {
         const t = performance.now();
         while (performance.now() - t < NET_MS);   // (synchronous: the worker waits)
-        const f = path.join(STATIC, this.url.split("?")[0]);
+        const f = libFile(this.url);
         if (fs.existsSync(f)) { this.status = 200; const b = fs.readFileSync(f); this.response = b.buffer.slice(b.byteOffset, b.byteOffset + b.length); ctx.libFetches++; }
         else this.status = 404;
       }

@@ -47,8 +47,9 @@ importScripts(PYODIDE + "pyodide.js");
 // (<spot>/<flop>.bin, 1.5-6 KB) only when a flop spot it holds comes up. The solver runs synchronously, so it reads
 // them synchronously: from LIB, the files fetched ahead, else by a synchronous request (allowed in a worker); a missing
 // or unreadable file is just no library. Fetched ahead: both indexes (index.json 117 KB gzipped, 0.8-4.9 s on a cold
-// CDN; mw_index.json), requested now beside the runtime, and a flop's entries once the page says the flop is known
-// (a "prefetch" message: Advisor.prefetch's dry run names them, RECORD); a request waits for those still in flight
+// CDN; mw_index.json), requested now beside the runtime, and a flop's entries, with their turn files where the index
+// lists them (<spot>/<flop>.turn.bin, ~10-25 KB: the turn's approximate answer at once), once the page says the flop is
+// known (a "prefetch" message: Advisor.prefetch's dry run names them, RECORD); a request waits for those still in flight
 // (whenAhead) rather than asking again. A synchronous request blocked the worker for the index on a session's first
 // flop and for each entry (0.13-0.67 s each from here, through the CDN), where the answer itself takes 10-40 ms.
 const LIB = new Map();   // path -> Uint8Array (fetched) or a Promise (in flight)

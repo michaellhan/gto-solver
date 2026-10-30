@@ -2040,6 +2040,63 @@ def instant_from_prev(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
             "iterations": int(sol.iters)}
 
 
+# the stored turn answers before the turn's own solve in hand until that has run this many iterations: EV given up
+# (each combo's mix priced by the turn's own Fast solve run to 600 iterations; 29 turns of four BTN vs BB flops, % of
+# the pot) the stored turn 0.04 first to act / 0.08 in position after a check, the solve at 50 iterations 0.09 / 0.06,
+# at 100 0.02 / 0.02 (README, Accuracy vs speed: "The turn after a library flop")
+STORE_UNTIL = 100
+
+
+def instant_from_store(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
+    """A library flop's turn: the precomputed flop solve's own turn strategies, stored beside its entry (the entry's
+    turn file: flop_library.encode_turns, FlopLibrary.turns, turn_node), on the flop lines most hands take: the
+    turn's first decision, and in position after a check, at the flop solve's turn sizes (a 75% bet), the card dealt
+    read as its class's played card (each combo the same combo's; one holding the played card its image's holding
+    the card dealt). On the line the flop's walk took (its sizes at their nearest) and on the entry's canonical flop;
+    not once the turn's own solve in hand has run STORE_UNTIL iterations (instant_from_own reads that). Against a live
+    Accurate turn with the opponent free to adapt (BTN vs BB on Kc7d2h) it gives up 0.50 / 0.67% of the pot out of /
+    in position on the played cards, 0.81 / 0.63 on the others; priced by the turn's own solve's EVs 0.04 / 0.08."""
+    lib = adv.library
+    if spot.street != "turn" or spot.prev is None or lib is None or not hasattr(lib, "turns"):
+        return None
+    if spot.own is not None and spot.own.solver.iters >= STORE_UNTIL:
+        return None   # (the turn's own solve, a presolve's or one stopped part way, is the closer read by now)
+    sol, _, taken = spot.prev
+    head = getattr(sol, "head", None)
+    if not hasattr(sol, "stored") or not isinstance(head, dict):
+        return None
+    if not spot.actions:
+        at = ()
+    elif len(spot.actions) == 1 and spot.actions[0]["action"] == "check" and spot.actions[0]["pos"] == spot.oop:
+        at = ("check",)
+    else:
+        return None
+    from . import flop_library as fl
+    canon, smap = fl.canonical(spot.board[:3])
+    name = cards_str(canon)
+    sp = next((s for s in lib.index().get("spots", ()) if s.get("id") == head.get("spot")), None)
+    if name != head.get("board") or sp is None:
+        return None
+    t = lib.turns(sp, name)
+    if t is None:
+        return None
+    mp = lambda c: c // 4 * 4 + smap[c % 4]
+    nd = fl.turn_node(t, taken, at, mp(spot.board[3]))
+    if nd is None or nd["player"] != spot.hero_p:
+        return None
+    x, y = sorted(mp(c) for c in spot.hole)
+    i = COMBO_INDEX[(x, y)]
+    j = int(np.searchsorted(nd["combos"], i))
+    if j >= len(nd["combos"]) or nd["combos"][j] != i:
+        return None   # (a combo the flop solve hardly brings here: not stored)
+    node = types.SimpleNamespace(names=nd["names"], pot_now=0.0, bets=(0.0, 0.0))
+    bets = [n for n in nd["names"] if n.startswith("bet")]
+    size = f"one bet size, {bets[0].split()[-1]}" if len(bets) == 1 else "its turn sizes"
+    return {"actions": _real_actions(node, nd["strat"][:, j], [0.0, 0.0], spot), "source": "store",
+            "label": f"the precomputed flop solve's view of the turn (by card class, {size})",
+            "iterations": int(sol.iters)}
+
+
 # ----------------------------------------------------------------------------- advisor
 class Advisor:
     def __init__(self, cfg: Optional[Config] = None, time_budget: float = 4.0, prior_budget: float = 2.0,
@@ -2122,7 +2179,7 @@ class Advisor:
         self._runout_close = None # Study's runout report: the action that closed the flop or turn (Advisor._runouts)
         self._req_sizes: Dict[str, List[float]] = {}   # the request's custom sizes (state "sizes"), as fractions
         # Advisor.instant's sources, tried in order: each (advisor, InstantSpot) -> {"actions", "source", "label"} or None
-        self.instant_sources = [instant_from_own, instant_from_prev]
+        self.instant_sources = [instant_from_store, instant_from_own, instant_from_prev]
         self._instant = False     # an Advisor.instant request: nothing is solved (_NoInstant where it would be)
 
     # ------------------------------------------------------------ public
@@ -2168,11 +2225,12 @@ class Advisor:
     def instant(self, state: dict) -> Optional[dict]:
         """An approximate answer at once, for the browser to show while the request itself solves (the worker posts it
         first, the full answer replaces it): a heads-up street whose own solve would take seconds, read off what is in
-        hand already by instant_sources (the street's own solve stopped part way; the previous street's live solve,
-        which plays this street under it; stored turns later), with "approximate": {source, label} and no EVs. Nothing
-        is solved: None where the answer needs a solve before anything can be read (an earlier street not solved yet),
-        is quick anyway (preflop, a library flop, a street solved already), isn't heads-up, or asks for more than the
-        equilibrium (exploit mode, locks, custom ranges or sizes, a tournament, Study, a jam, the breakdown)."""
+        hand already by instant_sources (a library flop's stored turn, until the street's own solve has run
+        STORE_UNTIL iterations; the street's own solve stopped part way; the previous street's live solve, which plays
+        this street under it), with "approximate": {source, label} and no EVs. Nothing is solved: None where the
+        answer needs a solve before anything can be read (an earlier street not solved yet), is quick anyway (preflop,
+        a library flop, a street solved already), isn't heads-up, or asks for more than the equilibrium (exploit mode,
+        locks, custom ranges or sizes, a tournament, Study, a jam, the breakdown)."""
         if len(str(state.get("board") or "")) < 6 or state.get("opponents") == "pool" or any(
                 state.get(k) for k in ("study", "runouts", "jam", "breakdown", "optimize_sizes", "locks", "library_only",
                                        "payouts", "ranges", "sizes")):
@@ -2220,8 +2278,8 @@ class Advisor:
         """The flop's library lookups for a hand as soon as its flop is known, without reading any entry: a dry run
         for the browser's worker, whose fetch then records the files asked for and requests them ahead
         (gto/static/worker.js), so the answer at the flop finds them in hand. The flop before anyone acts, asked as
-        the player first to act ("library_only": nothing is solved). The entries it asked for and didn't get stay
-        unread (they would otherwise be kept as missing)."""
+        the player first to act ("library_only": nothing is solved), and the turn files of the flop's entries the index
+        lists. The files it asked for and didn't get stay unread (they would otherwise be kept as missing)."""
         board = str(state.get("board") or "")[:6]
         libs = [x for x in (self.library, self.mw_library) if x is not None and hasattr(x, "_entries")]
         if len(board) < 6 or not libs:
@@ -2234,6 +2292,15 @@ class Advisor:
             m = re.match(r"it is (\w+)'s turn", str(res.get("error", "")))
             if m:
                 self.advise(dict(st, hero=m.group(1)))
+            # this flop's entries' turn files too, where the index lists them (the turn's approximate answer at once:
+            # instant_from_store)
+            lib = self.library
+            if lib is not None and lib in libs and hasattr(lib, "turns"):
+                from .flop_library import flop_name
+                name = flop_name(parse_cards(board))
+                spots = {s.get("id"): s for s in lib.index().get("spots", ())}
+                for k in [k for k in lib._entries if len(k) == 2 and k[1] == name and k[0] in spots]:
+                    lib.turns(spots[k[0]], name)
         except Exception:
             pass
         finally:
