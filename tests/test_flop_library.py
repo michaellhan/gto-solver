@@ -396,6 +396,99 @@ class TestFlopLibrary(unittest.TestCase):
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
+    def test_turn_file(self):
+        """An entry's turn file (fl.encode_turns): the flop lines the solve takes to the turn with TURN_LINE of the hand
+        pairs, most first; per line the turn's first decision and in position after a check, per turn class the acting
+        player's combos that reach the line (TURN_REACH of the most reached) and don't hold the class's played card
+        (the flop solve doesn't play those there), each the solve's strategy to within the steps (1/TURN_Q). Written
+        with its entry (build.write_entry) and listed by the index only beside that entry; any other is removed."""
+        sol, sid = self.sol, SPOT[0]
+        meta = dict(build._meta(sid, self.setup), board=CANON)
+        entry = fl.encode(sol, meta)
+        t = fl.decode_turns(fl.encode_turns(sol, entry))
+        h = t["head"]
+        self.assertEqual((h["format"], h["entry"], h["board"], h["q"]), (fl.TURN_FORMAT, fl.entry_hash(entry), CANON, fl.TURN_Q))
+        self.assertEqual(fl.turns_head(fl.encode_turns(sol, entry)), h)
+        classes = sol.ctx.turn_classes(tuple(sol.root.boards[0]), sol.solver.dead)
+        self.assertEqual(len(classes), 13)                                  # (rainbow: a class per rank)
+        self.assertEqual(sorted(c for _, cs in classes for c in cs), sorted(set(range(52)) - set(cards(CANON))))
+        self.assertEqual(h["classes"], [[cards_str([c]), cards_str(list(cs))] for c, cs in classes])
+        lines = fl.turn_lines(sol)
+        kept = [x for x in lines if x[4] >= fl.TURN_LINE]
+        self.assertGreater(len(kept), 1)
+        self.assertLessEqual(sum(x[4] for x in lines), 1 + 1e-9)
+        self.assertEqual([ln["path"] for ln in t["lines"]], [list(x[0]) for x in kept])
+        act, K = sol.ctx.active, len(classes)
+        pos = np.full(len(ALL_COMBOS), -1)
+        pos[act] = np.arange(len(act))
+        for (path, ch, a0, a1, share), ln in zip(kept, t["lines"]):
+            T = ch.child
+            for k, (played, _) in enumerate(classes):
+                self.assertTrue(np.array_equal(ch.masks.reshape(K, -1)[k] > 0, MEMBER_FULL[played][act] == 0))
+            for p, a in enumerate((a0, a1)):
+                m = np.zeros(len(ALL_COMBOS), dtype=bool)
+                m[act] = (a > 0) & (a >= fl.TURN_REACH * a.max())
+                self.assertTrue(np.array_equal(ln["masks"][p], m))
+            self.assertEqual([(nd["at"], nd["player"]) for nd in ln["nodes"]], [([], 0), (["check"], 1)])
+            for nd in ln["nodes"]:
+                st = fl.node_at(T, nd["at"]).avg_strategy()
+                A = len(nd["names"])
+                for k, (idx, s) in enumerate(nd["classes"]):
+                    want = ln["masks"][nd["player"]] & (MEMBER_FULL[classes[k][0]] == 0)
+                    self.assertTrue(np.array_equal(idx, np.nonzero(want)[0]))
+                    self.assertLessEqual(np.abs(s - st[k][:, pos[idx]]).max(), A / (2 * fl.TURN_Q) + 1e-6)
+        # another card of a class reads the played card's strategies: each combo the same combo's, one holding the
+        # played card its image's holding that card
+        ln, (played, cs) = t["lines"][0], classes[-1]
+        other = next(c for c in cs if c != played)
+        a, b = fl.turn_node(t, ln["path"], ["check"], played), fl.turn_node(t, ln["path"], ["check"], other)
+        self.assertEqual((a["played"], b["played"], a["player"]), (played, played, 1))
+        self.assertTrue(np.array_equal(a["combos"], ln["nodes"][1]["classes"][-1][0]))
+        sa = {int(i): a["strat"][:, n] for n, i in enumerate(a["combos"])}
+        self.assertEqual(len(b["combos"]), len(a["combos"]))
+        self.assertTrue(np.all(np.diff(b["combos"]) > 0))
+        for n, j in enumerate(b["combos"]):
+            x, y = ALL_COMBOS[j]
+            self.assertNotIn(other, (x, y))
+            self.assertTrue(np.array_equal(b["strat"][:, n], sa[COMBO_INDEX[tuple(sorted(other if c == played else c for c in (x, y)))]]))
+        self.assertTrue(any(played in ALL_COMBOS[j] for j in b["combos"]))
+        self.assertIsNone(fl.turn_node(t, ["fold"], [], played))
+        # written with the entry, listed by the index beside it only
+        self.assertIsNone(self.lib.turns(self.lib.index()["spots"][0], CANON))       # (the fixture has none)
+        d = tempfile.mkdtemp()
+        try:
+            data, turns = build.write_entry(d, sid, CANON, sol, meta)
+            self.assertEqual((data, fl.turns_head(turns)), (entry, h))
+            build.write_index(d, [SPOT])
+            lib = fl.FlopLibrary.from_dir(d)
+            sp = lib.index()["spots"][0]
+            self.assertIs(sp["turns"], True)
+            got = lib.turns(sp, CANON)
+            self.assertEqual(got["head"], h)
+            self.assertTrue(np.array_equal(got["lines"][0]["nodes"][0]["classes"][0][1], t["lines"][0]["nodes"][0]["classes"][0][1]))
+            path = os.path.join(d, sid, CANON + ".bin")
+            tpath = path[:-4] + ".turn.bin"
+            self.assertEqual(build._drop_turns(path, lambda: True), 0)      # (a build's pair written since: kept)
+            orphan = os.path.join(d, sid, "2c3c4d.turn.bin")                 # a turn file beside no entry
+            shutil.copy(tpath, orphan)
+            build.write_index(d, [SPOT])
+            self.assertFalse(os.path.exists(orphan))
+            self.assertTrue(os.path.exists(tpath))
+            with open(path, "wb") as f:                                     # another entry beside it: not its turns
+                f.write(fl.encode(sol, dict(meta, note="again")))
+            build.write_index(d, [SPOT])
+            lib = fl.FlopLibrary.from_dir(d)
+            sp = lib.index()["spots"][0]
+            self.assertNotIn("turns", sp)
+            self.assertFalse(os.path.exists(tpath))                         # (removed: the deploy publishes the folder)
+            self.assertIsNone(lib.turns(dict(sp, turns=True), CANON))
+            build.write_entry(d, sid, CANON, sol, meta)
+            self.assertTrue(os.path.exists(tpath))
+            build.write_entry(d, sid, CANON, sol, meta, with_turns=False)    # (--no-turns)
+            self.assertFalse(os.path.exists(tpath))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
     def test_advisor_answers_from_library(self):
         """The advisor's flop answer comes from the library where it holds the spot: instantly, at the stored
         iterations and exploitability, with the stored mix for the hero's hand; on the same tree for a model that
@@ -582,8 +675,32 @@ class TestShippedLibrary(unittest.TestCase):
                 size = os.path.getsize(os.path.join(fl.DIR, sp["id"], name + ".bin"))
                 self.assertLess(size, 200_000)
                 total += size
+            turns = sp.get("turns")
+            for name in (sp["flops"] if turns is True else turns or ()):         # (a turn file beside its entry)
+                with open(os.path.join(fl.DIR, sp["id"], name + ".turn.bin"), "rb") as f:
+                    self.assertTrue(fl.turns_head(f.read())["entry"].startswith(sp["flops"][name]), (sp["id"], name))
         # (the page fetches an entry when its spot comes up: the total is the repository's and the deploy's)
         self.assertLess(total, 60e6)
+
+    def test_every_file_is_indexed(self):
+        """Every entry and turn file in the shipped folder is named by index.json or the 3-way library's
+        mw_index.json (an entry, an "old" entry or a listed turn file): the library's deploy
+        (scripts/deploy_library.sh) publishes the folder as it is, so a stale file landed with the others would be."""
+        named = set()
+        for fn in ("index.json", "mw_index.json"):
+            path = os.path.join(fl.DIR, fn)
+            if not os.path.exists(path):
+                continue
+            with open(path) as f:
+                for sp in json.load(f)["spots"]:
+                    named |= {f"{sp['id']}/{nm}.bin" for nm in sp["flops"]}
+                    turns = sp.get("turns")
+                    named |= {f"{sp['id']}/{nm}.turn.bin" for nm in (sp["flops"] if turns is True else turns or ())}
+        if not named:
+            self.skipTest("no library built")
+        files = {os.path.relpath(os.path.join(d, fn), fl.DIR).replace(os.sep, "/")
+                 for d, _, fns in os.walk(fl.DIR) for fn in fns if fn.endswith(".bin")}
+        self.assertEqual(sorted(files - named), [], "not named by an index (rebuild it, or remove them)")
 
     def test_reports_match_the_index(self):
         """Each shipped spot's report.json (the page's flop reports) is the one the index hashes, holds the index's

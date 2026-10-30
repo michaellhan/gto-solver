@@ -8,9 +8,13 @@ the pot from equilibrium (checked every --check iterations from --min-iters, at 
     python scripts/build_flop_library.py --index-only                   # rewrite index.json from the entries
     python scripts/build_flop_library.py --recode                       # format-1 entries to format 2, unsolved
     python scripts/build_flop_library.py --format 40bb --flops 184 --jobs 5   # another game's spots (FORMAT_SPOTS)
+    python scripts/build_flop_library.py --spots srp_btn_sb --flops all --dry-run   # what it would solve, per spot
 
 Spots of another game (flop_library.FORMAT_SPOTS: a stack depth, ante, table size or straddle; ids like
 srp_btn_bb_40bb) are built only when named, by --format TAG or --spots; the index lists every game's spots on disk.
+
+Each entry is written with its turn file (<spot>/<flop>.turn.bin, flop_library.encode_turns: the flop solve's turn
+strategies on the lines it takes to the turn), unless --no-turns; the index lists the turn files beside their entries.
 
 Each index rewrite also writes <spot>/report.json (flop_library.build_report: per flop, the range frequencies at each
 stored node, both players' EV and equity; the page's flop reports), recomputing only the flops whose entries changed.
@@ -31,6 +35,7 @@ import multiprocessing as mp
 import os
 import sys
 import time
+import zlib
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import gto.native  # noqa: F401,E402  (holds BLAS to one thread before numpy loads)
@@ -89,14 +94,34 @@ def solve_entry(job):
     while expl > a["target"] and sol.iters < a["max_iters"]:
         sol.extend(1e9, max_iters=min(sol.iters + a["check"], a["max_iters"]))
         expl = sol.exploitability()
+    data, turns = write_entry(out, sid, name, sol, meta, a.get("turns", True))
+    return (f"{sid} {name} iters={sol.iters} expl={expl:.3f}% secs={time.time() - t0:.0f} bytes={len(data)}"
+            f" turns={len(turns or b'')}")
+
+
+def _unlink(p: str) -> None:
+    try:
+        os.remove(p)
+    except FileNotFoundError:
+        pass
+
+
+def write_entry(out: str, sid: str, name: str, sol, meta: dict, with_turns: bool = True) -> tuple:
+    """Writes a solve's entry and its turn file (flop_library.encode_turns; none when it has no lines or `with_turns`
+    is off): the earlier turn file removed, then the entry, then its turn file, so a turn file on disk names the entry
+    beside it (the library's deploy publishes the folder as it is). Returns (entry, turns)."""
     data = fl.encode(sol, meta)
+    turns = fl.encode_turns(sol, data) if with_turns else None
     path = os.path.join(out, sid, name + ".bin")
+    tpath = path[:-4] + ".turn.bin"
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "wb") as f:
-        f.write(data)
-    os.replace(tmp, path)
-    return f"{sid} {name} iters={sol.iters} expl={expl:.3f}% secs={time.time() - t0:.0f} bytes={len(data)}"
+    _unlink(tpath)
+    for p, b in ((path, data), (tpath, turns)):
+        if b is not None:
+            with open(p + ".tmp", "wb") as f:
+                f.write(b)
+            os.replace(p + ".tmp", p)
+    return data, turns
 
 
 def recode(out: str, spots) -> None:
@@ -154,12 +179,48 @@ def write_ranges(out: str, sp: dict, s: dict) -> None:
     os.replace(path + ".tmp", path)
 
 
+def _turns_of(path: str, data: bytes):
+    """The turn file beside the entry at `path` (its bytes `data`) if it names that entry, else None."""
+    try:
+        with open(path[:-4] + ".turn.bin", "rb") as f:
+            tb = f.read()
+        return tb if fl.turns_head(tb).get("entry") == fl.entry_hash(data) else None
+    except (OSError, ValueError, zlib.error):
+        return None
+
+
+def _drop_turns(path: str, is_current) -> int:
+    """Removes the turn file beside the entry at `path` that the index left out, unless a build has since written
+    that flop (a current entry and the turn file naming it). Returns 1 if removed."""
+    tp = path[:-4] + ".turn.bin"
+    try:
+        st = os.stat(tp)
+    except OSError:
+        return 0
+    try:
+        with open(path, "rb") as f:
+            if _turns_of(path, f.read()) and is_current():
+                return 0
+    except FileNotFoundError:
+        pass
+    try:
+        st2 = os.stat(tp)
+    except OSError:
+        return 0
+    if (st2.st_ino, st2.st_mtime_ns) == (st.st_ino, st.st_mtime_ns):     # (else rewritten meanwhile: the next index's)
+        _unlink(tp)
+        return 1
+    return 0
+
+
 def write_index(out: str, spots) -> dict:
     """index.json from the entries on disk that match the current charts and tree (and each spot's report.json).
-    A spot of another game than the default carries it ("game": flop_library.Format's fields)."""
+    A spot of another game than the default carries it ("game": flop_library.Format's fields). A spot lists the turn
+    files that name its listed entries; any other turn file in its folder (its entry gone, stale or rewritten since) is
+    removed, since the library's deploy publishes the folder as it is."""
     idx = {"format": fl.FORMAT, "tree": fl.tree_key(fl.library_config()), "spots": []}
-    stale = n_old = 0
-    total = 0
+    stale = n_old = n_turns = dropped = 0
+    total = total_turns = 0
     for sid, label, line, fmt in map(_spot, spots):
         d = os.path.join(out, sid)
         if not os.path.isdir(d):
@@ -167,27 +228,39 @@ def write_index(out: str, spots) -> dict:
         s = _setup(line, fmt)
         meta = _meta(sid, s)
         old = old_tree(meta)
-        flops, olds = {}, []
-        if os.path.isdir(d):
-            for fn in sorted(os.listdir(d)):
-                if not fn.endswith(".bin"):
+        flops, olds, turns = {}, [], []
+        names = sorted(os.listdir(d))
+        for fn in names:
+            if not fn.endswith(".bin") or fn.endswith(".turn.bin"):
+                continue
+            p = os.path.join(d, fn)
+            if not current(p, meta):
+                if old is None or not current(p, meta, old):
+                    stale += 1
                     continue
-                p = os.path.join(d, fn)
-                if not current(p, meta):
-                    if old is None or not current(p, meta, old):
-                        stale += 1
-                        continue
-                    olds.append(fn[:-4])
-                with open(p, "rb") as f:
-                    data = f.read()
-                total += len(data)
-                flops[fn[:-4]] = hashlib.sha1(data).hexdigest()[:10]
+                olds.append(fn[:-4])
+            with open(p, "rb") as f:
+                data = f.read()
+            total += len(data)
+            flops[fn[:-4]] = hashlib.sha1(data).hexdigest()[:10]
+            tb = _turns_of(p, data)
+            if tb:
+                turns.append(fn[:-4])
+                total_turns += len(tb)
+        listed = set(turns)
+        for fn in names:
+            if fn.endswith(".turn.bin") and fn[:-9] not in listed:
+                p = os.path.join(d, fn[:-9] + ".bin")
+                dropped += _drop_turns(p, lambda: current(p, meta) or (old is not None and current(p, meta, old)))
         if flops:
             sp = {"id": sid, "label": label, "line": line, "seats": [s["oop"], s["ip"]],
                   "fp": meta["fp"], "pot": s["pot"], "stack": s["stack"], "tree": meta["tree"], "flops": flops}
             if olds:
                 sp["old_tree"], sp["old"] = old, olds
                 n_old += len(olds)
+            if turns:
+                sp["turns"] = True if len(turns) == len(flops) else turns
+                n_turns += len(turns)
             if fmt != fl.DEFAULT_FORMAT:
                 sp["game"] = fmt.as_dict()
             sp["report"] = write_report(out, sp, s)
@@ -200,8 +273,10 @@ def write_index(out: str, spots) -> dict:
     os.replace(tmp, os.path.join(out, "index.json"))
     n = sum(len(sp["flops"]) for sp in idx["spots"])
     print(f"index: {len(idx['spots'])} spots, {n} flops, {total / 1e6:.2f} MB of entries"
-          + (f", {n_old} on the old tree" if n_old else "") + (f" ({stale} stale entries left out)" if stale else ""),
-          flush=True)
+          + (f", {n_old} on the old tree" if n_old else "")
+          + (f", {n_turns} turn files ({total_turns / 1e6:.2f} MB)" if n_turns else "")
+          + (f", {dropped} stale turn files removed" if dropped else "")
+          + (f" ({stale} stale entries left out)" if stale else ""), flush=True)
     return idx
 
 
@@ -225,6 +300,10 @@ def main(argv=None):
     ap.add_argument("--keep-old", action="store_true", help="leave the entries on the old tree (the river blind) for a "
                     "later run: solve the flops not on disk first")
     ap.add_argument("--recode", action="store_true", help="re-encode format-1 entries (no solving), then the index")
+    ap.add_argument("--no-turns", action="store_true", help="write the entries without their turn files "
+                    "(flop_library.encode_turns)")
+    ap.add_argument("--dry-run", action="store_true", help="list each spot's entries to solve and on disk, solving "
+                    "and writing nothing")
     a = ap.parse_args(argv)
     want = [x for x in a.spots.split(",") if x]
     tags = [x for x in a.format.split(",") if x]
@@ -247,17 +326,28 @@ def main(argv=None):
         n = 1755 if a.flops == "all" else int(a.flops) if a.flops else fl.SPOT_FLOPS.get(sid, fl.REP_FLOPS)
         return [cards_str(f) for f in fl.representative_flops(n)]
     jobs = []
-    opts = {"min_iters": a.min_iters, "max_iters": a.max_iters, "check": a.check, "target": a.target}
+    opts = {"min_iters": a.min_iters, "max_iters": a.max_iters, "check": a.check, "target": a.target,
+            "turns": not a.no_turns}
     n_flops = 0
     for sid, label, line, fmt in spots:
         meta = _meta(sid, _setup(line, fmt))
         old = old_tree(meta) if a.keep_old else None
         names = names_for(sid)
         n_flops += len(names)
+        n_jobs = len(jobs)
         for nm in names:
             p = os.path.join(a.out, sid, nm + ".bin")
             if not current(p, meta) and not (old is not None and current(p, meta, old)):
                 jobs.append((sid, line, fmt.as_dict(), nm, a.out, opts))
+        if a.dry_run:
+            on_disk = sum(fn.endswith(".bin") and not fn.endswith(".turn.bin")
+                          for fn in (os.listdir(os.path.join(a.out, sid)) if os.path.isdir(os.path.join(a.out, sid))
+                                     else ()))
+            print(f"{sid}: {len(names)} flops, {len(jobs) - n_jobs} to solve, {len(names) - len(jobs) + n_jobs} kept "
+                  f"({on_disk} entries on disk)", flush=True)
+    if a.dry_run:
+        print(f"{len(jobs)} entries to solve ({len(spots)} spots, {n_flops} flops); --dry-run: nothing solved")
+        return
     if a.limit:
         jobs = jobs[:a.limit]
     print(f"{len(jobs)} entries to solve ({len(spots)} spots, {n_flops} flops, the rest on disk), "

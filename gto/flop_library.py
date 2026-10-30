@@ -13,7 +13,8 @@ raises of entries built before they were stored (stored_paths).
 Files (gto/static/flop_library/, deployed next to the page): index.json lists the spots (their ranges'
 fingerprints, pot, stack, label, the tree its entries were solved on) with the default tree and, per spot, each
 solved flop's content hash;
-<spot>/<flop>.bin is one entry (SPOT_FLOPS: how many flops a spot stores). The browser's worker fetches the index once and an entry only when its spot comes up.
+<spot>/<flop>.bin is one entry (SPOT_FLOPS: how many flops a spot stores), <spot>/<flop>.turn.bin its turn file (the
+flop solve's turn strategies, encode_turns; a spot's "turns" lists them). The browser's worker fetches the index once and an entry only when its spot comes up.
 The library ignores itself where it doesn't apply: another tree (sizes, raises, rake, MODEL_VERSION), other ranges
 (changed charts, other stacks or table sizes, a custom range) or a flop not in it.
 """
@@ -29,7 +30,7 @@ from types import SimpleNamespace
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 from .cards import ALL_COMBOS, COMBO_INDEX, cards_str, cards as parse_cards
-from .solver import Config, Decision, TreeBuilder, MEMBER_FULL, FLOP_LEAF_RIVERS
+from .solver import Config, Chance, Decision, TreeBuilder, MEMBER_FULL, FLOP_LEAF_RIVERS
 
 FORMAT = 2                 # the index's and the entries' (1: per combo, GTOFL2; 2: per suit-isomorphic combo, GTOFL3)
 # Bump when the solver's flop game changes in a way the tree key can't see (the equity leaves, the turn classes,
@@ -633,6 +634,167 @@ def decode(data: bytes) -> dict:
     return {"head": head, "masks": masks, "nodes": nodes}
 
 
+# ----------------------------------------------------------------------------- precomputed turns
+# An entry's turn file (<spot>/<flop>.turn.bin, beside it; GTOTN1): the flop solve's own turn strategies, so a turn
+# on a library flop has an answer at once while a live solve settles it. Per flop line that TURN_LINE of the hand
+# pairs entering the flop take to the turn (BTN vs BB on Kc7d2h five lines, 66% of the pairs: check-check 29%,
+# check, bet 33%, call 23%, ...), the turn decisions TURN_NODES (the first, and in position after a check), per turn
+# class (Ctx.turn_classes: the played card's strategy; 13 classes on a rainbow flop, 26 two-tone), for the acting
+# player's combos that reach the line (TURN_REACH of its most reached) and don't hold the played card (which the flop
+# solve doesn't play there): strategies only, in 1/TURN_Q steps, no EVs. The flop solve bets and raises the turn 75%
+# only. Another card of a class reads the played card's strategies as the flop solve plays it (turn_node). Written
+# with the entry (scripts/build_flop_library.py), the header naming the entry's hash: a turn file is read only beside
+# the entry it was solved with (the index lists those, a spot's "turns").
+TURN_MAGIC = b"GTOTN1"
+TURN_FORMAT = 1
+TURN_LINE = 0.01           # a flop line is stored when this share of the hand pairs reach the turn on it
+TURN_REACH = 0.005         # a combo is stored on a line when its reach there is this share of the player's most reached
+TURN_Q = 20                # strategy steps (5%)
+TURN_NODES = ((), ("check",))
+
+
+def entry_hash(entry: bytes) -> str:
+    """The hash a turn file's header names its entry by."""
+    return hashlib.sha1(entry).hexdigest()[:12]
+
+
+def turn_lines(sol) -> List[tuple]:
+    """The flop lines a solve takes to a turn decision: (flop actions, the turn's Chance node, r0 and r1 entering the
+    turn, their share of the hand pairs entering the flop), most first."""
+    s = sol.solver
+    r0, r1 = sol.r0.astype(np.float64), sol.r1.astype(np.float64)
+
+    def pairs(a0, a1):
+        return float((s.compat_sum(a1[None, :].astype(np.float32))[0] * a0).sum())
+    tot = max(pairs(r0, r1), 1e-300)
+    out = []
+
+    def walk(n, path, a0, a1):
+        st = n.avg_strategy0()
+        for k, (nm, c) in enumerate(zip(n.names, n.children)):
+            b0, b1 = (a0 * st[k], a1) if n.player == 0 else (a0, a1 * st[k])
+            if isinstance(c, Decision):
+                walk(c, path + (nm,), b0, b1)
+            elif isinstance(c, Chance) and isinstance(c.child, Decision):
+                out.append((path + (nm,), c, b0, b1, pairs(b0, b1) / tot))
+    walk(sol.root, (), r0, r1)
+    return sorted(out, key=lambda x: -x[4])
+
+
+def encode_turns(sol, entry: bytes, nodes: Sequence[tuple] = TURN_NODES) -> Optional[bytes]:
+    """The turn file of an entry (`entry`, encode()'s bytes) from its flop solve, or None when no line reaches the turn
+    often enough (TURN_LINE). Header: format, board, entry (entry_hash), q, reach, classes [[played card, its class's
+    cards]], lines [{path, share, pot, nodes [{at (turn actions to it), player, names}]}]. Body, per line: the two
+    players' stored combos (1326 bits each); per node, per class, (A - 1) x k steps (the last action the rest), k the
+    acting player's stored combos without the played card, ascending."""
+    ctx = sol.ctx
+    act = np.asarray(ctx.active)
+    head = decode(entry)["head"]
+    classes = ctx.turn_classes(tuple(sol.root.boards[0]), sol.solver.dead)
+    lines, body = [], []
+    for path, ch, a0, a1, share in turn_lines(sol):
+        if share < TURN_LINE:
+            break
+        T = ch.child
+        masks = []
+        for a in (a0, a1):
+            m = np.zeros(len(ALL_COMBOS), dtype=bool)
+            m[act] = (a > 0) & (a >= TURN_REACH * float(a.max()))
+            masks.append(m)
+        hn, nb = [], []
+        for at in nodes:
+            try:
+                n = node_at(T, at)
+            except ValueError:
+                continue
+            if not isinstance(n, Decision):
+                continue
+            st = n.avg_strategy()                                 # (classes, A, n)
+            if st.shape[0] != len(classes):
+                raise ValueError("a turn node not batched by the turn classes")
+            for k, (played, _) in enumerate(classes):
+                cols = np.nonzero(masks[n.player][act] & (MEMBER_FULL[played][act] == 0))[0]
+                nb.append(np.clip(np.round(st[k][:-1, cols] * TURN_Q), 0, TURN_Q).astype(np.uint8).tobytes())
+            hn.append({"at": list(at), "player": n.player, "names": list(n.names)})
+        if hn:
+            lines.append({"path": list(path), "share": round(share, 4), "pot": round(float(T.pot_now), 4), "nodes": hn})
+            body += [_bits(m) for m in masks] + nb
+    if not lines:
+        return None
+    h = {"format": TURN_FORMAT, "board": head["board"], "entry": entry_hash(entry), "q": TURN_Q, "reach": TURN_REACH,
+         "classes": [[cards_str([c]), cards_str(list(cs))] for c, cs in classes], "lines": lines}
+    hb = json.dumps(h, separators=(",", ":")).encode()
+    return TURN_MAGIC + zlib.compress(struct.pack("<I", len(hb)) + hb + b"".join(body), 9)
+
+
+def turns_head(data: bytes) -> dict:
+    """A turn file's header alone."""
+    if data[:len(TURN_MAGIC)] != TURN_MAGIC:
+        raise ValueError("not a turn file")
+    raw = zlib.decompress(data[len(TURN_MAGIC):])
+    hl = struct.unpack("<I", raw[:4])[0]
+    return json.loads(raw[4:4 + hl].decode())
+
+
+def decode_turns(data: bytes) -> dict:
+    """{'head', 'lines': [{'path', 'share', 'pot', 'masks': [oop, ip] (1326 bools), 'nodes': [{'at', 'player', 'names',
+    'classes': per class (its stored combos (ascending indices), their strategy (A, k))}]}]}; combos on the entry's
+    (canonical) flop."""
+    if data[:len(TURN_MAGIC)] != TURN_MAGIC:
+        raise ValueError("not a turn file")
+    raw = zlib.decompress(data[len(TURN_MAGIC):])
+    hl = struct.unpack("<I", raw[:4])[0]
+    head = json.loads(raw[4:4 + hl].decode())
+    body = raw[4 + hl:]
+    q_ = head["q"]
+    played = [parse_cards(p)[0] for p, _ in head["classes"]]
+    nb = (len(ALL_COMBOS) + 7) // 8
+    o = 0
+    lines = []
+    for ln in head["lines"]:
+        masks = [_unbits(body[o:o + nb]), _unbits(body[o + nb:o + 2 * nb])]
+        o += 2 * nb
+        nodes = []
+        for nd in ln["nodes"]:
+            A = len(nd["names"])
+            per = []
+            for c in played:
+                idx = np.nonzero(masks[nd["player"]] & (MEMBER_FULL[c] == 0))[0]
+                k = len(idx)
+                q = np.frombuffer(body, dtype=np.uint8, count=(A - 1) * k, offset=o).reshape(A - 1, k).astype(np.float64)
+                o += (A - 1) * k
+                st = np.vstack([q, np.maximum(q_ - q.sum(axis=0), 0.0)[None, :]])
+                per.append((idx, st / np.maximum(st.sum(axis=0, keepdims=True), 1e-12)))
+            nodes.append(dict(nd, classes=per))
+        lines.append(dict(ln, masks=masks, nodes=nodes))
+    return {"head": head, "lines": lines}
+
+
+def turn_node(t: dict, path: Sequence[str], at: Sequence[str], card: int) -> Optional[dict]:
+    """A stored turn decision of a decoded turn file: the flop line `path`, `at` the turn actions to it, `card` the
+    turn (on the entry's flop): {'names', 'player', 'played' (its class's played card), 'combos' (ascending), 'strat'
+    (A, k)}, or None where the file doesn't hold it. Another card of the class reads the played card's strategies as
+    the flop solve plays it: each combo the same combo's, and one holding the played card (stored for neither) that of
+    its image holding `card` instead (dead on this turn). (Against a live Accurate turn on Kc7d2h this gives up 0.81 /
+    0.63% of the pot on average, OOP / IP, the played card itself 0.50 / 0.67; the combos' suit-swap images 0.81 /
+    0.93.)"""
+    k = next((i for i, (_, cs) in enumerate(t["head"]["classes"]) if card in parse_cards(cs)), None)
+    ln = next((x for x in t["lines"] if x["path"] == list(path)), None)
+    if k is None or ln is None:
+        return None
+    nd = next((x for x in ln["nodes"] if x["at"] == list(at)), None)
+    if nd is None:
+        return None
+    idx, st = nd["classes"][k]
+    played = parse_cards(t["head"]["classes"][k][0])[0]
+    if card != played:
+        idx = np.array([COMBO_INDEX[tuple(sorted(played if c == card else c for c in ALL_COMBOS[i]))] for i in idx],
+                       dtype=np.int64)
+        o = np.argsort(idx)
+        idx, st = idx[o], st[:, o]
+    return {"names": nd["names"], "player": nd["player"], "played": played, "combos": idx, "strat": st}
+
+
 # ----------------------------------------------------------------------------- the advisor's view
 class _Evs:
     """Stands in for Solution.solver: the stored EVs at stored nodes."""
@@ -752,6 +914,27 @@ class FlopLibrary:
             if len(self._entries) > 64:
                 self._entries.clear()
             self._entries[key] = e
+        return self._entries[key]
+
+    def turns(self, spot: dict, name: str) -> Optional[dict]:
+        """An entry's turn file (decode_turns), or None: the spot doesn't list one (its "turns": a list of flops, or
+        true for all), or it isn't the listed entry's."""
+        has, h = spot.get("turns"), spot.get("flops", {}).get(name)
+        if h is None or not (has is True or (has and name in has)):
+            return None
+        key = (spot["id"], name, "turns")
+        if key not in self._entries:
+            t = None
+            try:
+                raw = self._fetch(f"{spot['id']}/{name}.turn.bin?v={h}")
+                t = decode_turns(bytes(raw)) if raw else None
+            except Exception:
+                t = None
+            if t is not None and not t["head"].get("entry", "").startswith(h):
+                t = None
+            if len(self._entries) > 64:
+                self._entries.clear()
+            self._entries[key] = t
         return self._entries[key]
 
     def solution(self, full0: np.ndarray, full1: np.ndarray, board: Sequence[int], r0: np.ndarray, r1: np.ndarray,

@@ -1695,6 +1695,29 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   Fast model, the river checked down on random turns, was 5.6 and 8.6 off, up to 15 on dry boards.) Natively the
   answer takes ~0.01 s instead of 2.5 / 30 s; in the browser ~0.03 s instead of 8 / 60 s, and a turn spot saves
   the earlier flop solve too (BTN vs BB, J75 c-bet called: 8.2 s for the turn in Fast mode, 11.5 s before; measured on the old Fast model).
+* **Menu** (`scripts/bench_menu_loss.py`: a richer flop menu solved, then each player's flop decisions locked to
+  the library's; % of the pot given up out of / in position, BTN vs BB on Kc7d2h, JcTd8d, KcTd6h and 8c6d4c, 1000
+  iterations, the river blind): a third flop bet (33/75/125%) 0.02 at most; a second raise size of 30% 0.16 / 0.20
+  on Kc7d2h and 0.02 at most on the other three, of 100% 0.10 / 0.02 on KcTd6h and ~0 elsewhere. Each costs 32-43%
+  more nodes, up to 66% more time and a rebuild of every entry, so the library keeps bets of 33/75% and a 50% raise.
+* **Turns** (`<spot>/<flop>.turn.bin` beside each entry, `encode_turns`, GTOTN1; written by the builds from here,
+  none shipped yet): the flop solve's own turn strategies, for an answer at once on the turn after a library flop
+  (`FlopLibrary.turns`, `turn_node`; the advisor doesn't answer from them yet). Per flop line that 1% or more of the
+  hand pairs take to the turn (BTN vs BB on Kc7d2h: five lines, 66% of the pairs), the turn's first decision and
+  the in-position player's after a check; per turn class (one card a rank, a flush suit's apart: 13 on a rainbow
+  flop, 26 two-tone, 23 monotone) the played card's strategies for the acting player's combos that reach the line
+  (0.5% of its most reached): strategies only, in 5% steps, at the flop solve's turn sizes (75% bets and raises).
+  Another card of a class reads the played card's: each combo the same combo's, and one holding the played card that
+  of its image holding the turn card. ~10 KB a rainbow flop, ~18 KB on average (~360 MB for 20,000 entries,
+  committed with the entries). Against a live Accurate turn (33/75/125%, 400 iterations; BTN vs BB on Kc7d2h, its
+  two commonest lines; `scripts/bench_turn_store.py` on `scripts/turn_store_probe.py`'s dump) the stored turn gives
+  up 0.50 / 0.67% of the pot out of / in position on the played cards and 0.81 / 0.63 on the others (1.6 at most),
+  where the live solve is 0.08-0.18% from equilibrium; reading the suit-swapped combo instead gives up 0.81 / 0.93
+  (2.0), and the 5% steps add 0.003 (0.02 at most). A richer turn menu in the flop solve (33/75/125%) was left out:
+  2.4x the nodes' memory (a build worker ~4.5-5 GB) and CPU. `--no-turns` builds without them. The index lists a
+  spot's turn files that name the entry beside them by its hash (`"turns"`: true for all its flops, or a list), and
+  removes any other `.turn.bin` from the spot's folder, since the library's deploy publishes the folder as it is (a
+  test fails on an entry or turn file the indexes don't name).
 * **Lines**: the advisor walks the actual flop action through the stored nodes (sizes taken more than 15% off the
   tree's, more raises than it allows, or a line through a re-raise fall back to the live solve, as does a raise in an
   entry built before raises were stored). The spots' reports and drills keep to the first decisions. Turn and river
