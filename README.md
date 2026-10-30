@@ -141,7 +141,7 @@ Stop button (Continue picks up from there): a turn takes 2-25 s for every size i
 On the flop it waits for **Find the best size**, with its estimate (live flops take 1-3 s in all): the library's
 flops answer the advice at once, and solving every flop you look at would only load the machine. Answers are kept
 (by the page and the solver), so opening the tab again or coming back to the spot is instant; new advice stops its
-solves. Not against the pool, locks or tournament payouts (the tab is hidden there). See [One bet size](#one-bet-size).
+solves. Not against the pool, locks, tournament payouts or bounties (the tab is hidden there). See [One bet size](#one-bet-size).
 
 Solver stats and the villain's inferred range (as text and as a 13x13 grid shaded by weight) sit behind a "Details" toggle.
 Each decision you record is marked against the advice that was showing (✓ in
@@ -481,7 +481,8 @@ Action tokens are `POS:act` with `f` fold, `x` check, `c` call, `r<to>` raise to
 `b<amount>` bet, `ai` all-in. Amounts are in big blinds. `--ante 0.2` adds an ante
 per player, `--straddle` has the first seat straddle 2bb, `--rake 0.05 --rake-cap 3` sets a 5% rake capped at 3bb (see Rake).
 `--players 4` deals 2-9 players (default 6), `--stacks "CO=40,BTN=25,SB=8,BB=25"` gives seats their own stacks and `--payouts "50 30 20"` makes it a tournament
-(see Tournaments).
+(see Tournaments); `--bounties "pko 10"` (`"ko 10 SB=30 field=12"`, `"mystery 25"`) a bounty tournament (see Bounty
+tournaments).
 `--speed accurate` uses the server's Accurate tree and budgets (default `fast`; `--budget` / `--prior-budget` override).
 
 Server for your sandbox table:
@@ -520,7 +521,8 @@ and `"rake_cap"` (the most rake per pot, same units as the amounts; leave it out
 unless given (see Rake below). Optional `"payouts"` (the prizes still to be paid, first place first, a list
 or a string like `"50 30 20"`) makes it a tournament, the advice in prize equity (ICM), with two prizes or
 more; `"field"` adds the players at other tables (a list of their stacks, or `{"players": n, "chips": total}`;
-see Tournaments below). Positions are the 6-max names `UTG HJ CO BTN SB BB`.
+see Tournaments below); `"bounties"` makes it a bounty tournament (KO, PKO or mystery: see Bounty tournaments
+below; with no payouts, chip EV). Positions are the 6-max names `UTG HJ CO BTN SB BB`.
 Optional `"sizes"`, `"ranges"` and `"optimize_sizes"` change the postflop game, `"locks"` the preflop one too (see Custom sizes and ranges below).
 Optional `"one_size"` (`"all"`, `"full"`, a size or `"list"`) answers with the one-size view instead of the advice (see One bet size below).
 
@@ -537,8 +539,8 @@ hero's `f` per action and `ev`), the range's `eq`, `ev`, `nuts` (share at `nut_e
 flop only from the precomputed library and returns `{"skipped": …}` for any other postflop spot instead of solving it.
 
 `"study": true` (the page's Study mode, `Advisor.study`) answers for whoever acts next on the hand as recorded, with
-their whole range and no hero, at equilibrium (`hero`, `hole`, `opponents`, `locks`, `jam`, `payouts` and
-`optimize_sizes` are ignored):
+their whole range and no hero, at equilibrium (`hero`, `hole`, `opponents`, `locks`, `jam`, `payouts`, `bounties`
+and `optimize_sizes` are ignored):
 `{"study": "node", "actor", "opponent", "street", "pot_bb", "to_call_bb", "stack_bb", "actions", "grid", "combos",
 …}` with per action the range's `freq`, `combos` and `ev_bb` (of the hands that take it), per hand class in `grid`
 its weight `w`, mix `f`, per-action EVs `ev`, EV `evm` and equity `eq`, per combo in `combos` the same as
@@ -683,6 +685,98 @@ over what winning one gains, against each opponent) and a note naming the model.
   the solves don't play (five or more players, a solve that didn't settle) get the betting rules, in chips; the
   notes say which.
 
+### Bounty tournaments (KO, PKO, mystery)
+
+The **Bounties** row under Payouts (saved with the hand, kept across new hands and players, carried by share links
+and the copied hand) picks the format and the bounties, in the payouts' units: **KO** (the whole bounty goes to
+whoever busts the player), **PKO** (progressive knockout: half is paid at once, half is added to the eliminator's
+own bounty) or **mystery** (each bust draws an envelope: the average envelope left, or the money left in
+envelopes and how many). KO and PKO take one bounty for every seat ("each"), seats with their own ("per seat…",
+one box a seat), and the other tables' average bounty next to the field (the table's average if left empty). The
+request's `"bounties"` is `{"format": "ko" | "pko", "seats": {seat: bounty} (or one number for all, or a list in
+seat order), "field": average}` or `{"format": "mystery", "envelope": average}` (or `"pool"` and `"left"`);
+`"bounties"` with nothing at stake (every bounty 0) answers exactly as without (tested: the JSON is identical on
+calls, shoves, opens, defence and a river solve).
+
+The rules: a bounty pays only when the winner covers the busted player (they had at least as many chips at the
+start of the hand), so a short stack that wins gets chips only. A split pot busts nobody. With side pots won by
+different players, each bust's bounty goes to whoever wins the pot that takes the player's last chips: the top
+layer their chips reach, whose winner put in at least as much and so covered them.
+
+**The model** (gto/icm.py `Bounties`, `Model._bounty_setup`, `Model.value`) is the proportional model: every player
+owns their chip share of the bounty money in play, so a chip is worth its prize equity plus the bounty pool over
+the chips in play, and a bust moves the cash it pays out of that pool into the winner's pocket. It is GTO
+Wizard's "bounty power" (chips over prize pool plus bounty pool,
+[The Theory of Progressive Knockout Tournaments](https://blog.gtowizard.com/the-theory-of-progressive-knockout-tournaments/))
+and ICMIZER's "Proportional" model (a player's bounty equity is their stack over the chips in play times the
+bounty money left,
+[ICMIZER 3.15: calculation model selection for KO and PKO](https://blog.icmizer.com/icmizer-3-15-0-calculation-model-selection-for-ko-and-pko-tournaments-in-icmizer-and-sng-coach/)).
+Each outcome is worth, in chip equivalents,
+
+    k × [ΔICM + (end × (P − C) − start × P) / T + cash won],    k = 1 / (prizes / chips + P / T)
+
+with P the bounty pool, C the cash the hand's busts pay out of it, T the chips in play (the table's and every
+other player's), start and end the stacks, and k the chips a unit of money is worth (shown as "1 is worth X bb").
+A bust's own part, to the winner, comes to k × (1 − s') × cash, s' the winner's chip share after the hand: it owned
+that share of the busted player's bounty already. Cash is the whole bounty in a KO, the envelope in a mystery
+bounty, and half the bounty in a PKO. **The PKO's added half** stays in the pool on the winner's head, worth the
+winner's chip share of it (as every chip's share of the pool): B/2 at once plus s' × B/2 for the added half, less
+the s' × B it owned of the busted bounty, = (1 − s') × B/2 (the proportional model GTO Wizard and ICMIZER both
+use; tested against the hand formula). In a winner-take-all every outcome is its chips plus that bonus exactly.
+**With no payouts** chips are converted to money by taking the prizes still to be paid as equal to the bounties in
+play (a buy-in split evenly between the prize pool and the bounties, the usual 50/50 KO and PKO), chip EV
+otherwise; the answer's note says so. With payouts the prizes are ICM, as above.
+
+It reaches everywhere ICM does: push/fold (the shove's and each caller's values of every outcome, so a covering
+stack calls and shoves wider, and a short stack's own big bounty makes the stacks that cover it call wider),
+calling an all-in (the equity it needs, against the chip price: "a bounty discount"), the preflop risk premium
+(negative with a bounty: calls and 3bets re-priced, opens widen by at most 1.5x the chart's, the best against
+what continues added), heads-up solves after the flop (icm.HUPayoffs: the loser all in busts, a split doesn't)
+and 3- and 4-way solves (icm.MWPayoffs: each order of the live hands busts whoever ends with nothing, its bounty to
+that layer's winner; the compiled core reads the same weights, so it needed no change). Answers carry
+`tournament.bounties`: `format`, `model` ("proportional"), `bb_per_unit` (k), `pool`, every seat's `bounties`,
+`you_bust` (each opponent hero covers: what busting them is worth to hero in `bb` and in money (`value`), the `cash`
+it pays, and `in_hand`: whether hero's call or shove here can win it), `bust_you` (each opponent who covers hero:
+what hero's bust is worth to them, bb) and a `note` naming the model.
+
+Worked numbers (6-max, no payouts, UTG-BTN 30bb, the small blind 20bb jams into the big blind's 40bb, who covers):
+
+| bounties | 1 unit | busting SB is worth | BB's call needs | BB calls | SB jams | A2o |
+|---|---|---|---|---|---|---|
+| none | | | 47.5% (chips) | 21% of hands | 39% | folds |
+| PKO 10 on every head (pool 60) | 1.5bb | 5 cash, 5.0bb | 42.2% = 19 / (40 + 5) | 26% | 31% | calls 56% (42.5% equity) |
+| KO 10 on every head | 1.5bb | 10, 10.0bb | 38.0% | 35% | 30% | calls |
+| mystery, envelope 30 (pool 150) | 0.6bb | 30, 12.0bb | 36.5% | 46% | 33% | calls |
+| KO 30 on SB, 10 on the others | 1.125bb | 30, 22.5bb | 30.4% = 19 / 62.5 | 97% | 53% | calls |
+
+(The small blind's jam range tightens as the big blind calls wider, and widens again once the big blind calls
+nearly everything: then a jam needs only its equity against any two.) The small blind with 40bb covering a 12bb big blind jams 53% of hands in chips, 75% with 10 PKO on every head, 96%
+with 10 KO, and every hand with 30 KO on the big blind. KO winner-take-all (tests/test_bounty.py): the button's 10bb
+jam, the big blind (30bb) calling 9 more, 300 in prizes and 50 on each of three heads: a unit is worth 0.2
+chips, busting the button adds 0.2 × (1 − 40.5/90) × 50 = 5.5 to the chips won, so the call needs 9 / (20.5 + 5.5)
+= 34.6% against 43.9% in chips (PKO 9 / 23.25 = 38.7%). On a river (Ks7d2c9h4s) where the button jams 22bb all in
+into a big blind who covers, with 40 KO on the button the big blind's queens go from a fold (−2.94bb) to a call
+(+1.27bb: their 37.7% equity times the 11.2bb bust) and the big blind calls 36% of its range instead of 25%. 3-way
+(4 left, 50/30/20 paid; BTN 12bb jams the river, SB 30bb with queens, BB 30bb behind): with 80 KO on the button
+the small blind raises all in 52% of the time to push the big blind out of the side pot and keep the bounty for
+itself (35% with PKO), where it only calls without bounties.
+
+Limits:
+
+* The proportional model is the simple standard: it overvalues a big stack's share of the bounties (it can't
+  collect them all soon) and undervalues a short stack's, and it ignores where a bounty sits (a big bounty at your
+  table is easier to win than one across the field) and the future game (ICMIZER's TrueBounty and GTO Wizard's
+  simulations model those). A PKO's added half is valued as chips are, not by when it can be lost.
+* Mystery bounties are valued at the average envelope (no risk preference about the draw).
+* Push/fold counts a split as half a win and half a loss (a split busts nobody, so its bounty part is left out).
+* Opens widen by at most OPEN_WIDEN (1.5x the chart's range); preflop spots the push/fold model doesn't play take
+  the bounty as a discount on the risk premium.
+* The 3-way solves keep their bystander approximation (who wins when a player loses is taken as even), so which
+  opponent collects a bust's bounty when hero loses is averaged too; pots of five or more players get the betting
+  rules in chips.
+* The flop libraries, instant answers, presolves, Study and the one-size view (all in chips) leave bounties out:
+  a bounty tournament's flop solves live.
+
 ### Custom sizes and ranges
 
 The page's **Advanced** disclosure in the setup (saved with the hand and carried by share links, like rake;
@@ -813,7 +907,7 @@ every size).
   "hand", "hole"}, "notes", "seconds"}`; `full` and each row `{"size", "actions", "freq" (the range's), "amounts",
   "ev_bb", "grid", "iterations", "exploitability_pct", "seconds", "hand": {"freq", "ev"}}`, the rows with `loss_pct`
   (the EV given up) once the full menu is in. With `"study": true` it is for whoever acts, their whole range (no
-  `hand`). An error preflop, facing a bet, all-in, multiway, against the pool or locks, with tournament payouts, or for
+  `hand`). An error preflop, facing a bet, all-in, multiway, against the pool or locks, with tournament payouts or bounties, or for
   a size out of range.
 * **Cache**: the solver keeps every row it solved (`ONE_SIZE_CACHE`, the 256 used last; a few KB each), by spot (the
   ranges, pot, stacks, tree and target) and size, and answers with all it has for the spot; the page keeps its runs

@@ -9,6 +9,12 @@ A pot's outcomes (a fold, a win, a loss, a split) move chips between the players
 less than the chips do (a chip lost costs more than a chip won gains: the "bubble factor"), and the players not in
 the pot gain whenever someone busts. The solvers take each outcome at its prize-equity value (Payoffs), so a call
 that is +EV in chips can be -EV in prizes.
+
+Bounty tournaments (Bounties: knockout, progressive knockout, mystery bounty) pay cash for each player busted, to
+whoever wins the pot that takes their last chips, on top of the prizes. Bounties are valued by the proportional
+model (GTO Wizard's "bounty power", ICMIZER's Proportional model): every player owns their chip share of the bounty
+money still in play, so a chip is worth its prize equity plus the bounty pool over the chips in play, and a bust
+moves the cash it pays out of that pool into the winner's pocket (Model.value).
 """
 from __future__ import annotations
 from functools import lru_cache
@@ -188,12 +194,58 @@ def compress_payouts(payouts: Sequence[float], players: int, model_players: int)
     return out
 
 
+BOUNTY_FORMATS = {"ko": "KO", "pko": "PKO", "mystery": "mystery bounty"}
+BUST_EPS = 1e-6     # (bb: a stack this close to nothing after the hand is busted)
+
+
+class Bounties:
+    """A bounty tournament's bounties, in the payouts' units (money).
+
+    fmt: "ko" (knockout: the whole bounty goes to whoever busts the player), "pko" (progressive knockout: half is paid
+    at once, half is added to the eliminator's own bounty, which stays in play) or "mystery" (each bust draws an
+    envelope from a pool: worth the average envelope left).
+    seats: each seat's bounty (ko, pko); field: the players at other tables' average bounty (None: the table's average).
+    envelope: mystery's average envelope left; pool: the money left in envelopes (with envelope None: pool / left is the
+    envelope, `left` the bounties still to be drawn). A mystery pool not given is envelope x (players left - 1): one
+    envelope per bust still to come."""
+
+    def __init__(self, fmt: str, seats: Optional[Dict[str, float]] = None, field: Optional[float] = None,
+                 envelope: Optional[float] = None, pool: Optional[float] = None, left: Optional[float] = None):
+        fmt = str(fmt).lower()
+        if fmt not in BOUNTY_FORMATS:
+            raise ValueError(f"bounty format {fmt!r}: one of {', '.join(BOUNTY_FORMATS)}")
+        self.fmt = fmt
+        self.seats = {p: max(0.0, float(v)) for p, v in (seats or {}).items()}
+        self.field = None if field is None else max(0.0, float(field))
+        if fmt == "mystery" and envelope is None and pool and left:
+            envelope = float(pool) / float(left)
+        self.envelope = None if envelope is None else max(0.0, float(envelope))
+        self.pool = None if pool is None else max(0.0, float(pool))
+
+    def __bool__(self):
+        """Anything at stake: a bounty on someone at the table (or an envelope to draw)."""
+        if self.fmt == "mystery":
+            return bool(self.envelope)
+        return any(v > 0 for v in self.seats.values())
+
+
 class Model:
     """A tournament spot: the table's stacks (chips behind at the start of the hand, by seat), the other players'
     and the payouts still to be paid (first place first). ICM is exact over up to MAX_PLAYERS players; a bigger field
-    is modelled by stand-ins (field_stacks) with the payouts spread over them (compress_payouts)."""
+    is modelled by stand-ins (field_stacks) with the payouts spread over them (compress_payouts).
 
-    def __init__(self, stacks: Dict[str, float], payouts: Sequence[float], others: Sequence[float] = ()):
+    bounties (Bounties): a bounty tournament. Each player owns their chip share of the bounty money in play (the pool,
+    P: every bounty on a head, or a mystery's envelopes left; the proportional model), and a bust pays its cash (a KO
+    bounty, half a PKO bounty, a mystery envelope) out of the pool to whoever wins the pot that takes the player's last
+    chips (only a player who covers them can). A seat's value of an outcome is then its prize equity's change plus
+    its share of the pool after (its chips over the chips in play) less before, plus the cash it won, in chip
+    equivalents at chips / (prizes + pool) per unit (bounty_k: a chip is worth its prizes and its share of the pool;
+    in a winner-take-all, chips exactly). The half of a PKO bounty added to the winner's head stays in the pool, so
+    it is worth the winner's chip share of it after the hand (as everyone's). None, or nothing at stake: prizes only,
+    the same numbers as without."""
+
+    def __init__(self, stacks: Dict[str, float], payouts: Sequence[float], others: Sequence[float] = (),
+                 bounties: Optional[Bounties] = None):
         self.seats = list(stacks)
         self.stacks = {p: float(v) for p, v in stacks.items()}
         others = [float(x) for x in others if x > 0]
@@ -214,6 +266,57 @@ class Model:
         self.base = self.equity_of(self.stacks)
         self.key = (tuple(sorted((p, round(v, 4)) for p, v in self.stacks.items())), tuple(round(x, 4) for x in self.field),
                     tuple(round(x, 6) for x in self.payouts))
+        self.bounty = None
+        self.assumed_prizes = False     # (the advisor's: no payouts given, the prizes taken as the bounties in play)
+        if bounties:
+            self._bounty_setup(bounties, others)
+
+    def _bounty_setup(self, b: Bounties, others: List[float]):
+        """The bounty model's numbers: each seat's bounty and the cash its bust pays, the pool P in play, the chips in
+        play (the table's and every other player's, not the model's stand-ins: a player's share of the pool is theirs
+        of the real chips), and bounty_k, chip equivalents per unit of money."""
+        self.bounty = b
+        n_others = len(others)
+        if b.fmt == "mystery":
+            e = b.envelope or 0.0
+            self.bounties = {p: e for p in self.seats}
+            self.cash = dict(self.bounties)
+            pool = b.pool if b.pool else e * max(self.players - 1, 1)
+        else:
+            self.bounties = {p: b.seats.get(p, 0.0) for p in self.seats}
+            avg = b.field if b.field is not None else sum(self.bounties.values()) / max(len(self.seats), 1)
+            self.cash = {p: v * (0.5 if b.fmt == "pko" else 1.0) for p, v in self.bounties.items()}
+            pool = sum(self.bounties.values()) + n_others * avg
+        self.bounty_pool = float(pool)
+        self.chips_real = sum(self.stacks.values()) + sum(others)
+        self.rho = self.bounty_pool / max(self.chips_real, 1e-12)      # the pool's money per chip
+        self.bounty_k = 1.0 / (1.0 / self.scale + self.rho)              # chips per unit: GTO Wizard's bounty power
+        self.key = self.key + (("bounty", b.fmt, tuple(sorted((p, round(v, 6)) for p, v in self.cash.items())),
+                                round(self.bounty_pool, 6), round(self.chips_real, 4)),)
+
+    def busts(self, put: Dict[str, float], won: Dict[str, float], winners) -> list:
+        """The busts of an outcome (put, won as after()) for Model.value's `ko`: each seat with no chips left, its
+        bounty to winners(seat) ({seat: share}: who won the pot that took its last chips)."""
+        out = []
+        for p in self.seats:
+            if p in put and self.stacks[p] - put[p] + won.get(p, 0.0) <= BUST_EPS:
+                w = winners(p)
+                if w:
+                    out.append((p, w))
+        return out
+
+    def _bounty_money(self, end: Dict[str, float], ko) -> Dict[str, float]:
+        """Each seat's bounty money from an outcome (end: stacks after the hand; ko: [(busted seat, {winner: share})]):
+        the cash it won plus its share of the pool after (end / chips in play x (P - the cash paid)) less before."""
+        cash: Dict[str, float] = {}
+        paid = 0.0
+        for busted, winners in ko or ():
+            c = self.cash.get(busted, 0.0)
+            paid += c
+            for w, sh in winners.items():
+                cash[w] = cash.get(w, 0.0) + sh * c
+        P, T = self.bounty_pool, self.chips_real
+        return {p: cash.get(p, 0.0) + (max(end[p], 0.0) * (P - paid) - self.stacks[p] * P) / T for p in self.seats}
 
     def equity_of(self, stacks: Dict[str, float]) -> Dict[str, float]:
         vals = [max(stacks[p], 0.0) for p in self.seats] + list(self.field)
@@ -231,23 +334,35 @@ class Model:
         """Chips in play per unit of prize: prize equity times this is in chip equivalents."""
         return (sum(self.stacks.values()) + sum(self.field)) / self.prize_pool
 
-    def value(self, put: Dict[str, float], won: Dict[str, float]) -> Dict[str, float]:
+    def value(self, put: Dict[str, float], won: Dict[str, float], ko=()) -> Dict[str, float]:
         """Each seat's prize equity once the hand ends (after(put, won)) less its equity at the start of the hand, in
-        chip equivalents: in a winner-take-all, the chips won or lost exactly."""
+        chip equivalents: in a winner-take-all, the chips won or lost exactly. A bounty tournament adds each seat's
+        bounty money (ko: the busts, [(seat, {winner: share})], Model.busts)."""
         eq = self.after(put, won)
-        k = self.scale
-        return {p: (eq[p] - self.base[p]) * k for p in self.seats}
+        if self.bounty is None:
+            k = self.scale
+            return {p: (eq[p] - self.base[p]) * k for p in self.seats}
+        end = {p: self.stacks[p] - put.get(p, 0.0) + won.get(p, 0.0) for p in self.seats}
+        bm = self._bounty_money(end, ko)
+        k = self.bounty_k
+        return {p: (eq[p] - self.base[p] + bm[p]) * k for p in self.seats}
 
-    def value_batch(self, put, won) -> np.ndarray:
-        """value() for many outcomes: put, won (B, seats) in self.seats' order -> (B, seats)."""
+    def value_batch(self, put, won, kos=None) -> np.ndarray:
+        """value() for many outcomes: put, won (B, seats) in self.seats' order -> (B, seats); kos: each outcome's
+        busts (as value()'s ko, by seat name), for a bounty tournament."""
         st = np.array([self.stacks[p] for p in self.seats])[None, :] - np.asarray(put) + np.asarray(won)
         vals = np.concatenate([np.maximum(st, 0.0), np.broadcast_to(np.array(self.field, dtype=float), (len(st), len(self.field)))], axis=1)
         eq = equities_batch(vals, self.payouts)[:, :len(self.seats)]
-        return (eq - np.array([self.base[p] for p in self.seats])[None, :]) * self.scale
+        if self.bounty is None:
+            return (eq - np.array([self.base[p] for p in self.seats])[None, :]) * self.scale
+        bm = np.array([[d[p] for p in self.seats] for d in
+                       (self._bounty_money(dict(zip(self.seats, row)), kos[i] if kos else ()) for i, row in enumerate(st))])
+        return (eq - np.array([self.base[p] for p in self.seats])[None, :] + bm.reshape(eq.shape)) * self.bounty_k
 
     def showdown(self, put: Dict[str, float], a: str, b: str):
         """a and b all in against each other with every seat's chips in `put` (the others' dead): (a's values when a
-        wins, when b wins), by seat. The pot is what b can match of a's chips (and a of b's); the rest goes back."""
+        wins, when b wins), by seat. The pot is what b can match of a's chips (and a of b's); the rest goes back. In a
+        bounty tournament the loser busts when the winner covers them, its bounty to the winner."""
         m = min(put[a], put[b])
         pot = sum(min(v, m) if q in (a, b) else v for q, v in put.items())
         back = {q: put[q] - m for q in (a, b) if put[q] > m + 1e-12}
@@ -255,7 +370,9 @@ class Model:
         for w in (a, b):
             won = dict(back)
             won[w] = won.get(w, 0.0) + pot
-            out.append(self.value(put, won))
+            ko = self.busts(put, won, lambda p, w=w: {w: 1.0} if p in (a, b) and p != w else None) \
+                if self.bounty is not None else ()
+            out.append(self.value(put, won, ko))
         return out[0], out[1]
 
     def call_need(self, put: Dict[str, float], hero: str, jammer: str, to_call: float, taker: Optional[str] = None):
@@ -281,8 +398,27 @@ class Model:
             return 0.0
         jam = dict(put)
         jam[villain] = jam.get(villain, 0.0) + rest
-        icm, chips = self.call_need(jam, hero, villain, rest)
-        return max(0.0, icm - chips)
+        call = rest
+        if self.bounty is not None:
+            # (both all in for the shorter stack, so the one covered busts when it loses and pays its bounty: the
+            # rest behind alone leaves a seat with less in short of matching the other's chips)
+            eff = min(self.stacks[hero], self.stacks[villain])
+            jam[villain] = max(put.get(villain, 0.0), eff)
+            call = max(eff - put.get(hero, 0.0), 0.0)
+        icm, chips = self.call_need(jam, hero, villain, call)
+        # (bounties can make it a discount: a bust of a player hero covers pays hero their bounty)
+        return icm - chips if self.bounty is not None else max(0.0, icm - chips)
+
+    def bust_value(self, hero: str, villain: str) -> Optional[Tuple[float, float]]:
+        """What busting villain is worth to hero beyond the chips, all in against them (hero covering): (in chip
+        equivalents, in money): the cash it pays less hero's share of it after the hand (hero owned its chip share of
+        that bounty already, in the pool). None if hero doesn't cover villain or there's no bounty."""
+        if self.bounty is None or self.stacks[hero] + BUST_EPS < self.stacks[villain] or self.stacks[villain] <= 0:
+            return None
+        c = self.cash.get(villain, 0.0)
+        share = (self.stacks[hero] + self.stacks[villain]) / self.chips_real
+        money = c * (1.0 - share)
+        return money * self.bounty_k, money
 
     def bubble_factor(self, hero: str, villain: str) -> float:
         """What hero risks against villain over what hero gains, in prize equity per chip, for a pot where both
@@ -322,8 +458,14 @@ class HUPayoffs:
             put[p] = put.get(p, 0.0) + add[i]
         pot = sum(put.values())
         won = {self.seats[winner]: pot} if winner is not None else {self.seats[0]: pot / 2, self.seats[1]: pot / 2}
-        eq = self.model.after(put, won)
-        return tuple((eq[p] - self.model.base[p]) * self.scale for p in self.seats)
+        m = self.model
+        if m.bounty is not None:
+            # (a bounty tournament: the loser, all in, busts and its bounty goes to the winner; a split busts nobody)
+            ko = m.busts(put, won, lambda p: {self.seats[winner]: 1.0} if winner is not None and p in self.seats else None)
+            v = m.value(put, won, ko)
+            return tuple(v[p] for p in self.seats)
+        eq = m.after(put, won)
+        return tuple((eq[p] - m.base[p]) * self.scale for p in self.seats)
 
     def fold(self, inv, folder: int) -> Tuple[float, float]:
         k = ("f", round(float(inv[0]), 6), round(float(inv[1]), 6), folder)
@@ -389,7 +531,10 @@ class MWPayoffs:
             if k not in self._memo and k not in todo:
                 todo[k] = (tuple(live), [float(x) for x in c], [(float(a), tuple(e)) for a, e in layers])
         if todo:
-            puts, wons, index = [], [], []
+            puts, wons, index, kos = [], [], [], []
+            model = self.model
+            bounty = model.bounty is not None
+            stk = np.array([model.stacks[p] for p in model.seats])
             for k, (live, c, layers) in todo.items():
                 put = self._put0.copy()
                 put[self._ix] += np.asarray(c)
@@ -402,8 +547,19 @@ class MWPayoffs:
                         w = next(x for x in perm if x in elig)
                         won[self._ix[w]] += amt * sc
                     puts.append(put); wons.append(won)
+                    if bounty:
+                        # a live player left with nothing busts: its bounty to whoever won the top layer its chips
+                        # reach (the pot that took its last chips; that winner's chips reach it too, so covered it)
+                        ko = []
+                        for p in live:
+                            if stk[self._ix[p]] - put[self._ix[p]] + won[self._ix[p]] <= BUST_EPS:
+                                top = max(j for j, (_, e) in enumerate(layers) if p in e)
+                                w = next(x for x in perm if x in layers[top][1])
+                                if w != p:
+                                    ko.append((self.seats[p], {self.seats[w]: 1.0}))
+                        kos.append(ko)
                 index.append((k, live, layers, perms))
-            V = self.model.value_batch(np.array(puts), np.array(wons))[:, self._ix]     # (outcomes, np)
+            V = model.value_batch(np.array(puts), np.array(wons), kos if bounty else None)[:, self._ix]   # (outcomes, np)
             self.evals += len(V)
             at = 0
             for k, live, layers, perms in index:

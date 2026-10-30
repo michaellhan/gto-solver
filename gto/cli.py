@@ -39,6 +39,28 @@ def parse_actions(s: str):
     return out
 
 
+def parse_bounties(text: str, positions) -> dict:
+    """--bounties: "pko 10", "ko 10 SB=30 field=12", "mystery 25" or "mystery pool=900 left=30" -> the state's
+    "bounties" (the advisor checks the values)."""
+    words = text.replace(",", " ").split()
+    if not words:
+        return {}
+    out: dict = {"format": words[0].lower()}
+    seats = {}
+    for w in words[1:]:
+        k, _, v = w.partition("=")
+        if not v:
+            out["envelope" if out["format"] in ("mystery", "mb") else "seats"] = k
+        elif k.lower() in ("field", "envelope", "pool", "left"):
+            out[k.lower()] = v
+        else:
+            seats[k.upper()] = v
+    if seats:
+        every = out.pop("seats", 0)
+        out["seats"] = {**{p: every for p in positions}, **seats}
+    return out
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="GTO advisor (sandbox / manual entry)")
     ap.add_argument("--hero", required=True)
@@ -56,6 +78,8 @@ def main(argv=None):
     ap.add_argument("--players", type=int, default=6, help="players dealt in, 2-9")
     ap.add_argument("--stacks", default="", help='seats\' own stacks in bb, "CO=40,BTN=25,SB=8,BB=25"')
     ap.add_argument("--payouts", default="", help='a tournament\'s prizes still to be paid, "50 30 20" (ICM)')
+    ap.add_argument("--bounties", default="", help='a bounty tournament: "pko 10" (10 on every head), "ko 10 SB=30 '
+                    'field=12" (seats\' own, the other tables\' average), "mystery 25" (the average envelope)')
     ap.add_argument("--speed", choices=("fast", "accurate"), default="fast",
                     help="tree and budgets: fast 2.5 s a street, accurate 30 s (12 s per earlier street)")
     ap.add_argument("--budget", type=float, default=None, help="seconds for the current street solve")
@@ -73,6 +97,9 @@ def main(argv=None):
         state["stacks"] = {k.strip(): float(v) for k, v in (x.split("=") for x in args.stacks.split(",") if x.strip())}
     if args.payouts:
         state["payouts"] = args.payouts
+    if args.bounties:
+        from .preflop import SEATS
+        state["bounties"] = parse_bounties(args.bounties, SEATS.get(args.players, SEATS[6]))
     adv = advisor(args.speed, args.depth, args.budget, args.prior_budget)
     res = adv.advise(state)
     if args.json:
