@@ -314,25 +314,56 @@ static void ranking(Lane *L, const i32 *R, i32 b, const f32 *ro, f32 *u, int sca
   L->top = mark;
 }
 
-/* u = M @ ro for one (n, n) matrix: four 4-wide accumulators a row */
-static void matvec(const f32 *M, const f32 *ro, f32 *u) {
-  i32 n16 = n & ~15;
-  for (i32 i = 0; i < n; i++) {
-    const f32 *m = M + (size_t)i * n;
-    v4 s0 = {0, 0, 0, 0}, s1 = s0, s2 = s0, s3 = s0;
-    i32 j = 0;
-    for (; j < n16; j += 16) {
-      s0 += *(const v4u *)(m + j) * *(const v4u *)(ro + j);
-      s1 += *(const v4u *)(m + j + 4) * *(const v4u *)(ro + j + 4);
-      s2 += *(const v4u *)(m + j + 8) * *(const v4u *)(ro + j + 8);
-      s3 += *(const v4u *)(m + j + 12) * *(const v4u *)(ro + j + 12);
-    }
-    v4 s = (s0 + s1) + (s2 + s3);
-    f32 x = (s[0] + s[1]) + (s[2] + s[3]);
-    for (; j < n; j++) x += m[j] * ro[j];
-    u[i] = x;
+/* a row m of an (n, n) matrix dotted with ro: four 4-wide accumulators */
+static inline f32 dot(const f32 *m, const f32 *ro) {
+  i32 n16 = n & ~15, j = 0;
+  v4 s0 = {0, 0, 0, 0}, s1 = s0, s2 = s0, s3 = s0;
+  for (; j < n16; j += 16) {
+    s0 += *(const v4u *)(m + j) * *(const v4u *)(ro + j);
+    s1 += *(const v4u *)(m + j + 4) * *(const v4u *)(ro + j + 4);
+    s2 += *(const v4u *)(m + j + 8) * *(const v4u *)(ro + j + 8);
+    s3 += *(const v4u *)(m + j + 12) * *(const v4u *)(ro + j + 12);
   }
+  v4 s = (s0 + s1) + (s2 + s3);
+  f32 x = (s[0] + s[1]) + (s[2] + s[3]);
+  for (; j < n; j++) x += m[j] * ro[j];
+  return x;
 }
+
+/* u = M @ ro for one (n, n) matrix */
+static void matvec(const f32 *M, const f32 *ro, f32 *u) {
+  for (i32 i = 0; i < n; i++) u[i] = dot(M + (size_t)i * n, ro);
+}
+
+/* A training pass with subs (below) takes the products of its equity leaves above them (an all-in called on the turn:
+   M @ ro, one (n, n) matrix a row, read whole for one product) from the subs' job: COLLECT keeps each leaf row's
+   opponent reach, the job's last rows multiply them (a chunk of LCHUNK of a matrix's rows each, every reach on that
+   matrix at once: each matrix row read once for all of them, each entry dot()'s sum as matvec takes it), and READ's
+   terminal() takes the product of a row whose reach is the one kept, bit for bit (else it multiplies, as before).
+   Their matvecs were READ's serial walk: 12 rows an iteration on a turn after a checked-through flop, 0.6-0.9 ms of a
+   7.3-8.8 ms iteration on 8 threads. */
+typedef struct {
+  const i32 *nd;
+  i32 b, on;     /* its row; on: reached (not unreached()), its product taken in the job */
+  f32 *x, *u;    /* the opponent's reach (n), its product (n) */
+} Leaf;
+#define LCHUNK 64
+static Leaf *leaves;
+static i32 nleaves, maxleaves, leaf_next, nltask, *lorder, *ltask;   /* ltask: [first, end (in lorder), row] each */
+static int leafing;   /* READ: terminal() takes the kept products */
+static int leaves_on = 1;
+static u32 leaves_taken;   /* products READ took (tests) */
+
+/* 1: a pass with subs multiplies its equity leaves in their job, 0: READ multiplies them (the same floats: tests); -1
+   just asks */
+EXPORT(core_leaves) i32 core_leaves(i32 on) {
+  if (on >= 0) leaves_on = on;
+  return leaves_on;
+}
+EXPORT(core_leaves_taken) u32 core_leaves_taken(void) { return leaves_taken; }
+
+static inline int leafy(const i32 *nd) { return nd[0] == LEAF && nd[7] < 0; }
+static inline const f32 *leaf_matrix(const Leaf *l) { return PF(l->nd[2]) + (size_t)l->b * n * n; }
 
 static void bterminal(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *ro, f32 *u);
 
@@ -357,6 +388,14 @@ static int unreached(const f32 *r) {
   u32 x = 0;
   for (; i < n; i++) x |= w[i];
   return x == 0;
+}
+
+/* whether two rows of n floats are the same bit for bit */
+static int same(const f32 *x, const f32 *y) {
+  const u32a *a = (const u32a *)x, *b = (const u32a *)y;
+  u32 d = 0;
+  for (i32 i = 0; i < n; i++) d |= a[i] ^ b[i];
+  return d == 0;
 }
 
 /* p's utility (rows lo..hi, n) at a terminal; ro: the opponent's reach on those rows. (A row it doesn't reach: a
@@ -386,6 +425,13 @@ static void terminal(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r
       const f32 *r = ro + (size_t)(b - lo) * n;
       f32 *ub = u + (size_t)(b - lo) * n;
       int none = nd[0] == SHOWDOWN || nd[7] < 0 ? unreached(r) : 0;
+      const Leaf *lf = 0;
+      if (leafing && leafy(nd)) {
+        if (leaf_next >= nleaves) __builtin_trap();
+        lf = &leaves[leaf_next++];
+        if (lf->nd != nd || lf->b != b) __builtin_trap();   /* (the walks differ: a bug) */
+        if (!lf->on || !same(lf->x, r)) lf = 0;
+      }
       if (nd[0] == SHOWDOWN && none) {
         const f32 *live = PF(P[nd[2] + 7]) + (size_t)b * n;
         for (i32 i = 0; i < n; i++) ub[i] = 0.0f * live[i];
@@ -416,6 +462,9 @@ static void terminal(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r
         }
       } else if (none) {
         for (i32 i = 0; i < n; i++) ub[i] = 0;
+      } else if (lf) {
+        for (i32 i = 0; i < n; i++) ub[i] = lf->u[i];
+        leaves_taken++;
       } else {
         matvec(PF(nd[2]) + (size_t)b * n * n, r, ub);
       }
@@ -489,6 +538,8 @@ static void strategy(Lane *L, const f32 *regret, i32 lo, i32 hi, i32 A, i32 W, i
 
 static void cfr(Lane *L, i32 at, int p, i32 lo, i32 hi, const f32 *r0, const f32 *r1, f32 *out);
 static void split(Lane *L, i32 child, int p, i32 lo, i32 hi, const f32 *c0, const f32 *c1, f32 *u);
+static void keep(const i32 *nd, i32 lo, i32 hi, const f32 *x, i32 W);
+static int subbing;   /* this pass runs its subs (below) */
 
 /* TRAIN: a training pass (Solver._cfr, update=True); AVG: both players on their average strategies, no update (use_avg);
    BR: p best-responds to the opponent's average strategy (Solver._best_response) */
@@ -522,7 +573,21 @@ static void decision(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r
     f32 *reach = player == p ? 0 : salloc(L, sizeof(f32) * RW);
     if (player != p) strategy(L, regret, lo, hi, A, W, 0, s, 0);
     for (i32 a = 0; a < A; a++) {
-      if (is_terminal(kids[a])) continue;
+      if (is_terminal(kids[a])) {
+        if (!subbing || !leaves_on || !leafy(P + kids[a])) continue;
+        if (player == p) {   /* (an equity leaf: its opponent reach, as the pass proper passes it) */
+          keep(P + kids[a], lo, hi, ro, W);
+          continue;
+        }
+        for (i32 b = lo; b < hi; b++) {
+          size_t j = (size_t)(b - lo);
+          const f32 *sa = s + (j * A + a) * W, *rb = ro + j * W;
+          f32 *x = reach + j * W;
+          for (i32 i = 0; i < W; i++) x[i] = rb[i] * sa[i];
+        }
+        keep(P + kids[a], lo, hi, reach, W);
+        continue;
+      }
       if (player == p) {
         cfr(L, kids[a], p, lo, hi, r0, r1, out);
         continue;
@@ -694,7 +759,7 @@ typedef struct {
 static Sub *subs;
 static i32 nsubs, maxsubs, sub_rows, sub_next;   /* kept, room for, their rows, READ's next */
 static f32 *sub_area, *sub_end;
-static int subs_on = 1, subbing;   /* subbing: this pass runs them */
+static int subs_on = 1;
 
 /* 1: a training pass runs its first chance nodes' rows as one job (with helpers), 0: a job a node (the same floats:
    tests); -1 just asks */
@@ -729,6 +794,53 @@ static void sub(const i32 *nd, i32 lo, i32 hi, const f32 *r0, const f32 *r1, f32
     f32 *x0 = s->r0 + j * (n + 1), *x1 = s->r1 + j * (n + 1);
     for (i32 i = 0; i < n; i++) x0[i] = r0[j * n + i], x1[i] = r1[j * n + i];
     x0[n] = x1[n] = 0;
+  }
+}
+
+/* an equity leaf's rows lo..hi on COLLECT's walk: each row's opponent reach x (W = n a row) kept */
+static void keep(const i32 *nd, i32 lo, i32 hi, const f32 *x, i32 W) {
+  if (W != n) __builtin_trap();
+  for (i32 b = lo; b < hi; b++) {
+    if (nleaves == maxleaves) __builtin_trap();
+    Leaf *l = &leaves[nleaves++];
+    const f32 *r = x + (size_t)(b - lo) * n;
+    l->nd = nd, l->b = b, l->x = carve(n), l->u = carve(n), l->on = !unreached(r);
+    for (i32 i = 0; i < n; i++) l->x[i] = r[i];
+  }
+}
+
+/* after COLLECT: the kept leaves' products as the job's last rows, nltask of them (LCHUNK rows of a matrix each, for
+   every reached leaf on it: lorder holds them grouped by matrix, in the order kept) */
+static void leaf_tasks(void) {
+  i32 m = 0;
+  nltask = 0;
+  for (i32 x = 0; x < nleaves; x++) {
+    if (!leaves[x].on) continue;
+    const f32 *M0 = leaf_matrix(&leaves[x]);
+    i32 seen = 0;
+    for (i32 y = 0; y < m && !seen; y++) seen = leaf_matrix(&leaves[lorder[y]]) == M0;
+    if (seen) continue;
+    i32 first = m;
+    for (i32 y = x; y < nleaves; y++)
+      if (leaves[y].on && leaf_matrix(&leaves[y]) == M0) lorder[m++] = y;
+    for (i32 r = 0; r < n; r += LCHUNK) {
+      i32 *t = ltask + 3 * nltask++;
+      t[0] = first, t[1] = m, t[2] = r;
+    }
+  }
+}
+
+/* the job's leaf task t: rows t[2].. of its matrix times each of its leaves' reaches */
+static void leaf_task(i32 t) {
+  const i32 *k = ltask + 3 * t;
+  const f32 *M0 = leaf_matrix(&leaves[lorder[k[0]]]);
+  i32 e = n - k[2] < LCHUNK ? n : k[2] + LCHUNK;
+  for (i32 i = k[2]; i < e; i++) {
+    const f32 *m = M0 + (size_t)i * n;
+    for (i32 y = k[0]; y < k[1]; y++) {
+      Leaf *l = &leaves[lorder[y]];
+      l->u[i] = dot(m, l->x);
+    }
   }
 }
 
@@ -835,6 +947,10 @@ static void classes(Lane *L, const i32 *nd, int p, i32 lo, i32 hi, const f32 *r0
 /* subs' rows lo..hi of the pass's job (on a lane with par set) */
 static void subs_run(Lane *L, int p, i32 lo, i32 hi) {
   for (i32 g = lo; g < hi; g++) {
+    if (g >= sub_rows) {   /* (the leaves' products) */
+      leaf_task(g - sub_rows);
+      continue;
+    }
     i32 a = 0, z = nsubs - 1;   /* (the last sub starting at or before g) */
     while (a < z) {
       i32 m = (a + z + 1) / 2;
@@ -1752,7 +1868,7 @@ static void subs_job(int p) {
   if (!lane_size[2]) {
     M.par = 1;
     measuring = 1;
-    for (i32 r = 0; r < sub_rows; r++) {
+    for (i32 r = 0; r < sub_rows + nltask; r++) {
       size_t mark = M.top;
       M.peak = mark;
       run(&M, SUBS, p, r, r + 1, r, 0, 0, 0);
@@ -1764,7 +1880,7 @@ static void subs_job(int p) {
     return;
   }
 #ifdef THREADS
-  job(&M, SUBS, p, 0, sub_rows, 1, 0, 0, 0, lane_size[2]);
+  job(&M, SUBS, p, 0, sub_rows + nltask, 1, 0, 0, 0, lane_size[2]);
 #endif
 }
 
@@ -1793,13 +1909,19 @@ EXPORT(core_eval) i32 core_eval(u32 prog, i32 at, i32 p, u32 r0, u32 r1, u32 out
   return 0;
 }
 
-/* the first chance nodes below `at` (subs): counts them and the floats they keep (sub()); 0 if anything above them
-   but decisions and terminals */
-static int plan(i32 at, i32 *ns, size_t *nf) {
+/* the first chance nodes below `at` (subs): counts them and the floats they keep (sub()), and the equity leaves' rows
+   above them (nl) with theirs (keep()); 0 if anything above them but decisions and terminals */
+static int plan(i32 at, i32 *ns, i32 *nl, size_t *nf) {
   const i32 *nd = P + at;
   if (nd[0] == DECISION) {
-    for (i32 a = 0; a < nd[2]; a++)
-      if (!is_terminal(nd[7 + a]) && !plan(nd[7 + a], ns, nf)) return 0;
+    for (i32 a = 0; a < nd[2]; a++) {
+      const i32 *kid = P + nd[7 + a];
+      if (leafy(kid)) {
+        *nl += kid[1];
+        *nf += (size_t)kid[1] * 2 * (((size_t)n + 15) & ~(size_t)15);
+      }
+      if (!is_terminal(nd[7 + a]) && !plan(nd[7 + a], ns, nl, nf)) return 0;
+    }
     return 1;
   }
   if (nd[0] != CHANCE && nd[0] != CLASSES) return 0;
@@ -1826,9 +1948,9 @@ EXPORT(core_run) i32 core_run(u32 prog, i32 iters, u32 factors) {
   size_t len = (u32)P[9];
   const f32 *fac = PF(factors);
   int fuse = fuse_on && P[17] == 0;   /* (a deferred game's decisions are walked twice a pass: discounted after) */
-  i32 ns = 0;
+  i32 ns = 0, nl = 0;
   size_t nf = 0;
-  int sub_on = subs_on && nthreads > 1 && P[17] == 0 && plan(root, &ns, &nf) && ns > 0;
+  int sub_on = subs_on && nthreads > 1 && P[17] == 0 && plan(root, &ns, &nl, &nf) && ns > 0;
   for (i32 t = 0; t < iters; t++) {
     d_mode = fac[4 * t], d_pos = fac[4 * t + 1], d_neg = fac[4 * t + 2], d_sf = fac[4 * t + 3];
     fused = fuse;
@@ -1848,18 +1970,26 @@ EXPORT(core_run) i32 core_run(u32 prog, i32 iters, u32 factors) {
         deferring = 0;
       } else if (sub_on && lane_size[0]) {
         subs = salloc(&M, sizeof(Sub) * ns);
+        leaves = salloc(&M, sizeof(Leaf) * (nl + 1));
+        lorder = salloc(&M, sizeof(i32) * (nl + 1));
+        ltask = salloc(&M, sizeof(i32) * 3 * ((size_t)nl * ((n + LCHUNK - 1) / LCHUNK) + 1));
         sub_area = salloc(&M, sizeof(f32) * nf);
         sub_end = sub_area + nf;
         maxsubs = ns, nsubs = sub_rows = sub_next = 0;
+        maxleaves = nl, nleaves = leaf_next = nltask = 0;
         subbing = 1;
         phase = COLLECT;
         cfr(&M, root, p, 0, B, r0, r1, u);
         phase = WHOLE;
+        leaf_tasks();
         subs_job(p);
         phase = READ;
+        leafing = leaves_on;
         cfr(&M, root, p, 0, B, r0, r1, u);
+        leafing = 0;
         phase = WHOLE;
         subbing = 0;
+        if (leaf_next != nleaves) __builtin_trap();   /* (the walks differ: a bug) */
       } else {
         cfr(&M, root, p, 0, B, r0, r1, u);
       }

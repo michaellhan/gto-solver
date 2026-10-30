@@ -1645,6 +1645,30 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   | `turn-limp` | 5.81 / 6.06 -> 4.59 / 4.62 | 6.53 / 6.80 -> 5.76 / 5.88 | 300, 0.16 |
 
   The Accurate turn at a 15 s budget on 8 threads: 10.35 / 10.50 -> 7.74 / 7.67 s, 1000 iterations, 0.02%.
+* **The turn's equity leaves in the job** (`core/gtocore.c` `keep`, `leaf_tasks`, `leaf_task`, `dot`, `core_leaves`).
+  With the subs in one job, what was left of a threaded turn iteration's serial part (0.75-1.1 ms of 7.3-8.8 on 8
+  threads, profiled) was nearly all the pass proper's equity leaves: an all-in called on the turn, its utility a
+  product with an (n, n) matrix of equities over the rivers, 6 rows a pass on these turns, each a matvec on the one
+  thread that walks the turn (0.6-0.9 ms an iteration; its fold and chance rows 0.05). Now the walk down keeps each
+  leaf row's opponent reach beside the subs', the job's last rows multiply them (64 of a matrix's rows each, every
+  reach on that matrix at once: a matrix row read once for all of them, from cache), and the pass proper takes the
+  product of a row whose reach is the one kept bit for bit (else it multiplies, as before). Each entry is `dot()`'s sum,
+  `matvec`'s, so the floats are the same: regrets and strategy sums equal with the leaves in the job or not, and as one
+  thread, on 2, 4 and 8 threads over the 686 sweep trees (four turns, two rivers and a flop, four ranges, full and trimmed: 574 with leaves taken), and in the tests (four turns: full, trimmed, a
+  25bb stack, the threaded page's tree with BTN vs BB's ranges; `core_leaves_taken` counts the products taken, so a
+  test sees the path run). One thread is unchanged; `core_leaves(0)` multiplies them in the pass (the tests).
+  `core-mt.wasm` 76 -> 83 KB. In the browser bench on 8 threads (Fast, BTN vs BB's turn files, a fresh worker per spot,
+  two runs each, alternating, in a quiet hold; seconds to the answer, the same iterations and exploitability):
+
+  | request | before -> after | the solve | iterations, % of the pot |
+  |---|---|---|---|
+  | `turn` | 2.22 / 2.28 -> 2.05 / 2.12 | 2.06-2.11 -> 1.90-1.96 | 300, 0.12 |
+  | `turn-x` | 2.66 / 2.51 -> 2.45 / 2.49 | 2.33-2.49 -> 2.28-2.31 | 300, 0.18 |
+  | `turn-limp` | 4.36 / 4.28 -> 3.91 / 3.93 | 2.86-2.96 -> 2.71-2.76 | 300, 0.16 |
+
+  (`turn-limp`'s flop narrowing, a threaded flop solve with all-in leaves, 1.40 -> 1.18 s of it.) Natively, ms an
+  iteration from the 100th on 8 threads (medians of 2, alternating, the same hold): `turn` 5.79 -> 5.13, `turn-limp`
+  8.18 -> 7.48, `turn-x` 6.42 -> 6.43 (runs of 6.16-6.68 against 5.97-6.89: within the noise; outside the hold, the slot beside the build, 8.48 -> 7.90).
 * **The multiway core on threads** (`core/mwcore.c` `pass`, `rwalk`, `job`, `helper`, `mw_threads`;
   `gto/mwcore-mt.wasm`). The multiway core (3- and 4-way flop and turn solves, How it works) ran on one thread in the
   browser while the heads-up core had helpers. Now a pass runs its root-street leaves as one job: a walk down

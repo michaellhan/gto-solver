@@ -213,6 +213,46 @@ class TestThreads(unittest.TestCase):
                 for g in got[1:]:
                     np.testing.assert_array_equal(g, got[0])
 
+    def test_equity_leaves_in_the_subs_job(self):
+        # A training pass with subs multiplies the equity leaves above them (an all-in called on the turn) in the subs'
+        # job, every reach on a matrix at once, and the pass proper takes their products (core_leaves): the same floats
+        # bit for bit as multiplying them in the pass, and as one thread, on 2, 4 and 8 threads (a turn by river class
+        # full and trimmed, a shorter stack, the threaded page's tree with the Advisor's ranges); a product is taken
+        # only where its reach is the one kept (core_leaves_taken counts them)
+        from gto.advisor import Advisor
+        fast = native.config("fast")
+        threaded = native.config("fast")
+        threaded.bet_sizes["river"] = list(native.SPEEDS["accurate"][0]["bet_sizes"]["river"])
+        btn = fl.spot_setup(next(s for s in fl.SPOTS if s[0] == "srp_btn_bb")[2])
+        spots = (("Ks7d2cTh", OOP_T, IP_T, 20, 90, 20, fast), ("Ks7d2cTh", OOP_T, IP_T, 20, 25, 20, fast),
+                 ("Ks7d2cTh", OOP_T, IP_T, 9.1, 95.5, 20, Advisor._trim_cfg(fast, "turn", 3)),
+                 ("JcTd8d4h", btn["full0"], btn["full1"], 5.5, 97.5, 12, threaded))
+        L = core.lib().L
+        for board, r0, r1, pot, stack, iters, cfg in spots:
+            with self.subTest(board, pot=pot, stack=stack):
+                got, taken = [], []
+                try:
+                    for t, ons in ((1, (1,)), (2, (1, 0)), (4, (1, 0)), (8, (1, 0))):
+                        self.assertEqual(core.threads(t), t)
+                        for on in ons:
+                            self.assertEqual(L.core_leaves(on), on)
+                            before = L.core_leaves_taken()
+                            sol = _solve(board, r0, r1, pot, stack, cfg, iters)
+                            self.assertTrue(sol.solver.use_core and sol.solver._core_ok)
+                            taken.append((t, on, L.core_leaves_taken() - before))
+                            got.append(np.concatenate([np.r_[d.regret.ravel(), d.ssum.ravel()]
+                                                       for d in _decisions(sol)]).view(np.int32))
+                finally:
+                    L.core_leaves(1)
+                    core.threads(1)
+                for g in got[1:]:
+                    np.testing.assert_array_equal(g, got[0])
+                for t, on, k in taken:
+                    if t == 1 or not on:
+                        self.assertEqual(k, 0, (t, on))
+                    else:
+                        self.assertGreater(k, 0, (t, on))
+
     def test_lanes_hold_the_sums(self):
         # A helper runs its rows of a training pass's job (every first chance node's: subs) in a lane of its own, sized
         # by a serial pass over them in the second iteration (the first runs a job a node, sizing a whole pass's lanes
