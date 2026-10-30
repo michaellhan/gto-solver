@@ -23,8 +23,13 @@
 // worker's setup by stage, the worker's own timings (runtime, numpy, imports, advisors).
 // --early asks as the page does for its own advice (early: an approximate answer first where one is in hand at once,
 // Advisor.instant) and reports when it came (early_s) and what it said.
+// --gap G: the opponent's move (the spot's last action, theirs) is entered G seconds after it became their turn, and the
+// time to the answer is counted from it; --presolve runs the page's presolve meanwhile (Advisor.presolve: the
+// worker solves the street from where the opponent is to act, stopped through the shared stop flag at G s, as the
+// page does when the move is entered), else the worker idles through the gap as it does today.
 // Times are wall clock on this machine: a browser tab is single-threaded too, but other load moves them.
 import { spawnSync, execFileSync } from "child_process";
+import { Worker as Thread } from "worker_threads";
 import os from "os";
 import fs from "fs";
 import path from "path";
@@ -71,6 +76,19 @@ const SPOTS = {
   // solve the one before made, and its approximate answer, --early, is read off it)
   "flop-limp": base({ hero: "SB", hole: "QhJh", board: "Ks7d2c", preflop: LIMP }),
   "turn-limp": base({ hero: "SB", hole: "QhJh", board: "Ks7d2cTh", preflop: LIMP, flop: [X("SB"), B("BB", 1.5), C("SB")] }),
+  // you in position, the opponent's move last (--gap / --presolve: the worker presolves the street while it's theirs);
+  // --session flop-limp-ip,turn-limp-ip,river-limp-ip plays one hand street by street, flop,turn-ip one after a library flop
+  "flop-limp-ip": base({ hero: "BB", hole: "Kc6c", board: "Ks7d2c", preflop: LIMP, flop: [X("SB")] }),
+  "turn-limp-ip": base({ hero: "BB", hole: "Kc6c", board: "Ks7d2cTh", preflop: LIMP, flop: [X("SB"), B("BB", 1.5), C("SB")],
+                         turn: [X("SB")] }),
+  "turn-limp-ip-f": base({ hero: "BB", hole: "Kc6c", board: "Ks7d2cTh", preflop: LIMP, flop: [X("SB"), B("BB", 1.5), C("SB")],
+                           turn: [B("SB", 3)] }),   // a 60% lead: off the presolve's tree (33/75/125%)
+  "river-limp-ip": base({ hero: "BB", hole: "Kc6c", board: "Ks7d2cTh5s", preflop: LIMP, flop: [X("SB"), B("BB", 1.5), C("SB")],
+                          turn: [X("SB"), B("BB", 3.75), C("SB")], river: [X("SB")] }),
+  "turn-ip": base({ hero: "BTN", hole: "AsQs", board: "Ks7d2cTh", flop: SRP_FLOP, turn: [X("BB")] }),    // after a library flop
+  "flop-3bp-ip": base({ hero: "BTN", hole: "AsQs", board: "Ks7d2c", preflop: BB_3BET, flop: [X("BB")] }),
+  "turn-3bp-ip": base({ hero: "BTN", hole: "AsQs", board: "Ks7d2cTh", preflop: BB_3BET, flop: [X("BB"), B("BTN", 6.8), C("BB")],
+                        turn: [X("BB")] }),
   "turn-limp-f": base({ hero: "SB", hole: "QhJh", board: "Ks7d2cTh", preflop: LIMP, flop: [X("SB"), B("BB", 1.5), C("SB")],
                         turn: [X("SB"), B("BB", 3)] }),   // facing 60%, off the tree turn-limp's advice solved
   "river-limp": base({ hero: "SB", hole: "QhJh", board: "Ks7d2cTh5s", preflop: LIMP, flop: [X("SB"), B("BB", 1.5), C("SB")],
@@ -88,6 +106,7 @@ const SPOTS = {
   "raked": base({ hero: "BTN", hole: "AsQs", board: "Kc7d4h", flop: [X("BB")], rake: 0.05, rake_cap: 3 }),
 };
 const STREET_IDX = { 0: 0, 3: 1, 4: 2, 5: 3 };
+const STREET_OF = { 6: "flop", 8: "turn", 10: "river" };
 
 function arg(name, dflt) {
   const i = process.argv.indexOf("--" + name);
@@ -167,6 +186,34 @@ async function startWorker(pyodideDir, bundlePath) {
   const heap = () => py._module.HEAPU8.buffer.byteLength / 2 ** 20;
   let id = 0;
   const prefetch = (state) => ctx.onmessage({ data: { prefetch: state } });
+  // the page's stop flag, shared with the worker, and a thread that sets it on time while the worker's Python blocks
+  // this one: cmd [seq, request id], at [when, Date.now() ms]; a newer command replaces one still waiting
+  let stopAfter = null;
+  if (flag("presolve")) {
+    const stop = new SharedArrayBuffer(8), cmd = new Int32Array(new SharedArrayBuffer(8)), at = new Float64Array(new SharedArrayBuffer(8));
+    ctx.onmessage({ data: { stop } });
+    const t = new Thread(`const { workerData: d } = require("worker_threads");
+      const cmd = new Int32Array(d.cmd), at = new Float64Array(d.at), stop = new Int32Array(d.stop);
+      for (let seen = 0;;) {
+        Atomics.wait(cmd, 0, seen);
+        for (let newer = true; newer;) {
+          seen = Atomics.load(cmd, 0); newer = false;
+          const id = Atomics.load(cmd, 1), when = at[0];
+          for (let left = when - Date.now(); left > 0; left = when - Date.now())
+            if (Atomics.wait(cmd, 0, seen, left) !== "timed-out") { newer = true; break; }
+          if (!newer) Atomics.store(stop, 1, id);
+        }
+      }`, { eval: true, workerData: { stop, cmd: cmd.buffer, at: at.buffer } });
+    t.unref();
+    stopAfter = (ms, id) => { at[0] = Date.now() + ms; Atomics.store(cmd, 1, id); Atomics.add(cmd, 0, 1); Atomics.notify(cmd, 0); };
+  }
+  // the page's presolve while `seat` is to act, stopped `ms` after it's posted (the move entered)
+  const presolve = (state, seat, ms) => new Promise((res) => {
+    const my = ++id, t0 = performance.now();
+    onMsg = (m) => { if (m.id === my) res({ ...m.result, s: +((performance.now() - t0) / 1000).toFixed(2) }); };
+    stopAfter(ms, my);
+    ctx.onmessage({ data: { id: my, state, presolve: seat } });
+  });
   const request = (state, early) => new Promise((res) => {
     const my = ++id, t0 = performance.now();
     let part = null;
@@ -177,7 +224,7 @@ async function startWorker(pyodideDir, bundlePath) {
     };
     ctx.onmessage({ data: early ? { id: my, state, early: true } : { id: my, state } });
   });
-  return { setup, stages, heap, request, prefetch, ctx };
+  return { setup, stages, heap, request, prefetch, presolve, ctx };
 }
 
 // one spot's requests in one worker (--session: every spot's, one after another in the same worker, as a page
@@ -201,13 +248,23 @@ async function runSpot(w, spot, speeds) {
       await new Promise((r) => setTimeout(r, 1000 * +arg("prefetch")));
     }
     const [x0, a0] = [w.ctx.libFetches, w.ctx.aheadFetches];
-    const t0 = performance.now();
+    // --gap G: the opponent's move entered G s after it became theirs (--presolve: the worker presolving meanwhile)
+    let t0 = performance.now(), pre = null;
+    const gap = arg("gap") == null ? null : +arg("gap");
+    if (gap != null) {
+      const st = STREET_OF[state.board.length], line = state[st] || [], last = line.at(-1);
+      if (!last || last.pos === state.hero) throw new Error(`${spot}: --gap needs the opponent's move last on the ${st}`);
+      if (flag("presolve")) pre = await w.presolve({ ...state, [st]: line.slice(0, -1) }, last.pos, Math.round(gap * 1000));
+      const left = t0 + gap * 1000 - performance.now();
+      if (left > 0) await new Promise((r) => setTimeout(r, left));
+      t0 += gap * 1000;   // (the time to the answer counts from the move)
+    }
     const m = await w.request(state, flag("early"));
     const wall = (performance.now() - t0) / 1000;
     const r = m.result || {}, s = r.solver || {};
     const est = pageBudget(state, speed, fastSeconds);
     console.log(JSON.stringify({
-      spot, speed, wall: +wall.toFixed(2), page_budget: est, over_pct: est ? Math.round((wall / est - 1) * 100) : null,
+      spot, speed, gap, presolve: pre, wall: +wall.toFixed(2), page_budget: est, over_pct: est ? Math.round((wall / est - 1) * 100) : null,
       iterations: s.iterations ?? null, solve_s: s.solve_seconds ?? null, expl_pct: s.exploitability_pct ?? null, cells: s.cells ?? null,
       outside_s: s.solve_seconds != null ? +(wall - s.solve_seconds).toFixed(2) : null,
       precomputed: !!r.precomputed, heap_mb: +w.heap().toFixed(0), lib_fetches: w.ctx.libFetches - x0, lib_ahead: w.ctx.aheadFetches - a0,
@@ -239,7 +296,7 @@ for (const spot of flag("session") ? [spots.join(",")] : spots) {
   // a fresh worker per spot (and per speed unless --warm)
   for (const group of flag("warm") ? [speeds] : speeds.map((s) => [s])) {
     const p = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--child", "--spot", spot, "--speeds", group.join(","),
-                                           "--pyodide", pyodideDir, "--bundle", bundlePath, ...(arg("worker") ? ["--worker", arg("worker")] : []), ...["prefetch", "idle"].flatMap((k) => (arg(k) ? ["--" + k, arg(k)] : [])), ...(flag("early") ? ["--early"] : [])], { encoding: "utf8", maxBuffer: 1 << 26 });
+                                           "--pyodide", pyodideDir, "--bundle", bundlePath, ...(arg("worker") ? ["--worker", arg("worker")] : []), ...["prefetch", "idle", "gap"].flatMap((k) => (arg(k) ? ["--" + k, arg(k)] : [])), ...["early", "presolve"].flatMap((k) => (flag(k) ? ["--" + k] : []))], { encoding: "utf8", maxBuffer: 1 << 26 });
     for (const line of p.stdout.split("\n").filter((l) => l.startsWith("{"))) {
       const r = JSON.parse(line);
       if (r.speed) rows.push(r);
@@ -249,6 +306,7 @@ for (const spot of flag("session") ? [spots.join(",")] : spots) {
                             `${r.cells ? "  cells " + (r.cells / 1e6).toFixed(1) + "M" : ""}` +
                             `${r.precomputed ? "  library" : ""}${r.lib_fetches ? "  sync-fetches " + r.lib_fetches : ""}${r.error ? "  ERROR " + r.error : ""}` +
                             (r.early ? `\n             approximate at ${r.early.s} s: ${r.early.recommended} (${r.early.label}); the answer: ${r.recommended}` : "") +
+                            (r.gap != null ? `\n             the move ${r.gap} s in; ${r.presolve ? `presolve ${r.presolve.presolved ? "ran its budget, " + r.presolve.iterations + " iterations" : r.presolve.cancelled ? "stopped" : "skipped"} (${r.presolve.s} s)` : "no presolve"}; answered ${r.wall} s after it: ${r.recommended}` : "") +
                             (r.notes.length ? "\n             " + r.notes.join("\n             ") : "")
                           : `${r.spot}: worker setup ${r.setup} s${r.stages ? " (" + Object.entries(r.stages).filter(([k]) => k !== "total").map(([k, v]) => `${k} ${v}`).join(", ") + ")" : ""}, heap ${r.heap_mb} MB`);
     }

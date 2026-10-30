@@ -2056,6 +2056,8 @@ class Advisor:
         self.cache_mb = CACHE_MB
         self._held: Dict[tuple, int] = {}
         self.should_stop = None   # callable; when it returns true the running solve raises solver.Cancelled
+        self._presolving = False   # (Advisor.presolve running)
+        self._presolved = set()    # cache keys of solves a presolve made that no request of the hand has asked for yet
         # a heads-up solve (the street advised on, or an earlier one narrowing its ranges) stops once its
         # exploitability is under this, % of the pot (read at HU_CHECKS), instead of running its whole budget; None
         # runs the budget
@@ -2184,6 +2186,35 @@ class Advisor:
         finally:
             self._instant = False
         return res if isinstance(res, dict) and res.get("approximate") else None
+
+    def presolve(self, state: dict, seat: str) -> Optional[dict]:
+        """The solve your next decision on this street will read, started while `seat` (the opponent) is to act: the
+        browser's worker runs it while you enter their move, the page stops it when you do (or leave the tab), and
+        the advice goes on from where it stopped (a solve stopped part way stays cached), so the time you take counts
+        toward the answer's. The street's solve with your cards as your advice makes it (Advisor.play's actor path),
+        within the request's budget, its answer for them never read; your advice that follows takes what's left of
+        that budget. Only where an instant answer is offered (heads-up from the flop, at equilibrium: not exploit
+        mode, locks, custom ranges or sizes, a tournament, Study, a jam, the breakdown) and the street is solved live
+        (not a flop the library holds). {"presolved": street, "iterations"}, else None."""
+        if len(str(state.get("board") or "")) < 6 or state.get("opponents") == "pool" or any(
+                state.get(k) for k in ("study", "runouts", "jam", "breakdown", "optimize_sizes", "locks", "library_only",
+                                       "payouts", "ranges", "sizes")):
+            return None
+        seat = str(seat or "").upper()
+        if not seat or seat == str(state.get("hero") or "").upper():
+            return None
+        self._presolved &= set(self._cache)
+        self._presolving = True
+        try:
+            with np.errstate(all="ignore"):
+                res = self._advise(state, actor=(seat, None))
+        except Cancelled:
+            raise
+        except Exception:   # noqa: BLE001 - (nothing to show: the advice itself says what's wrong)
+            return None
+        finally:
+            self._presolving = False
+        return res if isinstance(res, dict) and res.get("presolved") else None
 
     def prefetch(self, state: dict) -> None:
         """The flop's library lookups for a hand as soon as its flop is known, without reading any entry: a dry run
@@ -3308,6 +3339,8 @@ class Advisor:
         if self._instant and (actor or pool or optimize or locks or custom or self._runout_close is not None
                               or any(len(st.players_start) > 2 for st in rep[1:])):
             raise _NoInstant()   # (heads-up from the flop at equilibrium only)
+        if actor and actor[1] is None and any(len(st.players_start) > 2 for st in rep[1:]):
+            return {"skipped": "multiway"}   # (a presolve: heads-up from the flop only, as an instant answer)
         # a 3-way flop's first decision the 3-way library holds: its precomputed solve answers (no narrowing needed)
         if len(cur.players_start) == 3 and actor is None and not pool and not optimize and not self._jam \
                 and getattr(self, "_icm", None) is None:
@@ -3484,6 +3517,8 @@ class Advisor:
                 hit = self._from_library(lib, full, board, r0, r1, cur, eff, cfg, oop, ip, n2,
                                          smoothing=self.prior_smoothing, only=1 - hero_p, widened=w2, board=board,
                                          rare_lines=rl2)
+                if hit is not None and self._presolving:
+                    return {"skipped": "a flop-library spot"}   # (its answers are read off the entry, not solved)
                 if hit is not None and not w2 and not rl2 and id(hit[1]) in hit[0].stored:
                     lib_sol, node, n_r0, n_r1 = hit
                     notes.extend(n2)
@@ -3502,6 +3537,8 @@ class Advisor:
             # library or from this hand's flop advice costs nothing), so a request never takes longer than cold
             spare = max(0.0, spare - (time.time() - t_prior)) if self.spare_prior else 0.0
             sol = self._solve_cached(board, r0, r1, cur.pot_start, eff, self.time_budget + spare, cfg=cfg)
+            if actor and actor[1] is None:   # (a presolve: the street's solve is what it came for)
+                return {"presolved": cur.name, "iterations": int(sol.iters)}
             self._trim_note(sol, cur.name, notes)
             # The villain's actions this street are exact unless the solve rarely takes them: then
             # smooth as on earlier streets, so we aren't advised against a sliver of a range.
@@ -5205,8 +5242,9 @@ class Advisor:
         earlier = False
         if own is None:   # (facing a size off the tree your advice on this street solved: that solve, at its nearest)
             c = self._hand_cfg(board, r0, r1, cur, oop, ip, eff, cfg)
-            if c is not cfg:
-                own, earlier = self._cache.get(self._solve_key(board, r0, r1, cur.pot_start, eff, cfg=c)), True
+            k = self._solve_key(board, r0, r1, cur.pot_start, eff, cfg=c)
+            if c is not cfg and k not in self._presolved:   # (a presolve's, the move off its tree: never shown)
+                own, earlier = self._cache.get(k), True
         spot = InstantSpot(cur.name, tuple(board), tuple(hole), hero_p, oop, ip, list(cur.actions), cur.pot_start, eff,
                            behind, own, walked.get(STREETS[STREETS.index(cur.name) - 1]), earlier)
         got = next((g for g in (src(self, spot) for src in self.instant_sources) if g), None)
@@ -5330,6 +5368,22 @@ class Advisor:
                                 max_per=SLOW * left / 10 if n >= 4 and not (warm or slow) and level < len(TRIMS)
                                 else None)
                     break
+                except Cancelled as e:
+                    # (stopped before its first check: kept all the same, its tree built and its iterations run, so
+                    # the spot asked again goes on from there, as one stopped later does; a presolve's mostly are)
+                    part = getattr(e, "sol", None)
+                    if part is not None:
+                        if level:
+                            part.trimmed = (level, full, cap)
+                        if warm is not None:
+                            part.seconds += warm.seconds
+                        part.stopped = True
+                        self._cache[key] = part
+                        self._by_spot[spot] = part
+                        self._keep("_cache", key, part)
+                        if self._presolving:
+                            self._presolved.add(key)
+                    raise
                 except (TreeTooBig, TooSlow) as e:
                     full = full or e.cells
                     if isinstance(e, TooSlow):
@@ -5354,10 +5408,14 @@ class Advisor:
             self._cache[key] = sol
             self._by_spot[spot] = sol
             self._keep("_cache", key, sol)
+            if self._presolving:
+                self._presolved.add(key)
             if target is not None:
                 self._hu_run(sol, left - (time.time() - t0), target, first)
         else:
             self._keep("_cache", key, None)
+            if not self._presolving:
+                self._presolved.discard(key)   # (asked for by a request of the hand's own: its solve now)
             if getattr(sol, "stopped", False):   # (stopped part way: its iterations and root mix as they are now)
                 sol.stopped = False
                 sol.iters = sol.solver.iters
@@ -5398,11 +5456,13 @@ class Advisor:
             nxt = min([c for c in checks if c > sol.iters] + [1000])
             if rem <= 0:
                 break
+            t1 = time.time()
             try:
                 _, secs = sol.solver.run(sol.r0, sol.r1, time_budget=rem, max_iters=nxt, min_iters=1,
                                          should_stop=self.should_stop, reserve=HU_RESERVE)
             except Cancelled:
                 sol.stopped = True
+                sol.seconds += time.time() - t1   # (its iterations ran: the budget asked again counts them)
                 raise
             sol.iters = sol.solver.iters
             sol.seconds += secs

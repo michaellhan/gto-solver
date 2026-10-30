@@ -98,7 +98,9 @@ streets used to narrow ranges. River spots are solid either way; turn spots need
 Accurate to get close to a full solver (see Accuracy vs speed below).
 While a heads-up turn or river solves in the browser, an approximate answer read off the solve before it (a live
 flop's for the turn, the turn's for the river, or the street's own from your earlier decision) shows at once under
-the progress bar, marked approximate, until the answer replaces it.
+the progress bar, marked approximate, until the answer replaces it. In position, the street is solved while your
+opponent is to act, so the time you take entering their move counts toward the answer (a limped pot's turn answers
+in 3.2-3.4 s with the move entered 4 s in, against 7.0-7.3 s otherwise).
 The panel shows the recommended action with its size (preflop: 2.5bb
 opens, 3bb from the small blind, 3x or 4x 3-bets, 2.3x 4-bets, then all-in; over limpers
 3x (4x from the blinds) plus 1bb a limper, and a squeeze adds one bet per caller;
@@ -1359,6 +1361,41 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   after them (the entries hold the flop's play only), a street solved already, multiway pots, Practice (it grades
   your move against the answer), exploit mode, locks, custom sizes or ranges, tournaments, Study, the breakdown, a
   jam request.
+* **The street solved while your opponent is to act** (`Advisor.presolve`; the worker's `presolve` request; the
+  page's `presolveFor`, `stopPresolve`). In position, your answer can't start until you enter the opponent's move,
+  and the worker sat idle meanwhile. Now, while your opponent is to act heads-up after the flop, the page asks the
+  worker for the solve your next decision on the street reads: the street's solve with your cards, as your advice
+  makes it, within the setting's own budget. Entering their move stops it through the shared stop flag (0.02-0.11 s
+  later, or once the tree is built: a tree's build isn't interrupted, 0.3-0.4 s on these), and the advice goes on from
+  where it stopped. A solve stopped part way stays cached with its iterations and their time, also one stopped
+  before its first check (that was lost before); the advice gets what's left of the budget, so the work is counted
+  once and the answer is the same solve: every pair below has the same iterations, exploitability and verdict at
+  Fast. Its answer is never shown. A move off its tree (a size it doesn't hold) isn't read from it, not even for
+  the approximate answer; the advice solves that tree as before. One at a time; never while another request is
+  asked or running (your own advice still solving when you act runs on instead, and the presolve starts once it's
+  answered); only while the page is visible (stopped when the tab is hidden or the page left, started again when
+  it's shown); only where the page can stop it (cross-origin isolated, as the site is under its service worker);
+  not on a flop the library holds (its answers are read off the entry), nor wherever the approximate answer isn't
+  offered (Practice, which looks ahead on its own; Study; multiway pots; exploit mode, locks, custom sizes or ranges;
+  tournaments). `scripts/bench_browser.mjs --session --gap G --presolve` (Pyodide, one thread, a fresh worker per
+  hand and one idle 6 s; you in position, the opponent's move entered G s after it became theirs; seconds from it
+  to the answer, today -> with the presolve, two runs each, Fast):
+
+  | hand (each street after the one before, in one worker) | G = 0 | 2 s | 4 s |
+  |---|---|---|---|
+  | limped pot's flop (solved live) | 1.62-1.81 -> 1.66-1.76 | 1.60-1.77 -> 0.01 | 1.59-1.60 -> 0.01 |
+  | its turn | 7.17-8.16 -> 7.59-7.60 | 7.15-7.54 -> 5.09-5.18 | 6.98-7.30 -> 3.16-3.35 |
+  | its river | 0.11-0.13 -> 0.11-0.12 | 0.12-0.14 -> 0.01 | 0.11-0.13 -> 0.01 |
+  | single-raised pot's turn after a library flop | 4.15-4.22 -> 4.15-4.23 | 4.19-4.55 -> 2.14-2.46 | 4.17-4.50 -> 0.20-0.55 |
+  | 3bet pot's flop (solved live) | 0.77-0.79 -> 0.77 | 0.76-0.82 -> 0.35 | 0.76-0.83 -> 0.35 |
+  | its turn | 0.92-0.94 -> 0.92-0.94 | 0.95-0.98 -> 0.01-0.02 | 0.94-1.04 -> 0.01-0.02 |
+  | limped pot's turn facing a 60% lead (off the presolve's tree) | 8.54-9.15 -> 8.63-8.87 | 8.30-9.30 -> 8.38-8.62 (three runs) | |
+
+  At Quick the limped hand's flop goes from 1.52-1.53 s to 0.01-0.02 with the move entered 2 or 4 s in, its turn
+  from 1.85-1.87 to 0.03-0.06, its river from 0.11-0.14 to 0.01-0.03. With the move entered at once (G = 0) it's as
+  fast as today everywhere; also off the tree with the move entered 0.25 s in, the presolve stopped once its tree
+  was built (8.49-9.29 s, against 8.39-9.53). The 3bet pot's flop keeps 0.35 s: the opponent's check is rare there,
+  so the advice solves again from it against their rule-based range, which the presolve can't know ahead.
 * **Regret minimizer** (`docs/cfr_research.md`, `scripts/bench_solver.py --algos`, exploitability per
   iteration): predictive CFR+ and its discounted form (PCFR+, PDCFR+), the state of the art on many
   non-poker games, are 2-7x more exploitable than DCFR here at 100-200 iterations on every spot (the river,

@@ -984,6 +984,7 @@ function prefetchLibrary() {
 // partials, by request id)
 function callAdvise(state, play, onPartial) {
   if (MODE === "server") return fetch(play ? "play" : "advise", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(play ? { state, ...play } : state) }).then(r => r.json());
+  stopPresolve();   // (a real request never waits behind one)
   startWorker();
   const early = !play && !!onPartial;
   const id = ++reqId, p = new Promise(res => { pending[id] = res; if (early) partials[id] = onPartial; worker.postMessage(play ? { id, state, play } : early ? { id, state, early } : { id, state }); });
@@ -999,6 +1000,46 @@ function stopRequests(id) {
   for (const k in pending) if (id == null || +k === id) { pending[k]({ cancelled: true }); delete pending[k]; delete partials[k]; }
   return true;
 }
+// Speculative pre-solves: while your opponent is to act, heads-up after the flop, the browser's worker makes the solve
+// your next decision on the street reads (Advisor.presolve: the street's solve with your cards, as your advice makes
+// it), so the time you take entering their move counts toward the answer's: a check you then face goes on from where it
+// stopped. One at a time, within the setting's own budget, only while the page is visible and nothing else is asked;
+// your move (or the tab hidden, the page left) stops it at once, and its answer is never shown (a move off its tree
+// isn't read from it). Not where the instant answer isn't offered (Practice looks ahead on its own; Study, multiway,
+// exploit mode, locks, custom sizes or ranges, tournaments), nor where it can't be stopped (no shared stop flag).
+const PRE = { k: null, id: null, done: new Set() };   // the presolve's payload and request id; payloads presolved whole
+function presolveSeat(sim) {
+  if (MODE !== "wasm" || !STOP || !worker || workerStatus !== "Solving…") return null;
+  const busy = solving || review || Object.keys(pending).some(k => +k !== PRE.id);
+  if (busy || overlay || practicing()
+      || (typeof document !== "undefined" && document.hidden) || !S.cards[0] || !S.cards[1] || boardCards().length < 3
+      || !sim.cur || sim.handOver || needCard(sim) || sim.active.size !== 2 || !sim.active.has(S.hero) || sim.allin.has(S.hero)
+      || !sim.toAct || sim.toAct === S.hero || OPP === "pool" || OPP_LOCKS() || OPP_RANGES() || S.sizes || S.optSizes || ICM()) return null;
+  return sim.toAct;
+}
+function presolveFor(sim) {
+  const seat = presolveSeat(sim), k = seat ? JSON.stringify(payload()) : null;
+  if (PRE.k !== k) stopPresolve();
+  if (!k || PRE.k === k || PRE.done.has(k)) return;
+  if (PRE.done.size > 64) PRE.done.clear();
+  const id = ++reqId;
+  PRE.k = k; PRE.id = id;
+  new Promise(res => { pending[id] = res; worker.postMessage({ id, state: JSON.parse(k), presolve: seat }); }).then((r) => {
+    if (PRE.id !== id) return;
+    PRE.id = null;
+    if (r && !r.cancelled) PRE.done.add(k);   // (run its budget, nothing to do, or failed: not asked again)
+    else PRE.k = null;
+  });
+}
+function stopPresolve() {
+  const id = PRE.id;
+  PRE.k = PRE.id = null;
+  if (id != null) stopRequests(id);
+}
+if (typeof document !== "undefined" && document.addEventListener) document.addEventListener("visibilitychange", () => {
+  if (document.hidden) stopPresolve(); else presolveFor(simulate());
+});
+if (typeof addEventListener === "function") addEventListener("pagehide", stopPresolve);
 // Stop the solve in flight; its analyze() call then returns without showing anything.
 async function cancelSolve() {
   if (!solving) return;
@@ -1643,6 +1684,7 @@ async function analyze(sim) {
   solving = false;
   const now = JSON.stringify(payload());
   if (now !== key && simulate().toAct === S.hero) analyze(simulate());
+  else presolveFor(simulate());   // (your opponent to act meanwhile: their street's solve, now the worker is free)
 }
 // Bets and raises are shaded light to dark by size, so "bet 33%" and "bet 75%" never look alike.
 let CMAP = {};
@@ -1842,6 +1884,7 @@ function renderAll() {
   document.getElementById("pCards").hidden = !needCard(sim);   // the deck shows while a card is needed, or on request
   renderSetup(); renderSlots(sim); renderPicker(sim); renderTable(sim); renderAction(sim); renderTimeline();
   prefetchLibrary();
+  presolveFor(sim);
   if (sim.toAct === S.hero && S.cards[0] && S.cards[1] && !sim.handOver && !(practicing() && window.Practice.auto(sim))) analyze(sim);
   else if (!S.cards[0] || !S.cards[1]) resetAdvice();
   updateAdviceState();

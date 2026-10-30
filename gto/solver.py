@@ -2268,11 +2268,18 @@ def solve(board: Sequence[int], r_oop: np.ndarray, r_ip: np.ndarray, pot: float,
         warm_start(root, ctx, warm.root, warm.ctx)
     if reserve is not None:
         time_budget = max(time_budget - (time.time() - t_start), 0.0)
+    t_run = time.time()
     try:
         iters, secs = s.run(r0, r1, time_budget=time_budget, max_iters=max_iters, should_stop=should_stop,
                             reserve=reserve, max_per=max_per)
     except TooSlow as e:
         e.cells = tb.cells
+        raise
+    except Cancelled as e:
+        # (stopped part way: the solve so far rides on the exception, its iterations in the solver, for the caller to
+        # keep and go on with; its root mix and EVs aren't read until then)
+        e.sol = Solution(root, root.names, None, None, s.iters, time.time() - t_run, tb.n_nodes, ctx, r0, r1, s)
+        e.sol.cells = tb.cells
         raise
     sol = Solution(root, root.names, None, None, iters, secs, tb.n_nodes, ctx, r0, r1, s)
     sol.cells = tb.cells

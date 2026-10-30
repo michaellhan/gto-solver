@@ -106,6 +106,7 @@ function loadPage(opts = {}) {
     location.pathname = u.pathname; location.search = u.search; location.hash = u.hash;
   };
   const scripts = [];   // the scripts the page loaded (document.head.appendChild), by file name
+  const docListeners = {};   // document events other than keydown (visibilitychange), by type
 
   class FakeWorker {
     constructor(url) { this.url = url; this.onmessage = null; this.onerror = null; this.terminated = false; workers.push(this); }
@@ -143,7 +144,7 @@ function loadPage(opts = {}) {
       for (const e of byId(m[1]).walk()) if (e.dataset.key === m[2]) return e;
       return null;
     },
-    addEventListener: (t, f) => { if (t === "keydown") keydown.push(f); },
+    addEventListener: (t, f) => { if (t === "keydown") keydown.push(f); else (docListeners[t] = docListeners[t] || []).push(f); },
     execCommand(cmd) {
       if (cmd !== "copy" || !El.selected || (opts.gesture && !clipboard.gesture)) return false;
       clipboard.text = El.selected.value; clipboard.via = "execCommand"; return true;
@@ -217,6 +218,8 @@ function loadPage(opts = {}) {
     popTo(url) { goTo(url); page.fire("popstate", { state: null }); },
     // fire a window event (e.g. "hashchange" after setting location.hash)
     fire(t, e = {}) { for (const f of winListeners[t] || []) f(e); },
+    // the tab hidden or shown (document.hidden, then visibilitychange)
+    setHidden(h) { document.hidden = h; for (const f of docListeners.visibilitychange || []) f({}); },
     // change the visual viewport (e.g. the on-screen keyboard opening) and fire its events
     setViewport(v) { Object.assign(viewport, v); for (const t of ["resize", "scroll"]) for (const f of vvListeners[t] || []) f({}); },
     get S() { return val("S"); },

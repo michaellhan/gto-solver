@@ -281,7 +281,15 @@ const ready = (async () => {
              + "        r = advs.get(st.get('speed'), advs['fast']).instant(st)\n"
              + "    except Exception:\n"
              + "        r = None\n"
-             + "    return json.dumps(r) if r else ''");
+             + "    return json.dumps(r) if r else ''\n"
+             // a presolve (the page's, while your opponent is to act): the solve your next decision on the street reads,
+             // made now and kept (Advisor.presolve); its answer is never shown, the request that follows goes on from it
+             + "def presolve(st, seat):\n"
+             + "    try:\n"
+             + "        r = advs.get(st.get('speed'), advs['fast']).presolve(st, seat)\n"
+             + "    except Cancelled:\n"
+             + "        return json.dumps({'cancelled': True})\n"
+             + "    return json.dumps(r or {'skipped': True})");
   lap("advisors");
   setup.total = +((performance.now() - T0) / 1000).toFixed(2);
   postMessage({ status: "Solving…", setup });
@@ -326,8 +334,9 @@ onmessage = async (e) => {
     } catch (err) {} finally { RECORD = null; }
     return;
   }
-  // play: {seat, hole}, a practice opponent's move (Advisor.play); early: post an approximate answer first ({id, partial})
-  const { id, state, play, early } = e.data;
+  // play: {seat, hole}, a practice opponent's move (Advisor.play); early: post an approximate answer first ({id, partial});
+  // presolve: the opponent's seat, to act (Advisor.presolve: {presolved, iterations}, {skipped} or {cancelled})
+  const { id, state, play, early, presolve } = e.data;
   busy++;
   try {
     const py = await ready;
@@ -336,6 +345,10 @@ onmessage = async (e) => {
     if (cancelled.delete(id) || stopNow()) return postMessage({ id, result: { cancelled: true } });
     py.globals.set("state_json", JSON.stringify(state));
     py.globals.set("play_json", JSON.stringify(play || null));
+    if (presolve) {
+      py.globals.set("pre_seat", String(presolve));
+      return postMessage({ id, result: JSON.parse(py.runPython("presolve(json.loads(state_json), pre_seat)")) });
+    }
     if (early && !play) {
       const r = py.runPython("early(json.loads(state_json))");
       if (r) postMessage({ id, partial: JSON.parse(r) });
