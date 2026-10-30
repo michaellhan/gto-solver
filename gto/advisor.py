@@ -2745,8 +2745,9 @@ class Advisor:
         """The turn report (Advisor._runouts) from a library flop's stored turns (its entry's turn file,
         runouts.store_parts): per turn card the first decision's range mix and in position's after a check, as the
         library's flop solve plays them (its turn sizes; a turn class's cards alike), with each card's chance and
-        range equities; no EVs (the file holds strategies only). None where the entry has no turn file, or it doesn't
-        hold the hand's flop line (the lines it holds go to self._runout_lines)."""
+        range equities, and each player's EV there where the file holds the flop solve's EVs (format 2: its turn
+        class's, as a live report's; format 1 holds strategies only, so no EVs). None where the entry has no turn file,
+        or it doesn't hold the hand's flop line (the lines it holds go to self._runout_lines)."""
         got = _turn_file(self.library, sol, board[:3])
         if got is None or not isinstance(node, Decision) or id(node) not in getattr(sol, "stored", ()):
             return None
@@ -2767,12 +2768,18 @@ class Advisor:
             self._runout_lines = lines
             return None
         ln = next(x for x in t["lines"] if x["path"] == path)
+        ev_of = None
+        if ln.get("evs") is not None:        # (format 2: each card its class's range EVs, on the entry's suits)
+            from .flop_library import turn_range_evs
+            ev_of = {c: turn_range_evs(t, path, c // 4 * 4 + smap[c % 4]) for c in range(52) if c not in set(board)}
+            ev_of = {c: e for c, e in ev_of.items() if e is not None}
         notes = list(notes) + [
             "the flop library's stored turns: the precomputed flop solve's turn strategies (its turn sizes, each turn "
-            "class's cards alike: a rank's cards, a flush suit's apart; mixes in 5% steps), strategies only, so no EVs; "
-            "a turn dealt is solved on its own, with more sizes"]
+            "class's cards alike: a rank's cards, a flush suit's apart; mixes in 5% steps), "
+            + ("and its EVs there (each turn class's)" if ev_of else "strategies only, so no EVs")
+            + "; a turn dealt is solved on its own, with more sizes"]
         return {"study": "runouts", "street": "turn", "first": first, "after_check": after, "seats": list(seats),
-                "pot_bb": round(float(ln["pot"]), 2), "cards": self._runout_cards(board, r[0], r[1]),
+                "pot_bb": round(float(ln["pot"]), 2), "cards": self._runout_cards(board, r[0], r[1], ev_of),
                 "source": "store", "lines": lines, "line": at,
                 "solver": {"iterations": int(sol.iters), "exploitability_pct": round(float(sol.exploitability()), 3),
                            "by": "the flop library"},

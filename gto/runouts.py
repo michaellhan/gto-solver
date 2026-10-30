@@ -112,11 +112,12 @@ def store_parts(t: dict, smap: Sequence[int], path: Sequence[str], reach: Sequen
                 seats: Sequence[str]) -> List[Optional[dict]]:
     """A library flop's stored turn (a decoded turn file, flop_library.decode_turns) on the flop line `path`, for the
     turn report: [the turn's first decision, in position's after a check] (None where the file doesn't hold it), each
-    {"actor", "actions", "avg", "cards": [{"card", "cards": [card], "f", "w"}]}: per turn card off the board (the hand's
-    own suits; smap: canonical()'s suit map of its flop) the acting player's range frequencies there, each stored
-    combo by its reach entering the turn (reach: the two players', 1326 each, on the hand's suits) less the card
-    (combos the file doesn't store, under its 0.5% of the most reached, are left out; w: that reach); avg: over every
-    card, each by the reach live on it."""
+    {"actor", "actions", "avg", "cards": [{"card", "cards": [card], "f", "w", "ev"}]}: per turn card off the board (the
+    hand's own suits; smap: canonical()'s suit map of its flop) the acting player's range frequencies there, each
+    stored combo by its reach entering the turn (reach: the two players', 1326 each, on the hand's suits) less the card
+    (combos the file doesn't store, under its 0.5% of the most reached, are left out; w: that reach); ev (a format-2
+    file only): the flop solve's EV of each action for the hands that take it on the card's class, chips (None: nobody
+    does); avg: over every card, each by the reach live on it."""
     from .flop_library import combo_map, turn_node
     from .solver import MEMBER_FULL
     img = combo_map(smap)
@@ -141,8 +142,10 @@ def store_parts(t: dict, smap: Sequence[int], path: Sequence[str], reach: Sequen
                 np.full(len(names), 1.0 / len(names))
             F.append(f)
             W.append(tot)
-            rows.append({"card": card_str(c), "cards": [card_str(c)], "f": [round(float(x), 4) for x in f],
-                         "w": round(tot, 3)})
+            row = {"card": card_str(c), "cards": [card_str(c)], "f": [round(float(x), 4) for x in f], "w": round(tot, 3)}
+            if nd.get("evs") is not None:
+                row["ev"] = [round(float(x), 2) if np.isfinite(x) else None for x in nd["evs"]]
+            rows.append(row)
         if len(rows) != len(cards):
             out.append(None)
             continue

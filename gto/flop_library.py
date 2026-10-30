@@ -648,16 +648,33 @@ def decode(data: bytes) -> dict:
 # check, bet 33%, call 23%, ...), the turn decisions TURN_NODES (the first, and in position after a check), per turn
 # class (Ctx.turn_classes: the played card's strategy; 13 classes on a rainbow flop, 26 two-tone), for the acting
 # player's combos that reach the line (TURN_REACH of its most reached) and don't hold the played card (which the flop
-# solve doesn't play there): strategies only, in 1/TURN_Q steps, no EVs. The flop solve bets and raises the turn 75%
-# only. Another card of a class reads the played card's strategies as the flop solve plays it (turn_node). Written
-# with the entry (scripts/build_flop_library.py), the header naming the entry's hash: a turn file is read only beside
-# the entry it was solved with (the index lists those, a spot's "turns").
+# solve doesn't play there): strategies in 1/TURN_Q steps (format 2: and the solve's EVs there, below). The flop solve
+# bets and raises the turn 75% only. Another card of a class reads the played card's strategies as the flop solve
+# plays it (turn_node). Written with the entry (scripts/build_flop_library.py), the header naming the entry's hash: a
+# turn file is read only beside the entry it was solved with (the index lists those, a spot's "turns").
 TURN_MAGIC = b"GTOTN1"
 TURN_FORMAT = 1
 TURN_LINE = 0.01           # a flop line is stored when this share of the hand pairs reach the turn on it
 TURN_REACH = 0.005         # a combo is stored on a line when its reach there is this share of the player's most reached
 TURN_Q = 20                # strategy steps (5%)
 TURN_NODES = ((), ("check",))
+# Format 2 (encode_turns(evs=True)): the flop solve's EVs on the turn too, after the strategies, so a format-1 reader
+# (which reads the strategies the header lays out and stops there) reads the file as before; same magic, the header's
+# "format": 2 and "ev": TURN_EV_STEP. Per line, per turn class: both players' range EV at the turn's first decision
+# (range against range, each pair of hands that share no card by its two reaches, as Advisor._row_evs: the two add up
+# to the pot), then per stored node, per class, the acting player's EV of each action (of the hands that take it,
+# each by its reach and the pairs it makes); chips relative to folding now, both players on the solve's average
+# strategies, every river dealt. int16 in a step of the line's turn pot, the header's "ev": TURN_EV_STEP, or the first
+# of TURN_EV_STEPS the file's largest EV fits in (32767 steps: an all-in deep-stacked, 200bb behind a 5.5bb turn pot,
+# is ~36x the pot, past 0.1%'s 32.7x); TURN_EV_NONE where nobody is there (an action under TURN_EV_MIN combos of the
+# range). 8-12% more bytes, ~0.1-0.5 s a flop (3bet pots at 300 iterations:
+# CO vs HJ 9c6d6c 8131 -> 9073 bytes, BB vs SB Kc7d2h 3861 -> 4225, BB vs CO Qc9c4d 16585 -> 17854). Written only
+# when the build asks (scripts/build_flop_library.py --turn-evs); a format-1 file reads as before, without EVs.
+TURN_EV_FORMAT = 2
+TURN_EV_STEP = 0.001       # 0.1% of the turn pot (0.04 bb in a 3bet pot's 40 bb turn)
+TURN_EV_STEPS = (0.001, 0.002, 0.005, 0.01)   # (up to 32.7, 65.5, 164, 328 times the pot; past the last: clipped)
+TURN_EV_NONE = -32768
+TURN_EV_MIN = 0.05         # (Study's: an action's EV is shown for a twentieth of a combo or more)
 
 
 def entry_hash(entry: bytes) -> str:
@@ -688,17 +705,83 @@ def turn_lines(sol) -> List[tuple]:
     return sorted(out, key=lambda x: -x[4])
 
 
-def encode_turns(sol, entry: bytes, nodes: Sequence[tuple] = TURN_NODES) -> Optional[bytes]:
+def turn_evs(sol, ch, a0: np.ndarray, a1: np.ndarray, nodes: Sequence[tuple] = TURN_NODES) -> dict:
+    """The EVs a flop solve has at a line's turn (ch: the line's turn Chance node, turn_lines; a0, a1: the two reaches
+    entering it), per turn class (ch's rows: Ctx.turn_classes' order): {"range": (K, 2) both players' range EV at the
+    turn's first decision, "nodes": {at: (K, A) the acting player's EV of each action at node_at(turn, at)}}, as format 2
+    stores them (TURN_EV_FORMAT); in chips, NaN where nobody is there. A class's reach is the line's on its played card's
+    live combos (ch.masks)."""
+    from .solver import _inv_of
+    s = sol.solver
+    T = ch.child
+    K = T.avg_strategy().shape[0]
+    masks = np.asarray(ch.masks, dtype=np.float64).reshape(K, -1)
+    R = [np.asarray(a0, dtype=np.float64)[None, :] * masks, np.asarray(a1, dtype=np.float64)[None, :] * masks]
+
+    def cfv(node, p, r):
+        """p's utility per combo at node (K, n), each over the pairs it makes (compat_sum), and those pair weights."""
+        f32 = [np.ascontiguousarray(x, dtype=np.float32) for x in r]
+        u = np.asarray(s._cfr(node, p, f32[0], f32[1], update=False, use_avg=True), dtype=np.float64)
+        cs = np.asarray(s.compat_sum(f32[1 - p]), dtype=np.float64)
+        return np.where(cs > 1e-12, u / np.where(cs > 1e-12, cs, 1.0), 0.0), cs
+
+    was = getattr(s, "sampling", True)
+    s.sampling = False                  # (an exact expectation: every river)
+    try:
+        rng = np.full((K, 2), np.nan)
+        for p in (0, 1):
+            ev, cs = cfv(T, p, R)
+            w = R[p] * cs
+            den = w.sum(axis=1)
+            ok = den > 1e-9
+            rng[ok, p] = (w * ev).sum(axis=1)[ok] / den[ok] + _inv_of(T, p, sol.ctx.cfg.icm)
+        out = {}
+        for at in nodes:
+            n, r = T, list(R)
+            try:
+                for nm in at:
+                    a = n.names.index(nm)
+                    r[n.player] = r[n.player] * n.avg_strategy()[:, a, :]
+                    n = n.children[a]
+            except (ValueError, AttributeError):
+                continue
+            if not isinstance(n, Decision):
+                continue
+            q, st = n.player, n.avg_strategy()                 # (K, A, n)
+            inv = _inv_of(n, q, sol.ctx.cfg.icm)
+            evs = np.full((K, len(n.names)), np.nan)
+            for a, c in enumerate(n.children):
+                ev, cs = cfv(c, q, r)
+                wa = r[q] * st[:, a, :]                         # the hands that take it
+                w = wa * cs
+                den = w.sum(axis=1)
+                ok = (wa.sum(axis=1) >= TURN_EV_MIN) & (den > 1e-12)
+                evs[ok, a] = (w * ev).sum(axis=1)[ok] / den[ok] + inv
+            out[tuple(at)] = evs
+    finally:
+        s.sampling = was
+    return {"range": rng, "nodes": out}
+
+
+def _ev_q(x: np.ndarray, step: float) -> bytes:
+    """int16 steps of x (clipped to +-32767: -32768 is TURN_EV_NONE, where x is NaN)."""
+    q = np.where(np.isfinite(x), np.clip(np.round(np.nan_to_num(x) / step), -32767, 32767), TURN_EV_NONE)
+    return q.astype("<i2").tobytes()
+
+
+def encode_turns(sol, entry: bytes, nodes: Sequence[tuple] = TURN_NODES, evs: bool = False) -> Optional[bytes]:
     """The turn file of an entry (`entry`, encode()'s bytes) from its flop solve, or None when no line reaches the turn
     often enough (TURN_LINE). Header: format, board, entry (entry_hash), q, reach, classes [[played card, its class's
     cards]], lines [{path, share, pot, nodes [{at (turn actions to it), player, names}]}]. Body, per line: the two
     players' stored combos (1326 bits each); per node, per class, (A - 1) x k steps (the last action the rest), k the
-    acting player's stored combos without the played card, ascending."""
+    acting player's stored combos without the played card, ascending. evs: format 2 (TURN_EV_FORMAT), the solve's EVs
+    after that (turn_evs): per line (K, 2) range EVs, then per node (K, A) action EVs, int16 in the header's "ev" of
+    the line's pot (TURN_EV_STEP, or the first of TURN_EV_STEPS that holds the file's largest EV)."""
     ctx = sol.ctx
     act = np.asarray(ctx.active)
     head = decode(entry)["head"]
     classes = ctx.turn_classes(tuple(sol.root.boards[0]), sol.solver.dead)
-    lines, body = [], []
+    lines, body, tail = [], [], []
     for path, ch, a0, a1, share in turn_lines(sol):
         if share < TURN_LINE:
             break
@@ -724,14 +807,23 @@ def encode_turns(sol, entry: bytes, nodes: Sequence[tuple] = TURN_NODES) -> Opti
                 nb.append(np.clip(np.round(st[k][:-1, cols] * TURN_Q), 0, TURN_Q).astype(np.uint8).tobytes())
             hn.append({"at": list(at), "player": n.player, "names": list(n.names)})
         if hn:
-            lines.append({"path": list(path), "share": round(share, 4), "pot": round(float(T.pot_now), 4), "nodes": hn})
+            pot = round(float(T.pot_now), 4)
+            lines.append({"path": list(path), "share": round(share, 4), "pot": pot, "nodes": hn})
             body += [_bits(m) for m in masks] + nb
+            if evs:
+                e = turn_evs(sol, ch, a0, a1, [tuple(x["at"]) for x in hn])
+                tail += [(e["range"], pot)] + [(e["nodes"][tuple(x["at"])], pot) for x in hn]
     if not lines:
         return None
-    h = {"format": TURN_FORMAT, "board": head["board"], "entry": entry_hash(entry), "q": TURN_Q, "reach": TURN_REACH,
-         "classes": [[cards_str([c]), cards_str(list(cs))] for c, cs in classes], "lines": lines}
+    h = {"format": TURN_EV_FORMAT if evs else TURN_FORMAT, "board": head["board"], "entry": entry_hash(entry),
+         "q": TURN_Q, "reach": TURN_REACH, "classes": [[cards_str([c]), cards_str(list(cs))] for c, cs in classes],
+         "lines": lines}
+    if evs:   # (the step: the first that holds the file's largest EV, in times its line's pot)
+        big = max((float(np.nanmax(np.abs(x))) / pot for x, pot in tail if np.isfinite(x).any()), default=0.0)
+        h["ev"] = next((s for s in TURN_EV_STEPS if big / s <= 32767), TURN_EV_STEPS[-1])
+        tail = [_ev_q(x, h["ev"] * pot) for x, pot in tail]
     hb = json.dumps(h, separators=(",", ":")).encode()
-    return TURN_MAGIC + zlib.compress(struct.pack("<I", len(hb)) + hb + b"".join(body), 9)
+    return TURN_MAGIC + zlib.compress(struct.pack("<I", len(hb)) + hb + b"".join(body) + b"".join(tail), 9)
 
 
 def turns_head(data: bytes) -> dict:
@@ -745,7 +837,8 @@ def turns_head(data: bytes) -> dict:
 
 def decode_turns(data: bytes) -> dict:
     """{'head', 'lines': [{'path', 'share', 'pot', 'masks': [oop, ip] (1326 bools), 'nodes': [{'at', 'player', 'names',
-    'classes': per class (its stored combos (ascending indices), their strategy (A, k))}]}]}; combos on the entry's
+    'classes': per class (its stored combos (ascending indices), their strategy (A, k)), 'evs' (format 2: (K, A) the
+    action EVs, chips; else None)}], 'evs' (format 2: (K, 2) the range EVs; else None)}]}; combos on the entry's
     (canonical) flop."""
     if data[:len(TURN_MAGIC)] != TURN_MAGIC:
         raise ValueError("not a turn file")
@@ -772,15 +865,29 @@ def decode_turns(data: bytes) -> dict:
                 o += (A - 1) * k
                 st = np.vstack([q, np.maximum(q_ - q.sum(axis=0), 0.0)[None, :]])
                 per.append((idx, st / np.maximum(st.sum(axis=0, keepdims=True), 1e-12)))
-            nodes.append(dict(nd, classes=per))
-        lines.append(dict(ln, masks=masks, nodes=nodes))
+            nodes.append(dict(nd, classes=per, evs=None))
+        lines.append(dict(ln, masks=masks, nodes=nodes, evs=None))
+    if head.get("ev"):          # (format 2: the EVs after every line's strategies)
+        K = len(played)
+
+        def ev(shape, step):
+            nonlocal o
+            x = np.frombuffer(body, dtype="<i2", count=shape[0] * shape[1], offset=o).reshape(shape)
+            o += 2 * x.size
+            return np.where(x == TURN_EV_NONE, np.nan, x * step)
+        for ln in lines:
+            step = float(head["ev"]) * float(ln["pot"])
+            ln["evs"] = ev((K, 2), step)
+            for nd in ln["nodes"]:
+                nd["evs"] = ev((K, len(nd["names"])), step)
     return {"head": head, "lines": lines}
 
 
 def turn_node(t: dict, path: Sequence[str], at: Sequence[str], card: int) -> Optional[dict]:
     """A stored turn decision of a decoded turn file: the flop line `path`, `at` the turn actions to it, `card` the
     turn (on the entry's flop): {'names', 'player', 'played' (its class's played card), 'combos' (ascending), 'strat'
-    (A, k)}, or None where the file doesn't hold it. Another card of the class reads the played card's strategies as
+    (A, k), 'evs' (format 2: (A,) the acting player's EV of each action on the class, chips, NaN where nobody takes
+    it; else None)}, or None where the file doesn't hold it. Another card of the class reads the played card's strategies as
     the flop solve plays it: each combo the same combo's, and one holding the played card (stored for neither) that of
     its image holding `card` instead (dead on this turn). (Against a live Accurate turn on Kc7d2h this gives up 0.81 /
     0.63% of the pot on average, OOP / IP, the played card itself 0.50 / 0.67; the combos' suit-swap images 0.81 /
@@ -799,7 +906,19 @@ def turn_node(t: dict, path: Sequence[str], at: Sequence[str], card: int) -> Opt
                        dtype=np.int64)
         o = np.argsort(idx)
         idx, st = idx[o], st[:, o]
-    return {"names": nd["names"], "player": nd["player"], "played": played, "combos": idx, "strat": st}
+    evs = None if nd.get("evs") is None else nd["evs"][k]
+    return {"names": nd["names"], "player": nd["player"], "played": played, "combos": idx, "strat": st, "evs": evs}
+
+
+def turn_range_evs(t: dict, path: Sequence[str], card: int) -> Optional[np.ndarray]:
+    """Format 2: both players' range EV (2,) at the turn's first decision on the flop line `path` with `card` the turn
+    (on the entry's flop; its class's), chips relative to folding now; None where the file holds no EVs (format 1) or
+    not that line."""
+    k = next((i for i, (_, cs) in enumerate(t["head"]["classes"]) if card in parse_cards(cs)), None)
+    ln = next((x for x in t["lines"] if x["path"] == list(path)), None)
+    if k is None or ln is None or ln.get("evs") is None:
+        return None
+    return ln["evs"][k]
 
 
 def turn_strategies(t: dict, path: Sequence[str], at: Sequence[str], card: int, smap: Sequence[int]) -> Optional[dict]:

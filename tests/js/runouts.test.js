@@ -103,6 +103,20 @@ test("the table: a summary, groups, every card dealt on a click, the seats' EVs 
   assert.match(c, /<option value="1" selected>Flop: check, check \(25%\)<\/option>/);
   assert.match(c, /<option value="0">Flop: check, bet 7.13, call \(30%\)<\/option>/);
   assert.doesNotMatch(R.controlsHtml(RO, ui), /data-ctl="roline"/);
+  // stored turns with the flop solve's EVs (a format-2 turn file): each card's EVs as a live report's, each action's
+  // EV for the hands that take it in its bar's tip (none where nobody does), and the note says so
+  const evPart = (actor) => ({ ...part(actor, [0.9, 0.1], [1, 0]), cards: [{ card: "7d", cards: sevens, f: [0.9, 0.1], w: 30, ev: [4.12, 6.3] },
+                                                                       { card: "Qh", cards: rest, f: [1, 0], w: 60, ev: [4.4, null] }] });
+  const SE = { ...ST, cards: RO.cards, first: evPart("BB"), after_check: evPart("BTN") };
+  const eh = R.html(SE, ui, "Kd7c2h");
+  assert.match(eh, /<tr data-card="Ah"[^>]*>.*?<td class="n">3.50<\/td><td class="n">6.00<\/td><td class="n ro-eq">40.0<\/td>/);
+  assert.match(eh, /<tr data-card="7s"[^>]*>.*?title="Check 90.0%, EV 4.12bb"><\/i><i [^>]*title="Bet 75% 10.0%, EV 6.30bb">/);
+  assert.match(eh, /<tr data-card="Ah"[^>]*>.*?title="Check 100.0%, EV 4.40bb">/);
+  assert.match(eh, /<tr class="ro-sum">.*?title="Check [\d.]+%"><\/i>/);   // (averages: no action EVs)
+  assert.deepEqual(R.rows(SE, "first", "Kd7c2h").find(r => r.card === "Qh").fe, [4.4, null]);
+  assert.equal(R.rows(RO, "first", "Kd7c2h").find(r => r.card === "Qh").fe, null);
+  assert.match(R.noteHtml(SE), /EV in bb: each range's share of the pot \(9.50bb pot\) on the flop solve's strategies, by turn class .*the EV of each action for the hands that take it/);
+  assert.doesNotMatch(R.noteHtml(SE), /no EVs/);
 });
 
 test("Study's report: the table or the cards, the solve offered when nothing's in hand, its seconds", () => {

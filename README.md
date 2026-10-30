@@ -227,8 +227,10 @@ flush; completes a straight: three board ranks within a straight's five; pairs t
 brick, under every board card); sort by any column, filter to a class, or group by class, rank or suit (the mix
 averaged by the acting range on each card, EV and equity by the cards' chances given both ranges; a group row
 filters to it). **Cards** shows the same as a 13x4 grid. Click a card to deal it. The report comes from what's in
-hand first, at once: a library flop's stored turns (the 3bet pots with turn files: 0.1 s; strategies only, so the EV
-columns are "—", and a line they don't hold offers the lines they do), or the solve Study's own answer made (a
+hand first, at once: a library flop's stored turns (the 3bet pots with turn files: 0.1 s; the files shipped so far
+hold strategies only, so the EV columns are "—"; a file built with the flop solve's EVs, format 2, fills them with
+each turn class's range EVs and gives each action's EV for the hands that take it in its bar's tip; a line they don't
+hold offers the lines they do), or the solve Study's own answer made (a
 river report after Study answered the turn: 0.02 s natively; a flop solved live). Otherwise **Solve the flop** /
 **Solve the turn** solves that street at the speed picked, with a progress bar against the speed's budget (Fast: 2.5 s
 a street on the local server, 8 s in the browser, and a river report's flop too where it isn't in hand: K72r's turn
@@ -2675,7 +2677,18 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   up 0.50 / 0.67% of the pot out of / in position on the played cards and 0.81 / 0.63 on the others (1.6 at most),
   where the live solve is 0.08-0.18% from equilibrium; reading the suit-swapped combo instead gives up 0.81 / 0.93
   (2.0), and the 5% steps add 0.003 (0.02 at most). A richer turn menu in the flop solve (33/75/125%) was left out:
-  2.4x the nodes' memory (a build worker ~4.5-5 GB) and CPU. `--no-turns` builds without them. The index lists a
+  2.4x the nodes' memory (a build worker ~4.5-5 GB) and CPU. `--no-turns` builds without them. **Format 2**
+  (`--turn-evs`, `turn_evs`; header `"format": 2`, `"ev": 0.001`) adds the flop solve's EVs after every line's
+  strategies, where a format-1 reader (which reads what the header lays out and stops) doesn't look, so it reads the
+  file as before: per line and turn class both players' range EV at the turn's first decision (range against range,
+  as a live turn report's `Advisor._row_evs`: the two add up to the pot), then per stored node and class the acting
+  player's EV of each action for the hands that take it (none under 0.05 combos); int16 in 0.1% of the line's turn
+  pot, or the first of 0.2, 0.5 and 1% that holds the file's largest EV (the header's `"ev"`: a deep stack's all-in,
+  200bb behind a 5.5bb turn pot, is ~36 pots, past 0.1%'s 32.7; beyond 1%'s 328 pots it's clipped). The turn report then has EVs as a live one's (each card its class's) and each action's in its bar's tip; a
+  format-1 file's report is as before (EVs "—", a note saying the file holds strategies only). On three 3bet-pot flops
+  at 300 iterations it adds 8-12% (CO vs HJ 9c6d6c 8131 -> 9073 bytes, BB vs SB Kc7d2h 3861 -> 4225, BB vs CO Qc9c4d
+  16585 -> 17854) and 0.1-0.5 s a flop to a 19-47 s solve; a hand-class block on top (each grid class's EV per action,
+  1% of the pot) would add another 111-133%, so it isn't stored. The index lists a
   spot's turn files that name the entry beside them by its hash (`"turns"`: true for all its flops, or a list), and
   removes any other `.turn.bin` from the spot's folder, since the library's deploy publishes the folder as it is (a
   test fails on an entry or turn file the indexes don't name).

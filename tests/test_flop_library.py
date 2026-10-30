@@ -7,10 +7,13 @@ import json
 import os
 import random
 import shutil
+import struct
 import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
+import zlib
 
 import numpy as np
 
@@ -488,6 +491,131 @@ class TestFlopLibrary(unittest.TestCase):
             self.assertFalse(os.path.exists(tpath))
         finally:
             shutil.rmtree(d, ignore_errors=True)
+
+    def test_turn_file_evs(self):
+        """Format 2 (fl.encode_turns(evs=True)): the same turn file with the flop solve's EVs on the turn after its
+        strategies: per line and turn class both players' range EV at the turn's first decision (as a live turn
+        report's, Advisor._row_evs: the two add up to the pot), per stored node and class the acting player's EV of
+        each action (of the hands that take it: their range's EV lies between them), to TURN_EV_STEP of the line's pot,
+        NaN where under TURN_EV_MIN combos take it. A format-1 reader reads the strategies as before (it reads what
+        the header lays out and stops there); the default writes format 1. A turn report from it has EVs."""
+        sol, sid = self.sol, SPOT[0]
+        meta = dict(build._meta(sid, self.setup), board=CANON)
+        entry = fl.encode(sol, meta)
+        v1, v2 = fl.encode_turns(sol, entry), fl.encode_turns(sol, entry, evs=True)
+        h1, h2 = fl.turns_head(v1), fl.turns_head(v2)
+        self.assertEqual((h1["format"], "ev" in h1, h2["format"], h2["ev"]), (fl.TURN_FORMAT, False, fl.TURN_EV_FORMAT, fl.TURN_EV_STEP))
+        self.assertEqual({k: v for k, v in h2.items() if k not in ("format", "ev")}, {k: v for k, v in h1.items() if k != "format"})
+        self.assertLess(len(v2), 1.2 * len(v1))
+        # a format-1 reader: the header without "ev" (what it reads) over the format-2 body
+        raw = zlib.decompress(v2[len(fl.TURN_MAGIC):])
+        hl = struct.unpack("<I", raw[:4])[0]
+        old = {k: v for k, v in json.loads(raw[4:4 + hl]).items() if k != "ev"}
+        ob = json.dumps(dict(old, format=1), separators=(",", ":")).encode()
+        t1, t2 = fl.decode_turns(v1), fl.decode_turns(v2)
+        t_old = fl.decode_turns(fl.TURN_MAGIC + zlib.compress(struct.pack("<I", len(ob)) + ob + raw[4 + hl:]))
+        for t in (t2, t_old):
+            for a, b in zip(t1["lines"], t["lines"]):
+                self.assertTrue(all(np.array_equal(x, y) for x, y in zip(a["masks"], b["masks"])))
+                for x, y in zip(a["nodes"], b["nodes"]):
+                    self.assertTrue(all(np.array_equal(i, j) and np.array_equal(p, q) for (i, p), (j, q) in zip(x["classes"], y["classes"])))
+        for t in (t1, t_old):
+            self.assertTrue(all(ln["evs"] is None and all(nd["evs"] is None for nd in ln["nodes"]) for ln in t["lines"]))
+        # the EVs
+        K = len(h2["classes"])
+        kept = [x for x in fl.turn_lines(sol) if x[4] >= fl.TURN_LINE]
+        for (path, ch, a0, a1, share), ln in zip(kept, t2["lines"]):
+            step = h2["ev"] * ln["pot"]
+            T = ch.child
+            masks = np.asarray(ch.masks, dtype=np.float64).reshape(K, -1)
+            R = [a0[None, :] * masks, a1[None, :] * masks]
+            want = Advisor._row_evs(sol, T, R).T                                    # (K, 2)
+            self.assertEqual(ln["evs"].shape, (K, 2))
+            self.assertTrue(np.all(np.isfinite(ln["evs"])))
+            self.assertLessEqual(np.abs(ln["evs"] - want).max(), step / 2 + 1e-4)
+            self.assertLessEqual(np.abs(ln["evs"].sum(axis=1) - ln["pot"]).max(), 2 * step + 1e-3 * ln["pot"])
+            direct = fl.turn_evs(sol, ch, a0, a1)
+            for nd in ln["nodes"]:
+                n, r = T, list(R)
+                for nm in nd["at"]:
+                    a = n.names.index(nm)
+                    r[n.player] = r[n.player] * n.avg_strategy()[:, a, :]
+                    n = n.children[a]
+                e = nd["evs"]
+                self.assertEqual(e.shape, (K, len(nd["names"])))
+                np.testing.assert_allclose(e, direct["nodes"][tuple(nd["at"])], atol=step / 2 + 1e-4)
+                took = (r[n.player][:, None, :] * n.avg_strategy()).sum(axis=2)     # (K, A): the combos that take each
+                self.assertTrue(np.array_equal(np.isnan(e), took < fl.TURN_EV_MIN))
+                if not nd["at"]:   # (the turn's first decision: its player's range EV between its actions')
+                    lo, hi = np.nanmin(e, axis=1), np.nanmax(e, axis=1)
+                    tol = 0.01 * ln["pot"]   # (and the hands under TURN_EV_MIN on an action left out of both)
+                    self.assertTrue(np.all((lo - tol <= ln["evs"][:, 0]) & (ln["evs"][:, 0] <= hi + tol)))
+        # a library with it: the turn report has each card's EVs (its class's) and each action's on the card
+        d = tempfile.mkdtemp()
+        try:
+            for evs in (False, True):
+                build.write_entry(d, sid, CANON, sol, meta, turn_evs=evs)
+                build.write_index(d, [SPOT])
+                adv = Advisor(fl.library_config(self.setup["pot"], self.setup["stack"]), time_budget=1.0, prior_budget=0.5)
+                adv.library = fl.FlopLibrary.from_dir(d)
+                q = {"players": 6, "stack": 100, "board": BOARD, "preflop": self.pre, "turn": [], "river": [], "study": True,
+                     "runouts": "held"}
+                lines = adv.advise(dict(q, flop=[{"pos": self.setup["oop"], "action": "check"}, {"pos": self.setup["ip"], "action": "check"}]))
+                ln = (lines.get("lines") or [None])[0]
+                r = lines if not lines.get("skipped") else adv.advise(dict(q, flop=ln["flop"]))
+                self.assertEqual(r["source"], "store", r)
+                f = (t2 if evs else t1)["lines"][r["line"]]
+                smap = fl.canonical(cards(BOARD))[1]
+                cls = {c: k for k, (_, cs) in enumerate(h2["classes"]) for c in cards(cs)}
+                for c in r["cards"]:
+                    if not evs:
+                        self.assertIsNone(c["ev"])
+                        continue
+                    k = cls[(lambda x: x // 4 * 4 + smap[x % 4])(cards(c["card"])[0])]
+                    np.testing.assert_allclose(c["ev"], f["evs"][k], atol=0.006)
+                rows = r["first"]["cards"]
+                self.assertEqual(all(x.get("ev") is None for x in rows), not evs)
+                if evs:
+                    self.assertEqual(len(rows[0]["ev"]), len(r["first"]["actions"]))
+                self.assertEqual(any("no EVs" in n for n in r["notes"]), not evs)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_turn_file_ev_scale(self):
+        """A turn file's EV step is per file: 0.1% of each line's pot (TURN_EV_STEP) holds 32.7 pots, and a deep
+        stack's all-in is more (200bb behind a 5.5bb turn pot: ~36 pots), so the file takes the first of TURN_EV_STEPS
+        its largest EV fits in and round-trips within a step; past the last, EVs are clipped to it (never the
+        no-combos marker), and where nobody takes an action it stays None."""
+        sol, sid = self.sol, SPOT[0]
+        entry = fl.encode(sol, dict(build._meta(sid, self.setup), board=CANON))
+        real, kept = fl.turn_evs, [x for x in fl.turn_lines(sol) if x[4] >= fl.TURN_LINE]
+        for times, step in ((36.0, 0.002), (150.0, 0.005), (500.0, 0.01)):
+            # the real EVs scaled so the largest is `times` its line's pot (each line's pot: its turn node's)
+            pots = {id(ch): float(ch.child.pot_now) for _, ch, _, _, _ in kept}
+            want = {}
+
+            def big(sol_, ch, a0, a1, nodes=fl.TURN_NODES):
+                e = real(sol_, ch, a0, a1, nodes)
+                arrs = [e["range"]] + list(e["nodes"].values())
+                k = times * pots[id(ch)] / max(float(np.nanmax(np.abs(x))) for x in arrs)
+                out = {"range": e["range"] * k, "nodes": {at: x * k for at, x in e["nodes"].items()}}
+                want[id(ch)] = out
+                return out
+            with mock.patch.object(fl, "turn_evs", big):
+                data = fl.encode_turns(sol, entry, evs=True)
+            t = fl.decode_turns(data)
+            self.assertEqual(t["head"]["ev"], step)
+            for (_, ch, _, _, _), ln in zip(kept, t["lines"]):
+                unit = step * ln["pot"]
+                w = want[id(ch)]
+                for got, exp in [(ln["evs"], w["range"])] + [(nd["evs"], w["nodes"][tuple(nd["at"])]) for nd in ln["nodes"]]:
+                    self.assertTrue(np.array_equal(np.isnan(got), np.isnan(exp)))
+                    lim = 32767 * unit
+                    np.testing.assert_allclose(got[~np.isnan(got)], np.clip(exp[~np.isnan(exp)], -lim, lim), atol=unit / 2 + 1e-9)
+            if times > 32767 * fl.TURN_EV_STEPS[-1]:   # (clipped: the largest at the last step's end, not a marker)
+                self.assertTrue(any(np.nanmax(np.abs(ln["evs"])) >= 32767 * step * ln["pot"] - 1e-6
+                                    or any(np.nanmax(np.abs(nd["evs"])) >= 32767 * step * ln["pot"] - 1e-6 for nd in ln["nodes"])
+                                    for ln in t["lines"]))
 
     def test_advisor_answers_from_library(self):
         """The advisor's flop answer comes from the library where it holds the spot: instantly, at the stored

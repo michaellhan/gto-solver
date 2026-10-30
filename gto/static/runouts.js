@@ -44,7 +44,8 @@
   // the part shown: "first" (the street's first decision) or "after" (in position after a check)
   const partOf = (ro, who) => who === "after" && ro.after_check ? ro.after_check : ro.first;
   // rows: one per card off the board {card, cls, rank, suit, f (the part's mix there; null: none), w (its player's
-  // range there), p (the card's chance), eq, ev ([out of position, in position]; null: none)}
+  // range there), fe (each action's EV for the hands that take it: a stored turn with EVs; else null), p (the card's
+  // chance), eq, ev ([out of position, in position]; null: none)}
   function rows(ro, who, board) {
     const part = partOf(ro, who), by = {};
     for (const c of part.cards) for (const x of c.cards) by[x] = c;
@@ -52,7 +53,7 @@
     return cards.map(x => {
       const c = by[x.card];
       return { card: x.card, cls: cardClass(board, x.card), rank: x.card[0], suit: x.card[1], f: c ? c.f : null,
-               w: c ? (c.w ?? 1) : 0, p: x.p, eq: x.eq, ev: x.ev };
+               w: c ? (c.w ?? 1) : 0, fe: c && c.ev ? c.ev : null, p: x.p, eq: x.eq, ev: x.ev };
     });
   }
   const filter = (rs, flt) => rs.filter(r => Object.entries(flt || {}).every(([k, v]) => !v || r[k] === v));
@@ -87,9 +88,11 @@
   function groups(rs, by) {
     return ORDER[by].map(g => ({ g, label: LABELS[by][g], ...average(rs.filter(r => r[by] === g)) })).filter(x => x.n);
   }
-  function bar(f, acts) {
+  // fe: each action's EV (a card's row of a stored turn with EVs), in its part's tip
+  function bar(f, acts, fe) {
     if (!f) return `<span class="ro-na">—</span>`;
-    return `<span class="ro-bar">${f.map((x, i) => x > 0.001 ? `<i style="width:${(x * 100).toFixed(2)}%;background:${color(acts[i])}" title="${esc(label(acts[i]))} ${pct(x, 1)}%"></i>` : "").join("")}</span>`;
+    const ev = (i) => fe && ok(fe[i]) ? `, EV ${bb(fe[i])}bb` : "";
+    return `<span class="ro-bar">${f.map((x, i) => x > 0.001 ? `<i style="width:${(x * 100).toFixed(2)}%;background:${color(acts[i])}" title="${esc(label(acts[i]))} ${pct(x, 1)}%${ev(i)}"></i>` : "").join("")}</span>`;
   }
 
   // the table: a summary row, the group averages (when grouped), the cards; th[data-rosort] sorts, tr[data-card]
@@ -111,7 +114,7 @@
       body += `<tr class="ro-grp" data-rogroup="${ui.group}:${g.g}" tabindex="0" title="Only these cards"><td class="ro-c">${esc(g.label)}<small>${g.n} card${g.n === 1 ? "" : "s"}, ${pct(g.p, 1)}%</small></td><td class="ro-b">${bar(g.f, acts)}</td>${nums(g)}</tr>`;
     for (const r of rs)
       body += `<tr data-card="${r.card}" tabindex="0" title="Deal ${r.card}"><td class="ro-c"><span class="ro-card">${cardHtml1(r.card)}</span><small>${SHORT[r.cls]}</small></td>`
-        + `<td class="ro-b">${bar(r.f, acts)}</td>${nums(r)}</tr>`;
+        + `<td class="ro-b">${bar(r.f, acts, r.fe)}</td>${nums(r)}</tr>`;
     return `<div class="ro-scroll"><table class="ro-t"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
   }
   // the controls over the table: grouping, the class filter and (a stored turn) the flop lines it holds
@@ -143,10 +146,15 @@
   function noteHtml(ro) {
     const s = ro.solver || {}, river = ro.street === "river", pot = ro.pot_bb != null ? ` (${bb(ro.pot_bb)}bb pot)` : "";
     const eq = `equity range against range${river ? "" : " (every river dealt)"}, each card's chance given both ranges`;
-    if (ro.source === "store")
+    if (ro.source === "store") {
+      // (a turn file with the flop solve's EVs, format 2: EVs as a live report's, each action's in its bar's tip)
+      const evs = (ro.cards || []).some(c => c.ev);
       return `From the flop library's stored turns: the precomputed flop solve's turn strategy (${s.iterations} iterations, ${s.exploitability_pct}% of the pot from equilibrium), `
-        + `its turn sizes and each turn class's cards alike (a rank's cards, a flush suit's apart), mixes in 5% steps. The stored turns hold strategies only, so there are no EVs (—); `
-        + `${eq}. Groups average the mix by the acting range on each card. A turn you deal is solved on its own, with more sizes. Click a card to deal it.`;
+        + `its turn sizes and each turn class's cards alike (a rank's cards, a flush suit's apart), mixes in 5% steps. `
+        + (evs ? `EV in bb: each range's share of the pot${pot} on the flop solve's strategies, by turn class (the two add up to it), and in each bar's tip the EV of each action for the hands that take it; `
+          : `These stored turns hold strategies only, so there are no EVs (—); `)
+        + `${eq}. Groups average the mix by the acting range on each card${evs ? ", EV and equity by the cards' chances" : ""}. A turn you deal is solved on its own, with more sizes. Click a card to deal it.`;
+    }
     return `Read off a live solve of the ${river ? "turn" : "flop"} (${s.iterations} iterations, ${s.exploitability_pct}% of the pot from equilibrium${s.by === "hand buckets" ? `, the ${esc(ro.street)} by hand buckets` : ""}), `
       + (river ? "which plays the river with its own few sizes: a river you deal is solved on its own, with its own menu of sizes. "
         : "which plays one turn bet size and each turn card's class alike (a rank's cards, a flush suit's apart): a turn you deal is solved on its own, with more sizes. ")

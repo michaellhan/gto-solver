@@ -15,6 +15,8 @@ srp_btn_bb_40bb) are built only when named, by --format TAG or --spots; the inde
 
 Each entry is written with its turn file (<spot>/<flop>.turn.bin, flop_library.encode_turns: the flop solve's turn
 strategies on the lines it takes to the turn), unless --no-turns; the index lists the turn files beside their entries.
+--turn-evs writes them in format 2, with the flop solve's EVs on the turn too (flop_library.turn_evs: 8-12% more bytes;
+readers of format 1 read the strategies as before).
 
 Each index rewrite also writes <spot>/report.json (flop_library.build_report: per flop, the range frequencies at each
 stored node, both players' EV and equity; the page's flop reports), recomputing only the flops whose entries changed.
@@ -94,7 +96,7 @@ def solve_entry(job):
     while expl > a["target"] and sol.iters < a["max_iters"]:
         sol.extend(1e9, max_iters=min(sol.iters + a["check"], a["max_iters"]))
         expl = sol.exploitability()
-    data, turns = write_entry(out, sid, name, sol, meta, a.get("turns", True))
+    data, turns = write_entry(out, sid, name, sol, meta, a.get("turns", True), a.get("turn_evs", False))
     return (f"{sid} {name} iters={sol.iters} expl={expl:.3f}% secs={time.time() - t0:.0f} bytes={len(data)}"
             f" turns={len(turns or b'')}")
 
@@ -106,12 +108,14 @@ def _unlink(p: str) -> None:
         pass
 
 
-def write_entry(out: str, sid: str, name: str, sol, meta: dict, with_turns: bool = True) -> tuple:
+def write_entry(out: str, sid: str, name: str, sol, meta: dict, with_turns: bool = True,
+                turn_evs: bool = False) -> tuple:
     """Writes a solve's entry and its turn file (flop_library.encode_turns; none when it has no lines or `with_turns`
-    is off): the earlier turn file removed, then the entry, then its turn file, so a turn file on disk names the entry
-    beside it (the library's deploy publishes the folder as it is). Returns (entry, turns)."""
+    is off; turn_evs: format 2, with the EVs): the earlier turn file removed, then the entry, then its turn file, so a
+    turn file on disk names the entry beside it (the library's deploy publishes the folder as it is). Returns (entry,
+    turns)."""
     data = fl.encode(sol, meta)
-    turns = fl.encode_turns(sol, data) if with_turns else None
+    turns = fl.encode_turns(sol, data, evs=turn_evs) if with_turns else None
     path = os.path.join(out, sid, name + ".bin")
     tpath = path[:-4] + ".turn.bin"
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -302,6 +306,8 @@ def main(argv=None):
     ap.add_argument("--recode", action="store_true", help="re-encode format-1 entries (no solving), then the index")
     ap.add_argument("--no-turns", action="store_true", help="write the entries without their turn files "
                     "(flop_library.encode_turns)")
+    ap.add_argument("--turn-evs", action="store_true", help="write the turn files in format 2, with the flop solve's "
+                    "EVs on the turn (flop_library.turn_evs)")
     ap.add_argument("--dry-run", action="store_true", help="list each spot's entries to solve and on disk, solving "
                     "and writing nothing")
     a = ap.parse_args(argv)
@@ -327,7 +333,7 @@ def main(argv=None):
         return [cards_str(f) for f in fl.representative_flops(n)]
     jobs = []
     opts = {"min_iters": a.min_iters, "max_iters": a.max_iters, "check": a.check, "target": a.target,
-            "turns": not a.no_turns}
+            "turns": not a.no_turns, "turn_evs": a.turn_evs}
     n_flops = 0
     for sid, label, line, fmt in spots:
         meta = _meta(sid, _setup(line, fmt))
