@@ -108,6 +108,23 @@ test("the hand state for a flop at each view", () => {
   assert.deepEqual([g.players, g.stack, g.ante, g.straddle], [6, 40, 0.125, undefined]);
 });
 
+test("a flop's Turns: Study at the flop with the view's line closed, for its turn report", () => {
+  const pre = R.stateFor(REP, "Ac4d3h", "oop").actions.preflop;
+  // out of position first: checked through; in position's view and facing a bet: the most common bet, called
+  assert.deepEqual(R.studyStateFor(REP, "Ac4d3h", "oop"), { players: 6, stack: 100, board: "Ac4d3h", preflop: pre,
+    flop: [{ pos: "BB", action: "check" }, { pos: "BTN", action: "check" }], turn: [], river: [] });
+  for (const v of ["ip", "vsbet"])
+    assert.deepEqual(R.studyStateFor(REP, "Ac4d3h", v).flop, [{ pos: "BB", action: "check" }, { pos: "BTN", action: "bet", to: 4.13 }, { pos: "BB", action: "call" }]);
+  assert.equal(R.turnLine(REP, "Kc7d7h", "vsbet").text, "check, check");   // (no bet stored after a check)
+  assert.equal(R.studyStateFor(REP, "2c2d2h", "oop"), null);
+  const g = R.studyStateFor({ ...REP, game: { players: 6, stack: 40, ante: 0.125 } }, "Ac4d3h", "oop");
+  assert.deepEqual([g.stack, g.ante], [40, 0.125]);
+  // a button on every flop's row, not the summary's or the groups'
+  const h = R.html(REP, { view: "vsbet", sort: "flop", desc: true, group: "pair", filter: {} });
+  assert.deepEqual([...h.matchAll(/data-turns="(\w+)"/g)].map(m => m[1]), ["Ac4d3h", "Kc7d7h", "9c8c7c"]);
+  assert.match(h, /title="The turn report: every turn card after check, bet 75%, call, in Study">Turns<\/button>/);
+});
+
 // click-to-load in the page: the hand replaces the page's, the hero is to act at the flop node
 async function loaded(rep, f, view) {
   const p = loadPage();

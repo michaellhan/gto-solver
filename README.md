@@ -194,6 +194,26 @@ Clicking a flop loads that hand: the spot's preflop action, the flop, the action
 to act with the hand that mixes most there, so the precomputed advice appears at once. The data is one small
 `flop_library/<spot>/report.json` per spot (~45 KB, ~12 KB gzipped; ~135 KB on 552 flops, 430 KB / 80 KB gzipped on all 1755, SB vs BB's 530 / 113 KB), written with the library's index
 (`flop_library.build_report`, see Building below); the panel is `gto/static/reports.js`, loaded when first opened.
+Each flop's **Turns** button opens its turn report in Study (below), on the view's flop line: checked through for out
+of position's first decision, else in position's most common bet after a check, called.
+
+**Turn and river reports** (Study, at a closed flop or turn: **Turn report** / **River report** beside the next card's
+deal, or a flop's **Turns** in the flop reports) are the next street's first decision on every card, like GTO
+Wizard's: a table of the 49 turns (48 rivers) with the acting range's mix as a stacked bar and numbers, both
+players' EV (bb, range against range: the two add up to the pot) and range equity (every river dealt under a turn),
+for the first player or the second after a check. Each card is classed by what it does to the board (completes a
+flush; completes a straight: three board ranks within a straight's five; pairs the board; overcard; undercard;
+brick, under every board card); sort by any column, filter to a class, or group by class, rank or suit (the mix
+averaged by the acting range on each card, EV and equity by the cards' chances given both ranges; a group row
+filters to it). **Cards** shows the same as a 13x4 grid. Click a card to deal it. The report comes from what's in
+hand first, at once: a library flop's stored turns (the 3bet pots with turn files: 0.1 s; strategies only, so the EV
+columns are "—", and a line they don't hold offers the lines they do), or the solve Study's own answer made (a
+river report after Study answered the turn: 0.02 s natively; a flop solved live). Otherwise **Solve the flop** /
+**Solve the turn** solves that street at the speed picked, with a progress bar against the speed's budget (Fast: 2.5 s
+a street on the local server, 8 s in the browser, and a river report's flop too where it isn't in hand: K72r's turn
+report took 1.2 s on the server, a Q84 river report 6.8 s). Like Study, it reads
+the equilibrium: tournament payouts, locks and exploit settings are left out. The pure parts (`gto/runouts.py`'s
+equities, `gto/static/runouts.js`, loaded when one first opens) are tested from Python and Node.
 
 **Drills** (in the ⋯ menu) drill one flop decision of the precomputed library, like GTO Wizard's trainer: pick a
 spot and a node (out of position first; in position after a check; out of position facing a bet after checking)
@@ -246,16 +266,17 @@ the river, where there are none); **✕ All hands** clears it. In the Breakdown,
 **Show these hands in the grid**. Each combo of the answer carries its category (`"categories"`: the indices are into
 its made-hand and draw lists).
 
-When the flop's or turn's betting closes, **Runouts** beside the next card's deal shows the next street's strategy
-on every card at once, like GTO Wizard's runout report: a 13x4 grid of the cards (suits down, ranks across; the
-board's blank), each card filled by the first player's mix there with the share that bets in its corner, and a tab
-for the second player's after a check. It is read off one live solve of the street that closed at the speed picked
-(Fast ~10 s in the browser; the river's at once from the turn solve Study answered the turn's last decision with):
-on the turn each card plays the flop solve's turn tree, one bet size (75%) and a rank's cards alike apart from a
-flush suit's (Fast's turn by hand buckets); on the river the turn solve's river sizes (33/75/125%; Fast on one
-thread 33/125%). Click a card to deal it; that street then solves on its own, with its full menu of sizes. A solve cut
-short (3% of the pot or more from equilibrium: a busy machine runs fewer iterations) says so above the cards, as a
-live answer does in the line under its grid.
+When the flop's or turn's betting closes, **Turn report** / **River report** beside the next card's deal shows the
+next street's strategy on every card at once (see **Turn and river reports** above): a table, or **Cards**, a
+13x4 grid of the cards (suits down, ranks across; the board's blank), each card filled by the first player's mix
+there with the share that bets in its corner, and a tab for the second player's after a check. It is read off the
+stored turns of a library flop that has them, else one solve of the street that closed at the speed picked (in hand
+already where Study's own answer solved it: the river's at once from the turn solve Study answered the turn's last
+decision with; else a button solves it, Fast ~10 s in the browser): on the turn each card plays the flop solve's turn
+tree, one bet size (75%) and a rank's cards alike apart from a flush suit's (Fast's turn by hand buckets); on the
+river the turn solve's river sizes (33/75/125%; Fast on one thread 33/125%). Click a card to deal it; that street then
+solves on its own, with its full menu of sizes. A solve cut short (3% of the pot or more from equilibrium: a busy
+machine runs fewer iterations) says so above the cards, as a live answer does in the line under its grid.
 
 **✎ Build** (or the B key) in Study turns the decision into a range-building drill, like GTO Wizard's range builder:
 the grid shows the acting player's range with every hand at the passive action (fold, else check or call), and you
@@ -512,10 +533,16 @@ what the hand needs: `{"study": "deal", "street": "turn", "allin": false}` (the 
 Preflop it is the charts' mix (no EVs); postflop it browses heads-up, 3-way and 4-way pots. A multiway node has
 `"multiway": true`, `"opponent"` naming the others ("BB and BTN"), `"opponents": [{"seat", "combos", "eq", "grid"}]` in acting order in
 place of `opponent_grid`, and `eq` (`range_eq`) null before the river. With `"runouts": true` on a heads-up hand whose flop
-or turn betting closed (the next card not dealt), it solves that street live and returns the next street's first
-decision on every card: `{"study": "runouts", "street": "turn" | "river", "first": {"actor", "actions", "avg",
-"cards": [{"card", "cards", "f"}]}, "after_check": …}` (`cards` the cards that share a class's mix `f`, `avg` the
-range's mix over every card; `after_check` the same for the second player after a check, or null).
+or turn betting closed (the next card not dealt), it returns the next street's first decision on every card, from a
+library flop's stored turns where they hold the line, else solving that street live: `{"study": "runouts", "street":
+"turn" | "river", "first": {"actor", "actions", "avg", "cards": [{"card", "cards", "f", "w"}]}, "after_check": …,
+"seats": [oop, ip], "pot_bb", "cards": [{"card", "p", "eq": [oop, ip], "ev": [oop, ip] | null}], "source": "store" |
+"solve", "solver", "notes", "seconds"}` (`cards` in a part: the cards that share a class's mix `f`, `w` its player's
+range there, `avg` the range's mix over every card; `after_check` the same for the second player after a check, or
+null; the top-level `cards`: each card's chance given both ranges, range equities and EVs, `ev` null from the stored
+turns; from the stored turns also `"lines"`, the flop lines they hold as Study's actions with how often the flop
+solve takes each, and `"line"`, this one's). `"runouts": "held"` answers from what's in hand only (the stored turns,
+a solve cached already) and else `{"study": "runouts", "skipped": "not solved yet", "lines"?}`, solving nothing.
 
 `"opponents": "pool"` (the page's Opponents: Pool toggle) is exploit mode: opponents play like a
 typical player pool instead of GTO. Preflop, hero's calls and raises are re-drawn against the pool's

@@ -61,7 +61,7 @@ fi
 if [ -z "${BUILD_ONLY:-}" ]; then gh repo clone michaellhan/michaellhan.github.io "$WORK/site" -- -q --depth 1; fi
 rm -rf "$WORK/site/gto-solver"
 mkdir -p "$WORK/site/gto-solver/gto"
-cp "$HERE/gto/static/index.html" "$HERE/gto/static/worker.js" "$HERE/gto/static/hh.js" "$HERE/gto/static/practice.js" "$HERE/gto/static/reports.js" "$HERE/gto/static/drills.js" "$HERE/gto/static/breakdown.js" "$HERE/gto/static/session.js" "$HERE/gto/static/study.js" "$HERE/gto/static/sw.js" "$HERE/gto/static/health.json" "$WORK/site/gto-solver/"
+cp "$HERE/gto/static/index.html" "$HERE/gto/static/worker.js" "$HERE/gto/static/hh.js" "$HERE/gto/static/practice.js" "$HERE/gto/static/reports.js" "$HERE/gto/static/drills.js" "$HERE/gto/static/breakdown.js" "$HERE/gto/static/session.js" "$HERE/gto/static/study.js" "$HERE/gto/static/runouts.js" "$HERE/gto/static/sw.js" "$HERE/gto/static/health.json" "$WORK/site/gto-solver/"
 # the worker's Python code and treys in one zip (scripts/build_bundle.py); the separate gto/*.py files stay for pages
 # cached from before the bundle (index.html is cached up to 10 minutes, with the old worker's version)
 "$PYTHON" "$HERE/scripts/build_bundle.py" "$WORK/site/gto-solver/solver.zip" >/dev/null
@@ -113,6 +113,11 @@ YV="$(shasum "$HERE/gto/static/study.js" | cut -c1-10)"
 sed -i.bak -E "s/^const SY_VERSION = \"[^\"]*\";/const SY_VERSION = \"$YV\";/" "$WORK/site/gto-solver/index.html"
 rm "$WORK/site/gto-solver/index.html.bak"
 grep -q "const SY_VERSION = \"$YV\";" "$WORK/site/gto-solver/index.html"
+# and Study's turn and river reports (runouts.js)
+OV="$(shasum "$HERE/gto/static/runouts.js" | cut -c1-10)"
+sed -i.bak -E "s/^const RO_VERSION = \"[^\"]*\";/const RO_VERSION = \"$OV\";/" "$WORK/site/gto-solver/index.html"
+rm "$WORK/site/gto-solver/index.html.bak"
+grep -q "const RO_VERSION = \"$OV\";" "$WORK/site/gto-solver/index.html"
 # Each view's URL (/gto-solver/practice/, /gto-solver/reports/srp-btn-bb/...: the page's ROUTES, gto/routes.py) is a copy
 # of the stamped page with a <base href="../"> pointing its relative URLs at gto-solver/ (GitHub Pages has no rewrites).
 # (No 404.html: GitHub Pages only uses the site root's, which isn't this folder's.)

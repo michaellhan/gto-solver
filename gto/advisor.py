@@ -1895,6 +1895,10 @@ class _NoInstant(Exception):
     """Advisor.instant: the answer needs a solve, or is quick anyway (nothing to answer ahead of it)."""
 
 
+class _NotHeld(Exception):
+    """Study's report from what's in hand ("runouts": "held"): a solve it needs isn't cached (nothing is solved)."""
+
+
 @dataclass
 class InstantSpot:
     """A heads-up street the hero acts on, for Advisor.instant's sources: the cards, the street's real actions so far
@@ -2201,6 +2205,8 @@ class Advisor:
         self._lib_only = False    # state "library_only": a flop the library holds, else {"skipped": …}, no solve
         self._study = False       # state "study": Study mode's answer (Advisor.study)
         self._runout_close = None # Study's runout report: the action that closed the flop or turn (Advisor._runouts)
+        self._runout_held = False # ...from what's in hand only: the library's stored turns, cached solves (_NotHeld)
+        self._runout_lines = None # ...the stored turn's flop lines, where the file is there but not for this line
         self._req_sizes: Dict[str, List[float]] = {}   # the request's custom sizes (state "sizes"), as fractions
         # Advisor.instant's sources, tried in order: each (advisor, InstantSpot) -> {"actions", "source", "label"} or None
         self.instant_sources = [instant_from_store, instant_from_own, instant_from_prev]
@@ -2365,7 +2371,7 @@ class Advisor:
         runouts = st.pop("runouts", None)
         try:
             if runouts:
-                return self._runouts(st)
+                return self._runouts(st, held=runouts == "held")
             with np.errstate(all="ignore"):
                 res = self._advise(st)
             why = _unusable(res)
@@ -2378,31 +2384,43 @@ class Advisor:
             why = e
         return self._fallback(st, why) if why else res   # (the catch-all, as advise's)
 
-    def _runouts(self, st: dict) -> dict:
+    def _runouts(self, st: dict, held: bool = False) -> dict:
         """Study mode's runout report (state "runouts": true, once a heads-up flop's or turn's betting closed): the
         next street's first decision on every card, the first player's mix and the second's after a check, read off
         a live solve of the street that closed (the library's entries hold the flop only), whose tree plays the next
         street under each card or card class: the decision that closed the street is walked to as Study would answer
         it, and the street below its closing action read (Advisor._runout_report). The flop solve's view of the
         turn: one bet size there (Config.later_sizes) and each turn class's cards alike; the turn solve's view of
-        the river: its sizes there. A card dealt and solved on its own can mix in other sizes."""
+        the river: its sizes there. A card dealt and solved on its own can mix in other sizes.
+        A library flop whose entry has a turn file (flop_library's stored turns) answers the turn report from it
+        (Advisor._store_report), on the flop lines it holds. held (state "runouts": "held"): from what's in hand only,
+        the stored turns or a solve cached already (Study's own answer at that node), else {"skipped", "lines": the
+        flop lines a stored turn holds, where there is one} and nothing is solved."""
         street = {3: "flop", 4: "turn"}.get(len(parse_cards(str(st.get("board") or ""))))
         line = list(st.get(street) or []) if street else []
         if not line or st.get("river"):
             return {"error": "the runout report needs a flop or turn whose betting is done (and the next card not dealt)"}
         self._runout_close = str(line[-1].get("action"))
+        self._runout_held, self._runout_lines = held, None
         try:
             with np.errstate(all="ignore"):
                 return self._advise(dict(st, **{street: line[:-1]}))
+        except _NotHeld:
+            out = {"study": "runouts", "street": "turn" if street == "flop" else "river",
+                   "skipped": "not solved yet"}
+            if self._runout_lines:
+                out["lines"] = self._runout_lines
+            return out
         finally:
-            self._runout_close = None
+            self._runout_close, self._runout_held, self._runout_lines = None, False, None
 
     def _runout_report(self, sol, node, n_r0, n_r1, hero, villain, hero_p, board, expl, notes, t0):
         """The runout report (Advisor._runouts) from the flop's or turn's solve at the decision that closed the
         street: per card of the next street (per class where the tree plays one for several: Ctx.turn_classes, a
         rank's cards, a flush suit's apart) the first decision's mix over its player's range there (f), and the second
         player's after a check; avg: over every card. A turn played by hand buckets (Fast's flop model, BucketEntry)
-        is read by the buckets' masses."""
+        is read by the buckets' masses. cards: per card off the board its chance, each player's range equity and EV
+        there (Advisor._runout_cards)."""
         a = match_action(node.names, self._runout_close)
         ch = node.children[a]
         nxt = "turn" if len(board) == 3 else "river"
@@ -2417,6 +2435,7 @@ class Advisor:
         else:
             masks = ch.masks.reshape(K, -1)
             m = [r[0] * masks, r[1] * masks]     # (K, n): each player's reach on each card or class
+        evs = self._row_evs(sol, ch.child, m)   # (2, K)
         dec, rows = ch.child, ch.child.boards
         if isinstance(dec, BucketEntry):
             T, ids = sol.solver._btab(dec)[:2]
@@ -2447,7 +2466,8 @@ class Advisor:
             avg = (f * wk[:, None]).sum(axis=0) / max(float(wk.sum()), 1e-12)
             return s, {"actor": seat(d.player), "actions": list(d.names), "avg": [round(float(x), 4) for x in avg],
                        "cards": [{"card": card_str(rows[k][i]), "cards": [card_str(c) for c in members[k]],
-                                  "f": [round(float(x), 4) for x in f[k]]} for k in range(K)]}
+                                  "f": [round(float(x), 4) for x in f[k]], "w": round(float(tot[k]), 3)}
+                                 for k in range(K)]}
         s1, first = part(dec, m)
         after = None
         if "check" in dec.names:
@@ -2462,10 +2482,111 @@ class Advisor:
             "rank's cards, a flush suit's apart); a turn dealt is solved on its own, with more sizes" if nxt == "turn"
             else "the turn solve's view of the river: its river sizes (" + ", ".join(dec.names[1:]) + "); a river "
             "dealt is solved on its own, with its own menu of sizes"]
-        return {"study": "runouts", "street": nxt, "first": first, "after_check": after,
+        ev_of = {c: evs[:, k] for k in range(K) for c in members[k]}
+        seats = [seat(0), seat(1)]
+        return {"study": "runouts", "street": nxt, "first": first, "after_check": after, "seats": seats,
+                "pot_bb": round(float(dec.pot_now), 2),
+                "cards": self._runout_cards(board, expand(sol.ctx, r[0]), expand(sol.ctx, r[1]), ev_of),
+                "source": "solve",
                 "solver": {"iterations": int(sol.iters), "exploitability_pct": round(float(expl), 3),
                            "by": "hand buckets" if isinstance(ch.child, BucketEntry) else "every hand"},
                 "notes": notes, "seconds": round(time.time() - t0, 2)}
+
+    @staticmethod
+    def _row_evs(sol, child, m) -> np.ndarray:
+        """(2, K): each player's range EV on each row of a chance node's child (m: the two players' reaches there,
+        (K, n) each), in chips relative to folding now, both players on their average strategies, every later card
+        dealt (no sampling); range against range, each pair of hands that share no card by its two reaches (as the
+        range equities: the two EVs add up to the pot, the equities to one); NaN where a player has no hand there."""
+        s = sol.solver
+        R = [np.ascontiguousarray(x, dtype=np.float32) for x in m]
+        out = np.full((2, R[0].shape[0]), np.nan)
+        was = getattr(s, "sampling", True)
+        s.sampling = False
+        try:
+            for p in (0, 1):
+                u = np.asarray(s._cfr(child, p, R[0], R[1], update=False, use_avg=True), dtype=np.float64)
+                cs = np.asarray(s.compat_sum(R[1 - p]), dtype=np.float64)
+                num, den = (R[p] * u).sum(axis=1), (R[p] * cs).sum(axis=1)
+                ok = den > 1e-9
+                out[p, ok] = num[ok] / den[ok] + _inv_of(child, p, sol.ctx.cfg.icm)
+        finally:
+            s.sampling = was
+        return out
+
+    @staticmethod
+    def _runout_cards(board, w0, w1, ev_of=None) -> List[dict]:
+        """The report's cards: per card off the board {"card", "p": its chance given the two ranges, "eq": each
+        player's range equity on it (the rest of the board dealt), "ev": each player's EV there (ev_of, by card;
+        None where the report has none)}. w0, w1: the two ranges entering the next street (1326 each)."""
+        from .runouts import next_card_equities
+        cards, eq, p = next_card_equities(list(board), np.asarray(w0, dtype=np.float64), np.asarray(w1, dtype=np.float64))
+        out = []
+        for c, e, q in zip(cards, eq, p):
+            ev = None if ev_of is None or c not in ev_of else ev_of[c]
+            out.append({"card": card_str(c), "p": round(float(q), 5),
+                        "eq": None if not np.isfinite(e) else [round(float(e), 4), round(1.0 - float(e), 4)],
+                        "ev": None if ev is None or not np.all(np.isfinite(ev)) else [round(float(x), 2) for x in ev]})
+        return out
+
+    def _store_report(self, sol, node, n_r0, n_r1, taken, board, seats, notes, t0) -> Optional[dict]:
+        """The turn report (Advisor._runouts) from a library flop's stored turns (its entry's turn file,
+        runouts.store_parts): per turn card the first decision's range mix and in position's after a check, as the
+        library's flop solve plays them (its turn sizes; a turn class's cards alike), with each card's chance and
+        range equities; no EVs (the file holds strategies only). None where the entry has no turn file, or it doesn't
+        hold the hand's flop line (the lines it holds go to self._runout_lines)."""
+        got = _turn_file(self.library, sol, board[:3])
+        if got is None or not isinstance(node, Decision) or id(node) not in getattr(sol, "stored", ()):
+            return None
+        t, smap = got
+        a = match_action(node.names, self._runout_close)
+        path = list(taken) + [node.names[a]]
+        lines = self._store_lines(sol, t, seats)
+        at = next((k for k, ln in enumerate(lines) if ln["path"] == path), None)
+        if at is None:
+            self._runout_lines = lines
+            return None
+        from .runouts import store_parts
+        r = [expand(sol.ctx, np.asarray(n_r0, dtype=np.float64).reshape(-1)),
+             expand(sol.ctx, np.asarray(n_r1, dtype=np.float64).reshape(-1))]
+        r[node.player] = r[node.player] * expand(sol.ctx, np.asarray(node.avg_strategy()[0, a], dtype=np.float64))
+        first, after = store_parts(t, smap, path, r, board, seats)
+        if first is None:
+            self._runout_lines = lines
+            return None
+        ln = next(x for x in t["lines"] if x["path"] == path)
+        notes = list(notes) + [
+            "the flop library's stored turns: the precomputed flop solve's turn strategies (its turn sizes, each turn "
+            "class's cards alike: a rank's cards, a flush suit's apart; mixes in 5% steps), strategies only, so no EVs; "
+            "a turn dealt is solved on its own, with more sizes"]
+        return {"study": "runouts", "street": "turn", "first": first, "after_check": after, "seats": list(seats),
+                "pot_bb": round(float(ln["pot"]), 2), "cards": self._runout_cards(board, r[0], r[1]),
+                "source": "store", "lines": lines, "line": at,
+                "solver": {"iterations": int(sol.iters), "exploitability_pct": round(float(sol.exploitability()), 3),
+                           "by": "the flop library"},
+                "notes": notes, "seconds": round(time.time() - t0, 2)}
+
+    def _store_lines(self, sol, t, seats) -> List[dict]:
+        """A turn file's flop lines as Study's flop actions ({"flop": [{"pos", "action", "to"}], "share": how often
+        the flop solve takes it, "path": its tree names}), walked down the library entry's tree `sol` (the amounts
+        its sizes come to); a line it can't walk is left out."""
+        out = []
+        for ln in t.get("lines", ()):
+            node, acts = sol.root, []
+            for name in ln["path"]:
+                if not isinstance(node, Decision) or name not in node.names:
+                    acts = None
+                    break
+                p = node.player
+                kind = "all-in" if name == "all-in" else name.split()[0]
+                act = {"pos": seats[p], "action": kind}
+                if kind in ("bet", "raise"):
+                    act["to"] = self._amount(name, node, p)
+                acts.append(act)
+                node = node.children[node.names.index(name)]
+            if acts:
+                out.append({"flop": acts, "share": round(float(ln.get("share", 0.0)), 4), "path": list(ln["path"])})
+        return out
 
     def _advise(self, state: dict, actor=None, rules: Optional[str] = None) -> dict:
         t0 = time.time()
@@ -3529,10 +3650,10 @@ class Advisor:
         r0, r1 = ranges[oop].copy(), ranges[ip].copy()
         full = (ranges[oop], ranges[ip])   # the ranges entering the flop: they pick a precomputed spot (flop_library)
         # (the library's solves are in chips: a tournament solves live; the flop's runout report reads the turn under a
-        # live flop solve, as the library's entries hold the flop only, while the river's keeps the flop Study answered)
+        # live flop solve, as the library's entries hold the flop only, unless the entry's turn file holds the line
+        # (Advisor._store_report), while the river's keeps the flop Study answered)
         lib = self.library if self.library is not None and not pool and not optimize and not (locks or {}).get(villain) \
-            and not getattr(self, "_jam", False) and (self._runout_close is None or len(board) > 3) \
-            and getattr(self, "_icm", None) is None else None
+            and not getattr(self, "_jam", False) and getattr(self, "_icm", None) is None else None
         lib_sol = None
         for c in hole:  # villain can't hold hero's cards
             if hero_p == 0:
@@ -3631,12 +3752,19 @@ class Advisor:
             if lib is not None and cur.name == "flop":
                 # a precomputed solve answers when it holds the spot and the line, the villain's line isn't rare in
                 # it and the node is one it stores (else the live solve below)
-                w2, rl2, n2 = [], [], []
+                w2, rl2, n2, tk = [], [], [], []
                 hit = self._from_library(lib, full, board, r0, r1, cur, eff, cfg, oop, ip, n2,
                                          smoothing=self.prior_smoothing, only=1 - hero_p, widened=w2, board=board,
-                                         rare_lines=rl2)
+                                         rare_lines=rl2, taken=tk)
                 if hit is not None and self._presolving:
                     return {"skipped": "a flop-library spot"}   # (its answers are read off the entry, not solved)
+                if self._runout_close is not None:
+                    # the turn report: the entry's stored turns where they hold the line, else a live flop solve
+                    rep = None if hit is None else \
+                        self._store_report(hit[0], hit[1], hit[2], hit[3], tk, board, (oop, ip), notes + n2, t0)
+                    if rep is not None:
+                        return rep
+                    hit = None
                 if hit is not None and not w2 and not rl2 and id(hit[1]) in hit[0].stored:
                     lib_sol, node, n_r0, n_r1 = hit
                     notes.extend(n2)
@@ -5522,6 +5650,10 @@ class Advisor:
             if sol is None:
                 raise _NoInstant()
             return sol
+        if self._runout_held:   # (a runout report from what's in hand: a solve cached already, as it stands)
+            if sol is None:
+                raise _NotHeld()
+            return sol
         if sol is None:
             # Same spot solved by warm_from (ranges can differ a little: they come from its own earlier
             # streets): start from it and count its time against the budget, as extend() does below.
@@ -5666,8 +5798,8 @@ class Advisor:
         """The street being advised on, far from settled after its budget (SETTLE_EXPL): one more budget,
         once. Limped pots, turn probes and short-stack check-raises stopped at 10 iterations 27-55% of the
         pot from settled, showing confident mixes (an all-in 75% at +15 beside a call at +22). Whether it ran."""
-        if getattr(self, "_quick", False) or getattr(sol, "settled_once", False) or sol.iters >= 1000 \
-                or self._expl(sol) < SETTLE_EXPL:
+        if getattr(self, "_quick", False) or self._runout_held or getattr(sol, "settled_once", False) \
+                or sol.iters >= 1000 or self._expl(sol) < SETTLE_EXPL:
             return False
         sol.settled_once = True
         try:

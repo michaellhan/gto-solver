@@ -853,6 +853,7 @@ const DR_VERSION = "1";        // and this with a hash of drills.js (the drills,
 const BD_VERSION = "1";        // and breakdown.js (the advice's Breakdown and Equity views, loaded on first use)
 const SS_VERSION = "1";        // and session.js (the session analyzer, loaded on first use, after hh.js)
 const SY_VERSION = "1";        // and study.js (Study mode, the solution browser, loaded on first use)
+const RO_VERSION = "1";        // and runouts.js (Study's turn and river reports, loaded when one first opens)
 // where the precomputed libraries are (flop_library/: the local server's, gto/static/flop_library); scripts/deploy.sh
 // points it at their own site, ../gto-solver-library/ (scripts/deploy_library.sh). The worker is told it in its URL
 // (relative: worker.js is in the folder the page's URLs resolve against).
@@ -2317,6 +2318,8 @@ async function studyAsk(st) {
   return callAdvise({ ...st, budget, prior_budget });
 }
 function studyHand() { return payload(); }
+// [budget, prior_budget] at a speed, for Study's turn and river reports' progress (the seconds a solve for one takes)
+function studyBudget(speed) { return BUDGETS[MODE || "wasm"][speed === "accurate" ? "accurate" : "fast"]; }
 // The views over the page: open (their scripts loaded first; spot: a precomputed spot's id, else the one last
 // picked), close, and what a failed load says. Their scripts report a spot picked (viewSpot) and closing (viewClosed).
 const VIEWS = {

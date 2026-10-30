@@ -1,8 +1,9 @@
 // Flop reports, loaded by index.html the first time "Flop reports" is opened from the ⋯ menu: a precomputed spot's
 // flop strategy across all its flops (flop_library/<spot>/report.json, written with the library's index by
 // scripts/build_flop_library.py), per flop and averaged by texture group (each flop weighted by how many of the 22100
-// flops it stands for), sortable and filterable; a click on a flop loads that hand into the page. The pure parts
-// (texture, filter, sort, groups, the HTML, the hand state) are what the Node tests call.
+// flops it stands for), sortable and filterable; a click on a flop loads that hand into the page, its Turns button opens
+// the flop's turn report in Study (study.js, runouts.js). The pure parts (texture, filter, sort, groups, the HTML, the
+// hand state, Study's state) are what the Node tests call.
 (function () {
   const LIB = typeof LIB_BASE === "string" ? LIB_BASE : "flop_library/";   // where the library is (index.html's LIB_BASE)
   "use strict";
@@ -126,13 +127,14 @@
     const nums = (a) => `${(a.freqs || cols.map(() => null)).map(x => `<td class="n">${pct(x)}</td>`).join("")}`
       + `<td class="n">${a.ev[0].toFixed(2)}</td><td class="n">${a.ev[1].toFixed(2)}</td><td class="n rp-eq">${pct(a.eq[0], 1)}</td><td class="n rp-eq">${pct(a.eq[1], 1)}</td>`;
     const head = `<tr>${th("flop", "Flop", "rp-f")}<th class="rp-b">Strategy</th>${cols.map((c, i) => th("a" + i, esc(label(c)), "n")).join("")}`
-      + `${th("ev0", `${o} EV`, "n")}${th("ev1", `${p} EV`, "n")}${th("eq0", `${o} eq`, "n rp-eq")}${th("eq1", `${p} eq`, "n rp-eq")}</tr>`;
+      + `${th("ev0", `${o} EV`, "n")}${th("ev1", `${p} EV`, "n")}${th("eq0", `${o} eq`, "n rp-eq")}${th("eq1", `${p} eq`, "n rp-eq")}<th class="rp-tu"></th></tr>`;
     const sum = average(rs);
-    let body = `<tr class="rp-sum"><td class="rp-f">${rs.length === all.length ? "All flops" : `${rs.length} flops`}<small>${pct(sum.w / tot, 0)}% of flops</small></td><td class="rp-b">${bar(sum.freqs, cols)}</td>${nums(sum)}</tr>`;
+    let body = `<tr class="rp-sum"><td class="rp-f">${rs.length === all.length ? "All flops" : `${rs.length} flops`}<small>${pct(sum.w / tot, 0)}% of flops</small></td><td class="rp-b">${bar(sum.freqs, cols)}</td>${nums(sum)}<td class="rp-tu"></td></tr>`;
     if (st.group) for (const g of groups(rs, st.group))
-      body += `<tr class="rp-grp" data-group="${st.group}:${g.g}" tabindex="0"><td class="rp-f">${esc(g.label)}<small>${pct(g.w / tot, 1)}%</small></td><td class="rp-b">${bar(g.freqs, cols)}</td>${nums(g)}</tr>`;
+      body += `<tr class="rp-grp" data-group="${st.group}:${g.g}" tabindex="0"><td class="rp-f">${esc(g.label)}<small>${pct(g.w / tot, 1)}%</small></td><td class="rp-b">${bar(g.freqs, cols)}</td>${nums(g)}<td class="rp-tu"></td></tr>`;
     for (const r of rs)
-      body += `<tr data-flop="${r.f}" tabindex="0" title="Load this flop${r.bet ? ` (facing ${esc(r.bet)})` : ""}"><td class="rp-f"><span class="rp-cards">${flopHtml(r.f)}</span>${r.bet ? `<small>vs ${esc(r.bet.replace("bet ", ""))}</small>` : ""}</td><td class="rp-b">${bar(r.freqs, cols)}</td>${nums({ freqs: r.freqs, ev: r.ev, eq: r.eq })}</tr>`;
+      body += `<tr data-flop="${r.f}" tabindex="0" title="Load this flop${r.bet ? ` (facing ${esc(r.bet)})` : ""}"><td class="rp-f"><span class="rp-cards">${flopHtml(r.f)}</span>${r.bet ? `<small>vs ${esc(r.bet.replace("bet ", ""))}</small>` : ""}</td><td class="rp-b">${bar(r.freqs, cols)}</td>${nums({ freqs: r.freqs, ev: r.ev, eq: r.eq })}`
+        + `<td class="rp-tu"><button class="ghost" data-turns="${r.f}" title="The turn report: every turn card after ${esc(turnLine(rep, r.f, st.view).text)}, in Study">Turns</button></td></tr>`;
     return `<table class="rp-t"><thead>${head}</thead><tbody>${body}</tbody></table>`;
   }
 
@@ -153,6 +155,29 @@
     const g = rep.game || {};     // (a spot of another game than 6-max 100bb: {players, stack, ante, straddle})
     return { players: g.players || 6, hero: VIEWS[view].player ? ip : oop, stack: g.stack || 100, ...(g.ante ? { ante: g.ante } : {}),
              ...(g.straddle ? { straddle: true } : {}), cards: [...hole, ...cardsOf(f), null, null], actions: { preflop: pre, flop, turn: [], river: [] } };
+  }
+
+  // The flop line a flop's turn report (its Turns button) follows from the view: out of position's first decision,
+  // checked through; in position's after a check and out of position facing a bet, that bet (the view's, the most
+  // common after a check) called. {flop: Study's flop actions, text}
+  function turnLine(rep, f, view) {
+    const fl = rep.flops.find(x => x.f === f), [oop, ip] = rep.seats;
+    const nd = fl && view !== "oop" ? nodeOf(rep, fl, "vsbet") : null;
+    if (!nd || !nd.bet || !/^bet [\d.]+%$/.test(nd.bet))
+      return { flop: [{ pos: oop, action: "check" }, { pos: ip, action: "check" }], text: "check, check" };
+    const to = Math.round(parseFloat(nd.bet.match(/[\d.]+/)[0]) / 100 * rep.pot * 100) / 100;
+    return { flop: [{ pos: oop, action: "check" }, { pos: ip, action: "bet", to }, { pos: oop, action: "call" }], text: `check, ${nd.bet}, call` };
+  }
+  // Study's state for a flop's turn report: the spot's preflop line, the canonical flop, turnLine's flop action
+  function studyStateFor(rep, f, view) {
+    if (!rep.flops.some(x => x.f === f)) return null;
+    const g = rep.game || {};
+    const preflop = rep.line.split(",").map(t => {
+      const [pos, a] = t.split(":");
+      return a[0] === "r" ? { pos, action: "raise", to: parseFloat(a.slice(1)) } : { pos, action: { f: "fold", c: "call", x: "check" }[a[0]] };
+    });
+    return { players: g.players || 6, stack: g.stack || 100, ...(g.ante ? { ante: g.ante } : {}), ...(g.straddle ? { straddle: true } : {}),
+             board: f, preflop, flop: turnLine(rep, f, view).flop, turn: [], river: [] };
   }
 
   // ---- the panel (browser)
@@ -187,6 +212,11 @@
     if (d.view) { ST.view = d.view; }
     else if (d.sort) { if (ST.sort === d.sort) ST.desc = !ST.desc; else { ST.sort = d.sort; ST.desc = true; } }
     else if (d.group) { const [k, v] = d.group.split(":"); ST.filter = { ...ST.filter, [k]: v }; ST.group = ""; }
+    else if (d.turns) {   // (Study at that flop with the view's line, its turn report open: study.js's STUDY_AT)
+      const st = studyStateFor(rep, d.turns, ST.view); close();
+      globalThis.STUDY_AT = { state: st, spot: ST.spot, report: true };
+      return typeof globalThis.openView === "function" && globalThis.openView("study");
+    }
     else if (d.flop) { const st = stateFor(rep, d.flop, ST.view); close(); return window.loadHandState && window.loadHandState(st, `${rep.label}, ${d.flop}`); }
     else if (d.ctl === "spot") { store(); return pick(d.value); }
     else if (d.ctl === "group") ST.group = d.value;
@@ -228,6 +258,7 @@
   .rp-bar { display: flex; height: 12px; border-radius: 3px; overflow: hidden; background: var(--line); }
   .rp-bar i { display: block; height: 100%; }
   .rp-na { color: var(--faint); font-size: 11px; }
+  .rp-t td.rp-tu { padding: 2px 6px; } .rp-tu button { font-size: 11px; padding: 3px 8px; min-height: 0; }
   .rp-note, .rp-msg { color: var(--muted); font-size: 11px; line-height: 1.45; }
   .rp-msg { padding: 20px 4px; font-size: 13px; }
   @media (max-width: 600px) {
@@ -247,7 +278,7 @@
       box.setAttribute("aria-modal", "true"); box.setAttribute("aria-label", "Flop reports");
       box.innerHTML = `<div class="rp-card"><div class="rp-head"><b>Flop reports</b><span class="rp-sub">the precomputed spots' flop strategy across every flop</span><button class="ghost rp-x" data-close aria-label="Close">✕</button></div><div class="rp-body"></div></div>`;
       document.body.appendChild(box);
-      const data = (t) => { const e = t.closest("[data-close],[data-view],[data-sort],[data-group],[data-flop]"); return e && (e.dataset.close != null ? { close: 1 } : e.dataset); };
+      const data = (t) => { const e = t.closest("[data-close],[data-view],[data-sort],[data-group],[data-turns],[data-flop]"); return e && (e.dataset.close != null ? { close: 1 } : e.dataset); };
       box.addEventListener("click", (e) => { if (e.target === box) return close(); const d = data(e.target); if (d) { if (d.close) close(); else act(d); } });
       box.addEventListener("keydown", (e) => {
         if (e.key === "Escape") { e.stopPropagation(); close(); }
@@ -266,7 +297,7 @@
     const t = box.querySelector("select, button"); if (t) t.focus();
   }
 
-  const api = { texture, rows, columns, nodeOf, filter, sort, average, groups, html, stateFor, VIEWS, LABELS,
+  const api = { texture, rows, columns, nodeOf, filter, sort, average, groups, html, stateFor, turnLine, studyStateFor, VIEWS, LABELS,
                 open, close, act, state: ST, _set: (i, r) => { index = i; rep = r; } };
   if (typeof module === "object" && module.exports) module.exports = api; else globalThis.FlopReports = api;
 })();

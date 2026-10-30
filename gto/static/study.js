@@ -390,6 +390,9 @@
         + `<span class="sy-rol">${cardHtml1(c)}</span><span class="sy-rov">${pct(bet)}</span></button>`;
     }
     const s = ro.solver || {}, river = ro.street === "river";
+    if (ro.source === "store")
+      return h + `</div><div class="sy-note">The number on each card: how often ${esc(part.actor)} bets. From the flop library's stored turns: the precomputed flop solve's `
+        + `turn strategy (its turn sizes, each turn class's cards alike), not EVs. A turn you deal is solved on its own, with more sizes. Click a card to deal it.</div></div>`;
     return h + `</div><div class="sy-note">The number on each card: how often ${esc(part.actor)} bets. Read off a live solve of the ${river ? "turn" : "flop"} `
       + `(${s.iterations} iterations, ${num(s.exploitability_pct || 0)}% of the pot from equilibrium${s.by === "hand buckets" ? `, the ${esc(ro.street)} by hand buckets` : ""}), `
       + (river ? `which plays the river with its own few sizes: a river you deal is solved on its own, with its own menu of sizes.`
@@ -397,12 +400,41 @@
       + ` Click a card to deal it.</div></div>`;
   }
 
+  // the report shown: the table (runouts.js's: every card, sortable, grouped) or the cards grid (runoutsHtml), with the
+  // first player's or the second's after a check; ui: {view, who, sort, desc, group, filter}
+  function reportHtml(ro, ui, board) {
+    const R = globalThis.Runouts, table = ui.view !== "cards" && !!R;
+    const views = `<span class="segment">${[["table", "Table"], ["cards", "Cards"]].map(([v, t]) => `<button data-roview="${v}" class="${(v === "table") === table ? "active" : ""}">${t}</button>`).join("")}</span>`;
+    if (!table) return `<div class="sy-ctl sy-rotop">${views}${ro.lines && R ? R.linesSelect(ro.lines, ro.line) : ""}</div>` + runoutsHtml(ro, ui.who, board);
+    const who = ui.who === "after" && ro.after_check ? "after" : "first";
+    const tabs = [["first", ro.first.actor], ...(ro.after_check ? [["after", `${ro.after_check.actor} after a check`]] : [])];
+    return `<div class="sy-ro"><div class="sy-ctl sy-rotop">${views}<span class="segment">${tabs.map(([w, t]) => `<button data-rowho="${w}" class="${w === who ? "active" : ""}">${esc(t)}</button>`).join("")}</span>`
+      + R.controlsHtml(ro, ui) + `</div>` + roughHtml(ro) + R.html(ro, { ...ui, who }, board) + `<div class="sy-note">${R.noteHtml(ro)}</div></div>`;
+  }
+  // a report not in hand ({"skipped"}): solve the street for it, or (a library flop's stored turns) one of the flop
+  // lines they hold
+  function skippedHtml(sk, street, speed) {
+    const prevSt = street === "river" ? "turn" : "flop", R = globalThis.Runouts;
+    return `<div class="sy-roskip"><div>The ${street} report reads ${street === "river" ? "the turn's solve" : "a solve of the flop"}, which isn't in hand yet${sk.lines ? " (the flop library's stored turns don't hold this flop line)" : ""}.</div>`
+      + `<div class="sy-ctl"><button type="button" data-rosolve>Solve the ${prevSt} (${speed === "accurate" ? "Accurate" : "Fast"}, ~${Math.round(estimate(street, speed))} s)</button>`
+      + (sk.lines && R ? `<span class="sy-or">or a line they hold:</span><select data-ctl="roline" aria-label="Flop line"><option value="" selected>Pick a flop line…</option>`
+        + sk.lines.map((ln, i) => `<option value="${i}">Flop: ${esc(R.lineLabel(ln))} (${Math.round(ln.share * 100)}%)</option>`).join("") + `</select>` : "")
+      + `</div></div>`;
+  }
+  // the seconds a report's solve takes: the speed's budget for the street (a river's: the turn's, and the flop's to
+  // narrow ranges if it isn't in hand)
+  function estimate(street, speed) {
+    const b = typeof globalThis.studyBudget === "function" ? globalThis.studyBudget(speed) : speed === "accurate" ? [60, 12] : [8, 3];
+    return street === "river" ? b[0] + b[1] : b[0];
+  }
+
   // ---- the panel (browser)
   let box = null, index = null, res = null, err = null, busy = false, gen = 0;
   const ST = { state: null, spot: "", speed: typeof SPEED === "string" && SPEED !== "quick" ? SPEED : "fast", view: "strategy", who: "me", sel: null, hover: null, focus: null,
-               build: false, brush: 0, amt: 1, tally: { n: 0, acc: 0 }, filter: null, ro: null, roWho: "first" };
-  try { const s = JSON.parse(localStorage.getItem("gto-study")) || {}; for (const k of ["state", "spot", "speed", "view", "build"]) if (s[k] != null) ST[k] = s[k]; } catch (e) {}
-  const store = () => { try { localStorage.setItem("gto-study", JSON.stringify({ state: ST.state, spot: ST.spot, speed: ST.speed, view: ST.view, build: ST.build })); } catch (e) {} };
+               build: false, brush: 0, amt: 1, tally: { n: 0, acc: 0 }, filter: null, ro: null, roWho: "first",
+               rui: { view: "table", sort: "card", desc: true, group: "", filter: {} } };
+  try { const s = JSON.parse(localStorage.getItem("gto-study")) || {}; for (const k of ["state", "spot", "speed", "view", "build", "rui"]) if (s[k] != null) ST[k] = s[k]; } catch (e) {}
+  const store = () => { try { localStorage.setItem("gto-study", JSON.stringify({ state: ST.state, spot: ST.spot, speed: ST.speed, view: ST.view, build: ST.build, rui: ST.rui })); } catch (e) {} };
   // the range builder's paints, by the answer they're of
   const paints = new Map();
   const building = () => ST.build && res && res.study === "node" && !busy;
@@ -431,15 +463,43 @@
     if (res && res.study === "node" && ST.brush >= res.grid.actions.length) ST.brush = 0;
     draw();
   }
-  // the runout report at a closed flop or turn: asked for once (it solves that street), shown under the deal box
-  async function runouts() {
-    const key = JSON.stringify({ ...request(ST.state, ST.speed), runouts: true }), g = gen;
-    ST.ro = { key, busy: true }; draw();
-    const r = await answer(key);
-    if (g !== gen || !ST.ro || ST.ro.key !== key) return;
-    ST.ro = r.error || r.cancelled ? { key, err: r.error || "The request was cancelled." } : { key, res: r };
-    if (ST.ro.res && typeof setColors === "function") setColors([...r.first.actions, ...(r.after_check ? r.after_check.actions : [])]);
+  // the turn or river report at a closed flop or turn, shown under the deal box: first from what's in hand
+  // (Advisor.study's "runouts": "held": a library flop's stored turns, the solve Study's own answers made), at once;
+  // else a button that solves the street for it (solve: "runouts": true, at the speed's budget, with a progress bar)
+  const loadRo = () => globalThis.Runouts ? Promise.resolve() : typeof loadJs === "function"
+    ? loadJs("runouts.js?v=" + (typeof RO_VERSION === "string" ? RO_VERSION : "1"), () => globalThis.Runouts) : Promise.reject(new Error("no loader"));
+  let roTick = null;
+  async function runouts(solve = false) {
+    const req = request(ST.state, ST.speed), g = gen, street = res && res.study === "deal" ? res.street : "turn";
+    const solved = JSON.stringify({ ...req, runouts: true });
+    const key = solve || answers.has(solved) ? solved : JSON.stringify({ ...req, runouts: "held" });
+    ST.ro = { key, busy: true, solve: key === solved, t0: Date.now(), est: estimate(street, ST.speed) };
+    ST.rui = { ...ST.rui, filter: {} };   // (a filter is the last board's: each report opens on every card)
     draw();
+    clearInterval(roTick);
+    if (ST.ro.solve) roTick = setInterval(() => {
+      if (!ST.ro || !ST.ro.busy || g !== gen) { clearInterval(roTick); return; }
+      const t = (Date.now() - ST.ro.t0) / 1000, tm = box && box.querySelector("[data-rotime]"), bar = box && box.querySelector("[data-robar]");
+      if (tm) tm.textContent = `${t.toFixed(1)}s of ~${Math.round(ST.ro.est)}s`;
+      if (bar) bar.style.width = Math.min(97, t / ST.ro.est * 100) + "%";
+    }, 100);
+    let r;
+    try { await loadRo(); r = await answer(key); } catch (e) { r = { error: String(e && e.message || e) }; }
+    clearInterval(roTick);
+    if (g !== gen || !ST.ro || ST.ro.key !== key) return;
+    if (r.skipped) { answers.delete(key); ST.ro = { key, skipped: r }; }   // (asked again next time: a solve may be in hand by then)
+    else ST.ro = r.error || r.cancelled ? { key, err: r.error || "The request was cancelled." } : { key, res: r };
+    if (ST.ro.res) {
+      if (typeof setColors === "function") setColors([...r.first.actions, ...(r.after_check ? r.after_check.actions : [])]);
+      globalThis.Runouts.style();
+    }
+    draw();
+  }
+  // a flop line a library flop's stored turns hold (the report's lines): Study walks it, and its report opens
+  function roLine(i) {
+    const ln = ST.ro && (ST.ro.res || ST.ro.skipped || {}).lines, x = ln && ln[+i];
+    if (!x) return;
+    return go({ ...ST.state, flop: x.flop.map(a => ({ ...a })), turn: [], river: [] }).then(() => { if (res && res.study === "deal") return runouts(); });
   }
   function controls() {
     const spots = (index && index.spots || []).map(s => [s.id, s.label]);
@@ -456,10 +516,12 @@
       const n = res.street === "flop" ? 3 : 1;
       return `<div class="sy-deal"><div>${res.allin ? "Nobody can bet any more. " : ""}Deal the ${res.street}:</div><form data-deal><input name="cards" autocomplete="off" spellcheck="false" placeholder="${n === 3 ? "e.g. Kd7c2h" : "e.g. 5s"}" aria-label="The ${res.street}">`
         + `<button type="submit">Deal</button><button type="button" data-random>Random</button>`
-        + (res.street !== "flop" && !res.allin ? `<button type="button" class="ghost" data-runouts title="The ${res.street}'s strategy on every card, from the ${prev(res.street)}'s solve"${ST.ro ? " disabled" : ""}>Runouts</button>` : "")
+        + (res.street !== "flop" && !res.allin ? `<button type="button" class="ghost" data-runouts title="The ${res.street}'s first decision on every card: strategy, EV and equity"${ST.ro ? " disabled" : ""}>${res.street === "turn" ? "Turn" : "River"} report</button>` : "")
         + `</form><div class="sy-err" data-dealerr></div>`
-        + (!ST.ro ? "" : ST.ro.busy ? `<div class="sy-msg"><span class="spinner"></span>Solving the ${prev(res.street)} for its runouts…</div>`
-          : ST.ro.err ? `<div class="sy-err">${esc(ST.ro.err)}</div>` : runoutsHtml(ST.ro.res, ST.roWho, ST.state.board)) + `</div>`;
+        + (!ST.ro ? "" : ST.ro.busy ? (ST.ro.solve ? `<div class="sy-msg"><span class="spinner"></span>Solving the ${prev(res.street)} for the ${res.street} report… <span class="num" data-rotime></span></div><div class="prog"><div data-robar></div></div>`
+            : `<div class="sy-msg"><span class="spinner"></span>Opening the ${res.street} report…</div>`)
+          : ST.ro.err ? `<div class="sy-err">${esc(ST.ro.err)}</div>` : ST.ro.skipped ? skippedHtml(ST.ro.skipped, res.street, ST.speed)
+          : reportHtml(ST.ro.res, { ...ST.rui, who: ST.roWho }, ST.state.board)) + `</div>`;
     }
     if (res.study === "over") return `<div class="sy-msg">${res.winner ? `Hand over: everyone else folded, ${esc(res.winner)} wins the pot.` : "Hand over: the river's betting is done, the hands go to showdown."} Step back along the line above to look at another branch.</div>`;
     const pre = res.street === "preflop", cls = ST.hover || ST.sel;
@@ -575,7 +637,11 @@
     if (d.who) { ST.who = d.who; ST.sel = ST.hover = null; return draw(); }
     if (d.random != null && res && res.study === "deal") return go(deal(ST.state, randomCards(ST.state, res.street === "flop" ? 3 : 1)));
     if (d.runouts != null && res && res.study === "deal") return runouts();
+    if (d.rosolve != null && res && res.study === "deal") return runouts(true);
     if (d.rowho) { ST.roWho = d.rowho; return draw(); }
+    if (d.roview) { ST.rui = { ...ST.rui, view: d.roview }; store(); return draw(); }
+    if (d.rosort) { const u = ST.rui; ST.rui = u.sort === d.rosort ? { ...u, desc: !u.desc } : { ...u, sort: d.rosort, desc: true }; store(); return draw(); }
+    if (d.rogroup) { const [k, v] = d.rogroup.split(":"); ST.rui = { ...ST.rui, group: "", filter: k === "cls" ? { cls: v } : { [k]: v } }; store(); return draw(); }
     if (d.card && res && res.study === "deal" && res.street !== "flop") return go(deal(ST.state, d.card));
     if (d.act != null && res && res.study === "node" && !busy) return go(play(ST.state, res, res.actions[+d.act]));
     if (d.build != null) { ST.build = !ST.build; ST.sel = ST.hover = ST.focus = null; store(); return draw(); }
@@ -685,6 +751,9 @@
   .sy-miss button { font-size: 12px; padding: 3px 7px; }
   .sy-miss small { color: var(--muted); }
   .sy-ro { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+  .sy-rotop { flex-wrap: wrap; }
+  .sy-roskip { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; font-size: 13px; color: var(--muted); }
+  .sy-or { font-size: 12px; color: var(--muted); }
   .sy-ro .sy-rough { font-size: 12px; line-height: 1.5; } .sy-rough.meh { color: var(--meh); } .sy-rough.bad { color: var(--bad); }
   .sy-rokey { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--muted); }
   .sy-rokey i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
@@ -721,7 +790,7 @@
       box.setAttribute("aria-modal", "true"); box.setAttribute("aria-label", "Study");
       box.innerHTML = `<div class="sy-card" tabindex="-1"><div class="sy-head"><b>Study</b><span class="sy-sub">the solver's strategy for a whole range, node by node: click an action to play it</span><button class="ghost sy-x" data-close aria-label="Close">✕</button></div><div class="sy-body"></div></div>`;
       document.body.appendChild(box);
-      const data = (t) => { const e = t.closest("[data-close],[data-speed],[data-back],[data-step],[data-view],[data-who],[data-random],[data-act],[data-cls],[data-build],[data-brush],[data-amt],[data-reset],[data-fill],[data-score],[data-retry],[data-newflop],[data-unfilter],[data-runouts],[data-rowho],[data-card]"); return e && !e.disabled ? e.dataset : null; };
+      const data = (t) => { const e = t.closest("[data-close],[data-speed],[data-back],[data-step],[data-view],[data-who],[data-random],[data-act],[data-cls],[data-build],[data-brush],[data-amt],[data-reset],[data-fill],[data-score],[data-retry],[data-newflop],[data-unfilter],[data-runouts],[data-rowho],[data-card],[data-rosolve],[data-roview],[data-rosort],[data-rogroup]"); return e && !e.disabled ? e.dataset : null; };
       // (the Breakdown's own buttons are its: its player and parts aren't the panel's)
       box.addEventListener("click", (e) => { if (e.target === box) return close(); if (e.target.closest(".sy-bd")) return; const d = data(e.target); if (d) act(d, e); });
       box.addEventListener("submit", (e) => {
@@ -734,11 +803,14 @@
       box.addEventListener("change", (e) => {
         if (e.target.dataset.ctl === "spot") startFrom(e.target.value);
         else if (e.target.dataset.ctl === "filter") { ST.filter = e.target.value || null; ST.hover = null; draw(); }
+        else if (e.target.dataset.ctl === "rogroup") { ST.rui = { ...ST.rui, group: e.target.value }; store(); draw(); }
+        else if (e.target.dataset.ctl === "rofilter") { ST.rui = { ...ST.rui, filter: e.target.value ? { cls: e.target.value } : {} }; store(); draw(); }
+        else if (e.target.dataset.ctl === "roline" && e.target.value !== "") roLine(e.target.value);
       });
       box.addEventListener("keydown", (e) => {
         if (e.key === "Escape") { e.stopPropagation(); close(); }
         else if (e.key === "Backspace" && !/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) { e.preventDefault(); stepBack(); }
-        else if ((e.key === "Enter" || e.key === " ") && e.target.matches("tr[data-act]")) { e.preventDefault(); act(e.target.dataset); }
+        else if ((e.key === "Enter" || e.key === " ") && e.target.matches("tr[data-act],tr[data-card],tr[data-rogroup],th[data-rosort]")) { e.preventDefault(); act(e.target.dataset); }
         else if (/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName) || e.metaKey || e.ctrlKey || e.altKey) return;
         else if (e.key === "b" || e.key === "B") { e.stopPropagation(); act({ build: "" }); }
         else if (building() && /^[1-9]$/.test(e.key) && +e.key <= res.grid.actions.length) { e.stopPropagation(); act({ brush: String(+e.key - 1) }); }
@@ -774,6 +846,13 @@
     box.hidden = false; res = null; err = null; draw();
     try { index = index || await fetch(LIB + "index.json", { cache: "no-cache" }).then(r => r.ok ? r.json() : null); } catch (e) { index = null; }
     if (ST.spot === "table") ST.spot = "";
+    if (globalThis.STUDY_AT) {   // (the flop reports' Turns: that flop and line, its turn report opened)
+      const at = globalThis.STUDY_AT; globalThis.STUDY_AT = null; ST.build = false;
+      if (at.spot) ST.spot = at.spot;
+      await go(at.state);
+      if (at.report && res && res.study === "deal") await runouts();
+      const t = box.querySelector("select, button"); if (t) t.focus(); return;
+    }
     if (globalThis.STUDY_BUILD) {   // (the menu's Range builder: a random flop of the spot, building)
       globalThis.STUDY_BUILD = false; ST.build = true;
       const sp = index && (index.spots.find(s => s.id === ST.spot) || index.spots[0]);
@@ -786,7 +865,7 @@
   const api = { fresh, parseLine, fromSpot, fromPayload, streetOf, request, kindOf, play, deal, randomCards, readCards, line, back, label,
                 eqr, cellValue, gridHtml, actionsHtml, detailHtml, lineHtml, statusHtml, solverHtml, classAt, combosOf,
                 passiveOf, blankPaint, brush, scoreBuild, grade, buildGridHtml, buildPanelHtml, buildDetailHtml,
-                catsOf, filterRes, filterHtml, runoutsHtml, oppsOf, whoHtml, viewsOf,
+                catsOf, filterRes, filterHtml, runoutsHtml, reportHtml, skippedHtml, estimate, oppsOf, whoHtml, viewsOf,
                 open, close, state: ST };
   if (typeof module === "object" && module.exports) module.exports = api; else globalThis.Study = api;
 })();
