@@ -197,7 +197,8 @@ class TestAdvisor(unittest.TestCase):
 
     def test_zero_bounties_change_nothing(self):
         """Zero bounties (any format) answer exactly as no bounties: preflop calls, shoves, opens, defence and a
-        heads-up river solve (its solve the same cached one: the same prize model)."""
+        heads-up river solve (its solve the same cached one: the same prize model). All but "seconds" and "sampled"
+        (a random draw from the mix: Qh9h's call is a hair under 100%, and once in a full run it drew the raise)."""
         jam = dict(players=4, bb=1, stacks={"CO": 30, "BTN": 20, "SB": 15, "BB": 5}, hero="SB", hole="AhJd",
                    preflop=[R("CO", "fold"), R("BTN", "all-in")], payouts=[50, 30, 20])
         spots = [jam, dict(jam, payouts=[1000, 600, 400], field={"players": 20, "chips": 500}),
@@ -216,10 +217,10 @@ class TestAdvisor(unittest.TestCase):
             a = Advisor(time_budget=1.0, prior_budget=0.5)
             want = a.advise(st)
             self.assertNotIn("error", want)
-            want.pop("seconds")
+            want.pop("seconds"); want.pop("sampled", None)
             for z in zeros:
                 got = a.advise(dict(st, bounties=z))
-                got.pop("seconds")
+                got.pop("seconds"); got.pop("sampled", None)
                 self.assertEqual(json.dumps(got, sort_keys=True), json.dumps(want, sort_keys=True), (st["hero"], z))
 
     def test_push_fold_call_widens_against_a_short_stack_with_a_bounty(self):
