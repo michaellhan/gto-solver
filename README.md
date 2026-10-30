@@ -2248,7 +2248,7 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   against 2-5% between the library's model and every turn played (frequencies: 0.2 points). Recoded from format 1
   without solving (`--recode`): 14.06 -> 8.77 MB (rainbow flops -22%, the rest ~-50%), 1.5-6 KB a flop. Pages
   gzips `.bin` too (`application/octet-stream`, `content-encoding: gzip`), but zlib'd files gain nothing (+0.7%):
-  what's stored is what's downloaded, so the test's 60 MB cap is on both (the page fetches only the entry a spot
+  what's stored is what's downloaded, so the test's 150 MB cap is on both (the page fetches only the entry a spot
   needs, 1.5-6 KB).
 * **Tree**: Accurate's flop model (one turn per rank class, the river bet on; the browser's Accurate config,
   which plays the same flop game as the native one), two flop sizes, 300-800 iterations, to at most 0.15% of the
@@ -2349,7 +2349,7 @@ KcTd9d and AcKdQd) ran to 23-73% of the pot after 1000 iterations, a regret sum 
 (fixed since) gone NaN, and were solved again with `GTO_CORE=0`: an entry the build leaves over `--target` at
 `--max-iters` is worth a second look.
 After changing the charts or the flop model, run it again (stale entries are re-solved). A spot on every flop is
-4.6-6.8 MB (SB vs BB's wide ranges 9.2): the test holds the library (39.51 MB) under 60 MB. The five flatted opens on 552 (2760 entries, their callers'
+4.6-6.8 MB (SB vs BB's wide ranges 9.2): the test holds the library's entries (48.31 MB) under 150 MB. The five flatted opens on 552 (2760 entries, their callers'
 ranges narrow) took 165 minutes on 7 processes, the BTN's flatted by the SB the slowest (its opens' wide range).
 
 ### Precomputed 3-way flop library

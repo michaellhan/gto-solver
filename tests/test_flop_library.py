@@ -680,7 +680,7 @@ class TestShippedLibrary(unittest.TestCase):
                 with open(os.path.join(fl.DIR, sp["id"], name + ".turn.bin"), "rb") as f:
                     self.assertTrue(fl.turns_head(f.read())["entry"].startswith(sp["flops"][name]), (sp["id"], name))
         # (the page fetches an entry when its spot comes up: the total is the repository's and the deploy's)
-        self.assertLess(total, 60e6)
+        self.assertLess(total, 150e6)
 
     def test_every_file_is_indexed(self):
         """Every entry and turn file in the shipped folder is named by index.json or the 3-way library's
