@@ -665,7 +665,9 @@ def _program(L, solver, r0, r1, regrets: bool = True):
 def evaluate(solver, jobs):
     """Each job (node, p, r0, r1, md): p's utilities (1, n) at `node` (of one board) for reaches r0, r1 (n,) there: md
     AVG with both players on their average strategies (Solver._cfr with use_avg), BR with p best-responding to the
-    opponent's (Solver._best_response). None when the core can't (numpy runs them)."""
+    opponent's (Solver._best_response). None when the core can't (numpy runs them), or failed (CoreError: it's off
+    then, as after a run that failed)."""
+    global _lib
     L = lib()
     if L is None or not solver.use_core or solver.predictive or any(len(j[0].boards) != 1 for j in jobs):
         return None
@@ -691,6 +693,9 @@ def evaluate(solver, jobs):
             L.read(prog.ev + 8 * n, u)
             out.append(u)
         return out
+    except CoreError:
+        _lib = False
+        return None
     finally:
         _lock.release()
 

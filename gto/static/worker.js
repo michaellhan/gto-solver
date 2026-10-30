@@ -85,13 +85,20 @@ self.libFetch = (path) => {
 // The core's threads: core-mt.wasm with its memory shared (a SharedArrayBuffer: the page must be cross-origin isolated,
 // which sw.js arranges) and up to 7 helper workers, each the same module on the same memory waiting in core_helper for
 // rows of a chance node's subtree (core/gtocore.c); a solve's numbers are the same on any number of threads. Without
-// isolation, or where the threaded module won't load, core.wasm alone.
+// isolation, or where the threaded module won't load, core.wasm alone. A helper that fails (a trap: core_helper throws)
+// marks itself in the core's memory (core_dead), where the solve waiting on its rows reads it: that solve's core_run
+// throws in turn, and numpy runs the solve (gto/core.py) instead of the worker waiting for good.
 const HELPERS = Math.min(7, ((self.navigator && navigator.hardwareConcurrency) || 1) - 1);
 const HELPER = `onmessage = async (e) => {
   const { mod, memory, i } = e.data;
   const ex = (await WebAssembly.instantiate(mod, { env: { memory } })).exports;
   ex.__stack_pointer.value = ex.core_stack(i);   // (every instance starts on the same stack)
-  ex.core_helper(i);                              // runs rows of the solves' chance nodes; never returns
+  const dead = new Int32Array(memory.buffer, ex.core_dead(0), 1);
+  try {
+    ex.core_helper(i);                            // runs rows of the solves' chance nodes; returns only by failing
+  } catch (err) {
+    Atomics.store(dead, 0, i + 1);
+  }
 };`;
 async function loadCore(py) {
   if (self.crossOriginIsolated && HELPERS > 0) {
@@ -322,6 +329,7 @@ const cancelled = new Set();
 let STOP = null, CUR = 0;   // (CUR: the request running)
 function stopNow() { return STOP !== null && (Atomics.load(STOP, 0) >= CUR || Atomics.load(STOP, 1) === CUR); }
 onmessage = async (e) => {
+  if (e.data.ping != null) return postMessage({ pong: e.data.ping });   // (the page: this thread isn't stuck)
   if (e.data.cancel != null) { cancelled.add(e.data.cancel); return; }
   if (e.data.stop) { STOP = new Int32Array(e.data.stop); return; }
   if (e.data.prefetch) {   // the page's hand has a flop: its library entries, fetched ahead (above)

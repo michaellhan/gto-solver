@@ -1405,6 +1405,13 @@ static struct {
 #define LD(x) __atomic_load_n(&(x), __ATOMIC_RELAXED)
 #define ST(x, v) __atomic_store_n(&(x), (v), __ATOMIC_RELAXED)
 
+/* A helper that failed: its number + 1. In the browser a trap in a helper (a bug: it ran past its lane, say) throws out
+   of core_helper with the chunk of rows it held unfinished, and the thread waiting on the job's rows would wait for
+   good, the page's stop out of its reach. worker.js's helper catches it and sets this word (core_dead gives its
+   address), and that wait traps on it: the solve's core_run throws, core.py's CoreError, and numpy runs the solve.
+   Natively a trap ends the process. fail_i, fail_n: a test's failure (core_fail). */
+static i32 dead, fail_i, fail_n;
+
 static inline void relax(void) {
 #if defined(__aarch64__)
   __asm__ volatile("yield");
@@ -1422,6 +1429,7 @@ static i32 started;
 
 /* this thread's share of job `seq`: chunks of rows while there are any */
 static i32 helped;   /* rows the helpers ran (core_helped) */
+static Lane hl[MAXT];   /* the helpers' lanes (not on their stacks: see core_stack) */
 
 static void take(Lane *L, u32 seq, i32 child, int p, i32 lo, i32 rows, i32 grain, const f32 *c0, const f32 *c1,
                  f32 *u) {
@@ -1430,6 +1438,8 @@ static void take(Lane *L, u32 seq, i32 child, int p, i32 lo, i32 rows, i32 grain
     i32 r = (i32)(u32)t;
     if ((u32)(t >> 32) != seq || r >= rows) return;
     if (__sync_val_compare_and_swap(&J.ticket, t, t + (u32)grain) != t) continue;   /* (no expected value in memory) */
+    if (LD(fail_n) && L == &hl[LD(fail_i) & (MAXT - 1)] && __atomic_sub_fetch(&fail_n, 1, __ATOMIC_RELAXED) == 0)
+      __builtin_trap();   /* (core_fail: a test's helper failing with these rows held) */
     i32 e = rows - r < grain ? rows : r + grain;
     size_t mark = L->top;
     run(L, child, p, lo + r, lo + e, r, c0, c1, u);
@@ -1473,7 +1483,6 @@ static void wake(void) {
 }
 
 /* helper i: takes rows of every job it sees, in its lane of the job's scratch */
-static Lane hl[MAXT];
 static void helper(i32 i) {
   u32 last = 0;
   for (;;) {
@@ -1490,7 +1499,7 @@ static void helper(i32 i) {
     if ((u32)(__atomic_load_n(&J.ticket, __ATOMIC_RELAXED) >> 32) != seq) continue;   /* (read across two jobs) */
     last = seq;
     if (i >= helpers) continue;
-    Lane *L = &hl[i];   /* (not on the stack: see core_stack) */
+    Lane *L = &hl[i];
     L->top = lanes + (size_t)i * lane, L->lim = lanes + (size_t)(i + 1) * lane, L->par = 1;
     take(L, seq, child, p, lo, rows, grain, c0, c1, u);
   }
@@ -1509,6 +1518,19 @@ static void *run_helper(void *i) {
 }
 #endif
 #endif
+
+/* the address of the word a failed helper sets (dead, above; worker.js), and for tests: i > 0 sets it to i */
+EXPORT(core_dead) u32 core_dead(i32 i) {
+  if (i > 0) __atomic_store_n(&dead, i, __ATOMIC_SEQ_CST);
+  return (u32)(uintptr_t)&dead;
+}
+
+/* tests: helper i traps holding the rows of its nth chunk from now (n 0: none) */
+EXPORT(core_fail) i32 core_fail(i32 i, i32 n) {
+  ST(fail_i, i);
+  ST(fail_n, n);
+  return n;
+}
 
 /* the helpers' lanes as sized (0: not yet), k 0 a whole pass's and 1 a deferred pass's (a test's: sized for the sums) */
 EXPORT(core_lanes) u32 core_lanes(i32 k) { return (u32)lane_size[k & 1]; }
@@ -1587,6 +1609,7 @@ static void split(Lane *L, i32 child, int p, i32 lo, i32 hi, const f32 *c0, cons
   L->par = 0;
   for (int spin = 0; __atomic_load_n(&J.done, __ATOMIC_ACQUIRE) < rows; spin++) {
     relax();
+    if (LD(dead)) __builtin_trap();   /* (a helper failed holding rows: they won't come) */
 #ifndef __wasm__
     if (spin > 1 << 12) sched_yield();
 #endif

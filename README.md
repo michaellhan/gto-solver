@@ -1563,6 +1563,19 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   on 4 and 20 on 2, all turns at that level (28 of its 112); full trees didn't. Now none of the 686 on 2, 4 or 8
   threads, and none of 65 requests (13 of the bench's spots at budgets of 1, 3 and 8 s on 8 threads, and at Quick's on
   4 and 8). The lanes are the same with the skip on as off (`core_lanes`), and so are the floats.
+
+  A helper that fails no longer hangs the page. In the browser a trap in a helper (a bug like that one) left the chunk
+  of rows it held unfinished, and the solve waited on them inside the core for good, out of reach of the page's stop.
+  Now worker.js's helper catches it and marks itself in the core's memory (`core_dead`), the wait on the job's rows
+  traps on that, and the solve's `core_run` throws: `CoreError`, and numpy runs the solve and the session's later
+  ones, as after any failure of the core (the passes after a solve too, `core.evaluate`, which let it through). In the
+  browser bench (`BENCH_THREADS`, new: the worker's helpers as Node worker threads running worker.js's own helper
+  script; `BENCH_FAIL`, new: `core_fail`, a test's, fails a helper holding rows), helper 0 failing on its first chunk
+  on 2 threads and on 8: BTN vs BB's Fast turn answered in 12.2 / 11.9 s by numpy (36-39 iterations, 4.9-6.9% of the
+  pot from equilibrium; 5.1 s and 300 iterations, 0.15%, in the core), and the limped turn and a river after it
+  answered too. And a stopped request that can't read the stop no longer holds the requests after it: the page pings
+  the worker after a stop and restarts one that hasn't answered in 15 s (`STUCK_S`; a stop takes ~0.1 s), posting the
+  requests still waiting to the new one.
 * **Regret minimizer** (`docs/cfr_research.md`, `scripts/bench_solver.py --algos`, exploitability per
   iteration): predictive CFR+ and its discounted form (PCFR+, PDCFR+), the state of the art on many
   non-poker games, are 2-7x more exploitable than DCFR here at 100-200 iterations on every spot (the river,

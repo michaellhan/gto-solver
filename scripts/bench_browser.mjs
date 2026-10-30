@@ -187,6 +187,26 @@ async function startWorker(pyodideDir, bundlePath) {
     libFetches: 0, aheadFetches: 0,
     postMessage: (m) => onMsg && onMsg(m),
   };
+  // BENCH_THREADS N: a cross-origin isolated page on an N-core machine (the live site: sw.js's COOP/COEP), the worker's
+  // helpers worker threads that run worker.js's own helper script (the Blob it makes, called as its onmessage)
+  const NT = +(process.env.BENCH_THREADS || 0);
+  if (NT > 0) {
+    const blobs = new Map();
+    Object.assign(ctx, {
+      crossOriginIsolated: true, navigator: { hardwareConcurrency: NT },
+      Blob: class { constructor(parts) { this.text = parts.join(""); } },
+      URL: class extends URL { static createObjectURL(b) { const u = `blob:bench/${blobs.size}`; blobs.set(u, b.text); return u; } },
+      Worker: class {
+        constructor(url) { this.src = blobs.get(String(url)); }
+        postMessage(d) {
+          const t = new Thread(`const { workerData } = require("worker_threads");\n${this.src}\nonmessage({ data: workerData });`,
+            { eval: true, workerData: d });
+          t.on("error", () => {});   // (a helper's error goes nowhere in the browser either)
+          t.unref();
+        }
+      },
+    });
+  }
   ctx.self = ctx;
   vm.createContext(ctx);
   const src = fs.readFileSync(arg("worker", path.join(STATIC, "worker.js")), "utf8");
@@ -202,6 +222,9 @@ async function startWorker(pyodideDir, bundlePath) {
     onMsg = (m) => { if (m.status === "Solving…") { stages = m.setup || null; res(); } if (m.error) rej(new Error(m.error)); };
   });
   const setup = (performance.now() - t0) / 1000;
+  // BENCH_FAIL "i,n": the core's helper i fails holding the rows of its nth chunk (core_fail, a test's: what a trap in
+  // a helper does), from the first request on
+  if (process.env.BENCH_FAIL && ctx.gtoCore && ctx.gtoCore.core_fail) ctx.gtoCore.core_fail(...process.env.BENCH_FAIL.split(",").map(Number));
   const heap = () => py._module.HEAPU8.buffer.byteLength / 2 ** 20;
   let id = 0;
   const prefetch = (state) => ctx.onmessage({ data: { prefetch: state } });

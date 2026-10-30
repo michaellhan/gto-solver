@@ -895,6 +895,7 @@ let MODE = null, worker = null, reqId = 0;
 // worker keeps its solves, library entries and tables; elsewhere stopping one restarts the worker (cancelSolve).
 let STOP = null;
 const partials = {};   // callAdvise's onPartial by request id
+const sent = {};       // the worker's requests by id, as posted (resent to a new worker: watchStop)
 let prefetched = null;   // the flop the worker was last told about (prefetchLibrary)
 const pending = {};
 // (health.json: the local server answers it {"ok": true}; the static site has the file, {"ok": false}, so the probe
@@ -960,9 +961,11 @@ function startWorker() {
   if (STOP) worker.postMessage({ stop: STOP.buffer });
   worker.onmessage = (e) => {
     const m = e.data;
+    if (m.pong != null) { pongs = Math.max(pongs, m.pong); return; }
     if (m.status) { workerStatus = m.status; setStatus(m.status); }
     if (m.partial) { if (m.id != null && pending[m.id] && partials[m.id]) partials[m.id](m.partial); return; }
     if (m.id != null && pending[m.id]) { pending[m.id](m.error ? { error: m.error } : m.result); delete pending[m.id]; delete partials[m.id]; }
+    if (m.id != null && !m.partial) delete sent[m.id];
   };
   worker.onerror = (e) => { for (const k in pending) { pending[k]({ error: "solver worker failed: " + e.message }); delete pending[k]; } };
 }
@@ -987,9 +990,14 @@ function callAdvise(state, play, onPartial) {
   stopPresolve();   // (a real request never waits behind one)
   startWorker();
   const early = !play && !!onPartial;
-  const id = ++reqId, p = new Promise(res => { pending[id] = res; if (early) partials[id] = onPartial; worker.postMessage(play ? { id, state, play } : early ? { id, state, early } : { id, state }); });
+  const id = ++reqId, p = new Promise(res => { pending[id] = res; if (early) partials[id] = onPartial; post(play ? { id, state, play } : early ? { id, state, early } : { id, state }); });
   p.reqId = id;   // (stopRequests(id))
   return p;
+}
+function post(m) {
+  for (const k in sent) if (!(k in pending)) delete sent[k];
+  sent[m.id] = m;
+  worker.postMessage(m);
 }
 // Stop the browser's requests in flight, or the one `id` (callAdvise's reqId): they answer {cancelled: true} at once
 // where the page shares a stop flag with the worker (the one running stops within ~0.1 s, the worker keeping what it
@@ -998,7 +1006,26 @@ function stopRequests(id) {
   if (MODE !== "wasm" || !STOP || !worker) return false;
   if (id == null) Atomics.store(STOP, 0, reqId); else Atomics.store(STOP, 1, id);
   for (const k in pending) if (id == null || +k === id) { pending[k]({ cancelled: true }); delete pending[k]; delete partials[k]; }
+  watchStop();
   return true;
+}
+// A stopped request can be stuck where it can't read the stop (in the compiled core, say), and every request after it
+// waits behind it: so the worker is pinged after a stop, and one that hasn't answered in STUCK_S seconds (a stop takes
+// ~0.1 s, the longest stretch that doesn't read it a few seconds) is restarted, as where there's no stop to share,
+// and the requests waiting are posted to the new one.
+const STUCK_S = 15;
+let pings = 0, pongs = 0;
+function watchStop() {
+  if (workerStatus !== "Solving…") return;   // (still loading: its stretches aren't requests)
+  const w = worker, n = ++pings;
+  w.postMessage({ ping: n });
+  setTimeout(() => {
+    if (worker !== w || pongs >= n) return;
+    w.onmessage = w.onerror = null;
+    w.terminate(); worker = null; workerStatus = "";
+    startWorker();
+    for (const k in pending) if (sent[k]) worker.postMessage(sent[k]);
+  }, STUCK_S * 1000);
 }
 // Speculative pre-solves: while your opponent is to act, heads-up after the flop, the browser's worker makes the solve
 // your next decision on the street reads (Advisor.presolve: the street's solve with your cards, as your advice makes
@@ -1024,7 +1051,7 @@ function presolveFor(sim) {
   if (PRE.done.size > 64) PRE.done.clear();
   const id = ++reqId;
   PRE.k = k; PRE.id = id;
-  new Promise(res => { pending[id] = res; worker.postMessage({ id, state: JSON.parse(k), presolve: seat }); }).then((r) => {
+  new Promise(res => { pending[id] = res; post({ id, state: JSON.parse(k), presolve: seat }); }).then((r) => {
     if (PRE.id !== id) return;
     PRE.id = null;
     if (r && !r.cancelled) PRE.done.add(k);   // (run its budget, nothing to do, or failed: not asked again)

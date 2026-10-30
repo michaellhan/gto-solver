@@ -139,3 +139,40 @@ test("no presolve where the page can't stop one (not cross-origin isolated) or t
   await flush();
   assert.equal(q.posted.filter((m) => m.presolve).length, 0);
 });
+
+test("a stopped solve that never answers (stuck where it can't read the stop): after 15 s the worker is restarted and the advice waiting behind it goes to the new one", async () => {
+  for (const stuck of [false, true]) {
+    const { p, pres, asks } = await solving();
+    const timers = [];
+    p.ctx.setTimeout = (f, ms) => { timers.push({ f, ms }); return timers.length; };
+    p.S = state(OOP_TO_ACT);
+    await flush();
+    const pre = pres()[0];
+    p.act({ action: "check" });   // stops the presolve and asks for your advice, which waits behind it
+    await flush();
+    const ask = asks().at(-1), pings = p.posted.filter((m) => m.ping != null);
+    assert.equal(pings.length, 1);
+    const watch = timers.filter((t) => t.ms === 15000);
+    assert.equal(watch.length, 1);
+    if (!stuck) p.workers[0].onmessage({ data: { pong: pings[0].ping } });   // (the worker went on: it isn't stuck)
+    const before = p.posted.length;
+    watch[0].f();
+    await flush();
+    if (!stuck) {
+      assert.equal(p.workers.length, 1);
+      assert.equal(p.workers[0].terminated, false);
+      continue;
+    }
+    assert.equal(p.workers.length, 2);
+    assert.equal(p.workers[0].terminated, true);
+    const again = p.posted.slice(before);
+    assert.ok(again.some((m) => m.stop));   // (the new worker's own stop flag)
+    assert.deepEqual(again.filter((m) => m.state).map((m) => m.id), [ask.id]);   // the advice, not the stopped presolve
+    assert.equal(again.find((m) => m.state).early, true);
+    assert.ok(!again.some((m) => m.id === pre.id));
+    p.workers[1].onmessage({ data: { status: "Solving…" } });
+    p.workers[1].onmessage({ data: { id: ask.id, result: { street: "flop", hero: "BTN", hand: "AKs", recommended: "check", actions: [{ action: "check", freq: 1 }] } } });
+    await flush();
+    assert.match(p.byId("result").innerHTML, /<span class="big">check<\/span>/);
+  }
+});

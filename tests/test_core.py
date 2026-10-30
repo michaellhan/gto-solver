@@ -564,6 +564,24 @@ class TestProgram(unittest.TestCase):
         finally:
             core._lib = L
 
+    def test_a_failed_pass_after_the_solve_turns_the_core_off(self):
+        """The core failing in the passes after a solve (core.evaluate: in the browser, say, a helper that failed
+        holding rows, which the thread waiting on them traps on) runs them in numpy and turns the core off, as a
+        failed run does: the answer still comes, and the next solve runs in numpy."""
+        sol = _solve("Ks7d2cTh5s", OOP, IP, 20, 90, native.config("fast"), 5)
+        want = sol.exploitability()
+        L = core.lib()
+        try:
+            with mock.patch.object(type(L), "eval", side_effect=core.CoreError("the core failed")):
+                got = sol.exploitability()
+            self.assertIsNone(core.lib())
+            self.assertAlmostEqual(got, want, places=4)
+            nxt = _solve("Ks7d2cTh5s", OOP, IP, 20, 90, native.config("fast"), 5)
+            self.assertEqual(nxt.iters, 5)
+            self.assertIsNone(getattr(nxt.solver, "per_iter", None))   # (numpy ran it)
+        finally:
+            core._lib = L
+
     def test_busy_core_numpy_runs(self):
         with core._lock:
             sol = _solve("Ks7d2cTh5s", OOP, IP, 20, 90, native.config("fast"), 5)

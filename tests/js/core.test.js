@@ -124,3 +124,52 @@ test("core-mt: threads give the same numbers, and the helpers run rows", async (
   assert.ok(runs[0].some((x) => x !== 0));
   assert.deepEqual(runs[1], runs[0]);
 });
+
+// A helper that fails (a trap in its rows: a bug, say, that runs past its lane) must not leave the solve waiting for
+// good on the rows it held. worker.js's own helper script marks it in the core's memory, the thread waiting on the job's
+// rows traps on that, and its core_run throws (gto/core.py: CoreError, and numpy runs the solve). Here the core fails
+// helper 0 (core_fail, a test's) on its first chunk, on 2 threads and on 8, the solving thread a worker thread of its
+// own, so a solve that waits for good fails the test at the time limit instead of hanging it.
+const SOLVER = `const { parentPort, workerData: { mod, memory, T } } = require("node:worker_threads");
+const MAGIC = ${MAGIC};
+${chanceGame.toString()}
+const ex = Object.assign({}, new WebAssembly.Instance(mod, { env: { memory } }).exports, { memory });
+ex.core_threads(T);
+const pause = new Int32Array(new SharedArrayBuffer(4));
+const dead = new Int32Array(memory.buffer, ex.core_dead(0), 1);
+let runs = 0, threw = null;
+ex.core_fail(0, 1);
+for (; runs < 2000 && !threw; runs++) {
+  const g = chanceGame(ex, 24, 40);
+  try { ex.core_run(g.prog, 50, g.fac); } catch (e) { threw = String(e); }
+  if (runs % 10 === 9) Atomics.wait(pause, 0, 0, 5);   // (the helpers scheduled)
+}
+parentPort.postMessage({ runs, threw, dead: Atomics.load(dead, 0), helped: ex.core_helped() });`;
+
+test("core-mt: a helper that fails ends the solve's wait instead of hanging it (worker.js's helper)", async () => {
+  const { Worker } = require("node:worker_threads");
+  const src = fs.readFileSync(path.join(ROOT, "gto", "static", "worker.js"), "utf8");
+  const helper = src.match(/const HELPER = `([\s\S]*?)`;/)[1];
+  // (the page's helper is a browser worker: its onmessage, called here with what worker.js posts it)
+  const HELPER_PAGE = `const { workerData } = require("node:worker_threads");\n${helper}\nonmessage({ data: workerData });`;
+  const mod = await WebAssembly.compile(fs.readFileSync(path.join(ROOT, "gto", "core-mt.wasm")));
+  for (const T of [2, 8]) {
+    const memory = new WebAssembly.Memory({ initial: 256, maximum: 32768, shared: true });
+    const helpers = [...Array(T - 1).keys()].map((i) => new Worker(HELPER_PAGE, { eval: true, workerData: { mod, memory, i } }));
+    for (const w of helpers) w.on("error", () => {});   // (a helper's own error goes nowhere in the browser either)
+    const solver = new Worker(SOLVER, { eval: true, workerData: { mod, memory, T } });
+    let timer;
+    try {
+      const got = await Promise.race([
+        new Promise((ok, no) => { solver.once("message", ok); solver.once("error", no); }),
+        new Promise((ok) => { timer = setTimeout(() => ok({ hung: true }), 60000); }),
+      ]);
+      assert.ok(!got.hung, `${T} threads: the solve waited for good on the failed helper's rows`);
+      assert.match(got.threw || "", /unreachable/, `${T} threads: no run failed (${got.runs} runs, ${got.helped} rows helped)`);
+      assert.equal(got.dead, 1, `${T} threads: helper 0 marked itself`);
+    } finally {
+      clearTimeout(timer);
+      await Promise.all([solver, ...helpers].map((w) => w.terminate()));
+    }
+  }
+});
