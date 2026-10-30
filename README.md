@@ -1670,6 +1670,41 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   (`turn-limp`'s flop narrowing, a threaded flop solve with all-in leaves, 1.40 -> 1.18 s of it.) Natively, ms an
   iteration from the 100th on 8 threads (medians of 2, alternating, the same hold): `turn` 5.79 -> 5.13, `turn-limp`
   8.18 -> 7.48, `turn-x` 6.42 -> 6.43 (runs of 6.16-6.68 against 5.97-6.89: within the noise; outside the hold, the slot beside the build, 8.48 -> 7.90).
+* **An evaluation's lanes, each kind its own** (`core/gtocore.c` `lane_size`, `lane_k`, `core_eval`, `job`, `SPARE`,
+  `core_lanes_grown`). An evaluation from the root of a threaded tree (`Solver.exploitability`'s best responses and,
+  raked, its averages) runs its chance nodes' rows on the helpers, each in a lane sized by a serial pass. A training
+  pass sizes them in a solve's first iteration, and the evaluations after it use those. A program no training pass had
+  sized (one built to evaluate a solve other than the arena's, `core.evaluate`; a solve stopped before its first
+  iteration) sized them on its first evaluation alone (9d6a7f17), and one player's pass can take more scratch than the
+  other's. On Ks7d2cTh (the tests' wide ranges, Fast's tree, 9.1bb pot) the first player's best response took 100,416
+  bytes a lane and the second's 97,664, so the second's measure trapped the first's in a helper. On the tree trimmed to
+  TRIMS' third level it went the other way: exploitability's own order (the first player, then the second) trapped.
+  In the browser a trap restarts the core and runs the evaluation again, the same trap follows, and the core is off for
+  the session: numpy then answers every solve, a Fast turn in ~12 s at ~5% of the pot instead of ~2 s at 0.15%.
+  No page request was found that reaches it. The Advisor reads a solve's exploitability right after its iterations and
+  keeps it per iteration count (`_expl`), so the program it evaluates is the arena's, sized by its own training. A
+  probe over 13 test modules on 2 threads (advice, presolves, Study, the breakdown, settled stops, instant answers, the
+  cache, page states) found a root evaluation in a program built only to evaluate in three tests alone. Each read an
+  earlier solve's exploitability after a later solve, and those run on one thread. A script doing the same, the
+  windows' accuracy sweep, found the trap. No flow runs the second player's best response before the first's; the
+  trimmed tree trapped in that order anyway.
+  Now, until a training pass has sized the whole pass's lane, each kind of evaluation (an average or a best response,
+  either player) measures and keeps its own. A training pass's lane also covers every evaluation after it: on that
+  turn 188,544 bytes. A lane that still comes short no longer traps. Each helper's lane is its measure plus half again,
+  and a job in which a helper held more than the measure grows that lane to what it held for the next job
+  (`core_lanes_grown` counts them). Scratch is scratch, so the floats are the same; only a helper past the spare (a bug)
+  still traps. The lanes take 1.5x the bytes: on that turn on 8 threads, 1.3 -> 2.0 MB for the whole pass's and
+  0.7 -> 1.1 MB for the subs' (one job at a time).
+  Natively on 8 threads, ms an iteration from the 100th to the 200th of the Advisor's own Fast turns, old / new / new /
+  old in a quiet hold: `turn` 5.99 / 6.23 -> 5.90 / 6.23, `turn-limp` 8.16 / 7.53 -> 8.18 / 7.43. An exploitability
+  read took 10.7-13.2 ms before and 10.0-13.3 after, with the same exploitability to 5 decimals (0.23244 and 0.3078%
+  of the pot).
+  Tests: `test_evaluations_in_any_order` (a child process, as a trap ends it). It covers every kind of program the
+  Advisor builds: evaluate-only, a presolve stopped before its first iteration, and a solve, a warm-started solve and a
+  seeded solve, each after its next iteration. Each runs all four evaluations in all 24 orders on 2, 4 and 8 threads,
+  on that turn full and trimmed. The floats match one thread's, and no lane grew. On the core before, it trapped on
+  the first: full tree, 2 threads, evaluate-only. A lane set to 3/4 of its measure, the subs' in a training pass and
+  then the whole pass's in an evaluation, grows to what its helpers held, with the same floats.
 * **The multiway core on threads** (`core/mwcore.c` `pass`, `rwalk`, `job`, `helper`, `mw_threads`;
   `gto/mwcore-mt.wasm`). The multiway core (3- and 4-way flop and turn solves, How it works) ran on one thread in the
   browser while the heads-up core had helpers. Now a pass runs its root-street leaves as one job: a walk down

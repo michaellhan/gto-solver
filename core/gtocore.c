@@ -91,7 +91,7 @@ static void ensure(size_t end) {
 /* A thread's scratch: allocated up to top (a helper's within its lane, at most lim); par: inside a job's rows (no
    further split); peak: the most it has held (the lanes' size is measured with it). */
 typedef struct {
-  size_t top, lim, peak;
+  size_t top, lim, peak, start;   /* (start: a helper's lane's first byte) */
   int par;
 } Lane;
 
@@ -109,18 +109,27 @@ static void *salloc(Lane *L, size_t bytes) {
   return base + at;
 }
 
-/* bytes a helper's chunk of rows may take: 0 until a serial pass measured them. [0] a whole pass's (a training pass,
-   an evaluation: the same scratch), [1] a deferred training pass's (below: its chunks a row at a time, less), [2] a
-   training pass's rows of every first chance node at once (subs, below: a row and its reaches, and a node's sums) */
-static size_t lane_size[3], measured[3];
+/* bytes a helper's chunk of rows may take: 0 until a serial pass measured them. [0] a whole training pass's (and the
+   evaluations' after it), [1] a deferred training pass's (below: its chunks a row at a time, less), [2] a training
+   pass's rows of every first chance node at once (subs, below: a row and its reaches, and a node's sums), [3 + 2 (a
+   best response) + p] an evaluation's in a program no training pass measured (one built to evaluate, or a solve
+   stopped before its first iteration): each kind measures its own, as one player's pass can take more scratch than the
+   other's (a turn's best response for the first player 100,416 bytes, the second's 97,664: measured on the second's
+   alone, the first's trapped) */
+#define NLANES 7
+static size_t lane_size[NLANES], measured[NLANES];
+static u32 grown;   /* jobs whose lanes came short of a helper's scratch (core_lanes_grown): job() */
+/* A helper's lane is its measure and half that again: a measure short of a later pass's scratch (the lanes' traps so
+   far: 16 bytes, 2.7 KB) costs the lane grown to what the helper held (job()), not a trap; a trap only past the half */
+#define SPARE(lane) (((lane) / 2 + 63) & ~(size_t)63)
 /* 1 while split() runs a chance node's chunks serially to measure them: terminal() sums every row then, reached or not
    (unreached), so the lanes hold the sums' scratch. A row unreached in that pass can be reached later: the first
    iteration's second pass meets the first player's regret-matched zeros, and skipped the deepest showdowns' ranking()
    on every row of a limped turn, whose lanes then came 16 bytes short of a chunk's on the next iteration (a trap). */
 static int measuring;
-static int deferring;   /* (which: 1 in a deferred training pass) */
+static int lane_k;   /* which split() uses: 1 in a deferred training pass, 3-6 an evaluation's (above) */
 static void sized(void) {
-  for (int k = 0; k < 3; k++)
+  for (int k = 0; k < NLANES; k++)
     if (!lane_size[k] && measured[k]) lane_size[k] = (measured[k] + 63) & ~(size_t)63;
 }
 
@@ -133,7 +142,7 @@ EXPORT(core_reset) void core_reset(void) {
   }
 #endif
   M.top = M.peak = 0;
-  for (int k = 0; k < 3; k++) lane_size[k] = measured[k] = 0;
+  for (int k = 0; k < NLANES; k++) lane_size[k] = measured[k] = 0;
 }
 
 /* `bytes` in the arena; returns its offset. */
@@ -749,8 +758,8 @@ static void dealt(const i32 *nd, const i32 *bk, int p, i32 lo, i32 hi, const f32
    last rows), and the spreads and sums run on them. Above the subs only decisions and terminals (plan()); a decision
    there is walked twice, its strategies worked out again (COLLECT's discount nothing, fused: read's). A program's
    first iteration still runs a job a node: it measures the lanes of a whole pass (lane_size[0]), which the evaluations
-   after a solve use (an evaluation's pass differs a little from a training pass, so the first evaluation's measure
-   alone held a later one's 16 bytes short); the subs run from the second. */
+   after a solve use (one in a program no training pass measured uses its own kind's: lane_size, above); the subs run
+   from the second. */
 typedef struct {
   const i32 *nd;
   i32 lo, hi, row0, left;     /* its rows, its first row in the job, its rows still to run */
@@ -1634,7 +1643,7 @@ static struct {
   i32 child, p, lo, rows, grain, helpers;
   const f32 *c0, *c1;
   f32 *u;
-  size_t lanes, lane;
+  size_t lanes, lane, need;   /* (need: the most a helper's lane held, past `lane`: job()) */
 } J;
 
 #define LD(x) __atomic_load_n(&(x), __ATOMIC_RELAXED)
@@ -1679,7 +1688,13 @@ static void take(Lane *L, u32 seq, i32 child, int p, i32 lo, i32 rows, i32 grain
     size_t mark = L->top;
     run(L, child, p, lo + r, lo + e, r, c0, c1, u);
     L->top = mark;
-    if (L != &M) __atomic_fetch_add(&helped, e - r, __ATOMIC_RELAXED);
+    if (L != &M) {
+      __atomic_fetch_add(&helped, e - r, __ATOMIC_RELAXED);
+      size_t used = L->peak - L->start, was = __atomic_load_n(&J.need, __ATOMIC_RELAXED);
+      while (used > LD(J.lane) && used > was &&
+             !__atomic_compare_exchange_n(&J.need, &was, used, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
+      }
+    }
     __atomic_fetch_add(&J.done, e - r, __ATOMIC_RELEASE);
   }
 }
@@ -1735,7 +1750,8 @@ static void helper(i32 i) {
     last = seq;
     if (i >= helpers) continue;
     Lane *L = &hl[i];
-    L->top = lanes + (size_t)i * lane, L->lim = lanes + (size_t)(i + 1) * lane, L->par = 1;
+    L->start = L->top = L->peak = lanes + (size_t)i * (lane + SPARE(lane)), L->lim = L->start + lane + SPARE(lane);
+    L->par = 1;
     take(L, seq, child, p, lo, rows, grain, c0, c1, u);
   }
 }
@@ -1767,9 +1783,14 @@ EXPORT(core_fail) i32 core_fail(i32 i, i32 n) {
   return n;
 }
 
-/* the helpers' lanes as sized (0: not yet), k 0 a whole pass's, 1 a deferred pass's and 2 a pass's subs' (a test's:
-   sized for the sums) */
-EXPORT(core_lanes) u32 core_lanes(i32 k) { return (u32)lane_size[k < 0 || k > 2 ? 0 : k]; }
+/* the helpers' lanes as sized (0: not yet), k 0 a whole pass's, 1 a deferred pass's, 2 a pass's subs' and 3-6 an
+   evaluation's before a training pass (lane_size) (a test's: sized for the sums) */
+EXPORT(core_lanes) u32 core_lanes(i32 k) { return (u32)lane_size[k < 0 || k >= NLANES ? 0 : k]; }
+/* jobs whose lanes came short (grown: above); for tests, k >= 0 sets lane_size[k] to `bytes` (a lane short) */
+EXPORT(core_lanes_grown) u32 core_lanes_grown(i32 k, u32 bytes) {
+  if (k >= 0 && k < NLANES) lane_size[k] = ((size_t)bytes + 63) & ~(size_t)63;
+  return grown;
+}
 
 /* the rows of jobs the helpers have run (so a test, or the page, can tell they're running) */
 EXPORT(core_helped) i32 core_helped(void) {
@@ -1799,24 +1820,25 @@ EXPORT(core_threads) i32 core_threads(i32 t) {
 #endif
   if (t != nthreads) {
     nthreads = t;
-    for (int k = 0; k < 3; k++) lane_size[k] = measured[k] = 0;   /* (the chunks change with the number) */
+    for (int k = 0; k < NLANES; k++) lane_size[k] = measured[k] = 0;   /* (the chunks change with the number) */
   }
   return nthreads;
 }
 
 #ifdef THREADS
-/* rows lo..lo+rows of a chance node's child (or SUBS) as a job, grain rows at a time, each helper in a lane of `lane`
-   bytes: this thread takes rows too, then waits for the rest */
+/* rows lo..lo+rows of a chance node's child (or SUBS) as a job, grain rows at a time, each helper in a lane of
+   lane_size[k] bytes and its spare: this thread takes rows too, then waits for the rest. A helper that held more than
+   lane_size[k] grows it to that for the next job (the same floats: scratch is scratch) */
 static void job(Lane *L, i32 child, int p, i32 lo, i32 rows, i32 grain, const f32 *c0, const f32 *c1, f32 *u,
-                size_t lane) {
+                int k) {
   i32 helpers = nthreads - 1;
-  size_t mark = L->top;
-  unsigned char *lanes = salloc(L, lane * helpers);
+  size_t mark = L->top, lane = lane_size[k];
+  unsigned char *lanes = salloc(L, (lane + SPARE(lane)) * helpers);
   u32 seq = (u32)(__atomic_load_n(&J.ticket, __ATOMIC_RELAXED) >> 32) + 2;
   __atomic_store_n(&J.ticket, ((u64)(seq - 1) << 32) | 0xffffffffu, __ATOMIC_SEQ_CST);
   ST(J.child, child), ST(J.p, p), ST(J.lo, lo), ST(J.rows, rows), ST(J.grain, grain), ST(J.helpers, helpers);
   ST(J.c0, c0), ST(J.c1, c1), ST(J.u, u), ST(J.lanes, (size_t)(lanes - base)), ST(J.lane, lane);
-  ST(J.done, 0);
+  ST(J.done, 0), ST(J.need, 0);
   __atomic_store_n(&J.ticket, (u64)seq << 32, __ATOMIC_SEQ_CST);
   wake();
   L->par = 1;
@@ -1830,6 +1852,8 @@ static void job(Lane *L, i32 child, int p, i32 lo, i32 rows, i32 grain, const f3
 #endif
   }
   L->top = mark;
+  size_t need = LD(J.need);
+  if (need > lane_size[k]) lane_size[k] = (need + 63) & ~(size_t)63, grown++;
 }
 #endif
 
@@ -1843,7 +1867,7 @@ static void split(Lane *L, i32 child, int p, i32 lo, i32 hi, const f32 *c0, cons
     return;
   }
   i32 grain = (rows + 2 * nthreads - 1) / (2 * nthreads);
-  if (!lane_size[deferring]) {
+  if (!lane_size[lane_k]) {
     L->par = 1;
     measuring = 1;
     for (i32 r = 0; r < rows; r += grain) {
@@ -1851,7 +1875,7 @@ static void split(Lane *L, i32 child, int p, i32 lo, i32 hi, const f32 *c0, cons
       size_t mark = L->top;
       L->peak = mark;
       run(L, child, p, lo + r, lo + e, r, c0, c1, u);
-      if (L->peak - mark > measured[deferring]) measured[deferring] = L->peak - mark;
+      if (L->peak - mark > measured[lane_k]) measured[lane_k] = L->peak - mark;
       L->top = mark;
     }
     measuring = 0;
@@ -1859,7 +1883,7 @@ static void split(Lane *L, i32 child, int p, i32 lo, i32 hi, const f32 *c0, cons
     return;
   }
 #ifdef THREADS
-  job(L, child, p, lo, rows, grain, c0, c1, u, lane_size[deferring]);
+  job(L, child, p, lo, rows, grain, c0, c1, u, lane_k);
 #endif
 }
 
@@ -1880,7 +1904,7 @@ static void subs_job(int p) {
     return;
   }
 #ifdef THREADS
-  job(&M, SUBS, p, 0, sub_rows + nltask, 1, 0, 0, 0, lane_size[2]);
+  job(&M, SUBS, p, 0, sub_rows + nltask, 1, 0, 0, 0, 2);
 #endif
 }
 
@@ -1901,9 +1925,11 @@ EXPORT(core_eval) i32 core_eval(u32 prog, i32 at, i32 p, u32 r0, u32 r1, u32 out
   if (P[0] != MAGIC) return -1;
   mode = md;
   M.par = at != P[4];
+  lane_k = lane_size[0] ? 0 : 3 + 2 * (md == BR) + (p != 0);
   batch(at, p, rows_of(at), PF(p == 0 ? r1 : r0));
   cfr(&M, at, p, 0, rows_of(at), PF(r0), PF(r1), PF(out));
   M.par = 0;
+  lane_k = 0;
   sized();
   mode = TRAIN;
   return 0;
@@ -1959,7 +1985,7 @@ EXPORT(core_run) i32 core_run(u32 prog, i32 iters, u32 factors) {
       f32 *u = salloc(&M, sizeof(f32) * B * n);
       batch(root, p, B, p == 0 ? r1 : r0);
       if (DEFER && P[17]) {
-        deferring = 1;
+        lane_k = 1;
         phase = COLLECT;
         cfr(&M, root, p, 0, B, r0, r1, u);
         phase = WHOLE;
@@ -1967,7 +1993,7 @@ EXPORT(core_run) i32 core_run(u32 prog, i32 iters, u32 factors) {
         phase = READ;
         cfr(&M, root, p, 0, B, r0, r1, u);
         phase = WHOLE;
-        deferring = 0;
+        lane_k = 0;
       } else if (sub_on && lane_size[0]) {
         subs = salloc(&M, sizeof(Sub) * ns);
         leaves = salloc(&M, sizeof(Leaf) * (nl + 1));

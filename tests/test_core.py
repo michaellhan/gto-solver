@@ -277,6 +277,31 @@ class TestThreads(unittest.TestCase):
             self.assertEqual(r["lanes"][0], r["lanes"][1], r)
         self.assertTrue(rows[-1]["solver"]["iterations"] > 0, rows[-1])
 
+    def test_evaluations_in_any_order(self):
+        # An evaluation from the root of a program no training pass sized (one built to evaluate another solve than
+        # the arena's, or a solve stopped before its first iteration) sizes the lanes itself, each kind its own (an
+        # average or a best response, either player): a turn's best response for the first player takes more scratch
+        # than the second's, so sized by the second's alone the first's trapped (and the reverse on a trimmed tree).
+        # Every kind of program the Advisor builds (evaluate-only, a presolve stopped before its first iteration, a
+        # solve, a warm-started and a seeded one after their next iteration), every evaluation in every order (24), on
+        # 2, 4 and 8 threads, a turn full and trimmed: the same floats as on one thread, no lane short (none grown);
+        # and a lane set short of its measure grows to what its helpers held, with the same floats (the training's
+        # and the evaluations'), not a trap. In a child process: a trap ends it.
+        import json
+        import subprocess
+        import sys
+        p = subprocess.run([sys.executable, "-c", "import tests.test_core as t; t._evals_child()"], cwd=core.ROOT,
+                           capture_output=True, text=True, timeout=900,
+                           env=dict(os.environ, PYTHONPATH=core.ROOT, GTO_THREADS="1"))
+        self.assertEqual(p.returncode, 0, p.stderr[-3000:])
+        rows = [json.loads(x) for x in p.stdout.splitlines() if x.startswith("{")]
+        self.assertEqual(len([r for r in rows if "kind" in r]), 2 * 3 * 5, rows)
+        for r in rows:
+            if "kind" in r:
+                self.assertEqual((r["orders"], r["same"], r["grown"]), (24, True, 0), r)
+            else:
+                self.assertEqual((r["same"], r["grew"]), (True, True), r)
+
 
 def _lane_spots():
     btn = fl.spot_setup(next(s for s in fl.SPOTS if s[0] == "srp_btn_bb")[2])
@@ -317,6 +342,103 @@ def _lanes_child():
                       "preflop": [F("UTG"), F("HJ"), F("CO"), F("BTN"), C("SB"), X("BB")],
                       "flop": [X("SB"), B("BB", 1.5), C("SB")], "turn": [], "river": []})
     print(json.dumps({"solver": res.get("solver"), "error": res.get("error")}), flush=True)
+
+
+def _evals_child():
+    """test_evaluations_in_any_order's evaluations (a child process): a line of JSON a tree, thread count and kind of
+    program; then the short lanes'."""
+    import itertools
+    import json
+    from gto import solver as solver_mod
+    from gto.advisor import Advisor
+    L = core.lib().L
+    fast = native.config("fast")
+    evals = [(md, p) for md in (core.AVG, core.BR) for p in (0, 1)]
+
+    def arrays(sol):
+        return [a for d in _decisions(sol) for a in (d.regret, d.ssum)]
+
+    def load(sol, saved, iters, horizon):
+        for a, b in zip(arrays(sol), saved):
+            a[...] = b
+        sol.solver.iters, sol.solver.horizon = iters, horizon
+
+    def seed(root, s):   # (a pure check or a pure bet a combo: the first pass's zeros, as Advisor._store_seed's)
+        root.regret[0][0, 0::2] = root.regret[0][-1, 1::2] = np.float32(root.pot_now)
+
+    def evaluate(sol, order):
+        a, b = sol.r0[None, :].astype(np.float32), sol.r1[None, :].astype(np.float32)
+        out = {}
+        for md, p in order:
+            u = core.evaluate(sol.solver, [(sol.root, p, a, b, md)])
+            assert u is not None and core._lib is not False, (md, p)
+            out[md, p] = u[0].view(np.int32).copy()
+        return out
+
+    for name, cfg in (("full", fast), ("trimmed", Advisor._trim_cfg(fast, "turn", 3))):
+        core.threads(1)
+        A = solve(cards("Ks7d2cTh"), OOP, IP, 9.1, 95.5, cfg=cfg, time_budget=1e9, max_iters=4)
+        W = solve(cards("Ks7d2cTh"), OOP, IP, 9.1, 95.5, cfg=cfg, time_budget=1e9, max_iters=1, warm=A)
+        D = solve(cards("Ks7d2cTh"), OOP, IP, 9.1, 95.5, cfg=cfg, time_budget=1e9, max_iters=1, seed=seed)
+        a0 = [x.copy() for x in arrays(A)]
+        st = (A.solver.iters, A.solver.horizon)
+
+        def ready(kind):
+            """the program of `kind` in the arena, its lanes unmeasured: the solve to evaluate"""
+            load(A, a0, *st)
+            core._prog = None
+            sol = A
+            if kind == "presolve stopped":
+                try:
+                    A.solver.run(A.r0, A.r1, time_budget=1e9, max_iters=st[0] + 1, min_iters=1, should_stop=lambda: True)
+                except solver_mod.Cancelled:
+                    pass
+                assert core._prog is not None and core._prog.valid(core.lib(), A.solver)
+            elif kind == "solve":
+                A.solver.run(A.r0, A.r1, time_budget=1e9, max_iters=st[0] + 1, min_iters=1)
+            elif kind in ("warm-started", "seeded"):
+                sol = W if kind == "warm-started" else D
+                load(sol, [np.zeros_like(x) for x in arrays(sol)], 0, 1)
+                if sol is W:
+                    solver_mod.warm_start(W.root, W.ctx, A.root, A.ctx)
+                else:
+                    seed(D.root, D.solver)
+                sol.solver.run(sol.r0, sol.r1, time_budget=1e9, max_iters=1, min_iters=1)
+            return sol
+
+        kinds = ("evaluate-only", "presolve stopped", "solve", "warm-started", "seeded")
+        ref = {k: evaluate(ready(k), evals) for k in kinds}
+        for t in (2, 4, 8):
+            core.threads(t)
+            for kind in kinds:
+                before, same, orders = L.core_lanes_grown(-1, 0), True, 0
+                for order in itertools.permutations(evals):
+                    got = evaluate(ready(kind), order)
+                    same &= all(np.array_equal(got[k], ref[kind][k]) for k in evals)
+                    orders += 1
+                print(json.dumps({"tree": name, "threads": t, "kind": kind, "orders": orders, "same": bool(same),
+                                  "grown": int(L.core_lanes_grown(-1, 0) - before)}), flush=True)
+        # a lane short of its measure (3/4 of it): the subs' in a training pass, then the whole pass's in an evaluation
+        core.threads(4)
+        load(A, a0, *st)
+        core._prog = None
+        A.solver.run(A.r0, A.r1, time_budget=1e9, max_iters=st[0] + 3, min_iters=1)
+        want = [x.view(np.int32).copy() for x in arrays(A)], evaluate(A, evals)
+        load(A, a0, *st)
+        core._prog = None
+        A.solver.run(A.r0, A.r1, time_budget=1e9, max_iters=st[0] + 2, min_iters=1)   # (both measured)
+        lanes, grew = [int(L.core_lanes(k)) for k in (0, 2)], []
+        before = L.core_lanes_grown(2, lanes[1] * 3 // 4)
+        A.solver.run(A.r0, A.r1, time_budget=1e9, max_iters=st[0] + 3, min_iters=1)
+        grew.append(L.core_lanes_grown(0, lanes[0] * 3 // 4) > before and L.core_lanes(2) > lanes[1] * 3 // 4)
+        before = L.core_lanes_grown(-1, 0)
+        got = [x.view(np.int32).copy() for x in arrays(A)], evaluate(A, evals)
+        grew.append(L.core_lanes_grown(-1, 0) > before and L.core_lanes(0) > lanes[0] * 3 // 4)
+        same = all(np.array_equal(x, y) for x, y in zip(got[0], want[0])) and \
+            all(np.array_equal(got[1][e], want[1][e]) for e in evals)
+        print(json.dumps({"tree": name, "lanes": lanes, "same": bool(same), "grew": all(grew), "each": grew}),
+              flush=True)
+    core.threads(1)
 
 
 @unittest.skipUnless(ON, "no C compiler for the native core")
