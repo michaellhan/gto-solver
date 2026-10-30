@@ -1706,6 +1706,44 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   pots on 552 (1,599, 15.2 MB: every BB vs SB and CO vs HJ flop and 495 of BB vs CO's, the entries solved since the
   builds write them); the single-raised spots' come with their re-solves, and `scripts/instant_coverage.py` counts 28.3 more instant decisions per 100 hands with them on
   the 13 spots the library holds (680.1 -> 708.4 of 813.5, 83.6% -> 87.1%; 46% of the turn's decisions).
+* **A library spot's flop the library doesn't store** (`instant_from_near`, `NEAR_UNTIL`; `gto/flop_approx.py`;
+  `Advisor.prefetch`). The flatted opens and the 3bet pots store 552 of the 1755 flops; on the other 1203 (10.2
+  points of the heads-up flop decisions: Precomputed flop library, Coverage) the page had nothing to show until the
+  flop's live solve answered. Now the flop's decisions are read at once off the spot's stored flops most like it,
+  marked approximate: the three nearest of the same pairing and suit pattern (`neighbours`; the ranks' summed gaps at
+  most 6, `MAX_DIST`), each carried over by card substitution (`card_map`: the flop's cards onto the stored flop's,
+  the other ranks in order, so KhJd6c read off KhJd5c plays a 6 as the 5 and 54 as 64), their mixes averaged per
+  combo with weights 1 / (1 + distance) (`predict`). It answers wherever an entry stores the decision (the first
+  decisions, facing a bet, facing a raise of it) on the line the hand took (sizes at their nearest), until the flop's
+  own solve in hand has run 50 iterations (`HU_CHECKS[0]`, from when `instant_from_own` reads it); the page names the
+  flops it read. Nothing is solved for it (6-16 ms natively), and the worker fetches the three entries with the
+  flop's once it's known (the prefetch's dry run names them). `scripts/instant_coverage.py` counts these apart:
+  heads-up flop decisions answered at once 77.2% -> 87.5% with them (9.4 decisions per 100 hands; postflop 35.2% ->
+  39.9%, all decisions 83.9% -> 85.1%). Every other answer is unchanged (advise JSON identical on stored and unstored
+  flops and a limped pot; `instant` differs only where it now answers).
+
+  EV given up (`scripts/bench_flop_approx.py`: a stored flop approximated from the spot's other stored flops, each
+  combo's mix priced by the entry's own EVs per action, weighted by the acting player's reach, % of the pot; per flop
+  over its stored decisions weighted by how often each comes; 18 of the 2310 flops have no stored flop within 6,
+  mostly trips, and get no answer):
+
+  | flops | per flop: mean / median / 90th pct / worst | first decisions: mean (90th) | facing a bet | facing a raise |
+  |---|---|---|---|---|
+  | the five flatted opens (600, each from the spot's other 551) | 0.22 / 0.12 / 0.41 / 5.2 | 0.039 (0.093) | 0.57 (1.20) | |
+  | the eight 3bet pots (960) | 0.22 / 0.16 / 0.48 / 1.6 | 0.032 (0.080) | 0.54 (1.17) | 1.59 (3.38) |
+  | five vs-BB spots' flops outside the 552, from the 552 only (750: the case met) | 0.18 / 0.12 / 0.35 / 2.8 | 0.020 (0.049) | 0.66 (1.48) | |
+
+  The bar it clears: per flop a median under 0.2% of the pot and a 90th percentile under 0.5%, first decisions
+  under 0.05. Read off the one nearest flop it gives up a third to two thirds more (per flop 0.20-0.45 against
+  0.14-0.29 on the vs-BB spots, 0.29-0.41 against 0.19-0.29 on the flatted opens); off four or six a little more than
+  off three. The worst are connected broadway boards whose straights don't carry over (KcQcJd read off KcJcTd,
+  KcTc9d and KcTc8d: their third-pot c-bet with hands that have no straight here, 5.2) and ace-high read off
+  king-high (AcKd2d, 2.8). The approximate turn answer from the flop's solve gives up 1.4-1.6% facing a bet (above).
+  Against the flop's own live solve (`scripts/bench_flop_seed.py`: 104 of these stored flops solved in the browser's
+  Fast tree natively, one thread, the same measure at the stored decisions): the approximation 0.41-0.42 (mean), the
+  solve 0.63-0.70 at 20 iterations, 0.32-0.35 at 30, 0.21 at 40, 0.12-0.13 at 60, 0.07-0.09 from 100 on (its tree's
+  own distance from the library's); better than the approximation on 40-44% of the flops at 30 iterations, 50-59% at
+  40, 68-81% at 60: hence `NEAR_UNTIL`.
 * **Your hand out of your range** (`Advisor._as_advised`). A hand the line's range doesn't hold (a preflop call or
   check the charts never make: the big blind flatting aces against the button, which it 3bets, or checking KQs
   behind a limp, which it raises) is solved on each street as a near-zero-weight combo (`_with_hero`). The next
@@ -2485,7 +2523,8 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   UTG and SB vs BB on every flop, 36.1% before CO vs BB on every flop and SB vs BB on 552, 21.3% before format 2
   made room, 9.4% with 184 flops everywhere). Of the rest, a spot not in the library is 9.5 points (the other 3bet
   pots ~0.6 each: the BTN's and the SB's 3bet of the UTG, the BB's and the SB's of the HJ; 4bet pots), a flop not
-  stored 10.2 (the flatted opens' and the 3bet pots'), a raise 3.2. A flop's
+  stored 10.2 (the flatted opens' and the 3bet pots': answered approximately at once from the stored flops most like
+  it, `scripts/instant_coverage.py` 77.2% -> 87.5% with them), a raise 3.2. A flop's
   entry is worth its spot's share times its suit count, so more flops of the commonest spots beat new spots; by
   points per MB (`--assume`): BTN vs BB on every flop +12.4 for 4.5 MB, CO vs BB on 1656 (90%) +7.6 for 2.8, UTG vs
   BB on 552 +2.4 for 1.05, SB vs BB on 552 +3.5 for 2.1, then on every flop SB vs BB +8.6 for 6.0 MB (its wide
@@ -2566,7 +2605,8 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   entry built before raises were stored). The spots' reports and drills keep to the first decisions. Turn and river
   spots narrow the flop's ranges through it as well, instead of the earlier street's short solve. The entry ignores
   the hero's cards in the villain's range (the live solve drops them): an edge the size of a blocker.
-* **Flops not stored** are solved live from scratch, never answered from another flop. A warm start from the
+* **Flops not stored** are solved live from scratch; meanwhile the stored flops most like it answer approximately
+  (Accuracy vs speed, A library spot's flop the library doesn't store). A warm start from the
   spot's most similar stored flop (same pairing and suit pattern, nearest ranks; strategies carried over by card
   substitution and seeded as regrets) was measured and left out (`scripts/bench_library_warm.py`, 12 unstored BTN vs
   BB flops, geometric mean % of the pot, cold -> seeded): it helps early (Accurate at 10 / 40 / 80 iterations: 81 ->

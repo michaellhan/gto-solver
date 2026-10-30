@@ -7,7 +7,9 @@ of yours, and Practice for each opponent's move; with the seats rotating, both h
 * preflop: every decision the enumeration reaches (the charts answer all of them);
 * flop, heads-up: the decisions of a flop by walking each stored entry's range frequencies (as
   flop_library_coverage.node_profile), answered where the spot, the flop and the node are stored; the flops a
-  spot doesn't store (and the spots the library doesn't hold) are live solves with the spot's average profile;
+  spot doesn't store (and the spots the library doesn't hold) are live solves with the spot's average profile, a
+  library spot's answered approximately at once meanwhile ("+approx": read off its stored flops most like it,
+  gto/flop_approx.py, at the nodes the spot's entries store);
 * flop, 3-way: the first decisions the 3-way library stores (first to act, checked to once and twice), by walking
   its entries; anything facing a bet is live (counted as two decisions a bet), and 4+ way flops are live;
 * turn and river: how often the flop's betting reaches the turn with chips behind comes from the same walks (a
@@ -308,6 +310,23 @@ def main(argv=None):
     def share(names):
         return sum(weights[fl.canonical(fl.parse_cards(n))[0]] for n in names) / 22100.0
     hu_prof = {}
+    near_memo = {}
+
+    def near_share(names):
+        """The share of the flops not in `names` (by weight) that some stored flop is near enough to answer
+        approximately (gto/flop_approx.py: the same pattern within MAX_DIST)."""
+        key = tuple(sorted(names))
+        if key not in near_memo:
+            from gto import flop_approx as fa
+            tw = nw = 0.0
+            for f, w in weights.items():
+                if fl.cards_str(f) in names:
+                    continue
+                tw += w
+                nb = fa.neighbours(key, list(f), 1)
+                nw += w if nb and nb[0][2] <= fa.MAX_DIST else 0.0
+            near_memo[key] = nw / tw if tw else 0.0
+        return near_memo[key]
     for s in lib.index().get("spots", []):
         acc = np.zeros(5)
         for name in s.get("flops", {}):
@@ -318,7 +337,8 @@ def main(argv=None):
             acc += w * np.array([*hu_entry_profile(e), 1.0])
         if acc[4] > 0:
             turns = s.get("turns")
-            hu_prof[s["id"]] = (acc[:4] / acc[4], share(s["flops"]), share(s["flops"] if turns is True else turns or ()))
+            hu_prof[s["id"]] = (acc[:4] / acc[4], share(s["flops"]), share(s["flops"] if turns is True else turns or ()),
+                                near_share(s["flops"]) if len(s["flops"]) < len(weights) else 0.0)
     kind_avg = {k: np.mean([v[0] for i, v in hu_prof.items() if i.startswith(k)], axis=0) for k in ("srp", "3bp")}
     mw_prof = {}
     for s in mlib.index().get("spots", []):
@@ -349,12 +369,14 @@ def main(argv=None):
                 fp0, fp1 = fl.range_fp(s["ranges"][0]), fl.range_fp(s["ranges"][1])
                 sp = lib.spot(fp0, fp1, s["pot"], s["stack"])
                 kind = "srp" if sum(":r" in x for x in line.split(",")) <= 1 else "3bp"
-                prof, fs, ft = hu_prof.get(sp["id"], (kind_avg[kind], 0.0, 0.0)) if sp else (kind_avg[kind], 0.0, 0.0)
+                prof, fs, ft, fn = hu_prof.get(sp["id"], (kind_avg[kind], 0.0, 0.0, 0.0)) if sp else (kind_avg[kind], 0.0, 0.0, 0.0)
                 fs, ft = _apply(layers, ("hu", fp0, fp1, round(s["pot"], 2), round(s["stack"], 2)), fs, ft)
                 d, st, t, tl = prof
                 p_flop["hu"] += prob
                 tot["flop hu"] += prob * d
                 tot["flop hu", "inst"] += prob * st * fs
+                if sp:   # (a library spot's flop not stored: an approximate answer at once, gto/flop_approx.py)
+                    tot["flop hu", "approx"] += prob * st * (1.0 - fs) * fn
                 tot["p_turn"] += prob * t
                 tot["turn"] += prob * t * (td if tp else d)
                 tot["turn", "inst"] += prob * tl * ft * tf
@@ -395,17 +417,23 @@ def main(argv=None):
     streets = ["preflop", "flop hu", "flop 3-way", "flop 4+", "turn", "river"]
     all_d = sum(tot[k] for k in streets)
     all_i = sum(tot[k, "inst"] for k in streets)
-    print(f"{'street':<11} {'per 100 hands':>13} {'share':>6} {'instant':>8}")
+    print(f"{'street':<11} {'per 100 hands':>13} {'share':>6} {'instant':>8} {'+approx':>8}")
     for k in streets:
-        print(f"{k:<11} {tot[k] * 100:13.1f} {tot[k] / all_d * 100:5.1f}% {tot[k, 'inst'] / max(tot[k], 1e-12) * 100:7.1f}%")
+        print(f"{k:<11} {tot[k] * 100:13.1f} {tot[k] / all_d * 100:5.1f}% {tot[k, 'inst'] / max(tot[k], 1e-12) * 100:7.1f}%"
+              + (f" {(tot[k, 'inst'] + tot[k, 'approx']) / max(tot[k], 1e-12) * 100:7.1f}%" if tot[k, "approx"] else ""))
     post = [k for k in streets if k != "preflop"]
     pd, pi = sum(tot[k] for k in post), sum(tot[k, "inst"] for k in post)
-    print(f"{'postflop':<11} {pd * 100:13.1f} {pd / all_d * 100:5.1f}% {pi / pd * 100:7.1f}%")
-    print(f"{'all':<11} {all_d * 100:13.1f} {100:5.1f}% {all_i / all_d * 100:7.1f}%")
+    pa = sum(tot[k, "approx"] for k in post)
+    print(f"{'postflop':<11} {pd * 100:13.1f} {pd / all_d * 100:5.1f}% {pi / pd * 100:7.1f}% {(pi + pa) / pd * 100:7.1f}%")
+    print(f"{'all':<11} {all_d * 100:13.1f} {100:5.1f}% {all_i / all_d * 100:7.1f}% {(all_i + pa) / all_d * 100:7.1f}%")
     hu = tot["flop hu"]
     print(f"heads-up flop decisions answered by the library: {tot['flop hu', 'inst'] / hu * 100:.1f}% "
           f"(scripts/flop_library_coverage.py's measure); the turn reached from a heads-up flop "
           f"{tot['p_turn'] / p_flop['hu'] * 100:.0f}% of the time")
+    print(f"...and approximately at once (a library spot's flop not stored, read off its stored flops most like it: "
+          f"gto/flop_approx.py): {tot['flop hu', 'approx'] / hu * 100:.1f}% more, "
+          f"{(tot['flop hu', 'inst'] + tot['flop hu', 'approx']) / hu * 100:.1f}% in all; "
+          f"{tot['flop hu', 'approx'] * 100:.1f} decisions per 100 hands")
     if a.candidate:
         print(f"\ninstant decisions per 100 hands each candidate adds (all {all_i * 100:.1f} of {all_d * 100:.1f} now):")
         print(f"{'candidate':<24} {'all':>6} {'flop':>6} {'turn':>6}")

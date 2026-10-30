@@ -2067,6 +2067,7 @@ class InstantSpot:
     own: Optional[Solution] = None
     prev: Optional[tuple] = None
     own_earlier: bool = False   # `own` is the street's solve from an earlier decision, its tree without a size since taken
+    near: Optional[Callable] = None   # a library spot's flop not stored: () -> flop_approx.ApproxSolution or None
 
 
 def _swap_combo(hole, a: int, b: int) -> int:
@@ -2191,6 +2192,43 @@ def instant_from_prev(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
     return {"actions": _real_actions(node, strat, bets, spot), "source": "prev",
             "label": f"the {STREETS[STREETS.index(nxt) - 1]} solve's view of the {nxt} ({how})",
             "iterations": int(sol.iters)}
+
+
+# A library spot's flop the library doesn't store is read off its stored flops most like it (instant_from_near) until
+# the flop's own solve in hand has run this many iterations, from when instant_from_own reads it: EV given up at the
+# stored decisions (scripts/bench_flop_seed.py: 104 of the flatted opens' and 3bet pots' stored flops solved live in
+# the Fast tree, priced by their entries' EVs, % of the pot) the stored flops like it 0.41-0.42 (mean), the solve
+# 0.63-0.70 at 20 iterations, 0.32-0.35 at 30, 0.21 at 40, 0.12-0.13 at 60 (better on 40-44%, 50-59%, 68-81% of the
+# flops at 30, 40, 60)
+NEAR_UNTIL = HU_CHECKS[0]
+
+
+def instant_from_near(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
+    """A flop of a library spot that the library doesn't store (the flatted opens' and the 3bet pots' other 1203): its
+    decisions read off the spot's stored flops most like it (gto/flop_approx.py: the same pairing and suit pattern, the
+    ranks nearest, each carried over by card substitution and their mixes averaged), on the line the hand took (sizes
+    at the tree's nearest); not once the flop's own solve in hand has run NEAR_UNTIL iterations (instant_from_own reads
+    that). None where hero's decision isn't one an entry stores or no stored flop holds an image of hero's combo."""
+    if spot.street != "flop" or spot.near is None:
+        return None
+    if spot.own is not None and spot.own.solver.iters >= NEAR_UNTIL:
+        return None
+    sol = spot.near()
+    if sol is None:
+        return None
+    col = hole_col(sol, spot.hole)
+    if not col:
+        return None
+    got = _read_line(sol.root, 0, col[0], spot)
+    if got is None:
+        return None
+    node, strat, bets = got
+    if id(node) not in sol.stored or not sol.known[id(node)][col[0]]:
+        return None
+    flops = ", ".join(nm for nm, _ in sol.near)
+    return {"actions": _real_actions(node, strat, bets, spot), "source": "near",
+            "label": f"the precomputed solves of the most similar flops ({flops}), by card substitution",
+            "iterations": None}
 
 
 # the stored turn answers before the turn's own solve in hand until that has run this many iterations: EV given up
@@ -2361,7 +2399,7 @@ class Advisor:
         self.one_size_settled: Dict[str, float] = dict(ONE_SIZE_SETTLED)
         self._one_rows: Dict[tuple, dict] = {}   # its rows solved here, by spot and size (ONE_SIZE_CACHE, oldest first)
         # Advisor.instant's sources, tried in order: each (advisor, InstantSpot) -> {"actions", "source", "label"} or None
-        self.instant_sources = [instant_from_store, instant_from_own, instant_from_prev]
+        self.instant_sources = [instant_from_store, instant_from_near, instant_from_own, instant_from_prev]
         self._instant = False     # an Advisor.instant request: nothing is solved (_NoInstant where it would be)
 
     # ------------------------------------------------------------ public
@@ -3964,9 +4002,18 @@ class Advisor:
         if self._instant:
             if lib_sol is not None or not hu_from_start:
                 raise _NoInstant()   # (a library flop is instant anyway; a pot heads-up from this street on solves first)
+            near = None
+            if lib is not None and cur.name == "flop":
+                from .flop_approx import approx_solution
+                near = lambda: approx_solution(lib, full[0], full[1], board, r0, r1, cur.pot_start, eff, cfg)
             return self._instant_answer(cur, board, hole, hero, villain, hero_p, oop, ip, eff, cfg, r0, r1, walked,
-                                        hero_remaining, to_call, len(positions), t0)
+                                        hero_remaining, to_call, len(positions), t0, near)
         if lib_sol is None and self._lib_only:
+            if lib is not None and cur.name == "flop" and hu_from_start:
+                # (a library spot's flop not stored: the stored flops its approximate answer reads, named for the
+                # browser's prefetch: instant_from_near)
+                from .flop_approx import approx_solution
+                approx_solution(lib, full[0], full[1], board, r0, r1, cur.pot_start, eff, cfg, fetch_only=True)
             return {"skipped": "not a flop-library spot"}
         if lib_sol is not None:
             sol = lib_sol
@@ -5679,7 +5726,7 @@ class Advisor:
                             for a, nm in enumerate(names)]}
 
     def _instant_answer(self, cur, board, hole, hero, villain, hero_p, oop, ip, eff, cfg, r0, r1, walked, behind, to_call,
-                        n_players, t0) -> dict:
+                        n_players, t0, near=None) -> dict:
         """Advisor.instant's answer at the street advised on (heads-up from its start, its ranges narrowed through the
         earlier streets' solves as they stand): the first of instant_sources that reads one, else _NoInstant; and
         _NoInstant when the street's own solve is cached and its answer quick (settled, or run its budget)."""
@@ -5694,7 +5741,7 @@ class Advisor:
             if c is not cfg and k not in self._presolved:   # (a presolve's, the move off its tree: never shown)
                 own, earlier = self._cache.get(k), True
         spot = InstantSpot(cur.name, tuple(board), tuple(hole), hero_p, oop, ip, list(cur.actions), cur.pot_start, eff,
-                           behind, own, walked.get(STREETS[STREETS.index(cur.name) - 1]), earlier)
+                           behind, own, walked.get(STREETS[STREETS.index(cur.name) - 1]), earlier, near)
         got = next((g for g in (src(self, spot) for src in self.instant_sources) if g), None)
         if got is None:
             raise _NoInstant()
