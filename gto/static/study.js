@@ -129,10 +129,11 @@
   const whoHtml = (res, who) => `<span class="segment">${[{ key: "me", seat: res.actor }, ...oppsOf(res)].map(o =>
     `<button data-who="${o.key}" class="${o.key === (oppOf(res, who) ? who : "me") ? "active" : ""}">${esc(o.seat)}</button>`).join("")}</span>`;
   // the node's views (3-way before the river no equity: the solve deals the cards to come into its leaves); Simple, the
-  // one-size view (simple.js), heads-up where the actor can bet
+  // one-size view (simple.js), heads-up where the actor can bet or raise
+  const canSize = (acts) => acts.some(a => a.action === "check") || acts.some(a => a.action === "fold") && acts.some(a => /^(raise|all-in)/.test(a.action));
   const viewsOf = (res) => res.street === "preflop" ? ["strategy"]
     : [...Object.keys(VIEWS).filter(v => res.range_eq != null || (v !== "equity" && v !== "eqr")), "breakdown",
-       ...(!res.multiway && (res.actions || []).some(a => a.action === "check") ? ["simple"] : [])];
+       ...(!res.multiway && canSize(res.actions || []) ? ["simple"] : [])];
   const viewName = (v) => VIEWS[v] || (v === "simple" ? "Simple" : "Breakdown");
   function gridHtml(res, ui) {
     const opp = oppOf(res, ui.who), g = opp ? opp.grid : res.grid, names = g.actions;

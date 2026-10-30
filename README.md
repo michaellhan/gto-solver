@@ -129,13 +129,15 @@ when that answer is in (A2s on 776r behind a HJ check, 100bb: the jam 0% at -2.2
 the tree it cost too much: a K72T turn 60 iterations in was 4.0% of the pot from equilibrium against 1.6%.
 When you're facing a bet the prompt shows the pot odds a call needs.
 
-**Simple** (the tab after Equity, where you can bet: heads-up after the flop, nothing to call) is a one-size view,
+**Simple** (the tab after Equity, where you can bet or raise: heads-up after the flop) is a one-size view,
 like GTO Wizard's single-size solutions: your decision's street solved again with one bet size for each of 25, 33,
 50, 75, 100, 125 and 150% of the pot (the river 200% too; all-in where the tree offers it) and once with all of them
 to mix. It shows the **best single size** (the one that keeps your range the most EV, the opponent adapting to it), a
 table of every size with its bet share, EV and the **EV it gives up** against mixing every size (% of the pot; sizes
 within the solves' precision of the best marked tied), and the picked size's strategy: the range's check and bet
-frequencies, your hand's mix and EVs, and the 13x13 grid (click a row for another size's). Always at Fast. On the
+frequencies, your hand's mix and EVs, and the 13x13 grid (click a row for another size's). Facing a bet it is the
+same for raise sizes: a raise to 2.5, 3, 4 and 5 times the bet (all-in where the tree offers it), each row with what
+it raises to, the range's raise share, and the fold, call and raise frequencies. Always at Fast. On the
 turn and river it starts when the tab opens, one size at a time with progress ("2 of 8 done · about 6 s left") and a
 Stop button (Continue picks up from there): a turn takes 1-22 s for every size in the browser, a river under a second.
 On the flop it waits for **Find the best size**, with its estimate (live flops take 1-3 s in all): the library's
@@ -267,7 +269,7 @@ each hand class's mix (each class's bar as tall as its share of the class's comb
 from here, relative to folding now), **Equity** (against the opponent's range, the rest of the board dealt) or
 **EQR** (EV over equity times the pot), shaded red to green; **Breakdown** is the range by made hands and draws (as
 the advice's Breakdown tab, both players); **Simple** is the advice's one-size view for the player to act, with their
-whole range (heads-up, where they can bet). The toggle beside the views shows the opponent's range instead (its
+whole range (heads-up, where they can bet or raise). The toggle beside the views shows the opponent's range instead (its
 weights and equity). Hover over an action for the hands that take it; hover over a class (or click to keep it) for
 its combos, best first, each with its own mix, EVs and equity. The actions table gives the range's frequency,
 combos and the EV of the hands that take each action; click one to play it and the next player's decision appears.
@@ -943,11 +945,11 @@ range ...`). Heads-up responses also carry `villain_grid` (the villain's range b
 
 `"one_size"` (the page's **Simple** tab and Study's **Simple** view, `gto/static/simple.js`; `Advisor._one_size_view`)
 answers how much a single bet size gives up, in place of the advice, at a heads-up decision where the player to act
-can bet (nothing to call). The street is solved again from that decision with the ranges the advice reached it with:
-once with one size there for each candidate, and once with every candidate to mix freely (the full menu). The rest of
-the tree (the opponent's bets and raises, the later streets) is the advice's, the same in every solve
-(`Config.root_bets` sets the root decision's bets and nothing below it; a tree too big for the speed is cut alike for
-every size).
+can bet, or facing a bet, raise (see Raise sizes below). The street is solved again from that decision with the
+ranges the advice reached it with: once with one size there for each candidate, and once with every candidate to mix
+freely (the full menu). The rest of the tree (the opponent's bets and raises, the later streets) is the advice's, the
+same in every solve (`Config.root_bets` sets the root decision's bets and nothing below it, `Config.root_raises` its
+raises; a tree too big for the speed is cut alike for every size).
 
 * **Candidates** (`ONE_SIZES`): 25, 33, 50, 75, 100, 125 and 150% of the pot, on the river 200% too, and all-in where
   the tree offers it (2.5 pots behind or less: a 3bet pot's turn and river). A quarter pot to 1.5 pots spans what
@@ -955,7 +957,16 @@ every size).
   points of pot move the EV most; a polar river's best single size is often the biggest (the advice's river already
   bets up to 250%). Bets round to half a big blind as the tree builds them: a size that reaches the stack is the
   all-in, and sizes that come out the same bet are one (`one_size_candidates`).
-* **Best** = the size whose one-size game keeps the most EV for the player betting: the range's EV with that size alone
+* **Raise sizes** (`ONE_RAISES`, `one_size_raises`): facing a bet, a raise to 2.5, 3, 4 and 5 times the bet faced
+  (the opponent's total on the street: "3x" over a bet of 6.8 is a raise to 20.3), labelled by the multiple, each
+  with what it raises to and that as % of the pot after calling (the answer's `raises`: `{"3x": {"to", "pct"}}`); a
+  check-raise of a third-pot bet to 3x is 40% of the pot after calling, of a 75% bet 60%. All-in where the tree offers
+  it (at most 2.5 pots behind once called) or a multiple reaches the stack. Raises round as the tree builds them (the
+  raise over the bet to half a big blind), the root's raise count isn't capped (a raise over a check-raise is offered
+  as the tree's sizes would be below the cap), and below the root the tree is the advice's (the opponent's re-raises at
+  its sizes, all-in past the cap). Rows hold fold, call and the one raise; the definitions, cache, order and early
+  stop are the bets'.
+* **Best** = the size whose one-size game keeps the most EV for the player betting (or raising): the range's EV with that size alone
   (the game's value, weighted by hand pairs; bb relative to folding now), the opponent playing its best against it.
   **EV given up** = the full menu's EV minus that size's, in % of the pot. It is what the bettor can be sure of with the
   one size (no opponent does better against its equilibrium); scoring a size against the full menu's opponent
@@ -982,7 +993,8 @@ every size).
   store two sizes, which can't say which of seven is best, so the flop is solved live (the advice's Fast flop model:
   1-3 s in all in the browser); doing it for every flop browsed would load the machine for answers rarely read.
 * **Request**: `"one_size": "all"` solves the full menu and every candidate, `"full"` the full menu, `"50%"` (or `50`,
-  or `"all-in"`) one size (any 5-500%, a candidate or not), `"list"` none. The page asks `"full"`, then each candidate,
+  or `"all-in"`) one size (any 5-500%, a candidate or not), `"list"` none; facing a bet `"3x"` (or `3`, 2-10x the
+  bet) or `"all-in"`, and the answer adds `"kind": "raise"`, `"to_call_bb"` and `"raises"`. The page asks `"full"`, then each candidate,
   a request each, so it shows progress and stops between sizes or mid-solve (the server's `POST /cancel`, the worker's
   stop flag) without losing what's done. The answer: `{"one_size": {"street", "actor", "opponent", "position",
   "board", "pot_bb", "stack_bb", "candidates", "asked", "definition", "target_pct", "full", "rows", "best", "tied",
@@ -990,8 +1002,8 @@ every size).
   "amounts", "ev_bb", "grid", "iterations", "exploitability_pct", "seconds", "cut", "hand": {"freq", "ev"}}`, the rows
   with `loss_pct` (the EV given up) once the full menu is in, and `order` (the sizes in the order to solve them) with
   it. The page asks the sizes in that order. With `"study": true` it is for whoever acts, their whole range (no
-  `hand`). An error preflop, facing a bet, all-in, multiway, against the pool or locks, with tournament payouts or bounties, or for
-  a size out of range.
+  `hand`). An error preflop, facing a bet with no raise left (calling puts the stacks in), all-in, multiway, against
+  the pool or locks, with tournament payouts or bounties, or for a size out of range.
 * **Cache**: the solver keeps every row it solved (`ONE_SIZE_CACHE`, the 256 used last; a few KB each), by spot (the
   ranges, pot, stacks, tree and target) and size, and answers with all it has for the spot; the page keeps its runs
   by request, so reopening the tab is instant and a stopped run continues where it stopped.
@@ -1031,6 +1043,25 @@ a 3bet pot's 1.1 (1.7), a 40bb turn 7.9 (9.2), 0.5-2.4 s on three flops (0.6-2.7
 targets more sizes come out tied (a turn where the BB bets first after the flop checked through: all seven within 0.1%
 of the pot), which is the answer: there, any of them will do. A tie can't stop early (its tolerance is the solves'
 precision), so that turn still takes 22 s (was 24).
+
+Raise sizes (`scripts/bench_one_size.py`'s facing-bet spots: the same trees, targets and thread; the player facing the
+bet raises to a multiple of it, in brackets as % of the pot after calling; Seconds the view's solves, 7 of the 25 sizes
+stopped early, the same best and ties as with every size settled, whose EVs these are):
+
+| Spot (player raising) | Best single raise: gives up, raises | Next best | Worst | Full menu's mix | Seconds |
+|---|---|---|---|---|---|
+| K72r flop, BB facing a third-pot c-bet | 5x (to 10, 84%): 0.08%, 11% (4x tied) | 4x: 0.12 | 2.5x: 0.21 | fold 39, call 39, 2.5x 12, 3x 3, 4x 2, 5x 6 | 1.0 |
+| T94 two-tone flop, 3bet pot, CO facing a third-pot c-bet | 2.5x (to 13.5, 29%): 0.00, 41% | 3x: 0.14 | 5x: 0.57 | fold 29, call 31, 2.5x 31, 3x 8 | 0.6 |
+| K72r 3 turn, BB facing 75% | 4x: 0.00, never (all four tied) | 5x: 0.00 | 2.5x: 0.00 | fold 42, call 58 | 10.1 |
+| Q83 A turn (overcard), BB facing 75% | 5x (to 35, 121%): 0.00, 7% (4x tied) | 4x: 0.03 | 2.5x: 0.26 | fold 46, call 47, 5x 7 | 6.9 |
+| K72 3 5 river, bet-bet, BB facing 75% | 5x (to 85, 120%): 0.00, 11% (4x, all-in tied) | 4x: 0.00 | 2.5x: 0.20 | fold 40, call 48, 4x 5, 5x 4, all-in 3 | 0.03 |
+| Q83 5 J river, BTN facing the BB's 75% lead | 2.5x (to 10, 44%): 0.13, 21% | 5x: 0.28 | 4x: 0.37 | fold 34, call 48, 2.5x 17, 5x 1 | 0.02 |
+
+One raise size costs less than one bet size: the best gives up at most 0.13% of the pot here (four of six spots
+within the solves' precision of the full menu), the worst 0.2-0.6% where the worst bet size gave up 0.45-8.7%, since a
+range facing a bet raises 0-39% of the time and the full menu's raises mostly take one size already. The size still
+follows the range: big where the raise is polar (the overcard turn and the river after three bets, 5x: 1.2 pots),
+small where it is wide (the 3bet pot's flop, 41% of the range at 2.5x; the river lead's 2.5x).
 
 ## How it works
 

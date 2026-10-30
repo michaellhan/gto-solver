@@ -249,10 +249,18 @@ ONE_SIZE_CHECKS = (50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 600, 700, 80
 # ...and a size whose solve shows it can't be the best nor tied with it stops there (ONE_SIZE_CUT x the target under
 # the best's lower bound: Advisor._one_size_run), its EV given up as precise as it is then
 ONE_SIZE_CUT = 2.0
+# Facing a bet, the view's raise sizes: a raise to these multiples of the bet faced (the opponent's street total; a
+# check-raise of a third-pot bet to 3x is 40% of the pot after calling, of a pot-sized bet 67%), and all-in where the
+# tree offers it (at most allin_spr pots behind after calling) or a multiple reaches the stack
+ONE_RAISES = (2.5, 3.0, 4.0, 5.0)
+ONE_RAISE_X = (2.0, 10.0)   # ...a raise asked for by its multiple ("3.5x") is held to this range
 ONE_SIZE_CACHE = 256    # rows kept per advisor (a few KB each: a grid and the numbers), least recently used out first
 ONE_SIZE_DEF = ("best = the size whose one-size strategy keeps the most EV for the player betting: each game is solved "
                 "from this decision with the same ranges, the opponent adapting; EV given up = the range's EV with "
                 "every candidate size to mix freely minus with that size alone, in % of the pot")
+ONE_RAISE_DEF = ("best = the raise size whose one-size strategy keeps the most EV for the player facing the bet: each "
+                 "game is solved from this decision with the same ranges, the opponent adapting; EV given up = the "
+                 "range's EV with every candidate raise size to mix freely minus with that size alone, in % of the pot")
 STREET_OF = {0: "preflop", 3: "flop", 4: "turn", 5: "river"}
 STREETS = ["preflop", "flop", "turn", "river"]
 
@@ -6111,19 +6119,41 @@ class Advisor:
             return {"error": "the one-size view is in chips: it isn't worked out with tournament payouts or bounties"}
         if node.player != hero_p:
             return {"error": "no decision of yours here"}
-        if "check" not in node.names:
-            return {"error": "the one-size view is for a decision where you can bet: here you face a bet (and raise "
-                             "sizes aren't part of it)"}
         bets = tuple(float(b) for b in node.bets)
         behind = eff - bets[hero_p]
+        facing = "check" not in node.names
         if behind <= 1e-9:
             return {"error": "no chips behind to bet"}
+        if facing and (eff - bets[1 - hero_p] <= 1e-9 or not any(n.startswith("raise") or n == "all-in"
+                                                                   for n in node.names)):
+            return {"error": "no raise here: calling puts the stacks in"}
         pot = float(node.pot_now)
         base = self._cfg_with_real_sizes(cur, oop, ip, eff)
-        base.keep_sizes, base.root_allin, base.root_bets = None, False, None
-        cands = one_size_candidates(pot, behind, base.allin_spr, river=street == "river")
+        base.keep_sizes, base.root_allin, base.root_bets, base.root_raises = None, False, None, None
+        if facing:
+            # (raises: by the multiple of the bet faced, each the tree's raise to as a fraction of the pot after calling)
+            b_op, b_me = bets[1 - hero_p], bets[hero_p]
+            raises = one_size_raises(b_op, b_me, pot, eff, base.allin_spr)
+            cands = [(lab, f) for lab, f, _ in raises]
+            raise_to = {lab: t for lab, _, t in raises}
+        else:
+            cands = one_size_candidates(pot, behind, base.allin_spr, river=street == "river")
         frac = dict(cands)
-        if want not in ("all", "full", "list"):
+        if facing and want not in ("all", "full", "list"):
+            w = str(want).strip().lower()
+            try:
+                x = None if w == "all-in" else float(w.rstrip("x"))
+            except ValueError:
+                return {"error": f"one_size: {want!r} is not a raise size (\"3x\", 3, \"all-in\", \"full\", \"all\" "
+                                 f"or \"list\": facing a bet the sizes are raises, by the multiple of the bet)"}
+            if x is not None and not ONE_RAISE_X[0] <= x <= ONE_RAISE_X[1]:
+                return {"error": f"one_size: raises are {ONE_RAISE_X[0]:g}-{ONE_RAISE_X[1]:g}x the bet"}
+            lab, f, t = one_size_raises(b_op, b_me, pot, eff, base.allin_spr, (x,) if x is not None else (),
+                                        allin=None if x is not None else True)[0]
+            want = lab
+            frac.setdefault(lab, f)
+            raise_to.setdefault(lab, t)
+        elif want not in ("all", "full", "list"):
             try:
                 pct = float(str(want).strip().rstrip("%")) if str(want).strip() != "all-in" else None
             except ValueError:
@@ -6139,12 +6169,15 @@ class Advisor:
                 want = "all-in" if amt >= behind - 1e-9 else f"{int(round(pct))}%"
                 frac.setdefault(want, f)
         todo = (["full"] + [c for c, _ in cands]) if want == "all" else [] if want == "list" else [want]
+        # (one_size_order's: each raise's action in the full menu's tree and its multiple of the bet)
+        order_by = ({lab: "all-in" if lab == "all-in" else f"raise to {raise_to[lab]:g}" for lab in raise_to},
+                    {lab: raise_to[lab] / max(b_op, 1e-9) for lab in raise_to}) if facing else ()
         R0, R1 = expand(sol.ctx, n_r0), expand(sol.ctx, n_r1)
         target = self.one_size_settled[street] if self.expl_target is None else \
             min(self.one_size_settled[street], self.expl_target)
         spot = (self._solve_key(board, R0, R1, cur.pot_start, eff, bets, hero_p, cur.n_raises, base), target)
         full_menu = [frac[c] for c, _ in cands]
-        level = self._one_size_trim(board, R0, R1, cur, eff, bets, hero_p, base, full_menu)
+        level = self._one_size_trim(board, R0, R1, cur, eff, bets, hero_p, base, full_menu, facing)
         cfg0 = base if not level else self._trim_cfg(base, street, level)
         i = 0
         while i < len(todo):
@@ -6155,7 +6188,7 @@ class Advisor:
                 self._one_rows[key] = self._one_rows.pop(key)   # (the most recently used last)
             else:
                 cfg = cfg0.copy()
-                cfg.root_bets = full_menu if label == "full" else [frac[label]]
+                setattr(cfg, "root_raises" if facing else "root_bets", full_menu if label == "full" else [frac[label]])
                 cut = self._one_size_bar(spot, target, pot) if label != "full" and self.one_size_cut else None
                 t1 = time.time()
                 s1 = self._one_size_solve(board, R0, R1, cur, eff, bets, hero_p, cfg, target, cut=cut,
@@ -6167,7 +6200,7 @@ class Advisor:
                     del self._one_rows[next(iter(self._one_rows))]
             if label == "full" and want == "all":
                 # (the sizes in the order the full menu suggests: the likely best first, so the rest can stop early)
-                todo = todo[:i] + one_size_order([c for c, _ in cands], self._one_rows[key])
+                todo = todo[:i] + one_size_order([c for c, _ in cands], self._one_rows[key], *order_by)
         known = {lab: r for (sp, lab), r in self._one_rows.items() if sp == spot}
         labels = [c for c, _ in cands]
         rows = [known[c] for c in labels if c in known] + \
@@ -6175,25 +6208,36 @@ class Advisor:
         full = known.get("full")
         out = {"street": street, "actor": hero, "opponent": villain, "position": "OOP" if hero_p == 0 else "IP",
                "board": cards_str(board), "pot_bb": round(pot, 2), "stack_bb": round(behind, 2),
-               "candidates": [c for c, _ in cands], "asked": want, "definition": ONE_SIZE_DEF, "target_pct": target,
+               "candidates": [c for c, _ in cands], "asked": want,
+               "definition": ONE_RAISE_DEF if facing else ONE_SIZE_DEF, "target_pct": target,
                "full": None if full is None else {k: v for k, v in full.items() if not k.startswith("_")},
                **one_size_summary(full, rows, pot)}
+        if facing:
+            # (each raise: what it raises to, bb, and that as % of the pot after calling)
+            for lab in [r["size"] for r in rows if r["size"] not in raise_to]:   # (asked before, not a candidate)
+                raise_to[lab] = one_size_raises(b_op, b_me, pot, eff, base.allin_spr, (float(lab[:-1]),))[0][2]
+            out.update(kind="raise", to_call_bb=round(b_op - b_me, 2),
+                       raises={lab: {"to": round(raise_to[lab], 2),
+                                     "pct": round((raise_to[lab] - b_op) / (pot + b_op - b_me) * 100)}
+                               for lab in labels + [r["size"] for r in rows if r["size"] not in labels]})
         if full is not None:
-            out["order"] = one_size_order(out["candidates"], full)
+            out["order"] = one_size_order(out["candidates"], full, *order_by)
         if hole:
             out["hand"] = hand_class(hole)
             out["hole"] = cards_str(hole)
         more = []
         if level:
             more.append(f"{street}: every size's tree is cut alike to fit this speed's time and memory: {TRIMS[level - 1]}")
-        rest = base.bet_sizes.get(street, [])
-        more.append(f"{street}: one size at {'your' if hole else hero + chr(39) + 's'} decision only; the rest of the tree "
-                    f"is the advice's ({villain}'s bets {', '.join(f'{int(round(x * 100))}%' for x in rest)}"
-                    f"{', and the later streets' if street != 'river' else ''})")
+        rest = base.raise_sizes.get(street, []) if facing else base.bet_sizes.get(street, [])
+        more.append(f"{street}: one {'raise ' if facing else ''}size at {'your' if hole else hero + chr(39) + 's'} "
+                    f"decision only; the rest of the tree is the advice's ({villain}'s "
+                    f"{'re-raises' if facing else 'bets'} {', '.join(f'{int(round(x * 100))}%' for x in rest)}"
+                    f"{' of the pot after calling' if facing else ''}{', and the later streets' if street != 'river' else ''})")
         return {"one_size": out, "street": street, "hero": hero, "villain": villain,
                 "notes": [n for n in notes if "to tree action" not in n] + more, "seconds": round(time.time() - t0, 2)}
 
-    def _one_size_trim(self, board, R0, R1, cur: StreetState, eff, bets, to_act, base: Config, full_menu) -> int:
+    def _one_size_trim(self, board, R0, R1, cur: StreetState, eff, bets, to_act, base: Config, full_menu,
+                       facing: bool = False) -> int:
         """The TRIMS level the one-size view's trees are cut to: the full menu's tree (the biggest) at the cap a new
         solve of the street has here (_cells_cap: memory, and on the turn and river the request's time), else 0."""
         cap = self._cells_cap(len(board), self.time_budget)
@@ -6202,7 +6246,7 @@ class Advisor:
         for level in range(len(TRIMS) + 1):
             cfg = base if not level else self._trim_cfg(base, cur.name, level)
             cfg = cfg.copy()
-            cfg.root_bets = list(full_menu)
+            setattr(cfg, "root_raises" if facing else "root_bets", list(full_menu))
             try:
                 tree_cells(board, R0, R1, cur.pot_start, eff, bets=bets, to_act=to_act, n_raises=cur.n_raises,
                            cfg=cfg, max_cells=cap if level < len(TRIMS) else self.max_cells)
@@ -6786,23 +6830,48 @@ def one_size_candidates(pot: float, behind: float, allin_spr: float, river: bool
     return out
 
 
-def one_size_order(labels: List[str], full: dict) -> List[str]:
+def one_size_raises(b_op: float, b_me: float, pot: float, stack: float, allin_spr: float, mults=ONE_RAISES,
+                    allin: Optional[bool] = None) -> List[Tuple[str, float, float]]:
+    """The one-size view's raise sizes facing a bet (b_op the opponent's street total, b_me ours, `pot` in the middle
+    with both, `stack` the street's effective stack): (label, fraction of the pot after calling: Config.root_raises,
+    raise to) for a raise to each of `mults` times the bet ("3x"), as the tree builds it (solver.TreeBuilder._decision:
+    the raise rounds to half a big blind, at least a min-raise; one reaching the stack is the all-in), sizes that come
+    out the same raise once, and all-in where the tree offers it (at most allin_spr pots behind once called) or a
+    multiple reaches the stack (`allin` True or False: always or never)."""
+    pac = pot + b_op - b_me
+    out, seen = [], set()
+    for k in mults:
+        to = max(b_op + round((k * b_op - b_op) / pac * pac * 2) / 2, 2 * b_op - b_me)
+        if to >= stack - 1e-9:
+            allin = True if allin is None else allin
+            continue
+        if to in seen:
+            continue
+        seen.add(to)
+        out.append((f"{k:g}x", (to - b_op) / pac, to))
+    if allin or (allin is None and stack - b_op <= allin_spr * pac):
+        out.append(("all-in", ONE_SIZE_ALLIN, stack))
+    return out
+
+
+def one_size_order(labels: List[str], full: dict, names: Optional[dict] = None, sizes: Optional[dict] = None) -> List[str]:
     """The order the one-size view solves its sizes in (the answer's "order"; the page asks them so): the sizes the
-    full menu's range bets most first, then the rest nearest the sizes it bets (in log size, weighted by how much),
-    all-in as the biggest, so the likely best is in early and the sizes clearly behind it can stop early
-    (_one_size_run). Which size is best doesn't depend on it."""
-    share = {}
-    for n, f in zip(full.get("actions", ()), full.get("freq", ())):
-        if n != "check":
-            share[n[4:] if n.startswith("bet ") else n] = float(f)
-    size = lambda c: 10.0 if c == "all-in" else float(c.rstrip("%")) / 100
+    full menu's range bets (or raises) most first, then the rest nearest the sizes it uses (in log size, weighted by
+    how much), all-in as the biggest, so the likely best is in early and the sizes clearly behind it can stop early
+    (_one_size_run). Which size is best doesn't depend on it. names: each label's action in the full menu's tree
+    (else "bet 50%" for "50%"), sizes: each label's size (else the label's %; all-in 10 pots)."""
+    names, sizes = names or {}, sizes or {}
+    act = lambda c: names.get(c) or (c if c == "all-in" else "bet " + c)
+    size = lambda c: sizes.get(c) or (10.0 if c == "all-in" else float(c.rstrip("%")) / 100)
+    share = {n: float(f) for n, f in zip(full.get("actions", ()), full.get("freq", ()))}
+    used = {c: share.get(act(c), 0.0) for c in labels}
+    tot = sum(used.values())
 
     def away(c):
-        tot = sum(share.values())
         if tot <= 0:
             return 0.0
-        return sum(f * abs(np.log(size(c) / size(k))) for k, f in share.items() if k in labels) / tot
-    return sorted(labels, key=lambda c: (-round(share.get(c, 0.0), 3), away(c), size(c)))
+        return sum(f * abs(np.log(size(c) / size(k))) for k, f in used.items()) / tot
+    return sorted(labels, key=lambda c: (-round(used[c], 3), away(c), size(c)))
 
 
 def one_size_summary(full: Optional[dict], rows: List[dict], pot: float) -> dict:

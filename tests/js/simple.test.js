@@ -177,6 +177,31 @@ test("the panel: a flop waits to be asked, then progress, the verdict, the sizes
   assert.equal(S.colorOf("check"), "var(--passive)");
 });
 
+test("facing a bet: the raise view, sizes by the multiple of the bet, each with what it raises to", () => {
+  assert.equal(S.kindOf({ actions: [{ action: "fold" }, { action: "call" }, { action: "raise to 20.3" }] }), "raise");
+  assert.equal(S.kindOf({ actions: [{ action: "check" }, { action: "bet 33%" }] }), "bet");
+  const run = S.runOf(JSON.stringify({ raise: 1 }), "turn", "raise");
+  let h = S.panelHtml(run);
+  assert.match(h, /<b>One raise size<\/b>/);
+  assert.match(h, /5 solves, about \d+ s/);   // (four multiples and the full menu, before the answer names them)
+  const R = (size, ev, to) => ({ size, actions: ["fold", "call", `raise to ${to}`], freq: [0.3, 0.5, 0.2], ev_bb: ev, iterations: 300,
+                                 exploitability_pct: 0.05, seconds: 1, grid: grid(["fold", "call", `raise to ${to}`]) });
+  const full = { ...R("full", 2.0, 16.8), actions: ["fold", "call", "raise to 16.8", "raise to 20.3"], freq: [0.3, 0.5, 0.1, 0.1],
+                 grid: grid(["fold", "call", "raise to 16.8", "raise to 20.3"]) };
+  S.merge(run, { ...META, kind: "raise", to_call_bb: 6.8, candidates: ["2.5x", "3x"], order: ["3x", "2.5x"],
+                 raises: { "2.5x": { to: 16.8, pct: 44 }, "3x": { to: 20.3, pct: 59 } }, full, rows: [R("2.5x", 1.9, 16.8), R("3x", 1.99, 20.3)] });
+  run.status = "done";
+  h = S.panelHtml(run);
+  assert.match(h, /Best single raise size: <b>3x<\/b> <span class="muted">to 20\.3<\/span> · gives up <b>0\.10%<\/b> of the pot against every raise size mixed/);
+  assert.match(h, /<th>Raise<\/th><th class="n">Raises<\/th>/);
+  // each row: its swatch by its size after calling, what it raises to, the share that raises (not folds or calls)
+  assert.match(h, /<tr data-size="2\.5x" class="" tabindex="0"><td><i style="background:var\(--agg1\)"><\/i>2\.5x <span class="muted">to 16\.8<\/span><\/td><td class="n">20%<\/td><td class="n">\+1\.90<\/td><td class="n">1\.00%<\/td><\/tr>/);
+  assert.match(h, /<td>Every size, mixed<\/td><td class="n">20%<\/td>/);
+  assert.match(h, /Sizes are multiples of the bet faced/);
+  assert.match(h, /Best: the raise size that keeps the most EV for the player facing the bet/);
+  assert.match(h, /<b>3x<\/b>: fold 30% · call 50% · raise to 20\.3 20%/);
+});
+
 // ---- the page
 const RES = { street: "turn", hero: "BTN", villain: "BB", hand: "AQo", board: "Ks7d2cTh", recommended: "bet 75%",
   solver: { exploitability_pct: 0.1, iterations: 300, solve_seconds: 2, active_combos: 300, tree_actions: ["check", "bet 33%", "bet 75%"] },
@@ -191,10 +216,16 @@ function page(server) {
 }
 const tabs = (p) => [...p.byId("result").innerHTML.matchAll(/data-v="(\w+)"/g)].map(m => m[1]);
 
-test("the advice panel offers Simple heads-up after the flop where you can bet, at equilibrium", () => {
+test("the advice panel offers Simple heads-up after the flop where you can bet or raise, at equilibrium", () => {
   const p = page();
   assert.deepEqual(tabs(p), ["grid", "breakdown", "equity", "simple"]);
-  const facing = { ...RES, actions: [{ action: "fold", freq: 0 }, { action: "call", freq: 1 }, { action: "raise", freq: 0 }] };
+  // facing a bet: where you can raise (the raise view), not where calling or folding is all there is
+  for (const raise of ["raise to 16.5", "all-in"]) {
+    p.ctx.__res = JSON.stringify({ ...RES, actions: [{ action: "fold", freq: 0 }, { action: "call", freq: 1 }, { action: raise, freq: 0 }] });
+    p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
+    assert.ok(tabs(p).includes("simple"), raise);
+  }
+  const facing = { ...RES, actions: [{ action: "fold", freq: 0 }, { action: "call", freq: 1 }] };
   for (const r of [facing, { ...RES, multiway: true, solved: true, opponents: ["BB", "CO"] }, { ...RES, locked: { BB: { fold: 10 } } }]) {
     p.ctx.__res = JSON.stringify(r);
     p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");

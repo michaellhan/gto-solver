@@ -370,8 +370,9 @@ test("a 3-way node: a toggle per opponent, their ranges and combos, no equity vi
   assert.match(S.whoHtml(NODE, "opp1"), /data-who="me" class="active">BTN</);
   assert.deepEqual(S.viewsOf(MW), ["strategy", "ev", "breakdown"]);
   assert.deepEqual(S.viewsOf({ ...MW, range_eq: 0.4 }), ["strategy", "ev", "equity", "eqr", "breakdown"]);
-  // heads-up where the actor can bet: Simple too (the one-size view, simple.js); facing a bet not
+  // heads-up where the actor can bet or raise: Simple too (the one-size view, simple.js); facing a bet with no raise not
   assert.deepEqual(S.viewsOf(NODE), ["strategy", "ev", "equity", "eqr", "breakdown", "simple"]);
+  assert.deepEqual(S.viewsOf({ ...NODE, actions: [{ action: "fold" }, { action: "call" }, { action: "raise to 20" }] }), ["strategy", "ev", "equity", "eqr", "breakdown", "simple"]);
   assert.deepEqual(S.viewsOf({ ...NODE, actions: [{ action: "fold" }, { action: "call" }] }), ["strategy", "ev", "equity", "eqr", "breakdown"]);
   assert.deepEqual(S.viewsOf({ ...NODE, street: "preflop" }), ["strategy"]);
   // the second opponent's range in the grid and the detail

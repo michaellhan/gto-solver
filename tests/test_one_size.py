@@ -42,6 +42,25 @@ class TestCandidates(unittest.TestCase):
         # a small pot: sizes that round to the same bet (half a big blind, at least 1) are one
         self.assertEqual(labels(A.one_size_candidates(2.0, 50.0, 2.5)), ["25%", "75%", "100%", "125%", "150%"])
 
+    def test_raises(self):
+        """Facing a bet: a raise to 2.5, 3, 4 and 5 times the bet, as the tree builds it (the raise over the bet rounds
+        to half a big blind), all-in where a multiple reaches the stack or the stack is short."""
+        r = A.one_size_raises(6.8, 0.0, 15.9, 95.7, 2.5)    # (a 75% turn bet into 9.1)
+        self.assertEqual([(lab, to) for lab, _, to in r], [("2.5x", 16.8), ("3x", 20.3), ("4x", 27.3), ("5x", 33.8)])
+        # each as a fraction of the pot after calling: what the tree's raise sizes take
+        for lab, f, to in r:
+            self.assertAlmostEqual(6.8 + round(f * (15.9 + 6.8) * 2) / 2, to, msg=lab)
+        # a multiple past the stack is the all-in, once
+        r = A.one_size_raises(20.6, 0.0, 48.1, 70.0, 2.5)
+        self.assertEqual([lab for lab, _, _ in r], ["2.5x", "3x", "all-in"])
+        self.assertEqual(r[-1][1:], (A.ONE_SIZE_ALLIN, 70.0))
+        # short: all-in too (at most allin_spr pots behind once called)
+        self.assertEqual([lab for lab, _, _ in A.one_size_raises(5.0, 0.0, 15.0, 40.0, 2.5)][-1], "all-in")
+        self.assertNotIn("all-in", [lab for lab, _, _ in A.one_size_raises(5.0, 0.0, 15.0, 400.0, 2.5)])
+        # re-raising: the multiple of the opponent's total (3x a raise to 6 is to 18), at least a min-raise
+        self.assertEqual(A.one_size_raises(6.0, 2.0, 18.0, 100.0, 2.5, (3.0,))[0][2], 18.0)
+        self.assertEqual(A.one_size_raises(6.0, 2.0, 18.0, 100.0, 2.5, (1.5,))[0][2], 10.0)
+
     def test_summary(self):
         full = {"size": "full", "ev_bb": 10.0, "exploitability_pct": 0.1}
         rows = [{"size": "25%", "ev_bb": 9.0, "exploitability_pct": 0.1},
@@ -79,6 +98,34 @@ class TestRootBets(unittest.TestCase):
         # its own cache key; the default config's key is as before
         self.assertNotEqual(one.sizes_key(), cfg.sizes_key())
         self.assertFalse(any(k and k[0] == "root_bets" for k in cfg.sizes_key() if isinstance(k, tuple)))
+
+    def test_root_raises(self):
+        """Config.root_raises replaces the raises of a root facing a bet (and its all-in, unless a raise reaches the
+        stack), however many raises came before, and nothing below it."""
+        board = cards("Ks7d2cTh5s")
+        r = rng("AhAd", "QhJc", "9s8s", "6h6d")
+        cfg = Config(bet_sizes={"river": [0.33, 1.25]}, raise_sizes={"river": [0.75]})
+        build = lambda c, stack, n_raises=1: TreeBuilder(Ctx(np.nonzero(r)[0], c), dead=list(board)).build(
+            board, 10.0, stack, bets=(0.0, 5.0), to_act=0, n_raises=n_raises)
+        root = build(cfg, 90.0)
+        self.assertEqual(root.names, ["fold", "call", "raise to 20"])   # (75% of the 20 after calling over the 5)
+        one = cfg.copy()
+        one.root_raises = [0.5, 1.0]
+        root1 = build(one, 90.0)
+        self.assertEqual(root1.names, ["fold", "call", "raise to 15", "raise to 25"])
+        # (below: the street's own, the opponent at the cap on raises going all-in, as after the street's raise)
+        self.assertEqual(root1.children[2].names, build(cfg, 90.0).children[2].names)
+        self.assertEqual(root1.children[3].names, ["fold", "call", "all-in"])
+        # past the cap on raises: the street's tree only goes all-in; root_raises still raises
+        self.assertEqual(build(cfg, 90.0, n_raises=2).names, ["fold", "call", "all-in"])
+        self.assertEqual(build(one, 90.0, n_raises=2).names, ["fold", "call", "raise to 15", "raise to 25"])
+        # a raise past the stack is the all-in; none is added otherwise, even shallow
+        one.root_raises = [0.5, A.ONE_SIZE_ALLIN]
+        self.assertEqual(build(one, 30.0).names, ["fold", "call", "raise to 15", "all-in"])
+        one.root_raises = [0.5]
+        self.assertEqual(build(one, 30.0).names, ["fold", "call", "raise to 15"])
+        self.assertIn("all-in", build(cfg, 30.0).names)
+        self.assertNotEqual(one.sizes_key(), cfg.sizes_key())
 
 
 class TestCut(unittest.TestCase):
@@ -124,6 +171,13 @@ class TestCut(unittest.TestCase):
         again = self.solve(adv, [2.0], cut=bar)
         self.assertIsNone(getattr(again, "cut_at", None))
         self.assertEqual(again.settled_at, 0.05)
+
+    def test_order_raises(self):
+        names = {"2.5x": "raise to 7.5", "3x": "raise to 9", "4x": "raise to 12", "all-in": "all-in"}
+        full = {"actions": ["fold", "call", "raise to 7.5", "raise to 9", "raise to 12", "all-in"],
+                "freq": [0.3, 0.5, 0.0, 0.15, 0.05, 0.0]}
+        self.assertEqual(A.one_size_order(list(names), full, names, {"2.5x": 2.5, "3x": 3, "4x": 4, "all-in": 32.5}),
+                         ["3x", "4x", "2.5x", "all-in"])
 
     def test_order(self):
         labels = ["25%", "33%", "50%", "75%", "100%", "125%", "150%"]
@@ -250,11 +304,51 @@ class TestView(unittest.TestCase):
         self.assertNotIn("hand", o)
         self.assertNotIn("hand", o["rows"][0])
 
+    def test_raise(self):
+        """Facing a bet the view's sizes are raises, by the multiple of the bet: each solve has one raise size at the
+        root (Config.root_raises), the full menu every one; the rest as for bets."""
+        self.adv._one_rows.clear()
+        face = dict(river=[{"pos": "BB", "action": "bet", "amount": 3}], hero="BTN", hole="AsQs")
+        solves = []
+        orig = A.Advisor._one_size_solve
+
+        def counted(adv, *a, **k):
+            solves.append((a[7].root_bets, a[7].root_raises))
+            return orig(adv, *a, **k)
+
+        with mock.patch.object(A.Advisor, "_one_size_solve", counted):
+            o = self.ask(one_size="list", **face)["one_size"]
+            self.assertEqual((o["kind"], o["to_call_bb"], o["candidates"]), ("raise", 3.0, ["2.5x", "3x", "4x", "5x"]))
+            self.assertEqual(o["raises"]["3x"], {"to": 9.0, "pct": 52})   # (6 over the bet, into 11.5 after calling)
+            self.assertIn("facing the bet", o["definition"])
+            o = self.ask(one_size="3x", **face)["one_size"]
+            self.assertIsNone(solves[-1][0])
+            self.assertAlmostEqual(solves[-1][1][0], 6 / 11.5)
+            row = o["rows"][0]
+            self.assertEqual(row["actions"], ["fold", "call", "raise to 9"])
+            self.assertEqual(len(row["hand"]["freq"]), 3)
+            o = self.ask(one_size="all", **face)["one_size"]
+            self.assertEqual(len(solves), 5)
+            self.assertEqual(len(solves[1][1]), 4)
+            self.assertEqual(o["full"]["actions"], ["fold", "call", "raise to 7.5", "raise to 9", "raise to 12", "raise to 15"])
+            self.assertEqual(sorted(o["order"]), sorted(o["candidates"]))
+            self.assertEqual([x["size"] for x in o["rows"]], o["candidates"])
+            best = next(x for x in o["rows"] if x["size"] == o["best"])
+            self.assertEqual(best["loss_pct"], min(x["loss_pct"] for x in o["rows"]))
+            self.assertGreater(min(x["loss_pct"] for x in o["rows"]), -2 * o["target_pct"])
+            # a multiple that isn't a candidate, and all-in
+            o = self.ask(one_size="3.5x", **face)["one_size"]
+            self.assertEqual((o["rows"][-1]["size"], o["raises"]["3.5x"]["to"]), ("3.5x", 10.5))
+            o = self.ask(one_size="all-in", **face)["one_size"]
+            self.assertEqual(o["rows"][-1]["actions"], ["fold", "call", "all-in"])
+            self.assertEqual(o["raises"]["all-in"]["to"], 97.5)
+        for bad in ("50%", "1x", "big"):
+            self.assertIn("error", self.ask(one_size=bad, **face), bad)
+
     def test_refused(self):
-        bet = dict(river=[{"pos": "BB", "action": "bet", "amount": 3}], hero="BTN", hole="AsQs")
         cases = {
             "preflop": dict(board="", flop=[], turn=[], preflop=PRE[:3], hero="BTN", hole="AsQs"),
-            "face": bet,
+            "no raise": dict(river=[{"pos": "BB", "action": "bet", "amount": 97.5}], hero="BTN", hole="AsQs"),
             "pool": dict(opponents="pool"),
             "lock": dict(locks={"BTN": {"fold": 15}}),
             "multiway": dict(preflop=PRE[:4] + [{"pos": "SB", "action": "call"}, {"pos": "BB", "action": "call"}],

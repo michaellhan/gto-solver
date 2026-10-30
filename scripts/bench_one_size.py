@@ -6,11 +6,12 @@ One JSON line a spot to --out (a spot already there is skipped: resumable), then
 against the full menu (% of the pot), the best size, the full menu's own bet mix.
 
   GTO_THREADS=1 python scripts/bench_one_size.py --out reports/one_size.jsonl [--spots t-k72-3,r-k72-3-5]
-      [--settled turn=0.05,river=0.02,flop=0.1] [--budget 120]
+      [--settled turn=0.05,river=0.02,flop=0.1] [--budget 120] [--no-cut]
 
 The spots are scripts/turn_river_reference.py's (BTN vs BB single-raised, CO vs BTN 3bet pots) plus two flops; the
 player deciding is the one who can bet: the in-position bettor after a check, or the BB first to act after the street
-before was checked through.
+before was checked through. The raise spots ("fr-", "tr-", "rr-": a flop check-raise, turn and river raises) are the
+player facing a bet, whose sizes are raises (2.5x to 5x the bet).
 """
 import argparse, json, os, sys, time
 for _v in ("VECLIB_MAXIMUM_THREADS", "OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
@@ -54,15 +55,23 @@ SPOTS = {
     "r-k72s-4-9s": st(SRP, "Ks7s2d4h9s", BC, TBC, [X("BB")], what="river, bet bet, the flush completes"),
     "r-k72-3x-9": st(SRP, "Ks7d2c3h9d", BC, TXX, what="river, turn checked through: the BB first to act"),
     "r-q83x-5-j": st(SRP, "Qs8d3c5hJc", XX, TXX, what="river, checked to the river: the BB first to act"),
+    # facing a bet: raise sizes
+    "fr-k72": st(SRP, "Ks7d2c", [X("BB"), B("BTN", 1.8)], what="flop, the BB facing a third-pot c-bet: check-raise"),
+    "fr-t94-3b": st(THREEBET, "Th9h4c", [X("CO"), B("BTN", 5.5)], what="flop, 3bet pot, the CO facing a third-pot c-bet"),
+    "tr-k72-3": st(SRP, "Ks7d2c3h", BC, [X("BB"), B("BTN", 6.8)], what="turn, c-bet called, brick: the BB facing 75%"),
+    "tr-q83-a": st(SRP, "Qs8d3cAh", BC, [X("BB"), B("BTN", 6.8)], what="turn, c-bet called, an overcard: the BB facing 75%"),
+    "rr-k72-3-5": st(SRP, "Ks7d2c3h5c", BC, TBC, [X("BB"), B("BTN", 17.0)],
+                     what="river, bet bet bet: the BB facing 75%"),
+    "rr-q83x-5-j": st(SRP, "Qs8d3c5hJc", XX, TXX, [B("BB", 4.1)],
+                      what="river, checked to the river: BTN facing the BB's 75% lead"),
 }
 
 
 def hero_of(s):
     street = {6: "flop", 8: "turn", 10: "river"}[len(s["board"])]
     line = s[street]
-    if line:
-        return {"BB": "BTN", "BTN": "BB", "CO": "BTN"}[line[-1]["pos"]]
-    return "CO" if s["preflop"] is THREEBET else "BB"
+    pair = ("CO", "BTN") if s["preflop"] is THREEBET else ("BB", "BTN")
+    return pair[0] if not line else next(p for p in pair if p != line[-1]["pos"])
 
 
 def page_advisor() -> Advisor:
@@ -85,6 +94,8 @@ def main():
     ap.add_argument("--settled", default="flop=0.1,turn=0.05,river=0.02")
     ap.add_argument("--budget", type=float, default=120.0)
     ap.add_argument("--table", action="store_true", help="only print the table of --out")
+    ap.add_argument("--no-cut", action="store_true", help="every size solved until settled (Advisor.one_size_cut off: "
+                                                          "no size stops early once clearly behind the best)")
     a = ap.parse_args()
     done = {}
     if os.path.exists(a.out):
@@ -93,6 +104,7 @@ def main():
             done[d["spot"]] = d
     if not a.table:
         adv = page_advisor()
+        adv.one_size_cut = not a.no_cut
         adv.one_size_settled.update({k: float(v) for k, v in (x.split("=") for x in a.settled.split(","))})
         for name in a.spots.split(","):
             if name in done:
@@ -106,12 +118,14 @@ def main():
                 print(name, r, flush=True)
                 continue
             d = {"spot": name, "what": SPOTS[name]["what"], "hero": o["actor"], "threads": core.threads(),
+                 "kind": o.get("kind", "bet"), "raises": o.get("raises"),
                  "seconds": round(time.time() - t0, 1), "pot_bb": o["pot_bb"], "stack_bb": o["stack_bb"],
                  "best": o["best"], "tied": o["tied"], "target_pct": o["target_pct"],
                  "full": {k: o["full"][k] for k in ("actions", "freq", "ev_bb", "iterations", "exploitability_pct",
                                                     "seconds")},
                  "rows": [{k: x[k] for k in ("size", "actions", "freq", "ev_bb", "loss_pct", "iterations",
-                                             "exploitability_pct", "seconds")} for x in o["rows"]]}
+                                             "exploitability_pct", "seconds")} | ({"cut": True} if x.get("cut") else {})
+                          for x in o["rows"]]}
             with open(a.out, "a") as f:
                 f.write(json.dumps(d) + "\n")
             done[name] = d
@@ -122,9 +136,11 @@ def main():
         print(f"\n{name}: {d['what']} ({d['hero']}, pot {d['pot_bb']} bb, {d['stack_bb']} behind)")
         print(f"  full menu: {mix}  [{full['iterations']} it, {full['exploitability_pct']}%, {full['seconds']} s]")
         for x in d["rows"]:
-            bet = sum(f for n, f in zip(x["actions"], x["freq"]) if n != "check")
+            bet = sum(f for n, f in zip(x["actions"], x["freq"]) if n not in ("check", "fold", "call"))
             mark = " best" if x["size"] == d["best"] else " tied" if x["size"] in d["tied"] else ""
-            print(f"  {x['size']:>7}: gives up {x['loss_pct']:6.3f}% of the pot, bets {bet * 100:3.0f}%  "
+            to = f" (to {d['raises'][x['size']]['to']:g})" if d.get("raises") and x["size"] in d["raises"] else ""
+            print(f"  {x['size']:>7}{to}: gives up {x['loss_pct']:6.3f}% of the pot, "
+                  f"{'raises' if d.get('kind') == 'raise' else 'bets'} {bet * 100:3.0f}%  "
                   f"[{x['iterations']} it, {x['exploitability_pct']}%, {x['seconds']} s]{mark}")
 
 
