@@ -3,6 +3,7 @@ solved, in any suits, and the advisor answering a 3-way flop's first decisions f
 it holds the spot)."""
 import importlib
 import json
+import re
 import os
 import shutil
 import sys
@@ -32,6 +33,63 @@ def _hole_in(r, board, k=0, full=True):
     b = set(cards(board))
     idx = [i for i in np.nonzero(r >= 0.999 * r.max() if full else r <= 0)[0] if not set(ALL_COMBOS[i]) & b]
     return cards_str(ALL_COMBOS[idx[k]])
+
+
+class TestNear(unittest.TestCase):
+    """MWLibrary.near on the repo's 3-way library: a flop it doesn't store read off its stored flops most like it."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.lib = ml.MWLibrary.from_dir()
+        cls.setup = ml.spot_setup(SPOT[2])
+        if not cls.lib.spot([fl.range_fp(r) for r in cls.setup["ranges"]], cls.setup["pot"], cls.setup["stack"]):
+            raise unittest.SkipTest("the 3-way library doesn't hold the spot")
+
+    def near(self, board):
+        s = self.setup
+        return self.lib.near(s["ranges"], cards(board), s["pot"], s["stack"])
+
+    def test_reads_the_stored_decisions(self):
+        sol = self.near("Kh8d3c")
+        self.assertIsNotNone(sol)
+        self.assertIsNone(self.lib.solution(self.setup["ranges"], cards("Kh8d3c"), self.setup["pot"], self.setup["stack"]))
+        self.assertEqual(sorted(sol.nodes), sorted(tuple(p) for p in ml.STORED))
+        self.assertEqual(len(sol.approx["near"]), 3)
+        for nm, d in sol.approx["near"]:   # (rainbow, unpaired, a king high: in the hand's suits)
+            b = cards(nm)
+            self.assertTrue(0 < d <= 6 and len({c % 4 for c in b}) == 3 and len({c // 4 for c in b}) == 3)
+        for path, node in sol.nodes.items():
+            s = node.avg_strategy()[0]
+            np.testing.assert_allclose(s.sum(axis=0), 1.0, atol=1e-5)
+            self.assertTrue(sol.approx["known"][path].all())
+            self.assertFalse(sol.action_evs(node).any())
+        # a flop the library stores: its own solve answers, not this
+        self.assertIsNone(self.near(CANON))
+
+    def test_any_suits(self):
+        # the same flop in other suits: each combo's mix that of its image
+        a, b = self.near("Kh8d3c"), self.near("Ks8c3d")
+        swap = {"h": "s", "d": "c", "c": "d", "s": "h"}
+        col_b = {int(i): k for k, i in enumerate(b.hands.active)}
+        img = [col_b[COMBO_INDEX[tuple(sorted(cards("".join(c[:-1] + swap[c[-1]] for c in
+                                                             re.findall("..", cards_str(ALL_COMBOS[i]))))))]]
+               for i in a.hands.active]
+        for path in a.nodes:
+            np.testing.assert_allclose(a.nodes[path].avg_strategy()[0], b.nodes[path].avg_strategy()[0][:, img], atol=1e-6)
+
+    def test_left_out_flops(self):
+        # stored flops read off the others (scripts/bench_mw_approx.py): the EV given up by their own EVs, % of the pot
+        bench = importlib.import_module("bench_mw_approx")
+        spot = self.lib.spot([fl.range_fp(r) for r in self.setup["ranges"]], self.setup["pot"], self.setup["stack"])
+        losses = []
+        for name in [CANON] + sorted(spot["flops"])[::70][:3]:
+            got = bench.leave_one_out(self.lib, spot, name, [np.asarray(r) for r in self.setup["ranges"]])
+            self.assertTrue(got is not None or name != CANON)   # (K72 rainbow has stored flops near; others may not)
+            losses += [x[1] for x in got or ()]
+            self.assertIn(name, spot["flops"])   # (put back)
+        self.assertTrue(losses)
+        self.assertLess(np.mean(losses), 0.5)
+        self.assertGreater(min(losses), -0.05)
 
 
 class TestMWLibrary(unittest.TestCase):

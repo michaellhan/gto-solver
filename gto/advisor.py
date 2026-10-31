@@ -2624,7 +2624,8 @@ class Advisor:
         Advisor.study asks: no cards of anyone's own) answers at once for the whole range on a library flop's turn from
         its stored turn (Advisor._study_store), on a flop the library doesn't store from the stored flops most like
         it (Advisor._study_near), and on a turn or river after the street before was solved live from that solve
-        (Advisor._study_prev), and nowhere else."""
+        (Advisor._study_prev), on a 3-way flop the 3-way library doesn't store from its stored flops most like it
+        (Advisor._study_mw_near), and nowhere else."""
         if state.get("study"):
             state = dict({k: v for k, v in state.items() if k not in STUDY_DROPS}, study=True)
         if len(str(state.get("board") or "")) < 6 or state.get("opponents") == "pool" or any(
@@ -3993,8 +3994,10 @@ class Advisor:
                          f"{'your' if p == hero else 'their'} range is the hands that take its last action")
         if self._runout_close is not None and len(cur.active) > 2:
             return {"error": f"the runout report reads heads-up pots: {len(cur.active)} players are in"}
+        # (Study's 3-way flop: read off the 3-way library's stored flops most like it, Advisor._study_mw_near)
+        mw_near = self._instant and self._study and cur.name == "flop" and len(cur.players_start) == 3
         if self._instant and (actor or pool or optimize or locks or custom or self._runout_close is not None
-                              or any(len(st.players_start) > 2 for st in rep[1:])):
+                              or any(len(st.players_start) > 2 for st in rep[1:]) and not mw_near):
             raise _NoInstant()   # (heads-up from the flop at equilibrium only)
         if actor and actor[1] is None and any(len(st.players_start) > 2 for st in rep[1:]):
             return {"skipped": "multiway"}   # (a presolve: heads-up from the flop only, as an instant answer)
@@ -4004,6 +4007,8 @@ class Advisor:
             res = self._mw_from_library(hero, hole, board, ranges, cur, stk, streets, t0, notes, locks, positions)
             if res is not None:
                 return res
+        if mw_near:
+            raise _NoInstant()
         # Streets that started with 3+ players can't be solved; narrow ranges there by rule.
         if self._lib_only and len(cur.players_start) > 2:
             return {"skipped": "multiway: not a flop-library spot"}
@@ -5820,6 +5825,58 @@ class Advisor:
         except Exception:   # a library that can't be read is no library
             return None
 
+    def _mw_library_near(self, entering, flop, st: StreetState, stk):
+        """A flop of a 3-way library spot the library doesn't store, read off its stored flops most like it
+        (mw_library.MWLibrary.near), as _mw_library_solution finds the spot; None where it doesn't apply."""
+        if self.mw_library is None or not hasattr(self.mw_library, "near") or len(flop) != 3 \
+                or len(st.players_start) != 3 or self.cfg.rake_rate > 0 or self._req_sizes \
+                or getattr(self, "_icm", None) is not None:
+            return None
+        players = [p for p in st.order if p in st.players_start]
+        if any(p not in entering for p in players):
+            return None
+        S = min(stk[p] - st.inv_start[p] for p in players)
+        try:
+            return self.mw_library.near([entering[p] for p in players], tuple(flop[:3]), st.pot_start, S)
+        except Exception:   # a library that can't be read is no library
+            return None
+
+    def _study_mw_near(self, sol, node, path, players, hp, behind, S, board, positions, notes, t0) -> dict:
+        """Study's answer at once on a 3-way flop the 3-way library doesn't store (Advisor.instant with "study"), while
+        the flop's own solve runs: the library's stored flops most like it read for this one (MWLibrary.near: card
+        substitution, each combo's mix its images' of the same hand class averaged), at a decision the library stores
+        (first to act, checked to once or twice): the actor's whole range per hand class and combo its mix (combos no
+        stored flop holds an image of left out), per action the range's frequency and combos, each opponent's range
+        (through the read mixes before), marked "approximate" with the flops read. No EVs or equities: the flop's own
+        solve, which replaces it, has them."""
+        R = sol.reach_at(path)
+        rng = [sol.expand(R[i][0]) for i in range(len(players))]
+        me = rng[hp] * sol.expand(np.asarray(sol.approx["known"].get(path, np.ones(sol.hands.n, bool)), dtype=np.float64))
+        if me.sum() < 1e-6:
+            raise _NoInstant()
+        shown = _mw_names(node.names, node.amounts, behind, S, node.pot_now)
+        sf = np.zeros((len(shown), N_COMBOS))
+        sf[:, sol.hands.active] = node.avg_strategy()[0]
+        none = np.full(N_COMBOS, np.nan)
+        opps = [i for i in range(len(players)) if i != hp]
+        amounts = [None if x is None else round(float(x), 2) for x in node.amounts]
+        part, og = _study_range(board, list(shown), amounts, me, sf, np.zeros_like(sf), none,
+                                [(players[i], rng[i], none) for i in opps])
+        _no_values(part)
+        flops = ", ".join(nm for nm, _ in sol.approx["near"])
+        return {"study": "node", "street": "flop", "actor": players[hp], "multiway": True,
+                "opponent": " and ".join(players[i] for i in opps), "opponents": og,
+                "position": f"{hp + 1} of {len(players)} to act", "players": len(positions), "board": cards_str(board),
+                "pot_bb": round(node.pot_now, 2), "to_call_bb": 0.0, "stack_bb": round(S, 2),
+                **part, "range_ev_bb": None, "range_eq": None,
+                "approximate": {"source": "near", "label": f"the precomputed 3-way solves of the most similar flops "
+                                                            f"({flops}), by card substitution", "iterations": None},
+                "solver": {"iterations": None, "exploitability_pct": None, "by": "the 3-way flop library"},
+                "precomputed": None,
+                "notes": list(notes) + [f"read off the 3-way library's {sol.label} on stored flops by card "
+                                        f"substitution: no EVs or equities until the flop's own solve"],
+                "seconds": round(time.time() - t0, 3)}
+
     def _mw_from_library(self, hero, hole, board, entering, cur: StreetState, stk, streets, t0, notes, locks,
                          positions=None):
         """A 3-way flop's first decision (first to act, or checked to) answered from the 3-way library's solve
@@ -5830,6 +5887,10 @@ class Advisor:
         if set(players) != set(cur.active) or hero not in players or any(p in (locks or {}) for p in players):
             return None
         sol = self._mw_library_solution(entering, board, cur, stk)
+        if self._instant:   # (Study's answer at once: a flop it holds is at once anyway; one it doesn't, read off)
+            if sol is not None:
+                raise _NoInstant()
+            sol = self._mw_library_near(entering, board, cur, stk)
         if sol is None:
             return None
         path = tuple("check" for _ in cur.actions)
@@ -5838,6 +5899,10 @@ class Advisor:
         ci = sol.combo_index(hole) if hole else None    # (Study: no cards of the actor's own)
         if node is None or node.player != hp or ci is None and not self._study:
             return None   # (a node it doesn't store: solved live)
+        if sol.approx is not None:
+            return self._study_mw_near(sol, node, path, players, hp, stk[hero] - cur.inv_start[hero],
+                                       min(stk[p] - cur.inv_start[p] for p in players), board, positions or [],
+                                       notes, t0)
         if ci is not None and sol.reach0[hp, 0, ci] <= 1e-12:
             notes.append("your hand isn't in your range for this line: its mix is the solve's current (regret-matching) "
                          "strategy for it, against the ranges as they are")
@@ -7217,6 +7282,12 @@ def _study_mix(board, names, amounts, me, sf, villain, opp):
     equity None (the grid's cells', the combos' and the actions'); (part, the opponent's)."""
     none = np.full(N_COMBOS, np.nan)
     part, (og,) = _study_range(board, names, amounts, me, sf, np.zeros_like(sf), none, [(villain, opp, none)])
+    _no_values(part)
+    return part, og
+
+
+def _no_values(part: dict) -> None:
+    """A _study_range answer's EVs and equities set to None (the grid's cells', the combos' and the actions')."""
     for c in part["grid"]["cells"].values():
         c.update(ev=None, evm=None, eq=None)
     for rows in part["combos"].values():
@@ -7224,7 +7295,6 @@ def _study_mix(board, names, amounts, me, sf, villain, opp):
             row[3], row[4] = None, None
     for a in part["actions"]:
         a["ev_bb"] = None
-    return part, og
 
 
 def _study_range(board, names, amounts, me, sf, ev, eq, opps):

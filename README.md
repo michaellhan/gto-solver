@@ -313,7 +313,18 @@ from there, the ranges narrowed through the solves Study answered from (on one t
 Fast 3-way turn 7 s at ~400 iterations and 0.04% of the pot, a river 0.4 s). A 3-way flop the library doesn't hold is solved live too, for at least 15 s
 (`MW_STUDY_FLOP_BUDGET`, stopping once settled; in numpy the advice's Fast 5 s rarely settled one: natively on a
 loaded machine 12-23 iterations, 17-40% of the pot, where 15 s ran 51-77, 1.1-1.9%; with the compiled multiway core
-5 s run 111-125, 0.7-1.05%). Equity (and EQR) on every street, as a share of the pot at showdown against the two
+5 s run 111-125, 0.7-1.05%). While it solves, Study shows at once the decisions the library would store (first to
+act, checked to once or twice) read off the spot's stored flops most like it, as a heads-up flop the library
+doesn't store (`MWLibrary.near`, `Advisor._study_mw_near`: the three nearest of the same pairing and suit pattern,
+each carried over by card substitution, a combo's mix its images' of the same hand class averaged, not the heads-up
+learned correction), the flops it read named, the mix alone (no EVs or equities until the solve lands); asked for at
+Fast too (a heads-up flop's Fast solve is as quick as the reading). Leaving each of the 740 stored flops out in turn
+and reading it off the others (`scripts/bench_mw_approx.py`), those decisions give up 0.14% of the pot on average
+by the flop's own EVs (median 0.10, 90th percentile 0.32; first to act 0.06, checked to once 0.15, twice 0.22; the
+worst low paired and connected boards 1.3-1.9), their range frequencies 7 points off (total variation); 16 of them (2%)
+have no stored flop near enough (6 rank steps), and nothing shows until the solve lands. In the browser on one
+thread (`scripts/bench_browser.mjs` study-mw-near, Kh8d3c) it shows in 0.7 s, the solve in 13 s. Equity (and EQR)
+on every street, as a share of the pot at showdown against the two
 other ranges with the rest of the board dealt (`multiway_solver.showdown_equities`): on the turn every river with
 the exact three-way card removal (as the river's showdowns, ~0.1 s natively); on the flop all 1176 turn-and-river
 runouts with the solver's pairwise correction for the opponents' shared cards, scaled so each runout's shares add

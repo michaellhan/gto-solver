@@ -24,7 +24,7 @@ from typing import Callable, Dict, List, Optional, Sequence
 
 import numpy as np
 
-from .cards import ALL_COMBOS, cards_str
+from .cards import ALL_COMBOS, cards as parse_cards, cards_str
 from . import flop_library as fl
 
 FORMAT = 1
@@ -194,6 +194,7 @@ class LibraryMWSolution:
         self._gains = np.array(head.get("gains") or [head["expl"]] * self.np, dtype=np.float64)
         self.pot_start = float(head["pot"])
         self.stacks = (float(stack if stack is not None else head.get("stack", 0.0)),) * self.np
+        self.approx: Optional[dict] = None   # (MWLibrary.near's: read off stored flops like it, no EVs)
 
     def root_pot(self):
         return self.pot_start
@@ -293,8 +294,6 @@ class MWLibrary:
                  rake: bool = False) -> Optional[LibraryMWSolution]:
         """The stored solve of this 3-way flop, or None. ranges: the three players' ranges entering the flop, in
         postflop order (they pick the spot); rake: the hand is raked (the library isn't)."""
-        from .multiway_solver import Decision
-        from .solver import MEMBER_FULL
         if len(board) != 3 or len(ranges) != 3 or rake:
             return None
         idx = self.index()
@@ -310,6 +309,12 @@ class MWLibrary:
         e = self.entry(spot, cards_str(canon))
         if e is None:
             return None
+        return self._from_entry(spot, e, ranges, board, smap)
+
+    def _from_entry(self, spot: dict, e: dict, ranges, board, smap) -> Optional[LibraryMWSolution]:
+        """A decoded entry of the canonical flop read for the hand's flop `board` (smap: its suits' canonical ones)."""
+        from .multiway_solver import Decision
+        from .solver import MEMBER_FULL
         cmap = fl.combo_map(smap)                       # actual combo -> canonical combo
         bm = np.prod([1.0 - MEMBER_FULL[c] for c in board], axis=0)
         rf = [np.asarray(r, dtype=np.float64) * bm for r in ranges]
@@ -354,6 +359,69 @@ class MWLibrary:
         reach0 = np.stack([r[active] for r in rf])[:, None, :]
         return LibraryMWSolution(nodes, evs, active, reach0, e["head"], spot.get("label", spot["id"]),
                                  spot.get("seats") or [], spot.get("stack"))
+
+
+    def near(self, ranges: Sequence[np.ndarray], board: Sequence[int], pot: float, stack: float,
+             rake: bool = False) -> Optional[LibraryMWSolution]:
+        """A 3-way flop of a library spot the library doesn't store, read off the spot's stored flops most like it,
+        as the heads-up library's (gto/flop_approx.py: the K nearest of the same pairing and suit pattern, each carried
+        over by card substitution, a combo's mix the average of its images' that hold its hand class; not the learned
+        correction, fit on heads-up flops): a LibraryMWSolution of the STORED decisions with those mixes, `approx` set
+        ({"near": [(stored flop in the hand's suits, distance)], "known": {path: (n,) bool, the combos some source
+        holds an image of}}), no EVs (zeros) or gains; None where the solve answers (a stored flop), the spot isn't
+        held, or no stored flop is near enough. Leaving each stored flop out (scripts/bench_mw_approx.py), the
+        STORED decisions read off the three nearest others give up 0.14% of the pot on average (by the flop's own
+        EVs; median 0.11, 90th percentile 0.33)."""
+        from collections import OrderedDict
+        from . import flop_approx as FA
+        from .solver import MEMBER_FULL
+        if len(board) != 3 or len(ranges) != 3 or rake:
+            return None
+        idx = self.index()
+        tk = idx.get("tree") or {}
+        if not idx.get("spots") or tk.get("version") != MODEL_VERSION or tk.get("rake"):
+            return None
+        spot = self.spot([fl.range_fp(r) for r in ranges], pot, stack)
+        if spot is None:
+            return None
+        canon, smap = fl.canonical(board)
+        if cards_str(canon) in spot.get("flops", {}):
+            return None
+        src = FA.sources(self, spot, list(canon))
+        if not src:
+            return None
+        cmap = fl.combo_map(smap)
+        bm = np.prod([1.0 - MEMBER_FULL[c] for c in board], axis=0)
+        combos = np.unique(cmap[np.flatnonzero(np.any([np.asarray(r) * bm > 0 for r in ranges], axis=0))])
+        key = (spot["id"], cards_str(canon), tuple((nm, d) for *_, nm, d in src), combos.tobytes())
+        kept = self.__dict__.setdefault("_near_pred", OrderedDict())
+        pred = kept.get(key)
+        if pred is None:
+            pred = kept[key] = FA.predict([(x, m, w) for x, m, w, _, _ in src], board=list(canon), combos=combos)
+            while len(kept) > FA.PRED_KEEP:
+                kept.popitem(last=False)
+        off = np.prod([1.0 - MEMBER_FULL[c] for c in canon], axis=0) > 0    # (canonical combos off the flop)
+        e0 = src[0][0]
+        nodes, known = [], {}
+        for nd in e0["nodes"]:
+            o = pred.get(tuple(nd["path"]))
+            if o is None or o["names"] != list(nd["names"]) or o["player"] != nd["player"]:
+                continue
+            st = o["strat"][:, off]
+            known[tuple(nd["path"])] = ~np.isnan(o["strat"][0])
+            nodes.append(dict(nd, strat=np.where(np.isnan(st), 1.0 / len(nd["names"]), st), evs=np.zeros(st.shape)))
+        head = dict(e0["head"], board=cards_str(canon), iters=0, expl=0.0, gains=[0.0] * 3)
+        sol = self._from_entry(spot, {"head": head, "masks": [off] * 3, "nodes": nodes}, ranges, board, smap)
+        if sol is None:
+            return None
+        inv = [0] * 4                                   # canonical suit -> the hand's
+        for a, b in enumerate(smap):
+            inv[b] = a
+        ca = cmap[sol.hands.active]
+        sol.approx = {"near": [(cards_str(sorted((c // 4 * 4 + inv[c % 4] for c in parse_cards(nm)), reverse=True)), d)
+                               for *_, nm, d in src],
+                      "known": {path: k[ca] for path, k in known.items()}}
+        return sol
 
 
 _DEFAULT: Optional[MWLibrary] = None

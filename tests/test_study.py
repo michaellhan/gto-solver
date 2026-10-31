@@ -268,6 +268,43 @@ class TestStudy(unittest.TestCase):
         self.assertIn("error", self.study(preflop=PRE, board="Kd7c2h5s", flop=flop, turn=turn[:2], runouts=True,
                                           budget=1.0))
 
+    def test_three_way_near_at_once(self):
+        """A 3-way flop the 3-way library doesn't store: Study's answer at once (Advisor.instant with "study") read
+        off the library's stored flops most like it (MWLibrary.near) at the decisions it stores, first to act and
+        checked to: the mix alone (no EVs or equities), both opponents' ranges, the flops read; none on a flop the
+        library stores (its answer is at once anyway), after a bet, or 4-way."""
+        pre = PRE[:3] + [{"pos": "BTN", "action": "raise", "to": 2.5}, {"pos": "SB", "action": "call"},
+                         {"pos": "BB", "action": "call"}]
+        st = {"players": 6, "stack": 100, "preflop": pre, "board": "Kd8c3h", "study": True}
+        r = self.adv.instant(st)
+        self.assertEqual((r["study"], r["street"], r["actor"], r["position"]), ("node", "flop", "SB", "1 of 3 to act"))
+        self.assertTrue(r["multiway"])
+        self.assertEqual(r["approximate"]["source"], "near")
+        self.assertRegex(r["approximate"]["label"], r"3-way solves of the most similar flops \((\w{6}, ){2}\w{6}\), by card")
+        self.assertIsNone(r["precomputed"])
+        self.assertEqual([o["seat"] for o in r["opponents"]], ["BB", "BTN"])
+        self.check_totals(r)
+        self.assertTrue(r["range_ev_bb"] is None and r["range_eq"] is None and all(o["eq"] is None for o in r["opponents"]))
+        self.assertTrue(all(a["ev_bb"] is None for a in r["actions"]))
+        self.assertTrue(all(c["ev"] is None and c["eq"] is None for c in r["grid"]["cells"].values()))
+        self.assertTrue(all(x[3] is None and x[4] is None for rows in r["combos"].values() for x in rows))
+        root = dict({o["seat"]: o["combos"] for o in r["opponents"]}, SB=r["range_combos"])
+        # checked to: BB, then BTN, the players before narrowed by the mixes read for them
+        r = self.adv.instant(dict(st, flop=[{"pos": "SB", "action": "check"}]))
+        self.assertEqual((r["actor"], r["approximate"]["source"]), ("BB", "near"))
+        r = self.adv.instant(dict(st, flop=[{"pos": "SB", "action": "check"}, {"pos": "BB", "action": "check"}]))
+        self.assertEqual(r["actor"], "BTN")
+        opp = {o["seat"]: o["combos"] for o in r["opponents"]}
+        self.assertLess(opp["SB"], root["SB"])
+        self.assertLess(opp["BB"], root["BB"])
+        self.check_totals(r)
+        # none: a flop the library stores, a line through a bet, 4-way
+        self.assertIsNone(self.adv.instant(dict(st, board="Kd7c2h")))
+        self.assertIsNone(self.adv.instant(dict(st, flop=[{"pos": "SB", "action": "bet", "to": 2.5}])))
+        pre4 = PRE[:2] + [{"pos": "CO", "action": "raise", "to": 2.5}, {"pos": "BTN", "action": "call"},
+                          {"pos": "SB", "action": "call"}, {"pos": "BB", "action": "call"}]
+        self.assertIsNone(self.adv.instant(dict(st, preflop=pre4)))
+
     def test_three_way(self):
         """3-way pots after the flop: the 3-player solve's answer (the 3-way library's at its flops' checked-to
         nodes), each opponent's range, equity on every street (a share of the pot at showdown against the two other

@@ -153,6 +153,10 @@ const SPOTS = {
   "study-mw-turn": base({ board: "Kh7d2c9s", preflop: MW, flop: [X("BB"), X("CO"), X("BTN")], study: true }),
   "study-mw-river": base({ board: "Kh7d2c9s4h", preflop: MW, flop: [X("BB"), X("CO"), X("BTN")],
                            turn: [X("BB"), X("CO"), X("BTN")], study: true }),
+  // a 3-way flop the library doesn't store: solved live (15 s at least), --early read off its stored flops most like it
+  // (Advisor._study_mw_near), first to act and checked to twice
+  "study-mw-near": base({ board: "Kh8d3c", preflop: MW, study: true }),
+  "study-mw-near-x": base({ board: "Kh8d3c", preflop: MW, flop: [X("BB"), X("CO")], study: true }),
   "mw4-flop": base({ hero: "BB", hole: "Qh9h", board: "Kh7d2c", preflop: MW4 }),               // 4-way, first to act
   "mw4-turn": base({ hero: "BB", hole: "Qh9h", board: "Kh7d2c9s", preflop: MW4, flop: [X("BB"), X("HJ"), X("CO"), X("BTN")] }),
   "exploit": base({ hero: "BB", hole: "QhJh", board: "Ks7d2cTh", flop: SRP_FLOP, opponents: "pool" }),

@@ -632,6 +632,29 @@ test("Study on a flop the library doesn't store: the near flops' answer at once,
   assert.match(p.html(), /Solved live in 2.4 s/);
 });
 
+// a 3-way flop the 3-way library doesn't store, answered at once off its stored flops most like it
+// (Advisor._study_mw_near): asked for at Fast too, where a heads-up flop isn't
+test("Study on a 3-way flop: an answer at once asked for at Fast too, the note without Simple", async () => {
+  const pre = [["UTG", "f"], ["HJ", "f"], ["CO", "f"], ["BTN", "r2.5"], ["SB", "c"], ["BB", "c"]].map(([pos, a]) =>
+    a[0] === "r" ? { pos, action: "raise", to: 2.5 } : { pos, action: { f: "fold", c: "call" }[a] });
+  assert.equal(S.sawFlop({ players: 6, preflop: pre }), 3);
+  assert.equal(S.sawFlop({ players: 6, preflop: [...pre.slice(0, 4), { pos: "SB", action: "fold" }, { pos: "BB", action: "call" }] }), 2);
+  const MWN = { ...NEAR, multiway: true, actor: "SB", opponent: "BB and BTN", board: "Kd8c3h",
+    approximate: { source: "near", label: "the precomputed 3-way solves of the most similar flops (Kd8c4h, Kd9c3h, Kd7c2h), by card substitution", iterations: null } };
+  assert.match(S.approxHtml(MWN), /replaces it: then each hand's EVs, equities and the Breakdown\.$/);
+  const LIVE = { ...NODE, actor: "SB", board: "Kd8c3h", multiway: true, precomputed: undefined, solver: { iterations: 200, solve_seconds: 15, exploitability_pct: 0.5 } };
+  const p = await studyPage(() => MWN, () => LIVE);
+  p.ctx.STUDY_AT = { state: { players: 6, stack: 100, board: "Kd8c3h", preflop: pre, flop: [], turn: [], river: [] }, spot: "" };
+  const opened = p.ctx.Study.open();
+  await p.tick();
+  assert.deepEqual(p.asked.map(x => x.early), [true]);
+  assert.match(p.html(), /Approximate, at once: the flop's own solve is running/);
+  assert.match(p.html(), /3-way solves of the most similar flops \(Kd8c4h, Kd9c3h, Kd7c2h\)/);
+  await p.land(1);
+  await opened;
+  assert.doesNotMatch(p.html(), /Approximate/);
+});
+
 // a river after a turn Study solved live: that solve's view of the river at once (Advisor._study_prev)
 const PREV = {
   ...QUICK, street: "river", board: "Ks7d2cTh5s", pot_bb: 12.5, stack_bb: 93.75,

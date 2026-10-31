@@ -55,6 +55,9 @@
     return { ...st, [s]: [...(st[s] || []), act] };
   }
   const deal = (st, cards) => ({ ...st, board: st.board + cards });
+  // how many saw the flop: the seats that acted preflop less those that folded
+  const sawFlop = (st) => { const pre = st.preflop || [], seats = (f) => new Set(pre.filter(f).map(a => a.pos)).size;
+                            return seats(() => true) - seats(a => a.action === "fold"); };
   // n random cards off the board
   function randomCards(st, n, rnd = Math.random) {
     const used = new Set(cardsOf(st.board)), deck = [];
@@ -399,7 +402,7 @@
   function approxHtml(res) {
     const a = res.approximate || {}, s = res.solver || {}, before = res.street === "river" ? "turn" : "flop";
     return `Approximate, at once: ${esc(a.label || "")}${s.iterations != null ? ` (${s.iterations} iterations, ${num(s.exploitability_pct)}% of the pot from equilibrium on the ${before})` : ""}. `
-      + `The ${esc(res.street)}'s own solve is running and replaces it: then each hand's EVs, equities, the Breakdown and Simple.`;
+      + `The ${esc(res.street)}'s own solve is running and replaces it: then each hand's EVs, equities${res.multiway ? " and the Breakdown" : ", the Breakdown and Simple"}.`;
   }
 
   // ---- the runout report (Advisor.study with "runouts": a closed flop's turn or a closed turn's river, read off that
@@ -548,9 +551,11 @@
     const fetchAhead = () => { if (flop.length === 6 && !fetched.has(flop) && typeof globalThis.studyPrefetch === "function" && globalThis.studyPrefetch(request(state, ST.speed))) fetched.add(flop); };
     if (acc || n > 6) fetchAhead();
     // (an answer at once is asked for on a turn or river, read off a library flop's stored turn or the street before's
-    // live solve, and at Accurate on a flop, read off the stored flops nearest it)
+    // live solve, and at Accurate on a flop, read off the stored flops nearest it; on a flop three saw at Fast too: a
+    // 3-way flop the library doesn't store is solved live for 15 s, its answer at once read off the 3-way library's
+    // stored flops nearest it, Advisor._study_mw_near)
     asking = key;
-    answer(key, n >= 8 || (n === 6 && acc));
+    answer(key, n >= 8 || (n === 6 && (acc || sawFlop(state) >= 3)));
     busy = true;
     if (early.has(key)) { res = { ...early.get(key), key }; colors(); }   // (back at a node still solving)
     draw();
@@ -1072,7 +1077,7 @@
   const api = { fresh, parseLine, fromSpot, fromPayload, streetOf, request, kindOf, play, deal, randomCards, readCards, line, back, label,
                 eqr, cellValue, gridHtml, actionsHtml, detailHtml, lineHtml, statusHtml, solverHtml, classAt, combosOf,
                 passiveOf, blankPaint, brush, scoreBuild, grade, buildGridHtml, buildPanelHtml, buildDetailHtml,
-                catsOf, filterRes, filterHtml, runoutsHtml, reportHtml, roHeadHtml, skippedHtml, estimate, oppsOf, whoHtml, viewsOf, approxHtml,
+                catsOf, filterRes, filterHtml, runoutsHtml, reportHtml, roHeadHtml, skippedHtml, estimate, oppsOf, whoHtml, viewsOf, approxHtml, sawFlop,
                 open, close, act, state: ST };
   if (typeof module === "object" && module.exports) module.exports = api; else globalThis.Study = api;
 })();
