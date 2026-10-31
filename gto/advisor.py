@@ -2750,7 +2750,10 @@ class Advisor:
         game (pf_game's equilibrium: every class's mix and EVs), where one is in hand (solved here, or stored: the
         standard games); else {"study": "pf_unsolved", "game", "key", "estimate_s"} (the page offers to solve it) or
         {"study": "pf_none", "reason"} (a game the solve doesn't take). "preflop_solve": {"run": seconds} runs the
-        game's solve that much more (from where it was) and answers {"study": "pf_progress", "pf_solve": its status}."""
+        game's solve that much more (from where it was) and answers {"study": "pf_progress", "pf_solve": its status}.
+        {"export": true} packs a finished solve run here for the page to keep ({"study": "pf_export", "key",
+        "iterations", "mbb", "blob"}; "blob" null if there's none), and {"load": blob, "iterations": n} takes it back
+        (where the worker no longer holds it) before answering the node."""
         from . import pf_study
         t0 = time.time()
         spec, why = pf_study.spec_of(st)
@@ -2761,6 +2764,14 @@ class Advisor:
             s = pf_study.solve(spec, sec, self.should_stop)
             return {"study": "pf_progress", "street": "preflop", "pf_solve": s.status(),
                     "seconds": round(time.time() - t0, 2)}
+        if isinstance(pfs, dict) and pfs.get("export"):
+            out = pf_study.export(spec) or {"key": spec.key, "blob": None}
+            return {"study": "pf_export", "street": "preflop", **out}
+        if isinstance(pfs, dict) and pfs.get("load") and pf_study.held(spec) is None:
+            try:
+                pf_study.load(spec, str(pfs["load"]), int(pfs.get("iterations") or 0))
+            except (ValueError, TypeError):   # (another tree's, or not a solve: the game offered as unsolved)
+                pass
         s = pf_study.held(spec)
         if s is None:
             return {"study": "pf_unsolved", "street": "preflop", "game": spec.label(), "key": spec.key,

@@ -26,6 +26,7 @@ player the solve never brings to the node (a 0% move on the way) is taken to mak
 plays and which fit published solves better: README, Preflop equilibrium). Checked against a direct computation
 over class pairs wherever two players are left (tests/test_pf_study.py)."""
 from __future__ import annotations
+import base64
 import os
 import sys
 import time
@@ -262,6 +263,7 @@ class Solve:
         self.expl: Optional[List[float]] = None       # bb/hand each seat gains by best-responding
         self.expl_at = -1
         self.stored = False
+        self.cached = False      # (a solve run earlier in the browser and kept there: load())
         self.stored_mbb: Optional[float] = None
         self._vals = None
         if stored is not None:
@@ -304,7 +306,8 @@ class Solve:
 
     def status(self) -> dict:
         return {"key": self.spec.key, "label": self.spec.label(), "iterations": self.iters, "done": self.done,
-                "max_iterations": MAX_ITERS, "target_mbb": self.target, "stored": self.stored,
+                "max_iterations": MAX_ITERS, "target_mbb": self.target, "stored": self.stored and not self.cached,
+                "cached": self.cached,
                 "mbb": None if self.mbb is None else round(self.mbb, 2),
                 "measured_at": self.expl_at if self.expl is not None else (self.iters if self.mbb is not None else None),
                 "seconds": round(self.seconds, 1)}
@@ -515,6 +518,30 @@ def solve(spec: Spec, seconds: float, should_stop: Optional[Callable[[], bool]] 
     s = held(spec) or _keep(Solve(spec))
     _keep(s)
     return s.run(seconds, should_stop)
+
+
+def export(spec: Spec) -> Optional[dict]:
+    """A finished solve run here, packed for the page to keep (pack(), base64; Study keeps it in the browser's
+    IndexedDB and hands it back with load() once the worker no longer holds it): {"key", "iterations", "mbb",
+    "blob"}, or None (none run here, or not finished)."""
+    s = held(spec, load=False)
+    if s is None or s.stored or not s.done:
+        return None
+    mbb = s.mbb
+    blob = pack(s.game, float("nan") if mbb is None else mbb)
+    return {"key": spec.key, "iterations": s.iters, "mbb": None if mbb is None else round(mbb, 3),
+            "blob": base64.b64encode(blob).decode("ascii")}
+
+
+def load(spec: Spec, blob: str, iterations: int) -> Solve:
+    """export()'s solve back in hand (the page's copy): its strategy as stored, its iterations and distance from
+    equilibrium as measured when it was run. ValueError where it isn't this game's tree."""
+    try:
+        s = Solve(spec, base64.b64decode(blob))
+    except zlib.error as e:
+        raise ValueError(f"not a packed solve: {e}") from e
+    s.iters, s.cached = int(iterations), True
+    return _keep(s)
 
 
 def estimate_seconds(spec: Spec, per_iter: Optional[float] = None) -> float:

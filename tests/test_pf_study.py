@@ -334,6 +334,46 @@ class TestAdvisor(unittest.TestCase):
         self.assertNotEqual(r.get("source"), "solver")
         self.assertEqual(r["street"], "flop")
 
+    def test_kept_and_back(self):
+        """A finished solve packed for the page ({"export": true}) and handed back once the worker no longer holds it
+        ({"load"}): the same mix and EVs (to the pack's 1/255 steps), marked as kept in the browser; a stored game,
+        an unfinished solve or none give no blob; a bad blob leaves the game unsolved. Custom sizes ("pf_sizes")."""
+        PS._HELD.clear()
+        st = {"players": 3, "pf_sizes": {"open": 2.2, "four_x": 2.5}}
+        self.assertEqual(self.study(preflop_solve={"export": True}, **st)["blob"], None)       # (none run)
+        self.assertIsNone(self.study(preflop_solve={"export": True})["blob"])                  # (the stored game)
+        p = self.study(preflop_solve={"run": 0.5}, **st)
+        self.assertFalse(p["pf_solve"]["done"])
+        self.assertIsNone(self.study(preflop_solve={"export": True}, **st)["blob"])            # (not finished)
+        while not p["pf_solve"]["done"]:
+            p = self.study(preflop_solve={"run": 5}, **st)
+        line = [{"pos": "BTN", "action": "raise", "to": 2.2}]
+        live = self.study(preflop=line, **st)
+        self.assertEqual((live["actor"], live["pf_solve"]["key"]), ("SB", "3max_100bb_four_x2.5_open2.2"))
+        self.assertIn("opens 2.2bb (SB 3), 3bets 3x / 4.8x from the blinds, 4bets 2.5x", live["pf_solve"]["label"])
+        e = self.study(preflop_solve={"export": True}, **st)
+        self.assertEqual((e["study"], e["key"], e["iterations"]), ("pf_export", "3max_100bb_four_x2.5_open2.2", PS.MAX_ITERS))
+        self.assertLess(len(e["blob"]), 40000)
+        PS._HELD.clear()
+        self.assertEqual(self.study(preflop=line, **st)["study"], "pf_unsolved")
+        bad = self.study(preflop=line, preflop_solve={"load": "bm90IGEgc29sdmU=", "iterations": 5}, **st)
+        self.assertEqual(bad["study"], "pf_unsolved")
+        back = self.study(preflop=line, preflop_solve={"load": e["blob"], "iterations": e["iterations"]}, **st)
+        self.assertEqual((back["study"], back["actor"]), ("node", "SB"))
+        self.assertTrue(back["pf_solve"]["cached"])
+        self.assertFalse(back["pf_solve"]["stored"])
+        self.assertTrue(back["pf_solve"]["done"])
+        self.assertEqual((back["pf_solve"]["iterations"], back["pf_solve"]["mbb"]), (PS.MAX_ITERS, round(e["mbb"], 2)))
+        worst = 0.0
+        for cl, c in live["grid"]["cells"].items():
+            b = back["grid"]["cells"][cl]
+            worst = max(worst, max(abs(x - y) for x, y in zip(c["f"], b["f"])))
+        self.assertLess(worst, 0.006)
+        self.assertAlmostEqual(back["range_ev_bb"], live["range_ev_bb"], delta=0.01)
+        # (held now: its nodes answer without the blob, and it isn't exported again)
+        self.assertTrue(self.study(**st)["pf_solve"]["cached"])
+        self.assertIsNone(self.study(preflop_solve={"export": True}, **st)["blob"])
+
     def test_refused(self):
         r = self.study(players=8)
         self.assertEqual((r["study"], r["street"]), ("pf_none", "preflop"))

@@ -796,6 +796,128 @@ test("Study's Solver source on a game the solve doesn't take: why, and the chart
   assert.doesNotMatch(p.html(), /data-pfsolve/);
 });
 
+test("the Preflop solve's game: the form's fields read and clamped, its state (sizes where not the defaults), the game key, the form", () => {
+  assert.deepEqual(S.readGame({}), S.PF_GAME);
+  const g = S.readGame({ players: "3", stack: "40", ante: "0.1", straddle: true, rake: "5", cap: "3", open: "2.2", sb_open: "", ip_3bet: "9", blind_3bet: "x", four_x: "2.5" });
+  assert.deepEqual(g, { players: 3, stack: 40, ante: 0.1, straddle: true, rake: 5, cap: 3, open: 2.2, sb_open: 3, ip_3bet: 5, blind_3bet: 4.8, four_x: 2.5 });
+  assert.equal(S.readGame({ players: 2, straddle: true }).straddle, false);   // (no straddle heads-up)
+  assert.equal(S.readGame({ players: 9 }).players, 6);                       // (2-6 in the browser)
+  assert.equal(S.readGame({ players: 7 }, 7).players, 7);
+  assert.equal(S.readGame({ stack: 5000 }).stack, 250);
+  assert.deepEqual(S.gameState(g), { players: 3, stack: 40, board: "", preflop: [], flop: [], turn: [], river: [], ante: 0.1, straddle: true,
+                                     rake: 0.05, rake_cap: 3, pf_sizes: { open: 2.2, ip_3bet: 5, four_x: 2.5 } });
+  assert.deepEqual(S.gameState(S.PF_GAME), S.fresh());
+  assert.equal(S.gameState({ rake: 0, cap: 3 }).rake_cap, undefined);
+  // the solver's request carries the sizes preflop; the charts' and later streets' don't
+  const st = S.gameState(g);
+  assert.deepEqual(S.request(st, "fast", "solver").pf_sizes, { open: 2.2, ip_3bet: 5, four_x: 2.5 });
+  assert.equal(S.request(st, "fast", "charts").pf_sizes, undefined);
+  assert.equal(S.request(S.deal(st, "Kd7c2h"), "fast", "solver").pf_sizes, undefined);
+  // the game key: a line played in it is the same game; another size isn't
+  const played = S.play(st, { street: "preflop", actor: "BTN" }, { action: "raise to 2.2bb", amount_bb: 2.2 });
+  assert.equal(S.gameKey(played), S.gameKey(st));
+  assert.notEqual(S.gameKey(S.gameState({ ...g, open: 2.5 })), S.gameKey(st));
+  // the table's game
+  assert.deepEqual(S.gameOf({ players: 9, stacks: { UTG: 60, BB: 60 }, ante: 0.2, rake: 0.05, rake_cap: 4 }),
+                   { ...S.PF_GAME, stack: 60, ante: 0.2, rake: 5, cap: 4 });
+  const h = S.gameHtml(g);
+  assert.match(h, /<option value="3" selected>3<\/option>/);
+  assert.match(h, /<option value="2">2 \(heads-up\)<\/option>/);
+  assert.doesNotMatch(h, /value="7"/);
+  assert.match(h, /name="open" value="2.2" min="2" max="5" step="0.1"/);
+  assert.match(h, /name="straddle" checked>/);
+  assert.equal((h.match(/data-ctl="pfg"/g) || []).length, 11);
+  assert.match(S.gameHtml({ players: 2 }), /name="straddle" disabled>/);
+});
+
+test("Preflop solve from the menu: the form's game asked of the solve, a change solving another game (the running solve stopped), the solve kept in the browser and handed back", async () => {
+  const kept = new Map(), puts = [];
+  const cache = { get: async (k) => kept.get(k) || null, put: async (k, v) => { puts.push(k); kept.set(k, v); }, del: async (k) => { kept.delete(k); } };
+  const UNSOLVED = (q) => ({ study: "pf_unsolved", street: "preflop", game: `${q.players} players`, key: `${q.players}max_${q.stack}bb`, estimate_s: 3 });
+  let chunks = 0, loaded = null;
+  const node = (q, extra = {}) => ({ ...PF_NODE, actor: "UTG", pf_solve: { ...PF_NODE.pf_solve, key: `${q.players}max_${q.stack}bb`, stored: false, ...extra } });
+  const live = (q) => q.preflop_solve && q.preflop_solve.run ? { study: "pf_progress", street: "preflop", pf_solve: { iterations: 100 * ++chunks, mbb: 1, target_mbb: 0, max_iterations: 200, done: chunks >= 2 } }
+    : q.preflop_solve && q.preflop_solve.export ? { study: "pf_export", street: "preflop", key: `${q.players}max_${q.stack}bb`, iterations: 200, mbb: 0.9, blob: "QUJD" }
+    : q.preflop_solve && q.preflop_solve.load ? (loaded = q.preflop_solve, node(q, { cached: true, done: true, iterations: q.preflop_solve.iterations }))
+    : q.preflop_solve ? (chunks >= 2 && q.players === 4 ? node(q, { done: true, iterations: 200 }) : UNSOLVED(q))
+    : { ...PF_NODE, source: undefined, range_ev_bb: null };
+  const p = await studyPage(null, live, { studyPfCache: cache, WORKER_VERSION: "w1",
+    studyHand: () => ({ players: 4, stack: 100, hero: "BB", rake: 0, board: "" }) });
+  const opened = p.ctx.Study.open({ view: "preflop" });
+  await p.tick();
+  assert.equal(p.asked[0].q.preflop_solve, true);
+  assert.equal(p.asked[0].q.players, 4);   // (the table's game, the first time)
+  await p.land(1);
+  await opened;
+  assert.match(p.html(), /<option value="pfgame" selected>Preflop solve: a game you set<\/option>/);
+  assert.match(p.html(), /class="sy-pfg"/);
+  assert.match(p.html(), /Solve this game's preflop<\/b>: 4 players\./);
+  // solved: two chunks (the node asked after the first), then the node again and the solve kept
+  p.ctx.Study.act({ pfsolve: "" });
+  await p.tick();
+  await p.land(2); await p.land(3); await p.land(4);
+  assert.equal(p.asked[4].q.preflop_solve, true);
+  await p.land(5);
+  assert.equal(JSON.stringify(p.asked[5].q.preflop_solve), '{"export":true}');
+  await p.land(6);
+  assert.deepEqual(puts, ["w1/4max_100bb"]);
+  assert.equal(kept.get("w1/4max_100bb").blob, "QUJD");
+  assert.equal(kept.get("w1/4max_100bb").it, 200);
+  // another game from the form: its first decision (an offer); a solve started there stops when the form changes again
+  p.ctx.Study.setGame({ players: 3, stack: 100 });
+  await p.tick();
+  assert.equal(p.asked[6].q.players, 3);
+  await p.land(7);
+  assert.match(p.html(), /Solve this game's preflop<\/b>: 3 players\./);
+  p.ctx.Study.act({ pfsolve: "" });
+  await p.tick();
+  assert.equal(JSON.stringify(p.asked[7].q.preflop_solve), '{"run":4}');
+  p.ctx.Study.setGame({ players: 4, stack: 100 });   // (back to the solved game: its node in hand, the 3-handed solve stopped)
+  await p.tick();
+  assert.equal(p.ctx.Study.state.pfRun, null);
+  assert.equal(p.asked.length, 8);
+  assert.match(p.html(), /<b>UTG<\/b> to act/);
+  await p.land(8);   // (the stopped chunk of the 3-handed game ends: nothing more asked for it)
+  assert.equal(p.asked.length, 8);
+  // the same game again: nothing asked
+  p.ctx.Study.setGame({ players: "4", stack: "100" });
+  await p.tick();
+  assert.equal(p.asked.length, 8);
+  p.ctx.Study.close();
+  // the page opened again (a new worker, holding no solve): the game's solve from the browser's cache, handed back
+  chunks = 0;
+  const q = await studyPage(null, live, { studyPfCache: cache, WORKER_VERSION: "w1", studyHand: () => ({ players: 4, stack: 100 }) });
+  const o2 = q.ctx.Study.open({ view: "preflop" });
+  await q.tick();
+  await q.land(1);
+  assert.equal(JSON.stringify(q.asked[1].q.preflop_solve), '{"load":"QUJD","iterations":200}');
+  assert.equal(q.asked[1].q.players, 4);
+  await q.land(2);
+  await o2;
+  assert.equal(JSON.stringify(loaded), '{"load":"QUJD","iterations":200}');
+  assert.match(q.html(), /solved earlier in this browser, 200 iterations/);
+  assert.match(q.html(), /<b>UTG<\/b> to act/);
+  // another worker version: not this solver's, so not handed back
+  const r = await studyPage(null, live, { studyPfCache: cache, WORKER_VERSION: "w2", studyHand: () => ({ players: 4, stack: 100 }) });
+  const o3 = r.ctx.Study.open({ view: "preflop" });
+  await r.tick();
+  await r.land(1);
+  await o3;
+  assert.equal(r.asked.length, 1);
+  assert.match(r.html(), /Solve this game's preflop/);
+  // a copy the worker refuses (another tree's) is dropped from the cache
+  kept.set("w2/4max_100bb", { blob: "bad", it: 5 });
+  const u = await studyPage(null, (x) => x.preflop_solve ? UNSOLVED(x) : live(x), { studyPfCache: cache, WORKER_VERSION: "w2", studyHand: () => ({ players: 4, stack: 100 }) });
+  const o4 = u.ctx.Study.open({ view: "preflop" });
+  await u.tick();
+  await u.land(1);
+  await u.land(2);
+  await o4;
+  assert.equal(JSON.stringify(u.asked[1].q.preflop_solve), '{"load":"bad","iterations":5}');
+  assert.equal(kept.has("w2/4max_100bb"), false);
+  assert.match(u.html(), /Solve this game's preflop/);
+});
+
 test("the Solver source's buttons are among the panel's clickable data attributes", () => {
   const src = require("node:fs").readFileSync(path.join(__dirname, "..", "..", "gto", "static", "study.js"), "utf8");
   const sel = /const data = \(t\) => \{ const e = t\.closest\("([^"]+)"\)/.exec(src)[1].split(",");

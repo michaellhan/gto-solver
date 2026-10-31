@@ -44,8 +44,52 @@
   // the solver's request for the node: Advisor.study; preflop with the Solver source (pf "solver") the preflop solve's
   // node ("preflop_solve": gto/pf_study.py, the page's game solved by pf_game), else the charts' mix
   const request = (st, speed, pf) => ({ ...fromPayload(st), study: true, speed,
-    ...(pf === "solver" && streetOf(st) === "preflop" ? { preflop_solve: true } : {}) });
+    ...(pf === "solver" && streetOf(st) === "preflop" ? { preflop_solve: true, ...(st.pf_sizes ? { pf_sizes: { ...st.pf_sizes } } : {}) } : {}) });
   const solverPre = (res) => !!res && res.street === "preflop" && res.source === "solver";
+  // ---- the menu's Preflop solve (/preflop/; the start "pfgame"): a game set in a form, every preflop decision answered
+  // by its solve. The raise sizes as gto/pf_study.py's SIZE_LIMITS (opens in bb, 3bets and the 4bet as multiples); the
+  // rake in percent, its cap in bb (0: none); 2-6 players in the browser, 7 on the local server
+  const PF_GAME = { players: 6, stack: 100, ante: 0, straddle: false, rake: 0, cap: 0, open: 2.5, sb_open: 3, ip_3bet: 3, blind_3bet: 4.8, four_x: 2.3 };
+  const PF_FIELDS = [["stack", "Stack", 10, 250, 5, "bb", "Every seat's stack"], ["ante", "Ante", 0, 2, 0.05, "bb", "Each player's ante"],
+    ["rake", "Rake", 0, 10, 0.5, "%", "The rake, of a pot that sees a flop"], ["cap", "Cap", 0, 20, 0.5, "bb", "The rake's cap (0: none)"],
+    ["open", "Open", 2, 5, 0.1, "bb", "A raise first in"], ["sb_open", "SB open", 2, 5, 0.1, "bb", "The small blind's raise first in"],
+    ["ip_3bet", "3bet", 2, 5, 0.1, "×", "A 3bet from a seat that isn't a blind, times the open"],
+    ["blind_3bet", "Blind 3bet", 2.5, 6, 0.1, "×", "A 3bet from a blind, times the open"], ["four_x", "4bet", 1.8, 3.5, 0.1, "×", "A 4bet, times the 3bet"]];
+  const SIZE_KEYS = ["open", "sb_open", "ip_3bet", "blind_3bet", "four_x"];
+  const pfMaxPlayers = () => typeof MODE === "string" && MODE === "server" ? 7 : 6;
+  // a form's values (strings or numbers) as a game: each field clamped to its range, a blank or bad one its default
+  function readGame(g, max = pfMaxPlayers()) {
+    const x = g || {}, out = { ...PF_GAME }, n = Math.round(+x.players);
+    out.players = n >= 2 && n <= max ? n : Math.min(PF_GAME.players, max);
+    for (const [k, , lo, hi] of PF_FIELDS) {
+      const v = x[k] === "" || x[k] == null ? NaN : +x[k];
+      if (isFinite(v)) out[k] = Math.round(Math.min(hi, Math.max(lo, v)) * 100) / 100;
+    }
+    out.straddle = (x.straddle === true || x.straddle === "true") && out.players >= 3;
+    return out;
+  }
+  // the game's first decision as a Study state (the sizes only where they aren't the defaults)
+  function gameState(g) {
+    g = readGame(g);
+    const sizes = Object.fromEntries(SIZE_KEYS.filter(k => Math.abs(g[k] - PF_GAME[k]) > 1e-9).map(k => [k, g[k]]));
+    return { ...fresh(g.players, g.stack), ...(g.ante ? { ante: g.ante } : {}), ...(g.straddle ? { straddle: true } : {}),
+             ...(g.rake ? { rake: g.rake / 100, ...(g.cap ? { rake_cap: g.cap } : {}) } : {}),
+             ...(Object.keys(sizes).length ? { pf_sizes: sizes } : {}) };
+  }
+  // the game a state is in (a solve running stops when Study moves to another game)
+  const gameKey = (st) => JSON.stringify(["players", "stack", "stacks", "ante", "straddle", "rake", "rake_cap", "payouts", "pf_sizes"].map(k => st && st[k] != null ? st[k] : null));
+  // the table's game, the form's start the first time (its stacks: the first seat's, the solve plays one depth)
+  const gameOf = (p) => readGame({ players: p.players, stack: p.stacks ? Object.values(p.stacks)[0] : p.stack, ante: p.ante || 0,
+                                   straddle: !!p.straddle, rake: (p.rake || 0) * 100, cap: p.rake_cap || 0 });
+  function gameHtml(g) {
+    g = readGame(g);
+    const field = ([k, t, lo, hi, step, unit, tip]) => `<label title="${esc(tip)}">${t} <input type="number" data-ctl="pfg" name="${k}" value="${g[k]}" min="${lo}" max="${hi}" step="${step}" inputmode="decimal"><span class="sy-mut">${unit}</span></label>`;
+    return `<div class="sy-pfg" role="group" aria-label="The game"><label title="Players at the table">Players <select data-ctl="pfg" name="players">`
+      + Array.from({ length: pfMaxPlayers() - 1 }, (_, i) => i + 2).map(n => `<option value="${n}"${n === g.players ? " selected" : ""}>${n === 2 ? "2 (heads-up)" : n}</option>`).join("") + `</select></label>`
+      + PF_FIELDS.slice(0, 2).map(field).join("")
+      + `<label title="A straddle (3 players or more)"><input type="checkbox" data-ctl="pfg" name="straddle"${g.straddle ? " checked" : ""}${g.players < 3 ? " disabled" : ""}> Straddle</label>`
+      + PF_FIELDS.slice(2, 4).map(field).join("") + `<span class="sy-pfgsep"></span>` + PF_FIELDS.slice(4).map(field).join("") + `</div>`;
+  }
   // what an advice action's name plays as: check, call, fold, bet, raise or all-in
   const kindOf = (n) => n === "all-in" ? "all-in" : (/^(check|call|fold|bet|raise)/.exec(n) || [null, n])[1];
   // the state after the actor takes advice action a (amount_bb: a bet's or raise's total this street)
@@ -124,6 +168,35 @@
   // the preflop solve's chunks (seconds each: Advisor.study's "preflop_solve": {"run"}), and the iterations a 6-max one
   // takes to its target (its bar before the first measure; after it, the measure's distance from the target)
   const PF_CHUNK = 4, PF_ITERS = 1000;
+  // finished solves kept in the browser (IndexedDB "gto-pf": the worker's pack of one, ~0.3 MB at 6-max, keyed by the
+  // worker's version and the game, at most PF_KEEP, the oldest dropped), handed back when the worker no longer holds
+  // the game's ({"preflop_solve": {"load"}}); the page's studyPfCache ({get, put, del}) stands in where set
+  const PF_KEEP = 6;
+  const idb = {
+    db: null,
+    open() {
+      if (!this.db) this.db = new Promise((ok, no) => {
+        const q = indexedDB.open("gto-pf", 1);
+        q.onupgradeneeded = () => q.result.createObjectStore("solves");
+        q.onsuccess = () => ok(q.result); q.onerror = () => no(q.error);
+      });
+      return this.db;
+    },
+    async tx(mode, f) {
+      const db = await this.open();
+      return new Promise((ok, no) => { const t = db.transaction("solves", mode), q = f(t.objectStore("solves")); t.oncomplete = () => ok(q.result); t.onerror = () => no(t.error); });
+    },
+    get(k) { return globalThis.indexedDB ? this.tx("readonly", s => s.get(k)) : Promise.resolve(null); },
+    del(k) { return globalThis.indexedDB ? this.tx("readwrite", s => s.delete(k)) : Promise.resolve(); },
+    async put(k, v) {
+      if (!globalThis.indexedDB) return;
+      await this.tx("readwrite", s => s.put(v, k));
+      const keys = await this.tx("readonly", s => s.getAllKeys()), vals = await this.tx("readonly", s => s.getAll());
+      for (const [x] of keys.map((x, i) => [x, (vals[i] && vals[i].at) || 0]).sort((a, b) => b[1] - a[1]).slice(PF_KEEP)) await this.del(x);
+    },
+  };
+  const pfCache = () => globalThis.studyPfCache || idb;
+  const cacheKey = (key) => (typeof WORKER_VERSION === "string" ? WORKER_VERSION : "dev") + "/" + key;
   const ROUGH_TIP = "The range almost never takes this, so how the opponent answers it is barely solved: its EV is rough, usually lower than exact.";
   const rough = (res, a) => !!(res && res.actions && res.actions[a] && res.actions[a].rough_ev);
   const roughEv = (res, a, v) => rough(res, a) ? `<small class="sy-rough" title="${ROUGH_TIP}">≈ ${sgn(v)}</small>` : `<small>${sgn(v)}</small>`;
@@ -382,7 +455,7 @@
   function solverHtml(res) {
     if (solverPre(res)) {
       const p = res.pf_solve || {};
-      return `Preflop solve of this game (${esc(p.label || "")}): ${p.stored ? "precomputed, " : ""}${p.iterations} iterations`
+      return `Preflop solve of this game (${esc(p.label || "")}): ${p.cached ? "solved earlier in this browser, " : p.stored ? "precomputed, " : ""}${p.iterations} iterations`
         + (p.mbb != null ? `, ${num(p.mbb)} mbb/hand from equilibrium (a seat's average)` : "") + (p.done ? "" : ` <span class="sy-rough meh">Not finished: the numbers can still move.</span>`)
         + `. The solve's own equilibrium (its flops valued by the flop library's realization), not the charts: the advice plays the charts, which fit published solves better.`
         + (res.rough ? ` <span class="sy-rough meh">A line the solve rarely or never plays: the mix here is barely solved (the range gives up ${num(res.regret_bb || 0)}bb a hand to its best actions here), so take its EVs as rough.</span>` : "");
@@ -498,10 +571,10 @@
   // ---- the panel (browser)
   let box = null, index = null, res = null, err = null, busy = false, gen = 0;
   const ST = { state: null, spot: "", speed: typeof SPEED === "string" && SPEED !== "quick" ? SPEED : "fast", view: "strategy", who: "me", sel: null, hover: null, focus: null,
-               build: false, brush: 0, amt: 1, tally: { n: 0, acc: 0 }, filter: null, ro: null, roWho: "first", pf: "charts", pfRun: null,
+               build: false, brush: 0, amt: 1, tally: { n: 0, acc: 0 }, filter: null, ro: null, roWho: "first", pf: "charts", pfRun: null, pfGame: null,
                rui: { view: "table", sort: "card", desc: true, group: "", filter: {} } };
-  try { const s = JSON.parse(localStorage.getItem("gto-study")) || {}; for (const k of ["state", "spot", "speed", "view", "build", "rui", "pf"]) if (s[k] != null) ST[k] = s[k]; } catch (e) {}
-  const store = () => { try { localStorage.setItem("gto-study", JSON.stringify({ state: ST.state, spot: ST.spot, speed: ST.speed, view: ST.view, build: ST.build, rui: ST.rui, pf: ST.pf })); } catch (e) {} };
+  try { const s = JSON.parse(localStorage.getItem("gto-study")) || {}; for (const k of ["state", "spot", "speed", "view", "build", "rui", "pf", "pfGame"]) if (s[k] != null) ST[k] = s[k]; } catch (e) {}
+  const store = () => { try { localStorage.setItem("gto-study", JSON.stringify({ state: ST.state, spot: ST.spot, speed: ST.speed, view: ST.view, build: ST.build, rui: ST.rui, pf: ST.pf, pfGame: ST.pfGame })); } catch (e) {} };
   // the range builder's paints, by the answer they're of
   const paints = new Map();
   const building = () => ST.build && res && res.study === "node" && !busy;
@@ -541,6 +614,7 @@
     // doesn't wait behind it; it stays cached part way and goes on when the node is asked again)
     const left = busy && res && res.approximate ? answers.get(res.key) : null;
     ST.state = state; ST.sel = ST.hover = ST.focus = null; ST.ro = null; err = null; store();
+    if (ST.pfRun && ST.pfRun.game !== gameKey(state)) { ST.pfRun.stop = true; ST.pfRun = null; }   // (another game's solve)
     const key = JSON.stringify(request(state, ST.speed, ST.pf)), g = ++gen;
     if (left && stopFn && left !== answers.get(key)) stops.push(stopFn(left.req));
     if (stops.length) { await Promise.all(stops); if (g !== gen) return; }
@@ -559,8 +633,13 @@
     busy = true;
     if (early.has(key)) { res = { ...early.get(key), key }; colors(); }   // (back at a node still solving)
     draw();
-    const r = await answers.get(key);
+    let r = await answers.get(key);
     if (g !== gen) return;
+    if (r.study === "pf_unsolved" && !ST.pfRun) {   // (a game solved before in this browser: its solve handed back)
+      const r2 = await pfLoad(key, r.key);
+      if (g !== gen) return;
+      if (r2) r = r2;
+    }
     busy = false;
     if (r.cancelled) { err = "The request was cancelled."; res = null; }
     else if (r.error) { err = r.error; res = null; }
@@ -574,7 +653,7 @@
   // Stop; the node shown is asked again after each chunk (its answer from the solve so far), so it converges in view
   async function pfSolve() {
     if ((ST.pfRun && !ST.pfRun.err) || !ST.state) return;
-    const base = request(ST.state, ST.speed, "solver"), run = ST.pfRun = { it: 0, mbb: null, secs: 0, t0: Date.now() };
+    const base = request(ST.state, ST.speed, "solver"), run = ST.pfRun = { it: 0, mbb: null, secs: 0, t0: Date.now(), game: gameKey(ST.state) };
     draw();
     while (ST.pfRun === run && !run.stop) {
       let r;
@@ -587,6 +666,25 @@
     }
     if (ST.pfRun === run) ST.pfRun = run.err ? run : null;
     await refreshPf();
+    if (run.done && !run.err) await pfKeep(base);
+  }
+  // a finished solve kept in the browser ({"preflop_solve": {"export": true}}: its pack), and one handed back to the
+  // worker for the node asked (key: its request) where the cache has the game's (gkey: pf_study's Spec.key)
+  async function pfKeep(base) {
+    try {
+      const r = await ask({ ...base, preflop_solve: { export: true } });
+      if (r && r.study === "pf_export" && r.blob) await pfCache().put(cacheKey(r.key), { blob: r.blob, it: r.iterations, mbb: r.mbb, at: Date.now() });
+    } catch (e) {}
+  }
+  async function pfLoad(key, gkey) {
+    let c = null;
+    try { c = await pfCache().get(cacheKey(gkey)); } catch (e) {}
+    if (!c || !c.blob) return null;
+    let r = null;
+    try { r = await ask({ ...JSON.parse(key), preflop_solve: { load: c.blob, iterations: c.it } }); } catch (e) {}
+    if (!r || r.study !== "node") { if (r && r.study === "pf_unsolved") try { await pfCache().del(cacheKey(gkey)); } catch (e) {} return null; }
+    answers.set(key, Promise.resolve(r));
+    return r;
   }
   // the node shown asked again from the solve as it is now (the solver source's answers before it are dropped)
   async function refreshPf() {
@@ -654,10 +752,11 @@
   }
   function controls() {
     const spots = (index && index.spots || []).map(s => [s.id, s.label]);
-    const opts = [["", "New hand (6-max, 100bb)"], ...spots, ["table", "The hand on the table"]];
+    const opts = [["", "New hand (6-max, 100bb)"], ["pfgame", "Preflop solve: a game you set"], ...spots, ["table", "The hand on the table"]];
     return `<div class="sy-ctl"><select data-ctl="spot" aria-label="Start from">${opts.map(([v, t]) => `<option value="${v}"${v === ST.spot ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>`
       + `<span class="segment">${["fast", "accurate"].map(m => `<button data-speed="${m}" class="${m === ST.speed ? "active" : ""}">${m === "fast" ? "Fast" : "Accurate"}</button>`).join("")}</span>`
-      + `<button class="ghost" data-back ${back(ST.state) ? "" : "disabled"} title="Back one step (Backspace)">← Back</button></div>`;
+      + `<button class="ghost" data-back ${back(ST.state) ? "" : "disabled"} title="Back one step (Backspace)">← Back</button></div>`
+      + (ST.spot === "pfgame" ? gameHtml(ST.pfGame) : "");
   }
   const prev = (street) => street === "river" ? "turn" : "flop";
   // the preflop source: the charts' mix (the advice's), or the solve of this game (gto/pf_study.py: its mix and EVs)
@@ -738,9 +837,16 @@
     if (filtered.res !== res || filtered.key !== key) filtered = { res, key, out: filterRes(res, key) };
     return filtered.out;
   }
+  const formGame = () => {
+    const g = {};
+    box.querySelectorAll('[data-ctl="pfg"]').forEach(x => { g[x.name] = x.type === "checkbox" ? x.checked : x.value; });
+    return g;
+  };
   function draw() {
     if (!box) return;
     const b = box.querySelector(".sy-body");
+    // (a field of the game's form being typed in when a solve's progress redraws: its text and the focus kept)
+    const fe = document.activeElement, typing = fe && fe.dataset && fe.dataset.ctl === "pfg" && box.contains(fe) ? { name: fe.name, value: fe.value } : null;
     // (while solving: the last decision dimmed under a spinner; the spinner alone after a deal or an error; the node's
     // answer at once as it is, the request's own replacing it)
     const now = quick(), dim = busy && res && res.study === "node" && !now;
@@ -751,6 +857,8 @@
     const sp = b.querySelector(".sy-simple");
     if (sp && res && !busy) showSimple(sp);
     const inp = b.querySelector("[data-deal] input"); if (inp && !busy && !("ontouchstart" in window)) inp.focus();
+    const tf = typing && b.querySelector(`[data-ctl="pfg"][name="${typing.name}"]`);
+    if (tf) { if (tf.type !== "checkbox") tf.value = typing.value; tf.focus(); }
     // (a redraw drops the focused button: the panel keeps the focus, so its keys still work)
     if (!box.hidden && !box.contains(document.activeElement)) box.querySelector(".sy-card").focus({ preventScroll: true });
   }
@@ -800,12 +908,24 @@
   }
   function startFrom(spot) {
     ST.spot = spot;
+    if (spot === "pfgame") {   // (the form's game, first the table's; its preflop by the solve)
+      const p = !ST.pfGame && typeof globalThis.studyHand === "function" ? globalThis.studyHand() : null;
+      ST.pfGame = readGame(ST.pfGame || (p ? gameOf(p) : PF_GAME)); ST.pf = "solver"; ST.build = false;
+      return go(gameState(ST.pfGame));
+    }
     if (spot === "table") {
       const p = typeof globalThis.studyHand === "function" ? globalThis.studyHand() : null;
       return go(p ? fromPayload(p) : fresh());
     }
     const sp = spot && index && index.spots.find(s => s.id === spot);
     return go(sp ? fromSpot(sp) : fresh());
+  }
+  // the form changed (g: its fields' values): its game from the first decision, unless it's the game already in view
+  function setGame(g) {
+    const now = readGame(g), st = gameState(now);
+    ST.pfGame = now; ST.spot = "pfgame"; ST.pf = "solver"; store();
+    if (ST.state && gameKey(st) === gameKey(ST.state)) return draw();
+    return go(st);
   }
   function stepBack() { const b = back(ST.state); if (b) go(b); }
   // a hand painted with the brush (not once scored): its cell and the range's totals redrawn in place
@@ -863,12 +983,17 @@
     gen++; busy = false; ST.pfRun = null;
     if (simpleApi()) simpleApi().stop(null, simpleStopFn());
     if (box) box.hidden = true; const m = document.getElementById("menuBtn"); if (m) m.focus();
-    if (globalThis.viewClosed) globalThis.viewClosed("study");
+    if (globalThis.viewClosed) globalThis.viewClosed(opened);
   }
   const CSS = `
   .sy { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,.55); display: flex; justify-content: center; align-items: flex-start; padding: 28px 16px 16px; }
   .sy-card:focus { outline: none; }
   .sy-unf { font-size: 11px; padding: 1px 6px; margin-left: 4px; }
+  .sy-pfg { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: 12px; color: var(--muted); }
+  .sy-pfg label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .sy-pfg input[type=number] { width: 4.6em; }
+  .sy-pfg .sy-mut { min-width: 1em; }
+  .sy-pfgsep { flex-basis: 100%; height: 0; }
   .sy-card { background: var(--panel2); color: var(--text); border: 1px solid var(--line2); border-radius: var(--r); width: min(1120px, 100%); max-height: calc(100dvh - 44px); display: flex; flex-direction: column; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
   .sy-head { display: flex; align-items: baseline; gap: 10px; padding: 10px 12px 6px; }
   .sy-sub { color: var(--muted); font-size: 12px; flex: 1; }
@@ -993,7 +1118,10 @@
     .sy-rol { left: 1px; top: 1px; padding: 0 1px; }
     .sy-rov { font-size: 8px; right: 1px; bottom: 0; }
   }`;
-  async function open() {
+  // opened as: "study" (the menu's Study, /study/) or "preflop" (its Preflop solve, /preflop/: the game form's start)
+  let opened = "study";
+  async function open(opts) {
+    opened = opts && opts.view === "preflop" ? "preflop" : "study";
     if (!document.getElementById("syStyle")) {
       const s = document.createElement("style"); s.id = "syStyle"; s.textContent = CSS; document.head.appendChild(s);
     }
@@ -1014,6 +1142,7 @@
       });
       box.addEventListener("change", (e) => {
         if (e.target.dataset.ctl === "spot") startFrom(e.target.value);
+        else if (e.target.dataset.ctl === "pfg") setGame(formGame());
         else if (e.target.dataset.ctl === "filter") { ST.filter = e.target.value || null; ST.hover = null; draw(); }
         else if (e.target.dataset.ctl === "rogroup") { ST.rui = { ...ST.rui, group: e.target.value }; store(); draw(); }
         else if (e.target.dataset.ctl === "rofilter") { ST.rui = { ...ST.rui, filter: e.target.value ? { cls: e.target.value } : {} }; store(); draw(); }
@@ -1021,6 +1150,7 @@
       });
       box.addEventListener("keydown", (e) => {
         if (e.key === "Escape") { e.stopPropagation(); close(); }
+        else if (e.key === "Enter" && e.target.dataset && e.target.dataset.ctl === "pfg") { e.preventDefault(); setGame(formGame()); }
         else if (e.key === "Backspace" && !/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) { e.preventDefault(); stepBack(); }
         else if ((e.key === "Enter" || e.key === " ") && e.target.matches("tr[data-act],tr[data-card],tr[data-rogroup],th[data-rosort]")) { e.preventDefault(); act(e.target.dataset); }
         else if (/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName) || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -1065,6 +1195,11 @@
       if (at.report && res && res.study === "deal") await (at.view ? reportFor(at) : runouts());
       const t = box.querySelector("[data-rosolve]") || box.querySelector("select, button"); if (t) t.focus(); return;
     }
+    if (opened === "preflop") {   // (the menu's Preflop solve: the game form, its first decision)
+      globalThis.STUDY_BUILD = false;
+      await startFrom("pfgame");
+      const t = box.querySelector('[data-ctl="pfg"]') || box.querySelector("select, button"); if (t) t.focus(); return;
+    }
     if (globalThis.STUDY_BUILD) {   // (the menu's Range builder: a random flop of the spot, building)
       globalThis.STUDY_BUILD = false; ST.build = true;
       const sp = index && (index.spots.find(s => s.id === ST.spot) || index.spots[0]);
@@ -1078,6 +1213,7 @@
                 eqr, cellValue, gridHtml, actionsHtml, detailHtml, lineHtml, statusHtml, solverHtml, classAt, combosOf,
                 passiveOf, blankPaint, brush, scoreBuild, grade, buildGridHtml, buildPanelHtml, buildDetailHtml,
                 catsOf, filterRes, filterHtml, runoutsHtml, reportHtml, roHeadHtml, skippedHtml, estimate, oppsOf, whoHtml, viewsOf, approxHtml, sawFlop,
+                PF_GAME, readGame, gameState, gameKey, gameOf, gameHtml, setGame,
                 open, close, act, state: ST };
   if (typeof module === "object" && module.exports) module.exports = api; else globalThis.Study = api;
 })();

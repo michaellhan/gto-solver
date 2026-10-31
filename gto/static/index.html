@@ -632,6 +632,7 @@
       <button id="drills" title="Drill one flop spot: random flops and hands from the precomputed solutions, each answer graded at once (keys 1-4, Space for the next)">Drills…</button>
       <button id="analyzeSession" title="A whole session's hand histories: each of your decisions solved and graded, the EV lost by street, position, spot and preflop situation, the biggest mistakes">Analyze session…</button>
       <button id="study" title="Browse the solver's strategy for a whole range, node by node: every hand's mix, EV and equity; play any action, deal any card">Study…</button>
+      <button id="pfSolve" title="Solve a game's preflop: set the players, stacks, ante, straddle, rake and raise sizes, then browse every hand's mix and EVs at every preflop decision (Study)">Preflop solve…</button>
       <button id="rangeBuilder" title="Paint a range's strategy yourself and score it against the solver's (Study's Build mode), on random flops of a precomputed spot">Range builder…</button>
       <button id="flopReports" title="The precomputed spots' flop strategy across every flop, by texture; click a flop to load it">Flop reports…</button>
       <button id="swapCols" class="wideonly" title="Put the advice on the left and the table on the right">Advice on the left</button>
@@ -939,7 +940,7 @@ const LIB_BASE = "flop_library/";
 // points its relative URLs at the root. gto/routes.py reads these two lines (scripts/deploy.sh writes the copies,
 // gto/server.py serves them). Opening a view pushes its URL and closing it pushes the solver's (Practice's, if
 // that's on under it); back and forward switch views; a view's URL opened directly opens it (applyRoute, at the end).
-const ROUTES = { practice: "Practice", drills: "Drills", reports: "Flop reports", session: "Analyze session", study: "Study", import: "Import hand" };
+const ROUTES = { practice: "Practice", drills: "Drills", reports: "Flop reports", session: "Analyze session", study: "Study", preflop: "Preflop solve", import: "Import hand" };
 const SPOT_ROUTES = ["drills", "reports"];
 const ROUTE_RE = new RegExp(`^(.*?/)(?:(${Object.keys(ROUTES).join("|")})(?:/([a-z0-9-]+))?/?)?(?:index\\.html)?$`);
 function parseRoute(pathname) {   // -> { root: the solver's path, view: "solver" or a ROUTES key, spot: a spot id or null }
@@ -2452,6 +2453,8 @@ document.getElementById("analyzeSession").onclick = () => openView("session");
 // Advisor.study), asked at the speed's budgets; it can start from the page's own hand (its advice payload)
 document.getElementById("study").onclick = () => openView("study");
 // the range builder: Study in its Build mode, from a random flop of its spot
+// the preflop solve of a game set in Study's form (study.js: the start "pfgame", /preflop/)
+document.getElementById("pfSolve").onclick = () => openView("preflop");
 document.getElementById("rangeBuilder").onclick = () => { window.STUDY_BUILD = true; openView("study"); };
 // onPartial (the browser's worker): Study's answer at once where one is in hand (a library flop's stored turn:
 // Advisor.instant), before the request's own; the promise's reqId stops it (simpleStop) once the mode is known
@@ -2483,6 +2486,8 @@ const VIEWS = {
              close: () => window.Session && window.Session.close(), err: "Couldn't load the session analyzer: " },
   study: { open: () => loadJs("study.js?v=" + SY_VERSION, () => window.Study).then(() => window.Study.open()),
            close: () => window.Study && window.Study.close(), err: "Couldn't load Study mode: " },
+  preflop: { open: () => loadJs("study.js?v=" + SY_VERSION, () => window.Study).then(() => window.Study.open({ view: "preflop" })),
+             close: () => window.Study && window.Study.close(), err: "Couldn't load Study mode: " },
   import: { open: hhOpen, close: () => { hhBox.hidden = true; window.viewClosed("import"); }, err: "" },
 };
 window.viewSpot = (name, spot, label) => { if (overlay !== name) return; overlaySpot = spot; overlayLabel = label || null; syncRoute(true); };
