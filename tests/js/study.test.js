@@ -46,6 +46,10 @@ test("a spot's preflop line and the page's hand become states", () => {
   assert.equal(S.streetOf(st), "flop");
   assert.equal(S.streetOf(S.fresh()), "preflop");
   assert.equal(S.streetOf(S.deal(st, "5s9h")), "river");
+  // a tournament's payouts, other tables and bounties stay (the page sends them only when set)
+  const t = { ...p, payouts: [50, 30, 20], field: { players: 20, chips: 600 }, bounties: { format: "pko", seats: { BB: 10 } } };
+  assert.deepEqual(Object.keys(S.fromPayload(t)).sort(), ["ante", "board", "bounties", "field", "flop", "payouts", "players", "preflop", "stack"]);
+  assert.deepEqual(S.request(S.fromPayload(t), "fast").payouts, [50, 30, 20]);
 });
 
 test("an action played goes on the street it was answered for", () => {

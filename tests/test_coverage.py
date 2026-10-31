@@ -2,6 +2,7 @@
 betting rules or equity, marked "fallback", never an error; a cancel still raises; Study answers preflop from the
 chart and says it can't after the flop. And the spots scripts/coverage_fuzz.py found unanswered or answered with a
 move the page can't play, answered properly (regressions)."""
+import gc
 import unittest
 from unittest import mock
 
@@ -55,6 +56,12 @@ class TestCatchAll(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.adv = Advisor(time_budget=1.0, prior_budget=0.3)
+
+    @classmethod
+    def tearDownClass(cls):
+        # (its cached solves: the suite runs in one process, where a class's advisor holds them to the end)
+        del cls.adv
+        gc.collect()
 
     def check(self, res, by, state):
         self.assertNotIn("error", res)
@@ -158,6 +165,12 @@ class TestFuzzFound(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.adv = Advisor(time_budget=1.0, prior_budget=0.3)
+
+    @classmethod
+    def tearDownClass(cls):
+        # (its cached solves: the suite runs in one process, where a class's advisor holds them to the end)
+        del cls.adv
+        gc.collect()
 
     def answer(self, st):
         res = self.adv.advise(st)

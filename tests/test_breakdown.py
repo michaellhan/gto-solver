@@ -1,4 +1,5 @@
 """The Breakdown view (gto/breakdown.py): hand categories, range equities, and the advisor's "breakdown" flag."""
+import gc
 import json
 import os
 import unittest
@@ -124,6 +125,12 @@ class AdvisorFlag(unittest.TestCase):
             cls.state = json.load(f)
         cls.plain = cls.adv.advise(dict(cls.state))
         cls.res = cls.adv.advise(dict(cls.state, breakdown=True))
+
+    @classmethod
+    def tearDownClass(cls):
+        # (its cached solves: the suite runs in one process, where a class's advisor holds them to the end)
+        del cls.adv
+        gc.collect()
 
     def test_flag_off_no_keys(self):
         self.assertNotIn("error", self.plain)

@@ -300,9 +300,11 @@ class TestAdvisor(unittest.TestCase):
         self.assertTrue(b["you_bust"]["BTN"]["in_hand"])        # 25 against 25: BB covers BTN (and BTN BB)
         self.assertIn("BTN", b["bust_you"])
         self.assertIn("bounties: PKO", note(r, "bounties: PKO"))
-        # the one-size view isn't worked out with bounties
-        r = self.A.advise(dict(st, flop=[X("BB", "check"), X("BTN", "check")], board="Kh7d2c5s", one_size="all"))
-        self.assertIn("bounties", r["error"])
+        # the one-size view is worked out with them (its solves pay the bounties too) and shows their notes
+        r = self.A.advise(dict(st, flop=[X("BB", "check"), X("BTN", "check")], board="Kh7d2c5s", one_size="list"))
+        self.assertNotIn("error", r)
+        self.assertTrue(r["one_size"]["tournament"][1].startswith("bounties: PKO"))
+        self.assertTrue(r["one_size"]["definition"].endswith("prize equity"))
 
     def test_parsing(self):
         base = {"players": 6, "bb": 1, "stacks": JAM_STACKS, "hero": "BB", "hole": "Ad2c", "preflop": SB_JAM}

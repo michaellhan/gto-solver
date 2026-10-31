@@ -1,5 +1,6 @@
 """Preflop locks: your read of an opponent (exploit.lock_preflop) reshapes their preflop strategy, the ranges replayed
 through it, and hero's line re-drawn against them (Advisor._locked, _vs_jam)."""
+import gc
 import unittest
 import numpy as np
 from gto import preflop as pf
@@ -118,6 +119,12 @@ class TestPreflopLocks(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.adv = Advisor(time_budget=0.5, prior_budget=0.2)
+
+    @classmethod
+    def tearDownClass(cls):
+        # (its cached solves: the suite runs in one process, where a class's advisor holds them to the end)
+        del cls.adv
+        gc.collect()
 
     def advise(self, hero, hole, preflop, locks=None, **kw):
         return self.adv.advise({"players": 6, "hero": hero, "hole": hole, "stack": 100, "preflop": preflop,

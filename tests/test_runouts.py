@@ -1,6 +1,7 @@
 """Turn and river reports (Study's report at a closed flop or turn: Advisor._runouts, gto/runouts.py): each next
 card's equity and chance, the report from a library flop's stored turns and from a live turn solve's rivers, held
 (from what's in hand) or solved, matching what Study's own answers give."""
+import gc
 import itertools
 import json
 import os
@@ -100,6 +101,12 @@ class TestReports(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.adv = advisor("fast")
+
+    @classmethod
+    def tearDownClass(cls):
+        # (its cached solves: the suite runs in one process, where a class's advisor holds them to the end)
+        del cls.adv
+        gc.collect()
 
     def study(self, **st):
         return self.adv.advise(dict({"players": 6, "stack": 100, "study": True, "budget": 1.0}, **st))

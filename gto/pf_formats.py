@@ -150,7 +150,7 @@ def _interp(table: Dict[float, Dict[str, dict]], grid, x: float, key: str) -> Op
         return None
     t = 0.0 if hi == lo else (x - lo) / (hi - lo)
     out = {}
-    for k in set(a) | set(b):
+    for k in dict.fromkeys([*a, *b]):   # (in order: a set's would follow the process's string hashes)
         out[k] = (1 - t) * a.get(k, 0.0) + t * b.get(k, 0.0)
     return out
 
@@ -243,7 +243,7 @@ def apply(base: Dict[str, np.ndarray], mv: Dict[str, np.ndarray]) -> Dict[str, n
     continuing total at most 1, then made monotone without adding to it (isotonic)."""
     from .pf_classes import CLASS_OF
     out = {}
-    for a in set(base) | {k for k in mv if k != "fold"}:
+    for a in dict.fromkeys([*base, *(k for k in mv if k != "fold")]):   # (the actions in order, as interp's)
         v = np.asarray(base.get(a, 0.0), float) + (mv[a][CLASS_OF] if a in mv else 0.0)
         out[a] = np.clip(v, 0.0, 1.0)
     tot = sum(out.values())

@@ -2489,13 +2489,12 @@ function showView(el, v, res, key) {
 // ---- the one-size view (simple.js, loaded the first time it's opened): the advice's decision solved again with one
 // bet size, for each candidate size, and with all of them mixed (gto/advisor.py Advisor._one_size_view, the request's
 // "one_size"), always at Fast, one solve a request; heads-up after the flop where you can bet (or, facing a bet, raise),
-// at equilibrium (not against the pool, a lock, tournament payouts or bounties). A new spot's advice stops its solves
+// at equilibrium (not against the pool or a lock; a tournament's in prize equity). A new spot's advice stops its solves
 // (analyze); its answers stay.
 function simpleOk(res, key) {
   let st = {}; try { st = JSON.parse(key); } catch (e) { return false; }
   const can = res.actions.some(a => a.action === "check") || res.actions.some(a => a.action === "fold") && res.actions.some(a => /^(raise|all-in)/.test(a.action));
-  return !res.multiway && !res.solved && res.street !== "preflop" && can && !res.locked
-    && st.opponents !== "pool" && !(st.payouts && String(st.payouts).trim()) && !st.bounties;
+  return !res.multiway && !res.solved && res.street !== "preflop" && can && !res.locked && st.opponents !== "pool";
 }
 function simpleAsk(st) {
   const [budget, prior_budget] = BUDGETS[MODE].fast;

@@ -1,6 +1,7 @@
 """Study mode (Advisor.study, the page's solution browser): the hand as recorded, answered for whoever acts next
 with their whole range: per hand class and combo the mix, EVs and equities, and what the hand needs next where
 nobody acts."""
+import gc
 import unittest
 from unittest import mock
 
@@ -22,6 +23,12 @@ class TestStudy(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.adv = advisor("fast")
+
+    @classmethod
+    def tearDownClass(cls):
+        # (its cached solves: the suite runs in one process, where a class's advisor holds them to the end)
+        del cls.adv
+        gc.collect()
 
     def study(self, **st):
         return self.adv.advise(dict({"players": 6, "stack": 100, "study": True}, **st))
@@ -102,6 +109,41 @@ class TestStudy(unittest.TestCase):
         b = self.study(hero="BB", hole="KhKs", opponents="pool", locks={"BB": {"fold_to_bet": 30}}, **st)
         self.assertEqual(a["grid"], b["grid"])
         self.assertEqual(b["actor"], "BTN")
+
+    def test_tournament(self):
+        """A tournament's payouts and bounties reach Study: preflop the charts' mix as the advice re-prices it for the
+        whole range (ICM), after the flop the solves pay prize equity; the notes name the player to act. Without a
+        tournament (no payouts, or one prize: chips are prizes) the answers are the same as before."""
+        strip = lambda r: {k: v for k, v in r.items() if k != "seconds"}
+        pay = [50, 30, 20]
+        # BB facing BTN's open at 20bb: ICM's risk premium jams less (20% of hands in chips, 15.5% here: the rest call)
+        chips = self.study(stack=20, preflop=PRE[:5])
+        icm = self.study(stack=20, preflop=PRE[:5], payouts=pay)
+        self.assertEqual((icm["actor"], icm["street"]), ("BB", "preflop"))
+        self.assertEqual([a["action"] for a in icm["actions"]], ["all-in", "call", "fold"])
+        self.assertAlmostEqual(sum(a["freq"] for a in icm["actions"]), 1.0, delta=0.01)
+        jam = lambda r: next(a["freq"] for a in r["actions"] if a["action"] == "all-in")
+        self.assertLess(jam(icm), jam(chips) - 0.03)
+        self.assertTrue(icm["notes"][0].startswith("tournament: ICM, BB's prize equity"), icm["notes"][0])
+        self.assertIn("equity_share", icm["tournament"])
+        self.assertFalse([n for n in icm["notes"] if n.startswith("equity ")])   # (nothing about one hand)
+        for same in ([], [100]):
+            self.assertEqual(strip(self.study(stack=20, preflop=PRE[:5], payouts=same)), strip(chips), same)
+        # bounties: the note is the actor's
+        pko = self.study(stack=20, preflop=PRE[:5], bounties={"format": "pko", "seats": 10})
+        self.assertTrue(pko["notes"][1].startswith("bounties: PKO"), pko["notes"][1])
+        self.assertIn("BTN covers BB (BB's bounty 10)", pko["notes"][1])
+        self.assertNotIn(" you", pko["notes"][1])
+        # after the flop: the river solved in prize equity
+        flop = [{"pos": "BB", "action": "check"}, {"pos": "BTN", "action": "check"}]
+        st = dict(stack=30, preflop=PRE, board="Ks7d2cTh5s", flop=flop, turn=flop, budget=1.0)
+        chips, icm = self.study(**st), self.study(payouts=pay, **st)
+        self.assertEqual((icm["street"], icm["actor"]), ("river", "BB"))
+        self.check_totals(icm)
+        self.assertNotEqual(icm["grid"], chips["grid"])
+        self.assertTrue(icm["notes"][0].startswith("tournament: ICM, BB's prize equity"))
+        self.assertNotIn("tournament", chips)
+        self.assertEqual(strip(self.study(payouts=[100], **st))["grid"], chips["grid"])
 
     def test_breakdown(self):
         r = self.study(preflop=PRE, board="Kd7c2h", breakdown=True)

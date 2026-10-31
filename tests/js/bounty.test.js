@@ -131,12 +131,13 @@ test("bad bounty values in a link or storage are dropped", () => {
   }
 });
 
-test("the one-size view (Simple) is left out with bounties, as with payouts", async () => {
+test("the one-size view (Simple) is offered with bounties and payouts (its solves in prize equity)", async () => {
   const p = loadPage();
   await p.ready();
   const res = JSON.stringify({ actions: [{ action: "check" }, { action: "bet" }], street: "flop" });
-  assert.equal(p.val(`simpleOk(${res}, ${JSON.stringify(JSON.stringify({ hero: "BB" }))})`), true);
-  assert.equal(p.val(`simpleOk(${res}, ${JSON.stringify(JSON.stringify({ hero: "BB", bounties: { format: "ko", seats: { BB: 5 } } }))})`), false);
+  for (const st of [{ hero: "BB" }, { hero: "BB", bounties: { format: "ko", seats: { BB: 5 } } }, { hero: "BB", payouts: [50, 30, 20] }])
+    assert.equal(p.val(`simpleOk(${res}, ${JSON.stringify(JSON.stringify(st))})`), true, JSON.stringify(st));
+  assert.equal(p.val(`simpleOk(${res}, ${JSON.stringify(JSON.stringify({ hero: "BB", opponents: "pool" }))})`), false);
 });
 
 test("the advisor reads the bounty keys the page sends", () => {

@@ -1,5 +1,6 @@
 """Advisor.instant: an approximate answer at once for a heads-up street whose own solve takes seconds, read off what
 the hand has solved already (the browser's worker posts it before the request's own answer), and nothing solved."""
+import gc
 import unittest
 from unittest import mock
 
@@ -37,6 +38,12 @@ class TestInstant(unittest.TestCase):
     def setUpClass(cls):
         cls.adv = advisor()
         cls.adv.advise(FLOP)
+
+    @classmethod
+    def tearDownClass(cls):
+        # (its cached solves: the suite runs in one process, where a class's advisor holds them to the end)
+        del cls.adv
+        gc.collect()
 
     def test_turn_from_the_flop_solve(self):
         """The turn read off the hand's flop solve (its turn by card class and hand buckets, one bet size): the

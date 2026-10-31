@@ -202,6 +202,19 @@ test("facing a bet: the raise view, sizes by the multiple of the bet, each with 
   assert.match(h, /<b>3x<\/b>: fold 30% · call 50% · raise to 20\.3 20%/);
 });
 
+test("a tournament: the panel says the EVs are prize equity and shows the tournament's notes", () => {
+  const run = S.runOf(JSON.stringify({ tourney: 1 }), "river");
+  const full = { ...row("full", 3.0), actions: ["check", "bet 33%"], grid: grid(["check", "bet 33%"]) };
+  S.merge(run, { ...META, full, rows: [row("33%", 2.99)] });
+  assert.doesNotMatch(S.panelHtml(run), /prize equity/);
+  const note = "tournament: ICM, your prize equity 16.7% of what's left to pay; bubble factor up to 1.39 (a chip lost costs 1.39x what one won gains)";
+  S.merge(run, { ...META, tournament: [note, "bounties: KO <10>"], full, rows: [] });
+  const h = S.panelHtml(run);
+  assert.match(h, /In a tournament every solve pays prize equity \(ICM\), so EVs are chips worth as much prize equity\.<br>tournament: ICM, your prize equity 16\.7%/);
+  assert.match(h, /<br>bounties: KO &lt;10&gt;<\/div>/);   // (escaped)
+  assert.ok(run.rows["33%"]);   // (rows kept across answers)
+});
+
 // ---- the page
 const RES = { street: "turn", hero: "BTN", villain: "BB", hand: "AQo", board: "Ks7d2cTh", recommended: "bet 75%",
   solver: { exploitability_pct: 0.1, iterations: 300, solve_seconds: 2, active_combos: 300, tree_actions: ["check", "bet 33%", "bet 75%"] },

@@ -261,6 +261,8 @@ ONE_SIZE_DEF = ("best = the size whose one-size strategy keeps the most EV for t
 ONE_RAISE_DEF = ("best = the raise size whose one-size strategy keeps the most EV for the player facing the bet: each "
                  "game is solved from this decision with the same ranges, the opponent adapting; EV given up = the "
                  "range's EV with every candidate raise size to mix freely minus with that size alone, in % of the pot")
+ONE_SIZE_ICM = ("; in a tournament every solve pays prize equity (ICM), so the EVs are chips worth as much prize "
+                "equity")
 STREET_OF = {0: "preflop", 3: "flop", 4: "turn", 5: "river"}
 STREETS = ["preflop", "flop", "turn", "river"]
 
@@ -451,10 +453,12 @@ def _tournament(state: dict, positions, stack: float, stacks, bb: float):
     return icm.Model(seats, pay, others, bounty)
 
 
-def _tournament_info(model, hero: str, positions, street, out=()) -> dict:
+def _tournament_info(model, hero: str, positions, street, out=(), named=False) -> dict:
     """What the answer says about the tournament: hero's prize equity (share of the prizes left) and the bubble
     factor against each opponent (what a chip lost costs over what one won gains, all in against them); in a bounty
-    tournament the bounties' part (_bounty_info; `out`: the seats that have folded)."""
+    tournament the bounties' part (_bounty_info; `out`: the seats that have folded). named: the notes name hero's
+    seat instead of saying "you" (Study: hero is whoever acts)."""
+    your = f"{hero}'s" if named else "your"
     eq = model.base[hero] / model.real_pool
     bf = {}
     for p in positions:
@@ -467,23 +471,24 @@ def _tournament_info(model, hero: str, positions, street, out=()) -> dict:
         note = ("tournament: no payouts given, so chip EV: the prizes left are taken as equal to the bounties in play "
                 "(a buy-in split evenly between the prize pool and the bounties) to price chips against bounties")
     elif len(model.payouts) == 1 and not model.approx:
-        note = f"tournament: winner-take-all (prize equity is chips), your equity {eq:.1%} of the prize pool left"
+        note = f"tournament: winner-take-all (prize equity is chips), {your} equity {eq:.1%} of the prize pool left"
     else:
-        note = (f"tournament: ICM{approx}, your prize equity {eq:.1%} of what's left to pay; bubble factor up to {top:.2f} "
+        note = (f"tournament: ICM{approx}, {your} prize equity {eq:.1%} of what's left to pay; bubble factor up to {top:.2f} "
                 f"(a chip lost costs {top:.2f}x what one won gains)")
     res = {"equity_share": round(eq, 4), "bubble_factors": bf, "note": note}
     if model.bounty is not None:
-        res["bounties"] = _bounty_info(model, hero, positions, out)
+        res["bounties"] = _bounty_info(model, hero, positions, out, named)
     return res
 
 
-def _bounty_info(model, hero: str, positions, out=()) -> dict:
+def _bounty_info(model, hero: str, positions, out=(), named=False) -> dict:
     """A bounty tournament's part of the answer: the format and model, chips per unit of money (bounty_k: bb per unit
     of the payouts), the pool in play, each seat's bounty, what busting each opponent hero covers is worth to hero
     (you_bust: in bb and money, the cash it pays less hero's chip share of it after the hand; in_hand: still in, so
     what hero's call or shove here can win), and what hero's own bounty is worth to each opponent who covers hero
-    (bust_you, bb)."""
+    (bust_you, bb). named: the note names hero's seat instead of saying "you" (Study)."""
     from .icm import BOUNTY_FORMATS
+    you, your = (hero, f"{hero}'s") if named else ("you", "your")
     b = model.bounty
     you_bust, bust_you = {}, {}
     for p in positions:
@@ -502,15 +507,15 @@ def _bounty_info(model, hero: str, positions, out=()) -> dict:
         or f"an envelope from the pool for each player busted, {b.envelope or 0:g} on average"
     live = {p: d for p, d in you_bust.items() if d["in_hand"] and d["bb"] > 0.005}
     if live:
-        gain = "; ".join(f"busting {p} (you cover) pays {d['cash']:g}, worth {d['bb']:.1f}bb to you"
+        gain = "; ".join(f"busting {p} ({you} cover{'s' * named}) pays {d['cash']:g}, worth {d['bb']:.1f}bb to {you}"
                          for p, d in sorted(live.items(), key=lambda x: -x[1]["bb"]))
     else:
-        gain = "you cover nobody still in the hand who carries a bounty"
+        gain = f"{you} cover{'s' * named} nobody still in the hand who carries a bounty"
     risk = [p for p in bust_you if p not in out]
     note = (f"bounties: {BOUNTY_FORMATS[b.fmt]} ({what}), valued by the proportional model (each player owns their "
             f"chip share of the {model.bounty_pool:g} in bounties in play, so 1 is worth {k:.3g}bb: GTO Wizard's bounty "
-            f"power{'; the half added to your head counts at your chip share of it' if b.fmt == 'pko' else ''}): {gain}"
-            + (f"; {', '.join(risk)} cover{'s' * (len(risk) == 1)} you (your bounty {model.bounties[hero]:g})"
+            f"power{f'; the half added to {your} head counts at {your} chip share of it' if b.fmt == 'pko' else ''}): {gain}"
+            + (f"; {', '.join(risk)} cover{'s' * (len(risk) == 1)} {you} ({your} bounty {model.bounties[hero]:g})"
                if risk and model.bounties.get(hero) else ""))
     return {"format": b.fmt, "model": "proportional", "bb_per_unit": round(k, 4), "pool": round(model.bounty_pool, 4),
             "bounties": {p: round(model.bounties[p], 4) for p in model.seats}, "you_bust": you_bust,
@@ -2589,9 +2594,11 @@ class Advisor:
         against the other range (heads-up and 3-way after the flop; preflop the charts' mix), the range's totals per
         action.
         Where nobody acts: {"study": "deal", "street"} (the next card is due) or {"study": "over"}. At equilibrium
-        (no pool, locks, tournament payouts or jam requests) and without hero's cards (no card removal for them)."""
+        (no pool, locks or jam requests) and without hero's cards (no card removal for them). A tournament's payouts
+        and bounties stay: the answers are in prize equity as the advice's are (preflop the charts' mix as the advice
+        re-prices it, postflop the solves' payoffs), with the tournament's notes for the player to act."""
         st = {k: v for k, v in state.items() if k not in ("hero", "hole", "opponents", "locks", "jam", "library_only",
-                                                           "payouts", "bounties", "optimize_sizes")}
+                                                           "optimize_sizes")}
         st["study"] = True
         runouts = st.pop("runouts", None)
         try:
@@ -2884,12 +2891,14 @@ class Advisor:
             return self._rules(state, t0, hero, hole, board, positions, stack, streets, custom, model, rules)
         positions = pf.at_depth(positions, stack)
         res = self._advise_at(state, actor, t0, hero, hole, board, positions, stack, streets, sizes, custom, locks)
-        if model is not None and "actions" in res:
+        if model is not None and ("actions" in res or "one_size" in res or res.get("study") == "runouts"):
             out = {a["pos"] for s in STREETS for a in streets[s] if a["action"] == "fold"}
-            res["tournament"] = _tournament_info(model, hero, positions, res.get("street"), out)
+            res["tournament"] = _tournament_info(model, hero, positions, res.get("street"), out, named=study)
             res.setdefault("notes", []).insert(0, res["tournament"]["note"])   # (a practice move's answer has none)
             if "bounties" in res["tournament"]:
                 res["notes"].insert(1, res["tournament"]["bounties"]["note"])
+            if "one_size" in res:   # (the one-size panel shows them: simple.js)
+                res["one_size"]["tournament"] = res["notes"][:1 + ("bounties" in res["tournament"])]
         return res
 
     def _rules(self, state, t0, hero, hole, board, positions, stack, streets, custom, model, reason) -> dict:
@@ -2960,7 +2969,7 @@ class Advisor:
         if model is not None and "actions" in res:
             try:
                 out = {a["pos"] for s in STREETS for a in streets[s] if a["action"] == "fold"}
-                res["tournament"] = _tournament_info(model, hero, positions, res.get("street"), out)
+                res["tournament"] = _tournament_info(model, hero, positions, res.get("street"), out, named=study)
                 res["notes"].insert(1, res["tournament"]["note"] + " (the fallback plays chips)")
             except Exception:   # noqa: BLE001
                 pass
@@ -6110,13 +6119,13 @@ class Advisor:
         the full menu (loss_pct, % of the pot) and the best (one_size_summary); "full" or a size ("50%", 50, "all-in";
         one that isn't a candidate is solved too, 5-500%) solves that one; "list" none. Rows solved here are kept
         (ONE_SIZE_CACHE), so asking again answers at once, and a request answers with every row it has kept for the
-        spot ("rows"). At equilibrium only: not against the pool or locks, nor with tournament payouts."""
+        spot ("rows"). At equilibrium only: not against the pool or locks. A tournament's solves pay prize equity
+        (Config.icm, as the advice's: EVs in chips of equal worth), and stop early only when settled: the bounds the
+        early stop reads are a zero-sum game's."""
         want = self._one_size
         street = cur.name
         if exploit:
             return {"error": "the one-size view is at equilibrium: it isn't worked out against the pool or your locks"}
-        if getattr(self, "_icm", None) is not None:
-            return {"error": "the one-size view is in chips: it isn't worked out with tournament payouts or bounties"}
         if node.player != hero_p:
             return {"error": "no decision of yours here"}
         bets = tuple(float(b) for b in node.bets)
@@ -6130,6 +6139,9 @@ class Advisor:
         pot = float(node.pot_now)
         base = self._cfg_with_real_sizes(cur, oop, ip, eff)
         base.keep_sizes, base.root_allin, base.root_bets, base.root_raises = None, False, None, None
+        icm = getattr(self, "_icm", None) is not None
+        if icm:   # (a tournament: the payoffs from this decision, the bets already in counted: _icm_cfg)
+            base = self._icm_cfg(base, cur, oop, ip, bets)
         if facing:
             # (raises: by the multiple of the bet faced, each the tree's raise to as a fraction of the pot after calling)
             b_op, b_me = bets[1 - hero_p], bets[hero_p]
@@ -6209,7 +6221,8 @@ class Advisor:
         out = {"street": street, "actor": hero, "opponent": villain, "position": "OOP" if hero_p == 0 else "IP",
                "board": cards_str(board), "pot_bb": round(pot, 2), "stack_bb": round(behind, 2),
                "candidates": [c for c, _ in cands], "asked": want,
-               "definition": ONE_RAISE_DEF if facing else ONE_SIZE_DEF, "target_pct": target,
+               "definition": (ONE_RAISE_DEF if facing else ONE_SIZE_DEF) + (ONE_SIZE_ICM if icm else ""),
+               "target_pct": target,
                "full": None if full is None else {k: v for k, v in full.items() if not k.startswith("_")},
                **one_size_summary(full, rows, pot)}
         if facing:

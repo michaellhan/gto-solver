@@ -1,6 +1,7 @@
 """The one-size view (state "one_size"; Advisor._one_size_view, the page's Simple tab): a decision solved with one bet
 size at it for each candidate and with every candidate to mix freely; the best size keeps the most EV for the player
 betting, and each size's EV given up is the full menu's EV less its own, in % of the pot."""
+import gc
 import unittest
 from types import SimpleNamespace
 from unittest import mock
@@ -232,6 +233,12 @@ class TestView(unittest.TestCase):
     def setUpClass(cls):
         cls.adv = advisor("fast")
 
+    @classmethod
+    def tearDownClass(cls):
+        # (its cached solves: the suite runs in one process, where a class's advisor holds them to the end)
+        del cls.adv
+        gc.collect()
+
     def ask(self, **kw):
         return self.adv.advise(dict(RIVER, **kw))
 
@@ -344,6 +351,35 @@ class TestView(unittest.TestCase):
             self.assertEqual(o["raises"]["all-in"]["to"], 97.5)
         for bad in ("50%", "1x", "big"):
             self.assertIn("error", self.ask(one_size=bad, **face), bad)
+
+    def test_tournament(self):
+        """With a tournament's payouts (or bounties) every solve pays prize equity (Config.icm from this decision, the
+        bets in counted), the answer carries the tournament's notes and says what the EVs are; no size stops early
+        (the early stop's bounds are a zero-sum game's)."""
+        st = dict(stack=30, payouts=[50, 30, 20])
+        chips = self.ask(one_size="full", stack=30)["one_size"]
+        r = self.ask(one_size="all", **st)
+        o = r["one_size"]
+        self.assertTrue(r["notes"][0].startswith("tournament: ICM, your prize equity"))
+        self.assertEqual(o["tournament"], r["notes"][:1])
+        self.assertTrue(o["definition"].endswith("so the EVs are chips worth as much prize equity"))
+        self.assertNotEqual(o["full"]["freq"], chips["full"]["freq"])
+        self.assertEqual(len(o["rows"]), len(o["candidates"]))
+        self.assertFalse([x for x in o["rows"] if x.get("cut")])
+        self.assertIn(o["best"], o["candidates"])
+        self.assertNotIn("tournament", chips)
+        self.assertFalse(chips["definition"].endswith("prize equity"))
+        # facing a bet: the raises, the payoffs from this decision (the bet in the pot counted)
+        bet = [{"pos": "BB", "action": "bet", "amount": 3}]
+        o = self.ask(one_size="full", river=bet, hero="BTN", hole="AsQs", bounties={"format": "ko", "seats": 10},
+                     **st)["one_size"]
+        self.assertEqual(o["kind"], "raise")
+        self.assertEqual(len(o["tournament"]), 2)
+        self.assertTrue(o["tournament"][1].startswith("bounties: KO"))
+        with mock.patch.object(A.Advisor, "_icm_cfg", autospec=True, side_effect=A.Advisor._icm_cfg) as icm_cfg:
+            self.adv._one_rows.clear()
+            self.ask(one_size="full", river=bet, hero="BTN", hole="AsQs", **st)
+        self.assertEqual([c.args[5] for c in icm_cfg.call_args_list if len(c.args) > 5][-1], (3.0, 0.0))
 
     def test_refused(self):
         cases = {

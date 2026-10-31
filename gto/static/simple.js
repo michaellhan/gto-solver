@@ -220,7 +220,9 @@
       + (raise ? `Sizes are multiples of the bet faced (3x: a raise to three times it). ` : "")
       + `Best: the ${one} that keeps the most EV for the player ${raise ? "facing the bet" : "betting"}. Gives up: the range's EV with every ${one} to mix freely less with that size alone, in % of the pot`
       + `${m.target_pct != null ? `; each solve is within ${m.target_pct}% of the pot of equilibrium, so sizes closer than that are a tie` : ""}`
-      + `${sum.rows.some((r) => r.cut) ? "; ≈: a size whose solve stopped early, once it was clearly behind the best" : ""}.</div>`;
+      + `${sum.rows.some((r) => r.cut) ? "; ≈: a size whose solve stopped early, once it was clearly behind the best" : ""}.`
+      + (m.tournament ? ` In a tournament every solve pays prize equity (ICM), so EVs are chips worth as much prize equity.<br>${m.tournament.map(esc).join("<br>")}` : "")
+      + `</div>`;
     return h;
   }
 

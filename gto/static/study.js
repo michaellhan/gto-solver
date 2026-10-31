@@ -22,7 +22,8 @@
   const color = (n) => typeof COLORS === "function" ? COLORS(n) : n === "fold" ? "var(--fold)" : n === "check" || n === "call" ? "var(--passive)"
     : n === "all-in" ? "var(--allin)" : "var(--agg1)";
 
-  // ---- the hand being studied: {players, stack, (stacks, ante, straddle, rake, rake_cap,) board, preflop, flop, turn, river}
+  // ---- the hand being studied: {players, stack, (stacks, ante, straddle, rake, rake_cap, payouts, field, bounties,) board,
+  // preflop, flop, turn, river}
   const fresh = (players = 6, stack = 100) => ({ players, stack, board: "", preflop: [], flop: [], turn: [], river: [] });
   // a spot's preflop line as the flop library's index writes it ("UTG:f,...,BTN:r2.5,SB:f,BB:c")
   const parseLine = (line) => String(line || "").split(",").filter(Boolean).map(t => {
@@ -35,8 +36,9 @@
     return { ...fresh(g.players || 6, g.stack || 100), ...(g.ante ? { ante: g.ante } : {}), ...(g.straddle ? { straddle: true } : {}),
              preflop: parseLine(sp.line) };
   };
-  // the page's own hand (its advice payload) without hero, hole cards and the advice's own settings
-  const SETUP = ["players", "stack", "stacks", "ante", "straddle", "rake", "rake_cap", "board", ...STREETS];
+  // the page's own hand (its advice payload) without hero, hole cards and the advice's own settings; a tournament's
+  // payouts, other tables and bounties stay (the page sends them only when set: the answers are then in prize equity)
+  const SETUP = ["players", "stack", "stacks", "ante", "straddle", "rake", "rake_cap", "payouts", "field", "bounties", "board", ...STREETS];
   const fromPayload = (p) => Object.fromEntries(SETUP.filter(k => p[k] != null).map(k => [k, STREETS.includes(k) ? (p[k] || []).map(a => ({ ...a })) : p[k]]));
   const streetOf = (st) => ({ 0: "preflop", 3: "flop", 4: "turn", 5: "river" })[cardsOf(st.board).length];
   // the solver's request for the node: Advisor.study
@@ -413,7 +415,7 @@
     const who = ui.who === "after" && ro.after_check ? "after" : "first";
     const tabs = [["first", ro.first.actor], ...(ro.after_check ? [["after", `${ro.after_check.actor} after a check`]] : [])];
     return `<div class="sy-ro"><div class="sy-ctl sy-rotop">${views}<span class="segment">${tabs.map(([w, t]) => `<button data-rowho="${w}" class="${w === who ? "active" : ""}">${esc(t)}</button>`).join("")}</span>`
-      + R.controlsHtml(ro, ui) + `</div>` + roughHtml(ro) + R.html(ro, { ...ui, who }, board) + `<div class="sy-note">${R.noteHtml(ro)}</div></div>`;
+      + R.controlsHtml(ro, ui) + `</div>` + roughHtml(ro) + R.html(ro, { ...ui, who }, board) + `<div class="sy-note">${R.noteHtml(ro)}${ro.tournament ? "<br>A tournament: the solve pays prize equity (ICM), so EVs are chips worth as much prize equity." : ""}</div></div>`;
   }
   // the report's header: the line of the street that closed, which the report follows, and (the flop reports' Turns)
   // why Study picked it: pick {label: the view's decision, share: how often the flop solve takes the line}
@@ -592,7 +594,7 @@
     if (view === "simple") return h + `<div class="sy-simple"></div></div><div class="sy-right">${actionsHtml(r, ui)}</div></div><div class="sy-note">${solverHtml(res)}</div>`;
     h += view === "breakdown" ? `<div class="sy-bd"></div>` : gridHtml(r, ui);
     h += `</div><div class="sy-right">${actionsHtml(r, ui)}<div class="sy-detail">${view === "breakdown" ? "" : detailHtml(r, ui, cls)}</div></div></div>`;
-    h += `<div class="sy-note">${solverHtml(res)} ${pre ? "" : `EV: bb won from here relative to folding now. ${res.range_eq == null ? (res.multiway ? "No equity 3-way before the river." : "")
+    h += `<div class="sy-note">${solverHtml(res)} ${pre ? "" : `EV: bb won from here relative to folding now${res.tournament ? " (a tournament's: in prize equity, as chips worth as much)" : ""}. ${res.range_eq == null ? (res.multiway ? "No equity 3-way before the river." : "")
       : res.multiway ? `Equity: the share of the pot at showdown against ${esc(res.opponent)}'s ranges. EQR: EV over equity × pot.` : `Equity: against ${esc(res.opponent)}'s range with the rest of the board dealt. EQR: EV over equity × pot.`}`}`
       + `${(res.notes || []).length ? `<br>${res.notes.map(esc).join("<br>")}` : ""}</div>`;
     return h;

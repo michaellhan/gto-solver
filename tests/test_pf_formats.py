@@ -161,6 +161,16 @@ class TestMoves(unittest.TestCase):
         fixed = pf.monotone(dict(got, fold=1 - got["raise"]))
         self.assertLess(np.abs(fixed["raise"] - got["raise"]).max(), 1e-9)
 
+    def test_actions_keep_their_order(self):
+        """The chart's actions keep its order, then the move's (a set's order followed the process's string hashes:
+        the advice listed a 20bb big blind's all-in first in some processes and its call first in others)."""
+        z = np.zeros(K)
+        base = {"raise": np.full(len(CLASS_OF), 0.2), "call": np.full(len(CLASS_OF), 0.3)}
+        self.assertEqual(list(PF.apply(base, {"fold": z, "call": z})), ["raise", "call"])
+        self.assertEqual(list(PF.apply({"call": base["call"]}, {"raise": z + 0.1, "fold": z})), ["call", "raise"])
+        table = {20.0: {"k": {"call": 0.3, "raise": 0.2}}, 40.0: {"k": {"raise": 0.1, "call": 0.5, "x": 0.1}}}
+        self.assertEqual(list(PF._interp(table, [20.0, 40.0], 30.0, "k")), ["call", "raise", "x"])
+
     def test_unreached_classes_have_no_move(self):
         """A solve's strategy for a class that never reaches the decision is arbitrary: the moves leave it out (the
         big blind facing the 4bet with a hand it never 3bets), and weigh a decision both reach in full."""

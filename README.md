@@ -143,7 +143,8 @@ Stop button (Continue picks up from there): a turn takes 1-22 s for every size i
 On the flop it waits for **Find the best size**, with its estimate (live flops take 1-3 s in all): the library's
 flops answer the advice at once, and solving every flop you look at would only load the machine. Answers are kept
 (by the page and the solver), so opening the tab again or coming back to the spot is instant; new advice stops its
-solves. Not against the pool, locks, tournament payouts or bounties (the tab is hidden there). See [One bet size](#one-bet-size).
+solves. Not against the pool or locks (the tab is hidden there); in a tournament (payouts or bounties) every solve pays
+prize equity as the advice's do, and the tab shows the tournament's notes. See [One bet size](#one-bet-size).
 
 Solver stats and the villain's inferred range (as text and as a 13x13 grid shaded by weight) sit behind a "Details" toggle.
 Each decision you record is marked against the advice that was showing (✓ in
@@ -264,7 +265,13 @@ instant, also before the in-browser solver has loaded) and reads the hand weight
 **Study** (in the ⋯ menu) is a solution browser: walk a hand node by node with no cards of your own, and at each
 decision see the solver's answer for every hand of the player to act. Start from a precomputed spot's preflop line
 (BTN vs BB, …: instant on the library's flops), a new 6-max 100bb hand, or the hand on the page's table (its seats,
-stacks, antes, straddle, rake and action so far, without your cards, locks or exploit settings). The 13x13 grid shows
+stacks, antes, straddle, rake, tournament payouts and bounties, and action so far, without your cards, locks or
+exploit settings). In a tournament the answers are in prize equity, as the advice's are: preflop the charts' mix as
+the advice re-prices it, for the whole range (ICM's risk premium, a bounty's discount: as quick as in chips, ~0.01 s;
+six 20bb stacks, 50/30/20 to pay: the big blind facing the button's 2.2bb open jams 16% of hands and calls 41% where
+chips have 18% and 63%, the small blind calls the button's jam with 6% instead of 11%, and with 10 PKO on every head
+21% and 68%, 15%), after the flop solves that pay prizes, with the tournament's notes for the player to act (prize equity, bubble
+factors, who covers whom). The 13x13 grid shows
 each hand class's mix (each class's bar as tall as its share of the class's combos in the range), or by **EV** (bb
 from here, relative to folding now), **Equity** (against the opponent's range, the rest of the board dealt) or
 **EQR** (EV over equity times the pot), shaded red to green; **Breakdown** is the range by made hands and draws (as
@@ -610,8 +617,9 @@ hero's `f` per action and `ev`), the range's `eq`, `ev`, `nuts` (share at `nut_e
 flop only from the precomputed library and returns `{"skipped": …}` for any other postflop spot instead of solving it.
 
 `"study": true` (the page's Study mode, `Advisor.study`) answers for whoever acts next on the hand as recorded, with
-their whole range and no hero, at equilibrium (`hero`, `hole`, `opponents`, `locks`, `jam`, `payouts`, `bounties`
-and `optimize_sizes` are ignored):
+their whole range and no hero, at equilibrium (`hero`, `hole`, `opponents`, `locks`, `jam` and `optimize_sizes` are
+ignored; a tournament's `payouts`, `field` and `bounties` count, as in the advice, with `tournament` and its notes
+for the player to act):
 `{"study": "node", "actor", "opponent", "street", "pot_bb", "to_call_bb", "stack_bb", "actions", "grid", "combos",
 …}` with per action the range's `freq`, `combos` and `ev_bb` (of the hands that take it), per hand class in `grid`
 its weight `w`, mix `f`, per-action EVs `ev`, EV `evm` and equity `eq`, per combo in `combos` the same as
@@ -845,8 +853,8 @@ Limits:
 * The 3-way solves keep their bystander approximation (who wins when a player loses is taken as even), so which
   opponent collects a bust's bounty when hero loses is averaged too; pots of five or more players get the betting
   rules in chips.
-* The flop libraries, instant answers, presolves, Study and the one-size view (all in chips) leave bounties out:
-  a bounty tournament's flop solves live.
+* The flop libraries, instant answers and presolves (all in chips) leave bounties out: a bounty tournament's flop
+  solves live (Study's and the one-size view's solves pay bounties and prizes).
 
 ### Custom sizes and ranges
 
@@ -1003,7 +1011,20 @@ raises; a tree too big for the speed is cut alike for every size).
   with `loss_pct` (the EV given up) once the full menu is in, and `order` (the sizes in the order to solve them) with
   it. The page asks the sizes in that order. With `"study": true` it is for whoever acts, their whole range (no
   `hand`). An error preflop, facing a bet with no raise left (calling puts the stacks in), all-in, multiway, against
-  the pool or locks, with tournament payouts or bounties, or for a size out of range.
+  the pool or locks, or for a size out of range.
+* **Tournaments**: with payouts or bounties every solve pays prize equity (`Config.icm` from the decision, the bets
+  already in counted, as the advice's own solves from mid-street), so the EVs and what a size gives up are chips worth
+  as much prize equity (the definition says so), and the answer carries the tournament's notes (`"tournament"`, which
+  the page shows under the table). Such a game isn't zero-sum (the players outside the pot gain when either busts), so
+  the early stop's bounds don't hold and every size runs until settled. Six 30bb stacks, 50/30/20 to pay, BTN vs BB
+  single-raised, flop and turn checked through, the BB first on the river (Ks7d2cTh5s): ICM checks 61% of the range where chips check 51%, and 33% gives up 0.13% of the
+  pot (25-75% tied with it) where in chips it gives up 0.64% (no size tied); with 10 PKO on every head 33% gives up
+  1.22%. Facing the BB's 3bb lead there the button's best raise is 4x in ICM (3x and 5x tied), 5x in chips.
+  On the same table's turn after a called c-bet (Ks7d2c 3h, the button's 1.6bb bet called, checked to it) chips' best is 100% (0.11%, 125%
+  tied), ICM's 150% (125% tied), PKO's 100% (0.16%); there ICM's single sizes of 100-150% come out 0.03-0.14% of
+  the pot ahead of the full menu (a game that isn't zero-sum can leave a player less with more options, and each
+  solve is within 0.05% of equilibrium), shown as giving up nothing. The view's solves took 4.3 s in chips (three sizes
+  stopped early), 5.2 s with ICM and 5.9 s with PKO (one thread); Study's turn node 5.1 s in each.
 * **Cache**: the solver keeps every row it solved (`ONE_SIZE_CACHE`, the 256 used last; a few KB each), by spot (the
   ranges, pot, stacks, tree and target) and size, and answers with all it has for the spot; the page keeps its runs
   by request, so reopening the tab is instant and a stopped run continues where it stopped.
