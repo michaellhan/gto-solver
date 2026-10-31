@@ -148,6 +148,15 @@ class TestGames(unittest.TestCase):
 
 
 class TestSolve(unittest.TestCase):
+    def test_masses(self):
+        """Game._masses (each seat's reach times PAIR_COMPAT, worked once a node for the seat whose reach changes
+        there and carried down for the others) is the product at every node."""
+        pos = ["CO", "BTN", "SB", "BB"]
+        g = G.Game(G.build(pos, max_players=3), pos, G.flat_model())
+        g.solve(3)
+        reach = g._down(g.current())
+        np.testing.assert_allclose(g._masses(reach), reach @ G.PAIR_COMPAT, rtol=1e-12, atol=1e-15)
+
     def test_heads_up_converges(self):
         g = G.Game(G.build(["SB", "BB"]), ["SB", "BB"], G.flat_model())
         g.solve(400)

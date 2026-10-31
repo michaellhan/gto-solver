@@ -41,8 +41,11 @@
   const SETUP = ["players", "stack", "stacks", "ante", "straddle", "rake", "rake_cap", "payouts", "field", "bounties", "board", ...STREETS];
   const fromPayload = (p) => Object.fromEntries(SETUP.filter(k => p[k] != null).map(k => [k, STREETS.includes(k) ? (p[k] || []).map(a => ({ ...a })) : p[k]]));
   const streetOf = (st) => ({ 0: "preflop", 3: "flop", 4: "turn", 5: "river" })[cardsOf(st.board).length];
-  // the solver's request for the node: Advisor.study
-  const request = (st, speed) => ({ ...fromPayload(st), study: true, speed });
+  // the solver's request for the node: Advisor.study; preflop with the Solver source (pf "solver") the preflop solve's
+  // node ("preflop_solve": gto/pf_study.py, the page's game solved by pf_game), else the charts' mix
+  const request = (st, speed, pf) => ({ ...fromPayload(st), study: true, speed,
+    ...(pf === "solver" && streetOf(st) === "preflop" ? { preflop_solve: true } : {}) });
+  const solverPre = (res) => !!res && res.street === "preflop" && res.source === "solver";
   // what an advice action's name plays as: check, call, fold, bet, raise or all-in
   const kindOf = (n) => n === "all-in" ? "all-in" : (/^(check|call|fold|bet|raise)/.exec(n) || [null, n])[1];
   // the state after the actor takes advice action a (amount_bb: a bet's or raise's total this street)
@@ -115,6 +118,9 @@
   // an action the range almost never takes (the answer's rough_ev, advisor.RARE_BRANCH, as the advice panel's): its EVs
   // with a "≈" and this tip, wherever Study shows that action's EV (the EV view's cells on it, a class's mix, its
   // combos' tips, the range's per action)
+  // the preflop solve's chunks (seconds each: Advisor.study's "preflop_solve": {"run"}), and the iterations a 6-max one
+  // takes to its target (its bar before the first measure; after it, the measure's distance from the target)
+  const PF_CHUNK = 4, PF_ITERS = 1000;
   const ROUGH_TIP = "The range almost never takes this, so how the opponent answers it is barely solved: its EV is rough, usually lower than exact.";
   const rough = (res, a) => !!(res && res.actions && res.actions[a] && res.actions[a].rough_ev);
   const roughEv = (res, a, v) => rough(res, a) ? `<small class="sy-rough" title="${ROUGH_TIP}">≈ ${sgn(v)}</small>` : `<small>${sgn(v)}</small>`;
@@ -140,7 +146,7 @@
   // one-size view (simple.js), heads-up where the actor can bet or raise; an answer at once ("approximate") the
   // strategy alone: no hand's own EVs or equities until the node's own solve
   const canSize = (acts) => acts.some(a => a.action === "check") || acts.some(a => a.action === "fold") && acts.some(a => /^(raise|all-in)/.test(a.action));
-  const viewsOf = (res) => res.street === "preflop" || res.approximate ? ["strategy"]
+  const viewsOf = (res) => solverPre(res) ? ["strategy", "ev"] : res.street === "preflop" || res.approximate ? ["strategy"]
     : [...Object.keys(VIEWS).filter(v => res.range_eq != null || (v !== "equity" && v !== "eqr")), "breakdown",
        ...(!res.multiway && canSize(res.actions || []) ? ["simple"] : [])];
   const viewName = (v) => VIEWS[v] || (v === "simple" ? "Simple" : "Breakdown");
@@ -169,11 +175,12 @@
   // the actions: the range's frequency, its combos and the EV of the hands that take it; a row plays it
   function actionsHtml(res, ui) {
     const tot = res.range_combos;
-    let h = `<table class="sy-acts"><thead><tr><th>Action</th><th class="n">Range</th><th class="n">Combos</th>${res.street === "preflop" ? "" : `<th class="n" title="The EV in bb of the hands that take it, relative to folding now">EV</th>`}</tr></thead><tbody>`;
+    const evCol = res.street !== "preflop" || solverPre(res);
+    let h = `<table class="sy-acts"><thead><tr><th>Action</th><th class="n">Range</th><th class="n">Combos</th>${!evCol ? "" : `<th class="n" title="The EV in bb of the hands that take it, relative to folding now">EV</th>`}</tr></thead><tbody>`;
     res.actions.forEach((a, i) => {
       h += `<tr data-act="${i}" tabindex="0" class="${ui.focus === i ? "focus" : ""}" title="Play ${esc(label(a))}"><td><i class="sy-sw" style="background:${color(a.action)}"></i>${esc(label(a))}</td>`
         + `<td class="n"><span class="sy-mini"><span style="width:${(a.freq * 100).toFixed(1)}%;background:${color(a.action)}"></span></span>${pct(a.freq, 1)}</td>`
-        + `<td class="n">${a.combos.toFixed(1)}</td>${res.street === "preflop" ? "" : a.rough_ev && a.ev_bb != null ? `<td class="n sy-rough" title="${ROUGH_TIP}">≈ ${sgn(a.ev_bb)}</td>` : `<td class="n">${sgn(a.ev_bb)}</td>`}</tr>`;
+        + `<td class="n">${a.combos.toFixed(1)}</td>${!evCol ? "" : a.rough_ev && a.ev_bb != null ? `<td class="n sy-rough" title="${ROUGH_TIP}">≈ ${sgn(a.ev_bb)}</td>` : `<td class="n">${sgn(a.ev_bb)}</td>`}</tr>`;
     });
     h += `</tbody></table><div class="sy-bar">${res.actions.map(a => a.freq > 0.0005 ? `<i style="width:${(a.freq * 100).toFixed(2)}%;background:${color(a.action)}" title="${esc(label(a))} ${pct(a.freq, 1)}"></i>` : "").join("")}</div>`;
     const f = res.filter;
@@ -192,7 +199,7 @@
     if (!c || !(c.w > 0)) return `<div class="sy-dh"><b>${cls}</b> <span class="sy-mut">not in ${esc(opp ? opp.seat : res.actor)}'s range here</span></div>`;
     let h = `<div class="sy-dh"><b>${cls}</b> <span class="sy-mut">${num(c.w * n)} of ${n} combos</span>`;
     if (opp) return h + (c.eq != null ? ` · equity <b>${pct(c.eq, 1)}</b>` : "") + `</div>`;
-    h += c.eq != null ? ` · EV <b>${sgn(c.evm)}</b> · eq <b>${pct(c.eq, 1)}</b> · EQR <b>${eqr(c, res.pot_bb).toFixed(2)}</b>` : "";
+    h += c.eq != null ? ` · EV <b>${sgn(c.evm)}</b> · eq <b>${pct(c.eq, 1)}</b> · EQR <b>${eqr(c, res.pot_bb).toFixed(2)}</b>` : c.evm != null ? ` · EV <b>${sgn(c.evm)}</b>` : "";
     h += `</div><div class="sy-mix">${names.map((nm, a) => c.f[a] >= 0.005 ? `<span style="--c:${color(nm)}">${esc(nm)} <b>${pct(c.f[a])}</b>${c.ev ? ` ${roughEv(res, a, c.ev[a])}` : ""}</span>` : "").join("")}</div>`;
     const cs = (res.combos || {})[cls];
     if (!cs || !cs.length) return h;
@@ -370,7 +377,14 @@
   // a solve cut short (3% of the pot or more from equilibrium, the page's "fair" and "rough"): flagged where it shows
   const roughness = (s) => { const x = (s && s.exploitability_pct) || 0; return x < 3 ? "" : x < 10 ? "meh" : "bad"; };
   function solverHtml(res) {
-    if (res.street === "preflop") return "Preflop: the charts' mix (an approximation: no EVs or equities).";
+    if (solverPre(res)) {
+      const p = res.pf_solve || {};
+      return `Preflop solve of this game (${esc(p.label || "")}): ${p.stored ? "precomputed, " : ""}${p.iterations} iterations`
+        + (p.mbb != null ? `, ${num(p.mbb)} mbb/hand from equilibrium (a seat's average)` : "") + (p.done ? "" : ` <span class="sy-rough meh">Not finished: the numbers can still move.</span>`)
+        + `. The solve's own equilibrium (its flops valued by the flop library's realization), not the charts: the advice plays the charts, which fit published solves better.`
+        + (res.rough ? ` <span class="sy-rough meh">A line the solve rarely or never plays: the mix here is barely solved (the range gives up ${num(res.regret_bb || 0)}bb a hand to its best actions here), so take its EVs as rough.</span>` : "");
+    }
+    if (res.street === "preflop") return "Preflop: the charts' mix (an approximation: no EVs or equities; the Solver source has a solve's mix and EVs).";
     if (res.approximate) return approxHtml(res);
     const s = res.solver || {}, p = res.precomputed, r = !p && roughness(s);
     const how = p ? `Precomputed (${esc(p.label)})` : `Solved live in ${num(s.solve_seconds || 0)} s`;
@@ -480,10 +494,10 @@
   // ---- the panel (browser)
   let box = null, index = null, res = null, err = null, busy = false, gen = 0;
   const ST = { state: null, spot: "", speed: typeof SPEED === "string" && SPEED !== "quick" ? SPEED : "fast", view: "strategy", who: "me", sel: null, hover: null, focus: null,
-               build: false, brush: 0, amt: 1, tally: { n: 0, acc: 0 }, filter: null, ro: null, roWho: "first",
+               build: false, brush: 0, amt: 1, tally: { n: 0, acc: 0 }, filter: null, ro: null, roWho: "first", pf: "charts", pfRun: null,
                rui: { view: "table", sort: "card", desc: true, group: "", filter: {} } };
-  try { const s = JSON.parse(localStorage.getItem("gto-study")) || {}; for (const k of ["state", "spot", "speed", "view", "build", "rui"]) if (s[k] != null) ST[k] = s[k]; } catch (e) {}
-  const store = () => { try { localStorage.setItem("gto-study", JSON.stringify({ state: ST.state, spot: ST.spot, speed: ST.speed, view: ST.view, build: ST.build, rui: ST.rui })); } catch (e) {} };
+  try { const s = JSON.parse(localStorage.getItem("gto-study")) || {}; for (const k of ["state", "spot", "speed", "view", "build", "rui", "pf"]) if (s[k] != null) ST[k] = s[k]; } catch (e) {}
+  const store = () => { try { localStorage.setItem("gto-study", JSON.stringify({ state: ST.state, spot: ST.spot, speed: ST.speed, view: ST.view, build: ST.build, rui: ST.rui, pf: ST.pf })); } catch (e) {} };
   // the range builder's paints, by the answer they're of
   const paints = new Map();
   const building = () => ST.build && res && res.study === "node" && !busy;
@@ -523,7 +537,7 @@
     // doesn't wait behind it; it stays cached part way and goes on when the node is asked again)
     const left = busy && res && res.approximate ? answers.get(res.key) : null;
     ST.state = state; ST.sel = ST.hover = ST.focus = null; ST.ro = null; err = null; store();
-    const key = JSON.stringify(request(state, ST.speed)), g = ++gen;
+    const key = JSON.stringify(request(state, ST.speed, ST.pf)), g = ++gen;
     if (left && stopFn && left !== answers.get(key)) stops.push(stopFn(left.req));
     if (stops.length) { await Promise.all(stops); if (g !== gen) return; }
     // (a flop's library files fetched ahead, once a board: its entry and turn files, or the stored flops nearest it;
@@ -549,6 +563,33 @@
     if (res && res.study === "node" && ST.brush >= res.grid.actions.length) ST.brush = 0;
     if (res && res.precomputed && res.street === "flop") fetchAhead();   // (its turn files, for the turns' answers at once)
     draw();
+  }
+  // the preflop solve (Advisor.study "preflop_solve": {"run": seconds}), chunk after chunk until it says it's done or
+  // Stop; the node shown is asked again after each chunk (its answer from the solve so far), so it converges in view
+  async function pfSolve() {
+    if ((ST.pfRun && !ST.pfRun.err) || !ST.state) return;
+    const base = request(ST.state, ST.speed, "solver"), run = ST.pfRun = { it: 0, mbb: null, secs: 0, t0: Date.now() };
+    draw();
+    while (ST.pfRun === run && !run.stop) {
+      let r;
+      try { r = await ask({ ...base, preflop_solve: { run: PF_CHUNK } }); } catch (e) { r = { error: String(e && e.message || e) }; }
+      if (ST.pfRun !== run) return;
+      if (!r || r.cancelled || r.error || r.study !== "pf_progress") { run.err = r && (r.error || r.reason) || "cancelled"; break; }
+      Object.assign(run, { it: r.pf_solve.iterations, mbb: r.pf_solve.mbb, target: r.pf_solve.target_mbb, max: r.pf_solve.max_iterations, done: r.pf_solve.done, secs: (Date.now() - run.t0) / 1000 });
+      if (run.done || run.stop) break;
+      await refreshPf();
+    }
+    if (ST.pfRun === run) ST.pfRun = run.err ? run : null;
+    await refreshPf();
+  }
+  // the node shown asked again from the solve as it is now (the solver source's answers before it are dropped)
+  async function refreshPf() {
+    for (const k of [...answers.keys()]) if (k.includes('"preflop_solve":true')) answers.delete(k);
+    if (!ST.state || ST.pf !== "solver" || streetOf(ST.state) !== "preflop" || busy) return draw();
+    const key = JSON.stringify(request(ST.state, ST.speed, ST.pf)), g = gen;
+    const r = await answer(key);
+    if (g !== gen || !r || r.cancelled || r.error) return draw();
+    res = r; res.key = key; colors(); draw();
   }
   // the turn or river report at a closed flop or turn, shown under the deal box: first from what's in hand
   // (Advisor.study's "runouts": "held": a library flop's stored turns, the solve Study's own answers made), at once;
@@ -613,6 +654,31 @@
       + `<button class="ghost" data-back ${back(ST.state) ? "" : "disabled"} title="Back one step (Backspace)">← Back</button></div>`;
   }
   const prev = (street) => street === "river" ? "turn" : "flop";
+  // the preflop source: the charts' mix (the advice's), or the solve of this game (gto/pf_study.py: its mix and EVs)
+  const pfHtml = (on) => `<span class="segment" title="Preflop: the hand-written charts the advice plays (no EVs), or a solve of this game's preflop (every hand's mix and EVs)">`
+    + [["charts", "Charts"], ["solver", "Solver"]].map(([k, t]) => `<button data-pf="${k}" class="${k === on ? "active" : ""}">${t}</button>`).join("") + `</span>`;
+  const mins = (s) => s < 90 ? `${Math.max(5, Math.round(s / 5) * 5)} s` : `${Math.round(s / 60)} min`;
+  // a solve running (ST.pfRun: its iterations, distance from equilibrium, seconds): a line with Stop and a bar
+  function pfProgHtml(run) {
+    if (run.err) return `<div class="sy-err">The preflop solve stopped: ${esc(run.err)}</div>`;
+    // (exploitability falls about as 1/iterations^1.2: the iterations left from the last measure)
+    // (a small tree, no target, runs to its max_iterations)
+    const frac = run.done ? 1 : Math.min(0.97, run.mbb != null && run.target ? Math.pow(Math.min(1, run.target / run.mbb), 1 / 1.2)
+      : run.it / (run.target === 0 && run.max ? run.max : PF_ITERS));
+    return `<div class="sy-msg sy-pfrun"><span class="spinner"></span>Solving this game's preflop: <b>${run.it}</b> iterations`
+      + (run.mbb != null ? `, ${num(run.mbb)} mbb/hand from equilibrium` : "") + ` · <span class="num">${Math.round(run.secs || 0)} s</span>`
+      + `${run.stop ? " · stopping…" : ` <button class="ghost" data-pfstop title="Stop here: the answers so far stay">Stop</button>`}</div>`
+      + `<div class="prog"><div style="width:${(frac * 100).toFixed(1)}%"></div></div>`;
+  }
+  // a game not solved yet (an offer to solve it: about how long, what it gives) or one the solve doesn't take
+  function pfPanelHtml(res, run) {
+    let h = `<div class="sy-ctl">${pfHtml("solver")}</div>`;
+    if (res.study === "pf_none") return h + `<div class="sy-msg">The preflop solve doesn't take this game: ${esc(res.reason)}. Charts answers it.</div>`;
+    h += `<div class="sy-pf"><div><b>Solve this game's preflop</b>: ${esc(res.game)}.</div>`
+      + `<div class="sy-mut">Every hand's mix and EVs at every preflop decision, at the solve's equilibrium (flops valued by the flop library's realization). `
+      + `About ${mins(res.estimate_s || 60)} here; the strategy shows as it converges, and you can stop any time.</div>`;
+    return h + (run ? pfProgHtml(run) : `<div><button data-pfsolve>Solve</button></div>`) + `</div>`;
+  }
   function body() {
     if (err) return `<div class="sy-msg sy-err">${esc(err)}</div>`;
     if (!res) return `<div class="sy-msg"><span class="spinner"></span>Solving…</div>`;
@@ -628,7 +694,8 @@
           : roHeadHtml(ST.ro.res, ST.state, ST.ro.pick) + reportHtml(ST.ro.res, { ...ST.rui, who: ST.roWho }, ST.state.board)) + `</div>`;
     }
     if (res.study === "over") return `<div class="sy-msg">${res.winner ? `Hand over: everyone else folded, ${esc(res.winner)} wins the pot.` : "Hand over: the river's betting is done, the hands go to showdown."} Step back along the line above to look at another branch.</div>`;
-    const pre = res.street === "preflop", cls = ST.hover || ST.sel;
+    if (res.study === "pf_unsolved" || res.study === "pf_none") return pfPanelHtml(res, ST.pfRun);
+    const pre = res.street === "preflop" && !solverPre(res), cls = ST.hover || ST.sel;
     const buildBtn = res.approximate ? "" : `<button class="ghost${ST.build ? " active" : ""}" data-build title="Paint the strategy yourself, then score it (B)">${ST.build ? "✎ Building" : "✎ Build"}</button>`;
     if (ST.build && !res.approximate) {
       const paint = paintOf(res), ui = { ...ST };
@@ -639,7 +706,9 @@
     const views = viewsOf(res);
     const view = views.includes(ST.view) ? ST.view : "strategy";
     const ui = { ...ST, view }, r = shown(view);
-    let h = `<div class="sy-status">${statusHtml(res)}${res.approximate ? ` · <span class="sy-approx"><span class="spinner"></span>Approximate, at once: the ${esc(res.street)}'s own solve is running</span>` : ""}</div><div class="sy-main"><div class="sy-left"><div class="sy-ctl">`
+    let h = `<div class="sy-status">${statusHtml(res)}${res.approximate ? ` · <span class="sy-approx"><span class="spinner"></span>Approximate, at once: the ${esc(res.street)}'s own solve is running</span>` : ""}</div>`
+      + (ST.pfRun && solverPre(res) ? pfProgHtml(ST.pfRun) : "") + `<div class="sy-main"><div class="sy-left"><div class="sy-ctl">`
+      + (res.street === "preflop" ? pfHtml(ST.pf === "solver" ? "solver" : "charts") : "")
       + `<span class="segment">${views.map(v => `<button data-view="${v}" class="${v === view ? "active" : ""}">${viewName(v)}</button>`).join("")}</span>`
       + (oppsOf(res).length && view !== "breakdown" && view !== "simple" ? whoHtml(res, ST.who) : "")
       + (view !== "breakdown" && view !== "simple" && !oppOf(res, ST.who) ? filterHtml(res, r.filter ? r.filter.key : "") : "")
@@ -711,7 +780,7 @@
       if (d) d.innerHTML = buildDetailHtml(res, paint, ST.hover || ST.sel);
       return;
     }
-    const view = res.street === "preflop" ? "strategy" : ST.view, ui = { ...ST, view }, r = shown(view);
+    const view = viewsOf(res).includes(ST.view) ? ST.view : "strategy", ui = { ...ST, view }, r = shown(view);
     const g = box.querySelector(".sy-grid"), d = box.querySelector(".sy-detail");
     if (g) {
       const t = document.createElement("div"); t.innerHTML = gridHtml(r, ui);
@@ -753,6 +822,9 @@
   function act(d, e) {
     if (d.close != null) return close();
     if (d.speed) { if (d.speed !== ST.speed) { ST.speed = d.speed; return go(ST.state); } return; }
+    if (d.pf) { if (d.pf !== ST.pf) { ST.pf = d.pf; store(); return go(ST.state); } return; }
+    if (d.pfsolve != null) return pfSolve();
+    if (d.pfstop != null) { if (ST.pfRun) { ST.pfRun.stop = true; draw(); } return; }
     if (d.back != null) return stepBack();
     if (d.step != null) return go(line(ST.state)[+d.step].st);
     if (d.view) { ST.view = d.view; store(); return draw(); }
@@ -782,7 +854,7 @@
     if (d.cls) { ST.sel = ST.sel === d.cls ? null : d.cls; ST.hover = null; return redrawGrid(); }
   }
   function close() {
-    gen++; busy = false;
+    gen++; busy = false; ST.pfRun = null;
     if (simpleApi()) simpleApi().stop(null, simpleStopFn());
     if (box) box.hidden = true; const m = document.getElementById("menuBtn"); if (m) m.focus();
     if (globalThis.viewClosed) globalThis.viewClosed("study");
@@ -854,6 +926,11 @@
   .sy-note, .sy-msg { color: var(--muted); font-size: 11px; line-height: 1.5; margin-top: 10px; }
   .sy-msg { padding: 24px 4px; font-size: 13px; }
   .sy-err { color: var(--bad); }
+  .sy-msg.sy-pfrun { padding: 6px 0 0; font-size: 12px; }
+  .sy-pfrun .spinner { width: 10px; height: 10px; margin-right: 6px; vertical-align: -1px; }
+  .sy-pfrun button { margin-left: 6px; padding: 2px 10px; min-height: 0; }
+  .sy-pf { padding: 18px 4px; font-size: 13px; display: flex; flex-direction: column; gap: 10px; max-width: 620px; line-height: 1.5; }
+  .sy-pf .sy-mut { font-size: 12px; }
   .sy-deal { padding: 18px 4px; font-size: 13px; display: flex; flex-direction: column; gap: 8px; }
   .sy-deal form { display: flex; gap: 6px; flex-wrap: wrap; }
   .sy-deal input { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; font: inherit; width: 150px; text-transform: none; }
@@ -919,7 +996,7 @@
       box.setAttribute("aria-modal", "true"); box.setAttribute("aria-label", "Study");
       box.innerHTML = `<div class="sy-card" tabindex="-1"><div class="sy-head"><b>Study</b><span class="sy-sub">the solver's strategy for a whole range, node by node: click an action to play it</span><button class="ghost sy-x" data-close aria-label="Close">✕</button></div><div class="sy-body"></div></div>`;
       document.body.appendChild(box);
-      const data = (t) => { const e = t.closest("[data-close],[data-speed],[data-back],[data-step],[data-view],[data-who],[data-random],[data-act],[data-cls],[data-build],[data-brush],[data-amt],[data-reset],[data-fill],[data-score],[data-retry],[data-newflop],[data-unfilter],[data-runouts],[data-rowho],[data-card],[data-rosolve],[data-roview],[data-rosort],[data-rogroup]"); return e && !e.disabled ? e.dataset : null; };
+      const data = (t) => { const e = t.closest("[data-close],[data-speed],[data-back],[data-step],[data-view],[data-who],[data-random],[data-act],[data-cls],[data-build],[data-brush],[data-amt],[data-reset],[data-fill],[data-score],[data-retry],[data-newflop],[data-unfilter],[data-runouts],[data-rowho],[data-card],[data-rosolve],[data-roview],[data-rosort],[data-rogroup],[data-pf],[data-pfsolve],[data-pfstop]"); return e && !e.disabled ? e.dataset : null; };
       // (the Breakdown's own buttons are its: its player and parts aren't the panel's)
       box.addEventListener("click", (e) => { if (e.target === box) return close(); if (e.target.closest(".sy-bd,.sy-simple")) return; const d = data(e.target); if (d) act(d, e); });
       box.addEventListener("submit", (e) => {

@@ -19,7 +19,7 @@ import build_bundle  # noqa: E402
 WORKER = open(os.path.join(ROOT, "gto", "static", "worker.js")).read()
 # what the worker imports before it reports "Solving…" (its first runPython), and modules no startup should pay for
 STARTUP = re.search(r'"import (gto\.[\w., ]+)\\n"', WORKER).group(1)
-LAZY = ["gto.multiway_solver", "gto.pf_game", "gto.pf_game_data", "gto.pf_eqr", "gto.pf_solve", "gto.pf_realize",
+LAZY = ["gto.multiway_solver", "gto.pf_game", "gto.pf_study", "gto.pf_game_data", "gto.pf_eqr", "gto.pf_solve", "gto.pf_realize",
         "gto.pf_realize_model", "gto.breakdown", "gto.exploit", "gto.native", "gto.cli", "gto.server"]
 
 

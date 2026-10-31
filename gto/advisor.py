@@ -2703,6 +2703,9 @@ class Advisor:
         st = {k: v for k, v in state.items() if k not in STUDY_DROPS}
         st["study"] = True
         runouts = st.pop("runouts", None)
+        pfs = st.pop("preflop_solve", None)
+        if pfs and not str(st.get("board") or ""):
+            return self._study_pf(st, pfs)
         try:
             if runouts:
                 return self._runouts(st, held=runouts == "held")
@@ -2719,6 +2722,30 @@ class Advisor:
         if why and st.get("one_size") is not None:
             return _one_size_failed(why)
         return self._fallback(st, why) if why else res   # (the catch-all, as advise's)
+
+    def _study_pf(self, st: dict, pfs) -> dict:
+        """Study's Solver source preflop (state "preflop_solve"; gto/pf_study.py): the node from the solve of the page's
+        game (pf_game's equilibrium: every class's mix and EVs), where one is in hand (solved here, or stored: the
+        standard games); else {"study": "pf_unsolved", "game", "key", "estimate_s"} (the page offers to solve it) or
+        {"study": "pf_none", "reason"} (a game the solve doesn't take). "preflop_solve": {"run": seconds} runs the
+        game's solve that much more (from where it was) and answers {"study": "pf_progress", "pf_solve": its status}."""
+        from . import pf_study
+        t0 = time.time()
+        spec, why = pf_study.spec_of(st)
+        if spec is None:
+            return {"study": "pf_none", "street": "preflop", "reason": why}
+        if isinstance(pfs, dict) and pfs.get("run"):
+            sec = max(0.5, min(30.0, float(pfs["run"])))
+            s = pf_study.solve(spec, sec, self.should_stop)
+            return {"study": "pf_progress", "street": "preflop", "pf_solve": s.status(),
+                    "seconds": round(time.time() - t0, 2)}
+        s = pf_study.held(spec)
+        if s is None:
+            return {"study": "pf_unsolved", "street": "preflop", "game": spec.label(), "key": spec.key,
+                    "estimate_s": round(pf_study.estimate_seconds(spec)), "seconds": round(time.time() - t0, 2)}
+        res = s.node(_norm_actions(st.get("preflop"), float(st.get("bb", 1.0))))
+        res["seconds"] = round(time.time() - t0, 3)
+        return res
 
     def _runouts(self, st: dict, held: bool = False) -> dict:
         """Study mode's runout report (state "runouts": true, once a heads-up flop's or turn's betting closed): the

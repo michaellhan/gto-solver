@@ -81,6 +81,19 @@ self.libFetch = (path) => {
     return null;
   }
 };
+// A file of the site's own beside this worker (gto/pf_study.py's stored preflop solves, pf/<game>.bin, ~300 KB),
+// read synchronously as the library's entries are; null where it's missing.
+self.siteFetch = (path) => {
+  try {
+    const x = new XMLHttpRequest();
+    x.open("GET", path, false);
+    x.responseType = "arraybuffer";
+    x.send();
+    return x.status === 200 ? new Uint8Array(x.response) : null;
+  } catch (e) {
+    return null;
+  }
+};
 
 // The core's threads: core-mt.wasm with its memory shared (a SharedArrayBuffer: the page must be cross-origin isolated,
 // which sw.js arranges) and up to 7 helper workers, each the same module on the same memory waiting in core_helper for

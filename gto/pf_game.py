@@ -26,9 +26,18 @@ best-responding, in bb per hand, which is the check.
 from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import lru_cache
+import sys
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 from .pf_classes import CLASSES, N_IN, PAIR_COMPAT, equity_matrix
+
+if sys.platform == "emscripten":
+    # Pyodide's numpy has no BLAS: einsum's loop runs a (rows, 169) x (169, 169) product ~1.8x quicker than matmul's
+    def _mm(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+        return np.einsum("ij,jk->ik", a, b)
+else:
+    def _mm(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+        return a @ b
 
 K = len(CLASSES)
 PRIOR = N_IN / N_IN.sum()
@@ -608,12 +617,27 @@ class Game:
         self.model = model
         self._prep_terminals()
 
+    def _masses(self, reach: np.ndarray) -> np.ndarray:
+        """(N, n, K): each seat's reach times PAIR_COMPAT (its class weights against each class of an opponent's,
+        card removal included) at every node, the product taken once a node for the seat whose reach changes there
+        and carried down for the others: N rows instead of the terminals' T x n (in Pyodide 0.09 s an iteration in
+        place of 0.5)."""
+        M = np.empty_like(reach)
+        M[0] = _mm(reach[0], PAIR_COMPAT)
+        for d in range(1, self.maxd + 1):
+            idx = self.by_depth[d]
+            par = self.parent[idx]
+            M[idx] = M[par]
+            pl = self.player[self.dec_of[par]]
+            M[idx, pl] = _mm(reach[idx, pl], PAIR_COMPAT)
+        return M
+
     def _term_values(self, reach: np.ndarray, V: np.ndarray):
         """Fill V's terminal rows: each seat's counterfactual value (payoff summed over the other seats'
         classes weighted by their reaches; card removal by class pairs against each opponent)."""
         T = self.terms
         RT = reach[T]                                            # (T, n, K)
-        m = RT @ PAIR_COMPAT                                     # PAIR_COMPAT is symmetric
+        m = self._masses(reach)[T]                               # (T, n, K): reach @ PAIR_COMPAT (symmetric)
         n = self.n
         ones = np.ones((len(T), 1, K))
         pre = np.cumprod(np.concatenate([ones, m[:, :-1]], 1), 1)
@@ -626,13 +650,13 @@ class Game:
             ma, mc = m[rows, a], m[rows, c]
             inv_a, inv_c = self.inv[rows, a][:, None], self.inv[rows, c][:, None]
             ff = fold_f[rows]
-            out[rows, a] = (pe[:, None] * (rc @ S.T) - inv_a * mc) * ff
-            out[rows, c] = (pe[:, None] * (ma - ra @ S) - inv_c * ma) * ff
+            out[rows, a] = (pe[:, None] * _mm(rc, S.T) - inv_a * mc) * ff
+            out[rows, c] = (pe[:, None] * (ma - _mm(ra, S)) - inv_c * ma) * ff
         if self.three is not None:
             rows, act, fac, pe = self.three
             E = PAIR_COMPAT * equity_matrix()
             corr = three_way_corr()
-            er = np.stack([RT[rows, act[:, k]] @ E.T for k in range(3)], 1)      # (T3, 3, K)
+            er = np.stack([_mm(RT[rows, act[:, k]], E.T) for k in range(3)], 1)      # (T3, 3, K)
             ms = np.stack([m[rows, act[:, k]] for k in range(3)], 1)
             ff = fold_f[rows]
             shares, masses = [], []

@@ -66,6 +66,10 @@ cp "$HERE/gto/static/index.html" "$HERE/gto/static/worker.js" "$HERE/gto/static/
 # cached from before the bundle (index.html is cached up to 10 minutes, with the old worker's version)
 "$PYTHON" "$HERE/scripts/build_bundle.py" "$WORK/site/gto-solver/solver.zip" >/dev/null
 cp "$HERE"/gto/*.py "$WORK/site/gto-solver/gto/"
+# Study's stored preflop solves (gto/pf_study.py STORED: pf/<game>.bin, ~300 KB each, read by the worker's siteFetch
+# when Study's Solver source opens one of those games)
+mkdir -p "$WORK/site/gto-solver/pf"
+cp "$HERE"/gto/static/pf/*.bin "$WORK/site/gto-solver/pf/"
 # the precomputed libraries (gto/flop_library.py, gto/mw_library.py: the indexes and one small file per spot and flop,
 # fetched by the worker when its spot comes up) are published first to their own site, gto-solver-library/ beside
 # gto-solver/ (scripts/deploy_library.sh: one commit with no history, so rebuilt entries don't pile up in the site

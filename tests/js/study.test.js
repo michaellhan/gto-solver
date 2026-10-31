@@ -659,3 +659,119 @@ test("Study on a turn or river after the street before was solved live: that sol
   assert.doesNotMatch(p.html(), /Approximate/);
   assert.match(p.html(), /Solved live in 0.9 s/);
 });
+
+// ---- the Solver source preflop (gto/pf_study.py through Advisor.study's "preflop_solve"): the solve's mix and EVs
+const PF_NODE = {
+  study: "node", street: "preflop", actor: "BB", players: 6, board: "", pot_bb: 4, to_call_bb: 1.5, stack_bb: 99,
+  actions: [{ action: "raise", amount_bb: 11, freq: 0.12, combos: 60, ev_bb: 1.2 }, { action: "call", amount_bb: null, freq: 0.5, combos: 250, ev_bb: 0.6 },
+            { action: "fold", amount_bb: null, freq: 0.38, combos: 190, ev_bb: 0 }],
+  grid: { actions: ["raise", "call", "fold"], cells: {
+    AA: { w: 1, f: [1, 0, 0], ev: [9.1, 6.2, 0], evm: 9.1, eq: null }, "72o": { w: 1, f: [0, 0.1, 0.9], ev: [-1.1, -0.02, 0], evm: -0.002, eq: null } } },
+  range_combos: 1326, range_ev_bb: 0.554, range_eq: null, opponent: "BTN",
+  opponents: [{ seat: "BTN", combos: 560, grid: { actions: [], cells: { AA: { w: 1 } } } }],
+  solver: { by: "the preflop solve", iterations: 1500, mbb: 1.34, exploitability_bb: null },
+  pf_solve: { key: "6max_100bb", label: "6 players, 100bb, no rake", iterations: 1500, done: true, stored: true, mbb: 1.34, target_mbb: 2 },
+  source: "solver", notes: [], regret_bb: 0.004, rough: false,
+};
+
+test("the Solver source preflop: its request, the EV column and view, the solve's line", () => {
+  const st = S.fresh ? { ...SPOT, preflop: SPOT.preflop.slice(0, 5) } : null;
+  assert.equal(S.request(st, "fast", "solver").preflop_solve, true);
+  assert.equal(S.request(st, "fast", "charts").preflop_solve, undefined);
+  assert.equal(S.request(S.deal(SPOT, "Kd7c2h"), "fast", "solver").preflop_solve, undefined);   // (after the flop: the solves as ever)
+  assert.deepEqual(S.viewsOf(PF_NODE), ["strategy", "ev"]);
+  const ui = { view: "strategy", who: "me", sel: null, focus: null };
+  let h = S.actionsHtml(PF_NODE, ui);
+  assert.match(h, />EV</);
+  assert.match(h, /12\.0%<\/td><td class="n">60\.0<\/td><td class="n">\+1\.20<\/td>/);
+  assert.match(h, /BB's range: <b>1326<\/b> combos · EV <b>\+0\.55<\/b>bb/);
+  assert.match(S.detailHtml(PF_NODE, ui, "AA"), /EV <b>\+9\.10<\/b>/);
+  assert.equal(S.solverHtml(PF_NODE), "Preflop solve of this game (6 players, 100bb, no rake): precomputed, 1500 iterations, 1.34 mbb/hand from equilibrium "
+    + "(a seat's average). The solve's own equilibrium (its flops valued by the flop library's realization), not the charts: the advice plays the charts, which fit published solves better.");
+  const live = { ...PF_NODE, pf_solve: { ...PF_NODE.pf_solve, stored: false, done: false, iterations: 300, mbb: 12.5 } };
+  assert.match(S.solverHtml(live), /^Preflop solve of this game \(6 players, 100bb, no rake\): 300 iterations, 12\.5 mbb\/hand .*Not finished: the numbers can still move/);
+  assert.match(S.solverHtml({ ...PF_NODE, rough: true, regret_bb: 0.8 }), /A line the solve rarely or never plays: the mix here is barely solved \(the range gives up 0\.8bb a hand/);
+  assert.doesNotMatch(S.solverHtml(PF_NODE), /rarely/);
+  // the charts' answer keeps its mix without EVs
+  assert.deepEqual(S.viewsOf({ ...PF_NODE, source: undefined }), ["strategy"]);
+  assert.doesNotMatch(S.actionsHtml({ ...PF_NODE, source: undefined, range_ev_bb: null }, ui), />EV</);
+});
+
+test("Study's Solver source: a game not solved yet offered, solved in chunks with its progress, the node asked again after each, Stop", async () => {
+  const CHARTS = { ...PF_NODE, actor: "UTG", source: undefined, opponents: [], opponent: null, range_ev_bb: null, solver: undefined, pf_solve: undefined,
+                   actions: PF_NODE.actions.map(a => ({ ...a, ev_bb: null })) };
+  const UNSOLVED = { study: "pf_unsolved", street: "preflop", game: "3 players, 100bb, no rake", key: "3max_100bb", estimate_s: 3 };
+  let chunks = 0;
+  const live = (q) => q.preflop_solve && q.preflop_solve.run
+    ? { study: "pf_progress", street: "preflop", pf_solve: { ...PF_NODE.pf_solve, stored: false, done: false, iterations: 100 * ++chunks, mbb: 20 / chunks, target_mbb: 2 } }
+    : q.preflop_solve ? (chunks ? { ...PF_NODE, actor: "UTG", pf_solve: { ...PF_NODE.pf_solve, stored: false, done: false, iterations: 100 * chunks } } : UNSOLVED)
+    : CHARTS;
+  const p = await studyPage(null, live);
+  p.ctx.STUDY_AT = { state: { players: 3, stack: 100, board: "", preflop: [], flop: [], turn: [], river: [] } };
+  const opened = p.ctx.Study.open();
+  await p.tick();
+  await p.land(1);
+  await opened;
+  assert.equal(p.asked[0].q.preflop_solve, undefined);
+  assert.match(p.html(), /<button data-pf="charts" class="active">Charts<\/button><button data-pf="solver" class="">Solver<\/button>/);
+  // the Solver source: the game's not solved, so the offer
+  p.ctx.Study.act({ pf: "solver" });
+  await p.tick();
+  assert.equal(p.asked[1].q.preflop_solve, true);
+  await p.land(2);
+  assert.match(p.html(), /Solve this game's preflop<\/b>: 3 players, 100bb, no rake\./);
+  assert.match(p.html(), /About 5 s here/);
+  assert.match(p.html(), /<button data-pfsolve>Solve<\/button>/);
+  // solving: a chunk, then the node asked again (its answer from the solve so far), then the next chunk
+  p.ctx.Study.act({ pfsolve: "" });
+  await p.tick();
+  assert.equal(p.asked[2].q.preflop_solve.run, 4);
+  assert.equal(p.asked[2].q.players, 3);
+  assert.match(p.html(), /Solving this game's preflop: <b>0<\/b> iterations/);
+  assert.match(p.html(), /data-pfstop/);
+  await p.land(3);
+  assert.equal(p.asked[3].q.preflop_solve, true);
+  await p.land(4);
+  assert.equal(p.asked[4].q.preflop_solve.run, 4);
+  assert.match(p.html(), /Solving this game's preflop: <b>100<\/b> iterations, 20 mbb\/hand from equilibrium/);
+  assert.match(p.html(), /<b>UTG<\/b> to act/);
+  assert.match(p.html(), /Not finished: the numbers can still move/);
+  // Stop: the chunk running ends it, the node asked once more, the line gone
+  p.ctx.Study.act({ pfstop: "" });
+  assert.match(p.html(), /stopping…/);
+  await p.land(5);
+  assert.equal(p.asked.length, 6);
+  assert.equal(p.asked[5].q.preflop_solve, true);
+  await p.land(6);
+  assert.doesNotMatch(p.html(), /Solving this game's preflop|data-pfstop/);
+  assert.match(p.html(), /200 iterations/);
+  assert.equal(p.asked.length, 6);
+  // back to the charts: their answer (in hand) again
+  p.ctx.Study.act({ pf: "charts" });
+  await p.tick();
+  assert.equal(p.asked.length, 6);
+  assert.match(p.html(), /<button data-pf="charts" class="active">/);
+  assert.match(p.html(), /charts' mix/);
+});
+
+test("Study's Solver source on a game the solve doesn't take: why, and the charts still there", async () => {
+  const p = await studyPage(null, (q) => q.preflop_solve ? { study: "pf_none", street: "preflop", reason: "8-handed preflop is too big to solve here (up to 7 players)" }
+    : { ...PF_NODE, source: undefined, range_ev_bb: null });
+  p.ctx.STUDY_AT = { state: { players: 8, stack: 100, board: "", preflop: [], flop: [], turn: [], river: [] } };
+  const opened = p.ctx.Study.open();
+  await p.tick();
+  await p.land(1);
+  await opened;
+  p.ctx.Study.act({ pf: "solver" });
+  await p.tick();
+  await p.land(2);
+  assert.match(p.html(), /The preflop solve doesn't take this game: 8-handed preflop is too big to solve here \(up to 7 players\)\. Charts answers it\./);
+  assert.match(p.html(), /data-pf="charts"/);
+  assert.doesNotMatch(p.html(), /data-pfsolve/);
+});
+
+test("the Solver source's buttons are among the panel's clickable data attributes", () => {
+  const src = require("node:fs").readFileSync(path.join(__dirname, "..", "..", "gto", "static", "study.js"), "utf8");
+  const sel = /const data = \(t\) => \{ const e = t\.closest\("([^"]+)"\)/.exec(src)[1].split(",");
+  for (const a of ["[data-pf]", "[data-pfsolve]", "[data-pfstop]"]) assert.ok(sel.includes(a), a);
+});
