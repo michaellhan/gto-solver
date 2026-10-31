@@ -6380,10 +6380,12 @@ class Advisor:
         read off the stored flops most like it (a library spot's other flops; a pot the library holds no spot for, or
         another stack depth, off the spot nearest it), walked down the line as the library's answers are (its sizes at
         the tree's nearest, the ranges narrowed by its mixes); at a decision an entry would store, the actor's whole
-        range: per hand class (the grid) and combo the mix (combos no stored flop holds an image of left out), per
-        action the range's frequency and combos, the opponent's range, marked "approximate" with what it's read off
-        (the advice's early panel's label: the spot borrowed, at what depth). No EVs or equities: the flop's own solve,
-        which replaces it, has them. _NoInstant where it doesn't hold the node."""
+        range: per hand class (the grid) and combo the mix (combos no stored flop holds an image of left out, and the
+        hands the spot's ranges don't hold where it reads them alone: another game's or a bigger table's pot, another
+        depth; a note says how much of the range that leaves out), per action the range's frequency and combos, the
+        opponent's range, marked "approximate" with what it's read off (the advice's early panel's label: the spot
+        borrowed, at what depth). No EVs or equities: the flop's own solve, which replaces it, has them. _NoInstant
+        where it doesn't hold the node."""
         sol = near() if near is not None and cur.name == "flop" else None
         if sol is None:
             raise _NoInstant()
@@ -6396,10 +6398,12 @@ class Advisor:
             raise _NoInstant()
         act = sol.ctx.active
         me, opp = np.zeros(N_COMBOS), np.zeros(N_COMBOS)
-        me[act] = np.asarray(c0 if hero_p == 0 else c1, dtype=np.float64) * sol.known[id(node)]
+        whole = np.asarray(c0 if hero_p == 0 else c1, dtype=np.float64)
+        me[act] = whole * sol.known[id(node)]
         opp[act] = np.asarray(c1 if hero_p == 0 else c0, dtype=np.float64)
         if me.sum() < 1e-6:
             raise _NoInstant()
+        out = 1.0 - me.sum() / max(float(whole.sum()), 1e-12)   # (the range's share no read holds)
         names = list(node.names)
         sf = np.zeros((len(names), N_COMBOS))
         sf[:, act] = node.avg_strategy0()
@@ -6414,7 +6418,9 @@ class Advisor:
                 "solver": {"iterations": None, "exploitability_pct": None, "by": "the flop library"},
                 "notes": ["read off stored flops by card substitution: no EVs or equities until the flop's own solve"]
                 + (["the hands that spot's range doesn't hold: the average mix there of their hand class (made hand "
-                    "and draw)"] if getattr(sol, "filled", {}).get(id(node), np.zeros(1, bool)).any() else []),
+                    "and draw)"] if getattr(sol, "filled", {}).get(id(node), np.zeros(1, bool)).any() else [])
+                + ([f"{out:.0%} of this range (by weight) isn't shown: hands the stored flops' ranges don't hold, "
+                    f"which the flop's own solve answers"] if out >= 0.005 else []),
                 "seconds": round(time.time() - t0, 3)}
 
     def _study_prev(self, cur, board, hero, villain, hero_p, oop, ip, eff, r0, r1, walked, behind, to_call,

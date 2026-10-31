@@ -2054,7 +2054,12 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   doesn't store, a heads-up pot read off the nearest spot or another stack depth showed the progress bar until the
   flop's live solve answered. At Accurate the stored flops most like it now answer at once for the whole range, as the
   advice's approximate flop does for one hand (`instant_from_near`, below; the same mix for each combo), marked
-  approximate with the flops or the spot and depth borrowed, and the live solve replaces it.
+  approximate with the flops or the spot and depth borrowed, and the live solve replaces it. Where the read holds
+  only the hands the spot's ranges do (another depth, a bigger table's pot, another game's pot in the held tiers;
+  below), the rest are left out of the range and a note says how much: "14% of this range (by weight) isn't shown:
+  hands the stored flops' ranges don't hold, which the flop's own solve answers" (14% of the ante's BB defending the
+  CO at 150bb, 21% of 8-max's CO flatted by the BTN, 4% of the ante's UTG flatted by the HJ, 1% of a 60bb BB vs the
+  BTN; the live solve's range has them all).
   `scripts/bench_browser.mjs --early --prefetch 0` (Pyodide, one thread, a fresh worker a row, 300 ms a library file;
   seconds to the first answer, before -> with the answer at once / to the live solve):
 

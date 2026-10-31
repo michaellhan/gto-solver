@@ -445,6 +445,7 @@ class TestStudyNear(_Lib):
         with mock.patch.object(A, "solve", side_effect=AssertionError("solved")):
             res = adv.instant(self.study())
         json.dumps(res, allow_nan=False)
+        self.assertFalse([n for n in res["notes"] if "isn't shown" in n])   # (every combo of the range read)
         self.assertEqual((res["study"], res["street"], res["actor"], res["opponent"]), ("node", "flop", "HJ", "CO"))
         self.assertEqual(res["approximate"], {"source": "near", "iterations": None, "label": "the precomputed solves of "
                          "the most similar flops (KhJd5c, KhJd7c, KhQd6c), by card substitution"})
@@ -844,7 +845,8 @@ class TestOtherGame(_Lib):
         """Tiers 3 and 4 answer the hands their spot's ranges hold alone (near_fill): the straddled SB's raise called by
         the straddler, off SB vs BB (whose big blind holds 84% of the straddler's range) at less than half its stack-to-
         pot ratio. The SB gets the entry's mix at once, nothing solved; the straddler, facing the SB's bet with a hand
-        the big blind's range there doesn't hold (a suited ace it 3bets), has no answer at once (solved live)."""
+        the big blind's range there doesn't hold (a suited ace it 3bets), has no answer at once (solved live), and
+        Study's range there leaves those hands out with a note of their share."""
         st = fl.spot_setup(STRADDLE_SB, 6, straddle=True)
         self.assertEqual((st["oop"], st["ip"]), ("SB", "UTG"))
         args = (self.lib, st["full0"], st["full1"], st["pot"], st["stack"])
@@ -882,6 +884,18 @@ class TestOtherGame(_Lib):
         self.assertTrue(np.allclose([a["freq"] for a in res["actions"]], mix, atol=0.0006))
         self.assertNotIn("your hand isn't in that spot's range", held["approximate"]["label"])
         self.assertIsNone(adv.instant(dict(hand, hero="UTG", hole=cards_str(fl.ALL_COMBOS[off]), flop=bet)))
+        # Study shows the straddler's range without those hands, and says how much of it that leaves out (14%)
+        with mock.patch.object(A, "solve", side_effect=AssertionError("solved")):
+            study = adv.instant(dict(hand, study=True, flop=bet))
+            first = adv.instant(dict(hand, study=True, flop=[]))
+        alive = np.array([not dead & set(cb) for cb in fl.ALL_COMBOS])
+        w = st["full1"] * alive
+        out = (w * (ss["full1"] == 0)).sum() / w.sum()
+        self.assertEqual(study["actor"], "UTG")
+        self.assertAlmostEqual(study["range_combos"], (w * (ss["full1"] > 0)).sum(), delta=2.0)
+        self.assertIn(f"{out:.0%} of this range (by weight) isn't shown: hands the stored flops' ranges don't hold, "
+                      f"which the flop's own solve answers", study["notes"])
+        self.assertFalse([n for n in first["notes"] if "isn't shown" in n])   # (the SB's range: all held)
 
     def test_heads_up(self):
         """Heads-up's raised pot reads BTN vs BB's entry of the flop at once, approximately: a hand that spot's BB
