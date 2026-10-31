@@ -124,8 +124,9 @@ static void *salloc(Lane *L, size_t bytes) {
    best response) + p] an evaluation's in a program no training pass measured (one built to evaluate, or a solve
    stopped before its first iteration): each kind measures its own, as one player's pass can take more scratch than the
    other's (a turn's best response for the first player 100,416 bytes, the second's 97,664: measured on the second's
-   alone, the first's trapped) */
-#define NLANES 7
+   alone, the first's trapped), [7] a batch of tables' (core_tables: set from their sizes, not measured) */
+#define NLANES 8
+#define TLANE 7
 static size_t lane_size[NLANES], measured[NLANES];
 static u32 grown;   /* jobs whose lanes came short of a helper's scratch (core_lanes_grown): job() */
 /* A helper's lane is its measure and half that again: a measure short of a later pass's scratch (the lanes' traps so
@@ -1754,11 +1755,15 @@ static void games(Lane *L, int p, i32 lo, i32 hi) {
 }
 
 #define SUBS -2
-/* a job's rows lo..hi (from row r of its arrays): a chance node's child, (child -1) the deferred games, or (SUBS) the
-   pass's subs */
+#define TABLES -3
+static void t_task(Lane *L, i32 x);
+/* a job's rows lo..hi (from row r of its arrays): a chance node's child, (child -1) the deferred games, (SUBS) the
+   pass's subs, or (TABLES) a batch's tables (core_tables) */
 static void run(Lane *L, i32 child, int p, i32 lo, i32 hi, i32 r, const f32 *c0, const f32 *c1, f32 *u) {
   if (child == SUBS) {
     subs_run(L, p, lo, hi);
+  } else if (child == TABLES) {
+    for (i32 x = lo; x < hi; x++) t_task(L, x);
   } else if (DEFER && child < 0) {
     games(L, p, lo, hi);
   } else if (phase != WHOLE) {
@@ -2211,20 +2216,26 @@ static inline int t_compat(const i32 *A, const i32 *Bc, i32 i, i32 j) {
 
 /* Ctx._avg_showdown: L[i, j] = (boards where i beats j - boards where j beats i) / max(boards where neither holds a
    board card, 1), times their compatibility; the counts are exact, so the floats are numpy's. Counted in int16, eight
-   columns at a time, rows a block at a time (the block's counts stay in cache over the boards). */
-static void t_showdown(i32 nn, i32 R, const i32 *S, const i32 *A, const i32 *Bc, f32 *L) {
-  size_t mark = M.top;
-  i32 np = (nn + 7) & ~7, RB = 8;
-  short *s = salloc(&M, 2 * (size_t)R * np), *v = salloc(&M, 2 * (size_t)R * np);
-  short *D = salloc(&M, 2 * (size_t)RB * np), *C = salloc(&M, 2 * (size_t)RB * np);
+   columns at a time, rows a block at a time (the block's counts stay in cache over the boards). t_sd_prep lays the
+   strengths out (s, v: R x np shorts each), t_sd_rows fills rows r0..r1 of L (a batch's chunks: core_tables); every
+   entry is its own exact count, so the chunks make no difference to the floats. */
+static void t_sd_prep(i32 nn, i32 R, const i32 *S, short *s, short *v) {
+  i32 np = (nn + 7) & ~7;
   for (i32 r = 0; r < R; r++)
     for (i32 j = 0; j < np; j++) {
       i32 x = j < nn ? S[(size_t)r * nn + j] : -1;
       s[(size_t)r * np + j] = (short)x;
       v[(size_t)r * np + j] = x >= 0 ? -1 : 0;   /* (-1: counted) */
     }
-  for (i32 i0 = 0; i0 < nn; i0 += RB) {
-    i32 i1 = i0 + RB < nn ? i0 + RB : nn;
+}
+
+static void t_sd_rows(Lane *Ln, i32 nn, i32 R, const short *s, const short *v, const i32 *A, const i32 *Bc, f32 *L,
+                      i32 r0, i32 r1) {
+  size_t mark = Ln->top;
+  i32 np = (nn + 7) & ~7, RB = 8;
+  short *D = salloc(Ln, 2 * (size_t)RB * np), *C = salloc(Ln, 2 * (size_t)RB * np);
+  for (i32 i0 = r0; i0 < r1; i0 += RB) {
+    i32 i1 = i0 + RB < r1 ? i0 + RB : r1;
     for (size_t x = 0; x < (size_t)RB * np; x++) D[x] = C[x] = 0;
     for (i32 r = 0; r < R; r++) {
       const v8s *sr = (const v8s *)(s + (size_t)r * np), *vr = (const v8s *)(v + (size_t)r * np);
@@ -2247,7 +2258,15 @@ static void t_showdown(i32 nn, i32 R, const i32 *S, const i32 *A, const i32 *Bc,
         Li[j] = (f32)d[j] / (f32)(c[j] > 1 ? c[j] : 1) * (f32)t_compat(A, Bc, i, j);
     }
   }
-  M.top = mark;
+  Ln->top = mark;
+}
+
+static void t_showdown(Lane *Ln, i32 nn, i32 R, const i32 *S, const i32 *A, const i32 *Bc, f32 *L) {
+  size_t mark = Ln->top, np = (nn + 7) & ~7;
+  short *s = salloc(Ln, 2 * (size_t)R * np), *v = salloc(Ln, 2 * (size_t)R * np);
+  t_sd_prep(nn, R, S, s, v);
+  t_sd_rows(Ln, nn, R, s, v, A, Bc, L, 0, nn);
+  Ln->top = mark;
 }
 
 /* each combo's bucket (K: none) from its equity key eq (solver.eq_key: the equity to 2^-20, ties in combo order), among
@@ -2272,19 +2291,19 @@ static void t_bucket(i32 nn, const f64 *eq, const f64 *w, i32 K, i32 *ids, i32 *
   }
 }
 
-static void t_buckets(const i32 *a) {
+static void t_buckets(Lane *Ln, const i32 *a) {
   i32 nn = a[1], R = a[2], K = a[6];
   const i32 *S = PI(a[3]), *A = PI(a[4]), *Bc = PI(a[5]);
   const f64 *w[2] = {PD(a[7]), PD(a[8])};
   i32 *ids = PI(a[9]);
   f32 *E = PF(a[10]), *kap = PF(a[11]);
-  size_t mark = M.top, KK = (size_t)K * K;
-  f32 *L = salloc(&M, sizeof(f32) * (size_t)nn * nn);
-  f64 *eq = salloc(&M, sizeof(f64) * nn), *acc = salloc(&M, sizeof(f64) * K);
-  f64 *W[2] = {salloc(&M, sizeof(f64) * K), salloc(&M, sizeof(f64) * K)};
-  f64 *num = salloc(&M, sizeof(f64) * KK), *pm = salloc(&M, sizeof(f64) * KK), *c1 = salloc(&M, sizeof(f64) * 52 * K);
-  i32 *idx = salloc(&M, sizeof(i32) * nn), *tmp = salloc(&M, sizeof(i32) * nn);
-  t_showdown(nn, R, S, A, Bc, L);
+  size_t mark = Ln->top, KK = (size_t)K * K;
+  f32 *L = salloc(Ln, sizeof(f32) * (size_t)nn * nn);
+  f64 *eq = salloc(Ln, sizeof(f64) * nn), *acc = salloc(Ln, sizeof(f64) * K);
+  f64 *W[2] = {salloc(Ln, sizeof(f64) * K), salloc(Ln, sizeof(f64) * K)};
+  f64 *num = salloc(Ln, sizeof(f64) * KK), *pm = salloc(Ln, sizeof(f64) * KK), *c1 = salloc(Ln, sizeof(f64) * 52 * K);
+  i32 *idx = salloc(Ln, sizeof(i32) * nn), *tmp = salloc(Ln, sizeof(i32) * nn);
+  t_showdown(Ln, nn, R, S, A, Bc, L);
   /* each player's buckets, by equity against the opponent's root range: (L @ w) / its compatible mass */
   for (int q = 0; q < 2; q++) {
     const f64 *wo = w[1 - q];
@@ -2341,7 +2360,7 @@ static void t_buckets(const i32 *a) {
       kap[(size_t)x * K + y] = (f32)p;
       kap[KK + (size_t)y * K + x] = (f32)p;
     }
-  M.top = mark;
+  Ln->top = mark;
 }
 
 /* one board's sweep of the combos in order of strength (ord[from..nn): the live ones, -1s before them) with each
@@ -2383,21 +2402,21 @@ static void t_sweep(const i32 *ord, i32 from, i32 nn, const i32 *s, const i32 *A
   }
 }
 
-static void t_river(const i32 *a) {
+static void t_river(Lane *Ln, const i32 *a) {
   i32 nn = a[1], R = a[2], K = a[6], outer = a[9];
   const i32 *S = PI(a[3]), *A = PI(a[4]), *Bc = PI(a[5]), *tids = outer ? PI(a[10]) : 0;
   const f64 *rr[2] = {PD(a[7]), PD(a[8])};
   f32 *X = PF(a[11]), *E = PF(a[12]), *kap = PF(a[13]);
-  size_t mark = M.top, KK = (size_t)K * K, nK = (size_t)nn * K, K52 = (size_t)52 * K;
-  f64 *w[2] = {salloc(&M, sizeof(f64) * nn), salloc(&M, sizeof(f64) * nn)};
-  f64 *u = salloc(&M, sizeof(f64) * nn), *cm = salloc(&M, sizeof(f64) * nn), *key = salloc(&M, sizeof(f64) * nn);
-  i32 *ord = salloc(&M, sizeof(i32) * nn), *idx = salloc(&M, sizeof(i32) * nn), *tmp = salloc(&M, sizeof(i32) * nn);
-  i32 *ids[2] = {salloc(&M, sizeof(i32) * nn), salloc(&M, sizeof(i32) * nn)};
-  f64 *P[2] = {salloc(&M, sizeof(f64) * nK), salloc(&M, sizeof(f64) * nK)};
-  f64 *num = salloc(&M, sizeof(f64) * KK), *den = salloc(&M, sizeof(f64) * KK);
-  f64 *Tk = salloc(&M, sizeof(f64) * K), *wk = salloc(&M, sizeof(f64) * K), *gk = salloc(&M, sizeof(f64) * K);
-  f64 *bk = salloc(&M, sizeof(f64) * K);
-  f64 *ctk = salloc(&M, sizeof(f64) * K52), *cwk = salloc(&M, sizeof(f64) * K52), *gck = salloc(&M, sizeof(f64) * K52);
+  size_t mark = Ln->top, KK = (size_t)K * K, nK = (size_t)nn * K, K52 = (size_t)52 * K;
+  f64 *w[2] = {salloc(Ln, sizeof(f64) * nn), salloc(Ln, sizeof(f64) * nn)};
+  f64 *u = salloc(Ln, sizeof(f64) * nn), *cm = salloc(Ln, sizeof(f64) * nn), *key = salloc(Ln, sizeof(f64) * nn);
+  i32 *ord = salloc(Ln, sizeof(i32) * nn), *idx = salloc(Ln, sizeof(i32) * nn), *tmp = salloc(Ln, sizeof(i32) * nn);
+  i32 *ids[2] = {salloc(Ln, sizeof(i32) * nn), salloc(Ln, sizeof(i32) * nn)};
+  f64 *P[2] = {salloc(Ln, sizeof(f64) * nK), salloc(Ln, sizeof(f64) * nK)};
+  f64 *num = salloc(Ln, sizeof(f64) * KK), *den = salloc(Ln, sizeof(f64) * KK);
+  f64 *Tk = salloc(Ln, sizeof(f64) * K), *wk = salloc(Ln, sizeof(f64) * K), *gk = salloc(Ln, sizeof(f64) * K);
+  f64 *bk = salloc(Ln, sizeof(f64) * K);
+  f64 *ctk = salloc(Ln, sizeof(f64) * K52), *cwk = salloc(Ln, sizeof(f64) * K52), *gck = salloc(Ln, sizeof(f64) * K52);
   for (int q = 0; q < 2; q++)
     for (size_t x = 0; x < nK; x++) P[q][x] = 0;
   for (size_t x = 0; x < KK; x++) num[x] = den[x] = 0;
@@ -2479,7 +2498,7 @@ static void t_river(const i32 *a) {
       for (i32 k = 0; k < K; k++) p[k] /= c;
     }
   if (outer) {
-    f64 *Q = salloc(&M, sizeof(f64) * (size_t)outer * K), *wt = salloc(&M, sizeof(f64) * outer);
+    f64 *Q = salloc(Ln, sizeof(f64) * (size_t)outer * K), *wt = salloc(Ln, sizeof(f64) * outer);
     for (int q = 0; q < 2; q++) {
       const i32 *t = tids + (size_t)q * nn;
       for (size_t x = 0; x < (size_t)outer * K; x++) Q[x] = 0;
@@ -2513,7 +2532,7 @@ static void t_river(const i32 *a) {
       c1[(size_t)A[i] * K + k] += P[1][(size_t)i * K + k];
       c1[(size_t)Bc[i] * K + k] += P[1][(size_t)i * K + k];
     }
-  f64 *kn = salloc(&M, sizeof(f64) * KK);
+  f64 *kn = salloc(Ln, sizeof(f64) * KK);
   for (size_t x = 0; x < KK; x++) kn[x] = 0;
   for (i32 i = 0; i < nn; i++) {
     const f64 *a1 = P[1] + (size_t)i * K, *a0 = P[0] + (size_t)i * K;
@@ -2535,16 +2554,102 @@ static void t_river(const i32 *a) {
       kap[o] = (f32)kp;
       kap[KK + (size_t)y * K + x] = (f32)kp;
     }
-  M.top = mark;
+  Ln->top = mark;
 }
 
 /* one table (the arguments above); 0, or -1 on a bad kind */
 EXPORT(core_table) i32 core_table(u32 args) {
   const i32 *a = PI(args);
   switch (a[0]) {
-    case 1: t_showdown(a[1], a[2], PI(a[3]), PI(a[4]), PI(a[5]), PF(a[6])); return 0;
-    case 2: t_buckets(a); return 0;
-    case 3: t_river(a); return 0;
+    case 1: t_showdown(&M, a[1], a[2], PI(a[3]), PI(a[4]), PI(a[5]), PF(a[6])); return 0;
+    case 2: t_buckets(&M, a); return 0;
+    case 3: t_river(&M, a); return 0;
   }
   return -1;
+}
+
+/* A batch of tables (core_tables): each a task, an _avg_showdown's rows in chunks of them (its strengths laid out
+   once, s and v), the costliest first. */
+typedef struct {
+  const i32 *a;
+  i32 r0, r1;
+  const short *s, *v;
+  double cost;
+} TTask;
+static TTask *tq;
+
+/* the most scratch a task can take: each of its sallocs' bytes and 64 (alignment) */
+#define SB(b) ((size_t)(b) + 64)
+static size_t t_scratch(const TTask *t) {
+  const i32 *a = t->a;
+  size_t nn = a[1], R = a[2], np = (nn + 7) & ~(size_t)7, rows = 2 * SB(2 * 8 * np);
+  if (a[0] == 1) return rows;
+  size_t K = a[6], KK = K * K, sd = 2 * SB(2 * R * np) + rows;
+  if (a[0] == 2)
+    return SB(4 * nn * nn) + SB(8 * nn) + 3 * SB(8 * K) + 2 * SB(8 * KK) + SB(8 * 52 * K) + 2 * SB(4 * nn) + sd;
+  size_t outer = a[9];
+  return 5 * SB(8 * nn) + 5 * SB(4 * nn) + 2 * SB(8 * nn * K) + 3 * SB(8 * KK) + 4 * SB(8 * K) + 3 * SB(8 * 52 * K) +
+         (outer ? SB(8 * outer * K) + SB(8 * outer) : 0);
+}
+
+static void t_task(Lane *L, i32 x) {
+  const TTask *t = &tq[x];
+  const i32 *a = t->a;
+  switch (a[0]) {
+    case 1: t_sd_rows(L, a[1], a[2], t->s, t->v, PI(a[4]), PI(a[5]), PF(a[6]), t->r0, t->r1); break;
+    case 2: t_buckets(L, a); break;
+    case 3: t_river(L, a); break;
+  }
+}
+
+/* `count` tables at once, their argument blocks' offsets at `list`: with helpers each table a row of one job (an
+   _avg_showdown's rows in a chunk a row), in lanes sized for the largest; one by one without. Each table is
+   core_table's, the same floats. 0, or -1 on a bad kind. */
+EXPORT(core_tables) i32 core_tables(u32 list, i32 count) {
+  const u32 *off = (const u32 *)(base + list);
+  size_t mark = M.top;
+  i32 T = nthreads, nt = 0;
+  for (i32 i = 0; i < count; i++) {
+    const i32 *a = PI(off[i]);
+    if (a[0] < 1 || a[0] > 3) return -1;
+    nt += a[0] == 1 && T > 1 ? (a[1] + 7) / 8 < 2 * T ? (a[1] + 7) / 8 : 2 * T : 1;
+  }
+  tq = salloc(&M, sizeof(TTask) * (nt > 0 ? nt : 1));
+  i32 x = 0;
+  for (i32 i = 0; i < count; i++) {
+    const i32 *a = PI(off[i]);
+    double nn = a[1], R = a[2], np = (a[1] + 7) & ~7;
+    if (a[0] == 1) {
+      size_t sz = 2 * (size_t)a[2] * (size_t)np;
+      short *s = salloc(&M, sz), *v = salloc(&M, sz);
+      t_sd_prep(a[1], a[2], PI(a[3]), s, v);
+      i32 c = T > 1 ? (a[1] + 7) / 8 < 2 * T ? (a[1] + 7) / 8 : 2 * T : 1;
+      i32 per = ((a[1] + c - 1) / c + 7) & ~7;
+      for (i32 r0 = 0; r0 < a[1] && x < nt; r0 += per, x++) {
+        i32 r1 = r0 + per < a[1] ? r0 + per : a[1];
+        tq[x] = (TTask){a, r0, r1, s, v, (r1 - r0) * R * np};
+      }
+    } else {
+      /* (relative costs: measured natively, one thread) */
+      tq[x++] = (TTask){a, 0, 0, 0, 0, a[0] == 2 ? nn * R * np + 36 * nn * nn : 75 * R * nn * a[6]};
+    }
+  }
+  nt = x;
+  for (i32 i = 1; i < nt; i++)   /* (costliest first: the job hands them out in order) */
+    for (i32 j = i; j > 0 && tq[j].cost > tq[j - 1].cost; j--) {
+      TTask t = tq[j];
+      tq[j] = tq[j - 1], tq[j - 1] = t;
+    }
+#ifdef THREADS
+  if (T > 1 && nt > 1) {
+    size_t need = 0;
+    for (i32 i = 0; i < nt; i++)
+      if (t_scratch(&tq[i]) > need) need = t_scratch(&tq[i]);
+    lane_size[TLANE] = (need + 63) & ~(size_t)63;
+    job(&M, TABLES, 0, 0, nt, 1, 0, 0, 0, TLANE);
+  } else
+#endif
+    for (i32 i = 0; i < nt; i++) t_task(&M, i);
+  M.top = mark;
+  return 0;
 }

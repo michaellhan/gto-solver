@@ -1955,31 +1955,56 @@ def _equity_vs_any() -> np.ndarray:
     return _EQ_ANY
 
 
+_HELD_SKIP = (str, bytes, int, float, bool, type(None), type, types.ModuleType, types.FunctionType,
+              types.BuiltinFunctionType, types.MethodType, functools.partial)
+_HELD_ATOMS = frozenset((str, bytes, int, float, bool, type(None)))
+_HELD_SLOTS: dict = {}
+
+
+def _held_slots(t) -> tuple:
+    """The __slots__ of class t and its bases (once a class)."""
+    sl = _HELD_SLOTS.get(t)
+    if sl is None:
+        sl = []
+        for k in t.__mro__:
+            s = k.__dict__.get("__slots__", ())
+            sl.extend((s,) if isinstance(s, str) else s)
+        sl = _HELD_SLOTS[t] = tuple(sl)
+    return sl
+
+
 def _held_bytes(obj) -> int:
     """Bytes of the numpy arrays reachable from obj, each counted once: about what dropping a cached solve frees
-    (arrays it shares with module-level tables count too). Functions, methods and classes aren't followed."""
+    (arrays it shares with module-level tables count too). Functions, methods and classes aren't followed. (Exact
+    types first and the slots once a class: a limped flop's solve, ~16,000 objects, 36 -> 27 ms in Pyodide.)"""
     seen, todo, total = set(), [obj], 0
-    skip = (str, bytes, int, float, bool, type(None), type, types.ModuleType, types.FunctionType,
-            types.BuiltinFunctionType, types.MethodType, functools.partial)
+    pop, extend, add, nd = todo.pop, todo.extend, seen.add, np.ndarray
     while todo:
-        o = todo.pop()
-        if id(o) in seen or isinstance(o, skip):
+        o = pop()
+        t = type(o)
+        if t in _HELD_ATOMS:
             continue
-        seen.add(id(o))
-        if isinstance(o, np.ndarray):
-            if isinstance(o.base, np.ndarray):
-                todo.append(o.base)
+        i = id(o)
+        if i in seen or isinstance(o, _HELD_SKIP):
+            continue
+        add(i)
+        if t is nd or isinstance(o, nd):
+            b = o.base
+            if isinstance(b, nd):
+                todo.append(b)
             else:
                 total += o.nbytes
-        elif isinstance(o, dict):
-            todo.extend(o.values())
-        elif isinstance(o, (list, tuple, set, frozenset)):
-            todo.extend(o)
+        elif t is dict or isinstance(o, dict):
+            extend(o.values())
+        elif t is list or t is tuple or isinstance(o, (list, tuple, set, frozenset)):
+            extend(o)
         else:
-            todo.extend(getattr(o, "__dict__", {}).values())
-            for t in type(o).__mro__:
-                sl = t.__dict__.get("__slots__", ())
-                todo.extend(getattr(o, a) for a in ((sl,) if isinstance(sl, str) else sl) if hasattr(o, a))
+            d = getattr(o, "__dict__", None)
+            if d:
+                extend(d.values())
+            sl = _held_slots(t)
+            if sl:
+                extend(getattr(o, a) for a in sl if hasattr(o, a))
     return total
 
 

@@ -359,32 +359,14 @@ class Ctx:
         L = self._leaf.get(key)
         if L is not None:
             return L
+        boards = self._leaf_boards(board, dead)
         if len(board) == 5:
             L = self.showdown_matrix(board)
-        elif len(board) == 3:
-            L = self._flop_leaf(board, dead)
-        elif self.root_len == 3:
-            # a turn leaf inside a flop solve (an all-in or a check-down on the turn): every river, uncached.
-            # leaf_rivers_flop random rivers (4 in the browser's Fast tree) moved a flush draw's turn equity by
-            # tens of points, and a 4bet pot's flop with it: JsTs jammed Ks7s2d at +28.1 over a third-pot bet's
-            # +26.4, against +27.2 and +31.4 with every river
-            avail = [c for c in range(52) if c not in dead and c not in board]
-            L = self._avg_showdown([board + (r,) for r in avail])
+        elif boards is not None:
+            L = self._avg_showdown(boards)
         else:
             avail = [c for c in range(52) if c not in dead and c not in board]
-            if len(board) == 3:
-                picks = self.turn_picks(board, dead, self.cfg.leaf_turns)
-            else:
-                lr = self.cfg.leaf_rivers_flop if self.root_len == 3 else self.cfg.leaf_rivers
-                k = len(avail) if lr is None else min(lr, len(avail))
-                picks = avail if k >= len(avail) else sorted(self.rng.sample(avail, k))
-                if k >= len(avail):
-                    # every river: the same numbers by _avg_showdown (a count of wins a pair, in the core where it
-                    # lays a program out) without a float showdown matrix a river, each kept: 48 of 5 MB for a
-                    # limped pot's 1,126 combos, 0.6 s natively of a turn solve's setup and ~1.3 s in Pyodide
-                    L = self._avg_showdown([board + (c,) for c in picks])
-                    self._leaf[key] = L
-                    return L
+            picks = sorted(self.rng.sample(avail, min(self.cfg.leaf_rivers, len(avail))))
             L = np.zeros((self.n, self.n), dtype=np.float32)
             for c in picks:
                 L += self.leaf_matrix(board + (c,), dead)
@@ -409,14 +391,11 @@ class Ctx:
             return T
         n = self.n
         step = self.cfg.bucket_river_step
-        avail = [c for c in range(52) if c not in dead and c not in board]
-        live = self.member[list(board)].sum(axis=0) == 0
-        w = [np.where(live, self.root_reach[q], 0.0) for q in (0, 1)]
-        # every step-th river card (step coprime to 4 keeps the suits and ranks even); every one is leaf_matrix's
-        # inside a flop solve
-        rivers = avail[board[-1] % step::step] if step > 1 else avail if self.root_len == 3 else None
+        w, rivers = self._bucket_in(board, dead)
         if self.tables is not None and rivers is not None:
-            T = self.tables.bucket_table(self, self._strengths([tuple(board) + (r,) for r in rivers]), w, K)
+            T = self.tables.take(key)
+            if T is None:
+                T = self.tables.bucket_table(self, self._strengths([tuple(board) + (r,) for r in rivers]), w, K)
             self._stacks[key] = T
             return T
         if step > 1:
@@ -459,6 +438,47 @@ class Ctx:
         self._stacks[key] = T
         return T
 
+    def _bucket_in(self, board: tuple, dead: set) -> tuple:
+        """bucket_table's (w, rivers): each player's root reach on the combos holding no board card, and the river
+        cards its table averages over (None: the turn's leaf matrix, outside a flop solve)."""
+        step = self.cfg.bucket_river_step
+        avail = [c for c in range(52) if c not in dead and c not in board]
+        live = self.member[list(board)].sum(axis=0) == 0
+        w = [np.where(live, self.root_reach[q], 0.0) for q in (0, 1)]
+        # every step-th river card (step coprime to 4 keeps the suits and ranks even); every one is leaf_matrix's
+        # inside a flop solve
+        return w, avail[board[-1] % step::step] if step > 1 else avail if self.root_len == 3 else None
+
+    def table_request(self, kind: str, board: tuple, dead: set, K: int = 0, outer: Optional[int] = None):
+        """The core table (gto/core.py Tables) that bucket_table (kind "bucket"), river_table ("river") or leaf_matrix
+        ("leaf") would build for `board`: (key for Tables.take, kind number, its inputs...), or None (built already, or
+        not in the core). A river table's turn buckets (outer) must be built first (they're read here)."""
+        board = tuple(board)
+        if kind == "leaf":
+            if tuple(sorted(board)) in self._leaf:
+                return None
+            boards = self._leaf_boards(board, dead)
+            return None if boards is None else (("avg", tuple(boards)), 1, self._strengths(boards))
+        if kind == "bucket":
+            key = ("bucket", tuple(sorted(board)), K)
+            if key in self._stacks:
+                return None
+            w, rivers = self._bucket_in(board, dead)
+            return None if rivers is None else (key, 2, self._strengths([board + (r,) for r in rivers]), w, K)
+        key = ("river", tuple(sorted(board)), K, outer)
+        if key in self._stacks:
+            return None
+        tids = self.bucket_table(board, dead, outer)[0] if outer else None
+        return key, 3, self._strengths(self._river_boards(board, dead)), self._river_reach(board), K, tids, outer
+
+    def _river_boards(self, board: tuple, dead: set) -> list:
+        step = self.cfg.bucket_river_step
+        avail = [c for c in range(52) if c not in dead and c not in board]
+        return [tuple(board) + (r,) for r in (avail[board[-1] % step::step] if step > 1 else avail)]
+
+    def _river_reach(self, board: tuple) -> list:
+        return [np.where(self.member[list(board)].sum(axis=0) == 0, self.root_reach[q], 0.0) for q in (0, 1)]
+
     def _compat_rows(self, ro: np.ndarray) -> np.ndarray:
         """ro: (B, N) -> (B, N) mass of the combos sharing no card with each combo (Solver.compat_sum)."""
         cs = (ro @ self.member.T)[:, self.cab]
@@ -485,14 +505,12 @@ class Ctx:
         if T is not None:
             return T
         n = self.n
-        step = self.cfg.bucket_river_step
-        avail = [c for c in range(52) if c not in dead and c not in board]
-        rivers = avail[board[-1] % step::step] if step > 1 else avail
-        boards = [tuple(board) + (r,) for r in rivers]
+        boards = self._river_boards(board, dead)
         if self.tables is not None:
-            r = [np.where(self.member[list(board)].sum(axis=0) == 0, self.root_reach[q], 0.0) for q in (0, 1)]
-            tids = self.bucket_table(board, dead, outer)[0] if outer else None
-            T = self.tables.river_table(self, self._strengths(boards), r, K, tids, outer)
+            T = self.tables.take(key)
+            if T is None:
+                tids = self.bucket_table(board, dead, outer)[0] if outer else None
+                T = self.tables.river_table(self, self._strengths(boards), self._river_reach(board), K, tids, outer)
             self._stacks[key] = T
             return T
         rk = Ranking(self, list(self._strengths(boards)))
@@ -614,9 +632,30 @@ class Ctx:
                                               np.stack([kap[i], kap[i].T]).astype(np.float32))
         return self._stacks[key]
 
+    def _leaf_boards(self, board: tuple, dead: set) -> Optional[list]:
+        """The 5-card boards whose _avg_showdown is leaf_matrix(board), or None: a river's own showdown matrix, or a
+        turn's on a few random rivers (leaf_rivers). Draws no random cards."""
+        if len(board) == 5:
+            return None
+        if len(board) == 3:
+            return self._flop_leaf_boards(board, dead)
+        avail = [c for c in range(52) if c not in dead and c not in board]
+        # a turn leaf inside a flop solve (an all-in or a check-down on the turn): every river. leaf_rivers_flop random
+        # rivers (4 in the browser's Fast tree) moved a flush draw's turn equity by tens of points, and a 4bet pot's
+        # flop with it: JsTs jammed Ks7s2d at +28.1 over a third-pot bet's +26.4, against +27.2 and +31.4 with every
+        # river. Elsewhere every river when leaf_rivers covers them: the same numbers by _avg_showdown (a count of wins
+        # a pair, in the core where it lays a program out) without a float showdown matrix a river, each kept: 48 of
+        # 5 MB for a limped pot's 1,126 combos, 0.6 s natively of a turn solve's setup and ~1.3 s in Pyodide
+        if self.root_len == 3 or self.cfg.leaf_rivers is None or self.cfg.leaf_rivers >= len(avail):
+            return [board + (r,) for r in avail]
+        return None
+
     def _flop_leaf(self, board: tuple, dead: set) -> np.ndarray:
-        """The flop's equity matrix (a flop all-in): every turn card, each with FLOP_LEAF_RIVERS or more
-        rivers (leaf_turns x leaf_rivers_flop runouts in all, spread over the turns). Sampled turns gave a
+        return self._avg_showdown(self._flop_leaf_boards(board, dead))
+
+    def _flop_leaf_boards(self, board: tuple, dead: set) -> list:
+        """The boards of the flop's equity matrix (a flop all-in): every turn card, each with FLOP_LEAF_RIVERS or
+        more rivers (leaf_turns x leaf_rivers_flop runouts in all, spread over the turns). Sampled turns gave a
         draw a share of its outs set by which few turns came: with 4 turns x 4 rivers, JsTs called a flop jam
         on Ks7s2d at +19.5 bb where the default tree's 6 x 16 runouts had it at -18.6. The river boards'
         matrices aren't kept (a few hundred of them)."""
@@ -630,7 +669,7 @@ class Ctx:
             # picks left a flush draw's river outs over- or under-drawn: a 5-6% equity error at 2 per turn)
             rivers = [avail[(ti + 1 + j * step) % m] for j in range(min(per, m - 1))]
             boards += [board + (t, r) for r in dict.fromkeys(rivers)]
-        return self._avg_showdown(boards)
+        return boards
 
     def _strengths(self, boards) -> np.ndarray:
         """(boards, n) hand strengths on 5-card boards (-1: holds a board card). Those of a turn's rivers are kept,
@@ -648,7 +687,8 @@ class Ctx:
         """The showdown matrix averaged over 5-card boards, per pair over the boards neither hand blocks;
         the boards' own matrices aren't kept."""
         if self.tables is not None:
-            return self.tables.avg_showdown(self, self._strengths(boards))
+            L = self.tables.take(("avg", tuple(boards)))
+            return L if L is not None else self.tables.avg_showdown(self, self._strengths(boards))
         # sum over boards of sign(s_i - s_j) = G - G.T, G counting the boards where i beats j: one comparison and
         # one small-integer add per board (a float sign matrix and its masking were ~5x the work). A combo holding
         # a board card has strength NaN there, so it neither beats nor loses to anything.

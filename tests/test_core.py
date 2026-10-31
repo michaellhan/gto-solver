@@ -838,6 +838,53 @@ class TestTables(unittest.TestCase):
                     else:
                         np.testing.assert_array_equal(a, b)
 
+    def test_a_batch_builds_each_table_the_same_on_any_number_of_threads(self):
+        # a flop's tables in batches (Tables.batch, core_tables: as Program._tables_ahead builds them, the threads taking a
+        # table each, the flop's equity leaf in chunks of rows) and one by one (core_table): the same floats, bit for
+        # bit, on 1, 3 and 8 threads, the helpers' lanes never short (sized from the tables, not measured)
+        cfg = native.config("fast")
+        sol = solve(cards("Kd7c2h"), OOP_T, IP_T, pot=5.5, stack=97.5, cfg=cfg, time_budget=1e9, max_iters=0)
+        ctx, dead, board = sol.solver.ctx, sol.solver.dead, tuple(cards("Kd7c2h"))
+        turns = [board + (t,) for t, _ in ctx.turn_classes(board, dead)[:5]]
+        K = cfg.river_buckets
+        L = core.lib()
+
+        def build(batch):
+            ctx._stacks = {k: v for k, v in ctx._stacks.items() if k[0] == "S"}
+            ctx._leaf = {}
+            ctx.tables = core.Tables(L)
+            try:
+                if batch:
+                    ctx.tables.batch(ctx, [ctx.table_request("leaf", board, dead)] +
+                                     [ctx.table_request("bucket", b, dead, K) for b in turns])
+                    ctx.tables.batch(ctx, [ctx.table_request("river", b, dead, cfg.river_strength, outer)
+                                           for b in turns for outer in (None, K)])
+                    self.assertEqual(len(ctx.tables.ready), 1 + 2 * len(turns))
+                out = [ctx._flop_leaf(board, dead)]
+                for b in turns:
+                    out += ctx.bucket_table(b, dead, K)
+                    for outer in (None, K):
+                        out += ctx.river_table(b, dead, cfg.river_strength, outer)
+                self.assertEqual(ctx.tables.ready, {})            # (each taken)
+                return out
+            finally:
+                ctx.tables = None
+
+        ref = build(False)
+        try:
+            for t in (1, 3, 8):
+                with self.subTest(threads=t):
+                    self.assertEqual(core.threads(t), t)
+                    grown, helped = L.L.core_lanes_grown(-1, 0), L.L.core_helped()
+                    got = build(True)
+                    self.assertEqual(L.L.core_lanes_grown(-1, 0), grown)
+                    self.assertEqual(L.L.core_helped() > helped, t > 1)
+                    self.assertEqual(len(got), len(ref))
+                    for a, b in zip(got, ref):
+                        np.testing.assert_array_equal(a, b)
+        finally:
+            core.threads(1)
+
     def test_turn_roots_leaf_over_every_river(self):
         # a turn solve's equity leaf (an all-in on the turn) over every river by _avg_showdown, in the core's tables
         # (built while it lays the program out) and in numpy: the floats the rivers' showdown matrices summed gave

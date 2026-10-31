@@ -2456,6 +2456,65 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   Tests: `tests/test_core.py` `test_a_download_leaves_the_arena_in_the_solvers_order` (after a download the arena
   holds the solver's buffers in its order; laid out again, they are an upload's; an evaluation uploads only the
   sums; a solve run on after it is the same bit for bit). `core.wasm` 65 -> 69 KB, `core-mt.wasm` 91 -> 95 KB.
+* **A live flop's tables on threads** (`core/gtocore.c` `core_tables`; `gto/core.py` `Tables.batch`,
+  `Program._tables_ahead`; `Ctx.table_request`; `advisor._held_bytes`). Unstored flops, other depths and borrowed
+  spots all end in a live flop solve. Profiled end to end at one thread (Fast, the browser's settled checks), seconds:
+
+  | spot | answer | iterations | tables: core / Python around it | `_held_bytes` |
+  |---|---|---|---|---|
+  | `flop-40`, natively | 0.59 | 0.42 | 0.030 / 0.027 | 0.007 |
+  | `flop-limp`, natively | 1.31 | 0.90 | 0.094 / 0.031 | 0.015-0.021 |
+  | `flop-40`, Pyodide | 0.68 | 0.46 | 0.064 / 0.039 | 0.018 |
+  | `flop-limp`, Pyodide | 1.58 | 1.07 | 0.183 / 0.057 | 0.037 |
+
+  The rest is the tree (0.01-0.02 s), the answer's packing (0.02-0.03) and the Python of the solve. The tables (a
+  flop's 13 turn bucket tables, a limped flop's 13 river-strength tables too, and the flop's equity leaf over 196
+  runouts) were one core call each on one thread, while the iterations run on the site's 8: there the 40bb flop
+  answers in 0.3-0.4 s, of which its 0.1 s of tables in Pyodide were a quarter or more. The Python around them is mostly the river boards' strengths, which
+  `eval_boards` keeps by rank multiset (`_plain`: a session's first flop pays for them).
+  - The tables in two batches (`Program._tables_ahead`, before the walk that lays the tree out): the turns' bucket
+    tables and the equity leaves, then the river-strength tables, which read the turns' buckets. `core_tables` runs a
+    batch as one job on the core's threads, a table a task, the costliest first (by the work each does, measured
+    natively), the equity leaf's rows in chunks (its strengths laid out once); each helper's lane is sized from the
+    tables' sizes (not measured: a table's scratch is known), and a batch holds at most 64 MB of inputs and outputs
+    (`BATCH_BYTES`: a library flop's 49 turn leaves are 4 MB each). Each table is `core_table`'s code on its own
+    inputs, so the floats are the same bit for bit: the answers hash the same at 1, 2 and 4 threads (`flop-40`,
+    `flop-limp`, `turn-3bp`), and so do the library's flops.
+  - `_held_bytes` (the cached solves' accounting, after every new solve) checks exact types first and reads a class's
+    slots once: a limped flop's solve 36 -> 28 ms in Pyodide, the 40bb flop's 18 -> 13.5, the same bytes.
+  - Measured and left: the threads' first iteration, which measures their lanes in serial chunks, costs about an
+    iteration (the 40bb flop natively on 2 threads: 47 ms with the program built, then 1.8 ms against 1.2 steady).
+  - Practice's re-solves, counted: 24 hands natively (Fast; BTN and CO against the big blind, the 3bet pot, the
+    limped pot; both players drawing GTO moves, hands dealt from the ranges entering the flop, your advice asked at
+    each of your decisions and each opponent move through `Advisor.play`, as `practice.js` does). 3 hands re-solved
+    from a node for a rare line (0.07-0.56 s), 2 solved an earlier street again for an opponent's move (0.47 s, and
+    a limped hand's river reply 3.5 s for its flop and turn): 5% of the 93 s the hands' solves took. That last kind is
+    an opponent's move read from its own seat's view (`play`'s fallback when your line is rare in the solve, or its
+    hand has no weight there), whose ranges can differ from your advice's by a near-zero-weight combo (a hand outside
+    its range there: `_with_hero`, `_as_advised`), so it misses the solves your advice cached; not changed here.
+  - Natively (one quiet hold, the previous tree and this one, the last two of three runs): on 8 threads the tables'
+    core calls 26 -> 5.6 ms on `flop-40` and 81 -> 18 on `flop-limp` (on 4 threads 7.9 and 25), the whole step with
+    its Python 30 -> 10 and 87 -> 25 ms, the answers 0.180 -> 0.160 s and 0.366 -> 0.310 (on 4 threads 0.191 -> 0.172
+    and 0.410 -> 0.346); on one thread the same within 1-2%.
+  - In the browser (`scripts/bench_browser.mjs`, Fast, the previous tree and this one alternating; seconds to the
+    answer, the same iterations and exploitability):
+
+    | spot | 4 threads (2 rounds) | the site's 8 threads (1 round) |
+    |---|---|---|
+    | `flop-40` | 0.39 / 0.42 -> 0.32 / 0.32 | 0.31 -> 0.29 |
+    | `flop-limp` | 0.93 / 1.03 -> 0.81 / 0.66 | 0.70 -> 0.61 |
+    | `flop-near-80bb` (a flop the library stores at 100bb, solved at 80bb) | | 0.39 -> 0.34 |
+    | `ro-turn` (the turn report on a library flop, whose flop is solved for it) | | 0.58 -> 0.53 |
+    | `turn-3bp` | 0.78 / 0.85 -> 0.79 / 0.65 | 0.59 -> 0.58 |
+
+    The turn, a 40bb river, `flop-near` and a library flop within the noise (1.57 -> 1.56, 1.35 -> 1.29, 0.28 ->
+    0.27, 0.02 either way).
+
+    In Pyodide on one thread the tables take what they took (0.221 / 0.235 -> 0.237 / 0.226 s on `flop-limp`).
+
+  Tests: `tests/test_core.py` `test_a_batch_builds_each_table_the_same_on_any_number_of_threads` (a flop's equity
+  leaf, bucket and river-strength tables in batches on 1, 3 and 8 threads are the ones built one by one, bit for bit;
+  the helpers' lanes never short; each table taken). `core.wasm` 69 -> 74 KB, `core-mt.wasm` 95 -> 96 KB.
 * **A board's ranks ranked once** (`gto/evaluator.py` `eval_boards`, `_plain`). A program's showdowns (and numpy's
   tables) rank every combo on every five-card board the tree deals: on a flop solved live, its runouts and each turn's
   rivers, about 1200 boards. `eval_boards` ranked each one the same way. For each of the 169 pairs of hole ranks it

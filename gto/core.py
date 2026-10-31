@@ -105,6 +105,7 @@ class _Native:
         L.core_eval.argtypes = [ctypes.c_uint32, ctypes.c_int32, ctypes.c_int32] + [ctypes.c_uint32] * 3 + [ctypes.c_int32]
         L.core_threads.restype, L.core_threads.argtypes = ctypes.c_int32, [ctypes.c_int32]
         L.core_table.restype, L.core_table.argtypes = ctypes.c_int32, [ctypes.c_uint32]
+        L.core_tables.restype, L.core_tables.argtypes = ctypes.c_int32, [ctypes.c_uint32, ctypes.c_int32]
         L.core_gemm.restype, L.core_gemm.argtypes = ctypes.c_int32, [ctypes.c_int32]
         L.core_fuse.restype, L.core_fuse.argtypes = ctypes.c_int32, [ctypes.c_int32]
         L.core_skip.restype, L.core_skip.argtypes = ctypes.c_int32, [ctypes.c_int32]
@@ -144,6 +145,9 @@ class _Native:
     def table(self, args: int) -> int:
         return self.L.core_table(args)
 
+    def tables(self, lst: int, count: int) -> int:
+        return self.L.core_tables(lst, count)
+
     def permute(self, buf: int, rows: int, len_: int, perm: int, inverse: int) -> int:
         return self.L.core_permute(buf, rows, len_, perm, inverse)
 
@@ -156,6 +160,7 @@ class _Wasm:
             raise RuntimeError("core version mismatch")
         self.ex = ex
         self.base = 0
+        self.batched = hasattr(ex, "core_tables")    # (Tables.batch)
 
     @staticmethod
     def _js(f, *a):
@@ -195,6 +200,9 @@ class _Wasm:
 
     def table(self, args: int) -> int:
         return int(self._js(self.ex.core_table, args))
+
+    def tables(self, lst: int, count: int) -> int:
+        return int(self._js(self.ex.core_tables, lst, count))
 
     def permute(self, buf: int, rows: int, len_: int, perm: int, inverse: int) -> int:
         return int(self._js(self.ex.core_permute, buf, rows, len_, perm, inverse))
@@ -520,6 +528,7 @@ class Program:
         ctx = solver.ctx
         ctx.tables = Tables(self.L)
         try:
+            self._tables_ahead(solver)
             stack = [solver.root]
             while stack:
                 node = stack.pop()
@@ -540,6 +549,49 @@ class Program:
         finally:
             ctx.tables = None
             self.L.reset()
+
+    def _tables_ahead(self, solver):
+        """Every table the walk in _tables builds, built first in two batches (Tables.batch: the threads take a table
+        each): the turns' bucket tables and the equity leaves, then the river-strength tables, which read the turns'
+        buckets. The walk then takes them (Ctx's builds ask Tables.take first)."""
+        Decision, Terminal, Chance, BucketEntry, RiverEntry = self._types
+        ctx, dead, cfg = solver.ctx, solver.dead, solver.ctx.cfg
+        outer = cfg.river_buckets if cfg.turn_buckets and cfg.river_buckets else None
+        first, second = {}, {}
+
+        def bucket(boards):
+            for b in boards:
+                if len(b) != 5:
+                    first[("bucket", b)] = (b, cfg.river_buckets)
+
+        def river(boards):
+            for b in boards:
+                if outer:
+                    first[("bucket", b)] = (b, outer)
+                second[b] = None
+
+        stack = [solver.root]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, Decision):
+                stack.extend(node.children)
+            elif isinstance(node, Terminal):
+                if node.kind[0] == "b":
+                    bucket(dict.fromkeys(node.boards))
+                elif node.kind[0] == "r":
+                    river(dict.fromkeys(node.boards))
+                elif node.kind == "leaf" and node.M is None and (len(node.boards[0]) == 3 or len(node.boards[0]) == 4 and
+                                                                 (ctx.root_len == 3 or cfg.leaf_rivers is None)):
+                    for b in dict.fromkeys(node.boards if node.tile is None else node.boards[:node.tile]):
+                        first[("leaf", b)] = (b, 0)
+            elif isinstance(node, (Chance, BucketEntry, RiverEntry)):
+                if isinstance(node, RiverEntry):
+                    river(dict.fromkeys(node.boards))
+                elif isinstance(node, BucketEntry):
+                    bucket(dict.fromkeys(node.boards))
+                stack.append(node.child)
+        ctx.tables.batch(ctx, [ctx.table_request(k[0], b, dead, K) for k, (b, K) in first.items()])
+        ctx.tables.batch(ctx, [ctx.table_request("river", b, dead, cfg.river_strength, outer) for b in second])
 
     def valid(self, L, solver) -> bool:
         """The solver's, still in the arena, and built for its batch_leaves."""
@@ -776,6 +828,9 @@ class Program:
         self._get(self.ss, solver._ssum)
 
 
+BATCH_BYTES = 64 << 20   # a table batch's inputs and outputs in the arena at most (Tables.batch), one table whatever its size
+
+
 class Tables:
     """A flop solve's tables in the core (Ctx.tables while a Program is being built, the arena empty: each table's
     inputs, scratch and outputs in it, then released): 7-10x numpy's natively. _avg_showdown's are numpy's floats
@@ -784,6 +839,77 @@ class Tables:
 
     def __init__(self, L):
         self.L = L
+        self.ready = {}     # tables built ahead (batch), by Ctx.table_request's key, until taken
+
+    def take(self, key):
+        """A table batch built for key (Ctx's table builds ask first), or None."""
+        return self.ready.pop(key, None)
+
+    def batch(self, ctx, reqs) -> None:
+        """Builds the tables of reqs (Ctx.table_request's; None: none needed) in one call, for take: with the core's
+        helpers each table is a task of one job (an avg_showdown's rows in chunks), ~0.1 s of a limped flop's setup
+        on one thread. Each table is core_table's, the same floats. A module without core_tables (an older one) builds
+        them one by one."""
+        todo = {}
+        for r in reqs:
+            if r is not None and r[0] not in self.ready:
+                todo.setdefault(r[0], r)
+        if not todo:
+            return
+        if len(todo) == 1 or not getattr(self.L, "batched", True):
+            for key, kind, *a in todo.values():
+                self.ready[key] = (self.avg_showdown, self.bucket_table, self.river_table)[kind - 1](ctx, *a)
+            return
+        n, group, held = ctx.n, [], 0
+        for r in list(todo.values()) + [None]:
+            if r is not None:
+                # (its strengths in and its table out: a library flop's 49 turn leaves are 4 MB each, so a batch
+                # holds at most BATCH_BYTES of them)
+                key, kind, S, *a = r
+                K = a[1] if kind > 1 else 0
+                b = 4 * np.size(S) + (4 * n * n if kind == 1 else 24 * n + 16 * K * K if kind == 2 else
+                                      16 * n + 8 * (a[3] or n) * K + 16 * K * K)
+            if group and (r is None or held + b > BATCH_BYTES):
+                self._run_batch(ctx, group)
+                group, held = [], 0
+            if r is not None:
+                group.append(r)
+                held += b
+
+    def _run_batch(self, ctx, reqs):
+        self.L.reset()
+        args, reads = [], []
+        for key, kind, *a in reqs:
+            words, read = self._req(ctx, kind, *a)
+            args.append(self._put(np.array(words, dtype=np.int64).astype(np.int32), np.int32))
+            reads.append((key, read))
+        if self.L.tables(self._put(np.array(args, dtype=np.int64).astype(np.int32), np.int32), len(args)) != 0:
+            raise CoreError("core tables failed")
+        for key, read in reads:
+            self.ready[key] = read()
+
+    def _req(self, ctx, kind: int, S, *a) -> tuple:
+        """One table's inputs and outputs put in the arena: its argument words, and a function reading it back."""
+        n = ctx.n
+        head = self._head(ctx, S)
+        if kind == 1:
+            out = self.L.alloc(4 * n * n)
+            return [1] + head + [out], lambda: self._get(out, (n, n), np.float32)
+        if kind == 2:
+            w, K = a
+            ins = [self._put(w[q], np.float64) for q in (0, 1)]
+            ids, E, kap = self.L.alloc(8 * n), self.L.alloc(8 * K * K), self.L.alloc(8 * K * K)
+            return [2] + head + [K] + ins + [ids, E, kap], lambda: (
+                self._get(ids, (2, n), np.int32).astype(np.intp), self._get(E, (2, K, K), np.float32),
+                self._get(kap, (2, K, K), np.float32))
+        r, K, tids, outer = a
+        ins = [self._put(r[q], np.float64) for q in (0, 1)]
+        t = self._put(tids, np.int32) if outer else 0
+        W = outer or n
+        X, E, kap = self.L.alloc(8 * W * K), self.L.alloc(8 * K * K), self.L.alloc(8 * K * K)
+        return [3] + head + [K] + ins + [outer or 0, t, X, E, kap], lambda: (
+            self._get(X, (2, W, K), np.float32), self._get(E, (2, K, K), np.float32),
+            self._get(kap, (2, K, K), np.float32))
 
     def _put(self, a, dtype) -> int:
         a = np.ascontiguousarray(a, dtype=dtype)
@@ -801,43 +927,31 @@ class Tables:
         if self.L.table(args) != 0:
             raise CoreError("core table failed")
 
-    def _start(self, ctx, S):
-        self.L.reset()
+    def _head(self, ctx, S):
         S = np.asarray(S)
         if S.size and (S.max() > 32767 or S.min() < -1):
             raise Unsupported("strengths over int16")
         return [ctx.n, len(S), self._put(S, np.int32), self._put(ctx.ca, np.int32), self._put(ctx.cb, np.int32)]
 
+    def _one(self, ctx, kind, S, *a):
+        self.L.reset()
+        words, read = self._req(ctx, kind, S, *a)
+        self._run(words)
+        return read()
+
     def avg_showdown(self, ctx, S) -> np.ndarray:
         """Ctx._avg_showdown on boards of strengths S (R, n)."""
-        head = self._start(ctx, S)
-        out = self.L.alloc(4 * ctx.n * ctx.n)
-        self._run([1] + head + [out])
-        return self._get(out, (ctx.n, ctx.n), np.float32)
+        return self._one(ctx, 1, S)
 
     def bucket_table(self, ctx, S, w, K: int) -> tuple:
         """Ctx.bucket_table's (ids, E, kappa) on the rivers of strengths S, w: each player's root reach on the combos
         holding no turn card."""
-        n = ctx.n
-        head = self._start(ctx, S)
-        ins = [self._put(w[q], np.float64) for q in (0, 1)]
-        ids, E, kap = self.L.alloc(8 * n), self.L.alloc(8 * K * K), self.L.alloc(8 * K * K)
-        self._run([2] + head + [K] + ins + [ids, E, kap])
-        return (self._get(ids, (2, n), np.int32).astype(np.intp), self._get(E, (2, K, K), np.float32),
-                self._get(kap, (2, K, K), np.float32))
+        return self._one(ctx, 2, S, w, K)
 
     def river_table(self, ctx, S, r, K: int, tids, outer) -> tuple:
         """Ctx.river_table's (X, E, kappa) on the rivers of strengths S, r: each player's root reach on the combos
         holding no turn card, tids: the turn buckets (outer of them) or None."""
-        n = ctx.n
-        head = self._start(ctx, S)
-        ins = [self._put(r[q], np.float64) for q in (0, 1)]
-        t = self._put(tids, np.int32) if outer else 0
-        W = outer or n
-        X, E, kap = self.L.alloc(8 * W * K), self.L.alloc(8 * K * K), self.L.alloc(8 * K * K)
-        self._run([3] + head + [K] + ins + [outer or 0, t, X, E, kap])
-        return (self._get(X, (2, W, K), np.float32), self._get(E, (2, K, K), np.float32),
-                self._get(kap, (2, K, K), np.float32))
+        return self._one(ctx, 3, S, r, K, tids, outer)
 
 
 def _program(L, solver, r0, r1, regrets: bool = True):
