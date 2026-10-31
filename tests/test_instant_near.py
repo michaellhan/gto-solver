@@ -99,6 +99,11 @@ class TestFlopApprox(_Lib):
 
 
 class TestInstantFromNear(_Lib):
+    def setUp(self):   # (the averaged mixes themselves: the learned correction's tested below)
+        p = mock.patch.object(fa, "theta", return_value=None)
+        p.start()
+        self.addCleanup(p.stop)
+
     def test_first_to_act(self):
         """The opener first to act on a flop not stored: its combo's images' mixes averaged, marked approximate, the
         flops named, nothing solved; the bets at the hand's pot."""
@@ -210,6 +215,60 @@ class TestInstantFromNear(_Lib):
             self.assertIn(f"{SID}/{nm}.bin?v={self.spot['flops'][nm]}", asked)
         self.assertFalse([k for k, e in rec._entries.items() if e is None])
 
+
+
+class TestCorrection(_Lib):
+    def srcs_feats(self, hole):
+        canon, smap = fl.canonical(parse_cards(BOARD))
+        i = int(fl.combo_map(smap)[COMBO_INDEX[tuple(sorted(parse_cards(hole)))]])
+        srcs = [(self.lib.entry(self.spot, nm), m, 1.0 / (1 + d))
+                for nm, m, d in fa.neighbours(sorted(self.spot["flops"]), list(canon), fa.K)]
+        return list(canon), srcs, i
+
+    def test_applied(self):
+        """A library spot's flop not stored: facing a bet hero's averaged mix takes the learned correction
+        (correct_mix of the class average, gto/flop_approx_model.py's weights), a mix still; the first decisions (the
+        root, after a check) stay as averaged."""
+        th = fa.theta()
+        if th is None:
+            self.skipTest("no gto/flop_approx_model.py")
+        pot = self.setup["pot"]
+        moved = []
+        for hero, hole, flop, path, corrected in (
+                ("HJ", "AdJc", [X("HJ"), B("CO", round(0.75 * pot, 2))], ("check", "bet 75%"), True),
+                ("CO", "JhTh", [B("HJ", round(0.33 * pot, 2))], ("bet 33%",), True),
+                ("HJ", "AhQd", [], (), False), ("CO", "JhTh", [X("HJ")], ("check",), False)):
+            res = advisor().instant(dict(self.hand, hero=hero, hole=hole, flop=flop))
+            canon, srcs, i = self.srcs_feats(hole)
+            plain = fa.predict(srcs, board=canon, combos=[i])[path]
+            f = fa.correction_features(canon, srcs, np.array([i]))
+            want = fa.correct_mix(th, plain["names"], path, plain["player"], plain["strat"][:, [i]], f)[:, 0]
+            self.assertEqual(bool(th["on"][fa.node_kind(path, plain["player"])]), corrected, path)
+            if not corrected:
+                self.assertEqual(want.tolist(), plain["strat"][:, i].tolist())
+            got = np.array([a["freq"] for a in res["actions"]])
+            self.assertTrue(np.allclose(got, want, atol=0.0006), (hole, path, got, want))
+            self.assertAlmostEqual(float(want.sum()), 1.0, places=6)
+            self.assertEqual(fa.predict(srcs, board=canon, combos=[i], correct=True)[path]["strat"][:, i].round(6).tolist(),
+                             want.round(6).tolist())
+            moved.append(not np.allclose(want, plain["strat"][:, i], atol=0.002))
+        self.assertTrue(moved[0] or moved[1])   # (it moves something)
+
+    def test_mixes(self):
+        """Every combo's corrected mix is a mix; combos no source holds stay unanswered (NaN); without the board (a
+        stored flop's own entry) nothing is corrected."""
+        if fa.theta() is None:
+            self.skipTest("no gto/flop_approx_model.py")
+        canon, srcs, _ = self.srcs_feats("AhQd")
+        c, u = fa.predict(srcs, board=canon, correct=True), fa.predict(srcs, board=canon)
+        for path, o in c.items():
+            ok = ~np.isnan(u[path]["strat"][0])
+            self.assertTrue(np.array_equal(ok, ~np.isnan(o["strat"][0])))
+            self.assertTrue(np.allclose(o["strat"][:, ok].sum(axis=0), 1.0))
+            self.assertTrue((o["strat"][:, ok] >= 0).all())
+        a, b = fa.predict(srcs, correct=True), fa.predict(srcs)
+        for path in a:
+            self.assertTrue(np.array_equal(np.nan_to_num(a[path]["strat"]), np.nan_to_num(b[path]["strat"])))
 
 
 HJ_BB3 = "UTG:f,HJ:r2.5,CO:f,BTN:f,SB:f,BB:r10,HJ:c"     # (BB 3bets the HJ: no spot of its own; read off 3bp_bb_co)

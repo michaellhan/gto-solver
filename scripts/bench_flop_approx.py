@@ -16,6 +16,7 @@ one it doesn't store).
 
     python scripts/bench_flop_approx.py OUT.jsonl --protocol rep --spots srp_btn_bb,srp_co_bb --n 150 --methods knn1,knn3
     python scripts/bench_flop_approx.py OUT.jsonl --protocol loo --spots 3bp_bb_btn --n 150
+    python scripts/bench_flop_approx.py OUT.jsonl --protocol loo --spots 3bp_bb_btn --seed 11 --skip 80 --n 60 --methods knn3c,knn3cl
     python scripts/bench_flop_approx.py OUT.jsonl --protocol spot --spots srp_co_bb,srp_hj_bb --n 60 --methods near,nearx
     python scripts/bench_flop_approx.py OUT.jsonl --report
 """
@@ -75,15 +76,19 @@ def node_reaches(e, full0, full1):
     return out
 
 
-def given_up(nd, mask, reach, pred, pot):
+def given_up(nd, mask, reach, pred, pot, seen=False):
     """(EV given up, % of the pot, reach-weighted; the same measured to the best action) of the predicted mix (A, 1326;
-    NaN rows where none) at a true node."""
+    NaN rows where none) at a true node. seen: only over the combos some source holds an image of (the advisor leaves
+    the others unanswered); else those priced at the node's range average."""
     idx = np.nonzero(mask)[0]
     S, V = nd["strat"], nd["evs"]
     P = pred[:, idx]
     w = reach[idx]
     bad = np.isnan(P[0])
-    if bad.any():   # (no image anywhere: the predicted node's range average)
+    if bad.any() and seen:
+        w = np.where(bad, 0.0, w)
+        P = np.where(bad[None, :], 1.0 / len(P), P)
+    elif bad.any():   # (no image anywhere: the predicted node's range average)
         fill = np.nansum(P * w[None, :], axis=1) / max(float(w[~bad].sum()), 1e-12)
         if not np.isfinite(fill).all() or fill.sum() <= 0:
             fill = np.full(len(P), 1.0 / len(P))
@@ -94,13 +99,16 @@ def given_up(nd, mask, reach, pred, pot):
     W = max(float(w.sum()), 1e-12)
     loss = float((w * (true_ev - pred_ev)).sum() / W / pot * 100)
     regret = float((w * (V.max(axis=0) - pred_ev)).sum() / W / pot * 100)
-    return loss, regret, float(w[bad].sum() / W)
+    return loss, regret, float(reach[idx][bad].sum() / max(float(reach[idx].sum()), 1e-12))
 
 
 def method_pred(method, lib, spot, names, board, target_name):
     """{path: predicted node} for a flop, by method: knnK (K nearest stored flops, weights 1 / (1 + distance)),
     nnK (K nearest, equal weights), avgK (every combo the K nearest flops' range frequencies); a trailing c (knn3c):
-    each combo averages the images of its own hand class (flop_approx.predict's board)."""
+    each combo averages the images of its own hand class (flop_approx.predict's board); cl (knn3cl): and takes the
+    learned correction (predict's correct)."""
+    corr = method.endswith("cl")
+    method = method[:-1] if corr else method
     cls = method.endswith("c")
     method = method[:-1] if cls else method
     kind = method.rstrip("0123456789")
@@ -113,7 +121,7 @@ def method_pred(method, lib, spot, names, board, target_name):
             continue
         w = 1.0 / (1.0 + d) if kind == "knn" else 1.0
         srcs.append((e, m, w))
-    pred = fa.predict(srcs, board=list(board) if cls else None)
+    pred = fa.predict(srcs, board=list(board) if cls else None, correct=corr)
     if kind == "avg":
         for path, o in pred.items():
             # each source's node frequency, the same for every combo
@@ -162,7 +170,7 @@ def run(a):
             train = stored
             test = list(stored)
         random.Random(a.seed).shuffle(test)
-        test = test[:a.n]
+        test = test[a.skip:a.skip + a.n]
         s = setup(sid)
         pot = float(spot["pot"])
         t0 = time.time()
@@ -182,7 +190,8 @@ def run(a):
                         not meth.startswith("nearx") else \
                         [(lib.entry(source, nm), m, 1.0 / (1.0 + d), nm, d)
                          for nm, m, d in fa.neighbours([n for n in train if n != tn], canon, fa.K) if d <= fa.MAX_DIST]
-                    pred = fa.predict([x[:3] for x in src], board=canon if meth.endswith("c") else None)
+                    pred = fa.predict([x[:3] for x in src], board=canon if meth.rstrip("l").endswith("c") else None,
+                                      correct=meth.endswith("cl"))
                     nb = [(x[3], x[4]) for x in src]
                 else:
                     pred, nb = method_pred(meth, lib, spot, train, board, tn)
@@ -196,7 +205,7 @@ def run(a):
                     if pr is None:
                         rec["nodes"]["|".join(path)] = {"share": share, "missing": True}
                         continue
-                    loss, regret, unseen = given_up(nd, e["masks"][nd["player"]], r, pr["strat"], pot)
+                    loss, regret, unseen = given_up(nd, e["masks"][nd["player"]], r, pr["strat"], pot, a.seen)
                     rec["nodes"]["|".join(path)] = {"share": share, "loss": round(loss, 4), "regret": round(regret, 4),
                                                     "unseen": round(unseen, 4)}
                 with open(a.out, "a") as f:
@@ -247,6 +256,10 @@ def main(argv=None):
     ap.add_argument("--methods", default="avg3,knn1,knn2,knn3,knn4")
     ap.add_argument("--n", type=int, default=100)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--skip", type=int, default=0, help="leave out the first SKIP flops of the shuffle (the learned "
+                    "correction's training flops: --seed 11 --skip 80, as scripts/train_flop_correction.py picks them)")
+    ap.add_argument("--seen", action="store_true", help="price only the combos some source holds an image of (the "
+                    "ones the advisor answers)")
     ap.add_argument("--library", default=fl.DIR)
     ap.add_argument("--report", action="store_true")
     a = ap.parse_args(argv)
