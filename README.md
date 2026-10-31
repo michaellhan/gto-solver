@@ -2281,7 +2281,7 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   0.5-1.2. Facing a bet the read off the stored flops most like it (the last column) now takes the learned
   correction (above): a seventh less given up in a second sample of 132 flops and depths.
 * **Another table size** (`flop_approx.near_exact`, `NEAR_EXACT_COVER`, `NEAR_EXACT_TABLE_COVER`, `NEAR_EXACT_DIST`,
-  `NEAR_TABLE_COVER`). The library's spots
+  `NEAR_EXACT_TABLE_DIST`, `NEAR_TABLE_COVER`). The library's spots
   are 6-max's, so an 8- or 9-max flop was read approximately off the nearest spot (above: no EVs, until its own solve
   had run 50 iterations) and then solved live. Most of those tables' heads-up pots are a 6-max pot under other seat
   names: the same pot and stack, the ranges entering the flop a few combos apart (the BTN's, CO's, HJ's and SB's opens
@@ -2294,14 +2294,16 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   (`NEAR_EXACT_COVER`; at 8- and 9-max 90%, `NEAR_EXACT_TABLE_COVER`: the HJ's, UTG's and UTG1's opens flatted by
   the BTN, the CO's and the BTN's 3bets of the LJ, the HJ and UTG1, the HJ's of UTG1) and the two ranges' distances
   (normalized L1, as above) sum to at most 0.6
-  (`NEAR_EXACT_DIST`), and only off a spot of another table size: at 6-max a pot the library doesn't hold is 6-max's
+  (`NEAR_EXACT_DIST`; at 8- and 9-max 0.75, `NEAR_EXACT_TABLE_DIST`: an early seat's open flatted by another early
+  seat, 0.70-0.73 from UTG vs BTN), and only off a spot of another table size: at 6-max a pot the library doesn't hold is 6-max's
   own (the BTN's 3bet of UTG, 0.29 from the CO's of the HJ, would give up 0.093 against that spot's own 0.053),
   read approximately and solved as before. The combos off the spot's ranges are left out of them; your own hand off them is solved live,
   as are ranges you typed in. Study reads the same spot. `scripts/instant_coverage.py --players 8` (a borrowed
   pot, and an approximate read of a pot of the same size, counting the hands the spot's ranges hold: the two ranges'
-  cover averaged; the rest are solved): heads-up flop decisions answered at once by a precomputed solve 0% -> 66.9%
-  (64.7% with 97% cover everywhere; with the approximate reads 84.1% -> 88.1%), all decisions 79.8% -> 85.4%;
-  `--players 9` 0% -> 62.7% (60.6%; 81.1% -> 86.2%), 81.3% -> 86.0%; 6-max unchanged.
+  cover averaged; the rest are solved): heads-up flop decisions answered at once by a precomputed solve 0% -> 68.2%
+  (66.9% up to a distance of 0.6, 64.7% with 97% cover too; with the approximate reads 84.1% -> 88.0%), all
+  decisions 79.8% -> 85.6%; `--players 9` 0% -> 64.6% (62.7%, 60.6%; 81.1% -> 86.1%), 81.3% -> 86.2%;
+  6-max unchanged.
 
   EV given up (`scripts/bench_flop_formats.py`: 20 of each spot's stored flops, every flop solved at the 8-max pot's
   own ranges in the Accurate tree, natively, 300 iterations, 0.05-0.12% of the pot from equilibrium: the reference;
@@ -2339,12 +2341,15 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   | CO 3bet vs LJ <- HJ 3bet vs UTG (0.94, 0.28; 12) | 0.067 / 0.057 / 0.16 | 0.057 / 0.040 / 0.16 | 0.017 (0.047) |
   | CO 3bet vs UTG1 <- HJ 3bet vs UTG (0.96, 0.36; 12) | 0.070 / 0.066 / 0.21 | 0.057 / 0.040 / 0.16 | 0.028 (0.051) |
   | HJ 3bet vs UTG1 <- HJ 3bet vs UTG (0.91, 0.54; 12) | 0.088 / 0.069 / 0.29 | 0.057 / 0.040 / 0.16 | 0.038 (0.098) |
+  | UTG vs UTG1 <- UTG vs BTN (0.91, 0.73; 12; UTG vs the LJ and 9-max's early seats the same) | 0.156 / 0.142 / 0.31 | 0.146 / 0.152 / 0.23 | 0.057 (0.120) |
+  | UTG1 vs LJ <- UTG vs BTN (0.91, 0.70; 12) | 0.162 / 0.138 / 0.28 | 0.146 / 0.152 / 0.23 | 0.063 (0.112) |
 
   So a borrowed entry gives up about what the library's own does at 6-max: the ranges' difference costs 0.002-0.025%
   of the pot up to a distance of 0.15 and 0.009-0.039 (worst flop 0.072) at 0.17-0.57, against the 0.06-0.25 the
   entries give up at all; with 90-97% cover 0.017-0.055 (worst flop 0.172; the 3bet pots' entries 0.067-0.114
   against their spots' 0.053-0.057, the single-raised 0.143-0.165 against 0.146-0.149), the hands off the spot's
-  ranges (5-12% by reach) solved live.
+  ranges (5-12% by reach) solved live; and 0.70-0.73 apart 0.057-0.063 (worst flop 0.120; the entries 0.156-0.162
+  against UTG vs BTN's own 0.146 and the live Fast solve's 0.160 at its 50th iteration, 11% of the hands solved).
 
   Where no spot covers an 8- or 9-max pot of a library pot's size by 90% (the approximate reads' `NEAR_COVER`), it's
   now read approximately off the nearest spot covering each range by 75% at most 1.2 apart (`NEAR_TABLE_COVER`,
@@ -3371,7 +3376,7 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   stored 10.2 (the flatted opens' and the 3bet pots': answered approximately at once from the stored flops most like
   it, `scripts/instant_coverage.py` 77.2% -> 87.5% with them, 91.9% with both), a raise 3.2. At 40-200bb, where no
   spot is built, the 100bb spots answer 43-89% of the heads-up flop decisions approximately at once (`--stack`). At 8- and 9-max
-  the pots that play as 6-max ones are answered as the library's own (66.9% and 62.7% of their heads-up flop
+  the pots that play as 6-max ones are answered as the library's own (68.2% and 64.6% of their heads-up flop
   decisions, `--players`), and with antes or a straddle the nearest spot of another pot answers 77.5% and 58.5%
   approximately (`--ante`, `--straddle`). A
   flop's entry is worth its spot's share times its suit count, so more flops of the commonest spots beat new spots; by

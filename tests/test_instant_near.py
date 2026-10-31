@@ -697,11 +697,12 @@ class TestNearExact(_Lib):
 
 EIGHT_HJ_BTN = "UTG:f,UTG1:f,LJ:f,HJ:r2.5,CO:f,BTN:c,SB:f,BB:f"
 EIGHT_CO_BTN = "UTG:f,UTG1:f,LJ:f,HJ:f,CO:r2.5,BTN:c,SB:f,BB:f"
+EIGHT_UTG_UTG1 = "UTG:r2.5,UTG1:c,LJ:f,HJ:f,CO:f,BTN:f,SB:f,BB:f"
 
 
 class TestBiggerTable(_Lib):
     """At 8- and 9-max a pot of a library pot's size is borrowed with each range 90% held by the spot's
-    (NEAR_EXACT_TABLE_COVER), and where no spot covers it by NEAR_COVER, read approximately off one covering it by
+    (NEAR_EXACT_TABLE_COVER) and the ranges up to NEAR_EXACT_TABLE_DIST apart, and where no spot covers it by NEAR_COVER, read approximately off one covering it by
     NEAR_TABLE_COVER: the hands that spot's ranges hold (the rest solved live). 6-max and shorter tables as before."""
 
     def test_borrowed(self):
@@ -709,13 +710,19 @@ class TestBiggerTable(_Lib):
                  ("UTG:r2.5,UTG1:f,LJ:f,HJ:f,CO:f,BTN:c,SB:f,BB:f", 8): "srp_utg_btn",
                  ("UTG:f,UTG1:f,LJ:r2.5,HJ:f,CO:r7.5,BTN:f,SB:f,BB:f,LJ:c", 8): "3bp_hj_utg",
                  ("UTG:f,UTG1:f,LJ:f,HJ:r2.5,CO:f,BTN:r7.5,SB:f,BB:f,HJ:c", 8): "3bp_co_hj",
-                 ("UTG:f,UTG1:f,UTG2:f,LJ:f,HJ:r2.5,CO:f,BTN:c,SB:f,BB:f", 9): "srp_hj_co"}
+                 ("UTG:f,UTG1:f,UTG2:f,LJ:f,HJ:r2.5,CO:f,BTN:c,SB:f,BB:f", 9): "srp_hj_co",
+                 (EIGHT_UTG_UTG1, 8): "srp_utg_btn",
+                 ("UTG:f,UTG1:r2.5,LJ:c,HJ:f,CO:f,BTN:f,SB:f,BB:f", 8): "srp_utg_btn",
+                 ("UTG:f,UTG1:r2.5,UTG2:c,LJ:f,HJ:f,CO:f,BTN:f,SB:f,BB:f", 9): "srp_utg_btn"}
         for (line, n), sid in cases.items():
             st = fl.spot_setup(line, n)
             ne = fa.near_exact(self.lib, st["full0"], st["full1"], st["pot"], st["stack"], n)
             self.assertEqual(ne and ne["spot"]["id"], sid, line)
             self.assertGreaterEqual(min(ne["cover"]), fa.NEAR_EXACT_TABLE_COVER)
-            self.assertLessEqual(sum(ne["dist"]), fa.NEAR_EXACT_DIST)
+            self.assertLessEqual(sum(ne["dist"]), fa.NEAR_EXACT_TABLE_DIST)
+        st = fl.spot_setup(EIGHT_UTG_UTG1, 8)
+        ne = fa.near_exact(self.lib, st["full0"], st["full1"], st["pot"], st["stack"], 8)
+        self.assertGreater(sum(ne["dist"]), fa.NEAR_EXACT_DIST)        # (UTG1's cold calls: 0.73 from the BTN's)
         st = fl.spot_setup(EIGHT_HJ_BTN, 8)
         ne = fa.near_exact(self.lib, st["full0"], st["full1"], st["pot"], st["stack"], 8)
         self.assertLess(min(ne["cover"]), fa.NEAR_EXACT_COVER)        # (the BTN's flats: 8.5% off CO's range)

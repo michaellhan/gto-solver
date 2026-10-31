@@ -190,6 +190,12 @@ NEAR_EXACT_DIST = 0.6
 # 0.28-0.60) 0.067-0.114 against 0.053 / 0.057; the 6-max solve read for the 8-max pot 0.017-0.055 (worst flop 0.172).
 # Shorter tables (2-5 players) keep NEAR_EXACT_COVER: unmeasured.
 NEAR_EXACT_TABLE_COVER = 0.9
+# And there the distances may sum to NEAR_EXACT_TABLE_DIST: an early seat's open flatted by another early seat (8-max
+# UTG's by UTG1 or the LJ and UTG1's by the LJ, 9-max's UTG, UTG1 and UTG2 alike) off UTG vs BTN, cover 0.91,
+# distance 0.70-0.73. As above, 12 flops each: 0.156 / 0.162 against that spot's own 0.146 (the live Fast solve at
+# its 50th iteration 0.160), the 6-max solve read for the 8-max pot 0.057 / 0.063 (worst flop 0.120); 11% of the
+# hands (by reach) solved live. No pot lies 0.73-1.0 apart at 90% cover.
+NEAR_EXACT_TABLE_DIST = 0.75
 _SETUPS: Dict[tuple, Optional[dict]] = {}
 _NEAR: Dict[tuple, Optional[str]] = {}
 _EXACT: Dict[tuple, Optional[dict]] = {}
@@ -335,7 +341,7 @@ def near_exact(lib, full0: np.ndarray, full1: np.ndarray, pot: float, stack: flo
                 cover = (range_cover(full0, st["full0"]), range_cover(full1, st["full1"]))
                 dist = (range_dist(full0, st["full0"]), range_dist(full1, st["full1"]))
                 if min(cover) >= (NEAR_EXACT_TABLE_COVER if players > 6 else NEAR_EXACT_COVER) and \
-                        sum(dist) <= NEAR_EXACT_DIST and \
+                        sum(dist) <= (NEAR_EXACT_TABLE_DIST if players > 6 else NEAR_EXACT_DIST) and \
                         (best is None or sum(dist) < sum(best["dist"])):
                     best = {"id": sp["id"], "cover": cover, "dist": dist}
         _EXACT[key] = best

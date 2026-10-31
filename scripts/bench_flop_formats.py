@@ -87,6 +87,7 @@ CASES = {
     "8max_3bp_sb_co": ("8max", "UTG:f,UTG1:f,LJ:f,HJ:f,CO:r2.5,BTN:f,SB:r10,BB:f,CO:c", "3bp_sb_co"),
     "8max_utg1_bb": ("8max", "UTG:f,UTG1:r2.5,LJ:f,HJ:f,CO:f,BTN:f,SB:f,BB:c", "srp_utg_bb"),
     "8max_utg_utg1": ("8max", "UTG:r2.5,UTG1:c,LJ:f,HJ:f,CO:f,BTN:f,SB:f,BB:f", "srp_utg_btn"),
+    "8max_utg1_lj": ("8max", "UTG:f,UTG1:r2.5,LJ:c,HJ:f,CO:f,BTN:f,SB:f,BB:f", "srp_utg_btn"),
     "9max_btn_bb": ("9max", "UTG:f,UTG1:f,UTG2:f,LJ:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:c", "srp_btn_bb"),
     "6max_co_sb": ("", "UTG:f,HJ:f,CO:r2.5,BTN:f,SB:c,BB:f", "srp_co_sb"),
     "8max_co_sb": ("8max", "UTG:f,UTG1:f,LJ:f,HJ:f,CO:r2.5,BTN:f,SB:c,BB:f", "srp_co_sb"),
