@@ -366,7 +366,9 @@
   // ---- your decisions: each one's verdict and the solver's mix for the spot, kept with the hand
   const ACT = (a) => a.action === "bet" ? `bet ${fmt(a.to)}` : a.action === "raise" ? `raise to ${fmt(a.to)}` : a.action;
   const YOU = (a) => ({ fold: "folded", check: "checked", call: "called", "all-in": "went all-in" })[a.action] || (a.action === "bet" ? `bet ${fmt(a.to)}` : `raised to ${fmt(a.to)}`);
-  const mixOf = (res) => res && !res.error && res.actions ? res.actions.map(a => ({ n: a.action, f: a.freq, ...(a.ev_bb !== undefined ? { ev: a.ev_bb } : {}), ...(amtOf(a) != null ? { a: amtOf(a) } : {}) })) : null;
+  // (r: an action your range almost never takes, whose EV is rough: the answer's rough_ev, shown with a "≈")
+  const mixOf = (res) => res && !res.error && res.actions ? res.actions.map(a => ({ n: a.action, f: a.freq, ...(a.ev_bb !== undefined ? { ev: a.ev_bb } : {}), ...(a.rough_ev ? { r: 1 } : {}), ...(amtOf(a) != null ? { a: amtOf(a) } : {}) })) : null;
+  const evCell = (a) => a.ev === undefined ? `<span class="num"></span>` : a.r ? `<span class="num rough" title="${ROUGH_EV_TIP}">≈ ${evTxt(a.ev)} bb</span>` : `<span class="num">${evTxt(a.ev)} bb</span>`;
   function graded(street, rec, res) {
     if (!P.hand) return null;
     { const c = simulate().cur; if (c) habit(c.curBet - c.bets[S.hero] > 1e-9, rec.action); }   // (before the move: what it faced)
@@ -435,6 +437,8 @@
   }
   // the EV a decision gave up: red for an inaccuracy or a mistake; muted for a move in the solver's strategy (its
   // mixed actions are worth the same in theory: a small gap there is the solve's noise more than an error)
+  // the EV a decision gave up as text: "≈" when your move is one your range almost never takes (rv: its EV is rough)
+  const lostTxt = (g) => `${g.rv ? "≈ " : ""}−${g.l.toFixed(2)} bb`;
   const lostCls = (e) => !(e.g && e.g.l > 0.005) ? "muted" : ["best", "good"].includes(verdict(e.g).k) ? "soft" : "neg";
   // the verdict on one decision: the verdict, what you did and the EV it cost, the solver's mix as a bar with
   // its frequencies; why and the EVs fold away (Details), with how the solver plays your whole range there.
@@ -442,7 +446,7 @@
   // o.past: a decision from the review list (no range: its solve is gone)
   function feedback(e, o = {}) {
     const v = verdict(e.g), g = e.g, past = o.past;
-    const cost = g && g.l != null ? (g.l > 0.005 ? `<span class="cost num ${lostCls(e)}" title="EV given up against the solver's best action">−${g.l.toFixed(2)} bb</span>` : `<span class="cost num pos">no EV lost</span>`) : "";
+    const cost = g && g.l != null ? (g.l > 0.005 ? `<span class="cost num ${lostCls(e)}" title="EV given up against the solver's best action${g.rv ? ". " + ROUGH_EV_TIP : ""}">${lostTxt(g)}</span>` : `<span class="cost num pos">no EV lost</span>`) : "";
     let mix = "", table = "";
     if (e.mix && e.mix.length && g && g.h != null) {   // the betting rules: their EVs, no mix (0/1)
       const you = (a) => a.n === g.m;
@@ -456,7 +460,7 @@
       mix = `<div class="cx-mix">${e.mix.filter(a => a.f >= 0.0005).map(a => `<div style="width:${(a.f * 100).toFixed(1)}%;background:${COLORS(a.n)}" title="${a.n} ${pct(a.f)}">${a.f >= 0.2 ? `<span>${a.n}${/%$/.test(a.n) ? " · " : " "}${pct(a.f)}</span>` : ""}</div>`).join("")}</div>`
         + `<div class="cx-leg">${leg.map(a => `<span class="${you(a) ? "you" : a.f < 0.005 ? "muted" : ""}" style="--c:${COLORS(a.n)}">${a.n} <b class="num">${pct(a.f)}</b>${you(a) ? '<span class="tag">you</span>' : ""}</span>`).join("")}</div>`;
       if (ev) table = `<div class="cx-acts"><span class="hd">Action</span><span class="hd num">How often</span><span class="hd num">EV</span>`
-        + e.mix.map(a => `<span class="n${you(a) ? " you" : ""}" style="--c:${COLORS(a.n)}">${a.n}</span><span class="num${you(a) ? " you" : ""}">${pct(a.f)}</span><span class="num">${a.ev !== undefined ? evTxt(a.ev) + " bb" : ""}</span>`).join("") + `</div>`;
+        + e.mix.map(a => `<span class="n${you(a) ? " you" : ""}" style="--c:${COLORS(a.n)}">${a.n}</span><span class="num${you(a) ? " you" : ""}">${pct(a.f)}</span>${evCell(a)}`).join("") + `</div>`;
     }
     const lbl = o.label ? `<div class="lbl">${o.label} · ${e.street}</div>` : "";
     return `<div class="cx-fb${o.old ? " old" : ""}" style="--c:${v.c}">${lbl}<div class="head"><span class="ico" aria-hidden="true">${ICON[v.k]}</span><span class="verdict">${v.label}</span><span class="what">${o.label ? "" : e.street + " · "}you <b>${YOU(e.rec)}</b></span>${cost}</div>${mix}`
@@ -608,7 +612,7 @@
       for (const a of e.mix) L.push(`  - ${a.n}${a.a != null ? ` (${bb(a.a)})` : ""}: EV ${a.ev !== undefined ? evTxt(a.ev).replace("−", "-") : "?"}${a.n === g.m ? "  <- my move" : ""}`);
     } else if (e.mix && e.mix.length) {
       L.push("- The solver's strategy for my exact hand (how often, EV in bb):");
-      for (const a of e.mix) L.push(`  - ${a.n}${a.a != null ? ` (${bb(a.a)})` : ""}: ${f(a.f)}${a.ev !== undefined ? `, EV ${evTxt(a.ev).replace("−", "-")}` : ""}${g && a.n === g.m ? "  <- my move" : ""}`);
+      for (const a of e.mix) L.push(`  - ${a.n}${a.a != null ? ` (${bb(a.a)})` : ""}: ${f(a.f)}${a.ev !== undefined ? `, EV ${evTxt(a.ev).replace("−", "-")}${a.r ? " (rough: my range almost never takes this)" : ""}` : ""}${g && a.n === g.m ? "  <- my move" : ""}`);
       if (!e.mix.some(a => a.ev !== undefined)) L.push("  (preflop: the solver's chart gives frequencies, no EVs)");
     } else L.push("- The solver doesn't solve this multiway spot, so it has no mix here");
     if (g) {
@@ -794,7 +798,7 @@
     if (log.length > 1) {
       const lost = log.reduce((t, e) => t + (e.g && e.g.l || 0), 0), good = log.filter(e => ["best", "good"].includes(verdict(e.g).k)).length;
       out += `<div class="cx-h">This hand · ${good} of ${log.length} in the solver's strategy${lost > 0.005 ? ` · <span class="num neg">−${lost.toFixed(2)} bb</span> EV lost` : ""}</div><ul class="cx-list">`
-        + log.map(e => { const v = verdict(e.g); return `<li title="${e.g ? gradeTip(e.g) : ""}"><span class="st">${e.street}</span><span>${ACT(e.rec)} <span class="muted">· ${e.g && e.g.h != null ? "rules' best: " + e.g.b : "solver " + (e.g ? pct(e.g.f) : "–")}</span></span><span class="pill" style="--c:${v.c}">${v.label}</span><span class="num ${lostCls(e)}">${e.g && e.g.l != null ? (e.g.l > 0.005 ? "−" + e.g.l.toFixed(2) + " bb" : "0 bb") : ""}</span></li>`; }).join("") + `</ul>`;
+        + log.map(e => { const v = verdict(e.g); return `<li title="${e.g ? gradeTip(e.g) : ""}"><span class="st">${e.street}</span><span>${ACT(e.rec)} <span class="muted">· ${e.g && e.g.h != null ? "rules' best: " + e.g.b : "solver " + (e.g ? pct(e.g.f) : "–")}</span></span><span class="pill" style="--c:${v.c}">${v.label}</span><span class="num ${lostCls(e)}">${e.g && e.g.l != null ? (e.g.l > 0.005 ? lostTxt(e.g) : "0 bb") : ""}</span></li>`; }).join("") + `</ul>`;
     }
     return out;
   }
@@ -844,7 +848,7 @@
     const v = verdict(e.g);
     const row = `<li class="pick${P.pick === i ? " on" : ""}" data-i="${i}" tabindex="0" role="button" aria-expanded="${P.pick === i}" title="Show this decision's verdict"><span class="st">#${e.n} ${e.street}</span>`
       + `<span><span class="hole">${e.hole.map(cardHtml).join("")}</span> ${ACT(e.rec)}</span><span class="pill" style="--c:${v.c}">${v.label}</span>`
-      + `<span class="num ${lostCls(e)}">${e.g && e.g.l != null ? (lostOf(e) > 0.005 ? "−" + e.g.l.toFixed(2) + " bb" : "0 bb") : ""}</span></li>`;
+      + `<span class="num ${lostCls(e)}">${e.g && e.g.l != null ? (lostOf(e) > 0.005 ? lostTxt(e.g) : "0 bb") : ""}</span></li>`;
     return row + (P.pick === i ? `<li class="spot"><div class="muted">${SEAT_LABEL(e.seat, S.players)} · ${e.board.length ? e.board.map(cardHtml).join(" ") + " · " : ""}${e.line}</div>${feedback(e, { past: true })}</li>` : "");
   }
   // on a wide screen, under the score (the coach's column has the room): your last decisions, newest first
@@ -935,7 +939,7 @@
     else if (last) {
       const v = verdict(last.g), g = last.g, top = last.mix && last.mix.length ? last.mix.reduce((b, a) => a.f > b.f ? a : b) : null;
       html = (sim && sim.cur && sim.toAct === S.hero ? `<span class="muted">Last:</span>` : "") + `<b style="color:${v.c}">${v.label}</b><span class="muted">${last.street} · you ${YOU(last.rec)}</span>`
-        + (g && g.l != null && g.l > 0.005 ? `<span class="num neg">−${g.l.toFixed(2)} bb</span>` : "")
+        + (g && g.l != null && g.l > 0.005 ? `<span class="num neg">${lostTxt(g)}</span>` : "")
         + (top && v.k !== "best" ? `<span class="muted fit">· ${g && g.h != null ? `rules' best: ${top.n}` : `solver: ${top.n} ${pct(top.f)}`}</span>` : "");
     }
     el.innerHTML = html + `<span class="go">›</span>`;

@@ -621,7 +621,10 @@ Optional `"sizes"`, `"ranges"` and `"optimize_sizes"` change the postflop game, 
 Optional `"one_size"` (`"all"`, `"full"`, a size or `"list"`) answers with the one-size view instead of the advice (see One bet size below).
 
 Response: per-action `freq` (the mixed strategy for hero's exact hand), `ev_bb`
-(relative to folding now), `amount_bb`, a `recommended` action (highest
+(relative to folding now), `amount_bb`, `"rough_ev": true` heads-up where hero's range takes the action under 1% of
+the time (`advisor.RARE_BRANCH`: the opponent's answer to it is barely solved, so its EV is rough and usually lower
+than exact; the page shows it, and Practice's EV given up for such a move, with a "≈"; docs/cfr_research.md, EV gaps
+on live turns), a `recommended` action (highest
 frequency, or highest EV when the solve is 3%+ of the pot from equilibrium and that
 EV beats the top of the mix by over 1% of the pot), a `sampled` action (drawn from the mix, use this if you want to
 actually play unexploitably), the range-wide frequencies, the villain's inferred

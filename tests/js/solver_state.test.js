@@ -467,3 +467,41 @@ test("an approximate turn answer from a format-2 turn file shows the stored rang
   assert.match(box.innerHTML, /7\.13 bb<\/small><\/span><div class="bar">.*?<\/div><\/div><span class="num">30\.0%<\/span><span><\/span><\/div>/);
   assert.equal(p.run("lastResult"), null);
 });
+
+test("an action your range almost never takes (rough_ev) shows its EV with a ≈ and the tip; graded the same, its EV lost marked", async () => {
+  const p = loadPage();
+  await p.ready();
+  p.S = state(FLOP);
+  await flush();
+  const ask = p.posted.filter((m) => m.state).at(-1);
+  const res = { street: "flop", hero: "BTN", hand: "AKo", recommended: "bet 75%", pot_bb: 5.5,
+    actions: [{ action: "check", freq: 0.6, ev_bb: 4.88, amount_bb: null }, { action: "bet 33%", freq: 0, ev_bb: 4.5, amount_bb: 2 },
+      { action: "bet 75%", freq: 0.4, ev_bb: 4.9, amount_bb: 4 }] };
+  const rough = { ...res, actions: res.actions.map(a => a.action === "bet 33%" ? { ...a, rough_ev: true } : a) };
+  p.workers[0].onmessage({ data: { id: ask.id, result: res } });
+  await flush();
+  const result = p.byId("result");
+  assert.doesNotMatch(result.innerHTML, /≈|rough/);
+  const plain = result.innerHTML;
+  p.S = state({ ...FLOP, cards: ["Ah", "Kc", "Kd", "7s", "2c"] });   // (another hand: a request of its own)
+  await flush();
+  p.workers[0].onmessage({ data: { id: p.posted.filter((m) => m.state).at(-1).id, result: rough } });
+  await flush();
+  const html = result.innerHTML;
+  assert.match(html, /<span class="num pos rough" title="Your range almost never takes this, so how the opponent answers it is barely solved: its EV is rough, usually lower than exact\.">≈ \+4\.50 bb<\/span>/);
+  assert.match(html, /<span class="num pos">\+4\.88 bb<\/span>/);   // (the others as before)
+  assert.match(html, /≈: an action your range almost never takes, whose EV is rough \(usually lower than exact\)\./);
+  assert.equal((html.match(/≈/g) || []).length, (plain.match(/≈/g) || []).length + 2);
+  // grading: the same verdict and EV lost; the EV lost and the move's EV carry a ≈ and the tip
+  const g0 = p.val(`gradeWith(${JSON.stringify(res)}, { action: "bet", to: 2 })`);
+  const g = p.val(`gradeWith(${JSON.stringify(rough)}, { action: "bet", to: 2 })`);
+  assert.deepEqual({ ...g, rv: undefined }, { ...g0, rv: undefined });
+  assert.equal(g.rv, 1);
+  assert.equal(g0.rv, undefined);
+  assert.equal(p.val(`gradeClass(${JSON.stringify(g)})`), p.val(`gradeClass(${JSON.stringify(g0)})`));
+  assert.equal(p.val(`gradeWith(${JSON.stringify(rough)}, { action: "check" })`).rv, undefined);   // (your move's own EV is what counts)
+  assert.match(p.run(`evLossHtml(${JSON.stringify(g)})`), /EV ≈ \+4\.50 vs GTO \+4\.90 · <span class="num neg" title="Your range almost never[^"]*">≈ −0\.40 bb<\/span>/);
+  assert.equal(p.run(`evLossHtml(${JSON.stringify(g0)})`), `EV +4.50 vs GTO +4.90 · <span class="num neg">−0.40 bb</span>`);
+  assert.match(p.run(`gradeTip(${JSON.stringify(g)})`), /EV ≈ \+4\.50 bb vs GTO \+4\.90 bb \(−0\.40 bb\)\. Your range almost never takes this/);
+  assert.doesNotMatch(p.run(`gradeTip(${JSON.stringify(g0)})`), /≈|almost never/);
+});

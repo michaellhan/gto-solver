@@ -592,6 +592,32 @@ test("Review mistakes: your decisions that gave up the most EV across hands, eac
   assert.doesNotMatch(p.byId("practiceBar").innerHTML, /pxRev/);
 });
 
+test("a move your range almost never takes (rough_ev): the same verdict and EV lost, shown with a ≈ and the tip", async () => {
+  const ROUGH = { ...ADVICE, actions: ADVICE.actions.map(a => a.action === "fold" ? { ...a, rough_ev: true } : a) };
+  const graded = async (advice) => {
+    const p = await practicePage(11);
+    p.run("Practice.state.hint = true");
+    await toMyTurn(p, new Set(), (m) => m.play ? passive(m) : advice);
+    assert.equal(p.act({ action: "fold" }), null);   // 20% in the mix, 1bb below calling's EV
+    p.run("renderAll()");
+    return p;
+  };
+  const p0 = await graded(ADVICE), p = await graded(ROUGH);
+  const e0 = p0.val("Practice.state.hand.log.at(-1)"), e = p.val("Practice.state.hand.log.at(-1)");
+  assert.deepEqual({ ...e.g, rv: undefined }, { ...e0.g, rv: undefined });   // graded the same
+  assert.equal(e.g.rv, 1);
+  assert.deepEqual(e.mix[0], { n: "fold", f: 0.2, ev: 0, r: 1 });
+  assert.equal(p.val("Practice.state.score.good"), p0.val("Practice.state.score.good"));
+  const html = p.byId("practiceBar").innerHTML, html0 = p0.byId("practiceBar").innerHTML;
+  assert.doesNotMatch(html0, /≈/);
+  assert.match(html, /<span class="cost num soft" title="EV given up against the solver's best action\. Your range almost never takes this, so how the opponent answers it is barely solved: its EV is rough, usually lower than exact\.">≈ −1\.00 bb<\/span>/);
+  assert.match(html, /<span class="num rough" title="Your range almost never takes this[^"]*">≈ 0\.00 bb<\/span>/);   // (Details)
+  assert.match(html, /<span class="num">\+1\.00 bb<\/span>/);
+  assert.match(p.val(`Practice.ai.prompt(Practice.state.hand.log.at(-1))`), /  - fold: 20%, EV 0\.00 \(rough: my range almost never takes this\)  <- my move\n  - check: 30%, EV \+0\.40\n/);
+  p.run("Practice.state.rev = true; Practice.state.pick = 0; renderAll()");   // Review mistakes keeps it
+  assert.match(p.byId("practiceBar").innerHTML, /<ul class="cx-list cx-rev"><li class="pick on" data-i="0"[^>]*>.*fold.*≈ −1\.00 bb/);
+});
+
 test("the first-run hint goes once a hand is played; a change to the table's chips deals a new hand", async () => {
   const p = await practicePage(5);
   assert.match(p.byId("practiceBar").innerHTML, /cx-hint/);

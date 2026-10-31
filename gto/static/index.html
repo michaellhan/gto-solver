@@ -432,7 +432,7 @@
   .verdict .big { font-size: 24px; font-weight: 700; letter-spacing: -.01em; }
   .verdict .mix { color: var(--muted); font-size: 13px; }
   .arows { display: flex; flex-direction: column; gap: 4px; }
-  .arow { display: grid; grid-template-columns: minmax(0, 140px) minmax(40px, 1fr) 62px 76px; gap: 10px; align-items: center; padding: 7px 10px; border-radius: 8px; background: var(--panel2); border: 1px solid transparent; cursor: pointer; }
+  .arow { display: grid; grid-template-columns: minmax(0, 140px) minmax(40px, 1fr) 62px 84px; gap: 10px; align-items: center; padding: 7px 10px; border-radius: 8px; background: var(--panel2); border: 1px solid transparent; cursor: pointer; }
   .arows.noev .arow { grid-template-columns: minmax(0, 140px) minmax(40px, 1fr) 62px; }
   .arow:hover { border-color: var(--line2); }
   .arow.best { border-color: var(--accent); }
@@ -444,6 +444,7 @@
   .bar > div { height: 100%; border-radius: 4px; }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
   .num.pos { color: var(--good); } .num.neg { color: var(--bad); } .num.soft { color: var(--muted); }
+  .num.rough { opacity: .7; }   /* an EV of an action your range almost never takes (rough_ev): "≈" */
   .meta { color: var(--muted); font-size: 12px; margin-top: 10px; line-height: 1.6; }
   .grid { display: grid; grid-template-columns: repeat(13, 1fr); gap: 2px; margin-top: 6px; }
   .cell { aspect-ratio: 1; border-radius: 3px; position: relative; background: #111418; font-size: 10px; overflow: hidden; cursor: crosshair; }
@@ -1409,7 +1410,8 @@ function gradeWith(r, rec) {   // (also the session analyzer's, on its own answe
   if (heuristic(r) && hasEv && r.pot_bb > 0)   // (the rules' best by EV, not by its 0/1 frequency)
     return { m: m.action, f: m.freq, b: best.action, bf: best.freq, l: r2(loss), e: r2(m.ev_bb), o: r2(top), h: Math.round(loss / r.pot_bb * 1000) / 10 };
   if (heuristic(r)) return null;
-  return { m: m.action, f: m.freq, b: best.action, bf: best.freq, l: loss == null ? null : r2(loss), ...(hasEv ? { e: r2(m.ev_bb), o: r2(top) } : {}), ...(conv && conv.cls === "bad" ? { r: 1 } : {}), ...(v ? { v, ...(pre ? {} : { vs: 1 }) } : {}) };
+  // (rv: your move is one your range almost never takes, so its EV and the EV lost are rough: shown with a "≈", graded the same)
+  return { m: m.action, f: m.freq, b: best.action, bf: best.freq, l: loss == null ? null : r2(loss), ...(hasEv ? { e: r2(m.ev_bb), o: r2(top) } : {}), ...(hasEv && m.rough_ev ? { rv: 1 } : {}), ...(conv && conv.cls === "bad" ? { r: 1 } : {}), ...(v ? { v, ...(pre ? {} : { vs: 1 }) } : {}) };
 }
 // The move a recorded action is graded as: an all-in that puts in no more than anyone left can match (a stack that
 // doesn't cover the call, or nobody else with chips behind the bet) is a call, or a check: the answers list it so.
@@ -1441,9 +1443,12 @@ const gradeClass = (g) => g.h != null ? (g.h <= HEUR_OK ? "ok" : g.h <= HEUR_MEH
   : g.f >= 0.15 ? "ok" : g.f >= 0.03 || g.r ? "meh" : "bad";
 const gradeMark = (g) => ({ ok: "✓", meh: "~", bad: "✗" })[gradeClass(g)];
 const sgn = (x) => (x > 0 ? "+" : x < 0 ? "−" : "") + Math.abs(x).toFixed(2);
+// An action your range almost never takes (the answer's rough_ev, advisor.RARE_BRANCH; a grade's rv): its EV with a "≈"
+// and this tip. Against exact EVs of the same strategy they are 1-10% of the pot off at Fast, under 1% at Accurate.
+const ROUGH_EV_TIP = "Your range almost never takes this, so how the opponent answers it is barely solved: its EV is rough, usually lower than exact.";
 // Your EV vs the GTO-best EV for one decision, plus the EV lost.
-const evLossHtml = (g) => g.e == null ? `<span class="muted">no EV (preflop chart)</span>` : `EV ${sgn(g.e)} vs GTO ${sgn(g.o)} · ${g.l > 0.005 ? `<span class="num neg">−${g.l.toFixed(2)} bb</span>` : `<span class="num pos">0.00 bb</span>`}`;
-const gradeTip = (g) => g.h != null ? `Betting rules (no solve in this multiway spot): best ${g.b}. Your line (${g.m}) EV ${sgn(g.e)} bb vs ${sgn(g.o)} bb (${g.l > 0.005 ? "−" + g.l.toFixed(2) : "0.00"} bb, ${g.h}% of the pot).` : `Solver: ${g.b} ${(g.bf * 100).toFixed(0)}%. Your line (${g.v || g.m}) ${(g.f * 100).toFixed(0)}%${gradeAs(g)}${g.e != null ? `, EV ${sgn(g.e)} bb vs GTO ${sgn(g.o)} bb (${g.l > 0.005 ? "−" + g.l.toFixed(2) : "0.00"} bb)` : g.l ? `, ${g.l.toFixed(2)} bb below the best EV` : ""}.${g.r ? " Rough solve: treat this as a hint, not a verdict." : ""}`;
+const evLossHtml = (g) => g.e == null ? `<span class="muted">no EV (preflop chart)</span>` : `EV ${g.rv ? "≈ " : ""}${sgn(g.e)} vs GTO ${sgn(g.o)} · ${g.l > 0.005 ? `<span class="num neg"${g.rv ? ` title="${ROUGH_EV_TIP}"` : ""}>${g.rv ? "≈ " : ""}−${g.l.toFixed(2)} bb</span>` : `<span class="num pos">0.00 bb</span>`}`;
+const gradeTip = (g) => g.h != null ? `Betting rules (no solve in this multiway spot): best ${g.b}. Your line (${g.m}) EV ${sgn(g.e)} bb vs ${sgn(g.o)} bb (${g.l > 0.005 ? "−" + g.l.toFixed(2) : "0.00"} bb, ${g.h}% of the pot).` : `Solver: ${g.b} ${(g.bf * 100).toFixed(0)}%. Your line (${g.v || g.m}) ${(g.f * 100).toFixed(0)}%${gradeAs(g)}${g.e != null ? `, EV ${g.rv ? "≈ " : ""}${sgn(g.e)} bb vs GTO ${sgn(g.o)} bb (${g.l > 0.005 ? "−" + g.l.toFixed(2) : "0.00"} bb)` : g.l ? `, ${g.l.toFixed(2)} bb below the best EV` : ""}.${g.rv ? " " + ROUGH_EV_TIP : ""}${g.r ? " Rough solve: treat this as a hint, not a verdict." : ""}`;
 
 // Everyone before pos folds (checks when there's nothing to call), but never you: it stops at your turn.
 function advanceTo(pos) {
@@ -1874,13 +1879,13 @@ function renderResult(res, key) {
   const hasEv = res.actions.some(a => a.ev_bb !== undefined);
   h += `<div class="arows${hasEv ? "" : " noev"}"><div class="arow head"><span>Action</span><span>${heuristic(res) ? "" : "Solver mix"}</span><span class="num">${heuristic(res) ? "" : "Freq"}</span>${hasEv ? '<span class="num" title="Expected value of taking this action, in big blinds">EV</span>' : ""}</div>`;
   for (const a of res.actions) {
-    const ev = hasEv ? (a.ev_bb !== undefined ? `<span class="num ${a.ev_bb > 0.005 ? "pos" : a.ev_bb < -0.005 ? "neg" : ""}">${a.ev_bb > 0 ? "+" : ""}${a.ev_bb.toFixed(2)} bb</span>` : "<span></span>") : "";
+    const ev = hasEv ? (a.ev_bb !== undefined ? `<span class="num ${a.ev_bb > 0.005 ? "pos" : a.ev_bb < -0.005 ? "neg" : ""}${a.rough_ev ? ` rough" title="${ROUGH_EV_TIP}` : ""}">${a.rough_ev ? "≈ " : ""}${a.ev_bb > 0 ? "+" : ""}${a.ev_bb.toFixed(2)} bb</span>` : "<span></span>") : "";
     h += `<div class="arow ${a.action === res.recommended ? "best" : ""}" data-act='${JSON.stringify(a)}' title="Click to record this as what you did"><span class="name">${a.action}${amtOf(a) != null ? `<small>${amtOf(a)} bb</small>` : ""}</span><div class="bar"><div style="width:${(a.freq * 100).toFixed(1)}%;background:${COLORS(a.action)}"></div></div><span class="num"${a.gto_freq !== undefined ? ` title="GTO plays this ${(a.gto_freq * 100).toFixed(1)}% of the time (${res.street === "preflop" ? "the chart" : "this solve's equilibrium"})"` : ""}>${(a.freq * 100).toFixed(1)}%${a.gto_freq !== undefined ? `<small class="muted" style="display:block;font-size:10px">GTO ${(a.gto_freq * 100).toFixed(0)}%</small>` : ""}</span>${ev}</div>`;
   }
   const src = res.actions.some(a => a.gto_freq !== undefined) ? gtoSource(res, key) : "";
   if (res.locked) h += `</div><div class="meta">${Object.entries(res.locked).map(([p, l]) => `Against your lock on ${p} (${LOCK_TEXT(l)})`).join("; ")}: ${res.street === "preflop" ? "your line re-priced against it" : "the best response"}, with GTO's frequency under each (${src}).`;
   else if (src) h += `</div><div class="meta">Against a typical player pool: the best response, with GTO's frequency under each (${src}).`;
-  h += `</div><div class="meta">${practicing() ? "" : TAP + " a row to record it as what you did."}${hasEv ? " EV is in big blinds relative to folding now, so fold is 0: chips already in the pot are gone either way." : res.street === "preflop" ? " Preflop comes from charts, so there's no EV column." : ""}${res.widened && res.widened.length ? ` The solve rarely has ${res.widened.join(" and ")} play this way, so their range comes from simple betting rules instead; the EVs (and the pick) are against that range, so they can disagree with the solver's mix.` : conv && conv.cls !== "ok" ? " Actions the solver mixes should have near-equal EVs; gaps here mean the solve hasn't settled." : ""}</div>`;
+  h += `</div><div class="meta">${practicing() ? "" : TAP + " a row to record it as what you did."}${hasEv ? " EV is in big blinds relative to folding now, so fold is 0: chips already in the pot are gone either way." + (res.actions.some(a => a.rough_ev) ? " ≈: an action your range almost never takes, whose EV is rough (usually lower than exact)." : "") : res.street === "preflop" ? " Preflop comes from charts, so there's no EV column." : ""}${res.widened && res.widened.length ? ` The solve rarely has ${res.widened.join(" and ")} play this way, so their range comes from simple betting rules instead; the EVs (and the pick) are against that range, so they can disagree with the solver's mix.` : conv && conv.cls !== "ok" ? " Actions the solver mixes should have near-equal EVs; gaps here mean the solve hasn't settled." : ""}</div>`;
   if (res.grid && res.street !== "preflop" && !heuristic(res)) h += `<div class="segment vtabs">${["grid", "breakdown", ...(res.multiway ? [] : ["equity"]), ...(simpleOk(res, key) ? ["simple"] : [])].map(v => `<button data-v="${v}" class="${v === "grid" ? "active" : ""}">${v[0].toUpperCase() + v.slice(1)}</button>`).join("")}</div><div class="bdview" hidden></div>`;
   if (res.grid) h += `<div class="gridview">${renderGrid(res.grid, res.hand)}</div>`;
   h += `<details><summary>Details</summary>`;

@@ -215,6 +215,15 @@ PRICE_TOL = 0.02    # ...and a spot within this much of the chart's pot odds, ag
 CUT_FLOOR = 0.05    # ...a worse price holds the chart's continuing hands to the equity of its weakest this share of them
 LOCK_BLUFF_MAX = 1.5  # preflop, your locks: hero's bluff raises grow at most this much against a player who folds more (as the pool's)
 EV_GAP = 1.0        # heads-up, unsettled solve: recommend the highest EV when it beats the top of the mix by this % of pot
+# heads-up: an action hero's range takes less often than this (the solve's average strategy over the range at the node)
+# gets "rough_ev": the opponent's answer to a branch the range almost never takes is barely trained (its regrets move
+# only while the solve's current strategy still takes it), so the EV is rough and usually lower than exact. Against
+# postflop-solver with every turn decision locked to ours and the river solved exactly (docs/cfr_research.md, EV gaps
+# on live turns): single-raised turns' actions the range takes 0.01-1% 6.0% of the pot off on average at 100 iterations,
+# 2.4 at 300, 1.6 at Accurate's 400, 0.6 at 1000 (ours lower: -4.5, -1.5, -0.8, -0.3); 1-5%: 1.4, 0.6, 0.6, 0.15;
+# 5% or more 0.50, 0.16, 0.11, 0.06. The page shows such an EV with a "≈" (Practice's EV given up too); grading is
+# unchanged.
+RARE_BRANCH = 0.01
 BR_TIE_MIN = 0.005  # exploit mode: best-response EVs this close (share of pot; more when the solve is unsettled) count as tied
 COMMIT_BET = 0.75   # exploit mode: a postflop bet this big (share of the pot) marks its maker committed: no extra folds
                     # (a 96%-pot donk on AKQ left 4-high calling for its river bluffs, +1.4 bb)
@@ -4223,6 +4232,8 @@ class Advisor:
         pos_in_active = np.nonzero(sol.ctx.active == idx)[0]
         ci = int(pos_in_active[0]) if len(pos_in_active) else None
         acts_out = []
+        n_r = n_r0 if hero_p == 0 else n_r1     # (the range's equilibrium frequency of each action: RARE_BRANCH)
+        rare = (node.avg_strategy0() * n_r).sum(axis=1) < RARE_BRANCH * max(float(n_r.sum()), 1e-12)
         for a, name in enumerate(node.names):
             f = float(strat[a, ci]) if ci is not None else 1.0 / len(node.names)
             ev = float(evs[a, ci]) if ci is not None else 0.0
@@ -4230,6 +4241,8 @@ class Advisor:
                              "amount_bb": self._amount(name, node, hero_p)})
             if exploit and ci is not None:
                 acts_out[-1]["gto_freq"] = round(float(node.avg_strategy0()[a, ci]), 3)
+            if rare[a]:
+                acts_out[-1]["rough_ev"] = True
         if ci is None:
             notes.append("hero's hand was not solved; frequencies are uniform")
         best = max(acts_out, key=lambda a: a["freq"])["action"]

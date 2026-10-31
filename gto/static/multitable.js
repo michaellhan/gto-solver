@@ -691,7 +691,7 @@
     const x = X(), v = x.verdict(e.g), on = M.pick === i;
     const li = `<li class="pick${on ? " on" : ""}" data-pick="${i}" tabindex="0" role="button" aria-expanded="${on}" title="Show this decision's verdict"><span class="st">T${e.table} #${e.n} ${e.street}</span>`
       + `<span><span class="hole">${e.hole.map(cardHtml).join("")}</span> ${x.ACT(e.rec)}</span><span class="pill" style="--c:${v.c}">${v.label}</span>`
-      + `<span class="num ${x.lostCls(e)}">${e.g && e.g.l != null ? (lostOf(e) > 0.005 ? "−" + e.g.l.toFixed(2) + " bb" : "0 bb") : ""}</span></li>`;
+      + `<span class="num ${x.lostCls(e)}">${e.g && e.g.l != null ? (lostOf(e) > 0.005 ? (e.g.rv ? "≈ " : "") + "−" + e.g.l.toFixed(2) + " bb" : "0 bb") : ""}</span></li>`;
     return li + (on ? `<li class="spot"><div class="muted">Table ${e.table} · ${SEAT_LABEL(e.seat, S.players)} · ${e.board.length ? e.board.map(cardHtml).join(" ") + " · " : ""}${esc(e.line)}</div>${x.feedback(e, { past: true })}</li>` : "");
   }
   function sideHtml() {

@@ -152,6 +152,53 @@ brackets): the river 0.039 / 0.022 (0.040 / 0.021) and 0.067 / 0.044 (0.063 / 0.
 identical through 100 (the tables above are beta 0 throughout). Beta 0.5 from the start is 1.5-2x worse at 50-100 iterations (the turn 4.56 / 1.14 at 50 /
 100 against 2.58 / 0.78).
 
+## EV gaps on live turns
+
+How right are the per-combo EVs the page shows (`ev_bb`, `Solver.node_action_evs`) on a turn solved live? For 34
+turns (18 single-raised, BTN or CO vs BB after a library flop's common line; 16 BB vs BTN 3bet pots; random turn
+cards, picked as `scripts/bench_postflop_solver.py` picks them) the Advisor answered the turn at Fast and Accurate,
+and postflop-solver then played the same tree with every turn decision of both players locked to our average strategy
+and every river solved to 0.02% of the pot: each combo's exact EV of each action for the strategy we play. Ours
+against theirs, per combo and action, in % of the turn's pot, at the turn's first decision (OOP), IP after a check
+and IP facing OOP's commonest bet. (A variant of the benchmark and of its harness that dumps EVs below the root; not
+checked in.) The figure is the median over nodes of the mean |gap| over the actions each combo plays (5% or more of
+its mix), weighted by reach.
+
+**It follows exploitability.** Gap ≈ 0.04 + 0.4 x exploitability (% of the pot). Single-raised turns: 0.358 at 100
+iterations (Fast's turn; nodes 0.27-0.63, the 90th percentile pair 0.97), 0.125 at 300, 0.088 at Accurate's 400,
+0.056 at 1000. 3bet pots (SPR 1-3, so the Fast answer reaches 114-690 iterations, median 322): Fast 0.090, Accurate
+(925-1000) 0.071. At equal iterations the two are alike (300: 0.125 and 0.10); deep single-raised turns (SPR 7-18)
+only converge slower.
+
+**Where it sits.** By node (Fast / Accurate, single-raised): IP facing a bet 0.57 / 0.21, IP after a check 0.44 /
+0.12, the root 0.31 / 0.07. By hand (Fast, single-raised, mean 0.26): strong made hands are higher and biased up
+(full house 1.06, signed +0.97; flush 0.70, straight 0.52, trips 0.41, two pair 0.36), draws 0.29-0.33, air
+0.22. Combos the line rarely reaches are only ~20% worse than the rest.
+
+**The floor at 1000 iterations** (0.05-0.12 by node) is the river's hand classes (the live turn plays rivers by
+class): solving every river instead takes single-raised 0.039 / 0.061 / 0.120 (root / after check / facing bet) to
+0.032 / 0.042 / 0.107, 3bet pots 0.052 / 0.073 / 0.111 to 0.028 / 0.062 / 0.050; and the reference's own noise, 0.00
+to 0.04 (its river target 0.02 -> 0.005 moves the 3bet facing-bet node 0.111 -> 0.068, single-raised 0.120 -> 0.114).
+
+**Rare branches are the weak spot.** By how often the actor's range takes the action at the node (mean |gap| over the
+range, reach-weighted, played or not; Fast 100 / 300 / Accurate 400 / 1000 iterations, single-raised): 0.01-1% of the
+range 6.0 / 2.4 / 1.6 / 0.6 (ours lower: signed -4.5 / -1.5 / -0.8 / -0.3; 3bet pots 0.2-0.6); 1-5% 1.4 / 0.6 / 0.6 /
+0.15; 5% or more 0.50 / 0.16 / 0.11 / 0.06. These are mostly the big bets and overbets at the root: KdKc5h-6s bet
+125% (0.18% of the range), -9.1% of the pot; 9c7d2d-9d after check, bet, call, bet 125% (0.10%), -9.0. The cause: the
+opponent's answer in a branch the actor rarely takes is barely trained, because its regrets move only while the
+actor's current strategy still takes the branch (the reach weights them); against that half-trained answer the
+branch's EV comes out wrong, usually low. Best-response EVs instead of ours don't help (the answer is the problem,
+not the arithmetic), and at exactly 0% the reference's own answer is untrained too, so neither number can be judged
+there. For Practice's "EV given up" (a move the combo plays under 5% that its range takes 1% or more, against the
+combo's top action): 0.75% of the pot off at 100 iterations (90th percentile 1.8), 0.34 at 300, 0.29 at 400, 0.10 at
+1000; 3bet pots 0.14-0.20.
+
+**What was done:** a label. Heads-up answers mark an action hero's range takes under `advisor.RARE_BRANCH` (1%) with
+`"rough_ev"`, and the page shows its EV (and Practice the EV given up) with a "≈" and a tip; grading is unchanged.
+**Not done:** a reach floor in the opponent's regret updates (every solve would change, in the C core and
+`solver.py`, to fix a display at the tails); re-solving each rare branch with the actor's turn strategy frozen (~2 s
+per rare action at the browser's Fast, so 2-4 s more per turn, where speed matters most).
+
 ## Conclusions
 
 * The previous finding holds and is now measured carefully: PCFR+ (last instantaneous regret as the prediction,
@@ -167,5 +214,8 @@ identical through 100 (the tables above are beta 0 throughout). Beta 0.5 from th
 * Beta 0 is fastest early but can swing late (above): `dcfr-ramp` now raises beta to 0.5 at the 100th iteration,
   5-13% more exploitable at 200-300 iterations on the standard spots and better on the wide Accurate turn, the
   same through 100, and no late swings on the turns that had them (`dcfr-ramp-b0` keeps beta 0).
+* The EVs a live turn shows are as good as its convergence (gap ≈ 0.04 + 0.4 x exploitability, % of the pot), except
+  for actions the range almost never takes, whose opponent answer is barely trained: 1-10% of the pot off at Fast,
+  under 1% at Accurate. The page marks them (`rough_ev`, "≈") rather than paying for a fix in every solve.
 * Not done: regret-based pruning (an action can only be skipped when no hand of the range plays it, rare in a
   vectorised range-vs-range solve), learned discounting (DDCFR: a trained policy and per-iteration features).
