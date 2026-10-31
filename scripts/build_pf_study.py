@@ -1,5 +1,5 @@
 """Solves the preflop games Study answers at once (gto/pf_study.py STORED) and writes each one's average strategy to
-gto/static/pf/<key>.bin (pf_study.pack: ~300 KB).
+gto/static/pf/<key>.bin (pf_study.pack: ~85 KB).
 
     python scripts/build_pf_study.py [--keys 6max_100bb,6max_100bb_r5c3] [--iters 1500] [--out gto/static/pf]
 

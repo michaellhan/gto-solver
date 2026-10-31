@@ -510,6 +510,10 @@ class Game:
     iteration is a walk down (reaches) and one back up (values, regrets), each a few numpy calls a depth
     rather than a Python call a node."""
 
+    # the average strategy weighs iteration t's by t ** avg_power (1: linear averaging). pf_study's solves use 3: the
+    # 6-max game reaches 2 mbb/hand a seat in ~600 iterations instead of ~1050 (docs in gto/pf_study.py)
+    avg_power: float = 1.0
+
     def __init__(self, root: Node, positions: Sequence[str], model: EQRModel, stack: float = 100.0,
                  rake: Optional[Tuple[float, Optional[float]]] = None, root_reach: Optional[np.ndarray] = None):
         """`root` may be a node inside a full tree (a subgame): `root_reach` (n, K) then gives each seat's class
@@ -737,7 +741,7 @@ class Game:
     def iterate(self, t: int):
         s = self.current()
         reach = self._down(s)
-        self._up(reach, s, t, update=True)
+        self._up(reach, s, t if self.avg_power == 1.0 else float(t) ** self.avg_power, update=True)
         # discounted CFR: positive regrets by t^1.5 / (t^1.5 + 1), negative halved
         pa = t ** 1.5 / (t ** 1.5 + 1)
         self.regret *= np.where(self.regret > 0, pa, 0.5)

@@ -157,6 +157,31 @@ class TestSolve(unittest.TestCase):
         reach = g._down(g.current())
         np.testing.assert_allclose(g._masses(reach), reach @ G.PAIR_COMPAT, rtol=1e-12, atol=1e-15)
 
+    def test_average_power(self):
+        """Game.avg_power weighs iteration t's strategy (times its own reach) by t ** avg_power in the average: the
+        sums equal the strategies and reaches of a run replayed by hand. pf_study's solves average with t^3 and get
+        nearer equilibrium than linear averaging in the same iterations."""
+        from gto import pf_study as PS
+        pos = ["SB", "BB"]
+        for power in (1.0, 3.0):
+            g = G.Game(G.build(pos), pos, G.flat_model())
+            g.avg_power = power
+            want = np.zeros_like(g.ssum)
+            for t in (1, 2, 3):
+                s = g.current()
+                reach = g._down(s)
+                for i, nd in enumerate(g.dec):
+                    want[i] += t ** power * reach[nd, g.player[i]][None, :] * s[i]
+                g.iterate(t)
+            np.testing.assert_allclose(g.ssum, want, rtol=1e-12, atol=1e-15)
+        self.assertEqual(PS.Spec(players=2).game().avg_power, PS.AVG_POWER)
+        expl = {}
+        for power in (1.0, PS.AVG_POWER):
+            g = G.Game(G.build(pos), pos, G.flat_model())
+            g.avg_power = power
+            expl[power] = g.solve(60).exploitability()
+        self.assertLess(expl[PS.AVG_POWER], expl[1.0])
+
     def test_heads_up_converges(self):
         g = G.Game(G.build(["SB", "BB"]), ["SB", "BB"], G.flat_model())
         g.solve(400)

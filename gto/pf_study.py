@@ -11,8 +11,16 @@ trees are too big to hold (an 8-handed tree is 50k nodes: ~540 MB an array of re
 A solve runs in chunks of a few seconds the page asks for one after another (Advisor.study's "preflop_solve":
 {"run": seconds}), each going on from the last (the worker keeps the Solve), until it is within TARGET_MBB of
 equilibrium (mbb per hand per seat, what a seat gains on average by best-responding: Game.exploitability) or MAX_ITERS.
+Its average strategy weighs iteration t by t^AVG_POWER (3; pf_game's default is linear): the 6-max game is 2.3 mbb
+from equilibrium at 500 iterations and 1.6 at 750, against 5.8 and 3.2 averaged linearly (5% capped at 3bb 2.8 and
+1.3 against 6.9 and 3.4; 40bb 2.5 and 1.8 against 5.2 and 3.1); t^5 was a little quicker still (2.1 and 1.5),
+DCFR's own discount of negative regrets (beta 0.5) slower (4.5 and 2.5 at t^2). Against the same solve run to 2,000
+iterations (1.0 mbb), at 750 iterations a class's EV of an action it plays is 0.001-0.008 bb off on average at the
+first decisions and facing an open, 0.03-0.04 facing a 3bet (the worst class 0.45 bb), the range's EV 0.015 bb at
+most and the actions' frequencies 1 point; at 500 (2.3 mbb) 0.04-0.06 facing a 3bet
+(scripts/pf_study_convergence.py).
 The standard games Study starts from (6-max 100bb, unraked and 5% capped at 3bb) are solved offline to 1500 iterations
-and stored (gto/static/pf/<key>.bin, ~300 KB: each node's mix in 1/255 steps; scripts/build_pf_study.py) so they
+and stored (gto/static/pf/<key>.bin, ~85 KB: each node's mix in 1/255 steps; scripts/build_pf_study.py) so they
 answer at once.
 
 Each node's answer reads the solve's average strategy and its counterfactual values: per class its share of the
@@ -41,10 +49,11 @@ from .pf_classes import CLASSES, N_IN, PAIR_COMPAT
 K = len(CLASSES)
 MAX_PLAYERS = 7            # 8-9 handed trees don't fit (see the module's doc) ...
 BROWSER_PLAYERS = 6        # ... and in the browser 7-handed (~15 minutes, over 1 GB of arrays) is left to native
-TARGET_MBB = 2.0           # a solve stops this close to equilibrium (mbb/hand a seat, on average) ...
+TARGET_MBB = 1.5           # a solve stops this close to equilibrium (mbb/hand a seat, on average) ...
 MAX_ITERS = 2000           # ... or after this many iterations
 SMALL_WORK = 5000          # a tree this small (nodes x seats: 2-4 handed) solves to MAX_ITERS, seconds in all
 CHECK_EVERY = 100          # iterations between exploitability checks (each ~2.5 up-and-down passes a seat)
+AVG_POWER = 3.0            # the average strategy weighs iteration t by t^3 (pf_game.Game.avg_power; linear before)
 STORED_ITERS = 1500
 MAX_HELD = 3               # solves kept (a 6-max one holds ~60 MB)
 ROUGH_BB = 0.05            # a node is flagged rough from this loss to its best actions (bb a hand of the range)
@@ -137,7 +146,9 @@ class Spec:
 
     def game(self) -> G.Game:
         root, pos = self.build()
-        return G.Game(root, pos, flop_model(self.stack), stack=self.stack, rake=self.rake)
+        g = G.Game(root, pos, flop_model(self.stack), stack=self.stack, rake=self.rake)
+        g.avg_power = AVG_POWER
+        return g
 
 
 def spec_of(state: dict) -> Tuple[Optional[Spec], Optional[str]]:
@@ -545,12 +556,12 @@ def load(spec: Spec, blob: str, iterations: int) -> Solve:
 
 
 def estimate_seconds(spec: Spec, per_iter: Optional[float] = None) -> float:
-    """Roughly how long a solve takes: iterations (~1050 to TARGET_MBB at 6-max; MAX_ITERS for a small tree) times
+    """Roughly how long a solve takes: iterations (~800 to TARGET_MBB at 6-max; MAX_ITERS for a small tree) times
     the tree's iteration (measured: 0.12 s natively at 6-max, 0.35 s in Pyodide; in proportion to the tree's nodes
     and seats), plus the exploitability checks (~2.5 passes a seat each)."""
     root, pos = spec.build()
     work = sum(1 for _ in G.walk(root)) * len(pos)
     base = per_iter if per_iter is not None else (0.35 if sys.platform == "emscripten" else 0.12)
     it = base * work / (11010 * 6)
-    n = MAX_ITERS if work < SMALL_WORK else 1050
+    n = MAX_ITERS if work < SMALL_WORK else 800
     return it * n + it * 2.5 * len(pos) * (n // CHECK_EVERY)
