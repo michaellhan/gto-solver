@@ -123,6 +123,26 @@ CASES = {
     "ante_utg_hj": ("a0.125", "UTG:r2.5,HJ:c,CO:f,BTN:f,SB:f,BB:f", "srp_utg_hj"),
     "ante_3bp_hj_utg": ("a0.125", "UTG:r2.5,HJ:r7.5,CO:f,BTN:f,SB:f,BB:f,UTG:c", "3bp_hj_utg"),
     "ante_3bp_btn_hj": ("a0.125", "UTG:f,HJ:r2.5,CO:f,BTN:r7.5,SB:f,BB:f,HJ:c", "3bp_co_hj"),
+    "8max_hj_btn": ("8max", "UTG:f,UTG1:f,LJ:f,HJ:r2.5,CO:f,BTN:c,SB:f,BB:f", "srp_hj_co"),
+    "8max_utg_btn": ("8max", "UTG:r2.5,UTG1:f,LJ:f,HJ:f,CO:f,BTN:c,SB:f,BB:f", "srp_utg_btn"),
+    "8max_utg1_btn": ("8max", "UTG:f,UTG1:r2.5,LJ:f,HJ:f,CO:f,BTN:c,SB:f,BB:f", "srp_utg_btn"),
+    "8max_3bp_co_hj": ("8max", "UTG:f,UTG1:f,LJ:f,HJ:r2.5,CO:r7.5,BTN:f,SB:f,BB:f,HJ:c", "3bp_co_hj"),
+    "8max_3bp_btn_lj": ("8max", "UTG:f,UTG1:f,LJ:r2.5,HJ:f,CO:f,BTN:r7.5,SB:f,BB:f,LJ:c", "3bp_co_hj"),
+    "8max_3bp_co_lj": ("8max", "UTG:f,UTG1:f,LJ:r2.5,HJ:f,CO:r7.5,BTN:f,SB:f,BB:f,LJ:c", "3bp_hj_utg"),
+    "8max_3bp_co_utg1": ("8max", "UTG:f,UTG1:r2.5,LJ:f,HJ:f,CO:r7.5,BTN:f,SB:f,BB:f,UTG1:c", "3bp_hj_utg"),
+    "8max_3bp_btn_hj": ("8max", "UTG:f,UTG1:f,LJ:f,HJ:r2.5,CO:f,BTN:r7.5,SB:f,BB:f,HJ:c", "3bp_co_hj"),
+    "8max_3bp_btn_utg1": ("8max", "UTG:f,UTG1:r2.5,LJ:f,HJ:f,CO:f,BTN:r7.5,SB:f,BB:f,UTG1:c", "3bp_co_hj"),
+    "8max_3bp_hj_utg1": ("8max", "UTG:f,UTG1:r2.5,LJ:f,HJ:r7.5,CO:f,BTN:f,SB:f,BB:f,UTG1:c", "3bp_hj_utg"),
+    "8max_co_btn": ("8max", "UTG:f,UTG1:f,LJ:f,HJ:f,CO:r2.5,BTN:c,SB:f,BB:f", "srp_hj_co"),
+    "8max_utg_hj": ("8max", "UTG:r2.5,UTG1:f,LJ:f,HJ:c,CO:f,BTN:f,SB:f,BB:f", "srp_utg_hj"),
+    "8max_utg_co": ("8max", "UTG:r2.5,UTG1:f,LJ:f,HJ:f,CO:c,BTN:f,SB:f,BB:f", "srp_utg_hj"),
+    "8max_lj_hj": ("8max", "UTG:f,UTG1:f,LJ:r2.5,HJ:c,CO:f,BTN:f,SB:f,BB:f", "srp_utg_hj"),
+    "8max_utg1_co": ("8max", "UTG:f,UTG1:r2.5,LJ:f,HJ:f,CO:c,BTN:f,SB:f,BB:f", "srp_utg_hj"),
+    "8max_3bp_btn_utg": ("8max", "UTG:r2.5,UTG1:f,LJ:f,HJ:f,CO:f,BTN:r7.5,SB:f,BB:f,UTG:c", "3bp_co_hj"),
+    "8max_3bp_co_utg": ("8max", "UTG:r2.5,UTG1:f,LJ:f,HJ:f,CO:r7.5,BTN:f,SB:f,BB:f,UTG:c", "3bp_hj_utg"),
+    "8max_3bp_hj_utg": ("8max", "UTG:r2.5,UTG1:f,LJ:f,HJ:r7.5,CO:f,BTN:f,SB:f,BB:f,UTG:c", "3bp_hj_utg"),
+    "8max_sb_utg": ("8max", "UTG:r2.5,UTG1:f,LJ:f,HJ:f,CO:f,BTN:f,SB:c,BB:f", "srp_co_sb"),
+    "8max_utg_utg1": ("8max", "UTG:r2.5,UTG1:c,LJ:f,HJ:f,CO:f,BTN:f,SB:f,BB:f", "srp_utg_btn"),
 }
 TRUTH_DIR = os.environ.get("GTO_BENCH_FORMATS", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "reports",
                                                                "bench_formats"))
@@ -181,7 +201,8 @@ def run(a):
         base, tag, line, sid = case_of(case)
         s = setup(case)
         ag = fa.spot_aggressor({"seats": [s["oop"], s["ip"]], "line": line})
-        ns = fa.near_spot(lib, s["full0"], s["full1"], s["pot"], s["stack"], aggr=ag)
+        ns = fa.near_spot(lib, s["full0"], s["full1"], s["pot"], s["stack"], aggr=ag,
+                          players=fl.Format.parse(tag).players)
         if ns is not None and "@" not in case:
             sid = ns["id"]                  # (the spot the advisor reads; CASES' where it reads none)
         spot = spots[sid]

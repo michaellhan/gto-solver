@@ -373,18 +373,30 @@ def main(argv=None):
         key = (fp0, fp1, round(s["pot"], 2), round(s["stack"], 2), s.get("aggr"))
         if key not in near_memo2:
             ns = fa.near_spot(lib, np.asarray(s["ranges"][0]), np.asarray(s["ranges"][1]), s["pot"], s["stack"],
-                              aggr=s.get("aggr"))
+                              aggr=s.get("aggr"), players=a.players)
             near_memo2[key] = ns["id"] if ns is not None and ns["id"] in hu_prof else None
         return near_memo2[key]
 
     def borrowed(fp0, fp1, s):
-        """The library spot read as this pot's own (flop_approx.near_exact: another table size's), or None."""
+        """(the library spot read as this pot's own, flop_approx.near_exact: another table size's, or None; the share
+        of the decisions it answers: the hands its ranges hold, the two ranges' cover averaged; the rest are solved)."""
         key = (fp0, fp1, round(s["pot"], 2), round(s["stack"], 2))
         if key not in exact_memo:
             ne = fa.near_exact(lib, np.asarray(s["ranges"][0]), np.asarray(s["ranges"][1]), s["pot"], s["stack"],
                                a.players)
-            exact_memo[key] = ne["spot"] if ne is not None and ne["spot"]["id"] in hu_prof else None
+            exact_memo[key] = (ne["spot"], sum(ne["cover"]) / 2) if ne is not None and ne["spot"]["id"] in hu_prof \
+                else (None, 1.0)
         return exact_memo[key]
+
+    def held_share(sid, s):
+        """The share of a pot's decisions a near read of spot `sid` answers: of the same pot, the hands its ranges hold
+        (the two ranges' cover averaged; the rest are solved live); of another pot, every hand (class_fill)."""
+        sp = next(x for x in lib.index()["spots"] if x["id"] == sid)
+        if round(float(sp["pot"]), 2) != round(s["pot"], 2):
+            return 1.0
+        st = fa._spot_ranges(sp)
+        return 1.0 if st is None else (fa.range_cover(np.asarray(s["ranges"][0]), st["full0"]) +
+                                       fa.range_cover(np.asarray(s["ranges"][1]), st["full1"])) / 2
 
     def why_not(line, s):
         """Why nothing reads a heads-up pot: "limped" (nobody raised), else the gate its likeliest spot fails
@@ -395,7 +407,7 @@ def main(argv=None):
                s.get("aggr"))
         if key not in why_memo:
             rows = fa.near_candidates(lib, np.asarray(s["ranges"][0]), np.asarray(s["ranges"][1]), s["pot"],
-                                      s["stack"], aggr=s.get("aggr"))
+                                      s["stack"], aggr=s.get("aggr"), players=a.players)
             order = {"pot": 0, "spr": 1, "ranges": 2, "cover": 3, "dist": 4}
             best = max(rows, key=lambda r: (order.get(r["why"], -1), -(r["dist"] or 0.0)), default=None)
             why_memo[key] = {"pot": "another pot, no spot with the same preflop raiser",
@@ -414,7 +426,7 @@ def main(argv=None):
             if n_live == 2:
                 fp0, fp1 = fl.range_fp(s["ranges"][0]), fl.range_fp(s["ranges"][1])
                 sp = lib.spot(fp0, fp1, s["pot"], s["stack"])
-                lent = None if sp else borrowed(fp0, fp1, s)
+                lent, held = (None, 1.0) if sp else borrowed(fp0, fp1, s)
                 if lent is not None:
                     sp = lent    # (another table size's pot read as a library spot's own: instant, marked borrowed)
                 kind = "srp" if sum(":r" in x for x in line.split(",")) <= 1 else "3bp"
@@ -423,17 +435,18 @@ def main(argv=None):
                 d, st, t, tl = prof
                 p_flop["hu"] += prob
                 tot["flop hu"] += prob * d
-                tot["flop hu", "inst"] += prob * st * fs
+                tot["flop hu", "inst"] += prob * st * fs * held
                 if lent is not None:
-                    tot["flop hu", "borrowed"] += prob * st * fs
+                    tot["flop hu", "borrowed"] += prob * st * fs * held
                 if sp:   # (a library spot's flop not stored: an approximate answer at once, gto/flop_approx.py)
-                    tot["flop hu", "approx"] += prob * st * (1.0 - fs) * fn
+                    tot["flop hu", "approx"] += prob * st * (1.0 - fs) * fn * held
                 else:    # (a pot the library holds no spot for: the nearest spot's flops, flop_approx.near_spot)
                     ns = near_spot(fp0, fp1, s)
                     if ns is not None:
                         _, nfs, _, nfn = hu_prof[ns]
-                        tot["flop hu", "approx"] += prob * st * (nfs + (1.0 - nfs) * nfn)
-                        tot["flop hu", "other"] += prob * st * (nfs + (1.0 - nfs) * nfn)
+                        h = held_share(ns, s)
+                        tot["flop hu", "approx"] += prob * st * (nfs + (1.0 - nfs) * nfn) * h
+                        tot["flop hu", "other"] += prob * st * (nfs + (1.0 - nfs) * nfn) * h
                     elif a.why:
                         tot["why", why_not(line, s)] += prob * st
                 tot["p_turn"] += prob * t

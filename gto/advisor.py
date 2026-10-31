@@ -4233,7 +4233,8 @@ class Advisor:
                 from .flop_approx import approx_solution
                 near = lambda: approx_solution(lib, full[0], full[1], board, r0, r1, cur.pot_start, eff, cfg,
                                                seats=(oop, ip), hole=hole or None,
-                                               aggr=_pf_aggressor(streets["preflop"], oop, ip))
+                                               aggr=_pf_aggressor(streets["preflop"], oop, ip),
+                                               players=len(positions))
             return self._instant_answer(cur, board, hole, hero, villain, hero_p, oop, ip, eff, cfg, r0, r1, walked,
                                         hero_remaining, to_call, len(positions), t0, near)
         if lib_sol is None and self._lib_only:
@@ -4242,7 +4243,7 @@ class Advisor:
                 # browser's prefetch: instant_from_near)
                 from .flop_approx import approx_solution
                 approx_solution(lib, full[0], full[1], board, r0, r1, cur.pot_start, eff, cfg, fetch_only=True,
-                                aggr=_pf_aggressor(streets["preflop"], oop, ip))
+                                aggr=_pf_aggressor(streets["preflop"], oop, ip), players=len(positions))
             return {"skipped": "not a flop-library spot"}
         if lib_sol is not None:
             sol = lib_sol
