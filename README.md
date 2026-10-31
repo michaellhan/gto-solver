@@ -400,11 +400,16 @@ of the 3bet; `pf_study.SIZE_LIMITS`), starting from the table's game; any change
 with the Solver source (the standard games' answers at once, any other offered to solve; a solve running for another
 game stops). "Preflop solve: a game you set" in Study's start menu is the same. Measured in Pyodide on one thread (`pf_game` 2.3x quicker there than before:
 `Game._masses` takes each seat's card-removal product once a node instead of once a terminal, and einsum stands in
-for BLAS-less matmul): heads-up ~1 s, 3-handed 7.4 s (2,000 iterations, 0.69 mbb/hand a seat), 4-handed 42 s (1.23),
-6-max 0.34 s an iteration and ~5 minutes to 1.5 mbb (~800 iterations; natively 0.12 s, under 2 minutes), an
-exploitability check every 100 iterations 3.6 s (run as the worker does, in Pyodide under Node on one thread, the 6-max
-game raked 5% capped at 4bb stopped at 800 iterations, 1.21 mbb, in 4.4 minutes; natively the stored games' settings
-from scratch at 800 and 700 iterations in 114 and 95 s). The average strategy weighs iteration t by t³ (`pf_study.AVG_POWER`;
+for BLAS-less matmul; then ~1.5x again: that product is taken in its rank-13 form, `PAIR_COMPAT` being exactly
+1 - 4AAᵀ/(NNᵀ) + diag(1/N) with A[i, r] the number of class i's combos holding a given card of rank r, the rows a
+seat's current strategy never reaches skip their products (a third of the masses', a quarter of the showdowns'), the
+terminals' product over the other seats is taken in place, and an exploitability check's two passes share the
+terminals' values; regrets the same to 1e-11): heads-up 1.9 s, 3-handed 5.7 s (2,000 iterations, 0.54 mbb/hand a
+seat), 4-handed 27 s (1.03), 6-max 0.21 s an iteration and ~3 minutes to 1.5 mbb (~800 iterations; natively 0.12 s,
+under 2 minutes), an exploitability check every 100 iterations 1.4 s (run as the worker does, in Pyodide under Node on
+one thread, the 6-max game raked 5% capped at 4bb stopped at 800 iterations, 1.21 mbb, in 3.0 minutes, 4.4 before
+on the same machine at the same load; 3- and 4-handed 6.7 and 37.5 s before; natively, BLAS keeping the full product, the stored games'
+settings from scratch at 800 and 700 iterations in 114 and 95 s before the checks shared their terminals' values). The average strategy weighs iteration t by t³ (`pf_study.AVG_POWER`;
 it was linear): the 6-max game from scratch is 7.4 / 2.3 / 1.6 / 1.3 mbb/hand a seat at 250 / 500 / 750 / 1,000
 iterations, against 18.7 / 5.8 / 3.2 / 2.2 averaged linearly (5% capped at 3bb 10.6 / 2.8 / 1.3 / 0.85 against 25.0
 / 6.9 / 3.4 / 2.1; 40bb deep 7.0 / 2.5 / 1.8 / 1.5 against 13.8 / 5.2 / 3.1 / 2.3); t⁵ was a little quicker still,
@@ -417,8 +422,9 @@ equilibrium (1.07 and 0.52 mbb at 1,500 iterations, were 1.34 and 0.94) and a qu
 barely reached lines' late mixes are mostly pure and pack smaller); the two averagings' stored games agree at the
 six nodes above within 0.3 points of each action's frequency and 0.001-0.013 bb in a class's EV on average. Starting a game from the stored 100bb solve didn't
 help (linear averaging, the raked game from the unraked solve: 13.8 mbb at the start, then 4.0-12.0 after 700
-iterations against 3.4 from scratch at 750, over four ways to seed the regrets and averages), so each starts from
-scratch. A line the solve rarely or
+iterations against 3.4 from scratch at 750, over four ways to seed the regrets and averages; with t³ averaging the
+5%-capped-at-3bb game with its regrets seeded from the stored solve's strategy is 4.6-4.9 mbb at 500 iterations
+against 2.8 from scratch, a game with antes 3.9 against 3.3), so each starts from scratch. A line the solve rarely or
 never plays is flagged under the grid (an opponent's range under a combo, a range it never brings there, or a mix
 giving up 0.05 bb a hand or more to its best actions at that node, `regret_bb`): the average strategy is barely
 solved there (the stored 6-max's nodes reached by 1% of hands or more give up at most 0.003 bb a hand, median 0;
@@ -430,10 +436,19 @@ to the answer's rounding, 0.0005 bb; and wherever three are left (every such nod
 of the stored 6-max's that each seat reaches with 0.01% of its hands) a direct sum over class triples at every
 terminal below gives the same EVs to 0.0005 bb: each player's action probabilities on the way, a fold's or a heads-up
 showdown's payoff, and a three-way showdown's share of the pot (corr x equity x equity, normalised over the three
-ranges reaching that terminal, times the seat's realization), card removal from the enumerated combos. Folding is 0;
-at the first decision the range's EV is the game's own value (`Game.values`, over the chance the others' cards don't
-collide). Not checked independently: nodes four or more players are left at (a sum over four to six classes' tuples is
-too big to run; the arithmetic is the same), and the game's model itself. Its card removal is pairwise, each
+ranges reaching that terminal, times the seat's realization), card removal from the enumerated combos. Wherever four
+to six are left (the first decisions, the opens and calls before the blinds act: every such node of a 4-handed solve,
+and all 593 of the stored 6-max's that each seat reaches with 0.01% of its hands, 9 with six left, 95 with five, 489
+with four; and all 5,051 nodes, two to six left, of twelve games set in the form: 2-6 players at 10-250bb with
+antes, a straddle, rake and other sizes, solved 300 iterations) the same sums, factored, give the same EVs to 0.0005
+bb: the game's card removal is pairwise with the player's class, so given that class the opponents' sums multiply (an opponent out of the pot at a terminal adds its own
+sum, its combos off the player's times its action probabilities from the root; a three-way share splits into a sum for
+each of the two others), and where two or three are left the factored sums equal the double and triple ones to 1e-9.
+They see the card removal of the players behind: without it UTG's open with AA is worth 7.67 bb instead of 6.70, and
+at the median one of the stored 6-max's 246 nodes reached by 1% of hands with four or more left a class's EVs
+move by 0.8 bb on average. Folding
+is 0; at the first decision the range's EV is the game's own value (`Game.values`, over the chance the others' cards
+don't collide). Not checked independently: the game's model itself. Its card removal is pairwise, each
 opponent's combos off the player's cards but not off each other's: counted exactly over combo triples under the same
 strategies, the EVs at the stored 6-max's 25 most played 3-way nodes (BTN, CO, HJ or UTG first in with the blinds
 behind, an open and a call facing the big blind, a squeeze) move by 0.001-0.09 bb on average (median 0.02, the worst

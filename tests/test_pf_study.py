@@ -1,6 +1,6 @@
 """Study's preflop solves (gto/pf_study.py): the page's game read off a Study request, a solve run in chunks, the
 stored standard solves, and each node's answer, its EVs checked against a direct computation over class pairs (two
-players left) and triples (three)."""
+players left), triples (three) and factored sums over the opponents' classes (any number)."""
 import functools
 import itertools
 import unittest
@@ -157,10 +157,80 @@ def direct_evs3(sv, line):
     return node, {cl: [evs[a][i] for a in range(len(evs))] for i, cl in enumerate(PS.CLASSES)}
 
 
-def check_direct(t, sv, players, max_terms=None, min_reach=1e-4, limit=None):
-    """Every node `players` (2 or 3) are left at that the solve reaches (each seat with `min_reach` of its hands;
-    the first `limit` of them in the tree's order), its answer's EVs against the direct computation's to the answer's
-    rounding; returns how many."""
+def direct_evs_n(sv, line):
+    """Each class's EV of each action at a node any number of players are left at, by sums over the opponents'
+    classes at every terminal below, with no reaches, masses or counterfactual values. The game's card removal is
+    pairwise with the player's class, so given the player's class the opponents' sums factor: an opponent not in the
+    pot at a terminal adds its own sum (its combos off the player's, times its action probabilities from the root),
+    one in a heads-up showdown the sum of the pot share against it, and a three-way showdown's share (corr x equity x
+    equity, normalised over the three ranges reaching that terminal, times the seat's realization) splits into a sum
+    for each of the two. Agrees with direct_evs and direct_evs3 (the double and triple sums) to 1e-11."""
+    g = sv.game
+    node, _, bets = sv.walk(line)
+    s = sv._at(node.index)[0]
+    p = node.player
+    out = {g.positions.index(x) for x, a, _ in node.line if a == "fold"}
+    opp = [q for q in range(g.n) if q != p and q not in out]
+    n_in = np.array([combos(c) for c in PS.CLASSES], float)
+    wn = W / n_in[:, None]                       # [i, j]: j's combos off one of i's
+    E = wn * equity_matrix()
+    corr = G.three_way_corr()
+    row = {k: r for r, k in enumerate(g.terms)}
+    hu, three = {}, {}
+    for _, S, rows, a, c, pe in g.hu:
+        sh = np.where(G.PAIR_COMPAT > 0, S / np.maximum(G.PAIR_COMPAT, 1e-300), 0.0)
+        for j, r in enumerate(rows):
+            hu[int(r)] = (sh, int(a[j]), float(pe[j]))
+    if g.three is not None:
+        rows, act, fac, pe = g.three
+        for j, r in enumerate(rows):
+            three[int(r)] = ([int(x) for x in act[j]], [float(x) for x in fac[j]], float(pe[j]))
+    P0 = _path(g, s, node.index)
+    den = np.prod([wn @ P0[q] for q in opp], axis=0)
+    inv = bets[g.positions[p]] + sv.spec.ante
+    evs = []
+    for ch in node.children:
+        num = np.zeros(PS.K)
+        for t in G.walk(ch):
+            if t.kind == "dec":
+                continue
+            r = row[t.index]
+            Pt = _path(g, s, t.index, stop=ch.index)
+            Pq = {q: P0[q] * Pt[q] for q in opp}
+            own = {q: wn @ Pq[q] for q in opp}
+            if t.kind == "fold" or not g.t_active[r, p]:
+                v = g.pay[r, p] * np.prod([own[q] for q in opp], axis=0)
+            else:
+                act = [q for q in opp if g.t_active[r, q]]
+                rest = np.prod([own[q] for q in opp if q not in act] or [np.ones(PS.K)], axis=0)
+                if r in hu:
+                    sh, a, pe = hu[r]
+                    (o,) = act
+                    pay = (pe * sh if a == p else pe * (1 - sh.T)) - g.inv[r, p]     # [p's class, o's]
+                    v = ((pay * wn) @ Pq[o]) * rest
+                else:
+                    acts, fac, pe = three[r]
+                    x, y = act
+                    Pr = _path(g, s, t.index)            # the three's reaches from the root
+                    tot = mass = 0.0
+                    for k in range(3):
+                        u, w = [acts[m] for m in range(3) if m != k]
+                        tot += (Pr[acts[k]] * n_in * corr * (E @ Pr[u]) * (E @ Pr[w])).sum()
+                        mass += (Pr[acts[k]] * n_in * (wn @ Pr[u]) * (wn @ Pr[w])).sum() / 3
+                    norm = mass / tot if tot > 1e-300 else 1.0
+                    v = (pe * fac[acts.index(p)] * norm * corr * (E @ Pq[x]) * (E @ Pq[y])
+                         - g.inv[r, p] * own[x] * own[y]) * rest
+            num += Pt[p] * v
+        evs.append(num / np.maximum(den, 1e-300) + inv)
+    return node, {cl: [evs[a][i] for a in range(len(evs))] for i, cl in enumerate(PS.CLASSES)}
+
+
+
+def check_direct(t, sv, players, max_terms=None, min_reach=1e-4, limit=None, direct=None):
+    """Every node `players` are left at that the solve reaches (each seat with `min_reach` of its hands; the first
+    `limit` of them in the tree's order), its answer's EVs against the direct computation's to the answer's rounding
+    (`direct`: by default the double sum with two left, the triple sum with three, the factored sums with more);
+    returns how many."""
     n = 0
     g = sv.game
     reach = sv._values()[1]
@@ -173,7 +243,7 @@ def check_direct(t, sv, players, max_terms=None, min_reach=1e-4, limit=None):
             continue
         line = [{"pos": x, "action": a, **({"to": v} if a not in ("fold", "call") else {})} for x, a, v in nd.line]
         r = sv.node(line)
-        _, ev = (direct_evs if players == 2 else direct_evs3)(sv, line)
+        _, ev = (direct or (direct_evs if players == 2 else direct_evs3 if players == 3 else direct_evs_n))(sv, line)
         order = sorted(range(len(nd.names)), key=lambda a: {"raise": 0, "all-in": 0, "call": 1, "fold": 2}[nd.names[a]])
         for cl, c in r["grid"]["cells"].items():
             for j, a in enumerate(order):
@@ -327,6 +397,50 @@ class TestThreeHanded(unittest.TestCase):
         self.assertGreater(check_direct(self, self.sv, 3), 15)
         self.assertGreater(check_direct(self, self.sv, 2), 20)
 
+    def test_factored_sums(self):
+        """direct_evs_n (the opponents' sums factored, as the game's pairwise card removal allows) equals the double
+        and triple sums at every node the solve reaches."""
+        g, n = self.sv.game, 0
+        reach = self.sv._values()[1]
+        for nd in G.walk(g.root):
+            if nd.kind != "dec" or min(reach[nd.index, q].sum() for q in range(g.n)) < 1e-4:
+                continue
+            left = g.n - sum(a == "fold" for _, a, _ in nd.line)
+            line = [{"pos": x, "action": a, **({"to": v} if a not in ("fold", "call") else {})} for x, a, v in nd.line]
+            _, ev = direct_evs_n(self.sv, line)
+            _, want = (direct_evs if left == 2 else direct_evs3)(self.sv, line)
+            for cl in PS.CLASSES:
+                np.testing.assert_allclose(ev[cl], want[cl], rtol=0, atol=1e-9, err_msg=str((line, cl)))
+            n += 1
+        self.assertGreater(n, 40)
+
+
+class TestFourHanded(unittest.TestCase):
+    """A 4-handed game solved 400 iterations: every node it reaches with all four players left, its EVs checked by
+    the factored sums over the opponents' classes (direct_evs_n)."""
+    @classmethod
+    def setUpClass(cls):
+        cls.sv = PS.Solve(PS.Spec(players=4))
+        cls.sv.run(600, should_stop=lambda: cls.sv.iters >= 400)
+
+    def test_direct(self):
+        self.assertEqual(self.sv.iters, 400)
+        self.assertGreater(check_direct(self, self.sv, 4), 15)
+
+
+class TestCustomGames(unittest.TestCase):
+    """Games set in the Preflop solve form, solved 300 iterations, every node each reaches checked by the factored
+    sums: heads-up at 10bb (its limps), 3-handed at 15bb with antes, 4-handed with antes and a straddle, 4-handed at
+    20bb raked 10% capped at 1bb. (Checked once the same way, too slow for the tests: heads-up and 3-handed at
+    250bb, 5-handed raked with other sizes, 6-max at 40bb with antes, straddled, and with other sizes.)"""
+    def test_direct(self):
+        for kw in (dict(players=2, stack=10.0), dict(players=3, stack=15.0, ante=0.2),
+                   dict(players=4, ante=0.125, straddle=True), dict(players=4, stack=20.0, rake=(0.1, 1.0))):
+            sv = PS.Solve(PS.Spec(**kw))
+            sv.run(600, should_stop=lambda: sv.iters >= 300)
+            n = {k: check_direct(self, sv, k, direct=direct_evs_n) for k in range(2, kw["players"] + 1)}
+            self.assertGreater(min(n.values()), 5, (kw, n))
+
 
 class TestStored(unittest.TestCase):
     """The stored 6-max solve (gto/static/pf/6max_100bb.bin): loaded, answered, its EVs checked directly where two
@@ -386,6 +500,15 @@ class TestStored(unittest.TestCase):
         3-way pots first). Without those limits every one of the 1,079 the solve reaches with 0.01% of each seat's
         hands matches (~2.5 minutes)."""
         self.assertEqual(check_direct(self, self.sv, 3, max_terms=30, min_reach=1e-2, limit=40), 40)
+
+    def test_many_player_nodes(self):
+        """Every node three to six players are left at that each seat reaches with 0.01% of its hands (the first
+        decisions, the opens and calls before the blinds act, the blinds' 3-way pots: 9, 95, 489 and 1,079 of them
+        with six, five, four and three left), by the factored sums over the opponents' classes."""
+        n = {k: check_direct(self, self.sv, k, direct=direct_evs_n) for k in (3, 4, 5, 6)}
+        self.assertGreater(min(n.values()), 0)
+        self.assertGreater(n[3], 1000)
+        self.assertGreater(n[4] + n[5] + n[6], 550)
 
     def test_btn_open(self):
         sv = self.sv

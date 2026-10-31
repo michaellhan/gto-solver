@@ -157,6 +157,53 @@ class TestSolve(unittest.TestCase):
         reach = g._down(g.current())
         np.testing.assert_allclose(g._masses(reach), reach @ G.PAIR_COMPAT, rtol=1e-12, atol=1e-15)
 
+    def test_compat_forms(self):
+        """PAIR_COMPAT is exactly 1 - 4 A A^T / (N N^T) + diag(1 / N) (A: a card of each rank in how many of a
+        class's combos), and _compat's rank-13 form (Pyodide's) gives x @ PAIR_COMPAT; _live_mm leaves the rows a
+        seat never reaches at zero without their products. Solves give the same numbers either way."""
+        A, N = G._RANK_A, G.N_IN
+        np.testing.assert_allclose(1 - 4 * A @ A.T / np.outer(N, N) + np.diag(1 / N), G.PAIR_COMPAT,
+                                   rtol=0, atol=1e-15)
+        x = np.random.default_rng(1).random((7, G.K))
+        x[[1, 4]] = 0.0
+        for low in (True, False):
+            np.testing.assert_allclose(G._compat(x, low_rank=low), x @ G.PAIR_COMPAT, rtol=1e-12, atol=1e-13)
+        seen = []
+        got = G._live_mm(x, lambda y: (seen.append(len(y)), G._compat(y))[1])
+        self.assertEqual(seen, [5])
+        np.testing.assert_allclose(got, x @ G.PAIR_COMPAT, rtol=1e-12, atol=1e-13)
+        self.assertTrue((got[[1, 4]] == 0).all())
+        self.assertEqual(G._live_mm(np.zeros((3, G.K)), G._compat).shape, (3, G.K))
+        pos = ["CO", "BTN", "SB", "BB"]
+        regrets, low_rank = [], G.LOW_RANK
+        try:
+            for low in (True, False):
+                G.LOW_RANK = low
+                g = G.Game(G.build(pos, max_players=3), pos, G.flat_model())
+                g.solve(12)
+                reach = g._down(g.current())
+                self.assertGreater((~reach.any(2)).sum(), 0)          # rows a seat never reaches
+                np.testing.assert_allclose(g._masses(reach), reach @ G.PAIR_COMPAT, rtol=1e-12, atol=1e-15)
+                regrets.append(g.regret)
+        finally:
+            G.LOW_RANK = low_rank
+        np.testing.assert_allclose(regrets[0], regrets[1], rtol=1e-9, atol=1e-11)
+
+    def test_exploitability_reuses_terminals(self):
+        """exploitability() takes the terminals' values once a seat for both of its passes (the average strategy's
+        and the best response's, on the same reaches): the gains of two full passes."""
+        pos = ["CO", "BTN", "SB", "BB"]
+        g = G.Game(G.build(pos, max_players=3), pos, G.flat_model())
+        g.solve(20)
+        s = g.average()
+        want = []
+        for p in range(g.n):
+            reach = g._down(s, skip=p)
+            V0, V = g._up(reach, s), g._up(reach, s, br=p)
+            want.append(float(((V[0, p] - V0[0, p]) * g.root_reach[p]).sum()))
+        self.assertGreater(min(want), 0)
+        np.testing.assert_allclose(g.exploitability(per_seat=True), want, rtol=1e-12, atol=1e-15)
+
     def test_average_power(self):
         """Game.avg_power weighs iteration t's strategy (times its own reach) by t ** avg_power in the average: the
         sums equal the strategies and reaches of a run replayed by hand. pf_study's solves average with t^3 and get

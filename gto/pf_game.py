@@ -40,6 +40,40 @@ else:
         return a @ b
 
 K = len(CLASSES)
+
+# PAIR_COMPAT is exactly 1 - 4 A A^T / (N N^T) + diag(1 / N): two combos collide by sharing a card, a given card of
+# rank r is in A[i, r] of class i's N[i] combos (3 of a pair's 6, 1 of a suited class's 4, 3 of an offsuit's 12), so
+# class pairs share sum_r 4 A[i, r] A[j, r] card-combo pairs, a pair of identical combos (its own class) counted twice.
+# Without BLAS (Pyodide) x @ PAIR_COMPAT is ~2x quicker taken that way, (rows, 13) instead of (rows, 169) products.
+_RANK_A = np.zeros((K, 13))
+for _i, _c in enumerate(CLASSES):
+    _r1, _r2 = "23456789TJQKA".index(_c[0]), "23456789TJQKA".index(_c[1])
+    _RANK_A[_i, _r1] = _RANK_A[_i, _r2] = 3.0 if _r1 == _r2 or _c.endswith("o") else 1.0
+_A_N = _RANK_A / N_IN[:, None]                 # (K, 13)
+_A_4N = 4.0 * _RANK_A.T / N_IN[None, :]        # (13, K)
+LOW_RANK = sys.platform == "emscripten"
+
+
+def _compat(x: np.ndarray, low_rank: Optional[bool] = None) -> np.ndarray:
+    """x @ PAIR_COMPAT for rows x (m, K): natively by BLAS, in Pyodide by the rank-13 form above (the same numbers to
+    rounding)."""
+    if not (LOW_RANK if low_rank is None else low_rank):
+        return _mm(x, PAIR_COMPAT)
+    return x.sum(1, keepdims=True) - _mm(_mm(x, _A_N), _A_4N) + x / N_IN
+
+
+def _live_mm(x: np.ndarray, f: Callable[[np.ndarray], np.ndarray]) -> np.ndarray:
+    """f(x) row by row, (m, K) -> (m, K), linear: rows of x that are all 0 (a line a seat's current strategy never
+    takes: a third of the 6-max tree's rows) give 0 without the product."""
+    live = x.any(1)
+    if live.all():
+        return f(x)
+    out = np.zeros((x.shape[0], K))
+    if live.any():
+        out[live] = f(x[live])
+    return out
+
+
 PRIOR = N_IN / N_IN.sum()
 SIX = ["UTG", "HJ", "CO", "BTN", "SB", "BB"]
 POST_ORDER = ["SB", "BB", "UTG", "HJ", "CO", "BTN"]     # postflop action order (first = out of position)
@@ -625,15 +659,15 @@ class Game:
         """(N, n, K): each seat's reach times PAIR_COMPAT (its class weights against each class of an opponent's,
         card removal included) at every node, the product taken once a node for the seat whose reach changes there
         and carried down for the others: N rows instead of the terminals' T x n (in Pyodide 0.09 s an iteration in
-        place of 0.5)."""
+        place of 0.5; 0.03 with _compat's rank-13 form and the rows a seat never reaches skipped)."""
         M = np.empty_like(reach)
-        M[0] = _mm(reach[0], PAIR_COMPAT)
+        M[0] = _compat(reach[0])
         for d in range(1, self.maxd + 1):
             idx = self.by_depth[d]
             par = self.parent[idx]
             M[idx] = M[par]
             pl = self.player[self.dec_of[par]]
-            M[idx, pl] = _mm(reach[idx, pl], PAIR_COMPAT)
+            M[idx, pl] = _live_mm(reach[idx, pl], _compat)
         return M
 
     def _term_values(self, reach: np.ndarray, V: np.ndarray):
@@ -642,25 +676,27 @@ class Game:
         T = self.terms
         RT = reach[T]                                            # (T, n, K)
         m = self._masses(reach)[T]                               # (T, n, K): reach @ PAIR_COMPAT (symmetric)
-        n = self.n
-        ones = np.ones((len(T), 1, K))
-        pre = np.cumprod(np.concatenate([ones, m[:, :-1]], 1), 1)
-        suf = np.cumprod(np.concatenate([ones, m[:, ::-1][:, :-1]], 1), 1)[:, ::-1]
-        others = pre * suf                                       # product over the other seats
-        out = self.pay[:, :, None] * others                      # folds; folded seats at a showdown
-        fold_f = np.prod(np.where(self.t_active[:, :, None], 1.0, m), axis=1)   # (T, K) folded seats' mass
+        out = np.empty_like(m)                                   # product over the other seats: before
+        out[:, 0] = 1.0                                          # each seat's times after it
+        np.cumprod(m[:, :-1], axis=1, out=out[:, 1:])
+        suf = np.empty_like(m)
+        suf[:, -1] = 1.0
+        np.cumprod(m[:, :0:-1], axis=1, out=suf[:, -2::-1])
+        out *= suf
+        out *= self.pay[:, :, None]                              # folds; folded seats at a showdown
+        fold_f = np.prod(m, axis=1, where=~self.t_active[:, :, None])   # (T, K) folded seats' mass
         for key, S, rows, a, c, pe in self.hu:
             ra, rc = RT[rows, a], RT[rows, c]
             ma, mc = m[rows, a], m[rows, c]
             inv_a, inv_c = self.inv[rows, a][:, None], self.inv[rows, c][:, None]
             ff = fold_f[rows]
-            out[rows, a] = (pe[:, None] * _mm(rc, S.T) - inv_a * mc) * ff
-            out[rows, c] = (pe[:, None] * (ma - _mm(ra, S)) - inv_c * ma) * ff
+            out[rows, a] = (pe[:, None] * _live_mm(rc, lambda x: _mm(x, S.T)) - inv_a * mc) * ff
+            out[rows, c] = (pe[:, None] * (ma - _live_mm(ra, lambda x: _mm(x, S))) - inv_c * ma) * ff
         if self.three is not None:
             rows, act, fac, pe = self.three
             E = PAIR_COMPAT * equity_matrix()
             corr = three_way_corr()
-            er = np.stack([_mm(RT[rows, act[:, k]], E.T) for k in range(3)], 1)      # (T3, 3, K)
+            er = np.stack([_live_mm(RT[rows, act[:, k]], lambda x: _mm(x, E.T)) for k in range(3)], 1)   # (T3, 3, K)
             ms = np.stack([m[rows, act[:, k]] for k in range(3)], 1)
             ff = fold_f[rows]
             shares, masses = [], []
@@ -712,10 +748,13 @@ class Game:
             reach[idx, pl] *= f
         return reach
 
-    def _up(self, reach, strat, t=0, update=False, br=-1) -> np.ndarray:
-        V = np.zeros((self.N + 1, self.n, K))
-        with np.errstate(all="ignore"):     # macOS Accelerate's matmul raises spurious warnings
-            self._term_values(reach, V)
+    def _up(self, reach, strat, t=0, update=False, br=-1, V=None) -> np.ndarray:
+        """Each seat's counterfactual values (N + 1, n, K) from the terminals up; `V`, an earlier pass's on the same
+        reaches, gives its terminal rows (every decision row is written again)."""
+        if V is None:
+            V = np.zeros((self.N + 1, self.n, K))
+            with np.errstate(all="ignore"):     # macOS Accelerate's matmul raises spurious warnings
+                self._term_values(reach, V)
         for d in range(self.maxd, -1, -1):
             g = self.dec_by_depth[d]
             if len(g) == 0:
@@ -767,8 +806,10 @@ class Game:
         gains = []
         for p in range(self.n):
             reach = self._down(s, skip=p)
-            V0, V = self._up(reach, s), self._up(reach, s, br=p)
-            gains.append(float(((V[0, p] - V0[0, p]) * self.root_reach[p]).sum()))
+            V = self._up(reach, s)
+            v0 = V[0, p].copy()
+            V = self._up(reach, s, br=p, V=V)                    # the same terminals
+            gains.append(float(((V[0, p] - v0) * self.root_reach[p]).sum()))
         return gains if per_seat else sum(gains)
 
     # -------------------------------------------------------------- reading the result

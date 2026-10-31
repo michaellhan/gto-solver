@@ -52,7 +52,7 @@ BROWSER_PLAYERS = 6        # ... and in the browser 7-handed (~15 minutes, over 
 TARGET_MBB = 1.5           # a solve stops this close to equilibrium (mbb/hand a seat, on average) ...
 MAX_ITERS = 2000           # ... or after this many iterations
 SMALL_WORK = 5000          # a tree this small (nodes x seats: 2-4 handed) solves to MAX_ITERS, seconds in all
-CHECK_EVERY = 100          # iterations between exploitability checks (each ~2.5 up-and-down passes a seat)
+CHECK_EVERY = 100          # iterations between exploitability checks (each ~1.2 iterations' worth a seat)
 AVG_POWER = 3.0            # the average strategy weighs iteration t by t^3 (pf_game.Game.avg_power; linear before)
 STORED_ITERS = 1500
 MAX_HELD = 3               # solves kept (a 6-max one holds ~60 MB)
@@ -557,11 +557,12 @@ def load(spec: Spec, blob: str, iterations: int) -> Solve:
 
 def estimate_seconds(spec: Spec, per_iter: Optional[float] = None) -> float:
     """Roughly how long a solve takes: iterations (~800 to TARGET_MBB at 6-max; MAX_ITERS for a small tree) times
-    the tree's iteration (measured: 0.12 s natively at 6-max, 0.35 s in Pyodide; in proportion to the tree's nodes
-    and seats), plus the exploitability checks (~2.5 passes a seat each)."""
+    the tree's iteration (measured: 0.12 s natively at 6-max, 0.21 s in Pyodide; in proportion to the tree's nodes
+    and seats), plus the exploitability checks (~1.2 iterations' worth a seat each: two passes up from the same
+    terminals' values)."""
     root, pos = spec.build()
     work = sum(1 for _ in G.walk(root)) * len(pos)
-    base = per_iter if per_iter is not None else (0.35 if sys.platform == "emscripten" else 0.12)
+    base = per_iter if per_iter is not None else (0.21 if sys.platform == "emscripten" else 0.12)
     it = base * work / (11010 * 6)
     n = MAX_ITERS if work < SMALL_WORK else 800
-    return it * n + it * 2.5 * len(pos) * (n // CHECK_EVERY)
+    return it * n + it * 1.2 * len(pos) * (n // CHECK_EVERY)
