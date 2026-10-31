@@ -131,8 +131,8 @@
   const whoHtml = (res, who) => `<span class="segment">${[{ key: "me", seat: res.actor }, ...oppsOf(res)].map(o =>
     `<button data-who="${o.key}" class="${o.key === (oppOf(res, who) ? who : "me") ? "active" : ""}">${esc(o.seat)}</button>`).join("")}</span>`;
   // the node's views (3-way before the river no equity: the solve deals the cards to come into its leaves); Simple, the
-  // one-size view (simple.js), heads-up where the actor can bet or raise; an answer at once (a library flop's stored
-  // turn, "approximate") the strategy alone: no hand's own EVs or equities until the node's own solve
+  // one-size view (simple.js), heads-up where the actor can bet or raise; an answer at once ("approximate") the
+  // strategy alone: no hand's own EVs or equities until the node's own solve
   const canSize = (acts) => acts.some(a => a.action === "check") || acts.some(a => a.action === "fold") && acts.some(a => /^(raise|all-in)/.test(a.action));
   const viewsOf = (res) => res.street === "preflop" || res.approximate ? ["strategy"]
     : [...Object.keys(VIEWS).filter(v => res.range_eq != null || (v !== "equity" && v !== "eqr")), "breakdown",
@@ -372,11 +372,12 @@
       + (r ? ` <span class="sy-rough ${r}">Cut short: the numbers can be well off (a busy machine runs fewer iterations; Accurate solves longer).</span>` : "");
   }
 
-  // an answer at once (Advisor.instant on a library flop's turn): what it's read off, while the node's own solve runs
-  // (a stored turn: the flop solve's stats; a flop read off the stored flops most like it: what it borrowed, no stats)
+  // an answer at once (Advisor.instant): what it's read off, while the node's own solve runs (a library flop's stored
+  // turn, or a turn or river read off the street before's live solve: that solve's stats; a flop read off the stored
+  // flops most like it: what it borrowed, no stats)
   function approxHtml(res) {
-    const a = res.approximate || {}, s = res.solver || {};
-    return `Approximate, at once: ${esc(a.label || "")}${s.iterations != null ? ` (${s.iterations} iterations, ${num(s.exploitability_pct)}% of the pot from equilibrium on the flop)` : ""}. `
+    const a = res.approximate || {}, s = res.solver || {}, before = res.street === "river" ? "turn" : "flop";
+    return `Approximate, at once: ${esc(a.label || "")}${s.iterations != null ? ` (${s.iterations} iterations, ${num(s.exploitability_pct)}% of the pot from equilibrium on the ${before})` : ""}. `
       + `The ${esc(res.street)}'s own solve is running and replaces it: then each hand's EVs, equities, the Breakdown and Simple.`;
   }
 
@@ -482,8 +483,9 @@
   const building = () => ST.build && res && res.study === "node" && !busy;
   const paintOf = (r) => { if (!paints.has(r.key)) paints.set(r.key, blankPaint(r)); return paints.get(r.key); };
   const answers = new Map();   // request (JSON) -> its answer's promise (.req: the request, which simpleStop stops)
-  // request (JSON) -> its answer at once while it solves (Advisor.instant: a library flop's stored turn, marked
-  // "approximate"), shown meanwhile; the request's own answer replaces it
+  // request (JSON) -> its answer at once while it solves (Advisor.instant: a library flop's stored turn, the stored
+  // flops nearest a flop, the street before's live solve; marked "approximate"), shown meanwhile; the request's own
+  // answer replaces it
   const early = new Map();
   let asking = null;   // the request go() is showing
   const fetched = new Set();   // the flops whose library files were asked ahead (studyPrefetch)
@@ -524,10 +526,10 @@
     const flop = String(state.board || "").slice(0, 6), n = String(state.board || "").length, acc = ST.speed === "accurate";
     const fetchAhead = () => { if (flop.length === 6 && !fetched.has(flop) && typeof globalThis.studyPrefetch === "function" && globalThis.studyPrefetch(request(state, ST.speed))) fetched.add(flop); };
     if (acc || n > 6) fetchAhead();
-    // (an answer at once is asked for on a turn, a library flop's stored turn, and at Accurate on a flop, read off the
-    // stored flops nearest it)
+    // (an answer at once is asked for on a turn or river, read off a library flop's stored turn or the street before's
+    // live solve, and at Accurate on a flop, read off the stored flops nearest it)
     asking = key;
-    answer(key, n === 8 || (n === 6 && acc));
+    answer(key, n >= 8 || (n === 6 && acc));
     busy = true;
     if (early.has(key)) { res = { ...early.get(key), key }; colors(); }   // (back at a node still solving)
     draw();

@@ -1,6 +1,8 @@
 """Advisor.instant: an approximate answer at once for a heads-up street whose own solve takes seconds, read off what
-the hand has solved already (the browser's worker posts it before the request's own answer), and nothing solved."""
+the hand has solved already (the browser's worker posts it before the request's own answer), and nothing solved;
+Study's whole range off the street before's live solve."""
 import gc
+import json
 import unittest
 from unittest import mock
 
@@ -172,6 +174,123 @@ class TestInstant(unittest.TestCase):
         h = parse_cards("4hAs")
         self.assertEqual(_swap_combo(h, parse_cards("4h")[0], parse_cards("4c")[0]), COMBO_INDEX[tuple(sorted(parse_cards("4cAs")))])
         self.assertEqual(_swap_combo(h, parse_cards("5h")[0], parse_cards("5c")[0]), COMBO_INDEX[tuple(sorted(h))])
+
+
+STUDY_FLOP = dict({k: v for k, v in FLOP.items() if k not in ("hero", "hole")}, study=True)
+STUDY_TURN = dict(STUDY_FLOP, flop=TURN["flop"], board=TURN["board"])
+STUDY_RIVER = dict(STUDY_TURN, turn=[X("SB"), B("BB", 3.75), C("SB")], board=RIVER["board"])   # (the turn tree's 75%)
+
+
+class TestStudyPrev(unittest.TestCase):
+    """Study (Advisor.instant with "study": no cards of anyone's own) on a turn after a flop it solved live, and a river
+    after a turn: the actor's whole range at once off the previous street's solve (Advisor._study_prev), each combo's
+    mix the one the advice's early panel (instant_from_prev) reads for that hand off the same solve; no EVs; the
+    street's own solve still Study's answer."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.adv = advisor()
+        cls.adv.study(STUDY_FLOP)
+
+    @classmethod
+    def tearDownClass(cls):
+        del cls.adv
+        gc.collect()
+
+    def against_the_advice(self, adv, st):
+        """Study's answer at once for `st`, every combo's mix checked against instant_from_prev's for that hand off
+        the solve Study read (the advice's own requests narrow with your cards out of their range: another solve)."""
+        seen, real = {}, A.Advisor._study_prev
+
+        def spy(self_, cur, board, hero, villain, hero_p, oop, ip, eff, r0, r1, walked, behind, *rest):
+            seen.update(cur=cur, prev=walked.get(A.STREETS[A.STREETS.index(cur.name) - 1]),
+                        spot=(hero_p, oop, ip, eff, behind))
+            return real(self_, cur, board, hero, villain, hero_p, oop, ip, eff, r0, r1, walked, behind, *rest)
+        before = solved(adv)
+        with mock.patch.object(A.Advisor, "_study_prev", spy):
+            res = adv.instant(st)
+        self.assertEqual(solved(adv), before)
+        json.dumps(res, allow_nan=False)
+        cur, (hero_p, oop, ip, eff, behind) = seen["cur"], seen["spot"]
+        n = 0
+        for rows in res["combos"].values():
+            for r in rows:
+                spot = A.InstantSpot(cur.name, tuple(parse_cards(st["board"])), tuple(parse_cards(r[0])), hero_p, oop,
+                                     ip, list(cur.actions), cur.pot_start, eff, behind, None, seen["prev"])
+                mine = A.instant_from_prev(adv, spot)
+                self.assertEqual([(a["action"], a["amount_bb"]) for a in mine["actions"]],
+                                 [(a["action"], a["amount_bb"]) for a in res["actions"]])
+                self.assertEqual(list(r[2]), [a["freq"] for a in mine["actions"]], r[0])
+                self.assertIsNone(r[3])
+                n += 1
+        self.assertGreater(n, 300)
+        self.assertAlmostEqual(sum(a["freq"] for a in res["actions"]), 1.0, delta=0.005)
+        self.assertTrue(all(a["ev_bb"] is None and a["combos"] >= 0 for a in res["actions"]))
+        self.assertEqual((res["range_ev_bb"], res["range_eq"], res["opponent_eq"]), (None, None, None))
+        return res
+
+    def test_whole_range_at_once(self):
+        res = self.against_the_advice(self.adv, STUDY_TURN)
+        self.assertEqual((res["study"], res["street"], res["actor"], res["position"]), ("node", "turn", "SB", "OOP"))
+        self.assertEqual(res["approximate"], {"source": "prev", "iterations": res["solver"]["iterations"],
+                                              "label": "the flop solve's view of the turn (by card class and hand "
+                                                       "buckets, one bet size)"})
+        self.assertEqual(res["solver"]["by"], "the flop's solve")
+        self.assertGreater(res["solver"]["exploitability_pct"], 0)
+        self.assertEqual([a["action"] for a in res["actions"]], ["check", "bet 75%"])
+        self.assertEqual((res["pot_bb"], res["to_call_bb"], res["actions"][1]["amount_bb"]), (5.0, 0.0, 3.75))
+        # the live study's keys, its own sizes; then, the turn settled, nothing at once
+        adv = advisor()
+        adv.study(STUDY_FLOP)
+        quick = adv.instant(STUDY_TURN)
+        live = adv.study(STUDY_TURN)
+        self.assertEqual(set(quick) - {"approximate"}, set(live))
+        self.assertEqual((quick["pot_bb"], quick["stack_bb"]), (live["pot_bb"], live["stack_bb"]))
+        self.assertGreater(quick["opponent_combos"], 0)
+        self.assertIn("bet 33%", [a["action"] for a in live["actions"]])
+        self.assertIsNone(adv.instant(STUDY_TURN))
+
+    def test_in_position_and_facing_a_bet(self):
+        res = self.against_the_advice(self.adv, dict(STUDY_TURN, turn=[X("SB")]))
+        self.assertEqual((res["actor"], res["position"]), ("BB", "IP"))
+        first = self.adv.instant(STUDY_TURN)
+        self.assertAlmostEqual(res["opponent_combos"], first["actions"][0]["combos"], delta=0.11)   # (the hands SB checks)
+        # facing a 60% bet where the flop's turn has 75% only: read at 75%, the call the real one, raises scaled
+        res = self.against_the_advice(self.adv, dict(STUDY_TURN, turn=[X("SB"), B("BB", 3)]))
+        self.assertEqual([a["action"] for a in res["actions"]][:2], ["fold", "call"])
+        self.assertEqual((res["pot_bb"], res["to_call_bb"], res["actions"][1]["amount_bb"]), (8.0, 3.0, 3.0))
+        self.assertTrue(all(a["action"] == f"raise to {a['amount_bb']:g}" for a in res["actions"][2:]))
+
+    def test_the_river_off_the_turns_solve(self):
+        adv = advisor()
+        adv.study(STUDY_FLOP)
+        adv.study(STUDY_TURN)
+        res = self.against_the_advice(adv, STUDY_RIVER)
+        self.assertEqual((res["street"], res["actor"]), ("river", "SB"))
+        self.assertEqual(res["approximate"]["label"], "the turn solve's view of the river (by card class, its river sizes)")
+        self.assertEqual(res["solver"]["by"], "the turn's solve")
+        self.against_the_advice(adv, dict(STUDY_RIVER, river=[X("SB")]))
+        live = adv.study(STUDY_RIVER)
+        self.assertNotIn("approximate", live)
+        self.assertIsNone(adv.instant(STUDY_RIVER))
+
+    def test_none_where_it_doesnt_apply(self):
+        """Before the flop is solved, the river before the turn is, a line the flop's solve takes under 10% of the
+        time (SB's turn lead; a flop bet of 75%, where the walk gives SB's range to the betting rules), the flop
+        itself (quick: its solve is cached), the hand's own advice: none."""
+        self.assertIsNone(advisor().instant(STUDY_TURN))
+        self.assertIsNone(self.adv.instant(STUDY_RIVER))
+        lead = self.adv.instant(STUDY_TURN)["actions"][1]["freq"]
+        self.assertLess(lead, A.RARE_LINE)
+        self.assertIsNone(self.adv.instant(dict(STUDY_TURN, turn=[B("SB", 3.75)])))
+        flop = self.adv.study(STUDY_FLOP)["actions"]
+        self.assertEqual([a["action"] for a in flop], ["check", "bet 33%", "bet 75%"])
+        self.assertLess(flop[2]["freq"], A.RARE_LINE)
+        self.assertGreater(flop[1]["freq"], 3 * A.RARE_LINE)
+        self.assertIsNone(self.adv.instant(dict(STUDY_TURN, flop=[B("SB", 1.5), C("BB")])))
+        self.assertEqual(self.adv.instant(dict(STUDY_TURN, flop=[B("SB", 1), C("BB")]))["approximate"]["source"], "prev")
+        self.assertIsNone(self.adv.instant(STUDY_FLOP))
+        self.assertIsNone(self.adv.instant(dict(TURN)))   # (another solve: your cards out of their range)
 
 
 if __name__ == "__main__":

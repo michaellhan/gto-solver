@@ -181,6 +181,19 @@ const SPOTS = {
   "study-flop-near-3bp-bet": base({ board: "KhJd5c", preflop: BB_3BET_HJ, flop: [B("BB", 6.77)], study: true }),
   "study-flop-near-80": base({ stack: 80, board: "Ks7d2c", study: true }),
   "study-flop-near-80-x": base({ stack: 80, board: "Ks7d2c", flop: [X("BB")], study: true }),
+  // Study's turn and river after the street before was solved live (--early: read off that solve, Advisor.instant;
+  // --session study-flop-limp,study-turn-limp,study-river-limp or study-flop-near-x,study-turn-near: the flop's
+  // answer first, as Study asks; the -ip spots, asked straight after the flop's, are the in-position player's after a
+  // check played on the answer at once, its solve stopped)
+  "study-flop-limp": base({ board: "Ks7d2c", preflop: LIMP, study: true }),
+  "study-turn-limp": base({ board: "Ks7d2cTh", preflop: LIMP, flop: [X("SB"), B("BB", 1.5), C("SB")], study: true }),
+  "study-turn-limp-ip": base({ board: "Ks7d2cTh", preflop: LIMP, flop: [X("SB"), B("BB", 1.5), C("SB")], turn: [X("SB")], study: true }),
+  "study-river-limp": base({ board: "Ks7d2cTh5s", preflop: LIMP, flop: [X("SB"), B("BB", 1.5), C("SB")],
+                             turn: [X("SB"), B("BB", 3.75), C("SB")], study: true }),
+  "study-river-limp-ip": base({ board: "Ks7d2cTh5s", preflop: LIMP, flop: [X("SB"), B("BB", 1.5), C("SB")],
+                                turn: [X("SB"), B("BB", 3.75), C("SB")], river: [X("SB")], study: true }),
+  "study-turn-near": base({ board: "8c7d5h2s", preflop: HJ_CO, flop: [X("HJ"), B("CO", 2.15), C("HJ")], study: true }),
+  "study-turn-near-ip": base({ board: "8c7d5h2s", preflop: HJ_CO, flop: [X("HJ"), B("CO", 2.15), C("HJ")], turn: [X("HJ")], study: true }),
 };
 const STREET_IDX = { 0: 0, 3: 1, 4: 2, 5: 3 };
 const STREET_OF = { 6: "flop", 8: "turn", 10: "river" };

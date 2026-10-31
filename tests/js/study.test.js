@@ -597,3 +597,34 @@ test("Study on a flop the library doesn't store: the near flops' answer at once,
   assert.doesNotMatch(p.html(), /Approximate/);
   assert.match(p.html(), /Solved live in 2.4 s/);
 });
+
+// a river after a turn Study solved live: that solve's view of the river at once (Advisor._study_prev)
+const PREV = {
+  ...QUICK, street: "river", board: "Ks7d2cTh5s", pot_bb: 12.5, stack_bb: 93.75,
+  approximate: { source: "prev", label: "the turn solve's view of the river (by card class, its river sizes)", iterations: 122 },
+  solver: { iterations: 122, exploitability_pct: 0.54, by: "the turn's solve" },
+  notes: ["read off the turn's solve, which plays the river at its own sizes and a river class's cards alike: no EVs or equities until the river's own solve"],
+};
+
+test("Study on a turn or river after the street before was solved live: that solve's answer at once, its stats, the live one replacing it", async () => {
+  assert.equal(S.approxHtml(PREV), "Approximate, at once: the turn solve's view of the river (by card class, its river sizes) (122 iterations, "
+    + "0.54% of the pot from equilibrium on the turn). The river's own solve is running and replaces it: then each hand's EVs, equities, the Breakdown and Simple.");
+  assert.match(S.approxHtml({ ...PREV, street: "turn" }), /from equilibrium on the flop\)\. The turn's own solve/);
+  const flop = [{ pos: "HJ", action: "check" }, { pos: "CO", action: "bet", to: 4 }, { pos: "HJ", action: "call" }];
+  const turn = [{ pos: "HJ", action: "check" }, { pos: "CO", action: "check" }];
+  const at = { players: 6, stack: 100, board: "Ks7d2cTh5s", preflop: [], flop, turn, river: [] };
+  const LIVE = { ...NODE, actor: "HJ", street: "river", board: "Ks7d2cTh5s", precomputed: undefined, solver: { iterations: 300, solve_seconds: 0.9, exploitability_pct: 0.2 } };
+  const p = await studyPage((q) => ({ ...PREV, actor: "HJ" }), () => LIVE);
+  p.ctx.STUDY_AT = { state: at, spot: "srp_hj_co" };
+  const opened = p.ctx.Study.open();
+  await p.tick();
+  // at Fast too: a river asks for its answer at once
+  assert.deepEqual(p.asked.map(x => [x.q.board, x.early]), [["Ks7d2cTh5s", true]]);
+  assert.match(p.html(), /Approximate, at once: the river's own solve is running/);
+  assert.match(p.html(), /the turn solve's view of the river \(by card class, its river sizes\) \(122 iterations, 0\.54% of the pot from equilibrium on the turn\)/);
+  assert.doesNotMatch(p.html(), /null|NaN|undefined|EV: bb won|data-view="ev"/);
+  await p.land(1);
+  await opened;
+  assert.doesNotMatch(p.html(), /Approximate/);
+  assert.match(p.html(), /Solved live in 0.9 s/);
+});
