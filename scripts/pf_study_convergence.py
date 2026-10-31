@@ -5,7 +5,7 @@ BB and SB facing a BTN open, BTN facing BB's 3bet, CO facing BTN's 3bet; per nod
 actions (>= 5% of the class, weighted by the class's share) of |EV - reference EV|, the worst class, the range's EV
 and the actions' frequencies).
 
-    python scripts/pf_study_convergence.py [--game 6max|r5c3|s40|4max] [--gamma 1,3] [--beta none|0.5] [--ev --ref 2000]
+    python scripts/pf_study_convergence.py [--game 6max|r5c3|r5c4|s40|4max|4r5c3|a50] [--gamma 3,8] [--beta none|0.5] [--ev --ref 2000]
 
 One thread; a 6-max run ~0.13 s an iteration natively (~2 minutes to 1,000, ~5 to --ref 2000). Prints one JSON line a
 run. README (Study, Preflop: Charts or Solver) and pf_study's docstring quote its numbers.
@@ -24,7 +24,9 @@ sys.path.insert(0, os.path.join(HERE, ".."))
 import gto.native  # noqa: F401,E402
 from gto import pf_study as PS  # noqa: E402
 
-GAMES = {"6max": PS.Spec(), "r5c3": PS.Spec(rake=(0.05, 3.0)), "s40": PS.Spec(stack=40.0), "4max": PS.Spec(players=4)}
+GAMES = {"6max": PS.Spec(), "r5c3": PS.Spec(rake=(0.05, 3.0)), "r5c4": PS.Spec(rake=(0.05, 4.0)), "s40": PS.Spec(stack=40.0),
+         "4max": PS.Spec(players=4), "4r5c3": PS.Spec(players=4, rake=(0.05, 3.0)),
+         "a50": PS.Spec(stack=50.0, ante=0.12)}       # (a50 levels off at ~3 mbb: pf_study.STALL)
 FOLDS = [("UTG", "fold"), ("HJ", "fold"), ("CO", "fold")]
 NODES = {
     "UTG open": [],
@@ -98,7 +100,7 @@ def run(game: str, gamma: float, beta, checks, ev: bool, ref: int) -> dict:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--game", default="6max", choices=sorted(GAMES))
-    ap.add_argument("--gamma", default="1,3")
+    ap.add_argument("--gamma", default="3,8")
     ap.add_argument("--beta", default="none")
     ap.add_argument("--checks", default="100,250,500,750,1000")
     ap.add_argument("--ev", action="store_true")

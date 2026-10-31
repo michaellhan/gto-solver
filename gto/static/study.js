@@ -179,6 +179,11 @@
   // the preflop solve's chunks (seconds each: Advisor.study's "preflop_solve": {"run"}), and the iterations a 6-max one
   // takes to its target (its bar before the first measure; after it, the measure's distance from the target)
   const PF_CHUNK = 4, PF_ITERS = 1000;
+  // a finished solve that stopped above its target, getting no nearer in PF_STALL_BACK iterations (its status's
+  // "stalled", pf_study.STALL; one kept in the browser by its iterations short of the cap)
+  const PF_STALL_BACK = 200;
+  const pfStalled = (p) => !!(p && p.done && !p.stored && (p.stalled
+    || (p.cached && p.target_mbb > 0 && p.mbb > p.target_mbb && p.iterations < p.max_iterations)));
   // finished solves kept in the browser (IndexedDB "gto-pf": the worker's pack of one, ~0.3 MB at 6-max, keyed by the
   // worker's version and the game, at most PF_KEEP, the oldest dropped), handed back when the worker no longer holds
   // the game's ({"preflop_solve": {"load"}}); the page's studyPfCache ({get, put, del}) stands in where set
@@ -468,6 +473,7 @@
       const p = res.pf_solve || {};
       return `Preflop solve of this game (${esc(p.label || "")}): ${p.cached ? "solved earlier in this browser, " : p.stored ? "precomputed, " : ""}${p.iterations} iterations`
         + (p.mbb != null ? `, ${num(p.mbb)} mbb/hand from equilibrium (a seat's average)` : "") + (p.done ? "" : ` <span class="sy-rough meh">Not finished: the numbers can still move.</span>`)
+        + (pfStalled(p) ? `; it stopped there, getting no nearer in ${PF_STALL_BACK} iterations (the model's three-way pots keep some games' solves above the ${num(p.target_mbb)} mbb target, though their numbers settle)` : "")
         + `. The solve's own equilibrium (its flops valued by the flop library's realization), not the charts: the advice plays the charts, which fit published solves better.`
         + (res.rough ? ` <span class="sy-rough meh">A line the solve rarely or never plays: the mix here is barely solved (the range gives up ${num(res.regret_bb || 0)}bb a hand to its best actions here), so take its EVs as rough.</span>` : "");
     }

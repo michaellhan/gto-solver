@@ -544,8 +544,8 @@ class Game:
     iteration is a walk down (reaches) and one back up (values, regrets), each a few numpy calls a depth
     rather than a Python call a node."""
 
-    # the average strategy weighs iteration t's by t ** avg_power (1: linear averaging). pf_study's solves use 3: the
-    # 6-max game reaches 2 mbb/hand a seat in ~600 iterations instead of ~1050 (docs in gto/pf_study.py)
+    # the average strategy weighs iteration t's by t ** avg_power (1: linear averaging). pf_study's solves use 8: the
+    # 6-max game reaches 2 mbb/hand a seat in ~500 iterations (t^3 ~580, linear ~1050; docs in gto/pf_study.py)
     avg_power: float = 1.0
 
     def __init__(self, root: Node, positions: Sequence[str], model: EQRModel, stack: float = 100.0,

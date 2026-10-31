@@ -790,6 +790,13 @@ test("the Solver source preflop: its request, the EV column and view, the solve'
   assert.match(S.solverHtml(live), /^Preflop solve of this game \(6 players, 100bb, no rake\): 300 iterations, 12\.5 mbb\/hand .*Not finished: the numbers can still move/);
   assert.match(S.solverHtml({ ...PF_NODE, rough: true, regret_bb: 0.8 }), /A line the solve rarely or never plays: the mix here is barely solved \(the range gives up 0\.8bb a hand/);
   assert.doesNotMatch(S.solverHtml(PF_NODE), /rarely/);
+  // a solve that levelled off above its target says so (and one kept in the browser, short of the cap above it)
+  const stalled = { ...PF_NODE, pf_solve: { ...PF_NODE.pf_solve, stored: false, done: true, stalled: true, iterations: 1100, mbb: 3.01, target_mbb: 1.5, max_iterations: 2000 } };
+  assert.match(S.solverHtml(stalled), /: 1100 iterations, 3\.01 mbb\/hand from equilibrium \(a seat's average\); it stopped there, getting no nearer in 200 iterations \(the model's three-way pots keep some games' solves above the 1\.5 mbb target, though their numbers settle\)\. The solve's own/);
+  const kept = { ...stalled.pf_solve, stalled: undefined, cached: true };
+  assert.match(S.solverHtml({ ...stalled, pf_solve: kept }), /solved earlier in this browser, 1100 iterations, .*it stopped there/);
+  for (const p of [{ ...stalled.pf_solve, stalled: false }, { ...kept, iterations: 2000 }, { ...kept, mbb: 1.2 }, { ...stalled.pf_solve, done: false }, PF_NODE.pf_solve])
+    assert.doesNotMatch(S.solverHtml({ ...stalled, pf_solve: p }), /stopped there/, JSON.stringify(p));
   // the charts' answer keeps its mix without EVs
   assert.deepEqual(S.viewsOf({ ...PF_NODE, source: undefined }), ["strategy"]);
   assert.doesNotMatch(S.actionsHtml({ ...PF_NODE, source: undefined, range_ev_bb: null }, ui), />EV</);

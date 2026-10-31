@@ -442,6 +442,58 @@ class TestCustomGames(unittest.TestCase):
             self.assertGreater(min(n.values()), 5, (kw, n))
 
 
+class TestStall(unittest.TestCase):
+    def test_rule(self):
+        """A solve with a target stops once a check is no nearer than STALL times the one STALL_BACK iterations
+        before, from STALL_FROM on; its status says so."""
+        sv = PS.Solve(PS.Spec(players=5))
+        self.assertEqual(sv.target, PS.TARGET_MBB)
+        t, b = PS.STALL_FROM, PS.STALL_FROM - PS.STALL_BACK
+        sv.iters = sv.expl_at = t
+        sv.expl = [0.003] * 5
+        for hist, want in (({b: 3.05, t: 3.0}, True), ({b: 3.2, t: 3.0}, False), ({t: 3.0}, False),
+                           ({b - 100: 3.0, t: 3.0}, False)):
+            sv.history = hist
+            self.assertEqual((sv.stalled, sv.done, sv.status()["stalled"]), (want, want, want), hist)
+        sv.history = {b: 3.05, t: 3.0}
+        sv.target = 0.0                                   # (a small tree runs to MAX_ITERS)
+        self.assertFalse(sv.done)
+        sv.target, sv.iters, sv.expl_at = PS.TARGET_MBB, t + 1, t + 1      # (only as measured)
+        self.assertFalse(sv.stalled)
+        sv.iters = sv.expl_at = b
+        sv.history = {b - PS.STALL_BACK: 3.05, b: 3.0}    # (before STALL_FROM)
+        self.assertFalse(sv.done)
+
+    def test_levels_off(self):
+        """4-handed at 50bb with a 0.12 ante levels off at ~1.8 mbb (its three-way flops: tests/test_pf_game.py), so
+        given a 1.5 target it stops where it gets no nearer (the 700th iteration, 1.89), its numbers about where
+        2,000 iterations put them (1.75): at the first decisions a class's EVs 0.002-0.003 bb off on average (0.025 at
+        most), facing the CO's open 0.004 (0.09), the actions' frequencies within half a point."""
+        spec = PS.Spec(players=4, stack=50.0, ante=0.12)
+        sv = PS.Solve(spec)
+        sv.target = PS.TARGET_MBB                         # (4-handed solves run to MAX_ITERS: no target)
+        while not sv.done:
+            sv.run(30)
+        self.assertTrue(sv.stalled)
+        self.assertLess(sv.iters, 1000)
+        self.assertGreater(sv.mbb, PS.TARGET_MBB)
+        ref = PS.Solve(spec)
+        while not ref.done:
+            ref.run(30)
+        self.assertEqual(ref.iters, PS.MAX_ITERS)
+        self.assertFalse(ref.stalled)
+        co, btn = {"pos": "CO", "action": "fold"}, {"pos": "BTN", "action": "fold"}
+        for line, mean, worst in (([], 0.004, 0.04), ([co], 0.004, 0.04), ([co, btn], 0.004, 0.04),
+                                  ([{"pos": "CO", "action": "raise"}], 0.006, 0.15)):
+            a, b = sv.node(line), ref.node(line)
+            d = [abs(x - y) for cl, c in b["grid"]["cells"].items() if c["w"] > 0.2
+                 for x, y, f in zip(a["grid"]["cells"][cl]["ev"], c["ev"], c["f"]) if f >= 0.05]
+            self.assertGreater(len(d), 100, line)
+            self.assertLess(np.mean(d), mean, line)
+            self.assertLess(max(d), worst, line)
+            self.assertLess(max(abs(x["freq"] - y["freq"]) for x, y in zip(a["actions"], b["actions"])), 0.01, line)
+
+
 class TestStored(unittest.TestCase):
     """The stored 6-max solve (gto/static/pf/6max_100bb.bin): loaded, answered, its EVs checked directly where two
     players are left and against the game's own values at the first decision."""

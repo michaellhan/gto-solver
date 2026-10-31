@@ -206,11 +206,11 @@ class TestSolve(unittest.TestCase):
 
     def test_average_power(self):
         """Game.avg_power weighs iteration t's strategy (times its own reach) by t ** avg_power in the average: the
-        sums equal the strategies and reaches of a run replayed by hand. pf_study's solves average with t^3 and get
-        nearer equilibrium than linear averaging in the same iterations."""
+        sums equal the strategies and reaches of a run replayed by hand. pf_study's solves average with t^8 and get
+        nearer equilibrium than t^3 (and linear averaging) in the same iterations."""
         from gto import pf_study as PS
         pos = ["SB", "BB"]
-        for power in (1.0, 3.0):
+        for power in (1.0, 3.0, 8.0):
             g = G.Game(G.build(pos), pos, G.flat_model())
             g.avg_power = power
             want = np.zeros_like(g.ssum)
@@ -223,11 +223,35 @@ class TestSolve(unittest.TestCase):
             np.testing.assert_allclose(g.ssum, want, rtol=1e-12, atol=1e-15)
         self.assertEqual(PS.Spec(players=2).game().avg_power, PS.AVG_POWER)
         expl = {}
-        for power in (1.0, PS.AVG_POWER):
+        for power in (1.0, 3.0, PS.AVG_POWER):
             g = G.Game(G.build(pos), pos, G.flat_model())
             g.avg_power = power
-            expl[power] = g.solve(60).exploitability()
-        self.assertLess(expl[PS.AVG_POWER], expl[1.0])
+            expl[power] = g.solve(120).exploitability()
+        self.assertLess(expl[PS.AVG_POWER], 0.8 * expl[3.0])
+        self.assertLess(expl[3.0], expl[1.0])
+
+    def test_three_way_flops_level_off(self):
+        """With three-way flops a game can level off short of equilibrium: their shares are normalised over all three
+        ranges (_term_values), so a seat's payoffs there move with its own range, and the measure (on the best
+        response's reaches) stops falling. 4-handed at 50bb with a 0.12 ante: ~1.8 mbb/hand a seat from the 400th
+        iteration on, where with at most two players seeing a flop it keeps falling (0.5 at 600, 0.2 at 1,200).
+        pf_study stops such a solve where it gets no nearer (STALL)."""
+        from gto import pf_study as PS
+        spec = PS.Spec(players=4, stack=50.0, ante=0.12)
+        pos = spec.positions()
+        mbb = {}
+        for mp in (3, 2):
+            g = G.Game(G.build(pos, stack=spec.stack, sizes=spec.sizes_obj(), max_players=mp, ante=spec.ante), pos,
+                       PS.flop_model(spec.stack), stack=spec.stack)
+            g.avg_power = PS.AVG_POWER
+            for t in range(1, 601):
+                g.iterate(t)
+                if t in (400, 600):
+                    mbb[mp, t] = 1000 * g.exploitability() / len(pos)
+        self.assertGreater(mbb[3, 600], 1.5)
+        self.assertGreater(mbb[3, 600], 0.85 * mbb[3, 400])
+        self.assertLess(mbb[2, 600], 0.6)
+        self.assertLess(mbb[2, 600], 0.7 * mbb[2, 400])
 
     def test_heads_up_converges(self):
         g = G.Game(G.build(["SB", "BB"]), ["SB", "BB"], G.flat_model())

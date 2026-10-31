@@ -10,18 +10,34 @@ trees are too big to hold (an 8-handed tree is 50k nodes: ~540 MB an array of re
 
 A solve runs in chunks of a few seconds the page asks for one after another (Advisor.study's "preflop_solve":
 {"run": seconds}), each going on from the last (the worker keeps the Solve), until it is within TARGET_MBB of
-equilibrium (mbb per hand per seat, what a seat gains on average by best-responding: Game.exploitability) or MAX_ITERS.
-Its average strategy weighs iteration t by t^AVG_POWER (3; pf_game's default is linear): the 6-max game is 2.3 mbb
-from equilibrium at 500 iterations and 1.6 at 750, against 5.8 and 3.2 averaged linearly (5% capped at 3bb 2.8 and
-1.3 against 6.9 and 3.4; 40bb 2.5 and 1.8 against 5.2 and 3.1); t^5 was a little quicker still (2.1 and 1.5),
-DCFR's own discount of negative regrets (beta 0.5) slower (4.5 and 2.5 at t^2). Against the same solve run to 2,000
-iterations (1.0 mbb), at 750 iterations a class's EV of an action it plays is 0.001-0.008 bb off on average at the
-first decisions and facing an open, 0.03-0.04 facing a 3bet (the worst class 0.45 bb), the range's EV 0.015 bb at
-most and the actions' frequencies 1 point; at 500 (2.3 mbb) 0.04-0.06 facing a 3bet
-(scripts/pf_study_convergence.py).
+equilibrium (mbb per hand per seat, what a seat gains on average by best-responding: Game.exploitability) or MAX_ITERS,
+or once it gets no nearer (STALL, below).
+Its average strategy weighs iteration t by t^AVG_POWER (8; it was 3, and pf_game's default is linear): the 6-max game
+is 2.0 mbb from equilibrium at 500 iterations and 1.5 at 700, against 2.3 and 1.7 at t^3 and 5.8 and 3.2 at 500 and
+750 averaged linearly; 5% capped at 4bb 2.4 and 1.1 at 500 and 750 against 3.1 and 1.35 at t^3 (it stops at 700
+iterations, was 800); 4-handed raked 1.5 at 600 against 2.0 (a ramp from t^3 to t^8 over the first 50 iterations
+weighs them the same to 1e-12; t^5 is between; DCFR's own discount of negative regrets, beta 0.5, slower). Where it
+stops, the raked game's answers are as near the same solve run on to 2,000 iterations (0.4 mbb) as t^3's at 800: a
+class's EV of an action it plays 0.002-0.013 bb off on average at the first decisions and facing an open (t^3
+0.002-0.012), 0.039-0.049 facing a 3bet (0.033-0.036), the range's EV 0.04 bb at most and the actions' frequencies
+1.4 points, and the two averagings' 2,000-iteration solves agree to 0.0002-0.006 bb on average; the lines it rarely
+plays are as solved (scripts/pf_study_convergence.py --game r5c4 --ev).
+A game with many three-way flops levels off above the target: their shares of the pot are normalised over all three
+ranges (pf_game's _term_values), so a seat's payoffs there move with its own range and the measure stops falling
+(4-handed at 50bb with a 0.12 ante ~1.8 mbb from the 400th iteration, 0.2 by the 1,200th with at most two players
+seeing a flop: tests/test_pf_game.py). 6-max at 50bb with a 0.12 ante levels off at 3.0, straddled at 3.1, 5-handed at
+50bb with the ante at 2.4, and at 100bb with the ante it falls only slowly (2.0 at 1,500); their strategies settle all
+the same (where they stop, against the same solve run on to 2,000 iterations: 6-max at 50bb with the ante, 900
+iterations, a class's EV 0.001-0.004 bb off on average at the first decisions and facing an open, 0.007-0.026 facing a
+3bet; straddled, 900, 0.001-0.003 at the first decisions and facing an open; at 100bb with the ante, 1,700,
+0.0006-0.003 and 0.010-0.012; the actions' frequencies within a point). So a solve with a target also stops once a
+check is no nearer than STALL (97%) of the one STALL_BACK (200) iterations before, from the STALL_FROM-th (600) on,
+rather than run on to MAX_ITERS: 6-max at 50bb with the ante stops at 900 iterations (was 2,000), straddled at 900,
+5-handed at 50bb with the ante at 800, at 100bb with the ante at 1,700 (tests/test_pf_study.py's TestStall: a 4-handed
+game it stops, its EVs against the same solve's at 2,000).
 The standard games Study starts from (6-max 100bb, unraked and 5% capped at 3bb) are solved offline to 1500 iterations
-and stored (gto/static/pf/<key>.bin, ~85 KB: each node's mix in 1/255 steps; scripts/build_pf_study.py) so they
-answer at once.
+(averaged at t^3, 1.07 and 0.52 mbb) and stored (gto/static/pf/<key>.bin, ~85 KB: each node's mix in 1/255 steps;
+scripts/build_pf_study.py) so they answer at once.
 
 Each node's answer reads the solve's average strategy and its counterfactual values: per class its share of the
 range there (w), its mix (f), each action's EV (bb from here, relative to folding now: chips won net of what's in,
@@ -53,7 +69,10 @@ TARGET_MBB = 1.5           # a solve stops this close to equilibrium (mbb/hand a
 MAX_ITERS = 2000           # ... or after this many iterations
 SMALL_WORK = 5000          # a tree this small (nodes x seats: 2-4 handed) solves to MAX_ITERS, seconds in all
 CHECK_EVERY = 100          # iterations between exploitability checks (each ~1.2 iterations' worth a seat)
-AVG_POWER = 3.0            # the average strategy weighs iteration t by t^3 (pf_game.Game.avg_power; linear before)
+STALL = 0.97               # ... or once a check is no nearer than 97% of the one STALL_BACK iterations before it
+STALL_BACK = 200           # (from STALL_FROM on, a solve with a target): a game with many three-way flops levels
+STALL_FROM = 600           # off above the target while its strategy settles (the module's doc)
+AVG_POWER = 8.0            # the average strategy weighs iteration t by t^8 (pf_game.Game.avg_power; t^3, linear before)
 STORED_ITERS = 1500
 MAX_HELD = 3               # solves kept (a 6-max one holds ~60 MB)
 ROUGH_BB = 0.05            # a node is flagged rough from this loss to its best actions (bb a hand of the range)
@@ -273,6 +292,7 @@ class Solve:
         self.seconds = 0.0
         self.expl: Optional[List[float]] = None       # bb/hand each seat gains by best-responding
         self.expl_at = -1
+        self.history: Dict[int, float] = {}          # mbb/hand a seat at each check, by iteration
         self.stored = False
         self.cached = False      # (a solve run earlier in the browser and kept there: load())
         self.stored_mbb: Optional[float] = None
@@ -292,13 +312,22 @@ class Solve:
 
     @property
     def done(self) -> bool:
-        return self.stored or self.iters >= MAX_ITERS or (self.mbb is not None and self.expl_at == self.iters
-                                                          and self.mbb <= self.target)
+        return self.stored or self.iters >= MAX_ITERS or self.stalled or (
+            self.mbb is not None and self.expl_at == self.iters and self.mbb <= self.target)
+
+    @property
+    def stalled(self) -> bool:
+        """Measured just now (from STALL_FROM iterations, a solve with a target) no nearer equilibrium than STALL
+        times the check STALL_BACK iterations before."""
+        now, back = self.history.get(self.iters), self.history.get(self.iters - STALL_BACK)
+        return (self.target > 0 and self.iters >= STALL_FROM and now is not None and back is not None
+                and now >= STALL * back)
 
     def measure(self):
         if self.expl_at != self.iters:
             self.expl = self.game.exploitability(per_seat=True)
             self.expl_at = self.iters
+            self.history[self.iters] = self.mbb
 
     def run(self, seconds: float, should_stop: Optional[Callable[[], bool]] = None) -> "Solve":
         """Iterate for about `seconds` (whole iterations; an exploitability check every CHECK_EVERY), stopping once
@@ -317,6 +346,7 @@ class Solve:
 
     def status(self) -> dict:
         return {"key": self.spec.key, "label": self.spec.label(), "iterations": self.iters, "done": self.done,
+                "stalled": self.stalled,
                 "max_iterations": MAX_ITERS, "target_mbb": self.target, "stored": self.stored and not self.cached,
                 "cached": self.cached,
                 "mbb": None if self.mbb is None else round(self.mbb, 2),
@@ -556,10 +586,10 @@ def load(spec: Spec, blob: str, iterations: int) -> Solve:
 
 
 def estimate_seconds(spec: Spec, per_iter: Optional[float] = None) -> float:
-    """Roughly how long a solve takes: iterations (~800 to TARGET_MBB at 6-max; MAX_ITERS for a small tree) times
-    the tree's iteration (measured: 0.12 s natively at 6-max, 0.21 s in Pyodide; in proportion to the tree's nodes
-    and seats), plus the exploitability checks (~1.2 iterations' worth a seat each: two passes up from the same
-    terminals' values)."""
+    """Roughly how long a solve takes: iterations (~800 at 6-max: 700-800 to TARGET_MBB, 800-900 where a game levels
+    off, STALL, up to MAX_ITERS where it keeps falling slowly; MAX_ITERS for a small tree) times the tree's iteration
+    (measured: 0.12 s natively at 6-max, 0.21 s in Pyodide; in proportion to the tree's nodes and seats), plus the
+    exploitability checks (~1.2 iterations' worth a seat each: two passes up from the same terminals' values)."""
     root, pos = spec.build()
     work = sum(1 for _ in G.walk(root)) * len(pos)
     base = per_iter if per_iter is not None else (0.21 if sys.platform == "emscripten" else 0.12)
