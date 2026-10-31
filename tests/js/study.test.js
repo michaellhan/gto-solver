@@ -655,6 +655,17 @@ test("Study on a 3-way flop: an answer at once asked for at Fast too, the note w
   assert.doesNotMatch(p.html(), /Approximate/);
 });
 
+// a later 3-way node answered at once off the hand's earlier solve (Advisor._study_mw_prev): this street's from an
+// earlier decision (its stats in the label), or on the turn the flop's (its stats after the label, on the flop)
+test("Study's 3-way answer at once off the hand's earlier solve: the note", () => {
+  const own = { ...NEAR, multiway: true, street: "turn", actor: "BB", solver: { iterations: null, exploitability_pct: null },
+    approximate: { source: "solve", label: "this street's 3-way solve from SB's decision (270 iterations, 0.07% of the pot from equilibrium), on the line since", iterations: null } };
+  assert.match(S.approxHtml(own), /^Approximate, at once: this street's 3-way solve from SB's decision \(270 iterations, 0\.07% of the pot from equilibrium\), on the line since\. The turn's own solve is running/);
+  const prev = { ...own, actor: "SB", solver: { iterations: 400, exploitability_pct: 0.07 },
+    approximate: { source: "prev", label: "the flop solve's view of the turn (by card class and 12 hand buckets a player, one bet size)", iterations: 400 } };
+  assert.match(S.approxHtml(prev), /one bet size\) \(400 iterations, 0\.07% of the pot from equilibrium on the flop\)\. The turn's own solve is running and replaces it: then each hand's EVs, equities and the Breakdown\.$/);
+});
+
 // a river after a turn Study solved live: that solve's view of the river at once (Advisor._study_prev)
 const PREV = {
   ...QUICK, street: "river", board: "Ks7d2cTh5s", pot_bb: 12.5, stack_bb: 93.75,

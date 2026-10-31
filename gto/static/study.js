@@ -627,7 +627,8 @@
     // (an answer at once is asked for on a turn or river, read off a library flop's stored turn or the street before's
     // live solve, and at Accurate on a flop, read off the stored flops nearest it; on a flop three saw at Fast too: a
     // 3-way flop the library doesn't store is solved live for 15 s, its answer at once read off the 3-way library's
-    // stored flops nearest it, Advisor._study_mw_near)
+    // stored flops nearest it, Advisor._study_mw_near, or at a later node off the solve of an earlier one,
+    // Advisor._study_mw_prev)
     asking = key;
     answer(key, n >= 8 || (n === 6 && (acc || sawFlop(state) >= 3)));
     busy = true;

@@ -2026,6 +2026,38 @@ def _mw_pick(node, a: dict) -> Optional[int]:
                                                                kind.index(node.names[i].split()[0])))
 
 
+def _mw_follow(node, R, a: dict, players):
+    """One real action `a` down a multiway solve's root street from `node` (its tree's nearest: _mw_pick): its
+    player's reach R[p] (per combo, in place) times the solve's average mix for it; the child. _NoInstant where the
+    tree doesn't hold it (another player to act, a line the 3-way library doesn't store) or the range keeps under
+    RARE_LINE of itself (the solve's play there barely converged)."""
+    from . import multiway_solver as MW
+    if not isinstance(node, MW.Decision) or getattr(node, "unstored", False) or a.get("pos") not in players \
+            or players.index(a["pos"]) != node.player:
+        raise _NoInstant()
+    i = _mw_pick(node, a)
+    if i is None:
+        raise _NoInstant()
+    p = node.player
+    before = R[p].sum()
+    R[p] *= node.avg_strategy()[0][i]
+    if R[p].sum() < RARE_LINE * max(before, 1e-12):
+        raise _NoInstant()
+    return node.children[i]
+
+
+def _td_amounts(td, c0) -> list:
+    """A later street's decision (multiway_solver._template's _TD, the street begun with chips in c0): its actions'
+    amounts as a root decision's (multiway_solver._actions): a call its size, a bet, raise or all-in the street's
+    chips after it, else None."""
+    p = td.player
+    out = []
+    for nm, kid in zip(td.names, td.children):
+        k = nm.split()[0]
+        out.append(None if k in ("check", "fold") else kid.c[p] - td.c[p] if k == "call" else kid.c[p] - c0[p])
+    return out
+
+
 def _mw_line(board, hero, hole, stk, streets, street, n) -> tuple:
     """A 3-way solve's place in the hand: who it was solved for, the cards, the stacks, and every action before its
     root (the earlier streets', and this street's first n)."""
@@ -2625,7 +2657,8 @@ class Advisor:
         its stored turn (Advisor._study_store), on a flop the library doesn't store from the stored flops most like
         it (Advisor._study_near), and on a turn or river after the street before was solved live from that solve
         (Advisor._study_prev), on a 3-way flop the 3-way library doesn't store from its stored flops most like it
-        (Advisor._study_mw_near), and nowhere else."""
+        (Advisor._study_mw_near), at a later 3-way node before the river from the hand's earlier solve of its street,
+        or a turn's from the flop's (Advisor._study_mw_prev), and nowhere else."""
         if state.get("study"):
             state = dict({k: v for k, v in state.items() if k not in STUDY_DROPS}, study=True)
         if len(str(state.get("board") or "")) < 6 or state.get("opponents") == "pool" or any(
@@ -4005,10 +4038,13 @@ class Advisor:
                          f"{'your' if p == hero else 'their'} range is the hands that take its last action")
         if self._runout_close is not None and len(cur.active) > 2:
             return {"error": f"the runout report reads heads-up pots: {len(cur.active)} players are in"}
-        # (Study's 3-way flop: read off the 3-way library's stored flops most like it, Advisor._study_mw_near)
-        mw_near = self._instant and self._study and cur.name == "flop" and len(cur.players_start) == 3
+        # (Study's 3-way and 4-way nodes before the river, three or four from the flop: a 3-way flop the library
+        # doesn't store read off its stored flops most like it, Advisor._study_mw_near; a later node off the hand's
+        # earlier solve, Advisor._study_mw_prev)
+        mw_study = self._instant and self._study and cur.name != "river" and all(len(st.players_start) in (3, 4)
+                                                                                 for st in rep[1:])
         if self._instant and (actor or pool or optimize or locks or custom or self._runout_close is not None
-                              or any(len(st.players_start) > 2 for st in rep[1:]) and not mw_near):
+                              or any(len(st.players_start) > 2 for st in rep[1:]) and not mw_study):
             raise _NoInstant()   # (heads-up from the flop at equilibrium only)
         if actor and actor[1] is None and any(len(st.players_start) > 2 for st in rep[1:]):
             return {"skipped": "multiway"}   # (a presolve: heads-up from the flop only, as an instant answer)
@@ -4018,8 +4054,6 @@ class Advisor:
             res = self._mw_from_library(hero, hole, board, ranges, cur, stk, streets, t0, notes, locks, positions)
             if res is not None:
                 return res
-        if mw_near:
-            raise _NoInstant()
         # Streets that started with 3+ players can't be solved; narrow ranges there by rule.
         if self._lib_only and len(cur.players_start) > 2:
             return {"skipped": "multiway: not a flop-library spot"}
@@ -4048,6 +4082,11 @@ class Advisor:
         if by_rules:
             notes.append(f"{', '.join(by_rules)}: multiway, ranges narrowed by "
                          "simple betting rules rather than a solve")
+        if mw_study:   # (the ranges narrowed as the node's own solve will start from them)
+            res = self._study_mw_prev(hero, hole, board, rep, stk, streets, ranges, positions or [], notes, t0)
+            if res is None:
+                raise _NoInstant()
+            return res
         remaining = [p for p in cur.order if p in cur.active]
         pot_now = cur.pot_start + sum(cur.bets.values())
         to_call = cur.cur_bet - cur.bets[hero]
@@ -5871,25 +5910,175 @@ class Advisor:
         shown = _mw_names(node.names, node.amounts, behind, S, node.pot_now)
         sf = np.zeros((len(shown), N_COMBOS))
         sf[:, sol.hands.active] = node.avg_strategy()[0]
+        flops = ", ".join(nm for nm, _ in sol.approx["near"])
+        return self._mw_instant(
+            "flop", players, hp, [i for i in range(len(players)) if i != hp], rng, me, sf, shown, node.amounts,
+            node.pot_now, 0.0, S, board, positions,
+            {"source": "near", "label": f"the precomputed 3-way solves of the most similar flops ({flops}), by card "
+                                        f"substitution", "iterations": None},
+            {"iterations": None, "exploitability_pct": None, "by": "the 3-way flop library"},
+            list(notes) + [f"read off the 3-way library's {sol.label} on stored flops by card substitution: no EVs or "
+                           f"equities until the flop's own solve"], t0)
+
+    @staticmethod
+    def _mw_instant(street, players, hp, opps, rng, me, sf, shown, amounts, pot_now, to_call, stack, board, positions,
+                    approximate, solver, notes, t0) -> dict:
+        """A multiway Study answer at once (_study_mw_near, _study_mw_prev): the actor's range `me` and mix `sf` (A x
+        N_COMBOS) as _study_mw_node's answer without EVs or equities, each opponent's range (rng, players' order),
+        marked approximate."""
         none = np.full(N_COMBOS, np.nan)
-        opps = [i for i in range(len(players)) if i != hp]
-        amounts = [None if x is None else round(float(x), 2) for x in node.amounts]
+        amounts = [None if x is None else round(float(x), 2) for x in amounts]
         part, og = _study_range(board, list(shown), amounts, me, sf, np.zeros_like(sf), none,
                                 [(players[i], rng[i], none) for i in opps])
         _no_values(part)
-        flops = ", ".join(nm for nm, _ in sol.approx["near"])
-        return {"study": "node", "street": "flop", "actor": players[hp], "multiway": True,
+        return {"study": "node", "street": street, "actor": players[hp], "multiway": True,
                 "opponent": " and ".join(players[i] for i in opps), "opponents": og,
                 "position": f"{hp + 1} of {len(players)} to act", "players": len(positions), "board": cards_str(board),
-                "pot_bb": round(node.pot_now, 2), "to_call_bb": 0.0, "stack_bb": round(S, 2),
-                **part, "range_ev_bb": None, "range_eq": None,
-                "approximate": {"source": "near", "label": f"the precomputed 3-way solves of the most similar flops "
-                                                            f"({flops}), by card substitution", "iterations": None},
-                "solver": {"iterations": None, "exploitability_pct": None, "by": "the 3-way flop library"},
-                "precomputed": None,
-                "notes": list(notes) + [f"read off the 3-way library's {sol.label} on stored flops by card "
-                                        f"substitution: no EVs or equities until the flop's own solve"],
-                "seconds": round(time.time() - t0, 3)}
+                "pot_bb": round(pot_now, 2), "to_call_bb": round(to_call, 2), "stack_bb": round(stack, 2),
+                **part, "range_ev_bb": None, "range_eq": None, "approximate": approximate, "solver": solver,
+                "precomputed": None, "notes": notes, "seconds": round(time.time() - t0, 3)}
+
+    def _mw_hits(self, board, st: StreetState, stk, hole, streets) -> List[tuple]:
+        """The hand's multiway solves of street st that Study or the advice answered from (_mw_lines), latest first:
+        [(k, (solve, players, exploitability))], k the solve's root's place in the street's actions, under any of the
+        street's players (Study stores a node's solve under its actor)."""
+        acts = streets.get(st.name) or []
+        bk = board[:{"flop": 3, "turn": 4, "river": 5}[st.name]]
+        out = []
+        for k in range(len(acts), -1, -1):
+            h = next((h for h in (self._mw_lines.get(_mw_line(bk, x, hole, stk, streets, st.name, k))
+                                  for x in st.order if x in st.players_start) if h is not None), None)
+            if h is not None:
+                out.append((k, h))
+        return out
+
+    def _study_mw_prev(self, hero, hole, board, rep, stk, streets, ranges, positions, notes, t0) -> Optional[dict]:
+        """Study's answer at once at a 3-way or 4-way node before the river while its own solve runs (Advisor.instant
+        with "study"): each hand's mix read off the hand's latest live solve of an earlier decision on this street (its
+        tree from there on the line taken, the tree's nearest actions: each combo's own mix at its sizes), else on a
+        3-way turn a 3-way flop's, which plays the turn by card class and hand buckets at one bet size
+        (MWConfig.later: the card dealt read as its class's played card, each combo through the swap of the two, as
+        heads-up Advisor._study_prev; a 4-way flop's view of the turn was 0.6% of the pot from the turn's own answer,
+        its range frequencies 23 points apart: scripts/bench_mw_prev.py --lines hj4; facing a bet 4-way, where
+        the 4-way tree lets only its first decision's player raise, _NoInstant). The players' ranges are `ranges`, as the node's own solve will start from them (the
+        streets' actions narrowed through the solves Study answered from, Advisor._mw_walk). The actor's whole range
+        per hand class and combo its mix, per action the range's frequency and combos, each opponent's range, marked
+        "approximate"; no EVs or equities. None where no such solve is in hand (the 3-way library's flops hold the
+        flop's checked-to decisions only: none after a bet or on the turn); _NoInstant where the node's own solve is
+        in hand (its answer is quick) or the solve rarely takes the line (an action keeping a range under RARE_LINE of
+        itself in the solve: its play there barely converged)."""
+        from . import multiway_solver as MW
+        cur = rep[-1]
+        remaining = [p for p in cur.order if p in cur.active]
+        acts = list(streets.get(cur.name) or [])
+        hits = self._mw_hits(board, cur, stk, hole, streets)
+        if len(remaining) < 3:
+            return None
+        if hits and hits[0][0] == len(acts):
+            raise _NoInstant()   # (the node's own solve: its answer is quick)
+        live = lambda h: isinstance(h[1][0], MW.MultiwaySolver) and set(remaining) <= set(h[1][1]) \
+            and hero in h[1][1]
+        own = next((h for h in hits if live(h)), None)
+        behind = stk[hero] - cur.inv_start[hero]
+        S = min(stk[p] - cur.inv_start[p] for p in cur.players_start)
+        to_call = cur.cur_bet - cur.bets[hero]
+        stack = min(behind, max(stk[p] - cur.inv_start[p] for p in remaining if p != hero)) - cur.bets[hero]
+        pot_now = cur.pot_start + sum(cur.bets.values())
+        if own is not None:   # (this street's solve from an earlier decision: its tree per combo)
+            k, (sol, pl, expl) = own
+            R = np.asarray(sol.reach0[:, 0, :], dtype=np.float64).copy()
+            node = sol.root
+            for a in acts[k:]:
+                node = _mw_follow(node, R, a, pl)
+            hp = pl.index(hero)
+            if not isinstance(node, MW.Decision) or isinstance(node, MW.BDecision) or node.player != hp:
+                raise _NoInstant()
+            sf = np.zeros((len(node.names), N_COMBOS))
+            sf[:, sol.hands.active] = node.avg_strategy()[0]
+            cover = sol.hands.active
+            names, amounts, pot_at = node.names, node.amounts, node.pot_now
+            whose = pl[sol.root.player] if isinstance(sol.root, MW.Decision) else "an earlier"
+            approximate = {"source": "solve", "label": f"this street's {len(pl)}-way solve from {whose}'s decision "
+                                                       f"({sol.iters} iterations, {expl:.2f}% of the pot from "
+                                                       f"equilibrium), on the line since", "iterations": None}
+            solver = {"iterations": None, "exploitability_pct": None, "by": f"the {cur.name}'s earlier solve"}
+            note = (f"read off this street's solve from {whose}'s decision: each hand's mix there, no EVs or equities "
+                    f"until this decision's own solve")
+            if len(pl) > 3 and to_call > 1e-9 and not any(n.startswith("raise") for n in names):
+                # (the 4-way tree lets only its first decision's player raise, where this decision's own solve raises:
+                # 4c4sQs, HJ opens, CO, BTN and BB call, BTN's bet after three checks: BB raises 19% there, the read
+                # 0, giving up 1.1% of the pot)
+                raise _NoInstant()
+        else:
+            if cur.name != "turn" or len(rep[-2].players_start) != 3 or len(cur.players_start) != 3:
+                return None   # (a 4-way flop's view of the turn: too far from the turn's own answer)
+            fl = rep[-2]
+            fh = next((h for h in self._mw_hits(board, fl, stk, hole, streets)
+                       if live(h) and getattr(h[1][0], "tabs", None) is not None and h[1][0].levels), None)
+            if fh is None:
+                return None
+            k, (sol, pl, expl) = fh
+            R = np.asarray(sol.reach0[:, 0, :], dtype=np.float64).copy()
+            node = sol.root
+            for a in list(streets.get("flop") or [])[k:]:
+                node = _mw_follow(node, R, a, pl)
+            tb, card = sol.tabs, board[3]
+            loc = next(((g, b) for g in sol.levels[0] for b, (e, _) in enumerate(g.blocks) if e is node), None)
+            t = next((i for i, (_, cs) in enumerate(tb.cls) if card in cs), None)
+            if not isinstance(node, MW.Exit) or loc is None or t is None:
+                raise _NoInstant()
+            (g, b), played = loc, tb.cls[t][0]
+            row = b * tb.C + t
+            act = sol.hands.active
+            pos = np.full(N_COMBOS, -1)
+            pos[act] = np.arange(len(act))
+            img = np.full(len(act), -1)   # (each combo live on the turn: its image's column on the class's played card)
+            for i, f in enumerate(act):
+                if card not in ALL_COMBOS[f]:
+                    img[i] = pos[_swap_combo(ALL_COMBOS[f], played, card)] if played != card else i
+            m = img >= 0
+            cols = np.full((len(pl), len(act)), -1)
+            cols[:, m] = tb.ids[:, t][:, img[m]]
+            R[:, ~m] = 0.0
+            td = MW._template(sol.cfg, sol.np, "turn", node.pot, node.c, node.behind, node.folded)
+            c0, bn = node.c, g.tree
+            for a in cur.actions:   # (the turn's actions: each player's range narrowed by its buckets' mix)
+                if not isinstance(bn, MW.BDecision) or not isinstance(td, MW._TD) or a.get("pos") not in pl \
+                        or pl.index(a["pos"]) != bn.player:
+                    raise _NoInstant()
+                p = bn.player
+                i = _mw_pick(types.SimpleNamespace(names=td.names, amounts=_td_amounts(td, c0)), a)
+                if i is None:
+                    raise _NoInstant()
+                before = R[p].sum()
+                R[p, m] *= bn.avg_strategy()[row][i][cols[p, m]]
+                if R[p].sum() < RARE_LINE * max(before, 1e-12):
+                    raise _NoInstant()
+                bn, td = bn.children[i], td.children[i]
+            hp = pl.index(hero)
+            if not isinstance(bn, MW.BDecision) or not isinstance(td, MW._TD) or bn.player != hp:
+                raise _NoInstant()
+            sf = np.zeros((len(td.names), N_COMBOS))
+            sf[:, act[m]] = bn.avg_strategy()[row][:, cols[hp, m]]
+            cover = act[m]
+            names, amounts, pot_at = td.names, _td_amounts(td, c0), td.pot
+            K = bn.regret.shape[2]
+            approximate = {"source": "prev", "label": f"the flop solve's view of the turn (by card class and {K} hand "
+                                                      f"buckets a player, one bet size)", "iterations": int(sol.iters)}
+            solver = {"iterations": int(sol.iters), "exploitability_pct": round(float(expl), 2), "by": "the flop's solve"}
+            note = (f"read off the flop's solve, which plays the turn at one bet size, a turn class's cards alike (a "
+                    f"rank's cards, a flush suit's apart) and hands by {K} buckets a player: no EVs or equities until "
+                    f"the turn's own solve")
+        bm = np.prod([1.0 - MEMBER_FULL[c] for c in board], axis=0)
+        rng = [np.asarray(ranges[p], dtype=np.float64) * bm for p in pl]
+        me = np.zeros(N_COMBOS)
+        me[cover] = rng[hp][cover]   # (the combos the solve plays: its mix for each)
+        if me.sum() < 1e-6:
+            raise _NoInstant()
+        shown = _mw_names(names, amounts, behind, S, pot_at)
+        return self._mw_instant(cur.name, pl, hp, [i for i, p in enumerate(pl) if i != hp and p in remaining], rng, me,
+                                sf, shown, amounts, pot_now, to_call, stack, board, positions, approximate, solver,
+                                list(notes) + [note], t0)
 
     def _mw_from_library(self, hero, hole, board, entering, cur: StreetState, stk, streets, t0, notes, locks,
                          positions=None):
@@ -5904,6 +6093,9 @@ class Advisor:
         if self._instant:   # (Study's answer at once: a flop it holds is at once anyway; one it doesn't, read off)
             if sol is not None:
                 raise _NoInstant()
+            from .multiway_solver import MultiwaySolver
+            if any(isinstance(h[0], MultiwaySolver) for _, h in self._mw_hits(board, cur, stk, hole, streets)):
+                return None   # (this flop's own solve of an earlier decision reads it better: Advisor._study_mw_prev)
             sol = self._mw_library_near(entering, board, cur, stk)
         if sol is None:
             return None

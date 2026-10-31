@@ -268,6 +268,122 @@ class TestStudy(unittest.TestCase):
         self.assertIn("error", self.study(preflop=PRE, board="Kd7c2h5s", flop=flop, turn=turn[:2], runouts=True,
                                           budget=1.0))
 
+    def test_four_way_later_at_once(self):
+        """Later 4-way nodes: Study's answer at once off the street's own earlier solve (Advisor._study_mw_prev), the
+        ranges the node's own solve starts from (4-way streets narrowed by the betting rules). None at the first
+        decision (no 4-way library), once the node's own solve is in hand, facing a bet (the 4-way tree gives only its
+        first decision's player a raise) or on the turn's first decision (a 4-way flop's view of the turn was too far
+        from the turn's own answer)."""
+        adv = advisor("fast")
+        pre = [PRE[0], {"pos": "HJ", "action": "raise", "to": 2.5}, {"pos": "CO", "action": "call"},
+               {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
+        st = {"players": 6, "stack": 100, "preflop": pre, "board": "Js6cKs", "study": True}
+        X = lambda p: {"pos": p, "action": "check"}
+        with mock.patch.object(advisor_mod, "MW_STUDY_FLOP_BUDGET", 3.0):
+            self.assertIsNone(adv.instant(st))
+            root = adv.advise(st)
+            self.assertEqual((root["actor"], len(root["opponents"])), ("BB", 3))
+            x = dict(st, flop=[X("BB")])
+            r = adv.instant(x)
+            self.assertEqual((r["actor"], r["approximate"]["source"]), ("HJ", "solve"))
+            self.assertRegex(r["approximate"]["label"], r"^this street's 4-way solve from BB's decision \(\d+ iterations")
+            self.assertTrue(r["range_ev_bb"] is None and all(a["ev_bb"] is None for a in r["actions"]))
+            self.check_totals(r)
+            live = adv.advise(x)
+            self.assertEqual([a["action"] for a in r["actions"]], [a["action"] for a in live["actions"]])
+            for a, b in zip(r["opponents"], live["opponents"]):
+                self.assertEqual(a["seat"], b["seat"])
+                self.assertAlmostEqual(a["combos"], b["combos"], delta=0.01 * b["combos"] + 0.1)
+            for a, b in zip(r["actions"], live["actions"]):
+                self.assertAlmostEqual(a["freq"], b["freq"], delta=0.1)
+            self.assertIsNone(adv.instant(x))
+            # facing BB's bet: none (the root's tree gives HJ no raise there; the node's own solve does)
+            bet = root["actions"][1]
+            self.assertTrue(bet["action"].startswith("bet"))
+            fb = dict(st, flop=[{"pos": "BB", "action": "bet", "to": bet["amount_bb"]}])
+            self.assertIsNone(adv.instant(fb))
+            self.assertIn("raise", " ".join(a["action"] for a in adv.advise(fb)["actions"]))
+            # the turn's first decision: none (the flop's view of a 4-way turn)
+            self.assertIsNone(adv.instant(dict(st, board="Js6cKs7h", flop=[X(p) for p in ("BB", "HJ", "CO", "BTN")])))
+        del adv
+        gc.collect()
+
+    def test_three_way_later_at_once(self):
+        """Later 3-way nodes on a flop the library doesn't store, and the turn: Study's answer at once (Advisor.instant
+        with "study") read off the hand's earlier solve (Advisor._study_mw_prev): checked to, the first decision's
+        solve (preferred to the stored flops most like it); on the turn the flop's (by hand buckets, one bet size),
+        then the turn's first decision's; the mix alone, the ranges as the node's own solve starts from them. None
+        once the node's own solve is in hand, on a river, or on a library flop's turn (its entries hold the flop)."""
+        adv = advisor("fast")   # (its own: no solves of the class's other tests in hand)
+        adv.mw_budget = 2.5     # (the turn's solves: Fast's 5 s natively)
+        pre = PRE[:3] + [{"pos": "BTN", "action": "raise", "to": 2.5}, {"pos": "SB", "action": "call"},
+                         {"pos": "BB", "action": "call"}]
+        st = {"players": 6, "stack": 100, "preflop": pre, "board": "Kd8c3h", "study": True}
+        X = lambda p: {"pos": p, "action": "check"}
+
+        def no_values(r):
+            self.assertTrue(r["range_ev_bb"] is None and r["range_eq"] is None and all(o["eq"] is None for o in r["opponents"]))
+            self.assertTrue(all(a["ev_bb"] is None for a in r["actions"]))
+            self.assertTrue(all(x[3] is None and x[4] is None for rows in r["combos"].values() for x in rows))
+            self.check_totals(r)
+
+        def alike(inst, live, tol):
+            self.assertEqual([o["seat"] for o in inst["opponents"]], [o["seat"] for o in live["opponents"]])
+            for a, b in zip(inst["opponents"], live["opponents"]):   # (the ranges the node's own solve starts from)
+                self.assertAlmostEqual(a["combos"], b["combos"], delta=0.01 * b["combos"] + 0.1)
+            self.assertAlmostEqual(inst["range_combos"], live["range_combos"], delta=0.02 * live["range_combos"] + 0.5)
+            fi, fl = ({a["action"].split()[0]: 0.0 for a in r["actions"]} for r in (inst, live))
+            for r, f in ((inst, fi), (live, fl)):
+                for a in r["actions"]:
+                    f[a["action"].split()[0]] += a["freq"]
+            for k in set(fi) | set(fl):
+                self.assertAlmostEqual(fi.get(k, 0.0), fl.get(k, 0.0), delta=tol, msg=(k, fi, fl))
+
+        with mock.patch.object(advisor_mod, "MW_STUDY_FLOP_BUDGET", 3.0):
+            root = adv.advise(st)
+            self.assertTrue(root["multiway"] and not root["precomputed"])
+            self.assertIsNone(adv.instant(st))   # (its own solve in hand: quick anyway)
+            x = dict(st, flop=[X("SB")])
+            r = adv.instant(x)
+            self.assertEqual((r["actor"], r["approximate"]["source"]), ("BB", "solve"))
+            self.assertRegex(r["approximate"]["label"], r"^this street's 3-way solve from SB's decision \(\d+ iterations")
+            self.assertTrue(r["multiway"] and r["precomputed"] is None)
+            no_values(r)
+            live = adv.advise(x)
+            self.assertEqual([a["action"] for a in r["actions"]], [a["action"] for a in live["actions"]])
+            alike(r, live, 0.1)
+            self.assertIsNone(adv.instant(x))
+            # the turn: the flop's solve (BB's, the latest), by hand buckets at one bet size
+            t = dict(st, board="Kd8c3h9s", flop=[X("SB"), X("BB"), X("BTN")])
+            r = adv.instant(t)
+            self.assertEqual((r["street"], r["actor"], r["approximate"]["source"]), ("turn", "SB", "prev"))
+            self.assertEqual([a["action"] for a in r["actions"]], ["check", "bet 50%"])
+            self.assertRegex(r["approximate"]["label"], r"flop solve's view of the turn \(by card class and 12 hand buckets")
+            self.assertEqual(r["solver"]["iterations"], live["solver"]["iterations"])
+            no_values(r)
+            # checked to on the turn: still the flop's (no turn solve yet); facing a bet; then the turn's first decision's
+            r = adv.instant(dict(t, turn=[X("SB")]))
+            self.assertEqual((r["actor"], r["approximate"]["source"]), ("BB", "prev"))
+            no_values(r)
+            r = adv.instant(dict(t, turn=[X("SB"), {"pos": "BB", "action": "bet", "to": 4.0}]))
+            self.assertEqual(r["actor"], "BTN")
+            self.assertEqual([a["action"].split()[0] for a in r["actions"]][:2], ["fold", "call"])
+            no_values(r)
+            tl = adv.advise(t)
+            self.assertEqual(tl["actor"], "SB")
+            r = adv.instant(dict(t, turn=[X("SB")]))
+            self.assertEqual((r["actor"], r["approximate"]["source"]), ("BB", "solve"))
+            self.assertEqual([a["action"] for a in r["actions"]], [a["action"] for a in tl["actions"]])
+            no_values(r)
+            alike(r, adv.advise(dict(t, turn=[X("SB")])), 0.15)
+            # none: a river, a library flop's turn
+            self.assertIsNone(adv.instant(dict(t, board="Kd8c3h9s4c", turn=[X("SB"), X("BB"), X("BTN")])))
+            lib = dict(st, board="Kd7c2h")
+            self.assertTrue(adv.advise(lib)["precomputed"])
+            self.assertIsNone(adv.instant(dict(lib, board="Kd7c2h9s", flop=[X("SB"), X("BB"), X("BTN")])))
+        del adv
+        gc.collect()
+
     def test_three_way_near_at_once(self):
         """A 3-way flop the 3-way library doesn't store: Study's answer at once (Advisor.instant with "study") read
         off the library's stored flops most like it (MWLibrary.near) at the decisions it stores, first to act and

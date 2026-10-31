@@ -157,6 +157,12 @@ const SPOTS = {
   // (Advisor._study_mw_near), first to act and checked to twice
   "study-mw-near": base({ board: "Kh8d3c", preflop: MW, study: true }),
   "study-mw-near-x": base({ board: "Kh8d3c", preflop: MW, flop: [X("BB"), X("CO")], study: true }),
+  // its turn after checks (--session study-mw-near,study-mw-near-x,study-mw-near-turn,study-mw-near-turn-x --early:
+  // the nodes after the first read off the hand's earlier solve, the turn's first off the flop's by hand buckets,
+  // Advisor._study_mw_prev)
+  "study-mw-near-turn": base({ board: "Kh8d3c9s", preflop: MW, flop: [X("BB"), X("CO"), X("BTN")], study: true }),
+  "study-mw-near-turn-x": base({ board: "Kh8d3c9s", preflop: MW, flop: [X("BB"), X("CO"), X("BTN")], turn: [X("BB")],
+                                 study: true }),
   "mw4-flop": base({ hero: "BB", hole: "Qh9h", board: "Kh7d2c", preflop: MW4 }),               // 4-way, first to act
   "mw4-turn": base({ hero: "BB", hole: "Qh9h", board: "Kh7d2c9s", preflop: MW4, flop: [X("BB"), X("HJ"), X("CO"), X("BTN")] }),
   "exploit": base({ hero: "BB", hole: "QhJh", board: "Ks7d2cTh", flop: SRP_FLOP, opponents: "pool" }),

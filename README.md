@@ -324,7 +324,29 @@ and reading it off the others (`scripts/bench_mw_approx.py`), those decisions gi
 by the flop's own EVs (median 0.10, 90th percentile 0.32; first to act 0.06, checked to once 0.15, twice 0.22; the
 worst low paired and connected boards 1.3-1.9), their range frequencies 7 points off (total variation); 16 of them (2%)
 have no stored flop near enough (6 rank steps), and nothing shows until the solve lands. In the browser on one
-thread (`scripts/bench_browser.mjs` study-mw-near, Kh8d3c) it shows in 0.7 s, the solve in 13 s. Equity (and EQR)
+thread (`scripts/bench_browser.mjs` study-mw-near, Kh8d3c) it shows in 0.7 s, the solve in 13 s. At the nodes after
+it, as heads-up, Study answers at once off the hand's earlier solve while the node's own runs
+(`Advisor._study_mw_prev`): checked to or facing a bet on a street whose first decision it solved, that solve's own
+play of the line since (every combo's mix; the solve's iterations and distance from equilibrium named); on the turn
+after a 3-way flop it solved live, until one of the turn's decisions is solved, the flop solve's view of the turn (by
+card class and hand buckets, 12 a player at Fast, one bet size). The opponents' ranges are the ones the node's own
+answer shows; no EVs or equities until it lands (natively 0.004-0.04 s; in the browser on one thread 0.01-0.04 s,
+where the node's own Fast solve takes 4.4-6.7 s, on 8 threads 1.5-2.3 s: study-mw-near-x, -near-turn,
+-near-turn-x). 4-way, checked to on a
+street whose first decision Study solved, the same (the streets narrowed by the betting rules, as the node's own
+answer's); not facing a bet there (the 4-way tree lets only its first decision's player raise, and the node's own
+solve raises: BB 19% on 4c4sQs facing BTN's bet, the read giving up 1.1% of the pot) nor on the turn off a 4-way flop
+(its view of the turn's first decision gave up 0.6% of the pot, range frequencies 23 points apart). Not on a line a
+player of that solve takes under 10% of the time (`RARE_LINE`), on the turn after a library flop (the stored solve
+has no turn) or on the river (its solve takes 0.4 s). Walking Study node by node on 14 random flops the library
+doesn't hold (BTN or CO opens, two call; `scripts/bench_mw_prev.py`, Fast, natively), each answer at once priced by
+the EVs of the answer that replaces it: checked to once 0.002% of the pot given up on average (max 0.03), twice 0.008
+(0.07), facing a bet 0.11 (median 0.03, max 0.55), checked to on the turn 0.002 (0.06); the turn's first decision by
+buckets after a checked-through flop 0.13 (median 0.001, max 0.75) and after a flop bet called twice 0.38 (median
+0.20, max 0.83: every hand of a bucket plays the bucket's mix, so 22 on As4sTc9h bets 74-88% of the time as the
+bluffs it shares a bucket with, where its own solve checks it); range frequencies 1-7 points apart on average; 74 of
+76 nodes answered (two turns on a line under 10%). 4-way on 9 flops (HJ opens, CO, BTN and BB call): checked to once
+0.011 (max 0.03), twice 0.005 (0.03), three times 0.029 (0.12), on the turn 0.025 (0.06). Equity (and EQR)
 on every street, as a share of the pot at showdown against the two
 other ranges with the rest of the board dealt (`multiway_solver.showdown_equities`): on the turn every river with
 the exact three-way card removal (as the river's showdowns, ~0.1 s natively); on the flop all 1176 turn-and-river
