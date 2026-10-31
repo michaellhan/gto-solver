@@ -158,9 +158,9 @@ class TestStudyStore(unittest.TestCase):
         self.assertIsNone(adv.instant(dict(self.hand, study=True)))
 
     def test_turn_files_fetched_ahead_from_the_flop(self):
-        """Study at a library flop's decision, answered (its entry read): the prefetch's dry run for the flop (as the
-        browser's worker runs it, files recorded rather than read) asks for the entry's turn file, and keeps nothing
-        as missing; before the flop's answer it has no entry to go by (no hero to run the advice for)."""
+        """Study at a library flop, before its first answer: the prefetch's dry run for the flop (as the browser's
+        worker runs it, files recorded rather than read; Study's request has no seat or cards of its own) asks for the
+        flop's entry and its turn file, and keeps nothing as missing; once the entry is read, the turn file alone."""
         real = self.libs["f1"]._fetch
         asked, rec = [], [False]
 
@@ -172,17 +172,18 @@ class TestStudyStore(unittest.TestCase):
         lib = fl.FlopLibrary(fetch)
         adv = advisor(lib)
         flop = dict(self.hand, flop=[], turn=[], board=BOARD)
+        h = self.spot["flops"][CANON]
         rec[0] = True
         adv.prefetch(dict(flop, study=True))
-        self.assertEqual(asked, [])
+        self.assertEqual(asked, [f"{SPOT[0]}/{CANON}.bin?v={h}", f"{SPOT[0]}/{CANON}.turn.bin?v={h}"])
+        self.assertFalse([k for k, e in lib._entries.items() if e is None])
         rec[0] = False
         self.assertIn("precomputed", adv.study(flop))
+        asked.clear()
         rec[0] = True
         adv.prefetch(dict(flop, study=True))
-        h = self.spot["flops"][CANON]
         self.assertEqual(asked, [f"{SPOT[0]}/{CANON}.turn.bin?v={h}"])
         self.assertFalse([k for k, e in lib._entries.items() if e is None])
-
 
 if __name__ == "__main__":
     unittest.main()

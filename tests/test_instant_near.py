@@ -3,6 +3,7 @@ flops most like it (gto/flop_approx.py: same pairing and suit pattern, nearest r
 marked approximate (advisor.instant_from_near); the flop's own solve still answers the request. The stored flops it
 reads are prefetched once the flop is known (Advisor.prefetch). A heads-up pot the library holds no spot for is read
 off the spot whose ranges are nearest (flop_approx.near_spot). On the shipped library."""
+import json
 import unittest
 from unittest import mock
 
@@ -314,6 +315,139 @@ class TestNearSpot(_Lib):
         adv.prefetch({"players": 6, "stack": 100, "preflop": parse_actions(HJ_BB3), "board": "KhJd5c", "turn": [],
                       "river": [], "hero": "BB", "hole": "AhKd", "flop": []})
         self.assertIn(f"3bp_bb_co/KcJd5h.bin?v={sp['flops']['KcJd5h']}", asked)
+
+
+
+class TestStudyNear(_Lib):
+    """Study (Advisor.instant with "study": no cards of anyone's own) on a flop the library doesn't store: the actor's
+    whole range at once off the stored flops most like it (Advisor._study_near), the mix per combo as the advice's
+    approximate answer gives each hand, marked approximate with what it borrowed; no EVs or equities; the flop's own
+    solve still answers the request."""
+
+    def study(self, **kw):
+        return {**self.hand, "study": True, "flop": [], **kw}
+
+    @staticmethod
+    def row(res, hole):
+        cards = set(parse_cards(hole))
+        return next(r for rows in res["combos"].values() for r in rows if set(parse_cards(r[0])) == cards)
+
+    def test_whole_range_at_once(self):
+        """HJ first to act: every combo's mix that of its images on the nearest stored flops (8h9h's without
+        KcJd7h's, where it's another hand class), the range's frequency per action, the flops named; nothing
+        solved, no EVs; then the live solve's answer has the same seats, pot and sizes, without "approximate"."""
+        adv = advisor()
+        with mock.patch.object(A, "solve", side_effect=AssertionError("solved")):
+            res = adv.instant(self.study())
+        json.dumps(res, allow_nan=False)
+        self.assertEqual((res["study"], res["street"], res["actor"], res["opponent"]), ("node", "flop", "HJ", "CO"))
+        self.assertEqual(res["approximate"], {"source": "near", "iterations": None, "label": "the precomputed solves of "
+                         "the most similar flops (KhJd5c, KhJd7c, KhQd6c), by card substitution"})
+        for hole, skip in (("AhQd", ()), ("8h9h", ("KcJd7h",)), ("JcTc", ())):
+            names, mix = self.expected(BOARD, hole, [], skip=skip)
+            self.assertEqual([a["action"] for a in res["actions"]], names)
+            self.assertTrue(np.allclose(self.row(res, hole)[2], mix, atol=0.0006), hole)
+        rows = [r for rs in res["combos"].values() for r in rs]
+        self.assertTrue(all(r[3] is None and r[4] is None for r in rows))
+        w = sum(r[1] for r in rows)
+        self.assertAlmostEqual(res["range_combos"], w, delta=0.1)
+        for i, a in enumerate(res["actions"]):
+            self.assertAlmostEqual(a["freq"], sum(r[1] * r[2][i] for r in rows) / w, delta=0.002)
+            self.assertIsNone(a["ev_bb"])
+        self.assertTrue(all(c["ev"] is None and c["eq"] is None for c in res["grid"]["cells"].values()))
+        self.assertEqual((res["range_ev_bb"], res["range_eq"], res["opponent_eq"]), (None, None, None))
+        live = adv.study(self.study())
+        self.assertEqual(set(res) - set(live), {"approximate"})
+        for k in ("actor", "opponent", "position", "players", "board", "pot_bb", "to_call_bb", "stack_bb"):
+            self.assertEqual(res[k], live[k], k)
+        self.assertEqual([(a["action"], a["amount_bb"]) for a in res["actions"]],
+                         [(a["action"], a["amount_bb"]) for a in live["actions"]])
+        self.assertGreater(live["solver"]["iterations"], 0)
+        self.assertIsNone(adv.instant(self.study()))   # (its own solve settled: the request's answer is quick)
+
+    def test_in_position_and_facing_a_bet(self):
+        """CO after a check, HJ facing its 75% bet (to call at the hand's pot), on 8c7d5h (read off 8c7d4h, 8c7d6h,
+        8c6d5h, where the opener checks all of its range: its checking range is all of it); each combo's mix the
+        advice's approximate answer for that hand."""
+        adv, board = advisor(), "8c7d5h"
+        first = adv.instant(self.study(board=board))
+        self.assertEqual([a["freq"] for a in first["actions"]], [1.0, 0.0, 0.0])
+        res = adv.instant(self.study(board=board, flop=[X("HJ")]))
+        self.assertEqual((res["actor"], res["position"], res["approximate"]["source"]), ("CO", "IP", "near"))
+        for hole in ("JhTh", "9h8h"):   # (each combo's mix the advice's approximate answer for it)
+            mine = adv.instant(dict(self.hand, board=board, hero="CO", hole=hole, flop=[X("HJ")]))
+            self.assertEqual([a["action"] for a in res["actions"]], [a["action"] for a in mine["actions"]])
+            self.assertTrue(np.allclose(self.row(res, hole)[2], [a["freq"] for a in mine["actions"]], atol=0.0006))
+        self.assertAlmostEqual(res["opponent_combos"], first["range_combos"], delta=0.5)
+        pot = self.setup["pot"]
+        res = adv.instant(self.study(board=board, flop=[X("HJ"), B("CO", round(0.75 * pot, 2))]))
+        self.assertEqual([a["action"].split()[0] for a in res["actions"]], ["fold", "call", "raise"])
+        mine = adv.instant(dict(self.hand, board=board, hero="HJ", hole="AdJc",
+                                flop=[X("HJ"), B("CO", round(0.75 * pot, 2))]))
+        self.assertTrue(np.allclose(self.row(res, "AdJc")[2], [a["freq"] for a in mine["actions"]], atol=0.0006))
+        self.assertAlmostEqual(res["to_call_bb"], round(0.75 * pot, 2), places=2)
+        self.assertLess(res["opponent_combos"], 0.5 * first["range_combos"])   # (the hands CO bets)
+
+    def test_the_next_node_reads_the_flops_again(self):
+        """The flop's next node reads the stored flops' prediction kept from its first (flop_approx.PRED_KEEP per
+        library), made for the combos either range holds."""
+        adv, calls, real = advisor(fl.FlopLibrary(self.lib._fetch)), [], fa.predict
+
+        def predict(*a, **k):
+            calls.append(len(k["combos"]))
+            return real(*a, **k)
+        with mock.patch.object(fa, "predict", side_effect=predict):
+            first = adv.instant(self.study(board="8c7d5h"))
+            nxt = adv.instant(self.study(board="8c7d5h", flop=[X("HJ")]))
+        self.assertEqual(nxt["actor"], "CO")
+        self.assertEqual(len(calls), 1)
+        self.assertLess(calls[0], 0.3 * 1326)
+        self.assertEqual(first["approximate"], nxt["approximate"])
+
+    def test_borrowed_spot_and_depth(self):
+        """A pot the library holds no spot for (BB 3bets HJ: BB 3bet vs CO's flops) and another depth (80bb: BTN vs
+        BB's entry of the flop at 100bb): the spot and the depth borrowed named, as the advice's approximate answer
+        names them."""
+        line = "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:c"
+        adv = advisor()
+        res = adv.instant({"players": 6, "stack": 80, "preflop": parse_actions(line), "board": BOARD, "flop": [],
+                           "turn": [], "river": [], "study": True})
+        self.assertEqual(res["actor"], "BB")
+        self.assertEqual(res["approximate"]["label"], "the precomputed solve of this flop in the library's BTN vs BB "
+                         "single-raised pot, solved deeper (a stack-to-pot ratio of 17.7, this pot's 14.1)")
+        res = adv.instant({"players": 6, "stack": 100, "preflop": parse_actions(HJ_BB3), "board": "KhJd6c",
+                           "flop": [], "turn": [], "river": [], "study": True})
+        self.assertEqual(res["actor"], "BB")
+        self.assertTrue(res["approximate"]["label"].startswith("the library's BB 3bet vs CO on the most similar "
+                                                               "flops ("), res["approximate"]["label"])
+
+    def test_none_where_it_doesnt_apply(self):
+        """A stored flop (the library's answer is at once anyway), a pot the library doesn't hold, the turn after
+        an unstored flop, no stored flop near enough, a line the stored flops rarely take (HJ checks 7% of its range on
+        KhJd6c's: the library's own answer solves those live too): no answer at once."""
+        adv = advisor()
+        self.assertIsNone(adv.instant(self.study(flop=[X("HJ")])))
+        self.assertIsNone(adv.instant(self.study(board="KcJd5h")))
+        limped = dict(self.study(), preflop=parse_actions("UTG:f,HJ:f,CO:f,BTN:f,SB:c,BB:x"))
+        self.assertIsNone(adv.instant(limped))
+        self.assertIsNone(adv.instant(self.study(board=BOARD + "2s", flop=[X("HJ"), X("CO")])))
+        with mock.patch.object(fa, "MAX_DIST", 0):
+            self.assertIsNone(adv.instant(self.study()))
+
+    def test_prefetched(self):
+        """Study's prefetch (no seat or cards of its own) names the stored flops its answer at once reads."""
+        asked = []
+
+        def fetch(p, real=self.lib._fetch):
+            if p.startswith("index"):
+                return real(p)
+            asked.append(p)
+            return None
+        rec = fl.FlopLibrary(fetch)
+        advisor(rec).prefetch(self.study())
+        for nm in ("KcJd5h", "KcJd7h", "KcQd6h"):
+            self.assertIn(f"{SID}/{nm}.bin?v={self.spot['flops'][nm]}", asked)
+        self.assertFalse([k for k, e in rec._entries.items() if e is None])
 
 
 if __name__ == "__main__":

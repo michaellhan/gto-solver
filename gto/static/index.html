@@ -2452,10 +2452,14 @@ function studyAsk(st, onPartial) {
   const [budget, prior_budget] = BUDGETS[MODE][st.speed === "accurate" ? "accurate" : "fast"];
   return callAdvise({ ...st, budget, prior_budget }, null, onPartial);
 }
-// Study at a library flop's decision, answered: the flop's turn files the index lists fetched ahead (Advisor.prefetch
-// finds the entries that answer read), so its turns' answers at once need no request of their own
+// Study's flop: the library files its answers read fetched ahead, all at once (Advisor.prefetch: the flop's entry and
+// the turn files the index lists, or the stored flops nearest it), rather than one by one as the answers read them;
+// study.js asks before a flop's first answer at Accurate (its answer at once reads them) or a turn's, else once a
+// library flop's answer is in. True when asked.
 function studyPrefetch(st) {
-  if (MODE === "wasm" && worker && String(st.board || "").length === 6) worker.postMessage({ prefetch: { ...st, flop: [], turn: [], river: [] } });
+  if (MODE !== "wasm" || !worker || String(st.board || "").length < 6) return false;
+  worker.postMessage({ prefetch: { ...st, board: String(st.board).slice(0, 6), flop: [], turn: [], river: [] } });
+  return true;
 }
 function studyHand() { return payload(); }
 // [budget, prior_budget] at a speed, for Study's turn and river reports' progress (the seconds a solve for one takes)

@@ -441,8 +441,8 @@ test("an answer at once: the strategy alone, the mix without EVs, what it's read
 });
 
 // Study in a fake page (as runouts.test.js's), its solver answering `node` and, for a turn, `quick` at once first;
-// `hold` keeps each request open until resolved by hand
-async function studyPage(quick, live) {
+// `hold` keeps each request open until resolved by hand; `globals`: the page's (SPEED: the speed it opens at)
+async function studyPage(quick, live, globals = {}) {
   const vm = require("node:vm"), fs = require("node:fs");
   const body = { innerHTML: "", querySelector: (s) => s === ".sy-stage" ? body : null, insertAdjacentHTML(_, h) { this.innerHTML = h + this.innerHTML; } };
   const el = () => ({ dataset: {}, style: {}, hidden: true, innerHTML: "", setAttribute() {}, addEventListener() {}, appendChild: (c) => c,
@@ -463,6 +463,7 @@ async function studyPage(quick, live) {
       return p;
     } });
   ctx.window = ctx;
+  Object.assign(ctx, globals);
   vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "..", "gto", "static", "study.js"), "utf8"), ctx, { filename: "study.js" });
   const tick = () => new Promise(r => setTimeout(r, 5));
   const page = { asked, open, stopped, prefetched, tick, html: () => body.innerHTML, ctx,
@@ -519,21 +520,80 @@ test("an action played on an answer at once stops its solve; the next node's ans
   assert.deepEqual(p.stopped, [1, 2]);
 });
 
-test("a library flop's answer has its turn files fetched ahead; a live flop's or a turn's doesn't", async () => {
+test("a flop's library files: at Fast fetched once a library flop's answer is in; at Accurate before its first answer, its answer at once asked for", async () => {
   const at = { players: 6, stack: 100, board: "9c6d6c", preflop: [], flop: [], turn: [], river: [] };
-  const flopNode = (q) => q.board.length === 6 ? { ...NODE, actor: "HJ", precomputed: q.board === "9c6d6c" ? { label: "CO 3bet vs HJ" } : undefined } : { ...QUICK, approximate: undefined };
-  const p = await studyPage(null, flopNode);
+  const flopNode = (q) => q.board.length === 6 ? { ...NODE, actor: q.flop.length ? "CO" : "HJ", precomputed: q.board === "9c6d6c" ? { label: "CO 3bet vs HJ" } : undefined } : { study: "over" };
+  // Fast: the flop asked without an answer at once, its turn files fetched once its answer (a library flop's) is in
+  let p = await studyPage(null, flopNode);
   p.ctx.STUDY_AT = { state: at, spot: "3bp_co_hj" };
-  const opened = p.ctx.Study.open();
+  let opened = p.ctx.Study.open();
   await p.tick();
-  assert.equal(p.asked[0].early, false);   // (no answer at once asked for on a flop)
+  assert.deepEqual(p.asked.map(x => [x.q.flop.length, x.early]), [[0, false]]);
+  assert.equal(p.prefetched.length, 0);
   await p.land(1);
   await opened;
   assert.equal(p.prefetched.length, 1);
   assert.equal(p.prefetched[0].board, "9c6d6c");
   assert.equal(p.prefetched[0].study, true);
-  p.ctx.Study.act({ step: "0" });   // (preflop: none)
+  // the next node on the same flop: not fetched again; preflop: none, and no answer at once asked for
+  p.ctx.Study.act({ act: "0" });
   await p.tick();
   await p.land(2);
+  p.ctx.Study.act({ step: "0" });
+  await p.tick();
+  assert.deepEqual(p.asked.map(x => [x.q.flop.length, x.early]), [[0, false], [1, false], [0, false]]);
   assert.equal(p.prefetched.length, 1);
+  // a live flop at Fast: none
+  p = await studyPage(null, flopNode);
+  p.ctx.STUDY_AT = { state: { ...at, board: "Kc9d4h" }, spot: "3bp_co_hj" };
+  opened = p.ctx.Study.open();
+  await p.tick();
+  await p.land(1);
+  await opened;
+  assert.equal(p.prefetched.length, 0);
+  // Accurate: fetched before the answer lands (its entry and turn files, or the stored flops nearest it), once a
+  // flop, and the flop's requests ask for an answer at once (one read off the stored flops nearest it: none here)
+  p = await studyPage(null, flopNode, { SPEED: "accurate" });
+  p.ctx.STUDY_AT = { state: at, spot: "3bp_co_hj" };
+  opened = p.ctx.Study.open();
+  await p.tick();
+  assert.equal(p.prefetched.length, 1);
+  assert.equal(p.prefetched[0].board, "9c6d6c");
+  assert.deepEqual(p.asked.map(x => [x.q.flop.length, x.early]), [[0, true]]);
+  await p.land(1);
+  await opened;
+  p.ctx.Study.act({ act: "0" });
+  await p.tick();
+  assert.deepEqual(p.asked.map(x => [x.q.flop.length, x.early]), [[0, true], [1, true]]);
+  await p.land(2);
+  assert.equal(p.prefetched.length, 1);
+});
+
+// a flop the library doesn't store, answered at once off the stored flops most like it (Advisor._study_near): the
+// mix without EVs, what it borrowed, no solve stats of its own
+const NEAR = {
+  ...QUICK, street: "flop", board: "Kc9d4h", pot_bb: 22, stack_bb: 89,
+  approximate: { source: "near", label: "the precomputed solves of the most similar flops (Kc9d3h, Kc8d4h, Kc9c4d), by card substitution", iterations: null },
+  solver: { iterations: null, exploitability_pct: null, by: "the flop library" },
+  notes: ["read off stored flops by card substitution: no EVs or equities until the flop's own solve"],
+};
+
+test("Study on a flop the library doesn't store: the near flops' answer at once, what it borrowed, the live one replacing it", async () => {
+  assert.equal(S.approxHtml(NEAR), "Approximate, at once: the precomputed solves of the most similar flops (Kc9d3h, Kc8d4h, Kc9c4d), by card "
+    + "substitution. The flop's own solve is running and replaces it: then each hand's EVs, equities, the Breakdown and Simple.");
+  assert.deepEqual(S.viewsOf(NEAR), ["strategy"]);
+  const at = { players: 6, stack: 100, board: "Kc9d4h", preflop: [], flop: [], turn: [], river: [] };
+  const LIVE = { ...NODE, actor: "HJ", board: "Kc9d4h", precomputed: undefined, solver: { iterations: 400, solve_seconds: 2.4, exploitability_pct: 0.3 } };
+  const p = await studyPage((q) => ({ ...NEAR, actor: "HJ" }), () => LIVE, { SPEED: "accurate" });
+  p.ctx.STUDY_AT = { state: at, spot: "3bp_co_hj" };
+  const opened = p.ctx.Study.open();
+  await p.tick();
+  assert.deepEqual(p.asked.map(x => x.early), [true]);
+  assert.match(p.html(), /Approximate, at once: the flop's own solve is running/);
+  assert.match(p.html(), /most similar flops \(Kc9d3h, Kc8d4h, Kc9c4d\), by card substitution\. The flop's own solve/);
+  assert.doesNotMatch(p.html(), /iterations, |null|NaN|undefined|EV: bb won/);
+  await p.land(1);
+  await opened;
+  assert.doesNotMatch(p.html(), /Approximate/);
+  assert.match(p.html(), /Solved live in 2.4 s/);
 });

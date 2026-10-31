@@ -373,9 +373,10 @@
   }
 
   // an answer at once (Advisor.instant on a library flop's turn): what it's read off, while the node's own solve runs
+  // (a stored turn: the flop solve's stats; a flop read off the stored flops most like it: what it borrowed, no stats)
   function approxHtml(res) {
     const a = res.approximate || {}, s = res.solver || {};
-    return `Approximate, at once: ${esc(a.label || "")} (${s.iterations} iterations, ${num(s.exploitability_pct)}% of the pot from equilibrium on the flop). `
+    return `Approximate, at once: ${esc(a.label || "")}${s.iterations != null ? ` (${s.iterations} iterations, ${num(s.exploitability_pct)}% of the pot from equilibrium on the flop)` : ""}. `
       + `The ${esc(res.street)}'s own solve is running and replaces it: then each hand's EVs, equities, the Breakdown and Simple.`;
   }
 
@@ -485,6 +486,7 @@
   // "approximate"), shown meanwhile; the request's own answer replaces it
   const early = new Map();
   let asking = null;   // the request go() is showing
+  const fetched = new Set();   // the flops whose library files were asked ahead (studyPrefetch)
   const quick = () => busy && res && res.approximate && res.key === asking;   // (its answer at once shown, solving on)
   const ask = (st, onPartial) => typeof globalThis.studyAsk === "function" ? globalThis.studyAsk(st, onPartial) : Promise.reject(new Error("no solver"));
   const answer = (key, atOnce = false) => {
@@ -516,9 +518,16 @@
     const key = JSON.stringify(request(state, ST.speed)), g = ++gen;
     if (left && stopFn && left !== answers.get(key)) stops.push(stopFn(left.req));
     if (stops.length) { await Promise.all(stops); if (g !== gen) return; }
-    // (an answer at once is asked for on a turn only: a library flop's stored turn is the one there is)
+    // (a flop's library files fetched ahead, once a board: its entry and turn files, or the stored flops nearest it;
+    // before the answer at Accurate and on a turn or river, else once a library flop's answer is in: Fast's flop
+    // solve is about as quick as the stored flops' fetch and read, so it asks for no answer at once and fetches none)
+    const flop = String(state.board || "").slice(0, 6), n = String(state.board || "").length, acc = ST.speed === "accurate";
+    const fetchAhead = () => { if (flop.length === 6 && !fetched.has(flop) && typeof globalThis.studyPrefetch === "function" && globalThis.studyPrefetch(request(state, ST.speed))) fetched.add(flop); };
+    if (acc || n > 6) fetchAhead();
+    // (an answer at once is asked for on a turn, a library flop's stored turn, and at Accurate on a flop, read off the
+    // stored flops nearest it)
     asking = key;
-    answer(key, String(state.board || "").length === 8);
+    answer(key, n === 8 || (n === 6 && acc));
     busy = true;
     if (early.has(key)) { res = { ...early.get(key), key }; colors(); }   // (back at a node still solving)
     draw();
@@ -530,8 +539,7 @@
     else { err = null; res = r; res.key = key; }
     colors();
     if (res && res.study === "node" && ST.brush >= res.grid.actions.length) ST.brush = 0;
-    // (a library flop: its stored turns fetched ahead, for the turns' answers at once)
-    if (res && res.precomputed && res.street === "flop" && typeof globalThis.studyPrefetch === "function") globalThis.studyPrefetch(request(state, ST.speed));
+    if (res && res.precomputed && res.street === "flop") fetchAhead();   // (its turn files, for the turns' answers at once)
     draw();
   }
   // the turn or river report at a closed flop or turn, shown under the deal box: first from what's in hand
@@ -632,7 +640,8 @@
     if (view === "simple") return h + `<div class="sy-simple"></div></div><div class="sy-right">${actionsHtml(r, ui)}</div></div><div class="sy-note">${solverHtml(res)}</div>`;
     h += view === "breakdown" ? `<div class="sy-bd"></div>` : gridHtml(r, ui);
     h += `</div><div class="sy-right">${actionsHtml(r, ui)}<div class="sy-detail">${view === "breakdown" ? "" : detailHtml(r, ui, cls)}</div></div></div>`;
-    h += `<div class="sy-note">${solverHtml(res)} ${pre ? "" : `EV: bb won from here relative to folding now${res.tournament ? " (a tournament's: in prize equity, as chips worth as much)" : ""}. ${res.range_eq == null ? (res.multiway ? "No equity 3-way before the river." : "")
+    // (no EV line under an answer at once without EVs: the stored flops', a format-1 turn file's)
+    h += `<div class="sy-note">${solverHtml(res)} ${pre || (res.approximate && res.range_ev_bb == null) ? "" : `EV: bb won from here relative to folding now${res.tournament ? " (a tournament's: in prize equity, as chips worth as much)" : ""}. ${res.range_eq == null ? (res.multiway ? "No equity 3-way before the river." : "")
       : res.multiway ? `Equity: the share of the pot at showdown against ${esc(res.opponent)}'s ranges. EQR: EV over equity × pot.` : `Equity: against ${esc(res.opponent)}'s range with the rest of the board dealt. EQR: EV over equity × pot.`}`}`
       + `${(res.notes || []).length ? `<br>${res.notes.map(esc).join("<br>")}` : ""}</div>`;
     return h;

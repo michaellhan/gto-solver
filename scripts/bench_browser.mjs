@@ -166,6 +166,15 @@ const SPOTS = {
   "study-flop-3bp-sb": base({ board: "Kc3d2h", preflop: BB_3BET_SB, study: true }),
   "study-turn-3bp-sb": base({ board: "Kc3d2hQs", preflop: BB_3BET_SB, flop: [X("SB"), B("BB", 6.5), C("SB")], study: true }),
   "study-turn-3bp-sb-ip": base({ board: "Kc3d2hQs", preflop: BB_3BET_SB, flop: [X("SB"), B("BB", 6.5), C("SB")], turn: [X("SB")], study: true }),
+  // Study's flop where the library doesn't store it (--early: read off the stored flops most like it, Advisor.instant;
+  // --prefetch 0: those fetched ahead as the request is sent, as study.js does before a flop's first answer): HJ vs CO
+  // (552 flops stored) first to act, and in position after a check on 8c7d5h (the opener checks all of it there);
+  // BB 3bets the HJ (no spot: BB 3bet vs CO's flops); 80bb BTN vs BB (its 100bb entry of the flop)
+  "study-flop-near": base({ board: "KhJd6c", preflop: HJ_CO, study: true }),
+  "study-flop-near-x": base({ board: "8c7d5h", preflop: HJ_CO, flop: [X("HJ")], study: true }),
+  "study-flop-near-3bp": base({ board: "KhJd6c", preflop: BB_3BET_HJ, study: true }),
+  "study-flop-near-80": base({ stack: 80, board: "Ks7d2c", study: true }),
+  "study-flop-near-80-x": base({ stack: 80, board: "Ks7d2c", flop: [X("BB")], study: true }),
 };
 const STREET_IDX = { 0: 0, 3: 1, 4: 2, 5: 3 };
 const STREET_OF = { 6: "flop", 8: "turn", 10: "river" };
@@ -308,8 +317,8 @@ async function startWorker(pyodideDir, bundlePath) {
     stopAfter(ms, my);
     ctx.onmessage({ data: { id: my, state, presolve: seat } });
   });
-  const request = (state, early) => new Promise((res) => {
-    const my = ++id, t0 = performance.now();
+  const request = (state, early, from) => new Promise((res) => {   // (from: early_s counted from then)
+    const my = ++id, t0 = from ?? performance.now();
     let part = null;
     onMsg = (m) => {
       if (m.id !== my) return;
@@ -337,14 +346,16 @@ async function runSpot(w, spot, speeds) {
     const state = { ...SPOTS[spot], ...(arg("hole") ? { hole: arg("hole") } : {}), budget, prior_budget, speed,
                     ...JSON.parse(process.env.BENCH_STATE || "{}") };
     // --prefetch S: the page's prefetch as the flop is known, S seconds before the request (the time the hand takes
-    // to reach your decision)
+    // to reach your decision); --prefetch 0: sent with the request, counted in its time (Study's, before a flop's
+    // first answer)
+    const tp = performance.now();
     if (arg("prefetch") && state.board.length >= 6) {
       w.prefetch({ ...state, board: state.board.slice(0, 6), flop: [], turn: [], river: [] });
       await new Promise((r) => setTimeout(r, 1000 * +arg("prefetch")));
     }
     const [x0, a0] = [w.ctx.libFetches, w.ctx.aheadFetches];
     // --gap G: the opponent's move entered G s after it became theirs (--presolve: the worker presolving meanwhile)
-    let t0 = performance.now(), pre = null;
+    let t0 = arg("prefetch") === "0" ? tp : performance.now(), pre = null;
     const gap = arg("gap") == null ? null : +arg("gap");
     if (gap != null) {
       const st = STREET_OF[state.board.length], line = state[st] || [], last = line.at(-1);
@@ -354,7 +365,7 @@ async function runSpot(w, spot, speeds) {
       if (left > 0) await new Promise((r) => setTimeout(r, left));
       t0 += gap * 1000;   // (the time to the answer counts from the move)
     }
-    const m = await w.request(state, flag("early"));
+    const m = await w.request(state, flag("early"), t0);
     const wall = (performance.now() - t0) / 1000;
     const r = m.result || {}, s = r.solver || {};
     const est = pageBudget(state, speed, fastSeconds);

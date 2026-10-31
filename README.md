@@ -291,7 +291,14 @@ of the pot), the range's frequency and combos per action, the opponent's range, 
 and the range's EVs where the turn file holds them (format 2; strategies only from a format-1 file, as the site's
 are). The turn's solve replaces it when it lands, with every hand's EVs and equities, its own sizes, the Breakdown and
 Simple, as before. An action played on the approximate answer stops that solve and goes on at once (the next node's
-answer at once first, where the file has it); Study fetches a library flop's turn files when it answers the flop.
+answer at once first, where the file has it). At Accurate a flop the library doesn't store (a library spot's other
+flops, a heads-up pot it holds no spot for, another stack depth: the advice's approximate flops) shows at once the
+same way, read off the stored flops most like it for every combo, with the flops, or the spot and depth it borrowed,
+named (KhJd6c, HJ vs CO: "the precomputed solves of the most similar flops (KhJd5c, KhJd7c, KhQd6c), by card
+substitution"), while the flop's own solve runs (0.45 s in the browser on one thread, where the solve takes 2-4 s);
+no EVs or equities until it lands. Fast's flop solve is about as quick as that, so Fast waits for it as before. At
+Accurate Study fetches the library files a flop reads as it asks for the flop's first answer, all at once (its entry
+and turn files, or the stored flops nearest it); at Fast a library flop's turn files once its answer is in.
 Preflop it shows the charts' mix (no EVs or equities). After the flop it browses heads-up, 3-way and 4-way pots (a pot
 where 5+ players saw the flop is refused; a 4-way one by the 4-player solve, N-player pots in How it works). In a 3-way pot the toggle has each opponent (their ranges and combos), and the
 answer is the 3-player solve's: on the [3-way library](#precomputed-3-way-flop-library)'s flops their checked-to
@@ -655,8 +662,12 @@ flop's turn off its stored turn file where it holds the line, solving nothing: t
 `"approximate": {"source": "store", "label", "iterations"}`, the stored tree's actions (check, bet 75%, all-in), `ev_bb`
 and `range_ev_bb` from a format-2 file (else null), per hand class and combo the mix only (`ev`, `evm`, `eq` and each
 combo's EVs and equity null, `range_eq` too) and `"solver": {"by": "the flop library", "iterations",
-"exploitability_pct"}` (the flop solve's); `null` anywhere else (facing a turn bet, the river, a flop without a turn
-file, a tournament) and once the turn's own solve is in hand (settled).
+"exploitability_pct"}` (the flop solve's); on a library spot's flop the library doesn't store (or a heads-up pot
+read off the spot nearest it, `instant_from_near`'s), the flop's node read off the stored flops most like it, with
+`"approximate": {"source": "near", "label", "iterations": null}` (the label names the flops, or the spot and the depth
+borrowed), the tree's sizes, no EVs and `"solver": {"by": "the flop library", "iterations": null,
+"exploitability_pct": null}`; `null` anywhere else (facing a turn bet, the river, a flop without a turn file, a line
+the stored flops take less than 10% of the time, a tournament) and once the street's own solve is in hand (settled).
 
 `"opponents": "pool"` (the page's Opponents: Pool toggle) is exploit mode: opponents play like a
 typical player pool instead of GTO. Preflop, hero's calls and raises are re-drawn against the pool's
@@ -1872,6 +1883,35 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   Fast solve gives up 0.006% (natively; 0.55-0.72 s in the browser above, Accurate 3.4-4.7 s). So the solve stays
   automatic and the stored answer is what Study shows while it runs; an action played on it stops the solve, and the
   next node's request resumes it where it stopped (after a check the in-position player's stored answer first).
+* **Study's flop where the library doesn't store it** (`Advisor._study_near`, `_near_label`; flop_approx's kept
+  prediction, `PRED_KEEP`; study.js asks for it at Accurate). Study's flop on one of the 1203 flops a library spot
+  doesn't store, a heads-up pot read off the nearest spot or another stack depth showed the progress bar until the
+  flop's live solve answered. At Accurate the stored flops most like it now answer at once for the whole range, as the
+  advice's approximate flop does for one hand (`instant_from_near`, below; the same mix for each combo), marked
+  approximate with the flops or the spot and depth borrowed, and the live solve replaces it.
+  `scripts/bench_browser.mjs --early --prefetch 0` (Pyodide, one thread, a fresh worker a row, 300 ms a library file;
+  seconds to the first answer, before -> with the answer at once / to the live solve):
+
+  | Study's flop (one run each) | Accurate | Fast (unchanged) | Fast had it asked |
+  |---|---|---|---|
+  | HJ vs CO, KhJd6c (KhJd5c, KhJd7c, KhQd6c): HJ first | 2.81 -> 0.45 / 3.00 | 0.93 | 0.44 / 1.31 |
+  | ... 8c7d5h (8c7d4h, 8c7d6h, 8c6d5h): CO after HJ's check | 2.67 -> 0.45 / 3.08 | 0.93 | 0.45 / 1.32 |
+  | BB 3bets HJ (BB 3bet vs CO's flops), KhJd6c: BB first | 2.20 -> 0.45 / 2.60 | 0.50 | 0.45 / 0.91 |
+  | 80bb BTN vs BB (its 100bb entry of the flop), Ks7d2c: BB first | 3.55 -> 0.47 / 4.01 | 1.24 | 0.48 / 1.69 |
+
+  The answer at once waits for the stored flops' entries (fetched together as the request is sent: 300 ms here,
+  130-670 ms an entry from the CDN) and reads them in ~0.15 s, and the live solve starts that much later (+0.2-0.5 s).
+  At Fast that is about what the live solve takes (0.5-1.2 s on one thread, less on the worker's threads), so Fast
+  asks for none and fetches nothing ahead (a library flop's turn files once its answer is in, as before). Its
+  quality is the advice's approximate flop's (below: 0.11-0.18% of the pot given up per flop on average, median
+  0.05-0.07, facing a bet ~0.4), so the live solve stays automatic. The whole range made the hand class test (a
+  combo's images that hold its hand class) categorize every combo on four flops, 0.17 s natively; made for the combos
+  either range holds (271 and 295 of the 1326 on HJ vs CO's two flops above; the same mixes), 0.06 s, and the flop's
+  next node (played on the answer at once, its solve stopped) reads that prediction again, 0.01-0.02 s. A library
+  flop answers as quickly with its entry and turn files fetched together ahead (CO 3bet vs HJ 8c5d3h, BB 3bet vs SB
+  Kc3d2h: 0.49-0.52 s either way). Advise, instant and Study JSON identical to main (16 cases: the stored turn's eight, the
+  advice's approximate flops first to act and after a check, at a pot read off another spot and another depth, Study's
+  instant where it answers nothing).
 * **A library spot's flop the library doesn't store** (`instant_from_near`, `NEAR_UNTIL`; `gto/flop_approx.py`;
   `Advisor.prefetch`). The flatted opens and the 3bet pots store 552 of the 1755 flops; on the other 1203 (10.2
   points of the heads-up flop decisions: Precomputed flop library, Coverage) the page had nothing to show until the

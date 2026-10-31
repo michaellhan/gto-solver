@@ -13,6 +13,7 @@ Numpy only (the browser's worker runs it); nothing is solved.
 """
 from __future__ import annotations
 import itertools
+from collections import OrderedDict
 from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 from .cards import ALL_COMBOS, COMBO_INDEX, cards as parse_cards
@@ -208,6 +209,11 @@ class ApproxSolution:
         return all(id(n) in self.stored for n in nodes)
 
 
+# predict's answers kept per library (the last PRED_KEEP flops and combos asked: Study's next node on a flop, or the
+# advice's next decision with the same hand, reads its flop's again)
+PRED_KEEP = 4
+
+
 def approx_solution(lib, full0: np.ndarray, full1: np.ndarray, board: Sequence[int], r0: np.ndarray, r1: np.ndarray,
                     pot: float, stack: float, cfg, fetch_only: bool = False,
                     seats: Optional[Sequence[str]] = None,
@@ -246,12 +252,23 @@ def approx_solution(lib, full0: np.ndarray, full1: np.ndarray, board: Sequence[i
     if not src or fetch_only:
         return None
     cmap = fl.combo_map(smap)                       # actual combo -> canonical combo
-    combos = None if hole is None else [int(cmap[COMBO_INDEX[(min(hole), max(hole))]])]
-    pred = predict([(e, m, w) for e, m, w, _, _ in src],
-                   board=list(canon) if any(d > 0 for *_, d in src) else None, combos=combos)
     bm = np.prod([1.0 - MEMBER_FULL[c] for c in board], axis=0)
     r0f, r1f = r0 * bm, r1 * bm
     active = np.nonzero((r0f > 0) | (r1f > 0))[0]
+    # the hand class test made for hero's combo, else for every combo either range holds (the tree holds no other:
+    # Study's whole range, a third to a fifth of them); predict's answer kept for the flop's next node (PRED_KEEP)
+    combos = np.unique(cmap[active]) if hole is None else np.array([cmap[COMBO_INDEX[(min(hole), max(hole))]]])
+    key = (spot["id"], fl.cards_str(canon), tuple((nm, d) for *_, nm, d in src), combos.tobytes())
+    kept = lib.__dict__.setdefault("_approx_pred", OrderedDict())
+    pred = kept.get(key)
+    if pred is None:
+        pred = predict([(e, m, w) for e, m, w, _, _ in src],
+                       board=list(canon) if any(d > 0 for *_, d in src) else None, combos=combos)
+        kept[key] = pred
+        while len(kept) > PRED_KEEP:
+            kept.popitem(last=False)
+    else:
+        kept.move_to_end(key)
     tcfg = cfg.copy()
     tcfg.depth = 1
     ctx = SimpleNamespace(active=active, n=len(active), cfg=tcfg, root_len=3)
