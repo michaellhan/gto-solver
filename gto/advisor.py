@@ -935,11 +935,10 @@ def _street_rank(board: tuple):
 def _street_info(board: tuple):
     """(strength averaged over runouts, combos strongest first, bluff order) on this board (see
     _bluff_order); -1 = blocked."""
-    from .evaluator import eval_board
+    from .evaluator import eval_boards
     rng = random.Random(sum(c * 53 ** i for i, c in enumerate(board)))
     avail = [c for c in range(52) if c not in board]
     tot = np.zeros(N_COMBOS); cnt = np.zeros(N_COMBOS)
-    sts = []
     # Every turn card twice from the flop (a random river each), every river from the turn; strength as a
     # percentile of the live combos on each runout, averaged. 24 random runouts of raw strength ranked
     # K5s and K9o above AA on K72 (two-pair runouts weigh more in raw strength than an overpair holding).
@@ -949,15 +948,20 @@ def _street_info(board: tuple):
         runs = [(c,) for c in avail]
     else:
         runs = [(t, rng.choice([c for c in avail if c != t])) for t in avail for _ in range(2)]
-    for run in runs:
-        s = eval_board(list(board) + list(run))
-        ok = s >= 0
-        pct = np.zeros(N_COMBOS)
-        srt = np.sort(s[ok])
-        mid = (np.searchsorted(srt, s[ok], "left") + np.searchsorted(srt, s[ok], "right") - 1) / 2.0   # ties share a rank
-        pct[ok] = mid / max(ok.sum() - 1, 1)
-        tot[ok] += pct[ok]; cnt[ok] += 1
-        sts.append(s)
+    # (every runout's strengths at once, and each live combo's rank among its runout's from a count of each strength:
+    # the live combos below it and up to it, a sorted array's searchsorted left and right, ties sharing a rank; the
+    # same numbers as a runout at a time, in a few numpy calls where that took ~10 a runout: 20 ms natively a turn)
+    S = eval_boards([list(board) + list(run) for run in runs])          # (runs, combos): 1..7462, -1 blocked
+    ok = S >= 0
+    nr, top = len(runs), 7463
+    at = np.arange(nr)[:, None] * top + S
+    upto = np.cumsum(np.bincount(at[ok], minlength=nr * top).reshape(nr, top), axis=1).ravel()
+    mid = (upto[np.where(ok, at - 1, 0)] + upto[np.where(ok, at, 0)] - 1) / 2.0
+    live = ok.sum(axis=1)
+    for j in range(nr):
+        o = ok[j]
+        tot[o] += mid[j][o] / max(live[j] - 1, 1); cnt[o] += 1
+    sts = list(S)
     sc = np.where(cnt > 0, tot / np.maximum(cnt, 1), -1.0)
     rank = np.argsort(-sc)
     return sc, rank, _bluff_order(sts, rank, sc)

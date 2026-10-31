@@ -367,6 +367,7 @@ class Program:
             self.inv[ctx.n] = ctx.n
         self._pc = {}            # id(solver array) -> its columns laid out by window (_cols)
         self.runs = []           # (start, end) of the flat buffers' combo-wide stretches (their rows laid out so)
+        self._plain = set()      # offsets of the flat buffers a download left in the solver's order (_get)
         self._rows = set()
         self.games = []          # the deferred bucket games' entries (records)
         self._keep = []          # the solver's arrays the core reads in place (batched leaves' M) and their trims
@@ -450,12 +451,23 @@ class Program:
         """A flat buffer into the arena, its combo-wide stretches' rows laid out by window there (core_permute)."""
         self.L.write(off, flat)
         self._permute(off, 0)
+        self._plain.discard(off)
 
     def _get(self, off: int, flat: np.ndarray):
-        """The arena's buffer back into `flat` in the solver's order (the arena's laid out again as it was)."""
+        """The arena's buffer back into `flat` in the solver's order. The arena's is left in that order (_plain), not
+        laid out again: the next call that reads it uploads it first (run's and evaluate's _program), and _laid lays out
+        any left so (a pass over each buffer saved at each download: a turn's regrets and sums ~60 MB on threads)."""
         self._permute(off, 1)
         self.L.read(off, flat)
-        self._permute(off, 0)
+        if self.runs:
+            self._plain.add(off)
+
+    def _laid(self, *offs):
+        """The buffers at offs laid out by window again where a download left them in the solver's order (_get)."""
+        for off in offs:
+            if off in self._plain:
+                self._permute(off, 0)
+                self._plain.discard(off)
 
     def _permute(self, off: int, inverse: int):
         for s0, e0 in self.runs:
@@ -746,6 +758,7 @@ class Program:
         return at
 
     def iterate(self, k: int, factors):
+        self._laid(self.reg, self.ss)
         f = np.array(factors, dtype=np.float32).reshape(-1)
         self.L.write(self.fac, f)
         if self.L.run(self.prog, k, self.fac) != k:
@@ -892,6 +905,7 @@ def _evaluate(L, solver, jobs):
             if r.size != n:
                 return None
             L.write(off, r if perm is None else r[perm])
+        prog._laid(prog.ss)     # (an evaluation reads the sums, not the regrets: core_eval)
         if L.eval(prog.prog, at, p, prog.ev, prog.ev + 4 * n, prog.ev + 8 * n, md) != 0:
             return None
         u = np.empty((1, n), dtype=np.float32)

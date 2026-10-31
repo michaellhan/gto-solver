@@ -7,6 +7,7 @@ around their crate; build it first, see its Cargo.toml), the same ranges, pot an
     python scripts/bench_postflop_solver.py turn --boards 3
     python scripts/bench_postflop_solver.py flop [--target 0.15] srp_btn_bb:Kc7d2h 3bp_bb_btn:Tc2d2c ...
     python scripts/bench_postflop_solver.py summary         # the records so far, as tables
+    python scripts/bench_postflop_solver.py periter [--iters 300]   # ms an iteration, one thread each, same tree
 
 river, turn: the spots the Advisor solves in a hand. BTN vs BB, CO vs BB and a BB vs BTN 3bet pot, random flops of the
 flop library with lines its strategy plays often (check-check where both checks are common, and the commonest c-bet
@@ -25,6 +26,11 @@ their full game of the library's tree (every turn and river card, where the entr
 blind on the turn's boards, or in 3bet pots dealt by buckets), per player as above. Their flop game needs ~5 GB
 (compressed memory) and minutes a solve; scripts/bench_flop_abstraction.py measures other flop models the same way.
 
+periter: the cost of an iteration alone, each solver on one thread on the same tree and ranges (the Advisor's Fast
+solve of the browser bench's turn and river spots): ours in the compiled core (natively), theirs in the harness's "time"
+mode (--iters iterations with no exploitability read between them, then one read). Their game deals every river card
+where ours plays a turn's river by classes (13 on a rainbow turn against 48 cards), so on a turn an iteration of
+theirs does ~3.7x the work; a river is the same game.
 Each record is printed and appended to reports/postflop_solver/<mode>.jsonl. Times are wall seconds on this machine;
 theirs use --threads (rayon; 6, or RAYON_NUM_THREADS when set; records before their_threads used every core) unless
 noted, ours what the Advisor uses.
@@ -270,6 +276,57 @@ def bench_street(street, n_boards, speeds, target, seed):
                     write(street, rec)
 
 
+PERITER_SPOTS = {   # (the browser bench's: scripts/bench_browser.mjs)
+    "turn": ("UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:c", "BB:x,BTN:b1.8,BB:c", "", "Ks7d2cTh"),
+    "turn-x": ("UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:c", "BB:x,BTN:x", "", "Ks7d2cTh"),
+    "turn-3bp": ("UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:r10,BTN:c", "BB:x,BTN:b6.8,BB:c", "", "Ks7d2cTh"),
+    "river": ("UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:c", "BB:x,BTN:b1.8,BB:c", "BB:x,BTN:b6,BB:c", "Ks7d2cTh5s"),
+    "river-x": ("UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:c", "BB:x,BTN:x", "BB:x,BTN:x", "Ks7d2cTh5s"),
+    "river-3bp": ("UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:r10,BTN:c", "BB:x,BTN:b6.8,BB:c", "BB:x,BTN:b15,BB:c", "Ks7d2cTh5s"),
+}
+
+
+def bench_periter(names, iters, warm=20):
+    """ms an iteration of ours (the compiled core, natively, one thread) and theirs (one thread) on the Advisor's
+    tree and ranges for each of PERITER_SPOTS, and each one's exploitability after `iters` iterations."""
+    from gto import core, solver as S
+    core.threads(1)
+    for name in names:
+        pre, flop, turn, board = PERITER_SPOTS[name]
+        nb = len(parse_cards(board))
+        st = {"players": 6, "bb": 1, "stack": 100, "board": board, "hero": "BB", "hole": "QhJh",
+              "preflop": parse_actions(pre), "flop": parse_actions(flop), "turn": parse_actions(turn), "river": []}
+        if set(parse_cards("QhJh")) & set(parse_cards(board)):
+            st["hole"] = "2h2d"
+        adv = native.advisor("fast")
+        adv.advise(st)
+        keys = [k for k in adv._cache if len(k[2]) == nb and adv._cache[k] is not None]
+        if not keys:
+            print("skipped", name, flush=True)
+            continue
+        k = keys[-1]
+        sol = adv._cache[k]
+        board_t = tuple(k[2])
+        pot, stack, bets, to_act, n_raises = k[3:8]
+        f0, f1 = full_of(sol.ctx.active, sol.r0), full_of(sol.ctx.active, sol.r1)
+        ctx, active, r0f, r1f, dead = S._spot(board_t, f0, f1, sol.ctx.cfg, ())
+        root = S.TreeBuilder(ctx, dead=list(dead)).build(board_t, pot, stack, bets, to_act, n_raises)
+        r0, r1 = r0f[active], r1f[active]
+        ctx.root_reach = (r0, r1)
+        sv = S.Solver(ctx, root, dead)
+        sv.run(r0, r1, time_budget=1e9, max_iters=warm, min_iters=1)
+        t = time.perf_counter()
+        sv.run(r0, r1, time_budget=1e9, max_iters=iters, min_iters=1)
+        ours_ms = (time.perf_counter() - t) / (iters - warm) * 1e3
+        ours_expl = sv.exploitability(r0, r1)
+        th = run(dict(spec(board_t, f0, f1, pot, stack, root), mode="time", iters=iters), threads=1)
+        rec = {"spot": name, "board": cards_str(board_t), "iters": iters, "n": ctx.n,
+               "combos": [int((r0 > 0).sum()), int((r1 > 0).sum())], "ours_ms": round(ours_ms, 4),
+               "ours_expl": round(float(ours_expl), 4), "their_ms": round(th["iter_secs"] / iters * 1e3, 4),
+               "their_expl": round(th["expl_pct"], 4)}
+        write("periter", rec)
+
+
 def stored_nodes(ls, full_root):
     """(path strings, the full tree's node, the library's strategy, player) of every stored decision of an entry."""
     res = []
@@ -363,7 +420,7 @@ def summary():
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("mode", choices=("river", "turn", "flop", "summary"))
+    ap.add_argument("mode", choices=("river", "turn", "flop", "summary", "periter"))
     ap.add_argument("jobs", nargs="*", help="flop: spot:flop pairs (a flop the spot's library entry holds)")
     ap.add_argument("--boards", type=int, default=3, help="river/turn: random flops per spot")
     ap.add_argument("--speeds", default="fast,accurate")
@@ -371,12 +428,15 @@ if __name__ == "__main__":
                     help="their solves' exploitability, %% of the pot (river 0.005, turn 0.05, flop 0.15)")
     ap.add_argument("--seed", type=int, default=5)
     ap.add_argument("--threads", type=int, default=THREADS, help="their solves' threads (rayon)")
+    ap.add_argument("--iters", type=int, default=300, help="periter: iterations each")
     a = ap.parse_intermixed_args()
     THREADS = a.threads
     if a.mode == "summary":
         sys.exit(summary())
     if not os.path.exists(BIN):
         sys.exit(f"no harness at {BIN}: build scripts/pfbench (its Cargo.toml) or set PFBENCH")
+    if a.mode == "periter":
+        sys.exit(bench_periter(a.jobs or list(PERITER_SPOTS), a.iters))
     target = a.target if a.target is not None else {"river": 0.005, "turn": 0.05, "flop": 0.15}[a.mode]
     if a.mode == "flop":
         bench_flop(a.jobs, target)

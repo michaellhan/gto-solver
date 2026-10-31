@@ -161,7 +161,19 @@ fn main() {
     let pot = spec.pot as f32;
     let (mem_c, _) = (game.memory_usage().1, ());
     let mut out = json!({"mem_gb": (if spec.compress { mem_c } else { mem }) as f64 / 1e9});
-    if spec.mode == "solve" {
+    if spec.mode == "time" {
+        // iters iterations with no exploitability read between them (per-iteration cost), then one read
+        game.back_to_root();
+        let t = std::time::Instant::now();
+        for it in 0..spec.iters {
+            solve_step(&game, it);
+        }
+        let secs = t.elapsed().as_secs_f64();
+        let expl = compute_exploitability(&game);
+        out["iters"] = json!(spec.iters);
+        out["iter_secs"] = json!(secs);
+        out["expl_pct"] = json!(expl / pot * 100.0);
+    } else if spec.mode == "solve" {
         // node locks (any node; root_lock is the root's): the rest is solved around them
         for l in spec.locks.iter().chain(spec.root_lock.iter()) {
             apply_lock(&mut game, l);

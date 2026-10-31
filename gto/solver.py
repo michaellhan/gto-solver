@@ -43,12 +43,13 @@ def _matvec(M, x):
 # outside a player's range has no reach, so its strategies never change anything, and its regrets, sums and EVs stay 0
 # (the compiled core lays each player's combos out as a window: gto/core.py, core/gtocore.c). GTO_WINDOWS=0: off
 WINDOWS = os.environ.get("GTO_WINDOWS", "1") != "0"
-# ... where that leaves out enough to pay: the two players' combos over 0.8 of the tree's on average, none. A turn's
-# windows hold every river class's images of the ranges (0.95 / 0.81 of the combos on the Advisor's turns after a
-# c-bet, ranges 0.70 / 0.56), the same ms an iteration natively on 8 threads, and laying the buffers out by window
-# costs each upload and download a little (core_permute: +4.6 / +8.6 ms on a limped turn's 31 MB); a limped turn's
-# windows (0.56 / 0.82) 1.10x, live flops' (0.42 / 0.76) 1.19-1.23x
-WINDOW_MAX = 0.8
+# ... where that leaves out enough to pay: the two players' combos over 0.9 of the tree's on average, none (laying the
+# buffers out by window costs each upload and download a little: core_permute, +4.6 / +8.6 ms on a limped turn's
+# 31 MB). A turn's windows hold every river class's images of the ranges (0.95 / 0.81 of the combos on the Advisor's
+# turns after a c-bet, ranges 0.70 / 0.56): 5-10% less an iteration natively and in the browser, on one thread and
+# eight (README: Each player's combos alone; 0.8 left them out); a limped turn's windows (0.56 / 0.82) 1.10x, live
+# flops' (0.42 / 0.76) 1.19-1.23x
+WINDOW_MAX = 0.9
 TINY = np.float32(2.0 ** -126)   # float32's smallest normal: regret matching takes a sum under it for none (its
                                  # reciprocal can overflow, and a zero regret times inf is NaN), as the core does
 N_FULL = 1326
@@ -234,6 +235,7 @@ class Ctx:
         self._leaf: Dict[tuple, np.ndarray] = {}
         self._stacks: Dict[tuple, np.ndarray] = {}
         self._turn_picks: Dict[tuple, tuple] = {}   # flop -> (picks in draw order, order random)
+        self._cperm: Dict[tuple, tuple] = {}        # river classes -> class_perm's arrays
         self.active_list = [int(i) for i in active]
         self.root_len = 5
         self.root_reach = None     # (r0, r1) at the root, for river buckets (set by solve)
@@ -327,7 +329,13 @@ class Ctx:
         for c itself); flat is G offset by its class's index times n (one gather over (K * n)); starts: each class's
         first row; sizes: the classes' sizes. The combo space holds every active combo's images (solve() adds them); an
         image outside it (of a combo added that way, so with no reach of its own) is n in G, a zero reach column, and
-        the combo itself in flat (its utility is never used)."""
+        the combo itself in flat (its utility is never used). Once per classes: a turn tree's river nodes (one a line,
+        13 on a turn after a c-bet) share the arrays, so the windows (Solver._support) and the compiled core's program
+        (gto/core.py _classes, its uploads) take them once."""
+        key = tuple(classes)
+        hit = self._cperm.get(key)
+        if hit is not None:
+            return hit
         n = self.n
         pos = np.full(N_FULL, -1, dtype=np.intp)
         pos[self.active] = np.arange(n)
@@ -342,7 +350,8 @@ class Ctx:
         out = G < 0
         G[out] = n
         flat = np.array(cls_of, dtype=np.intp)[:, None] * n + np.where(out, np.arange(n)[None, :], G)
-        return G, flat, np.array(starts, dtype=np.intp), np.array(sizes, dtype=np.float32)
+        hit = self._cperm[key] = (G, flat, np.array(starts, dtype=np.intp), np.array(sizes, dtype=np.float32))
+        return hit
 
     def leaf_matrix(self, board: tuple, dead: set) -> np.ndarray:
         """Average showdown matrix over the remaining runout(s) from `board`."""

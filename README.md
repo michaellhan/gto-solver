@@ -1348,6 +1348,22 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   reference, is measured there: gto/native.py). The two turns where beta 0 swung late (Regret minimizer, below)
   answered at 0.99 and 1.48% of the pot and gave up 0.18-0.34; with the beta step 0.23 and 0.23, giving up 0.01-0.05.
 
+  Per iteration on one core (`periter`: the Advisor's Fast tree and ranges on Ks7d2c, BTN vs BB and BB's 3bet, 300
+  iterations each after 20, no exploitability read between them; 2026-10-30), ms, ours / theirs:
+
+  | spot | ours | theirs | exploitability after 300, % of the pot (each in its own game) |
+  |---|---|---|---|
+  | turn Th after a c-bet called | 14.5 | 54.7 | 0.117 / 0.124 |
+  | turn Th, flop checked through | 17.4 | 62.4 | 0.169 / 0.158 |
+  | turn Th, 3bet pot | 2.30 | 6.23 | 0.059 / 0.049 |
+  | river 5s after turn bets called | 0.131 | 0.212 | 0.068 / 0.064 |
+  | river 5s, checked through | 0.112 | 0.178 | 0.099 / 0.111 |
+  | river 5s, 3bet pot | 0.020 | 0.032 | 0.010 / 0.010 |
+
+  On a turn theirs deals all 48 river cards where ours plays 13 river classes, so per card dealt the two cost the same
+  (1.12 ms a class, 1.14 a card); a river is the same game in both, 1.6x cheaper an iteration here. (The 2.5x and 13x
+  theirs per core measured when this benchmark was first run were NumPy's, before the compiled core.)
+
   Flops: a library entry's stored decisions (the root, IP after a check, OOP facing a c-bet after checking) locked
   into their full game of the library's tree (every turn and river card, where the entry plays turn classes and the
   river blind on the turn's boards), the rest solved to 0.15% of the pot (their game takes 0.5-5 GB and 40-430 s on
@@ -2202,12 +2218,14 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   masked), so the fallback answers the same. Outside a player's window its regrets, sums and EVs are 0, and no answer
   shows one: every reader of a combo's mix or EV weighs it by its reach at the node (Study's combos and grid, the
   breakdown, the advice, drills and reports), which is 0 there; an evaluation with reach outside the windows runs in
-  numpy. Where the windows leave out little, none: over 0.8 of the tree's combos on average (`WINDOW_MAX`). A turn's
-  windows hold every river class's images of the ranges (0.95 / 0.81 of the combos on the Advisor's turn after a
-  c-bet, ranges 0.70 / 0.56: a suited hand's swap is offsuit), the same ms an iteration as without, and laying the
-  buffers out by window costs each upload and download a little (`core_permute`, in place a row at a time: +4.6 and
-  +8.6 ms natively on a limped turn's 31 MB of regrets and sums); those turns (and two-tone ones, 0.93 / 0.82),
-  rivers after a checked turn (0.94 / 0.76) and a 40bb flop (0.93 / 0.75) run as before, bit for bit. A limped pot's
+  numpy. Where the windows leave out little, none: over 0.9 of the tree's combos on average (`WINDOW_MAX`; 0.8 at
+  first). A turn's windows hold every river class's images of the ranges (0.95 / 0.81 of the combos on the Advisor's
+  turn after a c-bet, ranges 0.70 / 0.56: a suited hand's swap is offsuit), and laying the buffers out by window costs
+  each upload and download a little (`core_permute`, in place a row at a time: +4.6 and +8.6 ms natively on a limped
+  turn's 31 MB of regrets and sums, the download's now +5.2). Measured first at the same ms an iteration as without,
+  those turns (and two-tone ones, 0.93 / 0.82), rivers after a checked turn (0.94 / 0.76) and a 40bb flop (0.93 /
+  0.75) ran as before; with the core's other work since, their windows save 5-10% an iteration, and they take them
+  (A turn's windows, below). A limped pot's
   windows are its ranges (SB 0.42-0.56, BB 0.76-0.82), a 3bet pot's 0.75 / 0.66.
   Checked on the lanes fix's 686 sweep trees (four turns, two rivers and a flop, four ranges, full and TRIMS'
   levels), every one with its windows (`WINDOW_MAX` 1 for it): regrets and strategy sums the same bit for bit on 1,
@@ -2243,6 +2261,70 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   Tests: `tests/test_core.py` `TestWindows` (combos outside a range: their regrets, sums and EVs 0, the rest within
   rounding, core and numpy; off; none where they leave out little), `tests/test_study.py` (Study's combos and grid
   only in the range, our hand outside it). `core.wasm` 60 -> 65 KB, `core-mt.wasm` 83 -> 91 KB.
+* **A turn's windows, and less around its iterations** (`WINDOW_MAX`; `core/gtocore.c` `strategy`; `Ctx.class_perm`;
+  `gto/core.py` `Program._get`, `_laid`; `Advisor._street_info`). Profiled at one thread on the Advisor's own spots
+  (each answer's solve captured natively at Fast and replayed: `turn`, `turn-x`, `turn-2tone`, `turn-3bp`,
+  `turn-limp`, the turns' trees on threads, `river`, `river-x`, `river-3bp`, `river-limp`), a single-raised turn's
+  iteration goes to the showdowns' sums (`ranking`, 32% of the samples), the passes' own arithmetic (`cfr`, 21%),
+  regret matching (`strategy`, 19%), the folds' sums (`compat`, 16%), the other terminals (7%) and the river classes'
+  spreads (4%). Per card dealt it costs what postflop-solver's does (above), so what changed is around those:
+  - Turns take their windows (`WINDOW_MAX` 0.8 -> 0.9: a single-raised turn's 0.95 / 0.81 of the combos, two-tone
+    0.93 / 0.82; and rivers after a checked turn, 0.94 / 0.76, and a 40bb flop, 0.93 / 0.75). Natively on one
+    thread, seconds for 300 iterations (rivers 1000) and exploitability, without -> with:
+
+    | spot | seconds | % of the pot from equilibrium | ulp nudges of a range, without |
+    |---|---|---|---|
+    | `turn` | 4.15 -> 3.90 | 0.1142 -> 0.1167 | 0.1207, 0.1181 |
+    | `turn-x` | 5.31 -> 4.74 | 0.1683 -> 0.1686 | 0.1695, 0.1716 |
+    | `turn-2tone` | 6.78 -> 6.27 | 0.1524 -> 0.1498 | 0.1512, 0.1494 |
+    | `turn` (threads' tree) | 6.29 -> 5.68 | 0.1429 -> 0.1477 | |
+    | `turn-x` (threads' tree) | 7.00 -> 6.47 | 0.2103 -> 0.2103 | 0.2131, 0.2043 |
+    | `turn-2tone` (threads' tree) | 4.61 -> 4.31 | 0.0939 -> 0.0934 | 0.0906, 0.0905 |
+    | `river` | 0.11 -> 0.10 | 0.0080 -> 0.0092 | 0.0082, 0.0094 |
+    | `river-x` | 0.11 -> 0.10 | 0.0157 -> 0.0156 | 0.0156, 0.0155 |
+
+    The root's mix moves by at most 0.02-0.05 a combo and 0.08 points a range frequency, where nudging one range by
+    an ulp moves it 0.02-0.16 and 0.22: DCFR's rounding, not a bias. Natively on 8 threads (a quiet hold, two runs
+    each, alternating), ms an iteration: `turn` 3.85 / 3.85 -> 3.68 / 3.62, the threads' tree 5.48 / 5.46 -> 5.24 /
+    5.41. The spots with windows already (`turn-3bp`, `turn-limp`, `river-3bp`, `river-limp`) are the same bit for
+    bit.
+  - Regret matching in one loop an action (`strategy`): each action's regrets read once, the clipped value stored and
+    added to the sum in the same loop, the reciprocal on the last action, and the discount (player 0's regrets as
+    the second pass reads them) written back there too, where it took four loops. The same operations on each float
+    in the same order, so the same floats. Natively `turn` 15.4 -> 15.2 ms an iteration, `turn-3bp` 2.00 -> 1.96; in
+    wasm `turn` 17.4-18.5 -> 17.3-17.7.
+  - A download leaves the arena's buffers in the solver's order (`Program._get`) instead of laying them out by
+    window again: every call that reads them uploads them first, and an iteration or evaluation that doesn't lays
+    out what it reads (`_laid`). A download of `turn-limp`'s 60 MB of regrets and sums 8.7 -> 5.2 ms natively.
+  - The river classes' arrays once (`Ctx.class_perm`, cached by the classes): a turn's river nodes after a c-bet
+    (13) share one set of classes, and their gathers were built for each. Natively the turn's tree 10.7 -> 3.8 ms,
+    its program and first iteration 52 -> 36 ms; the same arrays.
+  - The street's strengths in a few numpy calls (`Advisor._street_info`: each runout's percentile ranks from one
+    `eval_boards` call, a bincount and a cumulative sum, where a loop ranked each runout): on a flop 38.7 -> 7.6 ms
+    natively, a turn 18.6 -> 3.5; the same arrays.
+
+  - In the browser (`scripts/bench_browser.mjs`, Fast, the previous tree and this one alternating; seconds to the
+    answer, at the same iterations and exploitability):
+
+    | spot | 1 thread (3 rounds) | 4 threads (2 rounds) | 8 threads (1 round) |
+    |---|---|---|---|
+    | `turn` | 3.46 / 3.64 / 4.26 -> 3.14 / 3.32 / 3.44 |  | 2.33 -> 2.09 |
+    | `turn-x` | 4.12 / 4.24 / 5.37 -> 3.85 / 3.90 / 4.06 | 4.95 / 5.49 -> 4.76 / 5.37 | 3.47 -> 3.15 |
+    | `turn-3bp` | 1.12 / 1.19 / 1.26 -> 1.11 / 1.11 / 1.14 | 1.11 / 1.13 -> 1.03 / 1.07 | 0.81 -> 0.75 |
+    | `turn-limp` |  | 4.65 / 4.96 -> 4.74 / 4.89 | 3.37 -> 3.24 |
+    | `ro-river` | 4.08 / 4.21 / 4.51 -> 3.91 / 4.22 / 3.98 |  | 3.00 -> 2.86 |
+    | `ro-turn` |  |  | 0.67 -> 0.78 |
+    | `flop-40` |  |  | 0.38 -> 0.41 |
+    | `river-40` | 2.68 / 2.76 / 3.01 -> 2.48 / 2.68 / 2.51 |  | 1.94 -> 2.20 |
+
+    On one thread the medians are 5-9% less. On the site's 8 threads (one round, a machine shared with other jobs)
+    the turns are 4-10% less; the small spots moved both ways between rounds (`river-40` 2.11 -> 1.93 in a round
+    under more load, `flop-40` 0.34 -> 0.37), and natively on 8 threads the 40bb flop's windows cost nothing (0.566
+    -> 0.562 ms an iteration; on one thread 1.46 -> 1.37).
+
+  Tests: `tests/test_core.py` `test_a_download_leaves_the_arena_in_the_solvers_order` (after a download the arena
+  holds the solver's buffers in its order; laid out again, they are an upload's; an evaluation uploads only the
+  sums; a solve run on after it is the same bit for bit). `core.wasm` 65 -> 69 KB, `core-mt.wasm` 91 -> 95 KB.
 * **A board's ranks ranked once** (`gto/evaluator.py` `eval_boards`, `_plain`). A program's showdowns (and numpy's
   tables) rank every combo on every five-card board the tree deals: on a flop solved live, its runouts and each turn's
   rivers, about 1200 boards. `eval_boards` ranked each one the same way. For each of the 169 pairs of hole ranks it

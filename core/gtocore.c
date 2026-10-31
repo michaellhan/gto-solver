@@ -563,27 +563,110 @@ static void discount(f32 *r, size_t m) {
 static void strategy(Lane *L, const f32 *regret, i32 lo, i32 hi, i32 A, i32 W, int avg, f32 *s, f32 *dw, int q) {
   f32 uni = (f32)(1.0 / A);
   size_t mark = L->top;
-  f32 *tot = salloc(L, sizeof(f32) * W);
+  f32 *restrict tot = salloc(L, sizeof(f32) * W);
   i32 x0 = wlo(q, W), x1 = whi(q, W);
+  f32 pos = d_pos, neg = d_neg;
+  int dm = d_mode != 0;
+  /* (each action's row in one loop: its regrets read once, the clipped value stored and summed, the regrets discounted
+     where dw asks, the last action's sum turned into its reciprocal; each float the same as loop by loop) */
   for (i32 b = lo; b < hi; b++) {
     const f32 *r = regret + (size_t)b * A * W;
     f32 *sb = s + (size_t)(b - lo) * A * W;
     for (i32 a = 0; a < A; a++) {
       const f32 *ra = r + (size_t)a * W;
-      f32 *sa = sb + (size_t)a * W;
-      if (avg)
-        for (i32 i = x0; i < x1; i++) sa[i] = ra[i];
+      f32 *restrict sa = sb + (size_t)a * W;
+      int first = a == 0, last = a == A - 1;
+      if (dw) {   /* (dw is regret itself: each entry read, then written discounted) */
+        f32 *d = dw + ((size_t)b * A + a) * W;
+        if (dm) {
+          if (first && last)
+            for (i32 i = x0; i < x1; i++) {
+              f32 v = d[i], c = v > 0 ? v : 0;
+              sa[i] = c, d[i] = c * pos;
+              tot[i] = c < 0x1p-126f ? 0 : 1 / c;
+            }
+          else if (first)
+            for (i32 i = x0; i < x1; i++) {
+              f32 v = d[i], c = v > 0 ? v : 0;
+              sa[i] = c, d[i] = c * pos, tot[i] = c;
+            }
+          else if (!last)
+            for (i32 i = x0; i < x1; i++) {
+              f32 v = d[i], c = v > 0 ? v : 0;
+              sa[i] = c, d[i] = c * pos, tot[i] += c;
+            }
+          else
+            for (i32 i = x0; i < x1; i++) {
+              f32 v = d[i], c = v > 0 ? v : 0, t = tot[i] + c;
+              sa[i] = c, d[i] = c * pos;
+              tot[i] = t < 0x1p-126f ? 0 : 1 / t;
+            }
+        } else {
+          if (first && last)
+            for (i32 i = x0; i < x1; i++) {
+              f32 v = d[i], c = v > 0 ? v : 0;
+              sa[i] = c, d[i] = v * (v > 0 ? pos : neg);
+              tot[i] = c < 0x1p-126f ? 0 : 1 / c;
+            }
+          else if (first)
+            for (i32 i = x0; i < x1; i++) {
+              f32 v = d[i], c = v > 0 ? v : 0;
+              sa[i] = c, d[i] = v * (v > 0 ? pos : neg), tot[i] = c;
+            }
+          else if (!last)
+            for (i32 i = x0; i < x1; i++) {
+              f32 v = d[i], c = v > 0 ? v : 0;
+              sa[i] = c, d[i] = v * (v > 0 ? pos : neg), tot[i] += c;
+            }
+          else
+            for (i32 i = x0; i < x1; i++) {
+              f32 v = d[i], c = v > 0 ? v : 0, t = tot[i] + c;
+              sa[i] = c, d[i] = v * (v > 0 ? pos : neg);
+              tot[i] = t < 0x1p-126f ? 0 : 1 / t;
+            }
+        }
+        continue;
+      }
+      if (avg) {
+        if (first && last)
+          for (i32 i = x0; i < x1; i++) {
+            f32 c = ra[i];
+            sa[i] = c, tot[i] = c < 0x1p-126f ? 0 : 1 / c;
+          }
+        else if (first)
+          for (i32 i = x0; i < x1; i++) sa[i] = ra[i], tot[i] = ra[i];
+        else if (!last)
+          for (i32 i = x0; i < x1; i++) sa[i] = ra[i], tot[i] += ra[i];
+        else
+          for (i32 i = x0; i < x1; i++) {
+            f32 c = ra[i], t = tot[i] + c;
+            sa[i] = c, tot[i] = t < 0x1p-126f ? 0 : 1 / t;
+          }
+        continue;
+      }
+      if (first && last)
+        for (i32 i = x0; i < x1; i++) {
+          f32 c = ra[i] > 0 ? ra[i] : 0;
+          sa[i] = c, tot[i] = c < 0x1p-126f ? 0 : 1 / c;
+        }
+      else if (first)
+        for (i32 i = x0; i < x1; i++) {
+          f32 c = ra[i] > 0 ? ra[i] : 0;
+          sa[i] = c, tot[i] = c;
+        }
+      else if (!last)
+        for (i32 i = x0; i < x1; i++) {
+          f32 c = ra[i] > 0 ? ra[i] : 0;
+          sa[i] = c, tot[i] += c;
+        }
       else
-        for (i32 i = x0; i < x1; i++) sa[i] = ra[i] > 0 ? ra[i] : 0;
-      if (dw) discount(dw + ((size_t)b * A + a) * W + x0, (size_t)(x1 - x0));
-      if (a == 0)
-        for (i32 i = x0; i < x1; i++) tot[i] = sa[i];
-      else
-        for (i32 i = x0; i < x1; i++) tot[i] += sa[i];
+        for (i32 i = x0; i < x1; i++) {
+          f32 c = ra[i] > 0 ? ra[i] : 0, t = tot[i] + c;
+          sa[i] = c, tot[i] = t < 0x1p-126f ? 0 : 1 / t;
+        }
     }
     /* (one division a combo; a sum under float32's smallest normal counts as none: its reciprocal can overflow, and
        a zero regret times inf is NaN) */
-    for (i32 i = x0; i < x1; i++) tot[i] = tot[i] < 0x1p-126f ? 0 : 1 / tot[i];
     for (i32 a = 0; a < A; a++)   /* (the product taken either way: a load under a condition doesn't vectorize) */
       for (i32 i = x0; i < x1; i++) {
         f32 v = sb[a * W + i] * tot[i];

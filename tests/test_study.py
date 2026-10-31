@@ -173,7 +173,7 @@ class TestStudy(unittest.TestCase):
         flop = [{"pos": "BB", "action": "check"}, {"pos": "BTN", "action": "bet", "to": 1.8},
                 {"pos": "BB", "action": "call"}]
         st = dict(preflop=PRE, board="Kd7c2h5s", flop=flop, turn=[{"pos": "BB", "action": "check"}], budget=1.0)
-        # (a turn's windows hold its river classes' images, too many to leave out by default: WINDOW_MAX; and a
+        # (windows whatever they leave out: WINDOW_MAX 1, where a turn's hold its river classes' images; and a
         # new advisor, whose solves are its own)
         p = mock.patch.object(solver_mod, "WINDOW_MAX", 1.0)
         p.start()

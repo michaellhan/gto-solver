@@ -763,6 +763,39 @@ class TestWindows(unittest.TestCase):
             self.assertIsNone(S._win)
             self.assertIsNone(core._prog.perm)
 
+    def test_a_download_leaves_the_arena_in_the_solvers_order(self):
+        # a download (core.run's last step) reads the buffers back and leaves the arena's in the solver's order, not
+        # laid out again: the next upload writes them anew, and an iteration or evaluation without one lays them out
+        # first (_laid), as an upload would. A solve run on after evaluations is the same bit for bit.
+        cfg = native.config("fast")
+        a = _solve("Ks7d2cTh", OOP_T, IP_T, 20, 90, cfg, 6)
+        S, prog = a.solver, core._prog
+        self.assertIs(prog.s(), S)
+        self.assertTrue(prog.runs)
+        self.assertEqual(prog._plain, {prog.reg})      # (the sums uploaded since, for the solve's root EVs)
+        raw = np.empty_like(S._regret)
+        prog.L.read(prog.reg, raw)
+        self.assertTrue(np.array_equal(raw.view(np.int32), S._regret.view(np.int32)))
+        prog._laid(prog.reg)
+        self.assertEqual(prog._plain, set())
+        laid = np.empty_like(raw)
+        prog.L.read(prog.reg, laid)
+        prog._put(prog.reg, S._regret)
+        prog.L.read(prog.reg, raw)
+        self.assertTrue(np.array_equal(raw.view(np.int32), laid.view(np.int32)))
+        self.assertFalse(np.array_equal(raw, S._regret))        # (laid out: another order)
+        # an evaluation uploads the sums and leaves the regrets as the download did
+        prog._get(prog.reg, S._regret)
+        ex = S.exploitability(a.r0, a.r1)
+        self.assertEqual(prog._plain, {prog.reg})
+        S.run(a.r0, a.r1, time_budget=1e9, max_iters=12, min_iters=1)
+        b = _solve("Ks7d2cTh", OOP_T, IP_T, 20, 90, cfg, 6)
+        self.assertEqual(b.solver.exploitability(b.r0, b.r1), ex)
+        b.solver.run(b.r0, b.r1, time_budget=1e9, max_iters=12, min_iters=1)
+        self.assertEqual((S.iters, b.solver.iters), (12, 12))
+        for x, y in ((S._regret, b.solver._regret), (S._ssum, b.solver._ssum)):
+            self.assertTrue(np.array_equal(x.view(np.int32), y.view(np.int32)))
+
     def test_none_where_they_leave_out_little(self):
         # the players' combos over WINDOW_MAX of the tree's on average: no windows (here 0.51 and 1 of them, 0.75)
         a = _solve("Ks7d2cTh", OOP_T, IP_T, 20, 90, native.config("fast"), 5)
