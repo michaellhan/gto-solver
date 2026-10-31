@@ -1,5 +1,7 @@
 """Study's preflop solves (gto/pf_study.py): the page's game read off a Study request, a solve run in chunks, the
-stored standard solves, and each node's answer, its EVs checked against a direct computation over class pairs."""
+stored standard solves, and each node's answer, its EVs checked against a direct computation over class pairs (two
+players left) and triples (three)."""
+import functools
 import itertools
 import unittest
 
@@ -8,6 +10,7 @@ import numpy as np
 from gto import pf_game as G
 from gto import pf_study as PS
 from gto.native import advisor
+from gto.pf_classes import equity_matrix
 
 RANKS = "23456789TJQKA"
 BTN_OPEN = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "fold"},
@@ -73,6 +76,110 @@ def direct_evs(sv, line):
     inv = bets[g.positions[p]] + sv.spec.ante
     ev = [(w * val(c)).sum(1) / np.maximum(w.sum(1), 1e-300) + inv for c in node.children]
     return node, {cl: [ev[a][i] for a in range(len(ev))] for i, cl in enumerate(PS.CLASSES)}
+
+
+def _path(g, s, t, stop=None):
+    """Each seat's product of its own action probabilities on the way down to node t from `stop` (the root)."""
+    P = np.ones((g.n, PS.K))
+    x = g.nodes_all[t]
+    while g.parent[x.index] >= 0 and x.index != stop:
+        par = g.nodes_all[g.parent[x.index]]
+        P[par.player] *= s[g.dec_of[par.index], g.act[x.index]]
+        x = par
+    return P
+
+
+@functools.lru_cache(maxsize=1)
+def _triples():
+    """[i, j, l] combo triples with j's and l's combos off i's cards (from W), and a class's three-way share before
+    normalising: corr x equity against each opponent."""
+    n_in = np.array([combos(c) for c in PS.CLASSES], float)
+    eq = equity_matrix()
+    return (W[:, :, None] * W[:, None, :] / n_in[:, None, None],
+            G.three_way_corr()[:, None, None] * eq[:, :, None] * eq[:, None, :])
+
+
+def direct_evs3(sv, line):
+    """Each class's EV of each action at a node three players are left at, by a sum over class triples at every
+    terminal below (each player's action probabilities on the way, from the root to the node for the opponents and
+    from the action down for all three; the payoffs: a fold's, a heads-up showdown's pot share, a three-way one's
+    share of the pot, corr x equity x equity, normalised over the three ranges reaching that terminal and times the
+    seat's realization), with no reaches, masses or counterfactual values. Card removal as the game models it: combo
+    triples with both opponents' combos disjoint from the player's, from the 1326 combos enumerated here (each
+    opponent's against the other's isn't modelled); the players folded before the node cancel out."""
+    g = sv.game
+    node, _, bets = sv.walk(line)
+    s = sv._at(node.index)[0]
+    p = node.player
+    out = {g.positions.index(x) for x, a, _ in node.line if a == "fold"}
+    o1, o2 = [q for q in range(g.n) if q != p and q not in out]
+    row = {k: r for r, k in enumerate(g.terms)}
+    hu, three = {}, {}
+    for _, S, rows, a, c, pe in g.hu:
+        sh = np.where(G.PAIR_COMPAT > 0, S / np.maximum(G.PAIR_COMPAT, 1e-300), 0.0)
+        for j, r in enumerate(rows):
+            hu[int(r)] = (sh, int(a[j]), int(c[j]), float(pe[j]))
+    if g.three is not None:
+        rows, act, fac, pe = g.three
+        for j, r in enumerate(rows):
+            three[int(r)] = ([int(x) for x in act[j]], [float(x) for x in fac[j]], float(pe[j]))
+    T3, Q = _triples()
+    P0 = _path(g, s, node.index)
+    B = T3 * P0[o1][None, :, None] * P0[o2][None, None, :]
+    inv = bets[g.positions[p]] + sv.spec.ante
+    evs = []
+    for ch in node.children:
+        num = np.zeros(PS.K)
+        for t in G.walk(ch):
+            if t.kind == "dec":
+                continue
+            r = row[t.index]
+            Pt = _path(g, s, t.index, stop=ch.index)
+            w1, w2 = Pt[o1], Pt[o2]
+            if t.kind == "fold" or not g.t_active[r, p]:
+                v = g.pay[r, p] * np.einsum("ijl,j,l->i", B, w1, w2)
+            elif r in hu:
+                sh, a, c, pe = hu[r]
+                pay = (pe * sh if a == p else pe * (1 - sh.T)) - g.inv[r, p]     # [p's class, the other's]
+                v = np.einsum("ijl,j,l,ij->i" if o1 in (a, c) else "ijl,j,l,il->i", B, w1, w2, pay)
+            else:
+                act, fac, pe = three[r]
+                Pr = _path(g, s, t.index)
+                tot = mass = 0.0
+                for k in range(3):
+                    x, y = [act[m] for m in range(3) if m != k]
+                    tot += np.einsum("ijl,i,j,l,ijl->", T3, Pr[act[k]], Pr[x], Pr[y], Q)
+                    mass += np.einsum("ijl,i,j,l->", T3, Pr[act[k]], Pr[x], Pr[y]) / 3
+                pay = pe * fac[act.index(p)] * (mass / tot if tot > 1e-300 else 1.0) * Q - g.inv[r, p]
+                v = np.einsum("ijl,j,l,ijl->i", B, w1, w2, pay)
+            num += Pt[p] * v
+        evs.append(num / np.maximum(B.sum((1, 2)), 1e-300) + inv)
+    return node, {cl: [evs[a][i] for a in range(len(evs))] for i, cl in enumerate(PS.CLASSES)}
+
+
+def check_direct(t, sv, players, max_terms=None, min_reach=1e-4, limit=None):
+    """Every node `players` (2 or 3) are left at that the solve reaches (each seat with `min_reach` of its hands;
+    the first `limit` of them in the tree's order), its answer's EVs against the direct computation's to the answer's
+    rounding; returns how many."""
+    n = 0
+    g = sv.game
+    reach = sv._values()[1]
+    for nd in G.walk(g.root):
+        if nd.kind != "dec" or g.n - sum(a == "fold" for _, a, _ in nd.line) != players or n == limit:
+            continue
+        if min(reach[nd.index, q].sum() for q in range(g.n)) < min_reach:
+            continue
+        if max_terms and sum(1 for x in G.walk(nd) if x.kind != "dec") > max_terms:
+            continue
+        line = [{"pos": x, "action": a, **({"to": v} if a not in ("fold", "call") else {})} for x, a, v in nd.line]
+        r = sv.node(line)
+        _, ev = (direct_evs if players == 2 else direct_evs3)(sv, line)
+        order = sorted(range(len(nd.names)), key=lambda a: {"raise": 0, "all-in": 0, "call": 1, "fold": 2}[nd.names[a]])
+        for cl, c in r["grid"]["cells"].items():
+            for j, a in enumerate(order):
+                t.assertAlmostEqual(c["ev"][j], ev[cl][a], delta=0.0011, msg=(line, cl))
+        n += 1
+    return n
 
 
 class TestSpec(unittest.TestCase):
@@ -207,6 +314,20 @@ def check_totals(t, r):
         t.assertAlmostEqual(share, a["freq"], delta=0.005)
 
 
+class TestThreeHanded(unittest.TestCase):
+    """A 3-handed game solved to the end (2000 iterations, ~3 s): every node it reaches, its EVs checked directly,
+    where three players are left by a sum over class triples (three-way showdowns' normalised shares included)."""
+    @classmethod
+    def setUpClass(cls):
+        cls.sv = PS.Solve(PS.Spec(players=3))
+        while not cls.sv.done:
+            cls.sv.run(30)
+
+    def test_direct(self):
+        self.assertGreater(check_direct(self, self.sv, 3), 15)
+        self.assertGreater(check_direct(self, self.sv, 2), 20)
+
+
 class TestStored(unittest.TestCase):
     """The stored 6-max solve (gto/static/pf/6max_100bb.bin): loaded, answered, its EVs checked directly where two
     players are left and against the game's own values at the first decision."""
@@ -258,6 +379,13 @@ class TestStored(unittest.TestCase):
                     self.assertAlmostEqual(c["ev"][j], ev[cl][a], delta=0.0011, msg=(line, cl))
             n += 1
         self.assertGreater(n, 20)
+
+    def test_three_way_nodes(self):
+        """Nodes three players are left at (three folded first), by the sum over class triples: the first 40 in the
+        tree's order that each seat reaches with 1% of its hands, with at most 30 terminals below (BTN, SB and BB's
+        3-way pots first). Without those limits every one of the 1,079 the solve reaches with 0.01% of each seat's
+        hands matches (~2.5 minutes)."""
+        self.assertEqual(check_direct(self, self.sv, 3, max_terms=30, min_reach=1e-2, limit=40), 40)
 
     def test_btn_open(self):
         sv = self.sv

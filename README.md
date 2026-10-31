@@ -380,7 +380,9 @@ game stops). "Preflop solve: a game you set" in Study's start menu is the same. 
 `Game._masses` takes each seat's card-removal product once a node instead of once a terminal, and einsum stands in
 for BLAS-less matmul): heads-up ~1 s, 3-handed 7.4 s (2,000 iterations, 0.69 mbb/hand a seat), 4-handed 42 s (1.23),
 6-max 0.34 s an iteration and ~5 minutes to 1.5 mbb (~800 iterations; natively 0.12 s, under 2 minutes), an
-exploitability check every 100 iterations 3.6 s. The average strategy weighs iteration t by t³ (`pf_study.AVG_POWER`;
+exploitability check every 100 iterations 3.6 s (run as the worker does, in Pyodide under Node on one thread, the 6-max
+game raked 5% capped at 4bb stopped at 800 iterations, 1.21 mbb, in 4.4 minutes; natively the stored games' settings
+from scratch at 800 and 700 iterations in 114 and 95 s). The average strategy weighs iteration t by t³ (`pf_study.AVG_POWER`;
 it was linear): the 6-max game from scratch is 7.4 / 2.3 / 1.6 / 1.3 mbb/hand a seat at 250 / 500 / 750 / 1,000
 iterations, against 18.7 / 5.8 / 3.2 / 2.2 averaged linearly (5% capped at 3bb 10.6 / 2.8 / 1.3 / 0.85 against 25.0
 / 6.9 / 3.4 / 2.1; 40bb deep 7.0 / 2.5 / 1.8 / 1.5 against 13.8 / 5.2 / 3.1 / 2.3); t⁵ was a little quicker still,
@@ -402,10 +404,20 @@ those reached by 0.0001-0.01% of hands 0.01 in median, 0.06 averaged linearly; l
 every hand it held, so its range is as before the move. Checked (`tests/test_pf_study.py`): wherever two players are
 left (every node heads-up, 829 of the stored 6-max's) each class's EVs equal a direct computation over pure class
 pairs with card-removal weights from the 1326 combos enumerated there (no reaches, masses or counterfactual values)
-to the answer's rounding, 0.0005 bb; folding is 0; at the first decision the range's EV is the game's own value
-(`Game.values`, over the chance the others' cards don't collide). With three or more players in, a three-way
-showdown's shares are normalised over the three ranges together, so a class's EV there has no pairwise form to check
-it against: those EVs are the same counterfactual arithmetic, unverified independently.
+to the answer's rounding, 0.0005 bb; and wherever three are left (every such node of a 3-handed solve, and all 1,079
+of the stored 6-max's that each seat reaches with 0.01% of its hands) a direct sum over class triples at every
+terminal below gives the same EVs to 0.0005 bb: each player's action probabilities on the way, a fold's or a heads-up
+showdown's payoff, and a three-way showdown's share of the pot (corr x equity x equity, normalised over the three
+ranges reaching that terminal, times the seat's realization), card removal from the enumerated combos. Folding is 0;
+at the first decision the range's EV is the game's own value (`Game.values`, over the chance the others' cards don't
+collide). Not checked independently: nodes four or more players are left at (a sum over four to six classes' tuples is
+too big to run; the arithmetic is the same), and the game's model itself. Its card removal is pairwise, each
+opponent's combos off the player's cards but not off each other's: counted exactly over combo triples under the same
+strategies, the EVs at the stored 6-max's 25 most played 3-way nodes (BTN, CO, HJ or UTG first in with the blinds
+behind, an open and a call facing the big blind, a squeeze) move by 0.001-0.09 bb on average (median 0.02, the worst
+class 0.9 bb), and by more where the ranges are narrow (after a jam and a call, lines played well under 0.01% of the
+time: the pairwise count weighs AA against two KK hands as 216 combo triples where there are 36). Three-way showdowns'
+shares are a measured correction to pairwise equities (`MW_CORR`, `MW_REALIZE`), not an equity count.
 
 The **All hands** menu beside the views filters the range to one made hand or draw, like GTO Wizard's filters (the
 Breakdown's categories: set, top pair by kicker, middle pair, no made hand, flush draw, open-ended, …, each with its
