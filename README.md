@@ -1751,7 +1751,10 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   marked approximate: the three nearest of the same pairing and suit pattern (`neighbours`; the ranks' summed gaps at
   most 6, `MAX_DIST`), each carried over by card substitution (`card_map`: the flop's cards onto the stored flop's,
   the other ranks in order, so KhJd6c read off KhJd5c plays a 6 as the 5 and 54 as 64), their mixes averaged per
-  combo with weights 1 / (1 + distance) (`predict`). It answers wherever an entry stores the decision (the first
+  combo with weights 1 / (1 + distance) (`predict`) over the images that hold the combo's hand class there (the made
+  hand and the draw, `breakdown.categorize`: 8h9h on KhJd6c, no pair and a backdoor straight draw, reads its images on
+  KhJd5c and KhQd6c, not the gutshot it is on KhJd7c; all of them where none does, `CLASS_EPS`; the advisor tests
+  only hero's combo, four lookups). It answers wherever an entry stores the decision (the first
   decisions, facing a bet, facing a raise of it) on the line the hand took (sizes at their nearest), until the flop's
   own solve in hand has run 50 iterations (`HU_CHECKS[0]`, from when `instant_from_own` reads it); the page names the
   flops it read. Nothing is solved for it (6-16 ms natively), and the worker fetches the three entries with the
@@ -1763,32 +1766,38 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   EV given up (`scripts/bench_flop_approx.py`: a stored flop approximated from the spot's other stored flops, each
   combo's mix priced by the entry's own EVs per action, weighted by the acting player's reach, % of the pot; per flop
   over its stored decisions weighted by how often each comes; 18 of the 2310 flops have no stored flop within 6,
-  mostly trips, and get no answer):
+  mostly trips, and get no answer; `knn3c`, the plain average `knn3` in brackets, on the library as it is now):
 
   | flops | per flop: mean / median / 90th pct / worst | first decisions: mean (90th) | facing a bet | facing a raise |
   |---|---|---|---|---|
-  | the five flatted opens (600, each from the spot's other 551) | 0.22 / 0.12 / 0.41 / 5.2 | 0.039 (0.093) | 0.57 (1.20) | |
-  | the eight 3bet pots (960) | 0.22 / 0.16 / 0.48 / 1.6 | 0.032 (0.080) | 0.54 (1.17) | 1.59 (3.38) |
-  | five vs-BB spots' flops outside the 552, from the 552 only (750: the case met) | 0.18 / 0.12 / 0.35 / 2.8 | 0.020 (0.049) | 0.66 (1.48) | |
+  | the five flatted opens (600, each from the spot's other 551) | 0.18 / 0.06 / 0.32 / 5.3 (0.24 / 0.13 / 0.42 / 5.2) | 0.037 (0.088) | 0.41 (0.86); 0.60 | |
+  | the eight 3bet pots (960) | 0.16 / 0.07 / 0.38 / 4.3 (0.24 / 0.16 / 0.50 / 4.3) | 0.029 (0.065) | 0.40 (0.91); 0.56 | 1.21 (2.78); 1.66 |
+  | five vs-BB spots' flops outside the 552, from the 552 only (750: the case met) | 0.11 / 0.05 / 0.25 / 2.8 (0.18 / 0.12 / 0.36 / 2.8) | 0.015 (0.040) | 0.43 (1.17); 0.67 | |
 
-  The bar it clears: per flop a median under 0.2% of the pot and a 90th percentile under 0.5%, first decisions
-  under 0.05. Read off the one nearest flop it gives up a third to two thirds more (per flop 0.20-0.45 against
-  0.14-0.29 on the vs-BB spots, 0.29-0.41 against 0.19-0.29 on the flatted opens); off four or six a little more than
-  off three. The worst are connected broadway boards whose straights don't carry over (KcQcJd read off KcJcTd,
-  KcTc9d and KcTc8d: their third-pot c-bet with hands that have no straight here, 5.2) and ace-high read off
-  king-high (AcKd2d, 2.8). The approximate turn answer from the flop's solve gives up 1.4-1.6% facing a bet (above).
-  Against the flop's own live solve (`scripts/bench_flop_seed.py`: 104 of these stored flops solved in the browser's
-  Fast tree natively, one thread, the same measure at the stored decisions): the approximation 0.41-0.42 (mean), the
-  solve 0.63-0.70 at 20 iterations, 0.32-0.35 at 30, 0.21 at 40, 0.12-0.13 at 60, 0.07-0.09 from 100 on (its tree's
-  own distance from the library's); better than the approximation on 40-44% of the flops at 30 iterations, 50-59% at
-  40, 68-81% at 60: hence `NEAR_UNTIL`. With the opponent free to adapt (`scripts/bench_flop_approx_lock.py`: 24
-  stored flops of six spots solved in the browser's Accurate tree, numpy, 300 iterations, then again with one
-  player's stored flop decisions locked and everything else free: that player's EV lost, % of the pot) the
-  approximation loses 0.27 a player more than the flop's own entry locked the same way (median 0.20, 90th percentile
-  0.60; in Fast's tree 0.28, 0.19, 0.62), in line with the measure above; the entry itself loses 0.94 there (1.08
-  in Fast's), what a strategy from the library's tree costs played in another: the measure's floor. In the browser
-  (`scripts/bench_browser.mjs --early`, one thread, the compiled core) the answer comes at 0.02 s and the flop's Fast
-  solve at 0.4-1.1 s (flop-near, flop-near-ip, flop-near-3bp).
+  The hand class test is better on 78% of the held-out flops by more than 0.01% of the pot, worse on 1.5% (the vs-BB
+  spots' 85% and 0.1%): an image that plays another hand there (a gutshot for a backdoor draw, a pair for no pair)
+  carried that hand's mix over. The bar it clears: per flop a median under 0.2% of the pot and a 90th percentile under
+  0.5%, first decisions under 0.05. Read off the one nearest flop (the plain average) it gives up a third to two
+  thirds more (per flop 0.20-0.45 against 0.14-0.29 on the vs-BB spots, 0.29-0.41 against 0.19-0.29 on the flatted
+  opens); off four or six a little more than off three. With the hand class test four or six give up a little less
+  than three (0.167 and 0.165 against 0.177 on six spots' 720 flops; median 0.073, 0.080 and 0.073), not worth the
+  entries more to fetch. The worst are connected broadway boards whose straights don't carry over (KcQcJd read off
+  KcJcTd, KcTc9d and KcTc8d: their third-pot c-bet with hands that have no straight here, 5.3), trips aces read off
+  trips kings (3.7-4.3) and ace-high read off king-high (AcKd2d, 2.8): the hand class test leaves them, no image
+  holding the hand's class. The approximate turn answer from the flop's solve gives up 1.4-1.6% facing a bet (above).
+  Against the flop's own live solve (measured before the hand class test, as is the lock below;
+  `scripts/bench_flop_seed.py`: 104 of these stored flops solved in the browser's Fast tree natively, one thread, the
+  same measure at the stored decisions): the approximation 0.41-0.42 (mean), the solve 0.63-0.70 at 20 iterations,
+  0.32-0.35 at 30, 0.21 at 40, 0.12-0.13 at 60, 0.07-0.09 from 100 on (its tree's own distance from the library's);
+  better than the approximation on 40-44% of the flops at 30 iterations, 50-59% at 40, 68-81% at 60: hence
+  `NEAR_UNTIL`. With the opponent free to adapt (`scripts/bench_flop_approx_lock.py`: 24 stored flops of six spots
+  solved in the browser's Accurate tree, numpy, 300 iterations, then again with one player's stored flop decisions
+  locked and everything else free: that player's EV lost, % of the pot) the approximation loses 0.27 a player more
+  than the flop's own entry locked the same way (median 0.20, 90th percentile 0.60; in Fast's tree 0.28, 0.19, 0.62),
+  in line with the measure above; the entry itself loses 0.94 there (1.08 in Fast's), what a strategy from the
+  library's tree costs played in another: the measure's floor. In the browser (`scripts/bench_browser.mjs --early`,
+  one thread, the compiled core) the answer comes at 0.02 s and the flop's Fast solve at 0.4-1.1 s (flop-near,
+  flop-near-ip, flop-near-3bp).
 * **A pot the library holds no spot for** (`flop_approx.near_spot`, `NEAR_COVER`, `NEAR_SPOT_DIST`). The HJ's and
   the UTG's opens flatted by the SB or 3bet by either blind, and the BTN's 3bet of the UTG, have no spot of their own
   (4.5% of the heads-up flop decisions): their flops were solved live with nothing shown meanwhile. They're now read
@@ -1807,30 +1816,65 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   EV given up, holding out whole spots (for each library spot, the spot `near_spot` picks with it left out of the
   index; 60 of its stored flops, the measure above priced by its own entries; per flop mean / median / 90th
   percentile, first decisions in brackets; "met": the two by how often the picked spot stores the flop, 38% of the
-  time for those on 552 flops):
+  time for those on 552 flops; the three most like it with the hand class test, 0.085-0.44 per flop before it, met
+  0.009-0.40):
 
   | held out <- read off (cover, distance) | its entry of the flop | its three most like it | met |
   |---|---|---|---|
-  | UTG vs BB <- HJ vs BB (1.00, 0.63) | 0.009 / 0.008 / 0.02 (0.003) | 0.085 / 0.067 / 0.19 (0.011) | 0.009 |
-  | CO vs BB <- BTN vs BB (0.99, 1.04) | 0.085 / 0.074 / 0.19 (0.010) | 0.139 / 0.124 / 0.24 (0.018) | 0.085 |
-  | HJ vs BB <- UTG vs BB (0.92, 0.63) | 0.269 / 0.235 / 0.46 (0.010) | 0.312 / 0.280 / 0.47 (0.017) | 0.269 |
-  | UTG vs BTN <- HJ vs CO (1.00, 0.34) | 0.011 / 0.004 / 0.03 (0.008) | 0.251 / 0.108 / 0.43 (0.041) | 0.159 |
-  | HJ vs CO <- UTG vs BTN (0.93, 0.34) | 0.117 / 0.118 / 0.24 (0.008) | 0.318 / 0.193 / 0.73 (0.041) | 0.241 |
-  | UTG vs HJ <- UTG vs BTN (0.94, 0.49) | 0.326 / 0.158 / 0.66 (0.056) | 0.438 / 0.307 / 0.71 (0.094) | 0.395 |
-  | CO vs SB <- BTN vs SB (0.91, 1.06) | 0.383 / 0.254 / 0.80 (0.036) | 0.378 / 0.312 / 0.71 (0.062) | 0.379 |
-  | HJ 3bet vs UTG <- CO 3bet vs HJ (0.95, 0.73) | 0.053 / 0.026 / 0.11 (0.016) | 0.149 / 0.093 / 0.39 (0.038) | 0.113 |
-  | SB 3bet vs CO <- SB 3bet vs BTN (0.94, 0.92) | 0.325 / 0.277 / 0.65 (0.020) | 0.343 / 0.301 / 0.52 (0.044) | 0.336 |
-  | BB 3bet vs CO <- BB 3bet vs BTN (0.95, 1.16) | 0.334 / 0.228 / 0.69 (0.026) | 0.442 / 0.368 / 0.77 (0.057) | 0.401 |
+  | UTG vs BB <- HJ vs BB (1.00, 0.63) | 0.009 / 0.008 / 0.02 (0.003) | 0.034 / 0.025 / 0.08 (0.008) | 0.009 |
+  | CO vs BB <- BTN vs BB (0.99, 1.04) | 0.085 / 0.074 / 0.19 (0.010) | 0.092 / 0.079 / 0.17 (0.015) | 0.085 |
+  | HJ vs BB <- UTG vs BB (0.92, 0.63) | 0.269 / 0.235 / 0.46 (0.010) | 0.260 / 0.213 / 0.40 (0.014) | 0.269 |
+  | UTG vs BTN <- HJ vs CO (1.00, 0.34) | 0.011 / 0.004 / 0.03 (0.008) | 0.207 / 0.068 / 0.35 (0.036) | 0.132 |
+  | HJ vs CO <- UTG vs BTN (0.93, 0.34) | 0.117 / 0.118 / 0.24 (0.008) | 0.272 / 0.151 / 0.69 (0.038) | 0.213 |
+  | UTG vs HJ <- UTG vs BTN (0.94, 0.49) | 0.326 / 0.158 / 0.66 (0.056) | 0.398 / 0.242 / 0.65 (0.091) | 0.368 |
+  | CO vs SB <- BTN vs SB (0.91, 1.06) | 0.383 / 0.254 / 0.80 (0.036) | 0.330 / 0.244 / 0.69 (0.057) | 0.347 |
+  | HJ 3bet vs UTG <- CO 3bet vs HJ (0.95, 0.73) | 0.053 / 0.026 / 0.11 (0.016) | 0.121 / 0.078 / 0.36 (0.035) | 0.095 |
+  | SB 3bet vs CO <- SB 3bet vs BTN (0.94, 0.92) | 0.325 / 0.277 / 0.65 (0.020) | 0.243 / 0.218 / 0.44 (0.037) | 0.269 |
+  | BB 3bet vs CO <- BB 3bet vs BTN (0.95, 1.16) | 0.334 / 0.228 / 0.69 (0.026) | 0.348 / 0.284 / 0.67 (0.050) | 0.342 |
 
   The bar it clears: per flop a mean under 0.45% of the pot and a 90th percentile under 0.8, first decisions under
   0.1, about the flop's live solve at 30 iterations (0.32-0.35, above); a library spot's own flops not stored are
-  0.22 (above). The other eight spots have no pick (BTN vs BB, SB vs BB, BTN vs SB, the BB's 3bet of the BTN and of
+  0.16-0.18 (above). The other eight spots have no pick (BTN vs BB, SB vs BB, BTN vs SB, the BB's 3bet of the BTN and of
   the SB, the SB's of the BTN, the BTN's of the CO, the CO's of the HJ), and the pairs under 90% cover measured gave
   up more: 1.77 (the SB's 3bet of the BTN read off its 3bet of the CO, cover 0.73), 1.47 (the BB's, 0.75), 1.20 (HJ
   vs CO off UTG vs HJ, 0.78), 1.04 (BTN vs SB off CO vs SB, 0.73), 0.66 (the CO's 3bet of the HJ off the HJ's of the
   UTG, 0.80), 0.36 (the BTN's of the CO off the CO's of the HJ, 0.77): hence `NEAR_COVER`. Ranking the candidates
   by cover before distance would read HJ vs BB off CO vs BB (0.095 against 0.269) and pick the same spot for every
   pot met; distance alone was kept.
+* **Another stack depth** (`flop_approx.near_spot`, `NEAR_SPR`, `NEAR_MIN_SPR`). The library's spots are 100bb deep
+  (the 40bb and 200bb formats aren't built), so a flop at 40, 80 or 200bb was solved live with nothing shown
+  meanwhile. Now the same spot at 100bb answers it at once, marked approximate (or the spot whose ranges are
+  nearest, as above): a spot of the same pot covering both ranges by 90% as above, whose stack-to-pot ratio is within
+  0.35-2.05x this pot's (`NEAR_SPR`), where this pot's is at least 3 (`NEAR_MIN_SPR`); a spot of the hand's own
+  depth, once one is built, comes first. Single-raised pots are read from about 37bb to 202bb deep (BTN vs BB), 3bet
+  pots from 57-72bb (an SPR of 3) to about 185bb where the 100bb spot's ranges still cover the deeper ones (the BB's
+  3bet of the BTN; the in-position 3bets' ranges move sooner: the BTN's of the CO to 118bb). The tree is the hand's
+  own, built at its stack, so a decision the entry stores with other actions (an all-in where the 100bb entry bets)
+  isn't read. The page names the depth: "the precomputed solve of this flop in the library's BTN vs BB single-raised
+  pot, solved deeper (a stack-to-pot ratio of 17.7, this pot's 14.1)". `scripts/instant_coverage.py --stack`:
+  heads-up flop decisions answered at once 0% -> 51.7% at 40bb, 53.5% at 50bb, 75.8% at 60bb, 89.1% at 80bb, 80.6% at
+  125bb, 75.9% at 150bb, 68.6% at 175bb, 43.1% at 200bb (all decisions 73.9 -> 79.9%, 74.4 -> 80.5, 74.8 -> 83.4, 75.0
+  -> 85.0, 72.8 -> 82.3, 71.7 -> 80.8, 70.8 -> 79.0, 69.8 -> 74.9); 100bb unchanged (91.9%).
+
+  EV given up (`scripts/bench_flop_depth.py`: ten spots, six stored flops each, every flop solved at 60, 80, 125 and
+  150bb and at 100bb in the browser's Accurate tree, natively, 300 iterations, each solve made an entry; each combo's
+  mix priced by the depth's entry's EVs as above; per flop mean / median / 90th percentile; inside the gates):
+
+  | | the 100bb solve of the flop (the depth's own cost) | the library's entry (what's shown) | the spot's three stored flops most like it (a flop it doesn't store) |
+  |---|---|---|---|
+  | single-raised pots (114 flops; the last column 42 of the three spots on 552) | 0.104 / 0.088 / 0.217 | 0.233 / 0.206 / 0.379 | 0.369 / 0.328 / 0.588 |
+  | 3bet pots (48) | 0.097 / 0.088 / 0.172 | 0.222 / 0.202 / 0.424 | 0.290 / 0.284 / 0.504 |
+  | the same flops at 100bb, single-raised / 3bet pots (the measure's floor: the library's tree against the browser's) | 0 | 0.17 / 0.14 | 0.31 / 0.25 |
+
+  So the depth costs ~0.05-0.08% of the pot over the 100bb answer at the hand's depth, within the bar the other
+  approximations clear (mean under 0.45, 90th percentile under 0.8). Toward the band's ends it costs more, still under
+  the bar (`--depths 40,50`: nine single-raised spots, eight flops each; `--depths 175,200`: eight spots, six flops;
+  inside the gates): 0.30 / 0.24 / 0.46 at 40bb (a ratio of 0.38), 0.32 / 0.22 / 0.47 at 50bb (0.49), 0.35 / 0.33 /
+  0.58 at 175bb (1.77-1.83; single-raised and 3bet pots), 0.25 / 0.25 / 0.36 at 200bb (2.03; BTN vs BB and SB vs BB,
+  the only spots there whose ranges the 100bb ones cover). Outside the gates: the pots under 90% cover 0.58-1.16
+  (mean) at 40-50bb and 0.43-0.78 at 175-200bb, 3bet pots at 60bb (an SPR of 2.4) 1.3-1.9 with most of the entry's
+  decisions not in the hand's tree, and 3bet pots at 125bb and deeper whose ranges the 100bb spot covers by 66-83%
+  0.5-1.2.
 * **Your hand out of your range** (`Advisor._as_advised`). A hand the line's range doesn't hold (a preflop call or
   check the charts never make: the big blind flatting aces against the button, which it 3bets, or checking KQs
   behind a limp, which it raises) is solved on each street as a near-zero-weight combo (`_with_hero`). The next
@@ -2612,8 +2656,9 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   pots ~0.6 each: the BTN's and the SB's 3bet of the UTG, the BB's and the SB's of the HJ; 4bet pots; 4.5 of them
   answered approximately at once off the spot whose ranges are nearest, `flop_approx.near_spot`), a flop not
   stored 10.2 (the flatted opens' and the 3bet pots': answered approximately at once from the stored flops most like
-  it, `scripts/instant_coverage.py` 77.2% -> 87.5% with them, 91.9% with both), a raise 3.2. A flop's
-  entry is worth its spot's share times its suit count, so more flops of the commonest spots beat new spots; by
+  it, `scripts/instant_coverage.py` 77.2% -> 87.5% with them, 91.9% with both), a raise 3.2. At 40-200bb, where no
+  spot is built, the 100bb spots answer 43-89% of the heads-up flop decisions approximately at once (`--stack`). A
+  flop's entry is worth its spot's share times its suit count, so more flops of the commonest spots beat new spots; by
   points per MB (`--assume`): BTN vs BB on every flop +12.4 for 4.5 MB, CO vs BB on 1656 (90%) +7.6 for 2.8, UTG vs
   BB on 552 +2.4 for 1.05, SB vs BB on 552 +3.5 for 2.1, then on every flop SB vs BB +8.6 for 6.0 MB (its wide
   ranges' entries are the biggest), HJ vs BB +7.8 for 3.5, UTG vs BB +6.1 for 3.1, the five flatted opens on 552

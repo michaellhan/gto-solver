@@ -40,10 +40,10 @@ class _Lib(unittest.TestCase):
         cls.setup = fl.spot_setup(LINE)
         cls.hand = {"players": 6, "stack": 100, "preflop": parse_actions(LINE), "board": BOARD, "turn": [], "river": []}
 
-    def expected(self, board, hole, path, spot=None):
+    def expected(self, board, hole, path, spot=None, skip=()):
         """The mix instant_from_near should give `hole` at the stored node `path`: its images' stored mixes on the K
         nearest stored flops, averaged with weights 1 / (1 + distance); `spot` another spot's (near_spot), whose
-        entry of the flop, where it stores it, is the one read."""
+        entry of the flop, where it stores it, is the one read; skip: flops left out (the image another hand class)."""
         b = parse_cards(board)
         canon, smap = fl.canonical(b)
         c = [x // 4 * 4 + smap[x % 4] for x in parse_cards(hole)]
@@ -52,6 +52,8 @@ class _Lib(unittest.TestCase):
         nb = fa.neighbours(sorted(sp["flops"]), list(canon), fa.K + 1)
         nb = nb[:1] if spot is not None and nb[0][2] == 0 else [x for x in nb if x[2] > 0][:fa.K]
         for nm, m, d in nb:
+            if nm in skip:
+                continue
             e = self.lib.entry(sp, nm)
             nd = next((n for n in e["nodes"] if n["path"] == list(path)), None)
             if nd is None:
@@ -111,6 +113,24 @@ class TestInstantFromNear(_Lib):
         self.assertAlmostEqual(bet["amount_bb"], round(0.75 * self.setup["pot"], 2), places=2)
         self.assertNotIn("solver", res)
         self.assertTrue(any("this flop's own solve replaces it" in n for n in res["notes"]))
+
+    def test_hand_class(self):
+        """An image of another hand class doesn't count where one of the same class does: 8h9h on KhJd6c is no pair
+        and a backdoor straight draw, as its images on KcJd5h and KcQd6h, but on KcJd7h a gutshot."""
+        canon = list(fl.canonical(parse_cards(BOARD))[0])
+        cmap = fl.combo_map(fl.canonical(parse_cards(BOARD))[1])
+        i = int(cmap[COMBO_INDEX[tuple(sorted(parse_cards("8h9h")))]])
+        here = fa.combo_classes(canon, np.array([i]))[0]
+        there = {nm: fa.combo_classes(parse_cards(nm), fa.combo_image(m)[[i]])[0]
+                 for nm, m, _ in fa.neighbours(sorted(self.spot["flops"]), canon, 3)}
+        self.assertEqual(there, {"KcJd5h": here, "KcJd7h": there["KcJd7h"], "KcQd6h": here})
+        self.assertNotEqual(there["KcJd7h"], here)
+        res = advisor().instant(dict(self.hand, hero="HJ", hole="8h9h", flop=[]))
+        names, mix = self.expected(BOARD, "8h9h", [], skip=("KcJd7h",))
+        self.assertEqual([a["action"] for a in res["actions"]], names)
+        self.assertTrue(np.allclose([a["freq"] for a in res["actions"]], mix, atol=0.0006))
+        _, every = self.expected(BOARD, "8h9h", [])
+        self.assertFalse(np.allclose(mix, every, atol=0.01))
 
     def test_in_position_and_facing_a_bet(self):
         """The caller after a check, and the opener facing its bet (the size read at the tree's nearest)."""
@@ -196,7 +216,7 @@ HJ_BB3 = "UTG:f,HJ:r2.5,CO:f,BTN:f,SB:f,BB:r10,HJ:c"     # (BB 3bets the HJ: no 
 
 class TestNearSpot(_Lib):
     """A heads-up pot the library holds no spot for, read off the spot whose ranges are nearest (near_spot): the
-    same pot and stack, each range covered by NEAR_COVER, the least distance."""
+    same pot and stack, each range covered by NEAR_COVER, the least distance; at another depth, the same pot."""
 
     def test_which_spot(self):
         lines = {HJ_BB3: "3bp_bb_co", "UTG:r2.5,HJ:f,CO:f,BTN:f,SB:f,BB:r10,UTG:c": "3bp_bb_co",
@@ -239,6 +259,39 @@ class TestNearSpot(_Lib):
         res = adv.instant(dict(hand, board="KhJd6c", hero="HJ", hole="QhQd", flop=[X("BB")]))
         names, mix = self.expected("KhJd6c", "QhQd", ["check"], spot=sp)
         self.assertTrue(np.allclose([a["freq"] for a in res["actions"]], mix, atol=0.0006))
+
+    def test_depths(self):
+        """Another stack depth: the same spot at 100bb where the stack-to-pot ratio is within NEAR_SPR of its own and
+        at least NEAR_MIN_SPR; none at 30bb or 250bb, nor in a 3bet pot at 60bb (SPR 2.4) or 200bb (ratio 2.11)."""
+        srp, bb3 = "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:c", "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:r10,BTN:c"
+        cases = {(srp, 30): None, (srp, 40): "srp_btn_bb", (srp, 60): "srp_btn_bb", (srp, 150): "srp_btn_bb",
+                 (srp, 200): "srp_btn_bb", (srp, 250): None, (bb3, 60): None, (bb3, 80): "3bp_bb_btn",
+                 (bb3, 175): "3bp_bb_btn", (bb3, 200): None}
+        for (line, depth), sid in cases.items():
+            st = fl.spot_setup(line, 6, depth)
+            self.assertIsNone(self.lib.spot(fl.range_fp(st["full0"]), fl.range_fp(st["full1"]), st["pot"], st["stack"]))
+            sp = fa.near_spot(self.lib, st["full0"], st["full1"], st["pot"], st["stack"])
+            self.assertEqual(sp and sp["id"], sid, (line, depth))
+
+    def test_instant_depth(self):
+        """80bb: the BB first to act on a flop BTN vs BB stores reads its 100bb entry (the depth named); the BTN after
+        a check too."""
+        line = "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:c"
+        sp = next(s for s in self.lib.index()["spots"] if s["id"] == "srp_btn_bb")
+        hand = {"players": 6, "stack": 80, "preflop": parse_actions(line), "board": BOARD, "turn": [], "river": []}
+        adv = advisor()
+        for hero, hole, flop, path in (("BB", "Qh9h", [], []), ("BTN", "AhQd", [X("BB")], ["check"])):
+            with mock.patch.object(A, "solve", side_effect=AssertionError("solved")):
+                res = adv.instant(dict(hand, hero=hero, hole=hole, flop=flop))
+            self.assertEqual(res["approximate"]["source"], "near")
+            label = res["approximate"]["label"]
+            self.assertIn("the precomputed solve of this flop in the library's BTN vs BB", label)
+            self.assertIn("solved deeper (a stack-to-pot ratio of 17.7, this pot's 14.1)", label)
+            self.assertNotIn("nearest", label)
+            names, mix = self.expected(BOARD, hole, path, spot=sp)
+            self.assertEqual([a["action"] for a in res["actions"]], names)
+            self.assertTrue(np.allclose([a["freq"] for a in res["actions"]], mix, atol=0.0006))
+        self.assertIsNone(adv.instant(dict(hand, stack=30, hero="BB", hole="Qh9h", flop=[])))
 
     def test_none_without_one(self):
         """A pot no spot covers: no approximate answer."""

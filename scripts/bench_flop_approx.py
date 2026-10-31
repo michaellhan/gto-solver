@@ -9,10 +9,14 @@ is reached (the range frequencies along its line).
 
 Protocols: rep (the spots on every flop: neighbours only from the 552 representative flops, the set the flatted opens
 and 3bet pots store, tested on the other flops: the case the advisor meets); loo (any spot: a stored flop from the
-spot's other stored flops).
+spot's other stored flops); spot (a whole spot held out: its flops read off the spot flop_approx.near_spot picks with
+it left out of the index, or the one named as TARGET<SOURCE; methods near, the source's entry of the same flop where
+it stores it, else its K most like it, as the advisor reads it, and nearx, its K most like it other than the flop:
+one it doesn't store).
 
     python scripts/bench_flop_approx.py OUT.jsonl --protocol rep --spots srp_btn_bb,srp_co_bb --n 150 --methods knn1,knn3
     python scripts/bench_flop_approx.py OUT.jsonl --protocol loo --spots 3bp_bb_btn --n 150
+    python scripts/bench_flop_approx.py OUT.jsonl --protocol spot --spots srp_co_bb,srp_hj_bb --n 60 --methods near,nearx
     python scripts/bench_flop_approx.py OUT.jsonl --report
 """
 from __future__ import annotations
@@ -95,7 +99,10 @@ def given_up(nd, mask, reach, pred, pot):
 
 def method_pred(method, lib, spot, names, board, target_name):
     """{path: predicted node} for a flop, by method: knnK (K nearest stored flops, weights 1 / (1 + distance)),
-    nnK (K nearest, equal weights), avgK (every combo the K nearest flops' range frequencies)."""
+    nnK (K nearest, equal weights), avgK (every combo the K nearest flops' range frequencies); a trailing c (knn3c):
+    each combo averages the images of its own hand class (flop_approx.predict's board)."""
+    cls = method.endswith("c")
+    method = method[:-1] if cls else method
     kind = method.rstrip("0123456789")
     k = int(method[len(kind):] or 1)
     nb = [x for x in fa.neighbours(names, board, k + 1) if x[0] != target_name][:k]
@@ -106,7 +113,7 @@ def method_pred(method, lib, spot, names, board, target_name):
             continue
         w = 1.0 / (1.0 + d) if kind == "knn" else 1.0
         srcs.append((e, m, w))
-    pred = fa.predict(srcs)
+    pred = fa.predict(srcs, board=list(board) if cls else None)
     if kind == "avg":
         for path, o in pred.items():
             # each source's node frequency, the same for every combo
@@ -133,10 +140,22 @@ def run(a):
             d = json.loads(x)
             done.add((d["spot"], d["flop"], d["method"], d["protocol"]))
     methods = a.methods.split(",")
-    for sid in a.spots.split(","):
+    for item in a.spots.split(","):
+        sid, src_id = item.split("<") if "<" in item else (item, None)
         spot = spots[sid]
         stored = sorted(spot["flops"])
-        if a.protocol == "rep":
+        source = None
+        if a.protocol == "spot":
+            if src_id is None:
+                s0 = setup(sid)
+                got = fa.near_spot(lib, s0["full0"], s0["full1"], float(spot["pot"]), float(spot["stack"]), exclude=sid)
+                if got is None:
+                    print(f"{sid}: no spot near enough with it left out")
+                    continue
+                src_id = got["id"]
+            source = spots[src_id]
+            train, test = sorted(source["flops"]), list(stored)
+        elif a.protocol == "rep":
             train = [n for n in stored if n in rep]
             test = [n for n in stored if n not in rep]
         else:
@@ -157,8 +176,19 @@ def run(a):
             board = parse_cards(tn)
             reaches = node_reaches(e, s["full0"], s["full1"])
             for meth in todo:
-                pred, nb = method_pred(meth, lib, spot, train, board, tn)
+                if source is not None:   # (protocol spot)
+                    canon = list(fl.canonical(board)[0])
+                    src = fa.sources(lib, source, canon, same=True) if meth.startswith("near") and \
+                        not meth.startswith("nearx") else \
+                        [(lib.entry(source, nm), m, 1.0 / (1.0 + d), nm, d)
+                         for nm, m, d in fa.neighbours([n for n in train if n != tn], canon, fa.K) if d <= fa.MAX_DIST]
+                    pred = fa.predict([x[:3] for x in src], board=canon if meth.endswith("c") else None)
+                    nb = [(x[3], x[4]) for x in src]
+                else:
+                    pred, nb = method_pred(meth, lib, spot, train, board, tn)
                 rec = {"spot": sid, "flop": tn, "method": meth, "protocol": a.protocol, "nb": nb, "nodes": {}}
+                if source is not None:
+                    rec["source"] = source["id"]
                 for nd in e["nodes"]:
                     path = tuple(nd["path"])
                     r, share = reaches[path]
@@ -178,7 +208,7 @@ def report(path, by_node=True):
     rows = [json.loads(x) for x in open(path)]
     groups = collections.defaultdict(list)
     for r in rows:
-        groups[(r["protocol"], r["spot"], r["method"])].append(r)
+        groups[(r["protocol"], r["spot"] + ("<" + r["source"] if r.get("source") else ""), r["method"])].append(r)
     print("EV given up (% of the pot entering the flop): per flop, its decisions weighted by how often each comes; "
           "mean / median / 90th percentile / worst; then per node, mean (90th)")
     for (proto, sid, meth), rs in sorted(groups.items()):
@@ -198,7 +228,7 @@ def report(path, by_node=True):
             if den > 0:
                 agg.append(num / den)
         agg = np.array(agg)
-        line = (f"{proto:3s} {sid:12s} {meth:6s} n={len(agg):4d}  {agg.mean():6.3f} {np.median(agg):6.3f} "
+        line = (f"{proto:4s} {sid:12s} {meth:6s} n={len(agg):4d}  {agg.mean():6.3f} {np.median(agg):6.3f} "
                 f"{np.percentile(agg, 90):6.3f} {agg.max():6.3f}")
         if by_node:
             line += "   " + "  ".join(f"{k or 'root'}: {np.mean(v):.3f} ({np.percentile(v, 90):.3f})"
@@ -212,7 +242,7 @@ def report(path, by_node=True):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("out")
-    ap.add_argument("--protocol", default="rep", choices=("rep", "loo"))
+    ap.add_argument("--protocol", default="rep", choices=("rep", "loo", "spot"))
     ap.add_argument("--spots", default="srp_btn_bb")
     ap.add_argument("--methods", default="avg3,knn1,knn2,knn3,knn4")
     ap.add_argument("--n", type=int, default=100)

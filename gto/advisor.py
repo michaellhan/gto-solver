@@ -2215,12 +2215,13 @@ NEAR_UNTIL = HU_CHECKS[0]
 def instant_from_near(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
     """A flop of a library spot that the library doesn't store (the flatted opens' and the 3bet pots' other 1203): its
     decisions read off the spot's stored flops most like it (gto/flop_approx.py: the same pairing and suit pattern, the
-    ranks nearest, each carried over by card substitution and their mixes averaged), on the line the hand took (sizes
-    at the tree's nearest); a heads-up pot the library holds no spot for (the HJ's and UTG's opens 3bet by the blinds
-    or flatted by the SB, the BTN's 3bet of the UTG) off the spot whose ranges are nearest, where one covers it
-    (flop_approx.near_spot: its entry of the flop where it stores it, else those most like it); not once the flop's
-    own solve in hand has run NEAR_UNTIL iterations (instant_from_own reads that). None where hero's decision isn't
-    one an entry stores or no stored flop holds an image of hero's combo."""
+    ranks nearest, each carried over by card substitution and their mixes averaged over the images of hero's hand
+    class), on the line the hand took (sizes at the tree's nearest); a heads-up pot the library holds no spot for (the
+    HJ's and UTG's opens 3bet by the blinds or flatted by the SB, the BTN's 3bet of the UTG) or at another stack depth
+    off the spot whose ranges are nearest, where one covers it (flop_approx.near_spot: its entry of the flop where it
+    stores it, else those most like it); not once the flop's own solve in hand has run NEAR_UNTIL iterations
+    (instant_from_own reads that). None where hero's decision isn't one an entry stores or no stored flop holds an
+    image of hero's combo."""
     if spot.street != "flop" or spot.near is None:
         return None
     if spot.own is not None and spot.own.solver.iters >= NEAR_UNTIL:
@@ -2241,7 +2242,13 @@ def instant_from_near(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
     if sol.other:   # (a pot the library holds no spot for: the nearest spot's)
         what = (f"the precomputed solve of this flop in the library's {sol.label}" if sol.near[0][1] == 0 else
                 f"the library's {sol.label} on the most similar flops ({flops}), by card substitution")
-        label = f"{what}, the spot whose ranges are nearest this pot's"
+        if sol.spr is not None:   # (another stack depth)
+            label = (f"{what}, solved {'deeper' if sol.spr[0] > sol.spr[1] else 'shallower'} (a stack-to-pot ratio "
+                     f"of {sol.spr[0]:.1f}, this pot's {sol.spr[1]:.1f})")
+            if not sol.same_seats:
+                label += ", the spot whose ranges are nearest this pot's"
+        else:
+            label = f"{what}, the spot whose ranges are nearest this pot's"
     else:
         label = f"the precomputed solves of the most similar flops ({flops}), by card substitution"
     return {"actions": _real_actions(node, strat, bets, spot), "source": "near", "label": label, "iterations": None}
@@ -4029,7 +4036,8 @@ class Advisor:
             near = None
             if lib is not None and cur.name == "flop":
                 from .flop_approx import approx_solution
-                near = lambda: approx_solution(lib, full[0], full[1], board, r0, r1, cur.pot_start, eff, cfg)
+                near = lambda: approx_solution(lib, full[0], full[1], board, r0, r1, cur.pot_start, eff, cfg,
+                                               seats=(oop, ip), hole=hole or None)
             return self._instant_answer(cur, board, hole, hero, villain, hero_p, oop, ip, eff, cfg, r0, r1, walked,
                                         hero_remaining, to_call, len(positions), t0, near)
         if lib_sol is None and self._lib_only:

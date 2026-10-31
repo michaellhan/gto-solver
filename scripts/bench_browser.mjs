@@ -90,6 +90,9 @@ const SPOTS = {
   "flop-near-ip": base({ hero: "CO", hole: "JhTh", board: "KhJd6c", preflop: HJ_CO, flop: [X("HJ")] }),
   "flop-near-3bp": base({ hero: "BB", hole: "AhKd", board: "Qh8d5c", preflop: BB_3BET }),
   "flop-near-other": base({ hero: "BB", hole: "AhKd", board: "KhJd5c", preflop: BB_3BET_HJ }),   // (read off 3bp_bb_co's KcJd5h)
+  "flop-near-80bb": base({ stack: 80, hero: "BB", hole: "Qh9h", board: "KhJd6c" }),   // (another depth: srp_btn_bb's KcJd6h)
+  "flop-near-80bb-3bp": base({ stack: 80, hero: "BB", hole: "AhKd", board: "KhJd6c", preflop: BB_3BET }),   // (3bp_bb_btn's
+                                                    // three stored flops most like it)
   "flop-2tone": base({ hero: "BB", hole: "JcTc", board: "9h8h6c" }),                          // not in it, two-tone
   "turn-lib": base({ hero: "BB", hole: "QhJh", board: "Kc7d4h9s", flop: SRP_FLOP }),         // the flop narrowed by the library
   "turn": base({ hero: "BB", hole: "QhJh", board: "Ks7d2cTh", flop: SRP_FLOP }),             // (its flop in the library now)
