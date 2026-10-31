@@ -666,6 +666,67 @@ test("Study's 3-way answer at once off the hand's earlier solve: the note", () =
   assert.match(S.approxHtml(prev), /one bet size\) \(400 iterations, 0\.07% of the pot from equilibrium on the flop\)\. The turn's own solve is running and replaces it: then each hand's EVs, equities and the Breakdown\.$/);
 });
 
+// a live multiway solve's progress while Study waits on it: its seconds of the speed's budget (a flop's 15 at least),
+// a bar; on the answer at once's line too; none heads-up. A 3-way deal has no Turn report (heads-up pots only)
+test("Study on a live 3-way solve: its seconds of up to its budget, a bar, none heads-up; no Turn report 3-way", async () => {
+  const pre = [["UTG", "f"], ["HJ", "f"], ["CO", "f"], ["BTN", "r2.5"], ["SB", "c"], ["BB", "c"]].map(([pos, a]) =>
+    a[0] === "r" ? { pos, action: "raise", to: 2.5 } : { pos, action: { f: "fold", c: "call" }[a] });
+  const at = { players: 6, stack: 100, board: "Kd8c3h", preflop: pre, flop: [], turn: [], river: [] };
+  assert.equal(S.inPot(at), 3);
+  assert.equal(S.inPot({ ...at, flop: [{ pos: "SB", action: "check" }, { pos: "BB", action: "fold" }] }), 2);
+  assert.equal(S.mwSeconds(at, "fast"), 15);
+  assert.equal(S.mwSeconds({ ...at, board: "Kd8c3h9s" }, "fast"), 8);
+  assert.equal(S.mwSeconds({ ...at, board: "Kd8c3h9s" }, "accurate"), 60);
+  assert.equal(S.mwSeconds({ ...at, preflop: [...pre.slice(0, 4), { pos: "SB", action: "fold" }, { pos: "BB", action: "call" }] }, "fast"), null);
+  assert.equal(S.mwSeconds({ ...at, board: "" }, "fast"), null);
+  const LIVE = { ...NODE, actor: "SB", board: "Kd8c3h", multiway: true, precomputed: undefined, solver: { iterations: 400, solve_seconds: 13, exploitability_pct: 0.05 } };
+  // no answer at once: the count beside the spinner, and the bar
+  let p = await studyPage(null, () => LIVE);
+  p.ctx.STUDY_AT = { state: at, spot: "" };
+  let opened = p.ctx.Study.open();
+  await p.tick();
+  assert.match(p.html(), /Solving the 3-way flop… <span class="num" data-sytime>0\.\d s of up to ~15 s<\/span><\/div><div class="prog"><div data-sybar style="width:\d+\.\d%"><\/div><\/div>/);
+  await p.land(1);
+  await opened;
+  assert.doesNotMatch(p.html(), /data-sytime|data-sybar/);
+  // with the answer at once: the count on its line
+  const MWN = { ...NEAR, multiway: true, actor: "SB", opponent: "BB and BTN", board: "Kd8c3h",
+    approximate: { source: "near", label: "the precomputed 3-way solves of the most similar flops (Kd8c4h, Kd9c3h, Kd7c2h), by card substitution", iterations: null } };
+  p = await studyPage(() => MWN, () => LIVE);
+  p.ctx.STUDY_AT = { state: at, spot: "" };
+  opened = p.ctx.Study.open();
+  await p.tick();
+  assert.match(p.html(), /Approximate, at once: the flop's own solve is running <span class="num" data-sytime>0\.\d s of up to ~15 s<\/span>/);
+  await p.land(1);
+  await opened;
+  // a 3-way deal: no Turn report (it reads heads-up pots); heads-up it's there
+  const closed = [{ pos: "SB", action: "check" }, { pos: "BB", action: "check" }, { pos: "BTN", action: "check" }];
+  p = await studyPage(null, () => ({ study: "deal", street: "turn" }));
+  p.ctx.STUDY_AT = { state: { ...at, flop: closed }, spot: "" };
+  opened = p.ctx.Study.open();
+  await p.tick();
+  await p.land(1);
+  await opened;
+  assert.match(p.html(), /Deal the turn/);
+  assert.doesNotMatch(p.html(), /data-runouts/);
+  p = await studyPage(null, () => ({ study: "deal", street: "turn" }));
+  p.ctx.STUDY_AT = { state: { ...at, preflop: [...pre.slice(0, 4), { pos: "SB", action: "fold" }, { pos: "BB", action: "call" }], flop: closed.slice(1) }, spot: "" };
+  opened = p.ctx.Study.open();
+  await p.tick();
+  await p.land(1);
+  await opened;
+  assert.match(p.html(), /data-runouts/);
+  // heads-up: the spinner alone
+  p = await studyPage(null, () => LIVE);
+  p.ctx.STUDY_AT = { state: { ...at, preflop: [...pre.slice(0, 4), { pos: "SB", action: "fold" }, { pos: "BB", action: "call" }] }, spot: "" };
+  opened = p.ctx.Study.open();
+  await p.tick();
+  assert.match(p.html(), /<span class="spinner"><\/span>Solving…<\/div>/);
+  assert.doesNotMatch(p.html(), /data-sytime/);
+  await p.land(1);
+  await opened;
+});
+
 // a river after a turn Study solved live: that solve's view of the river at once (Advisor._study_prev)
 const PREV = {
   ...QUICK, street: "river", board: "Ks7d2cTh5s", pot_bb: 12.5, stack_bb: 93.75,

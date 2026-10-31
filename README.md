@@ -346,7 +346,10 @@ buckets after a checked-through flop 0.13 (median 0.001, max 0.75) and after a f
 0.20, max 0.83: every hand of a bucket plays the bucket's mix, so 22 on As4sTc9h bets 74-88% of the time as the
 bluffs it shares a bucket with, where its own solve checks it); range frequencies 1-7 points apart on average; 74 of
 76 nodes answered (two turns on a line under 10%). 4-way on 9 flops (HJ opens, CO, BTN and BB call): checked to once
-0.011 (max 0.03), twice 0.005 (0.03), three times 0.029 (0.12), on the turn 0.025 (0.06). Equity (and EQR)
+0.011 (max 0.03), twice 0.005 (0.03), three times 0.029 (0.12), on the turn 0.025 (0.06). While a 3-way or 4-way node solves live,
+Study counts its seconds beside the spinner up to the most it can take, with a bar (`study.js` mwSeconds: the speed's
+budget, a flop's 15 s at least; it stops sooner once settled, a river in about 0.4 s); the Turn and River
+reports read heads-up pots, so a 3-way or 4-way deal has none. Equity (and EQR)
 on every street, as a share of the pot at showdown against the two
 other ranges with the rest of the board dealt (`multiway_solver.showdown_equities`): on the turn every river with
 the exact three-way card removal (as the river's showdowns, ~0.1 s natively); on the flop all 1176 turn-and-river

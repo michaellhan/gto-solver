@@ -102,6 +102,17 @@
   // how many saw the flop: the seats that acted preflop less those that folded
   const sawFlop = (st) => { const pre = st.preflop || [], seats = (f) => new Set(pre.filter(f).map(a => a.pos)).size;
                             return seats(() => true) - seats(a => a.action === "fold"); };
+  // how many are still in: those that saw the flop less the seats that folded since
+  const inPot = (st) => sawFlop(st) - new Set(["flop", "turn", "river"].flatMap(s => (st[s] || []).filter(a => a.action === "fold").map(a => a.pos))).size;
+  // a node's live multiway solve, its seconds at most for the progress shown while it runs (gto/advisor.py
+  // _multiway_solve: the speed's budget, a flop's at least MW_STUDY_FLOP_BUDGET, 15 s; on the local server Fast's turn
+  // and river the native mw_budget, 5 s; it stops sooner once settled: a river in about 0.4 s); null heads-up or preflop
+  function mwSeconds(st, speed) {
+    const n = String(st.board || "").length;
+    if (n < 6 || inPot(st) < 3) return null;
+    const b = typeof globalThis.studyBudget === "function" ? globalThis.studyBudget(speed)[0] : speed === "accurate" ? 60 : 8;
+    return n === 6 ? Math.max(b, 15) : speed !== "accurate" && typeof MODE === "string" && MODE === "server" ? Math.max(b, 5) : b;
+  }
   // n random cards off the board
   function randomCards(st, n, rnd = Math.random) {
     const used = new Set(cardsOf(st.board)), deck = [];
@@ -587,6 +598,14 @@
   let asking = null;   // the request go() is showing
   const fetched = new Set();   // the flops whose library files were asked ahead (studyPrefetch)
   const quick = () => busy && res && res.approximate && res.key === asking;   // (its answer at once shown, solving on)
+  // the live multiway solve being waited on ({key, t0, est, k players, street}: mwSeconds), its seconds counted up to
+  // its budget beside the spinner (and a bar), the answer at once's line included
+  let prog = null, progTick = null;
+  const progOn = () => busy && prog && prog.key === asking;
+  const progText = () => `${((Date.now() - prog.t0) / 1000).toFixed(1)} s of up to ~${Math.round(prog.est)} s`;
+  const progPct = () => Math.min(97, (Date.now() - prog.t0) / 10 / prog.est);
+  const solvingHtml = (bar) => !progOn() ? "Solving…" : `Solving the ${prog.k}-way ${prog.street}… <span class="num" data-sytime>${progText()}</span>`
+    + (bar ? `</div><div class="prog"><div data-sybar style="width:${progPct().toFixed(1)}%"></div>` : "");
   const ask = (st, onPartial) => typeof globalThis.studyAsk === "function" ? globalThis.studyAsk(st, onPartial) : Promise.reject(new Error("no solver"));
   const answer = (key, atOnce = false) => {
     if (!answers.has(key)) {
@@ -632,6 +651,15 @@
     asking = key;
     answer(key, n >= 8 || (n === 6 && (acc || sawFlop(state) >= 3)));
     busy = true;
+    clearInterval(progTick);
+    const est = mwSeconds(state, ST.speed);
+    prog = est && { key, t0: Date.now(), est, k: inPot(state), street: n === 6 ? "flop" : n === 8 ? "turn" : "river" };
+    if (prog) progTick = setInterval(() => {
+      if (g !== gen || !progOn()) { clearInterval(progTick); return; }
+      const tm = box && box.querySelector("[data-sytime]"), bar = box && box.querySelector("[data-sybar]");
+      if (tm) tm.textContent = progText();
+      if (bar) bar.style.width = progPct().toFixed(1) + "%";
+    }, 200);
     if (early.has(key)) { res = { ...early.get(key), key }; colors(); }   // (back at a node still solving)
     draw();
     let r = await answers.get(key);
@@ -792,7 +820,7 @@
       const n = res.street === "flop" ? 3 : 1;
       return `<div class="sy-deal"><div>${res.allin ? "Nobody can bet any more. " : ""}Deal the ${res.street}:</div><form data-deal><input name="cards" autocomplete="off" spellcheck="false" placeholder="${n === 3 ? "e.g. Kd7c2h" : "e.g. 5s"}" aria-label="The ${res.street}">`
         + `<button type="submit">Deal</button><button type="button" data-random>Random</button>`
-        + (res.street !== "flop" && !res.allin ? `<button type="button" class="ghost" data-runouts title="The ${res.street}'s first decision on every card: strategy, EV and equity"${ST.ro ? " disabled" : ""}>${res.street === "turn" ? "Turn" : "River"} report</button>` : "")
+        + (res.street !== "flop" && !res.allin && inPot(ST.state) < 3 ? `<button type="button" class="ghost" data-runouts title="The ${res.street}'s first decision on every card: strategy, EV and equity"${ST.ro ? " disabled" : ""}>${res.street === "turn" ? "Turn" : "River"} report</button>` : "")
         + `</form><div class="sy-err" data-dealerr></div>`
         + (!ST.ro ? "" : ST.ro.busy ? (ST.ro.solve ? `<div class="sy-msg"><span class="spinner"></span>Solving the ${prev(res.street)} for the ${res.street} report… <span class="num" data-rotime></span></div><div class="prog"><div data-robar></div></div>`
             : `<div class="sy-msg"><span class="spinner"></span>Opening the ${res.street} report…</div>`)
@@ -812,7 +840,7 @@
     const views = viewsOf(res);
     const view = views.includes(ST.view) ? ST.view : "strategy";
     const ui = { ...ST, view }, r = shown(view);
-    let h = `<div class="sy-status">${statusHtml(res)}${res.approximate ? ` · <span class="sy-approx"><span class="spinner"></span>Approximate, at once: the ${esc(res.street)}'s own solve is running</span>` : ""}</div>`
+    let h = `<div class="sy-status">${statusHtml(res)}${res.approximate ? ` · <span class="sy-approx"><span class="spinner"></span>Approximate, at once: the ${esc(res.street)}'s own solve is running${progOn() ? ` <span class="num" data-sytime>${progText()}</span>` : ""}</span>` : ""}</div>`
       + (ST.pfRun && solverPre(res) ? pfProgHtml(ST.pfRun) : "") + `<div class="sy-main"><div class="sy-left"><div class="sy-ctl">`
       + (res.street === "preflop" ? pfHtml(ST.pf === "solver" ? "solver" : "charts") : "")
       + `<span class="segment">${views.map(v => `<button data-view="${v}" class="${v === view ? "active" : ""}">${viewName(v)}</button>`).join("")}</span>`
@@ -851,8 +879,8 @@
     // (while solving: the last decision dimmed under a spinner; the spinner alone after a deal or an error; the node's
     // answer at once as it is, the request's own replacing it)
     const now = quick(), dim = busy && res && res.study === "node" && !now;
-    b.innerHTML = controls() + `<div class="sy-line">${lineHtml(ST.state, res && (!busy || now) ? res : null)}</div>` + `<div class="sy-stage${dim ? " busy" : ""}">${busy && !dim && !now ? `<div class="sy-msg"><span class="spinner"></span>Solving…</div>` : body()}</div>`;
-    if (dim) b.querySelector(".sy-stage").insertAdjacentHTML("afterbegin", `<div class="sy-wait"><span class="spinner"></span>Solving…</div>`);
+    b.innerHTML = controls() + `<div class="sy-line">${lineHtml(ST.state, res && (!busy || now) ? res : null)}</div>` + `<div class="sy-stage${dim ? " busy" : ""}">${busy && !dim && !now ? `<div class="sy-msg"><span class="spinner"></span>${solvingHtml(true)}</div>` : body()}</div>`;
+    if (dim) b.querySelector(".sy-stage").insertAdjacentHTML("afterbegin", `<div class="sy-wait"><span class="spinner"></span>${solvingHtml(false)}</div>`);
     const bd = b.querySelector(".sy-bd");
     if (bd && res && !busy) showBreakdown(bd);
     const sp = b.querySelector(".sy-simple");
@@ -1213,7 +1241,7 @@
   const api = { fresh, parseLine, fromSpot, fromPayload, streetOf, request, kindOf, play, deal, randomCards, readCards, line, back, label,
                 eqr, cellValue, gridHtml, actionsHtml, detailHtml, lineHtml, statusHtml, solverHtml, classAt, combosOf,
                 passiveOf, blankPaint, brush, scoreBuild, grade, buildGridHtml, buildPanelHtml, buildDetailHtml,
-                catsOf, filterRes, filterHtml, runoutsHtml, reportHtml, roHeadHtml, skippedHtml, estimate, oppsOf, whoHtml, viewsOf, approxHtml, sawFlop,
+                catsOf, filterRes, filterHtml, runoutsHtml, reportHtml, roHeadHtml, skippedHtml, estimate, oppsOf, whoHtml, viewsOf, approxHtml, sawFlop, inPot, mwSeconds,
                 PF_GAME, readGame, gameState, gameKey, gameOf, gameHtml, setGame,
                 open, close, act, state: ST };
   if (typeof module === "object" && module.exports) module.exports = api; else globalThis.Study = api;
