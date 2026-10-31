@@ -156,13 +156,16 @@ NEAR_POT_COVER = 0.9
 # solve's 0.18-0.33 at its 50th iteration, worst flop 0.30-0.64); 2, a single-raised pot the big blind defends
 # whose stack-to-pot ratio is within NEAR_POT_WIDE_SPR of this one's, covering each range by NEAR_POT_WIDE_COVER and
 # at most NEAR_POT_WIDE_DIST apart (heads-up's raised pot off BTN vs BB, cover 0.59, distance 1.36: 0.257, the live
-# solve 0.199; the ante's BTN vs BB 0.234 against 0.198). Left out, measured worse: ranges 0.53-0.64 apart in the
-# ante's UTG vs HJ (cover 0.84; 0.443, worst flop 0.96) and HJ's 3bet of UTG (0.87; 0.423, 0.93), a straddled
-# BTN flatting the CO (0.79, 0.61; 0.371, 0.87), and the 3bet pots under 0.75 cover or 1.4 apart (above).
+# solve 0.199; the ante's BTN vs BB 0.234 against 0.198; the ante's SB flatting UTG's, the HJ's, the CO's and the
+# BTN's opens off the big blind's defence of each, cover 0.91-0.96, distance 1.44-1.50: 0.176-0.220, worst flop
+# 0.27-0.36, against the live solve's 0.218-0.246; nothing else lies 1.4-1.55 apart). Left out, measured worse:
+# ranges 0.53-0.64 apart in the ante's UTG vs HJ (cover 0.84; 0.443, worst flop 0.96) and HJ's 3bet of UTG
+# (0.87; 0.423, 0.93), a straddled BTN flatting the CO (0.79, 0.61; 0.371, 0.87), and the 3bet pots under 0.75 cover
+# or 1.4 apart (above).
 NEAR_POT_CLOSE_COVER = 0.75
 NEAR_POT_CLOSE_DIST = 0.5
 NEAR_POT_WIDE_COVER = 0.55
-NEAR_POT_WIDE_DIST = 1.4
+NEAR_POT_WIDE_DIST = 1.55
 NEAR_POT_WIDE_SPR = (0.8, 1.25)
 # A pot of another table size that plays as one the library holds (8- and 9-max BTN, SB, CO and HJ vs the BB, BTN and
 # CO vs SB, the blinds' 3bets of the BTN and the CO, the BB's of the SB: the same pot and stack, the ranges entering the

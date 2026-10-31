@@ -142,7 +142,10 @@ CASES = {
     "8max_3bp_co_utg": ("8max", "UTG:r2.5,UTG1:f,LJ:f,HJ:f,CO:r7.5,BTN:f,SB:f,BB:f,UTG:c", "3bp_hj_utg"),
     "8max_3bp_hj_utg": ("8max", "UTG:r2.5,UTG1:f,LJ:f,HJ:r7.5,CO:f,BTN:f,SB:f,BB:f,UTG:c", "3bp_hj_utg"),
     "8max_sb_utg": ("8max", "UTG:r2.5,UTG1:f,LJ:f,HJ:f,CO:f,BTN:f,SB:c,BB:f", "srp_co_sb"),
-    "8max_utg_utg1": ("8max", "UTG:r2.5,UTG1:c,LJ:f,HJ:f,CO:f,BTN:f,SB:f,BB:f", "srp_utg_btn"),
+    "ante_sb_co": ("a0.125", "UTG:f,HJ:f,CO:r2.5,BTN:f,SB:c,BB:f", "srp_co_bb"),
+    "ante_sb_btn": ("a0.125", "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:c,BB:f", "srp_btn_bb"),
+    "ante_sb_hj": ("a0.125", "UTG:f,HJ:r2.5,CO:f,BTN:f,SB:c,BB:f", "srp_hj_bb"),
+    "ante_sb_utg": ("a0.125", "UTG:r2.5,HJ:f,CO:f,BTN:f,SB:c,BB:f", "srp_utg_bb"),
 }
 TRUTH_DIR = os.environ.get("GTO_BENCH_FORMATS", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "reports",
                                                                "bench_formats"))

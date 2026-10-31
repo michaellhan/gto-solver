@@ -795,11 +795,14 @@ class TestOtherGame(_Lib):
     def test_tiers(self):
         """Where no spot covers each range by NEAR_POT_COVER, a nearer one covering less (tier 1: the ante's SB vs BB
         off SB vs BB, the straddler's call of the BB's raise off it too), else a single-raised pot the BB defends at
-        about the same stack-to-pot ratio (tier 2: heads-up's raised pot and the ante's BTN vs BB off BTN vs BB); a
+        about the same stack-to-pot ratio (tier 2: heads-up's raised pot and the ante's BTN vs BB off BTN vs BB, the
+        ante's SB flatting the CO off CO vs BB and the HJ off HJ vs BB, 1.44 and 1.50 apart); a
         lower tier wins over a nearer spot (the ante's UTG vs BB stays on HJ vs BB, not UTG vs BB's tier 2); outside
         them nothing (the ante's UTG vs HJ, 0.53 apart; heads-up's 3bet pot)."""
         cases = [("SB:r3,BB:c", 2, {}, "srp_btn_bb", 2),
                  ("UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:c", 6, {"ante": 0.125}, "srp_btn_bb", 2),
+                 ("UTG:f,HJ:f,CO:r2.5,BTN:f,SB:c,BB:f", 6, {"ante": 0.125}, "srp_co_bb", 2),
+                 ("UTG:f,HJ:r2.5,CO:f,BTN:f,SB:c,BB:f", 6, {"ante": 0.125}, "srp_hj_bb", 2),
                  ("UTG:f,HJ:f,CO:f,BTN:f,SB:r3,BB:c", 6, {"ante": 0.125}, "srp_sb_bb", 1),
                  ("HJ:f,CO:f,BTN:f,SB:f,BB:r5,UTG:c", 6, {"straddle": True}, "srp_sb_bb", 1),
                  ("UTG:r2.5,HJ:f,CO:f,BTN:f,SB:f,BB:c", 6, {"ante": 0.125}, "srp_hj_bb", 0),
