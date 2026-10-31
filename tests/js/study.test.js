@@ -392,3 +392,148 @@ test("a 3-way node: a toggle per opponent, their ranges and combos, no equity vi
   h = S.actionsHtml({ ...MW, range_eq: 0.4, opponents: MW.opponents.map((o, i) => ({ ...o, eq: [0.25, 0.35][i] })) }, ui);
   assert.match(h, /equity <b>40\.0%<\/b> · EQR <b>1\.82<\/b><br>SB: 30 combos · equity 25\.0%<br>BTN: 500 combos · equity 35\.0%/);
 });
+
+// a library flop's turn answered at once from its stored turn (Advisor.instant with "study"): CO to act first on
+// 9c6d6c-As after HJ checks, bets and calls; strategies only (a format-1 file), the hands' EVs and equities none
+const QUICK = {
+  ...NODE, street: "turn", actor: "HJ", opponent: "CO", position: "OOP", board: "9c6d6cAs", pot_bb: 41.25, stack_bb: 80.25,
+  actions: [{ action: "check", amount_bb: null, freq: 0.9, combos: 18, ev_bb: null },
+            { action: "bet 75%", amount_bb: 30.94, freq: 0.1, combos: 2, ev_bb: null }],
+  grid: { actions: ["check", "bet 75%"], cells: {
+    AA: { w: 0.5, f: [0.5, 0.5], ev: null, evm: null, eq: null }, KQo: { w: 0.25, f: [1, 0], ev: null, evm: null, eq: null } } },
+  combos: { AA: [["AhAd", 1, [0, 1], null, null, 3, 0], ["AdAc", 0.5, [1, 0], null, null, 3, 0]] },
+  range_combos: 20, range_ev_bb: null, range_eq: null, opponent_eq: null,
+  categories: { made: [["none", "Nothing"], ["pair", "Pair"], ["twopair", "Two pair"], ["overpair", "Overpair"]], draws: [["none", "No draw"]] },
+  approximate: { source: "store", label: "the precomputed flop solve's view of the turn (by card class, one bet size, 75%)", iterations: 300 },
+  solver: { iterations: 300, exploitability_pct: 0.12, by: "the flop library" }, precomputed: undefined,
+  notes: ["the stored turn holds strategies only, so no EVs until the turn's own solve"],
+};
+
+test("an answer at once: the strategy alone, the mix without EVs, what it's read off", () => {
+  assert.deepEqual(S.viewsOf(QUICK), ["strategy"]);
+  assert.deepEqual(S.viewsOf({ ...QUICK, approximate: undefined, range_eq: 0.5 }), ["strategy", "ev", "equity", "eqr", "breakdown", "simple"]);
+  const ui = { view: "strategy", who: "me", focus: null, sel: null };
+  assert.match(S.gridHtml(QUICK, ui), /data-cls="AA" style=""><span class="sy-fill" style="height:50.0%">/);
+  const a = S.actionsHtml(QUICK, ui);
+  assert.match(a, /Bet 75% · 30.94bb<\/td><td class="n">.*10.0%<\/td><td class="n">2.0<\/td><td class="n">—<\/td>/);
+  assert.match(a, /HJ's range: <b>20<\/b> combos<br>CO: 300 combos</);
+  assert.doesNotMatch(a, /EV <b>/);
+  // a hand's combos: by weight, their mix, no EV or equity columns
+  const d = S.detailHtml(QUICK, ui, "AA");
+  assert.match(d, /<th>Combo<\/th><th>Mix<\/th><\/tr>/);
+  assert.doesNotMatch(d, /EV|Eq|NaN|null/);
+  assert.ok(d.indexOf(`title="check 0%, bet 75% 100%"`) > 0);
+  assert.ok(d.indexOf(`title="check 0%, bet 75% 100%"`) < d.indexOf(`title="check 100%, bet 75% 0% · 50% of it in the range"`));
+  // a format-2 file's EVs: each action's and the range's
+  const e = { ...QUICK, actions: QUICK.actions.map((x, i) => ({ ...x, ev_bb: [12.5, 20.1][i] })), range_ev_bb: 13.26 };
+  assert.match(S.actionsHtml(e, ui), /<td class="n">\+20.10<\/td>.*EV <b>\+13.26<\/b>bb/s);
+  assert.equal(S.solverHtml(QUICK), "Approximate, at once: the precomputed flop solve's view of the turn (by card class, one bet size, 75%) "
+    + "(300 iterations, 0.12% of the pot from equilibrium on the flop). The turn's own solve is running and replaces it: then each hand's EVs, equities, the Breakdown and Simple.");
+  assert.equal(S.approxHtml(QUICK), S.solverHtml(QUICK));
+  // the filter: the category's mix, no EVs
+  const f = S.filterRes(QUICK, S.catsOf(QUICK)[0].key);
+  assert.equal(f.range_combos, 1.5);
+  assert.deepEqual(f.grid.cells.AA.f.map(x => +x.toFixed(3)), [0.333, 0.667]);
+  assert.equal(f.grid.cells.AA.ev, null);
+  assert.equal(f.range_ev_bb, null);
+  assert.deepEqual(f.actions.map(x => x.ev_bb), [null, null]);
+  assert.doesNotMatch(S.detailHtml(f, ui, "AA"), /NaN/);
+});
+
+// Study in a fake page (as runouts.test.js's), its solver answering `node` and, for a turn, `quick` at once first;
+// `hold` keeps each request open until resolved by hand
+async function studyPage(quick, live) {
+  const vm = require("node:vm"), fs = require("node:fs");
+  const body = { innerHTML: "", querySelector: (s) => s === ".sy-stage" ? body : null, insertAdjacentHTML(_, h) { this.innerHTML = h + this.innerHTML; } };
+  const el = () => ({ dataset: {}, style: {}, hidden: true, innerHTML: "", setAttribute() {}, addEventListener() {}, appendChild: (c) => c,
+                      focus() {}, contains: () => true, querySelector: (s) => s === ".sy-body" ? body : s === ".sy-card" ? { focus() {} } : null });
+  const asked = [], open = [], stopped = [], prefetched = [];
+  const ctx = vm.createContext({ console, setInterval, clearInterval, setTimeout, clearTimeout,
+    document: { getElementById: () => null, createElement: el, head: { appendChild() {} }, body: { appendChild() {} }, activeElement: null },
+    localStorage: { getItem: () => null, setItem() {} }, fetch: async () => ({ ok: false }), addEventListener() {},
+    studyPrefetch: (st) => prefetched.push(st),
+    simpleStop: (p) => { stopped.push(p && p.reqId); const o = open.find(x => x.id === (p && p.reqId)); if (o) o.done({ cancelled: true }); return true; },
+    studyAsk: (q, onPartial) => {
+      const id = asked.push({ q, early: !!onPartial });
+      let done;
+      const p = new Promise(r => { done = r; });
+      p.reqId = id;
+      open.push({ id, q, done });
+      if (onPartial && quick) setTimeout(() => onPartial(quick(q)), 0);
+      return p;
+    } });
+  ctx.window = ctx;
+  vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "..", "gto", "static", "study.js"), "utf8"), ctx, { filename: "study.js" });
+  const tick = () => new Promise(r => setTimeout(r, 5));
+  const page = { asked, open, stopped, prefetched, tick, html: () => body.innerHTML, ctx,
+    // answer request i (1-based) with the live answer
+    land: async (i) => { open.find(x => x.id === i).done(live(asked[i - 1].q)); await tick(); } };
+  return page;
+}
+
+test("Study on a library flop's turn: the stored answer at once, the live one replacing it; playing on it stops the solve", async () => {
+  const flop = [{ pos: "HJ", action: "check" }, { pos: "CO", action: "bet", to: 12.38 }, { pos: "HJ", action: "call" }];
+  const at = { players: 6, stack: 100, board: "9c6d6cAs", preflop: [], flop, turn: [], river: [] };
+  const LIVE = { ...QUICK, approximate: undefined, actions: [{ action: "check", amount_bb: null, freq: 1, combos: 20, ev_bb: 4.8 },
+    { action: "bet 33%", amount_bb: 13.61, freq: 0, combos: 0, ev_bb: null }, { action: "bet 75%", amount_bb: 30.94, freq: 0, combos: 0, ev_bb: null }],
+    grid: { actions: ["check", "bet 33%", "bet 75%"], cells: { AA: { w: 0.5, f: [1, 0, 0], ev: [5, 4, 3], evm: 5, eq: 0.8 } } }, combos: {},
+    range_ev_bb: 4.8, range_eq: 0.5, solver: { iterations: 1000, solve_seconds: 1.1, exploitability_pct: 0.01 }, notes: [] };
+  const p = await studyPage((q) => ({ ...QUICK, actor: q.turn.length ? "CO" : "HJ" }), (q) => q.board.length === 8 ? LIVE : { study: "deal", street: "turn" });
+  p.ctx.STUDY_AT = { state: at, spot: "3bp_co_hj" };
+  const opened = p.ctx.Study.open();
+  await p.tick();
+  // asked with an answer at once (a turn), shown at once, not dimmed, the solve said to run
+  assert.deepEqual(p.asked.map(x => [x.q.turn.length, x.early]), [[0, true]]);
+  assert.match(p.html(), /Approximate, at once: the turn's own solve is running/);
+  assert.match(p.html(), /<span class="sy-now">HJ \?<\/span>/);
+  assert.doesNotMatch(p.html(), /sy-stage busy|sy-wait|data-view="ev"|data-build/);
+  assert.match(p.html(), /Approximate, at once: the precomputed flop solve's view of the turn/);
+  // the live answer replaces it
+  await p.land(1);
+  await opened;
+  assert.doesNotMatch(p.html(), /Approximate/);
+  assert.match(p.html(), /data-view="ev"/);
+  assert.match(p.html(), /Solved live in 1.1 s/);
+  assert.equal(p.stopped.length, 0);   // (nothing left behind)
+});
+
+test("an action played on an answer at once stops its solve; the next node's answer at once comes first", async () => {
+  const flop = [{ pos: "HJ", action: "check" }, { pos: "CO", action: "bet", to: 12.38 }, { pos: "HJ", action: "call" }];
+  const at = { players: 6, stack: 100, board: "9c6d6cAs", preflop: [], flop, turn: [], river: [] };
+  const p = await studyPage((q) => ({ ...QUICK, actor: q.turn.length ? "CO" : "HJ" }), () => ({ study: "over" }));
+  p.ctx.STUDY_AT = { state: at, spot: "3bp_co_hj" };
+  p.ctx.Study.open();
+  await p.tick();
+  assert.match(p.html(), /<span class="sy-now">HJ \?<\/span>/);
+  // HJ checks on the answer at once (a click on its row): its solve is stopped, CO's node asked, its answer at once shown
+  p.ctx.Study.act({ act: "0" });
+  await p.tick();
+  assert.deepEqual(p.stopped, [1]);
+  assert.deepEqual(p.asked.map(x => [x.q.turn.length, x.early]), [[0, true], [1, true]]);
+  assert.match(p.html(), /<span class="sy-now">CO \?<\/span>/);
+  assert.match(p.html(), /Approximate, at once: the turn's own solve is running/);
+  // back to the start of the hand (no turn: asked without one), CO's solve stopped as well
+  p.ctx.Study.act({ step: "0" });
+  await p.tick();
+  assert.equal(p.asked.at(-1).early, false);
+  assert.deepEqual(p.stopped, [1, 2]);
+});
+
+test("a library flop's answer has its turn files fetched ahead; a live flop's or a turn's doesn't", async () => {
+  const at = { players: 6, stack: 100, board: "9c6d6c", preflop: [], flop: [], turn: [], river: [] };
+  const flopNode = (q) => q.board.length === 6 ? { ...NODE, actor: "HJ", precomputed: q.board === "9c6d6c" ? { label: "CO 3bet vs HJ" } : undefined } : { ...QUICK, approximate: undefined };
+  const p = await studyPage(null, flopNode);
+  p.ctx.STUDY_AT = { state: at, spot: "3bp_co_hj" };
+  const opened = p.ctx.Study.open();
+  await p.tick();
+  assert.equal(p.asked[0].early, false);   // (no answer at once asked for on a flop)
+  await p.land(1);
+  await opened;
+  assert.equal(p.prefetched.length, 1);
+  assert.equal(p.prefetched[0].board, "9c6d6c");
+  assert.equal(p.prefetched[0].study, true);
+  p.ctx.Study.act({ step: "0" });   // (preflop: none)
+  await p.tick();
+  await p.land(2);
+  assert.equal(p.prefetched.length, 1);
+});

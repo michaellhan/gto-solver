@@ -283,6 +283,15 @@ combos and the EV of the hands that take each action; click one to play it and t
 When the betting closes, type the next card(s) or deal random ones; the line above the grid steps back to any earlier
 decision (Backspace steps back one). Fast or Accurate picks the solver's speed for live solves (turns and rivers, or
 flops the library doesn't hold: a Fast turn ~10 s in the browser), and answers already seen come back at once.
+On a library flop's turn where the spot's entry stores one (the 3bet pots' turn files: every CO vs HJ and BB vs SB
+flop, 495 of BB vs CO's) and the flop line is one it holds, the turn's first decision and the in-position player's
+after a check show at once the flop solve's own turn strategy, marked approximate, while the turn's own solve runs:
+the grid by strategy (each combo's stored mix, the card dealt read as its class's played card, the one bet size 75%
+of the pot), the range's frequency and combos per action, the opponent's range, each class's combos with their mix,
+and the range's EVs where the turn file holds them (format 2; strategies only from a format-1 file, as the site's
+are). The turn's solve replaces it when it lands, with every hand's EVs and equities, its own sizes, the Breakdown and
+Simple, as before. An action played on the approximate answer stops that solve and goes on at once (the next node's
+answer at once first, where the file has it); Study fetches a library flop's turn files when it answers the flop.
 Preflop it shows the charts' mix (no EVs or equities). After the flop it browses heads-up, 3-way and 4-way pots (a pot
 where 5+ players saw the flop is refused; a 4-way one by the 4-player solve, N-player pots in How it works). In a 3-way pot the toggle has each opponent (their ranges and combos), and the
 answer is the 3-player solve's: on the [3-way library](#precomputed-3-way-flop-library)'s flops their checked-to
@@ -641,6 +650,13 @@ null; the top-level `cards`: each card's chance given both ranges, range equitie
 turns; from the stored turns also `"lines"`, the flop lines they hold as Study's actions with how often the flop
 solve takes each, and `"line"`, this one's). `"runouts": "held"` answers from what's in hand only (the stored turns,
 a solve cached already) and else `{"study": "runouts", "skipped": "not solved yet", "lines"?}`, solving nothing.
+`Advisor.instant` with `"study": true` (the browser's worker posts it before Study's own answer) reads a library
+flop's turn off its stored turn file where it holds the line, solving nothing: the same node answer with
+`"approximate": {"source": "store", "label", "iterations"}`, the stored tree's actions (check, bet 75%, all-in), `ev_bb`
+and `range_ev_bb` from a format-2 file (else null), per hand class and combo the mix only (`ev`, `evm`, `eq` and each
+combo's EVs and equity null, `range_eq` too) and `"solver": {"by": "the flop library", "iterations",
+"exploitability_pct"}` (the flop solve's); `null` anywhere else (facing a turn bet, the river, a flop without a turn
+file, a tournament) and once the turn's own solve is in hand (settled).
 
 `"opponents": "pool"` (the page's Opponents: Pool toggle) is exploit mode: opponents play like a
 typical player pool instead of GTO. Preflop, hero's calls and raises are re-drawn against the pool's
@@ -1733,8 +1749,8 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   so it stays marked approximate and the answer replaces it. Not
   offered where the answer is quick anyway or needs more than the equilibrium: preflop, library flops (and the turns
   after them, except from a stored turn: below), a street solved already, multiway pots, Practice (it grades
-  your move against the answer), exploit mode, locks, custom sizes or ranges, tournaments, Study, the breakdown, a
-  jam request.
+  your move against the answer), exploit mode, locks, custom sizes or ranges, tournaments, Study (but for a library
+  flop's stored turn: below), the breakdown, a jam request.
 * **The street solved while your opponent is to act** (`Advisor.presolve`; the worker's `presolve` request; the
   page's `presolveFor`, `stopPresolve`). In position, your answer can't start until you enter the opponent's move,
   and the worker sat idle meanwhile. Now, while your opponent is to act heads-up after the flop, the page asks the
@@ -1812,6 +1828,50 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   pots on 552 (1,599, 15.2 MB: every BB vs SB and CO vs HJ flop and 495 of BB vs CO's, the entries solved since the
   builds write them); the single-raised spots' come with their re-solves, and `scripts/instant_coverage.py` counts 28.3 more instant decisions per 100 hands with them on
   the 13 spots the library holds (680.1 -> 708.4 of 813.5, 83.6% -> 87.1%; 46% of the turn's decisions).
+* **Study's turn after a library flop** (`Advisor.instant` with `"study": true`, `Advisor._study_store`; study.js's
+  answer at once, the page's `studyAsk` and `studyPrefetch`). Study solved a library flop's turn live with only the
+  progress bar to look at. Where the entry's turn file holds the flop line it now shows the stored turn for the whole
+  range at once (Study, above), and the turn's own solve replaces it. `scripts/bench_browser.mjs --session --early
+  --prefetch 0.5` (Pyodide, one thread, a fresh worker per pair: Study's flop answer, then the turn's; 300 ms a
+  library file; seconds to the first answer, today -> with the stored turn / to the turn's own solve):
+
+  | Study's turn (one run each) | Fast | Accurate |
+  |---|---|---|
+  | CO's 3bet vs HJ, 8c5d3h check, bet 33%, call, As: HJ first | 0.84 -> 0.013 / 0.55 | 3.54 -> 0.014 / 3.40 |
+  | ... CO after HJ's check | 0.85 -> 0.019 / 0.57 | 3.71 -> 0.019 / 3.38 |
+  | BB's 3bet vs SB, Kc3d2h check, bet, call, Qs: SB first | 1.14 -> 0.017 / 0.69 | 4.96 -> 0.018 / 4.74 |
+  | ... BB after SB's check | 0.94 -> 0.026 / 0.72 | 4.65 -> 0.026 / 4.72 |
+
+  Today the first answer is the turn's solve, which also fetched the turn file (300 ms here: the solve seeds its
+  regrets from it); fetched ahead from the flop's answer, the solve is that much quicker too. Without the fetch
+  ahead the answer at once waits for it (0.32 s, Fast, the first row). In a desktop browser (the site built locally,
+  the worker's own threads) the first row's stored turn showed 0.010 s after the deal and its solve's answer at 0.31 s
+  (Fast) or 0.78 s (Accurate); a check played on the stored answer 0.06 s in had CO's stored answer up 0.02 s later
+  and its solve's at 0.77 s, and stepping back to HJ's decision answered at once from that solve.
+
+  Should the stored answer stand on its own (skip the turn's solve, or make it opt-in)? EV given up, each combo's mix
+  priced by the turn's live Accurate solve's EVs per action (natively, one thread, 0.01% of the pot from
+  equilibrium; the opponent not adapting), % of the pot: 108 nodes on CO vs HJ's and BB vs SB's 3bet pots (six flops
+  each, the flop lines checked through and check, bet, call at each size the flop solve takes 5% or more, two turn
+  cards each; the turn's first decision and the in-position player's after a check), against Study's live Fast solve:
+
+  | flop line, node | the stored turn: mean (worst) | the live Fast solve |
+  |---|---|---|
+  | checked through, first | 0.05 (0.14) | 0.001 (0.01) |
+  | ... after a check | 0.09 (0.49) | 0.003 (0.02) |
+  | check, bet 33%, call, first | 0.03 (0.35) | 0.011 (0.25) |
+  | ... after a check | 0.06 (0.50) | 0.014 (0.10) |
+  | check, bet 75%, call, first | 0.22 (1.19) | 0.000 (0.00) |
+  | ... after a check | 0.31 (0.86) | 0.001 (0.01) |
+
+  Mean 0.10% of the pot (median 0.03), but 17 of the 108 above the library's 0.15% and the worst 1.19%: the stored
+  tree has one turn size, and where the turn's solve bets a third of the pot 30% of the time or more (21 nodes) the
+  stored mix gives up 0.31% on average (the other 87: 0.05%); after a check its range is the stored first decision's,
+  so it holds 63-100% of the live range's weight there (median 97%; first to act 87-100%, median 95%). It has no
+  hand's own EVs or equities either, and with the opponent free to adapt it gives up 0.5-0.8% (above). Study's live
+  Fast solve gives up 0.006% (natively; 0.55-0.72 s in the browser above, Accurate 3.4-4.7 s). So the solve stays
+  automatic and the stored answer is what Study shows while it runs; an action played on it stops the solve, and the
+  next node's request resumes it where it stopped (after a check the in-position player's stored answer first).
 * **A library spot's flop the library doesn't store** (`instant_from_near`, `NEAR_UNTIL`; `gto/flop_approx.py`;
   `Advisor.prefetch`). The flatted opens and the 3bet pots store 552 of the 1755 flops; on the other 1203 (10.2
   points of the heads-up flop decisions: Precomputed flop library, Coverage) the page had nothing to show until the
@@ -2877,8 +2937,9 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   act both ranges' EVs (`"range_ev_bb"`, `"villain_range_ev_bb"`; at 200bb on Kc7d2h checked through, 8s turn: "range
   EV: yours +2.61 bb · theirs +2.89 bb of the 5.5 bb pot", check +2.20, bet 75% +3.89, where QsJs checks), scaled from
   the line's pot to the hand's. There's no `"ev_bb"`: your hand's EVs come with the turn's own solve. A format-1
-  file's answer is as before, to the character. Only the page's early panel shows it (Practice grades the turn's own
-  solve, and Study solves its turn nodes live). Against the library's own game solved live, river dealt, the stored
+  file's answer is as before, to the character. The page's early panel shows it, and Study's stored turn at once
+  (each action's EV and the range's, Study's own columns: Study's turn after a library flop); Practice grades the
+  turn's own solve. Against the library's own game solved live, river dealt, the stored
   EVs are 0.15-0.36% of the pot off on average (at most 0.73) for the ranges and 0.16-0.34 (at most 1.0) for the
   actions; a turn report read off a flop solved live (the river by strength buckets) differs by more (0.6-0.9% of the
   pot in single-raised pots, 1.6-4.5 in 3bet pots). On three 3bet-pot flops

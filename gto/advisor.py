@@ -2346,21 +2346,43 @@ def instant_from_store(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
     if j >= len(nd["combos"]) or nd["combos"][j] != i:
         return None   # (a combo the flop solve hardly brings here: not stored)
     node = types.SimpleNamespace(names=nd["names"], pot_now=0.0, bets=(0.0, 0.0))
-    bets = [n for n in nd["names"] if n.startswith("bet")]
-    size = f"one bet size, {bets[0].split()[-1]}" if len(bets) == 1 else "its turn sizes"
     acts = _real_actions(node, nd["strat"][:, j], [0.0, 0.0], spot)
-    out = {"actions": acts, "source": "store",
-           "label": f"the precomputed flop solve's view of the turn (by card class, {size})",
-           "iterations": int(sol.iters)}
-    if nd["evs"] is not None:   # (format 2: the class's range EVs, at the hand's pot; never your hand's own)
-        ln = next(x for x in t["lines"] if x["path"] == list(taken))
-        k = spot.pot / max(float(ln["pot"]), 1e-9)
-        for a, e in zip(acts, nd["evs"]):
-            a["range_ev_bb"] = round(float(e) * k, 2) if np.isfinite(e) else None
-        r = fl.turn_range_evs(t, taken, mp(spot.board[3])) if not at else None
-        if r is not None and np.all(np.isfinite(r)):
-            out["range_ev"] = (round(float(r[spot.hero_p]) * k, 2), round(float(r[1 - spot.hero_p]) * k, 2))
+    out = {"actions": acts, "source": "store", "label": _store_label(nd["names"]), "iterations": int(sol.iters)}
+    evs, rng = _store_evs(t, taken, at, mp(spot.board[3]), nd, spot.pot, spot.hero_p)
+    if evs is not None:   # (format 2: the class's range EVs, at the hand's pot; never your hand's own)
+        for a, e in zip(acts, evs):
+            a["range_ev_bb"] = e
+        if rng is not None:
+            out["range_ev"] = rng
     return out
+
+
+def _store_label(names) -> str:
+    """What a stored turn's answer is read off (instant_from_store, Advisor._study_store)."""
+    bets = [n for n in names if n.startswith("bet")]
+    size = f"one bet size, {bets[0].split()[-1]}" if len(bets) == 1 else "its turn sizes"
+    return f"the precomputed flop solve's view of the turn (by card class, {size})"
+
+
+def _store_evs(t: dict, path, at, card: int, nd: dict, pot: float, p: int):
+    """A format-2 turn file's EVs at its stored node `nd` (flop_library.turn_node of t on the flop line `path`, the
+    turn actions `at`, `card` on the entry's flop): the flop solve's, its turn class's, never a hand's own, in bb
+    relative to folding now, scaled from the stored line's pot to the hand's `pot`: (each action's, that of the hands
+    of the acting player's range that take it, None where none does; at the turn's first decision the ranges', player
+    p's and the other's, else None). (None, None) for a format-1 file: strategies only."""
+    if nd.get("evs") is None:
+        return None, None
+    from . import flop_library as fl
+    ln = next(x for x in t["lines"] if x["path"] == list(path))
+    k = pot / max(float(ln["pot"]), 1e-9)
+    acts = [round(float(e) * k, 2) if np.isfinite(e) else None for e in nd["evs"]]
+    r = fl.turn_range_evs(t, path, card) if not at else None
+    rng = (round(float(r[p]) * k, 2), round(float(r[1 - p]) * k, 2)) if r is not None and np.all(np.isfinite(r)) else None
+    return acts, rng
+
+
+# what Study asks without (Advisor.study): no cards of anyone's own, at equilibrium, every hand of the range
+STUDY_DROPS = ("hero", "hole", "opponents", "locks", "jam", "library_only", "optimize_sizes")
 
 
 # ----------------------------------------------------------------------------- advisor
@@ -2532,9 +2554,13 @@ class Advisor:
         "range_ev_bb" / "villain_range_ev_bb", the ranges' at the turn's first decision). Nothing is solved: None
         where the answer needs a solve before anything can be read (an earlier street not solved yet), is quick anyway
         (preflop, a library flop, a street solved already), isn't heads-up, or asks for more than the equilibrium
-        (exploit mode, locks, custom ranges or sizes, a tournament, Study, a jam, the breakdown)."""
+        (exploit mode, locks, custom ranges or sizes, a tournament, a jam, the breakdown). Study ("study", asked as
+        Advisor.study asks: no cards of anyone's own) answers at once on a library flop's turn from its stored turn for
+        the whole range (Advisor._study_store), and nowhere else."""
+        if state.get("study"):
+            state = dict({k: v for k, v in state.items() if k not in STUDY_DROPS}, study=True)
         if len(str(state.get("board") or "")) < 6 or state.get("opponents") == "pool" or any(
-                state.get(k) for k in ("study", "runouts", "jam", "breakdown", "optimize_sizes", "locks", "library_only",
+                state.get(k) for k in ("runouts", "jam", "breakdown", "optimize_sizes", "locks", "library_only",
                                        "payouts", "bounties", "ranges", "sizes")) or state.get("one_size") is not None:
             return None
         self._instant = True
@@ -2620,8 +2646,7 @@ class Advisor:
         (no pool, locks or jam requests) and without hero's cards (no card removal for them). A tournament's payouts
         and bounties stay: the answers are in prize equity as the advice's are (preflop the charts' mix as the advice
         re-prices it, postflop the solves' payoffs), with the tournament's notes for the player to act."""
-        st = {k: v for k, v in state.items() if k not in ("hero", "hole", "opponents", "locks", "jam", "library_only",
-                                                           "optimize_sizes")}
+        st = {k: v for k, v in state.items() if k not in STUDY_DROPS}
         st["study"] = True
         runouts = st.pop("runouts", None)
         try:
@@ -5806,6 +5831,9 @@ class Advisor:
         if own is not None and not getattr(own, "stopped", False) and (
                 getattr(own, "settled_at", None) is not None or own.iters >= 1000 or own.seconds >= 0.8 * self.time_budget):
             raise _NoInstant()
+        if self._study:   # (Study: the actor's whole range, off a library flop's stored turn only)
+            return self._study_store(cur, board, hero, villain, hero_p, oop, ip, eff, r0, r1, walked, behind, to_call,
+                                     n_players, t0)
         earlier = False
         if own is None:   # (facing a size off the tree your advice on this street solved: that solve, at its nearest)
             c = self._hand_cfg(board, r0, r1, cur, oop, ip, eff, cfg)
@@ -5834,6 +5862,85 @@ class Advisor:
                 "notes": notes, "seconds": round(time.time() - t0, 3),
                 **({"range_ev_bb": got["range_ev"][0], "villain_range_ev_bb": got["range_ev"][1]} if "range_ev" in got
                    else {})}
+
+    def _study_store(self, cur, board, hero, villain, hero_p, oop, ip, eff, r0, r1, walked, behind, to_call,
+                     n_players, t0) -> dict:
+        """Study's answer at once on a library flop's turn (Advisor.instant with "study"), while the turn's own solve
+        runs: the precomputed flop solve's turn strategies stored beside its entry (instant_from_store's turn file),
+        for the actor's whole range at the turn's first decision and in position after a check: per hand class (the
+        grid) and combo the mix, per action the range's frequency and combos, the opponent's range (after a check:
+        the hands the stored first decision checks), marked "approximate". A format-2 file adds its EVs (_store_evs:
+        each action's, the hands that take it, and the range's), as the early panel shows them; no hand's own EVs or
+        equities (they come with the turn's own solve, which replaces it). Combos the file doesn't store (under
+        TURN_REACH of the most reached) are left out of the range. _NoInstant where it doesn't hold the node."""
+        prev, lib = walked.get("flop"), self.library
+        if cur.name != "turn" or prev is None or lib is None or not hasattr(lib, "turns"):
+            raise _NoInstant()
+        sol, _, taken = prev
+        acts = list(cur.actions)
+        if not acts:
+            at = ()
+        elif len(acts) == 1 and acts[0]["action"] == "check" and acts[0]["pos"] == oop:
+            at = ("check",)
+        else:
+            raise _NoInstant()
+        got = _turn_file(lib, sol, board[:3])
+        if got is None:
+            raise _NoInstant()
+        from . import flop_library as fl
+        t, smap = got
+        st = fl.turn_strategies(t, taken, at, board[3], smap)
+        nd = fl.turn_node(t, taken, at, board[3] // 4 * 4 + smap[board[3] % 4])
+        if st is None or nd is None or st["player"] != hero_p:
+            raise _NoInstant()
+        live = np.prod([1.0 - MEMBER_FULL[c] for c in board], axis=0)
+        r = [np.asarray(r0, dtype=np.float64) * live, np.asarray(r1, dtype=np.float64) * live]
+        if at:   # (in position after a check: the hands the stored first decision checks; unstored ones at an even mix)
+            first = fl.turn_strategies(t, taken, (), board[3], smap)
+            if first is None or "check" not in first["names"]:
+                raise _NoInstant()
+            x = first["strat"][first["names"].index("check")]
+            r[0] = r[0] * np.where(np.isnan(x), 1.0 / len(first["names"]), x)
+        held = ~np.isnan(st["strat"][0])
+        me, opp = r[hero_p] * held, r[1 - hero_p]
+        if me.sum() < 1e-6:
+            raise _NoInstant()
+        sf = np.nan_to_num(st["strat"])
+        spot = InstantSpot("turn", tuple(board), (), hero_p, oop, ip, acts, cur.pot_start, eff, behind)
+        real = _real_actions(types.SimpleNamespace(names=st["names"], pot_now=0.0, bets=(0.0, 0.0)),
+                             np.zeros(len(st["names"])), [0.0, 0.0], spot)
+        none = np.full(N_COMBOS, np.nan)
+        part, (og,) = _study_range(board, [a["action"] for a in real], [a["amount_bb"] for a in real], me, sf,
+                                   np.zeros_like(sf), none, [(villain, opp, none)])
+        evs, rng = _store_evs(t, taken, at, board[3] // 4 * 4 + smap[board[3] % 4], nd, cur.pot_start, hero_p)
+        for a, act in enumerate(part["actions"]):
+            act["ev_bb"] = evs[a] if evs is not None else None
+        if rng is not None:
+            range_ev = rng[0]
+        elif evs is not None:   # (after a check: the actions' EVs by how often the range takes each)
+            w = [(x["freq"], e) for x, e in zip(part["actions"], evs) if e is not None and x["freq"] > 0]
+            range_ev = round(sum(f * e for f, e in w) / sum(f for f, _ in w), 2) if w else None
+        else:
+            range_ev = None
+        for c in part["grid"]["cells"].values():
+            c.update(ev=None, evm=None, eq=None)
+        for rows in part["combos"].values():
+            for row in rows:
+                row[3], row[4] = None, None
+        label = _store_label(st["names"])   # (the panel says what it is and that the turn's own solve replaces it)
+        notes = ["the stored turn's EVs are the flop solve's for the turn card's class (the range's and each action's), "
+                 "no hand's own" if evs is not None else "the stored turn holds strategies only, so no EVs until the "
+                 "turn's own solve"]
+        return {"study": "node", "street": "turn", "actor": hero, "opponent": villain,
+                "position": "OOP" if hero_p == 0 else "IP", "players": n_players, "board": cards_str(board),
+                "pot_bb": round(cur.pot_start, 2), "to_call_bb": round(min(to_call, behind), 2),
+                "stack_bb": round(min(eff, behind), 2),
+                **part, "range_ev_bb": range_ev, "range_eq": None,
+                "opponent_combos": og["combos"], "opponent_eq": None, "opponent_grid": og["grid"],
+                "approximate": {"source": "store", "label": label, "iterations": int(sol.iters)},
+                "solver": {"iterations": int(sol.iters), "exploitability_pct": round(float(sol.exploitability()), 3),
+                           "by": "the flop library"},
+                "notes": notes, "seconds": round(time.time() - t0, 3)}
 
     def _actor_move(self, sol: Solution, node: Decision, n_r0, n_r1, hole, p: int, street: str) -> dict:
         """The mix of player p (to act at `node`) for `hole`, from hero's solve; an error (play then asks

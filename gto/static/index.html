@@ -2445,10 +2445,17 @@ document.getElementById("analyzeSession").onclick = () => openView("session");
 document.getElementById("study").onclick = () => openView("study");
 // the range builder: Study in its Build mode, from a random flop of its spot
 document.getElementById("rangeBuilder").onclick = () => { window.STUDY_BUILD = true; openView("study"); };
-async function studyAsk(st) {
-  await modeReady;
+// onPartial (the browser's worker): Study's answer at once where one is in hand (a library flop's stored turn:
+// Advisor.instant), before the request's own; the promise's reqId stops it (simpleStop) once the mode is known
+function studyAsk(st, onPartial) {
+  if (!MODE) return modeReady.then(() => studyAsk(st, onPartial));
   const [budget, prior_budget] = BUDGETS[MODE][st.speed === "accurate" ? "accurate" : "fast"];
-  return callAdvise({ ...st, budget, prior_budget });
+  return callAdvise({ ...st, budget, prior_budget }, null, onPartial);
+}
+// Study at a library flop's decision, answered: the flop's turn files the index lists fetched ahead (Advisor.prefetch
+// finds the entries that answer read), so its turns' answers at once need no request of their own
+function studyPrefetch(st) {
+  if (MODE === "wasm" && worker && String(st.board || "").length === 6) worker.postMessage({ prefetch: { ...st, flop: [], turn: [], river: [] } });
 }
 function studyHand() { return payload(); }
 // [budget, prior_budget] at a speed, for Study's turn and river reports' progress (the seconds a solve for one takes)

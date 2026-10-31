@@ -72,6 +72,8 @@ const LIMP = [F("UTG"), F("HJ"), F("CO"), F("BTN"), C("SB"), X("BB")];   // (a l
 const BB_3BET = [F("UTG"), F("HJ"), F("CO"), R("BTN", 2.5), F("SB"), R("BB", 10), C("BTN")];
 const HJ_CO = [F("UTG"), R("HJ", 2.5), C("CO"), F("BTN"), F("SB"), F("BB")];   // (the flop library's on 552 flops)
 const BB_3BET_HJ = [F("UTG"), R("HJ", 2.5), F("CO"), F("BTN"), F("SB"), R("BB", 10), C("HJ")];   // (no spot: 3bp_bb_co's)
+const CO_3BET_HJ = [F("UTG"), R("HJ", 2.5), R("CO", 7.5), F("BTN"), F("SB"), F("BB"), C("HJ")];   // (3bp_co_hj: stored turns)
+const BB_3BET_SB = [F("UTG"), F("HJ"), F("CO"), F("BTN"), R("SB", 3), R("BB", 10), C("SB")];   // (3bp_bb_sb: stored turns)
 const base = (o) => ({ players: 6, stack: 100, preflop: SRP, flop: [], turn: [], river: [], ...o });
 const SRP_FLOP = [X("BB"), B("BTN", 1.8), C("BB")];                 // a third-pot c-bet called
 const SRP_TURN = [X("BB"), B("BTN", 6), C("BB")];                   // two thirds called
@@ -154,6 +156,16 @@ const SPOTS = {
   "ro-river-x": base({ board: "Ks7d2cTh", flop: [X("BB"), X("BTN")], turn: [X("BB"), X("BTN")], study: true, runouts: true }),
   "ro-river-3bp": base({ board: "Ks7d2cTh", preflop: BB_3BET, flop: [X("BB"), B("BTN", 6.8), C("BB")], turn: [X("BB"), B("BTN", 15), C("BB")],
                          study: true, runouts: true }),
+  // Study's own nodes (no hero): a library flop's first decision, then its turn after a called c-bet, first and in
+  // position after a check (--early: answered at once from the flop's stored turn, Advisor.instant; --session
+  // study-flop-3bp,study-turn-3bp with --prefetch S: the turn file fetched ahead once the flop's answer is in, as
+  // study.js's studyPrefetch does)
+  "study-flop-3bp": base({ board: "8c5d3h", preflop: CO_3BET_HJ, study: true }),
+  "study-turn-3bp": base({ board: "8c5d3hAs", preflop: CO_3BET_HJ, flop: [X("HJ"), B("CO", 5.45), C("HJ")], study: true }),
+  "study-turn-3bp-ip": base({ board: "8c5d3hAs", preflop: CO_3BET_HJ, flop: [X("HJ"), B("CO", 5.45), C("HJ")], turn: [X("HJ")], study: true }),
+  "study-flop-3bp-sb": base({ board: "Kc3d2h", preflop: BB_3BET_SB, study: true }),
+  "study-turn-3bp-sb": base({ board: "Kc3d2hQs", preflop: BB_3BET_SB, flop: [X("SB"), B("BB", 6.5), C("SB")], study: true }),
+  "study-turn-3bp-sb-ip": base({ board: "Kc3d2hQs", preflop: BB_3BET_SB, flop: [X("SB"), B("BB", 6.5), C("SB")], turn: [X("SB")], study: true }),
 };
 const STREET_IDX = { 0: 0, 3: 1, 4: 2, 5: 3 };
 const STREET_OF = { 6: "flop", 8: "turn", 10: "river" };
@@ -164,6 +176,8 @@ function arg(name, dflt) {
 }
 const flag = (name) => process.argv.includes("--" + name);
 
+// a Study node's answer in brief: its range's frequency per action
+const mixOf = (r) => (r.actions || []).map((a) => `${a.action} ${Math.round(a.freq * 100)}%`).join(" / ");
 // the page's estimate (index.html analyze(): the bar's "of ~N s"; a report: study.js estimate())
 function pageBudget(state, speed, fastSeconds) {
   if (state.runouts) return state.board.length === 8 ? BUDGETS[speed][0] + BUDGETS[speed][1] : BUDGETS[speed][0];
@@ -349,10 +363,10 @@ async function runSpot(w, spot, speeds) {
       iterations: s.iterations ?? null, solve_s: s.solve_seconds ?? null, expl_pct: s.exploitability_pct ?? null, cells: s.cells ?? null,
       outside_s: s.solve_seconds != null ? +(wall - s.solve_seconds).toFixed(2) : null,
       precomputed: !!r.precomputed, heap_mb: +w.heap().toFixed(0), lib_fetches: w.ctx.libFetches - x0, lib_ahead: w.ctx.aheadFetches - a0,
-      street: r.street, recommended: r.recommended ?? (r.study === "runouts" ? `${r.street} report: ${(r.first || {}).actor} ${((r.first || {}).actions || []).join("/")}, ${(r.cards || []).length} cards` : undefined),
+      street: r.street, recommended: r.recommended ?? (r.study === "node" ? mixOf(r) : r.study === "runouts" ? `${r.street} report: ${(r.first || {}).actor} ${((r.first || {}).actions || []).join("/")}, ${(r.cards || []).length} cards` : undefined),
       error: m.error || r.error || (r.skipped ? "skipped: " + r.skipped : null),
       restarts: process.env.BENCH_FAIL || process.env.BENCH_MWFAIL ? w.restarts() : null,
-      early: m.part ? { s: m.part.early_s, recommended: m.part.recommended, source: m.part.approximate.source,
+      early: m.part ? { s: m.part.early_s, recommended: m.part.recommended ?? mixOf(m.part), source: m.part.approximate.source,
                         label: m.part.approximate.label } : null,
       notes: (r.notes || []).filter((n) => process.env.BENCH_ALL_NOTES || /equilibrium|solved|iterations|rules/.test(n)).map((n) => n.slice(0, 160)),
     }));

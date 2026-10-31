@@ -131,9 +131,10 @@
   const whoHtml = (res, who) => `<span class="segment">${[{ key: "me", seat: res.actor }, ...oppsOf(res)].map(o =>
     `<button data-who="${o.key}" class="${o.key === (oppOf(res, who) ? who : "me") ? "active" : ""}">${esc(o.seat)}</button>`).join("")}</span>`;
   // the node's views (3-way before the river no equity: the solve deals the cards to come into its leaves); Simple, the
-  // one-size view (simple.js), heads-up where the actor can bet or raise
+  // one-size view (simple.js), heads-up where the actor can bet or raise; an answer at once (a library flop's stored
+  // turn, "approximate") the strategy alone: no hand's own EVs or equities until the node's own solve
   const canSize = (acts) => acts.some(a => a.action === "check") || acts.some(a => a.action === "fold") && acts.some(a => /^(raise|all-in)/.test(a.action));
-  const viewsOf = (res) => res.street === "preflop" ? ["strategy"]
+  const viewsOf = (res) => res.street === "preflop" || res.approximate ? ["strategy"]
     : [...Object.keys(VIEWS).filter(v => res.range_eq != null || (v !== "equity" && v !== "eqr")), "breakdown",
        ...(!res.multiway && canSize(res.actions || []) ? ["simple"] : [])];
   const viewName = (v) => VIEWS[v] || (v === "simple" ? "Simple" : "Breakdown");
@@ -189,12 +190,13 @@
     h += `</div><div class="sy-mix">${names.map((nm, a) => c.f[a] >= 0.005 ? `<span style="--c:${color(nm)}">${esc(nm)} <b>${pct(c.f[a])}</b>${c.ev ? ` <small>${sgn(c.ev[a])}</small>` : ""}</span>` : "").join("")}</div>`;
     const cs = (res.combos || {})[cls];
     if (!cs || !cs.length) return h;
-    const evOf = (x) => x[2].reduce((t, f, a) => t + f * x[3][a], 0);
-    h += `<table class="sy-cb"><thead><tr><th>Combo</th><th>Mix</th><th class="n">EV</th><th class="n">Eq</th></tr></thead><tbody>`;
-    for (const x of [...cs].sort((a, b) => evOf(b) - evOf(a))) {
-      h += `<tr title="${names.map((nm, a) => `${nm} ${pct(x[2][a])} (EV ${sgn(x[3][a])})`).join(", ")}${x[1] < 0.999 ? ` · ${pct(x[1])} of it in the range` : ""}"><td class="sy-c">${cardsOf(x[0]).map(cardHtml1).join("")}${x[1] < 0.999 ? `<small>${pct(x[1])}</small>` : ""}</td>`
+    // (an answer at once has no combo's EVs: its combos by weight, the mix alone)
+    const evs = cs.every(x => x[3]), evOf = (x) => x[2].reduce((t, f, a) => t + f * x[3][a], 0);
+    h += `<table class="sy-cb"><thead><tr><th>Combo</th><th>Mix</th>${evs ? `<th class="n">EV</th><th class="n">Eq</th>` : ""}</tr></thead><tbody>`;
+    for (const x of [...cs].sort(evs ? (a, b) => evOf(b) - evOf(a) : (a, b) => b[1] - a[1])) {
+      h += `<tr title="${names.map((nm, a) => `${nm} ${pct(x[2][a])}${evs ? ` (EV ${sgn(x[3][a])})` : ""}`).join(", ")}${x[1] < 0.999 ? ` · ${pct(x[1])} of it in the range` : ""}"><td class="sy-c">${cardsOf(x[0]).map(cardHtml1).join("")}${x[1] < 0.999 ? `<small>${pct(x[1])}</small>` : ""}</td>`
         + `<td><span class="sy-mini wide">${names.map((nm, a) => x[2][a] > 0.0005 ? `<span style="width:${(x[2][a] * 100).toFixed(1)}%;background:${color(nm)}"></span>` : "").join("")}</span></td>`
-        + `<td class="n">${sgn(evOf(x))}</td><td class="n">${pct(x[4])}</td></tr>`;
+        + (evs ? `<td class="n">${sgn(evOf(x))}</td><td class="n">${pct(x[4])}</td>` : "") + `</tr>`;
     }
     return h + `</tbody></table>`;
   }
@@ -221,6 +223,7 @@
     const cat = key ? catsOf(res).find(c => c.key === key) : null;
     if (!cat) return res;
     const col = cat.part === "m" ? 5 : 6, A = res.grid.actions.length, zero = () => new Array(A).fill(0);
+    const noEv = Object.values(res.combos || {}).some(cs => cs.some(x => !x[3]));   // (an answer at once: no combo's EVs)
     const cells = {}, combos = {}, fw = zero(), fe = zero();
     let W = 0, EV = 0, EQ = 0, EQW = 0;
     for (const [cls, cs] of Object.entries(res.combos || {})) {
@@ -231,15 +234,15 @@
       let w = 0, evm = 0, eq = 0, ew = 0;
       for (const x of rows) {
         w += x[1];
-        for (let a = 0; a < A; a++) { f[a] += x[1] * x[2][a]; ev[a] += x[1] * x[3][a]; evm += x[1] * x[2][a] * x[3][a]; fe[a] += x[1] * x[2][a] * x[3][a]; }
+        for (let a = 0; a < A; a++) { f[a] += x[1] * x[2][a]; if (x[3]) { ev[a] += x[1] * x[3][a]; evm += x[1] * x[2][a] * x[3][a]; fe[a] += x[1] * x[2][a] * x[3][a]; } }
         if (x[4] != null) { eq += x[1] * x[4]; ew += x[1]; }
       }
       f.forEach((v, a) => { fw[a] += v; });
-      cells[cls] = { w: w / combosOf(cls), f: f.map(v => v / w), ev: ev.map(v => v / w), evm: evm / w, eq: ew ? eq / ew : null };
+      cells[cls] = { w: w / combosOf(cls), f: f.map(v => v / w), ev: noEv ? null : ev.map(v => v / w), evm: noEv ? null : evm / w, eq: ew ? eq / ew : null };
       W += w; EV += evm; EQ += eq; EQW += ew;
     }
-    const actions = res.actions.map((a, i) => ({ ...a, freq: W ? fw[i] / W : 0, combos: fw[i], ev_bb: fw[i] >= 0.05 ? fe[i] / fw[i] : null }));
-    return { ...res, grid: { ...res.grid, cells }, combos, actions, range_combos: W, range_ev_bb: W ? EV / W : null,
+    const actions = res.actions.map((a, i) => ({ ...a, freq: W ? fw[i] / W : 0, combos: fw[i], ev_bb: !noEv && fw[i] >= 0.05 ? fe[i] / fw[i] : null }));
+    return { ...res, grid: { ...res.grid, cells }, combos, actions, range_combos: W, range_ev_bb: W && !noEv ? EV / W : null,
       range_eq: EQW ? EQ / EQW : null, filter: { key, label: cat.label, of: res.range_combos } };
   }
   function filterHtml(res, key) {
@@ -362,10 +365,18 @@
   const roughness = (s) => { const x = (s && s.exploitability_pct) || 0; return x < 3 ? "" : x < 10 ? "meh" : "bad"; };
   function solverHtml(res) {
     if (res.street === "preflop") return "Preflop: the charts' mix (an approximation: no EVs or equities).";
+    if (res.approximate) return approxHtml(res);
     const s = res.solver || {}, p = res.precomputed, r = !p && roughness(s);
     const how = p ? `Precomputed (${esc(p.label)})` : `Solved live in ${num(s.solve_seconds || 0)} s`;
     return `${how}: ${s.iterations} iterations, ${num(s.exploitability_pct)}% of the pot from equilibrium.`
       + (r ? ` <span class="sy-rough ${r}">Cut short: the numbers can be well off (a busy machine runs fewer iterations; Accurate solves longer).</span>` : "");
+  }
+
+  // an answer at once (Advisor.instant on a library flop's turn): what it's read off, while the node's own solve runs
+  function approxHtml(res) {
+    const a = res.approximate || {}, s = res.solver || {};
+    return `Approximate, at once: ${esc(a.label || "")} (${s.iterations} iterations, ${num(s.exploitability_pct)}% of the pot from equilibrium on the flop). `
+      + `The ${esc(res.street)}'s own solve is running and replaces it: then each hand's EVs, equities, the Breakdown and Simple.`;
   }
 
   // ---- the runout report (Advisor.study with "runouts": a closed flop's turn or a closed turn's river, read off that
@@ -469,31 +480,58 @@
   const paints = new Map();
   const building = () => ST.build && res && res.study === "node" && !busy;
   const paintOf = (r) => { if (!paints.has(r.key)) paints.set(r.key, blankPaint(r)); return paints.get(r.key); };
-  const answers = new Map();   // request (JSON) -> its answer's promise
-  const ask = (st) => typeof globalThis.studyAsk === "function" ? globalThis.studyAsk(st) : Promise.reject(new Error("no solver"));
-  const answer = (key) => {
-    if (!answers.has(key)) answers.set(key, Promise.resolve(ask(JSON.parse(key))).then(r => {
-      if (!r || r.cancelled || r.error) answers.delete(key);
-      return r || { error: "no answer" };
-    }, e => { answers.delete(key); return { error: String(e && e.message || e) }; }));
+  const answers = new Map();   // request (JSON) -> its answer's promise (.req: the request, which simpleStop stops)
+  // request (JSON) -> its answer at once while it solves (Advisor.instant: a library flop's stored turn, marked
+  // "approximate"), shown meanwhile; the request's own answer replaces it
+  const early = new Map();
+  let asking = null;   // the request go() is showing
+  const quick = () => busy && res && res.approximate && res.key === asking;   // (its answer at once shown, solving on)
+  const ask = (st, onPartial) => typeof globalThis.studyAsk === "function" ? globalThis.studyAsk(st, onPartial) : Promise.reject(new Error("no solver"));
+  const answer = (key, atOnce = false) => {
+    if (!answers.has(key)) {
+      const q = ask(JSON.parse(key), atOnce ? (p) => partial(key, p) : undefined);
+      const p = Promise.resolve(q).then(r => {
+        early.delete(key);
+        if (!r || r.cancelled || r.error) answers.delete(key);
+        return r || { error: "no answer" };
+      }, e => { early.delete(key); answers.delete(key); return { error: String(e && e.message || e) }; });
+      p.req = q;
+      answers.set(key, p);
+    }
     return answers.get(key);
   };
+  const colors = () => { if (res && res.study === "node" && typeof setColors === "function") setColors(res.actions.map(a => a.action)); };
+  function partial(key, p) {
+    if (!p || p.study !== "node" || !p.approximate || !answers.has(key)) return;
+    early.set(key, p);
+    if (busy && key === asking) { res = { ...p, key }; colors(); draw(); }
+  }
   async function go(state) {
     const stops = [], stopFn = simpleStopFn();   // (the one-size view's solves stopped before the next node's ask)
     if (simpleApi()) simpleApi().stop(null, p => { if (stopFn) stops.push(stopFn(p)); });
+    // (a node left while its own solve ran under its answer at once: that solve stopped too, so the next node's ask
+    // doesn't wait behind it; it stays cached part way and goes on when the node is asked again)
+    const left = busy && res && res.approximate ? answers.get(res.key) : null;
     ST.state = state; ST.sel = ST.hover = ST.focus = null; ST.ro = null; err = null; store();
     const key = JSON.stringify(request(state, ST.speed)), g = ++gen;
+    if (left && stopFn && left !== answers.get(key)) stops.push(stopFn(left.req));
     if (stops.length) { await Promise.all(stops); if (g !== gen) return; }
-    answer(key);
-    busy = true; draw();
+    // (an answer at once is asked for on a turn only: a library flop's stored turn is the one there is)
+    asking = key;
+    answer(key, String(state.board || "").length === 8);
+    busy = true;
+    if (early.has(key)) { res = { ...early.get(key), key }; colors(); }   // (back at a node still solving)
+    draw();
     const r = await answers.get(key);
     if (g !== gen) return;
     busy = false;
     if (r.cancelled) { err = "The request was cancelled."; res = null; }
     else if (r.error) { err = r.error; res = null; }
     else { err = null; res = r; res.key = key; }
-    if (res && res.study === "node" && typeof setColors === "function") setColors(res.actions.map(a => a.action));
+    colors();
     if (res && res.study === "node" && ST.brush >= res.grid.actions.length) ST.brush = 0;
+    // (a library flop: its stored turns fetched ahead, for the turns' answers at once)
+    if (res && res.precomputed && res.street === "flop" && typeof globalThis.studyPrefetch === "function") globalThis.studyPrefetch(request(state, ST.speed));
     draw();
   }
   // the turn or river report at a closed flop or turn, shown under the deal box: first from what's in hand
@@ -575,8 +613,8 @@
     }
     if (res.study === "over") return `<div class="sy-msg">${res.winner ? `Hand over: everyone else folded, ${esc(res.winner)} wins the pot.` : "Hand over: the river's betting is done, the hands go to showdown."} Step back along the line above to look at another branch.</div>`;
     const pre = res.street === "preflop", cls = ST.hover || ST.sel;
-    const buildBtn = `<button class="ghost${ST.build ? " active" : ""}" data-build title="Paint the strategy yourself, then score it (B)">${ST.build ? "✎ Building" : "✎ Build"}</button>`;
-    if (ST.build) {
+    const buildBtn = res.approximate ? "" : `<button class="ghost${ST.build ? " active" : ""}" data-build title="Paint the strategy yourself, then score it (B)">${ST.build ? "✎ Building" : "✎ Build"}</button>`;
+    if (ST.build && !res.approximate) {
       const paint = paintOf(res), ui = { ...ST };
       return `<div class="sy-status">${statusHtml(res)}</div><div class="sy-main"><div class="sy-left"><div class="sy-ctl">${buildBtn}</div>`
         + buildGridHtml(res, paint, ui) + `</div><div class="sy-right"><div class="sy-bpanel">${buildPanelHtml(res, paint, ui)}</div>`
@@ -585,7 +623,7 @@
     const views = viewsOf(res);
     const view = views.includes(ST.view) ? ST.view : "strategy";
     const ui = { ...ST, view }, r = shown(view);
-    let h = `<div class="sy-status">${statusHtml(res)}</div><div class="sy-main"><div class="sy-left"><div class="sy-ctl">`
+    let h = `<div class="sy-status">${statusHtml(res)}${res.approximate ? ` · <span class="sy-approx"><span class="spinner"></span>Approximate, at once: the ${esc(res.street)}'s own solve is running</span>` : ""}</div><div class="sy-main"><div class="sy-left"><div class="sy-ctl">`
       + `<span class="segment">${views.map(v => `<button data-view="${v}" class="${v === view ? "active" : ""}">${viewName(v)}</button>`).join("")}</span>`
       + (oppsOf(res).length && view !== "breakdown" && view !== "simple" ? whoHtml(res, ST.who) : "")
       + (view !== "breakdown" && view !== "simple" && !oppOf(res, ST.who) ? filterHtml(res, r.filter ? r.filter.key : "") : "")
@@ -611,9 +649,10 @@
   function draw() {
     if (!box) return;
     const b = box.querySelector(".sy-body");
-    // (while solving: the last decision dimmed under a spinner; the spinner alone after a deal or an error)
-    const dim = busy && res && res.study === "node";
-    b.innerHTML = controls() + `<div class="sy-line">${lineHtml(ST.state, res && !busy ? res : null)}</div>` + `<div class="sy-stage${dim ? " busy" : ""}">${busy && !dim ? `<div class="sy-msg"><span class="spinner"></span>Solving…</div>` : body()}</div>`;
+    // (while solving: the last decision dimmed under a spinner; the spinner alone after a deal or an error; the node's
+    // answer at once as it is, the request's own replacing it)
+    const now = quick(), dim = busy && res && res.study === "node" && !now;
+    b.innerHTML = controls() + `<div class="sy-line">${lineHtml(ST.state, res && (!busy || now) ? res : null)}</div>` + `<div class="sy-stage${dim ? " busy" : ""}">${busy && !dim && !now ? `<div class="sy-msg"><span class="spinner"></span>Solving…</div>` : body()}</div>`;
     if (dim) b.querySelector(".sy-stage").insertAdjacentHTML("afterbegin", `<div class="sy-wait"><span class="spinner"></span>Solving…</div>`);
     const bd = b.querySelector(".sy-bd");
     if (bd && res && !busy) showBreakdown(bd);
@@ -645,8 +684,8 @@
   }
   // hover, focus and a hand picked: the cells (in place: a tap's click lands on the cell it started on) and the detail
   function redrawGrid() {
-    if (!box || !res || res.study !== "node" || busy) return;
-    if (ST.build) {
+    if (!box || !res || res.study !== "node" || busy && !quick()) return;
+    if (ST.build && !res.approximate) {
       const paint = paintOf(res), g = box.querySelector(".sy-grid"), d = box.querySelector(".sy-detail");
       if (g) {
         const t = document.createElement("div"); t.innerHTML = buildGridHtml(res, paint, ST);
@@ -709,7 +748,7 @@
     if (d.rosort) { const u = ST.rui; ST.rui = u.sort === d.rosort ? { ...u, desc: !u.desc } : { ...u, sort: d.rosort, desc: true }; store(); return draw(); }
     if (d.rogroup) { const [k, v] = d.rogroup.split(":"); ST.rui = { ...ST.rui, group: "", filter: k === "cls" ? { cls: v } : { [k]: v } }; store(); return draw(); }
     if (d.card && res && res.study === "deal" && res.street !== "flop") return go(deal(ST.state, d.card));
-    if (d.act != null && res && res.study === "node" && !busy) return go(play(ST.state, res, res.actions[+d.act]));
+    if (d.act != null && res && res.study === "node" && (!busy || quick())) return go(play(ST.state, res, res.actions[+d.act]));
     if (d.build != null) { ST.build = !ST.build; ST.sel = ST.hover = ST.focus = null; store(); return draw(); }
     if (building()) {
       const paint = paintOf(res);
@@ -752,6 +791,8 @@
   .sy-wait { position: absolute; left: 50%; top: 40px; transform: translateX(-50%); z-index: 5; background: var(--panel); border: 1px solid var(--line2); border-radius: 8px; padding: 8px 14px; font-size: 13px; }
   .sy-status { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
   .sy-status b { color: var(--text); }
+  .sy-approx { color: var(--meh); }
+  .sy-approx .spinner { width: 10px; height: 10px; margin-right: 4px; vertical-align: -1px; }
   .sy-main { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 14px; align-items: start; }
   .sy-left .sy-ctl { margin-bottom: 6px; }
   .sy-grid { display: grid; grid-template-columns: repeat(13, 1fr); gap: 2px; max-width: 560px; }
@@ -934,7 +975,7 @@
   const api = { fresh, parseLine, fromSpot, fromPayload, streetOf, request, kindOf, play, deal, randomCards, readCards, line, back, label,
                 eqr, cellValue, gridHtml, actionsHtml, detailHtml, lineHtml, statusHtml, solverHtml, classAt, combosOf,
                 passiveOf, blankPaint, brush, scoreBuild, grade, buildGridHtml, buildPanelHtml, buildDetailHtml,
-                catsOf, filterRes, filterHtml, runoutsHtml, reportHtml, roHeadHtml, skippedHtml, estimate, oppsOf, whoHtml, viewsOf,
-                open, close, state: ST };
+                catsOf, filterRes, filterHtml, runoutsHtml, reportHtml, roHeadHtml, skippedHtml, estimate, oppsOf, whoHtml, viewsOf, approxHtml,
+                open, close, act, state: ST };
   if (typeof module === "object" && module.exports) module.exports = api; else globalThis.Study = api;
 })();
