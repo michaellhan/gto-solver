@@ -270,24 +270,45 @@ class TestStudy(unittest.TestCase):
 
     def test_three_way(self):
         """3-way pots after the flop: the 3-player solve's answer (the 3-way library's at its flops' checked-to
-        nodes), each opponent's range, equity on the river only (a share of the pot at showdown); 4-way by the
-        4-player solve, 5+ refused."""
+        nodes), each opponent's range, equity on every street (a share of the pot at showdown against the two other
+        ranges, the rest of the board dealt), rare actions marked; 4-way by the 4-player solve (equity on the river
+        only), 5+ refused."""
         pre = PRE[:3] + [{"pos": "BTN", "action": "raise", "to": 2.5}, {"pos": "SB", "action": "call"},
                          {"pos": "BB", "action": "call"}]
-        r = self.study(preflop=pre, board="Kd7c2h")
+        r = self.study(preflop=pre, board="Kd7c2h", breakdown=True)
         self.assertEqual((r["study"], r["street"], r["actor"], r["position"]), ("node", "flop", "SB", "1 of 3 to act"))
         self.assertTrue(r["multiway"] and r["precomputed"])
         self.assertEqual([o["seat"] for o in r["opponents"]], ["BB", "BTN"])
-        self.assertIsNone(r["range_eq"])
         self.check_totals(r)
         for o in r["opponents"]:
             tot = sum(c["w"] * combos(k) for k, c in o["grid"]["cells"].items())
             self.assertAlmostEqual(tot, o["combos"], delta=0.01 * tot + 1)
-            self.assertIsNone(o["eq"])
-        # the next node: BB's, checked to, from the same solve
+        eqs = [r["range_eq"]] + [o["eq"] for o in r["opponents"]]
+        self.assertTrue(all(0.2 < e < 0.5 for e in eqs))
+        self.assertAlmostEqual(sum(eqs), 1.0, delta=0.05)
+        # each combo's (sets and better near the top, 7x and 2x behind Kx) and the classes' and opponents' cells
+        eq_of = {x[0]: x[4] for rows in r["combos"].values() for x in rows}
+        sets = [v for k, v in eq_of.items() if k[0] == k[2] and k[0] in "K72"]
+        self.assertTrue(sets and min(sets) > 0.75, sets)
+        self.assertTrue(all(c["eq"] is not None for c in r["grid"]["cells"].values()))
+        self.assertTrue(all(c["eq"] is not None for o in r["opponents"] for c in o["grid"]["cells"].values()))
+        bd = r["breakdown"]
+        self.assertEqual(bd["runouts"], [1176, 1176])
+        self.assertAlmostEqual(bd["hero"]["eq"], r["range_eq"], delta=0.002)
+        self.assertEqual([round(v["eq"], 3) for v in bd["villains"]], [o["eq"] for o in r["opponents"]])
+        self.assertTrue(any(n.startswith("per hand: each hand's mix and EVs on the flop are its own") and "16 a player"
+                            in n for n in r["notes"]))
+        # the next node: BB's, checked to, from the same solve; its bets are never taken (rough EVs: rough_ev)
         r2 = self.study(preflop=pre, board="Kd7c2h", flop=[{"pos": "SB", "action": "check"}])
         self.assertEqual((r2["actor"], [o["seat"] for o in r2["opponents"]]), ("BB", ["SB", "BTN"]))
         self.assertLess(r2["opponents"][0]["combos"], r["range_combos"])    # SB's checks
+        self.assertGreater(r2["opponents"][0]["eq"], 0.2)
+        rare = {a["action"]: bool(a.get("rough_ev")) for a in r2["actions"]}
+        for a in r2["actions"]:
+            if abs(a["freq"] - advisor_mod.RARE_BRANCH) > 0.001:
+                self.assertEqual(rare[a["action"]], a["freq"] < advisor_mod.RARE_BRANCH, a)
+        self.assertTrue(rare["bet 33%"])
+        self.assertNotIn("rough_ev", next(a for a in r["actions"] if a["action"] == "check"))
         cc = [{"pos": p, "action": "check"} for p in ("SB", "BB", "BTN")]
         r = self.study(preflop=pre, board="Kd7c2h5s9c", flop=cc, turn=cc)
         self.assertEqual((r["study"], r["street"], r["actor"]), ("node", "river", "SB"))
@@ -304,6 +325,8 @@ class TestStudy(unittest.TestCase):
         self.assertEqual((r["study"], r["street"], r["actor"], r["position"]), ("node", "flop", "SB", "1 of 4 to act"))
         self.assertEqual([o["seat"] for o in r["opponents"]], ["BB", "CO", "BTN"])
         self.check_totals(r)
+        self.assertIsNone(r["range_eq"])
+        self.assertTrue(all(o["eq"] is None for o in r["opponents"]))
         pre5 = PRE[:1] + [{"pos": "HJ", "action": "raise", "to": 2.5}, {"pos": "CO", "action": "call"},
                           {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "call"}, {"pos": "BB", "action": "call"}]
         self.assertIn("5 players", self.study(preflop=pre5, board="Kd7c2h")["error"])

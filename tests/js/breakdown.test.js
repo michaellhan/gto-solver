@@ -89,6 +89,11 @@ test("the views say what the equities are over: the river's board, every river c
   assert.match(note([1, 1], "made"), /Equity is against the other range, on the river, no cards to come\./);
   assert.match(note([392, 1176], "made"), /Equity is against the other range, over an even sample of 392 of the 1176 turn and river runouts\./);
   assert.doesNotMatch(note(undefined), /every runout/);
+  // 3-way (advisor._study_mw_node): against both other ranges, as a share of the pot
+  const mw = (runouts) => B.breakdownHtml({ ...BD, runouts, villains: [BD.villains[0], { ...BD.villains[0], who: "CO" }] },
+                                          { who: 0, part: "made", sel: null }).match(/<div class="bd-note">([^<]*)<\/div>/)[1];
+  assert.match(mw([1176, 1176]), /Equity is against the other ranges \(a share of the pot at showdown\), every runout dealt out\./);
+  assert.match(mw([48, 48]), /other ranges \(a share of the pot at showdown\), every river card dealt out\./);
 });
 
 const RES = { street: "flop", hero: "BTN", villain: "BB", hand: "AQo", board: "Qs8d3c", recommended: "bet 75%",

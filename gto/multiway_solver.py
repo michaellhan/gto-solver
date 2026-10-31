@@ -146,6 +146,26 @@ class Hands:
         self.notmine = 1.0 - self.mem                                 # (n, 52)
 
 
+def _tie_bounds(srt: np.ndarray, perm: np.ndarray):
+    """For rows srt sorted ascending, srt = np.take_along_axis(x, perm, axis=1): np.searchsorted(srt[i], x[i], "left")
+    and "right" for every row at once, by one scan for the runs of equal values (each element's own value is in its
+    row, so the searches are those runs' ends) rather than a binary search per element."""
+    B, m = srt.shape
+    idx = np.broadcast_to(np.arange(m), (B, m))
+    new = np.ones((B, m), dtype=bool)
+    new[:, 1:] = srt[:, 1:] != srt[:, :-1]
+    last = np.ones((B, m), dtype=bool)
+    last[:, :-1] = new[:, 1:]
+    lo = np.maximum.accumulate(np.where(new, idx, 0), axis=1)
+    hi = np.minimum.accumulate(np.where(last, idx + 1, m)[:, ::-1], axis=1)[:, ::-1]
+    out = []
+    for v in (lo, hi):
+        o = np.empty((B, m), dtype=np.intp)
+        np.put_along_axis(o, perm, v, axis=1)
+        out.append(o)
+    return out
+
+
 class Boards:
     """A batch of B boards (complete five-card boards for showdowns): strengths and sort orders."""
 
@@ -165,8 +185,7 @@ class Boards:
             return
         self.order = np.argsort(s, axis=1, kind="stable")
         ss = np.take_along_axis(s, self.order, axis=1)
-        self.lo = np.stack([np.searchsorted(ss[i], s[i], "left") for i in range(B)])
-        self.hi = np.stack([np.searchsorted(ss[i], s[i], "right") for i in range(B)])
+        self.lo, self.hi = _tie_bounds(ss, self.order)
         self.r = np.arange(B)[:, None]
         rows = self.r
         # (card, combo) pairs, two per combo, sorted by card then strength (as the heads-up solver's Ranking):
@@ -184,10 +203,10 @@ class Boards:
         self.flo = (rows * (n + 1) + self.lo).ravel()
         self.fhi = (rows * (n + 1) + self.hi).ravel()
         self.fp = {}
+        # a combo's own (card, combo) pairs are among the keys: its bounds are those pairs' runs of equal keys
+        klo, khi = _tie_bounds(skey, po)
         for k, cc in ((0, hands.ca), (1, hands.cb)):
-            q = cc[None, :] * 1e4 + s
-            plo = np.stack([np.searchsorted(skey[i], q[i], "left") for i in range(B)])
-            phi = np.stack([np.searchsorted(skey[i], q[i], "right") for i in range(B)])
+            plo, phi = klo[:, k * n:(k + 1) * n], khi[:, k * n:(k + 1) * n]
             self.fp[k] = tuple((rows * (2 * n + 1) + a).ravel() for a in (plo, phi, np.broadcast_to(cstart[cc], (B, n))))
         self._exact_ready = False
 
@@ -2236,6 +2255,79 @@ class MultiwaySolver:
         out = np.zeros(N_FULL)
         out[self.hands.active] = v
         return out
+
+
+# showdown_equities: boards a batch (the exact count's (boards, combos, 52) card tables: ~3 MB each at 16 boards x 1000
+# combos), and the exact count up to this many runouts (a turn's 46; a flop's 1176 cost ~1.6 s natively that way,
+# the pairwise count over all of them 0.2 s)
+EQ_BATCH = {True: 16, False: 64}
+EQ_EXACT_RUNOUTS = 64
+
+
+def showdown_equities(board, ranges: Sequence[np.ndarray], exact: Optional[bool] = None) -> List[np.ndarray]:
+    """Each player's equity per combo (1326 arrays; NaN outside its range or where the others' ranges leave it no
+    deal): its share of the pot at showdown against the other ranges (the hands as dealt, nobody folding), ties split,
+    averaged over every runout of the rest of the board with each runout and deal by its weight (the others' hands that
+    share no card with it or with each other, by their reaches), as range_equities heads-up (two players: the same
+    numbers). Three players on the turn and river (EQ_EXACT_RUNOUTS) count the card removal between the three hands
+    exactly (the solver's kernels: the same numbers as a triple loop over the hands); on the flop the two others' hands
+    are taken as independent given the combo (pairwise, their joint deal weight exact) and each runout's shares scaled
+    so they add up to its pot: over all 1176 runouts of Kd7c2h and Jh8h4c (3-way charts' ranges) 0.2-0.3 points of
+    equity from the exact count on average, 1.5 at most, where an even sample of 168 runouts counted exactly is 1.6-1.9
+    points off on average (7-9 at most). Two or three players only (NaN for more: four players counted pairwise were
+    2.5-4 points low on their strongest hands against a Monte Carlo count)."""
+    board = [int(c) for c in board]
+    N = len(ranges)
+    R = [np.asarray(r, dtype=np.float64).reshape(-1) for r in ranges]
+    out = [np.full(N_FULL, np.nan) for _ in range(N)]
+    active = np.flatnonzero(np.any([r > 0 for r in R], axis=0))
+    if not 2 <= N <= 3 or not len(active):
+        return out
+    rest = [c for c in range(52) if c not in set(board)]
+    runs = list(itertools.combinations(rest, 5 - len(board)))
+    exact = N == 3 and (len(runs) <= EQ_EXACT_RUNOUTS if exact is None else exact)
+    h = Hands(active)
+    x = [r[active] for r in R]
+    num, den = np.zeros((N, h.n)), np.zeros((N, h.n))
+    dot = lambda a, b: np.einsum("bnc,bnc->bn", a, b)
+    step = EQ_BATCH[exact]
+    for b0 in range(0, len(runs), step):
+        bd = Boards(h, [tuple(board) + r for r in runs[b0:b0 + step]])
+        ok = bd.s >= 0                                   # (a combo holding a runout card: no deal there)
+        X = [np.where(ok, xi[None, :], 0.0) for xi in x]
+        KU = [bd.k_u(Xi) for Xi in X]
+        KLE = [bd.k_le(Xi) for Xi in X]
+        KW = [kl + 0.5 * ke for kl, ke in KLE]
+        PT = [bd.p_tables(Xi, ("W", "E")) for Xi in X] if exact else None
+        wins, mass = [], []
+        for p in range(N):
+            o = [j for j in range(N) if j != p]
+            if N == 2:
+                m, w = KU[o[0]][0], KW[o[0]]
+            else:
+                q, r = o
+                m = MultiwaySolver._mass(bd, X, q, r, KU[q], KU[r])
+                w = KW[q] * KW[r] + KLE[q][1] * KLE[r][1] / 12.0       # (beat both 1, tie one 1/2, tie both 1/3)
+                if exact:
+                    kl, ke = bd.k_le(X[q] * X[r])
+                    w = w - dot(PT[q]["W"], PT[r]["W"]) - dot(PT[q]["E"], PT[r]["E"]) / 12.0 + kl + ke / 3.0
+                else:
+                    w = w * MultiwaySolver._ratio(m, KU[q][0], KU[r][0])
+            wins.append(np.where(ok, w, 0.0))
+            mass.append(np.where(ok, m, 0.0))
+        sc = 1.0
+        if N == 3 and not exact:
+            # (each runout's shares scaled so the players' add up to its deals' weight: constant-sum, as _term's)
+            tot = sum((X[p] * wins[p]).sum(axis=1, keepdims=True) for p in range(N))
+            M = (X[0] * mass[0]).sum(axis=1, keepdims=True)
+            sc = np.where(tot > 1e-300, M / np.where(tot > 1e-300, tot, 1.0), 1.0)
+        for p in range(N):
+            num[p] += (wins[p] * sc).sum(axis=0)
+            den[p] += mass[p].sum(axis=0)
+    for p in range(N):
+        good = (den[p] > 1e-12) & (x[p] > 0)
+        out[p][active[good]] = np.clip(num[p][good] / den[p][good], 0.0, 1.0)
+    return out
 
 
 def solve(board, ranges, pot, stack, bets=None, to_act=0, n_raises=0, pending=None, cfg=None,

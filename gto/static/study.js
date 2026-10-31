@@ -649,8 +649,8 @@
     h += view === "breakdown" ? `<div class="sy-bd"></div>` : gridHtml(r, ui);
     h += `</div><div class="sy-right">${actionsHtml(r, ui)}<div class="sy-detail">${view === "breakdown" ? "" : detailHtml(r, ui, cls)}</div></div></div>`;
     // (no EV line under an answer at once without EVs: the stored flops', a format-1 turn file's)
-    h += `<div class="sy-note">${solverHtml(res)} ${pre || (res.approximate && res.range_ev_bb == null) ? "" : `EV: bb won from here relative to folding now${res.tournament ? " (a tournament's: in prize equity, as chips worth as much)" : ""}. ${(res.actions || []).some(a => a.rough_ev) ? "≈: an action the range almost never takes, whose EV is rough (usually lower than exact). " : ""}${res.range_eq == null ? (res.multiway ? "No equity 3-way before the river." : "")
-      : res.multiway ? `Equity: the share of the pot at showdown against ${esc(res.opponent)}'s ranges. EQR: EV over equity × pot.` : `Equity: against ${esc(res.opponent)}'s range with the rest of the board dealt. EQR: EV over equity × pot.`}`}`
+    h += `<div class="sy-note">${solverHtml(res)} ${pre || (res.approximate && res.range_ev_bb == null) ? "" : `EV: bb won from here relative to folding now${res.tournament ? " (a tournament's: in prize equity, as chips worth as much)" : ""}. ${(res.actions || []).some(a => a.rough_ev) ? "≈: an action the range almost never takes, whose EV is rough (usually lower than exact). " : ""}${res.range_eq == null ? (res.multiway ? `No equity ${oppsOf(res).length + 1}-way before the river.` : "")
+      : res.multiway ? `Equity: the share of the pot at showdown against ${esc(res.opponent)}'s ranges${res.street === "river" ? "" : ", the rest of the board dealt"}. EQR: EV over equity × pot.` : `Equity: against ${esc(res.opponent)}'s range with the rest of the board dealt. EQR: EV over equity × pot.`}`}`
       + `${(res.notes || []).length ? `<br>${res.notes.map(esc).join("<br>")}` : ""}</div>`;
     return h;
   }

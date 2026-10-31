@@ -64,7 +64,7 @@
     if (r) h += `<div class="bd-read"><b>${esc(r.label)}</b> · ${r.c.toFixed(1)} combos (${pct(r.c / tot, 1)})${r.eq != null ? ` · equity ${pct(r.eq, 1)}` : ""}${r.ev != null && hero ? ` · EV ${evs(r.ev)} bb` : ""}`
       + (hero && r.f ? `<br>${bd.actions.map((n, a) => `<span class="a" style="--c:${color(n)}">${esc(n)} ${pct(r.f[a])}</span>`).join(" ")}` : "")
       + (hero && opts.filter && r.id !== "none" ? `<br><button class="ghost bd-go" data-filter="${part === "made" ? "m" : "d"}:${esc(r.id)}">Show these hands in the grid</button>` : "") + `</div>`;
-    h += `<div class="bd-note">${part === "made" ? "Made hands by what the hole cards add (a pair on the board is everyone's); top pair's kicker is top, good (the next two) or weak." : "Draws: a flush draw is four to a suit with a hole card; open-ended counts double gutshots; combo is a flush draw with a straight draw; backdoor is three to a flush or straight on the flop."}${hasEq ? ` Equity is against the other range, ${runText(bd)}.` : ""}</div>`;
+    h += `<div class="bd-note">${part === "made" ? "Made hands by what the hole cards add (a pair on the board is everyone's); top pair's kicker is top, good (the next two) or weak." : "Draws: a flush draw is four to a suit with a hole card; open-ended counts double gutshots; combo is a flush draw with a straight draw; backdoor is three to a flush or straight on the flop."}${hasEq ? ` Equity is against the other range${bd.villains.length > 1 ? "s (a share of the pot at showdown)" : ""}, ${runText(bd)}.` : ""}</div>`;
     return h;
   }
 

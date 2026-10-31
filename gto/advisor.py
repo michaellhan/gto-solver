@@ -4389,16 +4389,22 @@ class Advisor:
                        solver, notes, t0, precomputed=None):
         """Study mode's answer at a 3-way node (Advisor.study), as _study_node's, from the 3-player solve of the street
         from this node (Advisor._multiway_solve): the actor's range per class and combo, its mix and each action's EV
-        (bb relative to folding now), and each opponent's range. Equity against the other two ranges on the river only
-        (an earlier street's solve deals the cards to come into equity leaves or buckets: no showdown to read it off).
-        `node`: the solve's root, or a node the 3-way library stores (R: the players' reach there)."""
+        (bb relative to folding now), and each opponent's range. Equity: each combo's share of the pot at showdown
+        against the other two ranges, the rest of the board dealt (multiway_solver.showdown_equities; the river's from
+        the solve's own showdown); 4-way on the river only. An action the range takes under RARE_BRANCH is marked
+        "rough_ev", as heads-up. `node`: the solve's root, or a node the 3-way library stores (R: the players' reach
+        there)."""
+        from .multiway_solver import showdown_equities
         names = list(shown)
         A = len(names)
         rng = [sol.expand(R[i][0]) for i in range(len(players))]
         sf = np.zeros((A, N_COMBOS)); sf[:, sol.hands.active] = strat
         ev = np.zeros((A, N_COMBOS)); ev[:, sol.hands.active] = evs
+        eqs = showdown_equities(board, rng) if len(board) < 5 and len(players) == 3 else None
 
         def eq_of(i):
+            if eqs is not None:
+                return eqs[i]
             e = np.full(N_COMBOS, np.nan)
             if len(board) == 5:
                 e[sol.hands.active] = sol.showdown_shares(i)
@@ -4407,6 +4413,21 @@ class Advisor:
         opps = [i for i in range(len(players)) if i != hp]
         part, og = _study_range(board, names, amounts, rng[hp], sf, ev, eq_of(hp),
                                 [(players[i], rng[i], eq_of(i)) for i in opps])
+        n_r = np.asarray(R[hp][0], dtype=np.float64)   # (the advice's rough_ev: an action the range takes under RARE_BRANCH)
+        rare = (np.asarray(strat, dtype=np.float64) * n_r).sum(axis=1) < RARE_BRANCH * max(float(n_r.sum()), 1e-12)
+        for a, r in zip(part["actions"], rare):
+            if r:
+                a["rough_ev"] = True
+        cfg = getattr(sol, "cfg", None)
+        if cfg is None:   # (the 3-way library's: its entries are read only where solved on this game)
+            from .mw_library import library_config
+            cfg = library_config()
+        later, K = cfg.later, cfg.buckets
+        if len(board) < 5 and later == "buckets" and K:
+            notes = list(notes) + [
+                f"per hand: each hand's mix and EVs on the {cur.name} are its own, and its equity; on the streets after "
+                f"it the solve plays hands by bucket ({K} a player on each card, by equity against the other ranges), "
+                f"so the EVs count a hand's later play as its bucket's"]
         hero = players[hp]
         res = {
             "study": "node", "street": cur.name, "actor": hero, "multiway": True,
@@ -4415,10 +4436,12 @@ class Advisor:
             "pot_bb": round(node.pot_now, 2), "to_call_bb": round(to_call, 2), "stack_bb": round(behind, 2),
             **part, "solver": solver, "precomputed": precomputed, "notes": notes, "seconds": round(time.time() - t0, 2),
         }
-        if self._breakdown:   # (no equity view 3-way, as the advice's)
+        if self._breakdown:   # (each player's equity against the two others where Study has it: 3-way)
             from . import breakdown as BD
             res["breakdown"] = BD.breakdown(board, names, hero, rng[hp], sf, (sf * ev).sum(axis=0),
-                                            {players[i]: rng[i] for i in opps}, node.pot_now, equity=False)
+                                            {players[i]: rng[i] for i in opps}, node.pot_now, equity=False,
+                                            equities={players[i]: eq_of(i) for i in range(len(players))}
+                                            if len(players) == 3 else None)
         return res
 
     # ------------------------------------------------------------ multiway

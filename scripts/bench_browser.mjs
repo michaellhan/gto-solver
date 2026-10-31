@@ -144,6 +144,15 @@ const SPOTS = {
   "mw-turn": base({ hero: "BB", hole: "Qh9h", board: "Kh7d2c9s", preflop: MW, flop: [X("BB"), X("CO"), X("BTN")] }),
   "mw-river": base({ hero: "BB", hole: "Qh9h", board: "Kh7d2c9s4h", preflop: MW, flop: [X("BB"), X("CO"), X("BTN")],
                      turn: [X("BB"), X("CO"), X("BTN")] }),
+  // Study in a 3-way pot (no hero): the 3-way library's flop, first to act and checked to twice (at once), facing a
+  // bet (solved live from there), the turn and river after checks (--session study-mw-flop,study-mw-flop-x,...: one
+  // walk, each node narrowed through the solves Study answered from before it)
+  "study-mw-flop": base({ board: "Kh7d2c", preflop: MW, study: true }),
+  "study-mw-flop-x": base({ board: "Kh7d2c", preflop: MW, flop: [X("BB"), X("CO")], study: true }),
+  "study-mw-flop-bet": base({ board: "Kh7d2c", preflop: MW, flop: [X("BB"), X("CO"), B("BTN", 2.6)], study: true }),
+  "study-mw-turn": base({ board: "Kh7d2c9s", preflop: MW, flop: [X("BB"), X("CO"), X("BTN")], study: true }),
+  "study-mw-river": base({ board: "Kh7d2c9s4h", preflop: MW, flop: [X("BB"), X("CO"), X("BTN")],
+                           turn: [X("BB"), X("CO"), X("BTN")], study: true }),
   "mw4-flop": base({ hero: "BB", hole: "Qh9h", board: "Kh7d2c", preflop: MW4 }),               // 4-way, first to act
   "mw4-turn": base({ hero: "BB", hole: "Qh9h", board: "Kh7d2c9s", preflop: MW4, flop: [X("BB"), X("HJ"), X("CO"), X("BTN")] }),
   "exploit": base({ hero: "BB", hole: "QhJh", board: "Ks7d2cTh", flop: SRP_FLOP, opponents: "pool" }),

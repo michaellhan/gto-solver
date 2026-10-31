@@ -256,10 +256,11 @@ def side(board, w: np.ndarray, who: str, eq=None, strat=None, ev=None, ev_avg=No
 
 def breakdown(board, actions: List[str], hero: str, hero_w: np.ndarray, strat: np.ndarray, ev: np.ndarray,
               villains: Dict[str, np.ndarray], pot: float, equity: bool = True, villain_ev: bool = True,
-              hole: Optional[Sequence[int]] = None) -> dict:
+              hole: Optional[Sequence[int]] = None, equities: Optional[Dict[str, np.ndarray]] = None) -> dict:
     """The payload: hero's categories with its strategy mix (strat: actions x 1326) and EV (ev: 1326, bb), the
     villains' composition; heads-up with equity, each side's equity against the other and the villain's EV as
-    the pot less hero's (no rake: villain_ev); "mine": the categories of hero's own hand (hole)."""
+    the pot less hero's (no rake: villain_ev); "mine": the categories of hero's own hand (hole). `equities`: each
+    player's equities given, by name (1326 each: Study's 3-way, against the other ranges with every runout dealt)."""
     board = list(board)
     one = len(villains) == 1 and equity
     e0 = e1 = None
@@ -270,6 +271,9 @@ def breakdown(board, actions: List[str], hero: str, hero_w: np.ndarray, strat: n
         # the runouts the equities are over: [dealt, of all] ([1, 1] on the river; on the flop usually a sample)
         dealt = len(_runouts(board, int(np.count_nonzero(hero_w > 0)) * int(np.count_nonzero(vw > 0))))
         runouts = [dealt, math.comb(52 - len(board), 5 - len(board))]
+    elif equities:
+        e0 = equities.get(hero)
+        runouts = [math.comb(52 - len(board), 5 - len(board))] * 2
     h = side(board, hero_w, hero, e0, strat, ev)
     if hole is not None:
         h["mine"] = [made_category(hole, board, len(board) == 5 and _plays_board(hole, board)),
@@ -277,6 +281,6 @@ def breakdown(board, actions: List[str], hero: str, hero_w: np.ndarray, strat: n
     vs = []
     for name, vw in villains.items():
         vev = pot - h["ev"] if one and villain_ev and h.get("ev") is not None else None
-        vs.append(side(board, vw, name, e1 if one else None, ev_avg=vev))
+        vs.append(side(board, vw, name, e1 if one else (equities or {}).get(name), ev_avg=vev))
     return {"actions": list(actions), "pot": round(float(pot), 2), "hero": h, "villains": vs, "nut_eq": NUT_EQ,
             **({"runouts": runouts} if runouts else {})}

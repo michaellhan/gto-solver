@@ -126,6 +126,113 @@ class TestCardRemoval(unittest.TestCase):
         m = s.total_mass()
         self.assertAlmostEqual(tot / m, 30.0 - 21.0, places=6)
 
+    def test_boards_bounds_as_searchsorted(self):
+        # Boards' tie bounds (_tie_bounds, one scan) are np.searchsorted's per row: the strengths' and the (card, combo)
+        # keys', on boards with many ties (trips on the board) and with blocked combos (-1)
+        import itertools
+        for bstr, dens in (("8h8d8c", 0.9), ("Kd7c2h", 0.5), ("Jh8h4c9s", 1.0)):
+            rng = np.random.default_rng(len(bstr))
+            board = cards(bstr)
+            h = MW.Hands(np.flatnonzero(rng.random(1326) < dens))
+            n = h.n
+            runs = list(itertools.combinations([c for c in range(52) if c not in board], 5 - len(board)))[::25]
+            bd = MW.Boards(h, [tuple(board) + r for r in runs])
+            s, B, rows = bd.s, len(runs), np.arange(len(runs))[:, None]
+            ss = np.take_along_axis(s, bd.order, axis=1)
+            pc, pi = np.concatenate([h.ca, h.cb]), np.concatenate([np.arange(n), np.arange(n)])
+            key = pc[None, :] * 1e4 + s[:, pi]
+            skey = np.take_along_axis(key, np.argsort(key, axis=1, kind="stable"), axis=1)
+            with self.subTest(board=bstr):
+                for side, got in (("left", bd.lo), ("right", bd.hi)):
+                    np.testing.assert_array_equal(got, [np.searchsorted(ss[i], s[i], side) for i in range(B)])
+                for k, cc in ((0, h.ca), (1, h.cb)):
+                    q = cc[None, :] * 1e4 + s
+                    for j, side in ((0, "left"), (1, "right")):
+                        want = rows * (2 * n + 1) + np.array([np.searchsorted(skey[i], q[i], side) for i in range(B)])
+                        np.testing.assert_array_equal(bd.fp[k][j], want.ravel())
+
+
+class TestShowdownEquities(unittest.TestCase):
+    """multiway_solver.showdown_equities (Study's 3-way equity): each combo's share of the pot at showdown against the
+    other ranges, every runout dealt; exact on the turn and river, pairwise on the flop, range_equities two-handed."""
+
+    @staticmethod
+    def _ranges(board, n=40, seed=0):
+        rng = np.random.default_rng(seed)
+        ok = [i for i, (a, b) in enumerate(ALL_COMBOS) if a not in board and b not in board]
+        rs = []
+        for _ in range(3):
+            r = np.zeros(1326)
+            pick = rng.choice(ok, n, replace=False)
+            r[pick] = rng.random(n)
+            rs.append(r)
+        rs[2][np.nonzero(rs[1])[0][:10]] = 0.5       # the same combos in two ranges
+        return rs
+
+    @staticmethod
+    def _brute(board, rs, p, ci):
+        """Combo ci of player p on a turn: its share of the pot over every river and every pair of the others' hands
+        that share no card with it, the river or each other, by their reaches (ties split)."""
+        from gto.evaluator import eval_boards
+        q, r = [j for j in range(3) if j != p]
+        iq, ir = np.nonzero(rs[q])[0], np.nonzero(rs[r])[0]
+        hc = set(ALL_COMBOS[ci])
+        cq, cr = [np.array([ALL_COMBOS[i] for i in ix]) for ix in (iq, ir)]
+        disj = ~((cq[:, :1] == cr[None, :, 0]) | (cq[:, :1] == cr[None, :, 1]) | (cq[:, 1:] == cr[None, :, 0])
+                 | (cq[:, 1:] == cr[None, :, 1]))
+        num = den = 0.0
+        for c in range(52):
+            if c in board or c in hc:
+                continue
+            s = eval_boards([list(board) + [c]], np.concatenate([[ci], iq, ir]))[0]
+            sh, sq, sr = s[0], s[1:1 + len(iq)], s[1 + len(iq):]
+            okq = (sq >= 0) & np.array([not set(ALL_COMBOS[i]) & hc for i in iq])
+            okr = (sr >= 0) & np.array([not set(ALL_COMBOS[i]) & hc for i in ir])
+            W = (rs[q][iq] * okq)[:, None] * (rs[r][ir] * okr)[None, :] * disj
+            best = np.maximum(sq[:, None], sr[None, :])
+            ties = 1 + (sq[:, None] == sh) + (sr[None, :] == sh)
+            num += float((W * ((sh > best) + (sh == best) / ties)).sum())
+            den += float(W.sum())
+        return num / den
+
+    def test_turn_matches_the_triple_loop(self):
+        board = tuple(cards("Kh7d2c9h"))
+        rs = self._ranges(board)
+        E = MW.showdown_equities(board, rs)
+        rng = np.random.default_rng(1)
+        for p in range(3):
+            for ci in rng.choice(np.nonzero(rs[p])[0], 4, replace=False):
+                self.assertAlmostEqual(E[p][ci], self._brute(board, rs, p, ci), places=6)
+            self.assertTrue(np.all(np.isnan(E[p][rs[p] == 0])))
+
+    def test_river_as_the_solvers_showdown(self):
+        board = tuple(cards("Kh7d2c9h5s"))
+        rs = self._ranges(board)
+        E = MW.showdown_equities(board, rs)
+        s = MultiwaySolver(board, rs, 10.0, 50.0)
+        for p in range(3):
+            got = E[p][s.hands.active]
+            np.testing.assert_allclose(got[rs[p][s.hands.active] > 0], s.showdown_shares(p)[rs[p][s.hands.active] > 0],
+                                       atol=1e-5)
+
+    def test_two_players_as_heads_up(self):
+        from gto.breakdown import range_equities
+        board = tuple(cards("Kh7d2c9h"))
+        rs = self._ranges(board)
+        for got, want in zip(MW.showdown_equities(board, rs[:2]), range_equities(board, rs[0], rs[1])):
+            np.testing.assert_allclose(got, want, atol=1e-9)
+
+    def test_flop_pairwise_near_the_exact_count(self):
+        board = tuple(cards("Kh7d2c"))
+        rs = self._ranges(board, n=30, seed=3)
+        fast, exact = MW.showdown_equities(board, rs), MW.showdown_equities(board, rs, exact=True)
+        for p in range(3):
+            d = np.abs(fast[p] - exact[p])[rs[p] > 0]
+            self.assertLess(float(d.max()), 0.04)
+            self.assertLess(float(np.average(d, weights=rs[p][rs[p] > 0])), 0.01)
+        # four players: none (pairwise was too rough there)
+        self.assertTrue(all(np.isnan(e).all() for e in MW.showdown_equities(board, rs + [rs[0]])))
+
 
 class TestSolve(unittest.TestCase):
     @classmethod
