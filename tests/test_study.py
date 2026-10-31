@@ -311,9 +311,10 @@ class TestStudy(unittest.TestCase):
     def test_three_way_later_at_once(self):
         """Later 3-way nodes on a flop the library doesn't store, and the turn: Study's answer at once (Advisor.instant
         with "study") read off the hand's earlier solve (Advisor._study_mw_prev): checked to, the first decision's
-        solve (preferred to the stored flops most like it); on the turn the flop's (by hand buckets, one bet size),
-        then the turn's first decision's; the mix alone, the ranges as the node's own solve starts from them. None
-        once the node's own solve is in hand, on a river, or on a library flop's turn (its entries hold the flop)."""
+        solve (preferred to the stored flops most like it); at the turn's first decision the flop's (by hand buckets,
+        one bet size), at its later ones the turn's first decision's once solved; the mix alone, the ranges as the
+        node's own solve starts from them. None once the node's own solve is in hand, at the turn's later decisions
+        before a turn solve, on a river, or on a library flop's turn (its entries hold the flop)."""
         adv = advisor("fast")   # (its own: no solves of the class's other tests in hand)
         adv.mw_budget = 2.5     # (the turn's solves: Fast's 5 s natively)
         pre = PRE[:3] + [{"pos": "BTN", "action": "raise", "to": 2.5}, {"pos": "SB", "action": "call"},
@@ -361,14 +362,10 @@ class TestStudy(unittest.TestCase):
             self.assertRegex(r["approximate"]["label"], r"flop solve's view of the turn \(by card class and 12 hand buckets")
             self.assertEqual(r["solver"]["iterations"], live["solver"]["iterations"])
             no_values(r)
-            # checked to on the turn: still the flop's (no turn solve yet); facing a bet; then the turn's first decision's
-            r = adv.instant(dict(t, turn=[X("SB")]))
-            self.assertEqual((r["actor"], r["approximate"]["source"]), ("BB", "prev"))
-            no_values(r)
-            r = adv.instant(dict(t, turn=[X("SB"), {"pos": "BB", "action": "bet", "to": 4.0}]))
-            self.assertEqual(r["actor"], "BTN")
-            self.assertEqual([a["action"].split()[0] for a in r["actions"]][:2], ["fold", "call"])
-            no_values(r)
+            # the turn's later decisions: none off the flop's buckets (far from their own answers there), checked to
+            # or facing a bet; once the turn's first decision is solved, its solve's
+            self.assertIsNone(adv.instant(dict(t, turn=[X("SB")])))
+            self.assertIsNone(adv.instant(dict(t, turn=[X("SB"), {"pos": "BB", "action": "bet", "to": 4.0}])))
             tl = adv.advise(t)
             self.assertEqual(tl["actor"], "SB")
             r = adv.instant(dict(t, turn=[X("SB")]))

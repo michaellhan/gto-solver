@@ -327,9 +327,11 @@ have no stored flop near enough (6 rank steps), and nothing shows until the solv
 thread (`scripts/bench_browser.mjs` study-mw-near, Kh8d3c) it shows in 0.7 s, the solve in 13 s. At the nodes after
 it, as heads-up, Study answers at once off the hand's earlier solve while the node's own runs
 (`Advisor._study_mw_prev`): checked to or facing a bet on a street whose first decision it solved, that solve's own
-play of the line since (every combo's mix; the solve's iterations and distance from equilibrium named); on the turn
-after a 3-way flop it solved live, until one of the turn's decisions is solved, the flop solve's view of the turn (by
-card class and hand buckets, 12 a player at Fast, one bet size). The opponents' ranges are the ones the node's own
+play of the line since (every combo's mix; the solve's iterations and distance from equilibrium named); at the
+turn's first decision after a 3-way flop it solved live, the flop solve's view of the turn (by card class and hand
+buckets, 12 a player at Fast, one bet size), and at the turn's later decisions the turn's first decision's solve once
+it lands (read off the flop's buckets they were far from their own answers: 1.1% of the pot given up after a check,
+1.2% after two checks, on 8 flops). The opponents' ranges are the ones the node's own
 answer shows; no EVs or equities until it lands (natively 0.004-0.04 s; in the browser on one thread 0.01-0.04 s,
 where the node's own Fast solve takes 4.4-6.7 s, on 8 threads 1.5-2.3 s: study-mw-near-x, -near-turn,
 -near-turn-x). 4-way, checked to on a

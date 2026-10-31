@@ -5955,10 +5955,13 @@ class Advisor:
     def _study_mw_prev(self, hero, hole, board, rep, stk, streets, ranges, positions, notes, t0) -> Optional[dict]:
         """Study's answer at once at a 3-way or 4-way node before the river while its own solve runs (Advisor.instant
         with "study"): each hand's mix read off the hand's latest live solve of an earlier decision on this street (its
-        tree from there on the line taken, the tree's nearest actions: each combo's own mix at its sizes), else on a
-        3-way turn a 3-way flop's, which plays the turn by card class and hand buckets at one bet size
+        tree from there on the line taken, the tree's nearest actions: each combo's own mix at its sizes), else at a
+        3-way turn's first decision a 3-way flop's, which plays the turn by card class and hand buckets at one bet size
         (MWConfig.later: the card dealt read as its class's played card, each combo through the swap of the two, as
-        heads-up Advisor._study_prev; a 4-way flop's view of the turn was 0.6% of the pot from the turn's own answer,
+        heads-up Advisor._study_prev; the turn's later decisions wait on a turn solve: read off the flop's buckets
+        they were far from their own answers, after a check 1.1% of the pot given up and the range's frequencies
+        19 points apart, after two checks 1.2% and 17 points; a 4-way flop's view of the turn was 0.6% of the
+        pot from the turn's own answer,
         its range frequencies 23 points apart: scripts/bench_mw_prev.py --lines hj4; facing a bet 4-way, where
         the 4-way tree lets only its first decision's player raise, _NoInstant). The players' ranges are `ranges`, as the node's own solve will start from them (the
         streets' actions narrowed through the solves Study answered from, Advisor._mw_walk). The actor's whole range
@@ -6042,19 +6045,8 @@ class Advisor:
             R[:, ~m] = 0.0
             td = MW._template(sol.cfg, sol.np, "turn", node.pot, node.c, node.behind, node.folded)
             c0, bn = node.c, g.tree
-            for a in cur.actions:   # (the turn's actions: each player's range narrowed by its buckets' mix)
-                if not isinstance(bn, MW.BDecision) or not isinstance(td, MW._TD) or a.get("pos") not in pl \
-                        or pl.index(a["pos"]) != bn.player:
-                    raise _NoInstant()
-                p = bn.player
-                i = _mw_pick(types.SimpleNamespace(names=td.names, amounts=_td_amounts(td, c0)), a)
-                if i is None:
-                    raise _NoInstant()
-                before = R[p].sum()
-                R[p, m] *= bn.avg_strategy()[row][i][cols[p, m]]
-                if R[p].sum() < RARE_LINE * max(before, 1e-12):
-                    raise _NoInstant()
-                bn, td = bn.children[i], td.children[i]
+            if cur.actions:
+                raise _NoInstant()   # (the turn's first decision only: its later ones were far from their own)
             hp = pl.index(hero)
             if not isinstance(bn, MW.BDecision) or not isinstance(td, MW._TD) or bn.player != hp:
                 raise _NoInstant()
