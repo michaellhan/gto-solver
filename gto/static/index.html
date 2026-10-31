@@ -1823,7 +1823,10 @@ function convergence(res) {
 const SIZE_USAGE = (r) => Object.entries(r.size_usage).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(" · ") + (r.sizes_kept ? `; kept ${r.sizes_kept.join(", ")}` : "")
   + (r.sizes_custom ? ` (your sizes ${r.sizes_custom.join(", ")} were in the menu${r.sizes_custom.every(s => !r.sizes_kept || !r.sizes_kept.includes(s)) ? ", not kept" : ""})` : "");
 // a flop answer read from the precomputed library (gto/flop_library.py) instead of solved live
-const PRE_TIP = (p) => `Solved offline (${p.label}, ${p.iterations} iterations)${p.same_tree ? "" : " with Accurate's flop model"}: instant, at either speed.`;
+// (borrowed: another table size's pot read off the library spot whose ranges are a few combos away, flop_approx.near_exact)
+const PRE_TIP = (p) => `Solved offline (${p.label}, ${p.iterations} iterations)${p.same_tree ? "" : " with Accurate's flop model"}: instant, at either speed.`
+  + (p.borrowed ? ` Approximate: that spot read as this one (${p.borrowed.text}).` : "");
+const PRE_BADGE = (p) => `<span class="conv ${p.borrowed ? "meh" : "ok"}" title="${PRE_TIP(p)}">${p.borrowed ? "precomputed · borrowed" : "precomputed"}</span>`;
 const convTip = (c) => `Exploitability ${c.x.toFixed(1)}% of the pot: a perfect counter-strategy would win that much from this solve. ${c.target != null ? `Answers at this speed are ${c.target}% or less: this solve ran short, so its mix and EVs are a rough guide.` : "Under 3% is close to a full solver."}`;
 
 // Where the GTO % under an exploit's mix (the pool, your locks) comes from: preflop the chart; after it the
@@ -1873,7 +1876,7 @@ function renderResult(res, key) {
   const board = res.board ? res.board.match(/../g).map(cardHtml).join(" ") : "";
   let h = `<div class="meta" style="margin:0 0 4px">${res.street} · ${res.hero} ${res.hand}${res.position ? " · " + res.position : ""}${board ? " · " + board : ""}${res.pot_bb ? " · pot " + res.pot_bb + " bb" : ""}</div>`;
   if (heuristic(res)) h += `<div class="verdict"><span class="big">${res.recommended}</span><span class="mix">${res.opponents.length + 1} players in · equity vs field ${(res.equity_vs_field * 100).toFixed(0)}% · heuristic, not a solve</span></div>`;
-  else h += `<div class="verdict"><span class="big">${res.recommended}</span>${res.solved ? `<span class="mix">${res.opponents.length + 1} players in · 3-way solve</span>` : ""}${conv ? `<span class="conv ${conv.cls}" title="${convTip(conv)}">${conv.label} · ${conv.x.toFixed(1)}% pot</span>` : ""}${res.precomputed ? `<span class="conv ok" title="${PRE_TIP(res.precomputed)}">precomputed</span>` : ""}${conv && conv.cls === "bad" && SPEED !== "accurate" ? `<button class="link" id="goAccurate">Solve again on Accurate</button>` : ""}</div>`;
+  else h += `<div class="verdict"><span class="big">${res.recommended}</span>${res.solved ? `<span class="mix">${res.opponents.length + 1} players in · 3-way solve</span>` : ""}${conv ? `<span class="conv ${conv.cls}" title="${convTip(conv)}">${conv.label} · ${conv.x.toFixed(1)}% pot</span>` : ""}${res.precomputed ? PRE_BADGE(res.precomputed) : ""}${conv && conv.cls === "bad" && SPEED !== "accurate" ? `<button class="link" id="goAccurate">Solve again on Accurate</button>` : ""}</div>`;
   // the advisor's catch-all (gto/advisor.py Advisor._rules): the solve failed, so the chart, the betting rules or equity answered
   if (res.fallback) h += `<div class="meta" style="color:var(--meh);margin:0 0 6px">The solver couldn't answer this spot, so this is ${{ chart: "the preflop chart's mix", rules: "the betting rules' answer", equity: "a rough equity estimate" }[res.fallback] || "a fallback"}, not a solve.</div>`;
   const hasEv = res.actions.some(a => a.ev_bb !== undefined);

@@ -387,7 +387,8 @@
     if (res.street === "preflop") return "Preflop: the charts' mix (an approximation: no EVs or equities; the Solver source has a solve's mix and EVs).";
     if (res.approximate) return approxHtml(res);
     const s = res.solver || {}, p = res.precomputed, r = !p && roughness(s);
-    const how = p ? `Precomputed (${esc(p.label)})` : `Solved live in ${num(s.solve_seconds || 0)} s`;
+    const how = p ? `Precomputed (${esc(p.label)}${p.borrowed ? `; approximate, that spot read as this one: ${esc(p.borrowed.text)}` : ""})`
+      : `Solved live in ${num(s.solve_seconds || 0)} s`;
     return `${how}: ${s.iterations} iterations, ${num(s.exploitability_pct)}% of the pot from equilibrium.`
       + (r ? ` <span class="sy-rough ${r}">Cut short: the numbers can be well off (a busy machine runs fewer iterations; Accurate solves longer).</span>` : "");
   }

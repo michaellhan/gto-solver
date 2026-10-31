@@ -193,6 +193,9 @@ test("the actions table, the range's totals, a hand's combos and the status line
   assert.equal(S.statusHtml({ ...NODE, to_call_bb: 2, position: null }), "<b>BTN</b> to act · pot 5.5bb · 2bb to call · 97.5bb behind");
   assert.equal(S.statusHtml({ study: "deal", street: "turn" }), "");
   assert.equal(S.solverHtml(NODE), "Precomputed (BTN vs BB): 400 iterations, 0.11% of the pot from equilibrium.");
+  // another table size's pot read off a library spot whose ranges are a few combos away: said so
+  assert.equal(S.solverHtml({ ...NODE, precomputed: { ...NODE.precomputed, label: "6-max BTN vs BB", borrowed: { text: "ranges 0.4% apart" } } }),
+               "Precomputed (6-max BTN vs BB; approximate, that spot read as this one: ranges 0.4% apart): 400 iterations, 0.11% of the pot from equilibrium.");
   assert.match(S.solverHtml({ ...NODE, precomputed: null, solver: { iterations: 90, solve_seconds: 3.456, exploitability_pct: 0.5 } }),
                /^Solved live in 3\.46 s: 90 iterations, 0\.5% of the pot/);
   assert.doesNotMatch(S.solverHtml({ ...NODE, precomputed: null, solver: { iterations: 90, solve_seconds: 3.456, exploitability_pct: 0.5 } }), /sy-rough/);

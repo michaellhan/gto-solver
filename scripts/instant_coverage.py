@@ -51,9 +51,10 @@ from flop_library_coverage import _line_str, RERAISE, rep_share  # noqa: E402
 AGGR = ("bet", "raise", "all-in")
 
 
-def enumerate_preflop(players=6, stack=100.0, min_prob=2e-5):
-    """(preflop decisions per hand, [(prob, line, setup, n_live)] for lines that see a flop)."""
-    positions = pf.at_depth(pf.Table(pf.SEATS[players], 0.0, False, None), stack)
+def enumerate_preflop(players=6, stack=100.0, min_prob=2e-5, ante=0.0, straddle=False):
+    """(preflop decisions per hand, [(prob, line, setup, n_live)] for lines that see a flop). setup's "aggr": who
+    raised last preflop, as an index into its "order" (None: nobody, or a player since folded)."""
+    positions = pf.at_depth(pf.Table(pf.SEATS[players], ante, straddle, None), stack)
     out, dec = [], [0.0]
 
     def rec(acts, prob):
@@ -66,9 +67,11 @@ def enumerate_preflop(players=6, stack=100.0, min_prob=2e-5):
                 eff = min(stack - st.inv_start[p] - st.bets[p] for p in live)
                 pot = st.pot_start + sum(st.bets.values())
                 allin = any(stack - st.inv_start[p] - st.bets[p] <= 1e-6 for p in live)
+                last = [x["pos"] for x in acts if x["action"] in ("raise", "all-in")]
+                aggr = order.index(last[-1]) if last and last[-1] in order else None
                 out.append((prob, _line_str(acts), {"order": order, "ranges": [ranges[p] for p in order],
                                                     "pot": round(float(pot), 2), "stack": round(float(eff), 2),
-                                                    "allin": allin}, len(live)))
+                                                    "allin": allin, "aggr": aggr}, len(live)))
             return
         p = st.to_act
         dec[0] += prob
@@ -281,7 +284,10 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--players", type=int, default=6)
     ap.add_argument("--stack", type=float, default=100.0)
+    ap.add_argument("--ante", type=float, default=0.0, help="each player's ante in bb (pf_formats: 0.125)")
+    ap.add_argument("--straddle", action="store_true", help="UTG straddles 2bb")
     ap.add_argument("--min-prob", type=float, default=2e-5)
+    ap.add_argument("--why", action="store_true", help="why the heads-up flops nothing answers at once aren't")
     ap.add_argument("--turns", type=int, default=0, help="native Fast turn solves to measure the turn and river with")
     ap.add_argument("--turn-json", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".work",
                                                          "turn_profile.json"))
@@ -301,7 +307,7 @@ def main(argv=None):
         tp = None
         print("(no turn profile: --turns N measures it; the turn and river use the flop's profile meanwhile)")
 
-    pre_dec, lines = enumerate_preflop(a.players, a.stack, a.min_prob)
+    pre_dec, lines = enumerate_preflop(a.players, a.stack, a.min_prob, a.ante, a.straddle)
     lib = fl.FlopLibrary.from_dir()
     mlib = mwl.MWLibrary.from_dir() if hasattr(mwl.MWLibrary, "from_dir") else mwl.default_library()
     weights = fl.all_flops()
@@ -359,16 +365,43 @@ def main(argv=None):
         print("(the turn profile has no turn_first: --turns N measures it; turn files count nothing meanwhile)")
         tf = 0.0
 
-    near_memo2 = {}
+    near_memo2, exact_memo, why_memo = {}, {}, {}
+    from gto import flop_approx as fa
 
     def near_spot(fp0, fp1, s):
         """The library spot flop_approx.near_spot reads a pot it holds no spot for off (its id), or None."""
-        key = (fp0, fp1, round(s["pot"], 2), round(s["stack"], 2))
+        key = (fp0, fp1, round(s["pot"], 2), round(s["stack"], 2), s.get("aggr"))
         if key not in near_memo2:
-            from gto import flop_approx as fa
-            ns = fa.near_spot(lib, np.asarray(s["ranges"][0]), np.asarray(s["ranges"][1]), s["pot"], s["stack"])
+            ns = fa.near_spot(lib, np.asarray(s["ranges"][0]), np.asarray(s["ranges"][1]), s["pot"], s["stack"],
+                              aggr=s.get("aggr"))
             near_memo2[key] = ns["id"] if ns is not None and ns["id"] in hu_prof else None
         return near_memo2[key]
+
+    def borrowed(fp0, fp1, s):
+        """The library spot read as this pot's own (flop_approx.near_exact: another table size's), or None."""
+        key = (fp0, fp1, round(s["pot"], 2), round(s["stack"], 2))
+        if key not in exact_memo:
+            ne = fa.near_exact(lib, np.asarray(s["ranges"][0]), np.asarray(s["ranges"][1]), s["pot"], s["stack"])
+            exact_memo[key] = ne["spot"] if ne is not None and ne["spot"]["id"] in hu_prof else None
+        return exact_memo[key]
+
+    def why_not(line, s):
+        """Why nothing reads a heads-up pot: "limped" (nobody raised), else the gate its likeliest spot fails
+        (flop_approx.near_candidates: the one with the least range distance among those that got that far)."""
+        if s.get("aggr") is None and ":r" not in line:
+            return "limped pot"
+        key = (fl.range_fp(s["ranges"][0]), fl.range_fp(s["ranges"][1]), round(s["pot"], 2), round(s["stack"], 2),
+               s.get("aggr"))
+        if key not in why_memo:
+            rows = fa.near_candidates(lib, np.asarray(s["ranges"][0]), np.asarray(s["ranges"][1]), s["pot"],
+                                      s["stack"], aggr=s.get("aggr"))
+            order = {"pot": 0, "spr": 1, "ranges": 2, "cover": 3, "dist": 4}
+            best = max(rows, key=lambda r: (order.get(r["why"], -1), -(r["dist"] or 0.0)), default=None)
+            why_memo[key] = {"pot": "another pot, no spot with the same preflop raiser",
+                             "spr": "stack-to-pot ratio out of range", "ranges": "charts changed",
+                             "cover": "range cover under 90%", "dist": "ranges too far apart"}.get(
+                best and best["why"], "no spot")
+        return why_memo[key]
 
     def evaluate(layers):
         """Decisions per hand by street, and those answered at once, with the assumptions `layers` (in order)."""
@@ -380,6 +413,9 @@ def main(argv=None):
             if n_live == 2:
                 fp0, fp1 = fl.range_fp(s["ranges"][0]), fl.range_fp(s["ranges"][1])
                 sp = lib.spot(fp0, fp1, s["pot"], s["stack"])
+                lent = None if sp else borrowed(fp0, fp1, s)
+                if lent is not None:
+                    sp = lent    # (another table size's pot read as a library spot's own: instant, marked borrowed)
                 kind = "srp" if sum(":r" in x for x in line.split(",")) <= 1 else "3bp"
                 prof, fs, ft, fn = hu_prof.get(sp["id"], (kind_avg[kind], 0.0, 0.0, 0.0)) if sp else (kind_avg[kind], 0.0, 0.0, 0.0)
                 fs, ft = _apply(layers, ("hu", fp0, fp1, round(s["pot"], 2), round(s["stack"], 2)), fs, ft)
@@ -387,6 +423,8 @@ def main(argv=None):
                 p_flop["hu"] += prob
                 tot["flop hu"] += prob * d
                 tot["flop hu", "inst"] += prob * st * fs
+                if lent is not None:
+                    tot["flop hu", "borrowed"] += prob * st * fs
                 if sp:   # (a library spot's flop not stored: an approximate answer at once, gto/flop_approx.py)
                     tot["flop hu", "approx"] += prob * st * (1.0 - fs) * fn
                 else:    # (a pot the library holds no spot for: the nearest spot's flops, flop_approx.near_spot)
@@ -395,6 +433,8 @@ def main(argv=None):
                         _, nfs, _, nfn = hu_prof[ns]
                         tot["flop hu", "approx"] += prob * st * (nfs + (1.0 - nfs) * nfn)
                         tot["flop hu", "other"] += prob * st * (nfs + (1.0 - nfs) * nfn)
+                    elif a.why:
+                        tot["why", why_not(line, s)] += prob * st
                 tot["p_turn"] += prob * t
                 tot["turn"] += prob * t * (td if tp else d)
                 tot["turn", "inst"] += prob * tl * ft * tf
@@ -421,10 +461,12 @@ def main(argv=None):
         tot["preflop", "inst"] = pre_dec
         return tot, p_flop
 
-    resolve = _resolver(a.players, a.stack)
+    resolve = _resolver(a.players, a.stack, a.ante, a.straddle)
     base = [parse_assume(a.assume, resolve)] if a.assume else []
     tot, p_flop = evaluate(base)
-    print(f"{a.players}-max {a.stack:g}bb, every seat by the charts: a flop seen in "
+    game = f"{a.players}-max {a.stack:g}bb" + (f", {a.ante:g}bb antes" if a.ante else "") + \
+        (", UTG straddling" if a.straddle else "")
+    print(f"{game}, every seat by the charts: a flop seen in "
           f"{sum(p_flop.values()) * 100:.1f}% of hands (heads-up {p_flop['hu'] * 100:.1f}%, 3-way "
           f"{p_flop['3-way'] * 100:.1f}%, 4+ {p_flop['4+'] * 100:.1f}%)" + (f"; assumed: {a.assume}" if a.assume else ""))
     if tp:
@@ -454,6 +496,14 @@ def main(argv=None):
           f"{tot['flop hu', 'approx'] * 100:.1f} decisions per 100 hands; {tot['flop hu', 'other'] / hu * 100:.1f} "
           f"points ({tot['flop hu', 'other'] * 100:.1f} decisions) in pots the library holds no spot for, read off "
           "the nearest spot's (flop_approx.near_spot)")
+    if tot["flop hu", "borrowed"]:
+        print(f"...of the library's: {tot['flop hu', 'borrowed'] / hu * 100:.1f} points in pots of this table size "
+              "read as a library spot's own (flop_approx.near_exact: the same pot and stack, the ranges a few combos "
+              "apart; marked borrowed)")
+    if a.why:
+        miss = {k[1]: v for k, v in tot.items() if isinstance(k, tuple) and k[0] == "why"}
+        print("heads-up flop decisions nothing answers at once, by why: " +
+              "; ".join(f"{k} {v / hu * 100:.1f}%" for k, v in sorted(miss.items(), key=lambda x: -x[1])))
     if a.candidate:
         print(f"\ninstant decisions per 100 hands each candidate adds (all {all_i * 100:.1f} of {all_d * 100:.1f} now):")
         print(f"{'candidate':<24} {'all':>6} {'flop':>6} {'turn':>6}")
@@ -483,7 +533,7 @@ def _apply(layers, key, fs, ft):
     return fs, ft
 
 
-def _resolver(players, stack):
+def _resolver(players, stack, ante=0.0, straddle=False):
     """name -> the key a game's enumerated lines carry: a spot id (flop_library.all_spots(), in its game, or
     mw_library.SPOTS) or a preflop line, heads-up or 3-way to the flop."""
     hu_ids = {sid: (line, fmt) for sid, _, line, fmt in fl.all_spots()}
@@ -498,7 +548,7 @@ def _resolver(players, stack):
             if fmt is not None:
                 s = fl.spot_setup(line, fmt.players, fmt.stack, fmt.ante, fmt.straddle)
             else:
-                s = fl.spot_setup(line, players, stack)
+                s = fl.spot_setup(line, players, stack, ante, straddle)
         except Exception:
             m = mwl.spot_setup(line, players, stack)
             return ("mw", tuple(fl.range_fp(r) for r in m["ranges"]), round(m["pot"], 2), round(m["stack"], 2))

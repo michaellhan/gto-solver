@@ -115,6 +115,23 @@ test("the villain's range grid and the size usage render in Details", async () =
   assert.match(p.run("handText()"), /size optimization: check 20% · 33% 50% · 125% 30%; kept 33%, 125%/);
 });
 
+test("a precomputed answer is badged; one borrowed from another table size's library spot says so and how far", async () => {
+  const p = loadPage();
+  await p.ready();
+  p.S = state(FLOP);
+  const pre = { spot: "srp_btn_bb", label: "BTN vs BB single-raised pot", iterations: 300, same_tree: false };
+  const res = { street: "flop", hero: "BTN", hand: "AKs", recommended: "check", actions: [{ action: "check", freq: 1, ev_bb: 1 }], precomputed: pre };
+  p.ctx.__res = JSON.stringify(res);
+  p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
+  let h = p.byId("result").innerHTML;
+  assert.match(h, /<span class="conv ok" title="Solved offline \(BTN vs BB single-raised pot, 300 iterations\) with Accurate's flop model: instant, at either speed.">precomputed<\/span>/);
+  const text = "this table's ranges differ from that spot's by 0.4% of their weight at most";
+  p.ctx.__res = JSON.stringify({ ...res, precomputed: { ...pre, label: "6-max " + pre.label, borrowed: { spot: "srp_btn_bb", cover: [1, 0.9996], dist: [0.0088, 0.0025], text } } });
+  p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
+  h = p.byId("result").innerHTML;
+  assert.match(h, /<span class="conv meh" title="Solved offline \(6-max BTN vs BB single-raised pot, 300 iterations\)[^"]* Approximate: that spot read as this one \(this table's ranges differ from that spot's by 0\.4% of their weight at most\)\.">precomputed · borrowed<\/span>/);
+});
+
 test("custom sizes with size optimization: the hint says they compete in its menu, the advice whether they were kept", async () => {
   const p = loadPage();
   await p.ready();

@@ -557,3 +557,186 @@ class TestStudyNear(_Lib):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+EIGHT_BTN = "UTG:f,UTG1:f,LJ:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:c"
+EIGHT_SB = "UTG:f,UTG1:f,LJ:f,HJ:f,CO:f,BTN:f,SB:r3,BB:c"
+
+
+class TestNearExact(_Lib):
+    """Another table size's pot that plays as a library spot (the same pot and stack, each range within a few combos:
+    flop_approx.near_exact) is read as the library's own solve: instant, with its EVs, marked borrowed; the combos off
+    the spot's ranges are left out, and your hand off them is solved live."""
+
+    def test_which_spot(self):
+        cases = {(EIGHT_BTN, 8): "srp_btn_bb", (EIGHT_SB, 8): "srp_sb_bb",
+                 ("UTG:f,UTG1:f,LJ:f,HJ:f,CO:r2.5,BTN:f,SB:f,BB:c", 8): "srp_co_bb",
+                 ("UTG:f,UTG1:f,LJ:f,HJ:r2.5,CO:f,BTN:f,SB:f,BB:c", 8): "srp_hj_bb",
+                 ("UTG:f,UTG1:f,UTG2:f,LJ:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:c", 9): "srp_btn_bb",
+                 ("UTG:r2.5,UTG1:f,LJ:f,HJ:f,CO:f,BTN:f,SB:f,BB:c", 8): None,   # (0.46 apart: read approximately)
+                 ("UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:c", 6): None}               # (the library's own spot)
+        for (line, n), sid in cases.items():
+            st = fl.spot_setup(line, n)
+            ne = fa.near_exact(self.lib, st["full0"], st["full1"], st["pot"], st["stack"])
+            self.assertEqual(ne and ne["spot"]["id"], sid, line)
+            if ne is not None:
+                self.assertGreaterEqual(min(ne["cover"]), fa.NEAR_EXACT_COVER)
+                self.assertLessEqual(sum(ne["dist"]), fa.NEAR_EXACT_DIST)
+        for game in ({"ante": 0.125}, {"straddle": True}, {"stack": 60}):   # (another pot or stack: never)
+            st = fl.spot_setup("UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:c", 6, **game)
+            self.assertIsNone(fa.near_exact(self.lib, st["full0"], st["full1"], st["pot"], st["stack"]), game)
+
+    def test_advice(self):
+        """8-max BTN vs BB: the BB first to act and the BTN after a check get the 6-max spot's stored mix and EVs,
+        nothing solved, the spot and how far named; without library_borrow the flop's approximate read instead."""
+        six = "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:c"
+        adv = advisor()
+        for hero, hole, flop in (("BB", "Qh9h", []), ("BTN", "AhQd", [X("BB")])):
+            got = {}
+            for n, line in ((6, six), (8, EIGHT_BTN)):
+                hand = {"players": n, "stack": 100, "preflop": parse_actions(line), "board": BOARD, "turn": [],
+                        "river": [], "hero": hero, "hole": hole, "flop": flop}
+                with mock.patch.object(A, "solve", side_effect=AssertionError("solved")):
+                    got[n] = adv.advise(hand)
+            r = got[8]
+            self.assertEqual(r["precomputed"]["spot"], "srp_btn_bb")
+            self.assertEqual(r["precomputed"]["label"], "6-max BTN vs BB single-raised pot")
+            b = r["precomputed"]["borrowed"]
+            self.assertLessEqual(sum(b["dist"]), fa.NEAR_EXACT_DIST)
+            self.assertIn("this table's ranges differ from that spot's by 0.4% of their weight at most", b["text"])
+            self.assertTrue(any("precomputed solution (6-max BTN vs BB" in x and "approximate: this table's ranges" in x
+                                for x in r["notes"]), r["notes"])
+            self.assertNotIn("borrowed", got[6]["precomputed"])
+            self.assertEqual([a["action"] for a in r["actions"]], [a["action"] for a in got[6]["actions"]])
+            for a, b6 in zip(r["actions"], got[6]["actions"]):
+                self.assertAlmostEqual(a["freq"], b6["freq"], places=6)
+                self.assertAlmostEqual(a.get("ev_bb", 0.0), b6.get("ev_bb", 0.0), places=6)
+            self.assertIsNotNone(r["actions"][0].get("ev_bb"))
+        hand = {"players": 8, "stack": 100, "preflop": parse_actions(EIGHT_BTN), "board": BOARD, "turn": [],
+                "river": [], "hero": "BB", "hole": "Qh9h", "flop": []}
+        with mock.patch.object(A, "solve", side_effect=AssertionError("solved")):
+            self.assertIsNone(adv.instant(hand))          # (the library's answer is the request's own, at once)
+            adv.library_borrow = False
+            res = adv.instant(hand)
+        self.assertEqual(res["approximate"]["source"], "near")
+        self.assertIn("the library's BTN vs BB single-raised pot", res["approximate"]["label"])
+
+    def test_not_for_ranges_of_your_own(self):
+        """Ranges typed in ("ranges") are solved as typed: an 8-max BTN vs BB flop with the BB's range entered (its
+        own chart's, so the spot would be borrowed) goes to the flop's solve, not the 6-max spot."""
+        from gto.cards import ALL_COMBOS
+        st = fl.spot_setup(EIGHT_BTN, 8)
+        self.assertIsNotNone(fa.near_exact(self.lib, st["full0"], st["full1"], st["pot"], st["stack"]))
+        text = ",".join(f"{cards_str(cb)}:{w:.4f}" for cb, w in zip(ALL_COMBOS, st["full0"]) if w > 1e-4)
+        hand = {"players": 8, "stack": 100, "preflop": parse_actions(EIGHT_BTN), "board": BOARD, "turn": [],
+                "river": [], "hero": "BB", "hole": "Qh9h", "flop": []}
+        adv = advisor()
+        with mock.patch.object(A, "solve", side_effect=RuntimeError("solved")) as solve:
+            self.assertIn("borrowed", adv.advise(hand)["precomputed"])
+            self.assertFalse(solve.called)
+            res = adv.advise(dict(hand, ranges={"BB": text}))
+            self.assertTrue(solve.called)     # (the solve was asked; its error here leaves the betting rules)
+        self.assertNotIn("precomputed", res)
+
+    def test_prefetched(self):
+        """The prefetch names the borrowed spot's entry of the flop for the browser to fetch ahead."""
+        asked = []
+
+        def fetch(p, real=self.lib._fetch):
+            if p.startswith("index"):
+                return real(p)
+            asked.append(p)
+            return None
+        sp = next(s for s in self.lib.index()["spots"] if s["id"] == "srp_btn_bb")
+        adv = advisor(fl.FlopLibrary(fetch))
+        adv.prefetch({"players": 8, "stack": 100, "preflop": parse_actions(EIGHT_BTN), "board": BOARD, "turn": [],
+                      "river": [], "hero": "BB", "hole": "Qh9h", "flop": []})
+        name = fl.cards_str(fl.canonical(parse_cards(BOARD))[0])
+        self.assertIn(f"srp_btn_bb/{name}.bin?v={sp['flops'][name]}", asked)
+
+    def test_study(self):
+        """Study on an 8-max BTN vs BB flop: the BTN's whole range at once from the borrowed spot, EVs included."""
+        with mock.patch.object(A, "solve", side_effect=AssertionError("solved")):
+            r = advisor().advise({"players": 8, "stack": 100, "study": True, "preflop": parse_actions(EIGHT_BTN),
+                                  "board": BOARD, "flop": [X("BB")], "turn": [], "river": []})
+        self.assertEqual((r["actor"], r["precomputed"]["spot"]), ("BTN", "srp_btn_bb"))
+        self.assertIn("borrowed", r["precomputed"])
+        self.assertEqual(r["pot_bb"], 5.5)
+        self.assertAlmostEqual(sum(a["freq"] for a in r["actions"]), 1.0, delta=0.01)
+        self.assertTrue(r["combos"]["AKo"] and all(x[3] is not None for x in r["combos"]["AKo"]))
+
+    def test_combos_off_its_ranges(self):
+        """8-max SB vs BB: the SB's K4o isn't in the 6-max spot's range: left out of the ranges read, but as your
+        hand the borrowed spot answers nothing (the flop is solved live)."""
+        st = fl.spot_setup(EIGHT_SB, 8)
+        ne = fa.near_exact(self.lib, st["full0"], st["full1"], st["pot"], st["stack"])
+        self.assertEqual(ne["spot"]["id"], "srp_sb_bb")
+        ss = fl.spot_setup(ne["spot"]["line"])
+        k4 = COMBO_INDEX[tuple(sorted(parse_cards("Kh4c")))]
+        self.assertGreater(st["full0"][k4], 0)
+        self.assertEqual(ss["full0"][k4], 0)
+        board = parse_cards("Qd8s3h")
+        cfg = fl.library_config(st["pot"], st["stack"])
+        args = (st["full0"], st["full1"], board, st["full0"], st["full1"], st["pot"], st["stack"], cfg)
+        self.assertIsNone(self.lib.solution(*args))                         # (not the library's own spot)
+        self.assertIsNone(self.lib.solution(*args, borrow=ne, need=[k4]))   # (your hand off its range)
+        sol = self.lib.solution(*args, borrow=ne)
+        self.assertEqual(sol.borrowed["spot"], "srp_sb_bb")
+        self.assertNotIn(k4, set(sol.ctx.active[sol.r0 > 0].tolist()))
+        held = COMBO_INDEX[tuple(sorted(parse_cards("AhKd")))]
+        self.assertIn(held, set(sol.ctx.active[sol.r0 > 0].tolist()))
+        self.assertIsNotNone(self.lib.solution(*args, borrow=ne, need=[held]))
+
+
+STRADDLE_BTN = "HJ:f,CO:f,BTN:r5,SB:f,BB:f,UTG:c"     # (the straddler calls the BTN's raise: an 11.5 bb pot)
+
+
+class TestOtherGame(_Lib):
+    """A pot of another game (a straddle, antes, heads-up blinds: another pot size) is read off the library spot whose
+    ranges are nearest, of the same stack-to-pot ratio band, where the same seat raised last preflop (near_spot's
+    aggr), within NEAR_POT_DIST; raises named by their size in bb are matched across pots (flop_approx.norm_name)."""
+
+    def test_which_spot(self):
+        st = fl.spot_setup(STRADDLE_BTN, 6, straddle=True)
+        self.assertEqual((st["oop"], st["ip"]), ("UTG", "BTN"))
+        sp = fa.near_spot(self.lib, st["full0"], st["full1"], st["pot"], st["stack"], aggr=1)
+        self.assertEqual(sp and sp["id"], "srp_btn_bb")
+        for aggr in (None, 0):          # (the raiser not known, or out of position: no other pot's spot)
+            self.assertIsNone(fa.near_spot(self.lib, st["full0"], st["full1"], st["pot"], st["stack"], aggr=aggr))
+        rows = {r["id"]: r for r in fa.near_candidates(self.lib, st["full0"], st["full1"], st["pot"], st["stack"], aggr=1)}
+        self.assertIsNone(rows["srp_btn_bb"]["why"])
+        self.assertEqual(rows["srp_sb_bb"]["why"], "pot")              # (the SB raised there: out of position)
+        self.assertEqual(rows["3bp_bb_btn"]["why"], "pot")
+        # 6-max 100bb's own lines are as they were: a squeeze pot isn't read off a 3bet pot of another size
+        sq = fl.spot_setup("UTG:f,HJ:f,CO:f,BTN:r2.5,SB:r10,BB:c,BTN:f")
+        self.assertIsNone(fa.near_spot(self.lib, sq["full0"], sq["full1"], sq["pot"], sq["stack"], aggr=0))
+
+    def test_instant(self):
+        """The straddler first to act: the entry of the flop in BTN vs BB, another game's pot named; the BTN's c-bet
+        check-raised: the entry's node facing its raise (named in bb at its own pot)."""
+        sp = next(s for s in self.lib.index()["spots"] if s["id"] == "srp_btn_bb")
+        board = "KhJd5c"
+        self.assertIn(fl.cards_str(fl.canonical(parse_cards(board))[0]), sp["flops"])
+        hand = {"players": 6, "stack": 100, "straddle": True, "preflop": parse_actions(STRADDLE_BTN), "board": board,
+                "turn": [], "river": []}
+        adv = advisor()
+        with mock.patch.object(A, "solve", side_effect=AssertionError("solved")):
+            res = adv.instant(dict(hand, hero="UTG", hole="Qh9h", flop=[]))
+        label = res["approximate"]["label"]
+        self.assertIn("the precomputed solve of this flop in the library's BTN vs BB single-raised pot", label)
+        self.assertIn("another game's pot (5.5 bb, a stack-to-pot ratio of 17.7; this one 11.5 bb, 8.3)", label)
+        names, mix = self.expected(board, "Qh9h", [], spot=sp)
+        self.assertEqual([a["action"] for a in res["actions"]], names)
+        self.assertTrue(np.allclose([a["freq"] for a in res["actions"]], mix, atol=0.0006))
+        # the straddler checks and faces the c-bet: the entry's node, whose raise is named at its own pot's size
+        e = self.lib.entry(sp, fl.cards_str(fl.canonical(parse_cards(board))[0]))
+        nd = next(nd for nd in e["nodes"] if nd["path"] == ["check", "bet 33%"])
+        st = fl.spot_setup(STRADDLE_BTN, 6, straddle=True)
+        sol = fa.approx_solution(self.lib, st["full0"], st["full1"], parse_cards(board), st["full0"], st["full1"],
+                                 st["pot"], st["stack"], fl.library_config(st["pot"], st["stack"]), aggr=1)
+        node = fa.node_norm(sol.root, nd["path"])
+        self.assertIn(id(node), sol.stored)
+        raise_here = next(x for x in node.names if x.startswith("raise to"))
+        self.assertNotIn(raise_here, nd["names"])                      # (another size in bb)
+        self.assertEqual([fa.norm_name(x) for x in node.names], [fa.norm_name(x) for x in nd["names"]])
+        self.assertEqual(fa.norm_name("bet 33%"), "bet 33%")

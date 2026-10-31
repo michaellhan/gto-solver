@@ -967,6 +967,7 @@ class LibrarySolution:
         self.head, self.label, self.exact = head, label, exact
         self.river_dealt = river_dealt             # solved with the river dealt (library_config)
         self.settled_once = True
+        self.borrowed = None                       # another pot's spot read as this one's (FlopLibrary.solution)
 
     def exploitability(self) -> float:
         return self._expl
@@ -980,11 +981,21 @@ class LibrarySolution:
     def note(self) -> str:
         return (f"flop: precomputed solution ({self.label}, {self.iters} iterations, {self._expl:.2f}% of the pot from "
                 f"equilibrium" + ("" if self.exact else "; every turn rank and every river card" if self.river_dealt
-                                  else "; Accurate's flop model, every turn rank with the river bet") + ")")
+                                  else "; Accurate's flop model, every turn rank with the river bet") + ")"
+                + (f"; approximate: {self.borrowed_text()}" if self.borrowed else ""))
+
+    def borrowed_text(self) -> str:
+        """How a borrowed spot (another pot's, read as this one's) differs from this pot."""
+        b = self.borrowed
+        moved = max(b["dist"]) / 2.0 * 100.0
+        held = min(b["cover"]) * 100.0
+        return (f"this table's ranges differ from that spot's by {moved:.1f}% of their weight at most"
+                + ("" if held >= 99.95 else f", {100.0 - held:.1f}% of a range off it is left out"))
 
     def info(self) -> dict:
         return {"spot": self.head.get("spot"), "label": self.label, "board": self.head.get("board"),
-                "iterations": self.iters, "exploitability_pct": round(self._expl, 2), "same_tree": self.exact}
+                "iterations": self.iters, "exploitability_pct": round(self._expl, 2), "same_tree": self.exact,
+                **({"borrowed": dict(self.borrowed, text=self.borrowed_text())} if self.borrowed else {})}
 
 
 class FlopLibrary:
@@ -1082,16 +1093,20 @@ class FlopLibrary:
         return self._entries[key]
 
     def solution(self, full0: np.ndarray, full1: np.ndarray, board: Sequence[int], r0: np.ndarray, r1: np.ndarray,
-                 pot: float, stack: float, cfg: Config) -> Optional[LibrarySolution]:
+                 pot: float, stack: float, cfg: Config, borrow: Optional[dict] = None,
+                 need: Sequence[int] = ()) -> Optional[LibrarySolution]:
         """The stored solve for this flop spot, or None. full0, full1: the two ranges entering the flop (they pick
         the spot); r0, r1: the ranges the advisor solves with (the villain's less the hero's cards, which are dropped
-        from the entry's), every combo of which the entry must hold; cfg: the advisor's tree for the street."""
+        from the entry's), every combo of which the entry must hold; cfg: the advisor's tree for the street.
+        borrow: another spot read as this pot's own (flop_approx.near_exact's {"spot", "cover", "dist"}; the same pot
+        and stack): the combos its entry doesn't hold are left out of r0 and r1, but for those in `need` (combo
+        indices: your hand), where it is None; the solution's `borrowed` says so."""
         if len(board) != 3:
             return None
         idx = self.index()
         if not idx.get("spots"):
             return None
-        spot = self.spot(range_fp(full0), range_fp(full1), pot, stack)
+        spot = borrow["spot"] if borrow else self.spot(range_fp(full0), range_fp(full1), pot, stack)
         if spot is None:
             return None
         tk, lk = tree_key(cfg), self.tree(spot)
@@ -1107,6 +1122,12 @@ class FlopLibrary:
         cmap = self._maps[mk]                       # actual combo -> canonical combo
         bm = np.prod([1.0 - MEMBER_FULL[c] for c in board], axis=0)
         r0f, r1f = r0 * bm, r1 * bm
+        if borrow:
+            for p, rf in ((0, r0f), (1, r1f)):
+                off = (rf > 0) & ~e["masks"][p][cmap]
+                if off[np.asarray(list(need), dtype=np.int64)].any():
+                    return None                     # (your hand, off the spot's range)
+                rf[off] = 0.0
         active = np.nonzero((r0f > 0) | (r1f > 0))[0]
         canon_active = cmap[active]
         cols = []
@@ -1142,8 +1163,15 @@ class FlopLibrary:
             evs[id(n)] = ev
         ek = self.entry_tree(spot, cards_str(canon))
         exact = _key_str(tk["model"]) == _key_str(ek.get("model"))
-        return LibrarySolution(root, ctx, r0f[active], r1f[active], tb.n_nodes, stored, evs, e["head"],
-                               spot.get("label", spot["id"]), exact, bool((ek.get("model") or {}).get("river_dealt")))
+        label = spot.get("label", spot["id"])
+        if borrow and not spot.get("game"):
+            label = f"6-max {label}"                # (the library's own game: 6-max 100bb)
+        sol = LibrarySolution(root, ctx, r0f[active], r1f[active], tb.n_nodes, stored, evs, e["head"], label, exact,
+                              bool((ek.get("model") or {}).get("river_dealt")))
+        if borrow:
+            sol.borrowed = {"spot": spot["id"], "cover": [round(float(c), 4) for c in borrow["cover"]],
+                            "dist": [round(float(d), 4) for d in borrow["dist"]]}
+        return sol
 
 
 _DEFAULT: Optional[FlopLibrary] = None

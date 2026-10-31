@@ -2130,6 +2130,16 @@ class InstantSpot:
     near: Optional[Callable] = None   # a library spot's flop not stored: () -> flop_approx.ApproxSolution or None
 
 
+def _pf_aggressor(preflop: List[dict], oop: str, ip: str) -> Optional[int]:
+    """Who raised last preflop of a heads-up pot's two players (0 out of position, 1 in position), None: nobody (a
+    limped pot) or someone since folded (flop_approx.near_spot reads another pot's spot only for the same raiser)."""
+    last = None
+    for a in preflop or ():
+        if a.get("action") in ("raise", "all-in", "bet"):
+            last = str(a.get("pos", "")).upper()
+    return 0 if last == oop else 1 if last == ip else None
+
+
 def _swap_combo(hole, a: int, b: int) -> int:
     """The index of `hole`'s image under the swap of cards a and b (a class's played card and the card dealt)."""
     x, y = [b if c == a else a if c == b else c for c in hole]
@@ -2294,8 +2304,11 @@ def instant_from_near(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
     node, strat, bets = got
     if id(node) not in sol.stored or not sol.known[id(node)][col[0]]:
         return None
-    return {"actions": _real_actions(node, strat, bets, spot), "source": "near", "label": _near_label(sol),
-            "iterations": None}
+    label = _near_label(sol)
+    f = getattr(sol, "filled", {}).get(id(node))
+    if f is not None and f[col[0]]:
+        label += "; your hand isn't in that spot's range: the average mix there of its hand class (made hand and draw)"
+    return {"actions": _real_actions(node, strat, bets, spot), "source": "near", "label": label, "iterations": None}
 
 
 def _near_label(sol) -> str:
@@ -2309,6 +2322,11 @@ def _near_label(sol) -> str:
             f"the library's {sol.label} on the most similar flops ({flops}), by card substitution")
     if sol.spr is None:
         return f"{what}, the spot whose ranges are nearest this pot's"
+    if getattr(sol, "pots", None):
+        # (another game's pot: antes, a straddle, heads-up blinds; the same seat raised last preflop)
+        return (f"{what}, another game's pot ({sol.pots[0]:g} bb, a stack-to-pot ratio of {sol.spr[0]:.1f}; this "
+                f"one {sol.pots[1]:g} bb, {sol.spr[1]:.1f}): the spot whose ranges are nearest this pot's with the "
+                "same preflop raiser")
     # (another stack depth)
     label = (f"{what}, solved {'deeper' if sol.spr[0] > sol.spr[1] else 'shallower'} (a stack-to-pot ratio "
              f"of {sol.spr[0]:.1f}, this pot's {sol.spr[1]:.1f})")
@@ -2504,6 +2522,9 @@ class Advisor:
         self._by_spot: Dict[tuple, Solution] = {}    # latest solve per spot, whatever the ranges
         # precomputed flop solves (gto/flop_library.py: FlopLibrary), used where they hold the spot; None = off
         self.library = None
+        # and a spot of the same pot and stack whose ranges are a few combos from this pot's (another table size's:
+        # flop_approx.near_exact), read as its own, marked borrowed; False: the library's own spots alone
+        self.library_borrow = True
         # precomputed 3-way flop solves (gto/mw_library.py: MWLibrary): a 3-way flop's first decisions, at every speed
         self.mw_library = None
         # the street advised on (heads-up from its start) also gets the earlier streets' prior_budget its narrowing
@@ -4110,8 +4131,8 @@ class Advisor:
                 cfg = self._cfg_with_real_sizes(st, oop, ip, eff)
                 taken: List[str] = []
                 hit = self._from_library(lib, full, sub_board, r0, r1, st, eff, cfg, oop, ip, notes,
-                                         smoothing=self.prior_smoothing, board=sub_board, rules=(0, 1), slow=slow_hu,
-                                         taken=taken) \
+                                         holes=(hole, adv_hole), borrow=not custom, smoothing=self.prior_smoothing,
+                                         board=sub_board, rules=(0, 1), slow=slow_hu, taken=taken) \
                     if lib is not None and st.name == "flop" else None
                 if hit is not None:
                     sol, node, c0, c1 = hit
@@ -4170,9 +4191,9 @@ class Advisor:
                 # a precomputed solve answers when it holds the spot and the line, the villain's line isn't rare in
                 # it and the node is one it stores (else the live solve below)
                 w2, rl2, n2, tk = [], [], [], []
-                hit = self._from_library(lib, full, board, r0, r1, cur, eff, cfg, oop, ip, n2,
-                                         smoothing=self.prior_smoothing, only=1 - hero_p, widened=w2, board=board,
-                                         rare_lines=rl2, taken=tk)
+                hit = self._from_library(lib, full, board, r0, r1, cur, eff, cfg, oop, ip, n2, holes=(hole,),
+                                         borrow=not custom, smoothing=self.prior_smoothing, only=1 - hero_p,
+                                         widened=w2, board=board, rare_lines=rl2, taken=tk)
                 if hit is not None and self._presolving:
                     return {"skipped": "a flop-library spot"}   # (its answers are read off the entry, not solved)
                 if self._runout_close is not None:
@@ -4193,7 +4214,8 @@ class Advisor:
             if lib is not None and cur.name == "flop":
                 from .flop_approx import approx_solution
                 near = lambda: approx_solution(lib, full[0], full[1], board, r0, r1, cur.pot_start, eff, cfg,
-                                               seats=(oop, ip), hole=hole or None)
+                                               seats=(oop, ip), hole=hole or None,
+                                               aggr=_pf_aggressor(streets["preflop"], oop, ip))
             return self._instant_answer(cur, board, hole, hero, villain, hero_p, oop, ip, eff, cfg, r0, r1, walked,
                                         hero_remaining, to_call, len(positions), t0, near)
         if lib_sol is None and self._lib_only:
@@ -4201,7 +4223,8 @@ class Advisor:
                 # (a library spot's flop not stored: the stored flops its approximate answer reads, named for the
                 # browser's prefetch: instant_from_near)
                 from .flop_approx import approx_solution
-                approx_solution(lib, full[0], full[1], board, r0, r1, cur.pot_start, eff, cfg, fetch_only=True)
+                approx_solution(lib, full[0], full[1], board, r0, r1, cur.pot_start, eff, cfg, fetch_only=True,
+                                aggr=_pf_aggressor(streets["preflop"], oop, ip))
             return {"skipped": "not a flop-library spot"}
         if lib_sol is not None:
             sol = lib_sol
@@ -6118,7 +6141,9 @@ class Advisor:
                 "opponent_combos": og["combos"], "opponent_eq": None, "opponent_grid": og["grid"],
                 "approximate": {"source": "near", "label": _near_label(sol), "iterations": None},
                 "solver": {"iterations": None, "exploitability_pct": None, "by": "the flop library"},
-                "notes": ["read off stored flops by card substitution: no EVs or equities until the flop's own solve"],
+                "notes": ["read off stored flops by card substitution: no EVs or equities until the flop's own solve"]
+                + (["the hands that spot's range doesn't hold: the average mix there of their hand class (made hand "
+                    "and draw)"] if getattr(sol, "filled", {}).get(id(node), np.zeros(1, bool)).any() else []),
                 "seconds": round(time.time() - t0, 3)}
 
     def _study_prev(self, cur, board, hero, villain, hero_p, oop, ip, eff, r0, r1, walked, behind, to_call,
@@ -6277,12 +6302,22 @@ class Advisor:
         is the same but for that one combo's weight (1e-3 of a combo's), and the walk takes it out again after."""
         return self._with_hero(r0, r1, hero_p, hole, [])
 
-    def _from_library(self, lib, full, flop, r0, r1, st: StreetState, eff, cfg: Config, oop, ip, notes, **walk_kw):
+    def _from_library(self, lib, full, flop, r0, r1, st: StreetState, eff, cfg: Config, oop, ip, notes, holes=(),
+                      borrow=True, **walk_kw):
         """(solution, node, r0, r1) walked from the library's solve of this flop (flop_library.LibrarySolution)
         when it holds the spot (the ranges entering the flop, pot, stack and tree) and every node of the line
-        taken; else None. The walk's notes go to `notes` only when it is used."""
+        taken; else None. Where it doesn't, a spot whose ranges are that close (library_borrow: flop_approx.near_exact)
+        is read as this pot's, the combos off its ranges left out but for the hands in `holes` (yours: None where one
+        is); not with `borrow` False (ranges of your own: their answer is a solve). The walk's notes go to `notes` only
+        when it is used."""
         try:
             sol = lib.solution(full[0], full[1], flop, r0, r1, st.pot_start, eff, cfg)
+            if sol is None and borrow and self.library_borrow and len(flop) == 3:
+                from .flop_approx import near_exact
+                ne = near_exact(lib, full[0], full[1], st.pot_start, eff)
+                if ne is not None:
+                    need = [COMBO_INDEX[(min(h), max(h))] for h in holes if h]
+                    sol = lib.solution(full[0], full[1], flop, r0, r1, st.pot_start, eff, cfg, borrow=ne, need=need)
         except Exception:   # a library that can't be read is no library
             sol = None
         if sol is None:

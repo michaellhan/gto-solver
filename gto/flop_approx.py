@@ -126,24 +126,51 @@ NEAR_COVER = 0.9
 NEAR_SPOT_DIST = 2.0
 NEAR_SPR = (0.35, 2.05)
 NEAR_MIN_SPR = 3.0
-_SETUPS: Dict[str, Optional[dict]] = {}
+# Another game's pot (antes or a straddle add dead money; heads-up the blinds play: a pot no spot has) is read off a
+# spot of another pot where the same seat raised last preflop (near_spot's aggr: out of position, or in position, in
+# both), the stack-to-pot ratio within NEAR_SPR as above, each range covered by NEAR_POT_COVER and the distances
+# summing to at most NEAR_POT_DIST (6-max 100bb's squeezes and cold calls of a 3bet, 1.14-1.9 from the 3bet pots of
+# another size, stay unread). The hands that spot's ranges don't hold play their hand class's average there
+# (class_fill). scripts/bench_flop_formats.py (20 flops each, every game's flop solved at its own ranges in the
+# Accurate tree, 300 iterations; each combo's mix priced by its EVs, % of the pot per flop, mean, the filled hands
+# in): ante CO vs BB off BTN vs BB 0.21, straddled BTN vs UTG off BTN vs BB 0.19, CO vs UTG off HJ vs BB 0.17; the
+# live Fast solve at its 50th iteration 0.19-0.21.
+NEAR_POT_DIST = 1.0
+NEAR_POT_COVER = 0.9
+# A pot of another table size that plays as one the library holds (8- and 9-max BTN, SB, CO and HJ vs the BB, BTN and
+# CO vs SB, the blinds' 3bets of the BTN and the CO, the BB's of the SB: the same pot and stack, the ranges entering the
+# flop a few combos apart) is read as the library's own solve (near_exact: flop_library.FlopLibrary.solution with that
+# spot: instant, its EVs and stored turns), marked borrowed, where each range there holds at least NEAR_EXACT_COVER of
+# this one's (by weight; the combos it doesn't hold are left out, and your own hand off it is solved live) and the two
+# ranges' distances (range_dist) sum to at most NEAR_EXACT_DIST. scripts/bench_flop_formats.py (as above, 20 flops
+# each): the library's entry gave up as much for the 8-max pot as for its own 6-max one (BTN vs BB 0.120 / 0.119, SB
+# vs BB 0.212 / 0.210, CO vs BB 0.128 / 0.128, HJ vs BB 0.126 / 0.127, BTN vs SB 0.164 / 0.165, CO vs SB 0.178 /
+# 0.162, the 3bet pots 0.081-0.251 / 0.082-0.248); the 6-max pot's own solve read for the 8-max one 0.002-0.025
+# (distance 0.011-0.145).
+NEAR_EXACT_COVER = 0.97
+NEAR_EXACT_DIST = 0.15
+_SETUPS: Dict[tuple, Optional[dict]] = {}
 _NEAR: Dict[tuple, Optional[str]] = {}
+_EXACT: Dict[tuple, Optional[dict]] = {}
 
 
 def _spot_ranges(spot: dict) -> Optional[dict]:
-    """A library spot's ranges entering the flop (flop_library.spot_setup of its line), None where they no longer
-    match the fingerprints the index holds (the charts changed since it was built)."""
+    """A library spot's ranges entering the flop (flop_library.spot_setup of its line, in its game: the index's
+    "game" of another format's spot), None where they no longer match the fingerprints the index holds (the charts
+    changed since it was built)."""
     from . import flop_library as fl
     line = spot.get("line")
-    if line not in _SETUPS:
+    game = {k: v for k, v in (spot.get("game") or {}).items() if k in ("players", "stack", "ante", "straddle")}
+    key = (line, tuple(sorted(game.items())))
+    if key not in _SETUPS:
         try:
-            st = fl.spot_setup(line) if line else None
+            st = fl.spot_setup(line, **game) if line else None
         except Exception:
             st = None
         if st is not None and list(spot.get("fp") or ()) != [fl.range_fp(st["full0"]), fl.range_fp(st["full1"])]:
             st = None
-        _SETUPS[line] = st
-    return _SETUPS[line]
+        _SETUPS[key] = st
+    return _SETUPS[key]
 
 
 def range_cover(t: np.ndarray, s: np.ndarray) -> float:
@@ -157,35 +184,98 @@ def range_dist(t: np.ndarray, s: np.ndarray) -> float:
     return float(np.abs(t / max(float(t.sum()), 1e-12) - s / max(float(s.sum()), 1e-12)).sum())
 
 
+def spot_aggressor(spot: dict) -> Optional[int]:
+    """Who raised last preflop in a library spot (0 out of position, 1 in position; None: nobody, or not one of its
+    two seats), from its line and seats."""
+    seats = list(spot.get("seats") or ())
+    last = None
+    for tok in str(spot.get("line") or "").split(","):
+        pos, _, act = tok.partition(":")
+        if act.startswith("r"):
+            last = pos
+    return seats.index(last) if last in seats else None
+
+
+def near_candidates(lib, full0: np.ndarray, full1: np.ndarray, pot: float, stack: float,
+                    exclude: Optional[str] = None, aggr: Optional[int] = None) -> List[dict]:
+    """Every library spot as near_spot weighs it for a heads-up pot: {"id", "other" (another pot or stack), "cover"
+    (the lesser of the two ranges' cover), "dist" (summed), "why" (None where it qualifies, else the first gate it
+    fails: "pot" (another pot, and the same preflop raiser isn't in the same position or isn't known), "spr" (another
+    stack-to-pot ratio outside NEAR_SPR or this pot's under NEAR_MIN_SPR), "ranges" (its charts changed), "cover",
+    "dist")}."""
+    out = []
+    for sp in lib.index().get("spots", []):
+        if sp["id"] == exclude:
+            continue
+        same_pot = round(float(sp["pot"]), 2) == round(pot, 2)
+        other = not same_pot or round(float(sp["stack"]), 2) != round(stack, 2)   # (another pot or depth)
+        row = {"id": sp["id"], "other": other, "cover": None, "dist": None, "why": None}
+        out.append(row)
+        if not same_pot and (aggr is None or spot_aggressor(sp) != aggr):
+            row["why"] = "pot"
+            continue
+        if other and (stack / pot < NEAR_MIN_SPR or not
+                      NEAR_SPR[0] <= (stack / pot) / (float(sp["stack"]) / float(sp["pot"])) <= NEAR_SPR[1]):
+            row["why"] = "spr"
+            continue
+        st = _spot_ranges(sp)
+        if st is None:
+            row["why"] = "ranges"
+            continue
+        row["cover"] = min(range_cover(full0, st["full0"]), range_cover(full1, st["full1"]))
+        row["dist"] = range_dist(full0, st["full0"]) + range_dist(full1, st["full1"])
+        if row["cover"] < (NEAR_COVER if same_pot else NEAR_POT_COVER):
+            row["why"] = "cover"
+        elif row["dist"] > (NEAR_SPOT_DIST if same_pot else NEAR_POT_DIST):
+            row["why"] = "dist"
+    return out
+
+
 def near_spot(lib, full0: np.ndarray, full1: np.ndarray, pot: float, stack: float,
-              exclude: Optional[str] = None) -> Optional[dict]:
+              exclude: Optional[str] = None, aggr: Optional[int] = None) -> Optional[dict]:
     """The library spot nearest a heads-up pot it holds no spot for (ranges full0 out of position, full1 in position
-    entering the flop; pot and stack): the same pot, covering each range by NEAR_COVER, the ranges' summed distance
-    least and at most NEAR_SPOT_DIST; one with the same stack first, else (at least NEAR_MIN_SPR here) one whose
-    stack-to-pot ratio is within NEAR_SPR of this pot's. None where none is. exclude: a spot id left out
+    entering the flop; pot and stack): covering each range by NEAR_COVER, the ranges' summed distance least and at most
+    NEAR_SPOT_DIST; one with the same pot and stack first, else (at least NEAR_MIN_SPR here) one whose stack-to-pot
+    ratio is within NEAR_SPR of this pot's: of the same pot (another depth), or of another pot (another game's: antes,
+    a straddle, heads-up) where the same seat raised last preflop (aggr: 0 out of position, 1 in position, None not
+    known: no other pot). None where none is (near_candidates says why). exclude: a spot id left out
     (scripts/bench_flop_approx.py's protocol spot)."""
     from . import flop_library as fl
-    key = (fl.range_fp(full0), fl.range_fp(full1), round(pot, 2), round(stack, 2), exclude)
+    key = (fl.range_fp(full0), fl.range_fp(full1), round(pot, 2), round(stack, 2), exclude, aggr)
     if key not in _NEAR:
         best = None
-        for sp in lib.index().get("spots", []):
-            if sp["id"] == exclude or round(float(sp["pot"]), 2) != key[2]:
-                continue
-            other = round(float(sp["stack"]), 2) != key[3]   # (another depth)
-            if other and (stack / pot < NEAR_MIN_SPR or not
-                          NEAR_SPR[0] <= (stack / pot) / (float(sp["stack"]) / float(sp["pot"])) <= NEAR_SPR[1]):
-                continue
-            st = _spot_ranges(sp)
-            if st is None:
-                continue
-            if min(range_cover(full0, st["full0"]), range_cover(full1, st["full1"])) < NEAR_COVER:
-                continue
-            d = range_dist(full0, st["full0"]) + range_dist(full1, st["full1"])
-            if d <= NEAR_SPOT_DIST and (best is None or (other, d) < best[0]):
-                best = ((other, d), sp["id"])
+        for row in near_candidates(lib, full0, full1, pot, stack, exclude, aggr):
+            if row["why"] is None and (best is None or (row["other"], row["dist"]) < best[0]):
+                best = ((row["other"], row["dist"]), row["id"])
         _NEAR[key] = best and best[1]
     sid = _NEAR[key]
     return next((sp for sp in lib.index().get("spots", []) if sp["id"] == sid), None) if sid else None
+
+
+def near_exact(lib, full0: np.ndarray, full1: np.ndarray, pot: float, stack: float) -> Optional[dict]:
+    """The library spot read as this heads-up pot's own (see NEAR_EXACT_DIST): {"spot", "cover" (each range's: the
+    share of its weight the spot's range holds), "dist" (each range's range_dist)}, or None where the library holds
+    this pot itself or no spot of the same pot and stack is that near."""
+    from . import flop_library as fl
+    key = (fl.range_fp(full0), fl.range_fp(full1), round(pot, 2), round(stack, 2))
+    if key not in _EXACT:
+        best = None
+        if lib.spot(key[0], key[1], pot, stack) is None:
+            for sp in lib.index().get("spots", []):
+                if round(float(sp["pot"]), 2) != key[2] or round(float(sp["stack"]), 2) != key[3]:
+                    continue
+                st = _spot_ranges(sp)
+                if st is None:
+                    continue
+                cover = (range_cover(full0, st["full0"]), range_cover(full1, st["full1"]))
+                dist = (range_dist(full0, st["full0"]), range_dist(full1, st["full1"]))
+                if min(cover) >= NEAR_EXACT_COVER and sum(dist) <= NEAR_EXACT_DIST and \
+                        (best is None or sum(dist) < sum(best["dist"])):
+                    best = {"id": sp["id"], "cover": cover, "dist": dist}
+        _EXACT[key] = best
+    got = _EXACT[key]
+    sp = got and next((x for x in lib.index().get("spots", []) if x["id"] == got["id"]), None)
+    return {"spot": sp, "cover": got["cover"], "dist": got["dist"]} if sp else None
 
 
 class ApproxSolution:
@@ -194,7 +284,8 @@ class ApproxSolution:
     no EVs, nothing solved."""
 
     def __init__(self, root, ctx, r0, r1, stored: set, known: dict, near: List[Tuple[str, int]], label: str,
-                 other: bool = False, spr: Optional[Tuple[float, float]] = None, same_seats: bool = False):
+                 other: bool = False, spr: Optional[Tuple[float, float]] = None, same_seats: bool = False,
+                 pots: Optional[Tuple[float, float]] = None):
         self.root, self.names, self.ctx, self.r0, self.r1 = root, root.names, ctx, r0, r1
         self.stored = stored
         self.known = known                         # id(node) -> (n,) bool: the combos some source holds an image of
@@ -203,10 +294,30 @@ class ApproxSolution:
         self.other = other                         # ...another spot's (near_spot): the hand's isn't in the library
         self.spr = spr                             # (the spot's stack-to-pot ratio, the hand's) at another depth
         self.same_seats = same_seats               # ...the hand's seats (the same spot, another depth)
+        self.pots = pots                           # (the spot's pot, the hand's) in another game's pot (antes...)
+        self.filled: Dict[int, np.ndarray] = {}    # id(node) -> (n,) bool: the combos class_fill answered
         self.iters = 0
 
     def covers(self, nodes) -> bool:
         return all(id(n) in self.stored for n in nodes)
+
+
+def norm_name(name: str) -> str:
+    """An action's name as a tree at another pot names it: a raise is named by its size in bb ("raise to 11" in a 5.5 bb
+    pot is "raise to 12.5" in a 6.25 bb one) and the library's flop tree offers one raise size, so "raise"."""
+    return "raise" if name.startswith("raise to ") else name
+
+
+def node_norm(root, path: Sequence[str]):
+    """The node of `root`'s tree a path names (norm_name's names), or None."""
+    n = root
+    for nm in path:
+        names = [norm_name(x) for x in getattr(n, "names", ())]
+        k = norm_name(nm)
+        if k not in names:
+            return None
+        n = n.children[names.index(k)]
+    return n
 
 
 # predict's answers kept per library (the last PRED_KEEP flops and combos asked: Study's next node on a flop, or the
@@ -217,7 +328,7 @@ PRED_KEEP = 4
 def approx_solution(lib, full0: np.ndarray, full1: np.ndarray, board: Sequence[int], r0: np.ndarray, r1: np.ndarray,
                     pot: float, stack: float, cfg, fetch_only: bool = False,
                     seats: Optional[Sequence[str]] = None,
-                    hole: Optional[Sequence[int]] = None) -> Optional[ApproxSolution]:
+                    hole: Optional[Sequence[int]] = None, aggr: Optional[int] = None) -> Optional[ApproxSolution]:
     """The flop decisions a library entry would store, for a flop of a library spot the library doesn't store, read
     off the spot's K stored flops most like it (sources, predict), or for a heads-up pot the library holds no spot
     for, off the nearest spot's (near_spot: its entry of the flop where it stores it, else its K most like it); or
@@ -227,7 +338,9 @@ def approx_solution(lib, full0: np.ndarray, full1: np.ndarray, board: Sequence[i
     answer for it: none).
     fetch_only: only read the sources' entries (None; the advisor's prefetch, which names them for the browser to
     fetch ahead). seats: the pot's (out of position, in position), for the label: the same spot at another depth.
-    hole: the combo the answer is for (predict's hand class test made for it alone; default every combo)."""
+    hole: the combo the answer is for (predict's hand class test made for it alone; default every combo). aggr: who
+    raised last preflop (0 out of position, 1 in position; near_spot reads another pot's spot only where its own
+    raiser sits there too)."""
     from types import SimpleNamespace
     from . import flop_library as fl
     from .solver import Decision, TreeBuilder, MEMBER_FULL
@@ -239,7 +352,7 @@ def approx_solution(lib, full0: np.ndarray, full1: np.ndarray, board: Sequence[i
     spot = lib.spot(fl.range_fp(full0), fl.range_fp(full1), pot, stack)
     other = spot is None
     if other:
-        spot = near_spot(lib, full0, full1, pot, stack)
+        spot = near_spot(lib, full0, full1, pot, stack, aggr=aggr)
         if spot is None:
             return None
     tk, lk = fl.tree_key(cfg), lib.tree(spot)
@@ -262,12 +375,22 @@ def approx_solution(lib, full0: np.ndarray, full1: np.ndarray, board: Sequence[i
     combos = np.unique(cmap[active]) if hole is None else np.array([cmap[COMBO_INDEX[(min(hole), max(hole))]]])
     corr = theta() is not None and (not other or any(d > 0 for *_, d in src)
                                     or round(float(spot["stack"]), 2) == round(stack, 2))
-    key = (spot["id"], fl.cards_str(canon), tuple((nm, d) for *_, nm, d in src), combos.tobytes(), corr)
+    # another game's pot: the hands its ranges don't hold play their hand class's average there (class_fill)
+    fill = round(float(spot["pot"]), 2) != round(pot, 2)
+    key = (spot["id"], fl.cards_str(canon), tuple((nm, d) for *_, nm, d in src), combos.tobytes(), corr,
+           (fl.range_fp(full0), fl.range_fp(full1)) if fill else None)
     kept = lib.__dict__.setdefault("_approx_pred", OrderedDict())
     pred = kept.get(key)
     if pred is None:
         pred = predict([(e, m, w) for e, m, w, _, _ in src],
                        board=list(canon) if corr or any(d > 0 for *_, d in src) else None, combos=combos, correct=corr)
+        if fill:
+            held = {path: ~np.isnan(o["strat"][0]) for path, o in pred.items()}
+            wc = (np.zeros(N_COMBOS), np.zeros(N_COMBOS))
+            wc[0][cmap], wc[1][cmap] = full0, full1          # (the ranges on the canonical flop)
+            class_fill(pred, list(canon), wc, combos=combos)
+            for path, o in pred.items():
+                o["filled"] = held[path] ^ ~np.isnan(o["strat"][0])
         kept[key] = pred
         while len(kept) > PRED_KEEP:
             kept.popitem(last=False)
@@ -277,16 +400,15 @@ def approx_solution(lib, full0: np.ndarray, full1: np.ndarray, board: Sequence[i
     tcfg.depth = 1
     ctx = SimpleNamespace(active=active, n=len(active), cfg=tcfg, root_len=3)
     root = TreeBuilder(ctx, dead=list(board)).build(tuple(board), pot, stack)
-    stored, known = set(), {}
+    stored, known, filled = set(), {}, {}
     for path, o in pred.items():
-        try:
-            n = fl.node_at(root, path)
-        except (ValueError, IndexError, AttributeError):
-            continue
-        if not isinstance(n, Decision) or list(n.names) != o["names"]:
+        n = node_norm(root, path)
+        if not isinstance(n, Decision) or [norm_name(x) for x in n.names] != [norm_name(x) for x in o["names"]]:
             continue
         s = o["strat"][:, cmap[active]]
         known[id(n)] = ~np.isnan(s[0])
+        if "filled" in o:
+            filled[id(n)] = o["filled"][cmap[active]]
         s = np.where(np.isnan(s), 0.0, s).astype(np.float32)   # (no image: a zero row, avg_strategy's uniform; unread)
         n.ssum[0] = s
         n.regret[0] = s
@@ -301,8 +423,11 @@ def approx_solution(lib, full0: np.ndarray, full1: np.ndarray, board: Sequence[i
     spr = None if round(float(spot["stack"]), 2) == round(stack, 2) else \
         (float(spot["stack"]) / float(spot["pot"]), stack / pot)
     same = seats is not None and list(spot.get("seats") or ()) == list(seats)
-    return ApproxSolution(root, ctx, r0f[active], r1f[active], stored, known, near, spot.get("label", spot["id"]),
-                          other, spr, same)
+    pots = None if round(float(spot["pot"]), 2) == round(pot, 2) else (float(spot["pot"]), pot)
+    sol = ApproxSolution(root, ctx, r0f[active], r1f[active], stored, known, near, spot.get("label", spot["id"]),
+                         other, spr, same, pots)
+    sol.filled = filled
+    return sol
 
 
 # A source's image of a combo counts only where it holds the same hand class there (gto/breakdown.py's categorize: the
@@ -320,6 +445,43 @@ def combo_classes(board: Sequence[int], combos: np.ndarray) -> np.ndarray:
     from .breakdown import categorize
     made, draws = categorize(list(board), combos)
     return np.array([m + "/" + d for m, d in zip(made, draws)])
+
+
+def class_fill(pred: Dict[tuple, dict], board: Sequence[int], ranges: Sequence[np.ndarray],
+               combos: Optional[Sequence[int]] = None) -> Dict[tuple, dict]:
+    """predict()'s nodes with each combo no source holds (NaN: off the source's range) playing the average mix of
+    the combos of its hand class here (breakdown.categorize's made hand and draw) that the sources do hold, weighted
+    by the acting player's range (ranges: out of position, in position); the made hand's alone where no held combo
+    shares the draw too; NaN where neither. combos: only these are filled (default every combo off the board).
+    In place; returns pred."""
+    dead = np.zeros(52, bool)
+    dead[list(board)] = True
+    live = np.nonzero(~(dead[CA_FULL] | dead[CB_FULL]))[0]
+    made = draw = None
+    want = None if combos is None else np.isin(live, np.asarray(list(combos), dtype=np.int64))
+    for o in pred.values():
+        S = o["strat"]
+        bad = np.isnan(S[0, live])
+        if want is not None:
+            bad_t = bad & want
+        else:
+            bad_t = bad
+        if not bad_t.any():
+            continue
+        if made is None:   # (once, where some combo needs it: ~35 ms natively)
+            made, draw = class_codes(board, live)
+        w = np.asarray(ranges[o["player"]], float)[live]
+        good = ~bad & (w > 0)
+        for key in (made * 8 + draw, made):
+            for c in np.unique(key[bad_t]):
+                tgt = bad_t & (key == c)
+                src = good & (key == c)
+                if not tgt.any() or not src.any():
+                    continue
+                avg = (S[:, live[src]] * w[src]).sum(axis=1) / float(w[src].sum())
+                S[:, live[tgt]] = avg[:, None]
+                bad_t &= ~tgt
+    return pred
 
 
 def class_codes(board: Sequence[int], combos: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
