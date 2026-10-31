@@ -54,6 +54,9 @@ class TestStudy(unittest.TestCase):
         self.assertEqual(r["actor"], "SB")
         self.assertIn("call", r["grid"]["actions"])
         self.check_totals(r)
+        r = self.study(stack=10)   # (a jam: "all-in" in the grid as in the actions, its colour and legend)
+        self.assertEqual(r["grid"]["actions"], ["all-in", "fold"])
+        self.check_totals(r)
 
     def test_next_card_and_over(self):
         self.assertEqual(self.study(preflop=PRE), {"study": "deal", "street": "flop", "allin": False})

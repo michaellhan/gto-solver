@@ -3101,7 +3101,6 @@ class Advisor:
             acts.append(a)
         if sum(a["freq"] for a in acts) <= 0:
             acts[0]["freq"] = 1.0
-        names = list(full)
         try:
             arriving = preflop_ranges(preflop, positions, stack).get(hero, np.ones(N_COMBOS))
         except Exception:   # noqa: BLE001
@@ -3109,7 +3108,7 @@ class Advisor:
         return {"street": "preflop", "hero": hero, "hand": hand_class(hole), "players": len(positions),
                 "actions": acts, "recommended": max(acts, key=lambda a: a["freq"])["action"], "sampled": self._sample(acts),
                 "pot_bb": round(st.pot_start + sum(st.bets.values()), 2), "to_call_bb": round(to_call, 2),
-                "grid": strategy_grid([full[k] for k in names], names, arriving), "notes": [],
+                "grid": strategy_grid(list(full.values()), [a["action"] for a in acts], arriving), "notes": [],
                 "seconds": round(time.time() - t0, 3)}
 
     def _equity_rules(self, hero, hole, board, positions, st: "StreetState", stk, t0) -> dict:
@@ -3330,13 +3329,13 @@ class Advisor:
                 a["amount_bb"] = round(to_call, 2)
             acts.append(a)
         best = max(acts, key=lambda a: a["freq"])["action"]
-        names = list(full.keys())
+        names = [a["action"] for a in acts]   # (the grid's too: a jam is "all-in" there as in the actions)
         arriving = preflop_ranges(preflop, positions, stack).get(hero, np.ones(N_COMBOS))
         return {
             "street": "preflop", "hero": hero, "hand": hand_class(hole), "players": len(positions),
             "actions": acts, "recommended": best, "sampled": self._sample(acts),
             "pot_bb": round(st.pot_start + sum(st.bets.values()), 2), "to_call_bb": round(to_call, 2),
-            "grid": strategy_grid([full[k] for k in names], names, arriving),
+            "grid": strategy_grid(list(full.values()), names, arriving),
             "notes": notes, "seconds": round(time.time() - t0, 3),
         }
 
