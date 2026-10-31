@@ -175,6 +175,12 @@ const SPOTS = {
   "ro-turn-3bp": base({ board: "Ks7d2c", preflop: BB_3BET, flop: [X("BB"), B("BTN", 6.8), C("BB")], study: true, runouts: true }),
   "ro-turn-limp": base({ board: "Ks7d2c", preflop: LIMP, flop: [X("SB"), B("BB", 1.5), C("SB")], study: true, runouts: true }),
   "ro-turn-2tone": base({ board: "9h8h6c", flop: [X("BB"), B("BTN", 1.8), C("BB")], study: true, runouts: true }),
+  // 3-way (CO opens, BTN and BB call; checked through): cold, the closing decision solved for it at Study's 3-way flop
+  // budget; a library flop (its entries hold the flop only); held, after Study answered the flop's first decision
+  // (--session study-mw-near,ro-mw-turn-held: Advisor._mw_runouts off that solve)
+  "ro-mw-turn": base({ board: "Kh8d3c", preflop: MW, flop: [X("BB"), X("CO"), X("BTN")], study: true, runouts: true }),
+  "ro-mw-turn-lib": base({ board: "Kh7d2c", preflop: MW, flop: [X("BB"), X("CO"), X("BTN")], study: true, runouts: true }),
+  "ro-mw-turn-held": base({ board: "Kh8d3c", preflop: MW, flop: [X("BB"), X("CO"), X("BTN")], study: true, runouts: "held" }),
   "ro-river": base({ board: "Ks7d2cTh", flop: SRP_FLOP, turn: SRP_TURN, study: true, runouts: true }),
   "ro-river-x": base({ board: "Ks7d2cTh", flop: [X("BB"), X("BTN")], turn: [X("BB"), X("BTN")], study: true, runouts: true }),
   "ro-river-3bp": base({ board: "Ks7d2cTh", preflop: BB_3BET, flop: [X("BB"), B("BTN", 6.8), C("BB")], turn: [X("BB"), B("BTN", 15), C("BB")],

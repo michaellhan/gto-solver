@@ -667,8 +667,8 @@ test("Study's 3-way answer at once off the hand's earlier solve: the note", () =
 });
 
 // a live multiway solve's progress while Study waits on it: its seconds of the speed's budget (a flop's 15 at least),
-// a bar; on the answer at once's line too; none heads-up. A 3-way deal has no Turn report (heads-up pots only)
-test("Study on a live 3-way solve: its seconds of up to its budget, a bar, none heads-up; no Turn report 3-way", async () => {
+// a bar; on the answer at once's line too; none heads-up. A 3-way deal's Turn report has strategies only
+test("Study on a live 3-way solve: its seconds of up to its budget, a bar, none heads-up; a 3-way Turn report", async () => {
   const pre = [["UTG", "f"], ["HJ", "f"], ["CO", "f"], ["BTN", "r2.5"], ["SB", "c"], ["BB", "c"]].map(([pos, a]) =>
     a[0] === "r" ? { pos, action: "raise", to: 2.5 } : { pos, action: { f: "fold", c: "call" }[a] });
   const at = { players: 6, stack: 100, board: "Kd8c3h", preflop: pre, flop: [], turn: [], river: [] };
@@ -699,7 +699,7 @@ test("Study on a live 3-way solve: its seconds of up to its budget, a bar, none 
   assert.match(p.html(), /Approximate, at once: the flop's own solve is running <span class="num" data-sytime>0\.\d s of up to ~15 s<\/span>/);
   await p.land(1);
   await opened;
-  // a 3-way deal: no Turn report (it reads heads-up pots); heads-up it's there
+  // a 3-way deal: a Turn report of the first decision's strategy; heads-up with EVs and equities
   const closed = [{ pos: "SB", action: "check" }, { pos: "BB", action: "check" }, { pos: "BTN", action: "check" }];
   p = await studyPage(null, () => ({ study: "deal", street: "turn" }));
   p.ctx.STUDY_AT = { state: { ...at, flop: closed }, spot: "" };
@@ -708,14 +708,26 @@ test("Study on a live 3-way solve: its seconds of up to its budget, a bar, none 
   await p.land(1);
   await opened;
   assert.match(p.html(), /Deal the turn/);
-  assert.doesNotMatch(p.html(), /data-runouts/);
+  assert.match(p.html(), /data-runouts title="The turn's first decision on every card: strategy \(3-way\)"/);
   p = await studyPage(null, () => ({ study: "deal", street: "turn" }));
   p.ctx.STUDY_AT = { state: { ...at, preflop: [...pre.slice(0, 4), { pos: "SB", action: "fold" }, { pos: "BB", action: "call" }], flop: closed.slice(1) }, spot: "" };
   opened = p.ctx.Study.open();
   await p.tick();
   await p.land(1);
   await opened;
-  assert.match(p.html(), /data-runouts/);
+  assert.match(p.html(), /data-runouts title="The turn's first decision on every card: strategy, EV and equity"/);
+  // none where four saw the flop, though three are left (the report reads pots 3-way from the flop)
+  const pre4 = [{ pos: "UTG", action: "fold" }, { pos: "HJ", action: "raise", to: 2.5 }, { pos: "CO", action: "call" }, { pos: "BTN", action: "call" },
+                { pos: "SB", action: "fold" }, { pos: "BB", action: "call" }];
+  p = await studyPage(null, () => ({ study: "deal", street: "turn" }));
+  p.ctx.STUDY_AT = { state: { ...at, preflop: pre4, flop: [{ pos: "BB", action: "check" }, { pos: "HJ", action: "bet", to: 3.5 }, { pos: "CO", action: "call" },
+                                                           { pos: "BTN", action: "call" }, { pos: "BB", action: "fold" }] }, spot: "" };
+  opened = p.ctx.Study.open();
+  await p.tick();
+  await p.land(1);
+  await opened;
+  assert.match(p.html(), /Deal the turn/);
+  assert.doesNotMatch(p.html(), /data-runouts/);
   // heads-up: the spinner alone
   p = await studyPage(null, () => LIVE);
   p.ctx.STUDY_AT = { state: { ...at, preflop: [...pre.slice(0, 4), { pos: "SB", action: "fold" }, { pos: "BB", action: "call" }] }, spot: "" };

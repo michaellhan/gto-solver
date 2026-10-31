@@ -2026,11 +2026,11 @@ def _mw_pick(node, a: dict) -> Optional[int]:
                                                                kind.index(node.names[i].split()[0])))
 
 
-def _mw_follow(node, R, a: dict, players):
+def _mw_follow(node, R, a: dict, players, rare: float = RARE_LINE):
     """One real action `a` down a multiway solve's root street from `node` (its tree's nearest: _mw_pick): its
     player's reach R[p] (per combo, in place) times the solve's average mix for it; the child. _NoInstant where the
     tree doesn't hold it (another player to act, a line the 3-way library doesn't store) or the range keeps under
-    RARE_LINE of itself (the solve's play there barely converged)."""
+    `rare` of itself (RARE_LINE: the solve's play there barely converged)."""
     from . import multiway_solver as MW
     if not isinstance(node, MW.Decision) or getattr(node, "unstored", False) or a.get("pos") not in players \
             or players.index(a["pos"]) != node.player:
@@ -2041,7 +2041,7 @@ def _mw_follow(node, R, a: dict, players):
     p = node.player
     before = R[p].sum()
     R[p] *= node.avg_strategy()[0][i]
-    if R[p].sum() < RARE_LINE * max(before, 1e-12):
+    if R[p].sum() < rare * max(before, 1e-12):
         raise _NoInstant()
     return node.children[i]
 
@@ -2570,6 +2570,8 @@ class Advisor:
         self._runout_close = None # Study's runout report: the action that closed the flop or turn (Advisor._runouts)
         self._runout_held = False # ...from what's in hand only: the library's stored turns, cached solves (_NotHeld)
         self._runout_lines = None # ...the stored turn's flop lines, where the file is there but not for this line
+        self._runout_state = None # ...the request at the decision that closed the street (a 3-way report solves it)
+        self._mw_nolib = False    # a 3-way flop decision solved live though the 3-way library holds it (the report)
         self._req_sizes: Dict[str, List[float]] = {}   # the request's custom sizes (state "sizes"), as fractions
         self._one_size = None     # state "one_size": the one-size view's request (Advisor._one_size_view), else None
         # ...its solves stop this close to equilibrium (% of the pot, by street; the lower expl_target where set)
@@ -2824,13 +2826,15 @@ class Advisor:
         A library flop whose entry has a turn file (flop_library's stored turns) answers the turn report from it
         (Advisor._store_report), on the flop lines it holds. held (state "runouts": "held"): from what's in hand only,
         the stored turns or a solve cached already (Study's own answer at that node), else {"skipped", "lines": the
-        flop lines a stored turn holds, where there is one} and nothing is solved."""
+        flop lines a stored turn holds, where there is one} and nothing is solved. A 3-way pot's report reads the
+        hand's 3-way solve of the street (Advisor._mw_runouts)."""
         street = {3: "flop", 4: "turn"}.get(len(parse_cards(str(st.get("board") or ""))))
         line = list(st.get(street) or []) if street else []
         if not line or st.get("river"):
             return {"error": "the runout report needs a flop or turn whose betting is done (and the next card not dealt)"}
         self._runout_close = str(line[-1].get("action"))
         self._runout_held, self._runout_lines = held, None
+        self._runout_state = dict(st, **{street: line[:-1]})
         try:
             with np.errstate(all="ignore"):
                 return self._advise(dict(st, **{street: line[:-1]}))
@@ -2841,7 +2845,107 @@ class Advisor:
                 out["lines"] = self._runout_lines
             return out
         finally:
-            self._runout_close, self._runout_held, self._runout_lines = None, False, None
+            self._runout_close, self._runout_held, self._runout_lines, self._runout_state = None, False, None, None
+
+    def _mw_runouts(self, hero, hole, board, rep, stk, streets, notes, t0) -> dict:
+        """The runout report (Advisor._runouts) in a 3-way pot: the hand's latest live 3-way solve of the street that
+        closed whose tree holds the line (Study's own answer at the closing decision, or an earlier one's), followed
+        to the street's end (however rarely taken), and its next street read as it plays it: per card class (a
+        rank's cards, a flush suit's apart; MultiwaySolver.tabs) by hand buckets at one bet size: the first
+        decision's mix over its player's range there (its bucket mixes weighted by its range's mass in each bucket
+        on the class's card), a river's the second player's after a check too. Its range on each card weights the
+        averages; each card's chance is given the three ranges (their card overlaps taken as independent). No EVs or
+        equities, and on the turn no later decision: a flop solve's were far from each turn's own solve (betting
+        16-19 points less: Advisor._study_mw_prev), where a turn solve's river after a check was 4 points from each
+        river's. With nothing in hand: held, _NotHeld; else the closing decision solved live as Study answers it (a
+        flop the 3-way library holds too: its entries hold the flop only)."""
+        from . import multiway_solver as MW
+        cur = rep[-1]
+        nxt = "turn" if cur.name == "flop" else "river"
+        acts = list(streets.get(cur.name) or []) + [{"pos": hero, "action": self._runout_close}]
+
+        def read():
+            for k, (sol, pl, expl) in self._mw_hits(board, cur, stk, hole, streets):
+                if not isinstance(sol, MW.MultiwaySolver) or getattr(sol, "tabs", None) is None or not sol.levels \
+                        or len(pl) != 3:
+                    continue
+                R = np.asarray(sol.reach0[:, 0, :], dtype=np.float64).copy()
+                node = sol.root
+                try:
+                    for a in acts[k:]:
+                        node = _mw_follow(node, R, a, pl, rare=0.0)
+                except _NoInstant:
+                    continue
+                loc = next(((g, b) for g in sol.levels[0] for b, (e, _) in enumerate(g.blocks) if e is node), None)
+                if isinstance(node, MW.Exit) and loc is not None:
+                    return sol, pl, expl, R, node, loc
+            return None
+
+        got = read()
+        if got is None and not self._runout_held and self._runout_state is not None:
+            close, self._runout_close, self._mw_nolib = self._runout_close, None, True
+            try:     # (Study's own answer at the closing decision: its solve, kept in _mw_lines)
+                self._advise(dict(self._runout_state))
+            finally:
+                self._runout_close, self._mw_nolib = close, False
+            got = read()
+        if got is None:
+            if self._runout_held:
+                raise _NotHeld()
+            return {"error": f"no {nxt} to report on: the 3-way solve doesn't play the {nxt} on this line"}
+        sol, pl, expl, R, node, (g, b) = got
+        tb = sol.tabs
+        if not isinstance(g.tree, MW.BDecision):
+            return {"error": f"no {nxt} to report on: nobody can bet any more"}
+        C = tb.C
+        X = tb.to_buckets(R[:, None, :].astype(np.float32))      # (np, C, K): each player's reach by class and bucket
+        n_cards = np.array([len(cs) for _, cs in tb.cls], dtype=np.float64)
+
+        def part(d):
+            S = d.avg_strategy()
+            m = np.asarray(X[d.player], dtype=np.float64)          # (C, K)
+            tot = m.sum(axis=1)
+            f = np.stack([(S[b * C + t] * m[t][None, :]).sum(axis=1) for t in range(C)]) \
+                / np.maximum(tot, 1e-12)[:, None]
+            wk = n_cards * tot
+            avg = (f * wk[:, None]).sum(axis=0) / max(float(wk.sum()), 1e-12)
+            return {"actor": pl[d.player], "actions": list(d.names), "avg": [round(float(x), 4) for x in avg],
+                    "cards": [{"card": card_str(tb.cls[t][0]), "cards": [card_str(c) for c in tb.cls[t][1]],
+                               "f": [round(float(x), 4) for x in f[t]], "w": round(float(tot[t]), 3)}
+                              for t in range(C) if tot[t] > 1e-9]}
+
+        d1 = g.tree
+        d2 = None    # (the river's second player after a check; not the turn's)
+        if nxt == "river" and "check" in d1.names and isinstance(d1.children[d1.names.index("check")], MW.BDecision):
+            d2 = d1.children[d1.names.index("check")]
+        # each card's chance: the share of the three ranges' hands that leave it live (overlaps independent)
+        dead = set(board)
+        w = [sol.expand(R[i]) for i in range(len(pl))]
+        cards = []
+        live = np.ones(52)
+        for i in range(len(pl)):
+            tot = max(float(w[i].sum()), 1e-12)
+            hold = np.zeros(52)
+            for ci, cb in enumerate(ALL_COMBOS):
+                if w[i][ci] > 0:
+                    hold[cb[0]] += w[i][ci]
+                    hold[cb[1]] += w[i][ci]
+            live *= np.clip(1.0 - hold / tot, 0.0, 1.0)
+        off = [c for c in range(52) if c not in dead]
+        z = max(float(sum(live[c] for c in off)), 1e-12)
+        cards = [{"card": card_str(c), "p": round(float(live[c] / z), 5), "eq": None, "ev": None} for c in off]
+        K = d1.regret.shape[2]
+        notes = list(notes) + [
+            f"the {cur.name} solve's view of the {nxt}: one bet size there, each {nxt} class's cards alike (a rank's "
+            f"cards, a flush suit's apart) and hands by {K} buckets a player; strategies only (no EVs or equities "
+            f"3-way{'' if d2 is not None else ', nor the decisions after the first'}); a {nxt} dealt is solved on its "
+            f"own, with more sizes"]
+        return {"study": "runouts", "street": nxt, "multiway": True, "first": part(d1),
+                "after_check": part(d2) if d2 is not None else None, "seats": list(pl),
+                "pot_bb": round(float(node.pot), 2), "cards": cards, "source": "solve",
+                "solver": {"iterations": int(sol.iters), "exploitability_pct": round(float(expl), 3),
+                           "by": "hand buckets"},
+                "notes": notes, "seconds": round(time.time() - t0, 2)}
 
     def _runout_report(self, sol, node, n_r0, n_r1, hero, villain, hero_p, board, expl, notes, t0):
         """The runout report (Advisor._runouts) from the flop's or turn's solve at the decision that closed the
@@ -4037,7 +4141,11 @@ class Advisor:
             notes.append(f"{'your' if p == hero else p + chr(39) + 's'} preflop line isn't in the chart, so "
                          f"{'your' if p == hero else 'their'} range is the hands that take its last action")
         if self._runout_close is not None and len(cur.active) > 2:
-            return {"error": f"the runout report reads heads-up pots: {len(cur.active)} players are in"}
+            if len(cur.active) == 3 and all(len(s.players_start) == 3 for s in rep[1:]):
+                return self._mw_runouts(hero, hole, board, rep, stk, streets, notes, t0)
+            big = max(rep[1:], key=lambda s: len(s.players_start))
+            return {"error": f"the runout report reads heads-up and 3-way pots: {len(big.players_start)} players saw "
+                             f"the {big.name}"}
         # (Study's 3-way and 4-way nodes before the river, three or four from the flop: a 3-way flop the library
         # doesn't store read off its stored flops most like it, Advisor._study_mw_near; a later node off the hand's
         # earlier solve, Advisor._study_mw_prev)
@@ -4050,7 +4158,7 @@ class Advisor:
             return {"skipped": "multiway"}   # (a presolve: heads-up from the flop only, as an instant answer)
         # a 3-way flop's first decision the 3-way library holds: its precomputed solve answers (no narrowing needed)
         if len(cur.players_start) == 3 and actor is None and not pool and not optimize and not self._jam \
-                and getattr(self, "_icm", None) is None and self._one_size is None:
+                and getattr(self, "_icm", None) is None and self._one_size is None and not self._mw_nolib:
             res = self._mw_from_library(hero, hole, board, ranges, cur, stk, streets, t0, notes, locks, positions)
             if res is not None:
                 return res

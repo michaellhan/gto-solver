@@ -526,6 +526,10 @@
     if (ro.source === "store")
       return h + `</div><div class="sy-note">The number on each card: how often ${esc(part.actor)} bets. From the flop library's stored turns: the precomputed flop solve's `
         + `turn strategy (its turn sizes, each turn class's cards alike), not EVs. A turn you deal is solved on its own, with more sizes. Click a card to deal it.</div></div>`;
+    if (ro.multiway)
+      return h + `</div><div class="sy-note">The number on each card: how often ${esc(part.actor)} bets. Read off a live ${ro.seats.length}-way solve of the ${river ? "turn" : "flop"} `
+        + `(${s.iterations} iterations, ${num(s.exploitability_pct || 0)}% of the pot from equilibrium), which plays the ${esc(ro.street)} by hand buckets at one bet size, each card's class alike `
+        + `(a rank's cards, a flush suit's apart): a ${esc(ro.street)} you deal is solved on its own, with more sizes. ${ro.after_check ? "Strategies only (no EVs or equities" : "The first decision's strategy only (no EVs or equities"} ${ro.seats.length}-way${ro.after_check ? "" : ", nor the decisions after it"}). Click a card to deal it.</div></div>`;
     return h + `</div><div class="sy-note">The number on each card: how often ${esc(part.actor)} bets. Read off a live solve of the ${river ? "turn" : "flop"} `
       + `(${s.iterations} iterations, ${num(s.exploitability_pct || 0)}% of the pot from equilibrium${s.by === "hand buckets" ? `, the ${esc(ro.street)} by hand buckets` : ""}), `
       + (river ? `which plays the river with its own few sizes: a river you deal is solved on its own, with its own menu of sizes.`
@@ -555,13 +559,13 @@
   // a report not in hand ({"skipped"}): solve the street for it, or (a library flop's stored turns) one of the flop
   // lines they hold; none {label}: opened for a view (the flop reports' Turns) that no line held goes through, the
   // solve offered first
-  function skippedHtml(sk, street, speed, none) {
+  function skippedHtml(sk, street, speed, none, mw = null) {
     const prevSt = street === "river" ? "turn" : "flop", R = globalThis.Runouts;
     const why = !none ? `The ${street} report reads ${street === "river" ? "the turn's solve" : "a solve of the flop"}, which isn't in hand yet${sk.lines ? " (the flop library's stored turns don't hold this flop line)" : ""}.`
       : sk.lines ? `The flop library's stored turns hold no flop line through ${esc(none.label)}: solve the flop for this line's turn report.`
       : `The flop library doesn't hold this flop's turns: solve the flop for the turn report.`;
     return `<div class="sy-roskip"><div>${why}</div>`
-      + `<div class="sy-ctl"><button type="button" data-rosolve>Solve the ${prevSt} (${speed === "accurate" ? "Accurate" : "Fast"}, ~${Math.round(estimate(street, speed))} s)</button>`
+      + `<div class="sy-ctl"><button type="button" data-rosolve>Solve the ${prevSt} (${speed === "accurate" ? "Accurate" : "Fast"}, ${mw ? "up to " : ""}~${Math.round(mw || estimate(street, speed))} s)</button>`
       + (sk.lines && R ? `<span class="sy-or">or a line they hold:</span><select data-ctl="roline" aria-label="Flop line"><option value="" selected>Pick a flop line…</option>`
         + sk.lines.map((ln, i) => `<option value="${i}">Flop: ${esc(R.lineLabel(ln))} (${Math.round(ln.share * 100)}%)</option>`).join("") + `</select>` : "")
       + `</div></div>`;
@@ -740,7 +744,7 @@
     const req = request(ST.state, ST.speed), g = gen, street = res && res.study === "deal" ? res.street : "turn";
     const solved = JSON.stringify({ ...req, runouts: true });
     const key = solve || answers.has(solved) ? solved : JSON.stringify({ ...req, runouts: "held" });
-    ST.ro = { key, busy: true, solve: key === solved, t0: Date.now(), est: estimate(street, ST.speed) };
+    ST.ro = { key, busy: true, solve: key === solved, t0: Date.now(), est: mwSeconds(ST.state, ST.speed) || estimate(street, ST.speed) };
     ST.rui = { ...ST.rui, filter: {} };   // (a filter is the last board's: each report opens on every card)
     draw();
     clearInterval(roTick);
@@ -826,11 +830,11 @@
       const n = res.street === "flop" ? 3 : 1;
       return `<div class="sy-deal"><div>${res.allin ? "Nobody can bet any more. " : ""}Deal the ${res.street}:</div><form data-deal><input name="cards" autocomplete="off" spellcheck="false" placeholder="${n === 3 ? "e.g. Kd7c2h" : "e.g. 5s"}" aria-label="The ${res.street}">`
         + `<button type="submit">Deal</button><button type="button" data-random>Random</button>`
-        + (res.street !== "flop" && !res.allin && inPot(ST.state) < 3 ? `<button type="button" class="ghost" data-runouts title="The ${res.street}'s first decision on every card: strategy, EV and equity"${ST.ro ? " disabled" : ""}>${res.street === "turn" ? "Turn" : "River"} report</button>` : "")
+        + (res.street !== "flop" && !res.allin && (inPot(ST.state) < 3 || sawFlop(ST.state) === 3) ? `<button type="button" class="ghost" data-runouts title="The ${res.street}'s first decision on every card: ${inPot(ST.state) > 2 ? "strategy (3-way)" : "strategy, EV and equity"}"${ST.ro ? " disabled" : ""}>${res.street === "turn" ? "Turn" : "River"} report</button>` : "")
         + `</form><div class="sy-err" data-dealerr></div>`
         + (!ST.ro ? "" : ST.ro.busy ? (ST.ro.solve ? `<div class="sy-msg"><span class="spinner"></span>Solving the ${prev(res.street)} for the ${res.street} report… <span class="num" data-rotime></span></div><div class="prog"><div data-robar></div></div>`
             : `<div class="sy-msg"><span class="spinner"></span>Opening the ${res.street} report…</div>`)
-          : ST.ro.err ? `<div class="sy-err">${esc(ST.ro.err)}</div>` : ST.ro.skipped ? skippedHtml(ST.ro.skipped, res.street, ST.speed, ST.ro.none)
+          : ST.ro.err ? `<div class="sy-err">${esc(ST.ro.err)}</div>` : ST.ro.skipped ? skippedHtml(ST.ro.skipped, res.street, ST.speed, ST.ro.none, mwSeconds(ST.state, ST.speed))
           : roHeadHtml(ST.ro.res, ST.state, ST.ro.pick) + reportHtml(ST.ro.res, { ...ST.rui, who: ST.roWho }, ST.state.board)) + `</div>`;
     }
     if (res.study === "over") return `<div class="sy-msg">${res.winner ? `Hand over: everyone else folded, ${esc(res.winner)} wins the pot.` : "Hand over: the river's betting is done, the hands go to showdown."} Step back along the line above to look at another branch.</div>`;

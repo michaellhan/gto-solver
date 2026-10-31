@@ -268,6 +268,72 @@ class TestStudy(unittest.TestCase):
         self.assertIn("error", self.study(preflop=PRE, board="Kd7c2h5s", flop=flop, turn=turn[:2], runouts=True,
                                           budget=1.0))
 
+    def test_three_way_runouts(self):
+        """A 3-way pot's Turn / River report (Advisor._mw_runouts): read off the hand's 3-way solve of the street
+        that closed, its next street per card class by hand buckets: the first decision's mix (a river's the second
+        player's after a check too), each card's chance; no EVs or equities. Held: nothing until a solve of the
+        street is in hand; asked to solve, the closing decision is solved live (a library flop too). A 4-way pot has
+        none."""
+        adv = advisor("fast")
+        adv.mw_budget = 2.0
+        pre = PRE[:4] + [{"pos": "SB", "action": "call"}, {"pos": "BB", "action": "call"}]
+        st = {"players": 6, "stack": 100, "preflop": pre, "board": "Kd8c3h", "study": True}
+        X = lambda p: {"pos": p, "action": "check"}
+        closed = dict(st, flop=[X("SB"), X("BB"), X("BTN")])
+
+        def check_parts(r, street, board):
+            self.assertEqual((r["study"], r["street"], r["multiway"], r["seats"]), ("runouts", street, True, ["SB", "BB", "BTN"]))
+            self.assertEqual(r["first"]["actor"], "SB")
+            if street == "river":   # (the river's second player after a check too; not the turn's)
+                self.assertEqual(r["after_check"]["actor"], "BB")
+            else:
+                self.assertIsNone(r["after_check"])
+            self.assertNotIn("after_check2", r)
+            self.assertEqual(r["solver"]["by"], "hand buckets")
+            n = 52 - len(board) // 2
+            for part in [r["first"]] + ([r["after_check"]] if street == "river" else []):
+                self.assertEqual(part["actions"][0], "check")
+                cards_in = sorted(c for x in part["cards"] for c in x["cards"])
+                self.assertEqual((len(cards_in), len(set(cards_in))), (n, n))
+                self.assertFalse(set(cards_in) & {board[i:i + 2] for i in range(0, len(board), 2)})
+                for x in part["cards"]:
+                    self.assertIn(x["card"], x["cards"])
+                    self.assertAlmostEqual(sum(x["f"]), 1.0, delta=0.01)
+                self.assertAlmostEqual(sum(part["avg"]), 1.0, delta=0.01)
+            self.assertEqual(len(r["cards"]), n)
+            self.assertAlmostEqual(sum(c["p"] for c in r["cards"]), 1.0, delta=1e-3)
+            self.assertTrue(all(c["eq"] is None and c["ev"] is None for c in r["cards"]))
+        with mock.patch.object(advisor_mod, "MW_STUDY_FLOP_BUDGET", 3.0):
+            self.assertEqual(adv.advise(dict(closed, runouts="held")).get("skipped"), "not solved yet")
+            adv.advise(st)   # (Study's answer at the flop's first decision: its 3-way solve)
+            ro = adv.advise(dict(closed, runouts="held"))
+            check_parts(ro, "turn", "Kd8c3h")
+            # the same solve's view as Study's answer at once at the turn's first decision (Advisor._study_mw_prev)
+            x = next(c for c in ro["first"]["cards"] if "9s" in c["cards"])
+            at = adv.instant(dict(closed, board="Kd8c3h" + x["card"]))
+            self.assertEqual(at["approximate"]["source"], "prev")
+            for f, a in zip(x["f"], at["actions"]):
+                self.assertAlmostEqual(f, a["freq"], delta=0.01)
+            # a closed turn's: the river report off Study's 3-way turn solve
+            t = dict(closed, board="Kd8c3h9s")
+            adv.advise(t)
+            check_parts(adv.advise(dict(t, turn=[X("SB"), X("BB"), X("BTN")], runouts="held")), "river", "Kd8c3h9s")
+            # a flop the 3-way library stores (its entries hold the flop only): held, none; asked, solved live
+            lib = dict(st, board="Kd7c2h", flop=closed["flop"])
+            self.assertEqual(adv.advise(dict(lib, runouts="held")).get("skipped"), "not solved yet")
+            r = adv.advise(dict(lib, runouts=True))
+            check_parts(r, "turn", "Kd7c2h")
+            self.assertGreater(r["solver"]["iterations"], 0)
+            # a street still being bet: none; 4-way: none
+            self.assertIn("error", adv.advise(dict(st, flop=closed["flop"][:2], runouts=True)))
+            pre4 = [PRE[0], {"pos": "HJ", "action": "raise", "to": 2.5}, {"pos": "CO", "action": "call"},
+                    {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]
+            r = adv.advise({"players": 6, "stack": 100, "preflop": pre4, "board": "Js6cKs", "study": True,
+                            "flop": [X(p) for p in ("BB", "HJ", "CO", "BTN")], "runouts": True})
+            self.assertIn("heads-up and 3-way pots", r["error"])
+        del adv
+        gc.collect()
+
     def test_four_way_later_at_once(self):
         """Later 4-way nodes: Study's answer at once off the street's own earlier solve (Advisor._study_mw_prev), the
         ranges the node's own solve starts from (4-way streets narrowed by the betting rules). None at the first
@@ -466,9 +532,7 @@ class TestStudy(unittest.TestCase):
         eqs = [r["range_eq"]] + [o["eq"] for o in r["opponents"]]
         self.assertTrue(all(0 < e < 1 for e in eqs))
         self.assertAlmostEqual(sum(eqs), 1.0, delta=0.1)
-        # (the runout report reads heads-up pots)
-        self.assertIn("heads-up", self.adv.study(dict(players=6, stack=100, preflop=pre, board="Kd7c2h", flop=cc,
-                                                      runouts=True))["error"])
+        # (a 3-way runout report: test_three_way_runouts)
         pre4 = PRE[:2] + [{"pos": "CO", "action": "raise", "to": 2.5}, {"pos": "BTN", "action": "call"},
                           {"pos": "SB", "action": "call"}, {"pos": "BB", "action": "call"}]
         r = self.study(preflop=pre4, board="Kd7c2h")

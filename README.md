@@ -249,6 +249,25 @@ Study, it reads
 the equilibrium: tournament payouts, locks and exploit settings are left out. The pure parts (`gto/runouts.py`'s
 equities, `gto/static/runouts.js`, loaded when one first opens) are tested from Python and Node.
 
+In a 3-way pot (three in from the flop) the report reads the hand's 3-way solve of the street that closed
+(`Advisor._mw_runouts`): Study's own answer at its closing decision, or an earlier one on the street whose tree holds
+the line, followed to the street's end. That solve plays the next street per card class (a rank's cards, a flush
+suit's apart) by hand buckets at one bet size (half the pot), so the report has the first decision's mix (its
+player's bucket mixes weighted by its range's mass in each bucket on the class's card), a river report the second
+player's after a check too, each card's chance given the three ranges (their card overlaps taken as independent), and
+no EV or equity columns (the solve's later streets have no per-hand EVs). Against each card's own solve (Study's
+answer once you deal it: per hand, with its sizes; BTN opens, SB and BB call, checked through), a card per class on
+Kd8c3h, As7c2d and Th9h4c, the turn's first decision bet 4 points apart on average (10 at most), and on every river
+class of Kd8c3h9s, As7c2dJh and Th9h4c2s the river's first decision 4 (14) and after a check 4 (11); a flop solve's
+turn after a check was far from the turn's own (Study's answers at once off it on 8 flops: 1.1% of the pot given up,
+betting 19 points less; after two checks 1.2% and 16 points), so a turn report has no tab after a check. After Study
+answered the flop's first decision (or the turn's, for a river report) it shows at once (natively in a few ms, in the
+browser on one thread under 0.01 s); else **Solve the flop** solves the closing decision live at Study's 3-way budget
+(up to 15 s at Fast; in the browser 5.7 s on one thread and 2.8 s on 8 on Kh8d3c, CO opens, BTN and BB call), a flop
+the 3-way library stores too, whose entries hold the flop only (6.2 s on one thread on Kh7d2c). On Kd8c3h each card
+class's first decision matched Study's answer at once on that turn (`Advisor._study_mw_prev`, off the same solve) to
+0.1 point. A pot four saw the flop has none, even with three left.
+
 **Drills** (in the ⋯ menu) drill one flop decision of the precomputed library, like GTO Wizard's trainer: pick a
 spot and a node (out of position first; in position after a check; out of position facing a bet after checking)
 and optionally a texture (the reports' high card, suits, pairing, connectedness). Each hand is a flop drawn by how
@@ -351,7 +370,7 @@ bluffs it shares a bucket with, where its own solve checks it); range frequencie
 0.011 (max 0.03), twice 0.005 (0.03), three times 0.029 (0.12), on the turn 0.025 (0.06). While a 3-way or 4-way node solves live,
 Study counts its seconds beside the spinner up to the most it can take, with a bar (`study.js` mwSeconds: the speed's
 budget, a flop's 15 s at least; it stops sooner once settled, a river in about 0.4 s); the Turn and River
-reports read heads-up pots, so a 3-way or 4-way deal has none. Equity (and EQR)
+reports read heads-up and 3-way pots, so a 4-way deal has none. Equity (and EQR)
 on every street, as a share of the pot at showdown against the two
 other ranges with the rest of the board dealt (`multiway_solver.showdown_equities`): on the turn every river with
 the exact three-way card removal (as the river's showdowns, ~0.1 s natively); on the flop all 1176 turn-and-river
@@ -497,7 +516,8 @@ its made-hand and draw lists).
 When the flop's or turn's betting closes, **Turn report** / **River report** beside the next card's deal shows the
 next street's strategy on every card at once (see **Turn and river reports** above): a table, or **Cards**, a
 13x4 grid of the cards (suits down, ranks across; the board's blank), each card filled by the first player's mix
-there with the share that bets in its corner, and a tab for the second player's after a check. It is read off the
+there with the share that bets in its corner, and a tab for the second player's after a check (a 3-way pot's:
+strategies only, a turn's the first decision's alone). It is read off the
 stored turns of a library flop that has them, else one solve of the street that closed at the speed picked (in hand
 already where Study's own answer solved it: the river's at once from the turn solve Study answered the turn's last
 decision with; else a button solves it, Fast ~10 s in the browser): on the turn each card plays the flop solve's turn
@@ -835,7 +855,7 @@ more from where it was and answers `{"study": "pf_progress", "pf_solve"}`. `"pf_
 true`, and a blob of another tree is ignored). Postflop it browses heads-up, 3-way and 4-way pots. A multiway node has
 `"multiway": true`, `"opponent"` naming the others ("BB and BTN"), `"opponents": [{"seat", "combos", "eq", "grid"}]` in acting order in
 place of `opponent_grid`, and `eq` (`range_eq`) a share of the pot at showdown (3-way on every street, the rest of
-the board dealt; 4-way on the river, else null); `"rough_ev": true` on an action the range takes under 1% of the time. With `"runouts": true` on a heads-up hand whose flop
+the board dealt; 4-way on the river, else null); `"rough_ev": true` on an action the range takes under 1% of the time. With `"runouts": true` on a heads-up or 3-way hand whose flop
 or turn betting closed (the next card not dealt), it returns the next street's first decision on every card, from a
 library flop's stored turns where they hold the line, else solving that street live: `{"study": "runouts", "street":
 "turn" | "river", "first": {"actor", "actions", "avg", "cards": [{"card", "cards", "f", "w"}]}, "after_check": …,
@@ -846,6 +866,10 @@ null; the top-level `cards`: each card's chance given both ranges, range equitie
 turns; from the stored turns also `"lines"`, the flop lines they hold as Study's actions with how often the flop
 solve takes each, and `"line"`, this one's). `"runouts": "held"` answers from what's in hand only (the stored turns,
 a solve cached already) and else `{"study": "runouts", "skipped": "not solved yet", "lines"?}`, solving nothing.
+A 3-way hand's (three in from the flop) has `"multiway": true`, `"seats"` the three in acting order, `"after_check"`
+null on the turn, `"eq"` and `"ev"` null and `"solver": {"by": "hand buckets"}`, read off the hand's 3-way solve of
+the street (`"held"`: Study's answer at the closing decision or an earlier one on the street; else that decision
+solved live, a library flop's too); a 4-way hand's is `{"error"}`.
 `Advisor.instant` with `"study": true` (the browser's worker posts it before Study's own answer) reads a library
 flop's turn off its stored turn file where it holds the line, solving nothing: the same node answer with
 `"approximate": {"source": "store", "label", "iterations"}`, the stored tree's actions (check, bet 75%, all-in), `ev_bb`

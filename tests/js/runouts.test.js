@@ -144,6 +144,38 @@ test("Study's report: the table or the cards, the solve offered when nothing's i
   assert.match(l, /<option value="0">Flop: check, bet 12.5, call \(30%\)<\/option>/);
 });
 
+// a 3-way turn report (Advisor._mw_runouts): the first decision's strategy only
+const RO3 = { study: "runouts", street: "turn", multiway: true, first: part("SB", [0.7, 0.3], [0.6, 0.4]), after_check: null,
+              seats: ["SB", "BB", "BTN"], pot_bb: 7.5, source: "solve",
+              cards: all.map(c => ({ card: c, p: 1 / 49, eq: null, ev: null })),
+              solver: { iterations: 270, exploitability_pct: 0.4, by: "hand buckets" }, notes: [] };
+
+test("a 3-way report: the first decision's strategy only (one tab, no EV or equity columns), its note, its solve's seconds", () => {
+  assert.equal(R.partOf(RO3, "after").actor, "SB");   // (no part after a check: the first)
+  assert.deepEqual(R.rows(RO3, "first", "Kd7c2h").find(r => r.card === "7s").f, [0.7, 0.3]);
+  const ui = { who: "first", sort: "card", desc: true, group: "cls", filter: {} };
+  const h = R.html(RO3, ui, "Kd7c2h");
+  assert.match(h, /<th class="ro-b">SB<\/th>/);
+  assert.doesNotMatch(h, /data-rosort="ev0"|data-rosort="eq0"|ro-eq/);
+  assert.match(h, /<tr data-card="Ah"[^>]*>.*?<td class="n">60<\/td><td class="n">40<\/td><\/tr>/);
+  assert.match(h, /<tr class="ro-grp" data-rogroup="cls:over"[^>]*>.*?<td class="n">60<\/td><td class="n">40<\/td><\/tr>/);
+  assert.match(R.noteHtml(RO3), /^Read off a live 3-way solve of the flop \(270 iterations, 0.4% of the pot from equilibrium\), which plays the turn \(7.50bb pot\) by hand buckets at one bet size.*The first decision's strategy only: no EVs or equities 3-way, nor the decisions after it/);
+  // Study's: one tab over the table or the cards grid
+  const t = S.reportHtml(RO3, { view: "table", ...ui }, "Kd7c2h");
+  assert.match(t, /<span class="segment"><button data-rowho="first" class="active">SB<\/button><\/span>/);
+  const c = S.reportHtml(RO3, { ...ui, view: "cards" }, "Kd7c2h");
+  assert.match(c, /data-card="Ah" title="Ah: check 60% · bet 75% 40%/);
+  assert.match(c, /how often SB bets\. Read off a live 3-way solve of the flop .*The first decision's strategy only \(no EVs or equities 3-way, nor the decisions after it\)/);
+  // its solve, a 3-way flop's: up to its budget
+  assert.match(S.skippedHtml({ skipped: "not solved yet" }, "turn", "fast", undefined, 15), /data-rosolve>Solve the flop \(Fast, up to ~15 s\)/);
+  // a river report: the second player's after a check too (two tabs)
+  const RV = { ...RO3, street: "river", after_check: part("BB", [0.8, 0.2], [0.75, 0.25]) };
+  assert.match(R.noteHtml(RV), /^Read off a live 3-way solve of the turn .*the river \(7.50bb pot\).*Strategies only: no EVs or equities 3-way\. Each card's chance/);
+  const v = S.reportHtml(RV, { ...ui, who: "after", view: "cards" }, "Kd7c2h5s");
+  assert.match(v, /data-rowho="first" class="">SB<\/button><button data-rowho="after" class="active">BB after a check<\/button><\/span>/);
+  assert.match(v, /how often BB bets\. Read off a live 3-way solve of the turn .*Strategies only \(no EVs or equities 3-way\)\. Click/);
+});
+
 // the flop reports' Turns: the lines a library flop's stored turns hold (Advisor._store_lines), most reached first
 const HJ_CO = [
   { flop: [{ pos: "HJ", action: "check" }, { pos: "CO", action: "bet", to: 12.38 }, { pos: "HJ", action: "call" }], share: 0.3047, path: ["check", "bet 75%", "call"] },

@@ -2,6 +2,7 @@
 // Advisor.study's "runouts" answer as a table of every next card: the first decision's range strategy on it (or in
 // position's after a check), each player's EV and equity there, per card and averaged by what the card does to the
 // board, by rank or by suit; sortable and filterable like the flop reports (reports.js), a click on a card deals it.
+// A 3-way pot's report has strategies only, no EVs or equities, and on the turn the first decision's alone.
 // The pure parts (card classes, rows, filter, sort, groups, the HTML) are what the Node tests call.
 (function () {
   "use strict";
@@ -103,11 +104,12 @@
     const [o, p] = ro.seats || ["OOP", "IP"];
     const arrow = (k) => ui.sort === k ? (ui.desc !== false ? " ▾" : " ▴") : "";
     const th = (k, t, cls = "") => `<th data-rosort="${k}" class="${cls}" tabindex="0" aria-sort="${ui.sort === k ? (ui.desc !== false ? "descending" : "ascending") : "none"}">${t}${arrow(k)}</th>`;
+    // (a 3-way report: strategies only, no EV or equity columns)
     const nums = (a) => `${(a.f || acts.map(() => null)).map(x => `<td class="n">${pct(x)}</td>`).join("")}`
-      + `<td class="n">${bb(a.ev && a.ev[0])}</td><td class="n">${bb(a.ev && a.ev[1])}</td><td class="n ro-eq">${pct(a.eq && a.eq[0], 1)}</td><td class="n ro-eq">${pct(a.eq && a.eq[1], 1)}</td>`;
+      + (ro.multiway ? "" : `<td class="n">${bb(a.ev && a.ev[0])}</td><td class="n">${bb(a.ev && a.ev[1])}</td><td class="n ro-eq">${pct(a.eq && a.eq[0], 1)}</td><td class="n ro-eq">${pct(a.eq && a.eq[1], 1)}</td>`);
     const head = `<tr>${th("card", ro.street === "river" ? "River" : "Turn", "ro-c")}<th class="ro-b">${esc(part.actor)}${ui.who === "after" ? " after a check" : ""}</th>`
-      + `${acts.map((n, i) => th("a" + i, esc(label(n)), "n")).join("")}${th("ev0", `${esc(o)} EV`, "n")}${th("ev1", `${esc(p)} EV`, "n")}`
-      + `${th("eq0", `${esc(o)} eq`, "n ro-eq")}${th("eq1", `${esc(p)} eq`, "n ro-eq")}</tr>`;
+      + `${acts.map((n, i) => th("a" + i, esc(label(n)), "n")).join("")}`
+      + (ro.multiway ? "" : `${th("ev0", `${esc(o)} EV`, "n")}${th("ev1", `${esc(p)} EV`, "n")}${th("eq0", `${esc(o)} eq`, "n ro-eq")}${th("eq1", `${esc(p)} eq`, "n ro-eq")}`) + `</tr>`;
     const sum = average(rs);
     let body = `<tr class="ro-sum"><td class="ro-c">${rs.length === all.length ? `All ${all.length} cards` : `${rs.length} card${rs.length === 1 ? "" : "s"}`}<small>${pct(sum.p, 0)}% of ${ro.street}s</small></td><td class="ro-b">${bar(sum.f, acts)}</td>${nums(sum)}</tr>`;
     if (ui.group) for (const g of groups(rs, ui.group))
@@ -155,6 +157,11 @@
           : `These stored turns hold strategies only, so there are no EVs (—); `)
         + `${eq}. Groups average the mix by the acting range on each card${evs ? ", EV and equity by the cards' chances" : ""}. A turn you deal is solved on its own, with more sizes. Click a card to deal it.`;
     }
+    if (ro.multiway)
+      return `Read off a live ${ro.seats.length}-way solve of the ${river ? "turn" : "flop"} (${s.iterations} iterations, ${s.exploitability_pct}% of the pot from equilibrium), `
+        + `which plays the ${esc(ro.street)}${pot} by hand buckets at one bet size, each ${esc(ro.street)} card's class alike (a rank's cards, a flush suit's apart): a ${esc(ro.street)} you deal is solved on its own, with more sizes. `
+        + (ro.after_check ? `Strategies only: no EVs or equities ${ro.seats.length}-way. ` : `The first decision's strategy only: no EVs or equities ${ro.seats.length}-way, nor the decisions after it (the buckets' were far from each ${esc(ro.street)}'s own solve). `)
+        + `Each card's chance is given the ${ro.seats.length} ranges; groups average the mix by the acting range on each card. Click a card to deal it.`;
     return `Read off a live solve of the ${river ? "turn" : "flop"} (${s.iterations} iterations, ${s.exploitability_pct}% of the pot from equilibrium${s.by === "hand buckets" ? `, the ${esc(ro.street)} by hand buckets` : ""}), `
       + (river ? "which plays the river with its own few sizes: a river you deal is solved on its own, with its own menu of sizes. "
         : "which plays one turn bet size and each turn card's class alike (a rank's cards, a flush suit's apart): a turn you deal is solved on its own, with more sizes. ")
