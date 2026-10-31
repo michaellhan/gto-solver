@@ -2307,7 +2307,14 @@ def instant_from_store(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
     the card dealt). On the line the flop's walk took (its sizes at their nearest) and on the entry's canonical flop;
     not once the turn's own solve in hand has run STORE_UNTIL iterations (instant_from_own reads that). Against a live
     Accurate turn with the opponent free to adapt (BTN vs BB on Kc7d2h) it gives up 0.50 / 0.67% of the pot out of /
-    in position on the played cards, 0.81 / 0.63 on the others; priced by the turn's own solve's EVs 0.04 / 0.08."""
+    in position on the played cards, 0.81 / 0.63 on the others; priced by the turn's own solve's EVs 0.04 / 0.08.
+    A format-2 turn file (flop_library.turn_evs) adds the flop solve's EVs there, its turn class's, never your hand's
+    own: each action's "range_ev_bb" (that of the hands in your range that take it; None where none does) and at the
+    turn's first decision "range_ev" (your range's and theirs), in big blinds relative to folding now, scaled from the
+    stored line's pot to the hand's. (Against the library's own game solved live, river dealt: the ranges' 0.15-0.36%
+    of the pot on average, at most 0.73; the actions' 0.16-0.34, at most 1.0. A turn report read off a flop solved
+    live, the river by strength buckets, differs by more: 0.6-0.9% of the pot in single-raised pots, 1.6-4.5 in 3bet
+    pots.)"""
     lib = adv.library
     if spot.street != "turn" or spot.prev is None or lib is None or not hasattr(lib, "turns"):
         return None
@@ -2337,9 +2344,19 @@ def instant_from_store(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
     node = types.SimpleNamespace(names=nd["names"], pot_now=0.0, bets=(0.0, 0.0))
     bets = [n for n in nd["names"] if n.startswith("bet")]
     size = f"one bet size, {bets[0].split()[-1]}" if len(bets) == 1 else "its turn sizes"
-    return {"actions": _real_actions(node, nd["strat"][:, j], [0.0, 0.0], spot), "source": "store",
-            "label": f"the precomputed flop solve's view of the turn (by card class, {size})",
-            "iterations": int(sol.iters)}
+    acts = _real_actions(node, nd["strat"][:, j], [0.0, 0.0], spot)
+    out = {"actions": acts, "source": "store",
+           "label": f"the precomputed flop solve's view of the turn (by card class, {size})",
+           "iterations": int(sol.iters)}
+    if nd["evs"] is not None:   # (format 2: the class's range EVs, at the hand's pot; never your hand's own)
+        ln = next(x for x in t["lines"] if x["path"] == list(taken))
+        k = spot.pot / max(float(ln["pot"]), 1e-9)
+        for a, e in zip(acts, nd["evs"]):
+            a["range_ev_bb"] = round(float(e) * k, 2) if np.isfinite(e) else None
+        r = fl.turn_range_evs(t, taken, mp(spot.board[3])) if not at else None
+        if r is not None and np.all(np.isfinite(r)):
+            out["range_ev"] = (round(float(r[spot.hero_p]) * k, 2), round(float(r[1 - spot.hero_p]) * k, 2))
+    return out
 
 
 # ----------------------------------------------------------------------------- advisor
@@ -2506,10 +2523,12 @@ class Advisor:
         first, the full answer replaces it): a heads-up street whose own solve would take seconds, read off what is in
         hand already by instant_sources (a library flop's stored turn, until the street's own solve has run
         STORE_UNTIL iterations; the street's own solve stopped part way; the previous street's live solve, which plays
-        this street under it), with "approximate": {source, label} and no EVs. Nothing is solved: None where the
-        answer needs a solve before anything can be read (an earlier street not solved yet), is quick anyway (preflop,
-        a library flop, a street solved already), isn't heads-up, or asks for more than the equilibrium (exploit mode,
-        locks, custom ranges or sizes, a tournament, Study, a jam, the breakdown)."""
+        this street under it), with "approximate": {source, label} and no EVs of your hand's (a library flop's turn
+        file in format 2 adds its range EVs: each action's "range_ev_bb", the hands in your range that take it, and
+        "range_ev_bb" / "villain_range_ev_bb", the ranges' at the turn's first decision). Nothing is solved: None
+        where the answer needs a solve before anything can be read (an earlier street not solved yet), is quick anyway
+        (preflop, a library flop, a street solved already), isn't heads-up, or asks for more than the equilibrium
+        (exploit mode, locks, custom ranges or sizes, a tournament, Study, a jam, the breakdown)."""
         if len(str(state.get("board") or "")) < 6 or state.get("opponents") == "pool" or any(
                 state.get(k) for k in ("study", "runouts", "jam", "breakdown", "optimize_sizes", "locks", "library_only",
                                        "payouts", "bounties", "ranges", "sizes")) or state.get("one_size") is not None:
@@ -5808,7 +5827,9 @@ class Advisor:
                 "to_call_bb": round(min(to_call, behind), 2), "stack_bb": round(min(eff - bets, behind), 2),
                 "actions": acts, "recommended": best,
                 "approximate": {"source": got["source"], "label": got["label"], "iterations": got.get("iterations")},
-                "notes": notes, "seconds": round(time.time() - t0, 3)}
+                "notes": notes, "seconds": round(time.time() - t0, 3),
+                **({"range_ev_bb": got["range_ev"][0], "villain_range_ev_bb": got["range_ev"][1]} if "range_ev" in got
+                   else {})}
 
     def _actor_move(self, sol: Solution, node: Decision, n_r0, n_r1, hole, p: int, street: str) -> dict:
         """The mix of player p (to act at `node`) for `hole`, from hero's solve; an error (play then asks

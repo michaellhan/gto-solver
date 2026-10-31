@@ -1833,7 +1833,10 @@ function gtoSource(res, key) {
     : "the equilibrium of this same solve";
 }
 // An approximate answer while the solve runs (Advisor.instant: e.g. the flop's solve read for the turn): the verdict
-// and the mix, labelled, under the progress bar; not the answer graded, reviewed or recorded (lastResult stays)
+// and the mix, labelled, under the progress bar; not the answer graded, reviewed or recorded (lastResult stays). A
+// library flop's stored turn in format 2 adds the flop solve's range EVs (never your hand's own: that's the solve's
+// EV column): the range's, and per action the hands in your range that take it
+const RANGE_EV_TIP = "The EV of the hands in your range that take this action (not your hand's own), in big blinds: the flop solve's stored turn EVs, by card class";
 function renderEarly(res) {
   const el = document.getElementById("result");
   if (!el || !res || !res.actions || !res.approximate) return;
@@ -1841,10 +1844,16 @@ function renderEarly(res) {
   if (!box) { box = document.createElement("div"); box.id = "early"; el.appendChild(box); }
   setColors(res.actions.map(a => a.action));
   const label = res.approximate.label;
-  let h = `<div class="verdict"><span class="big">${res.recommended}</span><span class="conv meh" title="Approximate: ${label}">approximate</span></div>`;
-  h += `<div class="arows noev"><div class="arow head"><span>Action</span><span>Solver mix</span><span class="num">Freq</span></div>`;
-  for (const a of res.actions) h += `<div class="arow ${a.action === res.recommended ? "best" : ""}"><span class="name">${a.action}${amtOf(a) != null ? `<small>${amtOf(a)} bb</small>` : ""}</span><div class="bar"><div style="width:${(a.freq * 100).toFixed(1)}%;background:${COLORS(a.action)}"></div></div><span class="num">${(a.freq * 100).toFixed(1)}%</span></div>`;
+  const rev = res.actions.some(a => a.range_ev_bb != null);
+  const bb = (x) => `${x > 0 ? "+" : ""}${x.toFixed(2)} bb`;
+  let h = `<div class="verdict"><span class="big">${res.recommended}</span><span class="conv meh" title="Approximate: ${label}">approximate</span>${res.range_ev_bb != null ? `<span class="mix" title="Range EVs at this turn's first decision, in big blinds relative to folding now: the flop solve's stored turn EVs, by card class">range EV: yours ${bb(res.range_ev_bb)} · theirs ${bb(res.villain_range_ev_bb)} of the ${res.pot_bb} bb pot</span>` : ""}</div>`;
+  h += `<div class="arows${rev ? "" : " noev"}"><div class="arow head"><span>Action</span><span>Solver mix</span><span class="num">Freq</span>${rev ? `<span class="num" title="${RANGE_EV_TIP}">Range EV</span>` : ""}</div>`;
+  for (const a of res.actions) {
+    const ev = !rev ? "" : a.range_ev_bb == null ? "<span></span>" : `<span class="num ${a.range_ev_bb > 0.005 ? "pos" : a.range_ev_bb < -0.005 ? "neg" : ""}" title="${RANGE_EV_TIP}">${bb(a.range_ev_bb)}</span>`;
+    h += `<div class="arow ${a.action === res.recommended ? "best" : ""}"><span class="name">${a.action}${amtOf(a) != null ? `<small>${amtOf(a)} bb</small>` : ""}</span><div class="bar"><div style="width:${(a.freq * 100).toFixed(1)}%;background:${COLORS(a.action)}"></div></div><span class="num">${(a.freq * 100).toFixed(1)}%</span>${ev}</div>`;
+  }
   h += `</div><div class="meta">Approximate, at once: ${label}. The ${res.street}'s own solve, running above, replaces it.`;
+  if (rev) h += ` Range EV is the stored EV of the hands in your range that take each action, not your hand's own; your hand's EVs come with the solve.`;
   // (a solve cut to fit Quick's time and memory: its game has fewer sizes, and the box says so)
   for (const n of res.notes || []) if (n.includes("smaller game")) h += `<br>${n}`;
   h += `</div>`;

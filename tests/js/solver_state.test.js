@@ -428,3 +428,42 @@ test("an approximate answer the worker has at once is shown under the progress b
   p.run("callAdvise({ x: 1 }, { seat: 'BB', hole: 'AhAd' }, () => {})");
   assert.equal(asks().at(-1).early, undefined);
 });
+
+test("an approximate turn answer from a format-2 turn file shows the stored range EVs, labelled as the range's", async () => {
+  const p = loadPage();
+  await p.ready();
+  p.S = state(FLOP);
+  await flush();
+  const ask = p.posted.filter((m) => m.state).at(-1);
+  p.workers[0].onmessage({ data: { status: "Solving…" } });
+  const result = p.byId("result");
+  const approx = { street: "turn", hero: "BB", recommended: "check", pot_bb: 9.5, approximate: { source: "store", label: "the precomputed flop solve's view of the turn (by card class, one bet size, 75%)" },
+                   actions: [{ action: "check", freq: 0.7, amount_bb: null }, { action: "bet 75%", freq: 0.3, amount_bb: 7.13 }] };
+  // format 1: no EV column (the mix only)
+  p.workers[0].onmessage({ data: { id: ask.id, partial: approx } });
+  await flush();
+  let box = result.children.at(-1);
+  assert.match(box.innerHTML, /class="arows noev"/);
+  assert.doesNotMatch(box.innerHTML, /range EV|Range EV/);
+  // format 2: each action's range EV and both ranges', never as the hand's own EV
+  p.workers[0].onmessage({ data: { id: ask.id, partial: { ...approx, range_ev_bb: 4.54, villain_range_ev_bb: 4.96,
+    actions: [{ ...approx.actions[0], range_ev_bb: 3.2 }, { ...approx.actions[1], range_ev_bb: -0.41 }] } } });
+  await flush();
+  box = result.children.at(-1);
+  assert.equal(result.children.filter((c) => c.id === "early").length, 1);
+  assert.match(box.innerHTML, /class="arows"/);
+  assert.match(box.innerHTML, /<span class="num" title="The EV of the hands in your range that take this action \(not your hand's own\)[^"]*">Range EV<\/span>/);
+  assert.match(box.innerHTML, /<span class="num pos"[^>]*>\+3\.20 bb<\/span>/);
+  assert.match(box.innerHTML, /<span class="num neg"[^>]*>-0\.41 bb<\/span>/);
+  assert.match(box.innerHTML, /range EV: yours \+4\.54 bb · theirs \+4\.96 bb of the 9\.5 bb pot/);
+  assert.match(box.innerHTML, /not your hand's own; your hand's EVs come with the solve/);
+  assert.doesNotMatch(box.innerHTML, />EV</);
+  // in position after a check: the actions' range EVs, no range line (one action nobody takes: no EV)
+  p.workers[0].onmessage({ data: { id: ask.id, partial: { ...approx, actions: [{ ...approx.actions[0], range_ev_bb: 2.5 }, { ...approx.actions[1], range_ev_bb: null }] } } });
+  await flush();
+  box = result.children.at(-1);
+  assert.match(box.innerHTML, /Range EV/);
+  assert.doesNotMatch(box.innerHTML, /range EV: yours/);
+  assert.match(box.innerHTML, /7\.13 bb<\/small><\/span><div class="bar">.*?<\/div><\/div><span class="num">30\.0%<\/span><span><\/span><\/div>/);
+  assert.equal(p.run("lastResult"), null);
+});

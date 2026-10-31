@@ -2789,7 +2789,17 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   player's EV of each action for the hands that take it (none under 0.05 combos); int16 in 0.1% of the line's turn
   pot, or the first of 0.2, 0.5 and 1% that holds the file's largest EV (the header's `"ev"`: a deep stack's all-in,
   200bb behind a 5.5bb turn pot, is ~36 pots, past 0.1%'s 32.7; beyond 1%'s 328 pots it's clipped). The turn report then has EVs as a live one's (each card its class's) and each action's in its bar's tip; a
-  format-1 file's report is as before (EVs "—", a note saying the file holds strategies only). On three 3bet-pot flops
+  format-1 file's report is as before (EVs "—", a note saying the file holds strategies only). The approximate turn
+  answer (`instant_from_store`) shows them too, as the range's, never your hand's own: a Range EV column, the stored EV
+  of the hands in your range that take each action (`"range_ev_bb"` per action, `null` where none does), and first to
+  act both ranges' EVs (`"range_ev_bb"`, `"villain_range_ev_bb"`; at 200bb on Kc7d2h checked through, 8s turn: "range
+  EV: yours +2.61 bb · theirs +2.89 bb of the 5.5 bb pot", check +2.20, bet 75% +3.89, where QsJs checks), scaled from
+  the line's pot to the hand's. There's no `"ev_bb"`: your hand's EVs come with the turn's own solve. A format-1
+  file's answer is as before, to the character. Only the page's early panel shows it (Practice grades the turn's own
+  solve, and Study solves its turn nodes live). Against the library's own game solved live, river dealt, the stored
+  EVs are 0.15-0.36% of the pot off on average (at most 0.73) for the ranges and 0.16-0.34 (at most 1.0) for the
+  actions; a turn report read off a flop solved live (the river by strength buckets) differs by more (0.6-0.9% of the
+  pot in single-raised pots, 1.6-4.5 in 3bet pots). On three 3bet-pot flops
   at 300 iterations it adds 8-12% (CO vs HJ 9c6d6c 8131 -> 9073 bytes, BB vs SB Kc7d2h 3861 -> 4225, BB vs CO Qc9c4d
   16585 -> 17854) and 0.1-0.5 s a flop to a 19-47 s solve; a hand-class block on top (each grid class's EV per action,
   1% of the pot) would add another 111-133%, so it isn't stored. The index lists a

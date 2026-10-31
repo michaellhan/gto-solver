@@ -4,6 +4,7 @@
 entry once the flop is known (Advisor.prefetch)."""
 import functools
 import importlib
+import json
 import os
 import shutil
 import sys
@@ -200,6 +201,87 @@ class TestInstantFromStore(_Store):
             self.assertIn(f"{SPOT[0]}/{CANON}.bin?v={h}", asked)
             self.assertEqual(f"{SPOT[0]}/{CANON}.turn.bin?v={h}" in asked, want, asked)
             self.assertFalse([k for k, e in rec._entries.items() if e is None])
+
+
+class TestStoreEvs(_Store):
+    """A format-2 turn file (fl.encode_turns(evs=True)): the instant answer adds the flop solve's range EVs there, its
+    turn class's, scaled to the hand's pot: each action's "range_ev_bb" (the hands in hero's range that take it) and
+    at the turn's first decision "range_ev_bb" / "villain_range_ev_bb"; never "ev_bb" (hero's hand's own, the
+    solve's). A format-1 file's answer is as it was, without them."""
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        sid = SPOT[0]
+        _, sol = _flop_solve()
+        d = tempfile.mkdtemp()
+        cls.dirs.append(d)
+        build.write_entry(d, sid, CANON, sol, dict(build._meta(sid, cls.setup), board=CANON), turn_evs=True)
+        build.write_index(d, [SPOT])
+        cls.lib2 = fl.FlopLibrary.from_dir(d)
+        cls.turns2 = cls.lib2.turns(cls.lib2.index()["spots"][0], CANON)
+        assert cls.turns2["lines"][0].get("evs") is not None and cls.turns.get("lines")[0].get("evs") is None
+
+    def answers(self, st):
+        with mock.patch.object(A, "solve", side_effect=AssertionError("solved")):
+            return advisor(self.lib).instant(st), advisor(self.lib2).instant(st)
+
+    def test_format_1_as_it_was_and_format_2_adds_range_evs(self):
+        """At the turn's first decision and in position after a check: format 1 has no EV keys at all; format 2 is the
+        same answer (to the character but for "seconds") plus each action's stored range EV and, first to act, both
+        ranges' EVs, as the turn file holds them (the hand's pot is the line's)."""
+        oop, ip = self.setup["oop"], self.setup["ip"]
+        path, turn = ["check", "check"], "9c"
+        card = self.canon(parse_cards(turn)[0])
+        for p, hero, acts, at in ((0, oop, [], []), (1, ip, [X(oop)], ["check"])):
+            st = dict(self.hand, hero=hero, hole=self.hole_in(p, turn, 3), flop=[X(oop), X(ip)], turn=acts,
+                      board=BOARD + turn)
+            one, two = self.answers(st)
+            self.assertEqual(one["approximate"]["source"], "store")
+            self.assertNotIn("range_ev_bb", one)
+            self.assertFalse([a for a in one["actions"] if set(a) != {"action", "freq", "amount_bb"}])
+            nd = fl.turn_node(self.turns2, path, at, card)
+            want = [None if not np.isfinite(e) else round(float(e), 2) for e in nd["evs"]]
+            self.assertEqual([a["range_ev_bb"] for a in two["actions"]], want)
+            self.assertFalse([a for a in two["actions"] if "ev_bb" in a])
+            self.assertTrue(any(x is not None for x in want))
+            stripped = dict(two, actions=[{k: v for k, v in a.items() if k != "range_ev_bb"} for a in two["actions"]])
+            if p == 0:
+                r = fl.turn_range_evs(self.turns2, path, card)
+                self.assertEqual((two["range_ev_bb"], two["villain_range_ev_bb"]),
+                                 (round(float(r[0]), 2), round(float(r[1]), 2)))
+                # (relative to folding now, so both ranges' share the pot between them: card removal aside)
+                self.assertAlmostEqual(two["range_ev_bb"] + two["villain_range_ev_bb"], two["pot_bb"],
+                                       delta=0.05 * two["pot_bb"])
+                del stripped["range_ev_bb"], stripped["villain_range_ev_bb"]
+            else:
+                self.assertNotIn("range_ev_bb", two)   # (the stored range EVs are the first decision's)
+            one.pop("seconds"), stripped.pop("seconds")
+            self.assertEqual(json.dumps(stripped), json.dumps(one))
+
+    def test_scaled_to_the_hands_pot(self):
+        """A flop bet of exactly a third of the pot, where the library's tree bets its 33% rounded to half a big blind
+        (2 into 5.5): the stored line's EVs scaled by the hand's pot over the line's."""
+        oop, ip = self.setup["oop"], self.setup["ip"]
+        pot, path, turn = self.setup["pot"], ["check", "bet 33%", "call"], "9c"
+        line = next(ln for ln in self.turns2["lines"] if ln["path"] == path)
+        card = self.canon(parse_cards(turn)[0])
+        nd = fl.turn_node(self.turns2, path, [], card)
+        inv = {self.canon(c): c for c in range(52)}
+        board = set(parse_cards(BOARD + turn))
+        hole = next(h for h in (cards_str(sorted((inv[a], inv[b]), reverse=True)) for a, b in (ALL_COMBOS[i] for i in nd["combos"]))
+                    if not set(parse_cards(h)) & board)
+        bet = round(0.33 * pot, 2)
+        _, two = self.answers(dict(self.hand, hero=oop, hole=hole, board=BOARD + turn,
+                                   flop=[X(oop), B(ip, bet), C(oop)]))
+        self.assertEqual(two["approximate"]["source"], "store")
+        k = two["pot_bb"] / line["pot"]
+        self.assertLess(k, 0.97)
+        r = fl.turn_range_evs(self.turns2, path, card)
+        self.assertAlmostEqual(two["range_ev_bb"], float(r[0]) * k, delta=0.006)
+        self.assertAlmostEqual(two["villain_range_ev_bb"], float(r[1]) * k, delta=0.006)
+        for a, e in zip(two["actions"], nd["evs"]):
+            if np.isfinite(e):
+                self.assertAlmostEqual(a["range_ev_bb"], float(e) * k, delta=0.006)
 
 
 class TestStoreSeed(_Store):
