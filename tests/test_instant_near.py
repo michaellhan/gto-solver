@@ -777,6 +777,7 @@ class TestBiggerTable(_Lib):
 
 
 STRADDLE_BTN = "HJ:f,CO:f,BTN:r5,SB:f,BB:f,UTG:c"     # (the straddler calls the BTN's raise: an 11.5 bb pot)
+STRADDLE_SB = "HJ:f,CO:f,BTN:f,SB:r6,BB:f,UTG:c"      # (the straddler calls the SB's raise: 13 bb, 94 behind)
 
 
 class TestOtherGame(_Lib):
@@ -803,7 +804,9 @@ class TestOtherGame(_Lib):
         """Where no spot covers each range by NEAR_POT_COVER, a nearer one covering less (tier 1: the ante's SB vs BB
         off SB vs BB, the straddler's call of the BB's raise off it too), else a single-raised pot the BB defends at
         about the same stack-to-pot ratio (tier 2: heads-up's raised pot and the ante's BTN vs BB off BTN vs BB, the
-        ante's SB flatting the CO off CO vs BB and the HJ off HJ vs BB, 1.44 and 1.50 apart); a
+        ante's SB flatting the CO off CO vs BB and the HJ off HJ vs BB, 1.44 and 1.50 apart), else such a pot at
+        another stack-to-pot ratio, read for the hands held alone (tier 3: a straddled SB vs UTG off SB vs BB, at 50bb
+        with an ante the BB's defence of the CO off BTN vs BB, not the SB vs BB, whose raiser's range is 83% held); a
         lower tier wins over a nearer spot (the ante's UTG vs BB stays on HJ vs BB, not UTG vs BB's tier 2); outside
         them nothing (the ante's UTG vs HJ, 0.53 apart; heads-up's 3bet pot)."""
         cases = [("SB:r3,BB:c", 2, {}, "srp_btn_bb", 2),
@@ -812,6 +815,9 @@ class TestOtherGame(_Lib):
                  ("UTG:f,HJ:r2.5,CO:f,BTN:f,SB:c,BB:f", 6, {"ante": 0.125}, "srp_hj_bb", 2),
                  ("UTG:f,HJ:f,CO:f,BTN:f,SB:r3,BB:c", 6, {"ante": 0.125}, "srp_sb_bb", 1),
                  ("HJ:f,CO:f,BTN:f,SB:f,BB:r5,UTG:c", 6, {"straddle": True}, "srp_sb_bb", 1),
+                 (STRADDLE_SB, 6, {"straddle": True}, "srp_sb_bb", 3),
+                 ("UTG:f,HJ:f,CO:r2.5,BTN:f,SB:f,BB:c", 6, {"ante": 0.125, "stack": 50}, "srp_btn_bb", 3),
+                 ("UTG:f,HJ:f,CO:f,BTN:f,SB:r3,BB:c", 6, {"ante": 0.125, "stack": 75}, None, None),
                  ("UTG:r2.5,HJ:f,CO:f,BTN:f,SB:f,BB:c", 6, {"ante": 0.125}, "srp_hj_bb", 0),
                  ("UTG:r2.5,HJ:c,CO:f,BTN:f,SB:f,BB:f", 6, {"ante": 0.125}, None, None),
                  ("SB:r3,BB:r10,SB:c", 2, {}, None, None)]
@@ -828,6 +834,47 @@ class TestOtherGame(_Lib):
         rows = {r["id"]: r for r in fa.near_candidates(self.lib, st["full0"], st["full1"], st["pot"], st["stack"],
                                                        aggr=0)}
         self.assertEqual(rows["3bp_bb_btn"]["why"], "cover")          # (heads-up's 3bet pot: half its range unheld)
+
+    def test_held_only(self):
+        """Tier 3's read answers the hands its spot's ranges hold alone (near_fill): the straddled SB's raise called by
+        the straddler, off SB vs BB (whose big blind holds 84% of the straddler's range) at less than half its stack-to-
+        pot ratio. The SB gets the entry's mix at once, nothing solved; the straddler, facing the SB's bet with a hand
+        the big blind's range there doesn't hold (a suited ace it 3bets), has no answer at once (solved live)."""
+        st = fl.spot_setup(STRADDLE_SB, 6, straddle=True)
+        self.assertEqual((st["oop"], st["ip"]), ("SB", "UTG"))
+        args = (self.lib, st["full0"], st["full1"], st["pot"], st["stack"])
+        self.assertEqual(fa.near_spot(*args, aggr=0)["id"], "srp_sb_bb")
+        self.assertFalse(fa.near_fill(*args, aggr=0))
+        ante = fl.spot_setup("UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:c", 6, ante=0.125)   # (tier 2: filled)
+        self.assertTrue(fa.near_fill(self.lib, ante["full0"], ante["full1"], ante["pot"], ante["stack"], aggr=1))
+        sp = next(s for s in self.lib.index()["spots"] if s["id"] == "srp_sb_bb")
+        board = "KcJd2h"
+        self.assertIn(board, sp["flops"])
+        sol = fa.approx_solution(*args[:3], parse_cards(board), st["full0"], st["full1"], st["pot"], st["stack"],
+                                 fl.library_config(st["pot"], st["stack"]), aggr=0)
+        self.assertFalse(any(f.any() for f in sol.filled.values()))
+        known = sol.known[id(sol.root)]
+        self.assertTrue(0.7 < known.mean() < 0.95)                      # (the straddler's hands the BB doesn't hold)
+        hand = {"players": 6, "stack": 100, "straddle": True, "preflop": parse_actions(STRADDLE_SB), "board": board,
+                "turn": [], "river": []}
+        ss = fl.spot_setup(sp["line"])
+        dead = set(parse_cards(board))
+        off = next(i for i, cb in enumerate(fl.ALL_COMBOS) if st["full1"][i] > 0.5 and ss["full1"][i] == 0 and
+                   not dead & set(cb))
+        on = next(i for i, cb in enumerate(fl.ALL_COMBOS) if st["full1"][i] > 0.5 and ss["full1"][i] > 0.5 and
+                  not dead & set(cb))
+        adv = advisor()
+        bet = [B("SB", round(0.33 * st["pot"], 2))]
+        with mock.patch.object(A, "solve", side_effect=AssertionError("solved")):
+            res = adv.instant(dict(hand, hero="SB", hole="QhTh", flop=[]))
+            held = adv.instant(dict(hand, hero="UTG", hole=cards_str(fl.ALL_COMBOS[on]), flop=bet))
+        self.assertIn("another game's pot (6 bb, a stack-to-pot ratio of 16.2; this one 13 bb, 7.2)",
+                      res["approximate"]["label"])
+        names, mix = self.expected(board, "QhTh", [], spot=sp)
+        self.assertEqual([a["action"] for a in res["actions"]], names)
+        self.assertTrue(np.allclose([a["freq"] for a in res["actions"]], mix, atol=0.0006))
+        self.assertNotIn("your hand isn't in that spot's range", held["approximate"]["label"])
+        self.assertIsNone(adv.instant(dict(hand, hero="UTG", hole=cards_str(fl.ALL_COMBOS[off]), flop=bet)))
 
     def test_heads_up(self):
         """Heads-up's raised pot reads BTN vs BB's entry of the flop at once, approximately: a hand that spot's BB

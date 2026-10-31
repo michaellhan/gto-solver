@@ -2256,8 +2256,9 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   isn't read. The page names the depth: "the precomputed solve of this flop in the library's BTN vs BB single-raised
   pot, solved deeper (a stack-to-pot ratio of 17.7, this pot's 14.1)". `scripts/instant_coverage.py --stack`:
   heads-up flop decisions answered at once 0% -> 51.7% at 40bb, 53.5% at 50bb, 75.8% at 60bb, 89.1% at 80bb, 80.6% at
-  125bb, 75.9% at 150bb, 68.6% at 175bb, 43.1% at 200bb (all decisions 73.9 -> 79.9%, 74.4 -> 80.5, 74.8 -> 83.4, 75.0
-  -> 85.0, 72.8 -> 82.3, 71.7 -> 80.8, 70.8 -> 79.0, 69.8 -> 74.9); 100bb unchanged (91.9%).
+  125bb, 75.9% at 150bb, 68.6% at 175bb, 43.1% at 200bb (48.3% with the SB's flats, see Antes; all decisions 73.9
+  -> 79.9%, 74.4 -> 80.5, 74.8 -> 83.4, 75.0 -> 85.0, 72.8 -> 82.3, 71.7 -> 80.8, 70.8 -> 79.0, 69.8 -> 74.9); 100bb
+  unchanged (91.9%).
 
   EV given up (`scripts/bench_flop_depth.py`: ten spots, six stored flops each, every flop solved at 60, 80, 125 and
   150bb and at 100bb in the browser's Accurate tree, natively, 300 iterations, each solve made an entry; each combo's
@@ -2371,7 +2372,8 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   Left out: UTG flatted by the HJ (0.71, 0.79: 0.371, worst flop 1.57), the SB flatting UTG (0.71, 1.82: 0.405).
   6-max and the shorter tables keep their reads.
 * **Antes, a straddle, heads-up** (`flop_approx.near_spot`'s `aggr`, `NEAR_POT_COVER`, `NEAR_POT_DIST`, the
-  `NEAR_POT_CLOSE_*` and `NEAR_POT_WIDE_*` tiers, `class_fill`). Antes and a straddle put dead money in, and
+  `NEAR_POT_CLOSE_*`, `NEAR_POT_WIDE_*` and `NEAR_POT_HELD_*` tiers, `class_fill`,
+  `near_fill`). Antes and a straddle put dead money in, and
   heads-up the blinds play a pot no 6-max seat does, so none of those games' pots is a library pot, and nothing
   answered their flops at once. Now a spot of another pot is read for one where the same seat raised last preflop (out of position,
   or in position, in both: the straddled BTN's open called by UTG reads BTN vs BB), the stack-to-pot ratio within
@@ -2383,7 +2385,12 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   straddler calling the BB's raise); else a single-raised pot the big blind defends whose stack-to-pot ratio is
   within 0.8-1.25x this one's, covering each range by 55%, at most 1.55 apart (`NEAR_POT_WIDE_*`: heads-up's raised
   pot and the ante's BTN vs BB, both off BTN vs BB, whose big blind defends narrower, and the ante's small blind
-  flatting an open, off the big blind's defence of that open). It's read as a
+  flatting an open, off the big blind's defence of that open); last, such a pot at another stack-to-pot ratio
+  (within `NEAR_SPR`), 80% of each range and 85% of the preflop raiser's held, at most 1.55 apart and 2.5 times the
+  spot's pot (`NEAR_POT_HELD_*`), read for the hands the spot's ranges hold alone, the rest solved live (as a bigger
+  table's pots are, below): the straddled SB's raise called by the straddler, off SB vs BB at under half its
+  stack-to-pot ratio; with an ante at 50-150bb the big blind's defence of UTG's, the HJ's and the CO's opens and the
+  small blind's flats; at 200bb the small blind's flats. It's read as a
   pot with no spot is (approximate, no EVs, until the flop's own solve has run 50 iterations), with two
   differences: the trees' raises are matched by their size in chips ("raise to 15" in either pot), and the hands the
   spot's ranges don't hold, which the game's wider ranges have, play the average mix there of their hand class (made
@@ -2391,11 +2398,15 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   isn't in that spot's range: the average mix there of its hand class (made hand and draw)"). The page names the pot:
   "another game's pot (5.5 bb, a stack-to-pot ratio of 17.7; this one 11.5 bb, 8.3)". `scripts/instant_coverage.py
   --ante 0.125`: heads-up flop decisions answered approximately at once 0% -> 77.5% (70.7% with the wide tier at
-  1.4 apart, 24.4% with the first tier alone; all decisions 71.0% -> 80.8%); `--straddle` 0% -> 58.5% (38.0%; 74.5% -> 81.2%); `--players 2` 0% -> 48.6%
-  (41.5% -> 55.2%), the rest mostly limped pots (38.7%), which no spot is.
+  1.4 apart, 24.4% with the first tier alone; all decisions 71.0% -> 80.8%); `--straddle` 0% -> 66.8% (58.5% without
+  the held tier, 38.0% with the first alone; 74.5% -> 82.2%); `--players 2` 0% -> 48.6%
+  (41.5% -> 55.2%), the rest mostly limped pots (38.7%), which no spot is. The held tier at other depths (`--stack`):
+  with an ante at 50, 60, 75 and 150bb 0, 1.3, 1.5 and 22.1% -> 36.9, 38.5, 39.3 and 50.7% (all decisions 68.6 ->
+  73.4%, 69.4 -> 74.3, 69.9 -> 74.8, 70.8 -> 74.6), a straddle at 150bb 52.6 -> 60.7% (78.3 -> 79.3%), 6-max at
+  200bb 42.1 -> 48.3% (74.8 -> 75.6%); at 100bb only the straddle's changes.
 
-  EV given up (as above, 20 flops each, 12 where marked; the filled hands included; against the live Fast solve at
-  its 50th iteration, where the read gives way to it):
+  EV given up (as above, 20 flops each, 12 where marked; the filled hands included, the held tier's hands held
+  alone; against the live Fast solve at its 50th iteration, where the read gives way to it):
 
   | pot <- spot (cover, distance) | the read | the live Fast solve at 50 iterations |
   |---|---|---|
@@ -2419,20 +2430,39 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   | ante SB flatting the BTN <- BTN vs BB (0.94, 1.50; wide; 12) | 0.180 / 0.176 / 0.31 | 0.246 / 0.222 / 0.40 |
   | ante SB flatting the HJ <- HJ vs BB (0.95, 1.50; wide; 12) | 0.200 / 0.200 / 0.35 | 0.218 / 0.212 / 0.34 |
   | ante SB flatting UTG <- UTG vs BB (0.96, 1.49; wide; 12) | 0.220 / 0.193 / 0.36 | 0.218 / 0.210 / 0.34 |
+  | straddled SB vs UTG <- SB vs BB (0.85, 1.41; held tier) | 0.246 / 0.198 / 0.49 | 0.193 / 0.170 / 0.49 |
+  | the same at 150bb (0.85, 1.36; held; 12) | 0.256 / 0.255 / 0.39 | 0.285 / 0.271 / 0.54 |
+  | ante 50bb BB vs CO <- BTN vs BB (0.87, 0.94; held; 12) | 0.207 / 0.195 / 0.42 | 0.213 / 0.210 / 0.27 |
+  | ante 50bb BB vs UTG <- HJ vs BB (0.83, 0.84; held; 12) | 0.187 / 0.193 / 0.24 | 0.196 / 0.201 / 0.23 |
+  | ante 50bb BB vs HJ <- HJ vs BB (0.82, 0.69; held; 12) | 0.186 / 0.189 / 0.25 | 0.202 / 0.203 / 0.25 |
+  | ante 50bb SB flatting the BTN <- BTN vs BB (0.97, 1.44; held; 12) | 0.190 / 0.201 / 0.28 | 0.173 / 0.148 / 0.37 |
+  | ante 60bb BB vs HJ <- HJ vs BB (0.84, 0.62; held; 12) | 0.245 / 0.246 / 0.38 | 0.229 / 0.221 / 0.33 |
+  | ante 75bb BB vs CO <- BTN vs BB (0.89, 0.92; held; 12) | 0.226 / 0.200 / 0.40 | 0.225 / 0.206 / 0.35 |
+  | ante 75bb BB vs HJ <- HJ vs BB (0.85, 0.58; held; 12) | 0.238 / 0.229 / 0.39 | 0.219 / 0.199 / 0.39 |
+  | ante 75bb BB vs UTG <- HJ vs BB (0.87, 0.78; held; 12) | 0.216 / 0.186 / 0.35 | 0.204 / 0.179 / 0.34 |
+  | ante 75bb SB flatting the CO <- CO vs BB (0.92, 1.37; held; 12) | 0.160 / 0.164 / 0.22 | 0.212 / 0.205 / 0.39 |
+  | ante 150bb BB vs CO <- BTN vs BB (0.86, 0.94; held; 12) | 0.180 / 0.149 / 0.35 | 0.212 / 0.187 / 0.35 |
+  | ante 150bb BB vs HJ <- HJ vs BB (0.81, 0.61; held; 12) | 0.207 / 0.191 / 0.29 | 0.194 / 0.175 / 0.28 |
+  | 200bb SB flatting the BTN <- BTN vs BB (1.00, 1.51; held; 12) | 0.205 / 0.199 / 0.28 | 0.330 / 0.305 / 0.56 |
+  | 200bb SB flatting UTG <- UTG vs BB (0.97, 1.36; held; 12) | 0.199 / 0.192 / 0.29 | 0.294 / 0.271 / 0.46 |
 
   The tiers' reads give up 0.18-0.40 (worst flop 0.27-0.64), inside the bar; the 3bet pots' up to twice the
   live solve's at 50 iterations, which replaces them, and heads-up's first decisions 0.152 against its 0.148. The
   ante's small-blind flats (7.1% of its heads-up flop decisions) lie 1.44-1.50 apart, nothing else between 1.4 and
   1.55: the big blind's defence covers the flat's range by 91-96%, and the hands filled (the SB's flats the big
   blind folds, 8-15% by reach) give up 0.27-0.99 (worst flop 6.7, a 6-high board read off HJ vs BB), the read as a
-  whole under the live solve's or level with it.
+  whole under the live solve's or level with it. The held tier's reads give up 0.160-0.256 (worst flop 0.22-0.49),
+  15-26% of the hands (by reach) left to the live solve; filling them instead gave up 0.67-0.68 in the straddled SB
+  vs UTG, the straddler's hands the big blind 3bets (suited aces) played as their class there.
 
   Outside the gates they did worse (cover 0.55 and distance 1.4 tried for every pot): the ante's UTG flatted by
   the HJ off UTG vs HJ (0.84, 0.53) 0.443 with a worst flop of 0.96, its HJ's 3bet of UTG (0.87, 0.64) 0.423 /
   0.93, a straddled BTN flatting the CO off HJ vs CO (0.79, 0.61) 0.371 / 0.87 (so the close tier ends at 0.5, and
   the wide one is for the big blind's defence alone); heads-up's 3bet pot off the BB's 3bet of the
   BTN (cover 0.51, distance 1.70) 0.579 / 0.622 / 0.89 against the live solve's 0.149; the ante's BTN vs SB (0.48)
-  0.770; a straddled SB vs UTG (0.84, 1.41, a stack-to-pot ratio under half the spot's) 0.729; 6-max's BB cold-calling
+  0.770; a straddled SB vs UTG with those hands filled (0.84, 1.41, a stack-to-pot ratio under half the spot's)
+  0.729 (so the held tier); the ante's SB vs BB at 60 and 75bb, the hands held alone (the SB's range 81-83% held, so
+  the raiser's 85%) 0.475 / 0.66 and 0.435 / 0.62 against the live solve's 0.271 and 0.319; 6-max's BB cold-calling
   the BTN's 3bet of the CO off the CO's call (0.89, 0.85) 0.457, worst flop 2.37, and the SB's squeeze off its 3bet
   of the CO (1.00, 1.34) 0.463; the hands filled are the worst part (0.4-0.9 in the 3bet pots, 0.27-0.37 in
   single-raised ones).
@@ -3375,9 +3405,9 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   answered approximately at once off the spot whose ranges are nearest, `flop_approx.near_spot`), a flop not
   stored 10.2 (the flatted opens' and the 3bet pots': answered approximately at once from the stored flops most like
   it, `scripts/instant_coverage.py` 77.2% -> 87.5% with them, 91.9% with both), a raise 3.2. At 40-200bb, where no
-  spot is built, the 100bb spots answer 43-89% of the heads-up flop decisions approximately at once (`--stack`). At 8- and 9-max
+  spot is built, the 100bb spots answer 48-89% of the heads-up flop decisions approximately at once (`--stack`). At 8- and 9-max
   the pots that play as 6-max ones are answered as the library's own (68.2% and 64.6% of their heads-up flop
-  decisions, `--players`), and with antes or a straddle the nearest spot of another pot answers 77.5% and 58.5%
+  decisions, `--players`), and with antes or a straddle the nearest spot of another pot answers 77.5% and 66.8%
   approximately (`--ante`, `--straddle`). A
   flop's entry is worth its spot's share times its suit count, so more flops of the commonest spots beat new spots; by
   points per MB (`--assume`): BTN vs BB on every flop +12.4 for 4.5 MB, CO vs BB on 1656 (90%) +7.6 for 2.8, UTG vs

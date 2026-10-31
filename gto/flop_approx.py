@@ -167,6 +167,20 @@ NEAR_POT_CLOSE_DIST = 0.5
 NEAR_POT_WIDE_COVER = 0.55
 NEAR_POT_WIDE_DIST = 1.55
 NEAR_POT_WIDE_SPR = (0.8, 1.25)
+# 3, such a pot at another stack-to-pot ratio (within NEAR_SPR as above), covering each range by NEAR_POT_HELD_COVER
+# and the preflop raiser's by NEAR_POT_HELD_RAISER, at most NEAR_POT_WIDE_DIST apart and NEAR_POT_HELD_POT times the
+# spot's pot (a straddled single-raised pot is 1.8-2.3 times a 6-max one, a 3bet pot 3.5 or more), read for the hands
+# its ranges hold alone (no class_fill, which gave up 0.67-0.68 here: the rest are solved live, as at a bigger table's
+# NEAR_TABLE_COVER). As above, 12 flops each, the hands held: a straddled SB vs UTG off SB vs BB (cover 0.85,
+# distance 1.41, a ratio 0.45 of the spot's; 20 flops) 0.246 against the live solve's 0.193, at 150bb 0.256 / 0.285;
+# with an ante at 50-150bb (0.40-1.33) the big blind's defence of UTG's, the HJ's and the CO's opens off HJ vs BB and
+# BTN vs BB and the SB's flats off the big blind's defence 0.160-0.245 against 0.173-0.229; 6-max at 200bb (1.86) the
+# SB's flats 0.199-0.205 against 0.294-0.330; worst flop 0.22-0.49 in all; 15-26% of the hands (by reach) left to the
+# live solve. Left out by NEAR_POT_HELD_RAISER: the ante's SB vs BB at 60 and 75bb (the SB's range 81-83% held),
+# 0.475 and 0.435 against 0.271 and 0.319.
+NEAR_POT_HELD_COVER = 0.8
+NEAR_POT_HELD_RAISER = 0.85
+NEAR_POT_HELD_POT = 2.5
 # A pot of another table size that plays as one the library holds (8- and 9-max BTN, SB, CO and HJ vs the BB, BTN and
 # CO vs SB, the blinds' 3bets of the BTN and the CO, the BB's of the SB: the same pot and stack, the ranges entering the
 # flop a few combos apart) is read as the library's own solve (near_exact: flop_library.FlopLibrary.solution with that
@@ -197,7 +211,7 @@ NEAR_EXACT_TABLE_COVER = 0.9
 # hands (by reach) solved live. No pot lies 0.73-1.0 apart at 90% cover.
 NEAR_EXACT_TABLE_DIST = 0.75
 _SETUPS: Dict[tuple, Optional[dict]] = {}
-_NEAR: Dict[tuple, Optional[str]] = {}
+_NEAR: Dict[tuple, Optional[tuple]] = {}
 _EXACT: Dict[tuple, Optional[dict]] = {}
 
 
@@ -270,7 +284,8 @@ def near_candidates(lib, full0: np.ndarray, full1: np.ndarray, pot: float, stack
         if st is None:
             row["why"] = "ranges"
             continue
-        row["cover"] = min(range_cover(full0, st["full0"]), range_cover(full1, st["full1"]))
+        covers = (range_cover(full0, st["full0"]), range_cover(full1, st["full1"]))
+        row["cover"] = min(covers)
         row["dist"] = range_dist(full0, st["full0"]) + range_dist(full1, st["full1"])
         if same_pot:
             if row["cover"] < NEAR_COVER:
@@ -284,17 +299,20 @@ def near_candidates(lib, full0: np.ndarray, full1: np.ndarray, pot: float, stack
         # another pot: the tiers' gates (0 first: near_spot prefers a lower tier to a nearer spot)
         c, d = row["cover"], row["dist"]
         q = (stack / pot) / (float(sp["stack"]) / float(sp["pot"]))
-        wide = str(sp.get("line") or "").count(":r") == 1 and "BB" in (sp.get("seats") or ()) and \
-            NEAR_POT_WIDE_SPR[0] <= q <= NEAR_POT_WIDE_SPR[1]   # (a single-raised pot the BB defends, as deep)
+        defends = str(sp.get("line") or "").count(":r") == 1 and "BB" in (sp.get("seats") or ())
+        wide = defends and NEAR_POT_WIDE_SPR[0] <= q <= NEAR_POT_WIDE_SPR[1]   # (a single-raised pot the BB defends)
         if c >= NEAR_POT_COVER and d <= NEAR_POT_DIST:
             row["tier"] = 0
         elif c >= NEAR_POT_CLOSE_COVER and d <= NEAR_POT_CLOSE_DIST:
             row["tier"] = 1
         elif wide and c >= NEAR_POT_WIDE_COVER and d <= NEAR_POT_WIDE_DIST:
             row["tier"] = 2
+        elif defends and c >= NEAR_POT_HELD_COVER and covers[aggr] >= NEAR_POT_HELD_RAISER and \
+                d <= NEAR_POT_WIDE_DIST and pot <= NEAR_POT_HELD_POT * float(sp["pot"]):
+            row["tier"] = 3   # (read for the hands held alone: near_fill)
         else:
-            row["why"] = "cover" if c < min(NEAR_POT_COVER, NEAR_POT_CLOSE_COVER,
-                                            NEAR_POT_WIDE_COVER if wide else 1.0) else "dist"
+            row["why"] = "cover" if c < min(NEAR_POT_COVER, NEAR_POT_CLOSE_COVER, NEAR_POT_WIDE_COVER if wide else
+                                            NEAR_POT_HELD_COVER if defends else 1.0) else "dist"
     return out
 
 
@@ -308,6 +326,12 @@ def near_spot(lib, full0: np.ndarray, full1: np.ndarray, pot: float, stack: floa
     known: no other pot). None where none is (near_candidates says why). exclude: a spot id left out
     (scripts/bench_flop_approx.py's protocol spot). players: the hand's table size (over 6, a spot of the same pot and
     stack covering it by NEAR_TABLE_COVER where none does by NEAR_COVER)."""
+    best = _near_best(lib, full0, full1, pot, stack, exclude, aggr, players)
+    return next((sp for sp in lib.index().get("spots", []) if sp["id"] == best[0]), None) if best else None
+
+
+def _near_best(lib, full0, full1, pot, stack, exclude=None, aggr=None, players=6) -> Optional[tuple]:
+    """near_spot's choice: (spot id, tier), or None."""
     from . import flop_library as fl
     key = (fl.range_fp(full0), fl.range_fp(full1), round(pot, 2), round(stack, 2), exclude, aggr, int(players))
     if key not in _NEAR:
@@ -315,9 +339,19 @@ def near_spot(lib, full0: np.ndarray, full1: np.ndarray, pot: float, stack: floa
         for row in near_candidates(lib, full0, full1, pot, stack, exclude, aggr, players):
             if row["why"] is None and (best is None or (row["other"], row.get("tier", 0), row["dist"]) < best[0]):
                 best = ((row["other"], row.get("tier", 0), row["dist"]), row["id"])
-        _NEAR[key] = best and best[1]
-    sid = _NEAR[key]
-    return next((sp for sp in lib.index().get("spots", []) if sp["id"] == sid), None) if sid else None
+        _NEAR[key] = best and (best[1], best[0][1])
+    return _NEAR[key]
+
+
+def near_fill(lib, full0: np.ndarray, full1: np.ndarray, pot: float, stack: float, aggr: Optional[int] = None,
+              players: int = 6) -> bool:
+    """Whether near_spot's read of this pot fills the hands its spot's ranges don't hold (class_fill): another pot's,
+    but for tier 3's (NEAR_POT_HELD_COVER: those hands are solved live, as for the same pot's)."""
+    best = _near_best(lib, full0, full1, pot, stack, None, aggr, players)
+    if not best:
+        return False
+    sp = next(x for x in lib.index().get("spots", []) if x["id"] == best[0])
+    return round(float(sp["pot"]), 2) != round(pot, 2) and best[1] != 3
 
 
 def near_exact(lib, full0: np.ndarray, full1: np.ndarray, pot: float, stack: float,
@@ -448,8 +482,9 @@ def approx_solution(lib, full0: np.ndarray, full1: np.ndarray, board: Sequence[i
     combos = np.unique(cmap[active]) if hole is None else np.array([cmap[COMBO_INDEX[(min(hole), max(hole))]]])
     corr = theta() is not None and (not other or any(d > 0 for *_, d in src)
                                     or round(float(spot["stack"]), 2) == round(stack, 2))
-    # another game's pot: the hands its ranges don't hold play their hand class's average there (class_fill)
-    fill = round(float(spot["pot"]), 2) != round(pot, 2)
+    # another game's pot: the hands its ranges don't hold play their hand class's average there (class_fill), but
+    # for tier 3's read (near_fill)
+    fill = other and near_fill(lib, full0, full1, pot, stack, aggr, players)
     key = (spot["id"], fl.cards_str(canon), tuple((nm, d) for *_, nm, d in src), combos.tobytes(), corr,
            (fl.range_fp(full0), fl.range_fp(full1)) if fill else None)
     kept = lib.__dict__.setdefault("_approx_pred", OrderedDict())
