@@ -2491,7 +2491,8 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
     a limped hand's river reply 3.5 s for its flop and turn): 5% of the 93 s the hands' solves took. That last kind is
     an opponent's move read from its own seat's view (`play`'s fallback when your line is rare in the solve, or its
     hand has no weight there), whose ranges can differ from your advice's by a near-zero-weight combo (a hand outside
-    its range there: `_with_hero`, `_as_advised`), so it misses the solves your advice cached; not changed here.
+    its range there: `_with_hero`, `_as_advised`), so it missed the solves your advice cached (since read: the
+    next bullet).
   - Natively (one quiet hold, the previous tree and this one, the last two of three runs): on 8 threads the tables'
     core calls 26 -> 5.6 ms on `flop-40` and 81 -> 18 on `flop-limp` (on 4 threads 7.9 and 25), the whole step with
     its Python 30 -> 10 and 87 -> 25 ms, the answers 0.180 -> 0.160 s and 0.366 -> 0.310 (on 4 threads 0.191 -> 0.172
@@ -2515,6 +2516,37 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   Tests: `tests/test_core.py` `test_a_batch_builds_each_table_the_same_on_any_number_of_threads` (a flop's equity
   leaf, bucket and river-strength tables in batches on 1, 3 and 8 threads are the ones built one by one, bit for bit;
   the helpers' lanes never short; each table taken). `core.wasm` 69 -> 74 KB, `core-mt.wasm` 95 -> 96 KB.
+* **Practice opponents' moves from their own seat read your advice's solves** (`Advisor.play`, `_seen_from`).
+  Heads-up after the flop an opponent's move is read off your advice's solve of the street; when your line is rare
+  in it (under `RARE_LINE` of your range) or the opponent's hand has no weight there, the move is that seat's own
+  advice. That advice solved every earlier street again: its ranges took its cards out of yours where your
+  advice takes yours out of its, and put its hand in at a near-zero weight where yours had been, so none of its
+  solves were the cached ones. Now, heads-up from the street's start, it solves with your advice's ranges (your
+  cards out of its range, your hand in where your range doesn't hold it, its own added on the street it acts), so
+  the earlier streets are the solves your advice made, and so is the street itself where its hand has weight
+  there. As when the move is read off your solve, its own cards stay in your range: a blocker's edge.
+  - The Practice simulation above (24 hands natively at Fast, both players drawing GTO moves; two seeds): the
+    opponents' moves from their own seat (3 and 5 a seed) solved 5.3 and 11.9 s, now 0.09 and 0.02 (the
+    earlier streets 3.8 and 11.8 s, now none; a limped river's reply 3.37 s -> 0.005); all the hands' solving
+    88.5 -> 81.9 and 90.7 -> 79.1 s. Every one of the 278 moves was drawn the same, those 8 with the same mix.
+  - At Practice's quick answers (Fast in the page: an earlier street not solved already is narrowed by the betting
+    rules) those moves took no earlier street's solve, and now read your advice's (its flop narrowing as yours,
+    not the rules'): 1-2 s less a seed (34.9 -> 32.9 s, a flop reply 1.26 -> 0.24; 26.9 -> 25.9 up to the hand
+    that changed). One move of 186 changed: a turn reply to a 125% bet that its own 82-iteration solve didn't
+    read as rare (call 89%) is now read off your advice's turn solve, finds the bet rare there and is solved
+    again from the bet (300 iterations): fold.
+  - Where the reply mixes (the button's hands outside its range on a turn checked to it, solved to 1000
+    iterations a street): check and bet as before; the split between two bet sizes whose EVs are 0.00-0.05 bb
+    apart moved, as a near-zero-weight hand's does, and the EVs by up to 0.3 bb (the narrowing's flop solve and
+    the blockers). Keeping its own cards out of yours on the street it acts moved them as much.
+  - Looked at and left: your hand outside your range on a library flop takes a live flop solve (1.24 s natively).
+    The entry stores strategies for its ranges' combos only; a hand at a near-zero weight plays a best response
+    through turns and rivers the entry doesn't hold, and the approximate flops read the same ranges off similar
+    flops. Practice grades your move by that solve, and the opponents' moves are read off it, so they cost nothing
+    more.
+
+  Tests: `tests/test_gto.py` `test_fallback_reads_the_earlier_streets_the_advice_solved` (a turn move for a hand
+  the big blind 3bets: one new solve, the turn, where it was two).
 * **A board's ranks ranked once** (`gto/evaluator.py` `eval_boards`, `_plain`). A program's showdowns (and numpy's
   tables) rank every combo on every five-card board the tree deals: on a flop solved live, its runouts and each turn's
   rivers, about 1200 boards. `eval_boards` ranked each one the same way. For each of the 169 pairs of hole ranks it
@@ -3383,8 +3415,9 @@ their products batched: `core.LEAF_ROWS_BLAS`).
   `MAX_CELLS` (not fuzzed: the fuzz keeps each process under 1 GB). Left: the catch-all is a heuristic.
 * Practice opponents heads-up after the flop read their move off your own solve, whose ranges leave out
   your cards (as your advice does): an edge the size of a blocker. A line of yours the solve rarely
-  takes, or a pot that became heads-up mid-street, gets a solve from their seat instead (a few seconds,
-  more in the browser).
+  takes, a hand of theirs it gives no weight, or a pot that became heads-up mid-street, gets a solve from their
+  seat instead (a few seconds, more in the browser), heads-up with your advice's ranges, so the earlier streets
+  are your advice's solves and the same edge holds.
 * The bet-size abstraction is coarse. A real bet or raise more than 15% off every tree size is put
   into that street's tree (closer ones are played as the nearest size). The Fast turn bets 33/75/125% in
   single-raised pots (the river inside 33/125%; 33/75/125% with the core on 4+ threads, as Accurate) and on one

@@ -2508,6 +2508,7 @@ class Advisor:
         self._breakdown = False   # this request asked for the breakdown (state "breakdown": true)
         self._lib_only = False    # state "library_only": a flop the library holds, else {"skipped": …}, no solve
         self._study = False       # state "study": Study mode's answer (Advisor.study)
+        self._seen_from = None    # play's fallback: (seat, hand) of the player practising, whose ranges it solves with
         self._runout_close = None # Study's runout report: the action that closed the flop or turn (Advisor._runouts)
         self._runout_held = False # ...from what's in hand only: the library's stored turns, cached solves (_NotHeld)
         self._runout_lines = None # ...the stored turn's flop lines, where the file is there but not for this line
@@ -4028,11 +4029,20 @@ class Advisor:
         lib = self.library if self.library is not None and not pool and not optimize and not (locks or {}).get(villain) \
             and not getattr(self, "_jam", False) and getattr(self, "_icm", None) is None else None
         lib_sol = None
-        for c in hole:  # villain can't hold hero's cards
-            if hero_p == 0:
+        # (play's fallback, an opponent's move from its own seat: `seen` is the hand of the player practising, the
+        # villain here, and the ranges are the ones that player's advice solved with, its cards out of this seat's
+        # range and its hand in at a near-zero weight where its range doesn't hold it, so the earlier streets' solves
+        # are the ones that advice cached, and this street's too where this seat's hand has weight in it: as when
+        # the move is read off that advice's solve, this seat's own cards stay in the other's range, a blocker's edge)
+        seen = getattr(self, "_seen_from", None)
+        seen = tuple(seen[1]) if seen is not None and seen[0] == villain and seen[1] and \
+            cur.players_start == remaining else None   # (a pot heads-up from this street's start: solves to reuse)
+        for c in (hole if seen is None else seen):  # villain can't hold hero's cards (play's fallback: the other way)
+            if (hero_p == 0) == (seen is None):
                 r1 = r1 * (1.0 - MEMBER_FULL[c])
             else:
                 r0 = r0 * (1.0 - MEMBER_FULL[c])
+        adv_p, adv_hole = (hero_p, hole) if seen is None else (1 - hero_p, seen)   # (the hand _as_advised puts in)
 
         hu_from_start = cur.players_start == remaining
         opt = {}
@@ -4081,7 +4091,7 @@ class Advisor:
                         cfg = dataclasses.replace(cfg, root_allin=False)   # (a jam request: the street advised on only)
                     # (your hand out of your range here: the ranges with it in, as the street's own advice solved, so
                     # that solve is the one read, not a second without it: Advisor._as_advised)
-                    s0, s1 = self._as_advised(r0, r1, hero_p, hole)
+                    s0, s1 = self._as_advised(r0, r1, adv_p, adv_hole)
                     # (the hand's own solve of this street, made before a later action took a size off its tree)
                     cfg = self._hand_cfg(sub_board, s0, s1, st, oop, ip, eff, cfg, adjust=lambda c: dataclasses.replace(
                         c, **(self.prior_model or {}), **({"root_allin": False} if c.root_allin else {})))
@@ -4113,12 +4123,14 @@ class Advisor:
                                               board=sub_board, rules=(0, 1),
                                               lock=mk_lock(sol), trust=trust, slow=slow_hu, taken=taken)
                     if s0 is not r0 or s1 is not r1:   # (and out again for the next street: _with_hero puts it back)
-                        (c0 if hero_p == 0 else c1)[sol.ctx.active == COMBO_INDEX[(min(hole), max(hole))]] = 0.0
+                        (c0 if adv_p == 0 else c1)[sol.ctx.active == COMBO_INDEX[(min(adv_hole), max(adv_hole))]] = 0.0
                 walked[st.name] = (sol, node, taken)
                 r0 = _post_floor(r0, expand(sol.ctx, c0), nxt_board, oop, st.name, notes)
                 r1 = _post_floor(r1, expand(sol.ctx, c1), nxt_board, ip, st.name, notes)
             eff = min(stk[oop] - cur.inv_start[oop], stk[ip] - cur.inv_start[ip])
             cfg = self._cfg_with_real_sizes(cur, oop, ip, eff)
+            if seen is not None:
+                r0, r1 = self._with_hero(r0, r1, adv_p, adv_hole, [])
             r0, r1 = self._with_hero(r0, r1, hero_p, hole, notes)
             if optimize and to_call <= 1e-9:
                 cfg, opt = self._optimize_sizes(board, r0, r1, cur, eff, cfg, hero_p, notes)
@@ -5597,7 +5609,8 @@ class Advisor:
         move and the hero's advice (the villain's range there leaves out the hero's cards, as in the hero's
         advice: an edge the size of a blocker). Otherwise (preflop, multiway, a pot that became heads-up this
         street, a line of the hero's the solve rarely takes, a hand it gives no weight) it's the advice for
-        `seat` holding `hole`. `seed` makes the draw repeatable.
+        `seat` holding `hole`, heads-up with the hero's advice's ranges (its earlier streets' solves are the
+        cached ones). `seed` makes the draw repeatable.
         Returns the move in the page's format: {"pos", "action", "to" (bets and raises, chips), "name" (the
         advisor's), "freq", "street", "actions" (the mix it was drawn from)}, or {"error"}."""
         rng = random.Random(seed) if seed is not None else self.rng
@@ -5615,9 +5628,21 @@ class Advisor:
                     res = None
         if res is None or "error" in res or not res.get("actions"):
             # from the seat's own view: a GTO player, so not best-responding to the locks the player practising
-            # set on their opponents (which can name this seat: "you can't lock your own seat" stalled practice)
-            res = self.advise({**{k: v for k, v in st.items() if k not in ("locks", "study")}, "hero": seat,
-                               "hole": cards_str(hole)})
+            # set on their opponents (which can name this seat: "you can't lock your own seat" stalled practice).
+            # Heads-up its ranges are the ones the practising player's advice solved with (_seen_from: their cards
+            # out of this seat's range, their hand in where off its range), so the earlier streets' solves are cached
+            # ones: from its own view's ranges it solved them again (3.5 s of a limped river's 3.6).
+            view = st.get("hero"), st.get("hole")
+            try:
+                self._seen_from = (str(view[0]).upper(), tuple(parse_cards(view[1])) if isinstance(view[1], str)
+                                   else tuple(view[1])) if view[0] and view[1] and str(view[0]).upper() != seat else None
+            except Exception:   # noqa: BLE001 - (an unreadable hand: the seat's own view, as before)
+                self._seen_from = None
+            try:
+                res = self.advise({**{k: v for k, v in st.items() if k not in ("locks", "study")}, "hero": seat,
+                                   "hole": cards_str(hole)})
+            finally:
+                self._seen_from = None
         if "error" in res:
             return {"error": res["error"]}
         acts = [a for a in res["actions"] if a["freq"] > 0] or res["actions"]

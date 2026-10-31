@@ -3514,6 +3514,27 @@ class TestPractice(unittest.TestCase):
         st = {"players": 6, "hero": "BTN", "hole": "AhKh", "board": "Kd7s2c", "stack": 100, "preflop": pre, "flop": []}
         self.assertIn(adv.play(st, "BB", "8c8d", seed=1)["action"], {"check", "bet", "all-in"})
 
+    def test_fallback_reads_the_earlier_streets_the_advice_solved(self):
+        # a turn move for a hand the big blind's range doesn't hold (it 3bets QQ): from its own seat, with the ranges
+        # the button's advice solved with, so the flop's solve is the advice's (from its own view's ranges, the
+        # button's cards out of its range, it solved the flop again)
+        adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
+        st = dict(self.FLOP, flop=[{"pos": "BB", "action": "check"}])
+        r = adv.advise(st)
+        name = max((a for a in r["range_action_freq"] if a.startswith("bet")), key=r["range_action_freq"].get)
+        size = next(a["amount_bb"] for a in r["actions"] if a["action"] == name)
+        turn = dict(self.FLOP, board="Kd7s2c9h", turn=[], flop=st["flop"] + [
+            {"pos": "BTN", "action": "bet", "amount": size}, {"pos": "BB", "action": "call"}])
+        self.assertNotIn("error", adv.advise(dict(turn, turn=[{"pos": "BB", "action": "check"}])))   # (its turn)
+        before = set(adv._cache)
+        m = adv.play(turn, "BB", "QcQd", seed=2)
+        self.assertIn(m["action"], {"check", "bet", "all-in"})
+        self.assertIn("ev_bb", m["actions"][0])                  # (the seat's own advice)
+        new = set(adv._cache) - before
+        self.assertEqual(len(new), 1)                            # the turn with QQ in at a near-zero weight only
+        self.assertEqual({len(k[2]) for k in new}, {4})
+        self.assertIsNone(adv._seen_from)
+
 
 class TestAdvanced(unittest.TestCase):
     """Optional state keys: custom postflop sizes ("sizes", % of the pot), custom ranges entering the flop
