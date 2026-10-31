@@ -207,6 +207,37 @@ test("the actions table, the range's totals, a hand's combos and the status line
   assert.doesNotMatch(S.lineHtml(SPOT, { study: "deal" }), /sy-now/);
 });
 
+test("an action the range almost never takes (rough_ev) shows its EVs with a \"≈\" and the tip, nowhere else", () => {
+  const R = { ...NODE, actions: NODE.actions.map((a, i) => i === 2 ? { ...a, rough_ev: true } : a) };
+  const ui = { view: "strategy", who: "me", sel: null, focus: null };
+  const tip = /title="The range almost never takes this, so how the opponent answers it is barely solved/;
+  // the range's per action: bet 75%'s EV alone
+  let h = S.actionsHtml(R, ui);
+  assert.match(h, /<td class="n sy-rough" title="The range almost never[^"]*">≈ \+6\.00<\/td>/);
+  assert.equal((h.match(/≈/g) || []).length, 1);
+  assert.match(h, /<td class="n">\+4\.20<\/td>/);
+  // a class's mix and its combos' tips
+  h = S.detailHtml(R, ui, "AA");
+  assert.match(h, /bet 75% <b>50%<\/b> <small class="sy-rough" title="The range almost never[^"]*">≈ \+12\.00<\/small>/);
+  assert.match(h, /check <b>20%<\/b> <small>\+10\.00<\/small>/);
+  const rows = h.match(/<tr title="[^"]*"/g);
+  assert.match(rows[0], /bet 33% 0% \(EV \+11\.00\), bet 75% 100% \(EV ≈ \+12\.50\)\. ≈: The range almost never/);
+  // the EV view focused on it: "≈" in each cell and the tip on the grid; on another action or the mix's EV, none
+  assert.equal(S.cellValue(R.grid.cells.AA, "ev", R, 2).txt, "≈12.0");
+  assert.equal(S.cellValue(R.grid.cells.AA, "ev", R, 1).txt, "11.0");
+  assert.equal(S.cellValue(R.grid.cells.AA, "ev", R, null).txt, "11.3");
+  assert.match(S.gridHtml(R, { ...ui, view: "ev", focus: 2 }), tip);
+  assert.doesNotMatch(S.gridHtml(R, { ...ui, view: "ev", focus: 1 }), /≈|title=/);
+  assert.doesNotMatch(S.gridHtml(R, { ...ui, view: "strategy", focus: 2 }), /≈/);
+  // Build's solver mix once scored
+  const p = S.blankPaint(R); p.score = S.scoreBuild(R, p);
+  assert.match(S.buildDetailHtml(R, p, "AA"), /<small class="sy-rough"[^>]*>≈ \+12\.00<\/small>/);
+  // without the flag nothing changes; an action under a twentieth of a combo has no EV and no "≈"
+  assert.doesNotMatch(S.actionsHtml(NODE, ui) + S.detailHtml(NODE, ui, "AA") + S.gridHtml(NODE, { ...ui, view: "ev", focus: 2 }), /≈|sy-rough/);
+  const none = { ...R, actions: R.actions.map((a, i) => i === 2 ? { ...a, ev_bb: null } : a) };
+  assert.match(S.actionsHtml(none, ui), /<td class="n">—<\/td>/);
+});
+
 test("the range builder: a blank paint, brushes, the score, and its grid, panel and detail", () => {
   assert.equal(S.passiveOf(["fold", "call", "raise"]), 0);
   assert.equal(S.passiveOf(["check", "bet 33%"]), 0);

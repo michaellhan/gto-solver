@@ -644,7 +644,9 @@ their whole range and no hero, at equilibrium (`hero`, `hole`, `opponents`, `loc
 ignored; a tournament's `payouts`, `field` and `bounties` count, as in the advice, with `tournament` and its notes
 for the player to act):
 `{"study": "node", "actor", "opponent", "street", "pot_bb", "to_call_bb", "stack_bb", "actions", "grid", "combos",
-…}` with per action the range's `freq`, `combos` and `ev_bb` (of the hands that take it), per hand class in `grid`
+…}` with per action the range's `freq`, `combos` and `ev_bb` (of the hands that take it; `"rough_ev": true` heads-up
+where the range takes it under `advisor.RARE_BRANCH`, as the advice marks it, and Study shows that action's EVs with
+a "≈" and the tip: the range's, a class's mix, its combos' and the EV view's cells on it), per hand class in `grid`
 its weight `w`, mix `f`, per-action EVs `ev`, EV `evm` and equity `eq`, per combo in `combos` the same as
 `[cards, w, f, ev, eq, made, draw]` (the last two indices into `categories`' `made` and `draws` lists, `[id, label]`
 each; no draws on the river), the opponent's range in `opponent_grid`, and the solver's stats (`breakdown` too with

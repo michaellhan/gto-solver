@@ -4363,6 +4363,11 @@ class Advisor:
         eq, eq_opp = range_equities(board, me, opp)
         part, (og,) = _study_range(board, names, [self._amount(n, node, hero_p) for n in names], me, sf, ev, eq,
                                    [(villain, opp, eq_opp)])
+        n_r = n_r0 if hero_p == 0 else n_r1   # (the advice's rough_ev: an action the range takes under RARE_BRANCH)
+        rare = (node.avg_strategy0() * n_r).sum(axis=1) < RARE_BRANCH * max(float(n_r.sum()), 1e-12)
+        for a, r in zip(part["actions"], rare):
+            if r:
+                a["rough_ev"] = True
         res = {
             "study": "node", "street": cur.name, "actor": hero, "opponent": villain,
             "position": "OOP" if hero_p == 0 else "IP", "players": len(positions), "board": cards_str(board),

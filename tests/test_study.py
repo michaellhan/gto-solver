@@ -7,6 +7,7 @@ from unittest import mock
 
 import numpy as np
 
+from gto import advisor as advisor_mod
 from gto import solver as solver_mod
 from gto.breakdown import draw_category, made_category
 from gto.cards import COMBO_INDEX, cards
@@ -105,6 +106,27 @@ class TestStudy(unittest.TestCase):
         # at equilibrium the mix's EV is the best action's, within the solve's distance from it
         for k, c in r["grid"]["cells"].items():
             self.assertLess(max(c["ev"]) - c["evm"], 0.05 * r["pot_bb"] + 0.01, k)
+
+    def test_rough_ev(self):
+        """An action the range takes under advisor.RARE_BRANCH is marked "rough_ev", as the advice marks it for a hand
+        (the opponent's answer to it is barely trained: the page shows its EVs with a "≈"); nothing else changes."""
+        st = dict(preflop=PRE, board="Kd7c2h", flop=[{"pos": "BB", "action": "check"}])
+        root, r = self.study(**dict(st, flop=[])), self.study(**st)
+        with mock.patch.object(advisor_mod, "RARE_BRANCH", 0.3):   # (the same stored flop: BTN bets 75% 26%)
+            t = self.study(**st)
+            adv = self.adv.advise(dict({"players": 6, "stack": 100, "hero": "BTN", "hole": "AsJc"}, **st))
+        for res, bar in ((root, advisor_mod.RARE_BRANCH), (r, advisor_mod.RARE_BRANCH), (t, 0.3)):
+            for a in res["actions"]:
+                self.assertIn(a.get("rough_ev"), (None, True))   # (the key only where it holds)
+                share = a["combos"] / res["range_combos"]
+                if abs(share - bar) > 0.002:
+                    self.assertEqual("rough_ev" in a, share < bar, (a, bar))
+        self.assertEqual([a.get("rough_ev") for a in root["actions"]], [None, True, True])   # (BB checks it all)
+        self.assertEqual([a.get("rough_ev") for a in t["actions"]], [None, None, True])
+        self.assertEqual([a.get("rough_ev") for a in t["actions"]], [a.get("rough_ev") for a in adv["actions"]])
+        strip = lambda res: dict(res, seconds=None, actions=[{k: v for k, v in a.items() if k != "rough_ev"}
+                                                             for a in res["actions"]])
+        self.assertEqual(strip(r), strip(t))
 
     def test_hero_and_exploits_ignored(self):
         st = dict(preflop=PRE, board="Kd7c2h", flop=[{"pos": "BB", "action": "check"}])

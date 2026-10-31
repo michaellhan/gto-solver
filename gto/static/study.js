@@ -112,13 +112,19 @@
     return n === "raise" ? `Raise to ${num(amt)}bb` : `${cap} ${num(amt)}bb`;
   }
   const eqr = (c, pot) => c.eq > 0 && c.evm != null ? c.evm / (c.eq * pot) : null;
+  // an action the range almost never takes (the answer's rough_ev, advisor.RARE_BRANCH, as the advice panel's): its EVs
+  // with a "≈" and this tip, wherever Study shows that action's EV (the EV view's cells on it, a class's mix, its
+  // combos' tips, the range's per action)
+  const ROUGH_TIP = "The range almost never takes this, so how the opponent answers it is barely solved: its EV is rough, usually lower than exact.";
+  const rough = (res, a) => !!(res && res.actions && res.actions[a] && res.actions[a].rough_ev);
+  const roughEv = (res, a, v) => rough(res, a) ? `<small class="sy-rough" title="${ROUGH_TIP}">≈ ${sgn(v)}</small>` : `<small>${sgn(v)}</small>`;
 
   // ---- the grid: a cell per hand class; strategy: its mix stacked, as tall as its share of the class's combos; ev,
   // equity, eqr: shaded red to green with the number; the opponent's range: its weight and equity
   const VIEWS = { strategy: "Strategy", ev: "EV", equity: "Equity", eqr: "EQR" };
   const hue = (t) => `hsl(${Math.round(Math.max(0, Math.min(1, t)) * 120)} 50% 34%)`;
   function cellValue(c, view, res, focus) {
-    if (view === "ev") { const v = focus != null ? c.ev[focus] : c.evm; return v == null ? null : { v, t: 0.5 + v / (2 * res.pot_bb), txt: (Math.abs(v) < 0.05 ? 0 : v).toFixed(1) }; }
+    if (view === "ev") { const v = focus != null ? c.ev[focus] : c.evm; return v == null ? null : { v, t: 0.5 + v / (2 * res.pot_bb), txt: (focus != null && rough(res, focus) ? "≈" : "") + (Math.abs(v) < 0.05 ? 0 : v).toFixed(1) }; }
     if (view === "equity") return c.eq == null ? null : { v: c.eq, t: c.eq, txt: (c.eq * 100).toFixed(0) };
     if (view === "eqr") { const v = eqr(c, res.pot_bb); return v == null ? null : { v, t: (v - 0.4) / 1.2, txt: v.toFixed(2) }; }
     return null;
@@ -141,7 +147,7 @@
   function gridHtml(res, ui) {
     const opp = oppOf(res, ui.who), g = opp ? opp.grid : res.grid, names = g.actions;
     const view = opp && ui.view !== "equity" ? "strategy" : ui.view, focus = opp ? null : ui.focus;
-    let h = `<div class="sy-grid${view === "strategy" ? "" : " sy-num"}">`;
+    let h = `<div class="sy-grid${view === "strategy" ? "" : " sy-num"}"${view === "ev" && focus != null && rough(res, focus) ? ` title="${ROUGH_TIP}"` : ""}>`;
     for (let i = 0; i < 13; i++) for (let j = 0; j < 13; j++) {
       const cls = classAt(i, j), c = g.cells[cls];
       let inner = "", style = "";
@@ -167,7 +173,7 @@
     res.actions.forEach((a, i) => {
       h += `<tr data-act="${i}" tabindex="0" class="${ui.focus === i ? "focus" : ""}" title="Play ${esc(label(a))}"><td><i class="sy-sw" style="background:${color(a.action)}"></i>${esc(label(a))}</td>`
         + `<td class="n"><span class="sy-mini"><span style="width:${(a.freq * 100).toFixed(1)}%;background:${color(a.action)}"></span></span>${pct(a.freq, 1)}</td>`
-        + `<td class="n">${a.combos.toFixed(1)}</td>${res.street === "preflop" ? "" : `<td class="n">${sgn(a.ev_bb)}</td>`}</tr>`;
+        + `<td class="n">${a.combos.toFixed(1)}</td>${res.street === "preflop" ? "" : a.rough_ev && a.ev_bb != null ? `<td class="n sy-rough" title="${ROUGH_TIP}">≈ ${sgn(a.ev_bb)}</td>` : `<td class="n">${sgn(a.ev_bb)}</td>`}</tr>`;
     });
     h += `</tbody></table><div class="sy-bar">${res.actions.map(a => a.freq > 0.0005 ? `<i style="width:${(a.freq * 100).toFixed(2)}%;background:${color(a.action)}" title="${esc(label(a))} ${pct(a.freq, 1)}"></i>` : "").join("")}</div>`;
     const f = res.filter;
@@ -187,14 +193,14 @@
     let h = `<div class="sy-dh"><b>${cls}</b> <span class="sy-mut">${num(c.w * n)} of ${n} combos</span>`;
     if (opp) return h + (c.eq != null ? ` · equity <b>${pct(c.eq, 1)}</b>` : "") + `</div>`;
     h += c.eq != null ? ` · EV <b>${sgn(c.evm)}</b> · eq <b>${pct(c.eq, 1)}</b> · EQR <b>${eqr(c, res.pot_bb).toFixed(2)}</b>` : "";
-    h += `</div><div class="sy-mix">${names.map((nm, a) => c.f[a] >= 0.005 ? `<span style="--c:${color(nm)}">${esc(nm)} <b>${pct(c.f[a])}</b>${c.ev ? ` <small>${sgn(c.ev[a])}</small>` : ""}</span>` : "").join("")}</div>`;
+    h += `</div><div class="sy-mix">${names.map((nm, a) => c.f[a] >= 0.005 ? `<span style="--c:${color(nm)}">${esc(nm)} <b>${pct(c.f[a])}</b>${c.ev ? ` ${roughEv(res, a, c.ev[a])}` : ""}</span>` : "").join("")}</div>`;
     const cs = (res.combos || {})[cls];
     if (!cs || !cs.length) return h;
     // (an answer at once has no combo's EVs: its combos by weight, the mix alone)
     const evs = cs.every(x => x[3]), evOf = (x) => x[2].reduce((t, f, a) => t + f * x[3][a], 0);
     h += `<table class="sy-cb"><thead><tr><th>Combo</th><th>Mix</th>${evs ? `<th class="n">EV</th><th class="n">Eq</th>` : ""}</tr></thead><tbody>`;
     for (const x of [...cs].sort(evs ? (a, b) => evOf(b) - evOf(a) : (a, b) => b[1] - a[1])) {
-      h += `<tr title="${names.map((nm, a) => `${nm} ${pct(x[2][a])}${evs ? ` (EV ${sgn(x[3][a])})` : ""}`).join(", ")}${x[1] < 0.999 ? ` · ${pct(x[1])} of it in the range` : ""}"><td class="sy-c">${cardsOf(x[0]).map(cardHtml1).join("")}${x[1] < 0.999 ? `<small>${pct(x[1])}</small>` : ""}</td>`
+      h += `<tr title="${names.map((nm, a) => `${nm} ${pct(x[2][a])}${evs ? ` (EV ${rough(res, a) ? "≈ " : ""}${sgn(x[3][a])})` : ""}`).join(", ")}${x[1] < 0.999 ? ` · ${pct(x[1])} of it in the range` : ""}${evs && names.some((_, a) => rough(res, a)) ? `. ≈: ${ROUGH_TIP}` : ""}"><td class="sy-c">${cardsOf(x[0]).map(cardHtml1).join("")}${x[1] < 0.999 ? `<small>${pct(x[1])}</small>` : ""}</td>`
         + `<td><span class="sy-mini wide">${names.map((nm, a) => x[2][a] > 0.0005 ? `<span style="width:${(x[2][a] * 100).toFixed(1)}%;background:${color(nm)}"></span>` : "").join("")}</span></td>`
         + (evs ? `<td class="n">${sgn(evOf(x))}</td><td class="n">${pct(x[4])}</td>` : "") + `</tr>`;
     }
@@ -336,7 +342,7 @@
     if (!cls) return `<div class="sy-hint">${paint.score ? "Hover or click a hand to compare." : "Hover a hand for its mix."}</div>`;
     const g = res.grid, c = g.cells[cls], names = g.actions, m = paint.f[cls];
     if (!c || !(c.w > 0)) return `<div class="sy-dh"><b>${cls}</b> <span class="sy-mut">not in ${esc(res.actor)}'s range here</span></div>`;
-    const mix = (f, ev) => `<div class="sy-mix">${names.map((nm, a) => f[a] >= 0.005 ? `<span style="--c:${color(nm)}">${esc(nm)} <b>${pct(f[a])}</b>${ev ? ` <small>${sgn(ev[a])}</small>` : ""}</span>` : "").join("")}</div>`;
+    const mix = (f, ev) => `<div class="sy-mix">${names.map((nm, a) => f[a] >= 0.005 ? `<span style="--c:${color(nm)}">${esc(nm)} <b>${pct(f[a])}</b>${ev ? ` ${roughEv(res, a, ev[a])}` : ""}</span>` : "").join("")}</div>`;
     let h = `<div class="sy-dh"><b>${cls}</b> <span class="sy-mut">${num(c.w * combosOf(cls))} of ${combosOf(cls)} combos</span></div><div class="sy-mut">Yours</div>${mix(m)}`;
     if (paint.score) {
       const x = paint.score.cells[cls];
@@ -643,7 +649,7 @@
     h += view === "breakdown" ? `<div class="sy-bd"></div>` : gridHtml(r, ui);
     h += `</div><div class="sy-right">${actionsHtml(r, ui)}<div class="sy-detail">${view === "breakdown" ? "" : detailHtml(r, ui, cls)}</div></div></div>`;
     // (no EV line under an answer at once without EVs: the stored flops', a format-1 turn file's)
-    h += `<div class="sy-note">${solverHtml(res)} ${pre || (res.approximate && res.range_ev_bb == null) ? "" : `EV: bb won from here relative to folding now${res.tournament ? " (a tournament's: in prize equity, as chips worth as much)" : ""}. ${res.range_eq == null ? (res.multiway ? "No equity 3-way before the river." : "")
+    h += `<div class="sy-note">${solverHtml(res)} ${pre || (res.approximate && res.range_ev_bb == null) ? "" : `EV: bb won from here relative to folding now${res.tournament ? " (a tournament's: in prize equity, as chips worth as much)" : ""}. ${(res.actions || []).some(a => a.rough_ev) ? "≈: an action the range almost never takes, whose EV is rough (usually lower than exact). " : ""}${res.range_eq == null ? (res.multiway ? "No equity 3-way before the river." : "")
       : res.multiway ? `Equity: the share of the pot at showdown against ${esc(res.opponent)}'s ranges. EQR: EV over equity × pot.` : `Equity: against ${esc(res.opponent)}'s range with the rest of the board dealt. EQR: EV over equity × pot.`}`}`
       + `${(res.notes || []).length ? `<br>${res.notes.map(esc).join("<br>")}` : ""}</div>`;
     return h;
@@ -711,6 +717,7 @@
       const t = document.createElement("div"); t.innerHTML = gridHtml(r, ui);
       const now = t.firstElementChild;
       g.className = now.className;
+      if (now.title) g.title = now.title; else g.removeAttribute("title");   // (the EV view on a rough_ev action: its tip)
       [...now.children].forEach((c, i) => { const o = g.children[i]; o.className = c.className; o.setAttribute("style", c.getAttribute("style")); o.innerHTML = c.innerHTML; });
     }
     if (d && view !== "breakdown") d.innerHTML = detailHtml(r, ui, ST.hover || ST.sel);
@@ -815,6 +822,7 @@
   .sy-fill i { display: block; height: 100%; }
   .sy-l { position: absolute; left: 2px; top: 1px; color: #fff; text-shadow: 0 0 3px #000; font-weight: 600; pointer-events: none; z-index: 1; }
   .sy-cell.pair .sy-l { color: #ffe9b0; }
+  .sy-rough { opacity: .7; }   /* an EV with a "≈" (rough_ev) */
   .sy-v { position: absolute; right: 2px; bottom: 1px; font-size: 9px; color: #fff; opacity: .9; pointer-events: none; font-variant-numeric: tabular-nums; }
   .sy-acts { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
   .sy-acts th { color: var(--muted); font-weight: 500; text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line2); font-size: 12px; }
