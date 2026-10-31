@@ -391,7 +391,7 @@ def main(argv=None):
     def held_share(sid, s):
         """The share of a pot's decisions a near read of spot `sid` answers: of the same pot, the hands its ranges hold
         (the two ranges' cover averaged; the rest are solved live); of another pot, every hand (class_fill), but for
-        tier 3's read (flop_approx.near_fill: the hands held, as for the same pot)."""
+        tiers 3 and 4's (flop_approx.near_fill: the hands held, as for the same pot)."""
         sp = next(x for x in lib.index()["spots"] if x["id"] == sid)
         if round(float(sp["pot"]), 2) != round(s["pot"], 2) and \
                 fa.near_fill(lib, np.asarray(s["ranges"][0]), np.asarray(s["ranges"][1]), s["pot"], s["stack"],

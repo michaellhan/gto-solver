@@ -806,9 +806,11 @@ class TestOtherGame(_Lib):
         about the same stack-to-pot ratio (tier 2: heads-up's raised pot and the ante's BTN vs BB off BTN vs BB, the
         ante's SB flatting the CO off CO vs BB and the HJ off HJ vs BB, 1.44 and 1.50 apart), else such a pot at
         another stack-to-pot ratio, read for the hands held alone (tier 3: a straddled SB vs UTG off SB vs BB, at 50bb
-        with an ante the BB's defence of the CO off BTN vs BB, not the SB vs BB, whose raiser's range is 83% held); a
-        lower tier wins over a nearer spot (the ante's UTG vs BB stays on HJ vs BB, not UTG vs BB's tier 2); outside
-        them nothing (the ante's UTG vs HJ, 0.53 apart; heads-up's 3bet pot)."""
+        with an ante the BB's defence of the CO off BTN vs BB, not the SB vs BB, whose raiser's range is 83% held), else
+        any pot at most 0.8 apart, held alone too (tier 4: the ante's UTG flatted by the HJ, 0.52 apart, and the HJ's
+        3bet of UTG); a lower tier wins over a nearer spot (the ante's UTG vs BB stays on HJ vs BB, not UTG vs BB's tier
+        2); outside them nothing (the ante's UTG flatted by the BTN, 61% of the BTN's range held; heads-up's 3bet pot;
+        6-max's BB cold-calling the BTN's 3bet of the CO, 0.85 apart)."""
         cases = [("SB:r3,BB:c", 2, {}, "srp_btn_bb", 2),
                  ("UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:c", 6, {"ante": 0.125}, "srp_btn_bb", 2),
                  ("UTG:f,HJ:f,CO:r2.5,BTN:f,SB:c,BB:f", 6, {"ante": 0.125}, "srp_co_bb", 2),
@@ -819,7 +821,10 @@ class TestOtherGame(_Lib):
                  ("UTG:f,HJ:f,CO:r2.5,BTN:f,SB:f,BB:c", 6, {"ante": 0.125, "stack": 50}, "srp_btn_bb", 3),
                  ("UTG:f,HJ:f,CO:f,BTN:f,SB:r3,BB:c", 6, {"ante": 0.125, "stack": 75}, None, None),
                  ("UTG:r2.5,HJ:f,CO:f,BTN:f,SB:f,BB:c", 6, {"ante": 0.125}, "srp_hj_bb", 0),
-                 ("UTG:r2.5,HJ:c,CO:f,BTN:f,SB:f,BB:f", 6, {"ante": 0.125}, None, None),
+                 ("UTG:r2.5,HJ:c,CO:f,BTN:f,SB:f,BB:f", 6, {"ante": 0.125}, "srp_utg_hj", 4),
+                 ("UTG:r2.5,HJ:r7.5,CO:f,BTN:f,SB:f,BB:f,UTG:c", 6, {"ante": 0.125}, "3bp_hj_utg", 4),
+                 ("UTG:r2.5,HJ:f,CO:f,BTN:c,SB:f,BB:f", 6, {"ante": 0.125}, None, None),
+                 ("UTG:f,HJ:f,CO:r2.5,BTN:r7.5,SB:f,BB:c,CO:f", 6, {}, None, None),
                  ("SB:r3,BB:r10,SB:c", 2, {}, None, None)]
         for line, n, game, sid, tier in cases:
             st = fl.spot_setup(line, n, **game)
@@ -836,7 +841,7 @@ class TestOtherGame(_Lib):
         self.assertEqual(rows["3bp_bb_btn"]["why"], "cover")          # (heads-up's 3bet pot: half its range unheld)
 
     def test_held_only(self):
-        """Tier 3's read answers the hands its spot's ranges hold alone (near_fill): the straddled SB's raise called by
+        """Tiers 3 and 4 answer the hands their spot's ranges hold alone (near_fill): the straddled SB's raise called by
         the straddler, off SB vs BB (whose big blind holds 84% of the straddler's range) at less than half its stack-to-
         pot ratio. The SB gets the entry's mix at once, nothing solved; the straddler, facing the SB's bet with a hand
         the big blind's range there doesn't hold (a suited ace it 3bets), has no answer at once (solved live)."""
@@ -847,6 +852,8 @@ class TestOtherGame(_Lib):
         self.assertFalse(fa.near_fill(*args, aggr=0))
         ante = fl.spot_setup("UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:c", 6, ante=0.125)   # (tier 2: filled)
         self.assertTrue(fa.near_fill(self.lib, ante["full0"], ante["full1"], ante["pot"], ante["stack"], aggr=1))
+        flat = fl.spot_setup("UTG:r2.5,HJ:c,CO:f,BTN:f,SB:f,BB:f", 6, ante=0.125)     # (tier 4: held alone)
+        self.assertFalse(fa.near_fill(self.lib, flat["full0"], flat["full1"], flat["pot"], flat["stack"], aggr=0))
         sp = next(s for s in self.lib.index()["spots"] if s["id"] == "srp_sb_bb")
         board = "KcJd2h"
         self.assertIn(board, sp["flops"])

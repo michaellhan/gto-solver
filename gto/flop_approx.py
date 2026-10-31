@@ -181,6 +181,20 @@ NEAR_POT_WIDE_SPR = (0.8, 1.25)
 NEAR_POT_HELD_COVER = 0.8
 NEAR_POT_HELD_RAISER = 0.85
 NEAR_POT_HELD_POT = 2.5
+# 4, any pot (a 3bet pot, an open flatted in position) covering each range by NEAR_POT_HELD_CLOSE_COVER and the
+# raiser's by NEAR_POT_HELD_RAISER, at most NEAR_POT_HELD_CLOSE_DIST apart and NEAR_POT_HELD_POT times the spot's pot,
+# read for the hands held alone as in tier 3. As above, 12 flops each: with an ante, the HJ's open flatted by the CO
+# off HJ vs CO (cover 0.88, distance 0.52) 0.185 against the live solve's 0.183, UTG's by the HJ off UTG vs HJ (0.84,
+# 0.52) 0.293 against 0.178, the HJ's 3bet of UTG and the SB's of the CO off those spots (0.87, 0.64; 0.88, 0.55)
+# 0.140 and 0.267 against 0.195 and 0.163; at 125-150bb BTN vs BB (0.75, 0.66), the SB's 3bet of the BTN and UTG's
+# open flatted by the HJ 0.155-0.230 against 0.172-0.232; a straddled CO's open flatted by the BTN off HJ vs CO (0.79,
+# 0.61) 0.206 against 0.144, at 200bb the SB flatting the BTN off CO vs SB (0.81, 0.79) 0.302 against 0.284; 6-max's
+# blinds' 3bets of the CO at 150bb off each other's (0.82, 0.68) 0.116-0.127 against 0.198; worst flop 0.21-0.73.
+# Left out, 0.8-1.0 apart: a straddled SB flatting the CO at 150bb (0.77, 0.95) 0.323, worst flop 1.00; the straddled
+# HJ's open flatted by the CO (0.78, 0.96) 0.235 against 0.159; 6-max's BB cold-calling the BTN's 3bet of the CO
+# (0.89, 0.85) 0.219 against 0.198 (so 6-max 100bb keeps its reads).
+NEAR_POT_HELD_CLOSE_COVER = 0.75
+NEAR_POT_HELD_CLOSE_DIST = 0.8
 # A pot of another table size that plays as one the library holds (8- and 9-max BTN, SB, CO and HJ vs the BB, BTN and
 # CO vs SB, the blinds' 3bets of the BTN and the CO, the BB's of the SB: the same pot and stack, the ranges entering the
 # flop a few combos apart) is read as the library's own solve (near_exact: flop_library.FlopLibrary.solution with that
@@ -310,6 +324,9 @@ def near_candidates(lib, full0: np.ndarray, full1: np.ndarray, pot: float, stack
         elif defends and c >= NEAR_POT_HELD_COVER and covers[aggr] >= NEAR_POT_HELD_RAISER and \
                 d <= NEAR_POT_WIDE_DIST and pot <= NEAR_POT_HELD_POT * float(sp["pot"]):
             row["tier"] = 3   # (read for the hands held alone: near_fill)
+        elif c >= NEAR_POT_HELD_CLOSE_COVER and covers[aggr] >= NEAR_POT_HELD_RAISER and \
+                d <= NEAR_POT_HELD_CLOSE_DIST and pot <= NEAR_POT_HELD_POT * float(sp["pot"]):
+            row["tier"] = 4   # (held alone too)
         else:
             row["why"] = "cover" if c < min(NEAR_POT_COVER, NEAR_POT_CLOSE_COVER, NEAR_POT_WIDE_COVER if wide else
                                             NEAR_POT_HELD_COVER if defends else 1.0) else "dist"
@@ -346,12 +363,12 @@ def _near_best(lib, full0, full1, pot, stack, exclude=None, aggr=None, players=6
 def near_fill(lib, full0: np.ndarray, full1: np.ndarray, pot: float, stack: float, aggr: Optional[int] = None,
               players: int = 6) -> bool:
     """Whether near_spot's read of this pot fills the hands its spot's ranges don't hold (class_fill): another pot's,
-    but for tier 3's (NEAR_POT_HELD_COVER: those hands are solved live, as for the same pot's)."""
+    but for tiers 3 and 4's (NEAR_POT_HELD_*: those hands are solved live, as for the same pot's)."""
     best = _near_best(lib, full0, full1, pot, stack, None, aggr, players)
     if not best:
         return False
     sp = next(x for x in lib.index().get("spots", []) if x["id"] == best[0])
-    return round(float(sp["pot"]), 2) != round(pot, 2) and best[1] != 3
+    return round(float(sp["pot"]), 2) != round(pot, 2) and best[1] < 3
 
 
 def near_exact(lib, full0: np.ndarray, full1: np.ndarray, pot: float, stack: float,
