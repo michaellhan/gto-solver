@@ -4147,7 +4147,8 @@ class Advisor:
                 cfg = self._cfg_with_real_sizes(st, oop, ip, eff)
                 taken: List[str] = []
                 hit = self._from_library(lib, full, sub_board, r0, r1, st, eff, cfg, oop, ip, notes,
-                                         holes=(hole, adv_hole), borrow=not custom, smoothing=self.prior_smoothing,
+                                         holes=(hole, adv_hole), borrow=not custom, players=len(positions),
+                                         smoothing=self.prior_smoothing,
                                          board=sub_board, rules=(0, 1), slow=slow_hu, taken=taken) \
                     if lib is not None and st.name == "flop" else None
                 if hit is not None:
@@ -4208,7 +4209,8 @@ class Advisor:
                 # it and the node is one it stores (else the live solve below)
                 w2, rl2, n2, tk = [], [], [], []
                 hit = self._from_library(lib, full, board, r0, r1, cur, eff, cfg, oop, ip, n2, holes=(hole,),
-                                         borrow=not custom, smoothing=self.prior_smoothing, only=1 - hero_p,
+                                         borrow=not custom, players=len(positions), smoothing=self.prior_smoothing,
+                                         only=1 - hero_p,
                                          widened=w2, board=board, rare_lines=rl2, taken=tk)
                 if hit is not None and self._presolving:
                     return {"skipped": "a flop-library spot"}   # (its answers are read off the entry, not solved)
@@ -6379,18 +6381,18 @@ class Advisor:
         return self._with_hero(r0, r1, hero_p, hole, [])
 
     def _from_library(self, lib, full, flop, r0, r1, st: StreetState, eff, cfg: Config, oop, ip, notes, holes=(),
-                      borrow=True, **walk_kw):
+                      borrow=True, players=6, **walk_kw):
         """(solution, node, r0, r1) walked from the library's solve of this flop (flop_library.LibrarySolution)
         when it holds the spot (the ranges entering the flop, pot, stack and tree) and every node of the line
         taken; else None. Where it doesn't, a spot whose ranges are that close (library_borrow: flop_approx.near_exact)
         is read as this pot's, the combos off its ranges left out but for the hands in `holes` (yours: None where one
-        is); not with `borrow` False (ranges of your own: their answer is a solve). The walk's notes go to `notes` only
-        when it is used."""
+        is); not with `borrow` False (ranges of your own: their answer is a solve); `players`: the table's size (only
+        another's spots are borrowed). The walk's notes go to `notes` only when it is used."""
         try:
             sol = lib.solution(full[0], full[1], flop, r0, r1, st.pot_start, eff, cfg)
             if sol is None and borrow and self.library_borrow and len(flop) == 3:
                 from .flop_approx import near_exact
-                ne = near_exact(lib, full[0], full[1], st.pot_start, eff)
+                ne = near_exact(lib, full[0], full[1], st.pot_start, eff, players)
                 if ne is not None:
                     need = [COMBO_INDEX[(min(h), max(h))] for h in holes if h]
                     sol = lib.solution(full[0], full[1], flop, r0, r1, st.pot_start, eff, cfg, borrow=ne, need=need)

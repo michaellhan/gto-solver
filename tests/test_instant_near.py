@@ -573,18 +573,25 @@ class TestNearExact(_Lib):
                  ("UTG:f,UTG1:f,LJ:f,HJ:f,CO:r2.5,BTN:f,SB:f,BB:c", 8): "srp_co_bb",
                  ("UTG:f,UTG1:f,LJ:f,HJ:r2.5,CO:f,BTN:f,SB:f,BB:c", 8): "srp_hj_bb",
                  ("UTG:f,UTG1:f,UTG2:f,LJ:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:c", 9): "srp_btn_bb",
-                 ("UTG:r2.5,UTG1:f,LJ:f,HJ:f,CO:f,BTN:f,SB:f,BB:c", 8): None,   # (0.46 apart: read approximately)
-                 ("UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:c", 6): None}               # (the library's own spot)
+                 ("UTG:r2.5,UTG1:f,LJ:f,HJ:f,CO:f,BTN:f,SB:f,BB:c", 8): "srp_utg_bb",   # (0.46 apart)
+                 ("UTG:f,UTG1:f,LJ:r2.5,HJ:f,CO:f,BTN:c,SB:f,BB:f", 8): "srp_utg_btn",
+                 ("UTG:f,UTG1:f,LJ:r2.5,HJ:r7.5,CO:f,BTN:f,SB:f,BB:f,LJ:c", 8): "3bp_hj_utg",
+                 ("UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:c", 6): None,               # (the library's own spot)
+                 ("UTG:r2.5,HJ:f,CO:f,BTN:r7.5,SB:f,BB:f,UTG:c", 6): None}      # (6-max's own pot: not borrowed)
         for (line, n), sid in cases.items():
             st = fl.spot_setup(line, n)
-            ne = fa.near_exact(self.lib, st["full0"], st["full1"], st["pot"], st["stack"])
+            ne = fa.near_exact(self.lib, st["full0"], st["full1"], st["pot"], st["stack"], n)
             self.assertEqual(ne and ne["spot"]["id"], sid, line)
             if ne is not None:
                 self.assertGreaterEqual(min(ne["cover"]), fa.NEAR_EXACT_COVER)
                 self.assertLessEqual(sum(ne["dist"]), fa.NEAR_EXACT_DIST)
+        # (the same 6-max pot as another table size's would read CO's 3bet of HJ: only another table size's spots)
+        st = fl.spot_setup("UTG:r2.5,HJ:f,CO:f,BTN:r7.5,SB:f,BB:f,UTG:c", 6)
+        self.assertEqual(fa.near_exact(self.lib, st["full0"], st["full1"], st["pot"], st["stack"], 8)["spot"]["id"],
+                         "3bp_co_hj")
         for game in ({"ante": 0.125}, {"straddle": True}, {"stack": 60}):   # (another pot or stack: never)
             st = fl.spot_setup("UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:c", 6, **game)
-            self.assertIsNone(fa.near_exact(self.lib, st["full0"], st["full1"], st["pot"], st["stack"]), game)
+            self.assertIsNone(fa.near_exact(self.lib, st["full0"], st["full1"], st["pot"], st["stack"], 8), game)
 
     def test_advice(self):
         """8-max BTN vs BB: the BB first to act and the BTN after a check get the 6-max spot's stored mix and EVs,
@@ -626,7 +633,7 @@ class TestNearExact(_Lib):
         own chart's, so the spot would be borrowed) goes to the flop's solve, not the 6-max spot."""
         from gto.cards import ALL_COMBOS
         st = fl.spot_setup(EIGHT_BTN, 8)
-        self.assertIsNotNone(fa.near_exact(self.lib, st["full0"], st["full1"], st["pot"], st["stack"]))
+        self.assertIsNotNone(fa.near_exact(self.lib, st["full0"], st["full1"], st["pot"], st["stack"], 8))
         text = ",".join(f"{cards_str(cb)}:{w:.4f}" for cb, w in zip(ALL_COMBOS, st["full0"]) if w > 1e-4)
         hand = {"players": 8, "stack": 100, "preflop": parse_actions(EIGHT_BTN), "board": BOARD, "turn": [],
                 "river": [], "hero": "BB", "hole": "Qh9h", "flop": []}
@@ -669,7 +676,7 @@ class TestNearExact(_Lib):
         """8-max SB vs BB: the SB's K4o isn't in the 6-max spot's range: left out of the ranges read, but as your
         hand the borrowed spot answers nothing (the flop is solved live)."""
         st = fl.spot_setup(EIGHT_SB, 8)
-        ne = fa.near_exact(self.lib, st["full0"], st["full1"], st["pot"], st["stack"])
+        ne = fa.near_exact(self.lib, st["full0"], st["full1"], st["pot"], st["stack"], 8)
         self.assertEqual(ne["spot"]["id"], "srp_sb_bb")
         ss = fl.spot_setup(ne["spot"]["line"])
         k4 = COMBO_INDEX[tuple(sorted(parse_cards("Kh4c")))]
@@ -710,6 +717,54 @@ class TestOtherGame(_Lib):
         # 6-max 100bb's own lines are as they were: a squeeze pot isn't read off a 3bet pot of another size
         sq = fl.spot_setup("UTG:f,HJ:f,CO:f,BTN:r2.5,SB:r10,BB:c,BTN:f")
         self.assertIsNone(fa.near_spot(self.lib, sq["full0"], sq["full1"], sq["pot"], sq["stack"], aggr=0))
+
+    def test_tiers(self):
+        """Where no spot covers each range by NEAR_POT_COVER, a nearer one covering less (tier 1: the ante's SB vs BB
+        off SB vs BB, the straddler's call of the BB's raise off it too), else a single-raised pot the BB defends at
+        about the same stack-to-pot ratio (tier 2: heads-up's raised pot and the ante's BTN vs BB off BTN vs BB); a
+        lower tier wins over a nearer spot (the ante's UTG vs BB stays on HJ vs BB, not UTG vs BB's tier 2); outside
+        them nothing (the ante's UTG vs HJ, 0.53 apart; heads-up's 3bet pot)."""
+        cases = [("SB:r3,BB:c", 2, {}, "srp_btn_bb", 2),
+                 ("UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:c", 6, {"ante": 0.125}, "srp_btn_bb", 2),
+                 ("UTG:f,HJ:f,CO:f,BTN:f,SB:r3,BB:c", 6, {"ante": 0.125}, "srp_sb_bb", 1),
+                 ("HJ:f,CO:f,BTN:f,SB:f,BB:r5,UTG:c", 6, {"straddle": True}, "srp_sb_bb", 1),
+                 ("UTG:r2.5,HJ:f,CO:f,BTN:f,SB:f,BB:c", 6, {"ante": 0.125}, "srp_hj_bb", 0),
+                 ("UTG:r2.5,HJ:c,CO:f,BTN:f,SB:f,BB:f", 6, {"ante": 0.125}, None, None),
+                 ("SB:r3,BB:r10,SB:c", 2, {}, None, None)]
+        for line, n, game, sid, tier in cases:
+            st = fl.spot_setup(line, n, **game)
+            last = [t.split(":")[0] for t in line.split(",") if t.split(":")[1].startswith("r")][-1]
+            aggr = (st["oop"], st["ip"]).index(last)
+            sp = fa.near_spot(self.lib, st["full0"], st["full1"], st["pot"], st["stack"], aggr=aggr)
+            self.assertEqual(sp and sp["id"], sid, line)
+            if sid is not None:
+                rows = {r["id"]: r for r in fa.near_candidates(self.lib, st["full0"], st["full1"], st["pot"],
+                                                               st["stack"], aggr=aggr)}
+                self.assertEqual(rows[sid]["tier"], tier, line)
+        rows = {r["id"]: r for r in fa.near_candidates(self.lib, st["full0"], st["full1"], st["pot"], st["stack"],
+                                                       aggr=0)}
+        self.assertEqual(rows["3bp_bb_btn"]["why"], "cover")          # (heads-up's 3bet pot: half its range unheld)
+
+    def test_heads_up(self):
+        """Heads-up's raised pot reads BTN vs BB's entry of the flop at once, approximately: a hand that spot's BB
+        range holds gets its own mix there, one it doesn't (the heads-up big blind defends wider) its hand class's."""
+        sp = next(s for s in self.lib.index()["spots"] if s["id"] == "srp_btn_bb")
+        board = "KhJd5c"
+        hand = {"players": 2, "stack": 100, "preflop": parse_actions("SB:r3,BB:c"), "board": board, "turn": [],
+                "river": [], "hero": "BB", "flop": []}
+        adv = advisor()
+        with mock.patch.object(A, "solve", side_effect=AssertionError("solved")):
+            held = adv.instant(dict(hand, hole="Qh9h"))
+            other = adv.instant(dict(hand, hole="7h2c"))
+        self.assertIn("another game's pot (5.5 bb, a stack-to-pot ratio of 17.7; this one 6 bb, 16.2)",
+                      held["approximate"]["label"])
+        self.assertNotIn("your hand isn't in that spot's range", held["approximate"]["label"])
+        names, mix = self.expected(board, "Qh9h", [], spot=sp)
+        self.assertEqual([a["action"] for a in held["actions"]], names)
+        self.assertTrue(np.allclose([a["freq"] for a in held["actions"]], mix, atol=0.0006))
+        self.assertIn("your hand isn't in that spot's range: the average mix there of its hand class",
+                      other["approximate"]["label"])
+        self.assertAlmostEqual(sum(a["freq"] for a in other["actions"]), 1.0, places=3)
 
     def test_instant(self):
         """The straddler first to act: the entry of the flop in BTN vs BB, another game's pot named; the BTN's c-bet

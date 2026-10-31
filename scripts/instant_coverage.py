@@ -381,7 +381,8 @@ def main(argv=None):
         """The library spot read as this pot's own (flop_approx.near_exact: another table size's), or None."""
         key = (fp0, fp1, round(s["pot"], 2), round(s["stack"], 2))
         if key not in exact_memo:
-            ne = fa.near_exact(lib, np.asarray(s["ranges"][0]), np.asarray(s["ranges"][1]), s["pot"], s["stack"])
+            ne = fa.near_exact(lib, np.asarray(s["ranges"][0]), np.asarray(s["ranges"][1]), s["pot"], s["stack"],
+                               a.players)
             exact_memo[key] = ne["spot"] if ne is not None and ne["spot"]["id"] in hu_prof else None
         return exact_memo[key]
 
@@ -399,7 +400,7 @@ def main(argv=None):
             best = max(rows, key=lambda r: (order.get(r["why"], -1), -(r["dist"] or 0.0)), default=None)
             why_memo[key] = {"pot": "another pot, no spot with the same preflop raiser",
                              "spr": "stack-to-pot ratio out of range", "ranges": "charts changed",
-                             "cover": "range cover under 90%", "dist": "ranges too far apart"}.get(
+                             "cover": "range cover too low", "dist": "ranges too far apart"}.get(
                 best and best["why"], "no spot")
         return why_memo[key]
 
