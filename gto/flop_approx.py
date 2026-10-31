@@ -257,15 +257,17 @@ def approx_solution(lib, full0: np.ndarray, full1: np.ndarray, board: Sequence[i
     active = np.nonzero((r0f > 0) | (r1f > 0))[0]
     # the hand class test made for hero's combo, else for every combo either range holds (the tree holds no other:
     # Study's whole range, a third to a fifth of them); predict's answer kept for the flop's next node (PRED_KEEP);
-    # the learned correction on the spot's own flops only (not another depth's or spot's: the model isn't fit for them)
+    # the learned correction on every read of stored flops most like this one (the spot's own, another spot's, another
+    # depth's), and on another spot's entry of the flop itself at the same depth (not another depth's: unmeasured)
     combos = np.unique(cmap[active]) if hole is None else np.array([cmap[COMBO_INDEX[(min(hole), max(hole))]]])
-    corr = not other and theta() is not None
+    corr = theta() is not None and (not other or any(d > 0 for *_, d in src)
+                                    or round(float(spot["stack"]), 2) == round(stack, 2))
     key = (spot["id"], fl.cards_str(canon), tuple((nm, d) for *_, nm, d in src), combos.tobytes(), corr)
     kept = lib.__dict__.setdefault("_approx_pred", OrderedDict())
     pred = kept.get(key)
     if pred is None:
         pred = predict([(e, m, w) for e, m, w, _, _ in src],
-                       board=list(canon) if any(d > 0 for *_, d in src) else None, combos=combos, correct=corr)
+                       board=list(canon) if corr or any(d > 0 for *_, d in src) else None, combos=combos, correct=corr)
         kept[key] = pred
         while len(kept) > PRED_KEEP:
             kept.popitem(last=False)

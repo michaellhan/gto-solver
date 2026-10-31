@@ -1916,36 +1916,50 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   advice's approximate flops first to act and after a check, at a pot read off another spot and another depth, Study's
   instant where it answers nothing).
 * **A library spot's flop the library doesn't store** (`instant_from_near`, `NEAR_UNTIL`; `gto/flop_approx.py`;
-  `Advisor.prefetch`). The flatted opens and the 3bet pots store 552 of the 1755 flops; on the other 1203 (10.2
-  points of the heads-up flop decisions: Precomputed flop library, Coverage) the page had nothing to show until the
-  flop's live solve answered. Now the flop's decisions are read at once off the spot's stored flops most like it,
-  marked approximate: the three nearest of the same pairing and suit pattern (`neighbours`; the ranks' summed gaps at
-  most 6, `MAX_DIST`), each carried over by card substitution (`card_map`: the flop's cards onto the stored flop's,
-  the other ranks in order, so KhJd6c read off KhJd5c plays a 6 as the 5 and 54 as 64), their mixes averaged per
-  combo with weights 1 / (1 + distance) (`predict`) over the images that hold the combo's hand class there (the made
-  hand and the draw, `breakdown.categorize`: 8h9h on KhJd6c, no pair and a backdoor straight draw, reads its images on
-  KhJd5c and KhQd6c, not the gutshot it is on KhJd7c; all of them where none does, `CLASS_EPS`; the advisor tests
-  only hero's combo, four lookups), facing a bet then corrected by a small learned model (below). It answers wherever
-  an entry stores the decision (the first decisions, facing a bet, facing a raise of it) on the line the hand took
-  (sizes at their nearest), until the flop's own solve in hand has run 50 iterations (`HU_CHECKS[0]`, from when
-  `instant_from_own` reads it); the page names the
-  flops it read. Nothing is solved for it (6-16 ms natively), and the worker fetches the three entries with the
-  flop's once it's known (the prefetch's dry run names them). `scripts/instant_coverage.py` counts these apart:
-  heads-up flop decisions answered at once 77.2% -> 87.5% with them (9.4 decisions per 100 hands; postflop 35.2% ->
-  39.9%, all decisions 83.9% -> 85.1%). Every other answer is unchanged (advise JSON identical on stored and unstored
-  flops and a limped pot; `instant` differs only where it now answers).
+  `Advisor.prefetch`). The flatted opens and the 3bet pots store 552 of the 1755 flops; on the other 1203 (10.2 points
+  of the heads-up flop decisions: Precomputed flop library, Coverage) the page had nothing to show until the flop's
+  live solve answered. Now the flop's decisions are read at once off the spot's stored flops most like it, marked
+  approximate: the three nearest of the same pairing and suit pattern (`neighbours`; the ranks' summed gaps at most 6,
+  `MAX_DIST`), each carried over by card substitution (`card_map`: the flop's cards onto the stored flop's, the other
+  ranks in order, so KhJd6c read off KhJd5c plays a 6 as the 5 and 54 as 64), their mixes averaged per combo with
+  weights 1 / (1 + distance) (`predict`) over the images that hold the combo's hand class there (the made hand and the
+  draw, `breakdown.categorize`: 8h9h on KhJd6c, no pair and a backdoor straight draw, reads its images on KhJd5c and
+  KhQd6c, not the gutshot it is on KhJd7c; all of them where none does, `CLASS_EPS`; the advisor tests only hero's
+  combo, four lookups), facing a bet then corrected by a small learned model (below). It answers wherever an entry
+  stores the decision (the first decisions, facing a bet, facing a raise of it) on the line the hand took (sizes at
+  their nearest), until the flop's own solve in hand has run 50 iterations (`NEAR_UNTIL`, from when
+  `instant_from_own` reads it); the page names the flops it read. Nothing is solved for it (6-16 ms natively), and the
+  worker fetches the three entries with the flop's once it's known (the prefetch's dry run names them).
+  `scripts/instant_coverage.py` counts these apart: heads-up flop decisions answered at once 77.2% -> 87.5% with them
+  (9.4 decisions per 100 hands; postflop 35.2% -> 39.9%, all decisions 83.9% -> 85.1%). Every other answer is
+  unchanged (advise JSON identical on stored and unstored flops and a limped pot; `instant` differs only where it now
+  answers).
 
-  EV given up (`scripts/bench_flop_approx.py`: a stored flop approximated from the spot's other stored flops, each
-  combo's mix priced by the entry's own EVs per action, weighted by the acting player's reach, % of the pot; per flop
-  over its stored decisions weighted by how often each comes; 18 of the 2310 flops have no stored flop within 6,
-  mostly trips, and get no answer; `knn3c`, the plain average `knn3` in brackets, on the library as it is now, before
-  the learned correction, below: a third less):
+
+  EV given up, priced by the flop's own library entry (`scripts/bench_flop_approx.py`; that flatters it: against a
+  reference the answer doesn't read, the answer as it reads now gives up 3-4x what its library entry says, below: a
+  stored flop approximated from the spot's other stored flops, each combo's mix priced by the entry's own EVs per
+  action, weighted by the acting player's reach, % of the pot; per flop over its stored decisions weighted by how
+  often each comes; 18 of the 2310 flops have no stored flop within 6, mostly trips, and get no answer; `knn3c`, the
+  plain average `knn3` in brackets, on the library as it is now, before the learned correction, below: a third less):
 
   | flops | per flop: mean / median / 90th pct / worst | first decisions: mean (90th) | facing a bet | facing a raise |
   |---|---|---|---|---|
   | the five flatted opens (600, each from the spot's other 551) | 0.18 / 0.06 / 0.32 / 5.3 (0.24 / 0.13 / 0.42 / 5.2) | 0.037 (0.088) | 0.41 (0.86); 0.60 | |
   | the eight 3bet pots (960) | 0.16 / 0.07 / 0.38 / 4.3 (0.24 / 0.16 / 0.50 / 4.3) | 0.029 (0.065) | 0.40 (0.91); 0.56 | 1.21 (2.78); 1.66 |
   | five vs-BB spots' flops outside the 552, from the 552 only (750: the case met) | 0.11 / 0.05 / 0.25 / 2.8 (0.18 / 0.12 / 0.36 / 2.8) | 0.015 (0.040) | 0.43 (1.17); 0.67 | |
+
+  These are priced by the library's own entry of the flop, a solve in the same tree as the stored flops the answer
+  reads, and that flatters them: priced by the flop solved live in the Accurate tree instead (600 iterations, a
+  reference neither the answer nor the library reads; `scripts/bench_flop_seed.py --truth accurate:600 --seed 11
+  --skip 80`: 80 stored flops of the flatted opens and the 3bet pots, over the combos the answer gives), the answer as
+  it reads now (hand classes, facing a bet corrected) gives up 0.24% of the pot per flop on the flatted opens and 0.20
+  on the 3bet pots (median 0.19 and 0.17) where their library entries price it at 0.065 and 0.059; uncorrected 0.27
+  and 0.24. The flop's live Fast solve gives up as much by its 50th iteration (below). That reference leans the other
+  way, toward the live solve: it is the browser's own model (hands bucketed on the turn and river), and the library's
+  entries another (the river dealt by 64 strength buckets a card, not the browser's hand buckets), so even the flop's
+  own library entry gives up 0.12-0.21 against it (`bench_flop_depth.py`'s rows at 100bb, below); the true error lies
+  between the two measures.
 
   The hand class test is better on 78% of the held-out flops by more than 0.01% of the pot, worse on 1.5% (the vs-BB
   spots' 85% and 0.1%): an image that plays another hand there (a gutshot for a backdoor draw, a pair for no pair)
@@ -1963,14 +1977,22 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   same measure at the stored decisions): the approximation 0.41-0.42 (mean), the solve 0.63-0.70 at 20 iterations,
   0.32-0.35 at 30, 0.21 at 40, 0.12-0.13 at 60, 0.07-0.09 from 100 on (its tree's own distance from the library's);
   better than the approximation on 40-44% of the flops at 30 iterations, 50-59% at 40, 68-81% at 60: hence
-  `NEAR_UNTIL`. With the opponent free to adapt (`scripts/bench_flop_approx_lock.py`: 24 stored flops of six spots
-  solved in the browser's Accurate tree, numpy, 300 iterations, then again with one player's stored flop decisions
-  locked and everything else free: that player's EV lost, % of the pot) the approximation loses 0.27 a player more
-  than the flop's own entry locked the same way (median 0.20, 90th percentile 0.60; in Fast's tree 0.28, 0.19, 0.62),
-  in line with the measure above; the entry itself loses 0.94 there (1.08 in Fast's), what a strategy from the
-  library's tree costs played in another: the measure's floor. In the browser (`scripts/bench_browser.mjs --early`,
-  one thread, the compiled core) the answer comes at 0.02 s and the flop's Fast solve at 0.4-1.1 s (flop-near,
-  flop-near-ip, flop-near-3bp).
+  `NEAR_UNTIL` at 50. Measured again as it answers now (`--seed 11 --skip 80`: 80 of these stored flops, none the
+  learned correction was fit on; each combo off its own hand class's images, facing a bet corrected; over the combos
+  it answers, the solve's too): priced by the library's entries the approximation (0.059-0.065) beats the solve even
+  converged (0.18-0.20 at 50 iterations, 0.09-0.11 at 100, 0.08-0.10 from 150 on), but it is read off that same
+  library. Priced instead by the flop solved live in the Accurate tree (`--truth accurate:600`, a reference neither
+  reads), the approximation gives up 0.20-0.24, the solve 0.51-0.52 at 30 iterations, 0.31-0.33 at 40, 0.21-0.24 at
+  50, 0.15-0.19 at 60, 0.07-0.10 at 100, 0.03-0.05 at 300; the approximation better on 31-32 of 40 flops at 40
+  iterations, 18-22 at 50, 13-14 at 60, 0-5 at 100: the crossover is the 50th iteration, and `NEAR_UNTIL` stays. With
+  the opponent free to adapt (`scripts/bench_flop_approx_lock.py`: 24 stored flops of six spots solved in the
+  browser's Accurate tree, numpy, 300 iterations, then again with one player's stored flop decisions locked and
+  everything else free: that player's EV lost, % of the pot) the approximation loses 0.27 a player more than the
+  flop's own entry locked the same way (median 0.20, 90th percentile 0.60; in Fast's tree 0.28, 0.19, 0.62), in line
+  with the measure above; the entry itself loses 0.94 there (1.08 in Fast's), what a strategy from the library's tree
+  costs played in another: the measure's floor. In the browser (`scripts/bench_browser.mjs --early`, one thread, the
+  compiled core) the answer comes at 0.02 s and the flop's Fast solve at 0.4-1.1 s (flop-near, flop-near-ip,
+  flop-near-3bp).
 
   Facing a bet or a raise a learned correction then adjusts the averaged mixes on the spot's own flops (`correct_mix`;
   `gto/flop_approx_model.py`, written by `scripts/train_flop_correction.py`; numpy). An average blurs: a combo whose
@@ -1982,41 +2004,60 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   it), and renormalizes. It is fit on 80 stored flops of each of the 18 spots, each read off the spot's other stored
   flops as above (the vs-BB spots' off the 552), to the EV given up plus 3 x the squared distance of the mixes from
   the entry's: 300 iterations of Adam, about ten minutes on one core. On each spot's other flops
-  (`bench_flop_approx.py --seen --seed 11 --skip 80`: 60 a spot, 1062 in all, the combos the advisor answers) per flop
-  0.090 -> 0.061% of the pot (median 0.049 -> 0.032, 90th percentile 0.20 -> 0.15), lower by over 0.01 on 61% of the
-  flops and higher on 0.8%: facing a bet 0.24 -> 0.15 (the flatted opens 0.21 -> 0.11, the 3bet pots 0.23 -> 0.15, the
-  vs-BB flops outside the 552 0.28 -> 0.19), facing a raise 0.92 -> 0.74. Held out by spot (`--folds 2`: each half's
-  nine spots corrected by the model fit on the other nine; 1435 flops) 0.100 -> 0.066 (median 0.059 -> 0.037, 90th
-  percentile 0.23 -> 0.15; lower on 64% of the flops, higher on 1%), the mixes a little closer to the entry's (total
-  variation, reach-weighted, 0.1225 -> 0.1215; closer by over 0.01 on 5% of the flops, further on 1%) and a little
-  purer: where the entry mixes (no action over 90%) 3-4% further from it, where it plays one action 7-8% closer. The
-  first decisions (the root, after a check) stay as averaged: corrected they gave up 8% more and mixed a little
-  further (0.119 -> 0.122). What didn't work: fit to the EV given up alone it gave up less still, but by tilting each
-  combo toward the action the entry's EVs price best, the mixes a quarter further from the entry's (a best response to
-  the solve's indifferences, not the solve); fit to the mixes alone (cross entropy, squared distance) it brought them
-  no closer and gave up more; finer class fallbacks (the made hand alone, then the draw) changed nothing. The reads at
-  another stack depth and off another spot (below) stay averaged, the model not fit for them. It costs under a
+  (`bench_flop_approx.py --seen --seed 11 --skip 80`: 60 a spot, 1062 in all, the combos the advisor answers; priced
+  by their library entries, as above) per flop 0.090 -> 0.061% of the pot (median 0.049 -> 0.032, 90th percentile 0.20
+  -> 0.15), lower by over 0.01 on 61% of the flops and higher on 0.8%: facing a bet 0.24 -> 0.15 (the flatted opens
+  0.21 -> 0.11, the 3bet pots 0.23 -> 0.15, the vs-BB flops outside the 552 0.28 -> 0.19), facing a raise 0.92 ->
+  0.74. Held out by spot (`--folds 2`: each half's nine spots corrected by the model fit on the other nine; 1435
+  flops) 0.100 -> 0.066 (median 0.059 -> 0.037, 90th percentile 0.23 -> 0.15; lower on 64% of the flops, higher on
+  1%), the mixes a little closer to the entry's (total variation, reach-weighted, 0.1225 -> 0.1215; closer by over
+  0.01 on 5% of the flops, further on 1%) and a little purer: where the entry mixes (no action over 90%) 3-4% further
+  from it, where it plays one action 7-8% closer. The first decisions (the root, after a check) stay as averaged:
+  corrected they gave up 8% more and mixed a little further (0.119 -> 0.122). What didn't work: fit to the EV given up
+  alone it gave up less still, but by tilting each combo toward the action the entry's EVs price best, the mixes a
+  quarter further from the entry's (a best response to the solve's indifferences, not the solve); fit to the mixes
+  alone (cross entropy, squared distance) it brought them no closer and gave up more; finer class fallbacks (the made
+  hand alone, then the draw) changed nothing. Priced by a reference it wasn't fit to, the flop solved live in the
+  Accurate tree (`scripts/bench_flop_seed.py --truth accurate:600 --seed 11 --skip 80`: 80 stored flops of the flatted
+  opens and the 3bet pots, none it was fit on, over the combos it answers), it still gives up less: 0.273 -> 0.243
+  (flatted opens), 0.239 -> 0.201 (3bet pots), lower by over 0.01 on 65 of the 80 flops and higher on 1. The reads off
+  another spot (below) take it too, none of them a read it was fit on: priced by the held-out spot's library entries,
+  off that spot's stored flops most like the flop (ten spots, each read off the one `near_spot` picks for it with it
+  left out; 40 flops each, on the spots of 552 none the model was fit on: `--protocol spot --seen --seed 11 --skip
+  80`, `nearxc` against `nearxcl`) 0.103 -> 0.075 (median 0.068 -> 0.047, 90th percentile 0.22 -> 0.18), lower on 63%
+  of the flops and higher on 1%; off its entry of the flop itself (`nearc` against `nearcl`) 0.035 -> 0.029 (median
+  0.020 -> 0.016, 90th percentile 0.085 -> 0.074), lower on 18% and higher on 0.5%; every spot lower on average both
+  ways. So do the reads at another stack depth off the spot's stored flops most like the flop, priced by the flop
+  solved at the hand's depth in the Accurate tree, a reference the answer doesn't read (`bench_flop_depth.py --knn`,
+  `knn100s` against `knn100cl`: eight spots, six flops each, solved at 40-150bb, 132 flops and depths inside the
+  gates) 0.299 -> 0.256 (median 0.248 -> 0.221, 90th percentile 0.63 -> 0.48), lower on 77% and higher on none
+  (single-raised pots 0.344 -> 0.281, 3bet pots 0.221 -> 0.212). The 100bb entry of the flop itself, read at another
+  depth, stays as stored: corrected it moved little (0.367 -> 0.364, lower on 20%, higher on 5%). It costs under a
   millisecond natively (hero's combo 0.9 ms; the whole range's read 147 -> 148 ms).
-* **A pot the library holds no spot for** (`flop_approx.near_spot`, `NEAR_COVER`, `NEAR_SPOT_DIST`). The HJ's and
-  the UTG's opens flatted by the SB or 3bet by either blind, and the BTN's 3bet of the UTG, have no spot of their own
+* **A pot the library holds no spot for** (`flop_approx.near_spot`, `NEAR_COVER`, `NEAR_SPOT_DIST`). The HJ's and the
+  UTG's opens flatted by the SB or 3bet by either blind, and the BTN's 3bet of the UTG, have no spot of their own
   (4.5% of the heads-up flop decisions): their flops were solved live with nothing shown meanwhile. They're now read
-  off the library spot whose ranges are nearest, marked approximate and named: one with the same pot and stack (so
-  the same tree) whose ranges each hold at least 90% of this pot's by weight (`NEAR_COVER`), the least summed
-  distance between them (each normalized, L1, at most 2: `NEAR_SPOT_DIST`). The blinds' 3bets of the HJ and the UTG
-  are read off their 3bets of the CO (`3bp_bb_co`, `3bp_sb_co`: cover 1.00, distance 0.92-1.23), the SB's flat of
-  either off its flat of the CO (`srp_co_sb`: 0.92, 1.39-1.63), the BTN's 3bet of the UTG off the CO's of the HJ
-  (`3bp_co_hj`: 0.98, 0.29). The CO's open flatted by the BTN has none (the nearest, the HJ's flatted by the CO,
-  covers 80%), nor do the 4bet pots. It reads that spot's entry of the flop where it stores it, else its three
-  stored flops most like it (as above), until the flop's own solve has run 50 iterations; the prefetch names the
-  entries, and the first such pot sets up the candidates' ranges once (~0.15 s natively). In the browser
-  (flop-near-other) the answer comes at 0.02 s, the Fast solve at 0.45 s. `scripts/instant_coverage.py`: heads-up
-  flop decisions answered at once 87.5% -> 91.9% (4.1 more decisions per 100 hands).
+  off the library spot whose ranges are nearest, marked approximate and named: one with the same pot and stack (so the
+  same tree) whose ranges each hold at least 90% of this pot's by weight (`NEAR_COVER`), the least summed distance
+  between them (each normalized, L1, at most 2: `NEAR_SPOT_DIST`). The blinds' 3bets of the HJ and the UTG are read
+  off their 3bets of the CO (`3bp_bb_co`, `3bp_sb_co`: cover 1.00, distance 0.92-1.23), the SB's flat of either off
+  its flat of the CO (`srp_co_sb`: 0.92, 1.39-1.63), the BTN's 3bet of the UTG off the CO's of the HJ (`3bp_co_hj`:
+  0.98, 0.29). The CO's open flatted by the BTN has none (the nearest, the HJ's flatted by the CO, covers 80%), nor do
+  the 4bet pots. It reads that spot's entry of the flop where it stores it, else its three stored flops most like it
+  (as above; facing a bet either corrected), until the flop's own solve has run 50 iterations;
+  the prefetch names the entries, and the first such pot sets up the candidates' ranges once (~0.15 s natively). In
+  the browser (flop-near-other) the answer comes at 0.02 s, the Fast solve at 0.45 s. `scripts/instant_coverage.py`:
+  heads-up flop decisions answered at once 87.5% -> 91.9% (4.1 more decisions per 100 hands).
+
 
   EV given up, holding out whole spots (for each library spot, the spot `near_spot` picks with it left out of the
-  index; 60 of its stored flops, the measure above priced by its own entries; per flop mean / median / 90th
-  percentile, first decisions in brackets; "met": the two by how often the picked spot stores the flop, 38% of the
-  time for those on 552 flops; the three most like it with the hand class test, 0.085-0.44 per flop before it, met
-  0.009-0.40):
+  index; 60 of its stored flops, the measure above priced by its own library entries (the library flatters it, as
+  above: against the Accurate tree's solve, `scripts/bench_flop_seed.py --truth accurate:600` with ten of these pairs
+  and six flops each, the read as answered gives up 0.14% of the pot per flop in single-raised pots and 0.27 in 3bet
+  pots, which these entries price at 0.017 and 0.046; the live Fast solve gives up 0.18 and 0.22 at its 50th
+  iteration); per flop mean / median / 90th percentile, first decisions in brackets; "met": the two by how often the
+  picked spot stores the flop, 38% of the time for those on 552 flops; the three most like it with the hand class
+  test, 0.085-0.44 per flop before it, met 0.009-0.40):
 
   | held out <- read off (cover, distance) | its entry of the flop | its three most like it | met |
   |---|---|---|---|
@@ -2057,7 +2098,8 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
 
   EV given up (`scripts/bench_flop_depth.py`: ten spots, six stored flops each, every flop solved at 60, 80, 125 and
   150bb and at 100bb in the browser's Accurate tree, natively, 300 iterations, each solve made an entry; each combo's
-  mix priced by the depth's entry's EVs as above; per flop mean / median / 90th percentile; inside the gates):
+  mix priced by the depth's entry's EVs as above, a reference the answer doesn't read (no library solve at that
+  depth); per flop mean / median / 90th percentile; inside the gates):
 
   | | the 100bb solve of the flop (the depth's own cost) | the library's entry (what's shown) | the spot's three stored flops most like it (a flop it doesn't store) |
   |---|---|---|---|
@@ -2073,7 +2115,8 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   the only spots there whose ranges the 100bb ones cover). Outside the gates: the pots under 90% cover 0.58-1.16
   (mean) at 40-50bb and 0.43-0.78 at 175-200bb, 3bet pots at 60bb (an SPR of 2.4) 1.3-1.9 with most of the entry's
   decisions not in the hand's tree, and 3bet pots at 125bb and deeper whose ranges the 100bb spot covers by 66-83%
-  0.5-1.2.
+  0.5-1.2. Facing a bet the read off the stored flops most like it (the last column) now takes the learned
+  correction (above): a seventh less given up in a second sample of 132 flops and depths.
 * **Your hand out of your range** (`Advisor._as_advised`). A hand the line's range doesn't hold (a preflop call or
   check the charts never make: the big blind flatting aces against the button, which it 3bets, or checking KQs
   behind a limp, which it raises) is solved on each street as a near-zero-weight combo (`_with_hero`). The next

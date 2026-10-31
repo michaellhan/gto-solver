@@ -13,6 +13,8 @@ player's reach x the predicted mix: only the average starts there, the iterates 
 both:S:W.
 
     python scripts/bench_flop_seed.py OUT.jsonl --spots srp_hj_co,3bp_bb_btn --n 6 --config fast --modes cold,regret:1
+    python scripts/bench_flop_seed.py OUT.jsonl --spots srp_hj_co,3bp_bb_btn --n 8 --modes cold --seed 11 --skip 80 \
+        --checkpoints 20,30,40,50,60,70,100
     python scripts/bench_flop_seed.py OUT.jsonl --report
 """
 from __future__ import annotations
@@ -97,8 +99,9 @@ def seeder(pred, mode: str, pot: float):
     return seed
 
 
-def measure(sol, e, reaches, pot):
-    """The solve's average mix at the entry's stored nodes, priced by the entry's EVs: (per-flop given-up, {path: loss})."""
+def measure(sol, e, reaches, pot, only=None):
+    """The solve's average mix at the entry's stored nodes, priced by the entry's EVs: (per-flop given-up, {path: loss}).
+    only: {path: predicted node}, priced over the combos the prediction answers there (bench_flop_approx's seen)."""
     act = sol.ctx.active
     num = den = 0.0
     per = {}
@@ -113,7 +116,11 @@ def measure(sol, e, reaches, pot):
         st = np.full((len(n.names), fa.N_COMBOS), np.nan)
         st[:, act] = n.avg_strategy()[0]
         r, share = reaches[path]
-        loss, _, _ = BA.given_up(nd, e["masks"][nd["player"]], r, st, pot)
+        if only is not None:
+            if path not in only:
+                continue
+            st[:, np.isnan(only[path]["strat"][0])] = np.nan
+        loss, _, _ = BA.given_up(nd, e["masks"][nd["player"]], r, st, pot, seen=only is not None)
         per["|".join(path)] = round(loss, 4)
         if share:
             num += share * loss
@@ -121,31 +128,48 @@ def measure(sol, e, reaches, pot):
     return (num / den if den else None), per
 
 
-def approx_loss(pred, e, reaches, pot):
+def approx_loss(pred, e, reaches, pot, seen=False):
     num = den = 0.0
     for nd in e["nodes"]:
         path = tuple(nd["path"])
         pr = pred.get(path)
         r, share = reaches[path]
-        if pr is None or not share:
+        if pr is None or not share or pr["names"] != list(nd["names"]):
             continue
-        loss, _, _ = BA.given_up(nd, e["masks"][nd["player"]], r, pr["strat"], pot)
+        loss, _, _ = BA.given_up(nd, e["masks"][nd["player"]], r, pr["strat"], pot, seen=seen)
         num += share * loss
         den += share
     return num / den if den else None
 
 
-def run_one(lib, spot, s, name, cfg_name, mode, cks):
+def truth_entry(spot, s, board, cfg_name, iters):
+    """The flop solved live (cfg_name's tree, iters iterations), as a decoded library entry: a reference of its own."""
+    cfg = config(cfg_name)
+    sol = S.solve(board, s["full0"], s["full1"], float(spot["pot"]), float(spot["stack"]), cfg=cfg, time_budget=1e9,
+                  max_iters=iters)
+    meta = {"spot": spot["id"], "fp": [fl.range_fp(s["full0"]), fl.range_fp(s["full1"])], "pot": float(spot["pot"]),
+            "stack": float(spot["stack"]), "tree": fl.tree_key(cfg), "board": fl.cards_str(board)}
+    return fl.decode(fl.encode(sol, meta))
+
+
+def run_one(lib, spot, s, name, cfg_name, mode, cks, truth=None, source=None):
     pot, stack = float(spot["pot"]), float(spot["stack"])
-    e = lib.entry(spot, name)
     board = parse_cards(name)
+    e = lib.entry(spot, name) if not truth else truth_entry(spot, s, board, truth.split(":")[0],
+                                                             int(truth.split(":")[1]))
     reaches = BA.node_reaches(e, s["full0"], s["full1"])
     others = [n for n in sorted(spot["flops"]) if n != name]
     src = []
-    for nm, m, d in fa.neighbours(others, board, fa.K):
+    if source is not None:   # (another spot's, as the advisor reads it: its entry of the flop, else those most like it)
+        src = [x[:3] for x in fa.sources(lib, source, list(board), same=True)]
+    for nm, m, d in fa.neighbours(others, board, fa.K) if source is None else ():
         if d <= fa.MAX_DIST:
             src.append((lib.entry(spot, nm), m, 1.0 / (1.0 + d)))
     pred = fa.predict(src)
+    # the approximation as the advisor answers now: each combo off its own hand class's images, facing a bet corrected,
+    # over the combos some source holds (the solve's checkpoints priced over the same combos too: loss_seen)
+    pcl = fa.predict(src, board=list(board), correct=True) if src else {}
+    pc = fa.predict(src, board=list(board)) if src else {}
     seed = None if mode == "cold" else seeder(pred, mode, pot)
     t0 = time.time()
     sol = S.solve(board, s["full0"], s["full1"], pot, stack, cfg=config(cfg_name), time_budget=1e9, max_iters=0,
@@ -158,10 +182,16 @@ def run_one(lib, spot, s, name, cfg_name, mode, cks):
         secs += time.time() - t0
         sol.iters = sol.solver.iters
         g, per = measure(sol, e, reaches, pot)
+        gs, _ = measure(sol, e, reaches, pot, only=pcl)
         pts.append({"it": ck, "s": round(secs, 2), "expl": round(sol.exploitability(), 4),
-                    "loss": None if g is None else round(g, 4), "nodes": per})
-    return {"spot": spot["id"], "flop": name, "cfg": cfg_name, "mode": mode, "build_s": round(build, 2),
-            "approx": round(approx_loss(pred, e, reaches, pot) or 0.0, 4), "pts": pts}
+                    "loss": None if g is None else round(g, 4), "loss_seen": None if gs is None else round(gs, 4),
+                    "nodes": per})
+    return {"spot": spot["id"], "flop": name, "cfg": cfg_name, "mode": mode, "truth": truth or "library",
+            "source": source["id"] if source is not None else None,
+            "build_s": round(build, 2),
+            "approx": round(approx_loss(pred, e, reaches, pot) or 0.0, 4),
+            "approx_c": round(approx_loss(pc, e, reaches, pot, seen=True) or 0.0, 4),
+            "approx_cl": round(approx_loss(pcl, e, reaches, pot, seen=True) or 0.0, 4), "pts": pts}
 
 
 def report(path):
@@ -190,6 +220,18 @@ def report(path):
                 c = np.array([[p["expl"] for p in d["cold"]["pts"]] for d in full])
                 print(f"  {'(worse than cold)':14s}  " + " ".join(f"{int(x):13d}" for x in (ex > c * 1.02).sum(axis=0)))
         print("  (exploitability geometric mean / given up at the stored nodes, mean; % of the pot)")
+        if all("approx_cl" in d["cold"] for d in full if "cold" in d):
+            cl = np.array([d["cold"]["approx_cl"] for d in full if "cold" in d])
+            c0 = np.array([d["cold"].get("approx_c", np.nan) for d in full if "cold" in d], dtype=float)
+            ls = np.array([[p.get("loss_seen") for p in d["cold"]["pts"]] for d in full if "cold" in d], dtype=float)
+            print(f"  as answered now (hand classes, the correction; the combos it answers): {cl.mean():.3f} (median "
+                  f"{np.median(cl):.3f}; uncorrected {np.nanmean(c0):.3f}, median {np.nanmedian(c0):.3f}; the "
+                  f"correction lower by over 0.01 on {int((cl < c0 - 0.01).sum())}, higher on "
+                  f"{int((cl > c0 + 0.01).sum())})")
+            print("  cold over the same combos "
+                  + " ".join(f"{c}: {v:.3f}" for c, v in zip(cks, np.nanmean(ls, axis=0)))
+                  + "; the approximation better on " + " ".join(f"{c}: {int((cl < ls[:, j]).sum())}/{len(cl)}"
+                                                                 for j, c in enumerate(cks)))
 
 
 def main(argv=None):
@@ -198,9 +240,13 @@ def main(argv=None):
     ap.add_argument("--spots", default="srp_hj_co,3bp_bb_btn")
     ap.add_argument("--n", type=int, default=6)
     ap.add_argument("--seed", type=int, default=2)
+    ap.add_argument("--skip", type=int, default=0, help="leave out the first SKIP flops of the shuffle (the learned "
+                    "correction's training flops on a spot of 552: --seed 11 --skip 80)")
     ap.add_argument("--config", default="fast")
     ap.add_argument("--modes", default="cold,regret:1")
     ap.add_argument("--checkpoints", default="5,10,20,40,70,100,150,200,300")
+    ap.add_argument("--truth", default="", help="CFG:ITERS: price against the flop solved live in that tree (e.g. "
+                    "accurate:600) instead of its library entry")
     ap.add_argument("--report", action="store_true")
     a = ap.parse_args(argv)
     if a.report:
@@ -213,16 +259,17 @@ def main(argv=None):
         for x in open(a.out):
             d = json.loads(x)
             done.add((d["spot"], d["flop"], d["cfg"], d["mode"]))
-    for sid in a.spots.split(","):
+    for item in a.spots.split(","):
+        sid, src_id = item.split("<") if "<" in item else (item, None)   # (TARGET<SOURCE: read off another spot)
         spot = spots[sid]
         s = BA.setup(sid)
         names = sorted(spot["flops"])
         random.Random(a.seed).shuffle(names)
-        for name in names[:a.n]:
+        for name in names[a.skip:a.skip + a.n]:
             for mode in a.modes.split(","):
                 if (sid, name, a.config, mode) in done:
                     continue
-                r = run_one(lib, spot, s, name, a.config, mode, cks)
+                r = run_one(lib, spot, s, name, a.config, mode, cks, a.truth, src_id and spots[src_id])
                 with open(a.out, "a") as f:
                     f.write(json.dumps(r) + "\n")
                 last = r["pts"][-1]

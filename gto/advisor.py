@@ -2255,11 +2255,16 @@ def instant_from_prev(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
 
 
 # A library spot's flop the library doesn't store is read off its stored flops most like it (instant_from_near) until
-# the flop's own solve in hand has run this many iterations, from when instant_from_own reads it: EV given up at the
-# stored decisions (scripts/bench_flop_seed.py: 104 of the flatted opens' and 3bet pots' stored flops solved live in
-# the Fast tree, priced by their entries' EVs, % of the pot) the stored flops like it 0.41-0.42 (mean), the solve
-# 0.63-0.70 at 20 iterations, 0.32-0.35 at 30, 0.21 at 40, 0.12-0.13 at 60 (better on 40-44%, 50-59%, 68-81% of the
-# flops at 30, 40, 60)
+# the flop's own solve in hand has run this many iterations, from when instant_from_own reads it.
+# scripts/bench_flop_seed.py (80 stored flops of the flatted opens and the 3bet pots, none the learned correction was
+# fit on, solved live in the Fast tree; EV given up at the stored decisions, over the combos the approximation
+# answers, % of the pot, mean), against the flop solved live in the Accurate tree (--truth accurate:600): the
+# approximation as answered (hand classes, facing a bet corrected) 0.20-0.24, the solve 0.31-0.33 at 40 iterations,
+# 0.21-0.24 at 50 (the approximation better on 18-22 of 40 flops), 0.07-0.10 at 100 (0-5 of 40), 0.03-0.05 from 300
+# on. Priced by the library's own entry instead the approximation (0.06) beats even the converged solve (0.08-0.10:
+# its tree's distance from the library's), but that reference is the approximation's own source. The crossover is the
+# 50th iteration (the approximation better on 13-14 of 40 at 60). Reads off another spot or at another depth hand over
+# there too.
 NEAR_UNTIL = HU_CHECKS[0]
 
 

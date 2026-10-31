@@ -90,9 +90,13 @@ const SPOTS = {
   // a library spot's flop it doesn't store: solved live, --early read off the stored flops most like it (instant_from_near)
   "flop-near": base({ hero: "HJ", hole: "AhQd", board: "KhJd6c", preflop: HJ_CO }),
   "flop-near-ip": base({ hero: "CO", hole: "JhTh", board: "KhJd6c", preflop: HJ_CO, flop: [X("HJ")] }),
+  // (facing a bet: the averaged mix takes flop_approx's learned correction, here fold 67% -> 87%)
+  "flop-near-bet": base({ hero: "HJ", hole: "Ah5h", board: "KhJd6c", preflop: HJ_CO, flop: [X("HJ"), B("CO", 4.88)] }),
   "flop-near-3bp": base({ hero: "BB", hole: "AhKd", board: "Qh8d5c", preflop: BB_3BET }),
   "flop-near-other": base({ hero: "BB", hole: "AhKd", board: "KhJd5c", preflop: BB_3BET_HJ }),   // (read off 3bp_bb_co's KcJd5h)
   "flop-near-80bb": base({ stack: 80, hero: "BB", hole: "Qh9h", board: "KhJd6c" }),   // (another depth: srp_btn_bb's KcJd6h)
+  // (another depth facing a bet: srp_hj_co's three stored flops most like it at 100bb, corrected)
+  "flop-near-80bb-bet": base({ stack: 80, hero: "HJ", hole: "Ah5h", board: "KhJd6c", preflop: HJ_CO, flop: [X("HJ"), B("CO", 4.88)] }),
   "flop-near-80bb-3bp": base({ stack: 80, hero: "BB", hole: "AhKd", board: "KhJd6c", preflop: BB_3BET }),   // (3bp_bb_btn's
                                                     // three stored flops most like it)
   "flop-2tone": base({ hero: "BB", hole: "JcTc", board: "9h8h6c" }),                          // not in it, two-tone
@@ -173,6 +177,8 @@ const SPOTS = {
   "study-flop-near": base({ board: "KhJd6c", preflop: HJ_CO, study: true }),
   "study-flop-near-x": base({ board: "8c7d5h", preflop: HJ_CO, flop: [X("HJ")], study: true }),
   "study-flop-near-3bp": base({ board: "KhJd6c", preflop: BB_3BET_HJ, study: true }),
+  // (3bp_bb_co's own entry of KhJd5c, the HJ facing a third-pot bet: corrected)
+  "study-flop-near-3bp-bet": base({ board: "KhJd5c", preflop: BB_3BET_HJ, flop: [B("BB", 6.77)], study: true }),
   "study-flop-near-80": base({ stack: 80, board: "Ks7d2c", study: true }),
   "study-flop-near-80-x": base({ stack: 80, board: "Ks7d2c", flop: [X("BB")], study: true }),
 };
@@ -377,8 +383,8 @@ async function runSpot(w, spot, speeds) {
       street: r.street, recommended: r.recommended ?? (r.study === "node" ? mixOf(r) : r.study === "runouts" ? `${r.street} report: ${(r.first || {}).actor} ${((r.first || {}).actions || []).join("/")}, ${(r.cards || []).length} cards` : undefined),
       error: m.error || r.error || (r.skipped ? "skipped: " + r.skipped : null),
       restarts: process.env.BENCH_FAIL || process.env.BENCH_MWFAIL ? w.restarts() : null,
-      early: m.part ? { s: m.part.early_s, recommended: m.part.recommended ?? mixOf(m.part), source: m.part.approximate.source,
-                        label: m.part.approximate.label } : null,
+      early: m.part ? { s: m.part.early_s, recommended: m.part.recommended ?? mixOf(m.part), mix: mixOf(m.part),
+                        source: m.part.approximate.source, label: m.part.approximate.label } : null,
       notes: (r.notes || []).filter((n) => process.env.BENCH_ALL_NOTES || /equilibrium|solved|iterations|rules/.test(n)).map((n) => n.slice(0, 160)),
     }));
     if (speed === "fast") fastSeconds = r.seconds;
@@ -440,7 +446,7 @@ for (const spot of flag("session") ? [spots.join(",")] : spots) {
                             `${r.cells ? "  cells " + (r.cells / 1e6).toFixed(1) + "M" : ""}` +
                             `${r.precomputed ? "  library" : ""}${r.lib_fetches ? "  sync-fetches " + r.lib_fetches : ""}${r.error ? "  ERROR " + r.error : ""}` +
                             `${r.restarts ? "  restarts: " + r.restarts : ""}` +
-                            (r.early ? `\n             approximate at ${r.early.s} s: ${r.early.recommended} (${r.early.label}); the answer: ${r.recommended}` : "") +
+                            (r.early ? `\n             approximate at ${r.early.s} s: ${r.early.recommended} [${r.early.mix}] (${r.early.label}); the answer: ${r.recommended}` : "") +
                             (r.gap != null ? `\n             the move ${r.gap} s in; ${r.presolve ? `presolve ${r.presolve.presolved ? "ran its budget, " + r.presolve.iterations + " iterations" : r.presolve.cancelled ? "stopped" : "skipped"} (${r.presolve.s} s)` : "no presolve"}; answered ${r.wall} s after it: ${r.recommended}` : "") +
                             (r.notes.length ? "\n             " + r.notes.join("\n             ") : "")
                           : `${r.spot}: worker setup ${r.setup} s${r.stages ? " (" + Object.entries(r.stages).filter(([k]) => k !== "total").map(([k, v]) => `${k} ${v}`).join(", ") + ")" : ""}, heap ${r.heap_mb} MB`);

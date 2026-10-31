@@ -254,6 +254,52 @@ class TestCorrection(_Lib):
             moved.append(not np.allclose(want, plain["strat"][:, i], atol=0.002))
         self.assertTrue(moved[0] or moved[1])   # (it moves something)
 
+    def test_other_spot_and_depth(self):
+        """Facing a bet a pot read off another spot takes the correction (BB 3bets the HJ, read off BB 3bet vs CO's
+        stored flops most like KhJd6c, which it doesn't store, and its own entry of KhJd5c), as does one at another
+        depth read off its 100bb stored flops most like the flop (80bb BB 3bet vs BTN on KhJd6c); not the 100bb entry
+        of the flop itself (KhJd5c)."""
+        th = fa.theta()
+        if th is None:
+            self.skipTest("no gto/flop_approx_model.py")
+        bb3 = "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:r10,BTN:c"
+        holes = ("AhQd", "JhTh", "9h9s", "AhKc", "Ah5h", "QdTd")
+        moved = []
+        for line, depth, sid, hero, board, stored, corrected in (
+                (HJ_BB3, 100, "3bp_bb_co", "HJ", BOARD, False, True),
+                (HJ_BB3, 100, "3bp_bb_co", "HJ", "KhJd5c", True, True),
+                (bb3, 80, "3bp_bb_btn", "BTN", BOARD, False, True),
+                (bb3, 80, "3bp_bb_btn", "BTN", "KhJd5c", True, False)):
+            sp = next(x for x in self.lib.index()["spots"] if x["id"] == sid)
+            st = fl.spot_setup(line, 6, depth)
+            canon, smap = fl.canonical(parse_cards(board))
+            self.assertEqual(fl.cards_str(canon) in sp["flops"], stored)
+            srcs = [(self.lib.entry(sp, nm), m, 1.0 / (1 + d))
+                    for nm, m, d in fa.neighbours(sorted(sp["flops"]), list(canon), 1 if stored else fa.K)]
+            hand = {"players": 6, "stack": depth, "preflop": parse_actions(line), "board": board, "turn": [],
+                    "river": [], "hero": hero, "flop": [B("BB", round(0.33 * st["pot"], 2))]}
+            adv, answered = advisor(), 0
+            for hole in holes:
+                res = adv.instant(dict(hand, hole=hole))
+                if res is None:   # (a hand the caller's range doesn't hold)
+                    continue
+                answered += 1
+                self.assertEqual(res["approximate"]["source"], "near")
+                i = int(fl.combo_map(smap)[COMBO_INDEX[tuple(sorted(parse_cards(hole)))]])
+                plain = fa.predict(srcs, board=list(canon), combos=[i])[("bet 33%",)]
+                want = plain["strat"][:, i]
+                if corrected:
+                    f = fa.correction_features(list(canon), srcs, np.array([i]))
+                    want = fa.correct_mix(th, plain["names"], ("bet 33%",), plain["player"], plain["strat"][:, [i]],
+                                          f)[:, 0]
+                    moved.append(not np.allclose(want, plain["strat"][:, i], atol=0.002))
+                got = np.array([a["freq"] for a in res["actions"]])
+                self.assertTrue(np.allclose(got, want, atol=0.0006), (sid, board, hole, got, want))
+            self.assertGreater(answered, 2, (sid, board))
+            if corrected:
+                self.assertTrue(any(moved), (sid, board))
+                moved = []
+
     def test_mixes(self):
         """Every combo's corrected mix is a mix; combos no source holds stay unanswered (NaN); without the board (a
         stored flop's own entry) nothing is corrected."""

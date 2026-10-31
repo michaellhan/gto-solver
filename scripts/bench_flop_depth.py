@@ -1,15 +1,15 @@
 """A library spot's flop at another stack depth, answered by its 100bb solve: what that gives up.
 
-The flop library holds 100bb spots only; the same preflop line at 60 or 150bb has nearly the same ranges and pot and
-a different stack behind. Here a spot's flop is solved at each depth (the browser's Fast or Accurate tree, natively,
-one thread) and at 100bb, each solve made an entry (flop_library.encode: the decisions an entry stores, with each
-action's EV). The 100bb solve's mixes ("solve100": the depth's own cost), the 100bb library entry's ("lib100": what
-an answer read off the library gives, its tree's distance from this one included) and, with --knn, the spot's three
-stored flops most like it other than itself ("knn100": a flop the spot doesn't store, read as flop_approx.predict
-reads it) are each priced by the depth's entry (bench_flop_approx.given_up: each combo's mix priced by the EVs per
-action, the acting player's reach, % of the pot; per flop over the stored decisions by how often each comes). At
-100bb itself lib100 is the measure's floor.
-One JSON line a (spot, flop, depth) to OUT; resumable.
+The flop library holds 100bb spots only; the same preflop line at 60 or 150bb has nearly the same ranges and pot and a
+different stack behind. Here a spot's flop is solved at each depth (the browser's Fast or Accurate tree, natively, one
+thread) and at 100bb, each solve made an entry (flop_library.encode: the decisions an entry stores, with each action's
+EV). The 100bb solve's mixes ("solve100": the depth's own cost), the 100bb library entry's ("lib100": what an answer
+read off the library gives, its tree's distance from this one included) and, with --knn, the spot's three stored flops
+most like it other than itself ("knn100": a flop the spot doesn't store, read as flop_approx.predict reads it; knn100s
+the same over the combos those flops hold, as the advisor answers; knn100cl and lib100cl those with the learned
+correction) are each priced by the depth's entry (bench_flop_approx.given_up: each combo's mix priced by the EVs per
+action, the acting player's reach, % of the pot; per flop over the stored decisions by how often each comes). At 100bb
+itself lib100 is the measure's floor. One JSON line a (spot, flop, depth) to OUT; resumable.
 
     python scripts/bench_flop_depth.py OUT.jsonl --spots srp_btn_bb,3bp_bb_btn --depths 60,80,150 --n 6
     python scripts/bench_flop_depth.py OUT.jsonl --report
@@ -58,8 +58,9 @@ def as_pred(e):
     return fa.predict([(e, np.arange(52), 1.0)])
 
 
-def price(truth, s, pred, pot):
-    """(per-flop given up, {path: (share, loss, unseen)}) of pred's mixes at the truth entry's stored nodes."""
+def price(truth, s, pred, pot, seen=False):
+    """(per-flop given up, {path: (share, loss, unseen)}) of pred's mixes at the truth entry's stored nodes (seen: over
+    the combos some source holds an image of, bench_flop_approx.given_up's)."""
     reaches = BA.node_reaches(truth, s["full0"], s["full1"])
     num = den = 0.0
     per = {}
@@ -70,7 +71,7 @@ def price(truth, s, pred, pot):
         if pr is None or pr["names"] != list(nd["names"]):
             per["|".join(path)] = {"share": share, "missing": True}
             continue
-        loss, _, unseen = BA.given_up(nd, truth["masks"][nd["player"]], r, pr["strat"], pot)
+        loss, _, unseen = BA.given_up(nd, truth["masks"][nd["player"]], r, pr["strat"], pot, seen=seen)
         per["|".join(path)] = {"share": share, "loss": round(loss, 4), "unseen": round(unseen, 4)}
         if share:
             num += share * loss
@@ -113,8 +114,12 @@ def run(a):
                            for nm, m, dd in fa.neighbours([n for n in names if n != name], board, fa.K)
                            if dd <= fa.MAX_DIST]
                     preds.append(("knn100", fa.predict(src, board=list(board)) if src else {}))
+                    preds.append(("knn100s", preds[-1][1]))   # (over the combos the sources hold, as the advisor)
+                    preds.append(("knn100cl", fa.predict(src, board=list(board), correct=True) if src else {}))
+                    preds.append(("lib100cl", fa.predict([(lib100, np.arange(52), 1.0)], board=list(board),
+                                                         correct=True)))
                 for key, pred in preds:
-                    g, per = price(ed, s, pred, s["pot"])
+                    g, per = price(ed, s, pred, s["pot"], seen=key in ("knn100s", "knn100cl"))
                     rec[key] = None if g is None else round(g, 4)
                     rec[key + "_nodes"] = per
                 with open(a.out, "a") as f:
@@ -155,7 +160,7 @@ def report(path):
             continue
         floor = [x["lib100"] for x in rows if x["depth"] == 100.0 and x["spot"][:3] == kind and x["lib100"] is not None]
         cols = []
-        for key in ("solve100", "lib100", "knn100"):
+        for key in ("solve100", "lib100", "lib100cl", "knn100", "knn100s", "knn100cl"):
             v = np.array([r[key] for r in sel if r.get(key) is not None])
             if not len(v):
                 continue
