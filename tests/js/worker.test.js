@@ -74,12 +74,12 @@ test("at most four looks, then the answer", async () => {
   assert.deepEqual(plain(mine.at(-1)), { id: 4, result: { recommended: "check" } });
 });
 
-test("the speeds' looks: Fast at the 100th iteration, Accurate at the 100th and 300th (flop and turn)", async () => {
+test("the speeds' looks: Fast at the 100th iteration and at the 200th-400th, Accurate at the 100th, 300th and 600th (flop and turn)", async () => {
   const w = loadWorker({});
   await w.send({ ping: 1 });
   for (let k = 0; k < 5 && !w.ran.some((c) => c.includes("first_look")); k++) await tick();
   const cfg = w.ran.find((c) => c.includes("first_look"));
-  assert.ok(cfg.includes("advs['fast'].first_look = {'flop': (100,), 'turn': (100,)}"));
-  assert.ok(cfg.includes("advs['accurate'].first_look = {'flop': (100, 300), 'turn': (100, 300)}"));
+  assert.ok(cfg.includes("advs['fast'].first_look = {'flop': (100, 200, 300, 400), 'turn': (100, 200, 300, 400)}"));
+  assert.ok(cfg.includes("advs['accurate'].first_look = {'flop': (100, 300, 600), 'turn': (100, 300, 600)}"));
   assert.match(w.ran.find((c) => c.includes("def progress")), /def progress\(st\):\n    try:\n        r = advs\.get\(st\.get\('speed'\), advs\['fast'\]\)\.progress\(st\)\n    except Cancelled:\n        r = \{'result': \{'cancelled': True\}\}\n    except Exception:\n        r = None/);
 });

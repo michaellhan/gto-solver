@@ -87,6 +87,34 @@ class TestProgress(unittest.TestCase):
         self.assertEqual(got[2]["result"]["solver"]["iterations"], 1000)
         self.assertFalse(got[2]["result"].get("approximate"))
 
+    def test_a_look_where_a_check_fails(self):
+        """A look at one of the settled stop's checks where the solve isn't settled there and runs on (the 300th at a
+        target of 0.05% of the pot, which the 400th meets): read there; the answer the same as without looks."""
+        cold = advisor(settled=0.05).advise(TURN)
+        self.assertEqual(cold["solver"]["iterations"], 400)
+        adv = advisor((100, 300, 400), settled=0.05)
+        with mock.patch.object(A, "LOOK_MIN_S", 0.0):
+            got = [adv.progress(TURN) for _ in range(3)]
+        self.assertEqual([g["partial"]["approximate"]["iterations"] for g in got[:2]], [100, 300])
+        self.assertEqual(list(got[2]), ["result"])   # (settled at the 400th: no look there)
+        self.assertEqual(got[2]["result"]["solver"]["iterations"], 400)
+        self.assertEqual(json.dumps(got[2]["result"]["actions"]), json.dumps(cold["actions"]))
+
+    def test_a_look_passed_by_keeps_the_later_ones(self):
+        """A look passed by (too near where the solve next may stop: _looked) goes on to the next look, not straight
+        to the answer."""
+        adv = advisor((100, 200, 300), settled=None)
+        real = A.Advisor._looked
+
+        def looked(self, sol, look, first):   # (the 200th's passed by)
+            return sol.solver.iters != 200 and real(self, sol, look, first)
+        with mock.patch.object(A, "LOOK_MIN_S", 0.0), mock.patch.object(A.Advisor, "_looked", looked):
+            got = [adv.progress(TURN) for _ in range(2)]
+            self.assertEqual(turn_iters(adv), [300])
+            got.append(adv.progress(TURN))
+        self.assertEqual([g["partial"]["approximate"]["iterations"] for g in got[:2]], [100, 300])
+        self.assertEqual(got[2]["result"]["solver"]["iterations"], 1000)
+
     def test_study_looks(self):
         """Study's turn: each look the actor's whole range off the solve so far, nothing solved past it (a "node"
         answer: the grid, the combos and the range's frequencies, marked approximate, no EVs or equities), then

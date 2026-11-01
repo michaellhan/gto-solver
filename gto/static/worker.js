@@ -264,12 +264,13 @@ const ready = (async () => {
              // busy or slow, a big tree, or the compiled core failed twice and numpy answered: 5-7% on a Fast turn)
              + `advs['fast'].expl_target = ${THREADED ? 0.2 : 0.3}; advs['accurate'].expl_target = 0.1; `
              // a live flop or turn shows its answer so far while it solves (Advisor.progress, first_look: the solve
-             //   stopped and read at these iterations, where it has at least advisor.LOOK_MIN_S left to its first check;
-             //   the answer the same): Fast at the 100th (32 turns: the mix 15 points per combo off a 1000-iteration
-             //   solve's, 0.02% of the pot given up; the answer, settled at 300-400, 4.4 and 0.005), Accurate at the
-             //   100th and 300th (5.2, 0.005) of its 1000
-             + "advs['fast'].first_look = {'flop': (100,), 'turn': (100,)}; "
-             + "advs['accurate'].first_look = {'flop': (100, 300), 'turn': (100, 300)}; "
+             //   stopped and read at these iterations, where it has at least advisor.LOOK_MIN_S left to where it next
+             //   may stop, and isn't settled there; the answer the same): Fast at the 100th (32 turns: the mix 15
+             //   points per combo off a 1000-iteration solve's, 0.02% of the pot given up; the answer, settled at
+             //   300-400, 4.4 and 0.005) and at the 200th, 300th and 400th where it runs on past them (8.0 and 0.007,
+             //   5.2 and 0.005, 3.6 and 0.004), Accurate at the 100th, 300th and 600th (1.8 and 0.004) of its 1000
+             + "advs['fast'].first_look = {'flop': (100, 200, 300, 400), 'turn': (100, 200, 300, 400)}; "
+             + "advs['accurate'].first_look = {'flop': (100, 300, 600), 'turn': (100, 300, 600)}; "
              // a shallow turn (at most 4.5 x the pot behind: a 3bet pot's) bets 33/75% in Fast, not 33/125% (gto/native.py
              // FAST_SPR_SIZES: four 3bet turns 1.96% of the pot off per combo -> 0.80 at 8 s, frequencies 6.8 points -> 2.0);
              // with threads Accurate's tree there too

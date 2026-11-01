@@ -101,8 +101,8 @@ While a heads-up turn or river solves in the browser, an approximate answer read
 flop's for the turn, the turn's for the river, or the street's own from your earlier decision; after a library flop,
 its precomputed solve's own turn, where the library has stored it) shows at once under the progress bar, marked
 approximate, until the answer replaces it. A flop or turn solved live then shows its own solve so far the same way
-(Fast at its 100th iteration, about half way to the answer; Accurate at its 100th and 300th), where the answer is
-more than a second off. In position, the street is solved while your
+(Fast at its 100th iteration, about half way to the answer, and at its 200th, 300th and 400th where it runs on past
+them; Accurate at its 100th, 300th and 600th), where the answer is more than a second off. In position, the street is solved while your
 opponent is to act, so the time you take entering their move counts toward the answer (a limped pot's turn answers
 in 3.2-3.4 s with the move entered 4 s in, against 7.0-7.3 s otherwise).
 The panel shows the recommended action with its size (preflop: 2.5bb
@@ -326,7 +326,7 @@ street before's solve's own play of it for every combo (the flop solve's turn by
 size; the turn solve's river at its river sizes), marked approximate with that solve's iterations and distance from
 equilibrium, while the street's own solve runs (0.02-0.07 s in the browser on one thread, where the turn's solve takes 1.6-27 s); no EVs or equities until it lands.
 A flop or turn Study solves live then shows that solve so far the same way where the answer is more than a second off,
-the whole range's mix at its 100th iteration (Accurate also at its 300th), with its iterations and distance from
+the whole range's mix at the same looks, with its iterations and distance from
 equilibrium (a limped pot's turn, its flop solved first: at 3.6 s, the answer at 5.8, in the browser on one thread).
 Preflop it shows the charts' mix (no EVs or equities), or with **Solver** a solve of the game's preflop with every
 hand's EVs (below). After the flop it browses heads-up, 3-way and 4-way pots (a pot
@@ -2197,9 +2197,10 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   EVs) and goes on; the worker posts each look as a partial, the page shows it as it does the approximate answer, and
   the answer replaces it. Study the same for the actor's whole range (`Advisor._study_look`: Study's answer off the
   solves in hand as they stand, a runout report's held mode, nothing solved; the mix alone, its equities not worked
-  out; built in 0.02-0.05 s natively). Fast looks at the 100th iteration, Accurate at the 100th and 300th of its
-  1000, on the flop and the turn; only where the solve has at least a second left to its first check at its pace so far (the core's
-  time an iteration), so a quick solve answers as before (at half a second a 3bet pot's turn showed its look 0.5 s
+  out; built in 0.02-0.05 s natively). Fast looks at the 100th iteration and at the 200th, 300th and 400th
+  where it isn't settled there, Accurate at the 100th, 300th and 600th of its 1000, on the flop and the turn; only
+  where the solve has at least a second left at its pace so far (the core's time an iteration) to where it next may
+  stop (the settled stop's next check; Accurate's 1000th), so a quick solve answers as before (at half a second a 3bet pot's turn showed its look 0.5 s
   before its answer). The answer is the same solve to the last digit (DCFR weighs by the iteration count, however the
   iterations are split: tests/test_progress.py checks it against a request without looks), and its time is the same
   within the runs' noise (below). Not where the approximate answer isn't offered (above), nor on a river (quick) or a
@@ -2213,7 +2214,10 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   | | mix, points per combo | EV given up: mean (worst node) | range frequencies, points |
   |---|---|---|---|
   | the 100th iteration (Fast's look, Accurate's first) | 15.4 | 0.022 (0.149) | 9.0 |
-  | the 300th (Accurate's second) | 5.2 | 0.005 (0.022) | 2.4 |
+  | the 200th (Fast's, where it runs on) | 8.0 | 0.007 (0.031) | 4.0 |
+  | the 300th (Accurate's second; Fast's where it runs on) | 5.2 | 0.005 (0.022) | 2.4 |
+  | the 400th (Fast's where it runs on) | 3.6 | 0.004 (0.020) | 1.5 |
+  | the 600th (Accurate's third) | 1.8 | 0.004 (0.017) | 0.6 |
   | Fast's answer (settled at 0.2%: 300-400 iterations) | 4.4 | 0.0045 (0.020) | 1.9 |
 
   About as close as the stored turn's 100th-iteration row above (0.02), and closer than the previous street's view
@@ -2241,7 +2245,12 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   browser (one thread, Fast, two runs each; the look / the answer before -> after): a limped pot's turn first to act
   (nothing at once: its flop is solved in the same request) 3.66 / 5.74 -> 5.81 s, in position after a check 3.63 /
   5.81 -> 5.79; HJ vs CO's turn after a flop read off its nearest stored flops no look (2.29 -> 2.24, under a second
-  left), a 3bet pot's turn after a library flop its stored turn at once as before (0.04; 0.52 -> 0.52).
+  left), a 3bet pot's turn after a library flop its stored turn at once as before (0.04; 0.52 -> 0.52). The later
+  looks (Fast's 200th-400th where it runs on, Accurate's 600th; one thread, two runs each alternating with the
+  first looks alone, a busier machine than above): CO vs BB's turn checked through looks at 2.9 and 5.3 s and answers
+  in 7.79 s (7.95 with its first look alone, at 2.84), Accurate's CO vs BB turn at 4.7, 8.3 and 13.7 s, 21.0 s (21.3,
+  looks at 4.9 and 8.6); the turns that settle at their first check unchanged (BTN vs BB's 3.31 -> 3.20 s, the
+  limped turn 5.66 -> 5.43).
 * **Study's turn after a library flop** (`Advisor.instant` with `"study": true`, `Advisor._study_store`; study.js's
   answer at once, the page's `studyAsk` and `studyPrefetch`). Study solved a library flop's turn live with only the
   progress bar to look at. Where the entry's turn file holds the flop line it now shows the stored turn for the whole

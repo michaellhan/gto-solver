@@ -100,9 +100,9 @@ MW4_FAST_STREETS = {"flop": {"later": "buckets", "buckets": 6, "bucket_river_ste
                     "turn": {"later": "buckets", "buckets": 8}}
 HU_RESERVE = 1.0   # heads-up solves likewise keep one iteration's time back (the exploitability read after: ~1 iteration)
 OVER_TARGET = 10   # an answer more than this many times its advisor's expl_target from equilibrium is approximate
-LOOK_MIN_S = 1.0   # Advisor.progress looks at a solve only with at least this many seconds of it left to its first
-                   # check (at its pace so far): a quicker one answers in full instead (at 0.5 a 3bet pot's turn showed its
-                   # look 0.5 s before its answer, one thread)
+LOOK_MIN_S = 1.0   # Advisor.progress looks at a solve only with at least this many seconds of it left (at its pace so
+                   # far) to where it next may stop (a settled check, or its end): a quicker one answers in full instead
+                   # (at 0.5 a 3bet pot's turn showed its look 0.5 s before its answer, one thread)
 HU_CHECKS = (50, 100, 150, 200, 300, 400, 600, 800)   # a heads-up street's solve, with Advisor.hu_settled set, stops at
                    # the first of these iterations where it is that close to equilibrium (an exploitability read each,
                    # about one iteration's time)...
@@ -2991,11 +2991,36 @@ class Advisor:
 
     def _looked(self, sol, look: Optional[int], first: int) -> bool:
         """Whether a solve run to its look (`look`) stops there for progress to read: not where it fell short of it
-        (out of time), settled or with under LOOK_MIN_S left to its first check at its pace so far."""
+        (out of time), settled, or with under LOOK_MIN_S left at its pace so far to where it next may stop (the
+        next of HU_CHECKS from `first`, its first check, on; `first` 1000: no target, on to its 1000th)."""
         if look is None or sol.solver.iters < look or getattr(sol, "settled_at", None) is not None:
             return False
         per = getattr(sol.solver, "per_iter", None) or sol.seconds / max(sol.solver.iters, 1)   # (the core's, its setup out)
-        return per * max(first - sol.solver.iters, 0) >= LOOK_MIN_S
+        it = sol.solver.iters
+        nxt = 1000 if first >= 1000 else next((c for c in HU_CHECKS if c >= first and c > it), 1000)
+        return per * max(nxt - it, 0) >= LOOK_MIN_S
+
+    def _go_on(self, sol, n: int, left: Callable[[], float], target: Optional[float], first: int,
+               look: int) -> None:
+        """_solve_cached: a solve run to a look of progress's (`look`) stops there to be read (_FirstLook), else goes
+        on to the next look, and so on, then to the answer: a look passed by (too near where the solve next may stop)
+        doesn't take the later ones with it. `left()`: the seconds of its budget left."""
+        while True:
+            if self._looked(sol, look, first if target is not None else 1000):
+                raise _FirstLook()
+            if sol.iters < look or sol.iters >= 1000 or getattr(sol, "settled_at", None) is not None:
+                return   # (out of time, or settled at the look: the answer)
+            look = self._look_at(n, sol)
+            if target is not None:
+                self._hu_run(sol, left(), target, first, stop_at=look)
+            else:
+                try:
+                    sol.extend(left(), max_iters=look or 1000, should_stop=self.should_stop, reserve=HU_RESERVE)
+                except Cancelled:
+                    sol.stopped = True
+                    raise
+            if look is None:
+                return
 
     def presolve(self, state: dict, seat: str) -> Optional[dict]:
         """The solve your next decision on this street will read, started while `seat` (the opponent) is to act: the
@@ -7299,16 +7324,10 @@ class Advisor:
             self._keep("_cache", key, sol)
             if self._presolving:
                 self._presolved.add(key)
-            if self._looked(sol, look, first if target is not None else 1000):
-                raise _FirstLook()
-            if target is not None:
+            if look is not None:   # (Advisor.progress: read at its look, or on to the next)
+                self._go_on(sol, n, lambda: left - (time.time() - t0), target, first, look)
+            elif target is not None:
                 self._hu_run(sol, left - (time.time() - t0), target, first)
-            elif look is not None and look <= sol.iters < 1000:   # (a look passed by, too near its end: on)
-                try:
-                    sol.extend(left - (time.time() - t0), should_stop=self.should_stop, reserve=HU_RESERVE)
-                except Cancelled:
-                    sol.stopped = True
-                    raise
         else:
             self._keep("_cache", key, None)
             if not self._presolving:
@@ -7330,18 +7349,8 @@ class Advisor:
                     except Cancelled:
                         sol.stopped = True
                         raise
-                if self._looked(sol, look, first if target is not None else 1000):
-                    raise _FirstLook()
-                if look is not None and look <= sol.iters < 1000 and getattr(sol, "settled_at", None) is None:
-                    # (a look passed by, too near the first check: on to the answer)
-                    if target is not None:
-                        self._hu_run(sol, budget - sol.seconds, target, first)
-                    else:
-                        try:
-                            sol.extend(budget - sol.seconds, should_stop=self.should_stop, reserve=HU_RESERVE)
-                        except Cancelled:
-                            sol.stopped = True
-                            raise
+                if look is not None:
+                    self._go_on(sol, n, lambda: budget - sol.seconds, target, first, look)
         if settle:
             self._settle(sol, budget)
         return sol
