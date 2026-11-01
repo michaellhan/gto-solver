@@ -78,6 +78,7 @@ const BB_3BET_SB = [F("UTG"), F("HJ"), F("CO"), F("BTN"), R("SB", 3), R("BB", 10
 const base = (o) => ({ players: 6, stack: 100, preflop: SRP, flop: [], turn: [], river: [], ...o });
 const SRP_FLOP = [X("BB"), B("BTN", 1.8), C("BB")];                 // a third-pot c-bet called
 const SRP_TURN = [X("BB"), B("BTN", 6), C("BB")];                   // two thirds called
+const MORE = { flop: [25, 33, 50, 75, 125] };                       // Study's "More sizes" (study.js SIZE_PRESETS)
 // name: request state (the page's payload without budget / prior_budget / speed)
 const SPOTS = {
   "preflop": base({ hero: "CO", hole: "AhJd", board: "", preflop: [F("UTG"), F("HJ")] }),
@@ -224,6 +225,16 @@ const SPOTS = {
                              turn: [X("SB"), B("BB", 3.75), C("SB")], study: true }),
   "study-river-limp-ip": base({ board: "Ks7d2cTh5s", preflop: LIMP, flop: [X("SB"), B("BB", 1.5), C("SB")],
                                 turn: [X("SB"), B("BB", 3.75), C("SB")], river: [X("SB")], study: true }),
+  // Study's size menus (study.js SIZE_PRESETS): "More sizes" bets 25/33/50/75/125% on the flop, which the library
+  // doesn't store, so the flop is solved live (the root, and a turn after it: the flop solved to narrow, then the turn)
+  "study-flop-more": base({ board: "Ks7d2c", study: true, sizes: MORE }),
+  "study-flop-more-2tone": base({ board: "9h8h6c", study: true, sizes: MORE }),
+  "study-flop-more-3bp": base({ board: "Ks7d2c", preflop: BB_3BET, study: true, sizes: MORE }),
+  "study-turn-more": base({ board: "Ks7d2cTh", flop: [X("BB"), B("BTN", 2.75), C("BB")], study: true, sizes: MORE }),
+  // a library flop facing a bet off its tree (a 50% bet: 33/75% stored): solved live with the size swapped in; --early
+  // gives the answer at once read off the stored decisions facing 33% and 75% (advisor.instant_from_off_tree)
+  "flop-offtree": base({ hero: "BB", hole: "QhJh", board: "Ks7d2c", flop: [X("BB"), B("BTN", 2.75)] }),
+  "flop-offtree-3bp": base({ hero: "BTN", hole: "AsQs", board: "Kc7d4h", preflop: BB_3BET, flop: [B("BB", 12)] }),
   "study-turn-near": base({ board: "8c7d5h2s", preflop: HJ_CO, flop: [X("HJ"), B("CO", 2.15), C("HJ")], study: true }),
   "study-turn-near-ip": base({ board: "8c7d5h2s", preflop: HJ_CO, flop: [X("HJ"), B("CO", 2.15), C("HJ")], turn: [X("HJ")], study: true }),
 };

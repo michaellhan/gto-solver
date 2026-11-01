@@ -1014,3 +1014,66 @@ test("the Solver source's buttons are among the panel's clickable data attribute
   const sel = /const data = \(t\) => \{ const e = t\.closest\("([^"]+)"\)/.exec(src)[1].split(",");
   for (const a of ["[data-pf]", "[data-pfsolve]", "[data-pfstop]"]) assert.ok(sel.includes(a), a);
 });
+
+test("the size menus: boxes read, the sizes a menu asks for, sent after the flop only", () => {
+  assert.deepEqual(S.readSizes("33 75/125%"), [33, 75, 125]);
+  assert.deepEqual(S.readSizes("75, 33, 33"), [33, 75]);
+  assert.deepEqual(S.readSizes("  "), []);
+  assert.match(S.readSizes("3").error, /from 5 to 500/);
+  assert.match(S.readSizes("x").error, /from 5 to 500/);
+  assert.match(S.readSizes("10 20 30 40 50 60").error, /at most 5/);
+  // a blank box, or the standard sizes typed, is that street's standard; none at all: the standard trees (null)
+  assert.deepEqual(S.customSizes({ flop: "25 50 100", turn: "33 75 125", river: "", raise: "" }), { flop: [25, 50, 100] });
+  assert.equal(S.customSizes({ flop: "33 75", raise: "50" }), null);
+  assert.match(S.customSizes({ turn: "1000" }).error, /^Turn:/);
+  assert.equal(S.sizesOf("standard", { flop: [25] }), null);
+  assert.deepEqual(S.sizesOf("more"), { flop: [25, 33, 50, 75, 125] });
+  assert.deepEqual(S.sizesOf("custom", { turn: [50] }), { turn: [50] });
+  const flop = S.deal(SPOT, "Kd7c2h");
+  assert.deepEqual(S.request(flop, "fast", "charts", S.sizesOf("more")).sizes, { flop: [25, 33, 50, 75, 125] });
+  assert.equal(S.request(flop, "fast", "charts", null).sizes, undefined);
+  assert.equal(S.request(SPOT, "fast", "solver", S.sizesOf("more")).sizes, undefined);   // (preflop: the charts' or the solve's own)
+  // the note: what each street bets and what the menu costs
+  assert.match(S.sizeNote("standard", null, "fast"), /^flop 33% \/ 75% · turn 33% \/ 75% \/ 125% .*The flop library's flops answer at once\.$/);
+  assert.match(S.sizeNote("more", S.sizesOf("more"), "fast"), /^flop 25% \/ 33% \/ 50% \/ 75% \/ 125% .*every flop is solved live here: about 1-4 s at Fast/);
+  assert.match(S.sizeNote("more", S.sizesOf("more"), "accurate"), /about 5-13 s at Accurate/);
+  assert.match(S.sizeNote("custom", { flop: [50] }, "fast"), /solved live here: up to 8 s at Fast/);
+  assert.match(S.sizeNote("custom", { turn: [50, 100] }, "fast"), /turn 50% \/ 100% .*flops still answer at once; the turn solves with these sizes/);
+  // the controls: the select, the custom boxes (the standard as placeholders), an error
+  const h = S.sizesHtml("custom", { flop: "25 50" }, "Flop: at most 5 sizes", "fast");
+  assert.match(h, /<select id="sySizes" data-ctl="sizes"[^>]*>.*<option value="custom" selected>Custom…<\/option>/);
+  assert.match(h, /<input name="flop" value="25 50" placeholder="33 75"/);
+  assert.match(h, /<input name="raise" value="" placeholder="50"/);
+  assert.match(h, /<div class="sy-err">Flop: at most 5 sizes<\/div>/);
+  assert.doesNotMatch(S.sizesHtml("more", {}, null, "fast"), /data-sizes|sy-err/);
+  // the note is on the sizes applied, not the boxes' text typed since
+  assert.match(S.sizesHtml("custom", { flop: "60" }, null, "fast", null), /sy-sznote[^>]*>flop 33% \/ 75% /);
+  assert.match(S.sizesHtml("custom", { flop: "60" }, null, "fast", { flop: [60] }), /sy-sznote[^>]*>flop 60% · /);
+});
+
+test("Study's size menu: the node asked again with the menu's sizes, a custom error shown without asking", async () => {
+  const p = await studyPage(null, (q) => ({ ...NODE, actions: q.sizes ? [...NODE.actions, { action: "bet 125%", amount_bb: 6.9, freq: 0, combos: 0, ev_bb: null }] : NODE.actions }));
+  p.ctx.STUDY_AT = { state: S.deal(SPOT, "Kd7c2h"), spot: "srp_btn_bb" };
+  const opened = p.ctx.Study.open();
+  await p.tick();
+  await p.land(1);
+  await opened;
+  assert.equal(p.asked[0].q.sizes, undefined);
+  assert.match(p.html(), /<option value="standard" selected>Standard<\/option>/);
+  await Promise.all([p.ctx.Study.setSizes("more"), p.tick().then(() => p.land(2))]);
+  assert.deepEqual(JSON.parse(JSON.stringify(p.asked[1].q.sizes)), { flop: [25, 33, 50, 75, 125] });
+  assert.match(p.html(), /every flop is solved live here/);
+  // Custom with nothing applied: the standard trees (the first answer, cached), its boxes shown
+  await p.ctx.Study.setSizes("custom");
+  await p.tick();
+  assert.equal(p.asked.length, 2);
+  assert.match(p.html(), /<form data-sizes/);
+  // a bad box: said, not asked; a good one asked
+  await p.ctx.Study.applyText({ flop: "2", turn: "", river: "", raise: "" });
+  assert.equal(p.asked.length, 2);
+  assert.match(p.html(), /Flop: percentages of the pot from 5 to 500/);
+  await Promise.all([p.ctx.Study.applyText({ flop: "25 50 100", turn: "", river: "", raise: "" }), p.tick().then(() => p.land(3))]);
+  assert.deepEqual(JSON.parse(JSON.stringify(p.asked[2].q.sizes)), { flop: [25, 50, 100] });
+  assert.doesNotMatch(p.html(), /sy-err/);
+  assert.equal(p.ctx.Study.state.sizes, "custom");
+});

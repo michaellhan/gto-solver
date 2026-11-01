@@ -43,8 +43,67 @@
   const streetOf = (st) => ({ 0: "preflop", 3: "flop", 4: "turn", 5: "river" })[cardsOf(st.board).length];
   // the solver's request for the node: Advisor.study; preflop with the Solver source (pf "solver") the preflop solve's
   // node ("preflop_solve": gto/pf_study.py, the page's game solved by pf_game), else the charts' mix
-  const request = (st, speed, pf) => ({ ...fromPayload(st), study: true, speed,
-    ...(pf === "solver" && streetOf(st) === "preflop" ? { preflop_solve: true, ...(st.pf_sizes ? { pf_sizes: { ...st.pf_sizes } } : {}) } : {}) });
+  // node ("preflop_solve": gto/pf_study.py, the page's game solved by pf_game), else the charts' mix; `sizes`: the size
+  // menu's bets and raises after the flop (sizesOf), not sent preflop (the charts' and the preflop solve's own)
+  const request = (st, speed, pf, sizes) => ({ ...fromPayload(st), study: true, speed,
+    ...(pf === "solver" && streetOf(st) === "preflop" ? { preflop_solve: true, ...(st.pf_sizes ? { pf_sizes: { ...st.pf_sizes } } : {}) } : {}),
+    ...(sizes && streetOf(st) !== "preflop" ? { sizes: Object.fromEntries(Object.entries(sizes).map(([k, v]) => [k, [...v]])) } : {}) });
+  // ---- the size menus (Advisor.study's "sizes": each street's bets, % of the pot, and "raise", every street's raises
+  // as % of the pot after the call; at most advisor.STUDY_MAX_SIZES a street). Standard is the trees as they are: the
+  // flop library's 33/75% flop bets and 50% raise, answered at once on its flops; a menu whose flop or raises differ
+  // has every flop solved live (its turn and river menus alone keep the library's flops: Config.later_sizes).
+  // SIZE_SECONDS: what a menu's flop costs in the browser on one thread (scripts/bench_browser.mjs study-flop-more*:
+  // Fast 1.0 / 2.1 / 3.5 s, Accurate 5.2 / 6.9 / 13.0 s), [Fast, Accurate], a turn after it adding its own solve
+  const STANDARD = { flop: [33, 75], turn: [33, 75, 125], river: [33, 75, 125], raise: [50] };
+  const SIZE_PRESETS = { standard: null, more: { flop: [25, 33, 50, 75, 125] } };
+  const SIZE_STREETS = ["flop", "turn", "river", "raise"], MAX_SIZES = 5, SIZE_PCT = [5, 500];
+  const SIZE_SECONDS = { more: ["1-4", "5-13"] };
+  // a custom box's text ("33 75 125", "33/75%", "33, 75") -> sorted distinct numbers, [] when blank, or {error}
+  function readSizes(text, what = "sizes") {
+    const t = String(text || "").trim();
+    if (!t) return [];
+    const parts = t.split(/[\s,;/]+/).filter(Boolean).map(x => x.replace(/%$/, ""));
+    const v = parts.map(Number);
+    if (v.some(x => !isFinite(x) || x < SIZE_PCT[0] || x > SIZE_PCT[1])) return { error: `${what}: percentages of the pot from ${SIZE_PCT[0]} to ${SIZE_PCT[1]}, e.g. 33 75 125` };
+    const out = [...new Set(v.map(x => Math.round(x * 10) / 10))].sort((a, b) => a - b);
+    if (out.length > MAX_SIZES) return { error: `${what}: at most ${MAX_SIZES} sizes (each one multiplies the game the solver plays)` };
+    return out;
+  }
+  // the custom boxes ({flop, turn, river, raise}: text) -> the request's sizes (a blank box: that street's standard),
+  // null when every box is blank or standard, or {error}
+  function customSizes(text) {
+    const out = {};
+    for (const k of SIZE_STREETS) {
+      const v = readSizes((text || {})[k], k === "raise" ? "Raises" : k[0].toUpperCase() + k.slice(1));
+      if (v.error) return v;
+      if (v.length && JSON.stringify(v) !== JSON.stringify(STANDARD[k])) out[k] = v;
+    }
+    return Object.keys(out).length ? out : null;
+  }
+  // the sizes a menu asks for: Standard null, More sizes its preset, Custom the boxes' (applied) sizes
+  const sizesOf = (menu, custom) => menu === "custom" ? (custom && !custom.error ? custom : null) : SIZE_PRESETS[menu] || null;
+  const fmtSizes = (v) => v.map(x => x + "%").join(" / ");
+  // what a menu is and what it costs, under the controls (speed: "fast" or "accurate")
+  function sizeNote(menu, sizes, speed) {
+    const live = sizes && (sizes.flop || sizes.raise);
+    const what = SIZE_STREETS.map(k => `${k === "raise" ? "raises" : k} ${fmtSizes((sizes && sizes[k]) || STANDARD[k])}${k === "raise" && !(sizes && sizes.raise) ? " (flop; 75% later)" : ""}${k === "river" && !(sizes && sizes.river) ? " (+250% first in)" : ""}`).join(" · ");
+    if (!sizes) return `${what}. ${menu === "custom" ? "Type sizes in a box to change that street (blank: the standard). " : ""}The flop library's flops answer at once.`;
+    const acc = speed === "accurate", budget = typeof globalThis.studyBudget === "function" ? globalThis.studyBudget(speed)[0] : acc ? 60 : 8;
+    const cost = SIZE_SECONDS[menu] ? `about ${SIZE_SECONDS[menu][acc ? 1 : 0]} s` : `up to ${budget} s`;
+    return `${what}. ` + (live ? `The flop library holds 33/75% bets and a 50% raise, so every flop is solved live here: ${cost} at ${acc ? "Accurate" : "Fast"} (Standard answers its flops at once), and each turn and river its own solve as usual.`
+      : `The flop library's flops still answer at once; the ${["turn", "river"].filter(k => sizes[k]).join(" and ")} solve${sizes.turn && sizes.river ? "" : "s"} with these sizes.`);
+  }
+  // the menu's controls: a select, the custom boxes (text: theirs, applied with Enter or Apply), the note on the sizes
+  // asked for (custom: the boxes' as last applied, else read off the text)
+  function sizesHtml(menu, text, err, speed, custom) {
+    const sizes = sizesOf(menu, menu !== "custom" ? null : custom !== undefined ? custom : customSizes(text));
+    return `<div class="sy-ctl sy-szrow"><label class="sy-mut" for="sySizes">Sizes</label><select id="sySizes" data-ctl="sizes" aria-label="Bet sizes">`
+      + [["standard", "Standard"], ["more", "More sizes (flop 25-125%)"], ["custom", "Custom…"]].map(([v, t]) => `<option value="${v}"${v === menu ? " selected" : ""}>${t}</option>`).join("") + `</select>`
+      + (menu === "custom" ? `<form data-sizes class="sy-sizes">` + SIZE_STREETS.map(k => `<label title="${k === "raise" ? "Raises on every street, % of the pot after the call" : `${k[0].toUpperCase() + k.slice(1)} bets, % of the pot`}">${k === "raise" ? "Raises" : k[0].toUpperCase() + k.slice(1)} `
+          + `<input name="${k}" value="${esc((text || {})[k] || "")}" placeholder="${STANDARD[k].join(" ")}" autocomplete="off" spellcheck="false" inputmode="decimal"></label>`).join("")
+          + `<button type="submit">Apply</button></form>` : "")
+      + `</div>${err ? `<div class="sy-err">${esc(err)}</div>` : ""}<div class="sy-sznote sy-mut">${esc(sizeNote(menu, sizes, speed))}</div>`;
+  }
   const solverPre = (res) => !!res && res.street === "preflop" && res.source === "solver";
   // ---- the menu's Preflop solve (/preflop/; the start "pfgame"): a game set in a form, every preflop decision answered
   // by its solve. The raise sizes as gto/pf_study.py's SIZE_LIMITS (opens in bb, 3bets and the 4bet as multiples); the
@@ -593,9 +652,12 @@
   let box = null, index = null, res = null, err = null, busy = false, gen = 0;
   const ST = { state: null, spot: "", speed: typeof SPEED === "string" && SPEED !== "quick" ? SPEED : "fast", view: "strategy", who: "me", sel: null, hover: null, focus: null,
                build: false, brush: 0, amt: 1, tally: { n: 0, acc: 0 }, filter: null, ro: null, roWho: "first", pf: "charts", pfRun: null, pfGame: null,
-               rui: { view: "table", sort: "card", desc: true, group: "", filter: {} } };
-  try { const s = JSON.parse(localStorage.getItem("gto-study")) || {}; for (const k of ["state", "spot", "speed", "view", "build", "rui", "pf", "pfGame"]) if (s[k] != null) ST[k] = s[k]; } catch (e) {}
-  const store = () => { try { localStorage.setItem("gto-study", JSON.stringify({ state: ST.state, spot: ST.spot, speed: ST.speed, view: ST.view, build: ST.build, rui: ST.rui, pf: ST.pf, pfGame: ST.pfGame })); } catch (e) {} };
+               rui: { view: "table", sort: "card", desc: true, group: "", filter: {} },
+               sizes: "standard", sizeText: {}, custom: null, sizeErr: null };
+  try { const s = JSON.parse(localStorage.getItem("gto-study")) || {}; for (const k of ["state", "spot", "speed", "view", "build", "rui", "pf", "pfGame", "sizes", "sizeText", "custom"]) if (s[k] != null) ST[k] = s[k]; } catch (e) {}
+  if (!["standard", "more", "custom"].includes(ST.sizes)) ST.sizes = "standard";
+  const store = () => { try { localStorage.setItem("gto-study", JSON.stringify({ state: ST.state, spot: ST.spot, speed: ST.speed, view: ST.view, build: ST.build, rui: ST.rui, pf: ST.pf, pfGame: ST.pfGame, sizes: ST.sizes, sizeText: ST.sizeText, custom: ST.custom })); } catch (e) {} };
+  const curSizes = () => sizesOf(ST.sizes, ST.custom);
   // the range builder's paints, by the answer they're of
   const paints = new Map();
   const building = () => ST.build && res && res.study === "node" && !busy;
@@ -644,7 +706,7 @@
     const left = busy && res && res.approximate ? answers.get(res.key) : null;
     ST.state = state; ST.sel = ST.hover = ST.focus = null; ST.ro = null; err = null; store();
     if (ST.pfRun && ST.pfRun.game !== gameKey(state)) { ST.pfRun.stop = true; ST.pfRun = null; }   // (another game's solve)
-    const key = JSON.stringify(request(state, ST.speed, ST.pf)), g = ++gen;
+    const key = JSON.stringify(request(state, ST.speed, ST.pf, curSizes())), g = ++gen;
     if (left && stopFn && left !== answers.get(key)) stops.push(stopFn(left.req));
     if (stops.length) { await Promise.all(stops); if (g !== gen) return; }
     // (a flop's library files fetched ahead, once a board: its entry and turn files, or the stored flops nearest it;
@@ -729,7 +791,7 @@
   async function refreshPf() {
     for (const k of [...answers.keys()]) if (k.includes('"preflop_solve":true')) answers.delete(k);
     if (!ST.state || ST.pf !== "solver" || streetOf(ST.state) !== "preflop" || busy) return draw();
-    const key = JSON.stringify(request(ST.state, ST.speed, ST.pf)), g = gen;
+    const key = JSON.stringify(request(ST.state, ST.speed, ST.pf, curSizes())), g = gen;
     const r = await answer(key);
     if (g !== gen || !r || r.cancelled || r.error) return draw();
     res = r; res.key = key; colors(); draw();
@@ -741,7 +803,7 @@
     ? loadJs("runouts.js?v=" + (typeof RO_VERSION === "string" ? RO_VERSION : "1"), () => globalThis.Runouts) : Promise.reject(new Error("no loader"));
   let roTick = null;
   async function runouts(solve = false) {
-    const req = request(ST.state, ST.speed), g = gen, street = res && res.study === "deal" ? res.street : "turn";
+    const req = request(ST.state, ST.speed, undefined, curSizes()), g = gen, street = res && res.study === "deal" ? res.street : "turn";
     const solved = JSON.stringify({ ...req, runouts: true });
     const key = solve || answers.has(solved) ? solved : JSON.stringify({ ...req, runouts: "held" });
     ST.ro = { key, busy: true, solve: key === solved, t0: Date.now(), est: mwSeconds(ST.state, ST.speed) || estimate(street, ST.speed) };
@@ -776,7 +838,7 @@
   // view's decision that the stored turns hold (Runouts.pickLine; the held report's or the skipped answer's lines);
   // where none does, the line Study was opened at, its solve offered first
   async function reportFor(at) {
-    const key = JSON.stringify({ ...request(ST.state, ST.speed), runouts: "held" }), g = gen;
+    const key = JSON.stringify({ ...request(ST.state, ST.speed, undefined, curSizes()), runouts: "held" }), g = gen;
     let r;
     try { await loadRo(); r = await answer(key); } catch (e) { return runouts(); }
     if (g !== gen) return;
@@ -795,7 +857,7 @@
     return `<div class="sy-ctl"><select data-ctl="spot" aria-label="Start from">${opts.map(([v, t]) => `<option value="${v}"${v === ST.spot ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>`
       + `<span class="segment">${["fast", "accurate"].map(m => `<button data-speed="${m}" class="${m === ST.speed ? "active" : ""}">${m === "fast" ? "Fast" : "Accurate"}</button>`).join("")}</span>`
       + `<button class="ghost" data-back ${back(ST.state) ? "" : "disabled"} title="Back one step (Backspace)">← Back</button></div>`
-      + (ST.spot === "pfgame" ? gameHtml(ST.pfGame) : "");
+      + (ST.spot === "pfgame" ? gameHtml(ST.pfGame) : sizesHtml(ST.sizes, ST.sizeText, ST.sizeErr, ST.speed, ST.custom));
   }
   const prev = (street) => street === "river" ? "turn" : "flop";
   // the preflop source: the charts' mix (the advice's), or the solve of this game (gto/pf_study.py: its mix and EVs)
@@ -884,8 +946,12 @@
   function draw() {
     if (!box) return;
     const b = box.querySelector(".sy-body");
-    // (a field of the game's form being typed in when a solve's progress redraws: its text and the focus kept)
-    const fe = document.activeElement, typing = fe && fe.dataset && fe.dataset.ctl === "pfg" && box.contains(fe) ? { name: fe.name, value: fe.value } : null;
+    // (a field of the game's form, or a custom size box, being typed in when a solve's progress or answer redraws: its
+    // text and the focus kept; the size boxes' text not applied yet too)
+    const fe = document.activeElement, inBox = fe && fe.dataset && box.contains(fe);
+    const typing = inBox && fe.dataset.ctl === "pfg" ? { sel: `[data-ctl="pfg"][name="${fe.name}"]`, value: fe.value }
+      : inBox && fe.closest("[data-sizes]") ? { sel: `[data-sizes] [name="${fe.name}"]`, value: fe.value } : null;
+    const sf = box.querySelector("[data-sizes]"), draft = sf ? SIZE_STREETS.map(k => sf.elements[k].value) : null;
     // (while solving: the last decision dimmed under a spinner; the spinner alone after a deal or an error; the node's
     // answer at once as it is, the request's own replacing it)
     const now = quick(), dim = busy && res && res.study === "node" && !now;
@@ -895,8 +961,10 @@
     if (bd && res && !busy) showBreakdown(bd);
     const sp = b.querySelector(".sy-simple");
     if (sp && res && !busy) showSimple(sp);
-    const inp = b.querySelector("[data-deal] input"); if (inp && !busy && !("ontouchstart" in window)) inp.focus();
-    const tf = typing && b.querySelector(`[data-ctl="pfg"][name="${typing.name}"]`);
+    const nf = draft && b.querySelector("[data-sizes]");
+    if (nf) SIZE_STREETS.forEach((k, i) => { nf.elements[k].value = draft[i]; });
+    const inp = b.querySelector("[data-deal] input"); if (inp && !busy && !typing && !("ontouchstart" in window)) inp.focus();
+    const tf = typing && b.querySelector(typing.sel);
     if (tf) { if (tf.type !== "checkbox") tf.value = typing.value; tf.focus(); }
     // (a redraw drops the focused button: the panel keeps the focus, so its keys still work)
     if (!box.hidden && !box.contains(document.activeElement)) box.querySelector(".sy-card").focus({ preventScroll: true });
@@ -980,6 +1048,27 @@
     const mb = box.querySelector("[data-minebar]"), nb = t.querySelector("[data-minebar]");
     if (mb && nb) mb.innerHTML = nb.innerHTML;
   }
+  // the size menu picked: the node asked again with its sizes (Custom with nothing applied yet: its boxes, the
+  // standard trees meanwhile)
+  function setSizes(menu) {
+    if (!["standard", "more", "custom"].includes(menu) || menu === ST.sizes) return;
+    const before = JSON.stringify(curSizes());
+    ST.sizes = menu; ST.sizeErr = null; store();
+    if (JSON.stringify(curSizes()) !== before && ST.state) return go(ST.state);
+    draw();
+    if (menu === "custom") { const f = box && box.querySelector("[data-sizes] input"); if (f) f.focus(); }
+  }
+  const applySizes = (form) => applyText(Object.fromEntries(SIZE_STREETS.map(k => [k, form.elements[k].value.trim()])));
+  // the custom boxes' text applied: their sizes asked for, or what's wrong with them said
+  function applyText(text) {
+    const got = customSizes(text);
+    ST.sizeText = text;
+    if (got && got.error) { ST.sizeErr = got.error; return draw(); }
+    const before = JSON.stringify(curSizes());
+    ST.custom = got; ST.sizeErr = null; store();
+    if (JSON.stringify(curSizes()) !== before && ST.state) return go(ST.state);
+    draw();
+  }
   function newFlop() {
     const base = { ...ST.state, board: "", flop: [], turn: [], river: [] };
     return go(deal(base, randomCards(base, 3)));
@@ -1041,6 +1130,12 @@
   .sy-ctl { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .sy-ctl select { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 5px 6px; font: inherit; font-size: 12px; max-width: 100%; }
   .sy-ctl .segment button { font-size: 12px; padding: 5px 9px; }
+  .sy-szrow { margin-top: 6px; font-size: 12px; }
+  .sy-sizes { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .sy-sizes label { display: flex; gap: 4px; align-items: center; color: var(--muted); }
+  .sy-sizes input { width: 92px; font-size: 12px; padding: 4px 6px; }
+  .sy-sizes button { font-size: 12px; padding: 4px 10px; min-height: 0; }
+  .sy-sznote { font-size: 11px; line-height: 1.5; margin: 4px 0 2px; }
   .sy-line { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-size: 12px; }
   .sy-line button { font-size: 12px; padding: 3px 7px; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); color: var(--text); }
   .sy-line button.sy-st { font-weight: 600; background: var(--bg); }
@@ -1174,6 +1269,7 @@
       box.addEventListener("click", (e) => { if (e.target === box) return close(); if (e.target.closest(".sy-bd,.sy-simple")) return; const d = data(e.target); if (d) act(d, e); });
       box.addEventListener("submit", (e) => {
         e.preventDefault();
+        if (e.target.matches("[data-sizes]")) return applySizes(e.target);
         if (!res || res.study !== "deal") return;
         const r = readCards(ST.state, e.target.elements.cards.value, res.street === "flop" ? 3 : 1);
         if (r.error) { const m = box.querySelector("[data-dealerr]"); if (m) m.textContent = r.error; return; }
@@ -1181,6 +1277,7 @@
       });
       box.addEventListener("change", (e) => {
         if (e.target.dataset.ctl === "spot") startFrom(e.target.value);
+        else if (e.target.dataset.ctl === "sizes") setSizes(e.target.value);
         else if (e.target.dataset.ctl === "pfg") setGame(formGame());
         else if (e.target.dataset.ctl === "filter") { ST.filter = e.target.value || null; ST.hover = null; draw(); }
         else if (e.target.dataset.ctl === "rogroup") { ST.rui = { ...ST.rui, group: e.target.value }; store(); draw(); }
@@ -1253,6 +1350,7 @@
                 passiveOf, blankPaint, brush, scoreBuild, grade, buildGridHtml, buildPanelHtml, buildDetailHtml,
                 catsOf, filterRes, filterHtml, runoutsHtml, reportHtml, roHeadHtml, skippedHtml, estimate, oppsOf, whoHtml, viewsOf, approxHtml, sawFlop, inPot, mwSeconds,
                 PF_GAME, readGame, gameState, gameKey, gameOf, gameHtml, setGame,
-                open, close, act, state: ST };
+                STANDARD, SIZE_PRESETS, readSizes, customSizes, sizesOf, sizeNote, sizesHtml,
+                open, close, act, setSizes, applyText, state: ST };
   if (typeof module === "object" && module.exports) module.exports = api; else globalThis.Study = api;
 })();
