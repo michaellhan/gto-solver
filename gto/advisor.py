@@ -1865,12 +1865,14 @@ class PreflopRanges(dict):
     rebuilt: List[str] = []
 
 
-def _post_floor(before: np.ndarray, after: np.ndarray, board, pos: str, street: str, notes: List[str]) -> np.ndarray:
+def _post_floor(before: np.ndarray, after: np.ndarray, board, pos: str, street: str, notes: List[str],
+                off: Optional[List[dict]] = None) -> np.ndarray:
     """A player's range after an earlier street's actions, filled out when the line leaves fewer than
     preflop.MIN_LINE_COMBOS live combos (counting the cards dealt since): the next street's solve would
     otherwise play against a face-up hand (a 4bet pot's ~12-combo range checking back the flop left 2 for
     the turn). The filler is the rest of the range the player started the street with, weighted as
-    preflop (pf.thin_line: 1 - combos / MIN_LINE_COMBOS); the hands that took the line are kept."""
+    preflop (pf.thin_line: 1 - combos / MIN_LINE_COMBOS); the hands that took the line are kept. `off` (the
+    answer's off_solution) gets the fill."""
     live = np.ones(N_COMBOS)
     for c in board:
         live = live * (1.0 - MEMBER_FULL[c])
@@ -1878,6 +1880,8 @@ def _post_floor(before: np.ndarray, after: np.ndarray, board, pos: str, street: 
     if r.sum() > (after * live).sum() + 1e-9:
         notes.append(f"{street}: {pos}'s line left {float((after * live).sum()):.1f} combos, so their range "
                      f"is filled out with the rest of their {street} range")
+        if off is not None:
+            off.append({"street": street, "pos": pos, "why": "filled", "combos": round(float((after * live).sum()), 1)})
     return r
 
 
@@ -4566,7 +4570,13 @@ class Advisor:
             ranges[p] = r
             notes.append(f"{'your' if p == hero else p + chr(39) + 's'} range entering the flop is the custom one "
                          f"({(r * bm).sum():.0f} combos), not the preflop chart's")
+        # where the ranges this answer is solved against left the solves (the answer's "off_solution": a line the
+        # solve rarely took, read by the betting rules; a range filled out; an earlier street narrowed by the rules,
+        # or partly, by an unsettled solve). Its mix is the best answer to those ranges, not the whole hand's
+        # equilibrium, and the page says so instead of a plain "converged".
+        off_solution: List[dict] = []
         for p in [q for q in getattr(pf_r, "rebuilt", []) if q not in (custom or {})]:
+            off_solution.append({"street": "preflop", "pos": p, "why": "filled"})
             notes.append(f"{'your' if p == hero else p + chr(39) + 's'} preflop line isn't in the chart, so "
                          f"{'your' if p == hero else 'their'} range is the hands that take its last action")
         if self._runout_close is not None and len(cur.active) > 2:
@@ -4755,8 +4765,9 @@ class Advisor:
                         _narrow_street(rs, sub_board, st, stk, hero, hole, slow_rules, check_whole=True)
                         notes.append(f"{st.name}: ranges narrowed by simple betting rules (a quick answer: the street "
                                      f"isn't solved)")
-                        r0 = _post_floor(r0, rs[oop], nxt_board, oop, st.name, notes)
-                        r1 = _post_floor(r1, rs[ip], nxt_board, ip, st.name, notes)
+                        off_solution.append({"street": st.name, "why": "rules"})
+                        r0 = _post_floor(r0, rs[oop], nxt_board, oop, st.name, notes, off_solution)
+                        r1 = _post_floor(r1, rs[ip], nxt_board, ip, st.name, notes, off_solution)
                         continue
                     sol = self._solve_cached(sub_board, s0, s1, st.pot_start, eff, self.prior_budget, cfg=cfg,
                                              seed=self._store_seed(walked.get("flop"), sub_board)
@@ -4764,18 +4775,19 @@ class Advisor:
                     expl = self._expl(sol)
                     trust = trust_of(expl, st.name)
                     if trust < 1.0:
+                        off_solution.append({"street": st.name, "why": "unsettled", "trust": round(trust * 100)})
                         notes.append(f"{st.name}: the solve that narrows ranges is {expl:.1f}% of the pot from "
                                      f"equilibrium ({sol.iters} iterations), so ranges follow it {trust * 100:.0f}% and "
                                      "simple betting rules the rest")
                     taken = []
                     node, c0, c1 = self._walk(sol, st.actions, oop, ip, st.pot_start, eff, notes, st.name, self.prior_smoothing,
                                               board=sub_board, rules=(0, 1),
-                                              lock=mk_lock(sol), trust=trust, slow=slow_hu, taken=taken)
+                                              lock=mk_lock(sol), trust=trust, slow=slow_hu, taken=taken, off=off_solution)
                     if s0 is not r0 or s1 is not r1:   # (and out again for the next street: _with_hero puts it back)
                         (c0 if adv_p == 0 else c1)[sol.ctx.active == COMBO_INDEX[(min(adv_hole), max(adv_hole))]] = 0.0
                 walked[st.name] = (sol, node, taken)
-                r0 = _post_floor(r0, expand(sol.ctx, c0), nxt_board, oop, st.name, notes)
-                r1 = _post_floor(r1, expand(sol.ctx, c1), nxt_board, ip, st.name, notes)
+                r0 = _post_floor(r0, expand(sol.ctx, c0), nxt_board, oop, st.name, notes, off_solution)
+                r1 = _post_floor(r1, expand(sol.ctx, c1), nxt_board, ip, st.name, notes, off_solution)
             eff = min(stk[oop] - cur.inv_start[oop], stk[ip] - cur.inv_start[ip])
             cfg = self._cfg_with_real_sizes(cur, oop, ip, eff)
             if seen is not None:
@@ -4845,7 +4857,8 @@ class Advisor:
                                       lock=mk_lock(sol), rare_lines=[], slow=dict(slow_hu))
             node, n_r0, n_r1 = self._walk(sol, cur.actions, oop, ip, cur.pot_start, eff, notes, cur.name,
                                           self.prior_smoothing, only=1 - hero_p, widened=widened, board=board,
-                                          lock=mk_lock(sol), rare_lines=rare_lines, slow=dict(slow_hu))
+                                          lock=mk_lock(sol), rare_lines=rare_lines, slow=dict(slow_hu),
+                                          off=off_solution)
             if not rare_lines and self._settle(sol):
                 # (far from settled: one more budget, then walk the line again; when the line is rare the
                 # solve from the node below gets it instead, so a spot doesn't pay for both)
@@ -4993,6 +5006,7 @@ class Advisor:
                        # (the tree's size: solver.TreeBuilder.cells, MAX_CELLS)
                        **({"cells": sol.cells} if getattr(sol, "cells", None) else {})},
             "widened": widened,
+            **({"off_solution": off_solution} if off_solution else {}),
             **({"precomputed": lib_sol.info()} if lib_sol is not None else {}),
             **({"locked": {villain: adj}} if adj else {}),
             "notes": notes, "seconds": round(time.time() - t0, 2),
@@ -7955,7 +7969,7 @@ class Advisor:
 
     def _walk(self, sol: Solution, acts: List[dict], oop, ip, pot, stack, notes, street, smoothing=0.0, only=None,
               widened=None, board=None, rules=None, lock=None, rare_lines=None, visited=None, trust=1.0, slow=None,
-              taken=None):
+              taken=None, off=None):
         """Follow real actions through the solved tree, narrowing ranges. Smoothing mixes each
         strategy with uniform so a line the solve rarely takes doesn't shrink a range to nothing.
         With `only` (0 = OOP, 1 = IP) and `board`, that player's actions are exact unless the solve
@@ -7971,7 +7985,9 @@ class Advisor:
         `trust` (with `rules` and `board`): the weight the solve's strategy gets on `rules`' other actions,
         the rest going to the rules' range for the action (softened, as multiway), for a solve that hasn't
         settled (trust_of). A call by the rules keeps the hands they have raising at SLOWPLAY when the player
-        could have raised (_slowplayed; `slow`, {player: mask} carried from street to street, as multiway)."""
+        could have raised (_slowplayed; `slow`, {player: mask} carried from street to street, as multiway).
+        `off` (the answer's off_solution) gets every line read by the rules: street, seat, the tree's action and the
+        share of their range the solve takes it with (%)."""
         rules = (only,) if rules is None and only is not None else rules or ()
         node = sol.root
         r0, r1 = sol.r0.copy(), sol.r1.copy()
@@ -8049,8 +8065,12 @@ class Advisor:
             if p in rules and rare and board is not None and a["action"] != "fold":
                 if widened is not None and p == only:
                     widened.append(a["pos"])
+                share = float((rp * s).sum() / max(rp.sum(), 1e-12) * 100)
+                if off is not None:
+                    off.append({"street": street, "pos": a["pos"], "why": "rare", "action": node.names[k],
+                                "share": round(share, 1)})
                 notes.append(f"{street}: the solve rarely has {a['pos']} {a['action']} here "
-                             f"({(rp * s).sum() / max(rp.sum(), 1e-12) * 100:.0f}% of their range), so their range "
+                             f"({share:.0f}% of their range), so their range "
                              + ("comes from simple betting rules instead" if not reraise else
                                 "is the solve's with the rules' value hands added"))
                 full, rank, m = rule_mask()

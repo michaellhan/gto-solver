@@ -618,6 +618,27 @@ test("a move your range almost never takes (rough_ev): the same verdict and EV l
   assert.match(p.byId("practiceBar").innerHTML, /<ul class="cx-list cx-rev"><li class="pick on" data-i="0"[^>]*>.*fold.*≈ −1\.00 bb/);
 });
 
+test("a decision whose answer left the solve earlier in the hand (off_solution): graded the same, said to be against the ranges the line leaves", async () => {
+  const OFF = { ...ADVICE, off_solution: [{ street: "flop", pos: "HJ", why: "rare", action: "bet 75%", share: 0 }] };
+  const graded = async (advice) => {
+    const p = await practicePage(11);
+    p.run("Practice.state.hint = true; Practice.state.more = true");
+    await toMyTurn(p, new Set(), (m) => m.play ? passive(m) : advice);
+    p.act({ action: "fold" });
+    p.run("renderAll()");
+    return p;
+  };
+  const p0 = await graded(ADVICE), p = await graded(OFF);
+  const e0 = p0.val("Practice.state.hand.log.at(-1)"), e = p.val("Practice.state.hand.log.at(-1)");
+  assert.deepEqual({ ...e.g, x: undefined }, { ...e0.g, x: undefined });   // graded the same
+  assert.equal(e.g.x, 1); assert.equal(e0.g.x, undefined);
+  const html = p.byId("practiceBar").innerHTML, html0 = p0.byId("practiceBar").innerHTML;
+  assert.match(html, /Against the ranges this line leaves, the solver mixes this in 20% of the time/);
+  assert.match(html, /\(off the solved line: earlier actions the solve rarely takes left its ranges, so this grades the best answer to the ranges the hand leaves\)/);
+  assert.match(html0, /The solver mixes this in 20% of the time/); assert.doesNotMatch(html0, /off the solved line/);
+  assert.match(p.val(`Practice.ai.prompt(Practice.state.hand.log.at(-1))`), /- Note: off the solved line: an earlier action the solve rarely takes left its ranges/);
+});
+
 test("the first-run hint goes once a hand is played; a change to the table's chips deals a new hand", async () => {
   const p = await practicePage(5);
   assert.match(p.byId("practiceBar").innerHTML, /cx-hint/);

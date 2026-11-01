@@ -132,6 +132,31 @@ test("a precomputed answer is badged; one borrowed from another table size's lib
   assert.match(h, /<span class="conv meh" title="Solved offline \(6-max BTN vs BB single-raised pot, 300 iterations\)[^"]* Approximate: that spot read as this one \(this table's ranges differ from that spot's by 0\.4% of their weight at most\)\.">precomputed · borrowed<\/span>/);
 });
 
+test("an answer whose ranges left the solve earlier in the hand is badged off the solved line, with why", async () => {
+  // (gto/advisor.py off_solution: HJ KhQh's 75% flop bet the solve takes with 0% of its range, read by the betting
+  // rules; a line that left a few combos, filled out; an unsettled earlier solve; a Quick answer's rules)
+  const p = loadPage();
+  await p.ready();
+  p.S = state(FLOP);
+  const off = [{ street: "flop", pos: "HJ", why: "rare", action: "bet 75%", share: 0 }, { street: "flop", pos: "BTN", why: "filled", combos: 6.7 },
+    { street: "turn", why: "unsettled", trust: 40 }, { street: "turn", why: "rules" }, { street: "flop", pos: "BTN", why: "rare", action: "raise to 13", share: 4.2 }];
+  const res = { street: "river", hero: "HJ", hand: "KQs", recommended: "fold", actions: [{ action: "fold", freq: 1, ev_bb: 0 }, { action: "call", freq: 0, ev_bb: -62.5 }],
+    solver: { iterations: 1000, solve_seconds: 0.03, active_combos: 153, tree_actions: ["fold", "call"], exploitability_pct: 0.01 } };
+  p.ctx.__res = JSON.stringify({ ...res, off_solution: off });
+  p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
+  const h = p.byId("result").innerHTML;
+  assert.match(h, /<span class="conv ok" title="[^"]*">converged · 0\.0% pot<\/span><span class="conv meh" title="Off the solved line: [^"]*not the whole hand's equilibrium\.">off the solved line<\/span>/);
+  assert.match(h, /Off the solved line: HJ's bet 75% on the flop is never in the solve, so their range from there is the betting rules'; BTN's flop line left 6\.7 combos, so their range is filled out with the rest of their flop range; the turn solve hadn't settled, so ranges follow it 40% and the betting rules the rest; the turn is narrowed by the betting rules, not solved; BTN's raise to 13 on the flop is only 4\.2% in the solve, so their range from there is the betting rules'\. This street's solve is the best answer to those ranges/);
+  assert.match(p.val(`offText({ off_solution: [{ street: "preflop", pos: "CO", why: "filled" }] })`), /^CO's preflop line isn't in the charts/);
+  assert.equal(p.val(`gradeWith(JSON.parse(__res), { action: "fold" }).x`), 1);
+  // on the solved line: neither, and the grade has no x
+  p.ctx.__res = JSON.stringify(res);
+  p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
+  assert.doesNotMatch(p.byId("result").innerHTML, /off the solved line|Off the solved line/);
+  assert.equal(p.val(`"x" in gradeWith(JSON.parse(__res), { action: "fold" })`), false);
+  assert.equal(p.val("offSolution({ off_solution: [] })"), false);
+});
+
 test("custom sizes with size optimization: the hint says they compete in its menu, the advice whether they were kept", async () => {
   const p = loadPage();
   await p.ready();

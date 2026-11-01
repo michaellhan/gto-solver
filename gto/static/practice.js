@@ -431,9 +431,11 @@
       return g.m === g.b ? `${rules} Your move has the highest EV.` : `${rules} Its best is ${g.b}; yours gives up ${g.h}% of the pot.`;
     }
     const as = g.v ? ` (graded as its ${g.m})` : "";
-    if (v.k === "best") return g.f >= 0.995 ? `The solver always plays this here.` : `The solver's top choice here: it plays this ${pct(g.f)} of the time.`;
-    if (v.k === "good") return `The solver mixes this in ${pct(g.f)} of the time${as}; its top choice is ${g.b} (${pct(g.bf)}).`;
-    return `The solver ${g.f < 0.005 ? "never plays this" : `plays this only ${pct(g.f)} of the time`}${as}; it prefers ${g.b} (${pct(g.bf)}).`;
+    // (x: the answer's ranges left the solve earlier in the hand, so its mix is the best answer to those ranges)
+    const on = g.x ? "Against the ranges this line leaves, the" : "The";
+    if (v.k === "best") return g.f >= 0.995 ? `${on} solver always plays this here.` : `${on} solver's top choice here: it plays this ${pct(g.f)} of the time.`;
+    if (v.k === "good") return `${on} solver mixes this in ${pct(g.f)} of the time${as}; its top choice is ${g.b} (${pct(g.bf)}).`;
+    return `${on} solver ${g.f < 0.005 ? "never plays this" : `plays this only ${pct(g.f)} of the time`}${as}; it prefers ${g.b} (${pct(g.bf)}).`;
   }
   // the EV a decision gave up: red for an inaccuracy or a mistake; muted for a move in the solver's strategy (its
   // mixed actions are worth the same in theory: a small gap there is the solve's noise more than an error)
@@ -464,7 +466,7 @@
     }
     const lbl = o.label ? `<div class="lbl">${o.label} · ${e.street}</div>` : "";
     return `<div class="cx-fb${o.old ? " old" : ""}" style="--c:${v.c}">${lbl}<div class="head"><span class="ico" aria-hidden="true">${ICON[v.k]}</span><span class="verdict">${v.label}</span><span class="what">${o.label ? "" : e.street + " · "}you <b>${YOU(e.rec)}</b></span>${cost}</div>${mix}`
-      + `<details class="cx-more"${P.more ? " open" : ""}><summary>Details</summary><div class="why">${why(e)}${g && g.r ? ' <span class="muted">(rough solve: a hint, not a verdict)</span>' : ""}</div>${table}${aiHtml(e)}`
+      + `<details class="cx-more"${P.more ? " open" : ""}><summary>Details</summary><div class="why">${why(e)}${g && g.r ? ' <span class="muted">(rough solve: a hint, not a verdict)</span>' : ""}${g && g.x ? ' <span class="muted">(off the solved line: earlier actions the solve rarely takes left its ranges, so this grades the best answer to the ranges the hand leaves)</span>' : ""}</div>${table}${aiHtml(e)}`
       + (!past && rangeOf(e) ? `<button class="cx-rangeb" id="pxDetail" aria-expanded="${P.detail}">${P.detail ? "Hide your range" : "See how the solver plays your whole range"}</button>` : "") + `</details></div>`;
   }
 
@@ -620,6 +622,7 @@
       L.push(`- EV lost against the best action: ${g.l != null ? bb(g.l) : "not known (no EVs preflop)"}`);
       L.push(`- Verdict: ${v.label}. ${why(e)}`);
       if (g.r) L.push("- Note: this solve hadn't fully converged, so close frequencies are rough");
+      if (g.x) L.push("- Note: off the solved line: an earlier action the solve rarely takes left its ranges, so the frequencies are the best answer to the ranges the hand leaves");
     } else L.push(`- Verdict: ${v.label}`);
     // (short and skimmable: a verdict, two or three reasons, one takeaway)
     const shape = "Answer briefly: a one-sentence verdict, three short reasons (ranges, equity, blockers, board texture or bet sizing, "

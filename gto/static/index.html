@@ -1412,7 +1412,7 @@ function gradeWith(r, rec) {   // (also the session analyzer's, on its own answe
     return { m: m.action, f: m.freq, b: best.action, bf: best.freq, l: r2(loss), e: r2(m.ev_bb), o: r2(top), h: Math.round(loss / r.pot_bb * 1000) / 10 };
   if (heuristic(r)) return null;
   // (rv: your move is one your range almost never takes, so its EV and the EV lost are rough: shown with a "≈", graded the same)
-  return { m: m.action, f: m.freq, b: best.action, bf: best.freq, l: loss == null ? null : r2(loss), ...(hasEv ? { e: r2(m.ev_bb), o: r2(top) } : {}), ...(hasEv && m.rough_ev ? { rv: 1 } : {}), ...(conv && conv.cls === "bad" ? { r: 1 } : {}), ...(v ? { v, ...(pre ? {} : { vs: 1 }) } : {}) };
+  return { m: m.action, f: m.freq, b: best.action, bf: best.freq, l: loss == null ? null : r2(loss), ...(hasEv ? { e: r2(m.ev_bb), o: r2(top) } : {}), ...(hasEv && m.rough_ev ? { rv: 1 } : {}), ...(conv && conv.cls === "bad" ? { r: 1 } : {}), ...(offSolution(r) ? { x: 1 } : {}), ...(v ? { v, ...(pre ? {} : { vs: 1 }) } : {}) };
 }
 // The move a recorded action is graded as: an all-in that puts in no more than anyone left can match (a stack that
 // doesn't cover the call, or nobody else with chips behind the bet) is a call, or a check: the answers list it so.
@@ -1814,6 +1814,19 @@ const COLORS = (n) => n === "fold" ? "var(--fold)" : n === "in range" ? "var(--a
 // Convergence of the solve, from exploitability in % of the pot (0 = exact equilibrium of the tree); "approximate" where
 // it is over 10 times what answers at its speed reach (solver.approximate, gto/advisor.py _flag_short: the solve ran
 // short, on a busy device or in numpy after the compiled solver failed)
+// Where the ranges an answer is solved against left the solves (Advisor's off_solution: a line the solve rarely took,
+// read by the betting rules; a range filled out; an earlier street narrowed by the rules or by an unsettled solve):
+// its mix is the best answer to those ranges, not the whole hand's equilibrium, so it isn't shown as plainly converged.
+const offSolution = (res) => !!(res && Array.isArray(res.off_solution) && res.off_solution.length);
+function offText(res) {
+  const one = (o) => o.why === "rare" ? `${o.pos}'s ${o.action} on the ${o.street} is ${o.share < 0.5 ? "never" : `only ${o.share}%`} in the solve, so their range from there is the betting rules'`
+    : o.why === "filled" ? (o.street === "preflop" ? `${o.pos}'s preflop line isn't in the charts, so their range is the hands that take its last action`
+      : `${o.pos}'s ${o.street} line left ${o.combos} combos, so their range is filled out with the rest of their ${o.street} range`)
+    : o.why === "rules" ? `the ${o.street} is narrowed by the betting rules, not solved`
+    : `the ${o.street} solve hadn't settled, so ranges follow it ${o.trust}% and the betting rules the rest`;
+  return [...new Set(res.off_solution.map(one))].join("; ");
+}
+const OFF_TIP = "Off the solved line: earlier in this hand the ranges left the solves (see below). This mix and its EVs are the best answer to the ranges the hand leaves, not the whole hand's equilibrium.";
 function convergence(res) {
   const x = res && res.solver && res.solver.exploitability_pct;
   if (x == null) return null;
@@ -1877,8 +1890,9 @@ function renderResult(res, key) {
   const board = res.board ? res.board.match(/../g).map(cardHtml).join(" ") : "";
   let h = `<div class="meta" style="margin:0 0 4px">${res.street} · ${res.hero} ${res.hand}${res.position ? " · " + res.position : ""}${board ? " · " + board : ""}${res.pot_bb ? " · pot " + res.pot_bb + " bb" : ""}</div>`;
   if (heuristic(res)) h += `<div class="verdict"><span class="big">${res.recommended}</span><span class="mix">${res.opponents.length + 1} players in · equity vs field ${(res.equity_vs_field * 100).toFixed(0)}% · heuristic, not a solve</span></div>`;
-  else h += `<div class="verdict"><span class="big">${res.recommended}</span>${res.solved ? `<span class="mix">${res.opponents.length + 1} players in · 3-way solve</span>` : ""}${conv ? `<span class="conv ${conv.cls}" title="${convTip(conv)}">${conv.label} · ${conv.x.toFixed(1)}% pot</span>` : ""}${res.precomputed ? PRE_BADGE(res.precomputed) : ""}${conv && conv.cls === "bad" && SPEED !== "accurate" ? `<button class="link" id="goAccurate">Solve again on Accurate</button>` : ""}</div>`;
+  else h += `<div class="verdict"><span class="big">${res.recommended}</span>${res.solved ? `<span class="mix">${res.opponents.length + 1} players in · 3-way solve</span>` : ""}${conv ? `<span class="conv ${conv.cls}" title="${convTip(conv)}">${conv.label} · ${conv.x.toFixed(1)}% pot</span>` : ""}${offSolution(res) ? `<span class="conv meh" title="${OFF_TIP}">off the solved line</span>` : ""}${res.precomputed ? PRE_BADGE(res.precomputed) : ""}${conv && conv.cls === "bad" && SPEED !== "accurate" ? `<button class="link" id="goAccurate">Solve again on Accurate</button>` : ""}</div>`;
   // the advisor's catch-all (gto/advisor.py Advisor._rules): the solve failed, so the chart, the betting rules or equity answered
+  if (offSolution(res)) h += `<div class="meta" style="color:var(--meh);margin:0 0 6px">Off the solved line: ${offText(res)}. This street's solve is the best answer to those ranges, not the whole hand's equilibrium.</div>`;
   if (res.fallback) h += `<div class="meta" style="color:var(--meh);margin:0 0 6px">The solver couldn't answer this spot, so this is ${{ chart: "the preflop chart's mix", rules: "the betting rules' answer", equity: "a rough equity estimate" }[res.fallback] || "a fallback"}, not a solve.</div>`;
   const hasEv = res.actions.some(a => a.ev_bb !== undefined);
   h += `<div class="arows${hasEv ? "" : " noev"}"><div class="arow head"><span>Action</span><span>${heuristic(res) ? "" : "Solver mix"}</span><span class="num">${heuristic(res) ? "" : "Freq"}</span>${hasEv ? '<span class="num" title="Expected value of taking this action, in big blinds">EV</span>' : ""}</div>`;
