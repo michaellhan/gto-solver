@@ -31,7 +31,7 @@ from gto import mw_library as ML  # noqa: E402
 from gto.cards import cards as parse_cards  # noqa: E402
 from gto.solver import MEMBER_FULL  # noqa: E402
 
-# case: (players, preflop line, the library spot read)
+# case: (players, preflop line, the library spot read[, ante, depth, straddle])
 CASES = {
     "utg_utg1_bb8": (8, "UTG:r2.5,UTG1:c,LJ:f,HJ:f,CO:f,BTN:f,SB:f,BB:c", "mw_utg_btn_bb"),
     "hj_btn_bb8": (8, "UTG:f,UTG1:f,LJ:f,HJ:r2.5,CO:f,BTN:c,SB:f,BB:c", "mw_hj_ip_bb"),
@@ -57,6 +57,16 @@ CASES = {
     # other depths (each player's stack, the depth's charts): another stack-to-pot ratio (MWLibrary.stand_in's read)
     "btn_sb_bb6d120": (6, "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:c,BB:c", "mw_btn_sb_bb", 0.0, 120.0),
     "co_btn_bb6d85": (6, "UTG:f,HJ:f,CO:r2.5,BTN:c,SB:f,BB:c", "mw_co_btn_bb", 0.0, 85.0),
+    "btn_sb_bb6d50": (6, "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:c,BB:c", "mw_btn_sb_bb", 0.0, 50.0),
+    "hj_btn_bb6d50": (6, "UTG:f,HJ:r2.5,CO:f,BTN:c,SB:f,BB:c", "mw_hj_ip_bb", 0.0, 50.0),
+    "utg_btn_bb6d50": (6, "UTG:r2.5,HJ:f,CO:f,BTN:c,SB:f,BB:c", "mw_utg_btn_bb", 0.0, 50.0),
+    "btn_sb_bb6d75": (6, "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:c,BB:c", "mw_btn_sb_bb", 0.0, 75.0),
+    "btn_sb_bb6d150": (6, "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:c,BB:c", "mw_btn_sb_bb", 0.0, 150.0),
+    "hj_btn_bb6d150": (6, "UTG:f,HJ:r2.5,CO:f,BTN:c,SB:f,BB:c", "mw_hj_ip_bb", 0.0, 150.0),
+    "co_btn_bb6d150": (6, "UTG:f,HJ:f,CO:r2.5,BTN:c,SB:f,BB:c", "mw_co_btn_bb", 0.0, 150.0),
+    "btn_sb_bb6d200": (6, "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:c,BB:c", "mw_btn_sb_bb", 0.0, 200.0),
+    "hj_btn_bb6d200": (6, "UTG:f,HJ:r2.5,CO:f,BTN:c,SB:f,BB:c", "mw_hj_ip_bb", 0.0, 200.0),
+    "co_btn_bb6d200": (6, "UTG:f,HJ:f,CO:r2.5,BTN:c,SB:f,BB:c", "mw_co_btn_bb", 0.0, 200.0),
     # the floor: each spot's own pot
     "own_utg_btn_bb": (6, "UTG:r2.5,HJ:f,CO:f,BTN:c,SB:f,BB:c", "mw_utg_btn_bb"),
     "own_hj_ip_bb": (6, "UTG:f,HJ:r2.5,CO:f,BTN:c,SB:f,BB:c", "mw_hj_ip_bb"),
@@ -185,11 +195,11 @@ def main():
     for case, (players, line, sid, *extra) in CASES.items():
         if a.cases and case not in a.cases.split(","):
             continue
-        ante, depth = (list(extra) + [0.0, 100.0][len(extra):])[:2]
-        s = ML.spot_setup(line, players=players, ante=ante, stack=depth)
+        ante, depth, straddle = (list(extra) + [0.0, 100.0, False][len(extra):])[:3]
+        s = ML.spot_setup(line, players=players, ante=ante, stack=depth, straddle=straddle)
         spot = spots[sid]
         own = ML.spot_setup(spot["line"])
-        other = bool(ante) or depth != 100.0      # (another pot or stack: no spot has it)
+        other = bool(ante) or depth != 100.0 or straddle     # (another pot or stack: no spot has it)
         assert other or abs(s["pot"] - spot["pot"]) < 0.01 and abs(s["stack"] - spot["stack"]) < 0.01, case
         table = players if players != 6 or case.startswith("own_") else 7   # (borrow reads only another table's)
         if other:

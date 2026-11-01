@@ -777,6 +777,110 @@ class TestBiggerTable(_Lib):
         self.assertIsNone(adv.instant(dict(hand, hole=cards_str(fl.ALL_COMBOS[off]))))
 
 
+DEEP_HJ_BB = "UTG:f,HJ:r2.5,CO:f,BTN:f,SB:f,BB:c"
+
+
+class TestOtherDepth(_Lib):
+    """At another depth a single-raised pot of a spot's pot that no spot covers by NEAR_COVER (the depth's charts
+    defend or flat a few more hands) is read off the nearest single-raised spot covering each range by
+    NEAR_DEPTH_COVER, at most NEAR_DEPTH_DIST apart, where no other tier reads it: the hands that spot's ranges hold
+    (the rest solved live). 100bb, 3bet pots, pots further off and pots another tier reads as before."""
+
+    def test_which_spot(self):
+        cases = [("UTG:f,HJ:f,CO:f,BTN:f,SB:r3,BB:c", 50, "srp_sb_bb"),
+                 (DEEP_HJ_BB, 200, "srp_hj_bb"),
+                 ("UTG:r2.5,HJ:f,CO:f,BTN:f,SB:f,BB:c", 200, "srp_utg_bb"),
+                 ("UTG:f,HJ:r2.5,CO:c,BTN:f,SB:f,BB:f", 150, "srp_hj_co"),
+                 ("UTG:r2.5,HJ:f,CO:f,BTN:c,SB:f,BB:f", 150, "srp_utg_btn"),
+                 ("UTG:f,HJ:r2.5,CO:c,BTN:f,SB:f,BB:f", 50, "srp_hj_co"),
+                 ("UTG:f,HJ:f,CO:r2.5,BTN:c,SB:f,BB:f", 200, None),                 # (55% held)
+                 ("UTG:r2.5,HJ:r7.5,CO:f,BTN:f,SB:f,BB:f,UTG:c", 150, None),        # (a 3bet pot, 60% held)
+                 ("UTG:f,HJ:f,CO:r2.5,BTN:c,SB:f,BB:f", 100, None),                 # (100bb: 80% held, as before)
+                 ("UTG:f,HJ:f,CO:f,BTN:r2.5,SB:c,BB:f", 75, "srp_btn_bb")]          # (BTN vs BB's tier 3 first)
+        for line, depth, sid in cases:
+            st = fl.spot_setup(line, 6, depth)
+            args = (self.lib, st["full0"], st["full1"], st["pot"], st["stack"])
+            ag = fa.spot_aggressor({"seats": [st["oop"], st["ip"]], "line": line})
+            sp = fa.near_spot(*args, aggr=ag)
+            self.assertEqual(sp and sp["id"], sid, (line, depth))
+            if sid is None:
+                continue
+            rows = {r["id"]: r for r in fa.near_candidates(*args, aggr=ag)}
+            if sid == "srp_btn_bb":      # (another pot's held tier, read before the depth's BTN vs SB)
+                self.assertEqual((rows[sid]["tier"], rows["srp_btn_sb"]["tier"]), (3, 5), line)
+                fa._NEAR.clear()
+                with mock.patch.object(fa, "NEAR_DEPTH_COVER", fa.NEAR_COVER):
+                    self.assertEqual(fa.near_spot(*args, aggr=ag)["id"], sid, line)
+                fa._NEAR.clear()
+                continue
+            self.assertEqual(rows[sid]["tier"], 5, line)
+            self.assertLess(rows[sid]["cover"], fa.NEAR_COVER, line)
+            self.assertGreaterEqual(rows[sid]["cover"], fa.NEAR_DEPTH_COVER, line)
+            self.assertLessEqual(rows[sid]["dist"], fa.NEAR_DEPTH_DIST, line)
+            self.assertFalse(fa.near_fill(*args, aggr=ag), line)       # (the hands held alone: no class average)
+            fa._NEAR.clear()
+            with mock.patch.object(fa, "NEAR_DEPTH_COVER", fa.NEAR_COVER):
+                self.assertIsNone(fa.near_spot(*args, aggr=ag), line)
+            fa._NEAR.clear()
+
+    def test_instant(self):
+        """200bb HJ vs BB, the big blind first to act: a hand HJ vs BB's BB range holds gets that spot's 100bb mix at
+        once (the depth named), nothing solved; one it doesn't (the 200bb BB defends wider) has no answer at once."""
+        st = fl.spot_setup(DEEP_HJ_BB, 6, 200)
+        sp = next(s for s in self.lib.index()["spots"] if s["id"] == "srp_hj_bb")
+        ss = fl.spot_setup(sp["line"])
+        dead = set(parse_cards(BOARD))
+        held = next(cards_str(cb) for i, cb in enumerate(fl.ALL_COMBOS) if st["full0"][i] > 0.5 and
+                    ss["full0"][i] > 0.5 and not dead & set(cb))
+        off = next(cards_str(cb) for i, cb in enumerate(fl.ALL_COMBOS) if st["full0"][i] > 0.5 and
+                   ss["full0"][i] == 0 and not dead & set(cb))
+        hand = {"players": 6, "stack": 200, "preflop": parse_actions(DEEP_HJ_BB), "board": BOARD, "turn": [],
+                "river": [], "hero": "BB", "flop": []}
+        adv = advisor()
+        with mock.patch.object(A, "solve", side_effect=AssertionError("solved")):
+            res = adv.instant(dict(hand, hole=held))
+        self.assertEqual(res["approximate"]["source"], "near")
+        label = res["approximate"]["label"]
+        self.assertIn("the library's HJ vs BB single-raised pot", label)
+        self.assertIn("solved shallower", label)
+        names, mix = self.expected(BOARD, held, [], spot=sp)
+        self.assertEqual([a["action"] for a in res["actions"]], names)
+        self.assertTrue(np.allclose([a["freq"] for a in res["actions"]], mix, atol=0.0006))
+        self.assertIsNone(adv.instant(dict(hand, hole=off)))
+
+
+class TestHeadsUpSpotAtDepth(_Lib):
+    """The heads-up open's spot (srp_sb_bb_2max, queued, solved at 100bb) reads the heads-up raised pot at other
+    depths as another depth (its ranges hold 91-98% of each depth's, 0.14-0.39 apart: NEAR_COVER), and no 6- or 8-max
+    pot of its pot (57-86% held, 1.5-3.1 apart) changes spot: checked on the index with that spot's row added."""
+
+    def test_which_spot(self):
+        st = fl.spot_setup("SB:r3,BB:c", 2, 100.0)
+        row = {"id": "srp_sb_bb_2max", "label": "SB vs BB single-raised pot, heads-up", "line": "SB:r3,BB:c",
+               "seats": [st["oop"], st["ip"]], "fp": [fl.range_fp(st["full0"]), fl.range_fp(st["full1"])],
+               "pot": st["pot"], "stack": st["stack"], "flops": {}, "game": fl.Format(players=2).as_dict()}
+        idx = dict(self.lib.index(), spots=list(self.lib.index()["spots"]) + [row])
+        lib = mock.Mock()
+        lib.index.return_value = idx
+
+        def near(lb, players, line, depth):
+            s = fl.spot_setup(line, players, float(depth))
+            ag = fa.spot_aggressor({"seats": [s["oop"], s["ip"]], "line": line})
+            fa._NEAR.clear()
+            sp = fa.near_spot(lb, s["full0"], s["full1"], s["pot"], s["stack"], aggr=ag, players=players)
+            fa._NEAR.clear()
+            return sp and sp["id"]
+
+        for depth in (40, 50, 75, 150, 200):
+            self.assertEqual(near(lib, 2, "SB:r3,BB:c", depth), "srp_sb_bb_2max", depth)
+        for players, line in [(6, "UTG:f,HJ:f,CO:f,BTN:f,SB:r3,BB:c"), (6, "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:c,BB:f"),
+                              (6, "UTG:f,HJ:f,CO:r2.5,BTN:f,SB:c,BB:f"),
+                              (8, "UTG:f,UTG1:f,LJ:f,HJ:f,CO:f,BTN:r2.5,SB:c,BB:f")]:
+            for depth in (40, 50, 150, 200):
+                self.assertEqual(near(lib, players, line, depth), near(self.lib, players, line, depth),
+                                 (players, line, depth))
+
+
 STRADDLE_BTN = "HJ:f,CO:f,BTN:r5,SB:f,BB:f,UTG:c"     # (the straddler calls the BTN's raise: an 11.5 bb pot)
 STRADDLE_SB = "HJ:f,CO:f,BTN:f,SB:r6,BB:f,UTG:c"      # (the straddler calls the SB's raise: 13 bb, 94 behind)
 

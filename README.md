@@ -2609,6 +2609,48 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   decisions not in the hand's tree, and 3bet pots at 125bb and deeper whose ranges the 100bb spot covers by 66-83%
   0.5-1.2. Facing a bet the read off the stored flops most like it (the last column) now takes the learned
   correction (above): a seventh less given up in a second sample of 132 flops and depths.
+
+  A single-raised pot of a spot's pot that no spot covers by 90% at its depth (the depth's charts defend or flat a
+  few more hands: SB vs BB at 40-50bb, the BB's defence of the HJ's and UTG's opens at 200bb, 87-90% held) and that
+  nothing else reads is now read off the nearest single-raised spot covering each range by 80%, at most 0.65 apart
+  (`NEAR_DEPTH_COVER`, `NEAR_DEPTH_DIST`; the last tier), for the hands its ranges hold, as at a bigger table's 75%:
+  the rest, 12-19% of the hands by reach, are solved live as before, and the reads over every hand (0.58-1.16 above)
+  stay out, as do 3bet pots. EV given up (`scripts/bench_flop_formats.py`, the depth cases: eight of the spot's
+  stored flops each, the pot's own ranges solved at its depth in the Accurate tree, 300 iterations, natively; the
+  entry's answers over the hands held, % of the pot, mean / 90th percentile / worst flop, and at the first decision;
+  against the live Fast solve of the flop at its 50th iteration, the answer that replaces the read: 0.1-0.4 s
+  natively, about 0.5 s in the browser):
+
+  | pot | spot read (least cover; distance) | the entry, hands held | first decision | live Fast (50): all / first |
+  |---|---|---|---|---|
+  | 50bb SB vs BB | SB vs BB (0.90; 0.26) | 0.187 / 0.21 / 0.25 | 0.128 | 0.241 / 0.263 |
+  | 200bb HJ vs BB | HJ vs BB (0.89; 0.27) | 0.165 / 0.22 / 0.22 | 0.065 | 0.255 / 0.152 |
+  | 200bb UTG vs BB | UTG vs BB (0.89; 0.33) | 0.180 / 0.27 / 0.28 | 0.074 | 0.290 / 0.148 |
+  | 8-max 200bb UTG vs BB | UTG vs BB (0.87; 0.60) | 0.174 / 0.24 / 0.28 | 0.009 | 0.283 / 0.159 |
+  | 150bb HJ open, CO flat | HJ vs CO (0.84; 0.51) | 0.225 / 0.28 / 0.30 | | 0.217 |
+  | 150bb UTG open, BTN flat | UTG vs BTN (0.82; 0.53) | 0.231 / 0.31 / 0.32 | | 0.232 |
+  | 50bb HJ open, CO flat | HJ vs CO (0.87; 0.42) | 0.157 / 0.28 / 0.29 | | 0.148 |
+  | 50bb UTG open, HJ flat | UTG vs HJ (0.81; 0.51) | 0.101 / 0.17 / 0.17 | | 0.125 |
+  | 50bb BTN open, SB flat | BTN vs SB (0.82; 0.61) | 0.277 / 0.46 / 0.59 | | 0.222 |
+  | inside 90%, as before: BTN vs BB at 50 / 200bb | BTN vs BB (0.98 / 0.92; 0.13 / 0.18) | 0.133 / 0.109 | | 0.203 / 0.286 |
+  | not taken: 75bb BTN open, SB flat | BTN vs SB (0.81; 0.56) | 0.308 / 0.52 / 0.68 | 0.038 | 0.239 / 0.083 |
+  | (kept: the same off BTN vs BB, held tier 3) | BTN vs BB (1.00; 1.54) | 0.223 / 0.34 / 0.67 | 0.029 | |
+
+  All under the bar; the blinds' and the 200bb pots give up less than the live solve that replaces them, the flatted
+  opens about as much (the BTN's flatted by the SB more: 0.28 against 0.22). In the browser the read shows at 0.11 s
+  where nothing showed until the Fast solve's answer at 0.93 s (`scripts/bench_browser.mjs --early`, flop-near-200bb,
+  one thread: the 200bb BB's Qh9h against the HJ on KhJd6c). Last because at 75bb, where BTN vs BB's
+  held tier already read the BTN's open flatted by the SB, the depth's BTN vs SB measured worse (above), so a pot
+  another tier reads keeps it. Heads-up flop decisions answered at once (`scripts/instant_coverage.py --stack`),
+  before -> after: 50.3% -> 66.9% at 40bb, 52.5 -> 72.9 at 50bb, 74.6 -> 75.8 at 60bb, 83.8 -> 85.0 at 125bb, 78.4
+  -> 81.9 at 150bb, 70.3 -> 72.0 at 175bb, 48.4 -> 66.0 at 200bb, at 8-max 63.0 -> 64.8 at 50bb and 34.3 -> 56.3 at
+  200bb (UTG's, UTG1's, the LJ's and the HJ's opens the BB defends); 75bb and 100bb unchanged (88.3%, 91.9%). Every
+  decision of a session at once: 92.5 -> 94.5%, 93.0 -> 95.4, 95.7 -> 95.8, 95.8 -> 96.0, 94.4 -> 94.8, 92.8 -> 93.0,
+  89.3 -> 91.4, 94.9 -> 95.1 and 87.8 -> 89.9. Still not read at once (`--why`): at 40-50bb 16-17% of the heads-up
+  flop decisions under a stack-to-pot ratio of 3 (mostly 3bet pots), at 200bb 13.7% too little held (by the gates
+  above) and 13.5% too far apart (8-max: 20.0% and 16.7%), at 150-175bb 7.6-13.8% too far apart. Those flops are
+  solved live at Fast in under a second in the browser (`scripts/bench_browser.mjs`, one thread: flop-50bb-3bp 0.29
+  s, flop-200bb-3bp 0.66 s, flop-200bb-co-btn 0.81 s); builds that would precompute them: Next for other games.
 * **Another table size** (`flop_approx.near_exact`, `NEAR_EXACT_COVER`, `NEAR_EXACT_TABLE_COVER`, `NEAR_EXACT_DIST`,
   `NEAR_EXACT_TABLE_DIST`, `NEAR_TABLE_COVER`). The library's spots
   are 6-max's, so an 8- or 9-max flop was read approximately off the nearest spot (above: no EVs, until its own solve
@@ -3842,7 +3884,21 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   or the LJ, would make 4.8 a 100 hands precomputed on every flop, ~1755 x 3 entries at 15-45 s of CPU each,
   22-66 CPU-hours); a straddle's 3bet pots (18.5% of its heads-up flop decisions) are under a stack-to-pot ratio
   of 3, where the 40bb spots listed above (BB vs BTN's 3bet pot at 40bb: 1.5) would be the ones to try, and its 3-way
-  pots (none read at once: under half a 3-way spot's stack-to-pot ratio) would need 3-way spots of their own.
+  pots (none read at once: under half a 3-way spot's stack-to-pot ratio) would need 3-way spots of their own. At
+  other depths (`--stack 40 / 50 / 200 --candidate`, precomputed decisions per 100 hands a spot adds on 552 flops;
+  its other flops would then read at once off them): at 40-50bb what nothing reads is the 3bet pots, under a
+  stack-to-pot ratio of 3, 0.23-0.51 each (the BB's and the SB's 3bets of the BTN and of the CO, the BTN's of the
+  CO, the BB's of the SB), the six together 2.2 at 40bb and 2.4 at 50bb, each depth needing its own build (a pot
+  under a ratio of 3 is read off no other depth, `NEAR_MIN_SPR`). Their entries are cheap: 5-12 s each natively to
+  0.02-0.05% of the pot (`fl.library_config`, 200 iterations; a 100bb 3bet pot's 21-26 s), ~7 CPU-hours for the six
+  on 552 at one depth, ~23 on every flop. At 200bb the HJ's open flatted by the CO or the BTN add 1.1 each, the
+  CO's and UTG's flatted by the BTN 0.56-0.58, the 3bet pots 0.53-0.71 (the BB's and the SB's of the BTN, the
+  BTN's of the CO), at 85-104 s an entry for a flatted open and 35-69 s for a 3bet pot (~15 and ~8 CPU-hours a spot
+  on 552); CO vs BB on every flop makes 12.8 precomputed instead of read approximately. The pots nothing reads
+  are solved live in under a second meanwhile (Another stack depth, above), so these builds buy precision more
+  than speed: not planned ahead of the heads-up builds. Heads-up raised pots at 40-200bb need nothing more: once
+  `srp_sb_bb_2max` is built its ranges hold 91-98% of each depth's, 0.14-0.39 apart, inside `NEAR_COVER`, so it
+  reads them as another depth (6-max and 8-max pots stay off it: 57-86% held, 1.5-3.1 apart).
 * **Flops**: canonical flops matched up to suits (the ranges are suit-symmetric, so a stored flop's solve is any
   suit permutation's, its combos permuted); other flops are solved live. Each spot stores a representative set
   (`representative_flops(n)`: the 1755 suit-isomorphic flops sorted by texture and sampled by weight, so each suit
@@ -3859,7 +3915,7 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   answered approximately at once off the spot whose ranges are nearest, `flop_approx.near_spot`), a flop not
   stored 10.2 (the flatted opens' and the 3bet pots': answered approximately at once from the stored flops most like
   it, `scripts/instant_coverage.py` 77.2% -> 87.5% with them, 91.9% with both), a raise 3.2. At 40-200bb, where no
-  spot is built, the 100bb spots answer 48-89% of the heads-up flop decisions approximately at once (`--stack`). At 8- and 9-max
+  spot is built, the 100bb spots answer 66-89% of the heads-up flop decisions approximately at once (`--stack`). At 8- and 9-max
   the pots that play as 6-max ones are answered as the library's own (68.2% and 64.6% of their heads-up flop
   decisions, `--players`), and with antes or a straddle the nearest spot of another pot answers 80.6% and 67.8%
   approximately (`--ante`, `--straddle`). A
@@ -4135,7 +4191,15 @@ betting rules. The commonest 3-way pots' flops are solved offline (`gto/mw_libra
   most like it, and more than the live solve of their own ranges, so they're read at once only and the live solve
   replaces them, as it replaces the read off the stored flops most like a flop (above). The pots 2.6-3.3 apart, left
   out, give up twice as much off the nearest flops as a spot's own pot does (0.25-0.27; checked to twice 0.37-0.41
-  from the stored entry).
+  from the stored entry). Other depths stay out too, outside `MW_STAND_SPR` (`scripts/bench_mw_formats.py`, the
+  `...6d50`-`...6d200` cases: the 100bb spots read at 50, 75, 150 and 200bb, five stored flops each, a stack-to-pot
+  ratio 0.49-0.74x or 1.51-2.03x the spot's): the stored entries give up 0.06-0.19 (the worst decision 0.64) and the
+  read off the stored flops most like it 0.14-0.28 (the worst 0.76, the raiser's after a check), against the live
+  solve's 0.04-0.08. Off the nearest flops the BTN's open called by both blinds gives up 0.18 / 0.14 / 0.15 at 75,
+  150 and 200bb (0.73, 0.68 and 1.14 apart) and UTG's flatted by the BTN 0.22 at 50bb (0.37), but the BTN's 0.27 at
+  50bb (0.86), the HJ's flatted by the BTN 0.26 at 50bb and 0.23-0.24 at 150-200bb (0.73-1.12) and the CO's 0.28 and
+  0.26 at 150 and 200bb (1.13, 1.66), as much as the pots left out above, with no gate on distance or cover between
+  them.
   What it answers (`scripts/instant_coverage.py`, Accuracy vs speed: The answer at once in 3-way pots, its table):
   of the 3-way flop decisions, borrowed and precomputed 1.9% at 8-max and 1.3% at 9-max (the stored flops are 12.8%
   of flops by weight), read at once off a borrowed spot's stored flops most like it 12.4 / 8.6 points more, and off

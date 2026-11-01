@@ -174,6 +174,19 @@ CASES = {
     "ante_sb_btn": ("a0.125", "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:c,BB:f", "srp_btn_bb"),
     "ante_sb_hj": ("a0.125", "UTG:f,HJ:r2.5,CO:f,BTN:f,SB:c,BB:f", "srp_hj_bb"),
     "ante_sb_utg": ("a0.125", "UTG:r2.5,HJ:f,CO:f,BTN:f,SB:c,BB:f", "srp_utg_bb"),
+    # other depths, the same pot: a spot's own seats whose ranges there hold 80-90% of this depth's
+    "6max50_sb_bb": ("50bb", "UTG:f,HJ:f,CO:f,BTN:f,SB:r3,BB:c", "srp_sb_bb"),
+    "6max50_btn_sb": ("50bb", "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:c,BB:f", "srp_btn_sb"),
+    "6max50_hj_co": ("50bb", "UTG:f,HJ:r2.5,CO:c,BTN:f,SB:f,BB:f", "srp_hj_co"),
+    "6max50_utg_hj": ("50bb", "UTG:r2.5,HJ:c,CO:f,BTN:f,SB:f,BB:f", "srp_utg_hj"),
+    "6max50_btn_bb": ("50bb", "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:c", "srp_btn_bb"),
+    "6max150_hj_co": ("150bb", "UTG:f,HJ:r2.5,CO:c,BTN:f,SB:f,BB:f", "srp_hj_co"),
+    "6max150_utg_btn": ("150bb", "UTG:r2.5,HJ:f,CO:f,BTN:c,SB:f,BB:f", "srp_utg_btn"),
+    "6max200_hj_bb": ("200bb", "UTG:f,HJ:r2.5,CO:f,BTN:f,SB:f,BB:c", "srp_hj_bb"),
+    "6max200_utg_bb": ("200bb", "UTG:r2.5,HJ:f,CO:f,BTN:f,SB:f,BB:c", "srp_utg_bb"),
+    "6max200_btn_bb": ("200bb", "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:c", "srp_btn_bb"),
+    "6max75_btn_sb": ("75bb", "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:c,BB:f", "srp_btn_sb"),
+    "8max200_utg_bb": ("8max_200bb", "UTG:r2.5,UTG1:f,LJ:f,HJ:f,CO:f,BTN:f,SB:f,BB:c", "srp_utg_bb"),
 }
 TRUTH_DIR = os.environ.get("GTO_BENCH_FORMATS", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "reports",
                                                                "bench_formats"))

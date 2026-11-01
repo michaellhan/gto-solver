@@ -101,6 +101,16 @@ const SPOTS = {
   "flop-near-80bb-bet": base({ stack: 80, hero: "HJ", hole: "Ah5h", board: "KhJd6c", preflop: HJ_CO, flop: [X("HJ"), B("CO", 4.88)] }),
   "flop-near-80bb-3bp": base({ stack: 80, hero: "BB", hole: "AhKd", board: "KhJd6c", preflop: BB_3BET }),   // (3bp_bb_btn's
                                                     // three stored flops most like it)
+  // what other depths still solve live (nothing read at once): a 3bet pot at 50bb (a stack-to-pot ratio of 2, under
+  // NEAR_MIN_SPR) and at 200bb (the 100bb spot's ranges 47% held), the CO's open flatted by the BTN at 200bb (55%)
+  "flop-50bb-3bp": base({ stack: 50, hero: "BB", hole: "AhKd", board: "Ks7d2c", preflop: BB_3BET }),
+  "flop-200bb-3bp": base({ stack: 200, hero: "BB", hole: "AhKd", board: "Ks7d2c", preflop: BB_3BET }),
+  "flop-200bb-co-btn": base({ stack: 200, hero: "CO", hole: "AhQd", board: "Ks7d2c",
+                              preflop: [F("UTG"), F("HJ"), R("CO", 2.5), C("BTN"), F("SB"), F("BB")] }),
+  // another depth under NEAR_COVER (--early: the 200bb BB's defence of the HJ, 89% held, read off srp_hj_bb for the
+  // hands its ranges hold, flop_approx.NEAR_DEPTH_COVER)
+  "flop-near-200bb": base({ stack: 200, hero: "BB", hole: "Qh9h", board: "KhJd6c",
+                            preflop: [F("UTG"), R("HJ", 2.5), F("CO"), F("BTN"), F("SB"), C("BB")] }),
   "flop-2tone": base({ hero: "BB", hole: "JcTc", board: "9h8h6c" }),                          // not in it, two-tone
   "turn-lib": base({ hero: "BB", hole: "QhJh", board: "Kc7d4h9s", flop: SRP_FLOP }),         // the flop narrowed by the library
   "turn": base({ hero: "BB", hole: "QhJh", board: "Ks7d2cTh", flop: SRP_FLOP }),             // (its flop in the library now)

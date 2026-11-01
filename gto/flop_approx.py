@@ -139,6 +139,22 @@ NEAR_MIN_SPR = 3.0
 # table (near_candidates' players): those pots stay as they were.
 NEAR_TABLE_COVER = 0.75
 NEAR_TABLE_DIST = 1.2
+# At another depth, a single-raised pot of the same pot that no spot covers by NEAR_COVER (the depth's charts defend or
+# flat a few more hands: 50bb SB vs BB, 200bb HJ and UTG vs BB, 87-90% held) and no tier above reads is read off the
+# nearest single-raised spot covering each range by NEAR_DEPTH_COVER, at most NEAR_DEPTH_DIST apart, for the hands its
+# ranges hold (the rest are solved live, as at a bigger table's NEAR_TABLE_COVER); tier 5, last. scripts/
+# bench_flop_formats.py (8 flops each, as below; the entry's answers over the hands held, mean / worst flop, against the
+# live Fast solve at its 50th iteration): 50bb SB vs BB (cover 0.90, distance 0.26) 0.187 / 0.25 against 0.241, 200bb
+# HJ and UTG vs BB (0.89, 0.27 / 0.33) 0.165 / 0.22 and 0.180 / 0.28 against 0.255 and 0.290, 8-max 200bb UTG vs BB
+# (0.87, 0.60) 0.174 / 0.28 against 0.283, at 150bb the HJ's open flatted by the CO and UTG's by the BTN (0.84, 0.51;
+# 0.82, 0.53) 0.225 / 0.30 and 0.231 / 0.32 against 0.217 and 0.232, at 50bb the HJ's flatted by the CO, UTG's by the
+# HJ and the BTN's by the SB (0.87, 0.42; 0.81, 0.51; 0.82, 0.61) 0.157 / 0.29, 0.101 / 0.17 and 0.277 / 0.59 against
+# 0.148, 0.125 and 0.222 (inside NEAR_COVER, BTN vs BB at 50 and 200bb: 0.133 and 0.109); 12-19% of the hands (by
+# reach) left to the live solve. Last, as the BTN's open flatted by the SB at 75bb (0.81, 0.56) gave up 0.308 / 0.68
+# read this way and 0.223 / 0.67 off BTN vs BB's held tier 3, which it keeps. 3bet pots stay out (at 125bb and deeper,
+# 66-83% held, 0.5-1.2: README).
+NEAR_DEPTH_COVER = 0.8
+NEAR_DEPTH_DIST = 0.65
 # Another game's pot (antes or a straddle add dead money; heads-up the blinds play: a pot no spot has) is read off a
 # spot of another pot where the same seat raised last preflop (near_spot's aggr: out of position, or in position, in
 # both), the stack-to-pot ratio within NEAR_SPR as above, each range covered by NEAR_POT_COVER and the distances
@@ -305,6 +321,9 @@ def near_candidates(lib, full0: np.ndarray, full1: np.ndarray, pot: float, stack
             if row["cover"] < NEAR_COVER:
                 if players > 6 and not other and row["cover"] >= NEAR_TABLE_COVER and row["dist"] <= NEAR_TABLE_DIST:
                     row["tier"] = 1   # (a bigger table's pot of the same pot and stack: NEAR_TABLE_COVER)
+                elif other and row["cover"] >= NEAR_DEPTH_COVER and row["dist"] <= NEAR_DEPTH_DIST and \
+                        str(sp.get("line") or "").count(":r") == 1:
+                    row["tier"] = 5   # (another depth's single-raised pot of the same pot: NEAR_DEPTH_COVER, last)
                 else:
                     row["why"] = "cover"
             elif row["dist"] > NEAR_SPOT_DIST:
