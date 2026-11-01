@@ -3934,18 +3934,22 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   and the flop reports play its hands in that game. Listed: BTN, CO, HJ, UTG and SB vs BB and BB vs BTN's 3bet pot
   at 40bb and 200bb, and heads-up at 100bb the small blind's (the button's) 3bb open called by the big blind
   (`srp_sb_bb_2max`, "SB vs BB single-raised pot, heads-up", on 552 flops: the heads-up charts' ranges, wider than
-  6-max SB vs BB's, about half of heads-up flop decisions), built by `--format` (until built they are solved live,
-  or read approximately off a 6-max spot; their entries deal the river, as every spot's do).
+  6-max SB vs BB's, about half of heads-up flop decisions) and its limp the big blind checks (`lp_sb_bb_2max`, "SB
+  vs BB limped pot, heads-up", on 552 flops: pot 2, 99 behind, 38.8% of heads-up flop decisions; its base spot,
+  6-max's limped pot `lp_sb_bb`, is `FORMAT_ONLY`: not built in the default game, nor listed there by
+  `all_spots()`), built by `--format` (until built they are solved live, or read approximately off a 6-max spot;
+  their entries deal the river, as every spot's do).
 * **Next for other games** (a plan, not built; `scripts/instant_coverage.py --players 2 --assume
   "srp_sb_bb_2max=552,turns" --candidate ...`, over the heads-up open already listed): heads-up's limped pot (the
   small blind completes, the big blind checks: `SB:c,BB:x`, pot 2, stack 99, the heads-up charts' 384 / 1,007 combos
-  by frequency) is 38.8% of heads-up flop decisions (53.6 a 100 hands) and nothing reads it at once (no spot has its
-  ranges or a stack-to-pot ratio near 49.5). On 552 flops with turn files it adds 29.1 instant decisions per 100
-  heads-up hands (20.4 on the flop, 8.7 on the turn; 6.0 points of all of them; the other limped flops would read
-  approximately off it, not counted); on every flop 76.3 (53.5 and 22.8). Its combo pairs are 80% of the heads-up
-  open's (384 x 1,007 against 787 x 617) at a far deeper stack-to-pot ratio, so about that spot's ~100 s an entry (an
-  estimate, not timed): ~15 CPU-hours and ~3.5 MB of entries plus ~10 MB of turn files on 552, ~50 CPU-hours and ~45
-  MB on every flop. The heads-up open's other 1,203 flops add 59.3 over its 552 (~35 more CPU-hours; queued with
+  by frequency; listed now, `lp_sb_bb_2max`, and queued on 552 flops with turn files) is 38.8% of heads-up flop
+  decisions (53.6 a 100 hands) and nothing reads it at once (no spot has its ranges or a stack-to-pot ratio near
+  49.5). On 552 flops with turn files it adds 29.1 instant decisions per 100 heads-up hands (20.4 on the flop, 8.7 on
+  the turn; 6.0 points of all of them; the other limped flops would read approximately off it, not counted); on every
+  flop 76.3 (53.5 and 22.8). Timed on four flops (Kc7d2h, Jc9c4d, 8c6c2c, 7d7c3h, one process, with turn EVs) an
+  entry takes 138-200 s (168 on average: 400-500 iterations to the build's target, where the open settles at 300) and
+  its worker 3.0 GB at its peak (the open's 2.1-2.6), entries ~10.5 KB and turn files ~28 KB: ~26 CPU-hours and ~5.8
+  MB of entries plus ~15 MB of turn files on 552 (built at one process), ~82 CPU-hours and ~67 MB on every flop. The heads-up open's other 1,203 flops add 59.3 over its 552 (~35 more CPU-hours; queued with
   turn files). With antes at
   8-max the heads-up flops left are 13.5% too far from any spot and 12.7% too little covered, 3-way flops 24.5
   decisions a 100 hands (67.5% of them now at once, read off the nearest 3-way spot: Precomputed 3-way flop

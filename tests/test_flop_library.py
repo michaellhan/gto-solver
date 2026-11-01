@@ -721,7 +721,10 @@ class TestOtherGames(unittest.TestCase):
         spots = fl.all_spots()
         ids = [s[0] for s in spots]
         self.assertEqual(len(ids), len(set(ids)))
-        self.assertEqual([s[:3] for s in spots[:len(fl.SPOTS)]], [tuple(s) for s in fl.SPOTS])
+        default = [tuple(s) for s in fl.SPOTS if s[0] not in fl.FORMAT_ONLY]   # (6-max's limped pot: heads-up's base)
+        self.assertEqual([s[:3] for s in spots[:len(default)]], default)
+        self.assertNotIn("lp_sb_bb", ids)
+        self.assertIn("lp_sb_bb_2max", ids)
         base = {s[0]: s for s in fl.SPOTS}
         for tag, which in fl.FORMAT_SPOTS.items():
             fmt = fl.Format.parse(tag)
@@ -760,6 +763,16 @@ class TestOtherGames(unittest.TestCase):
         self.assertGreater((s["full1"] > 0).sum(), (six["full0"] > 0).sum())       # (the button's opens, wider)
         self._found_in_its_game(sid, label, line, fmt, s, {"players": 2},
                                 {"players": 6, "preflop": parse_actions(dict((x[0], x[2]) for x in fl.SPOTS)["srp_sb_bb"])})
+
+    def test_heads_up_limped_entry(self):
+        """Heads-up the small blind's limp the big blind checks: pot 2, 99 behind, the big blind first to act after the
+        flop, found in a 2-player game and not in 6-max's limped pot (its own ranges, a spot not built there)."""
+        sid, label, line, fmt = fl.all_spots(["2max"])[1]
+        self.assertEqual((sid, label, line), ("lp_sb_bb_2max", "SB vs BB limped pot, heads-up", "SB:c,BB:x"))
+        s = fl.spot_setup(line, fmt.players, fmt.stack, fmt.ante, fmt.straddle)
+        self.assertEqual((s["oop"], s["ip"], s["pot"], s["stack"]), ("BB", "SB", 2.0, 99.0))
+        self._found_in_its_game(sid, label, line, fmt, s, {"players": 2},
+                                {"players": 6, "preflop": parse_actions(dict((x[0], x[2]) for x in fl.SPOTS)["lp_sb_bb"])})
 
     def _found_in_its_game(self, sid, label, line, fmt, s, game: dict, other: dict):
         """An entry of the spot in a library of its own: the index lists it with its game, and the advisor answers
