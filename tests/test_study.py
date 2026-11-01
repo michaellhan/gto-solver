@@ -112,10 +112,10 @@ class TestStudy(unittest.TestCase):
         (the opponent's answer to it is barely trained: the page shows its EVs with a "≈"); nothing else changes."""
         st = dict(preflop=PRE, board="Kd7c2h", flop=[{"pos": "BB", "action": "check"}])
         root, r = self.study(**dict(st, flop=[])), self.study(**st)
-        with mock.patch.object(advisor_mod, "RARE_BRANCH", 0.3):   # (the same stored flop: BTN bets 75% 26%)
+        with mock.patch.object(advisor_mod, "RARE_BRANCH", 0.25):   # (the same stored flop: BTN checks 29%, bets 75% 22%)
             t = self.study(**st)
             adv = self.adv.advise(dict({"players": 6, "stack": 100, "hero": "BTN", "hole": "AsJc"}, **st))
-        for res, bar in ((root, advisor_mod.RARE_BRANCH), (r, advisor_mod.RARE_BRANCH), (t, 0.3)):
+        for res, bar in ((root, advisor_mod.RARE_BRANCH), (r, advisor_mod.RARE_BRANCH), (t, 0.25)):
             for a in res["actions"]:
                 self.assertIn(a.get("rough_ev"), (None, True))   # (the key only where it holds)
                 share = a["combos"] / res["range_combos"]

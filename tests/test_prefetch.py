@@ -61,13 +61,13 @@ class TestPrefetch(unittest.TestCase):
             f.record = None
 
     def test_names_the_flops_entry_and_reads_it_later(self):
-        """A heads-up flop the library holds: the dry run names its entry (the hero not first to act: asked as the
-        player who is), reads none, and leaves nothing marked missing; the answer then reads it and is
-        precomputed."""
+        """A heads-up flop the library holds: the dry run names its entry and its turn file (the hero not first to
+        act: asked as the player who is), reads none, and leaves nothing marked missing; the answer then reads the
+        entry and is precomputed."""
         adv, f = self.advisor()
         st = state(hero="BTN", hole="AsQs", board="Kc7d4h")
         names = self.dry(adv, f, st)
-        self.assertEqual([p.split("?")[0] for p in names], ["srp_btn_bb/Kc7d4h.bin"])
+        self.assertEqual([p.split("?")[0] for p in names], ["srp_btn_bb/Kc7d4h.bin", "srp_btn_bb/Kc7d4h.turn.bin"])
         self.assertEqual([p for p in f.read if not p.endswith("index.json")], [])
         self.assertNotIn(None, adv.library._entries.values())
         res = adv.advise(dict(st, flop=[X("BB")]))
@@ -83,13 +83,13 @@ class TestPrefetch(unittest.TestCase):
 
     def test_nothing_before_the_flop_or_off_the_library(self):
         """Preflop there is nothing to name; nor in a pot no library holds (here a limped one); the hand's turn and
-        river don't matter (the flop's entries are named)."""
+        river don't matter (the flop's entries and turn files are named)."""
         adv, f = self.advisor()
         self.assertEqual(self.dry(adv, f, state(hero="BTN", hole="AsQs", board="")), [])
         limp = [F("UTG"), F("HJ"), F("CO"), C("BTN"), F("SB"), X("BB")]
         self.assertEqual(self.dry(adv, f, state(preflop=limp, hero="BTN", hole="AsQs", board="Kc7d4h")), [])
         later = self.dry(adv, f, state(hero="BTN", hole="AsQs", board="Kc7d4h9s", flop=[X("BB"), X("BTN")]))
-        self.assertEqual([p.split("?")[0] for p in later], ["srp_btn_bb/Kc7d4h.bin"])
+        self.assertEqual([p.split("?")[0] for p in later], ["srp_btn_bb/Kc7d4h.bin", "srp_btn_bb/Kc7d4h.turn.bin"])
 
 
 class TestWarmStep(unittest.TestCase):

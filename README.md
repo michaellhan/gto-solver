@@ -303,8 +303,8 @@ combos and the EV of the hands that take each action; click one to play it and t
 When the betting closes, type the next card(s) or deal random ones; the line above the grid steps back to any earlier
 decision (Backspace steps back one). Fast or Accurate picks the solver's speed for live solves (turns and rivers, or
 flops the library doesn't hold: a Fast turn ~10 s in the browser), and answers already seen come back at once.
-On a library flop's turn where the spot's entry stores one (the 3bet pots' turn files: every CO vs HJ and BB vs SB
-flop, 495 of BB vs CO's) and the flop line is one it holds, the turn's first decision and the in-position player's
+On a library flop's turn where the spot's entry stores one (every BTN vs BB flop, and the 3bet pots' turn files:
+every CO vs HJ and BB vs SB flop, 495 of BB vs CO's) and the flop line is one it holds, the turn's first decision and the in-position player's
 after a check show at once the flop solve's own turn strategy, marked approximate, while the turn's own solve runs:
 the grid by strategy (each combo's stored mix, the card dealt read as its class's played card, the one bet size 75%
 of the pot), the range's frequency and combos per action, the opponent's range, each class's combos with their mix,
@@ -2056,7 +2056,8 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   on the other cards 0.04 / 0.09. With the opponent free to adapt (flop-core's measure: Precomputed flop library,
   Turns) it gives up 0.5-0.8% of the pot, so it stays marked approximate. The first turn files ship with the 3bet
   pots on 552 (1,599, 15.2 MB: every BB vs SB and CO vs HJ flop and 495 of BB vs CO's, the entries solved since the
-  builds write them); the single-raised spots' come with their re-solves, and `scripts/instant_coverage.py` counts 28.3 more instant decisions per 100 hands with them on
+  builds write them); the single-raised spots' come with their re-solves, BTN vs BB's first (every flop: 1,755,
+  29.6 MB, 16.9 KB each), and `scripts/instant_coverage.py` counts 28.3 more instant decisions per 100 hands with them on
   the 13 spots the library holds (680.1 -> 708.4 of 813.5, 83.6% -> 87.1%; 46% of the turn's decisions).
 * **Study's turn after a library flop** (`Advisor.instant` with `"study": true`, `Advisor._study_store`; study.js's
   answer at once, the page's `studyAsk` and `studyPrefetch`). Study solved a library flop's turn live with only the
@@ -3576,6 +3577,10 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   river's were 16-55 (in-position losses move by up to 2x between measurements of one strategy: Qc5h5d's 0.21 and
   0.42). In a single-raised pot the blind river cost 0.29 and 0.17 (BTN vs BB, JcTd8d), dealt 0.04 and 0.07; on
   Kc7d2h 0.40 and 0.48 blind, 0.18 and 0.25 dealt (their game there to 0.14% of the pot); an entry takes 6-7x as long (93-179 s on one core at 300 iterations, 14-28 blind; the same size, 4-9 KB).
+  BTN vs BB is solved again with the river dealt on every flop (200-500 iterations, 300 on 94% of them; 0.10% of the
+  pot from equilibrium on the median flop, 0.15 at most), its entries 9.24 MB where the blind ones were 6.78: they
+  store 4.9 flop decisions on average where those stored 3.4 (more of the button's 33% bets and the raises after a
+  bet).
   The entries solved blind before stay in the index until each is solved again: a spot lists them under its
   `old_tree` (`old_tree()`) and `old`, and the advisor reads each entry by its own tree. The answer's `precomputed`
   field (a badge on the page) says which spot and how many iterations;
