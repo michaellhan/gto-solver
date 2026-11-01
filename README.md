@@ -3513,8 +3513,10 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   the same key (the two ranges, pot and stack) and the page fetches it by its id (`srp_btn_bb_40bb`, "BTN vs BB,
   40bb"). The index carries its game (`"game": {"players", "stack", "ante", "straddle"}`), and Study, the drills
   and the flop reports play its hands in that game. Listed: BTN, CO, HJ, UTG and SB vs BB and BB vs BTN's 3bet pot
-  at 40bb and 200bb, built by `--format` (until built they are solved live; their entries deal the river, as every
-  spot's do).
+  at 40bb and 200bb, and heads-up at 100bb the small blind's (the button's) 3bb open called by the big blind
+  (`srp_sb_bb_2max`, "SB vs BB single-raised pot, heads-up", on 552 flops: the heads-up charts' ranges, wider than
+  6-max SB vs BB's, about half of heads-up flop decisions), built by `--format` (until built they are solved live,
+  or read approximately off a 6-max spot; their entries deal the river, as every spot's do).
 * **Flops**: canonical flops matched up to suits (the ranges are suit-symmetric, so a stored flop's solve is any
   suit permutation's, its combos permuted); other flops are solved live. Each spot stores a representative set
   (`representative_flops(n)`: the 1755 suit-isomorphic flops sorted by texture and sampled by weight, so each suit

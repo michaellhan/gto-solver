@@ -55,7 +55,7 @@ class TestCanonicalFlops(unittest.TestCase):
         # a spot storing more flops stores a representative set holding the 184 (systematic sampling at a multiple
         # of 184: 3 x 184 picks every third of its points at the 184's)
         for sid, n in fl.SPOT_FLOPS.items():
-            self.assertIn(sid, [s[0] for s in fl.SPOTS])
+            self.assertIn(sid, [s[0] for s in fl.all_spots()])
             self.assertTrue(set(rep) <= set(fl.representative_flops(n)), (sid, n))
         # a report's weights: the representative set stands for every flop evenly; other sets for their own flops
         names = [cards_str(f) for f in rep]
@@ -746,6 +746,24 @@ class TestOtherGames(unittest.TestCase):
         s = fl.spot_setup(line, fmt.players, fmt.stack, fmt.ante, fmt.straddle)
         s100 = fl.spot_setup(line)
         self.assertEqual((s["pot"], s["stack"]), (s100["pot"], 197.5))
+        self._found_in_its_game(sid, label, line, fmt, s, {"stack": 200}, {"stack": 100})
+
+    def test_heads_up_entry(self):
+        """Heads-up the small blind's 3bb open called: the big blind first to act after the flop, the heads-up charts'
+        ranges (wider than 6-max SB vs BB's), found in a 2-player game and not at 6-max."""
+        sid, label, line, fmt = next(s for s in fl.all_spots(["2max"]))
+        self.assertEqual((sid, label, line), ("srp_sb_bb_2max", "SB vs BB single-raised pot, heads-up", "SB:r3,BB:c"))
+        s = fl.spot_setup(line, fmt.players, fmt.stack, fmt.ante, fmt.straddle)
+        six = fl.spot_setup(dict((x[0], x[2]) for x in fl.SPOTS)["srp_sb_bb"])
+        self.assertEqual((s["oop"], s["ip"], s["pot"], s["stack"]), ("BB", "SB", 6.0, 97.0))
+        self.assertEqual((six["pot"], six["stack"]), (6.0, 97.0))
+        self.assertGreater((s["full1"] > 0).sum(), (six["full0"] > 0).sum())       # (the button's opens, wider)
+        self._found_in_its_game(sid, label, line, fmt, s, {"players": 2},
+                                {"players": 6, "preflop": parse_actions(dict((x[0], x[2]) for x in fl.SPOTS)["srp_sb_bb"])})
+
+    def _found_in_its_game(self, sid, label, line, fmt, s, game: dict, other: dict):
+        """An entry of the spot in a library of its own: the index lists it with its game, and the advisor answers
+        from it with `game` in the advise state, not with `other`."""
         sol = solve(cards(CANON), s["full0"], s["full1"], s["pot"], s["stack"], cfg=fl.library_config(),   # (blind: quick)
                     time_budget=1e9, max_iters=40)
         d = tempfile.mkdtemp()
@@ -761,14 +779,14 @@ class TestOtherGames(unittest.TestCase):
                 self.assertEqual(json.load(f)["game"], fmt.as_dict())
             lib = fl.FlopLibrary.from_dir(d)
             self.assertEqual(lib.spot(sp["fp"][0], sp["fp"][1], s["pot"], s["stack"])["id"], sid)
-            # the advisor finds it in that game, and not at 100bb
+            # the advisor finds it in that game, and not in the other
             adv = Advisor(fl.library_config(), time_budget=0.3, prior_budget=0.2)
             adv.library = lib
             base = {"hero": s["oop"], "hole": _hole_in(s["full0"], BOARD, 3), "board": BOARD, "preflop": parse_actions(line)}
-            r = adv.advise(dict(base, stack=200))
+            r = adv.advise(dict(base, **game))
             self.assertIn("precomputed", r, r.get("notes"))
             self.assertEqual(r["solver"]["iterations"], 40)
-            self.assertNotIn("precomputed", adv.advise(dict(base, stack=100)))
+            self.assertNotIn("precomputed", adv.advise(dict(base, **other)))
         finally:
             shutil.rmtree(d, ignore_errors=True)
 

@@ -99,12 +99,13 @@ SPOTS = [
 # (scripts/flop_library_coverage.py --assume; a flop not stored was 53 of the 79 points of heads-up flop decisions
 # the library missed): BTN vs BB on every flop +12.4 points for 4.5 MB, then SB vs BB +8.6 for 6.0 MB (its ranges'
 # entries the biggest), HJ vs BB +7.8 for 3.5, UTG vs BB +6.1 for 3.1; the opens flatted behind or by the small
-# blind 552 (+2.9 for 6.6 MB, every flop +4.3 more); the 3bet pots REP_FLOPS.
+# blind 552 (+2.9 for 6.6 MB, every flop +4.3 more); the 3bet pots REP_FLOPS; heads-up SB vs BB 552 (~50.7% of
+# heads-up flop decisions, read approximately off 6-max spots before, ~14 core-h, ~3.6 MB).
 REP_FLOPS = 184
 SPOT_FLOPS = {"srp_btn_bb": 1755, "srp_co_bb": 1755, "srp_hj_bb": 1755, "srp_utg_bb": 1755, "srp_sb_bb": 1755,
               "srp_hj_co": 552, "srp_btn_sb": 552, "srp_utg_hj": 552, "srp_co_sb": 552, "srp_utg_btn": 552,
               "3bp_bb_btn": 552, "3bp_btn_co": 552, "3bp_sb_btn": 552, "3bp_sb_co": 552, "3bp_hj_utg": 552,
-              "3bp_bb_co": 552, "3bp_co_hj": 552, "3bp_bb_sb": 552}
+              "3bp_bb_co": 552, "3bp_co_hj": 552, "3bp_bb_sb": 552, "srp_sb_bb_2max": 552}
 
 
 # ----------------------------------------------------------------------------- formats
@@ -165,9 +166,12 @@ class Format:
 DEFAULT_FORMAT = Format()
 # Other formats' spots: per format tag, which of SPOTS it holds (each is that spot's preflop line played in the format:
 # format_line). Built on request (scripts/build_flop_library.py --format TAG); until then the advisor solves them live.
+# Heads-up the small blind is the button: SB vs BB's line there is its 3bb open called (SB:r3,BB:c), the big blind
+# first to act after the flop, the ranges the heads-up charts'.
 FORMAT_SPOTS: Dict[str, List[str]] = {
     "40bb": ["srp_btn_bb", "srp_co_bb", "srp_sb_bb", "srp_hj_bb", "srp_utg_bb", "3bp_bb_btn"],
     "200bb": ["srp_btn_bb", "srp_co_bb", "srp_sb_bb", "srp_hj_bb", "srp_utg_bb", "3bp_bb_btn"],
+    "2max": ["srp_sb_bb"],
 }
 
 
