@@ -12,7 +12,12 @@ of yours, and Practice for each opponent's move; with the seats rotating, both h
   gto/flop_approx.py, at the nodes the spot's entries store), and a pot the library holds no spot for off the
   nearest spot's (flop_approx.near_spot: its stored flops, else those most like it);
 * flop, 3-way: the first decisions the 3-way library stores (first to act, checked to once and twice), by walking
-  its entries; anything facing a bet is live (counted as two decisions a bet), and 4+ way flops are live;
+  its entries (at 8- and 9-max a pot read as a spot's, mw_library.MWLibrary.borrow); anything facing a bet is live
+  (counted as two decisions a bet), and 4+ way flops are live; "+approx": a spot's flop not stored at those
+  decisions off its stored flops most like it (MW_NEAR_HELD of them), a decision again after a bet off the player's
+  earlier decision's live solve, and a 3-way turn's first decision off the flop's live solve (advisor.
+  _study_mw_near, _study_mw_prev; Advisor.instant's answer for your hand); a pot neither held nor borrowed read off
+  the nearest spot (MWLibrary.stand_in: its stored flops' mixes, the others' off those most like them);
 * turn and river: how often the flop's betting reaches the turn with chips behind comes from the same walks (a
   call of an all-in reaches no further decision); the decisions a turn has, and how often it reaches the river,
   from --turns native Fast turn solves of the commonest spots (their turn and river streets walked by range
@@ -60,6 +65,9 @@ AGGR = ("bet", "raise", "all-in")
 # hand's combo for (advisor._near_turn_spots; scripts/bench_turn_near.py's "unseen", single-raised pots: 3-15% of the
 # reach first to act, 8% on average, 13-21% in position after a check, 16%; weighted 1 : 0.7)
 NEAR_TURN_STORED = 0.89
+# the share of a 3-way library spot's flops the library doesn't store that its stored flops answer at once
+# (advisor._study_mw_near; scripts/bench_mw_approx.py: 16 of 740 stored flops left out in turn had none near enough)
+MW_NEAR_HELD = 0.98
 
 
 def enumerate_preflop(players=6, stack=100.0, min_prob=2e-5, ante=0.0, straddle=False):
@@ -145,12 +153,14 @@ def hu_entry_profile(e):
 
 
 def mw_entry_profile(e):
-    """(decisions, stored decisions, P(the turn)) a 3-way flop from a 3-way entry (stored: the checks to a bet;
-    a bet is faced by the two others: two live decisions, the turn reached ~60% of the time)."""
+    """(decisions, stored decisions, P(the turn), decisions again) a 3-way flop from a 3-way entry (stored: the
+    checks to a bet; a bet is faced by the two others: two live decisions, the turn reached ~60% of the time; "again":
+    those of a player who acted on the flop before the bet, the first to act facing the second's, both facing the
+    third's, read at once off that player's earlier decision's live solve: advisor._study_mw_prev)."""
     nodes = {tuple(n["path"]): n for n in e["nodes"]}
-    d = s = t = 0.0
+    d = s = t = again = 0.0
     reach = 1.0
-    for path in mwl.STORED:
+    for k, path in enumerate(mwl.STORED):
         n = nodes.get(tuple(path))
         if n is None:
             break
@@ -158,10 +168,11 @@ def mw_entry_profile(e):
         s += reach
         bet = sum(f for a, f in n["freqs"].items() if a.startswith(AGGR))
         d += reach * bet * 2 * RERAISE
+        again += reach * bet * k * RERAISE
         t += reach * bet * 0.6
         reach *= n["freqs"].get("check", 0.0)
     t += reach                                # checked through
-    return d, s, t
+    return d, s, t, again
 
 
 def turn_profile(n_turns, seed=1):
@@ -370,16 +381,16 @@ def main(argv=None):
             near_turn[s["id"]] = share(set(s["flops"]) & src)
     mw_prof = {}
     for s in mlib.index().get("spots", []):
-        acc = np.zeros(4)
+        acc = np.zeros(5)
         for name in s.get("flops", {}):
             e = mlib.entry(s, name) if hasattr(mlib, "entry") else None
             if e is None:
                 continue
             w = weights[fl.canonical(fl.parse_cards(name))[0]]
             acc += w * np.array([*mw_entry_profile(e), 1.0])
-        if acc[3] > 0:
-            mw_prof[s["id"]] = (acc[:3] / acc[3], share(s["flops"]))
-    mw_avg = np.mean([v[0] for v in mw_prof.values()], axis=0) if mw_prof else np.array([4.0, 1.5, 0.6])
+        if acc[4] > 0:
+            mw_prof[s["id"]] = (acc[:4] / acc[4], share(s["flops"]))
+    mw_avg = np.mean([v[0] for v in mw_prof.values()], axis=0) if mw_prof else np.array([4.0, 1.5, 0.6, 0.4])
     td = tp["turn_decisions"] if tp else None
     tf = tp.get("turn_first") if tp else None
     if tf is None:
@@ -498,15 +509,48 @@ def main(argv=None):
             elif n_live == 3:
                 fps = tuple(fl.range_fp(r) for r in s["ranges"])
                 sp = mlib.spot(list(fps), s["pot"], s["stack"]) if hasattr(mlib, "spot") else None
+                lent = None
+                if sp is None and hasattr(mlib, "borrow"):
+                    # (another table size's pot read as a 3-way spot's: MWLibrary.borrow, marked borrowed)
+                    lent = mlib.borrow([np.asarray(r) for r in s["ranges"]], s["pot"], s["stack"], a.players)
+                    sp = lent and lent["spot"]
+                stand = None
+                if sp is None and hasattr(mlib, "stand_in"):
+                    # (a pot neither held nor borrowed read approximately off the nearest spot: MWLibrary.stand_in)
+                    stand = mlib.stand_in([np.asarray(r) for r in s["ranges"]], s["pot"], s["stack"])
+                    stand = stand and stand["spot"]
                 prof, fs = mw_prof.get(sp["id"], (mw_avg, 0.0)) if sp else (mw_avg, 0.0)
                 fs, _ = _apply(layers, ("mw", fps, round(s["pot"], 2), round(s["stack"], 2)), fs, 0.0)
-                d, st, t = prof
+                held_v = sp is not None or fs > 0      # (held, borrowed, or a build assumed)
+                if stand and not held_v:
+                    prof, fs_stand = mw_prof.get(stand["id"], (mw_avg, 0.0))
+                else:
+                    stand = None
+                d, st, t, again = prof
                 p_flop["3-way"] += prob
                 tot["flop 3-way"] += prob * d
                 tot["flop 3-way", "inst"] += prob * st * fs
-                # (a 3-way turn: a heads-up turn's decisions times 1.5, the same share reaching the river)
-                tot["turn"] += prob * t * 1.5 * (td if tp else 2.0)
-                tot["twhy", "3-way or more (solved live)"] += prob * t * 1.5 * (td if tp else 2.0)
+                if lent:
+                    tot["flop 3-way", "borrowed"] += prob * st * fs
+                # at once, approximately (advisor._study_mw_near, _study_mw_prev, for your hand: Advisor.instant): a
+                # 3-way library spot's flop it doesn't store at the decisions it stores, off the stored flops most like
+                # it; on a flop solved live (any but a stored one) a decision again after a bet, off that player's
+                # earlier decision's solve, and the turn's first decision off the flop's
+                live = 1.0 - fs if held_v else 1.0
+                near = prob * st * (1.0 - fs) * MW_NEAR_HELD if held_v else 0.0
+                if stand:    # (its stored flops' mixes, the others off its stored flops most like them)
+                    near = prob * st * (fs_stand + (1.0 - fs_stand) * MW_NEAR_HELD)
+                    tot["flop 3-way", "stand"] += near
+                tot["flop 3-way", "approx"] += near + prob * again * live
+                tot["flop 3-way", "near"] += near
+                # (a 3-way turn: a heads-up turn's decisions times 1.5, the same share reaching the river; its decisions
+                # again after a bet as the flop's share of them, off the turn's earlier decision's solve)
+                tdec = prob * t * 1.5 * (td if tp else 2.0)
+                tmw = prob * t * live + (tdec - prob * t) * again / max(d, 1e-9)
+                tot["turn"] += tdec
+                tot["turn", "approx"] += tmw
+                tot["turn", "mw"] += tmw
+                tot["twhy", "3-way or more (solved live)"] += tdec - tmw
                 tot["river"] += prob * t * 1.5 * (tp["p_river"] * tp["river_decisions"] if tp else 1.2)
             else:
                 p_flop["4+"] += prob
@@ -563,9 +607,19 @@ def main(argv=None):
         print("heads-up flop decisions nothing answers at once, by why: " +
               "; ".join(f"{k} {v / hu * 100:.1f}%" for k, v in sorted(miss.items(), key=lambda x: -x[1])))
         tmiss = {k[1]: v for k, v in tot.items() if isinstance(k, tuple) and k[0] == "twhy"}
+        mw = tot["flop 3-way"]
+        print(f"3-way flop decisions: {tot['flop 3-way', 'inst'] / max(mw, 1e-12) * 100:.1f}% the 3-way library's "
+              f"({tot['flop 3-way', 'borrowed'] / max(mw, 1e-12) * 100:.1f} borrowed: MWLibrary.borrow), "
+              f"{tot['flop 3-way', 'near'] / max(mw, 1e-12) * 100:.1f}% read off its stored flops most like it "
+              f"({tot['flop 3-way', 'stand'] / max(mw, 1e-12) * 100:.1f} in pots read off another: "
+              f"MWLibrary.stand_in), "
+              f"{(tot['flop 3-way', 'approx'] - tot['flop 3-way', 'near']) / max(mw, 1e-12) * 100:.1f}% again after a "
+              f"bet off the player's earlier decision's solve; the 3-way turns' {tot['turn', 'mw'] * 100:.1f} a 100 "
+              "hands at once (the first decision off the flop's solve, again after a bet off the turn's)")
         print(f"turn decisions: {tot['turn', 'inst'] / max(tot['turn'], 1e-12) * 100:.1f}% a stored turn's, "
               f"{tot['turn', 'near'] / max(tot['turn'], 1e-12) * 100:.1f}% a near spot's stored turn, "
-              f"{tot['turn', 'prev'] / max(tot['turn'], 1e-12) * 100:.1f}% read off the flop's live solve at once; "
+              f"{tot['turn', 'prev'] / max(tot['turn'], 1e-12) * 100:.1f}% read off the flop's live solve at once, "
+              f"{tot['turn', 'mw'] / max(tot['turn'], 1e-12) * 100:.1f}% 3-way off the hand's live solves; "
               "not at once: " + "; ".join(f"{k} {v / max(tot['turn'], 1e-12) * 100:.1f}% ({v * 100:.1f} a 100 hands)"
                                           for k, v in sorted(tmiss.items(), key=lambda x: -x[1])))
     if a.candidate:
@@ -614,7 +668,7 @@ def _resolver(players, stack, ante=0.0, straddle=False):
             else:
                 s = fl.spot_setup(line, players, stack, ante, straddle)
         except Exception:
-            m = mwl.spot_setup(line, players, stack)
+            m = mwl.spot_setup(line, players, stack, ante, straddle)
             return ("mw", tuple(fl.range_fp(r) for r in m["ranges"]), round(m["pot"], 2), round(m["stack"], 2))
         return ("hu", fl.range_fp(s["full0"]), fl.range_fp(s["full1"]), round(s["pot"], 2), round(s["stack"], 2))
     return resolve

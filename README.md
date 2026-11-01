@@ -2024,9 +2024,9 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
 
   Not
   offered where the answer is quick anyway or needs more than the equilibrium: preflop, library flops (and the turns
-  after them, except from a stored turn: below), a street solved already, multiway pots, Practice (it grades
-  your move against the answer), exploit mode, locks, custom sizes or ranges, tournaments, Study (but for a library
-  flop's stored turn: below), the breakdown, a jam request.
+  after them, except from a stored turn: below), a street solved already, pots four or more saw the flop (3-way
+  ones: below), Practice (it grades your move against the answer), exploit mode, locks, custom sizes or
+  ranges, tournaments, Study (but for a library flop's stored turn: below), the breakdown, a jam request.
 * **The street solved while your opponent is to act** (`Advisor.presolve`; the worker's `presolve` request; the
   page's `presolveFor`, `stopPresolve`). In position, your answer can't start until you enter the opponent's move,
   and the worker sat idle meanwhile. Now, while your opponent is to act heads-up after the flop, the page asks the
@@ -2348,6 +2348,46 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   the live range's weight (median 99.8%). So the turn's solve stays automatic and the read is what Study shows while
   it runs. Advise, instant and Study JSON identical to main (22 cases: the 16 above, Study's stored turns, and none
   facing a library turn's bet or on a river before its turn is solved).
+* **The answer at once in 3-way pots** (`Advisor.instant` for your hand: `_study_mw_near`, `_study_mw_prev`,
+  `_mw_instant`'s `hole`). The advice's early panel was heads-up only: a 3-way flop the 3-way library doesn't store
+  showed the progress bar until its live solve answered (Fast's 8 s in the browser on one thread), as did every
+  later 3-way decision and the 3-way turn (Fast's ~7 s), while Study already read those nodes at once for the whole
+  range. The advice now reads them the same way for your hand, each combo's mix the one Study shows for it: on a
+  3-way library spot's flop it doesn't store, at the decisions it stores (first to act, checked to once or twice),
+  off the stored flops most like it (`MWLibrary.near`), and in a 3-way pot no spot holds off the nearest spot's (3-way
+  pots no spot holds, Precomputed 3-way flop library); facing a bet after your check, on a street whose first
+  decision your advice solved live, that solve's play of the line since; first to act on the turn after a 3-way flop
+  solved live, the flop solve's view of the turn (by card class and hand buckets, one bet size). Marked approximate
+  with the source named, no EVs, until the node's own solve replaces it (natively 1-6 ms). EV given up, as Study's
+  reads measured (each combo's mix priced by the EVs of the answer that replaces it, % of the pot): the stored flops
+  most like it 0.14 on average (`scripts/bench_mw_approx.py`), facing a bet 0.11 (worst 0.55), the turn's first
+  decision after a checked-through flop 0.13 and after a flop bet called twice 0.38 (`scripts/bench_mw_prev.py`;
+  Study, above). Not on a flop the library stores (its answer is at once anyway), at the turn's later decisions
+  before a turn solve (read off the flop's buckets they were 1.1-1.2% of the pot from their own answers), on a river
+  (its solve takes ~0.4 s), on a line the solve takes under 10% of the time, where your hand is off its range, or
+  4-way (your later decisions there face a bet, which the 4-way read leaves to the solve).
+  `scripts/instant_coverage.py` counts them ("+approx": a spot's flop not stored at the decisions it stores, 98% of
+  them having a stored flop near enough; a pot no spot holds off the nearest spot, its stored flops' mixes and the
+  others' off those most like them; a decision again after a bet on a flop solved live; a 3-way turn's first
+  decision, and its decisions again after a bet), every decision of a session at once, before -> after (the 3-way flop
+  decisions at once, before -> after: precomputed, of them borrowed at another table size; off a held or borrowed
+  spot's stored flops most like it; off the nearest spot; again after a bet; the turn decisions waiting on a 3-way
+  solve, % of the turn's and per 100 hands):
+
+  | game | all decisions | 3-way flop decisions | 3-way turn decisions not at once |
+  |---|---|---|---|
+  | 6-max 100bb | 94.6% -> 95.4% | 5.2% -> 76.6% (5.2, 34.8, 13.0, 23.6) | 7.0% -> 4.0% (4.3 -> 2.4) |
+  | 8-max | 94.6% -> 95.7% | 0% -> 74.6% (1.9 borrowed, 12.4, 34.5, 25.8) | 12.6% -> 7.0% (7.9 -> 4.4) |
+  | 9-max | 94.5% -> 95.8% | 0% -> 73.3% (1.3 borrowed, 8.6, 37.2, 26.2) | 15.1% -> 8.5% (9.7 -> 5.5) |
+  | 6-max, 0.125bb antes | 94.4% -> 95.9% | 0% -> 72.9% (0, 0, 47.8, 25.1) | 10.9% -> 6.1% (8.4 -> 4.6) |
+  | 8-max, 0.125bb antes | 91.5% -> 93.7% | 0% -> 67.5% (0, 0, 41.4, 26.2) | 20.8% -> 12.0% (17.3 -> 10.0) |
+  | 6-max, UTG straddling | 94.3% -> 94.9% | 0% -> 26.1% (0, 0, 0, 26.1) | 8.0% -> 4.3% (5.1 -> 2.7) |
+
+  (Heads-up unchanged, 85.4%.) With a straddle no spot has a pot near enough (its 3-way pots have under half a
+  spot's stack-to-pot ratio), so a 3-way flop's first decisions wait on the live solve; elsewhere what's left is a
+  first decision facing a bet (no entry stores a line through a bet), the pots further than 2.0 from any spot (the
+  SB's flat of an early open: 6-max HJ or UTG open, SB and BB call, 8.2% of its 3-way flops), and the flops no stored
+  flop is near enough to.
 * **A library spot's flop the library doesn't store** (`instant_from_near`, `NEAR_UNTIL`; `gto/flop_approx.py`;
   `Advisor.prefetch`). The flatted opens and the 3bet pots store 552 of the 1755 flops; on the other 1203 (10.2 points
   of the heads-up flop decisions: Precomputed flop library, Coverage) the page had nothing to show until the flop's
@@ -3741,10 +3781,15 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   approximately off it, not counted); on every flop 76.3 (53.5 and 22.8). Its combo pairs are 80% of the heads-up
   open's (384 x 1,007 against 787 x 617) at a far deeper stack-to-pot ratio, so about that spot's ~100 s an entry (an
   estimate, not timed): ~15 CPU-hours and ~3.5 MB of entries plus ~10 MB of turn files on 552, ~50 CPU-hours and ~45
-  MB on every flop. The heads-up open on every flop is next after it (+59.3 for ~35 more CPU-hours). With antes at
+  MB on every flop. The heads-up open's other 1,203 flops add 59.3 over its 552 (~35 more CPU-hours; queued with
+  turn files). With antes at
   8-max the heads-up flops left are 13.5% too far from any spot and 12.7% too little covered, 3-way flops 24.5
-  decisions a 100 hands; a straddle's 3bet pots (18.5% of its heads-up flop decisions) are under a stack-to-pot ratio
-  of 3, where the 40bb spots listed above (BB vs BTN's 3bet pot at 40bb: 1.5) would be the ones to try.
+  decisions a 100 hands (67.5% of them now at once, read off the nearest 3-way spot: Precomputed 3-way flop
+  library, 3-way pots no spot holds; a 3-way spot of its own, 8-max with antes UTG's or UTG1's open flatted by UTG1
+  or the LJ, would make 4.8 a 100 hands precomputed on every flop, ~1755 x 3 entries at 15-45 s of CPU each,
+  22-66 CPU-hours); a straddle's 3bet pots (18.5% of its heads-up flop decisions) are under a stack-to-pot ratio
+  of 3, where the 40bb spots listed above (BB vs BTN's 3bet pot at 40bb: 1.5) would be the ones to try, and its 3-way
+  pots (none read at once: under half a 3-way spot's stack-to-pot ratio) would need 3-way spots of their own.
 * **Flops**: canonical flops matched up to suits (the ranges are suit-symmetric, so a stored flop's solve is any
   suit permutation's, its combos permuted); other flops are solved live. Each spot stores a representative set
   (`representative_flops(n)`: the 1755 suit-isomorphic flops sorted by texture and sampled by weight, so each suit
@@ -3945,8 +3990,9 @@ betting rules. The commonest 3-way pots' flops are solved offline (`gto/mw_libra
   call (10.2%: one game), CO opens, SB and BB call (8.3%), HJ opens, SB and BB call (4.3%), UTG opens, SB and BB call
   (3.9%), 90.5% with them. With the stored flops 12.8% of flops by weight the library answers ~8.2% of 3-way flops'
   first decisions; every flop (`--flops 1755`) of the four built spots would answer 63.8%.
-  A spot is matched by the three ranges entering the flop (as the charts replay them), the pot and the stack; not
-  with rake, custom sizes or ranges, exploit mode, locks or Optimize sizes.
+  A spot is matched by the three ranges entering the flop (as the charts replay them), the pot and the stack (at 8-
+  and 9-max a pot a few combos from a spot's is read as it, and other 3-way pots at once off the nearest spot: 3-way
+  pots no spot holds, below); not with rake, custom sizes or ranges, exploit mode, locks or Optimize sizes.
 * **Flops**: the heads-up library's 184 representative canonical flops (`flop_library.representative_flops`), plus
   K72 rainbow (`EXTRA_FLOPS`), matched up to suits; other flops are solved live.
 * **What is stored**: one 3-player CFR solve from the flop's start on native Accurate's 3-way game
@@ -3973,6 +4019,78 @@ betting rules. The commonest 3-way pots' flops are solved offline (`gto/mw_libra
   `mw-turn` narrows the checked-through flop through it (followed 100%). The worker fetches `mw_index.json` as it
   starts and a 3-way flop's entry once the flop is dealt (0.01 s an answer then, the preflop equity tables built
   while the worker was idle).
+* **3-way pots no spot holds** (`MWLibrary.borrow`, `MW_BORROW_DIST`, `MW_BORROW_COVER`; `MWLibrary.stand_in`,
+  `MW_STAND_DIST`, `MW_STAND_COVER`, `MW_STAND_SPR`; `solution` and `near`'s `players`; `Advisor._mw_borrow`). The
+  spots are 6-max 100bb's, so a 3-way pot at 8- or 9-max, with antes, or on another 6-max line (UTG's open flatted by
+  the HJ or the CO, the CO's flatted by the SB) never matched one: its flop's first decisions waited on the live solve
+  (Fast's 8 s in the browser) with nothing shown. Now:
+  * **Borrowed at another table size.** Some 8- and 9-max pots are a 6-max spot's under other seat names: the same
+    pot and stack, an open flatted behind and called by the big blind, the three ranges a few combos apart (summed
+    normalized L1, as the heads-up library's: 8-max BTN open, SB and BB call 0.14 from the 6-max spot; the HJ's open
+    flatted by the CO or the BTN 0.31 / 0.43, the LJ's by the BTN 0.36; 9-max's alike). Where the distances sum to
+    at most 0.5 and each of the spot's ranges holds at least 90% of this pot's, the pot is read as the spot's: on a
+    stored flop its precomputed answer, EVs and all, badged "precomputed · borrowed" with the spot named ("6-max BTN
+    open, SB and BB call") and how far the ranges are ("this table's ranges differ from that spot's by 4.8% of their
+    weight at most"); on another flop, while its own solve runs, the answer at once off the spot's stored flops most
+    like it (above). Study reads the same spot, and the worker's dry run at the flop names the borrowed entry. Not
+    with ranges of your own, and only at another table size.
+  * **Read at once off the nearest spot** (`stand_in`). Any other 3-way pot whose stack-to-pot ratio is within
+    0.8-1.25x of a spot's (other depths' about 85-120bb deep among them), the distances summing to at most 2.0 and
+    each of the spot's ranges holding at least 44% of this pot's: on a flop the spot stores, its entry's mixes; on another, its stored flops most like it; marked
+    approximate, naming the spot and how the pot differs ("the precomputed 3-way solve of this flop in the library's
+    6-max HJ open, CO or BTN and BB call, that spot read for this pot (its pot 8bb with 97.5 behind, this one 8.75bb
+    with 97.4; the ranges differ by 35.2% of their weight at most)"), no EVs, until the flop's own solve answers (the
+    advice's early panel and Study's alike). Not with a straddle: its 3-way pots have under half a spot's
+    stack-to-pot ratio.
+
+  EV given up (`scripts/bench_mw_formats.py`, new: each pot's three ranges solved from the flop on the library's
+  game until settled, 300-700 iterations, 0.05-0.10% of the pot from equilibrium; each combo's mix at the stored
+  decisions priced by that solve's EVs per action, weighted by the acting player's range, % of the pot, the mean of
+  the three decisions (the worst decision on a flop); on 4-10 of the spot's stored flops a pot: the spot's stored
+  entry, the read off its other stored flops most like it with this one left out, and the live Fast solve of the
+  pot's own ranges at 200 iterations, the browser's in its 8 s, on four of them):
+
+  | pot | spot read (distance; least cover) | stored entry | stored flops most like it | live Fast |
+  |---|---|---|---|---|
+  | **borrowed** | | | | |
+  | 8-max BTN open, SB and BB call | BTN's (0.14; 98%) | 0.015 (0.06) | 0.171 | |
+  | 8-max HJ open, CO and BB call | HJ's (0.31; 99%) | 0.028 (0.13) | 0.152 | |
+  | 8-max LJ open, BTN and BB call | UTG's (0.36; 100%) | 0.032 (0.11) | 0.157 | |
+  | 8-max HJ open, BTN and BB call | HJ's (0.43; 92%) | 0.046 (0.13) | 0.152 | |
+  | **read at once** | | | | |
+  | 8-max UTG open, BTN and BB call | UTG's (0.58; 91%) | 0.088 (0.37) | 0.159 | 0.047 |
+  | 8-max UTG open, UTG1 and BB call | UTG's (0.88; 91%) | 0.098 (0.31) | 0.174 | 0.079 |
+  | 8-max CO open, BTN and BB call | CO's (0.90; 73%) | 0.109 (0.51) | 0.192 | 0.060 |
+  | 8-max UTG open, HJ and BB call | UTG's (1.30; 68%) | 0.172 (0.72) | 0.202 | |
+  | 8-max CO open, SB and BB call | BTN's (1.56; 91%) | 0.129 (0.47) | 0.221 | |
+  | 6-max UTG open, HJ and BB call | UTG's (0.83; 94%) | 0.090 (0.25) | 0.145 | 0.087 |
+  | 6-max CO open, SB and BB call | BTN's (1.58; 91%) | 0.084 (0.20) | 0.121 | 0.059 |
+  | 6-max antes, HJ open, BTN and BB call | HJ's (1.05; 66%) | 0.091 (0.18) | 0.139 | 0.061 |
+  | 6-max antes, BTN open, SB and BB call | BTN's (1.58; 48%) | 0.093 (0.42) | 0.128 | 0.052 |
+  | 6-max antes, CO open, SB and BB call | BTN's (1.95; 51%) | 0.106 (0.39) | 0.149 | 0.053 |
+  | 8-max antes, BTN open, SB and BB call | BTN's (1.68; 45%) | 0.124 (0.62) | 0.163 | 0.059 |
+  | 8-max antes, UTG open, UTG1 and BB call | UTG's (1.80; 45%) | 0.168 (0.46) | 0.237 | 0.056 |
+  | 6-max 120bb, BTN open, SB and BB call (stack-to-pot 1.21x) | BTN's (0.43; 98%) | 0.044 (0.08) | 0.085 | 0.060 |
+  | 6-max 85bb, CO open, BTN and BB call (0.85x) | CO's (0.14; 97%) | 0.024 (0.09) | 0.104 | 0.088 |
+  | **left out** | | | | |
+  | 6-max antes, HJ open, SB and BB call | BTN's (2.60; 55%) | 0.210 (0.44) | 0.269 | 0.052 |
+  | 6-max HJ open, SB and BB call | BTN's (3.26; 76%) | 0.203 (0.57) | 0.250 | 0.063 |
+  | **the spots' own pots** | themselves | 0.000 | 0.116-0.135 | 0.057-0.084 |
+
+  The borrowed pots' stored answers give up less than the live Fast solve of the spots' own pots, so they stand as
+  final, as the spots' own do; the pots further apart give up as much as a spot's own pot read off its stored flops
+  most like it, and more than the live solve of their own ranges, so they're read at once only and the live solve
+  replaces them, as it replaces the read off the stored flops most like a flop (above). The pots 2.6-3.3 apart, left
+  out, give up twice as much off the nearest flops as a spot's own pot does (0.25-0.27; checked to twice 0.37-0.41
+  from the stored entry).
+  What it answers (`scripts/instant_coverage.py`, Accuracy vs speed: The answer at once in 3-way pots, its table):
+  of the 3-way flop decisions, borrowed and precomputed 1.9% at 8-max and 1.3% at 9-max (the stored flops are 12.8%
+  of flops by weight), read at once off a borrowed spot's stored flops most like it 12.4 / 8.6 points more, and off
+  the nearest spot 34.5 / 37.2 at 8- / 9-max, 13.0 at 6-max, 47.8 with antes at 6-max and 41.4 at 8-max, where
+  nothing answered the flop's first decisions before the live solve. A build for the commonest of them (8-max with
+  antes: UTG's or UTG1's open flatted by UTG1 or the LJ, 31% of its 3-way flops) on every flop would make 4.8
+  decisions per 100 hands precomputed instead of read at once (0.6 on the 185 representative flops; 6-max with
+  antes, BTN or CO open, SB and BB call, 1.5 / 1.0 on every flop): not planned.
 
 ```bash
 nohup nice python scripts/build_mw_library.py --jobs 8 > reports/mw_library_build.log &   # every spot (resumable)
