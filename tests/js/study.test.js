@@ -1077,3 +1077,14 @@ test("Study's size menu: the node asked again with the menu's sizes, a custom er
   assert.doesNotMatch(p.html(), /sy-err/);
   assert.equal(p.ctx.Study.state.sizes, "custom");
 });
+
+// a live street's own solve so far at a look (Advisor.progress, Advisor._study_look): the mix alone, its stats in its
+// label (the solver's left out, as a 3-way look's off an earlier decision), the street's own solve running on
+test("Study's look at the street's own solve so far: the label with its stats, the strategy alone", () => {
+  const look = { ...QUICK, solver: { iterations: null, solve_seconds: 1.2, exploitability_pct: null },
+    approximate: { source: "solve", label: "this street's solve so far (100 iterations, 0.85% of the pot from equilibrium)", iterations: 100 } };
+  assert.equal(S.approxHtml(look), "Approximate, at once: this street's solve so far (100 iterations, 0.85% of the pot from equilibrium). "
+    + "The turn's own solve is running and replaces it: then each hand's EVs, equities, the Breakdown and Simple.");
+  assert.equal(S.solverHtml(look), S.approxHtml(look));
+  assert.deepEqual(S.viewsOf(look), ["strategy"]);
+});

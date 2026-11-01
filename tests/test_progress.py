@@ -20,6 +20,7 @@ TURN = {"players": 6, "stack": 100, "preflop": BB3, "flop": [X("BB"), B("BTN", 6
         "hero": "BB", "hole": "QhJh", "board": "Ks7d2cTh"}
 FLOP = dict(TURN, flop=[], board="Ks7d2c")   # (from the flop library: answered at once)
 RIVER = dict(TURN, turn=[X("BB"), X("BTN")], board="Ks7d2cTh5s")
+STUDY = dict({k: v for k, v in TURN.items() if k not in ("hero", "hole")}, study=True)   # (Study: no cards of its own)
 
 
 def advisor(looks=None, settled=0.3):
@@ -86,6 +87,42 @@ class TestProgress(unittest.TestCase):
         self.assertEqual(got[2]["result"]["solver"]["iterations"], 1000)
         self.assertFalse(got[2]["result"].get("approximate"))
 
+    def test_study_looks(self):
+        """Study's turn: each look the actor's whole range off the solve so far, nothing solved past it (a "node"
+        answer: the grid, the combos and the range's frequencies, marked approximate, no EVs or equities), then
+        Study's answer, the same as without looks."""
+        cold = advisor().study(STUDY)
+        adv = advisor((100, 200))
+        got = []
+        with mock.patch.object(A, "LOOK_MIN_S", 0.0):
+            for it in (100, 200):
+                got.append(adv.progress(STUDY))
+                self.assertEqual(turn_iters(adv), [it])
+            got.append(adv.progress(STUDY))
+        for part, it in zip(got, (100, 200)):
+            self.assertEqual(list(part), ["partial"])
+            part = part["partial"]
+            self.assertEqual((part["study"], part["actor"], part["street"]), ("node", "BB", "turn"))
+            self.assertEqual(part["approximate"]["source"], "solve")
+            self.assertEqual(part["approximate"]["iterations"], it)
+            self.assertRegex(part["approximate"]["label"], rf"^this street's solve so far \({it} iterations, [\d.]+% of the pot")
+            self.assertEqual((part["solver"]["iterations"], part["solver"]["exploitability_pct"]), (None, None))
+            self.assertEqual(part["grid"]["actions"], cold["grid"]["actions"])
+            self.assertEqual(sorted(part["combos"]), sorted(cold["combos"]))
+            self.assertAlmostEqual(sum(a["freq"] for a in part["actions"]), 1.0, delta=0.01)
+            self.assertTrue(all(a["ev_bb"] is None for a in part["actions"]))
+            self.assertTrue(all(c["ev"] is None and c["evm"] is None and c["eq"] is None
+                                for c in part["grid"]["cells"].values()))
+            self.assertTrue(all(row[3] is None and row[4] is None for rows in part["combos"].values() for row in rows))
+            self.assertTrue(all(c["eq"] is None for c in part["opponent_grid"]["cells"].values()))
+            self.assertEqual((part["range_ev_bb"], part["range_eq"], part["opponent_eq"]), (None, None, None))
+        self.assertEqual(list(got[2]), ["result"])
+        res = got[2]["result"]
+        self.assertFalse(res.get("approximate"))
+        self.assertEqual(res["solver"]["iterations"], 300)
+        for k in ("actions", "grid", "combos", "opponent_grid", "range_ev_bb", "range_eq"):
+            self.assertEqual(json.dumps(res[k]), json.dumps(cold[k]), k)
+
     def test_stopped_at_a_look_and_after(self):
         """The page's stop (should_stop) during a look's run stops the request as it does an answer's: the solve is kept
         as it stands and the next request goes on from it."""
@@ -109,11 +146,11 @@ class TestProgress(unittest.TestCase):
         self.assertEqual(got["partial"]["approximate"]["iterations"], 100)
 
     def test_nothing_to_look_at(self):
-        """None, nothing solved, where no look applies: no looks set, the river (quick anyway), Study, locks, a one-size
-        view or custom ranges; a library flop answers in full."""
+        """None, nothing solved, where no look applies: no looks set, the river (quick anyway), Study's runout report,
+        locks, a one-size view or custom ranges; a library flop answers in full."""
         self.assertIsNone(advisor().progress(TURN))
         adv = advisor((100,))
-        for state in (RIVER, dict(TURN, study=True), dict(TURN, locks={"x": 1}), dict(TURN, one_size=0),
+        for state in (RIVER, dict(STUDY, runouts=True), dict(TURN, locks={"x": 1}), dict(TURN, one_size=0),
                       dict(TURN, ranges={"BB": "AA"}), dict(TURN, board="")):
             self.assertIsNone(adv.progress(state), state)
         self.assertEqual(len(adv._cache), 0)

@@ -325,6 +325,9 @@ after a flop Study solved live (a pot or a flop the library doesn't hold), and a
 street before's solve's own play of it for every combo (the flop solve's turn by card class and hand buckets, one bet
 size; the turn solve's river at its river sizes), marked approximate with that solve's iterations and distance from
 equilibrium, while the street's own solve runs (0.02-0.07 s in the browser on one thread, where the turn's solve takes 1.6-27 s); no EVs or equities until it lands.
+A flop or turn Study solves live then shows that solve so far the same way where the answer is more than a second off,
+the whole range's mix at its 100th iteration (Accurate also at its 300th), with its iterations and distance from
+equilibrium (a limped pot's turn, its flop solved first: at 3.6 s, the answer at 5.8, in the browser on one thread).
 Preflop it shows the charts' mix (no EVs or equities), or with **Solver** a solve of the game's preflop with every
 hand's EVs (below). After the flop it browses heads-up, 3-way and 4-way pots (a pot
 where 5+ players saw the flop is refused; a 4-way one by the 4-player solve, N-player pots in How it works). In a 3-way pot the toggle has each opponent (their ranges and combos), and the
@@ -2192,8 +2195,10 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   looks, is read as the approximate answer reads a solve stopped part way
   (`instant_from_own`: hero's mix as it stands, marked approximate, "this street's solve so far (100 iterations)", no
   EVs) and goes on; the worker posts each look as a partial, the page shows it as it does the approximate answer, and
-  the answer replaces it. Fast looks at the 100th iteration, Accurate at the 100th and 300th of its 1000, on the flop
-  and the turn; only where the solve has at least a second left to its first check at its pace so far (the core's
+  the answer replaces it. Study the same for the actor's whole range (`Advisor._study_look`: Study's answer off the
+  solves in hand as they stand, a runout report's held mode, nothing solved; the mix alone, its equities not worked
+  out; built in 0.02-0.05 s natively). Fast looks at the 100th iteration, Accurate at the 100th and 300th of its
+  1000, on the flop and the turn; only where the solve has at least a second left to its first check at its pace so far (the core's
   time an iteration), so a quick solve answers as before (at half a second a 3bet pot's turn showed its look 0.5 s
   before its answer). The answer is the same solve to the last digit (DCFR weighs by the iteration count, however the
   iterations are split: tests/test_progress.py checks it against a request without looks), and its time is the same
@@ -2232,7 +2237,11 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   store BB's AhKh after a check-through.) Accurate, one thread, one run each: CO vs BB's turn looks at 6.0 and 10.5 s
   and answers in 25.7 -> 25.8 s, the limped pot's turn at 8.1 and 14.4 s, 37.2 -> 36.0. Natively (two threads, the
   threaded site's tree, three runs each, alternating) a look costs nothing measurable: CO vs BB's turn checked through
-  9.59 -> 9.59 s (its look at 2.49), BTN vs BB's 5.14 -> 5.17 (1.79), the same answer every time.
+  9.59 -> 9.59 s (its look at 2.49), BTN vs BB's 5.14 -> 5.17 (1.79), the same answer every time. Study in the
+  browser (one thread, Fast, two runs each; the look / the answer before -> after): a limped pot's turn first to act
+  (nothing at once: its flop is solved in the same request) 3.66 / 5.74 -> 5.81 s, in position after a check 3.63 /
+  5.81 -> 5.79; HJ vs CO's turn after a flop read off its nearest stored flops no look (2.29 -> 2.24, under a second
+  left), a 3bet pot's turn after a library flop its stored turn at once as before (0.04; 0.52 -> 0.52).
 * **Study's turn after a library flop** (`Advisor.instant` with `"study": true`, `Advisor._study_store`; study.js's
   answer at once, the page's `studyAsk` and `studyPrefetch`). Study solved a library flop's turn live with only the
   progress bar to look at. Where the entry's turn file holds the flop line it now shows the stored turn for the whole

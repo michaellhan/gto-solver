@@ -2817,6 +2817,7 @@ class Advisor:
         # sets them). A look comes only where the solve has at least LOOK_MIN_S left to run to its first check.
         self.first_look: Dict[str, Tuple[int, ...]] = {}
         self._look = None         # (Advisor.progress running: the request's street's board length)
+        self._looking = False     # (Advisor._study_look: Study's answer at a look, no equities worked out)
 
     # ------------------------------------------------------------ public
     _icm = None   # the tournament's prize model while a request is answered (_advise), else None
@@ -2922,13 +2923,16 @@ class Advisor:
         answer replaces them): the request's own street's solve runs to its next look (first_look: by street, the
         iterations at which it stops) and stops there, cached, and its answer so far is read off it as Advisor.instant
         reads a solve stopped part way (instant_from_own: hero's mix as it stands, "approximate", no EVs); the
-        request asked again goes on from it. {"partial": that answer}; {"result": the answer} where it answered in full
-        instead (a library flop, a solve cached or settled already, one with under LOOK_MIN_S left to its first
-        check); None where nothing is looked at: as Advisor.instant (preflop, exploit mode, locks, custom ranges or
-        sizes, a tournament, ...), a river (quick anyway), Study (which reads its own) or a street with no looks."""
+        request asked again goes on from it. Study ("study") the same, for the actor's whole range
+        (Advisor._study_look). {"partial": that answer}; {"result": the answer} where it answered in full instead (a
+        library flop, a solve cached or settled already, one with under LOOK_MIN_S left to its first check, a 3-way
+        pot); None where nothing is looked at: as Advisor.instant (preflop, exploit mode, locks, custom ranges or
+        sizes, a tournament, ...), a river (quick anyway), a runout report or a street with no looks."""
+        if state.get("study"):
+            state = dict({k: v for k, v in state.items() if k not in STUDY_DROPS}, study=True)
         board = str(state.get("board") or "")
         street = {6: "flop", 8: "turn"}.get(len(board))
-        if street is None or not self.first_look.get(street) or state.get("study") \
+        if street is None or not self.first_look.get(street) \
                 or state.get("opponents") == "pool" or any(
                 state.get(k) for k in ("runouts", "jam", "breakdown", "optimize_sizes", "locks", "library_only",
                                        "payouts", "bounties", "ranges", "sizes")) or state.get("one_size") is not None:
@@ -2942,8 +2946,39 @@ class Advisor:
             self._look = None
         if res is not None:
             return {"result": res}
-        got = self.instant(state)
+        got = self._study_look(state) if state.get("study") else self.instant(state)
         return {"partial": got} if got else None
+
+    def _study_look(self, state: dict) -> Optional[dict]:
+        """Advisor.progress's look for Study: Study's answer off the solves in hand as they stand, the street's own
+        stopped at its look (nothing is solved: a runout report's held answer, _NotHeld where one is missing), the mix
+        alone (no EVs or equities until the answer: _no_values; the equities aren't worked out), marked approximate
+        ("this street's solve so far"); None where it doesn't come out as a heads-up node."""
+        self._runout_held = self._looking = True
+        try:
+            with np.errstate(all="ignore"):
+                res = self._advise(state)
+        except _NotHeld:
+            return None
+        finally:
+            self._runout_held = self._looking = False
+        if not isinstance(res, dict) or res.get("study") != "node" or res.get("multiway") or "grid" not in res \
+                or _unusable(res):
+            return None
+        _no_values(res)
+        for c in (res.get("opponent_grid") or {}).get("cells", {}).values():
+            c["eq"] = None
+        s = res.get("solver") or {}
+        it, ex = int(s.get("iterations") or 0), s.get("exploitability_pct")
+        label = f"this street's solve so far ({it} iterations" + (
+            f", {ex}% of the pot from equilibrium)" if ex is not None else ")")
+        res.pop("breakdown", None)
+        res.update(range_ev_bb=None, range_eq=None, opponent_eq=None,
+                   approximate={"source": "solve", "label": label, "iterations": it},
+                   # (study.js's line names the label, its stats in it, as a 3-way look's off an earlier decision)
+                   solver=dict(s, iterations=None, exploitability_pct=None),
+                   notes=[f"approximate: {label}; no EVs or equities until its answer"] + list(res.get("notes") or []))
+        return res
 
     def _look_at(self, n: int, sol) -> Optional[int]:
         """Advisor.progress: the iterations the request's own street's solve (`sol`, None before it starts; `n` its
@@ -4871,7 +4906,7 @@ class Advisor:
         A = len(names)
         sf = np.zeros((A, N_COMBOS)); sf[:, sol.ctx.active] = strat
         ev = np.zeros((A, N_COMBOS)); ev[:, sol.ctx.active] = evs
-        eq, eq_opp = range_equities(board, me, opp)
+        eq, eq_opp = (np.full(N_COMBOS, np.nan),) * 2 if self._looking else range_equities(board, me, opp)
         part, (og,) = _study_range(board, names, [self._amount(n, node, hero_p) for n in names], me, sf, ev, eq,
                                    [(villain, opp, eq_opp)])
         n_r = n_r0 if hero_p == 0 else n_r1   # (the advice's rough_ev: an action the range takes under RARE_BRANCH)
