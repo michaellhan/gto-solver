@@ -14,7 +14,10 @@ Methods (each combo's mix over fold / call / raise / all-in, from the stored dec
           from the stored sizes, linear in log x between them and as the nearest outside; the share removed (or added)
           by each combo's realized share of the pot when it continues, q = (EV + C) / (T + C) from the stored EVs
           (linear in log x), the lowest continuing hands folding first (the highest folding hands continuing first);
-  prop    interp, then every combo's continuing share scaled to the same target.
+  prop    interp, then every combo's continuing share scaled to the same target;
+  nearmdf the nearest's mix (and q), then mdf's move to the same target (k still linear in log x): between two sizes
+          the nearest size's hands keep their own mix, and only the range's continuing share follows the price; outside
+          them the same as mdf.
 """
 from __future__ import annotations
 
@@ -108,7 +111,8 @@ def answer(sources: List[dict], C: float, T: float, method: str = "mdf", reach: 
         i = nearest(xs, x)
         return _masked(mixes[i], ~np.isnan(sources[i]["strat"][0]))
     ws = _weights(xs, x)
-    mix = {k: sum(w * mixes[i][k] for i, w in ws) for k in KINDS}
+    wm = [(nearest(xs, x), 1.0)] if method == "nearmdf" else ws   # (the mix's and q's weights)
+    mix = {k: sum(w * mixes[i][k] for i, w in wm) for k in KINDS}
     if method == "interp":
         return _masked(mix, held)
     r = np.nan_to_num(reach if reach is not None else sources[ws[0][0]]["reach"])
@@ -123,7 +127,7 @@ def answer(sources: List[dict], C: float, T: float, method: str = "mdf", reach: 
         return _masked(mix, held)
     if method == "prop":
         return _masked(_scale(mix, target / now), held)
-    if method != "mdf":
+    if method not in ("mdf", "nearmdf"):
         raise ValueError(method)
     # each combo's realized share of the pot when it continues (its best continuing action's), linear in log x
     qs = []
@@ -134,7 +138,7 @@ def answer(sources: List[dict], C: float, T: float, method: str = "mdf", reach: 
         ks_ = [kind(n) for n in s["names"]]
         best = np.max([ev[a] for a, kk in enumerate(ks_) if kk != "fold"], axis=0)
         qs.append((best + s["C"]) / (s["T"] + s["C"]))
-    q = sum(w * qs[i] for i, w in ws)
+    q = sum(w * qs[i] for i, w in wm)
     return _masked(_by_rank(mix, q, r, target - now), held)
 
 

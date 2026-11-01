@@ -59,7 +59,7 @@ class TestOffTree(unittest.TestCase):
         for x, s in ((1 / 3, self.small), (0.75, self.big)):
             C, T = s["C"], s["T"]
             want = ot.by_kind(s["names"], s["strat"])
-            for method in ("near", "interp", "mdf", "prop"):
+            for method in ("near", "interp", "mdf", "prop", "nearmdf"):
                 got = ot.answer([self.small, self.big], C, T, method)
                 for k in ot.KINDS:
                     np.testing.assert_allclose(got[k], want[k], atol=1e-9, err_msg=f"{method} {k} at {x}")
@@ -102,6 +102,31 @@ class TestOffTree(unittest.TestCase):
         s = ot.by_kind(self.small["names"], self.small["strat"])
         self.assertLessEqual(float(got["fold"][3]), float(s["fold"][3]))
         self.assertGreaterEqual(float(got["call"][3]), float(s["call"][3]))
+
+    def test_nearmdf(self):
+        """Between two stored sizes "nearmdf" keeps the nearest size's mix, each combo only moving between folding and
+        continuing, and the range continues as much as with mdf; outside them it is mdf."""
+        mixes = [ot.by_kind(s["names"], s["strat"]) for s in (self.small, self.big)]
+        for x, near in ((0.45, mixes[0]), (0.5, mixes[0]), (0.6, mixes[1])):
+            C, T = x, 1.0 + x   # (pot 1)
+            got = ot.answer([self.small, self.big], C, T, "nearmdf")
+            want = ot.answer([self.small, self.big], C, T, "mdf")
+            self.assertAlmostEqual(cont(got, self.r), cont(want, self.r), places=9)
+            np.testing.assert_allclose(sum(got[k] for k in ot.KINDS), 1.0)
+            c_near = near["call"] + near["raise"] + near["allin"]
+            c_got = got["call"] + got["raise"] + got["allin"]
+            for k in ("call", "raise", "allin"):   # (its continuing actions in the nearest's proportions)
+                np.testing.assert_allclose(got[k] * c_near, near[k] * c_got, atol=1e-12)
+        # (the strongest combo jams facing 33%, and keeps doing so facing 50%, where mdf mixes in 75%'s calls)
+        got = ot.answer([self.small, self.big], 0.5, 1.5, "nearmdf")
+        self.assertAlmostEqual(float(got["allin"][0]), 1.0)
+        self.assertLess(float(ot.answer([self.small, self.big], 0.5, 1.5, "mdf")["allin"][0]), 0.9)
+        for x in (0.2, 1.0, 1.5):
+            got = ot.answer([self.small, self.big], x, 1.0 + x, "nearmdf")
+            want = ot.answer([self.small, self.big], x, 1.0 + x, "mdf")
+            for k in ot.KINDS:
+                np.testing.assert_allclose(got[k], want[k], atol=1e-12)
+        self.assertEqual(A.OFF_METHOD, "nearmdf")
 
     def test_not_held(self):
         """NaN columns (combos a source doesn't hold) stay NaN, and don't count in the range's share."""
@@ -183,7 +208,8 @@ class TestInstantOffTree(unittest.TestCase):
 
     def test_turn_off_the_earlier_solve(self):
         """The turn facing a bet off the tree of your earlier decision's solve: that solve's answers facing its sizes,
-        read by the bet's price where it is bigger than all of them (Advisor.off_tree_later), else the nearest size's."""
+        read by the bet's price, between two of them too (Advisor.off_tree_later "always"); "outside", between two
+        the nearest size's; None, the nearest size's always."""
         adv = native.advisor("fast", budget=2.0, prior_budget=1.0)   # (under ~1 s the turn's tree is cut to one size)
         flop = [X("BB"), B("BTN", 1.8), {"pos": "BB", "action": "call"}]
         st = lambda turn: {"players": 6, "stack": 100, "preflop": parse_actions(LINE), "board": BOARD + "Th",
@@ -194,15 +220,34 @@ class TestInstantOffTree(unittest.TestCase):
         self.assertIn("read for this 200% bet by its price", got["approximate"]["label"])
         self.assertAlmostEqual(sum(a["freq"] for a in got["actions"]), 1.0, places=2)
         self.assertEqual(got["actions"][1], {"action": "call", "freq": got["actions"][1]["freq"], "amount_bb": 18.2})
-        # between two of its sizes (100%: 75% and 125%) the nearest's answer, by default (OFF_LATER)
+        # between two of its sizes (100%: 75% and 125%) by the price too, by default (OFF_LATER)
         mid = adv.instant(st([X("BB"), B("BTN", 9.1)]))
-        self.assertIn("the sizes since read at its nearest", mid["approximate"]["label"])
-        adv.off_tree_later = "always"
-        self.assertIn("read for this 100% bet by its price", adv.instant(st([X("BB"), B("BTN", 9.1)]))["approximate"]["label"])
+        self.assertIn("read for this 100% bet by its price", mid["approximate"]["label"])
+        adv.off_tree_later = "outside"
+        self.assertIn("the sizes since read at its nearest", adv.instant(st([X("BB"), B("BTN", 9.1)]))["approximate"]["label"])
         adv.off_tree_later = None
         old = adv.instant(st([X("BB"), B("BTN", 18.2)]))
         self.assertIn("the sizes since read at its nearest", old["approximate"]["label"])
         self.assertIsNone(adv.instant(st([X("BB"), B("BTN", 3.0)])))   # (33%: in its tree, read as before)
+
+    def test_river_bigger_only(self):
+        """The river reads by the price only a bet bigger than all of its solve's (OFF_LATER "above"): smaller, the
+        nearest size's answer (a small river bet or raise read by the price gave up more), and between two (a tie)."""
+        self.assertEqual(A.OFF_LATER, {"turn": "always", "river": "above"})
+        adv = native.advisor("fast", budget=1.0, prior_budget=0.5)
+        flop = [X("BB"), B("BTN", 1.8), {"pos": "BB", "action": "call"}]
+        st = lambda river: {"players": 6, "stack": 100, "preflop": parse_actions(LINE), "board": BOARD + "Th3s",
+                            "hero": "BB", "hole": "9s8s", "flop": flop, "turn": [X("BB"), X("BTN")], "river": river}
+        adv.advise(st([]))
+        # (the 9.1 bb pot: the river's tree bets 33/75/125/250%)
+        big = adv.instant(st([X("BB"), B("BTN", 36.4)]))
+        self.assertIn("read for this 400% bet by its price", big["approximate"]["label"])
+        small = adv.instant(st([X("BB"), B("BTN", 1.4)]))
+        self.assertIn("the sizes since read at its nearest", small["approximate"]["label"])
+        adv.off_tree_later = dict(A.OFF_LATER, river="outside")
+        self.assertIn("read for this 15% bet by its price", adv.instant(st([X("BB"), B("BTN", 1.4)]))["approximate"]["label"])
+        mid = adv.instant(st([X("BB"), B("BTN", 9.1)]))   # (100%: between 75% and 125%)
+        self.assertIn("the sizes since read at its nearest", mid["approximate"]["label"])
 
 
 if __name__ == "__main__":

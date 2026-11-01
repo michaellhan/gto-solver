@@ -3,9 +3,11 @@ that has the size in its tree.
 
 The library's flop entries store the decisions facing a 33% and a 75% bet and a 50% raise (of the pot after calling).
 A bet of another size (x) is answered here, at the decision facing it, by:
-  near, interp, mdf, prop   read off the entry's decisions facing the stored sizes (gto/off_tree.py);
-  fast:N                    the flop solved live in the browser's Fast tree with x in it (the advice's live solve:
-                            the stored size nearest x replaced by it, Advisor._cfg_with_real_sizes), N iterations;
+  near, interp, mdf, prop, nearmdf
+                            read off the entry's decisions facing the stored sizes (gto/off_tree.py);
+  fast:N                    the flop solved live in the browser's Fast tree with x in it, N iterations, with the
+                            reference's menu: "swap", the advice's live solve's (the stored size nearest x replaced
+                            by it, Advisor._cfg_with_real_sizes), or "only", x the bettor's only size;
 and priced by the reference: the flop solved in the browser's Accurate tree with x in it (the same menu), --iters
 iterations (natively, one thread; a reference neither the library nor Fast's tree reads). EV given up at the decision
 = the reference mix's EV - the answer's, each combo priced by the reference's EVs per action, weighted by the player's
@@ -19,6 +21,10 @@ the one out of position bets X% first), raise:R (a 33% bet raised R% of the pot 
 
     python scripts/bench_off_tree.py OUT.jsonl --spots srp_btn_bb,3bp_bb_btn --n 16 \
         --cases bet:25,bet:50,bet:100,bet:150,raise:30,raise:85,raise:130
+    python scripts/bench_off_tree.py OUT.jsonl --street turn --spots srp_btn_bb,3bp_bb_btn --n 12 --iters 600 \
+        --cases bet:50,bet:100,bet:200,lead:50,lead:100,lead:200,raise:40,raise:120
+    python scripts/bench_off_tree.py OUT.jsonl --street turn --shallow --spots 3bp_bb_btn --n 12 --iters 600 \
+        --cases bet:100,bet:125,bet:150,bet:200,lead:100,lead:125,lead:150,lead:200
     python scripts/bench_off_tree.py OUT.jsonl --report
 """
 from __future__ import annotations
@@ -45,7 +51,7 @@ import bench_flop_approx as BA  # noqa: E402
 import bench_flop_seed as BS  # noqa: E402
 
 N = 1326
-METHODS = ("near", "interp", "mdf", "prop")
+METHODS = ("near", "interp", "mdf", "prop", "nearmdf")
 
 
 def texture_sample(names, n, seed):
@@ -253,27 +259,29 @@ def run_one(lib, spot, s, name, cases, iters, cks):
                 row["m"][rk][m] = loss(ref, OT.onto(ref["names"], mix), pot)
         if not refs:
             continue
-        # the advice's live solve: Fast's tree with x in it (the stored size nearest replaced), cold
-        bets, raises = menus["swap"]
-        cfg = BS.config("fast")
-        cfg.bet_sizes["flop"], cfg.raise_sizes["flop"] = list(bets), list(raises)
-        t0 = time.time()
-        sol = S.solve(board, s["full0"], s["full1"], pot, stack, cfg=cfg, time_budget=1e9, max_iters=0)
-        el = time.time() - t0
-        for ck in cks:
+        # the live solve: Fast's tree with x in it, cold, with each reference's menu (the swap menu's: the advice's,
+        # the stored size nearest replaced; "only": like for like with that reference, whose bettor's range for the
+        # line differs: in 3bet pots facing 100-150% the swap tree's solves, Fast's or Accurate's, stood 0.6-2.1% of
+        # the pot from the "only" reference, Fast with the size alone 0.16-0.26)
+        for rk, ref in refs.items():
+            bets, raises = menus[rk]
+            cfg = BS.config("fast")
+            cfg.bet_sizes["flop"], cfg.raise_sizes["flop"] = list(bets), list(raises)
             t0 = time.time()
-            sol.solver.run(sol.r0, sol.r1, time_budget=1e9, max_iters=ck, min_iters=1)
-            el += time.time() - t0
-            sol.iters = sol.solver.iters
-            try:
-                n = fl.node_at(sol.root, ref_path(sol.root, kind_, x, fb, b0))
-            except (ValueError, IndexError, AttributeError, TypeError):
-                continue
-            st = np.full((len(n.names), N), np.nan)
-            st[:, sol.ctx.active] = n.avg_strategy0()
-            mix = OT.by_kind(n.names, st)
-            for rk, ref in refs.items():
-                row["m"][rk][f"fast:{ck}"] = loss(ref, OT.onto(ref["names"], mix), pot) + (round(el, 2),)
+            sol = S.solve(board, s["full0"], s["full1"], pot, stack, cfg=cfg, time_budget=1e9, max_iters=0)
+            el = time.time() - t0
+            for ck in cks:
+                t0 = time.time()
+                sol.solver.run(sol.r0, sol.r1, time_budget=1e9, max_iters=ck, min_iters=1)
+                el += time.time() - t0
+                sol.iters = sol.solver.iters
+                try:
+                    n = fl.node_at(sol.root, ref_path(sol.root, kind_, x, fb, b0))
+                except (ValueError, IndexError, AttributeError, TypeError):
+                    continue
+                st = np.full((len(n.names), N), np.nan)
+                st[:, sol.ctx.active] = n.avg_strategy0()
+                row["m"][rk][f"fast:{ck}"] = loss(ref, OT.onto(ref["names"], OT.by_kind(n.names, st)), pot) + (round(el, 2),)
     return out
 
 
@@ -358,20 +366,29 @@ def later_spot(lib, spot, s, name, street, rng):
             "|".join(base + (b, "call")) + " / check|" + path[1] + "|call")
 
 
-def run_later(lib, spot, s, name, street, cases, iters, src_iters, cks, seed):
+def run_later(lib, spot, s, name, street, cases, iters, src_iters, cks, seed, shallow=False):
     rng = random.Random(f"{seed}{name}{street}")
     sp = later_spot(lib, spot, s, name, street, rng)
     if sp is None:
         return None
     board, r0, r1, pot, stack, line = sp
     std = {"turn": [0.33, 0.75, 1.25], "river": [0.33, 0.75, 1.25, 2.5]}[street]
+    # (--shallow: a turn at most 4.5x the pot deep, a 3bet pot's, as Fast plays it on one thread: gto/native.py
+    # FAST_SPR_SIZES, the turn's bets 33/75% and the river's inside 75%, the swap menu's size replacing one of those)
+    from gto.native import FAST_SPR_SIZES
+    lo = shallow and street == "turn" and stack <= FAST_SPR_SIZES["turn"][0] * pot
+    if lo:
+        std = list(FAST_SPR_SIZES["turn"][1]["bet"])
     out = {"spot": spot["id"], "flop": name, "street": street, "board": fl.cards_str(board), "line": line,
-           "pot": round(pot, 2), "stack": round(stack, 2), "iters": iters, "cases": {}}
+           "pot": round(pot, 2), "stack": round(stack, 2), "iters": iters, "shallow": lo, "cases": {}}
 
     def cfg_of(name_, bets=None, raises=None):
         c = BS.config(name_)
         if street == "river":
             c.bet_sizes["river"] = list(std)
+        if lo and name_ == "fast":
+            c.bet_sizes["turn"] = list(std)
+            c.bet_sizes["river"] = list(FAST_SPR_SIZES["turn"][1]["river"])
         if bets is not None:
             c.bet_sizes[street] = list(bets)
         if raises is not None:
@@ -427,15 +444,16 @@ def run_later(lib, spot, s, name, street, cases, iters, src_iters, cks, seed):
                 row["m"][rk][m] = loss(ref, OT.onto(ref["names"], mix), pot)
         if not refs:
             continue
-        bets, raises = menus["swap"]
-        sol = S.solve(board, r0, r1, pot, stack, cfg=cfg_of("fast", bets if kind_ != "raise" else None, raises),
-                      time_budget=1e9, max_iters=0)
-        el = 0.0
-        for ck in cks:
-            t0 = time.time()
-            sol.solver.run(sol.r0, sol.r1, time_budget=1e9, max_iters=ck, min_iters=1)
-            el += time.time() - t0
-            for rk, (ref, path) in refs.items():
+        # (Fast's solve with each reference's menu: run_one)
+        for rk, (ref, path) in refs.items():
+            bets, raises = menus[rk]
+            sol = S.solve(board, r0, r1, pot, stack, cfg=cfg_of("fast", bets if kind_ != "raise" else None, raises),
+                          time_budget=1e9, max_iters=0)
+            el = 0.0
+            for ck in cks:
+                t0 = time.time()
+                sol.solver.run(sol.r0, sol.r1, time_budget=1e9, max_iters=ck, min_iters=1)
+                el += time.time() - t0
                 try:
                     n = fl.node_at(sol.root, path)
                 except (ValueError, IndexError, AttributeError):
@@ -491,6 +509,7 @@ def main(argv=None):
     ap.add_argument("--checkpoints", default="50,100,200,300,500")
     ap.add_argument("--street", default="flop", help="flop, or turn / river: after the entry's flop line, a random card")
     ap.add_argument("--src-iters", type=int, default=300, help="(turn, river) the hand's own solve's iterations")
+    ap.add_argument("--shallow", action="store_true", help="(turn) a shallow turn's sizes as Fast on one thread")
     ap.add_argument("--report", action="store_true")
     a = ap.parse_args(argv)
     if a.report:
@@ -511,7 +530,8 @@ def main(argv=None):
             if a.street == "flop":
                 r = run_one(lib, spot, s, name, a.cases.split(","), a.iters, cks)
             else:
-                r = run_later(lib, spot, s, name, a.street, a.cases.split(","), a.iters, a.src_iters, cks, a.seed)
+                r = run_later(lib, spot, s, name, a.street, a.cases.split(","), a.iters, a.src_iters, cks, a.seed,
+                              a.shallow)
                 if r is None:
                     continue
             with open(a.out, "a") as f:

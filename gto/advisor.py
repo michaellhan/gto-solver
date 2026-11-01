@@ -2245,7 +2245,7 @@ def instant_from_own(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
     sol = spot.own
     if sol is None or sol.solver.iters < HU_CHECKS[0] or not hole_col(sol, spot.hole):
         return None
-    if spot.own_earlier and adv.off_tree_later:
+    if spot.own_earlier and adv._off_later(spot.street):
         got = adv._off_tree_own(sol, spot)
         if got is not None:
             return got
@@ -2369,27 +2369,44 @@ def instant_from_near(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
 # a 33% bet raised 30 / 85 / 130% of the pot after the call: nearest 1.04 / 2.16 / 6.06, by the price 0.50 / 0.81 /
 # 1.10, Fast 0.43 / 0.99 / 2.18 at 50 iterations. The crossover is about the 50th iteration.
 OFF_UNTIL = HU_CHECKS[0]
+# off_tree.answer's method for those reads (the flop's, and the turn's and river's off your earlier decision's solve).
+# "nearmdf": the nearest size's mix, the range's continuing share moved by the price; outside the sizes the same as
+# "mdf", which between two takes each combo's mix between them. A 50% bet (12 flops a spot, the size in place of the
+# nearest, the Accurate tree at 1000 iterations; % of the pot), nearest / "mdf" / "nearmdf": BTN vs BB 0.59 / 0.37 /
+# 0.35, CO vs BB 0.60 / 0.45 / 0.30, SB vs BB (the big blind's stab) 0.51 / 0.65 / 0.43, BB vs BTN 3bet pot 0.56 / 0.42
+# / 0.33; with 50% the bettor's only size 0.55 / 0.34 / 0.32, 0.58 / 0.42 / 0.33, 0.54 / 0.55 / 0.40, 0.55 / 0.41 /
+# 0.33.
+OFF_METHOD = "nearmdf"
 # A turn or river facing a bet or raise off the tree of the street's solve from your earlier decision (instant_from_own,
-# Advisor._off_tree_own): read by its price where it is smaller or bigger than every size that solve has, at the
-# nearest size between two of them. scripts/bench_off_tree.py --street turn / river (12 BTN vs BB and 12 BB vs BTN 3bet
-# pot turns after the library flop's 33% bet called, a random card, and BTN vs BB rivers after the turn's 75% bet
-# called; the source the street's Fast solve without the size, 300 iterations; hero's whole range at the decision
-# facing it priced by the street solved in the Accurate tree with the size in place of the nearest, 600 / 1000
-# iterations; % of the pot, mean where the line is taken 2%+): bigger or smaller than every size, read by the price
-# gives up less: a 200% turn bet 0.10 where the nearest (125%) gave up 0.25, in a 3bet pot (the bettor's only size)
-# 1.61 against 2.28; the turn's 75% bet check-raised 40% / 120% of the pot after the call 0.62 / 0.75 against 1.29 /
-# 1.51, the river's raised 120% 0.26 against 0.85 (raised 40%: 0.97 against 0.42, on the 2 rivers that take it).
-# Between two sizes the nearest's answer gives up less: a 100% turn bet 0.09 against 0.11, 3bet pots' 50% / 100% 0.15
-# / 0.19 against 0.21 / 0.52, a 100% river bet 0.11 against 0.17.
-OFF_LATER = "outside"
+# Advisor._off_tree_own), by street: "outside", read by its price where it is smaller or bigger than every size that
+# solve has; "above", only bigger; "always", between two of them too; None, never; else at the nearest size.
+# scripts/bench_off_tree.py --street turn / river (BTN vs BB and BB vs BTN 3bet pot turns after the library flop's 33%
+# bet called, a random card, and rivers after the turn's 75% bet called; the source the street's Fast solve without
+# the size, 300 iterations; hero's whole range at the decision facing it priced by the street solved in the Accurate
+# tree with the size in place of the nearest, 600 / 1000 iterations; % of the pot, mean where the line is taken 2%+).
+# The turn, bigger or smaller than every size, read by the price: a 200% bet 0.10 where the nearest (125%) gave up
+# 0.25, in a 3bet pot (the bettor's only size) 1.61 against 2.28; the 75% bet check-raised 40% / 120% of the pot after
+# the call 0.62 / 0.75 against 1.29 / 1.51 (30%: 1.06 against 3.23), a 20% bet (the only size) 0.46 against 0.92, a
+# 3bet pot's 0.08 against 0.14; a 3bet pot's turn as Fast plays it on one thread (33/75%: FAST_SPR_SIZES;
+# --shallow), checked to and bet 100 / 125 / 150 / 200% (the only size) 0.22 / 0.42 / 0.77 / 1.39 against 0.35 / 0.94
+# / 2.12 / 5.18, led 0.20 / 0.38 / 0.40 / 1.53 against 0.45 / 1.23 / 2.30 / 5.64. The river, bigger: the 75% bet
+# raised 120% 0.14 against 0.35 (16 rivers), a 300% bet (sizes 33/75/125/250%) 0.03 against 0.04, the bettor's only
+# size 2.76 against 4.03; smaller, the nearest's: raised 30% / 50% 0.34 / 0.14 against 3.06 / 0.51 (8 rivers each), a
+# 20% lead 0.37 against 0.63 (20 rivers; a 3bet pot's 0.04 against 0.15), a 20% bet 0.13 against 0.17 (5 rivers; the
+# only size 0.80 against 0.73). Between two sizes (OFF_METHOD: the nearest's mix, the continuing share by the price),
+# the nearest / each combo's mix between the two ("mdf") / OFF_METHOD: the turn (sizes 33/75/125%) checked to and bet
+# 50% / 100%, 3bet pots (12 / 6 turns) 0.15 / 0.19, 0.21 / 0.49, 0.07 / 0.11, single-raised (5 turns, 100%) 0.09,
+# 0.12, 0.05; led 50% / 100% in 3bet pots (9 / 7) 0.22 / 0.26, 0.24 / 0.55, 0.09 / 0.10; the river, a tie: a 100% bet
+# (11 rivers) 0.11, 0.16, 0.12, a 50% lead (4) 0.12, 0.31, 0.12.
+OFF_LATER = {"turn": "always", "river": "above"}
 
 
 def instant_from_off_tree(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
     """A library flop facing a bet or raise more than 15% off every size its tree has (the flop's own solve swaps the
     real size in, so the entry doesn't answer it): hero's mix read off the entry's stored decisions facing the sizes
-    of that action it does store (gto/off_tree.py "mdf": each combo's mix between the stored sizes either side, then
-    the range's continuing share moved to what the stored sizes defend relative to the minimum defence, the hands
-    that realize the least of the pot folding first), the line before it walked as the library's answers are. Not once
+    of that action it does store (gto/off_tree.py, OFF_METHOD: each combo's mix at the nearest stored size, then the
+    range's continuing share moved to what the stored sizes defend relative to the minimum defence, the hands that
+    realize the least of the pot folding first), the line before it walked as the library's answers are. Not once
     the flop's own solve has run OFF_UNTIL iterations (instant_from_own reads that)."""
     if spot.street != "flop" or spot.off is None:
         return None
@@ -2426,14 +2443,14 @@ def _off_tree_price(acts: List[dict], oop: str, ip: str, hero_p: int, pot: float
 
 
 def _off_tree_read(node, hero_p: int, c0, c1, C: float, T: float, evs: Callable, stored=None, tol=OFF_TREE_TOL,
-                   between: bool = True):
+                   between: bool = True, below: bool = True):
     """Hero facing the villain's bet or raise of price (C, T) at the villain's decision `node` of a solve (c0, c1: the
-    ranges there, over its combos): (off_tree.answer "mdf" over the decisions facing the node's bets or raises, by
-    kind; the decision facing the size nearest; their sizes x) where the real size is more than `tol` off every one of
-    them, else None; None too where the villain's bets or raises there are rare (RARE_LINE of their range), no
-    decision facing them is held (`stored`: the ids of the nodes held, None every one), or (not `between`) the real
-    size is between two of them. evs(child, k): its EVs
-    per action, chips relative to folding (k: the villain's action leading to it)."""
+    ranges there, over its combos): (off_tree.answer, OFF_METHOD, over the decisions facing the node's bets or
+    raises, by kind; the decision facing the size nearest; their sizes x) where the real size is more than `tol` off
+    every one of them, else None; None too where the villain's bets or raises there are rare (RARE_LINE of their
+    range), no decision facing them is held (`stored`: the ids of the nodes held, None every one), or (not
+    `between`) the real size is between two of them, or (not `below`) smaller than all. evs(child, k): its EVs per
+    action, chips relative to folding (k: the villain's action leading to it)."""
     from . import off_tree
     vp = 1 - hero_p
     if not isinstance(node, Decision) or node.player != vp:
@@ -2457,10 +2474,12 @@ def _off_tree_read(node, hero_p: int, c0, c1, C: float, T: float, evs: Callable,
         return None   # (a size the tree has: read as it is)
     if not between and min(xs) < x < max(xs):
         return None   # (between two of its sizes: the nearest's answer, OFF_LATER)
+    if not below and x < min(xs):
+        return None   # (smaller than all: the nearest's answer, OFF_LATER's "above")
     sources = [{"names": list(ch.names), "strat": np.asarray(ch.avg_strategy0(), dtype=np.float64),
                 "evs": np.asarray(evs(ch, k), dtype=np.float64), "C": float(max(ch.bets) - ch.bets[hero_p]),
                 "T": float(ch.pot_now), "reach": me} for k, ch in cand]
-    return off_tree.answer(sources, C, T, "mdf", reach=me), cand[i][1], xs
+    return off_tree.answer(sources, C, T, OFF_METHOD, reach=me), cand[i][1], xs
 
 
 def _off_tree_actions(near: Decision, mix: Dict[str, float], to: float, C: float, T: float, bets, hero_p: int,
@@ -2869,8 +2888,9 @@ class Advisor:
                                 instant_from_prev]
         # instant_from_own facing a bet off the tree of your earlier decision's solve: its answers facing the sizes it
         # has read by the bet's price (_off_tree_own) where the bet is smaller or bigger than all of them ("outside";
-        # "always": between two of them too; None: never), else the nearest size's (OFF_LATER)
-        self.off_tree_later = OFF_LATER
+        # "above": bigger only; "always": between two of them too; None: never), else the nearest size's; by street
+        # ({"turn": ..., "river": ...}) or one for both (OFF_LATER)
+        self.off_tree_later = dict(OFF_LATER)
         self._instant = False     # an Advisor.instant request: nothing is solved (_NoInstant where it would be)
         # Advisor.progress: by street ("flop", "turn"), the iterations at which a live street's solve stops to be read
         # (its answer so far, as instant_from_own reads it) before it goes on; none by default (the browser's worker
@@ -7160,11 +7180,16 @@ class Advisor:
         notes.extend(n2)
         return sol, node, c0, c1
 
+    def _off_later(self, street: str) -> Optional[str]:
+        """off_tree_later's mode on `street`."""
+        m = self.off_tree_later
+        return m.get(street) if isinstance(m, dict) else m
+
     def _off_tree_own(self, sol: Solution, spot: InstantSpot) -> Optional[dict]:
         """instant_from_own's answer facing the villain's bet or raise just made off the tree of this street's solve
-        from your earlier decision (spot.own_earlier): off_tree.answer ("mdf") over that solve's decisions facing the
-        sizes it has (_off_tree_read: their EVs worked out, a pass over each), the line before it walked through the
-        solve. None where the last action isn't such a bet or raise."""
+        from your earlier decision (spot.own_earlier): off_tree.answer (OFF_METHOD) over that solve's decisions facing
+        the sizes it has (_off_tree_read: their EVs worked out, a pass over each), the line before it walked through
+        the solve. None where the last action isn't such a bet or raise."""
         from . import off_tree
         price = _off_tree_price(spot.actions, spot.oop, spot.ip, spot.hero_p, spot.pot, spot.eff)
         col = hole_col(sol, spot.hole)
@@ -7180,7 +7205,9 @@ class Advisor:
         sv = node.avg_strategy0()
         vp = 1 - spot.hero_p
         evs = lambda ch, k: sol.solver.node_action_evs(ch, c0 * sv[k] if vp == 0 else c0, c1 * sv[k] if vp == 1 else c1)
-        got = _off_tree_read(node, spot.hero_p, c0, c1, C, T, evs, between=self.off_tree_later == "always")
+        mode = self._off_later(spot.street)
+        got = _off_tree_read(node, spot.hero_p, c0, c1, C, T, evs, between=mode == "always",
+                             below=mode in ("always", "outside"))
         if got is None:
             return None
         mix, near, xs = got
@@ -7198,7 +7225,7 @@ class Advisor:
                          players) -> Optional[dict]:
         """instant_from_off_tree's answer: hero facing the villain's bet or raise just made, of a size more than 15%
         off every one the library's tree has for it (OFF_TREE_TOL, as _swap_nearest), on a flop the library stores
-        with the line before it (each earlier size within 15% of one in the tree): off_tree.answer ("mdf") over the
+        with the line before it (each earlier size within 15% of one in the tree): off_tree.answer (OFF_METHOD) over the
         entry's stored decisions facing that action's sizes, hero's whole range for the range's continuing share
         (_off_tree_read). None where it isn't such a spot, the villain's line is rare in the entry (RARE_LINE: the live
         solve answers it) or the entry doesn't store a decision facing it."""
