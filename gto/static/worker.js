@@ -263,6 +263,13 @@ const ready = (async () => {
              // Fast's settled stop, Accurate's 0.1% of the pot) says it's approximate: its solve ran short (the device
              // busy or slow, a big tree, or the compiled core failed twice and numpy answered: 5-7% on a Fast turn)
              + `advs['fast'].expl_target = ${THREADED ? 0.2 : 0.3}; advs['accurate'].expl_target = 0.1; `
+             // a live flop or turn shows its answer so far while it solves (Advisor.progress, first_look: the solve
+             //   stopped and read at these iterations, where it has at least advisor.LOOK_MIN_S left to its first check;
+             //   the answer the same): Fast at the 100th (32 turns: the mix 15 points per combo off a 1000-iteration
+             //   solve's, 0.02% of the pot given up; the answer, settled at 300-400, 4.4 and 0.005), Accurate at the
+             //   100th and 300th (5.2, 0.005) of its 1000
+             + "advs['fast'].first_look = {'flop': (100,), 'turn': (100,)}; "
+             + "advs['accurate'].first_look = {'flop': (100, 300), 'turn': (100, 300)}; "
              // a shallow turn (at most 4.5 x the pot behind: a 3bet pot's) bets 33/75% in Fast, not 33/125% (gto/native.py
              // FAST_SPR_SIZES: four 3bet turns 1.96% of the pot off per combo -> 0.80 at 8 s, frequencies 6.8 points -> 2.0);
              // with threads Accurate's tree there too
@@ -322,6 +329,17 @@ const ready = (async () => {
              + "def early(st):\n"
              + "    try:\n"
              + "        r = advs.get(st.get('speed'), advs['fast']).instant(st)\n"
+             + "    except Exception:\n"
+             + "        r = None\n"
+             + "    return json.dumps(r) if r else ''\n"
+             // ...and then, where the street is solved live, its answer so far at each of the speed's looks
+             // (Advisor.progress: the solve stops there, is read and goes on; {partial} each, else {result}: answered in
+             // full on the way, or stopped)
+             + "def progress(st):\n"
+             + "    try:\n"
+             + "        r = advs.get(st.get('speed'), advs['fast']).progress(st)\n"
+             + "    except Cancelled:\n"
+             + "        r = {'result': {'cancelled': True}}\n"
              + "    except Exception:\n"
              + "        r = None\n"
              + "    return json.dumps(r) if r else ''\n"
@@ -396,6 +414,13 @@ onmessage = async (e) => {
     if (early && !play) {
       const r = py.runPython("early(json.loads(state_json))");
       if (r) postMessage({ id, partial: JSON.parse(r) });
+      for (let k = 0; k < 4; k++) {   // (the street's own solve so far, at each look: Advisor.progress)
+        const p = py.runPython("progress(json.loads(state_json))");
+        if (!p) break;
+        const o = JSON.parse(p);
+        if (o.result) return postMessage({ id, result: o.result });
+        postMessage({ id, partial: o.partial });
+      }
     }
     postMessage({ id, result: JSON.parse(py.runPython("answer(json.loads(state_json), json.loads(play_json))")) });
   } catch (err) {

@@ -25,7 +25,8 @@
 // --one-size: after a spot's Fast advice, the Simple view's requests as the page sends them (simple.js: "one_size":
 // "full", then each candidate size, one solve a request at Fast's budget), each timed, and the best size.
 // --early asks as the page does for its own advice (early: an approximate answer first where one is in hand at once,
-// Advisor.instant) and reports when it came (early_s) and what it said.
+// Advisor.instant) and reports when it came (early_s) and what it said; then each of the solve's looks (Advisor.progress:
+// its answer so far, posted while it solves), when it came and at how many iterations ("looks").
 // --gap G: the opponent's move (the spot's last action, theirs) is entered G seconds after it became their turn, and the
 // time to the answer is counted from it; --presolve runs the page's presolve meanwhile (Advisor.presolve: the
 // worker solves the street from where the opponent is to act, stopped through the shared stop flag at G s, as the
@@ -121,6 +122,12 @@ const SPOTS = {
   // served with BENCH_LIB)
   "turn-x": base({ hero: "BB", hole: "QhJh", board: "Ks7d2cTh", flop: [X("BB"), X("BTN")] }),
   "turn-x-ip": base({ hero: "BTN", hole: "AsQs", board: "Ks7d2cTh", flop: [X("BB"), X("BTN")], turn: [X("BB")] }),
+  // CO vs BB after a library flop, no turn file of its own, where nothing answers at once (--early: the solve's own look
+  // is the first thing shown, Advisor.progress): CO rarely c-bets a third on Qh9c4d (3%: the flop's ranges come from
+  // betting rules, so no stored file is walked), and BTN vs BB's turn file (instant_from_store's near turns) doesn't
+  // store BB's AhKh after a check-through (QdJd it answers at once)
+  "turn-co": base({ hero: "BB", hole: "JdTd", board: "Qh9c4d2s", preflop: CO_BB, flop: [X("BB"), B("CO", 1.8), C("BB")] }),
+  "turn-co-x": base({ hero: "BB", hole: "AhKh", board: "Qh9c4d7h", preflop: CO_BB, flop: [X("BB"), X("CO")] }),
   // one hand street by street with your hand out of your range for its line (--hole: yours in every spot of the run):
   // --session flop-bb,turn,river --hole AhAd (the big blind 3bets aces rather than calls), flop-limp-ip,turn-limp-ip,
   // river-limp-ip --hole KhQh, flop-3bp-ip,turn-3bp-ip,river-3bp-ip --hole AhKh, flop-40,turn-40,river-40 --hole AhAd;
@@ -364,10 +371,13 @@ async function startWorker(pyodideDir, bundlePath) {
   const request = (state, early, from) => new Promise((res) => {   // (from: early_s counted from then)
     const my = ++id, t0 = from ?? performance.now();
     let part = null;
+    const parts = [];   // (every partial: the answer at once, then the solve's looks, Advisor.progress)
     onMsg = (m) => {
       if (m.id !== my) return;
-      if (m.partial) part = { early_s: +((performance.now() - t0) / 1000).toFixed(3), ...m.partial };
-      else res({ ...m, part });
+      if (m.partial) {
+        parts.push({ early_s: +((performance.now() - t0) / 1000).toFixed(3), ...m.partial });
+        part = part || parts[0];
+      } else res({ ...m, part, parts });
     };
     ctx.onmessage({ data: early ? { id: my, state, early: true } : { id: my, state } });
   });
@@ -423,6 +433,7 @@ async function runSpot(w, spot, speeds) {
       restarts: process.env.BENCH_FAIL || process.env.BENCH_MWFAIL ? w.restarts() : null,
       early: m.part ? { s: m.part.early_s, recommended: m.part.recommended ?? mixOf(m.part), mix: mixOf(m.part),
                         source: m.part.approximate.source, label: m.part.approximate.label } : null,
+      looks: (m.parts || []).map((p) => ({ s: p.early_s, source: p.approximate.source, iterations: p.approximate.iterations ?? null })),
       notes: (r.notes || []).filter((n) => process.env.BENCH_ALL_NOTES || /equilibrium|solved|iterations|rules/.test(n)).map((n) => n.slice(0, 160)),
     }));
     if (speed === "fast") fastSeconds = r.seconds;
@@ -485,6 +496,7 @@ for (const spot of flag("session") ? [spots.join(",")] : spots) {
                             `${r.precomputed ? "  library" : ""}${r.lib_fetches ? "  sync-fetches " + r.lib_fetches : ""}${r.error ? "  ERROR " + r.error : ""}` +
                             `${r.restarts ? "  restarts: " + r.restarts : ""}` +
                             (r.early ? `\n             approximate at ${r.early.s} s: ${r.early.recommended} [${r.early.mix}] (${r.early.label}); the answer: ${r.recommended}` : "") +
+                            (r.looks && r.looks.length > 1 || (r.looks || []).some((l) => l.source === "solve") ? `\n             partials: ${r.looks.map((l) => `${l.s} s (${l.source}${l.iterations ? ", " + l.iterations + " it" : ""})`).join(", ")}` : "") +
                             (r.gap != null ? `\n             the move ${r.gap} s in; ${r.presolve ? `presolve ${r.presolve.presolved ? "ran its budget, " + r.presolve.iterations + " iterations" : r.presolve.cancelled ? "stopped" : "skipped"} (${r.presolve.s} s)` : "no presolve"}; answered ${r.wall} s after it: ${r.recommended}` : "") +
                             (r.notes.length ? "\n             " + r.notes.join("\n             ") : "")
                           : `${r.spot}: worker setup ${r.setup} s${r.stages ? " (" + Object.entries(r.stages).filter(([k]) => k !== "total").map(([k, v]) => `${k} ${v}`).join(", ") + ")" : ""}, heap ${r.heap_mb} MB`);

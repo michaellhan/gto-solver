@@ -100,6 +100,9 @@ MW4_FAST_STREETS = {"flop": {"later": "buckets", "buckets": 6, "bucket_river_ste
                     "turn": {"later": "buckets", "buckets": 8}}
 HU_RESERVE = 1.0   # heads-up solves likewise keep one iteration's time back (the exploitability read after: ~1 iteration)
 OVER_TARGET = 10   # an answer more than this many times its advisor's expl_target from equilibrium is approximate
+LOOK_MIN_S = 1.0   # Advisor.progress looks at a solve only with at least this many seconds of it left to its first
+                   # check (at its pace so far): a quicker one answers in full instead (at 0.5 a 3bet pot's turn showed its
+                   # look 0.5 s before its answer, one thread)
 HU_CHECKS = (50, 100, 150, 200, 300, 400, 600, 800)   # a heads-up street's solve, with Advisor.hu_settled set, stops at
                    # the first of these iterations where it is that close to equilibrium (an exploitability read each,
                    # about one iteration's time)...
@@ -2139,6 +2142,11 @@ class _NotHeld(Exception):
     """Study's report from what's in hand ("runouts": "held"): a solve it needs isn't cached (nothing is solved)."""
 
 
+class _FirstLook(Cancelled):
+    """Advisor.progress: the request's own street's solve reached its next look (Advisor.first_look), cached as it
+    stands. A Cancelled, so the catch-alls let it through as they do a stop."""
+
+
 @dataclass
 class InstantSpot:
     """A heads-up street the hero acts on, for Advisor.instant's sources: the cards, the street's real actions so far
@@ -2659,6 +2667,11 @@ class Advisor:
         # Advisor.instant's sources, tried in order: each (advisor, InstantSpot) -> {"actions", "source", "label"} or None
         self.instant_sources = [instant_from_store, instant_from_near, instant_from_own, instant_from_prev]
         self._instant = False     # an Advisor.instant request: nothing is solved (_NoInstant where it would be)
+        # Advisor.progress: by street ("flop", "turn"), the iterations at which a live street's solve stops to be read
+        # (its answer so far, as instant_from_own reads it) before it goes on; none by default (the browser's worker
+        # sets them). A look comes only where the solve has at least LOOK_MIN_S left to run to its first check.
+        self.first_look: Dict[str, Tuple[int, ...]] = {}
+        self._look = None         # (Advisor.progress running: the request's street's board length)
 
     # ------------------------------------------------------------ public
     _icm = None   # the tournament's prize model while a request is answered (_advise), else None
@@ -2754,6 +2767,51 @@ class Advisor:
         finally:
             self._instant = False
         return res if isinstance(res, dict) and res.get("approximate") else None
+
+    def progress(self, state: dict) -> Optional[dict]:
+        """A live street's answer in steps, for the browser to show while it solves (the worker posts each, the full
+        answer replaces them): the request's own street's solve runs to its next look (first_look: by street, the
+        iterations at which it stops) and stops there, cached, and its answer so far is read off it as Advisor.instant
+        reads a solve stopped part way (instant_from_own: hero's mix as it stands, "approximate", no EVs); the
+        request asked again goes on from it. {"partial": that answer}; {"result": the answer} where it answered in full
+        instead (a library flop, a solve cached or settled already, one with under LOOK_MIN_S left to its first
+        check); None where nothing is looked at: as Advisor.instant (preflop, exploit mode, locks, custom ranges or
+        sizes, a tournament, ...), a river (quick anyway), Study (which reads its own) or a street with no looks."""
+        board = str(state.get("board") or "")
+        street = {6: "flop", 8: "turn"}.get(len(board))
+        if street is None or not self.first_look.get(street) or state.get("study") \
+                or state.get("opponents") == "pool" or any(
+                state.get(k) for k in ("runouts", "jam", "breakdown", "optimize_sizes", "locks", "library_only",
+                                       "payouts", "bounties", "ranges", "sizes")) or state.get("one_size") is not None:
+            return None
+        self._look = len(board) // 2
+        try:
+            res = self.advise(state)
+        except _FirstLook:
+            res = None
+        finally:
+            self._look = None
+        if res is not None:
+            return {"result": res}
+        got = self.instant(state)
+        return {"partial": got} if got else None
+
+    def _look_at(self, n: int, sol) -> Optional[int]:
+        """Advisor.progress: the iterations the request's own street's solve (`sol`, None before it starts; `n` its
+        board's cards) stops at for its next look, or None (not progress's request, not its street, or no look left).
+        A shallow turn's (a 3bet pot's) are the turn's."""
+        if self._look != n or self._instant:
+            return None
+        done = 0 if sol is None else sol.solver.iters
+        return next((c for c in self.first_look.get("flop" if n == 3 else "turn", ()) if c > done), None)
+
+    def _looked(self, sol, look: Optional[int], first: int) -> bool:
+        """Whether a solve run to its look (`look`) stops there for progress to read: not where it fell short of it
+        (out of time), settled or with under LOOK_MIN_S left to its first check at its pace so far."""
+        if look is None or sol.solver.iters < look or getattr(sol, "settled_at", None) is not None:
+            return False
+        per = getattr(sol.solver, "per_iter", None) or sol.seconds / max(sol.solver.iters, 1)   # (the core's, its setup out)
+        return per * max(first - sol.solver.iters, 0) >= LOOK_MIN_S
 
     def presolve(self, state: dict, seat: str) -> Optional[dict]:
         """The solve your next decision on this street will read, started while `seat` (the opponent) is to act: the
@@ -6880,6 +6938,7 @@ class Advisor:
             # (the budget covers the tree's build and the exploitability read after the iterations: the browser's
             # Accurate flop answered 4.5 s past its 60 s, a two-tone one 9 s)
             left = max(budget - warm.seconds, 0.2 * budget) if warm else budget
+            look = None if warm else self._look_at(n, None)   # (Advisor.progress: stopped there to be read)
             cap = self._cells_cap(n, left)
             level, full, use, slow = 0, None, cfg, False
             while True:   # (a tree past the cap is cut, TRIMS, until it fits)
@@ -6890,8 +6949,9 @@ class Advisor:
                                    max_cells=cap)
                     sol = solve(board, r0, r1, pot, stack, bets=bets, to_act=to_act, n_raises=n_raises, cfg=use,
                                 time_budget=rest, should_stop=self.should_stop, warm=warm, reserve=HU_RESERVE,
-                                max_cells=cap, max_iters=min(c for c in HU_CHECKS if c >= first) if target is not None
-                                else 1000, horizon=1000, seed=seed,
+                                max_cells=cap, max_iters=min([c for c in HU_CHECKS if c >= first] if target is not None
+                                                             else [1000], default=1000) if look is None else look,
+                                horizon=1000, seed=seed,
                                 max_per=SLOW * left / 10 if n >= 4 and not (warm or slow) and level < len(TRIMS)
                                 else None)
                     break
@@ -6937,8 +6997,16 @@ class Advisor:
             self._keep("_cache", key, sol)
             if self._presolving:
                 self._presolved.add(key)
+            if self._looked(sol, look, first if target is not None else 1000):
+                raise _FirstLook()
             if target is not None:
                 self._hu_run(sol, left - (time.time() - t0), target, first)
+            elif look is not None and look <= sol.iters < 1000:   # (a look passed by, too near its end: on)
+                try:
+                    sol.extend(left - (time.time() - t0), should_stop=self.should_stop, reserve=HU_RESERVE)
+                except Cancelled:
+                    sol.stopped = True
+                    raise
         else:
             self._keep("_cache", key, None)
             if not self._presolving:
@@ -6950,14 +7018,28 @@ class Advisor:
             if getattr(sol, "settled_at", None) is not None and (target is None or sol.settled_at <= target):
                 pass        # (settled already)
             elif sol.seconds < budget * 0.8 and sol.iters < 1000:
+                look = self._look_at(n, sol)   # (Advisor.progress: stopped there to be read)
                 if target is not None:
-                    self._hu_run(sol, budget - sol.seconds, target, first)
+                    self._hu_run(sol, budget - sol.seconds, target, first, stop_at=look)
                 else:       # keep going from the stored regrets instead of restarting
                     try:
-                        sol.extend(budget - sol.seconds, should_stop=self.should_stop, reserve=HU_RESERVE)
+                        sol.extend(budget - sol.seconds, max_iters=look or 1000, should_stop=self.should_stop,
+                                   reserve=HU_RESERVE)
                     except Cancelled:
                         sol.stopped = True
                         raise
+                if self._looked(sol, look, first if target is not None else 1000):
+                    raise _FirstLook()
+                if look is not None and look <= sol.iters < 1000 and getattr(sol, "settled_at", None) is None:
+                    # (a look passed by, too near the first check: on to the answer)
+                    if target is not None:
+                        self._hu_run(sol, budget - sol.seconds, target, first)
+                    else:
+                        try:
+                            sol.extend(budget - sol.seconds, should_stop=self.should_stop, reserve=HU_RESERVE)
+                        except Cancelled:
+                            sol.stopped = True
+                            raise
         if settle:
             self._settle(sol, budget)
         return sol
@@ -6969,18 +7051,22 @@ class Advisor:
             sol.expl_at = (sol.iters, sol.exploitability())
         return sol.expl_at[1]
 
-    def _hu_run(self, sol: Solution, left: float, target: float, first: int = HU_CHECKS[0]) -> None:
+    def _hu_run(self, sol: Solution, left: float, target: float, first: int = HU_CHECKS[0],
+                stop_at: Optional[int] = None) -> None:
         """Runs a heads-up solve on for at most `left` seconds, stopping at the first of HU_CHECKS from `first` on
-        where its exploitability is under `target` (% of the pot): sol.settled_at = target then. (Its pieces run the
-        solver directly: Solution.extend's EV pass after each would cost about an iteration a piece.)"""
+        where its exploitability is under `target` (% of the pot): sol.settled_at = target then; or at `stop_at`
+        iterations (Advisor.progress's look). (Its pieces run the solver directly: Solution.extend's EV pass after each
+        would cost about an iteration a piece.)"""
         t0 = time.time()
         checks = [c for c in HU_CHECKS if c >= first]
         while sol.iters < 1000:
             if sol.iters in checks and self._expl(sol) < target:
                 sol.settled_at = target
                 break
+            if stop_at is not None and sol.iters >= stop_at:
+                break
             rem = left - (time.time() - t0)
-            nxt = min([c for c in checks if c > sol.iters] + [1000])
+            nxt = min([c for c in checks if c > sol.iters] + [1000] + ([stop_at] if stop_at is not None else []))
             if rem <= 0:
                 break
             t1 = time.time()

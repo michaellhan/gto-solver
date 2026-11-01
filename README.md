@@ -100,7 +100,9 @@ Accurate to get close to a full solver (see Accuracy vs speed below).
 While a heads-up turn or river solves in the browser, an approximate answer read off the solve before it (a live
 flop's for the turn, the turn's for the river, or the street's own from your earlier decision; after a library flop,
 its precomputed solve's own turn, where the library has stored it) shows at once under the progress bar, marked
-approximate, until the answer replaces it. In position, the street is solved while your
+approximate, until the answer replaces it. A flop or turn solved live then shows its own solve so far the same way
+(Fast at its 100th iteration, about half way to the answer; Accurate at its 100th and 300th), where the answer is
+more than a second off. In position, the street is solved while your
 opponent is to act, so the time you take entering their move counts toward the answer (a limped pot's turn answers
 in 3.2-3.4 s with the move entered 4 s in, against 7.0-7.3 s otherwise).
 The panel shows the recommended action with its size (preflop: 2.5bb
@@ -2137,6 +2139,56 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   7.0% are 3-way; at 8-max with antes 3-way flops are 20.8% of the turn decisions and 13.5% / 12.7% of the
   heads-up flop decisions are too far from any spot / too little covered; heads-up, the limped pots (38.8% of its
   flop decisions) have no spot at all (Precomputed flop library: Next for other games).
+* **The street's own solve so far, while it solves** (`Advisor.progress`, `first_look`, `LOOK_MIN_S`; the worker's
+  `progress` after `early`; `scripts/bench_browser.mjs --early`'s `looks`). A flop or turn solved live showed at most
+  the approximate answer above while its solve ran, read off another solve or a stored file (for CO vs BB's turn a
+  near spot's, `instant_from_store`), and sometimes nothing: a limped pot's turn (its flop solved inside the same
+  request), a flop line the library's solve rarely takes (its ranges from betting rules), a hand the near file doesn't
+  store. Now the request's own solve stops at its
+  looks, is read as the approximate answer reads a solve stopped part way
+  (`instant_from_own`: hero's mix as it stands, marked approximate, "this street's solve so far (100 iterations)", no
+  EVs) and goes on; the worker posts each look as a partial, the page shows it as it does the approximate answer, and
+  the answer replaces it. Fast looks at the 100th iteration, Accurate at the 100th and 300th of its 1000, on the flop
+  and the turn; only where the solve has at least a second left to its first check at its pace so far (the core's
+  time an iteration), so a quick solve answers as before (at half a second a 3bet pot's turn showed its look 0.5 s
+  before its answer). The answer is the same solve to the last digit (DCFR weighs by the iteration count, however the
+  iterations are split: tests/test_progress.py checks it against a request without looks), and its time is the same
+  within the runs' noise (below). Not where the approximate answer isn't offered (above), nor on a river (quick) or a
+  one-size view. How close a look is (32 turns after library flops: BTN, CO, HJ and UTG vs BB, SB vs BB, HJ vs CO and
+  BB's 3bet pots against BTN and CO, after a check-through and after a third-pot c-bet called, two random boards
+  each; the threaded site's tree natively; the first decision and the one after a check, the acting player's whole
+  range, against the same tree solved to its 1000th iteration, 0.007-0.04% of the pot from equilibrium by the repo's
+  best responses; mix: total variation per combo; EV given up: each combo's mix priced by the reference's EVs per
+  action, % of the pot):
+
+  | | mix, points per combo | EV given up: mean (worst node) | range frequencies, points |
+  |---|---|---|---|
+  | the 100th iteration (Fast's look, Accurate's first) | 15.4 | 0.022 (0.149) | 9.0 |
+  | the 300th (Accurate's second) | 5.2 | 0.005 (0.022) | 2.4 |
+  | Fast's answer (settled at 0.2%: 300-400 iterations) | 4.4 | 0.0045 (0.020) | 1.9 |
+
+  About as close as the stored turn's 100th-iteration row above (0.02), and closer than the previous street's view
+  the approximate answer shows (0.06 first to act, 1.43 facing a bet). Live flops at the 100th iteration range more
+  (four flops natively: the root's mix 0.3-44 points per combo, 0.002-0.30% of the pot given up; the 44 a limped
+  pot's slow flop, whose Fast answer at its 600th is still 8.6 points off the 1000th). In the browser (`scripts/bench_browser.mjs --early`, Pyodide in node on
+  this machine, Fast, a fresh worker per spot; seconds to what shows at once / to the look / to the answer, before ->
+  after; one thread two runs each, eight threads one; "-": nothing before the answer):
+
+  | spot | 1 thread: at once | look | answer | 8 threads: at once | look | answer |
+  |---|---|---|---|---|---|---|
+  | BTN vs BB's turn, c-bet called (`turn`, its stored turn) | 0.03 | 2.08 | 3.96 -> 3.94 | 0.03 | 0.89 | 2.14 -> 2.19 |
+  | the same, checked through (`turn-x`) | 0.03 | 2.40 | 4.63 -> 4.68 | 0.03 | 1.01 | 2.56 -> 2.54 |
+  | CO vs BB's turn, c-bet called (`turn-co`) | - | 2.77 | 4.37 -> 4.40 | - | 1.14 | 2.23 -> 2.30 |
+  | the same, checked through (`turn-co-x`) | - | 3.31 | 9.48 -> 9.52 | - | 1.33 | 4.48 -> 4.60 |
+  | a limped pot's turn, its flop solved first (`turn-limp`) | - | 4.52 | 6.94 -> 7.00 | - | 1.81 | 3.30 -> 3.32 |
+  | a limped pot's flop (`flop-limp`: under a second left, no look) | - | - | 1.71 -> 1.71 | - | - | 0.79 -> 0.78 |
+  | a 3bet pot's turn (`turn-3bp`: no look) | - | - | 1.36 -> 1.35 | | | |
+
+  (The two CO vs BB turns get no near spot's read: CO rarely c-bets a third on that flop, and the near file doesn't
+  store BB's AhKh after a check-through.) Accurate, one thread, one run each: CO vs BB's turn looks at 6.0 and 10.5 s
+  and answers in 25.7 -> 25.8 s, the limped pot's turn at 8.1 and 14.4 s, 37.2 -> 36.0. Natively (two threads, the
+  threaded site's tree, three runs each, alternating) a look costs nothing measurable: CO vs BB's turn checked through
+  9.59 -> 9.59 s (its look at 2.49), BTN vs BB's 5.14 -> 5.17 (1.79), the same answer every time.
 * **Study's turn after a library flop** (`Advisor.instant` with `"study": true`, `Advisor._study_store`; study.js's
   answer at once, the page's `studyAsk` and `studyPrefetch`). Study solved a library flop's turn live with only the
   progress bar to look at. Where the entry's turn file holds the flop line it now shows the stored turn for the whole

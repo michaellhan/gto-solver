@@ -199,6 +199,36 @@ combo's top action): 0.75% of the pot off at 100 iterations (90th percentile 1.8
 `solver.py`, to fix a display at the tails); re-solving each rare branch with the actor's turn strategy frozen (~2 s
 per rare action at the browser's Fast, so 2-4 s more per turn, where speed matters most).
 
+## Stopping a budgeted solve sooner
+
+Measured on 32 turns after library flops (BTN, CO, HJ, UTG vs BB, SB vs BB, HJ vs CO, BB's 3bet pots against BTN and
+CO; after a check-through and after a third-pot c-bet called, two random boards each; the threaded site's tree,
+natively), each solved to 1000 iterations with the exploitability and both first decisions' mixes and EVs recorded
+every 50th iteration, the 1000th the reference (0.007-0.04% of the pot from equilibrium). Errors per combo over the
+acting range: EV over the actions it plays, % of the pot.
+
+* **Finer checks** (every 50th to the 500th instead of 300, 400, 600): the stop fires nearer the target, so the
+  solve stops sooner at the same exploitability target: 2.4% fewer iterations at the threaded site's 0.2% from the
+  300th (5 of 32 turns 400 -> 350), 6.4% at one thread's 0.3% from the 200th. But it moves along the same curve: at
+  equal mean iterations the two grids give the same EV error (300th floor: old grid at 0.2%, 328 iterations, 0.260;
+  finer at 0.18%, 333, 0.252; one thread: old at 0.3%, 244, 0.427; finer at 0.25%, 247, 0.412), and at the shipped
+  targets the finer grid's EVs were 7% (threaded) and 12% (one thread) further off. Not adopted: a speed-up bought
+  with accuracy, which a target change would buy as well.
+* **Stopping on settled EVs** (stop at the first check past the floor where the exploitability is under target and
+  the node's per-combo EVs moved under a threshold since the last check, thresholds 0.02-0.08% of the pot): the same
+  iterations-for-accuracy trade as the exploitability rule at every threshold; no gain.
+* **Lower floors** trade accuracy the same way: a 3bet pot's turn stopped at the 200th instead of the 300th is
+  0.289% of the pot off per combo instead of 0.118.
+* **Seeding from the nearest stored turn** (CO, UTG vs BB's turns seeded from BTN vs BB's file, card-substituted):
+  mixed. CO vs BB after a c-bet called 0.270% of the pot from equilibrium at the 200th against 0.252 cold, the same by
+  the 300th; in position after a check-through 0.169 at the 300th against 0.211 (the stop at the 300th instead of the
+  400th); UTG vs BB the same as cold (0.222 / 0.228 at the 200th). BTN vs BB's own file (`Advisor._store_seed`) gives
+  0.192 against 0.270 on its turn. Not adopted.
+
+What was adopted instead is a first look rather than a sooner stop: the request's own solve stopped at its 100th
+iteration (and Accurate's 300th), read and shown as approximate while it goes on to the same answer
+(`Advisor.progress`, README).
+
 ## Conclusions
 
 * The previous finding holds and is now measured carefully: PCFR+ (last instantaneous regret as the prediction,
