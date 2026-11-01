@@ -18,8 +18,15 @@ of yours, and Practice for each opponent's move; with the seats rotating, both h
   from --turns native Fast turn solves of the commonest spots (their turn and river streets walked by range
   frequencies; cached in --turn-json). A flop with a turn file (flop_library.encode_turns: the index's "turns", or
   assumed) answers the turn's first decision and the in-position player's after a check (the profile's
-  turn_first) on the flop lines it stores (TURN_LINE of the pairs or more, by the entry's walk); nothing answers a
-  river.
+  turn_first) on the flop lines it stores (TURN_LINE of the pairs or more, by the entry's walk), in a borrowed pot
+  for the hands the spot's ranges hold; a spot with none of its own, "+approx", off the nearest spot's that stores
+  that flop's (advisor._near_turn_spots; NEAR_TURN_STORED of the decisions: the hands its file holds); nothing
+  precomputed answers a river. "+approx" also: a flop not read off a
+  library entry is solved live, and that solve answers every turn decision approximately at once (advisor.
+  instant_from_prev: its own turn, by card class and hand buckets), as the turn's live solve answers every river
+  decision (the river's own solve takes ~0.1-0.3 s); --why splits the turn decisions answered neither way (after a
+  library flop with no turn file, its own or a near spot's; past a turn file's decisions: the turn's own solve, run
+  from its first decision on; 3-way and more, solved live).
 
 --assume projects a build (';' separated, a spot id of flop_library.all_spots() or mw_library.SPOTS, or a preflop
 line as printed): id=n (n representative flops), id=n,turns (and turn files on the flops it adds), id=turns (turn
@@ -49,6 +56,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from flop_library_coverage import _line_str, RERAISE, rep_share  # noqa: E402
 
 AGGR = ("bet", "raise", "all-in")
+# the share of a turn's stored decisions (the first, and in position after a check) a near spot's turn file holds the
+# hand's combo for (advisor._near_turn_spots; scripts/bench_turn_near.py's "unseen", single-raised pots: 3-15% of the
+# reach first to act, 8% on average, 13-21% in position after a check, 16%; weighted 1 : 0.7)
+NEAR_TURN_STORED = 0.89
 
 
 def enumerate_preflop(players=6, stack=100.0, min_prob=2e-5, ante=0.0, straddle=False):
@@ -347,6 +358,16 @@ def main(argv=None):
             hu_prof[s["id"]] = (acc[:4] / acc[4], share(s["flops"]), share(s["flops"] if turns is True else turns or ()),
                                 near_share(s["flops"]) if len(s["flops"]) < len(weights) else 0.0)
     kind_avg = {k: np.mean([v[0] for i, v in hu_prof.items() if i.startswith(k)], axis=0) for k in ("srp", "3bp")}
+    # per heads-up spot that stores no turn files: the share of the flops (by weight) it stores whose turns the
+    # nearest spot that does stores (advisor._near_turn_spots: instant_from_store reads them, approximately)
+    from gto.advisor import _near_turn_spots
+    near_turn = {}
+    for s in lib.index().get("spots", []):
+        if s["id"] in hu_prof and not s.get("turns"):
+            src = set()
+            for x in _near_turn_spots(lib, s["id"]):
+                src |= set(x["flops"]) if x.get("turns") is True else set(x.get("turns") or ())
+            near_turn[s["id"]] = share(set(s["flops"]) & src)
     mw_prof = {}
     for s in mlib.index().get("spots", []):
         acc = np.zeros(4)
@@ -452,10 +473,28 @@ def main(argv=None):
                         tot["flop hu", "other"] += prob * st * (nfs + (1.0 - nfs) * nfn) * h
                     elif a.why:
                         tot["why", why_not(line, s)] += prob * st
+                td_ = td if tp else d
+                entry = fs * held     # (the flop read off a library entry, its own or borrowed: the hands it holds)
+                nts = min(near_turn.get(sp["id"], 0.0), max(fs - ft, 0.0)) if sp else 0.0
                 tot["p_turn"] += prob * t
-                tot["turn"] += prob * t * (td if tp else d)
-                tot["turn", "inst"] += prob * tl * ft * tf
-                tot["river"] += prob * t * (tp["p_river"] * tp["river_decisions"] if tp else t * d)
+                tot["turn"] += prob * t * td_
+                tot["turn", "inst"] += prob * tl * ft * tf * held
+                # a library flop with no turn file: the nearest spot's stored turn, for the combos it stores
+                tot["turn", "approx"] += prob * tl * nts * tf * held * NEAR_TURN_STORED
+                tot["turn", "near"] += prob * tl * nts * tf * held * NEAR_TURN_STORED
+                # every other flop is solved live, and that solve answers the turn approximately at once (advisor.
+                # instant_from_prev: the flop solve's own turn, by card class and hand buckets, one bet size)
+                tot["turn", "approx"] += prob * t * (1.0 - entry) * td_
+                tot["turn", "prev"] += prob * t * (1.0 - entry) * td_
+                if a.why:
+                    tot["twhy", "after a library flop with no turn file (its own or a near spot's)"] += \
+                        prob * t * (fs - ft - nts) * held * td_
+                    tot["twhy", "after a library flop with a turn file (its own or a near spot's), past its decisions "
+                        "(the turn's own solve, from the first decision on)"] += \
+                        prob * (t * (ft + nts) * td_ - tl * (ft + nts * NEAR_TURN_STORED) * tf) * held
+                rv = prob * t * (tp["p_river"] * tp["river_decisions"] if tp else t * d)
+                tot["river"] += rv
+                tot["river", "approx"] += rv   # (every river: off the turn's live solve, instant_from_prev)
             elif n_live == 3:
                 fps = tuple(fl.range_fp(r) for r in s["ranges"])
                 sp = mlib.spot(list(fps), s["pot"], s["stack"]) if hasattr(mlib, "spot") else None
@@ -467,12 +506,14 @@ def main(argv=None):
                 tot["flop 3-way", "inst"] += prob * st * fs
                 # (a 3-way turn: a heads-up turn's decisions times 1.5, the same share reaching the river)
                 tot["turn"] += prob * t * 1.5 * (td if tp else 2.0)
+                tot["twhy", "3-way or more (solved live)"] += prob * t * 1.5 * (td if tp else 2.0)
                 tot["river"] += prob * t * 1.5 * (tp["p_river"] * tp["river_decisions"] if tp else 1.2)
             else:
                 p_flop["4+"] += prob
                 d = 4.0 * (n_live / 4)
                 tot["flop 4+"] += prob * d
                 tot["turn"] += prob * 0.6 * d
+                tot["twhy", "3-way or more (solved live)"] += prob * 0.6 * d
                 tot["river"] += prob * 0.4 * d
         tot["preflop"] = pre_dec
         tot["preflop", "inst"] = pre_dec
@@ -521,6 +562,12 @@ def main(argv=None):
         miss = {k[1]: v for k, v in tot.items() if isinstance(k, tuple) and k[0] == "why"}
         print("heads-up flop decisions nothing answers at once, by why: " +
               "; ".join(f"{k} {v / hu * 100:.1f}%" for k, v in sorted(miss.items(), key=lambda x: -x[1])))
+        tmiss = {k[1]: v for k, v in tot.items() if isinstance(k, tuple) and k[0] == "twhy"}
+        print(f"turn decisions: {tot['turn', 'inst'] / max(tot['turn'], 1e-12) * 100:.1f}% a stored turn's, "
+              f"{tot['turn', 'near'] / max(tot['turn'], 1e-12) * 100:.1f}% a near spot's stored turn, "
+              f"{tot['turn', 'prev'] / max(tot['turn'], 1e-12) * 100:.1f}% read off the flop's live solve at once; "
+              "not at once: " + "; ".join(f"{k} {v / max(tot['turn'], 1e-12) * 100:.1f}% ({v * 100:.1f} a 100 hands)"
+                                          for k, v in sorted(tmiss.items(), key=lambda x: -x[1])))
     if a.candidate:
         print(f"\ninstant decisions per 100 hands each candidate adds (all {all_i * 100:.1f} of {all_d * 100:.1f} now):")
         print(f"{'candidate':<24} {'all':>6} {'flop':>6} {'turn':>6}")

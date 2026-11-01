@@ -2059,6 +2059,84 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   builds write them); the single-raised spots' come with their re-solves, BTN vs BB's first (every flop: 1,755,
   29.6 MB, 16.9 KB each), and `scripts/instant_coverage.py` counts 28.3 more instant decisions per 100 hands with them on
   the 13 spots the library holds (680.1 -> 708.4 of 813.5, 83.6% -> 87.1%; 46% of the turn's decisions).
+* **The turn after a library flop whose spot stores no turns** (`instant_from_store`'s near spots:
+  `_near_turn_spots`, `_near_turn_files`, `NEAR_TURN_RAISES`, `NEAR_TURN_POT`, `NEAR_TURN_DIST`, `NEAR_TURN_UNTIL`,
+  `NEAR_TURN_HELD`; `Advisor._study_store`; `Advisor.prefetch`). Of the single-raised spots only BTN vs BB stores turn
+  files, so the turn after any other library flop (the CO's, the HJ's and UTG's opens the big blind calls, the BTN's
+  and the CO's flatted by the SB, and the 8- and 9-max pots read as theirs: Another table size, below) showed
+  nothing until its own solve answered (5-6 s at Fast in the browser). It now reads the nearest spot that stores
+  them: the same preflop raiser in the same seat, single-raised, its pot within 0.8-1.25x this one's and the two
+  ranges at most 2.4 apart (summed normalized L1: CO vs BB 1.04 from BTN vs BB, HJ vs BB 1.49, BTN vs SB 1.66, UTG
+  vs BB 1.89, CO vs SB 2.37), its stack-to-pot ratio within 0.8-1.25x too; at the turn's first decision and in
+  position after a check, on the line the flop took, each combo the near file's own mix where it stores it, marked
+  approximate and naming the spot ("the precomputed flop solve's view of the turn in the library's BTN vs BB
+  single-raised pot (by card class, one bet size, 75%), the nearest spot that stores its turns"), with no EVs (the
+  near file's are its pot's and ranges').
+  It gives way to the turn's own solve at the solve's 50th iteration (`NEAR_TURN_UNTIL`; instant_from_own reads it
+  from there, as with the flop's approximate reads), not the 100th as a spot's own file does. Study shows the whole
+  range off it the same way where the near file stores at least 90% of the range (`NEAR_TURN_HELD`); the worker
+  fetches the near file with the flop's entry (the prefetch's dry run names it). A spot with turn files of its own
+  reads only those, as before.
+
+  EV given up (`scripts/bench_turn_near.py`, new: six of each spot's stored flops, its two most-reached flop lines,
+  one turn card each; the reference the turn solved natively in the Accurate tree, 300 iterations, one thread, on
+  the two ranges the pot's own entry narrows the flop line to; each combo's mix priced by its per-action EVs there,
+  the acting player's reach, % of the turn's pot, mean (worst); the near read over the combos the near file stores,
+  "unseen" the reach it doesn't, which waits for the live solve; against the live Fast solve at 50 and 100
+  iterations; first to act / in position after a check):
+
+  | pot <- the spot read (distance) | first to act | in position after a check | unseen | the live solve at 50 iterations | at 100 | the read at most the 50th's |
+  |---|---|---|---|---|---|---|
+  | BTN vs BB <- its own file (the floor) | 0.026 (0.18) | 0.103 (0.50) | 0.01 / 0.02 | 0.105 / 0.070 | 0.032 / 0.023 | 12 / 7 of 12 |
+  | CO vs BB <- BTN vs BB (1.04) | 0.109 (0.29) | 0.083 (0.25) | 0.03 / 0.13 | 0.087 / 0.065 | 0.026 / 0.021 | 6 / 7 of 12 |
+  | HJ vs BB <- BTN vs BB (1.49) | 0.116 (0.36) | 0.135 (0.47) | 0.05 / 0.15 | 0.098 / 0.079 | 0.022 / 0.020 | 7 / 4 of 12 |
+  | UTG vs BB <- BTN vs BB (1.89) | 0.142 (0.49) | 0.176 (0.52) | 0.08 / 0.17 | 0.118 / 0.076 | 0.018 / 0.027 | 7 / 5 of 12 |
+  | BTN vs SB <- BTN vs BB (1.66) | 0.044 (0.25) | 0.209 (0.49) | 0.12 / 0.16 | 0.089 / 0.113 | 0.026 / 0.035 | 10 / 3 of 12 |
+  | CO vs SB <- BTN vs BB (2.37; 11 turns) | 0.037 (0.12) | 0.200 (0.62) | 0.15 / 0.21 | 0.129 / 0.110 | 0.021 / 0.036 | 9 / 2 of 11 |
+  | 8-max CO vs BB (CO vs BB's entry) <- BTN vs BB | 0.122 (0.29) | 0.113 (0.27) | 0.04 / 0.13 | 0.123 / 0.088 | 0.022 / 0.017 | 6 / 5 of 12 |
+  | 9-max UTG vs BB (UTG vs BB's entry) <- BTN vs BB | 0.227 (0.59) | 0.110 (0.43) | 0.11 / 0.17 | 0.077 / 0.070 | 0.020 / 0.031 | 5 / 6 of 12 |
+  | BB 3bet vs CO <- its own file | 0.172 (0.60) | 0.388 (1.91) | 0.02 / 0.02 | 0.052 / 0.054 | 0.021 / 0.016 | 4 / 4 of 12 |
+  | BB 3bet vs BTN <- BB 3bet vs CO (1.16; left out) | 0.255 (1.23) | 0.639 (1.79) | 0.29 / 0.26 | 0.052 / 0.047 | 0.012 / 0.017 | 5 / 1 of 12 |
+  | SB 3bet vs BTN <- BB 3bet vs CO (1.05; left out) | 0.325 (2.04) | 0.421 (0.97) | 0.13 / 0.28 | 0.035 / 0.050 | 0.007 / 0.013 | 3 / 1 of 12 |
+  | CO 3bet vs HJ <- its own file (11 turns) | 0.052 (0.23) | 0.086 (0.27) | 0.02 / 0.02 | 0.105 / 0.103 | 0.027 / 0.019 | 7 / 6 of 11 |
+  | BTN 3bet vs CO <- CO 3bet vs HJ (1.08; left out; 11) | 0.028 (0.10) | 0.242 (0.60) | 0.12 / 0.27 | 0.062 / 0.133 | 0.009 / 0.025 | 7 / 3 of 11 |
+  | HJ 3bet vs UTG <- CO 3bet vs HJ (0.73; left out; 11) | 0.162 (0.66) | -0.095 (0.59) | 0.05 / 0.08 | 0.039 / 0.063 | 0.008 / 0.006 | 6 / 4 of 11 |
+
+  The reference is itself 0.13% of the pot from equilibrium on average (0.30 at most; a negative figure is that
+  noise). First to act the near read gives up about what the live solve's 50th iteration does (0.037-0.227 against
+  0.077-0.129, at most it on 5-10 of 12 turns), in position after a check up to twice as much (0.083-0.209 against
+  0.065-0.113; 13-21% of the reach off the file there, 3-15% first to act), under the flop's approximate reads
+  (0.18-0.40, below); BTN vs BB's own file is the floor. The 3bet pots stay out (`NEAR_TURN_RAISES`): the blinds'
+  3bets of the BTN off BB vs CO's file gave up five to fourteen times the live solve's 50th iteration, 13-29% of the
+  reach off the file; the BTN's of the CO off CO vs HJ's less first to act and nearly twice as much in position;
+  and a 3bet pot's turn answers at Fast in under a second in the browser (0.55-0.72 s: Study's turn after a library
+  flop, below). (BB vs CO's own turn files gave up 0.172 / 0.388 here against the live solve's 0.052 / 0.054 at 50
+  iterations, where CO vs HJ's beat it: worth a look for the 3bet pots' re-solves.)
+
+  `scripts/instant_coverage.py` counts it (as "+approx": the hands the near file holds, 89% of the decisions by the
+  bench's unseen), and now also counts the turns and rivers answered approximately at once off the street before's
+  live solve (instant_from_prev: every turn after a flop not read off a library entry, every heads-up river; the
+  river's own solve takes ~0.1-0.3 s); `--why` splits the turn decisions nothing answers at once. Turn decisions
+  answered at once from precomputed files, a spot's own or a near one's, before -> after: 6-max 15.1% -> 36.1%, 8-max
+  10.5% -> 30.2%, 9-max 8.7% -> 27.8% (12.3-12.8 decisions per 100 hands). Every decision of a session, every seat
+  (precomputed / with the flop's approximate reads, as before / with the near turns / with the reads off the street
+  before's live solve too):
+
+  | game | per 100 hands | precomputed | + flop reads | + near turns | + live solves' reads (turn, river) |
+  |---|---|---|---|---|---|
+  | 6-max 100bb | 814.6 | 85.1% | 86.8% | 88.3% | 89.7%, 94.6% |
+  | 8-max | 1029.2 | 86.3% | 88.0% | 89.2% | 90.8%, 94.6% |
+  | 9-max | 1138.1 | 86.7% | 88.4% | 89.5% | 91.0%, 94.5% |
+  | 6-max, 0.125bb antes | 877.4 | 70.9% | 81.1% | 81.1% | 88.9%, 94.4% |
+  | 8-max, 0.125bb antes | 1110.9 | 75.0% | 81.4% | 81.4% | 87.3%, 91.5% |
+  | 6-max, UTG straddling | 826.8 | 74.5% | 82.3% | 82.3% | 89.3%, 94.3% |
+  | heads-up 100bb | 487.0 | 41.8% | 55.6% | 55.6% | 73.0%, 85.4% |
+
+  What's left at once: at 6-max 18.3% of the turn decisions follow a library flop no file reads (SB vs BB, the
+  flatted opens with the opener out of position, the 3bet pots without files), 20.2% are past a file's two decisions,
+  7.0% are 3-way; at 8-max with antes 3-way flops are 20.8% of the turn decisions and 13.5% / 12.7% of the
+  heads-up flop decisions are too far from any spot / too little covered; heads-up, the limped pots (38.8% of its
+  flop decisions) have no spot at all (Precomputed flop library: Next for other games).
 * **Study's turn after a library flop** (`Advisor.instant` with `"study": true`, `Advisor._study_store`; study.js's
   answer at once, the page's `studyAsk` and `studyPrefetch`). Study solved a library flop's turn live with only the
   progress bar to look at. Where the entry's turn file holds the flop line it now shows the stored turn for the whole
@@ -3517,6 +3595,19 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   (`srp_sb_bb_2max`, "SB vs BB single-raised pot, heads-up", on 552 flops: the heads-up charts' ranges, wider than
   6-max SB vs BB's, about half of heads-up flop decisions), built by `--format` (until built they are solved live,
   or read approximately off a 6-max spot; their entries deal the river, as every spot's do).
+* **Next for other games** (a plan, not built; `scripts/instant_coverage.py --players 2 --assume
+  "srp_sb_bb_2max=552,turns" --candidate ...`, over the heads-up open already listed): heads-up's limped pot (the
+  small blind completes, the big blind checks: `SB:c,BB:x`, pot 2, stack 99, the heads-up charts' 384 / 1,007 combos
+  by frequency) is 38.8% of heads-up flop decisions (53.6 a 100 hands) and nothing reads it at once (no spot has its
+  ranges or a stack-to-pot ratio near 49.5). On 552 flops with turn files it adds 29.1 instant decisions per 100
+  heads-up hands (20.4 on the flop, 8.7 on the turn; 6.0 points of all of them; the other limped flops would read
+  approximately off it, not counted); on every flop 76.3 (53.5 and 22.8). Its combo pairs are 80% of the heads-up
+  open's (384 x 1,007 against 787 x 617) at a far deeper stack-to-pot ratio, so about that spot's ~100 s an entry (an
+  estimate, not timed): ~15 CPU-hours and ~3.5 MB of entries plus ~10 MB of turn files on 552, ~50 CPU-hours and ~45
+  MB on every flop. The heads-up open on every flop is next after it (+59.3 for ~35 more CPU-hours). With antes at
+  8-max the heads-up flops left are 13.5% too far from any spot and 12.7% too little covered, 3-way flops 24.5
+  decisions a 100 hands; a straddle's 3bet pots (18.5% of its heads-up flop decisions) are under a stack-to-pot ratio
+  of 3, where the 40bb spots listed above (BB vs BTN's 3bet pot at 40bb: 1.5) would be the ones to try.
 * **Flops**: canonical flops matched up to suits (the ranges are suit-symmetric, so a stored flop's solve is any
   suit permutation's, its combos permuted); other flops are solved live. Each spot stores a representative set
   (`representative_flops(n)`: the 1755 suit-isomorphic flops sorted by texture and sampled by weight, so each suit
@@ -3637,7 +3728,9 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   1% of the pot) would add another 111-133%, so it isn't stored. The index lists a
   spot's turn files that name the entry beside them by its hash (`"turns"`: true for all its flops, or a list), and
   removes any other `.turn.bin` from the spot's folder, since the library's deploy publishes the folder as it is (a
-  test fails on an entry or turn file the indexes don't name).
+  test fails on an entry or turn file the indexes don't name). A spot with none of its own reads the nearest spot's
+  that stores them, single-raised pots only (`_near_turn_spots`: Accuracy vs speed, "The turn after a library flop
+  whose spot stores no turns").
 * **Lines**: the advisor walks the actual flop action through the stored nodes (sizes taken more than 15% off the
   tree's, more raises than it allows, or a line through a re-raise fall back to the live solve, as does a raise in an
   entry built before raises were stored). The spots' reports and drills keep to the first decisions. Turn and river

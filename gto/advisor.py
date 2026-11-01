@@ -2380,6 +2380,70 @@ STORE_UNTIL = 100
 # 1000th's, B3's given-up 0.0017 / 0.0015 -> 0.0012 / 0.0009 (README, "The turn solve starts from the stored turn")
 STORE_SEED = 1.0
 
+# A library flop whose spot stores no turn files (the spots solved before them, and the pots of 8- and 9-max read as
+# theirs: flop_approx.near_exact) reads its turn off the nearest spot that stores them (_near_turn_spots): the same
+# preflop raiser in the same seat, as many raises preflop (NEAR_TURN_RAISES), the pot and the stack-to-pot ratio
+# within NEAR_TURN_POT of its own and the two ranges within NEAR_TURN_DIST (summed flop_approx.range_dist), until the
+# turn's own solve has run NEAR_TURN_UNTIL iterations (instant_from_own reads it from there). scripts/
+# bench_turn_near.py (six flops of each pot, its two likeliest flop lines, a turn each; each combo's mix priced by the
+# turn's live Accurate solve's EVs per action, % of the pot, first to act / in position after a check): the single-
+# raised pots off BTN vs BB's turn files (CO, HJ and UTG vs BB, 1.04-1.89 apart; BTN and CO vs SB, 1.66 and 2.37;
+# 8-max CO vs BB, 9-max UTG vs BB) 0.04-0.23 / 0.08-0.21, the live Fast solve at 50 iterations 0.08-0.13 / 0.07-0.11
+# (4-15% / 13-21% of the reach off the near file: left to the live solve); the 3bet pots off another 3bet pot's
+# 0.03-0.33 / up to 0.64 where that solve gives up 0.04-0.06 / 0.05-0.13 (the blinds' 3bets of the BTN off BB vs CO's
+# file 5-13 times as much), so they're left out.
+NEAR_TURN_RAISES = (1,)
+NEAR_TURN_POT = (0.8, 1.25)
+NEAR_TURN_DIST = 2.4
+NEAR_TURN_UNTIL = HU_CHECKS[0]
+NEAR_TURN_HELD = 0.9   # (Study's whole range: the share of the actor's the near spot's turn file must store)
+
+
+def _near_turn_spots(lib, sid) -> List[dict]:
+    """The library spots (index rows) whose turn files a spot `sid` that stores none of its own reads its turns off
+    (instant_from_store), nearest ranges first; [] for a spot that stores turn files, or with none near enough."""
+    memo = lib.__dict__.setdefault("_near_turns", {})   # (by spot, kept with the library and its index)
+    if sid not in memo:
+        from . import flop_approx as fa
+        spots = list(lib.index().get("spots", ()))
+        sp = next((s for s in spots if s.get("id") == sid), None)
+        out = []
+        raises = str((sp or {}).get("line") or "").count(":r")
+        if sp is not None and not sp.get("turns") and raises in NEAR_TURN_RAISES:
+            mine, aggr = fa._spot_ranges(sp), fa.spot_aggressor(sp)
+            for s in spots:
+                spr = (float(s["stack"]) / float(s["pot"])) / (float(sp["stack"]) / float(sp["pot"]))
+                if s is sp or not s.get("turns") or mine is None or aggr is None or fa.spot_aggressor(s) != aggr or \
+                        str(s.get("line") or "").count(":r") != raises or not NEAR_TURN_POT[0] <= spr <= NEAR_TURN_POT[1] \
+                        or not NEAR_TURN_POT[0] <= float(s["pot"]) / float(sp["pot"]) <= NEAR_TURN_POT[1]:
+                    continue
+                st = fa._spot_ranges(s)
+                if st is None:
+                    continue
+                d = fa.range_dist(mine["full0"], st["full0"]) + fa.range_dist(mine["full1"], st["full1"])
+                if d <= NEAR_TURN_DIST:
+                    out.append((d, s))
+        memo[sid] = [s for _, s in sorted(out, key=lambda x: x[0])]
+    return memo[sid]
+
+
+def _near_turn_files(lib, sol, flop):
+    """(a decoded turn file, the hand's flop's suit map, the spot it's from) for each spot near the one the library
+    entry `sol` (a LibrarySolution) was read from (its own, or the one a borrowed pot reads as its own) that stores
+    this flop's turns, nearest first, where that spot stores none (_near_turn_spots); each fetched as it's reached."""
+    head = getattr(sol, "head", None)
+    if lib is None or not hasattr(lib, "turns") or not hasattr(sol, "stored") or not isinstance(head, dict):
+        return
+    from . import flop_library as fl
+    canon, smap = fl.canonical(flop)
+    name = cards_str(canon)
+    if name != head.get("board"):
+        return
+    for sp in _near_turn_spots(lib, head.get("spot")):
+        t = lib.turns(sp, name)
+        if t is not None:
+            yield t, smap, sp
+
 
 def _turn_file(lib, sol, flop) -> Optional[tuple]:
     """(the decoded turn file, the hand's flop's suit map) beside the library entry `sol` (a LibrarySolution) was read
@@ -2426,22 +2490,32 @@ def instant_from_store(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
     else:
         return None
     got = _turn_file(lib, sol, spot.board[:3])
-    if got is None:
+    if got is not None:
+        files = [got + (None,)]
+    elif spot.own is not None and spot.own.solver.iters >= NEAR_TURN_UNTIL:
         return None
+    else:   # (a spot with no turn files of its own: the nearest that stores this flop's, _near_turn_spots)
+        files = _near_turn_files(lib, sol, spot.board[:3])
     from . import flop_library as fl
-    t, smap = got
-    mp = lambda c: c // 4 * 4 + smap[c % 4]
-    nd = fl.turn_node(t, taken, at, mp(spot.board[3]))
-    if nd is None or nd["player"] != spot.hero_p:
+    for t, smap, src in files:
+        mp = lambda c: c // 4 * 4 + smap[c % 4]
+        nd = fl.turn_node(t, taken, at, mp(spot.board[3]))
+        if nd is None or nd["player"] != spot.hero_p:
+            continue
+        x, y = sorted(mp(c) for c in spot.hole)
+        i = COMBO_INDEX[(x, y)]
+        j = int(np.searchsorted(nd["combos"], i))
+        if j < len(nd["combos"]) and nd["combos"][j] == i:
+            break
+        # (a combo the flop solve hardly brings here: not stored)
+    else:
         return None
-    x, y = sorted(mp(c) for c in spot.hole)
-    i = COMBO_INDEX[(x, y)]
-    j = int(np.searchsorted(nd["combos"], i))
-    if j >= len(nd["combos"]) or nd["combos"][j] != i:
-        return None   # (a combo the flop solve hardly brings here: not stored)
     node = types.SimpleNamespace(names=nd["names"], pot_now=0.0, bets=(0.0, 0.0))
     acts = _real_actions(node, nd["strat"][:, j], [0.0, 0.0], spot)
-    out = {"actions": acts, "source": "store", "label": _store_label(nd["names"]), "iterations": int(sol.iters)}
+    out = {"actions": acts, "source": "store", "label": _store_label(nd["names"], src), "iterations": int(sol.iters)}
+    if src is not None:   # (another spot's: no EVs, they're its pot's and ranges', not this one's)
+        out["near_spot"] = src.get("id")
+        return out
     evs, rng = _store_evs(t, taken, at, mp(spot.board[3]), nd, spot.pot, spot.hero_p)
     if evs is not None:   # (format 2: the class's range EVs, at the hand's pot; never your hand's own)
         for a, e in zip(acts, evs):
@@ -2451,10 +2525,14 @@ def instant_from_store(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
     return out
 
 
-def _store_label(names) -> str:
-    """What a stored turn's answer is read off (instant_from_store, Advisor._study_store)."""
+def _store_label(names, src: Optional[dict] = None) -> str:
+    """What a stored turn's answer is read off (instant_from_store, Advisor._study_store): src, the spot whose turn
+    file it is where that isn't the hand's own (_near_turn_spots)."""
     bets = [n for n in names if n.startswith("bet")]
     size = f"one bet size, {bets[0].split()[-1]}" if len(bets) == 1 else "its turn sizes"
+    if src is not None:
+        return (f"the precomputed flop solve's view of the turn in the library's {src.get('label') or src.get('id')} "
+                f"(by card class, {size}), the nearest spot that stores its turns")
     return f"the precomputed flop solve's view of the turn (by card class, {size})"
 
 
@@ -2733,14 +2811,17 @@ class Advisor:
             if m:
                 self.advise(dict(st, hero=m.group(1)))
             # this flop's entries' turn files too, where the index lists them (the turn's approximate answer at once:
-            # instant_from_store)
+            # instant_from_store), and for a spot that stores none, the nearest spot's that does (_near_turn_spots)
             lib = self.library
             if lib is not None and lib in libs and hasattr(lib, "turns"):
                 from .flop_library import flop_name
                 name = flop_name(parse_cards(board))
                 spots = {s.get("id"): s for s in lib.index().get("spots", ())}
                 for k in [k for k in lib._entries if len(k) == 2 and k[1] == name and k[0] in spots]:
-                    lib.turns(spots[k[0]], name)
+                    if lib.turns(spots[k[0]], name) is None:
+                        for sp in _near_turn_spots(lib, k[0]):
+                            if lib.turns(sp, name) is not None or (sp["id"], name, "turns") in lib._entries:
+                                break
         except Exception:
             pass
         finally:
@@ -6423,32 +6504,37 @@ class Advisor:
         else:
             raise _NoInstant()
         got = _turn_file(lib, sol, board[:3])
-        if got is None:
-            raise _NoInstant()
+        # (a spot with no turn files of its own: the nearest that stores this flop's, _near_turn_spots, where it holds
+        # NEAR_TURN_HELD of the actor's range)
+        files = [got + (None,)] if got is not None else _near_turn_files(lib, sol, board[:3])
         from . import flop_library as fl
-        t, smap = got
-        st = fl.turn_strategies(t, taken, at, board[3], smap)
-        nd = fl.turn_node(t, taken, at, board[3] // 4 * 4 + smap[board[3] % 4])
-        if st is None or nd is None or st["player"] != hero_p:
-            raise _NoInstant()
         live = np.prod([1.0 - MEMBER_FULL[c] for c in board], axis=0)
-        r = [np.asarray(r0, dtype=np.float64) * live, np.asarray(r1, dtype=np.float64) * live]
-        if at:   # (in position after a check: the hands the stored first decision checks; unstored ones at an even mix)
-            first = fl.turn_strategies(t, taken, (), board[3], smap)
-            if first is None or "check" not in first["names"]:
-                raise _NoInstant()
-            x = first["strat"][first["names"].index("check")]
-            r[0] = r[0] * np.where(np.isnan(x), 1.0 / len(first["names"]), x)
-        held = ~np.isnan(st["strat"][0])
-        me, opp = r[hero_p] * held, r[1 - hero_p]
-        if me.sum() < 1e-6:
+        for t, smap, src in files:
+            st = fl.turn_strategies(t, taken, at, board[3], smap)
+            nd = fl.turn_node(t, taken, at, board[3] // 4 * 4 + smap[board[3] % 4])
+            if st is None or nd is None or st["player"] != hero_p:
+                continue
+            r = [np.asarray(r0, dtype=np.float64) * live, np.asarray(r1, dtype=np.float64) * live]
+            if at:   # (in position after a check: the hands the stored first decision checks; unstored ones at an
+                # even mix)
+                first = fl.turn_strategies(t, taken, (), board[3], smap)
+                if first is None or "check" not in first["names"]:
+                    continue
+                x = first["strat"][first["names"].index("check")]
+                r[0] = r[0] * np.where(np.isnan(x), 1.0 / len(first["names"]), x)
+            held = ~np.isnan(st["strat"][0])
+            me, opp = r[hero_p] * held, r[1 - hero_p]
+            if me.sum() >= 1e-6 and (src is None or me.sum() >= NEAR_TURN_HELD * r[hero_p].sum()):
+                break
+        else:
             raise _NoInstant()
         sf = np.nan_to_num(st["strat"])
         spot = InstantSpot("turn", tuple(board), (), hero_p, oop, ip, acts, cur.pot_start, eff, behind)
         real = _real_actions(types.SimpleNamespace(names=st["names"], pot_now=0.0, bets=(0.0, 0.0)),
                              np.zeros(len(st["names"])), [0.0, 0.0], spot)
         part, og = _study_mix(board, [a["action"] for a in real], [a["amount_bb"] for a in real], me, sf, villain, opp)
-        evs, rng = _store_evs(t, taken, at, board[3] // 4 * 4 + smap[board[3] % 4], nd, cur.pot_start, hero_p)
+        evs, rng = (None, None) if src is not None else \
+            _store_evs(t, taken, at, board[3] // 4 * 4 + smap[board[3] % 4], nd, cur.pot_start, hero_p)
         for a, act in enumerate(part["actions"]):
             act["ev_bb"] = evs[a] if evs is not None else None
         if rng is not None:
@@ -6458,10 +6544,11 @@ class Advisor:
             range_ev = round(sum(f * e for f, e in w) / sum(f for f, _ in w), 2) if w else None
         else:
             range_ev = None
-        label = _store_label(st["names"])   # (the panel says what it is and that the turn's own solve replaces it)
+        label = _store_label(st["names"], src)   # (the panel says what it is and that the turn's own solve replaces it)
         notes = ["the stored turn's EVs are the flop solve's for the turn card's class (the range's and each action's), "
                  "no hand's own" if evs is not None else "the stored turn holds strategies only, so no EVs until the "
-                 "turn's own solve"]
+                 "turn's own solve" if src is None else "another spot's stored turn: its strategies only, so no EVs "
+                 "until the turn's own solve"]
         return {"study": "node", "street": "turn", "actor": hero, "opponent": villain,
                 "position": "OOP" if hero_p == 0 else "IP", "players": n_players, "board": cards_str(board),
                 "pot_bb": round(cur.pot_start, 2), "to_call_bb": round(min(to_call, behind), 2),
