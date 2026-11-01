@@ -3031,6 +3031,41 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   of a 75% bet only, played on a class's card: a start, not an answer, so the stopping rules are unchanged. The
   turn file is read before the solve (the approximate answer reads it first, and the worker fetches it with the
   flop's entry).
+* **The turn solve starts from the near spot's stored turn, or from the flop's own solve** (`Advisor._store_seed`,
+  `NEAR_SEED`, `PREV_SEED`, `_prev_turn_strategies`). The seed above needed the entry's own turn file, which four
+  spots have (BTN vs BB, and BB vs CO's, CO vs HJ's and BB vs SB's 3bets). Now a library flop whose spot stores none
+  but has a near spot that does (CO, HJ and UTG vs BB, BTN and CO vs SB off BTN vs BB's; the 8- and 9-max pots read
+  as theirs) starts the turn from that spot's file where it holds the flop's line (the one
+  its approximate answer reads, `_near_turn_files`), and a turn after a flop solved live (a limped pot, another stack
+  depth, a flop the library doesn't store, a flop line the library's solve rarely takes) from that flop solve's own
+  turn: the card dealt read as its class's played card, each combo by its hand bucket, as the approximate answer
+  reads it for one hand (`instant_from_prev`), here for every combo at once. The same nodes as before (the turn's
+  first decision, and in position after a check) and the same regrets (the pot x the opponent's compatible reach x
+  the mix); the stopping rules unchanged. Measured natively (the threaded browser's tree, its settled stop at 0.2%
+  of the pot from the 300th; each turn solved cold to 1000 iterations as the reference, 0.01-0.11% of the pot from
+  equilibrium; mix and EVs at the turn's first decision and in position after a check, as above):
+
+  | turns | stop, mean iterations (at the 300th) | % of the pot from equilibrium there | EVs over the played actions, % of the pot off | EV given up by the mixes | at 100 / 200 / 300 / 400 iterations |
+  |---|---|---|---|---|---|
+  | 12 CO, HJ and UTG vs BB turns, BTN vs BB's file (checked through and a third-pot c-bet called, two boards each) | 325 (9) -> 300 (12) | 0.150 -> 0.147 | 0.264 -> 0.166 | 0.0045 -> 0.0044 | 0.885 / 0.312 / 0.171 / 0.109 -> 0.752 / 0.270 / 0.147 / 0.093 |
+  | 8 limped turns, the flop solved live (checked through, a bet called) | 450 (4) -> 413 (5) | 0.162 -> 0.151 | 0.213 -> 0.196 | 0.0159 -> 0.0133 | 1.634 / 0.567 / 0.300 / 0.191 -> 1.372 / 0.483 / 0.265 / 0.168 |
+  | 6 turns at 40 and 60bb, the flop solved live | 300 (6) -> 300 (6) | 0.121 -> 0.111 | 0.148 -> 0.140 | 0.0032 -> 0.0031 | 0.664 / 0.223 / 0.121 / 0.077 -> 0.593 / 0.212 / 0.111 / 0.073 |
+
+  The mixes' distance from the reference's (points per combo) 4.21 -> 3.90 over the 26, range frequencies 1.60 ->
+  1.15. On the one-thread tree (the page without threads: Fast's own tree, its settled stop at 0.3%
+  from the 200th; the 12 near turns and the 8 limped, each against its own 1000-iteration reference) the near turns stop
+  at 225 -> 208 iterations (11 of the 12 at the 200th, was 9), 0.219 -> 0.220% of the pot from equilibrium there, each
+  combo's EVs over the actions it plays 0.357 -> 0.255% of the pot off, EV given up 0.0051 -> 0.0050; the limped at
+  350 -> 288, 0.220 -> 0.241% from equilibrium, EVs 0.292 -> 0.332 off (stopping a check sooner, inside the target; at
+  equal iterations the seeded solve is the closer, 0.597 -> 0.524 at the 200th, 0.373 -> 0.313 at the 300th), EV given
+  up 0.0177 -> 0.0166. In the browser (`scripts/bench_browser.mjs --early`, Pyodide in node, Fast; one thread two runs
+  each alternating with 5516d4ff, eight threads one): CO vs BB's turn checked through (`turn-co-x`) 7.94 / 9.75 -> 5.21 /
+  6.55 s at one thread (300 -> 200 iterations; its look at 2.8 / 3.3 -> 2.7 / 3.4 s, now the only one), 4.56 -> 3.23 s
+  at eight (400 -> 300; looks at 1.34, 2.39 and 3.48 -> 1.26). The others stop where they did, so within the machine's
+  noise: at one thread CO vs BB's turn after a c-bet its solve rarely takes 3.70 / 4.84 -> 3.58 / 4.48 s, a limped
+  turn 5.82 / 7.11 -> 6.67 / 6.81, a 40bb turn 2.66 / 3.16 -> 2.95 / 3.20, BTN vs BB's turn (its own file: no change)
+  3.99 / 4.61 -> 4.86 / 4.79; at eight 2.32 -> 2.24, 3.41 -> 3.38, 1.71 -> 1.73, 2.40 -> 2.42. The seed costs 1-8 ms
+  natively, read and set (`_prev_turn_strategies` reads the flop solve's turn for every combo at once).
 * **The first chance nodes in one job** (`core/gtocore.c` `subs_job`, `subs_run`, `plan`, `core_subs`). On threads a
   training pass ran a job per chance node: on a turn, each line's river split into its classes' rows (13 on a rainbow
   turn), the helpers taking rows while the thread that set the job up spread the reaches, waited for the last rows and

@@ -360,7 +360,8 @@ class TestStoreSeed(_Store):
         st = self.state(0, self.hole_in(0, "9c", 3))
         seen, _ = self.turn_solves(self.libs[1], st)
         self.assertEqual([kw["seed"] for _, kw, _ in seen], [None])
-        seen, _ = self.turn_solves(self.lib, dict(st, board="Qh8s3d9c", hole="AcKd"))
+        with mock.patch.object(A, "PREV_SEED", False):   # (else from the flop's live solve: TestPrevSeed)
+            seen, _ = self.turn_solves(self.lib, dict(st, board="Qh8s3d9c", hole="AcKd"))
         self.assertEqual([kw["seed"] for _, kw, _ in seen], [None])
         t = dict(self.turns, lines=[ln for ln in self.turns["lines"] if ln["path"] != ["check", "check"]])
         with mock.patch.object(self.lib, "turns", return_value=t):
@@ -391,6 +392,106 @@ class TestStoreSeed(_Store):
         self.assertNotIn("approximate", res)
         self.assertGreater(res["solver"]["iterations"], 0)
         self.assertAlmostEqual(sum(a["freq"] for a in res["actions"]), 1.0, delta=0.01)
+
+    def test_from_the_near_spots_turn_file(self):
+        """An entry without a turn file of its own: the seed is the near spot's (_near_turn_files: here the fixture's
+        file standing in for it), as the entry's own would be; not with NEAR_SEED off."""
+        st = self.state(0, self.hole_in(0, "9c", 3))
+        near = lambda lib, sol, flop: iter([(self.turns, self.smap, self.spot)])
+        with mock.patch.object(A, "_near_turn_files", side_effect=near):
+            seen, _ = self.turn_solves(self.libs[1], st)
+            with mock.patch.object(A, "NEAR_SEED", False):
+                off, _ = self.turn_solves(self.libs[1], st)
+        self.assertEqual([kw["seed"] for _, kw, _ in off], [None])
+        first = seen[0][2]
+        self.assertIsNotNone(first)
+        nd, strat, _ = first["oop"]
+        hole = self.hole_in(0, "9c", 3)
+        names, mix, _ = self.stored(["check", "check"], [], hole, "9c")
+        want = np.zeros(len(nd.names))
+        for a, name in enumerate(names):
+            want[A.match_action(nd.names, name)] += mix[a]
+        col = list(first["s"].ctx.active).index(COMBO_INDEX[tuple(sorted(parse_cards(hole)))])
+        self.assertTrue(np.allclose(strat[:, col], want / want.sum(), atol=1e-5))
+
+
+LIMP = [{"pos": p, "action": "fold"} for p in ("UTG", "HJ", "CO", "BTN")] + [C("SB"), X("BB")]
+LIMP_TURN = {"players": 6, "stack": 100, "preflop": LIMP, "flop": [X("SB"), X("BB")], "turn": [], "river": [],
+             "hero": "SB", "hole": "QhJh", "board": "Ks7d2cTh"}
+
+
+def live_flop_advisor():
+    a = native.advisor("fast", budget=0.5, prior_budget=0.5)
+    a.library = None   # (the flop solved live)
+    return a
+
+
+class TestPrevSeed(unittest.TestCase):
+    """After a flop solved live (a limped pot: no library spot), the turn's own solve starts from that solve's turn
+    (Advisor._store_seed, _prev_turn_strategies): the turn as the flop solve plays it, the card dealt read as its
+    class's played card and each combo by its hand bucket, as the approximate answer reads it for a hand
+    (instant_from_prev)."""
+
+    def test_the_first_iteration_plays_the_flop_solves_turn(self):
+        for hero, hole, acts in (("SB", "QhJh", []), ("BB", "Kc6c", [X("SB")])):
+            adv = live_flop_advisor()
+            st = dict(LIMP_TURN, hero=hero, hole=hole, turn=acts)
+            adv.advise(dict(st, board="Ks7d2c9s"))   # (the flop solved live, under a turn on another card)
+            got = adv.instant(st)   # (this turn not solved yet: read off the flop's solve)
+            self.assertEqual(got["approximate"]["source"], "prev")
+            seen = []
+
+            def spy(*a, **kw):
+                if len(a[0]) == 4 and kw.get("seed") is not None:
+                    inner = kw["seed"]
+
+                    def wrapped(root, s):
+                        inner(root, s)
+                        nd = root if not acts else root.children[root.names.index("check")]
+                        seen.append((nd, nd.strategy()[0].copy(), s))
+                    kw = dict(kw, seed=wrapped)
+                return solve(*a, **kw)
+            with mock.patch.object(A, "solve", side_effect=spy):
+                adv.advise(st)
+            self.assertEqual(len(seen), 1)
+            nd, strat, s = seen[0]
+            want = np.zeros(len(nd.names))
+            for a in got["actions"]:
+                want[A.match_action(nd.names, a["action"])] += a["freq"]
+            col = list(s.ctx.active).index(COMBO_INDEX[tuple(sorted(parse_cards(hole)))])
+            self.assertTrue(np.allclose(strat[:, col], want / want.sum(), atol=0.002), (hero, strat[:, col], want))
+            self.assertIn("bet 33%", nd.names)   # (the live tree's sizes)
+
+    def test_no_more_exploitable_at_300_iterations(self):
+        """The limped turn solved 300 iterations from the flop solve's turn and from zero regrets: no further from
+        equilibrium."""
+        seen = []
+
+        def spy(*a, **kw):
+            if len(a[0]) == 4:
+                seen.append((a, kw))
+                raise RuntimeError("captured")
+            return solve(*a, **kw)
+        with mock.patch.object(A, "solve", side_effect=spy):
+            live_flop_advisor().advise(LIMP_TURN)
+        a, kw = seen[0]
+        self.assertIsNotNone(kw["seed"])
+        run = dict(kw, time_budget=1e9, max_iters=300, max_per=None, reserve=None, should_stop=None)
+        warm = solve(*a, **run).exploitability()
+        cold = solve(*a, **dict(run, seed=None)).exploitability()
+        self.assertLessEqual(warm, cold, (warm, cold))
+
+    def test_off(self):
+        """Not with PREV_SEED off."""
+        seen = []
+
+        def spy(*a, **kw):
+            if len(a[0]) == 4:
+                seen.append(kw.get("seed"))
+            return solve(*a, **kw)
+        with mock.patch.object(A, "PREV_SEED", False), mock.patch.object(A, "solve", side_effect=spy):
+            live_flop_advisor().advise(LIMP_TURN)
+        self.assertEqual(seen, [None])
 
 
 if __name__ == "__main__":

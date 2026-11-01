@@ -2525,6 +2525,15 @@ STORE_UNTIL = 100
 # 0.160% of the pot from equilibrium, each combo's EVs over the actions it plays 0.269 -> 0.175% of the pot off the
 # 1000th's, B3's given-up 0.0017 / 0.0015 -> 0.0012 / 0.0009 (README, "The turn solve starts from the stored turn")
 STORE_SEED = 1.0
+# The same where the spot stores no turn files from the near spot's file that holds the line (NEAR_SEED,
+# _near_turn_files), and after a flop solved live from that solve's own turn (PREV_SEED, _prev_turn_strategies). On
+# the threaded tree (26 turns, natively, against each solved cold to 1000 iterations): 12 CO, HJ and UTG vs BB turns
+# off BTN vs BB's file stop at 300 iterations where 3 took 400 (mean 325 -> 300), each combo's EVs over the actions it
+# plays 0.264 -> 0.166% of the pot off, EV given up 0.0045 -> 0.0044; 8 limped turns 450 -> 413, 0.213 -> 0.196,
+# 0.0159 -> 0.0133; 6 at 40 and 60bb 300 either way, 0.148 -> 0.140 (README, "The turn solve starts from the near
+# spot's stored turn, or from the flop's own solve")
+NEAR_SEED = True
+PREV_SEED = True
 
 # A library flop whose spot stores no turn files (the spots solved before them, and the pots of 8- and 9-max read as
 # theirs: flop_approx.near_exact) reads its turn off the nearest spot that stores them (_near_turn_spots): the same
@@ -2605,6 +2614,57 @@ def _turn_file(lib, sol, flop) -> Optional[tuple]:
         return None
     t = lib.turns(sp, name)
     return None if t is None else (t, smap)
+
+
+def _prev_turn_strategies(sol, ch, card: int) -> Optional[Callable]:
+    """The turn as a live flop solve `sol` plays it under `ch`, the turn's deal where the flop line ended (instant_from_
+    prev's read, for every combo at once): the card dealt read as its class's played card, each combo as its image
+    under the swap of the two, by its hand bucket where the solve plays the turn by buckets. at -> {"names", "player",
+    "strat" (A, 1326): each combo's mix, NaN where the solve doesn't hold it} at the turn's actions `at` from its first
+    decision (flop_library.turn_strategies' shape), or None where it has no such node; None where `sol` isn't a live
+    flop solve or the line doesn't end in the turn's deal."""
+    if not isinstance(sol, Solution) or hasattr(sol, "stored") or not isinstance(ch, Chance) or len(ch.boards) != 1:
+        return None
+    dec = ch.child
+    rows = dec.boards
+    if len(rows) != ch.K or isinstance(dec, RiverEntry) or len(rows[0]) != 4:
+        return None
+    if ch.umasks is not None or ch.perm is not None:
+        classes = sol.ctx.turn_classes(tuple(ch.boards[0]), sol.solver.dead)
+        if [c for c, _ in classes] != [b[-1] for b in rows]:
+            return None
+        k = next((i for i, (_, cs) in enumerate(classes) if card in cs), None)
+    else:
+        k = next((i for i, b in enumerate(rows) if b[-1] == card), None)
+    if k is None:
+        return None
+    played = rows[k][-1]
+    ids = None
+    if isinstance(dec, BucketEntry):
+        T, ids = sol.solver._btab(dec)[:2]
+        ids = np.asarray(ids[k % T])
+        dec = dec.child
+    pos = np.full(N_COMBOS, -1, dtype=np.int64)
+    pos[np.asarray(sol.ctx.active)] = np.arange(len(sol.ctx.active))
+    sw = lambda c: card if c == played else played if c == card else c
+    img = np.array([COMBO_INDEX[(min(sw(x), sw(y)), max(sw(x), sw(y)))] for x, y in ALL_COMBOS], dtype=np.int64)
+    j = pos[img]   # (each combo's column in the flop solve, -1 where it doesn't hold its image)
+
+    def strategies(at):
+        node = dec
+        for name in at:
+            if not isinstance(node, Decision) or name not in node.names:
+                return None
+            node = node.children[node.names.index(name)]
+        if not isinstance(node, Decision):
+            return None
+        s = np.asarray(node.avg_strategy()[k], dtype=np.float64)   # (actions, the solve's combos or buckets)
+        col = j if ids is None else np.where(j >= 0, ids[node.player][np.maximum(j, 0)], -1)
+        ok = (col >= 0) & (col < s.shape[1])   # (a bucket dead on the class's played card: none)
+        out = np.full((len(node.names), N_COMBOS), np.nan)
+        out[:, ok] = s[:, col[ok]]
+        return {"names": list(node.names), "player": node.player, "strat": out}
+    return strategies
 
 
 def instant_from_store(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
@@ -7189,21 +7249,28 @@ class Advisor:
         return (_range_key(r0), _range_key(r1)) + spot
 
     def _store_seed(self, flop_walk, board) -> Optional[Callable]:
-        """solve()'s `seed` for the turn's own solve after a library flop (STORE_SEED): the entry's stored turn on the
-        line the flop's walk took (`flop_walk`: walked["flop"], (sol, node, taken)), or None where there is none (not
-        a library flop, no turn file, a line it doesn't hold). The seed sets the regrets at the turn's first decision
-        and in position after a check, each stored combo's; a node the file doesn't hold, a tree with no check there
+        """solve()'s `seed` for the turn's own solve (STORE_SEED): after a library flop the entry's stored turn on the
+        line the flop's walk took (`flop_walk`: walked["flop"], (sol, node, taken)), where the entry has no turn file
+        the near spot's that holds the line (NEAR_SEED, _near_turn_files), after a flop solved live that solve's own
+        turn (PREV_SEED, _prev_turn_strategies); else None. The seed sets the regrets at the turn's first decision and
+        in position after a check, each combo's the source holds; a node it doesn't hold, a tree with no check there
         or one played on several boards is left as it is."""
         if flop_walk is None or len(board) != 4:
             return None
-        sol, _, taken = flop_walk
-        got = _turn_file(self.library, sol, board[:3])
-        if got is None:
-            return None
-        t, smap = got
-        if not any(list(ln.get("path", ())) == list(taken) for ln in t.get("lines", ())):
-            return None
+        sol, node, taken = flop_walk
         from . import flop_library as fl
+        strategies = None
+        got = _turn_file(self.library, sol, board[:3])
+        files = [got] if got is not None else (f[:2] for f in _near_turn_files(self.library, sol, board[:3])) \
+            if NEAR_SEED else ()
+        for t, smap in files:
+            if any(list(ln.get("path", ())) == list(taken) for ln in t.get("lines", ())):
+                strategies = functools.partial(fl.turn_strategies, t, taken, card=board[3], smap=smap)
+                break
+        if strategies is None and PREV_SEED:
+            strategies = _prev_turn_strategies(sol, node, board[3])
+        if strategies is None:
+            return None
 
         def seed(root, s):
             if not isinstance(root, Decision) or root.player != 0 or "check" not in root.names \
@@ -7216,7 +7283,7 @@ class Advisor:
             for at, nd in (((), root), (("check",), root.children[k])):
                 if not isinstance(nd, Decision) or nd.regret.shape[0] != 1:
                     return
-                st = fl.turn_strategies(t, taken, at, board[3], smap)
+                st = strategies(at)
                 if st is None or st["player"] != nd.player:
                     return
                 mix = st["strat"][:, act]

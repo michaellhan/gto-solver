@@ -220,12 +220,28 @@ acting range: EV over the actions it plays, % of the pot.
 * **Lower floors** trade accuracy the same way: a 3bet pot's turn stopped at the 200th instead of the 300th is
   0.289% of the pot off per combo instead of 0.118.
 * **Seeding from the nearest stored turn** (CO, UTG vs BB's turns seeded from BTN vs BB's file, card-substituted):
-  mixed. CO vs BB after a c-bet called 0.270% of the pot from equilibrium at the 200th against 0.252 cold, the same by
-  the 300th; in position after a check-through 0.169 at the 300th against 0.211 (the stop at the 300th instead of the
-  400th); UTG vs BB the same as cold (0.222 / 0.228 at the 200th). BTN vs BB's own file (`Advisor._store_seed`) gives
-  0.192 against 0.270 on its turn. Not adopted.
+  mixed on the first four turns measured. CO vs BB after a c-bet called 0.270% of the pot from equilibrium at the
+  200th against 0.252 cold, the same by the 300th; in position after a check-through 0.169 at the 300th against 0.211
+  (the stop at the 300th instead of the 400th); UTG vs BB the same as cold (0.222 / 0.228 at the 200th). BTN vs BB's
+  own file (`Advisor._store_seed`) gives 0.192 against 0.270 on its turn. Measured again on 12 CO, HJ and UTG vs BB
+  turns, and with a live flop's own turn on 14 more (limped, 40 and 60bb), against each turn's own 1000-iteration
+  reference, it was adopted (`NEAR_SEED`, `PREV_SEED`; README): to the settled stop 325 -> 300 mean iterations on the
+  12 and 450 -> 413 on the limped, each combo's EVs over the actions it plays 0.264 -> 0.166% of the pot off on the
+  12. On 8 turns seeded from their spot's own file (BTN vs BB, BB vs CO's 3bet pot; the shipped `STORE_SEED`) the
+  seed is flat: 325 -> 312 iterations, EVs 0.267 -> 0.271 off.
+* **How much a seed can buy**: five turns (CO vs BB checked through, two limped, a 40bb, BTN vs BB checked through)
+  seeded from their 1000-iteration reference's own strategy (an oracle) at the same two nodes are as far from
+  equilibrium as with the shipped seeds: at the 300th 0.172 / 0.421 / 0.139 / 0.128 / 0.179% of the pot against
+  0.170 / 0.489 / 0.147 / 0.123 / 0.179 (cold 0.194 / 0.557 / 0.178 / 0.144 / 0.226). Seeded at every turn decision
+  before the river (20 nodes), the regrets three times the seed's, 0.148 / 0.332 / 0.155 / 0.112 / 0.168: at most one
+  settled check sooner. The rivers below hold the rest, and a stored turn holds no river, so seeding stops there.
+* **A seeded turn stopping from the 250th** (a check added there for seeded solves; the threaded site's 0.2%): the 26
+  near-spot and live-flop turns 335 -> 308 mean iterations, each combo's EVs 0.169 -> 0.189% of the pot off (cold, as
+  shipped, 0.222), mixes 3.90 -> 4.26 points per combo (cold 4.21); but the 8 seeded from their own file 312 -> 275 at
+  0.271 -> 0.332 (cold 0.267; a 3bet pot's turn checked through 1.075 -> 1.331). Not adopted: iterations bought with
+  the seed's accuracy, as the finer grid buys them with cold accuracy.
 
-What was adopted instead is a first look rather than a sooner stop: the request's own solve stopped at its 100th
+Besides the seeds, what was adopted is a first look rather than a sooner stop: the request's own solve stopped at its 100th
 iteration (and Accurate's 300th), read and shown as approximate while it goes on to the same answer
 (`Advisor.progress`, README).
 

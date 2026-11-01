@@ -89,10 +89,11 @@ class TestProgress(unittest.TestCase):
 
     def test_a_look_where_a_check_fails(self):
         """A look at one of the settled stop's checks where the solve isn't settled there and runs on (the 300th at a
-        target of 0.05% of the pot, which the 400th meets): read there; the answer the same as without looks."""
-        cold = advisor(settled=0.05).advise(TURN)
+        target of 0.038% of the pot, which the 400th meets; the turn starts from its flop solve's: PREV_SEED): read
+        there; the answer the same as without looks."""
+        cold = advisor(settled=0.038).advise(TURN)
         self.assertEqual(cold["solver"]["iterations"], 400)
-        adv = advisor((100, 300, 400), settled=0.05)
+        adv = advisor((100, 300, 400), settled=0.038)
         with mock.patch.object(A, "LOOK_MIN_S", 0.0):
             got = [adv.progress(TURN) for _ in range(3)]
         self.assertEqual([g["partial"]["approximate"]["iterations"] for g in got[:2]], [100, 300])
