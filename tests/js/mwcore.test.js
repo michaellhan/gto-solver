@@ -11,12 +11,12 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const ROOT = path.join(__dirname, "..", "..");
-const MAGIC = 0x6d776332;
+const MAGIC = 0x6d776333;
 
 // Players 0, 1 and 2 each pick one of two actions (RDEC: regrets, sums, a kept strategy and its flag per decision),
 // then a fold (RFOLD) leaves one of them the pot: 8 leaves, a pass's tasks. n combos, some sharing a card.
 function mwGame(ex, n) {
-  const MAGIC = 0x6d776332;
+  const MAGIC = 0x6d776333;
   ex.mw_reset();
   const base = ex.mw_base() >>> 0;
   const put = (words, Arr) => {
@@ -53,7 +53,7 @@ function mwGame(ex, n) {
   const prog = put([MAGIC, 3, n, 1, 1, root, ca, cb, 0, 0, 0, 0, 1, arrs, 0, R0, 0, 0, 0, flags, ndec, 0, 0, 0, 0, 0, ...words], Int32Array);
   const iters = 40;
   const t = [...Array(iters).keys()].map((i) => i + 1);
-  const fac = put(t.flatMap((x) => [x ** 1.5 / (x ** 1.5 + 1), (x / (x + 1)) ** 2]), Float32Array);
+  const fac = put(t.flatMap((x) => [x ** 1.5 / (x ** 1.5 + 1), 0.5, (x / (x + 1)) ** 2]), Float32Array);
   const out = ex.mw_alloc(4 * n) >>> 0;
   return {
     run: () => ex.mw_run(prog, iters, fac),

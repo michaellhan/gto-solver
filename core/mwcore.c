@@ -74,7 +74,7 @@ extern unsigned char __heap_base;
 #define MAXT 1
 #endif
 
-#define MAGIC 0x6d776332 /* "mwc2" */
+#define MAGIC 0x6d776333 /* "mwc3" */
 enum { RDEC = 1, RFOLD = 2, REXIT = 3, BDEC = 4, BTERM = 5, BEXIT = 6, BTERMW = 7, RSHOW = 8 };
 enum { ALT = 0, BR = 1, EV = 2 };
 
@@ -1260,7 +1260,8 @@ EXPORT(mw_eval) i32 mw_eval(u32 prog, i32 at, i32 mode, i32 p, u32 R, u32 out, u
 }
 
 /* `iters` training iterations from the root (each player's pass but an all-in's, then the discount: factors holds
-   [pos, ssum] per iteration, negative regrets halved). Returns the iterations run, or -1 on a bad program. */
+   [pos, neg, ssum] per iteration: positive regrets x pos, negative x neg, sums x ssum). Returns the iterations run,
+   or -1 on a bad program. */
 EXPORT(mw_run) i32 mw_run(u32 prog, i32 iters, u32 factors) {
   load(prog);
   if (W[0] != MAGIC) return -1;
@@ -1275,11 +1276,11 @@ EXPORT(mw_run) i32 mw_run(u32 prog, i32 iters, u32 factors) {
       pass(W[5], R0, v, ALT, p, 0);
       M.top = mark;
     }
-    f32 pos = fac[2 * it], sf = fac[2 * it + 1];
+    f32 pos = fac[3 * it], neg = fac[3 * it + 1], sf = fac[3 * it + 2];
     for (int a = 0; a < narr; a++) {
       f32 *reg = PF(arrs[3 * a]), *ssum = PF(arrs[3 * a + 1]);
       size_t len = (u32)arrs[3 * a + 2];
-      for (size_t x = 0; x < len; x++) reg[x] *= reg[x] > 0 ? pos : 0.5f;
+      for (size_t x = 0; x < len; x++) reg[x] *= reg[x] > 0 ? pos : neg;
       for (size_t x = 0; x < len; x++) ssum[x] *= sf;
     }
     for (int j = 0; j < NFLAG; j++) FLAGS[j] = 0;

@@ -162,6 +162,11 @@ const SPOTS = {
   "mw-turn": base({ hero: "BB", hole: "Qh9h", board: "Kh7d2c9s", preflop: MW, flop: [X("BB"), X("CO"), X("BTN")] }),
   "mw-river": base({ hero: "BB", hole: "Qh9h", board: "Kh7d2c9s4h", preflop: MW, flop: [X("BB"), X("CO"), X("BTN")],
                      turn: [X("BB"), X("CO"), X("BTN")] }),
+  // 3-way turns whose solves swung late with negative regrets halved throughout (MWConfig.beta_from: settled at the
+  // 200th iteration now, the 400th before)
+  "mw-turn-2": base({ hero: "BB", hole: "AhKh", board: "6s5s4dQc", preflop: MW, flop: [X("BB"), X("CO"), X("BTN")] }),
+  "mw-turn-3": base({ hero: "BB", hole: "Ks9s", board: "Jc7c2hTd", preflop: MW, flop: [X("BB"), X("CO"), X("BTN")] }),
+  "mw-turn-bc": base({ hero: "BB", hole: "AdKd", board: "9h8h3c2s", preflop: MW, flop: [X("BB"), B("CO", 2.6), C("BTN"), C("BB")] }),
   // Study in a 3-way pot (no hero): the 3-way library's flop, first to act and checked to twice (at once), facing a
   // bet (solved live from there), the turn and river after checks (--session study-mw-flop,study-mw-flop-x,...: one
   // walk, each node narrowed through the solves Study answered from before it)

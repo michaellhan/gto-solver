@@ -152,6 +152,21 @@ brackets): the river 0.039 / 0.022 (0.040 / 0.021) and 0.067 / 0.044 (0.063 / 0.
 identical through 100 (the tables above are beta 0 throughout). Beta 0.5 from the start is 1.5-2x worse at 50-100 iterations (the turn 4.56 / 1.14 at 50 /
 100 against 2.58 / 0.78).
 
+**The same in the multiway solves.** `gto/multiway_solver.py` and its compiled core halved the negatives every
+iteration too, and swung the same way: 16 3-way turns (CO opens, BTN and BB call; 10 turn boards, the flop checked
+through or a 2.6bb bet called twice; the Advisor's own Fast solves, captured and solved cold in the core; the mean
+best-response gain, % of the pot, every 100 iterations) had four that went back up after settling: Ts6c2d8h checked
+through 0.084 at the 200th iteration, 0.931 at the 300th, 0.317 at the 400th, 0.148 at the 500th; 9h8h3c2s after the
+bet 0.386 at the 100th, 0.569 at the 200th; 6s5s4dQc and Jc7c2hTd stalled at the 200th (0.265 -> 0.219, 0.338 ->
+0.299) where the others were at 0.08-0.14. With the heads-up step (beta 0.5 from the 100th, `MWConfig.beta`,
+`beta_from`) those four read 0.033, 0.084, 0.055 and 0.081 at the 200th/300th and fall steadily; the other twelve
+are within 0.003 at every check (the same through the 100th). Mean over the 16 at the 300th 0.118 -> 0.050 (worst
+0.931 -> 0.072), at the 400th 0.054 -> 0.031 (0.317 -> 0.045), at the 700th 0.016 -> 0.013 (0.049 -> 0.020).
+Flops: two 3-way flops solved live (Kh7d2c, Jd9c3h, first to act) the same within 0.003 through the 700th; two 4-way
+flops (HJ opens, three call) the same EV given up at the turn's two nodes, but a slower tail in the gain (Kh7d2c
+0.011 -> 0.020 at the 400th, 0.005 -> 0.012 at the 700th; both stop at the 200th, 0.035 -> 0.040); two 4-way turns
+within 0.002 (they stop at the 100th).
+
 ## EV gaps on live turns
 
 How right are the per-combo EVs the page shows (`ev_bb`, `Solver.node_action_evs`) on a turn solved live? For 34

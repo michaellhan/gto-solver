@@ -108,7 +108,9 @@ class MWConfig:
     # root_jam: the root's player may go all-in however deep (a jam request: the page grading your all-in), the rest
     # of the tree as it is (all-in everywhere made the 4-way tree 401 nodes, 4% of the pot from settled)
     root_jam: bool = False
-    alpha: float = 1.5           # DCFR: positive regrets x t^a / (t^a + 1), negative x 1/2,
+    alpha: float = 1.5           # DCFR: positive regrets x t^a / (t^a + 1), negative x 1/2 until the beta_from'th
+    beta: float = 0.5            # iteration, then x t^b / (t^b + 1) (discount_factors),
+    beta_from: int = 100
     gamma: float = 3.0           # average strategy x (t / (t + 1))^g (3: 20-30% less exploitable than 2 at equal time, 3-way river and turns)
     seed: int = 3
 
@@ -117,6 +119,14 @@ class MWConfig:
             return 0.0
         r = self.rake_rate * pot
         return r if self.rake_cap is None else min(r, self.rake_cap)
+
+
+def discount_factors(cfg: MWConfig, t):
+    """DCFR's factors after iteration t (a number or an array; numpy and the core alike): positive regrets', negative
+    regrets' and the strategy sums'."""
+    t = np.asarray(t, dtype=np.float64)
+    b = np.where(t < cfg.beta_from, 0.0, cfg.beta)
+    return t ** cfg.alpha / (t ** cfg.alpha + 1), t ** b / (t ** b + 1), (t / (t + 1)) ** cfg.gamma
 
 
 def _pw_scale(want, have):
@@ -1982,12 +1992,10 @@ class MultiwaySolver:
         return out
 
     def _discount(self):
-        t = float(self.iters)
-        pos = t ** self.cfg.alpha / (t ** self.cfg.alpha + 1)
-        sf = (t / (t + 1)) ** self.cfg.gamma
+        pos, neg, sf = (np.float32(x) for x in discount_factors(self.cfg, self.iters))
         for d in self.decisions:
-            d.regret *= np.where(d.regret > 0, np.float32(pos), np.float32(0.5))
-            d.ssum *= np.float32(sf)
+            d.regret *= np.where(d.regret > 0, pos, neg)
+            d.ssum *= sf
         self._ver = [v + 1 for v in self._ver]      # (every player's regrets changed)
 
     def _core(self):

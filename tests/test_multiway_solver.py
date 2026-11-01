@@ -466,6 +466,18 @@ class TestCore(unittest.TestCase):
             with self.subTest(board):
                 self._same(*self._pair(board, 3, **kw))
 
+    def test_negative_regrets_discount_past_beta_from(self):
+        # negative regrets halved until beta_from, then x t^0.5 / (t^0.5 + 1) (2/3 after the 4th iteration): the
+        # core's factors are numpy's, and they apply (the step taken at the 4th, not the 100th, changes the regrets)
+        self.assertEqual(float(MW.discount_factors(MWConfig(), 99)[1]), 0.5)
+        self.assertAlmostEqual(float(MW.discount_factors(MWConfig(), 100)[1]), 10 / 11)
+        self.assertAlmostEqual(float(MW.discount_factors(MWConfig(beta_from=4), 4)[1]), 2 / 3)
+        cfg = dict(later="buckets", buckets=8)
+        a, b = self._pair("Kh7d2c9s", 3, cfg=MWConfig(beta_from=4, **cfg))
+        self._same(a, b)
+        c, _ = self._pair("Kh7d2c9s", 3, cfg=MWConfig(**cfg))
+        self.assertGreater(max(np.abs(x.regret - y.regret).max() for x, y in zip(a.decisions, c.decisions)), 1e-3)
+
     def test_all_in_player_and_two_players_agree(self):
         # a player all-in for less (its main pot and the others' side pot), and a heads-up bucketed turn
         a, b = self._pair("Kh7d2c9s", 3, pot=40.0, stack=77.5,

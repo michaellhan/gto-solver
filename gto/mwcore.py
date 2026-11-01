@@ -24,7 +24,7 @@ import weakref
 
 import numpy as np
 
-MAGIC = 0x6d776332
+MAGIC = 0x6d776333
 RDEC, RFOLD, REXIT, BDEC, BTERM, BEXIT, BTERMW, RSHOW = 1, 2, 3, 4, 5, 6, 7, 8
 ALT, BR, EV = 0, 1, 2
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -292,7 +292,7 @@ class Program:
         self.w[13] = self._up(arrs.astype(np.uint32).view(np.int32), np.int32)
         words = np.array(self.w, dtype=np.int64)
         self.prog = self._up(words.astype(np.uint32).view(np.int32), np.int32)
-        self.fac = L.alloc(8 * MAX_CHUNK)
+        self.fac = L.alloc(12 * MAX_CHUNK)
         self.R = L.alloc(4 * s.np * self.n)
         self.out = L.alloc(4 * self.n)
         self.kids = L.alloc(4 * self.n * 16)
@@ -493,11 +493,9 @@ class Program:
 
     def run(self, iters: int, t0: int) -> int:
         """`iters` iterations, the discount's t counting from t0 (the solver's iterations before them)."""
-        s = self.s()
-        a, g = s.cfg.alpha, s.cfg.gamma
+        from .multiway_solver import discount_factors
         t = np.arange(t0 + 1, t0 + iters + 1, dtype=np.float64)
-        fac = np.stack([t ** a / (t ** a + 1), (t / (t + 1)) ** g], axis=1).astype(np.float32)
-        self.L.write(self.fac, fac)
+        self.L.write(self.fac, np.stack(discount_factors(self.s().cfg, t), axis=1).astype(np.float32))
         return self.L.run(self.prog, iters, self.fac)
 
     def eval(self, node, mode: int, p: int, R: np.ndarray, kids: bool = False):

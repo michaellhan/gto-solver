@@ -45,7 +45,9 @@
 
 * **Algorithm.** Vectorised full-width CFR over the three ranges, with regrets per (board, action, combo) and
   alternating updates (one traverser per pass). Discounting is DCFR's (positive regrets × t^1.5/(t^1.5+1), negative
-  × ½, average strategy × (t/(t+1))²). Alternating converged about 10x faster than simultaneous updates per
+  × ½ through the 99th iteration and × √t/(√t+1) from the 100th, the heads-up solver's beta step, average strategy ×
+  (t/(t+1))³). Halving the negatives throughout swung late on 4 of 16 3-way turns (one from 0.08% of the pot at the
+  200th iteration to 0.93 at the 300th); the step removed it (README: The 3-way solves' negative regrets). Alternating converged about 10x faster than simultaneous updates per
   iteration (river, BB/CO/BTN: best-response gains 0.8% of the pot after 30 iterations against 5%, 0.1% after 100
   against 1%) at about the same cost, since each pass needs only the traverser's terminal values.
 * **Tree.** Bets of ⅓ and ¾ of the pot on the flop (`MWConfig.bet` takes a list; the advisor's flop config), ½ on
