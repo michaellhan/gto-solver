@@ -136,6 +136,81 @@ class TestOffTree(unittest.TestCase):
         self.assertTrue(np.isnan(got["call"][3]))
         self.assertFalse(np.isnan(got["call"][:3]).any())
 
+    def test_mix_from(self):
+        """`mix_from`: the mix (and q) from the nearest of those sources; the range's continuing share still from all."""
+        for x in (0.45, 0.2):
+            C, T = x, 1.0 + x   # (pot 1: nearest the 33% bet)
+            got = ot.answer([self.small, self.big], C, T, "nearmdf", mix_from=[1])
+            want = ot.answer([self.small, self.big], C, T, "nearmdf")
+            self.assertAlmostEqual(cont(got, self.r), cont(want, self.r), places=9)
+            b = ot.by_kind(self.big["names"], self.big["strat"])
+            c_b, c_got = b["call"] + b["raise"] + b["allin"], got["call"] + got["raise"] + got["allin"]
+            for k in ("call", "raise", "allin"):   # (75%'s continuing actions, in its proportions)
+                np.testing.assert_allclose(got[k] * c_b, b[k] * c_got, atol=1e-12)
+        got = ot.answer([self.small, self.big], 0.45, 1.45, "near", mix_from=[1])
+        np.testing.assert_allclose(got["fold"], ot.by_kind(self.big["names"], self.big["strat"])["fold"])
+
+    def test_untaken_size_not_read(self):
+        """Off a live solve, hero's mix facing a size the villain bets under OFF_SOURCE_LINE of their range (the flop
+        library's STORE_LINE: it doesn't store those) isn't read: a 50% bet reads the 75% one's though 33% is nearer
+        (the range's continuing share still by every size's price)."""
+        from gto.solver import Decision
+        self.assertEqual(A.OFF_SOURCE_LINE, fl.STORE_LINE)
+        n = 4
+
+        def dec(player, names, pot_now, bets, strat, children=None):
+            d = Decision([None], player, names, children or [None] * len(names), pot_now, bets, n)
+            d.ssum[0] = np.asarray(strat, dtype=np.float32)
+            return d
+
+        facing = lambda b, strat: dec(0, ["fold", "call", "raise 50%"], 10.0 + b, [0.0, b], strat)
+        f33 = facing(3.3, [[0, 0, 0, 0], [1, 1, 1, 1], [0, 0, 0, 0]])
+        f75 = facing(7.5, [[1, 1, 0, 0], [0, 0, 1, 1], [0, 0, 0, 0]])
+        f125 = facing(12.5, [[1, 1, 1, 0], [0, 0, 0, 1], [0, 0, 0, 0]])
+        check = dec(0, ["check"], 10.0, [0.0, 0.0], [[1, 1, 1, 1]])
+        evs = lambda ch, k: np.zeros((len(ch.names), n))
+        one = np.ones(n)
+
+        def villain(b33, b75=0.25, b125=None):   # (the BTN's share of their range on each line; the rest checks)
+            b125 = 0.15 - b33 if b125 is None else b125
+            return dec(1, ["check", "bet 33%", "bet 75%", "bet 125%"], 10.0, [0.0, 0.0],
+                       [[1 - b33 - b75 - b125] * n, [b33] * n, [b75] * n, [b125] * n], [check, f33, f75, f125])
+
+        mix, near, xs = A._off_tree_read(villain(0.01), 0, one, one, 5.0, 15.0, evs)   # (a 50% bet)
+        self.assertIs(near, f75)
+        np.testing.assert_allclose(xs, [0.33, 0.75, 1.25])
+        self.assertAlmostEqual(float(mix["fold"][1]), 1.0)   # (75%'s mix: combo 1 folds, 33%'s calls everything)
+        ks = [1.0 / ot.mdf(0.33), 0.5 / ot.mdf(0.75), 0.25 / ot.mdf(1.25)]
+        k = sum(w * ks[i] for i, w in ot._weights(xs, 0.5))
+        self.assertAlmostEqual(cont(mix, one), k * ot.mdf(0.5), places=6)
+        want = ot.answer([dict(names=f.names, strat=f.avg_strategy0().astype(float), evs=evs(f, 0), C=f.bets[1],
+                               T=f.pot_now, reach=one) for f in (f33, f75, f125)], 5.0, 15.0, "nearmdf", mix_from=[1, 2])
+        for kk in ot.KINDS:
+            np.testing.assert_allclose(mix[kk], want[kk], atol=1e-6)
+        mix, near, xs = A._off_tree_read(villain(0.06), 0, one, one, 5.0, 15.0, evs)   # (taken 6%: read)
+        self.assertIs(near, f33)
+        # every size under it (the bets 12% of the range in all): all of them, as before
+        mix, near, xs = A._off_tree_read(villain(0.04, 0.04, 0.04), 0, one, one, 5.0, 15.0, evs)
+        self.assertIs(near, f33)
+        # the river (OFF_LATER "above"): between two sizes the nearest's answer (None here), unless the villain doesn't
+        # take the nearest: then read by the price
+        self.assertIsNone(A._off_tree_read(villain(0.06), 0, one, one, 5.0, 15.0, evs, between=False, below=False))
+        got = A._off_tree_read(villain(0.01), 0, one, one, 5.0, 15.0, evs, between=False, below=False)
+        self.assertIs(got[1], f75)
+        # a 100% bet with 33% taken, 75% and 125% not: the nearest's (75%) as before, not 33%'s two sizes below
+        mix, near, xs = A._off_tree_read(villain(0.1, 0.01, 0.01), 0, one, one, 10.0, 20.0, evs)
+        self.assertIs(near, f75)
+
+    def test_readable(self):
+        """The sizes a live solve's read takes its mix from: those taken, from the one just below the real size up."""
+        T_, F_ = True, False
+        self.assertEqual(ot.readable([0.33, 0.75, 1.25], [F_, T_, T_], 0.5), [1, 2])
+        self.assertEqual(ot.readable([0.33, 0.75, 1.25], [F_, F_, T_], 0.4), [2])
+        self.assertEqual(ot.readable([0.33, 0.75, 1.25, 2.5], [T_, F_, F_, T_], 1.0), [3])   # (not 33% for 100%)
+        self.assertEqual(ot.readable([0.33, 0.75, 1.25], [T_, F_, F_], 1.0), [0, 1, 2])      # (none: all)
+        self.assertEqual(ot.readable([0.33, 0.75, 1.25], [T_, T_, F_], 2.0), [0, 1, 2])      # (125% isn't: all)
+        self.assertEqual(ot.readable([0.33, 0.75], [F_, T_], 0.2), [1])
+
 
 # On the shipped library: the BTN's open called by the BB, BB to act facing the BTN's bet after a check.
 SID = "srp_btn_bb"

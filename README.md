@@ -2003,7 +2003,8 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   plays the street. Now the worker first reads an answer off what it holds and posts it before the request's solve:
   this street's own solve, stopped part way or made for your earlier decision on it (facing a bet off the tree your
   advice solved: a bet or raise off that tree read off its answers facing its sizes by its price, below; on the
-  river only one bigger than all of them, else the sizes since read at their nearest), else the previous street's live solve, which plays this street
+  river only one bigger than all of them, or nearest a size the villain doesn't take, else the sizes since read at
+  their nearest), else the previous street's live solve, which plays this street
   under it (the flop's by card class and hand buckets at one bet size; the turn's for the river by card class at its
   river sizes). The page shows it under the progress bar, the verdict and the mix with "approximate" and where it
   came from (and a cut solve's "smaller game" note), until the answer replaces it; nothing is solved for it, it has
@@ -2061,6 +2062,30 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   Between two sizes the read keeps the nearest size's mix and moves the range's continuing share by the price
   (`OFF_METHOD`, as a library flop's); each combo's mix taken between the two ("mdf") gave up more than the nearest's
   answer there: on those turns 0.21 / 0.49, 0.24 / 0.55; 0.12, the river 0.16; 0.31.
+
+  Those reads take hero's mix only from the solve's decisions facing a size the villain bets or raises with 5%+ of
+  their range (`OFF_SOURCE_LINE`, the flop library's `STORE_LINE`, under which an entry doesn't store a decision), of
+  those the one just below the real size and all above it (`off_tree.readable`: a river's 33% decision read for a 100%
+  bet or lead gave up 4-10% of the pot), the continuing share still by every size's price; and the river reads a bet
+  between two sizes by its price too where the villain doesn't take the nearest. Hero's play facing a size the solve
+  never bets is its noise: in single-raised pots the BTN's turn bets are 75% and 125%, its 33% taken by almost none of
+  its range on most turns, and a 50% bet was read off that 33% decision (raising 6-15% of the range where the
+  reference raised 0-11%), giving up 3-4x what a 3bet pot's read did. `scripts/bench_off_tree.py --rescore
+  every,taken` (every size's decision read / only those; 28 single-raised and 28 3bet pot turns, bets of 40/50/60/100%
+  and leads, and 48 single-raised rivers, bets of 50/100/175% and leads; % of the pot, mean / median / 90th, where the
+  line is taken 2%+):
+
+  | facing a size between the solve's | the bettor's only size | the advice's menu (the nearest size replaced) |
+  |---|---|---|
+  | single-raised turns (75 / 35 decisions) | 0.17 / 0.10 / 0.38 → 0.11 / 0.05 / 0.31 | 0.045 / 0.026 / 0.125 → 0.036 / 0.026 / 0.076 |
+  | 3bet pot turns (108 / 83) | 0.15 / 0.09 / 0.34 → 0.13 / 0.09 / 0.32 | 0.059 / 0.048 / 0.131 → 0.066 / 0.050 / 0.143 |
+  | single-raised rivers (165 / 121) | 1.07 / 0.68 / 2.13 → 0.89 / 0.36 / 1.73 | 0.27 / 0.18 / 0.67 → 0.26 / 0.16 / 0.67 |
+
+  Fast's live solve of the advice's menu gives up 0.125, 0.075 and 0.50 there at 50 iterations. A 50% turn bet in a
+  single-raised pot against the bettor's only size gave up 0.41 / 0.26 / 0.88 (12 turns, worst 1.20; a 3bet pot's
+  0.11 / 0.08 / 0.25), now 0.25 / 0.10 / 0.54 (worst 1.07, 5h5d5c4d): the continuing share is within ~0.1 of the
+  reference's relative to the minimum defence either way, and what is left is which hands continue, the range a
+  bettor takes 50% with alone being wider than the 75% one's it is read off (most on paired boards).
 
   Not
   offered where the answer is quick anyway or needs more than the equilibrium: preflop, library flops (and the turns
@@ -4511,8 +4536,9 @@ their products batched: `core.LEAF_ROWS_BLAS`).
   into that street's tree (closer ones are played as the nearest size); on a library flop the answer at once
   facing it is read off the stored sizes by its price until that solve lands (0.3-0.5% of the pot given up in
   single-raised pots, about what the library gives up on its own sizes; 1.2% facing a 150% bet in a 3bet pot), and on
-  the turn and river off your earlier decision's solve (the river: only a bet or raise bigger than all of that solve's
-  sizes; between two, or smaller, the nearest size's answer shows until the solve lands). The
+  the turn and river off your earlier decision's solve, from the sizes it bets 5%+ of the time (the river: only a bet
+  or raise bigger than all of that solve's sizes; between two, or smaller, the nearest size's answer shows until the
+  solve lands, unless the solve doesn't take that size). The
   library stores 33/75% flop bets only, so Study's More sizes and custom flop sizes solve every flop live. Storing
   More sizes' tree is a library build: on 4 BTN vs BB flops in the library's tree (river bet blind, 150 iterations)
   each iteration took 2.2x as long, the solves stood 1.35-1.6x as far from equilibrium, and the entries were 1.55x

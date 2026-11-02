@@ -5,6 +5,9 @@ The library's flop entries store the decisions facing a 33% and a 75% bet and a 
 A bet of another size (x) is answered here, at the decision facing it, by:
   near, interp, mdf, prop, nearmdf
                             read off the entry's decisions facing the stored sizes (gto/off_tree.py);
+  taken, every              (turn, river: the source the street's own Fast solve) the advice's read, by the price
+                            or the nearest's answer as OFF_LATER has the street (advisor._off_tree_read), the mix from
+                            the sizes the bettor takes OFF_SOURCE_LINE of the time (taken) or from any (every: before);
   fast:N                    the flop solved live in the browser's Fast tree with x in it, N iterations, with the
                             reference's menu: "swap", the advice's live solve's (the stored size nearest x replaced
                             by it, Advisor._cfg_with_real_sizes), or "only", x the bettor's only size;
@@ -26,6 +29,9 @@ the one out of position bets X% first), raise:R (a 33% bet raised R% of the pot 
     python scripts/bench_off_tree.py OUT.jsonl --street turn --shallow --spots 3bp_bb_btn --n 12 --iters 600 \
         --cases bet:100,bet:125,bet:150,bet:200,lead:100,lead:125,lead:150,lead:200
     python scripts/bench_off_tree.py OUT.jsonl --report
+    python scripts/bench_off_tree.py OUT.jsonl --street river --spots srp_btn_bb --n 36 --seed 11 --iters 1000 \
+        --cases bet:50,bet:100,bet:175,lead:50,lead:100 --save DIR
+    python scripts/bench_off_tree.py - --rescore every,taken --save DIR     (no solving)
 """
 from __future__ import annotations
 import argparse
@@ -51,7 +57,25 @@ import bench_flop_approx as BA  # noqa: E402
 import bench_flop_seed as BS  # noqa: E402
 
 N = 1326
-METHODS = ("near", "interp", "mdf", "prop", "nearmdf")
+METHODS = ("near", "interp", "mdf", "prop", "nearmdf", "every", "taken")
+
+
+def read(srcs, C, T, m, reach, street="flop"):
+    """off_tree.answer by method m; "taken", the advice's read off a live solve of the street (advisor._off_tree_read):
+    nearmdf, the mix from the sizes the bettor takes OFF_SOURCE_LINE of the time or more (off_tree.readable; a library
+    entry stores only those), where OFF_LATER reads the street by the price, else the nearest's answer; "every", the
+    same with every size's decision read (as before OFF_SOURCE_LINE)."""
+    if m in ("taken", "every"):
+        from gto.advisor import OFF_LATER, OFF_SOURCE_LINE
+        mode = OFF_LATER.get(street, "always")
+        xs = [OT.size_of(s["C"], s["T"]) for s in srcs]
+        x = OT.size_of(C, T)
+        mi = OT.readable(xs, [m == "every" or s.get("freq", 1.0) >= OFF_SOURCE_LINE for s in srcs], x)
+        if OT.nearest(xs, x) in mi and ((mode != "always" and min(xs) < x < max(xs)) or
+                                         (mode not in ("always", "outside") and x < min(xs))):
+            return OT.answer(srcs, C, T, "near", reach=reach)   # (the nearest's answer: the walk's, _read_line)
+        return OT.answer(srcs, C, T, "nearmdf", reach=reach, mix_from=mi)
+    return OT.answer(srcs, C, T, m, reach=reach)
 
 
 def texture_sample(names, n, seed):
@@ -255,7 +279,7 @@ def run_one(lib, spot, s, name, cases, iters, cks):
                                         for a, nm in enumerate(ref["names"])}}
             row["m"][rk] = {}
             for m in METHODS:
-                mix = OT.answer(srcs, ref["C"], ref["T"], m, reach=ref["reach"])
+                mix = read(srcs, ref["C"], ref["T"], m, ref["reach"])
                 row["m"][rk][m] = loss(ref, OT.onto(ref["names"], mix), pot)
         if not refs:
             continue
@@ -366,7 +390,12 @@ def later_spot(lib, spot, s, name, street, rng):
             "|".join(base + (b, "call")) + " / check|" + path[1] + "|call")
 
 
-def run_later(lib, spot, s, name, street, cases, iters, src_iters, cks, seed, shallow=False):
+def _arrays(d):
+    """A decision's dict (ref_node's) as saved by --save: the arrays in float32."""
+    return {k: (v.astype(np.float32) if isinstance(v, np.ndarray) else v) for k, v in d.items()}
+
+
+def run_later(lib, spot, s, name, street, cases, iters, src_iters, cks, seed, shallow=False, save=None):
     rng = random.Random(f"{seed}{name}{street}")
     sp = later_spot(lib, spot, s, name, street, rng)
     if sp is None:
@@ -402,6 +431,7 @@ def run_later(lib, spot, s, name, street, cases, iters, src_iters, cks, seed, sh
     # the hand's own solve of the street with the speed's menu (what Advisor.instant reads at its nearest)
     src_sol, secs = solve(cfg_of("fast"), src_iters)
     out["src"] = {"expl": round(src_sol.exploitability(), 4), "s": round(secs, 1)}
+    arrays = {}
     for case in cases:
         kind_, v = case.split(":")
         x = float(v) / 100
@@ -419,6 +449,13 @@ def run_later(lib, spot, s, name, street, cases, iters, src_iters, cks, seed, sh
         if not srcs:
             row["error"] = "no source"
             continue
+        # each source: its size, the share of the bettor's range that takes it in the source solve, and the share of
+        # hero's range continuing facing it (by its own reach)
+        row["srcs"] = [{"x": round(OT.size_of(d["C"], d["T"]), 3), "line_freq": round(d["freq"], 4),
+                        "cont": round(float(np.nansum((1 - d["strat"][d["names"].index("fold")]) * d["reach"]) /
+                                            max(d["reach"].sum(), 1e-12)), 4) if "fold" in d["names"] else None}
+                       for d in srcs]
+        arrays[case] = {"srcs": [_arrays(d) for d in srcs], "refs": {}}
         refs = {}
         for rk, (bets, raises) in menus.items():
             ref_sol, secs = solve(cfg_of("accurate", bets, raises), iters)
@@ -432,6 +469,7 @@ def run_later(lib, spot, s, name, street, cases, iters, src_iters, cks, seed, sh
                 row["refs"][rk] = {"error": str(ex)}
                 continue
             refs[rk] = (ref, tuple(path))
+            arrays[case]["refs"][rk] = _arrays(ref)
             row["refs"][rk] = {"path": path, "names": ref["names"], "C": ref["C"], "T": ref["T"],
                                "line_freq": round(ref["freq"], 4), "expl": round(ref_sol.exploitability(), 4),
                                "s": round(secs, 1),
@@ -440,7 +478,7 @@ def run_later(lib, spot, s, name, street, cases, iters, src_iters, cks, seed, sh
                                         for a, nm in enumerate(ref["names"])}}
             row["m"][rk] = {}
             for m in METHODS:
-                mix = OT.answer(srcs, ref["C"], ref["T"], m, reach=ref["reach"])
+                mix = read(srcs, ref["C"], ref["T"], m, ref["reach"], street)
                 row["m"][rk][m] = loss(ref, OT.onto(ref["names"], mix), pot)
         if not refs:
             continue
@@ -461,7 +499,45 @@ def run_later(lib, spot, s, name, street, cases, iters, src_iters, cks, seed, sh
                 st = np.full((len(n.names), N), np.nan)
                 st[:, sol.ctx.active] = n.avg_strategy0()
                 row["m"][rk][f"fast:{ck}"] = loss(ref, OT.onto(ref["names"], OT.by_kind(n.names, st)), pot) + (round(el, 2),)
+    if save:
+        import pickle
+        os.makedirs(save, exist_ok=True)
+        with open(os.path.join(save, f"{spot['id']}_{name}_{street}.pkl"), "wb") as f:
+            pickle.dump({"pot": pot, "board": out["board"], "cases": arrays}, f)
     return out
+
+
+def rescore(save, methods, min_line=0.02):
+    """The methods (off_tree.answer's, or "near" etc.) scored again off --save's arrays, no solving: per spot, case and
+    reference menu, EV given up (% of the pot) mean / median / 90th / worst over the turns whose line the reference's
+    bettor takes min_line+ of the time."""
+    import glob
+    import pickle
+    by = collections.defaultdict(lambda: collections.defaultdict(list))
+    for fn in sorted(glob.glob(os.path.join(save, "*.pkl"))):
+        d = pickle.load(open(fn, "rb"))
+        sid, _, street = os.path.basename(fn)[:-4].rsplit("_", 2)
+        for case, c in d["cases"].items():
+            srcs = [{k: (v.astype(np.float64) if isinstance(v, np.ndarray) else v) for k, v in x.items()}
+                    for x in c["srcs"]]
+            for rk, ref in c["refs"].items():
+                ref = {k: (v.astype(np.float64) if isinstance(v, np.ndarray) else v) for k, v in ref.items()}
+                if ref["freq"] < min_line:
+                    continue
+                row = {}
+                for m in methods:
+                    mix = read(srcs, ref["C"], ref["T"], m, ref["reach"], street)
+                    row[m] = loss(ref, OT.onto(ref["names"], mix), d["pot"])
+                by[sid][(case, rk)].append((d["board"], row))
+    for sid, cases in by.items():
+        print(sid)
+        for (case, rk), rows in sorted(cases.items(), key=lambda kv: (kv[0][0].split(":")[0], float(kv[0][0].split(":")[1]), kv[0][1])):
+            print(f"  {case} vs {rk} menu: {len(rows)} turns")
+            for m in methods:
+                a = np.array([r[m][0] for _, r in rows])
+                w = max(rows, key=lambda br: br[1][m][0])[0]
+                print(f"    {m:10s} mean {a.mean():6.3f} median {np.median(a):6.3f} 90th {np.percentile(a, 90):6.3f} "
+                      f"worst {a.max():6.3f} ({w}), range freq {np.mean([r[m][1] for _, r in rows]):5.1f}")
 
 
 def report(path, min_line=0.02):
@@ -511,9 +587,14 @@ def main(argv=None):
     ap.add_argument("--src-iters", type=int, default=300, help="(turn, river) the hand's own solve's iterations")
     ap.add_argument("--shallow", action="store_true", help="(turn) a shallow turn's sizes as Fast on one thread")
     ap.add_argument("--report", action="store_true")
+    ap.add_argument("--save", help="(turn, river) a directory to keep each turn's source and reference decisions in, "
+                                   "for --rescore")
+    ap.add_argument("--rescore", help="methods to score again off --save's arrays (comma-separated), no solving")
     a = ap.parse_args(argv)
     if a.report:
         return report(a.out)
+    if a.rescore:
+        return rescore(a.save, a.rescore.split(","))
     lib = fl.FlopLibrary.from_dir()
     spots = {x["id"]: x for x in lib.index()["spots"]}
     done = set()
@@ -531,7 +612,7 @@ def main(argv=None):
                 r = run_one(lib, spot, s, name, a.cases.split(","), a.iters, cks)
             else:
                 r = run_later(lib, spot, s, name, a.street, a.cases.split(","), a.iters, a.src_iters, cks, a.seed,
-                              a.shallow)
+                              a.shallow, a.save)
                 if r is None:
                     continue
             with open(a.out, "a") as f:

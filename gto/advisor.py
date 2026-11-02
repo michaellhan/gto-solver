@@ -2403,6 +2403,19 @@ OFF_METHOD = "nearmdf"
 # 0.12, 0.05; led 50% / 100% in 3bet pots (9 / 7) 0.22 / 0.26, 0.24 / 0.55, 0.09 / 0.10; the river, a tie: a 100% bet
 # (11 rivers) 0.11, 0.16, 0.12, a 50% lead (4) 0.12, 0.31, 0.12.
 OFF_LATER = {"turn": "always", "river": "above"}
+# Those reads take hero's mix only from the decisions facing a size the villain bets or raises with this share of
+# their range or more (the flop library's STORE_LINE: an entry doesn't store the rest; off_tree.readable: of those, the
+# one just below the real size and all above), the continuing share still by every size's price, and the river reads
+# by the price between two sizes too where the villain doesn't take the nearest. Hero's play facing a size the solve
+# never bets is its noise: single-raised turns (the BTN betting 75/125%, 33% almost never) read a 50% bet off the 33%
+# decision, raising 6-15% of the range where the reference raised 0-11%. scripts/bench_off_tree.py --rescore
+# every,taken (every size read / these; % of the pot, mean / median / 90th; against the bettor's only size, and the
+# advice's menu): single-raised turns (28, bets of 40/50/60/100% and leads) 0.17 / 0.10 / 0.38 -> 0.11 / 0.05 / 0.31,
+# 0.045 / 0.026 / 0.125 -> 0.036 / 0.026 / 0.076; 3bet pot turns (28) 0.15 / 0.09 / 0.34 -> 0.13 / 0.09 / 0.32,
+# 0.059 / 0.048 / 0.131 -> 0.066 / 0.050 / 0.143; single-raised rivers (48, bets of 50/100/175% and leads) 1.07 / 0.68
+# / 2.13 -> 0.89 / 0.36 / 1.73, 0.27 / 0.18 / 0.67 -> 0.26 / 0.16 / 0.67 (Fast at 50 iterations on the advice's
+# menu: 0.125, 0.075, 0.50). 0.01-0.08 measured the same.
+OFF_SOURCE_LINE = 0.05
 
 
 def instant_from_off_tree(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
@@ -2453,8 +2466,11 @@ def _off_tree_read(node, hero_p: int, c0, c1, C: float, T: float, evs: Callable,
     raises, by kind; the decision facing the size nearest; their sizes x) where the real size is more than `tol` off
     every one of them, else None; None too where the villain's bets or raises there are rare (RARE_LINE of their
     range), no decision facing them is held (`stored`: the ids of the nodes held, None every one), or (not
-    `between`) the real size is between two of them, or (not `below`) smaller than all. evs(child, k): its EVs per
-    action, chips relative to folding (k: the villain's action leading to it)."""
+    `between`) the real size is between two of them, or (not `below`) smaller than all, unless the villain takes the
+    nearest with under OFF_SOURCE_LINE of their range. Off a live solve (`stored` None) the mix (and the decision
+    facing the size nearest) from the sizes they take that often (off_tree.readable: the one just below the real size
+    and those above; else all).
+    evs(child, k): its EVs per action, chips relative to folding (k: the villain's action leading to it)."""
     from . import off_tree
     vp = 1 - hero_p
     if not isinstance(node, Decision) or node.player != vp:
@@ -2476,14 +2492,21 @@ def _off_tree_read(node, hero_p: int, c0, c1, C: float, T: float, evs: Callable,
     i = off_tree.nearest(xs, x)
     if abs(xs[i] - x) <= tol * xs[i]:
         return None   # (a size the tree has: read as it is)
-    if not between and min(xs) < x < max(xs):
-        return None   # (between two of its sizes: the nearest's answer, OFF_LATER)
-    if not below and x < min(xs):
-        return None   # (smaller than all: the nearest's answer, OFF_LATER's "above")
+    # off a live solve (every decision held) the mix from the sizes the villain takes OFF_SOURCE_LINE of the time or
+    # more (hero's mix facing one they don't is the solve's noise; the flop library doesn't store those: STORE_LINE),
+    # the continuing share by every size's price
+    mi = off_tree.readable(xs, [stored is not None or float((rv * sv[k]).sum()) >= OFF_SOURCE_LINE * float(rv.sum())
+                                for k, _ in cand], x)
+    if i in mi:   # (else the nearest's answer is that noise: read by the price)
+        if not between and min(xs) < x < max(xs):
+            return None   # (between two of its sizes: the nearest's answer, OFF_LATER)
+        if not below and x < min(xs):
+            return None   # (smaller than all: the nearest's answer, OFF_LATER's "above")
+    i = mi[off_tree.nearest([xs[j] for j in mi], x)]
     sources = [{"names": list(ch.names), "strat": np.asarray(ch.avg_strategy0(), dtype=np.float64),
                 "evs": np.asarray(evs(ch, k), dtype=np.float64), "C": float(max(ch.bets) - ch.bets[hero_p]),
                 "T": float(ch.pot_now), "reach": me} for k, ch in cand]
-    return off_tree.answer(sources, C, T, OFF_METHOD, reach=me), cand[i][1], xs
+    return off_tree.answer(sources, C, T, OFF_METHOD, reach=me, mix_from=mi), cand[i][1], xs
 
 
 def _off_tree_actions(near: Decision, mix: Dict[str, float], to: float, C: float, T: float, bets, hero_p: int,

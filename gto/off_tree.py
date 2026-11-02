@@ -97,21 +97,35 @@ def nearest(xs: Sequence[float], x: float) -> int:
     return min(range(len(xs)), key=lambda i: abs(xs[i] - x))
 
 
-def answer(sources: List[dict], C: float, T: float, method: str = "mdf", reach: Optional[np.ndarray] = None) -> Dict[str, np.ndarray]:
+def readable(xs: Sequence[float], taken: Sequence[bool], x: float) -> List[int]:
+    """The sizes (indices into xs) whose decisions a read of x takes its mix from: of those `taken` (the bettor bets or
+    raises them often enough for the decisions facing them to be trained), the one just below x and all above it; else
+    every size. (A smaller size's play facing a bet more than one size bigger doesn't carry over: a river's 33%
+    decision read for a 100% bet or lead gave up 4-10% of the pot.)"""
+    below = [v for v in xs if v <= x]
+    floor = max(below) if below else 0.0
+    return [i for i, v in enumerate(xs) if taken[i] and v >= floor] or list(range(len(xs)))
+
+
+def answer(sources: List[dict], C: float, T: float, method: str = "mdf", reach: Optional[np.ndarray] = None,
+           mix_from: Optional[Sequence[int]] = None) -> Dict[str, np.ndarray]:
     """Each combo's mix by kind ({kind: (N,)}) facing an action of price C into T, read off `sources`: the stored
     decisions facing other sizes of the same action, each {"names", "strat" (A, N), "evs" (A, N) chips relative to
     folding now, or None, "C", "T", "reach" (N,) the player's reach there}, over the same N combos (NaN columns: not
     held). `reach`: the player's reach facing this action (default the sources' first), for the range's continuing
-    share."""
+    share. `mix_from`: the indices of the sources whose mixes (and q) are read, the nearest of them, or the two of them
+    either side (default all); the range's continuing share still follows every source's (k)."""
     xs = [size_of(s["C"], s["T"]) for s in sources]
     x = size_of(C, T)
     mixes = [by_kind(s["names"], np.nan_to_num(s["strat"], nan=0.0)) for s in sources]
     held = np.all([~np.isnan(s["strat"][0]) for s in sources], axis=0)
+    mi = list(mix_from) if mix_from else list(range(len(sources)))
+    near = mi[nearest([xs[i] for i in mi], x)]
     if method == "near":
-        i = nearest(xs, x)
-        return _masked(mixes[i], ~np.isnan(sources[i]["strat"][0]))
+        return _masked(mixes[near], ~np.isnan(sources[near]["strat"][0]))
     ws = _weights(xs, x)
-    wm = [(nearest(xs, x), 1.0)] if method == "nearmdf" else ws   # (the mix's and q's weights)
+    # (the mix's and q's weights)
+    wm = [(near, 1.0)] if method == "nearmdf" else [(mi[i], w) for i, w in _weights([xs[i] for i in mi], x)]
     mix = {k: sum(w * mixes[i][k] for i, w in wm) for k in KINDS}
     if method == "interp":
         return _masked(mix, held)
