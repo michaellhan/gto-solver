@@ -83,7 +83,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
         if p in ("/worker.js", "/hh.js", "/practice.js", "/reports.js", "/drills.js", "/breakdown.js", "/session.js",
-                 "/study.js", "/runouts.js", "/simple.js", "/multitable.js", "/help.js", "/store.js", "/hands.js", "/sw.js"):
+                 "/study.js", "/runouts.js", "/simple.js", "/multitable.js", "/help.js", "/store.js", "/hands.js", "/writeup.js", "/sw.js"):
             name = p[1:]
             path = os.path.join(static, name)
             with open(path, "rb") as f:

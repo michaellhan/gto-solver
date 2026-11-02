@@ -675,17 +675,26 @@
   <div class="col" id="colL">
     <section class="panel" id="pSetup">
       <div id="setupFull">
+        <div class="row setuprow" id="stakesRow">
+          <span class="muted">Stakes</span>
+          <select id="stakes" title="Live stakes: bets, stacks and rake are typed in dollars and shown in dollars beside the big blinds (the solver plays in big blinds, the small blind as half of one). Remembered for new hands.">
+            <option value="off">big blinds</option><option value="1-2">$1/$2</option><option value="1-3">$1/$3</option><option value="2-5">$2/$5</option><option value="5-10">$5/$10</option><option value="custom">custom $</option>
+          </select>
+          <span class="row" id="stakesCustom" hidden><span class="muted">$</span><input type="number" id="stakeSb" min="0" step="any" style="width:56px" title="The small blind, in dollars"><span class="muted">/ $</span><input type="number" id="stakeBb" min="0" step="any" style="width:56px" title="The big blind, in dollars"></span>
+          <span class="muted" id="stakesNote" style="font-size:12px"></span>
+          <button class="link" id="writeupBtn" style="margin-left:auto" title="Enter a hand you've played, seat by seat with amounts in dollars, then review every decision you made in it (made for phones: write up your session's hands afterwards)">Write up a hand…</button>
+        </div>
         <div class="row setuprow">
           <span class="muted">Players</span>
           <div class="segment" id="players"></div>
         </div>
         <div class="row setuprow">
           <span class="muted">Stacks</span>
-          <input type="number" id="stack" value="100" min="5" step="1"><span class="muted">bb</span>
+          <span class="muted" id="stackPre" hidden>$</span><input type="number" id="stack" value="100" min="5" step="1"><span class="muted" id="stackUnit">bb</span>
           <button class="link" id="stacksEdit" title="Give some seats a different stack">per seat…</button>
           <span class="anteg"><span class="muted">Ante</span>
-          <input type="number" id="ante" value="0" min="0" step="0.05" title="Ante per player, in big blinds"><span class="muted">bb</span>
-          <label class="muted" id="straddleBox" style="margin-left:auto" title="The first seat posts a 2bb straddle and acts last preflop"><input type="checkbox" id="straddle"> straddle</label></span>
+          <span class="muted" id="antePre" hidden>$</span><input type="number" id="ante" value="0" min="0" step="0.05" title="Ante per player, in big blinds"><span class="muted" id="anteUnit">bb</span>
+          <label class="muted" id="straddleBox" style="margin-left:auto" title="The first seat posts a 2bb straddle and acts last preflop"><input type="checkbox" id="straddle"> <span id="straddleTxt">straddle</span></label></span>
         </div>
         <div class="row setuprow seatstacks" id="seatStacks" hidden title="Each seat's stack in big blinds (the others have the table's stack)">
           <span class="muted">Per seat</span><span class="row" id="seatStackIns"></span>
@@ -697,8 +706,8 @@
             <option value="off">off</option><option value="5-3">5%, cap 3bb</option><option value="custom">custom</option>
           </select>
           <span class="row" id="rakeCustom" hidden>
-            <input type="number" id="rakePct" min="0" max="25" step="0.5" title="Rake, percent of the pot"><span class="muted">%, cap</span>
-            <input type="number" id="rakeCap" min="0" step="0.5" title="Most rake per pot, in big blinds (0 = no cap)"><span class="muted">bb</span>
+            <input type="number" id="rakePct" min="0" max="25" step="0.5" title="Rake, percent of the pot"><span class="muted" id="rakeCapPre">%, cap</span>
+            <input type="number" id="rakeCap" min="0" step="0.5" title="Most rake per pot, in big blinds (0 = no cap)"><span class="muted" id="rakeCapUnit">bb</span>
           </span>
         </div>
         <div class="row setuprow" title="A tournament: the prizes still to be paid, first place first, in any unit (50 30 20). The advice is then in prize equity (ICM): calls and raises that risk your stack need more equity, push/fold and the postflop solves (heads-up, 3- and 4-way) pay prizes, not chips. Give each seat's stack with per seat…; players at other tables count too. Empty: a cash game.">
@@ -836,7 +845,31 @@ const STRADDLER = () => S.straddle && S.players >= 3 ? POS[0] : null;
 // rake: percent of the pot (S.rake, 0-25) up to a cap in bb (S.rakeCap, 0 or none = no cap); pots that end preflop aren't raked
 const RAKE = () => { const r = +S.rake; return r > 0 && r <= 25 ? r : 0; };
 const RAKE_CAP = () => RAKE() && +S.rakeCap > 0 ? +S.rakeCap : 0;
-const RAKE_TEXT = () => RAKE() ? `${fmt(RAKE())}% rake${RAKE_CAP() ? ` (cap ${fmt(RAKE_CAP())}bb)` : " (no cap)"}` : "";
+const RAKE_TEXT = () => RAKE() ? `${fmt(RAKE())}% rake${RAKE_CAP() ? ` (cap ${STAKES() ? DOLLARS(RAKE_CAP()) : fmt(RAKE_CAP()) + "bb"})` : " (no cap)"}` : "";
+// live stakes: S.stakes {sb, bb} in dollars ($2/$5: {sb: 2, bb: 5}), none = big blinds only. The engine and the solver
+// play in big blinds (the small blind as half of one, whatever it is in dollars); with stakes, stacks, bets, the ante
+// and the rake's cap are typed in dollars where they're entered (amountIn) and shown in dollars beside the big blinds.
+// The last stakes picked are remembered for new hands ("gto-stakes" in the page's storage, store.js; fresh()).
+const STAKES_PRESETS = { "1-2": [1, 2], "1-3": [1, 3], "2-5": [2, 5], "5-10": [5, 10] };
+const cleanStakes = (k) => k && typeof k === "object" && +k.bb > 0 && +k.bb < 1e6 && +k.sb > 0 && +k.sb <= +k.bb ? { sb: +k.sb, bb: +k.bb } : null;
+const STAKES = () => cleanStakes(S.stakes);
+const cents = (d) => Math.round(d * 100) / 100;
+// dollars as shown: "$15", "$12.50", "$1,250"
+const usd = (d) => { const c = cents(d), w = Math.abs(c - Math.round(c)) < 1e-9;
+  return (c < 0 ? "−$" : "$") + Math.abs(c).toLocaleString("en-US", { minimumFractionDigits: w ? 0 : 2, maximumFractionDigits: w ? 0 : 2 }); };
+const DOLLARS = (x) => STAKES() ? usd(x * STAKES().bb) : "";   // an amount in big blinds in dollars ("" without stakes)
+const withUsd = (x, pre = " (", post = ")") => STAKES() ? pre + DOLLARS(x) + post : "";
+const STAKES_TEXT = () => { const k = STAKES(); return k ? `${usd(k.sb)}/${usd(k.bb)}` : ""; };
+// A typed amount in big blinds: with stakes it's in dollars (a "$" or "," in it ignored), NaN if it isn't one
+function amountIn(v) { if (!STAKES()) return parseFloat(v); const x = parseFloat(String(v ?? "").replace(/[$,\s]/g, "")); return isFinite(x) ? x / STAKES().bb : x; }
+// an amount in big blinds as an input shows it: dollars to the cent with stakes
+const amountOut = (x) => STAKES() ? String(cents(x * STAKES().bb)) : fmt(x);
+// amounts as the hand shows them: "13 bb" ("13 bb ($65)" with stakes); a button's "5 bb" ("$25 · 5bb"); a short one
+// for the felt, "6.5" ("$32.50")
+const BBX = (x) => `${fmt(x)} bb${withUsd(x)}`;
+const AMT_SUB = (x) => STAKES() ? `${DOLLARS(x)} · ${fmt(x)}bb` : fmt(x) + " bb";
+const AMT = (x) => STAKES() ? DOLLARS(x) : fmt(x);
+function stakesPref() { try { const k = cleanStakes(JSON.parse(pageStore.getRaw("gto-stakes") || "null")); return k ? { stakes: k } : {}; } catch (e) { return {}; } }
 // a tournament: the prizes still to be paid (S.payouts, first place first) and the players at other tables (S.fieldN of
 // them, S.fieldAvg bb on average); with two prizes or more the advice is in prize equity (ICM: gto/icm.py)
 const parsePayouts = (v) => (Array.isArray(v) ? v : String(v ?? "").split(/[\s,;\/]+/)).map(parseFloat).filter(x => x > 0 && isFinite(x)).slice(0, 200);
@@ -975,6 +1008,7 @@ const DR_VERSION = "1";        // and this with a hash of drills.js (the drills,
 const BD_VERSION = "1";        // and breakdown.js (the advice's Breakdown and Equity views, loaded on first use)
 const SS_VERSION = "1";        // and session.js (the session analyzer, loaded on first use, after hh.js)
 const SY_VERSION = "1";        // and study.js (Study mode, the solution browser, loaded on first use)
+const WU_VERSION = "1";        // and writeup.js (Write up a hand: a played hand entered seat by seat, then reviewed)
 const RO_VERSION = "1";        // and runouts.js (Study's turn and river reports, loaded when one first opens)
 const SP_VERSION = "1";        // and simple.js (the one-size view: the advice's Simple tab and Study's, loaded on first use)
 const MT_VERSION = "1";        // and multitable.js (Practice on 2-4 tables at once, loaded the first time Tables goes above 1)
@@ -1223,7 +1257,7 @@ let solveGen = 0;         // bumped by cancelSolve so a cancelled analyze() drop
 let lastResult = null;
 const cache = new Map();  // payload -> result, so undo/redo doesn't re-solve
 
-function fresh(n) { n = n || 6; return { players: n, hero: n === 2 ? "SB" : "BTN", stack: 100, cards: [null, null, null, null, null, null, null], actions: { preflop: [], flop: [], turn: [], river: [] } }; }
+function fresh(n) { n = n || 6; return { players: n, hero: n === 2 ? "SB" : "BTN", stack: 100, cards: [null, null, null, null, null, null, null], actions: { preflop: [], flop: [], turn: [], river: [] }, ...stakesPref() }; }
 // Practice and the solver each keep their own hand and setup: the solver's under "handreview", Practice's under
 // "gto-practice-state"; turning Practice on or off puts one away and brings the other back (swapState)
 function stateKey() { return practicing() ? "gto-practice-state" : "handreview"; }
@@ -1252,6 +1286,8 @@ function cleanState(st) {
     && (a.action !== "bet" && a.action !== "raise" || +a.to > 0);
   const actions = Object.fromEntries(STREETS.map(s => [s, Array.isArray(st.actions[s]) ? st.actions[s].filter(ok) : []]));
   const out = { ...st, players: n, hero: seats.includes(st.hero) ? st.hero : fresh(n).hero, stack: +st.stack > 0 ? +st.stack : 100, cards, actions };
+  // live stakes in dollars (a small blind no bigger than the big blind), or none
+  const stk = cleanStakes(st.stakes); if (stk) out.stakes = stk; else delete out.stakes;
   // rake: a percent in (0, 25] and a positive cap (none = no cap), or no rake at all
   if (!(+st.rake > 0 && +st.rake <= 25)) { delete out.rake; delete out.rakeCap; }
   else { out.rake = +st.rake; if (+st.rakeCap > 0) out.rakeCap = +st.rakeCap; else delete out.rakeCap; }
@@ -1392,8 +1428,9 @@ function sidePots(tot, live, allin) {
 // the pots of the hand on the table now (bets of the street in progress included)
 const potsNow = (sim) => sidePots(Object.fromEntries(POS.map(p => [p, sim.invested[p] + (sim.cur ? sim.cur.bets[p] : 0)])), POS.filter(p => sim.active.has(p)), sim.allin);
 
-function act(a) {
-  const sim = simulate();
+// The record of action a by whoever is to act (sim: simulate()'s), or why it can't be taken (a string). The write-up
+// (writeup.js) records its hand's actions with it too.
+function recordOf(sim, a) {
   if (!sim.cur) return sim.waiting ? "Deal the next card first." : "The hand is over.";
   const p = sim.toAct, info = sim.cur;
   const toCall = info.curBet - info.bets[p], remaining = STACK(p) - sim.invested[p] - info.bets[p], facing = toCall > 1e-9;
@@ -1416,6 +1453,12 @@ function act(a) {
       else rec = { action: facing || info.curBet > 0 ? "raise" : "bet", to };
     }
   }
+  return rec;
+}
+function act(a) {
+  const sim = simulate(), rec = recordOf(sim, a);
+  if (typeof rec === "string") return rec;
+  const p = sim.toAct;
   // (practice: a drill plays your preflop for you (a.auto), not graded)
   if (p === S.hero && practicing() && !a.auto && resultKey !== JSON.stringify(payload())) return "One moment: the spot is being solved, so your move can be graded.";
   const move = p === S.hero ? gradedMove(sim, rec) : rec;
@@ -1570,18 +1613,18 @@ function renderSetup() {
   document.body.classList.toggle("setupopen", !!(full && started));
   document.getElementById("setupDone").hidden = !started;
   const sum = document.getElementById("setupSum"); sum.hidden = full;
-  sum.innerHTML = `<span><b>${S.players}-handed</b> <span class="muted">·</span> you are <b>${SEAT_LABEL(S.hero, S.players)}</b> <span class="muted">·</span> <b>${fmt(S.stack)}bb</b> stacks${UNEQUAL() ? ` (${STACKS_TEXT()})` : ""}${ANTE() ? ` <span class="muted">·</span> ${fmt(ANTE())}bb ante` : ""}${STRADDLER() ? ` <span class="muted">·</span> ${SEAT_LABEL(STRADDLER(), S.players)} straddles` : ""}${RAKE() ? ` <span class="muted">·</span> ${RAKE_TEXT()}` : ""}${TOURNEY() ? ` <span class="muted">·</span> ${ICM_TEXT()}` : ""}${ADV_TEXT() ? ` <span class="muted">·</span> ${ADV_TEXT()}` : ""}</span>`;
+  sum.innerHTML = `<span><b>${S.players}-handed</b> ${STAKES() ? ` <span class="muted">·</span> <b>${STAKES_TEXT()}</b>` : ""} <span class="muted">·</span> you are <b>${SEAT_LABEL(S.hero, S.players)}</b> <span class="muted">·</span> <b>${fmt(S.stack)}bb</b>${withUsd(S.stack)} stacks${UNEQUAL() ? ` (${STACKS_TEXT()})` : ""}${ANTE() ? ` <span class="muted">·</span> ${fmt(ANTE())}bb${withUsd(ANTE())} ante` : ""}${STRADDLER() ? ` <span class="muted">·</span> ${SEAT_LABEL(STRADDLER(), S.players)} straddles` : ""}${RAKE() ? ` <span class="muted">·</span> ${RAKE_TEXT()}` : ""}${TOURNEY() ? ` <span class="muted">·</span> ${ICM_TEXT()}` : ""}${ADV_TEXT() ? ` <span class="muted">·</span> ${ADV_TEXT()}` : ""}</span>`;
   const e = document.createElement("button"); e.className = "link"; e.style.marginLeft = "auto"; e.textContent = "Edit"; e.onclick = () => { editSetup = true; renderAll(); };
   sum.appendChild(e);
 
   document.getElementById("straddleBox").hidden = S.players < 3;
-  syncAdv(); renderSeatStacks(); syncIcm();
+  syncStakes(); syncAdv(); renderSeatStacks(); syncIcm();
   const el = document.getElementById("seats"); el.innerHTML = "";
   for (const p of POS) { const b = document.createElement("button"); b.textContent = SEAT_LABEL(p, POS.length); if (p === S.hero) b.classList.add("active");
     b.onclick = () => { S.hero = p; save(); renderAll(); }; el.appendChild(b); }
   const pl = document.getElementById("players"); pl.innerHTML = "";
   for (let n = 2; n <= 9; n++) { const b = document.createElement("button"); b.className = "small"; b.textContent = n; if (n === S.players) b.classList.add("active");
-    b.onclick = () => { if (n === S.players) return; S = { ...fresh(n), stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, payouts: S.payouts, fieldN: S.fieldN, fieldAvg: S.fieldAvg, ...cleanBounty(S, SEATS[n]), ...cleanAdv(S, SEATS[n]), ...cleanStacks(S, SEATS[n]), cards: S.cards }; setPositions(n); selSlot = null; save(); resetAdvice(); renderAll(); }; pl.appendChild(b); }
+    b.onclick = () => { if (n === S.players) return; S = { ...fresh(n), stakes: S.stakes, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, payouts: S.payouts, fieldN: S.fieldN, fieldAvg: S.fieldAvg, ...cleanBounty(S, SEATS[n]), ...cleanAdv(S, SEATS[n]), ...cleanStacks(S, SEATS[n]), cards: S.cards }; setPositions(n); selSlot = null; save(); resetAdvice(); renderAll(); }; pl.appendChild(b); }
 }
 function renderSlots(sim) {
   const needIdx = sim.waiting ? S.cards.findIndex((c, i) => !c && i >= 2 && i < 2 + NEED[sim.waiting]) : (!S.cards[0] ? 0 : !S.cards[1] ? 1 : -1);
@@ -1636,25 +1679,25 @@ function renderTable(sim) {
     const th = (90 + (i - hi) * 360 / n) * Math.PI / 180;   // hero at the bottom, action runs clockwise
     d.style.left = (50 + 43 * Math.cos(th)) + "%"; d.style.top = (50 + 40 * Math.sin(th)) + "%";
     d.className = "seat" + (p === S.hero ? " hero" : "") + (folded ? " folded" : "") + (sim.toAct === p ? " toact" : "") + (sim.allin.has(p) ? " allin" : "") + (clickable ? " clickable" : "");
-    const amt = folded ? "folded" : sim.allin.has(p) ? "all-in" : bet > 0 ? fmt(bet) + " bb" : total > 0 ? "in " + fmt(total) : "";
+    const amt = folded ? "folded" : sim.allin.has(p) ? "all-in" : bet > 0 ? (STAKES() ? DOLLARS(bet) : fmt(bet) + " bb") : total > 0 ? "in " + AMT(total) : "";
     const shown = p === S.hero ? (S.cards[0] && S.cards[1] ? S.cards.slice(0, 2) : null) : window.Practice && window.Practice.shown(p);
     const hc = shown ? `<span class="hc">${cardHtml(shown[0])}${cardHtml(shown[1])}</span>` : p === S.hero ? '<span class="you">you</span>' : "";
     const ta = sim.toAct === p ? `<span class="ta">to act</span>` : "";
     // (stacks that differ, or practice at a table: each seat's chips behind beside its name, once the hand's over
     // its chips after it, and what it won)
     const tv = window.Practice && window.Practice.seatView && window.Practice.seatView(p);
-    const stk = (UNEQUAL() && !folded) || tv ? `<span class="stk" title="${SEAT_LABEL(p, n)}'s stack${tv && tv.after != null ? "" : " behind"}">${fmt(tv && tv.after != null ? tv.after : Math.max(0, STACK(p) - total))}</span>` : "";
+    const stk = (UNEQUAL() && !folded) || tv ? `<span class="stk" title="${SEAT_LABEL(p, n)}'s stack${tv && tv.after != null ? "" : " behind"}">${AMT(tv && tv.after != null ? tv.after : Math.max(0, STACK(p) - total))}</span>` : "";
     if (tv && tv.won > 0) d.classList.add("won");
     const btn = p === (n === 2 ? "SB" : "BTN") ? '<span class="dbtn" title="The dealer button">D</span>' : "";
-    d.innerHTML = `<span class="pos">${SEAT_LABEL(p, n)}${stk}</span>${hc}<span class="amt">${tv && tv.won > 0 ? `wins ${fmt(tv.won)}` : amt}${ta}</span>${btn}`;
+    d.innerHTML = `<span class="pos">${SEAT_LABEL(p, n)}${stk}</span>${hc}<span class="amt">${tv && tv.won > 0 ? `wins ${AMT(tv.won)}` : amt}${ta}</span>${btn}`;
     if (clickable) { d.title = `Everyone before ${p} folds`; d.onclick = () => { showErr(advanceTo(p)); renderAll(); }; }
     el.appendChild(d);
   });
   const center = document.createElement("div"); center.className = "center";
   const b = S.cards.slice(2).map(c => c ? `<div class="bc ${c[1]}">${c[0]}<span>${SUIT_SYM[c[1]]}</span></div>` : `<div class="bc empty"></div>`).join("");
   const pots = sim.active.size > 1 ? potsNow(sim) : [];
-  const side = pots.length > 1 ? `<div class="side">${pots.map((x, i) => `${i ? "side" : "main"} ${fmt(x.amount)}`).join(" · ")}</div>` : "";
-  center.innerHTML = `<div class="board">${b}</div><div class="pot">pot ${fmt(sim.pot)} bb</div>${side}`;
+  const side = pots.length > 1 ? `<div class="side">${pots.map((x, i) => `${i ? "side" : "main"} ${AMT(x.amount)}`).join(" · ")}</div>` : "";
+  center.innerHTML = `<div class="board">${b}</div><div class="pot">pot ${BBX(sim.pot)}</div>${side}`;
   el.appendChild(center);
   document.getElementById("tableHint").innerHTML = sim.cur ? `${TAP.toLowerCase()} a seat to fold to it` : "";
   const ec = document.getElementById("editCards"), auto = !S.cards[0] || !S.cards[1] || !!sim.waiting;
@@ -1667,7 +1710,7 @@ function renderAction(sim) {
   const prompt = document.createElement("div"); prompt.className = "prompt";
   if (!S.cards[0] || !S.cards[1]) { step.textContent = ""; prompt.innerHTML = `<span class="ask">Place your two hole cards to start.</span>`; el.appendChild(prompt); return; }
   if (sim.handOver && practicing()) {   // practice: the one way on is Next hand (or N), where the action buttons were
-    step.textContent = "hand over"; prompt.innerHTML = `<span class="who">Hand over</span><span class="pot">pot ${fmt(sim.pot)} bb</span>`;
+    step.textContent = "hand over"; prompt.innerHTML = `<span class="who">Hand over</span><span class="pot">pot ${BBX(sim.pot)}</span>`;
     const b = document.createElement("button"); b.className = "nexth"; b.id = "pxNext"; b.innerHTML = "Next hand<kbd>N</kbd>";
     b.onclick = () => window.Practice.next(); el.append(prompt);
     const run = window.Practice.runLabel();   // (after your fold: everyone's cards, or the hand played on)
@@ -1675,10 +1718,10 @@ function renderAction(sim) {
       const row = document.createElement("div"); row.className = "pxend"; row.append(r, b); el.append(row); } else el.append(b);
     return;
   }
-  if (sim.handOver) { step.textContent = "hand over"; prompt.innerHTML = `<span class="who">Hand over</span><span class="pot">pot ${fmt(sim.pot)} bb</span><span class="ask">Press <kbd style="margin:0">N</kbd> for a new hand.</span>`; el.appendChild(prompt); return; }
+  if (sim.handOver) { step.textContent = "hand over"; prompt.innerHTML = `<span class="who">Hand over</span><span class="pot">pot ${BBX(sim.pot)}</span><span class="ask">Press <kbd style="margin:0">N</kbd> for a new hand.</span>`; el.appendChild(prompt); return; }
   if (sim.waiting) {
     step.textContent = sim.waiting;
-    prompt.innerHTML = `<span class="who">Deal the ${sim.waiting}</span><span class="pot">pot ${fmt(sim.pot)} bb</span><span class="ask">${sim.runout ? "Everyone is all-in. " : ""}Click or type the ${sim.waiting === "flop" ? "three flop cards" : sim.waiting + " card"} above.</span>`;
+    prompt.innerHTML = `<span class="who">Deal the ${sim.waiting}</span><span class="pot">pot ${BBX(sim.pot)}</span><span class="ask">${sim.runout ? "Everyone is all-in. " : ""}Click or type the ${sim.waiting === "flop" ? "three flop cards" : sim.waiting + " card"} above.</span>`;
     el.appendChild(prompt); return;
   }
   const street = sim.current, info = sim.cur, p = sim.toAct, isHero = p === S.hero;
@@ -1688,8 +1731,8 @@ function renderAction(sim) {
   // practice: the other seats move by themselves (and a drill's preflop yours: "Dealing a 3-bet pot…"); on your
   // turn the buttons wait for the spot's solve (to grade your move)
   const px = practicing(), wait = px && isHero && resultKey !== JSON.stringify(payload());
-  if (px && (!isHero || window.Practice.auto(sim))) { prompt.innerHTML = `<span class="who">${window.Practice.seeking() || SEAT_LABEL(p, POS.length) + " is thinking…"}</span><span class="pot">pot ${fmt(info.pot)} bb</span>`; el.appendChild(prompt); return; }
-  prompt.innerHTML = `<span class="who ${isHero ? "hero" : ""}">${wait ? '<span class="spinner"></span>Solving your spot…' : isHero ? "Your turn" : p + " to act"}</span><span class="pot">pot ${fmt(info.pot)} bb${facing ? ` · ${fmt(callAmt)} to call · <span title="Pot odds: the equity a call needs to break even${TOURNEY() ? " in chips (in a tournament your prize equity asks more, bounties less: the advice's notes give it)" : ""}">need ${(need * 100).toFixed(0)}%${TOURNEY() ? " in chips" : ""}</span>` : ""}</span><span class="ask">${isHero ? "Check the advice, then record what you did." : "What did " + p + " do?"}</span>`;
+  if (px && (!isHero || window.Practice.auto(sim))) { prompt.innerHTML = `<span class="who">${window.Practice.seeking() || SEAT_LABEL(p, POS.length) + " is thinking…"}</span><span class="pot">pot ${BBX(info.pot)}</span>`; el.appendChild(prompt); return; }
+  prompt.innerHTML = `<span class="who ${isHero ? "hero" : ""}">${wait ? '<span class="spinner"></span>Solving your spot…' : isHero ? "Your turn" : p + " to act"}</span><span class="pot">pot ${BBX(info.pot)}${facing ? ` · ${fmt(callAmt)}${withUsd(callAmt)} to call · <span title="Pot odds: the equity a call needs to break even${TOURNEY() ? " in chips (in a tournament your prize equity asks more, bounties less: the advice's notes give it)" : ""}">need ${(need * 100).toFixed(0)}%${TOURNEY() ? " in chips" : ""}</span>` : ""}</span><span class="ask">${isHero ? "Check the advice, then record what you did." : "What did " + p + " do?"}</span>`;
   el.appendChild(prompt);
 
   // On your turn, once the advice for this exact spot is in, the buttons use the solver's sizes and show its mix.
@@ -1700,7 +1743,7 @@ function renderAction(sim) {
   const mk = (label, cls, a, sub, key, sa) => { const b = document.createElement("button"); b.className = cls + (sa && sa.action === res.recommended ? " best" : ""); b.innerHTML = label + (sub ? `<small>${sub}</small>` : "") + (key ? `<kbd>${key}</kbd>` : "");
     if (key) b.dataset.key = key.toLowerCase();
     b.onclick = () => { showErr(act(a)); renderAll(); }; acts.appendChild(b); return b; };
-  if (facing) { mk("Fold", "fold", { action: "fold" }, res ? pct(solverAct("fold")).replace("> · ", ">") : "", "F", solverAct("fold")); mk("Call", "pass", { action: "call" }, fmt(callAmt) + " bb" + pct(solverAct("call")), "C", solverAct("call")); }
+  if (facing) { mk("Fold", "fold", { action: "fold" }, res ? pct(solverAct("fold")).replace("> · ", ">") : "", "F", solverAct("fold")); mk("Call", "pass", { action: "call" }, AMT_SUB(callAmt) + pct(solverAct("call")), "C", solverAct("call")); }
   else mk("Check", "pass", { action: "check" }, res ? pct(solverAct("check")).replace("> · ", ">") : "", "C", solverAct("check"));
   // (no raise once an all-in for less than a full raise has closed the betting to you, or nobody has chips to call)
   const raiseOk = canRaise(sim, p), canRaiseNow = remaining > toCall + 1e-9 && raiseOk, minTo = minRaiseTo(info);
@@ -1712,7 +1755,7 @@ function renderAction(sim) {
       const v = legalTo(x.amount_bb, info);
       if (!(v < myBet + remaining - 1e-9)) continue;
       const tag = /%$/.test(x.action) ? x.action.replace(/^bet /, "") + " pot" : street === "preflop" ? (info.nRaises === 0 ? "open" : (v / info.curBet).toFixed(1) + "x") : (v / info.curBet).toFixed(1) + "x";
-      mk(`${verb} ${fmt(v)}`, "agg", { action: "bet", to: v }, tag + pct(x), String(++k), x);
+      mk(`${verb} ${AMT(v)}`, "agg", { action: "bet", to: v }, (STAKES() ? fmt(v) + "bb · " : "") + tag + pct(x), String(++k), x);
     }
   } else if (canRaiseNow) {
     // sizes are rounded to 0.5bb before a label is worked out from them, so a label describes the size used
@@ -1723,21 +1766,21 @@ function renderAction(sim) {
     else if (!facing) sizes = [[half(info.pot / 3), "⅓ pot"], [half(info.pot * 0.66), "⅔ pot"], [half(info.pot), "pot"]];
     else sizes = [[half(info.curBet + 0.75 * (info.pot + toCall)), "¾ pot"], [half(info.curBet + info.pot + toCall), "pot"]];
     let k = 0;
-    for (const [v, l] of sizes) if (v < myBet + remaining - 1e-9 && v >= minTo - 1e-9) mk(`${verb} ${fmt(v)}`, "agg", { action: "bet", to: v }, l, String(++k));
+    for (const [v, l] of sizes) if (v < myBet + remaining - 1e-9 && v >= minTo - 1e-9) mk(`${verb} ${AMT(v)}`, "agg", { action: "bet", to: v }, (STAKES() ? fmt(v) + "bb · " : "") + l, String(++k));
   }
   if (canRaiseNow) {
     const custom = document.createElement("button"); custom.className = "agg"; custom.innerHTML = `${verb}<small>your size…</small><kbd>R</kbd>`; custom.dataset.key = "r";   // (a bare "Raise to …" read as a cut-off label)
     custom.onclick = () => { document.getElementById("customBox").classList.toggle("open"); document.getElementById("customAmt").focus(); };
     acts.appendChild(custom);
   }
-  if (remaining > 0 && (raiseOk || remaining <= toCall + 1e-9)) mk("All-in", "agg", { action: "all-in" }, fmt(myBet + remaining) + " bb" + pct(solverAct("all-in")), "A", solverAct("all-in"));
+  if (remaining > 0 && (raiseOk || remaining <= toCall + 1e-9)) mk("All-in", "agg", { action: "all-in" }, AMT_SUB(myBet + remaining) + pct(solverAct("all-in")), "A", solverAct("all-in"));
   if (wait) { acts.classList.add("wait"); for (const b of acts.children) b.disabled = true; }
   el.appendChild(acts);
 
   const cb = document.createElement("div"); cb.className = "custom"; cb.id = "customBox";
-  cb.innerHTML = `<span class="muted">${facing || info.curBet > 0 ? "raise to" : "bet"}</span><input type="number" id="customAmt" step="0.5" min="0"><span class="muted">bb</span>`;
+  cb.innerHTML = `<span class="muted">${facing || info.curBet > 0 ? "raise to" : "bet"}</span>${STAKES() ? '<span class="muted">$</span>' : ""}<input type="number" id="customAmt" step="${STAKES() ? "any" : "0.5"}" min="0"><span class="muted">${STAKES() ? `(${usd(STAKES().bb / 2)} steps)` : "bb"}</span>`;
   const go = document.createElement("button"); go.className = "small"; go.textContent = "Apply";
-  go.onclick = () => { showErr(act({ action: "bet", to: parseFloat(document.getElementById("customAmt").value) })); renderAll(); };
+  go.onclick = () => { showErr(act({ action: "bet", to: amountIn(document.getElementById("customAmt").value) })); renderAll(); };
   cb.appendChild(go); el.appendChild(cb);
   document.getElementById("customAmt").addEventListener("keydown", (e) => { if (e.key === "Enter") go.click(); if (e.key === "Escape") { cb.classList.remove("open"); e.target.blur(); } });
 
@@ -1768,7 +1811,7 @@ function renderTimeline() {
   for (const s of STREETS) {
     const acts = S.actions[s]; if (!acts.length) continue; any = true;
     const line = document.createElement("div"); line.className = "tl";
-    const chips = acts.map((a, i) => `<span data-s="${s}" data-i="${i}" class="chip${a.pos === S.hero ? " hero rewind" : ""}${["bet", "raise", "all-in"].includes(a.action) ? " agg" : ""}${a.action === "fold" ? " fold" : ""}" title="${a.pos === S.hero ? "Replay from here. " : ""}${a.g ? gradeTip(a.g) : ""}">${a.pos} ${a.action === "bet" ? "bets " + fmt(a.to) : a.action === "raise" ? "raises to " + fmt(a.to) : a.action === "all-in" ? "all-in" : a.action + "s"}${a.g ? `<span class="g ${gradeClass(a.g)}">${gradeMark(a.g)}</span>` : ""}</span>`).join("");
+    const chips = acts.map((a, i) => `<span data-s="${s}" data-i="${i}" class="chip${a.pos === S.hero ? " hero rewind" : ""}${["bet", "raise", "all-in"].includes(a.action) ? " agg" : ""}${a.action === "fold" ? " fold" : ""}" title="${a.pos === S.hero ? "Replay from here. " : ""}${a.g ? gradeTip(a.g) : ""}">${a.pos} ${a.action === "bet" ? "bets " + fmt(a.to) + withUsd(a.to) : a.action === "raise" ? "raises to " + fmt(a.to) + withUsd(a.to) : a.action === "all-in" ? "all-in" : a.action + "s"}${a.g ? `<span class="g ${gradeClass(a.g)}">${gradeMark(a.g)}</span>` : ""}</span>`).join("");
     const b = s === "preflop" ? "" : ` <span class="muted">${boardCards().slice(NEED[s] - (s === "flop" ? 3 : 1), NEED[s]).map(cardHtml).join(" ")}</span>`;
     line.innerHTML = `<span class="st">${s}${b}</span><span class="line">${chips}</span>`;
     line.querySelectorAll(".rewind").forEach(c => c.onclick = () => rewindTo(c.dataset.s, +c.dataset.i));
@@ -1789,7 +1832,9 @@ function payload() {
   return { players: S.players, hero: S.hero, hole: (S.cards[0] || "") + (S.cards[1] || ""), board: boardCards().join(""), stack: S.stack,
            ...(UNEQUAL() ? { stacks: Object.fromEntries(POS.map(p => [p, STACK(p)])) } : {}),
            ...(ANTE() ? { ante: ANTE() } : {}), ...(STRADDLER() ? { straddle: true } : {}),
-           ...(RAKE() ? { rake: RAKE() / 100, ...(RAKE_CAP() ? { rake_cap: RAKE_CAP() } : {}) } : {}),
+           // (a tournament has no rake, whatever the Rake setting: one set here, or an imported tournament hand's,
+           // S.tournament from hh.js; the advisor drops it too)
+           ...(RAKE() && !TOURNEY() && !S.tournament ? { rake: RAKE() / 100, ...(RAKE_CAP() ? { rake_cap: RAKE_CAP() } : {}) } : {}),
            ...(TOURNEY() ? { ...(PAYOUTS().length ? { payouts: PAYOUTS() } : {}), ...(FIELD_AVG() ? { field: { players: FIELD_N(), chips: FIELD_N() * FIELD_AVG() } } : {}) } : {}),
            ...(BOUNTY() ? { bounties: BOUNTY_SPEC() } : {}),
            preflop: conv(S.actions.preflop), flop: conv(S.actions.flop), turn: conv(S.actions.turn), river: conv(S.actions.river), budget, prior_budget, speed: SPEED, ...(quick ? { quick } : {}),
@@ -2139,14 +2184,14 @@ function resetAdvice() {
 // ---- share: plain-text summary + link that reopens the spot
 function handText() {
   const n = S.players, seat = SEAT_LABEL(S.hero, n);
-  const lines = [`GTO Solver hand: ${n}-handed, ${UNEQUAL() ? `${S.stack}bb stacks (${STACKS_TEXT()})` : `${S.stack}bb effective`}${ANTE() ? `, ${fmt(ANTE())}bb ante` : ""}${STRADDLER() ? `, ${SEAT_LABEL(STRADDLER(), n)} straddles 2bb` : ""}${RAKE() ? `, ${RAKE_TEXT()}` : ""}${TOURNEY() ? `, ${ICM_TEXT()}` : ""}${ADV_TEXT() ? `, ${ADV_TEXT()}` : ""}, I am ${seat} with ${S.cards[0] || "?"}${S.cards[1] || "?"}`];
-  const act = (a) => `${SEAT_LABEL(a.pos, n)} ${a.action === "bet" ? "bets " + fmt(a.to) : a.action === "raise" ? "raises to " + fmt(a.to) : a.action === "all-in" ? "all-in" : a.action + "s"}${a.g ? ` [${gradeMark(a.g)} solver ${(a.g.f * 100).toFixed(0)}%${a.g.v ? ` as the chart's ${a.g.m}` : ""}${a.g.l ? `, -${a.g.l.toFixed(2)}bb` : ""}]` : ""}`;
+  const lines = [`GTO Solver hand: ${n}-handed, ${STAKES() ? `${STAKES_TEXT()}, ` : ""}${UNEQUAL() ? `${S.stack}bb${withUsd(S.stack)} stacks (${STACKS_TEXT()})` : `${S.stack}bb${withUsd(S.stack)} effective`}${ANTE() ? `, ${fmt(ANTE())}bb${withUsd(ANTE())} ante` : ""}${STRADDLER() ? `, ${SEAT_LABEL(STRADDLER(), n)} straddles 2bb` : ""}${RAKE() ? `, ${RAKE_TEXT()}` : ""}${TOURNEY() ? `, ${ICM_TEXT()}` : ""}${ADV_TEXT() ? `, ${ADV_TEXT()}` : ""}, I am ${seat} with ${S.cards[0] || "?"}${S.cards[1] || "?"}`];
+  const act = (a) => `${SEAT_LABEL(a.pos, n)} ${a.action === "bet" ? "bets " + fmt(a.to) + withUsd(a.to) : a.action === "raise" ? "raises to " + fmt(a.to) + withUsd(a.to) : a.action === "all-in" ? "all-in" : a.action + "s"}${a.g ? ` [${gradeMark(a.g)} solver ${(a.g.f * 100).toFixed(0)}%${a.g.v ? ` as the chart's ${a.g.m}` : ""}${a.g.l ? `, -${a.g.l.toFixed(2)}bb` : ""}]` : ""}`;
   const bd = (s) => s === "preflop" ? "" : " (" + boardCards().slice(NEED[s] - (s === "flop" ? 3 : 1), NEED[s]).join(" ") + ")";
   const sim = simulate();
   for (const s of STREETS) {
     if (!S.actions[s].length && !(sim.current === s && sim.cur)) continue;
     let line = `${s[0].toUpperCase() + s.slice(1)}${bd(s)}: ` + S.actions[s].map(act).join(", ");
-    if (sim.current === s && sim.cur) line += `${S.actions[s].length ? " — " : ""}${SEAT_LABEL(sim.toAct, n)} to act, pot ${fmt(sim.cur.pot)}bb`;
+    if (sim.current === s && sim.cur) line += `${S.actions[s].length ? " — " : ""}${SEAT_LABEL(sim.toAct, n)} to act, pot ${fmt(sim.cur.pot)}bb${withUsd(sim.cur.pot)}`;
     lines.push(line);
   }
   const r = lastResult;
@@ -2221,11 +2266,11 @@ let linkLoaded = false;
 // A link opened in a tab already showing the page only changes its hash (no reload): load the spot then too.
 if (typeof window.addEventListener === "function") window.addEventListener("hashchange", () => { const st = linkState(); if (st) loadHandState(st, null, "link"); });
 document.getElementById("stack").value = S.stack;
-document.getElementById("stack").onchange = (e) => { S.stack = parseFloat(e.target.value) > 0 ? parseFloat(e.target.value) : 100; e.target.value = S.stack; const o = S.stacks; delete S.stacks; Object.assign(S, cleanStacks({ ...S, stacks: o }, POS)); save(); renderAll(); };
+document.getElementById("stack").onchange = (e) => { const v = amountIn(e.target.value); S.stack = v > 0 ? v : 100; e.target.value = STAKES() ? amountOut(S.stack) : S.stack; const o = S.stacks; delete S.stacks; Object.assign(S, cleanStacks({ ...S, stacks: o }, POS)); save(); renderAll(); };
 // The seats' own stacks (Stacks: "per seat"): a row of boxes, one per seat; a seat left at the table's stack has none.
 // Changing the table's stack keeps the seats given their own.
 function setSeatStack(p, v) {
-  const x = parseFloat(v);
+  const x = amountIn(v);   // (dollars with stakes)
   const o = { ...(S.stacks || {}) };
   if (x > 0 && x !== S.stack) o[p] = x; else delete o[p];
   delete S.stacks; Object.assign(S, cleanStacks({ ...S, stacks: o }, POS)); save(); resetAdvice(); renderAll();
@@ -2237,30 +2282,40 @@ function renderSeatStacks() {
   document.getElementById("seatStacks").hidden = !open; document.getElementById("stacksEdit").hidden = open;
   document.getElementById("stacksSame").textContent = UNEQUAL() ? "all equal" : "close";
   if (!open) { box.innerHTML = ""; delete box.dataset.seats; return; }
-  if (box.dataset.seats === POS.join() && box.dataset.vals === POS.map(STACK).join()) return;   // (keep a box being typed in)
-  box.innerHTML = ""; box.dataset.seats = POS.join(); box.dataset.vals = POS.map(STACK).join();
+  const vals = POS.map(STACK).join() + STAKES_TEXT();
+  if (box.dataset.seats === POS.join() && box.dataset.vals === vals) return;   // (keep a box being typed in)
+  box.innerHTML = ""; box.dataset.seats = POS.join(); box.dataset.vals = vals;
   for (const p of POS) {
-    const l = document.createElement("label"); l.className = "muted"; l.textContent = SEAT_LABEL(p, S.players) + " ";
-    const i = document.createElement("input"); i.type = "number"; i.min = "1"; i.step = "1"; i.value = fmt(STACK(p)); i.dataset.p = p;
-    i.title = `${SEAT_LABEL(p, S.players)}'s stack in big blinds`;
+    const l = document.createElement("label"); l.className = "muted"; l.textContent = SEAT_LABEL(p, S.players) + (STAKES() ? " $" : " ");
+    const i = document.createElement("input"); i.type = "number"; i.min = "1"; i.step = STAKES() ? "any" : "1"; i.value = amountOut(STACK(p)); i.dataset.p = p;
+    i.title = STAKES() ? `${SEAT_LABEL(p, S.players)}'s stack in dollars (${fmt(STACK(p))}bb)` : `${SEAT_LABEL(p, S.players)}'s stack in big blinds`;
     i.onchange = (e) => setSeatStack(p, e.target.value);
     l.appendChild(i); box.appendChild(l);
   }
 }
 document.getElementById("ante").value = ANTE();
-document.getElementById("ante").onchange = (e) => { S.ante = Math.max(0, parseFloat(e.target.value) || 0); save(); resetAdvice(); renderAll(); };
+document.getElementById("ante").onchange = (e) => { S.ante = Math.max(0, amountIn(e.target.value) || 0); save(); resetAdvice(); renderAll(); };
 document.getElementById("straddle").checked = !!S.straddle;
 document.getElementById("straddle").onchange = (e) => { S.straddle = e.target.checked; save(); resetAdvice(); renderAll(); };
+// (an input being typed in keeps its text)
+const setIn = (id, v) => { const el = document.getElementById(id); if (document.activeElement !== el) el.value = v; };
 // rake: a preset, or a custom percent and cap
 let rakeCustom = false;
-const RAKE_PRESETS = { "5-3": [5, 3] };
+// (with stakes also the commonest live rake, 10% capped at $5, its cap in big blinds at those stakes)
+const RAKE_LIVE = 5;
+const RAKE_PRESETS = { "5-3": () => [5, 3], "10-live": () => STAKES() ? [10, RAKE_LIVE / STAKES().bb] : null };
+const rakeOptions = () => `<option value="off">off</option><option value="5-3">5%, cap 3bb${withUsd(3)}</option>${STAKES() ? `<option value="10-live">10%, cap ${usd(RAKE_LIVE)}</option>` : ""}<option value="custom">custom</option>`;
 function syncRake() {
-  const preset = Object.keys(RAKE_PRESETS).find(k => RAKE_PRESETS[k][0] === RAKE() && RAKE_PRESETS[k][1] === RAKE_CAP());
+  const preset = Object.keys(RAKE_PRESETS).find(k => { const r = RAKE_PRESETS[k](); return r && r[0] === RAKE() && Math.abs(r[1] - RAKE_CAP()) < 1e-9; });
   const mode = !RAKE() && !rakeCustom ? "off" : preset && !rakeCustom ? preset : "custom";
-  document.getElementById("rake").value = mode;
+  const sel = document.getElementById("rake"), opts = rakeOptions();
+  if (STAKES() ? sel.dataset.opts !== opts : sel.dataset.opts) { sel.innerHTML = opts; sel.dataset.opts = STAKES() ? opts : ""; }
+  sel.value = mode;
   document.getElementById("rakeCustom").hidden = mode !== "custom";
-  document.getElementById("rakePct").value = RAKE() ? fmt(RAKE()) : "";
-  document.getElementById("rakeCap").value = RAKE_CAP() ? fmt(RAKE_CAP()) : "";
+  setIn("rakePct", RAKE() ? fmt(RAKE()) : "");
+  setIn("rakeCap", RAKE_CAP() ? amountOut(RAKE_CAP()) : "");
+  document.getElementById("rakeCapPre").textContent = STAKES() ? "%, cap $" : "%, cap";
+  document.getElementById("rakeCapUnit").textContent = STAKES() ? (RAKE_CAP() ? fmt(RAKE_CAP()) + "bb" : "") : "bb";
 }
 function setRake(pct, cap) {
   S.rake = pct; S.rakeCap = cap;
@@ -2272,15 +2327,62 @@ document.getElementById("rake").onchange = (e) => {
   const v = e.target.value;
   rakeCustom = v === "custom";
   if (v === "off") setRake(0, 0);
-  else if (RAKE_PRESETS[v]) setRake(...RAKE_PRESETS[v]);
+  else if (RAKE_PRESETS[v] && RAKE_PRESETS[v]()) setRake(...RAKE_PRESETS[v]());
   else setRake(RAKE() || 5, RAKE() ? RAKE_CAP() : 3);   // custom: starts from the current rake, or 5% cap 3bb
 };
 document.getElementById("rakePct").onchange = (e) => setRake(Math.min(25, Math.max(0, parseFloat(e.target.value) || 0)), RAKE_CAP() || +S.rakeCap || 0);
-document.getElementById("rakeCap").onchange = (e) => setRake(RAKE(), Math.max(0, parseFloat(e.target.value) || 0));
+document.getElementById("rakeCap").onchange = (e) => setRake(RAKE(), Math.max(0, amountIn(e.target.value) || 0));
 syncRake();
+// stakes: a preset or custom dollars; the stack, ante and straddle rows (and the rake's) in dollars with them
+let stakesCustom = false;
+function syncStakes() {
+  const k = STAKES(), key = k && Object.keys(STAKES_PRESETS).find(x => STAKES_PRESETS[x][0] === k.sb && STAKES_PRESETS[x][1] === k.bb);
+  const mode = !k ? "off" : key && !stakesCustom ? key : "custom";
+  document.getElementById("stakes").value = mode;
+  document.getElementById("stakesCustom").hidden = mode !== "custom";
+  if (k) { setIn("stakeSb", k.sb); setIn("stakeBb", k.bb); }
+  // (the engine posts half a big blind: at $1/$3 or $2/$5 the small blind's $1 or $2 is played as $1.50 or $2.50)
+  document.getElementById("stakesNote").textContent = k && Math.abs(2 * k.sb - k.bb) > 1e-9 ? `small blind played as ${usd(k.bb / 2)}` : "";
+  const stack = document.getElementById("stack"), ante = document.getElementById("ante");
+  setIn("stack", k ? amountOut(S.stack) : S.stack); setIn("ante", k ? amountOut(ANTE()) : ANTE());
+  stack.step = k ? "any" : "1"; stack.min = k ? String(cents(5 * k.bb)) : "5"; ante.step = k ? "any" : "0.05";
+  stack.title = k ? `Each player's stack in dollars (${fmt(S.stack)}bb)` : "";
+  ante.title = k ? `Ante per player, in dollars${ANTE() ? ` (${fmt(ANTE())}bb)` : ""}` : "Ante per player, in big blinds";
+  document.getElementById("stackPre").hidden = document.getElementById("antePre").hidden = !k;
+  document.getElementById("stackUnit").textContent = k ? `= ${fmt(S.stack)}bb` : "bb";
+  document.getElementById("anteUnit").textContent = k ? (ANTE() ? `= ${fmt(ANTE())}bb` : "") : "bb";
+  document.getElementById("straddleTxt").textContent = k ? `${usd(2 * k.bb)} straddle` : "straddle";
+  syncRake();
+}
+// (amounts are kept in big blinds: new stakes change only how they're typed and shown, so not the advice; a rake of
+// 10% capped at $5 stays capped at $5)
+function setStakes(k) {
+  k = cleanStakes(k);
+  const live = STAKES() && RAKE() === 10 && Math.abs(RAKE_CAP() - RAKE_LIVE / STAKES().bb) < 1e-9;
+  if (k) S.stakes = k; else delete S.stakes;
+  pageStore.setRaw("gto-stakes", JSON.stringify(k));
+  if (live && k) { S.rakeCap = RAKE_LIVE / k.bb; resetAdvice(); }
+  save(); renderAll();
+}
+document.getElementById("stakes").onchange = (e) => {
+  const v = e.target.value;
+  stakesCustom = v === "custom";
+  if (v === "off") setStakes(null);
+  else if (STAKES_PRESETS[v]) setStakes({ sb: STAKES_PRESETS[v][0], bb: STAKES_PRESETS[v][1] });
+  else setStakes(STAKES() || { sb: 1, bb: 2 });   // custom: starts from the current stakes
+};
+for (const id of ["stakeSb", "stakeBb"]) document.getElementById(id).onchange = () => {
+  const sb = parseFloat(document.getElementById("stakeSb").value), bb = parseFloat(document.getElementById("stakeBb").value);
+  if (sb > 0 && bb > 0 && sb <= bb) setStakes({ sb, bb }); else renderAll();
+};
+// ---- Write up a hand (writeup.js, loaded the first time it opens): a hand you played entered seat by seat (amounts in
+// dollars with stakes), then reviewed. Its draft is a hand like S, kept apart, that the page's engine plays: withHand
+// runs f with it in place of the page's own (S and the seats), which it puts back.
+function withHand(st, f) { const s0 = S; S = st; setPositions(st.players); try { return f(); } finally { S = s0; setPositions(s0.players); } }
+document.getElementById("writeupBtn").onclick = () => loadJs("writeup.js?v=" + WU_VERSION, () => window.WriteUp).then(() => window.WriteUp.open())
+  .catch(e => showErr("Couldn't load the write-up: " + (e && e.message || e)));
 // tournament payouts, and the players at other tables (shown once there are payouts)
 // (an input being typed in keeps its text)
-const setIn = (id, v) => { const el = document.getElementById(id); if (document.activeElement !== el) el.value = v; };
 function syncIcm() {
   setIn("payouts", PAYOUTS().map(fmt).join(" "));
   const f = BOUNTY_FMT();

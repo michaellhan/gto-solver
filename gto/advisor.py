@@ -2180,6 +2180,7 @@ class InstantSpot:
     own_earlier: bool = False   # `own` is the street's solve from an earlier decision, its tree without a size since taken
     near: Optional[Callable] = None   # a library spot's flop not stored: () -> flop_approx.ApproxSolution or None
     off: Optional[Callable] = None    # a library flop facing a size off its tree: () -> instant_from_off_tree's answer
+    unraked: Optional[Callable] = None   # a raked table's library flop: () -> its unraked entry (instant_from_unraked)
 
 
 def _pf_aggressor(preflop: List[dict], oop: str, ip: str) -> Optional[int]:
@@ -2366,6 +2367,36 @@ def instant_from_near(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
     if f is not None and f[col[0]]:
         label += "; your hand isn't in that spot's range: the average mix there of its hand class (made hand and draw)"
     return {"actions": _real_actions(node, strat, bets, spot), "source": "near", "label": label, "iterations": None}
+
+
+# A raked table's flop of a library spot is read off the spot's unraked entry (instant_from_unraked) until the flop's own
+# solve, with the rake, has run this many iterations, from when instant_from_own reads it (flop_library.RAKE_READ).
+RAKE_UNTIL = HU_CHECKS[0]
+
+
+def instant_from_unraked(adv: "Advisor", spot: InstantSpot) -> Optional[dict]:
+    """A raked table's flop that the library stores for the same preflop line without rake (every entry is solved
+    without; with rake the advisor re-prices the preflop calls, so the callers' ranges are narrower and the flop is
+    solved live, Advisor._unraked_entry): hero's mix read off the entry, for the raked ranges' combos, on the line the
+    hand took (sizes at the tree's nearest), at a decision the entry stores; not once the flop's own raked solve has
+    run RAKE_UNTIL iterations (instant_from_own reads that). No EVs (the entry's leave out the rake and the ranges'
+    change). What it gives up: flop_library.RAKE_READ."""
+    if spot.street != "flop" or spot.unraked is None:
+        return None
+    if spot.own is not None and spot.own.solver.iters >= RAKE_UNTIL:
+        return None
+    sol = spot.unraked()
+    if sol is None:
+        return None
+    col = hole_col(sol, spot.hole)
+    if not col:
+        return None
+    got = _read_line(sol.root, 0, col[0], spot)
+    if got is None or id(got[0]) not in sol.stored:
+        return None
+    node, strat, bets = got
+    return {"actions": _real_actions(node, strat, bets, spot), "source": "unraked", "label": sol.unraked_text(),
+            "iterations": sol.iters}
 
 
 # A library flop facing a bet or raise of a size its tree doesn't have is read off the stored decisions facing the sizes
@@ -2893,6 +2924,9 @@ class Advisor:
         # and a spot of the same pot and stack whose ranges are a few combos from this pot's (another table size's:
         # flop_approx.near_exact), read as its own, marked borrowed; False: the library's own spots alone
         self.library_borrow = True
+        # a raked table's flop of a library spot: an answer at once off the spot's unraked entry while the flop's
+        # own solve runs (instant_from_unraked); False: none
+        self.rake_library = True
         # precomputed 3-way flop solves (gto/mw_library.py: MWLibrary): a 3-way flop's first decisions, at every speed
         self.mw_library = None
         # the street advised on (heads-up from its start) also gets the earlier streets' prior_budget its narrowing
@@ -2917,8 +2951,8 @@ class Advisor:
         self._one_rows: Dict[tuple, dict] = {}   # its rows solved here, by spot and size (ONE_SIZE_CACHE, oldest first)
         self.one_size_cut = True    # (a size clearly behind the best stops early: ONE_SIZE_CUT)
         # Advisor.instant's sources, tried in order: each (advisor, InstantSpot) -> {"actions", "source", "label"} or None
-        self.instant_sources = [instant_from_store, instant_from_off_tree, instant_from_near, instant_from_own,
-                                instant_from_prev]
+        self.instant_sources = [instant_from_store, instant_from_off_tree, instant_from_near, instant_from_unraked,
+                                instant_from_own, instant_from_prev]
         # instant_from_own facing a bet off the tree of your earlier decision's solve: its answers facing the sizes it
         # has read by the bet's price (_off_tree_own) where the bet is smaller or bigger than all of them ("outside";
         # "above": bigger only; "always": between two of them too; None: never), else the nearest size's; by street
@@ -3663,8 +3697,10 @@ class Advisor:
         ante = float(state.get("ante") or 0.0) / bb
         straddle = bool(state.get("straddle")) and n >= 3
         # rake: a share of the pot (0.05 = 5%) up to a cap (in chips, like the other amounts), taken from
-        # pots that see a flop
-        rate = max(0.0, min(0.25, float(state.get("rake") or 0.0)))
+        # pots that see a flop; a tournament has none, whatever the rake given (its payouts or bounties, or
+        # "tournament": an imported tournament hand's, hh.js)
+        tourney = bool(state.get("payouts") or state.get("bounties") or state.get("tournament"))
+        rate = 0.0 if tourney else max(0.0, min(0.25, float(state.get("rake") or 0.0)))
         cap = state.get("rake_cap")
         cap = float(cap) / bb if cap not in (None, "") and float(cap) > 0 else None
         positions = pf.Table(pf.SEATS[n], ante, straddle, (rate, cap) if rate > 0 else None)
@@ -4923,8 +4959,12 @@ class Advisor:
                 if not custom and hole:
                     off = lambda: self._off_tree_answer(lib, full, board, r0, r1, cur, eff, oop, ip, hero_p, hole,
                                                         hero_remaining, len(positions))
+            unr = None
+            if lib is not None and cur.name == "flop" and self.cfg.rake_rate and self.rake_library and not custom:
+                unr = lambda: self._unraked_entry(lib, streets["preflop"], positions, stack, board, r0, r1, cur, eff,
+                                                  cfg, oop, ip, hole)
             return self._instant_answer(cur, board, hole, hero, villain, hero_p, oop, ip, eff, cfg, r0, r1, walked,
-                                        hero_remaining, to_call, len(positions), t0, near, off)
+                                        hero_remaining, to_call, len(positions), t0, near, off, unr)
         if lib_sol is None and self._lib_only:
             if lib is not None and cur.name == "flop" and hu_from_start:
                 # (a library spot's flop not stored: the stored flops its approximate answer reads, named for the
@@ -6929,7 +6969,7 @@ class Advisor:
                             for a, nm in enumerate(names)]}
 
     def _instant_answer(self, cur, board, hole, hero, villain, hero_p, oop, ip, eff, cfg, r0, r1, walked, behind, to_call,
-                        n_players, t0, near=None, off=None) -> dict:
+                        n_players, t0, near=None, off=None, unraked=None) -> dict:
         """Advisor.instant's answer at the street advised on (heads-up from its start, its ranges narrowed through the
         earlier streets' solves as they stand): the first of instant_sources that reads one, else _NoInstant; and
         _NoInstant when the street's own solve is cached and its answer quick (settled, or run its budget)."""
@@ -6955,7 +6995,7 @@ class Advisor:
             if c is not cfg and k not in self._presolved:   # (a presolve's, the move off its tree: never shown)
                 own, earlier = self._cache.get(k), True
         spot = InstantSpot(cur.name, tuple(board), tuple(hole), hero_p, oop, ip, list(cur.actions), cur.pot_start, eff,
-                           behind, own, walked.get(STREETS[STREETS.index(cur.name) - 1]), earlier, near, off)
+                           behind, own, walked.get(STREETS[STREETS.index(cur.name) - 1]), earlier, near, off, unraked)
         got = next((g for g in (src(self, spot) for src in self.instant_sources) if g), None)
         if got is None:
             raise _NoInstant()
@@ -7287,6 +7327,29 @@ class Advisor:
             return None
         notes.extend(n2)
         return sol, node, c0, c1
+
+    def _unraked_entry(self, lib, preflop, positions, stack, board, r0, r1, st: StreetState, eff, cfg: Config, oop,
+                       ip, hole=()):
+        """instant_from_unraked's solution: the library's entry for this raked table's flop, its spot found by the
+        ranges the preflop line brings to the flop without rake (with it the callers' are narrower: _call_rake), read
+        for the raked ranges r0, r1, every combo of which it must hold (FlopLibrary.solution's `unraked`); at another
+        table size the spot those ranges borrow (library_borrow: flop_approx.near_exact, as without rake), the combos
+        off its ranges left out but for your hand (`hole`), which it must hold; else None."""
+        flat = pf.Table(list(positions), positions.ante, positions.straddle, None, positions.depth, positions.stacks,
+                        positions.icm)
+        try:
+            u = preflop_ranges(preflop, flat, stack)
+            sol = lib.solution(u[oop], u[ip], board, r0, r1, st.pot_start, eff, cfg, unraked=True)
+            if sol is None and self.library_borrow:
+                from .flop_approx import near_exact
+                ne = near_exact(lib, u[oop], u[ip], st.pot_start, eff, len(positions))
+                if ne is not None:
+                    need = [COMBO_INDEX[(min(hole), max(hole))]] if hole else []
+                    sol = lib.solution(u[oop], u[ip], board, r0, r1, st.pot_start, eff, cfg, borrow=ne, need=need,
+                                       unraked=True)
+            return sol
+        except Exception:   # (a library that can't be read is no library)
+            return None
 
     def _off_later(self, street: str) -> Optional[str]:
         """off_tree_later's mode on `street`."""

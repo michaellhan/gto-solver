@@ -95,6 +95,17 @@ the betting to players who already acted, a bet nobody can match in full comes b
 anyone else put in, the action ends once at most one player with chips is left, and the table shows
 the main pot and side pots.
 
+**Stakes** (the setup's first row) plays a live game in dollars: off (big blinds, the default), $1/$2, $1/$3,
+$2/$5, $5/$10 or custom ($ small / big blind). With stakes the stacks (each seat's too), the ante, the rake's cap
+and every bet or raise are typed in dollars (`$1,000`, `12.50`, `$35`) and converted to big blinds, which the
+solver plays in; the pot, the price to call, the action buttons, the hand's timeline, the seats' chips and the
+setup's line show the dollars beside the big blinds ("pot 5.5 bb ($27.50)", "Bet $17.50 · 3.5bb"). The engine
+posts half a big blind, so at $1/$3 and $2/$5 the small blind's $1 or $2 is played as $1.50 or $2.50 (said under
+the select), and amounts go in half-big-blind steps ($2.50 at $2/$5). The Rake select gains the common live rake,
+10% capped at $5 ("no flop, no drop", as every rake here: see Rake), whose cap in big blinds follows the stakes
+(1bb at $2/$5, 2.5bb at $1/$2). The stakes are saved with the hand and remembered for new hands (`gto-stakes` in
+the browser's storage, store.js); off, nothing changes.
+
 Whenever it becomes your turn the advice panel solves the spot. The **Quick / Fast /
 Accurate** toggle in the header (remembered between visits) picks the solve
 time: Quick is about 2 s either way (the requests Practice makes at Fast, below: `QUICK_BUDGETS`, `"quick": true`;
@@ -200,6 +211,17 @@ loaded only when the dialog opens. **Review whole hand** (offered after an impor
 hand with ungraded decisions) solves each of your decisions in order at the current Fast/Accurate setting,
 grades it as if it had been entered live and ends on the hand review; it shows "decision 2 of 5" while it
 runs and can be cancelled, keeping the grades so far.
+
+**Write up a hand…** (beside Stakes) is for a hand played live, written up after the session on a phone. The game
+is one line (stakes, players, stacks in dollars or big blinds with each seat's own if set, a straddle, rake;
+**edit** opens it), then your seat and your two cards (typed: `AhKd`, `A♥K♦`, `10h 9h`), then the action seat
+by seat: who is to act, with the pot and the price in dollars and big blinds, buttons for fold, check, call and
+all-in, a box for a bet or raise in dollars (one under the minimum says the smallest), and **Folds to** any later
+seat, which folds every seat before it (checks after the flop). A street that closes asks for its cards. **Undo**
+takes back the last action or street's cards, **New hand** starts again in the same game, and the draft is kept
+in the browser. **Open on table** puts the hand on the page's table; **Review hand** puts it there and grades each
+of your decisions as **Review whole hand** does (once there is one). The page's own hand and its advice are left
+alone while you write. The box is `gto/static/writeup.js`, loaded the first time it opens.
 
 **Analyze session** (in the ⋯ menu) reviews whole sessions, like GTO Wizard's analyzer: drop, choose or paste
 hand-history files of any number of hands (any site above, mixed sites too), several files at once, or **a folder**
@@ -1027,9 +1049,12 @@ precomputed library's), so it can differ from the GTO setting's answer for the s
 
 ### Rake
 
-Off by default (the page's Rake select: off, 5% capped at 3bb, or a custom percent and cap; the
-setting is saved with the hand and carried by share links). Rake is taken "no flop, no drop": a pot
-that ends preflop isn't raked, so opens, steals and folds to them are unchanged.
+Off by default (the page's Rake select: off, 5% capped at 3bb, with stakes 10% capped at $5, or a custom
+percent and cap; the setting is saved with the hand and carried by share links). Rake is taken "no flop, no
+drop": a pot that ends preflop isn't raked, so opens, steals and folds to them are unchanged. A tournament has
+none, whatever the setting: the page sends no rake with payouts or bounties set or for an imported tournament
+hand (`S.tournament`, from hh.js), and the advisor drops a request's rake when it has `payouts`, `bounties` or
+`tournament`.
 
 * Postflop, the solver's terminal payoffs are raked: the winner pays rake = min(rate x pot, cap) out
   of the pot it collects, at showdowns, equity leaves and folds (the pot without an uncalled bet,
@@ -1079,6 +1104,27 @@ that ends preflop isn't raked, so opens, steals and folds to them are unchanged.
   (the pot it wins is short the rake) while the jam's fold equity is untouched, so callers tighten
   and the jam range widens: 10bb deep, 5% capped at 3bb, the small blind jams 60% of hands instead of
   58% and the big blind's K5s calls 74% instead of always.
+* The flop library is solved without rake, and with rake the callers' ranges are re-priced, so a raked
+  table's flop is narrower than any library spot's and is solved live. Meanwhile a library spot's flop answers at
+  once off its unraked entry (`advisor.instant_from_unraked`, the page's early panel, marked approximate: "the
+  library's solve of this flop without rake (unraked library), read for the table's 10% rake capped at 1bb: …" with
+  the numbers below for the nearest rake measured, `flop_library.RAKE_READ`). The spot is found by the ranges the same
+  preflop line brings without rake and read for the raked table's (a subset: the big blind defends a button open
+  with 218 combos at 10% capped at 3bb and 324 at 1bb, the spot's range 576); a 9-handed table goes through the
+  6-max spot as it does without rake. It gives the mix only, no EVs, and the flop's own raked solve replaces it
+  (once one has run 50 iterations, `RAKE_UNTIL`, that answers instead). `scripts/bench_rake_read.py --raked-ranges`,
+  60 stored flops (six each of BTN, CO, SB, HJ and UTG vs BB and of the BB vs BTN, SB vs BTN, BTN vs CO, BB vs CO
+  and SB vs CO 3bet pots) at 10% capped at 3bb, 10% at 1bb and 5% at 3bb, the entry's mix priced by the flop solved
+  with the rake and the raked ranges (Accurate's tree, 600 iterations, ~0.02% of the pot from equilibrium), % of
+  the pot: it gives up 0.18 / 0.15 / 0.17 on average (worst 0.58, 0.35, 0.43; the worst a BB vs CO 3bet pot, AQ8
+  two-tone), where a Fast raked solve gives up 0.18-0.19 after 50 iterations, 0.07 after 100 and 0.05 after 200:
+  the read beats Fast at 50 on 122 of the 180 and at 100 on 9, which is why it isn't the final answer. At the
+  library's own ranges (the rake on the flop only) it gives up 0.13-0.14, under the 0.15 the same entries give up
+  against that tree solved without rake: the rake itself moves the flop little (that unraked solve gives up
+  0.005-0.014 against the raked one), the ranges more. Its mixes differ from the raked solve's by 21-26% of the
+  range (reach-weighted), 20-21% at the library's own ranges, where the same tree solved without rake differs by
+  4-7%: mostly the library's model, not the rake. The stored EVs run 11.4 / 5.7 / 6.6% of the pot high at the
+  three rakes (they leave the rake out), hence none shown. Without rake nothing changes.
 * 3-way solves rake every pot at their terminals, as heads-up.
 * Multiway (three or more players see the flop): the Monte Carlo heuristic pays every pot hero wins
   less its rake (the pot without an uncalled bet; a split costs hero its share), so the EVs it ranks
@@ -4506,6 +4552,12 @@ their products batched: `core.LEAF_ROWS_BLAS`).
   heuristic rakes its payouts but not the betting rules inside its trials (see Rake above).
   BTN vs BB on K72 at 5% capped at 0.6bb (both ranges re-priced, the flop raked) still c-bets 49% (QQ6 81%,
   the BB checking 95%) against 69% unraked and published 90%+: the hands the re-pricing swaps don't move it.
+  A raked table's library flop answers at once only approximately (the unraked entry's mix, no EVs: see Rake);
+  its own answer is the live raked solve. The read is measured on 60 flops at three rakes, not on 9-handed tables.
+* Live stakes: the engine posts half a big blind, so at $1/$3 and $2/$5 the small blind's $1 or $2 is played as
+  $1.50 or $2.50 (a little more dead money than the table's), and amounts go in half-big-blind steps (a $33 raise
+  at $2/$5 is $32.50). A written-up hand is the page's own game: each seat's stack and one 2bb straddle, none of
+  a live game's extras (a double straddle, a kill, a bomb pot, running it twice).
 * Tournaments (ICM): Malmuth-Harville equity (no future-game model: a big stack's edge from covering others,
   or the blinds' next orbit, isn't counted), at most 12 players modelled (stand-ins for a bigger field). Preflop
   the charts are chip charts re-priced by a risk premium and the commitment factor ICM_COMMIT (1.0, judgment

@@ -961,6 +961,32 @@ class _Evs:
         return self._evs[id(node)]
 
 
+# What reading the library's unraked entries for a raked table gives up (FlopLibrary.solution's `unraked`, the
+# advisor's instant_from_unraked): scripts/bench_rake_read.py --raked-ranges, 60 stored flops (six each of BTN, CO, SB,
+# HJ and UTG vs BB, and of the 3bet pots BB vs BTN, SB vs BTN, BTN vs CO, BB vs CO and SB vs CO) at each rake, the
+# entry read for the ranges the raked table's preflop brings (the callers' re-priced by the rake) and priced by the
+# flop solved with that rake and those ranges (the browser's Accurate tree, 600 iterations, ~0.02% of the pot from
+# equilibrium): % of the pot entering the flop, mean and worst over the flops; fast50: the Fast tree solved the same
+# way, after 50 iterations (after 100: 0.07, 200: 0.05); ev: the entry's EVs against the raked solve's, how much
+# higher on average (% of the pot: they leave the rake out). By (rate, cap in bb); a table's rake reads the nearest.
+RAKE_READ = {"flops": 60,
+             (0.10, 3.0): {"loss": 0.18, "worst": 0.58, "fast50": 0.18, "ev": 11.4},
+             (0.10, 1.0): {"loss": 0.15, "worst": 0.35, "fast50": 0.19, "ev": 5.7},
+             (0.05, 3.0): {"loss": 0.17, "worst": 0.43, "fast50": 0.19, "ev": 6.6}}
+
+
+def _rake_text(rate, cap) -> str:
+    return f"{rate * 100:g}%" + (f" capped at {cap:g}bb" if cap else " with no cap")
+
+
+def rake_read(rate: float, cap) -> tuple:
+    """RAKE_READ's measured rake nearest (rate, cap): ((rate, cap), its numbers). No cap counts as a 10bb one."""
+    lg = lambda x: np.log(max(float(x), 1e-3))
+    key = min((k for k in RAKE_READ if isinstance(k, tuple)),
+              key=lambda k: abs(lg(k[0]) - lg(rate)) + abs(lg(k[1]) - lg(cap if cap else 10.0)))
+    return key, RAKE_READ[key]
+
+
 class LibrarySolution:
     """A flop solve read from the library, shaped like solver.Solution for the advisor (its walk, its answer at a
     node): the flop street's tree (TreeBuilder, depth 1: the same flop decisions as the full tree) with the stored
@@ -979,6 +1005,7 @@ class LibrarySolution:
         self.river_dealt = river_dealt             # solved with the river dealt (library_config)
         self.settled_once = True
         self.borrowed = None                       # another pot's spot read as this one's (FlopLibrary.solution)
+        self.unraked = None                        # (rate, cap): an unraked entry read for a raked table (RAKE_READ)
 
     def exploitability(self) -> float:
         return self._expl
@@ -994,6 +1021,18 @@ class LibrarySolution:
                 f"equilibrium" + ("" if self.exact else "; every turn rank and every river card" if self.river_dealt
                                   else "; Accurate's flop model, every turn rank with the river bet") + ")"
                 + (f"; approximate: {self.borrowed_text()}" if self.borrowed else ""))
+
+    def unraked_text(self) -> str:
+        """What reading an unraked entry for this table's rake gives up (RAKE_READ, at the nearest rake measured)."""
+        rate, cap = self.unraked
+        (r0, c0), m = rake_read(rate, cap)
+        return (f"the library's solve of this flop without rake (unraked library), read for the table's "
+                f"{_rake_text(rate, cap).replace('%', '% rake', 1)}: against the flop solved with the rake and the "
+                f"narrower ranges its preflop calls bring, its mix gives up {m['loss']:.2f}% of the pot on average "
+                f"(worst {m['worst']:.2f}; {RAKE_READ['flops']} flops at {_rake_text(r0, c0)}), about what a Fast "
+                f"solve gives up after 50 iterations ({m['fast50']:.2f}); no EVs: the stored ones leave out the rake "
+                f"(they run {m['ev']:.0f}% of the pot high)"
+                + (f"; that spot read as this one ({self.borrowed_text()})" if self.borrowed else ""))
 
     def borrowed_text(self) -> str:
         """How a borrowed spot (another pot's, read as this one's) differs from this pot."""
@@ -1105,13 +1144,16 @@ class FlopLibrary:
 
     def solution(self, full0: np.ndarray, full1: np.ndarray, board: Sequence[int], r0: np.ndarray, r1: np.ndarray,
                  pot: float, stack: float, cfg: Config, borrow: Optional[dict] = None,
-                 need: Sequence[int] = ()) -> Optional[LibrarySolution]:
+                 need: Sequence[int] = (), unraked: bool = False) -> Optional[LibrarySolution]:
         """The stored solve for this flop spot, or None. full0, full1: the two ranges entering the flop (they pick
         the spot); r0, r1: the ranges the advisor solves with (the villain's less the hero's cards, which are dropped
         from the entry's), every combo of which the entry must hold; cfg: the advisor's tree for the street.
         borrow: another spot read as this pot's own (flop_approx.near_exact's {"spot", "cover", "dist"}; the same pot
         and stack): the combos its entry doesn't hold are left out of r0 and r1, but for those in `need` (combo
-        indices: your hand), where it is None; the solution's `borrowed` says so."""
+        indices: your hand), where it is None; the solution's `borrowed` says so.
+        unraked: a raked tree (cfg.rake_rate) may read the entry its spot holds without rake (every entry is solved
+        without), its tree otherwise the same; the solution's `unraked` is then the table's (rate, cap) (RAKE_READ:
+        what that gives up, measured)."""
         if len(board) != 3:
             return None
         idx = self.index()
@@ -1121,7 +1163,11 @@ class FlopLibrary:
         if spot is None:
             return None
         tk, lk = tree_key(cfg), self.tree(spot)
-        if _key_str(tk["sizes"]) != _key_str(lk.get("sizes")) or (lk.get("model") or {}).get("version") != MODEL_VERSION:
+        want, have = tk["sizes"], lk.get("sizes")
+        off_rake = bool(unraked and want.get("rake") and isinstance(have, dict) and not have.get("rake"))
+        if off_rake:   # (the same tree but the rake)
+            want, have = dict(want, rake=None), dict(have, rake=None)
+        if _key_str(want) != _key_str(have) or (lk.get("model") or {}).get("version") != MODEL_VERSION:
             return None
         canon, smap = canonical(board)
         e = self.entry(spot, cards_str(canon))
@@ -1182,6 +1228,8 @@ class FlopLibrary:
         if borrow:
             sol.borrowed = {"spot": spot["id"], "cover": [round(float(c), 4) for c in borrow["cover"]],
                             "dist": [round(float(d), 4) for d in borrow["dist"]]}
+        if off_rake:
+            sol.unraked = (float(cfg.rake_rate), None if cfg.rake_cap is None else float(cfg.rake_cap))
         return sol
 
 
