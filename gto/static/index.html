@@ -644,6 +644,7 @@
     <button id="menuBtn" class="ghost" title="More: import and analyze hands, Study, drills and reports, help, settings" aria-label="More" aria-haspopup="true" aria-expanded="false" aria-controls="menu">⋯</button>
     <div class="menu" id="menu" hidden>
       <div class="mlbl">Review</div>
+      <button id="myHands" title="Every hand you've entered, reviewed or imported, kept in this browser: search, tags, notes, open one in review or Study, export, back up">My hands…</button>
       <button id="importHand" title="Paste a hand history (PokerStars, GGPoker, 888, partypoker, Winamax, WPN/ACR, Ignition/Bovada, iPoker) to replay and review it">Import hand…</button>
       <button id="analyzeSession" title="A whole session's hand histories: each of your decisions solved and graded, the EV lost by street, position, spot and preflop situation, the biggest mistakes">Analyze session…</button>
       <div class="mlbl">Study</div>
@@ -818,6 +819,7 @@
   <div class="row wfoot"><button class="link" id="welcomeStart">Getting started</button><button class="link" id="welcomeAbout">How accurate is it?</button><button class="link" id="welcomeFair">Fair play</button><button id="welcomeClose" class="ghost">Not now</button></div>
 </div>
 
+<script src="store.js?v=1"></script>
 <script>
 const RANKS = "AKQJT98765432";
 const SUITS = ["s", "h", "d", "c"];
@@ -947,11 +949,15 @@ function budgetsFor(speed, board) {
   if (!MODE) return [null, null, false];   // (the backend not known yet)
   return st && (speed === "quick" || practicing() && speed === "fast") ? [...QUICK_BUDGETS[st], true] : [...BUDGETS[MODE][speed], false];
 }
+// this browser's storage (store.js: IndexedDB records, each small key also kept in localStorage under its own name for
+// the reads while the page starts); without it (the tests' page) localStorage itself
+const pageStore = window.GTOStore || { getRaw: (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } },
+                                       setRaw: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} } };
 let SPEED = "fast";
-try { const v = localStorage.getItem("gto-speed"); if (v === "accurate" || v === "quick") SPEED = v; } catch (e) {}
+{ const v = pageStore.getRaw("gto-speed"); if (v === "accurate" || v === "quick") SPEED = v; }
 // opponents: "gto" (equilibrium) or "pool" (a typical player pool, exploited); a preference like the speed
 let OPP = "gto";
-try { if (localStorage.getItem("gto-opponents") === "pool") OPP = "pool"; } catch (e) {}
+if (pageStore.getRaw("gto-opponents") === "pool") OPP = "pool";
 // the first visit's chooser (#welcome, shown at the end): "due" on a first visit (no speed stored yet, which modeReady
 // stores on every load, so this is read before it can), "seen" once answered or dismissed, or for a visitor from
 // before the chooser existed
@@ -973,6 +979,7 @@ const RO_VERSION = "1";        // and runouts.js (Study's turn and river reports
 const SP_VERSION = "1";        // and simple.js (the one-size view: the advice's Simple tab and Study's, loaded on first use)
 const MT_VERSION = "1";        // and multitable.js (Practice on 2-4 tables at once, loaded the first time Tables goes above 1)
 const HP_VERSION = "1";        // and help.js (the help pages: Getting started, About & accuracy, Glossary, Changelog, Fair play)
+const HN_VERSION = "1";        // and hands.js (My hands, loaded the first time it opens; store.js, loaded with the page, has ?v= of its own)
 // where the precomputed libraries are (flop_library/: the local server's, gto/static/flop_library); scripts/deploy.sh
 // points it at their own site, ../gto-solver-library/ (scripts/deploy_library.sh). The worker is told it in its URL
 // (relative: worker.js is in the folder the page's URLs resolve against).
@@ -983,7 +990,7 @@ const LIB_BASE = "flop_library/";
 // points its relative URLs at the root. gto/routes.py reads these two lines (scripts/deploy.sh writes the copies,
 // gto/server.py serves them). Opening a view pushes its URL and closing it pushes the solver's (Practice's, if
 // that's on under it); back and forward switch views; a view's URL opened directly opens it (applyRoute, at the end).
-const ROUTES = { practice: "Practice", drills: "Drills", reports: "Flop reports", session: "Analyze session", study: "Study", preflop: "Preflop solve", import: "Import hand", start: "Getting started", about: "About & accuracy", glossary: "Glossary", changelog: "Changelog", fairplay: "Fair play" };
+const ROUTES = { practice: "Practice", drills: "Drills", reports: "Flop reports", session: "Analyze session", study: "Study", preflop: "Preflop solve", import: "Import hand", hands: "My hands", start: "Getting started", about: "About & accuracy", glossary: "Glossary", changelog: "Changelog", fairplay: "Fair play" };
 const SPOT_ROUTES = ["drills", "reports"];
 const ROUTE_RE = new RegExp(`^(.*?/)(?:(${Object.keys(ROUTES).join("|")})(?:/([a-z0-9-]+))?/?)?(?:index\\.html)?$`);
 function parseRoute(pathname) {   // -> { root: the solver's path, view: "solver" or a ROUTES key, spot: a spot id or null }
@@ -1043,14 +1050,14 @@ const modeReady = (async () => {
   const setSpeed = (m) => {
     SPEED = m;
     ctl.querySelectorAll("button").forEach(x => x.classList.toggle("active", x.dataset.m === m));
-    try { localStorage.setItem("gto-speed", m); } catch (e) {}
+    pageStore.setRaw("gto-speed", m);
   };
   setSpeed(SPEED);
   const octl = document.getElementById("oppctl");
   const setOpp = (o) => {
     OPP = o;
     octl.querySelectorAll("button").forEach(x => x.classList.toggle("active", x.dataset.o === o));
-    try { localStorage.setItem("gto-opponents", o); } catch (e) {}
+    pageStore.setRaw("gto-opponents", o);
   };
   setOpp(OPP);
   octl.querySelectorAll("button").forEach(b => b.onclick = async () => {
@@ -1220,8 +1227,15 @@ function fresh(n) { n = n || 6; return { players: n, hero: n === 2 ? "SB" : "BTN
 // Practice and the solver each keep their own hand and setup: the solver's under "handreview", Practice's under
 // "gto-practice-state"; turning Practice on or off puts one away and brings the other back (swapState)
 function stateKey() { return practicing() ? "gto-practice-state" : "handreview"; }
-function save() { try { localStorage.setItem(stateKey(), JSON.stringify(S)); } catch (e) {} }
-function load() { try { const s = localStorage.getItem(stateKey()); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
+function save() { pageStore.setRaw(stateKey(), JSON.stringify(S)); }
+function load() { try { const s = pageStore.getRaw(stateKey()); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
+// My hands (store.js, GTOStore.hands): the hand on the table is kept before another takes its place (New hand, a hand
+// loaded, a link; a review's whole hand while it runs), and a reviewed or imported hand is saved. Not while practising.
+function keepHand(how, st, meta) {
+  try { if (window.GTOStore && !practicing()) return window.GTOStore.hands.keep(how, st || review && review.full || S, meta); } catch (e) {}
+  return Promise.resolve(null);
+}
+function handOnTable(opts) { try { if (window.GTOStore) window.GTOStore.hands.onTable(S, opts); } catch (e) {} }
 // the board up to its first empty slot: with an earlier card removed, later ones wait for it rather than slide down
 function boardCards() { const b = []; for (let i = 2; i < 7 && S.cards[i]; i++) b.push(S.cards[i]); return b; }
 // A hand from a share link or this browser's storage, repaired so a bad one can't break the page (unknown
@@ -2087,7 +2101,7 @@ async function reviewHand() {
   await cancelSolve(); await modeReady;
   const full = JSON.parse(JSON.stringify(S)), spots = [];
   for (const s of STREETS) full.actions[s].forEach((a, i) => { if (a.pos === full.hero) spots.push([s, i]); });
-  const rv = review = { n: spots.length, k: 0, what: "", cancel: null };
+  const rv = review = { n: spots.length, k: 0, what: "", cancel: null, full };
   let spot = null;
   for (const [s, i] of spots) {
     const a = full.actions[s][i];
@@ -2110,7 +2124,11 @@ async function reviewHand() {
     if (!a.g && jamOffTree(lastResult, mv)) a.g = await jamGrade(resultKey, mv);
   }
   review = null;
-  if (rv.cancel !== "drop" && (!spot || JSON.stringify(S) === spot)) { S = full; save(); }
+  if (rv.cancel !== "drop") {   // (a review dropped for another hand: kept as it went, keepHand "replaced")
+    const back = !spot || JSON.stringify(S) === spot;
+    if (back) { S = full; save(); }
+    keepHand("review", full, back ? {} : { table: false });
+  }
   renderAll();
 }
 const EMPTY_ADVICE = "Pick your seat and cards, then enter the action seat by seat.<br>Advice appears here whenever it's your turn.";
@@ -2199,9 +2217,9 @@ function linkState() {   // the spot a #h= link carries (null if none), the hash
   return st;
 }
 let linkLoaded = false;
-(function loadFromLink() { const st = linkState(); if (st) { S = st; setPositions(S.players); save(); linkLoaded = true; } })();
+(function loadFromLink() { const st = linkState(); if (st) { keepHand("replaced"); S = st; setPositions(S.players); save(); handOnTable({ source: "link" }); linkLoaded = true; } })();
 // A link opened in a tab already showing the page only changes its hash (no reload): load the spot then too.
-if (typeof window.addEventListener === "function") window.addEventListener("hashchange", () => { const st = linkState(); if (st) loadHandState(st); });
+if (typeof window.addEventListener === "function") window.addEventListener("hashchange", () => { const st = linkState(); if (st) loadHandState(st, null, "link"); });
 document.getElementById("stack").value = S.stack;
 document.getElementById("stack").onchange = (e) => { S.stack = parseFloat(e.target.value) > 0 ? parseFloat(e.target.value) : 100; e.target.value = S.stack; const o = S.stacks; delete S.stacks; Object.assign(S, cleanStacks({ ...S, stacks: o }, POS)); save(); renderAll(); };
 // The seats' own stacks (Stacks: "per seat"): a row of boxes, one per seat; a seat left at the table's stack has none.
@@ -2378,19 +2396,19 @@ document.getElementById("editCards").onclick = () => { if (needCard(simulate()))
 
 // ---- four-colour deck (per browser)
 function applyFour(on) { document.body.classList.toggle("four", on); document.getElementById("fourcolor").classList.toggle("active", on); }
-let four = false; try { four = localStorage.getItem("fourcolor") === "1"; } catch (e) {}
+let four = pageStore.getRaw("fourcolor") === "1";
 applyFour(four);
-document.getElementById("fourcolor").onclick = () => { four = !four; applyFour(four); try { localStorage.setItem("fourcolor", four ? "1" : "0"); } catch (e) {} };
+document.getElementById("fourcolor").onclick = () => { four = !four; applyFour(four); pageStore.setRaw("fourcolor", four ? "1" : "0"); };
 
 // ---- sound effects (per browser, on by default): short synthesized sounds for Practice and Drills (cards dealt,
 // checks, chips, folds, a verdict, a pot won), made with Web Audio so there are no files to load. sfx(name) does
 // nothing while they're off or where the browser has no Web Audio.
 const SFX = { on: true, ctx: null, played: [], seed: 1 };
 const sfxRand = () => (SFX.seed = (SFX.seed * 16807) % 2147483647) / 2147483647;
-try { SFX.on = localStorage.getItem("gto-sound") !== "0"; } catch (e) {}
+SFX.on = pageStore.getRaw("gto-sound") !== "0";
 function applySound() { const b = document.getElementById("soundBtn"); b.classList.toggle("active", SFX.on); b.textContent = SFX.on ? "Sounds on" : "Sounds off"; }
 applySound();
-document.getElementById("soundBtn").onclick = () => { SFX.on = !SFX.on; applySound(); try { localStorage.setItem("gto-sound", SFX.on ? "1" : "0"); } catch (e) {} if (SFX.on) sfx("good"); };
+document.getElementById("soundBtn").onclick = () => { SFX.on = !SFX.on; applySound(); pageStore.setRaw("gto-sound", SFX.on ? "1" : "0"); if (SFX.on) sfx("good"); };
 // each sound: tones [start (s), frequency, end frequency, length, wave, volume]; a card is a soft wooden tick, not a
 // swish of noise (heard on every street, it grated)
 // (their jitter has its own generator: Math.random deals Practice's hands)
@@ -2455,8 +2473,9 @@ document.addEventListener("keydown", (e) => {
 });
 document.getElementById("newhand").onclick = () => {
   if (practicing()) { if (simulate().handOver) window.Practice.next(); return; }   // (practice: N is Next hand; a stray N mid-hand doesn't throw it away)
+  keepHand("replaced");
   if (review) { review.cancel = "drop"; cancelSolve(); }
-  S = { ...fresh(S.players), hero: S.hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, payouts: S.payouts, fieldN: S.fieldN, fieldAvg: S.fieldAvg, ...cleanBounty(S, POS), ...cleanAdv(S, POS), ...cleanStacks(S, POS) }; selSlot = null; showDeck = false; editSetup = false; pendingRank = null; save(); resetAdvice(); renderAll();
+  S = { ...fresh(S.players), hero: S.hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, payouts: S.payouts, fieldN: S.fieldN, fieldAvg: S.fieldAvg, ...cleanBounty(S, POS), ...cleanAdv(S, POS), ...cleanStacks(S, POS) }; selSlot = null; showDeck = false; editSetup = false; pendingRank = null; save(); handOnTable(); resetAdvice(); renderAll();
 };
 // ---- hand-history import (hh.js, loaded the first time the dialog opens)
 let hhLoad = null;
@@ -2467,6 +2486,7 @@ const loadHH = () => typeof importHand === "function" ? Promise.resolve() : hhLo
 const hhBox = document.getElementById("importBox"), hhErr = document.getElementById("hhErr"), hhText = document.getElementById("hhText");
 const hhOpen = () => { hhBox.hidden = false; hhErr.textContent = ""; loadHH().catch(e => hhErr.textContent = e.message); hhText.focus(); };
 document.getElementById("importHand").onclick = () => openView("import");
+document.getElementById("myHands").onclick = () => openView("hands");
 const hhClose = () => { hhBox.hidden = true; window.viewClosed("import"); document.getElementById("menuBtn").focus(); };
 document.getElementById("hhCancel").onclick = hhClose;
 hhBox.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.stopPropagation(); hhClose(); } });
@@ -2476,20 +2496,24 @@ hhText.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey 
 document.getElementById("hhGo").onclick = async () => {
   let r;
   try { await loadHH(); r = importHand(hhText.value); } catch (e) { hhErr.textContent = e.message || String(e); return; }
-  await loadHandState(r.state); hhBox.hidden = true; hhText.value = ""; window.viewClosed("import");
+  const text = hhText.value;
+  await loadHandState(r.state); keepHand("import", S, { site: r.hand.site, hh: text }); hhBox.hidden = true; hhText.value = ""; window.viewClosed("import");
   const h = r.hand;
   toast(`Imported ${h.site === "generic" ? "a" : h.site} hand: ${h.players}-handed, you are ${SEAT_LABEL(h.hero, h.players)} with ${h.hole.join("")}, ${fmt(h.effective)}bb effective${S.stacks ? ` (you have ${fmt(S.stack)}bb; every seat plays its own stack)` : ""}.${r.warnings.length ? " " + r.warnings.join(" ") : ""}`, null, 15000);
   const b = document.createElement("button"); b.className = "link"; b.textContent = "Review whole hand";
   b.onclick = () => { document.getElementById("toast").hidden = true; reviewHand(); }; document.getElementById("toast").appendChild(b);
 };
-// A whole hand replaces the page's (an imported one, a flop from the reports): a review, not a practice deal.
-async function loadHandState(st, note) {
+// A whole hand replaces the page's (an imported one, a flop from the reports): a review, not a practice deal. The hand
+// it replaces is kept in My hands; a drills or reports spot (note) only once you play on from it. from: a link's.
+async function loadHandState(st, note, from) {
+  const out = practicing() ? null : JSON.parse(JSON.stringify(review && review.full || S));
   if (review) review.cancel = "drop";
   if (practicing()) window.Practice.set(false);
   await cancelSolve();
+  keepHand("replaced", out);
   S = cleanState(st); setPositions(S.players); selSlot = null; showDeck = false; editSetup = false; pendingRank = null;
   document.getElementById("stack").value = S.stack; document.getElementById("ante").value = ANTE(); document.getElementById("straddle").checked = !!S.straddle;
-  save(); resetAdvice(); renderAll();
+  save(); handOnTable(note ? { spot: true } : from ? { source: from } : {}); resetAdvice(); renderAll();
   if (note) toast(`Loaded ${note}: you are ${SEAT_LABEL(S.hero, S.players)} with ${S.cards[0]}${S.cards[1]}.`);
 }
 // Practice turned on or off (Practice.set, its state already switched): the page takes that mode's own hand and setup,
@@ -2549,6 +2573,8 @@ const VIEWS = {
   preflop: { open: () => loadJs("study.js?v=" + SY_VERSION, () => window.Study).then(() => window.Study.open({ view: "preflop" })),
              close: () => window.Study && window.Study.close(), err: "Couldn't load Study mode: " },
   import: { open: hhOpen, close: () => { hhBox.hidden = true; window.viewClosed("import"); }, err: "" },
+  hands: { open: () => loadJs("hands.js?v=" + HN_VERSION, () => window.MyHands).then(() => window.MyHands.open()),
+           close: () => window.MyHands && window.MyHands.close(), err: "Couldn't load My hands: " },
 };
 window.viewSpot = (name, spot, label) => { if (overlay !== name) return; overlaySpot = spot; overlayLabel = label || null; syncRoute(true); };
 window.viewClosed = (name) => { if (overlay !== name) return; overlay = overlaySpot = overlayLabel = null; syncRoute(); };
@@ -2628,8 +2654,8 @@ function showSimple(box, res, key) {
   if (typeof window.addEventListener !== "function" || typeof document.documentElement === "undefined") return;
   try {
     const root = document.documentElement, KEY = "gto-layout";
-    let L = {}; try { L = JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) {}
-    const store = () => { try { localStorage.setItem(KEY, JSON.stringify(L)); } catch (e) {} };
+    let L = {}; try { L = JSON.parse(pageStore.getRaw(KEY)) || {}; } catch (e) {}
+    const store = () => pageStore.setRaw(KEY, JSON.stringify(L));
     const apply = () => {
       if (L.left) root.style.setProperty("--left", L.left + "px"); else root.style.removeProperty("--left");
       if (L.felt) root.style.setProperty("--felt-h", L.felt + "px"); else root.style.removeProperty("--felt-h");

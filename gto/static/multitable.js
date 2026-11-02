@@ -17,8 +17,9 @@
 (() => {
   const X = () => window.Practice.mt;
   const STORE = "gto-mt", SCORE = "gto-mt-score", DRILL = "gto-mt-drill", SEAT = "gto-mt-seat";
-  const read = (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } };
-  const store = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+  const KV = globalThis.GTOStore || null;   // (the page's storage, store.js; localStorage itself without it)
+  const read = (k) => { try { return JSON.parse(KV ? KV.getRaw(k) : localStorage.getItem(k)); } catch (e) { return null; } };
+  const store = (k, v) => { try { if (KV) KV.set(k, v); else localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
   const ZERO = { hands: 0, decisions: 0, best: 0, good: 0, evDecisions: 0, evLost: 0, net: 0 };
   const REVIEW_KEEP = 60, REVIEW_SHOW = 6, RECENT = 8, CACHE_KEEP = 400, DRILL_TRIES = 400;
   // seconds: an answer under INSTANT goes first; under SHORT it's a quick solve (Practice's ~2 s at Fast)

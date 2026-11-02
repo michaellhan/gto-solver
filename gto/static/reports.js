@@ -193,8 +193,9 @@
   // ---- the panel (browser)
   let box = null, index = null, rep = null;
   const ST = { spot: null, view: "oop", sort: "flop", desc: true, group: "", filter: {} };
-  try { Object.assign(ST, JSON.parse(localStorage.getItem("gto-reports")) || {}); } catch (e) {}
-  const store = () => { try { localStorage.setItem("gto-reports", JSON.stringify(ST)); } catch (e) {} };
+  const KV = globalThis.GTOStore || null;   // (the page's storage, store.js; localStorage itself without it)
+  try { Object.assign(ST, JSON.parse(KV ? KV.getRaw("gto-reports") : localStorage.getItem("gto-reports")) || {}); } catch (e) {}
+  const store = () => { try { if (KV) KV.set("gto-reports", ST); else localStorage.setItem("gto-reports", JSON.stringify(ST)); } catch (e) {} };
   const get = async (p) => { const r = await fetch(LIB + p, { cache: "no-cache" }); if (!r.ok) throw new Error(`couldn't load ${p} (${r.status})`); return r.json(); };
 
   function controls() {

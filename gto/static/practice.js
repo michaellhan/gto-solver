@@ -10,8 +10,11 @@
 "use strict";
 (() => {
   const ON = "gto-practice", HABITS = "gto-practice-habits", STATE = "gto-practice-state", HAND = "gto-practice-hand", SCORE = "gto-practice-score", SEAT = "gto-practice-seat", REVIEW = "gto-practice-review", DRILL = "gto-practice-drill", HINT = "gto-practice-hint", TABLE = "gto-practice-table", TABLES = "gto-practice-tables";
-  const read = (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } };
-  const store = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+  // (kept through the page's storage, store.js, which keeps each key in localStorage too; localStorage itself without it.
+  // The API key below stays in localStorage alone: never a record, a backup or a sync)
+  const KV = globalThis.GTOStore || null;
+  const read = (k) => { try { return JSON.parse(KV ? KV.getRaw(k) : localStorage.getItem(k)); } catch (e) { return null; } };
+  const store = (k, v) => { try { if (KV) KV.set(k, v); else localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
   const ZERO = { hands: 0, decisions: 0, best: 0, good: 0, evDecisions: 0, evLost: 0, net: 0 };
   // hand: { hero, players, hole, hands: {seat: [c, c]}, board: [5 cards], result }
   // seat: "table", "random" or a position; table: the ring game (see deal()); more: the verdict's details open; detail: your range shown (see range);

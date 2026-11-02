@@ -34,7 +34,10 @@ copied hand text, and the state sent to the solver (its keys are checked against
 `Advisor._advise` reads). They also write `tests/data/page_states.json`, random hands played through
 the page (some with per-seat stacks); `tests/test_page_states.py` replays each spot with the advisor's own `replay_hand` (same
 player to act, pot, bet and players in) and asks the advisor about a sample of them. After a change to
-the page's engine, regenerate it with `UPDATE_FIXTURES=1 node --test 'tests/js/*.test.js'`.
+the page's engine, regenerate it with `UPDATE_FIXTURES=1 node --test 'tests/js/*.test.js'`. The storage layer's tests
+(`store.test.js`, `hands.test.js`) run on `tests/js/idb_shim.js`, a small in-memory IndexedDB (versions and upgrades,
+keyPath and out-of-line stores, transactions that roll back on abort), and `loadPage({ store: true })` loads
+`store.js` before the page as the browser does.
 
 ## Review UI
 
@@ -54,6 +57,7 @@ Open http://127.0.0.1:18877/ . Each view has its own URL, on the website and the
 | `/gto-solver/preflop/` | Preflop solve (Study on a game set in a form) |
 | `/gto-solver/session/` | Analyze session |
 | `/gto-solver/import/` | Import hand |
+| `/gto-solver/hands/` | My hands |
 | `/gto-solver/start/`, `/about/`, `/glossary/`, `/changelog/`, `/fairplay/` | Help: Getting started, About & accuracy, Glossary, Changelog, Fair play |
 
 (locally without the `/gto-solver` prefix: http://127.0.0.1:18877/practice/). Opening a view pushes its URL
@@ -227,6 +231,37 @@ solver's on the same hands over 15+ decisions, a preflop situation with under 80
 over 15+, a postflop spot losing 0.5bb+ a decision over 10+); each session's date, file, hands, share in the mix and
 bb/100 with a line of bb/100 over time (Forget removes one, Clear history all); and the street, preflop-situation,
 postflop-spot and frequency tables summed over every session.
+
+**My hands** (in the ⋯ menu, `/gto-solver/hands/`) keeps the hands you play on the table, in this browser. The hand
+on the table is saved when **New hand**, a share link, an imported history or a hand from the drills, reports or the
+analyzer takes its place (a drills or reports spot you didn't play on isn't), when **Review whole hand** finishes (with
+its grades), and when a history is imported (with its site, hand number and text). The same hand is one record however
+often it's saved (grades aside), and a hand opened from the list and played on is saved back into its own record. Each
+row has the date, positions, cards, board, kind of pot, how far it went and your decisions' grades with the EV given
+up; the search reads cards (`AhKd`, `AKo`, `77`), positions, the board, tags, notes and the site, and the list filters
+to reviewed, not reviewed or imported hands, or to one tag. A hand opens on the table (**Open**, to see or review it),
+in Study at your last decision (**Study**), or copies as its `#h=` link; it takes tags and a note; **Delete** has an
+Undo. **Export** downloads the hands listed (or one) as JSON (`gto-solver-hands`), and **Import a file…** or
+**Paste…** takes such a file, `#h=` links or hand histories (every hand of a session file). With 1,005 hands in the
+browser the list reads in 7 ms, the panel opens in 15 ms and a search filters in 7 ms; 1,000 hands import in 0.24 s.
+The panel is `gto/static/hands.js`, loaded when first opened.
+
+**Your data in this browser** is kept in one place, `gto/static/store.js` (loaded before the page's script): an
+IndexedDB database `gto-store` of records `{ id, v (the schema), created, updated, dev (this browser's id), data }`,
+a deleted one kept as a tombstone (`deleted: true`) so that a later sync can tell it from one never seen, in four
+stores: `kv` (each setting and saved state: the hand on the table, Practice's score and mistakes, the drills'
+progress, Study's choices, the speed, the deck's colours…), `hands` (My hands), `sessions` (the analyzer's summaries)
+and `blobs` (the analyzer's session in progress). The `kv` values are also kept in localStorage under their old names,
+so the page reads them at once as it starts; a key written there directly is taken in at the next load, and a value
+localStorage has no room for stays in its record. On its first load the store took in what the site kept before
+(every localStorage key, and the analyzer's IndexedDB `gto-session` or its localStorage fallback), leaving the old
+copies where they were. Without IndexedDB (some private windows) the records go to localStorage, else to memory.
+Study's solved preflop games (IndexedDB `gto-pf`) and the worker's cached files are caches and stay out of it.
+**Back up everything** (in My hands) downloads all of it as one file (`gto-solver-backup-<date>.json`: 772 KB with
+1,005 hands), and **Restore from a backup…** merges one in, here or in another browser: a record missing here is added,
+of one in both the newer stays, nothing here is deleted, and a hand already here under another id gets the backup's
+tags (and its note, if it had none); settings take effect on the next load. Your Anthropic API key (Explain with AI)
+is never a record and never in a backup or export, not even pasted into a note.
 
 **Flop reports** (in the ⋯ menu) are aggregate reports of the [precomputed flop library](#precomputed-flop-library):
 pick a spot (BTN vs BB, …) and a node (out of position first; in position after a check; out of position facing
@@ -596,7 +631,7 @@ is needed the deck moves up under the setup; otherwise it's hidden behind **Edit
 **Copy hand** puts a plain-text summary on the clipboard: the full action, the
 advice with frequencies, EVs and sizes, the villain range, solver stats, a link
 that reopens the exact spot, and the raw state JSON for the API or CLI.
-The hand is kept in the browser between reloads; **New hand** clears it.
+The hand is kept in the browser between reloads; **New hand** starts a new one and keeps the old one in **My hands**.
 
 **Practice** in the header plays hands against GTO opponents (**Exit practice** in the same place goes back
 to the solver), with the player count, stacks (each seat's own, if set), antes, straddle and rake of the setup. The
@@ -710,7 +745,7 @@ used up the card says "Daily free explanations used up — add your own key" and
 **Use my own key** link switches to your own key (and **Use free explanations** back). Without the proxy, or with
 your own key chosen, it goes straight from the browser to the Claude Messages API with your own Anthropic API key: the
 first time it asks for one (a link to console.anthropic.com to get one); the key is kept only in this browser's
-localStorage and sent only to api.anthropic.com (the site is static, nothing of ours in between), and **Forget key**
+localStorage (never in a backup or an export) and sent only to api.anthropic.com (the site is static, nothing of ours in between), and **Forget key**
 removes it. A refused key (401), a rate limit (429) or no network say so in the card with **Try again**; each
 explanation is kept in memory for its decision, so opening it again costs nothing. The page loads `practice.js` the first time Practice is turned on.
 

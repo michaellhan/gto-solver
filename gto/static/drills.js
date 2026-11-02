@@ -192,8 +192,9 @@
   const KEY = "gto-drills";
   let box = null, index = null, rep = null, ranges = null, entries = {}, busy = false, queued = null;
   const ST = { spot: null, view: "vsbet", filter: {}, pr: null, g: null, session: emptyScore(), hist: {} };
-  try { const s = JSON.parse(localStorage.getItem(KEY)) || {}; Object.assign(ST, { spot: s.spot || null, view: s.view || "vsbet", filter: s.filter || {}, hist: s.hist || {} }); } catch (e) {}
-  const store = () => { try { localStorage.setItem(KEY, JSON.stringify({ spot: ST.spot, view: ST.view, filter: ST.filter, hist: ST.hist })); } catch (e) {} };
+  const KV = globalThis.GTOStore || null;   // (the page's storage, store.js; localStorage itself without it)
+  try { const s = JSON.parse(KV ? KV.getRaw(KEY) : localStorage.getItem(KEY)) || {}; Object.assign(ST, { spot: s.spot || null, view: s.view || "vsbet", filter: s.filter || {}, hist: s.hist || {} }); } catch (e) {}
+  const store = () => { try { const v = { spot: ST.spot, view: ST.view, filter: ST.filter, hist: ST.hist }; if (KV) KV.set(KEY, v); else localStorage.setItem(KEY, JSON.stringify(v)); } catch (e) {} };
   const hkey = () => `${ST.spot}/${ST.view}`;
   const get = async (p, bin) => { const r = await fetch(LIB + p); if (!r.ok) throw new Error(`couldn't load ${p} (${r.status})`); return bin ? r.arrayBuffer() : r.json(); };
   const spotOf = (id) => index.spots.find(s => s.id === id);

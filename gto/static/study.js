@@ -654,9 +654,10 @@
                build: false, brush: 0, amt: 1, tally: { n: 0, acc: 0 }, filter: null, ro: null, roWho: "first", pf: "charts", pfRun: null, pfGame: null,
                rui: { view: "table", sort: "card", desc: true, group: "", filter: {} },
                sizes: "standard", sizeText: {}, custom: null, sizeErr: null };
-  try { const s = JSON.parse(localStorage.getItem("gto-study")) || {}; for (const k of ["state", "spot", "speed", "view", "build", "rui", "pf", "pfGame", "sizes", "sizeText", "custom"]) if (s[k] != null) ST[k] = s[k]; } catch (e) {}
+  const KV = globalThis.GTOStore || null;   // (the page's storage, store.js; localStorage itself without it)
+  try { const s = JSON.parse(KV ? KV.getRaw("gto-study") : localStorage.getItem("gto-study")) || {}; for (const k of ["state", "spot", "speed", "view", "build", "rui", "pf", "pfGame", "sizes", "sizeText", "custom"]) if (s[k] != null) ST[k] = s[k]; } catch (e) {}
   if (!["standard", "more", "custom"].includes(ST.sizes)) ST.sizes = "standard";
-  const store = () => { try { localStorage.setItem("gto-study", JSON.stringify({ state: ST.state, spot: ST.spot, speed: ST.speed, view: ST.view, build: ST.build, rui: ST.rui, pf: ST.pf, pfGame: ST.pfGame, sizes: ST.sizes, sizeText: ST.sizeText, custom: ST.custom })); } catch (e) {} };
+  const store = () => { try { const v = { state: ST.state, spot: ST.spot, speed: ST.speed, view: ST.view, build: ST.build, rui: ST.rui, pf: ST.pf, pfGame: ST.pfGame, sizes: ST.sizes, sizeText: ST.sizeText, custom: ST.custom }; if (KV) KV.set("gto-study", v); else localStorage.setItem("gto-study", JSON.stringify(v)); } catch (e) {} };
   const curSizes = () => sizesOf(ST.sizes, ST.custom);
   // the range builder's paints, by the answer they're of
   const paints = new Map();

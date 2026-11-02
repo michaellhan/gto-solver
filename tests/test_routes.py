@@ -18,7 +18,7 @@ LIB = os.path.join(ROOT, "gto", "static", "flop_library")
 class TestRoutes(unittest.TestCase):
     def test_table(self):
         names, spot = routes.routes(HTML)
-        self.assertEqual(names, ["practice", "drills", "reports", "session", "study", "preflop", "import",
+        self.assertEqual(names, ["practice", "drills", "reports", "session", "study", "preflop", "import", "hands",
                                  "start", "about", "glossary", "changelog", "fairplay"])
         self.assertEqual(spot, ["drills", "reports"])
 
@@ -60,7 +60,7 @@ class TestRoutes(unittest.TestCase):
             page = open(os.path.join(d, "practice", "index.html"), encoding="utf-8").read()
             self.assertIn('<base href="../">', page)
             self.assertIn('WORKER_VERSION = "stamped', page)   # a copy of the stamped page
-            self.assertEqual(len(done), 12)   # (no flop_library here: no spot pages)
+            self.assertEqual(len(done), 13)   # (no flop_library here: no spot pages)
 
 
 class TestServer(unittest.TestCase):
@@ -97,9 +97,13 @@ class TestServer(unittest.TestCase):
         self.assertEqual(r.getheader("Location"), "/practice/?x=1")
         r, _ = self.get("/nope/")
         self.assertEqual(r.status, 404)
-        r, body = self.get("/practice.js")
+        for js in ("/practice.js", "/store.js", "/hands.js"):
+            r, body = self.get(js)
+            self.assertEqual(r.status, 200, js)
+            self.assertEqual(r.getheader("Content-Type"), "text/javascript")
+        r, body = self.get("/hands/")
         self.assertEqual(r.status, 200)
-        self.assertEqual(r.getheader("Content-Type"), "text/javascript")
+        self.assertIn(b'<base href="../">', body)
         r, _ = self.get("/health.json")
         self.assertEqual(r.status, 200)
 

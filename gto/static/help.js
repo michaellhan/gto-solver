@@ -127,7 +127,9 @@
     </ul>
     <h3>Your data</h3>
     <p>The solver runs in your browser (Pyodide, Python compiled to WebAssembly, loaded from jsDelivr), so your hands,
-      hand histories and settings stay on your device, in its local storage. The page is hosted on GitHub Pages. The one
+      hand histories and settings stay on your device, in its local storage. Clearing this site's data in your browser
+      deletes them; <b>Back up everything</b> in My hands saves them to a file (without your Anthropic key), and Restore
+      reads it back, in this browser or another. The page is hosted on GitHub Pages. The one
       exception is <b>Explain with AI</b> in Practice: when you click it, that decision's summary is sent through our
       proxy to Anthropic's Claude to write the explanation (or straight to Anthropic with your own key, if you set one).</p>`;
   }
@@ -164,6 +166,7 @@
   // ---- the Changelog: what changed for users, newest first, from the commit history
   const CHANGES = [
     ["November 1 - 2", [
+      "My hands: every hand you enter, review or import is kept in this browser (New hand no longer replaces it), with search, tags, notes, export and import, and a backup file of everything the site keeps.",
       "Help pages: Getting started, About & accuracy, this Glossary, the Changelog and Fair play, in the ⋯ menu; a first-visit chooser; plainer tooltips on the speeds, Pool, Copy hand and the answer badges, which now open their Glossary entry.",
       "The eight 3bet pots are precomputed on every flop, with their turns: 83.6% of heads-up flop decisions in 6-max 100bb now answer at once (77.2% before).",
       "Answers whose ranges left the solves earlier in the hand say so: the \"off the solved line\" badge, and a line saying why.",

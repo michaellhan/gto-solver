@@ -207,6 +207,12 @@ function loadPage(opts = {}) {
   ctx.addEventListener = (t, f) => (winListeners[t] = winListeners[t] || []).push(f);
   if (opts.layout) ctx.visualViewport = viewport;
   vm.createContext(ctx);
+  // opts.store: the page's storage layer (store.js, its <script src> before the inline script) over opts.indexedDB (an
+  // idb_shim.js database; a new one if not given). Without it the page keeps its state in localStorage itself.
+  if (opts.store) {
+    ctx.indexedDB = opts.indexedDB || require("./idb_shim.js").fakeIndexedDB();
+    vm.runInContext(fs.readFileSync(path.join(path.dirname(HTML_PATH), "store.js"), "utf8"), ctx, { filename: "store.js" });
+  }
   vm.runInContext(pageScript(), ctx, { filename: "index.html" });
   // run code in the page's global scope (its top-level let/const are visible here)
   const run = (code) => vm.runInContext(code, ctx);

@@ -386,8 +386,9 @@
              set: async (v) => { try { localStorage.setItem(key, JSON.stringify(v)); } catch (e) {} },
              del: async () => { try { localStorage.removeItem(key); } catch (e) {} } };
   }
-  const defaultStore = (key = STORE_KEY) => typeof indexedDB === "object" && indexedDB ? idbStore("gto-session", key)
-    : lsStore(key === STORE_KEY ? "gto-session" : "gto-session-" + key);
+  // (the page's storage, store.js, where it's loaded: the session in progress a blob, the history a record each)
+  const defaultStore = (key = STORE_KEY) => globalThis.GTOStore ? (key === STORE_KEY ? globalThis.GTOStore.blob("session-current") : globalThis.GTOStore.sessions)
+    : typeof indexedDB === "object" && indexedDB ? idbStore("gto-session", key) : lsStore(key === STORE_KEY ? "gto-session" : "gto-session-" + key);
 
   // ---- the page: its importer, engine, solver and grading (globals of index.html and hh.js)
   function pageHost() {
