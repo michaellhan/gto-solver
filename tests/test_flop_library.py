@@ -881,7 +881,8 @@ class TestShippedLibrary(unittest.TestCase):
                 self.assertIn("", x["n"])
                 for k, fr in x["n"].items():
                     self.assertEqual(len(fr), len(rep["nodes"][k]))
-                    self.assertAlmostEqual(sum(fr), 1.0, delta=0.002, msg=(sp["id"], x["f"], k))
+                    # (each rounded to 0.001: half a step off at most)
+                    self.assertAlmostEqual(sum(fr), 1.0, delta=0.0005 * len(fr) + 1e-9, msg=(sp["id"], x["f"], k))
                 self.assertAlmostEqual(sum(x["ev"]), sp["pot"], delta=0.011)
 
     def test_shipped_ranges_match_the_index(self):

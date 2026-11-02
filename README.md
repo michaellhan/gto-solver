@@ -233,23 +233,22 @@ flush; completes a straight: three board ranks within a straight's five; pairs t
 brick, under every board card); sort by any column, filter to a class, or group by class, rank or suit (the mix
 averaged by the acting range on each card, EV and equity by the cards' chances given both ranges; a group row
 filters to it). **Cards** shows the same as a 13x4 grid. Click a card to deal it. The report comes from what's in
-hand first, at once: a library flop's stored turns (the 3bet pots with turn files: 0.1 s; the files shipped so far
-hold strategies only, so the EV columns are "—"; a file built with the flop solve's EVs, format 2, fills them with
-each turn class's range EVs and gives each action's EV for the hands that take it in its bar's tip; a line they don't
-hold offers the lines they do), or the solve Study's own answer made (a
-river report after Study answered the turn: 0.02 s natively; a flop solved live). Otherwise **Solve the flop** /
-**Solve the turn** solves that street at the speed picked, with a progress bar against the time it should take: on
-the local server the speed's budget (Fast: 2.5 s a street, and a river report's flop too where it isn't in hand:
-K72r's turn report took 1.2 s, a Q84 river report 6.8 s); in the browser, where the solves stop well inside their
-budgets (Fast 8 s, a river report 11; Accurate 60 and 72) once they reach the exploitability target, the time they
-took (`scripts/bench_browser.mjs`'s ro-* spots, each solved cold in a fresh worker, 8 threads as the site runs / 1
-where the page isn't cross-origin isolated): Fast turn reports 0.3-1.2 s / 0.5-2.3 s (single-raised, 3bet, limped
-and two-tone flops), river reports 0.7-3.0 s / 1.3-7.1 s (after a bet, checked through, a 3bet pot); Accurate a turn
-report 1.3 s / 3.5 s, a river report 7.2 s / 30.5 s. The button and the bar say the slowest of those, rounded up (~2
-s and ~3 s at Fast on 8 threads, ~31 s for an unthreaded Accurate river report), in between for 2-7 threads. Like
-Study, it reads
-the equilibrium: tournament payouts, locks and exploit settings are left out. The pure parts (`gto/runouts.py`'s
-equities, `gto/static/runouts.js`, loaded when one first opens) are tested from Python and Node.
+hand first, at once: a library flop's stored turns (BTN vs BB's and the 3bet pots' turn files: 0.1 s; a file built
+with the flop solve's EVs, format 2, as the 3bet pots' files on the flops added for every flop are, fills the EV
+columns with each turn class's range EVs and gives each action's EV for the hands that take it in its bar's tip, where
+a strategies-only file, format 1, leaves them "—"; a line they don't hold offers the lines they do), or the solve
+Study's own answer made (a river report after Study answered the turn: 0.02 s natively; a flop solved live). Otherwise
+**Solve the flop** / **Solve the turn** solves that street at the speed picked, with a progress bar against the time
+it should take: on the local server the speed's budget (Fast: 2.5 s a street, and a river report's flop too where it
+isn't in hand: K72r's turn report took 1.2 s, a Q84 river report 6.8 s); in the browser, where the solves stop well
+inside their budgets (Fast 8 s, a river report 11; Accurate 60 and 72) once they reach the exploitability target, the
+time they took (`scripts/bench_browser.mjs`'s ro-* spots, each solved cold in a fresh worker, 8 threads as the site
+runs / 1 where the page isn't cross-origin isolated): Fast turn reports 0.3-1.2 s / 0.5-2.3 s (single-raised, 3bet,
+limped and two-tone flops), river reports 0.7-3.0 s / 1.3-7.1 s (after a bet, checked through, a 3bet pot); Accurate a
+turn report 1.3 s / 3.5 s, a river report 7.2 s / 30.5 s. The button and the bar say the slowest of those, rounded up
+(~2 s and ~3 s at Fast on 8 threads, ~31 s for an unthreaded Accurate river report), in between for 2-7 threads. Like
+Study, it reads the equilibrium: tournament payouts, locks and exploit settings are left out. The pure parts
+(`gto/runouts.py`'s equities, `gto/static/runouts.js`, loaded when one first opens) are tested from Python and Node.
 
 In a 3-way pot (three in from the flop) the report reads the hand's 3-way solve of the street that closed
 (`Advisor._mw_runouts`): Study's own answer at its closing decision, or an earlier one on the street whose tree holds
@@ -305,8 +304,9 @@ combos and the EV of the hands that take each action; click one to play it and t
 When the betting closes, type the next card(s) or deal random ones; the line above the grid steps back to any earlier
 decision (Backspace steps back one). Fast or Accurate picks the solver's speed for live solves (turns and rivers, or
 flops the library doesn't hold: a Fast turn ~10 s in the browser), and answers already seen come back at once.
-On a library flop's turn where the spot's entry stores one (every BTN vs BB flop, and the 3bet pots' turn files:
-every CO vs HJ and BB vs SB flop, 495 of BB vs CO's) and the flop line is one it holds, the turn's first decision and the in-position player's
+On a library flop's turn where the spot's entry stores one (every BTN vs BB flop, and the 3bet pots' turn files: every
+CO vs HJ and BB vs SB flop, 1,698 of BB vs CO's, and the other five's 1,203 flops stored after their first 552) and
+the flop line is one it holds, the turn's first decision and the in-position player's
 after a check show at once the flop solve's own turn strategy, marked approximate, while the turn's own solve runs:
 the grid by strategy (each combo's stored mix, the card dealt read as its class's played card, the one bet size 75%
 of the pot), the range's frequency and combos per action, the opponent's range, each class's combos with their mix,
@@ -2421,23 +2421,24 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   SB's flat of an early open: 6-max HJ or UTG open, SB and BB call, 8.2% of its 3-way flops), and the flops no stored
   flop is near enough to.
 * **A library spot's flop the library doesn't store** (`instant_from_near`, `NEAR_UNTIL`; `gto/flop_approx.py`;
-  `Advisor.prefetch`). The flatted opens and the 3bet pots store 552 of the 1755 flops; on the other 1203 (10.2 points
-  of the heads-up flop decisions: Precomputed flop library, Coverage) the page had nothing to show until the flop's
-  live solve answered. Now the flop's decisions are read at once off the spot's stored flops most like it, marked
-  approximate: the three nearest of the same pairing and suit pattern (`neighbours`; the ranks' summed gaps at most 6,
-  `MAX_DIST`), each carried over by card substitution (`card_map`: the flop's cards onto the stored flop's, the other
-  ranks in order, so KhJd6c read off KhJd5c plays a 6 as the 5 and 54 as 64), their mixes averaged per combo with
-  weights 1 / (1 + distance) (`predict`) over the images that hold the combo's hand class there (the made hand and the
-  draw, `breakdown.categorize`: 8h9h on KhJd6c, no pair and a backdoor straight draw, reads its images on KhJd5c and
-  KhQd6c, not the gutshot it is on KhJd7c; all of them where none does, `CLASS_EPS`; the advisor tests only hero's
-  combo, four lookups), facing a bet then corrected by a small learned model (below). It answers wherever an entry
-  stores the decision (the first decisions, facing a bet, facing a raise of it) on the line the hand took (sizes at
-  their nearest), until the flop's own solve in hand has run 50 iterations (`NEAR_UNTIL`, from when
-  `instant_from_own` reads it); the page names the flops it read. Nothing is solved for it (6-16 ms natively), and the
-  worker fetches the three entries with the flop's once it's known (the prefetch's dry run names them).
-  `scripts/instant_coverage.py` counts these apart: heads-up flop decisions answered at once 77.2% -> 87.5% with them
-  (9.4 decisions per 100 hands; postflop 35.2% -> 39.9%, all decisions 83.9% -> 85.1%). Every other answer is
-  unchanged (advise JSON identical on stored and unstored flops and a limped pot; `instant` differs only where it now
+  `Advisor.prefetch`). The flatted opens store 552 of the 1755 flops (the 3bet pots did, until they were built on
+  every flop); on the other 1203 (4.3 points of the heads-up flop decisions: Precomputed flop library, Coverage) the
+  page had nothing to show until the flop's live solve answered. Now the flop's decisions are read at once off the
+  spot's stored flops most like it, marked approximate: the three nearest of the same pairing and suit pattern
+  (`neighbours`; the ranks' summed gaps at most 6, `MAX_DIST`), each carried over by card substitution (`card_map`:
+  the flop's cards onto the stored flop's, the other ranks in order, so KhJd6c read off KhJd5c plays a 6 as the 5 and
+  54 as 64), their mixes averaged per combo with weights 1 / (1 + distance) (`predict`) over the images that hold the
+  combo's hand class there (the made hand and the draw, `breakdown.categorize`: 8h9h on KhJd6c, no pair and a backdoor
+  straight draw, reads its images on KhJd5c and KhQd6c, not the gutshot it is on KhJd7c; all of them where none does,
+  `CLASS_EPS`; the advisor tests only hero's combo, four lookups), facing a bet then corrected by a small learned
+  model (below). It answers wherever an entry stores the decision (the first decisions, facing a bet, facing a raise
+  of it) on the line the hand took (sizes at their nearest), until the flop's own solve in hand has run 50 iterations
+  (`NEAR_UNTIL`, from when `instant_from_own` reads it); the page names the flops it read. Nothing is solved for it
+  (6-16 ms natively), and the worker fetches the three entries with the flop's once it's known (the prefetch's dry run
+  names them). `scripts/instant_coverage.py` counts these apart: heads-up flop decisions answered at once 77.2% ->
+  87.5% with them (9.4 decisions per 100 hands; postflop 35.2% -> 39.9%, all decisions 83.9% -> 85.1%). Every other
+  answer is unchanged (advise JSON identical on stored and unstored flops and a limped pot; `instant` differs only
+  where it now
   answers).
 
 
@@ -3976,29 +3977,28 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   suit permutation's, its combos permuted); other flops are solved live. Each spot stores a representative set
   (`representative_flops(n)`: the 1755 suit-isomorphic flops sorted by texture and sampled by weight, so each suit
   pattern, pairing and height gets its share): 552 flops (38% of all flops; it holds the 184, 12.7%, that the first
-  three 3bet pots stored before) for the eight 3bet pots and the opens flatted behind or by the small blind (the HJ's
-  by the CO, the BTN's by the SB, the UTG's by the HJ, the CO's by the SB, the UTG's by the BTN); every flop for the
-  opens the big blind calls (`SPOT_FLOPS`).
-* **Coverage** (`scripts/flop_library_coverage.py`: the 6-max 100bb preflop game played by the charts, the flop by
-  the stored strategies): 36% of hands go heads-up to the flop, and the library answers 77.2% of their flop
-  decisions (74.5% before the eight 3bet pots on 552, 71.6% before the five flatted opens on 552, 49.2% before HJ,
-  UTG and SB vs BB on every flop, 36.1% before CO vs BB on every flop and SB vs BB on 552, 21.3% before format 2
-  made room, 9.4% with 184 flops everywhere). Of the rest, a spot not in the library is 9.5 points (the other 3bet
-  pots ~0.6 each: the BTN's and the SB's 3bet of the UTG, the BB's and the SB's of the HJ; 4bet pots; 4.5 of them
-  answered approximately at once off the spot whose ranges are nearest, `flop_approx.near_spot`), a flop not
-  stored 10.2 (the flatted opens' and the 3bet pots': answered approximately at once from the stored flops most like
-  it, `scripts/instant_coverage.py` 77.2% -> 87.5% with them, 91.9% with both), a raise 3.2. At 40-200bb, where no
-  spot is built, the 100bb spots answer 66-89% of the heads-up flop decisions approximately at once (`--stack`). At 8- and 9-max
-  the pots that play as 6-max ones are answered as the library's own (68.2% and 64.6% of their heads-up flop
+  three 3bet pots stored before) for the opens flatted behind or by the small blind (the HJ's by the CO, the BTN's by
+  the SB, the UTG's by the HJ, the CO's by the SB, the UTG's by the BTN); every flop for the opens the big blind calls
+  and the eight 3bet pots (`SPOT_FLOPS`).
+* **Coverage** (`scripts/flop_library_coverage.py`: the 6-max 100bb preflop game played by the charts, the flop by the
+  stored strategies): 36% of hands go heads-up to the flop, and the library answers 83.6% of their flop decisions
+  (77.2% before the eight 3bet pots on every flop, 74.5% before them on 552, 71.6% before the five flatted opens on
+  552, 49.2% before HJ, UTG and SB vs BB on every flop, 36.1% before CO vs BB on every flop and SB vs BB on 552, 21.3%
+  before format 2 made room, 9.4% with 184 flops everywhere). Of the rest, a spot not in the library is 9.5 points
+  (the other 3bet pots ~0.6 each: the BTN's and the SB's 3bet of the UTG, the BB's and the SB's of the HJ; 4bet pots;
+  4.5 of them answered approximately at once off the spot whose ranges are nearest, `flop_approx.near_spot`), a flop
+  not stored 4.3 (the flatted opens': answered approximately at once from the stored flops most like it,
+  `scripts/instant_coverage.py` 83.8% -> 88.2% with them, 92.6% with both), a raise 2.6. At 40-200bb, where no spot is
+  built, the 100bb spots answer 66-89% of the heads-up flop decisions approximately at once (`--stack`). At 8- and
+  9-max the pots that play as 6-max ones are answered as the library's own (68.2% and 64.6% of their heads-up flop
   decisions, `--players`), and with antes or a straddle the nearest spot of another pot answers 80.6% and 67.8%
-  approximately (`--ante`, `--straddle`). A
-  flop's entry is worth its spot's share times its suit count, so more flops of the commonest spots beat new spots; by
-  points per MB (`--assume`): BTN vs BB on every flop +12.4 for 4.5 MB, CO vs BB on 1656 (90%) +7.6 for 2.8, UTG vs
-  BB on 552 +2.4 for 1.05, SB vs BB on 552 +3.5 for 2.1, then on every flop SB vs BB +8.6 for 6.0 MB (its wide
-  ranges' entries are the biggest), HJ vs BB +7.8 for 3.5, UTG vs BB +6.1 for 3.1, the five flatted opens on 552
-  +2.9 for 6.6, the eight 3bet pots on 552 (five of them new: the SB's and the BB's 3bet of the CO, the HJ's of
-  the UTG, the CO's of the HJ, the BB's of the SB) +2.7 for 8.8, all built; next: the flatted opens on every flop
-  +4.3 for ~14 MB.
+  approximately (`--ante`, `--straddle`). A flop's entry is worth its spot's share times its suit count, so more flops
+  of the commonest spots beat new spots; by points per MB (`--assume`): BTN vs BB on every flop +12.4 for 4.5 MB, CO
+  vs BB on 1656 (90%) +7.6 for 2.8, UTG vs BB on 552 +2.4 for 1.05, SB vs BB on 552 +3.5 for 2.1, then on every flop
+  SB vs BB +8.6 for 6.0 MB (its wide ranges' entries are the biggest), HJ vs BB +7.8 for 3.5, UTG vs BB +6.1 for 3.1,
+  the five flatted opens on 552 +2.9 for 6.6, the eight 3bet pots on 552 (five of them new: the SB's and the BB's 3bet
+  of the CO, the HJ's of the UTG, the CO's of the HJ, the BB's of the SB) +2.7 for 8.8, then on every flop +6.4 for
+  21.4 MB (their turn files 138 MB more), all built; next: the flatted opens on every flop +4.3 for ~14 MB.
 * **What is stored**: the flop's first decisions (the root; the in-position player after a check or facing a lead;
   the out-of-position player facing a bet after checking) and the decisions facing a raise of those bets (a
   check-raise, a lead raised: entries built since 2026-10-29; 1-2 more nodes a flop, entries 26-45% bigger), only
@@ -4053,13 +4053,14 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   iterations, the river blind): a third flop bet (33/75/125%) 0.02 at most; a second raise size of 30% 0.16 / 0.20
   on Kc7d2h and 0.02 at most on the other three, of 100% 0.10 / 0.02 on KcTd6h and ~0 elsewhere. Each costs 32-43%
   more nodes, up to 66% more time and a rebuild of every entry, so the library keeps bets of 33/75% and a 50% raise.
-* **Turns** (`<spot>/<flop>.turn.bin` beside each entry, `encode_turns`, GTOTN1; written by the builds from here,
-  none shipped yet): the flop solve's own turn strategies, for an answer at once on the turn after a library flop
-  (`FlopLibrary.turns`, `turn_node`; the advisor's approximate answer there, `instant_from_store`: Accuracy vs
-  speed, "The turn after a library flop"). Per flop line that 1% or more of the hand pairs take to the turn (BTN vs
-  BB on Kc7d2h: five lines, 66% of the pairs), the turn's first decision and the in-position player's after a check;
-  per turn class (one card a rank, a flush suit's apart: 13 on a rainbow flop, 26 two-tone, 23 monotone) the played
-  card's strategies for the acting player's combos that reach the line (0.5% of its most reached): strategies only, in 5% steps, at the flop solve's turn sizes (75% bets and raises).
+* **Turns** (`<spot>/<flop>.turn.bin` beside each entry, `encode_turns`, GTOTN1; written by the builds, shipped for
+  BTN vs BB and the 3bet pots: 12,978 files, 167.6 MB): the flop solve's own turn strategies, for an answer at once on
+  the turn after a library flop (`FlopLibrary.turns`, `turn_node`; the advisor's approximate answer there,
+  `instant_from_store`: Accuracy vs speed, "The turn after a library flop"). Per flop line that 1% or more of the hand
+  pairs take to the turn (BTN vs BB on Kc7d2h: five lines, 66% of the pairs), the turn's first decision and the
+  in-position player's after a check; per turn class (one card a rank, a flush suit's apart: 13 on a rainbow flop, 26
+  two-tone, 23 monotone) the played card's strategies for the acting player's combos that reach the line (0.5% of its
+  most reached): strategies only, in 5% steps, at the flop solve's turn sizes (75% bets and raises).
   Another card of a class reads the played card's: each combo the same combo's, and one holding the played card that
   of its image holding the turn card. ~10 KB a rainbow flop, ~18 KB on average (~360 MB for 20,000 entries,
   committed with the entries). Against a live Accurate turn (33/75/125%, 400 iterations; BTN vs BB on Kc7d2h, its

@@ -31,6 +31,20 @@ def advisor(lib=None):
     return a
 
 
+def without(lib, drop):
+    """A library on the shipped one's files whose index leaves out the flops `drop` ({spot id: canonical flops}): the
+    3bet pots store every flop, so a flop one of them doesn't store is one taken out of its index."""
+    idx = json.loads(json.dumps(lib.index()))
+    for s in idx["spots"]:
+        for nm in drop.get(s["id"], ()):
+            del s["flops"][nm]
+    raw = json.dumps(idx).encode()
+    return fl.FlopLibrary(lambda p: raw if p == "index.json" else lib._fetch(p))
+
+
+KJ6 = {"3bp_bb_co": ["KcJd6h"], "3bp_bb_btn": ["KcJd6h"]}   # (BOARD's canonical flop out of the 3bet pots read here)
+
+
 class _Lib(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -256,29 +270,29 @@ class TestCorrection(_Lib):
 
     def test_other_spot_and_depth(self):
         """Facing a bet a pot read off another spot takes the correction (BB 3bets the HJ, read off BB 3bet vs CO's
-        stored flops most like KhJd6c, which it doesn't store, and its own entry of KhJd5c), as does one at another
-        depth read off its 100bb stored flops most like the flop (80bb BB 3bet vs BTN on KhJd6c); not the 100bb entry
-        of the flop itself (KhJd5c)."""
+        stored flops most like KhJd6c, here taken out of its index, and its own entry of KhJd5c), as does one at another
+        depth read off its 100bb stored flops most like the flop (80bb BB 3bet vs BTN on KhJd6c, taken out too); not the
+        100bb entry of the flop itself (KhJd5c)."""
         th = fa.theta()
         if th is None:
             self.skipTest("no gto/flop_approx_model.py")
         bb3 = "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:r10,BTN:c"
         holes = ("AhQd", "JhTh", "9h9s", "AhKc", "Ah5h", "QdTd")
-        moved = []
+        moved, lib = [], without(self.lib, KJ6)
         for line, depth, sid, hero, board, stored, corrected in (
                 (HJ_BB3, 100, "3bp_bb_co", "HJ", BOARD, False, True),
                 (HJ_BB3, 100, "3bp_bb_co", "HJ", "KhJd5c", True, True),
                 (bb3, 80, "3bp_bb_btn", "BTN", BOARD, False, True),
                 (bb3, 80, "3bp_bb_btn", "BTN", "KhJd5c", True, False)):
-            sp = next(x for x in self.lib.index()["spots"] if x["id"] == sid)
+            sp = next(x for x in lib.index()["spots"] if x["id"] == sid)
             st = fl.spot_setup(line, 6, depth)
             canon, smap = fl.canonical(parse_cards(board))
             self.assertEqual(fl.cards_str(canon) in sp["flops"], stored)
-            srcs = [(self.lib.entry(sp, nm), m, 1.0 / (1 + d))
+            srcs = [(lib.entry(sp, nm), m, 1.0 / (1 + d))
                     for nm, m, d in fa.neighbours(sorted(sp["flops"]), list(canon), 1 if stored else fa.K)]
             hand = {"players": 6, "stack": depth, "preflop": parse_actions(line), "board": board, "turn": [],
                     "river": [], "hero": hero, "flop": [B("BB", round(0.33 * st["pot"], 2))]}
-            adv, answered = advisor(), 0
+            adv, answered = advisor(lib), 0
             for hole in holes:
                 res = adv.instant(dict(hand, hole=hole))
                 if res is None:   # (a hand the caller's range doesn't hold)
@@ -343,12 +357,14 @@ class TestNearSpot(_Lib):
 
     def test_instant(self):
         """The 3bettor first to act: on a flop the nearest spot stores, its entry's mix (the spot named); on one it
-        doesn't, its K stored flops most like it; the caller after a check."""
-        sp = next(s for s in self.lib.index()["spots"] if s["id"] == "3bp_bb_co")
+        doesn't (KhJd6c, taken out of its index: it stores every flop), its K stored flops most like it; the caller
+        after a check."""
+        lib = without(self.lib, KJ6)
+        sp = next(s for s in lib.index()["spots"] if s["id"] == "3bp_bb_co")
         st = fl.spot_setup(HJ_BB3)
         hand = {"players": 6, "stack": 100, "preflop": parse_actions(HJ_BB3), "turn": [], "river": []}
         self.assertGreater(st["full0"][COMBO_INDEX[tuple(sorted(parse_cards("AhKd")))]], 0)
-        adv = advisor()
+        adv = advisor(lib)
         for board, stored in (("KhJd5c", True), ("KhJd6c", False)):
             self.assertEqual(fl.cards_str(fl.canonical(parse_cards(board))[0]) in sp["flops"], stored)
             with mock.patch.object(A, "solve", side_effect=AssertionError("solved")):
@@ -513,9 +529,9 @@ class TestStudyNear(_Lib):
     def test_borrowed_spot_and_depth(self):
         """A pot the library holds no spot for (BB 3bets HJ: BB 3bet vs CO's flops) and another depth (80bb: BTN vs
         BB's entry of the flop at 100bb): the spot and the depth borrowed named, as the advice's approximate answer
-        names them."""
+        names them (KhJd6c taken out of BB 3bet vs CO's index: it stores every flop)."""
         line = "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:f,BB:c"
-        adv = advisor()
+        adv = advisor(without(self.lib, KJ6))
         res = adv.instant({"players": 6, "stack": 80, "preflop": parse_actions(line), "board": BOARD, "flop": [],
                            "turn": [], "river": [], "study": True})
         self.assertEqual(res["actor"], "BB")

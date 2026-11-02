@@ -98,19 +98,20 @@ SPOTS = [
 # Spots above that only other games build (FORMAT_SPOTS): not built in the default game, so all_spots() leaves them
 # out of it (a build of every spot, the index, the coverage scripts' ids). 6-max's limped pot is heads-up's base.
 FORMAT_ONLY = {"lp_sb_bb"}
-# How many representative flops each spot stores (representative_flops(n); an odd multiple of a set holds it: 552 =
-# 3 x 184, 1656 = 3 x 552; 1755 is every flop): the opens the big blind calls every flop, by coverage per MB
-# (scripts/flop_library_coverage.py --assume; a flop not stored was 53 of the 79 points of heads-up flop decisions
-# the library missed): BTN vs BB on every flop +12.4 points for 4.5 MB, then SB vs BB +8.6 for 6.0 MB (its ranges'
-# entries the biggest), HJ vs BB +7.8 for 3.5, UTG vs BB +6.1 for 3.1; the opens flatted behind or by the small
-# blind 552 (+2.9 for 6.6 MB, every flop +4.3 more); the 3bet pots REP_FLOPS; heads-up SB vs BB 552 (~50.7% of
-# heads-up flop decisions, read approximately off 6-max spots before, ~14 core-h, ~3.6 MB) and its limped pot 552
-# (38.8% of heads-up flop decisions, read by nothing before, ~26 core-h, ~5.8 MB).
+# How many representative flops each spot stores (representative_flops(n); an odd multiple of a set holds it: 552 = 3 x
+# 184, 1656 = 3 x 552; 1755 is every flop): the opens the big blind calls every flop, by coverage per MB
+# (scripts/flop_library_coverage.py --assume; a flop not stored was 53 of the 79 points of heads-up flop decisions the
+# library missed): BTN vs BB on every flop +12.4 points for 4.5 MB, then SB vs BB +8.6 for 6.0 MB (its ranges' entries
+# the biggest), HJ vs BB +7.8 for 3.5, UTG vs BB +6.1 for 3.1; the opens flatted behind or by the small blind 552 (+2.9
+# for 6.6 MB, every flop +4.3 more); the 3bet pots every flop (+6.4 over their 552 for 21.4 MB, the turn files 138 MB
+# more); heads-up SB vs BB 552 (~50.7% of heads-up flop decisions, read approximately off 6-max spots before, ~14
+# core-h, ~3.6 MB) and its limped pot 552 (38.8% of heads-up flop decisions, read by nothing before, ~26 core-h, ~5.8
+# MB).
 REP_FLOPS = 184
 SPOT_FLOPS = {"srp_btn_bb": 1755, "srp_co_bb": 1755, "srp_hj_bb": 1755, "srp_utg_bb": 1755, "srp_sb_bb": 1755,
               "srp_hj_co": 552, "srp_btn_sb": 552, "srp_utg_hj": 552, "srp_co_sb": 552, "srp_utg_btn": 552,
-              "3bp_bb_btn": 552, "3bp_btn_co": 552, "3bp_sb_btn": 552, "3bp_sb_co": 552, "3bp_hj_utg": 552,
-              "3bp_bb_co": 552, "3bp_co_hj": 552, "3bp_bb_sb": 552, "srp_sb_bb_2max": 552, "lp_sb_bb_2max": 552}
+              "3bp_bb_btn": 1755, "3bp_btn_co": 1755, "3bp_sb_btn": 1755, "3bp_sb_co": 1755, "3bp_hj_utg": 1755,
+              "3bp_bb_co": 1755, "3bp_co_hj": 1755, "3bp_bb_sb": 1755, "srp_sb_bb_2max": 552, "lp_sb_bb_2max": 552}
 
 
 # ----------------------------------------------------------------------------- formats
