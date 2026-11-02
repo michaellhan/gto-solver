@@ -2566,7 +2566,8 @@ const VIEWS = {
              close: () => window.FlopReports && window.FlopReports.close(), err: "Couldn't load the flop reports: " },
   drills: { open: (spot) => loadJs("reports.js?v=" + RP_VERSION, () => window.FlopReports).then(() => loadJs("drills.js?v=" + DR_VERSION, () => window.Drills))
               .then(() => window.Drills.open(spot)), close: () => window.Drills && window.Drills.close(), err: "Couldn't load the drills: " },
-  session: { open: () => loadHH().then(() => loadJs("session.js?v=" + SS_VERSION, () => window.Session)).then(() => window.Session.open()),
+  session: { load: () => loadHH().then(() => loadJs("session.js?v=" + SS_VERSION, () => window.Session)),
+             open: () => VIEWS.session.load().then(() => window.Session.open()),
              close: () => window.Session && window.Session.close(), err: "Couldn't load the session analyzer: " },
   study: { open: () => loadJs("study.js?v=" + SY_VERSION, () => window.Study).then(() => window.Study.open()),
            close: () => window.Study && window.Study.close(), err: "Couldn't load Study mode: " },
@@ -2576,6 +2577,8 @@ const VIEWS = {
   hands: { open: () => loadJs("hands.js?v=" + HN_VERSION, () => window.MyHands).then(() => window.MyHands.open()),
            close: () => window.MyHands && window.MyHands.close(), err: "Couldn't load My hands: " },
 };
+// a session analysis left running when the page closed or reloaded goes on in the background (session.js resume)
+try { if (localStorage.getItem("gto-session-run")) modeReady.then(() => VIEWS.session.load()).then(() => window.Session.resume()).catch(() => {}); } catch (e) {}
 window.viewSpot = (name, spot, label) => { if (overlay !== name) return; overlaySpot = spot; overlayLabel = label || null; syncRoute(true); };
 window.viewClosed = (name) => { if (overlay !== name) return; overlay = overlaySpot = overlayLabel = null; syncRoute(); };
 function showOverlay(name, spot, push) {

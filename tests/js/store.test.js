@@ -32,6 +32,7 @@ const OLD_LS = () => ({
   "gto-reports": JSON.stringify({ spot: "srp_btn_bb", sort: "ev" }), "gto-mt-score": JSON.stringify({ hands: 3 }),
   "gto-some-new-thing": "x",                         // (a key added by a later version: taken in too)
   "gto-anthropic-key": KEY, "gto-explain-own": "1",  // (never records)
+  "gto-session-run": JSON.stringify({ tab: "t1", at: 1699990000000 }),   // (the analyzer's run mark: a lock between tabs, never a record)
   "other-site": "not ours",
 });
 const SESSION = { v: 1, created: 1699990000000, name: "Tuesday", scope: "all", status: "paused", items: [{ id: 0, hand: 0, s: "flop", i: 1 }], hands: [{ id: "h1", text: "PokerStars Hand #1: ..." }] };
@@ -45,7 +46,7 @@ test("first load: every localStorage key and the analyzer's database are taken i
   assert.equal(st.backend, "indexeddb");
   const kv = Object.fromEntries((await st.list("kv")).map(r => [r.id, r]));
   for (const [k, v] of Object.entries(init)) {
-    if (k === "gto-anthropic-key" || k === "gto-explain-own" || k === "other-site") assert.equal(kv[k], undefined, k);
+    if (k === "gto-anthropic-key" || k === "gto-explain-own" || k === "gto-session-run" || k === "other-site") assert.equal(kv[k], undefined, k);
     else assert.equal(kv[k].data.raw, v, k);
     assert.equal(ls.getItem(k), v, `localStorage keeps ${k}`);   // (the mirror: left where it was)
   }

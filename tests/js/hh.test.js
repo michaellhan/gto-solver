@@ -108,7 +108,7 @@ test("other sites: detected, seats, amounts and the hero", () => {
   const sites = Object.keys(SAME).map(f => parseHandHistory(HH(f)).site);
   assert.deepEqual(sites, ["888poker", "Ignition/Bovada", "888poker", "Winamax", "WPN/ACR", "partypoker", "partypoker", "Ignition/Bovada", "Winamax", "iPoker", "WPN/ACR"]);
   for (const [f, like] of Object.entries(SAME)) {   // the parsed hand is the PokerStars/GG one but for the names and seat numbers
-    const strip = (h) => ({ ...h, site: 0, heroName: 0, seats: h.seats.map(s => [s.pos, s.stack]).sort() });
+    const strip = (h) => ({ ...h, site: 0, heroName: 0, tournament: !!h.tournament, seats: h.seats.map(s => [s.pos, s.stack]).sort() });
     assert.deepEqual(strip(parseHandHistory(HH(f))), strip(parseHandHistory(HH(like))), f);
   }
   // 888's tournament amounts with dots for thousands; Ignition's hero is "[ME]" among everyone's cards, its seat numbers aren't the table's order
@@ -284,4 +284,21 @@ test("the import dialog names every site the importer reads", () => {
   const sites = new Set(fs.readdirSync(HH_DIR).map(f => parseHandHistory(HH(f)).site));
   assert.ok(sites.size >= 8);
   for (const s of sites) assert.ok(dialog.includes(s), `${s} isn't named in the dialog: ${dialog.trim()}`);
+});
+
+test("tournaments: the header's id, name, buy-in and level (Roman or not); a cash game has none", () => {
+  const T = (f) => j(parseHandHistory(HH(f)).tournament || null);
+  assert.deepEqual(T("stars_9max_mtt_ante"), { id: "3712345678", buyin: "$10+$1", level: 7 });
+  assert.deepEqual(T("stars_bounty_allin"), { id: "3800000000", buyin: "$4.40+$4.40+$1.20", level: 4 });
+  assert.deepEqual(T("winamax_mtt_ante"), { id: "812345678", name: "Monster Stack", buyin: "9€+1€", level: 7 });
+  assert.deepEqual(T("888_9max_mtt_ante"), { id: "198765432", buyin: "$10+$1" });
+  assert.deepEqual(T("acr_9max_mtt_ante"), { id: "33339185", level: 7 });
+  assert.deepEqual(T("ignition_mtt_allin"), { id: "M-20241002003411", buyin: "$8.80+$1.20", level: 4 });
+  assert.deepEqual(T("party_mtt_bounty_allin"), { id: "301084002", buyin: "$8.8+$1.2" });
+  for (const f of ["stars_6max_srp", "gg_straddle", "888_6max_srp", "winamax_3bet_pot", "ipoker_3bet_pot.xml"]) assert.equal(T(f), null, f);
+  // GGPoker's tournament header, and iPoker's tournament tags
+  const gg = HH("gg_straddle").replace(/^Poker Hand #\w+: [^\n]*/, "Poker Hand #TM2345678901: Tournament #123456789, Bounty Hunters $10 Hold'em No Limit - Level10(300/600(80)) - 2024/06/15 20:31:44");
+  assert.deepEqual(j(parseHandHistory(gg).tournament), { id: "123456789", level: 10 });
+  const ip = HH("ipoker_3bet_pot.xml").replace("<gametype>", "<tournamentcode>777123</tournamentcode><tournamentname>Sunday \"Big\"</tournamentname><gametype>");
+  assert.deepEqual(j(parseHandHistory(ip).tournament), { id: "777123", name: "Sunday 'Big'" });
 });

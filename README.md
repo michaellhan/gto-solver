@@ -201,27 +201,60 @@ hand with ungraded decisions) solves each of your decisions in order at the curr
 grades it as if it had been entered live and ends on the hand review; it shows "decision 2 of 5" while it
 runs and can be cancelled, keeping the grades so far.
 
-**Analyze session** (in the ⋯ menu) reviews a whole session, like GTO Wizard's analyzer: drop, choose or paste a
-hand-history file of any number of hands (any site above, mixed sites too). `hh.js`'s `splitHands` cuts it at each
-hand's header (iPoker: a `<session>` per `<game>`), each hand is imported as above, and hands that aren't Hold'em,
-lack your hole cards, have no decision of yours (a walk), repeat one already read, or can't be read are counted and
-skipped. Pick a scope: **Preflop only** (the charts: instant), **Flop-library spots** (preflop plus the flops the
+**Analyze session** (in the ⋯ menu) reviews whole sessions, like GTO Wizard's analyzer: drop, choose or paste
+hand-history files of any number of hands (any site above, mixed sites too), several files at once, or **a folder**
+(its `.txt`, `.xml`, `.log` and `.hh` files, in path order; a dropped folder is walked too). `hh.js`'s `splitHands`
+cuts each file at each hand's header (iPoker: a `<session>` per `<game>`), each hand is imported as above, and hands
+that aren't Hold'em, lack your hole cards, have no decision of yours (a walk), repeat one already read (in any of the
+files: a hand in two exports is counted once), or can't be read are counted and skipped, with the file each came
+from. Pick a scope: **Preflop only** (the charts: instant), **Flop-library spots** (preflop plus the flops the
 [precomputed library](#precomputed-flop-library) holds, asked with `"library_only": true` so any other flop is
-skipped rather than solved: instant) or **All streets** (every flop, turn and river solved at Fast: with the local server an 80-hand session averaged 0.7 s a flop decision (library ones
-included), 3.7 s a turn and 2.6 s a river; in the browser about 8 s plus 3 s per earlier street); each shows its decision count and estimated time. A queue
-then asks each decision in order, exactly as Review whole hand would (the page's request at Fast against GTO,
-graded the same way), with progress, an ETA from the measured time per street, Pause (after the decision in flight),
-Stop, and the session kept in IndexedDB so a reload resumes it; a finished narrower scope can be widened. The
-report: hands, decisions graded, EV lost (bb and bb/100; postflop only, as preflop chart answers carry no EVs and
-are graded by frequency), share in the solver's mix; tables by street, position, preflop situation (RFI, vs limp,
-vs open, squeeze spots, SB vs open, BB defence, vs 3bet, cold vs 3bet, vs 4bet+) and postflop spot (pot type, IP/OOP,
-facing a bet / first to act / checked to); your frequencies against the solver's for the same hands at the same
-decisions (opens, BB defence, folds and 4bets vs 3bets, flop c-bets, folds and raises vs c-bets, turn barrels,
-river bets, folds to turn and river bets); the 20 biggest mistakes by EV (a click opens that hand in the page
-rewound to that decision, Undo brings the rest back) and the clearest off-chart preflop plays. **Export CSV / JSON**
-downloads one row per decision (hand, site and number, seat, cards, board, situation, your action and its
-frequency, the solver's best, EVs, EV lost, grade, source). The panel is `gto/static/session.js`, loaded with `hh.js`
-when first opened.
+skipped rather than solved: instant), **Quick triage** (the default: every street, from the library and reads at once
+first, else a Quick solve, `"triage": true` above; each grade carries its confidence) or **All streets at Fast**
+(every flop, turn and river solved at Fast); each shows its decision count and estimated time. A queue then asks each
+decision in order (the page's request against GTO, graded as Review whole hand grades), with progress, an ETA from
+the measured time per street, Pause (after the decision in flight) and Stop. Tournament hands are kept together by
+tournament (`hh.js` reads each hand's tournament id, name, buy-in and level: PokerStars, GGPoker, 888, partypoker,
+Winamax, WPN/ACR, Ignition, iPoker), and before Analyze each tournament takes its payouts once, for all its hands, as
+the page's Payouts row takes them: the prizes still to pay, first place first, and the players left at other tables
+with their average stack (bb); from two prizes on its hands are solved in prize equity (ICM, as the advice is),
+without payouts in chips. The CSV names each decision's tournament. It runs in the background: the panel
+can be closed (the ⋯ menu's item shows how far it is), the page's own advice, Practice, Study and the Breakdown go
+first (the queue waits while the page asks the solver, and in the browser a decision in flight is stopped through the
+shared stop flag and asked again after), and the session is kept in the store (`blobs`) with a mark in `localStorage`
+while it runs (`gto-session-run`, never a record), so a reload, or the page opened again, picks it up where it stopped
+(not twice: another tab running it keeps it). A finished preflop or library scope can be widened.
+
+After a Quick triage, **Go deeper** asks again at Fast the decisions it flags, the biggest pots first: those graded
+out of the solver's mix (under 15%), losing 2% of the pot or more, answered with low confidence, or not graded (not
+the charts' or the library's own spot, which Fast answers the same); **All N at Fast** asks every one of those. Each
+answer replaces the triage's and keeps it, so the report shows how often the two agree. On a generated 1,000-hand
+6-max session (`scripts/bench_session.py`: 984 hands with a decision of yours, 1,446 decisions, 427 after the flop)
+the triage graded 94% of all decisions and 80% of the postflop ones as Fast does (the library 47 of 47, a stored turn
+13 of 13, a Quick solve within 1% of equilibrium 88%, a read off the nearest flops or an earlier street's solve 62%);
+it flagged 302 of the 427, and after the deeper pass 97.7% of the postflop grades are Fast's, 219 of Fast's 229
+postflop mistakes found (that player is a poor one: Fast puts 54% of their postflop decisions out of the mix or 2%+
+of the pot down; a better one has fewer flagged). Natively on one thread: Preflop only 4.2 s (~14,000 hands a
+minute), the triage 280 s (211 hands a minute), All streets at Fast 998 s (59 a minute; flop 1.9 s, turn 4.6, river
+0.26 a decision), the deeper pass on the flagged 842 s. In the browser (scripts/bench_session.mjs: the page's requests answered by the worker under Pyodide in Node; every 10th hand of the same session, 99 hands and 146 decisions) on one thread: the triage 24-27 s (220-250 hands a minute), All streets at Fast 129 s (46 a minute; a turn 7.8 s), the deeper pass on the 23 the triage flagged 117-125 s (a turn at Fast 9-10 s after the library's flop); on 22 of those the triage's grade was Fast's 14 times, milder 7, harsher 1. At 8 threads (every 20th hand, 50 hands and 76 decisions): the triage 10.7 s (280 hands a minute: its Quick solves keep their budget), All streets at Fast 21.1 s (142 a minute; a turn 2.2 s), the deeper pass on the 13 flagged 16.0 s (Fast's grade on 8, milder 4, harsher 1). So on one thread the triage takes a fifth of All streets at Fast's time, at 8 threads half, and there All streets at Fast takes less than the triage and its deeper pass together; the panel's estimate for each scope follows the browser's solver threads (pageHost.threads).
+
+The report: hands, decisions graded, EV lost (bb and bb/100; postflop only, as preflop chart answers carry no EVs and
+are graded by frequency; a read at once has no EVs either and is graded by frequency, "no EVs"), share in the
+solver's mix, the triage's confidence (high, medium, low) and sources; tables by street, position, preflop situation
+(RFI, vs limp, vs open, squeeze spots, SB vs open, BB defence, vs 3bet, cold vs 3bet, vs 4bet+) and postflop spot
+(pot type, IP/OOP, facing a bet / first to act / checked to); your frequencies against the solver's for the same
+hands at the same decisions (opens, BB defence, folds and 4bets vs 3bets, flop c-bets, folds and raises vs c-bets,
+turn barrels, river bets, folds to turn and river bets); **This session's leaks** (the leaks below, over this
+session's decisions), each with its hands; the decisions by EV lost (a click opens that hand in the page rewound to
+that decision, Undo brings the rest back) and the clearest off-chart preflop plays. **Filters** narrow the tables and
+the list: street, position, pot type (single-raised, 3bet, 4bet+, limped, multiway), EV lost (any, 2% or 8% of the
+pot, 1bb or 5bb) and tags (in position, out of position, facing a bet, preflop raiser or caller, multiway, all-in,
+off the mix, flagged, checked at Fast, low confidence); a leak's **N hands** filters to its decisions. **Drill this
+leak** (or **Drill these decisions** on a filtered list) turns those decisions into a drill set in Drills (below): up to 40
+spots, the misses first. **Export CSV / JSON** downloads one row per decision (hand, site and number, file, seat,
+cards, board, situation, your action and its frequency, the solver's best, EVs, EV lost, grade, source, confidence,
+tags, and after Go deeper the triage's source, grade and EV lost). The panel is `gto/static/session.js`, loaded with
+`hh.js` when first opened (or at load, with a session left running).
 
 Each analyzed session's summary (not its hands) is also kept in the browser (IndexedDB, up to 200 sessions; a file
 analyzed again, in any scope, replaces its earlier entry), and **Across your sessions** (or **Your sessions so far**
@@ -261,7 +294,8 @@ Study's solved preflop games (IndexedDB `gto-pf`) and the worker's cached files 
 1,005 hands), and **Restore from a backup…** merges one in, here or in another browser: a record missing here is added,
 of one in both the newer stays, nothing here is deleted, and a hand already here under another id gets the backup's
 tags (and its note, if it had none); settings take effect on the next load. Your Anthropic API key (Explain with AI)
-is never a record and never in a backup or export, not even pasted into a note.
+is never a record and never in a backup or export, not even pasted into a note; nor is the analyzer's mark of a run
+going in a tab (`gto-session-run`).
 
 **Flop reports** (in the ⋯ menu) are aggregate reports of the [precomputed flop library](#precomputed-flop-library):
 pick a spot (BTN vs BB, …) and a node (out of position first; in position after a check; out of position facing
@@ -340,6 +374,12 @@ each drill's history (hands, accuracy, last 100, best streak) is kept in the bro
 the hand into the page. `gto/static/drills.js` decodes the library's entries itself (no solver needed: answers are
 instant, also before the in-browser solver has loaded) and reads the hand weights from `flop_library/<spot>/ranges.json`
 (both ranges entering the flop, written with the index, fingerprinted as the index's).
+
+A **drill set** (Analyze session's **Drill this leak**) drills your own hands instead: each spot as you played it
+(the line so far, the pot and the amount to call), the session's answer for it (its mix, and EVs where it had them),
+in a fresh order each round, graded on the same scale (an answer without EVs, a preflop chart's or a read at once, by
+frequency: Best the most played action, Correct 10% or more, else Inaccuracy or, under 3%, Mistake), with what you
+played in the hand after each; the summary at the end offers the set again. **Open in the solver** loads the spot.
 
 **Study** (in the ⋯ menu) is a solution browser: walk a hand node by node with no cards of your own, and at each
 decision see the solver's answer for every hand of the player to act. Start from a precomputed spot's preflop line
@@ -910,6 +950,13 @@ hero's `f` per action and `ev`), the range's `eq`, `ev`, `nuts` (share at `nut_e
 (equities sorted high to low at every 2% of the range; heads-up only), and the hero's own categories (`mine`);
 `null` where the betting rules answered. `"library_only": true` (the session analyzer's instant scope) answers a
 flop only from the precomputed library and returns `{"skipped": …}` for any other postflop spot instead of solving it.
+`"triage": true` (the session analyzer's Quick triage, `Advisor.triage`) answers from what is in hand first: preflop
+the charts, a flop the library holds (as `library_only`), else a read at once (`Advisor.instant`: a library flop's
+stored turn, the nearest stored flops, the library's answers facing another bet size, the previous street's live
+solve), else a Quick solve at `TRIAGE_BUDGETS` (flop and turn 1.5 s plus 0.3 per earlier street, river 0.8 s), and
+marks it `"triage": {"source": "chart" | "library" | "approx" | "quick" | "rules", "confidence": "high" | "medium" |
+"low", "label"}` (high: the charts, the library's own spot; medium: a spot borrowed for the pot, a stored turn, a
+Quick solve within 1% of the pot of equilibrium; low: the other reads, a rougher Quick solve, the betting rules).
 
 `"study": true` (the page's Study mode, `Advisor.study`) answers for whoever acts next on the hand as recorded, with
 their whole range and no hero, at equilibrium (`hero`, `hole`, `opponents`, `locks`, `jam` and `optimize_sizes` are

@@ -245,3 +245,70 @@ test("the solver's state for a problem: the preflop line, the flop action to the
   const g = D.stateFor({ ...REP, game: { players: 6, stack: 200, ante: 0, straddle: true } }, pr);
   assert.deepEqual([g.players, g.stack, g.ante, g.straddle], [6, 200, undefined, true]);
 });
+
+// ---- a drill set: your own decisions from the session analyzer (session.js drillSet)
+test("a drill set's decisions graded on the same scale, by frequency where the answer has no EVs", () => {
+  const pr = D.setProblem({ key: "k", hero: "BTN", hand: ["Ah", "Qd"], board: [], street: "preflop", line: "Preflop: folded to you", names: ["raise", "fold"],
+                            freqs: [0.95, 0.05], evs: null, amounts: [2.5, null], pot: 1.5, played: "fold", state: {} });
+  assert.deepEqual([pr.set, pr.evs, pr.bet], [true, null, 0]);
+  assert.deepEqual([D.grade(pr, 0).verdict, D.grade(pr, 0).ok, D.grade(pr, 0).ev], ["Best", true, false]);
+  assert.deepEqual([D.grade(pr, 1).verdict, D.grade(pr, 1).ok, D.grade(pr, 1).loss], ["Inaccuracy", false, 0]);   // 5%: rare
+  assert.equal(D.grade({ ...pr, freqs: [0.99, 0.01] }, 1).verdict, "Mistake");
+  assert.equal(D.grade({ ...pr, freqs: [0.7, 0.3] }, 1).verdict, "Correct");
+  // with EVs as the library's: the EV lost against the pot
+  const fl = D.setProblem({ names: ["check", "bet 33%"], freqs: [0.3, 0.7], evs: [2, 2.5], amounts: [null, 1.8], pot: 5.5, board: ["Qs", "8d", "3c"] });
+  assert.deepEqual([D.grade(fl, 0).verdict, D.grade(fl, 0).loss, D.grade(fl, 0).ev], ["Correct", 0.5, undefined]);
+  assert.equal(D.grade({ ...fl, freqs: [0.05, 0.95] }, 0).verdict, "Blunder");   // 0.5bb of 5.5: 9% of the pot
+  // a score's EV lost is averaged over the decisions graded with EVs
+  let s = D.addScore(D.emptyScore(), D.grade(pr, 1));
+  s = D.addScore(s, D.grade({ ...fl, freqs: [0.05, 0.95] }, 0));
+  assert.deepEqual([s.n, s.ne, s.ok], [2, 1, 0]);
+  assert.ok(Math.abs(D.summary(s).loss - 0.5) < 1e-12);
+  assert.equal(D.summary({ n: 2, ok: 1, loss: 1, lossPct: 4 }).loss, 0.5);   // (a score kept before: all with EVs)
+  assert.equal(D.addScore({ n: 3, ok: 3, loss: 0, lossPct: 0, streak: 3, best: 3, recent: [1, 1, 1] }, D.grade(fl, 1)).ne, 4);
+  // dealt in a shuffled order, each once
+  const o = D.setOrder(20, Math.random);
+  assert.deepEqual([...o].sort((a, b) => a - b), Array.from({ length: 20 }, (_, i) => i));
+});
+
+test("the drills open on a drill set: each decision once in a shuffled order, its line and the answer's amounts, the summary", async () => {
+  const vm = require("node:vm");
+  const body = { innerHTML: "" }, keys = [], loaded = [];
+  const el = () => ({ hidden: false, dataset: {}, style: {}, innerHTML: "", setAttribute() {}, addEventListener() {}, appendChild() {}, focus() {},
+                      querySelector: (s) => s === ".dr-body" ? body : null });
+  const ctx = vm.createContext({
+    document: { getElementById: () => null, createElement: el, head: el(), body: el() },
+    window: { addEventListener: (t, f) => { if (t === "keydown") keys.push(f); }, loadHandState: (st, label) => loaded.push([st, label]) },
+    localStorage: { getItem: () => null, setItem() {} },
+    fetch: async () => { throw new Error("no library in this test"); },
+    FlopReports: globalThis.FlopReports, Blob, Response, DecompressionStream, TextDecoder,
+  });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "..", "gto", "static", "drills.js"), "utf8"), ctx);
+  const Dr = ctx.Drills, ST = Dr.state;
+  const press = (key) => { for (const f of keys) f({ key, target: { tagName: "BODY" }, stopPropagation() {}, preventDefault() {} }); };
+  const item = (n) => ({ key: "k" + n, hero: "BB", hand: ["Kh", "Jh"], board: ["Qs", "8d", "3c"], street: "flop", sit: "SRP · OOP · facing bet",
+                         line: "Preflop: BTN raises to 2.5, BB calls · Flop: BB checks, BTN bets 1.8", names: ["fold", "call", "raise to 6"], freqs: [0.1, 0.8, 0.1],
+                         evs: [0, 1.2, 0.9], amounts: [null, 1.8, 6], pot: 7.3, bet: 1.8, played: "fold", state: { hero: "BB", n } });
+  ctx.DRILL_SET = { name: "Flop vs c-bet: fold", items: [item(0), item(1), item(2)] };
+  await Dr.open();
+  assert.equal(ctx.DRILL_SET, null);
+  assert.ok(ST.set && ST.pr && ST.pr.set);
+  assert.match(body.innerHTML, /Flop vs c-bet: fold/);
+  assert.match(body.innerHTML, /BTN bets 1\.8 · pot 7\.3bb, 1\.8bb to call/);
+  assert.match(body.innerHTML, /Call <small>1\.8bb<\/small>/);
+  assert.match(body.innerHTML, /Raise to 6/);
+  const seen = [];
+  for (let k = 0; k < 3; k++) {
+    seen.push(ST.pr.state.n);
+    press("1");
+    assert.equal(ST.g.verdict, "Correct");   // (fold: 10% of the time)
+    assert.match(body.innerHTML, /In the hand you played fold/);
+    press(" ");
+  }
+  assert.deepEqual(seen.sort(), [0, 1, 2]);
+  assert.equal(ST.pr, null);
+  assert.match(body.innerHTML, /All 3 drilled: 100% correct/);
+  assert.equal(ST.hist["set:Flop vs c-bet: fold"].n, 3);
+  await Dr.open();   // (opened again from the menu: the library's drills, the set left)
+  assert.equal(ST.set, null);
+});

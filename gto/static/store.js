@@ -28,7 +28,8 @@
     "gto-practice", "gto-practice-habits", "gto-practice-state", "gto-practice-hand", "gto-practice-score", "gto-practice-seat",
     "gto-practice-review", "gto-practice-drill", "gto-practice-hint", "gto-practice-table", "gto-practice-tables", "gto-practice-more",
     "gto-practice-detail", "gto-mt", "gto-mt-score", "gto-mt-drill", "gto-mt-seat", "gto-hands-table", "gto-hands-ui"];
-  const LOCAL_ONLY = new Set(["gto-anthropic-key", "gto-explain-own"]);
+  // (and the session analyzer's "a run is going in this tab" mark, gto-session-run: a lock between tabs, not state)
+  const LOCAL_ONLY = new Set(["gto-anthropic-key", "gto-explain-own", "gto-session-run"]);
   const AI_KEY = "gto-anthropic-key";
   // the analyzer's localStorage fallback (no IndexedDB): its session in progress and history, moved to their stores
   const MOVED = { "gto-session": ["blobs", "session-current"], "gto-session-history": ["sessions", null] };

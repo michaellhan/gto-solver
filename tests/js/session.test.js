@@ -206,14 +206,14 @@ test("the queue in the flop-library scope asks flops with library_only, and wide
   assert.deepEqual([w.results.length, w.status, w.scope], [3, "paused", "all"]);
 });
 
-test("ETA: each street's budget until two answers are timed, then their average", () => {
-  const sess = stubSession(2);
-  // server Fast [2.5, 2.5]: preflop 0.2, flop 3, turn 5.5
-  assert.equal(SS.eta(sess, [2.5, 2.5]), 2 * (0.2 + 3 + 5.5));
-  assert.equal(SS.estimate("river", "all", [8, 3]), 8 + 6 + 0.5);
+test("ETA: a share of each street's budget until two answers are timed, then their average", () => {
+  const sess = stubSession(2), near = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} vs ${b}`);
+  // server Fast [2.5, 2.5]: preflop 0.2, flop 0.3 of 2.5 (+0.3), turn 0.7 of 2.5 + 2.5 (+0.3)
+  near(SS.eta(sess, [2.5, 2.5]), 2 * (0.2 + 1.05 + 3.8));
+  near(SS.estimate("river", "all", [8, 3]), 0.15 * (8 + 6) + 0.3);   // (the browser's: 8 s and 3 per earlier street)
   assert.equal(SS.estimate("flop", "library", [8, 3]), 0.4);
   sess.next = 3; sess.timing = { preflop: [0.1, 1], flop: [2, 2], turn: [9, 1] };
-  assert.equal(SS.eta(sess, [2.5, 2.5]), 0.2 + 1 + 5.5);
+  near(SS.eta(sess, [2.5, 2.5]), 0.2 + 1 + 3.8);
 });
 
 // ---- the report
@@ -268,9 +268,10 @@ test("exports: a CSV row per decision asked, and JSON with the summary", () => {
                   graded(0, "flop", { pos: "BTN", spot: "SRP · IP · checked to", act: "bet 1.8", cls: "aggr", src: "library", pot: 5.5, facing: false, ip: true }, { m: "bet 33%", f: 0.2, b: "check", bf: 0.8, l: 0.31, e: 1.2, o: 1.51 })];
   const csv = SS.toCSV(sess).trim().split("\n");
   assert.equal(csv.length, 3);
-  assert.equal(csv[0], "hand,hand_id,site,position,hole,street,board,situation,action,solver_freq,best_action,best_freq,ev_bb,best_ev_bb,ev_lost_bb,grade,source,status,pot_bb,facing_bet,in_position,seconds");
-  assert.equal(csv[1], '1,"a,""b""",PokerStars,BTN,AhQd,preflop,,RFI,raise to 2.5,0.9,raise,0.9,,,,ok,chart,ok,,,,0.1');
-  assert.equal(csv[2], '1,"a,""b""",PokerStars,BTN,AhQd,flop,Qs8d3c,SRP · IP · checked to,bet 1.8,0.2,check,0.8,1.2,1.51,0.31,ok,library,ok,5.5,false,true,');
+  assert.equal(csv[0], "hand,hand_id,site,position,hole,street,board,situation,action,solver_freq,best_action,best_freq,ev_bb,best_ev_bb,ev_lost_bb,grade,source,status,pot_bb,facing_bet,in_position,seconds,"
+    + "confidence,triage_source,triage_grade,triage_ev_lost_bb,tags,file,tournament");
+  assert.equal(csv[1], '1,"a,""b""",PokerStars,BTN,AhQd,preflop,,RFI,raise to 2.5,0.9,raise,0.9,,,,ok,chart,ok,,,,0.1,,,,,,,');
+  assert.equal(csv[2], '1,"a,""b""",PokerStars,BTN,AhQd,flop,Qs8d3c,SRP · IP · checked to,bet 1.8,0.2,check,0.8,1.2,1.51,0.31,ok,library,ok,5.5,false,true,,,,,,IP,,');
   const js = JSON.parse(SS.toJSON(sess));
   assert.deepEqual([js.scope, js.summary.lost, js.summary.graded, js.decisions.length, js.summary.mistakes[0].ev_lost_bb], ["all", 0.31, 2, 2, 0.31]);
   assert.equal(js.decisions[1].board, "Qs8d3c");
@@ -444,4 +445,259 @@ test("history storage: its own key beside the session's", async () => {
     await cur.del();
     assert.deepEqual(await hist.get(), [{ id: 1 }]);
   } finally { delete global.localStorage; }
+});
+
+// ---- several files, Quick triage and deeper, waiting for the page, filters, leaks and their drills
+test("prepare: several files at once, in order, a hand in two of them counted once, each hand with its file", async () => {
+  const p = await page();
+  const files = [{ name: "a.txt", text: HH("stars_6max_srp.txt") + "\n\n" + HH("stars_3bet_pot.txt") },
+                 { name: "b.txt", text: HH("stars_6max_srp.txt") + "\n\n" + HH("888_6max_srp.txt") }, { name: "c.txt", text: "nothing here" }];
+  const prep = await SS.prepare(files, (t) => p.ctx.importHand(t), null, 100, async () => {});
+  assert.deepEqual(prep.hands.map(h => [h.f, h.n, h.site]), [[0, 1, "PokerStars"], [0, 2, "PokerStars"], [1, 2, "888poker"]]);
+  assert.deepEqual([prep.total, prep.skipped.duplicate, prep.skipped.failed, prep.errors[0].file, prep.errors[0].n], [5, 1, 1, "c.txt", 1]);
+  assert.deepEqual(j(prep.files), [{ name: "a.txt", total: 2, hands: 2 }, { name: "b.txt", total: 2, hands: 1 }, { name: "c.txt", total: 1, hands: 0 }]);
+  // one file (or a text) as before: no file index
+  const one = await SS.prepare([files[0]], (t) => p.ctx.importHand(t), null, 100, async () => {});
+  assert.deepEqual([one.hands.length, one.files, one.hands[0].f], [2, undefined, undefined]);
+  const sess = SS.newSession(prep, "triage", SS.filesName([{ name: "a.txt", webkitRelativePath: "May/a.txt" }, { name: "b.txt", webkitRelativePath: "May/b.txt" }]));
+  assert.deepEqual([sess.name, sess.files], ["May (2 files)", ["a.txt", "b.txt", "c.txt"]]);
+  assert.equal(SS.filesName([{ name: "x.txt", path: "/A/x.txt" }, { name: "y.txt", path: "/B/y.txt" }]), "2 files");
+  // a folder's hand-history files only (one file of any name is read as it is chosen)
+  assert.deepEqual(SS.hhFiles([{ name: "a.txt" }, { name: "b.XML" }, { name: "pic.png", type: "image/png" }, { name: "notes", type: "text/plain" }, { name: "x.hh" }]).map(f => f.name), ["a.txt", "b.XML", "notes", "x.hh"]);
+  sess.results = [{ h: 2, s: "preflop", i: 0, street: "preflop", status: "ok", pos: sess.hands[2].state.hero, g: { m: "fold", f: 1, b: "fold", bf: 1, l: null } }];
+  assert.equal(SS.rowsOf(sess)[0].file, "b.txt");
+});
+
+// a triage answer: the stub's actions with the advisor's "triage" mark
+const TRI = (source, confidence, actions) => ({ triage: { source, confidence, label: source }, actions: actions || [{ action: "check", freq: 0.6, ev_bb: 1 }, { action: "bet 33%", freq: 0.4, ev_bb: 0.75 }, { action: "raise", freq: 0, ev_bb: 0.5 }] });
+test("Quick triage: every street asked with triage and its confidence kept; the flagged go deeper at Fast, the biggest pots' hands first", async () => {
+  const sess = stubSession(2); sess.scope = "triage"; sess.items = SS.buildItems(sess.hands, "triage");
+  const H = stubHost();
+  H.spot = (st) => ({ payload: { board: st.cards.slice(2).filter(Boolean).join(""), h: st.cards[0] }, pot: st.cards[5] ? 8 : st.cards[2] ? 5 : 1.5, toCall: 0, ip: true, players: 2, raises: 1 });
+  const R = SS.runner(sess, H), p = R.run();
+  const answers = [TRI("chart", "high", [{ action: "raise", freq: 0.9 }, { action: "fold", freq: 0.1 }]),
+                   TRI("library", "high", [{ action: "check", freq: 0.99, ev_bb: 1 }, { action: "bet 33%", freq: 0.01, ev_bb: 0.9 }]),   // off the mix, but Fast says the same
+                   TRI("approx", "medium"),                                                                                        // in the mix, no EV lost
+                   TRI("chart", "high", [{ action: "raise", freq: 0.9 }, { action: "fold", freq: 0.1 }]),
+                   TRI("quick", "low", [{ action: "check", freq: 0.98, ev_bb: 1 }, { action: "bet 33%", freq: 0.02, ev_bb: 0.9 }]),   // off the mix
+                   TRI("quick", "medium", [{ action: "check", freq: 0.5, ev_bb: 0.8 }, { action: "bet 33%", freq: 0.5, ev_bb: 1 }])];  // 0.2bb of an 8bb pot
+  for (const a of answers) { await tick(); H.answer(a); }
+  await p;
+  assert.ok(H.asked.every(q => q.triage === true));
+  assert.deepEqual(sess.results.map(r => [r.src, r.tc]), [["chart", "high"], ["library", "high"], ["approx", "medium"], ["chart", "high"], ["quick", "low"], ["quick", "medium"]]);
+  assert.deepEqual(sess.results.map(r => SS.flagged(r)), [false, false, false, false, true, true]);
+  assert.deepEqual([SS.flaggedCount(sess), SS.flaggedCount(sess, true)], [2, 3]);   // (every: the approximate read too)
+  assert.ok(SS.flagged({ ...sess.results[2], tc: "low" }));   // (a low-confidence read in the mix: checked too)
+  assert.ok(SS.tagsOf(sess.results[4]).includes("flagged") && SS.tagsOf(sess.results[4]).includes("low confidence"));
+  const rp0 = SS.report(sess);
+  assert.deepEqual([rp0.conf.high, rp0.conf.medium, rp0.conf.low, rp0.flagged, rp0.agree.n], [3, 2, 1, 2, 0]);
+  // deeper: the two flagged at Fast (no triage field), in the hand's order (its flop's solve narrows the turn); each
+  // replaces its triage answer
+  const d = SS.deepen(sess);
+  assert.deepEqual(d.items.slice(d.next).map(it => [it.h, it.s, it.k, it.deep]), [[1, "flop", 4, 1], [1, "turn", 5, 1]]);
+  assert.equal(SS.deepen(d).items.length, d.items.length);   // (already queued: not twice)
+  const R2 = SS.runner(d, H), p2 = R2.run();
+  await tick(); H.answer({ actions: [{ action: "check", freq: 0.7, ev_bb: 1 }, { action: "bet 33%", freq: 0.3, ev_bb: 0.95 }] });
+  await tick(); H.answer({ actions: [{ action: "check", freq: 0.1, ev_bb: 0.5 }, { action: "bet 33%", freq: 0.9, ev_bb: 1 }] });
+  await p2;
+  assert.deepEqual(H.asked.slice(6).map(q => [q.board.length, !!q.triage]), [[6, false], [8, false]]);
+  assert.deepEqual([d.results.length, d.status, d.next, d.items.length], [6, "done", 8, 8]);
+  const turn = d.results[5], flop = d.results[4];
+  assert.deepEqual([turn.src, turn.tc, turn.t.src, turn.t.tc, turn.t.c, turn.t.l, turn.g.f, turn.g.l], ["solve", undefined, "quick", "medium", "ok", 0.2, 0.1, 0.5]);
+  assert.deepEqual([flop.t.c, flop.g.f, SS.flagged(flop), SS.tagsOf(flop).includes("checked at Fast")], ["bad", 0.3, false, true]);
+  assert.deepEqual(j(SS.agreement(d.results)), { n: 2, same: 0, worse: 1, better: 1 });   // (the turn worse at Fast, the flop better)
+  assert.ok(d.timing["fast turn"] && d.timing["fast flop"] && d.timing.turn);   // (kept apart from the triage's)
+  assert.equal(SS.flaggedCount(d), 0);
+  const csv = SS.toCSV(d).trim().split("\n"), cols = csv[0].split(","), row = csv[6].split(",");
+  assert.deepEqual(["confidence", "triage_source", "triage_grade", "triage_ev_lost_bb"].map(c => row[cols.indexOf(c)]), ["deep", "quick", "ok", "0.2"]);
+  // the triage's estimate before anything is timed: most of it at once
+  assert.ok(SS.estimate("turn", "triage", [8, 3]) < 2 && SS.estimate("preflop", "triage", [8, 3]) < 0.1);
+});
+
+test("the estimates follow the browser's solver threads: at 8 a turn at Fast as measured, the triage's Quick solve near its budget", async () => {
+  const near = (a, b, d) => assert.ok(Math.abs(a - b) < d, `${a} vs ${b}`);
+  const fast1 = SS.estimate("turn", "all", [8, 3]), fast8 = SS.estimate("turn", "all", [8, 3], 8), fast4 = SS.estimate("turn", "all", [8, 3], 4);
+  near(fast8, 2.2, 0.1);
+  assert.ok(fast8 < fast4 && fast4 < fast1);
+  assert.equal(SS.estimate("turn", "all", [8, 3], 16), fast8);   // (the worker's helpers stop at 7)
+  assert.equal(SS.estimate("turn", "all", [8, 3], 1), fast1);
+  near(SS.estimate("turn", "triage", [8, 3], 8), 1.1, 0.05);
+  assert.equal(SS.estimate("flop", "library", [8, 3], 8), 0.4);
+  const sess = stubSession(2);
+  assert.ok(SS.eta(sess, [8, 3], 8) < SS.eta(sess, [8, 3]));
+  // the page's threads: the worker's, cross-origin isolated (else one); the local server's taken as one
+  const p = await page(), host = p.ctx.Session.pageHost();
+  assert.equal(host.threads(), 1);
+  p.ctx.crossOriginIsolated = true; p.ctx.navigator = { ...(p.ctx.navigator || {}), hardwareConcurrency: 10 };
+  assert.equal(p.run("MODE"), "wasm");
+  assert.equal(host.threads(), 8);
+});
+
+test("the queue waits while the page asks the solver, and a request of ours it stopped is asked again, not counted", async () => {
+  const sess = stubSession(1), H = stubHost();
+  let busy = true, looks = 0;
+  H.busy = () => busy; H.idle = async () => { looks++; await new Promise(r => setImmediate(r)); };
+  const R = SS.runner(sess, H), p = R.run();
+  await tick();
+  assert.deepEqual([H.asked.length, R.waiting], [0, true]);   // the page's own solve first
+  busy = false; await tick();
+  assert.ok(looks > 0); assert.equal(H.asked.length, 1);
+  for (let k = 0; k < 4; k++) { H.answer({ cancelled: true, yielded: true }); await tick(); }   // stopped for the page 4 times: still asked
+  assert.deepEqual([H.asked.length, sess.results.length], [5, 0]);
+  H.answer(); await tick(); H.answer(); await tick(); H.answer();
+  await p;
+  assert.deepEqual([sess.status, sess.results.map(r => r.status)], ["done", ["ok", "ok", "ok"]]);
+});
+
+test("the page host steps aside: its request stopped once the page solves (the shared stop flag), the page's busy seen", async () => {
+  const p = await page({ isolated: true });
+  const host = p.ctx.Session.pageHost();
+  assert.equal(host.busy(), false);
+  const q = host.advise({ x: 1 });
+  assert.equal(host.busy(), false);   // (ours doesn't count)
+  p.run("solving = true");
+  assert.equal(host.busy(), true);
+  host.step();   // (the look every 150 ms)
+  const r = await q;
+  assert.deepEqual(j(r), { cancelled: true, yielded: true });
+  p.run("solving = false");
+  assert.equal(host.busy(), false);
+  const other = p.run("window.__o = callAdvise({ y: 2 }); __o.reqId");   // (another request of the page's: Practice, Study)
+  assert.equal(host.busy(), true);
+  p.workers[0].onmessage({ data: { id: other, result: { ok: 1 } } });
+  await p.run("__o");
+  assert.equal(host.busy(), false);
+});
+
+test("filters: street, position, pot type, EV lost and tags; a leak's decisions; the report over what the filter keeps", () => {
+  const sess = stubSession(4);
+  const G = (f, l) => ({ m: "x", f, b: "best", bf: 0.7, l, ...(l != null ? { e: 0, o: l } : {}) });
+  sess.results = [
+    graded(0, "preflop", { pos: "BTN", pf: "RFI", cls: "aggr", act: "raise to 2.5" }, G(1, null)),
+    graded(0, "flop", { pos: "BTN", spot: "SRP · IP · checked to", potType: "SRP", ip: true, role: "PFR", facing: false, pot: 5.5, cls: "aggr" }, G(0.6, 0.05)),
+    graded(1, "turn", { pos: "BB", spot: "3bet pot · OOP · facing bet", potType: "3bet pot", ip: false, role: "caller", facing: true, pot: 40, cls: "fold", act: "fold" }, G(0.01, 4)),
+    graded(2, "river", { pos: "BB", spot: "Multiway · OOP · first to act", potType: "SRP", multi: true, ip: false, role: "caller", facing: false, pot: 12, cls: "aggr", act: "all-in" }, G(0.2, 0.5)),
+  ];
+  const keep = (F) => SS.filterRows(sess.results, F).map(r => r.s);
+  assert.deepEqual(keep(null), ["preflop", "flop", "turn", "river"]);
+  assert.deepEqual(keep({ street: "turn" }), ["turn"]);
+  assert.deepEqual(keep({ pos: "BB" }), ["turn", "river"]);
+  assert.deepEqual(keep({ pot: "SRP" }), ["flop"]);   // (not the multiway pot, nor preflop)
+  assert.deepEqual(keep({ pot: "Multiway" }), ["river"]);
+  assert.deepEqual(keep({ loss: "lost" }), ["flop", "turn", "river"]);
+  assert.deepEqual(keep({ loss: "p2" }), ["turn", "river"]);   // 10% and 4.2% of the pot (the flop's 0.9%)
+  assert.deepEqual(keep({ loss: "p8" }), ["turn"]);
+  assert.deepEqual(keep({ loss: "bb1" }), ["turn"]);
+  assert.deepEqual(keep({ tags: ["OOP"] }), ["turn", "river"]);
+  assert.deepEqual(keep({ tags: ["OOP", "facing a bet"] }), ["turn"]);
+  assert.deepEqual(keep({ tags: ["all-in", "multiway"] }), ["river"]);
+  assert.deepEqual(keep({ tags: ["off the mix"] }), ["turn"]);
+  assert.deepEqual(keep({ tags: ["PFR"] }), ["flop"]);
+  assert.deepEqual(keep({ leak: { kind: "spot", key: "3bet pot · OOP · facing bet" } }), ["turn"]);
+  assert.deepEqual(keep({ leak: { kind: "pf", key: "RFI" } }), ["preflop"]);
+  assert.deepEqual(keep({ leak: { kind: "freq", key: "Turn vs bet: fold" } }), ["turn"]);
+  assert.deepEqual(keep({ street: "", pos: "", tags: [] }), ["preflop", "flop", "turn", "river"]);
+  assert.deepEqual([SS.filterOn({}), SS.filterOn({ tags: [] }), SS.filterOn({ pos: "BB" })], [false, false, true]);
+  assert.deepEqual(SS.tagsOf(sess.results[0]), []);   // (preflop: no position or facing tags)
+  const rp = SS.report(sess, 5, { pos: "BB" }), all = SS.report(sess);
+  assert.deepEqual([rp.kept, rp.graded, rp.lost, rp.byStreet.map(r => r.key), rp.mistakes.length], [2, 2, 4.5, ["turn", "river"], 2]);
+  assert.deepEqual([all.kept, all.lost, all.filtered, rp.filtered], [4, 4.55, false, true]);
+});
+
+test("a session's leaks with their decisions, and a leak's drill set: the spot as it stood, the answer's mix and EVs, misses first", () => {
+  const sess = stubSession(10);
+  const pfAnswer = [["raise", 0.9, null, 2.5], ["fold", 0.1, null, null]];
+  sess.results = Array.from({ length: 20 }, (_, n) => graded(n % 10, "preflop", { i: 3, pos: "BTN", pf: "RFI", cls: n < 12 ? "fold" : "aggr", act: n < 12 ? "fold" : "raise to 2.5", acts: pfAnswer,
+    mix: { fold: 0.1, passive: 0, aggr: 0.9 } }, { m: n < 12 ? "fold" : "raise", f: n < 12 ? 0.01 : 0.9, b: "raise", bf: 0.9, l: null }));
+  sess.results.push(graded(0, "flop", { i: 1, pos: "BTN", spot: "SRP · IP · checked to", potType: "SRP", ip: true, role: "PFR", pot: 5.5, bet: 0, act: "check", cls: "passive",
+    acts: [["check", 0.3, 2, null], ["bet 33%", 0.7, 2.5, 1.8]] }, { m: "check", f: 0.3, b: "bet 33%", bf: 0.7, l: 0.5, e: 2, o: 2.5 }));
+  sess.next = sess.results.length;
+  const rp = SS.report(sess);
+  const pf = rp.leaks.find(l => l.kind === "pf"), fq = rp.leaks.find(l => l.kind === "freq");
+  assert.deepEqual([pf.key, pf.n, pf.rows], ["RFI", 20, 20]);
+  assert.deepEqual([fq.key, fq.rows], ["Open (RFI)", 20]);
+  const set = SS.drillSet(sess, sess.results.filter(SS.leakTest(pf)), "RFI");
+  assert.equal(set.items.length, 20);
+  assert.ok(set.items.slice(0, 12).every(it => it.played === "fold") && set.items.slice(12).every(it => it.played === "raise"));   // (the misses first)
+  const it = set.items[0];
+  assert.deepEqual([it.hero, it.hand, it.board, it.names, it.freqs, it.evs, it.amounts, it.pot, it.street], ["BTN", ["Ah", "Qd"], [], ["raise", "fold"], [0.9, 0.1], null, [2.5, null], undefined, "preflop"]);
+  assert.equal(it.line, "Preflop: folded to you");
+  assert.deepEqual(it.state.actions.preflop.length, 3);   // the hand as it stood: the three folds before
+  const fl = SS.drillSet(sess, [sess.results[20]], "x").items[0];
+  assert.deepEqual([fl.board, fl.evs, fl.pot, fl.line], [["Qs", "8d", "3c"], [2, 2.5], 5.5, "Preflop: BTN raises to 2.5, BB calls · Flop: BB checks"]);
+  assert.deepEqual(fl.state.cards.slice(5), [null, null]);
+  assert.equal(SS.drillSet(sess, sess.results.map(r => ({ ...r, acts: undefined })), "x").items.length, 0);   // (no answer kept: nothing to drill)
+});
+
+test("a session left running: the page loads the analyzer and resumes it in the background, the panel closed", async () => {
+  const flush = async () => { for (let k = 0; k < 20; k++) await new Promise(r => setImmediate(r)); };
+  const plain = loadPage({}); await plain.ready(); await flush();
+  assert.ok(!plain.scripts.includes("session.js"));   // (nothing left running: loaded only when opened)
+  const p = loadPage({ storage: { [SS.RUN_KEY]: JSON.stringify({ tab: "t", at: 0 }) } });
+  await p.ready(); await flush();
+  assert.deepEqual(p.scripts.filter(s => /^(hh|session)\.js$/.test(s)), ["hh.js", "session.js"]);
+  assert.ok(p.ctx.Session && !p.els.has("sessionBox"));
+});
+
+test("resume: a session saved while it ran goes on where it stopped, in this tab only, and is marked while it runs", async () => {
+  const src = fs.readFileSync(path.join(STATIC, "session.js"), "utf8");
+  const shared = new Map();   // (localStorage: the tabs' own; sessionStorage: each tab's)
+  const tab = () => {
+    const own = new Map(), kv = (m) => ({ getItem: (k) => m.has(k) ? m.get(k) : null, setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k) });
+    const ctx = { console, setTimeout, clearTimeout, setInterval: () => 0, clearInterval: () => {}, localStorage: kv(shared), sessionStorage: kv(own) };
+    vm.createContext(ctx);
+    for (const [f, t] of [["hh.js", fs.readFileSync(path.join(STATIC, "hh.js"), "utf8")], ["session.js", src]]) vm.runInContext(t, ctx, { filename: f });
+    return ctx.Session;
+  };
+  const sess = stubSession(1); sess.next = 1; sess.status = "running";
+  sess.results.push({ h: 0, s: "preflop", i: 3, status: "ok", g: { m: "raise", f: 1, b: "raise", bf: 1, l: null } });
+  shared.set("gto-session", JSON.stringify(sess));
+  // another tab marked it a moment ago: not started twice
+  shared.set(SS.RUN_KEY, JSON.stringify({ tab: "other", at: Date.now() }));
+  const H1 = stubHost();
+  assert.equal(await tab().resume(H1), null);
+  assert.equal(H1.asked.length, 0);
+  // its mark gone stale (that tab closed): this one goes on from the flop, marked as this tab's
+  shared.set(SS.RUN_KEY, JSON.stringify({ tab: "other", at: Date.now() - 2 * 60000 }));
+  const S2 = tab(), H2 = stubHost(), p = S2.resume(H2);
+  await tick();
+  assert.equal(H2.asked.length, 1);
+  assert.ok(H2.asked[0].board.length === 6 && JSON.parse(shared.get(SS.RUN_KEY)).tab !== "other");
+  assert.equal(S2.session.next, 1);
+  H2.answer(); await tick(); H2.answer();
+  await p;
+  assert.deepEqual([S2.session.status, S2.session.next, shared.has(SS.RUN_KEY)], ["done", 3, false]);
+  assert.equal(JSON.parse(shared.get("gto-session")).status, "done");
+});
+
+test("deepen: the hands with the biggest flagged pots first, each hand's decisions in the order played", () => {
+  const R = (h, s, pot, f) => ({ h, s, i: 0, status: "ok", src: "quick", tc: "medium", pot, g: { m: "check", f, b: "check", bf: 0.6, l: 0 } });
+  const sess = { items: [], next: 0, results: [R(0, "flop", 5, 0.01), R(0, "turn", 8, 0.02), R(1, "flop", 6, 0.5), R(1, "river", 20, 0.01), R(2, "turn", 9, 0.01)] };
+  sess.items = sess.results.map(r => ({ h: r.h, s: r.s, i: r.i })); sess.next = 5;
+  const d = SS.deepen(sess);
+  assert.deepEqual(d.items.slice(5).map(it => [it.h, it.s]), [[1, "river"], [2, "turn"], [0, "flop"], [0, "turn"]]);
+});
+
+test("tournaments: each one's hands kept together, its payouts entered once and every hand of it asked in prize equity", async () => {
+  const p = await page();
+  const stars2 = HH("stars_9max_mtt_ante.txt").replace("PokerStars Hand #250123456789", "PokerStars Hand #250123456790").replace("Level VII (150/300)", "Level IX (150/300)");
+  const files = [{ name: "a.txt", text: [HH("stars_9max_mtt_ante.txt"), stars2, HH("stars_6max_srp.txt")].join("\n\n") }, { name: "b.txt", text: HH("winamax_mtt_ante.txt") }];
+  const prep = await SS.prepare(files, (t) => p.ctx.importHand(t), null, 100, async () => {});
+  assert.deepEqual(j(prep.tourneys), [{ key: "PokerStars|3712345678", site: "PokerStars", id: "3712345678", buyin: "$10+$1", hands: 2, levels: [7, 9] },
+                                      { key: "Winamax|812345678", site: "Winamax", id: "812345678", name: "Monster Stack", buyin: "9€+1€", hands: 1, levels: [7, 7] }]);
+  assert.deepEqual(prep.hands.map(h => h.t || null), ["PokerStars|3712345678", "PokerStars|3712345678", null, "Winamax|812345678"]);
+  // the Stars one's payouts (and the field), the Winamax one left in chips
+  prep.tset = { "PokerStars|3712345678": { payouts: "500 300, 200", fieldN: "40", fieldAvg: "35.5" }, "Winamax|812345678": { payouts: "" } };
+  const sess = SS.newSession(prep, "all", "mtt");
+  assert.deepEqual(sess.hands.map(h => h.state.payouts || null), [[500, 300, 200], [500, 300, 200], null, null]);
+  assert.deepEqual([sess.hands[0].state.fieldN, sess.hands[0].state.fieldAvg], [40, 35.5]);
+  assert.deepEqual(j(sess.tourneys.map(t => t.payouts || null)), [[500, 300, 200], null]);
+  // the page's request for it carries them (prize equity), the cash hand's doesn't
+  const host = p.ctx.Session.pageHost(), it = sess.items.find(x => x.h === 0), cash = sess.items.find(x => x.h === 2);
+  const sp = j(host.spot(SS.spotState(sess.hands[0].state, it.s, it.i)));
+  assert.deepEqual([sp.payload.payouts, sp.payload.field], [[500, 300, 200], { players: 40, chips: 40 * 35.5 }]);
+  assert.ok(!("payouts" in j(host.spot(SS.spotState(sess.hands[2].state, cash.s, cash.i))).payload));
+  assert.equal(SS.tourSet({ payouts: " " }), null);
+  sess.results = [{ h: 0, s: "preflop", i: 0, status: "ok", g: { m: "fold", f: 1, b: "fold", bf: 1, l: null } }];
+  assert.equal(SS.rowsOf(sess)[0].tournament, "3712345678");
 });

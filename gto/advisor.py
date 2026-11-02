@@ -100,6 +100,12 @@ MW4_FAST_STREETS = {"flop": {"later": "buckets", "buckets": 6, "bucket_river_ste
                     "turn": {"later": "buckets", "buckets": 8}}
 HU_RESERVE = 1.0   # heads-up solves likewise keep one iteration's time back (the exploitability read after: ~1 iteration)
 OVER_TARGET = 10   # an answer more than this many times its advisor's expl_target from equilibrium is approximate
+# The session analyzer's Quick triage (Advisor.triage, "triage": true): a decision nothing in hand answers at once is
+# solved as Quick solves it (index.html QUICK_BUDGETS: [the street, each earlier street], "quick": the earlier streets
+# the hand hasn't solved narrowed by the betting rules), and such an answer this close to equilibrium (% of the pot)
+# is graded with medium confidence, further with low
+TRIAGE_BUDGETS = {"flop": (1.5, 0.3), "turn": (1.5, 0.3), "river": (0.8, 0.3)}
+TRIAGE_SETTLED = 1.0
 LOOK_MIN_S = 1.0   # Advisor.progress looks at a solve only with at least this many seconds of it left (at its pace so
                    # far) to where it next may stop (a settled check, or its end): a quicker one answers in full instead
                    # (at 0.5 a 3bet pot's turn showed its look 0.5 s before its answer, one thread)
@@ -2932,6 +2938,8 @@ class Advisor:
     def advise(self, state: dict) -> dict:
         if state.get("study"):
             return self.study(state)
+        if state.get("triage"):
+            return self.triage(state)
         # the catch-all: a spot whose solve fails (an exception other than a cancel, or an answer with nothing usable
         # in it) is answered by the betting rules instead (Advisor._rules), not left with an error
         try:
@@ -3055,6 +3063,69 @@ class Advisor:
             return {"result": res}
         got = self._study_look(state) if state.get("study") else self.instant(state)
         return {"partial": got} if got else None
+
+    def triage(self, state: dict) -> dict:
+        """The session analyzer's Quick triage ("triage": true): your decision answered fast enough to grade a whole
+        session, from what is in hand first. Preflop the charts (as always); a flop the library holds (heads-up, or a
+        3-way pot's first decisions) from it, as "library_only" asks; else an answer at once off what is in hand
+        (Advisor.instant: the spot's stored flops most like this one, a library flop's stored turn, or the previous
+        street's live solve, which plays this street under it: your hand's mix, no EVs of its own); else a Quick
+        solve (TRIAGE_BUDGETS, "quick": an earlier street the hand hasn't solved narrowed by the betting rules). The
+        answer carries "triage": {"source": "chart" | "library" | "approx" | "quick" | "rules", "confidence": "high"
+        | "medium" | "low", "label"}: high where the analyzer's deep pass (the decision at Fast) answers the same (the
+        charts; the library's own spot for the pot), medium for a spot borrowed for this pot, a library flop's stored
+        turn, or a Quick solve within TRIAGE_SETTLED of equilibrium, low for the other reads (the nearest stored
+        flops, the library's answers facing another bet size, a live solve's view of a later street or of its own
+        street so far), a rougher Quick solve, or the betting rules (a multiway spot no solve answers). Measured on
+        a 1,000-hand session against the same decisions at Fast: the stored turn 13 of 13 the same grade, a Quick
+        solve within TRIAGE_SETTLED 88%, the nearest flops and an earlier street's solve 62%. A cancel or an error
+        comes back as it is."""
+        st = {k: v for k, v in state.items() if k != "triage"}
+        street = {6: "flop", 8: "turn", 10: "river"}.get(len(str(st.get("board") or "")))
+
+        def mark(res, source: str, conf: str, label: str) -> dict:
+            if isinstance(res, dict) and not any(k in res for k in ("error", "cancelled", "skipped")):
+                res["triage"] = {"source": source, "confidence": conf, "label": label}
+            return res
+
+        def lib(res) -> dict:
+            pc = res.get("precomputed") or {}
+            name = pc.get("label") or "precomputed"
+            return mark(res, "library", "medium", f"{name}, read as this pot") if pc.get("borrowed") \
+                else mark(res, "library", "high", name)
+
+        if street is None:
+            return mark(self.advise(st), "chart", "high", "the preflop charts")
+        if street == "flop":
+            res = self.advise(dict(st, library_only=True))
+            if not isinstance(res, dict) or res.get("cancelled"):
+                return res
+            if not any(k in res for k in ("skipped", "error")) and res.get("precomputed"):
+                return lib(res)
+        try:
+            got = self.instant(st)
+        except Cancelled:
+            raise
+        except Exception:   # noqa: BLE001  (nothing read at once: solved below)
+            got = None
+        if got:
+            ap = got.get("approximate") if isinstance(got.get("approximate"), dict) else {}
+            return mark(got, "approx", "medium" if ap.get("source") == "store" else "low",
+                        ap.get("label") or "approximate")
+        budget, prior = TRIAGE_BUDGETS[street]
+        res = self.advise(dict(st, quick=True, budget=budget, prior_budget=prior))
+        if not isinstance(res, dict) or any(k in res for k in ("error", "cancelled", "skipped")):
+            return res
+        if res.get("precomputed"):
+            return lib(res)
+        if res.get("multiway") and not res.get("solved") or res.get("fallback"):
+            return mark(res, "rules", "low", "the betting rules")
+        sv = res.get("solver") or {}
+        x = sv.get("exploitability_pct")
+        settled = x is not None and x <= TRIAGE_SETTLED and not sv.get("approximate")
+        return mark(res, "quick", "medium" if settled else "low",
+                    f"a Quick solve ({sv.get('iterations')} iterations" + (f", {x}% of the pot from equilibrium)"
+                                                                          if x is not None else ")"))
 
     def _study_look(self, state: dict) -> Optional[dict]:
         """Advisor.progress's look for Study: Study's answer off the solves in hand as they stand, the street's own

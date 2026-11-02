@@ -4,8 +4,11 @@
 // store the node and pass the texture filter, a hand from the acting player's range there (its weight entering the
 // flop, off the board, times its own frequency of the line so far), in a random suit relabelling. The player picks
 // an action; the stored mix and EVs for that hand grade it. The entry (<spot>/<flop>.bin, gto/flop_library.py's
-// encode) is decoded here; the weights entering the flop are <spot>/ranges.json. The pure parts (decoding, the
-// deal, grading, the score, keys) are what the Node tests call.
+// encode) is decoded here; the weights entering the flop are <spot>/ranges.json. A drill set is your own decisions
+// instead (the session analyzer's "Drill this leak": globalThis.DRILL_SET when the drills open, session.js
+// drillSet), each dealt once in a shuffled order and graded the same against the answer the analyzer got for it (by
+// frequency alone where it has no EVs: a preflop chart's, an answer read at once). The pure parts (decoding, the
+// deal, grading, the score, keys, a set's order) are what the Node tests call.
 (function () {
   const LIB = typeof LIB_BASE === "string" ? LIB_BASE : "flop_library/";   // where the library is (index.html's LIB_BASE)
   "use strict";
@@ -149,23 +152,39 @@
   }
 
   // ---- grading, as GTO Wizard's trainer: an action is correct when it's the highest-EV one (within the library's
-  // EV step) or the hand plays it MIX of the time or more; the EV given up is against the best action
-  const MIX = 0.1, TOL = 0.011;
+  // EV step) or the hand plays it MIX of the time or more; the EV given up is against the best action. Without EVs
+  // (pr.evs null) by frequency: the hand's most frequent action Best, MIX or more Correct, under RARE a Mistake,
+  // between an Inaccuracy; no EV lost counted (ev false)
+  const MIX = 0.1, TOL = 0.011, RARE = 0.03;
   function grade(pr, a) {
+    if (!pr.evs) {
+      const top = pr.freqs.indexOf(Math.max(...pr.freqs)), f = pr.freqs[a] || 0;
+      const verdict = a === top ? "Best" : f >= MIX ? "Correct" : f >= RARE ? "Inaccuracy" : "Mistake";
+      return { a, best: top, loss: 0, lossPct: 0, ok: verdict === "Best" || verdict === "Correct", mixed: pr.freqs.filter(x => x >= MIX).length > 1, verdict, ev: false };
+    }
     const best = Math.max(...pr.evs), loss = Math.max(0, best - pr.evs[a]), lossPct = loss / pr.pot * 100;
     const mixed = pr.freqs.filter(f => f >= MIX).length > 1;
     const verdict = loss <= TOL ? "Best" : pr.freqs[a] >= MIX ? "Correct" : lossPct < 2 ? "Inaccuracy" : lossPct < 8 ? "Mistake" : "Blunder";
     return { a, best: pr.evs.indexOf(best), loss: loss <= TOL ? 0 : loss, lossPct: loss <= TOL ? 0 : lossPct, ok: verdict === "Best" || verdict === "Correct", mixed, verdict };
   }
-  // a score: {n, ok, loss (bb, summed), lossPct (summed), streak, best, recent (the last 100 as 0/1)}
-  const emptyScore = () => ({ n: 0, ok: 0, loss: 0, lossPct: 0, streak: 0, best: 0, recent: [] });
+  // a score: {n, ok, loss (bb, summed), lossPct (summed), streak, best, recent (the last 100 as 0/1), ne (graded with
+  // EVs: the losses' average is over those; a score kept before it, n)}
+  const emptyScore = () => ({ n: 0, ok: 0, loss: 0, lossPct: 0, streak: 0, best: 0, recent: [], ne: 0 });
   function addScore(s, g) {
     const s2 = { ...emptyScore(), ...s };
+    if (!s || s.ne == null) s2.ne = s2.n;   // (a score kept before ne: all graded with EVs)
     const streak = g.ok ? s2.streak + 1 : 0;
     return { n: s2.n + 1, ok: s2.ok + (g.ok ? 1 : 0), loss: s2.loss + g.loss, lossPct: s2.lossPct + g.lossPct, streak,
-             best: Math.max(s2.best, streak), recent: [...s2.recent, g.ok ? 1 : 0].slice(-100) };
+             best: Math.max(s2.best, streak), recent: [...s2.recent, g.ok ? 1 : 0].slice(-100), ne: s2.ne + (g.ev === false ? 0 : 1) };
   }
-  const summary = (s) => s.n ? { acc: s.ok / s.n, loss: s.loss / s.n, lossPct: s.lossPct / s.n } : { acc: 0, loss: 0, lossPct: 0 };
+  const summary = (s) => {
+    const ne = s.ne == null ? s.n : s.ne;
+    return s.n ? { acc: s.ok / s.n, loss: ne ? s.loss / ne : 0, lossPct: ne ? s.lossPct / ne : 0 } : { acc: 0, loss: 0, lossPct: 0 };
+  };
+  // ---- a drill set (session.js drillSet: {name, items}): its items in a shuffled order, one problem each
+  function setOrder(n, rng) { const p = Array.from({ length: n }, (_, i) => i); for (let i = n - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [p[i], p[j]] = [p[j], p[i]]; } return p; }
+  const setProblem = (it) => ({ set: true, key: it.key, hero: it.hero, hand: it.hand, board: it.board, street: it.street, sit: it.sit, line: it.line,
+                                names: it.names, freqs: it.freqs, evs: it.evs, amounts: it.amounts || [], pot: it.pot, bet: it.bet || 0, played: it.played, state: it.state });
   // keys: 1-9 answer (while the next hand is dealing: kept for it), Space/Enter next once answered, Escape closes
   function keyAction(key, st) {
     if (key === "Escape") return { close: true };
@@ -191,11 +210,12 @@
   // ---- the panel (browser)
   const KEY = "gto-drills";
   let box = null, index = null, rep = null, ranges = null, entries = {}, busy = false, queued = null;
-  const ST = { spot: null, view: "vsbet", filter: {}, pr: null, g: null, session: emptyScore(), hist: {} };
+  // (set: a drill set being drilled, {name, items, order, k}; not kept)
+  const ST = { spot: null, view: "vsbet", filter: {}, pr: null, g: null, session: emptyScore(), hist: {}, set: null };
   const KV = globalThis.GTOStore || null;   // (the page's storage, store.js; localStorage itself without it)
   try { const s = JSON.parse(KV ? KV.getRaw(KEY) : localStorage.getItem(KEY)) || {}; Object.assign(ST, { spot: s.spot || null, view: s.view || "vsbet", filter: s.filter || {}, hist: s.hist || {} }); } catch (e) {}
   const store = () => { try { const v = { spot: ST.spot, view: ST.view, filter: ST.filter, hist: ST.hist }; if (KV) KV.set(KEY, v); else localStorage.setItem(KEY, JSON.stringify(v)); } catch (e) {} };
-  const hkey = () => `${ST.spot}/${ST.view}`;
+  const hkey = () => ST.set ? `set:${ST.set.name}` : `${ST.spot}/${ST.view}`;
   const get = async (p, bin) => { const r = await fetch(LIB + p); if (!r.ok) throw new Error(`couldn't load ${p} (${r.status})`); return bin ? r.arrayBuffer() : r.json(); };
   const spotOf = (id) => index.spots.find(s => s.id === id);
   async function entry(f) {
@@ -203,7 +223,20 @@
     if (!entries[k]) { const e = await decode(await get(`${ST.spot}/${f}.bin?v=${spotOf(ST.spot).flops[f]}`, true)); entries = { ...(Object.keys(entries).length > 40 ? {} : entries), [k]: e }; }
     return entries[k];
   }
+  // a drill set's next decision (none left: its summary)
+  function dealSet() {
+    const S = ST.set;
+    ST.g = null; ST.err = null; queued = null;
+    ST.pr = S.k < S.order.length ? setProblem(S.items[S.order[S.k++]]) : null;
+    draw();
+  }
+  function startSet(set) {
+    ST.set = { name: String(set.name || "Your decisions"), items: set.items || [], order: setOrder((set.items || []).length, Math.random), k: 0 };
+    ST.session = emptyScore(); ST.pr = null; ST.g = null;
+    return dealSet();
+  }
   async function deal() {
+    if (ST.set) return dealSet();
     if (busy) return; busy = true; ST.g = null; queued = null;
     try {
       const cs = candidates(rep, ST.view, ST.filter);
@@ -235,6 +268,11 @@
   const label = (n) => n[0].toUpperCase() + n.slice(1);
   const fmt = (x) => (Math.round(x * 100) / 100).toString();
   function actLabel(pr, n) {
+    if (pr.set) {   // (the answer's own names and amounts)
+      const x = pr.amounts[pr.names.indexOf(n)];
+      if (x == null || /^raise to /.test(n)) return esc(label(n));
+      return n === "raise" ? `Raise to ${fmt(x)}` : `${esc(label(n))} <small>${fmt(x)}bb</small>`;
+    }
     if (/^bet /.test(n)) return `${label(n)} <small>${fmt(parseFloat(n.slice(4)) / 100 * pr.pot)}bb</small>`;
     if (n === "call") return `Call <small>${fmt(pr.bet)}bb</small>`;
     return esc(label(n));
@@ -247,6 +285,7 @@
     return `var(--agg${sh[Math.min(agg.indexOf(n), sh.length - 1)]})`;
   };
   function situation(pr) {
+    if (pr.set) return `${esc(pr.line)} · pot ${fmt(pr.pot)}bb${pr.bet ? `, ${fmt(pr.bet)}bb to call` : ""}`;
     const [o, p] = rep.seats, b = pr.path.find(x => /^bet /.test(x));
     const line = pr.path.length === 0 ? `${o} to act first` : b ? `${o} checks, ${p} bets ${b.slice(4)} (${fmt(pr.bet)}bb)` : `${o} checks`;
     return `${esc(line)} · pot ${fmt(pr.pot)}bb`;
@@ -261,6 +300,11 @@
   function stageHtml() {
     if (ST.err) return `<div class="dr-msg">${esc(ST.err)}</div>`;
     const pr = ST.pr, g = ST.g;
+    if (!pr && ST.set) {
+      const s = summary(ST.session);
+      return `<div class="dr-msg">${ST.set.items.length ? `All ${ST.set.items.length} drilled: ${Math.round(s.acc * 100)}% correct.` : "No decision to drill."}</div>`
+        + `<div class="dr-next"><button class="link" data-leave>Library drills</button><button data-again class="active">Again, reshuffled</button></div>`;
+    }
     if (!pr) return `<div class="dr-msg">Dealing…</div>`;
     const btns = pr.names.map((n, i) => {
       const cls = !g ? "" : i === g.a ? (g.ok ? " dr-ok" : " dr-bad") : pr.freqs[i] >= MIX || i === g.best ? " dr-gto" : "";
@@ -268,16 +312,18 @@
     }).join("");
     let fb = "";
     if (g) {
-      const rows = pr.names.map((n, i) => `<tr class="${i === g.a ? "dr-me" : ""}"><td>${actLabel(pr, n)}</td><td class="dr-bw"><span class="dr-bar"><i style="width:${(pr.freqs[i] * 100).toFixed(1)}%;background:${color(n, pr.names)}"></i></span></td><td class="n">${(pr.freqs[i] * 100).toFixed(0)}%</td><td class="n">${pr.evs[i].toFixed(2)}</td></tr>`).join("");
+      const rows = pr.names.map((n, i) => `<tr class="${i === g.a ? "dr-me" : ""}"><td>${actLabel(pr, n)}</td><td class="dr-bw"><span class="dr-bar"><i style="width:${(pr.freqs[i] * 100).toFixed(1)}%;background:${color(n, pr.names)}"></i></span></td><td class="n">${(pr.freqs[i] * 100).toFixed(0)}%</td><td class="n">${pr.evs ? pr.evs[i].toFixed(2) : "—"}</td></tr>`).join("");
       fb = `<div class="dr-fb"><div class="dr-verdict ${g.ok ? "good" : "bad"}"><b>${g.verdict}</b>${g.mixed ? ` <span class="dr-tag">mixed</span>` : ""}`
-        + `<span>${g.loss > 0 ? `EV loss ${fmt(g.loss)}bb (${g.lossPct.toFixed(1)}% pot)` : "no EV lost"}</span></div>`
+        + `<span>${g.ev === false ? "graded by how often the hand plays it (no EVs)" : g.loss > 0 ? `EV loss ${fmt(g.loss)}bb (${g.lossPct.toFixed(1)}% pot)` : "no EV lost"}</span></div>`
+        + (pr.set && pr.played ? `<div class="dr-sub">In the hand you played ${esc(pr.played)}.</div>` : "")
         + `<table class="dr-t"><thead><tr><th>Action</th><th>GTO mix</th><th class="n">Freq</th><th class="n">EV bb</th></tr></thead><tbody>${rows}</tbody></table>`
         + `<div class="dr-next"><button class="link" data-study>Open in the solver</button><button data-next class="active">Next hand <kbd>Space</kbd></button></div></div>`;
     }
-    return `<div class="dr-sit">${situation(pr)}</div><div class="dr-cards"><div><small>Board</small><span>${pr.board.map(cardH).join("")}</span></div>`
+    return `<div class="dr-sit">${situation(pr)}</div><div class="dr-cards">${pr.board.length ? `<div><small>Board</small><span>${pr.board.map(cardH).join("")}</span></div>` : ""}`
       + `<div><small>You (${esc(pr.hero)})</small><span>${pr.hand.map(cardH).join("")}</span></div></div><div class="dr-acts">${btns}</div>${fb}`;
   }
   function controls() {
+    if (ST.set) return `<div class="dr-ctl"><b>${esc(ST.set.name)}</b><small class="dr-sub">your decisions from the session · ${Math.min(ST.set.k, ST.set.items.length)} of ${ST.set.items.length}</small><button class="link" data-leave>Library drills</button></div>`;
     const sel = (id, opts, cur) => `<select data-ctl="${id}" aria-label="${id}">${opts.map(([v, t]) => `<option value="${v}"${v === cur ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>`;
     const L = FR().LABELS, G = { hi: "high card", suits: "suits", pair: "pairing", conn: "connectedness" };
     const f = (k) => sel("f:" + k, [["", "Any " + G[k]], ...Object.entries(L[k])], ST.filter[k] || "");
@@ -289,16 +335,20 @@
   function draw() {
     if (!box) return;
     const body = box.querySelector(".dr-body");
-    if (!index || !rep) { body.innerHTML = `<div class="dr-msg">Loading…</div>`; return; }
+    if (!ST.set && (!index || !rep)) { body.innerHTML = `<div class="dr-msg">Loading…</div>`; return; }
     body.innerHTML = controls() + `<div class="dr-stage">${stageHtml()}</div>` + scoreHtml()
-      + `<div class="dr-note"><span class="hoveronly">Keys: 1-${ST.pr ? ST.pr.names.length : 3} answer, Space or Enter for the next hand. </span>Correct: the best EV, or an action the hand plays ${MIX * 100}% of the time or more. Flops drawn by how often they come, hands by the range's weight at this point.</div>`;
+      + `<div class="dr-note"><span class="hoveronly">Keys: 1-${ST.pr ? ST.pr.names.length : 3} answer, Space or Enter for the next hand. </span>Correct: the best EV, or an action the hand plays ${MIX * 100}% of the time or more. `
+      + (ST.set ? `Each decision graded against the answer the session analyzer got for it; an EV lost under 2% of the pot is an inaccuracy, under 8% a mistake, more a blunder.</div>` : `Flops drawn by how often they come, hands by the range's weight at this point.</div>`);
   }
   function act(d) {
     if (d.a != null) return answer(+d.a);
     if (d.next != null) return deal();
     if (d.view) { ST.view = d.view; ST.session = emptyScore(); store(); return deal(); }
     if (d.reset != null) { delete ST.hist[hkey()]; store(); return draw(); }
+    if (d.study != null && ST.set) { const st = ST.pr.state; close(); return window.loadHandState && window.loadHandState(JSON.parse(JSON.stringify(st)), `${ST.set.name}: ${ST.pr.hand.join("")}`); }
     if (d.study != null) { const st = stateFor(rep, ST.pr); close(); return window.loadHandState && window.loadHandState(st, `${rep.label}, ${ST.pr.board.join("")}`); }
+    if (d.again != null && ST.set) return startSet(ST.set);
+    if (d.leave != null) { ST.set = null; ST.pr = null; ST.session = emptyScore(); return library(); }
     if (d.ctl === "spot") return pickSpot(d.value).catch(err => { ST.err = err.message; draw(); });
     if (d.ctl && d.ctl.startsWith("f:")) { ST.filter = { ...ST.filter, [d.ctl.slice(2)]: d.value }; ST.session = emptyScore(); store(); return deal(); }
   }
@@ -379,26 +429,37 @@
       document.body.appendChild(box);
       box.addEventListener("click", (e) => {
         if (e.target === box) return close();
-        const t = e.target.closest("[data-close],[data-a],[data-next],[data-view],[data-reset],[data-study]");
+        const t = e.target.closest("[data-close],[data-a],[data-next],[data-view],[data-reset],[data-study],[data-again],[data-leave]");
         if (!t || t.disabled) return;
         if (t.dataset.close != null) close(); else act(t.dataset);
       });
       box.addEventListener("change", (e) => { const c = e.target.dataset.ctl; if (c) act({ ctl: c, value: e.target.value }); });
       window.addEventListener("keydown", onKey, true);
     }
-    box.hidden = false; draw();
+    box.hidden = false;
+    // (the session analyzer's drill set: drilled at once, no library needed)
+    const set = globalThis.DRILL_SET;
+    if (set) { globalThis.DRILL_SET = null; startSet(set); const t = box.querySelector(".dr-act"); if (t) t.focus(); return; }
+    ST.set = null;
+    draw();
+    return library(spot);
+  }
+  // the library's drills: the index, then the spot (spot's, else the one last picked)
+  async function library(spot) {
+    draw();
     try {
       index = index || await get("index.json");
       if (index.format !== FORMAT) { index = null; throw new Error("the library changed: reload the page"); }
       const ids = (index.spots || []).filter(s => s.report).map(s => s.id);
       if (!ids.length) throw new Error("no precomputed spots");
       const want = ids.includes(spot) ? spot : ids.includes(ST.spot) ? ST.spot : ids[0];
-      if (!rep || want !== ST.spot) await pickSpot(want); else if (globalThis.viewSpot) globalThis.viewSpot("drills", ST.spot, rep.label);
+      if (!rep || want !== ST.spot) await pickSpot(want);
+      else { if (globalThis.viewSpot) globalThis.viewSpot("drills", ST.spot, rep.label); if (!ST.pr) await deal(); else draw(); }
     } catch (err) { box.querySelector(".dr-body").innerHTML = `<div class="dr-msg">Couldn't load the drills: ${esc(err.message || err)}</div>`; }
     const t = box.querySelector(".dr-act") || box.querySelector("select"); if (t) t.focus();
   }
 
   const api = { decode, parse, nodeAt, candidates, pick, handWeights, problem, potAt, grade, addScore, emptyScore, summary,
-                keyAction, stateFor, COMBOS, VIEWS, MIX, open, close, state: ST };
+                keyAction, stateFor, setOrder, setProblem, COMBOS, VIEWS, MIX, open, close, state: ST };
   if (typeof module === "object" && module.exports) module.exports = api; else globalThis.Drills = api;
 })();

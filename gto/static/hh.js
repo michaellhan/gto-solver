@@ -34,7 +34,8 @@
     const games = x.match(/<game\b[\s\S]*?<\/game>/g) || [], hint = tag(x, "nickname"), bb = tag(x, "bigblind");
     const g = games.find(g => g.includes(`name="${hint}"`)) || games[0] || x;   // the first hand you were dealt into
     if (games.length > 1) warnings.push(`${games.length} hands pasted: imported the first.`);
-    const out = [`iPoker Hand #${at(g, "gamecode")}: ${tag(x, "gametype")}${bb ? ` (${money(tag(x, "smallblind"))}/${money(bb)})` : ""}`];
+    const tc = tag(x, "tournamentcode"), tn = tag(x, "tournamentname");
+    const out = [`iPoker Hand #${at(g, "gamecode")}: ${tag(x, "gametype")}${bb ? ` (${money(tag(x, "smallblind"))}/${money(bb)})` : ""}${tc ? ` Tournament #${tc}${tn ? ` "${tn.replace(/"/g, "'")}"` : ""}` : ""}`];
     for (const p of g.match(/<player\b[^>]*>/g) || []) {
       out.push(`Seat ${at(p, "seat")}: ${at(p, "name")} (${money(at(p, "chips"))})`);
       if (at(p, "dealer") === "1") out.push(`Seat #${at(p, "seat")} is the button`);
@@ -93,6 +94,20 @@
          .replace(/^(.+?)\s+:\s+(Small Blind|Big Blind|Ante chip)\b/i, (_, n, b) => `${n}: posts ${/ante/i.test(b) ? "ante" : b.toLowerCase()}`)
          .replace(/All-in\(raise[^)]*\)\s*(.*)$/i, "raises $1 and is all-in"));
     return { lines, site, hint: "" };
+  }
+
+  // a tournament's hand (the lines before the seats): its id (the site's number; Winamax's from the table's name), name,
+  // buy-in and level, or null for a cash game
+  const ROMAN = { I: 1, V: 5, X: 10, L: 50, C: 100, D: 500, M: 1000 };
+  const roman = (s) => [...s.toUpperCase()].reduceRight((o, c) => { const v = ROMAN[c]; return { n: o.n + (v < o.top ? -v : v), top: Math.max(o.top, v) }; }, { n: 0, top: 0 }).n;
+  function tourney(lines) {
+    const pre = lines.slice(0, Math.max(1, lines.findIndex(l => /^Seat \d+:/i.test(l)))).join("\n");
+    if (!/Tournament|Tourney|\bMTT\b|\bSNG\b|Sit ?(&|n|'n'|and) ?Go|Spin ?(&|and) ?Go/i.test(pre)) return null;
+    const name = (pre.match(/Tournament\s*(?:#[\w-]+\s*)?"([^"]+)"/i) || [])[1];
+    const id = (pre.match(/Tournament\s*(?:#|ID\s*:?)\s*([\w-]*\d[\w-]*)/i) || pre.match(/^Table:?\s*'[^'(]*\((\d+)\)/im) || [])[1] || name || null;
+    const buyin = (pre.match(/(?:[$€£]\s?)?\d+(?:\.\d+)?\s?[€£]?(?:\s?\+\s?(?:[$€£]\s?)?\d+(?:\.\d+)?\s?[€£]?){1,2}/) || [])[0];
+    const lv = (pre.match(/\bLevel\s*:?\s*([IVXLCDM]+|\d+)(?![\w.])/i) || [])[1];
+    return { id, ...(name ? { name } : {}), ...(buyin ? { buyin: buyin.replace(/\s+/g, "") } : {}), ...(lv ? { level: /^\d+$/.test(lv) ? +lv : roman(lv) } : {}) };
   }
 
   function parseHandHistory(text) {
@@ -222,8 +237,10 @@
     const opp = order.filter(s => s.name !== hero), folded = new Set(acts.filter(a => a.act === "fold").map(a => a.name));
     const deep = [opp.filter(s => !folded.has(s.name)), opp].find(x => x.length);
     const effective = Math.min(stacks[pos[hero]], Math.max(...deep.map(s => stacks[pos[s.name]])));
+    const tour = tourney(lines);
     return { site, bb, players: n, hero: pos[hero], heroName: hero, stack: stacks[pos[hero]], stacks, effective, ante, straddle,
-             hole, board: board.slice(0, 5), seats: order.map(s => ({ seat: s.seat, name: s.name, pos: pos[s.name], stack: r2(s.chips / bb) })), actions, warnings };
+             hole, board: board.slice(0, 5), seats: order.map(s => ({ seat: s.seat, name: s.name, pos: pos[s.name], stack: r2(s.chips / bb) })), actions, warnings,
+             ...(tour ? { tournament: tour } : {}) };
   }
 
   // The page state for a parsed hand: every seat with its own stack, and the actions through the page's engine one
