@@ -54,6 +54,7 @@ Open http://127.0.0.1:18877/ . Each view has its own URL, on the website and the
 | `/gto-solver/preflop/` | Preflop solve (Study on a game set in a form) |
 | `/gto-solver/session/` | Analyze session |
 | `/gto-solver/import/` | Import hand |
+| `/gto-solver/start/`, `/about/`, `/glossary/`, `/changelog/`, `/fairplay/` | Help: Getting started, About & accuracy, Glossary, Changelog, Fair play |
 
 (locally without the `/gto-solver` prefix: http://127.0.0.1:18877/practice/). Opening a view pushes its URL
 and closing it goes back to the solver's (or Practice's, when the view was opened over Practice); the browser's
@@ -157,6 +158,28 @@ Click any of your decisions (in the review or the timeline) to replay the hand f
 point; later actions and board cards are cleared, with Undo. While others act, the
 last advice stays visible but dimmed and labelled. The **⋯** menu has a four-colour
 deck (diamonds blue, clubs green), Sounds on/off, a switch that puts the advice on the left, and Reset layout.
+The menu is grouped: Review (Import hand, Analyze session), Study (Study, Preflop solve, Range builder, Drills, Flop
+reports), Help, and Settings (those switches, Reset practice, Reset layout); it scrolls on a short screen.
+
+**Help** (the **?** beside the ⋯ menu, and the menu's Help group) is five plain-language pages, each with its own URL
+(the table above) and tabs between them that move it: **Getting started** (reviewing a hand, a session, studying a
+spot, training, the settings worth knowing, with buttons that open each view), **About & accuracy** (the README's
+benchmarks in plain words: what "% of the pot from equilibrium" means, the comparison with postflop-solver, which
+spots are precomputed or solved live, Quick, Fast and Accurate, the known limits and where your data goes),
+**Glossary** (GTO, mix, EV and EV lost, equity and EQR, ranges and combos, exploitability, approximate, precomputed,
+borrowed, off the solved line, heuristic, the pool, node locks, ICM, the speeds, the grades, SPR, c-bet), a
+user-facing **Changelog** by week from the commit history, and **Fair play** (a study and review tool: not for use
+during a hand, online or live). It is `gto/static/help.js`, loaded when first opened (`HP_VERSION`, stamped by
+deploy.sh). The advice's badges (precomputed, borrowed, approximate, the convergence pill, off the solved line,
+heuristic) say what they mean in their tooltip and open the Glossary at their entry when clicked (`data-term`).
+The thresholds the Glossary quotes are the code's: tests/js/help.test.js checks them against `convergence()`,
+`gradeClass` and `HEUR_OK`/`HEUR_MEH`.
+
+**First visit.** A first visit to the solver's URL (no `gto-speed` in the browser yet, not a view's URL or a `#h=`
+link) opens a small chooser over the page: Review a hand, Study a spot, Practice, Analyze a session, with links to
+Getting started, About & accuracy and Fair play. Any choice, **Not now**, Escape or a click outside closes it for good
+(`gto-welcome` in localStorage: "due" until then, "seen" after; a returning visitor is "seen" from the start). It only
+opens views; it changes nothing about the advice.
 Sounds (on by default, kept in the browser) are short effects synthesized with Web Audio, no files: in Practice,
 the deal and each board card, a knock for a check, chips for a call, bet or all-in, a swish for a fold, a chime
 when your move is in the solver's mix and a low note for a mistake, and a pot won or lost; in Drills, each answer's
@@ -4295,7 +4318,7 @@ python scripts/compare_mw_library.py --spot mw_co_btn_bb --boards Kh7d2c,9s8s5d 
 scripts/deploy.sh
 ```
 
-copies the page, the worker, `practice.js`, `multitable.js`, `reports.js`, `drills.js`, `breakdown.js`, `session.js`, `study.js`, `solver.zip` (the worker's Python code: every `gto/*.py` and treys, `scripts/build_bundle.py`), the `gto` sources and Study's stored preflop solves (`gto/static/pf/*.bin` as `pf/`) into the `gto-solver/` folder
+copies the page, the worker, `practice.js`, `multitable.js`, `reports.js`, `drills.js`, `breakdown.js`, `session.js`, `study.js`, `help.js`, `solver.zip` (the worker's Python code: every `gto/*.py` and treys, `scripts/build_bundle.py`), the `gto` sources and Study's stored preflop solves (`gto/static/pf/*.bin` as `pf/`) into the `gto-solver/` folder
 of the michaellhan.github.io repo and pushes. The precomputed libraries (`gto/static/flop_library`: the heads-up and
 3-way indexes, entries and reports) go first to their own repo, michaellhan/gto-solver-library, served beside the page
 at /gto-solver-library/ (`scripts/deploy_library.sh`): one commit with no history, force-pushed on each publish and

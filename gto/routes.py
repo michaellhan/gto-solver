@@ -1,5 +1,5 @@
-"""The page's URLs: one per view (/practice/, /drills/, /reports/, /session/, /study/, /preflop/, /import/; the solver
-is /), and /reports/<spot>/ and /drills/<spot>/ for a precomputed spot (its id with dashes: srp_btn_bb -> srp-btn-bb).
+"""The page's URLs: one per view (/practice/, /drills/, /reports/, /session/, /study/, /preflop/, /import/, and the
+help pages /start/, /about/, /glossary/, /changelog/, /fairplay/; the solver is /), and /reports/<spot>/ and /drills/<spot>/ for a precomputed spot (its id with dashes: srp_btn_bb -> srp-btn-bb).
 
 The list lives in one place, gto/static/index.html's ROUTES and SPOT_ROUTES lines; this module reads it from
 there. The page is one file at the site's root (the static site has no rewrites), so each route gets a copy

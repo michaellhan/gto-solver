@@ -35,13 +35,18 @@
   header .ctl { display: inline-flex; align-items: center; gap: 6px; }
   header .ctl > .lbl { font-size: 11px; color: var(--faint); }
   .menuwrap { position: relative; }
-  .menu { position: absolute; right: 0; top: calc(100% + 6px); background: var(--panel2); border: 1px solid var(--line2); border-radius: var(--r); padding: 6px; min-width: 200px; z-index: 60; box-shadow: 0 10px 30px rgba(0,0,0,.5); display: flex; flex-direction: column; gap: 2px; }
+  .menu { position: absolute; right: 0; top: calc(100% + 6px); background: var(--panel2); border: 1px solid var(--line2); border-radius: var(--r); padding: 6px; min-width: 200px; z-index: 60; box-shadow: 0 10px 30px rgba(0,0,0,.5); display: flex; flex-direction: column; gap: 2px; max-height: calc(100dvh - 72px); overflow-y: auto; }
   .menu button { background: none; border: 0; text-align: left; padding: 7px 10px; border-radius: 6px; width: 100%; display: flex; justify-content: space-between; gap: 12px; }
   .menu button:hover { background: var(--line); }
   .menu button.active { background: none; color: var(--accent); font-weight: 500; }
   .menu button.active::after { content: "✓"; }
   .menu .sep { height: 1px; background: var(--line); margin: 4px 2px; }
   .menu .hint { font-size: 11px; color: var(--faint); padding: 4px 10px 2px; line-height: 1.5; }
+  /* the menu's groups (Review, Study, Help, Settings); Preflop solve and Range builder are Study's, indented under it */
+  .menu .mlbl { font-size: 10.5px; color: var(--faint); text-transform: uppercase; letter-spacing: .05em; padding: 8px 10px 2px; }
+  .menu .mlbl:first-child { padding-top: 2px; }
+  .menu button.sub { padding-left: 22px; }
+  #helpBtn { padding: 6px 10px; font-weight: 600; }
 
   /* ---- controls */
   button { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 6px 11px; font: inherit; cursor: pointer; }
@@ -501,6 +506,17 @@
 
   .importbox { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); width: min(620px, calc(100% - 32px)); z-index: 80; background: var(--panel2); border: 1px solid var(--line2); border-radius: var(--r); padding: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.5), 0 0 0 100vmax rgba(0,0,0,.55); display: flex; flex-direction: column; gap: 8px; }
   .importbox textarea { width: 100%; height: 40vh; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 8px; font: 12px/1.4 ui-monospace, Menlo, monospace; resize: vertical; }
+  /* the first visit's chooser (#welcome) */
+  .welcome { gap: 10px; }
+  .welcome .wgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .welcome .wgrid button { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; padding: 10px 12px; min-height: 64px; }
+  .welcome .wgrid button span { color: var(--muted); font-size: 12px; line-height: 1.35; }
+  .welcome .wgrid button:hover { border-color: var(--accent); }
+  .welcome .wfoot { gap: 14px; }
+  .welcome #welcomeClose { margin-left: auto; }
+  @media (max-width: 560px) { .welcome .wgrid { grid-template-columns: 1fr; } }
+  /* an answer's badge opens its Glossary entry (help.js) */
+  [data-term] { cursor: help; }
   .toast { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); background: #232932; border: 1px solid var(--line2); border-radius: var(--r); padding: 9px 14px; display: flex; gap: 14px; align-items: center; box-shadow: 0 8px 30px rgba(0,0,0,.5); z-index: 70; width: max-content; max-width: calc(100% - 32px); font-size: 13px; }
 
   /* ---- layout
@@ -617,24 +633,34 @@
   <h1>GTO Solver</h1>
   <span class="spacer"></span>
   <span class="ctl nopx" id="oppctl"><span class="lbl">Opponents</span>
-    <div class="segment"><button data-o="gto" class="active" title="Opponents play the equilibrium (GTO): advice that can't be exploited, whoever you face.">GTO</button><button data-o="pool" title="Opponents play like a typical player pool: they fold too often to bets of every size (most of all small ones), raise less and bluff less, from population data where it exists. Preflop, from population stats, they play more hands, 3bet more and fold less to 3bets. Your preflop calls and raises adjust to those ranges (opens follow the chart); after the flop, advice is the highest-EV play against them.">Pool</button></div></span>
+    <div class="segment"><button data-o="gto" class="active" title="Opponents play the equilibrium (GTO): advice that can't be exploited, whoever you face.">GTO</button><button data-o="pool" title="Opponents play like a typical online player pool instead of perfectly: they fold too often to bets of every size (most of all small ones), raise less and bluff less, fitted to published population data from online cash games. Preflop they play more hands, 3bet more and fold less to 3bets. Your preflop calls and raises adjust to those ranges (opens follow the chart); after the flop, the advice is the most profitable play against them, with GTO's frequency shown under each action.">Pool</button></div></span>
   <span class="ctl" id="solvectl"><span class="lbl">Solve</span>
-    <div class="segment"><button data-m="quick" title="About 2 s per spot. River answers are solid; turn answers are rough. 3-way flops and turns get a short solve in a small game (a 3-way flop's first decision in the commonest 3-way pots comes from precomputed solves); 4-way turns are solved, 4-way flops get the betting rules.">Quick</button><button data-m="fast" class="active" title="A few seconds per spot. River answers are solid; turn and flop answers are rough.">Fast</button><button data-m="accurate" title="Much longer per spot (about 30 s with the local server, about a minute in the browser). Turn answers get close to a full solver.">Accurate</button></div></span>
+    <div class="segment"><button data-m="quick" title="About 2 s per spot. Rivers come out close to exact; turns are approximate (about 6-7% of the pot from equilibrium in the browser, where Fast settles them under 1%). 3-way flops and turns get a short solve in a smaller game; 4-way turns are solved, 4-way flops get the betting rules. Practice uses Quick's answers at the Fast setting. More: ⋯ > About &amp; accuracy.">Quick</button><button data-m="fast" class="active" title="The default: about 8 s per spot in the browser (2.5 s with the local server). Rivers come out exact; a single-raised turn gives up about 0.2% of the pot to a perfect opponent, a 3bet pot's turn almost nothing; precomputed flops answer at once. More: ⋯ > About &amp; accuracy.">Fast</button><button data-m="accurate" title="About a minute per spot in the browser (30 s with the local server). Turns come within a fraction of a percent of a full solver: a single-raised turn gives up about 0.01% of the pot to a perfect opponent. More: ⋯ > About &amp; accuracy.">Accurate</button></div></span>
   <button id="practiceBtn" title="Practice against GTO: random hands, the other seats play the solver's strategy for their cards, and each of your decisions is graded">Practice</button>
-  <button id="copyhand" title="Copy the hand, the advice and a link that reopens this exact spot">Copy hand</button>
+  <button id="copyhand" title="Copy this hand as text: the action, the advice with its mix and EVs, the opponent's range, a link that reopens this exact spot, and the raw state the solver was asked (State JSON, for the command line)">Copy hand</button>
   <button id="newhand" title="Shortcut: N">New hand <kbd>N</kbd></button>
   <span class="menuwrap">
-    <button id="menuBtn" class="ghost" title="More: deck colours, import a hand, layout" aria-label="More" aria-haspopup="true" aria-expanded="false" aria-controls="menu">⋯</button>
+    <button id="helpBtn" class="ghost" title="Help: getting started, how accurate the answers are, a glossary" aria-label="Help">?</button>
+    <button id="menuBtn" class="ghost" title="More: import and analyze hands, Study, drills and reports, help, settings" aria-label="More" aria-haspopup="true" aria-expanded="false" aria-controls="menu">⋯</button>
     <div class="menu" id="menu" hidden>
+      <div class="mlbl">Review</div>
+      <button id="importHand" title="Paste a hand history (PokerStars, GGPoker, 888, partypoker, Winamax, WPN/ACR, Ignition/Bovada, iPoker) to replay and review it">Import hand…</button>
+      <button id="analyzeSession" title="A whole session's hand histories: each of your decisions solved and graded, the EV lost by street, position, spot and preflop situation, the biggest mistakes">Analyze session…</button>
+      <div class="mlbl">Study</div>
+      <button id="study" title="Browse the solver's strategy for a whole range, node by node: every hand's mix, EV and equity; play any action, deal any card">Study…</button>
+      <button id="pfSolve" class="sub" title="Study, starting at its preflop solve: set the players, stacks, ante, straddle, rake and raise sizes, then browse every hand's mix and EVs at every preflop decision">Preflop solve…</button>
+      <button id="rangeBuilder" class="sub" title="Study, starting in its Build mode: paint a range's strategy yourself and score it against the solver's, on random flops of a precomputed spot">Range builder…</button>
+      <button id="drills" title="Drill one flop spot: random flops and hands from the precomputed solutions, each answer graded at once (keys 1-4, Space for the next)">Drills…</button>
+      <button id="flopReports" title="The precomputed spots' flop strategy across every flop, by texture; click a flop to load it">Flop reports…</button>
+      <div class="mlbl">Help</div>
+      <button id="helpStart" title="What to do first, for reviewing hands, studying, practice or a whole session">Getting started…</button>
+      <button id="helpAbout" title="How the answers are made and measured: exploitability, the benchmark against an open-source solver, Quick, Fast and Accurate, the known limits">About & accuracy…</button>
+      <button id="helpGlossary" title="The words on the advice panel: EV, EQR, exploitability, mix, precomputed, borrowed, off the solved line…">Glossary…</button>
+      <button id="helpChangelog" title="What's new">Changelog…</button>
+      <button id="helpFairplay" title="A study and review tool: not for use during a hand, online or live">Fair play…</button>
+      <div class="mlbl">Settings</div>
       <button id="fourcolor" title="Four-colour deck: diamonds blue, clubs green">Four-colour deck</button>
       <button id="soundBtn" title="Sound effects in Practice and Drills: cards, chips, checks, folds, each verdict and the pot">Sounds on</button>
-      <button id="importHand" title="Paste a hand history (PokerStars, GGPoker, 888, partypoker, Winamax, WPN/ACR, Ignition/Bovada, iPoker) to replay and review it">Import hand…</button>
-      <button id="drills" title="Drill one flop spot: random flops and hands from the precomputed solutions, each answer graded at once (keys 1-4, Space for the next)">Drills…</button>
-      <button id="analyzeSession" title="A whole session's hand histories: each of your decisions solved and graded, the EV lost by street, position, spot and preflop situation, the biggest mistakes">Analyze session…</button>
-      <button id="study" title="Browse the solver's strategy for a whole range, node by node: every hand's mix, EV and equity; play any action, deal any card">Study…</button>
-      <button id="pfSolve" title="Solve a game's preflop: set the players, stacks, ante, straddle, rake and raise sizes, then browse every hand's mix and EVs at every preflop decision (Study)">Preflop solve…</button>
-      <button id="rangeBuilder" title="Paint a range's strategy yourself and score it against the solver's (Study's Build mode), on random flops of a precomputed spot">Range builder…</button>
-      <button id="flopReports" title="The precomputed spots' flop strategy across every flop, by texture; click a flop to load it">Flop reports…</button>
       <button id="swapCols" class="wideonly" title="Put the advice on the left and the table on the right">Advice on the left</button>
       <div class="sep"></div>
       <button id="resetPractice" class="pxonly" title="Clear your practice score, mistakes and the table's stacks, and deal a new hand">Reset practice…</button>
@@ -712,7 +738,7 @@
           <div class="advh">Ranges into the flop</div>
           <div class="row" id="rangeIns" title="Ranges entering the flop, PIO style (22+, A2s+, KTo+, QJo:0.5). Empty: the preflop charts' range for the action."></div>
           <div class="advh">Opponent tendencies (preflop, and heads-up postflop)</div>
-          <div class="row" id="lockIns" title="Lock an opponent's tendencies (nodelocking), with GTO's frequencies alongside. Preflop their opens, 3bets, calls and folds follow it and your line is re-priced against them; after the flop, heads-up, the advice is the best response to them. On top of GTO, or of the pool with Opponents: Pool. fold: points more of their range folding to a bet or raise (negative: calls); bluff, bet, raise: % more or less (-100 never, +100 always; bluff is their weak hands' bets; preflop bet is their opens, raise their 3bets and 4bets, scaled); next: their fold % to your bet and bet % when you check at their very next decision (after the flop)."></div>
+          <div class="row" id="lockIns" title="Tell the solver how an opponent plays, and the advice becomes the best counter to it (nodelocking), with GTO's frequencies alongside. It works preflop (their opens, 3bets, calls and folds; your line is re-priced against them) and heads-up after the flop, on top of GTO or of the pool (Opponents: Pool). fold: how many percentage points more of their range folds to a bet or raise (negative: they call more). bluff, bet, raise: how much more or less often, from -100 (never) to +100 (always); bluff is the bets of their weak hands; preflop, bet means their opens and raise their 3bets and 4bets. next: their fold % to your bet, and their bet % when you check, at their very next decision after the flop."></div>
         </details>
         <div class="row">
           <span class="muted nopx" style="width:58px;font-size:12px">You are</span>
@@ -779,6 +805,17 @@
   <textarea id="hhText" spellcheck="false" placeholder="PokerStars Hand #…, Poker Hand #…, Winamax Poker…"></textarea>
   <div class="err" id="hhErr"></div>
   <div class="row"><button id="hhGo" class="active">Import</button><button id="hhCancel" class="ghost">Cancel</button></div>
+</div>
+<div id="welcome" class="importbox welcome" role="dialog" aria-modal="true" aria-labelledby="welcomeTitle" hidden>
+  <b id="welcomeTitle">Welcome. What would you like to do first?</b>
+  <span class="muted" style="font-size:12px">GTO Solver works out what game theory does in any no-limit hold'em spot, in your browser: nothing you enter is uploaded. It's for studying and for reviewing hands after you've played them, not for use during a hand.</span>
+  <div class="wgrid">
+    <button id="welcomeReview"><b>Review a hand</b><span>Enter a hand you played, seat by seat, or paste its hand history, and see the solver's play at each decision</span></button>
+    <button id="welcomeStudy"><b>Study a spot</b><span>Browse the solver's strategy for a whole range, node by node</span></button>
+    <button id="welcomePractice"><b>Practice</b><span>Play random hands against the solver, each decision graded as you go</span></button>
+    <button id="welcomeSession"><b>Analyze a session</b><span>Paste a session's hand histories and see where you lost the most</span></button>
+  </div>
+  <div class="row wfoot"><button class="link" id="welcomeStart">Getting started</button><button class="link" id="welcomeAbout">How accurate is it?</button><button class="link" id="welcomeFair">Fair play</button><button id="welcomeClose" class="ghost">Not now</button></div>
 </div>
 
 <script>
@@ -915,6 +952,11 @@ try { const v = localStorage.getItem("gto-speed"); if (v === "accurate" || v ===
 // opponents: "gto" (equilibrium) or "pool" (a typical player pool, exploited); a preference like the speed
 let OPP = "gto";
 try { if (localStorage.getItem("gto-opponents") === "pool") OPP = "pool"; } catch (e) {}
+// the first visit's chooser (#welcome, shown at the end): "due" on a first visit (no speed stored yet, which modeReady
+// stores on every load, so this is read before it can), "seen" once answered or dismissed, or for a visitor from
+// before the chooser existed
+let WELCOME = null;
+try { WELCOME = localStorage.getItem("gto-welcome"); if (!WELCOME) localStorage.setItem("gto-welcome", WELCOME = localStorage.getItem("gto-speed") ? "seen" : "due"); } catch (e) {}
 // practice mode: random hands against GTO opponents (gto/static/practice.js, loaded on first use)
 const practicing = () => !!(window.Practice && window.Practice.on);
 // Practice on 2-4 tables (multitable.js): each table keeps its own hand and asks the solver itself; the page's own
@@ -930,17 +972,18 @@ const SY_VERSION = "1";        // and study.js (Study mode, the solution browser
 const RO_VERSION = "1";        // and runouts.js (Study's turn and river reports, loaded when one first opens)
 const SP_VERSION = "1";        // and simple.js (the one-size view: the advice's Simple tab and Study's, loaded on first use)
 const MT_VERSION = "1";        // and multitable.js (Practice on 2-4 tables at once, loaded the first time Tables goes above 1)
+const HP_VERSION = "1";        // and help.js (the help pages: Getting started, About & accuracy, Glossary, Changelog, Fair play)
 // where the precomputed libraries are (flop_library/: the local server's, gto/static/flop_library); scripts/deploy.sh
 // points it at their own site, ../gto-solver-library/ (scripts/deploy_library.sh). The worker is told it in its URL
 // (relative: worker.js is in the folder the page's URLs resolve against).
 const LIB_BASE = "flop_library/";
 // ---- the views' URLs: the solver is the root (/gto-solver/), the others /practice/, /drills/, /reports/,
-// /session/, /study/ and /import/ under it, and /reports/<spot>/, /drills/<spot>/ a precomputed spot (its id, dashes for
+// /session/, /study/, /preflop/, /import/ and the help pages (/start/, /about/, /glossary/, /changelog/, /fairplay/) under it, and /reports/<spot>/, /drills/<spot>/ a precomputed spot (its id, dashes for
 // underscores). The static site has no rewrites: each URL is a copy of this page with a <base href="../"> that
 // points its relative URLs at the root. gto/routes.py reads these two lines (scripts/deploy.sh writes the copies,
 // gto/server.py serves them). Opening a view pushes its URL and closing it pushes the solver's (Practice's, if
 // that's on under it); back and forward switch views; a view's URL opened directly opens it (applyRoute, at the end).
-const ROUTES = { practice: "Practice", drills: "Drills", reports: "Flop reports", session: "Analyze session", study: "Study", preflop: "Preflop solve", import: "Import hand" };
+const ROUTES = { practice: "Practice", drills: "Drills", reports: "Flop reports", session: "Analyze session", study: "Study", preflop: "Preflop solve", import: "Import hand", start: "Getting started", about: "About & accuracy", glossary: "Glossary", changelog: "Changelog", fairplay: "Fair play" };
 const SPOT_ROUTES = ["drills", "reports"];
 const ROUTE_RE = new RegExp(`^(.*?/)(?:(${Object.keys(ROUTES).join("|")})(?:/([a-z0-9-]+))?/?)?(?:index\\.html)?$`);
 function parseRoute(pathname) {   // -> { root: the solver's path, view: "solver" or a ROUTES key, spot: a spot id or null }
@@ -1840,7 +1883,10 @@ const SIZE_USAGE = (r) => Object.entries(r.size_usage).map(([k, v]) => `${k} ${(
 // (borrowed: another table size's pot read off the library spot whose ranges are a few combos away, flop_approx.near_exact)
 const PRE_TIP = (p) => `Solved offline (${p.label}, ${p.iterations} iterations)${p.same_tree ? "" : " with Accurate's flop model"}: instant, at either speed.`
   + (p.borrowed ? ` Approximate: that spot read as this one (${p.borrowed.text}).` : "");
-const PRE_BADGE = (p) => `<span class="conv ${p.borrowed ? "meh" : "ok"}" title="${PRE_TIP(p)}">${p.borrowed ? "precomputed · borrowed" : "precomputed"}</span>`;
+const PRE_BADGE = (p) => `<span class="conv ${p.borrowed ? "meh" : "ok"}" title="${PRE_TIP(p)} ${TERM_HINT}" data-term="${p.borrowed ? "borrowed" : "precomputed"}">${p.borrowed ? "precomputed · borrowed" : "precomputed"}</span>`;
+// a badge's word clicked opens the Glossary at its entry (help.js; the click is wired with the help pages' views)
+const TERM_HINT = "Click for what this means.";
+const HEUR_TIP = "Too many players in for a solve here: this answer comes from your equity against the field and betting rules fitted to the solver's play.";
 const convTip = (c) => `Exploitability ${c.x.toFixed(1)}% of the pot: a perfect counter-strategy would win that much from this solve. ${c.target != null ? `Answers at this speed are ${c.target}% or less: this solve ran short, so its mix and EVs are a rough guide.` : "Under 3% is close to a full solver."}`;
 
 // Where the GTO % under an exploit's mix (the pool, your locks) comes from: preflop the chart; after it the
@@ -1868,7 +1914,7 @@ function renderEarly(res) {
   const label = res.approximate.label;
   const rev = res.actions.some(a => a.range_ev_bb != null);
   const bb = (x) => `${x > 0 ? "+" : ""}${x.toFixed(2)} bb`;
-  let h = `<div class="verdict"><span class="big">${res.recommended}</span><span class="conv meh" title="Approximate: ${label}">approximate</span>${res.range_ev_bb != null ? `<span class="mix" title="Range EVs at this turn's first decision, in big blinds relative to folding now: the flop solve's stored turn EVs, by card class">range EV: yours ${bb(res.range_ev_bb)} · theirs ${bb(res.villain_range_ev_bb)} of the ${res.pot_bb} bb pot</span>` : ""}</div>`;
+  let h = `<div class="verdict"><span class="big">${res.recommended}</span><span class="conv meh" title="Approximate: ${label}. ${TERM_HINT}" data-term="approximate">approximate</span>${res.range_ev_bb != null ? `<span class="mix" title="Range EVs at this turn's first decision, in big blinds relative to folding now: the flop solve's stored turn EVs, by card class">range EV: yours ${bb(res.range_ev_bb)} · theirs ${bb(res.villain_range_ev_bb)} of the ${res.pot_bb} bb pot</span>` : ""}</div>`;
   h += `<div class="arows${rev ? "" : " noev"}"><div class="arow head"><span>Action</span><span>Solver mix</span><span class="num">Freq</span>${rev ? `<span class="num" title="${RANGE_EV_TIP}">Range EV</span>` : ""}</div>`;
   for (const a of res.actions) {
     const ev = !rev ? "" : a.range_ev_bb == null ? "<span></span>" : `<span class="num ${a.range_ev_bb > 0.005 ? "pos" : a.range_ev_bb < -0.005 ? "neg" : ""}" title="${RANGE_EV_TIP}">${bb(a.range_ev_bb)}</span>`;
@@ -1889,8 +1935,8 @@ function renderResult(res, key) {
   const conv = convergence(res);
   const board = res.board ? res.board.match(/../g).map(cardHtml).join(" ") : "";
   let h = `<div class="meta" style="margin:0 0 4px">${res.street} · ${res.hero} ${res.hand}${res.position ? " · " + res.position : ""}${board ? " · " + board : ""}${res.pot_bb ? " · pot " + res.pot_bb + " bb" : ""}</div>`;
-  if (heuristic(res)) h += `<div class="verdict"><span class="big">${res.recommended}</span><span class="mix">${res.opponents.length + 1} players in · equity vs field ${(res.equity_vs_field * 100).toFixed(0)}% · heuristic, not a solve</span></div>`;
-  else h += `<div class="verdict"><span class="big">${res.recommended}</span>${res.solved ? `<span class="mix">${res.opponents.length + 1} players in · 3-way solve</span>` : ""}${conv ? `<span class="conv ${conv.cls}" title="${convTip(conv)}">${conv.label} · ${conv.x.toFixed(1)}% pot</span>` : ""}${offSolution(res) ? `<span class="conv meh" title="${OFF_TIP}">off the solved line</span>` : ""}${res.precomputed ? PRE_BADGE(res.precomputed) : ""}${conv && conv.cls === "bad" && SPEED !== "accurate" ? `<button class="link" id="goAccurate">Solve again on Accurate</button>` : ""}</div>`;
+  if (heuristic(res)) h += `<div class="verdict"><span class="big">${res.recommended}</span><span class="mix">${res.opponents.length + 1} players in · equity vs field ${(res.equity_vs_field * 100).toFixed(0)}% · <span title="${HEUR_TIP} ${TERM_HINT}" data-term="heuristic">heuristic, not a solve</span></span></div>`;
+  else h += `<div class="verdict"><span class="big">${res.recommended}</span>${res.solved ? `<span class="mix">${res.opponents.length + 1} players in · 3-way solve</span>` : ""}${conv ? `<span class="conv ${conv.cls}" title="${convTip(conv)} ${TERM_HINT}" data-term="${conv.label === "approximate" ? "approximate" : "exploitability"}">${conv.label} · ${conv.x.toFixed(1)}% pot</span>` : ""}${offSolution(res) ? `<span class="conv meh" title="${OFF_TIP} ${TERM_HINT}" data-term="offsolved">off the solved line</span>` : ""}${res.precomputed ? PRE_BADGE(res.precomputed) : ""}${conv && conv.cls === "bad" && SPEED !== "accurate" ? `<button class="link" id="goAccurate">Solve again on Accurate</button>` : ""}</div>`;
   // the advisor's catch-all (gto/advisor.py Advisor._rules): the solve failed, so the chart, the betting rules or equity answered
   if (offSolution(res)) h += `<div class="meta" style="color:var(--meh);margin:0 0 6px">Off the solved line: ${offText(res)}. This street's solve is the best answer to those ranges, not the whole hand's equilibrium.</div>`;
   if (res.fallback) h += `<div class="meta" style="color:var(--meh);margin:0 0 6px">The solver couldn't answer this spot, so this is ${{ chart: "the preflop chart's mix", rules: "the betting rules' answer", equity: "a rough equity estimate" }[res.fallback] || "a fallback"}, not a solve.</div>`;
@@ -2518,6 +2564,28 @@ function openView(name) {   // the ⋯ menu's views
   if (overlay) VIEWS[overlay].close();
   return showOverlay(name, null, true);
 }
+// ---- the help pages (help.js, loaded the first time one opens): one overlay with a tab per page, each page its own
+// URL. A tab picked moves the URL without closing the overlay (viewSwitch); the pages' buttons open a tool (helpGo).
+const HELP_PAGES = ["start", "about", "glossary", "changelog", "fairplay"];
+const loadHelp = () => loadJs("help.js?v=" + HP_VERSION, () => window.Help);
+for (const page of HELP_PAGES)
+  VIEWS[page] = { open: () => loadHelp().then(() => window.Help.open(page)), close: () => window.Help && window.Help.close(), err: "Couldn't load the help pages: " };
+window.viewSwitch = (name) => { if (!VIEWS[name] || overlay === name) return; overlay = name; overlaySpot = overlayLabel = null; syncRoute(); };
+function helpOpen(page) {
+  document.getElementById("menu").hidden = true; document.getElementById("menuBtn").setAttribute("aria-expanded", "false");
+  if (HELP_PAGES.includes(overlay) && window.Help) return window.Help.show(page);
+  return openView(page);
+}
+window.helpGo = (what) => {
+  if (what === "practice") return loadPractice().then(P => { if (!P.on) P.set(true); }).catch(e => showErr(String(e)));
+  if (what === "rangeBuilder") { window.STUDY_BUILD = true; return openView("study"); }
+  if (VIEWS[what]) return openView(what);
+};
+for (const [id, page] of [["helpStart", "start"], ["helpAbout", "about"], ["helpGlossary", "glossary"], ["helpChangelog", "changelog"], ["helpFairplay", "fairplay"], ["helpBtn", "start"]])
+  document.getElementById(id).onclick = () => helpOpen(page);
+// an answer's badge clicked (data-term): the Glossary at that word
+function helpTerm(id) { window.HELP_TERM = id; return HELP_PAGES.includes(overlay) && window.Help ? window.Help.show("glossary", id) : openView("glossary"); }
+document.getElementById("result").addEventListener("click", (e) => { const t = e.target && e.target.closest && e.target.closest("[data-term]"); if (t) helpTerm(t.dataset.term); });
 // ---- the advice's Breakdown and Equity views (breakdown.js, loaded the first time one is opened): the advice's own
 // request again with "breakdown": true, answered from the solve it came from; the view picked stays for later advice
 let VIEW = "grid";
@@ -2655,6 +2723,29 @@ const startRoute = parseRoute(location.pathname);
 if (linkLoaded && startRoute.view === "practice") startRoute.view = "solver";
 routing--;
 applyRoute(startRoute);
+// ---- the first visit's chooser (#welcome): shown once, at the solver's own URL without a link's spot, once the page
+// isn't about to reload (isolating: it shows after the reload). Any choice, Not now, Escape or a click outside
+// dismisses it for good ("gto-welcome": "seen"); its choices open what the menu and header open, nothing else.
+const welcomeBox = document.getElementById("welcome");
+function welcomeDone() { welcomeBox.hidden = true; WELCOME = "seen"; try { localStorage.setItem("gto-welcome", "seen"); } catch (e) {} }
+const WELCOME_GO = {
+  welcomeReview: () => {
+    toast("Pick your seat and cards in the setup panel, then enter the action seat by seat.", null, 9000);
+    const t = document.getElementById("toast"), b = document.createElement("button"); b.className = "link"; b.textContent = "Or import a hand history";
+    b.onclick = () => { t.hidden = true; openView("import"); }; t.appendChild(b);
+  },
+  welcomeStudy: () => openView("study"),
+  welcomePractice: () => window.helpGo("practice"),
+  welcomeSession: () => openView("session"),
+  welcomeStart: () => helpOpen("start"), welcomeAbout: () => helpOpen("about"), welcomeFair: () => helpOpen("fairplay"),
+  welcomeClose: () => {},
+};
+for (const [id, go] of Object.entries(WELCOME_GO)) document.getElementById(id).onclick = () => { welcomeDone(); return go(); };
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !welcomeBox.hidden) welcomeDone(); });
+document.addEventListener("click", (e) => { if (!welcomeBox.hidden && welcomeBox.contains && !welcomeBox.contains(e.target)) { e.stopPropagation(); e.preventDefault(); welcomeDone(); } }, true);
+welcomeBox.hidden = !(WELCOME === "due" && !isolating && startRoute.view === "solver" && !linkLoaded);
+if (!welcomeBox.hidden) document.getElementById("welcomeReview").focus();
+else if (WELCOME === "due" && !isolating) welcomeDone();   // (a first visit to a view or a link: it came for that)
 </script>
 </body>
 </html>
