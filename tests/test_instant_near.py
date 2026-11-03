@@ -45,6 +45,15 @@ def without(lib, drop):
 KJ6 = {"3bp_bb_co": ["KcJd6h"], "3bp_bb_btn": ["KcJd6h"]}   # (BOARD's canonical flop out of the 3bet pots read here)
 
 
+def without_spots(lib, ids):
+    """A library on the shipped one's files whose index leaves out the spots `ids`: the heads-up open is stored, so a
+    heads-up raised pot read off another spot before it was is read on the index without it."""
+    idx = json.loads(json.dumps(lib.index()))
+    idx["spots"] = [s for s in idx["spots"] if s["id"] not in ids]
+    raw = json.dumps(idx).encode()
+    return fl.FlopLibrary(lambda p: raw if p == "index.json" else lib._fetch(p))
+
+
 class _Lib(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -866,18 +875,13 @@ class TestOtherDepth(_Lib):
 
 
 class TestHeadsUpSpotAtDepth(_Lib):
-    """The heads-up open's spot (srp_sb_bb_2max, queued, solved at 100bb) reads the heads-up raised pot at other
-    depths as another depth (its ranges hold 91-98% of each depth's, 0.14-0.39 apart: NEAR_COVER), and no 6- or 8-max
-    pot of its pot (57-86% held, 1.5-3.1 apart) changes spot: checked on the index with that spot's row added."""
+    """The heads-up open's spot (srp_sb_bb_2max, solved at 100bb) reads the heads-up raised pot at other depths as
+    another depth (its ranges hold 91-98% of each depth's, 0.14-0.39 apart: NEAR_COVER), and no 6- or 8-max pot of its
+    pot (57-86% held, 1.5-3.1 apart) changes spot: checked against the index without that spot."""
 
     def test_which_spot(self):
-        st = fl.spot_setup("SB:r3,BB:c", 2, 100.0)
-        row = {"id": "srp_sb_bb_2max", "label": "SB vs BB single-raised pot, heads-up", "line": "SB:r3,BB:c",
-               "seats": [st["oop"], st["ip"]], "fp": [fl.range_fp(st["full0"]), fl.range_fp(st["full1"])],
-               "pot": st["pot"], "stack": st["stack"], "flops": {}, "game": fl.Format(players=2).as_dict()}
-        idx = dict(self.lib.index(), spots=list(self.lib.index()["spots"]) + [row])
-        lib = mock.Mock()
-        lib.index.return_value = idx
+        self.assertIn("srp_sb_bb_2max", [s["id"] for s in self.lib.index()["spots"]])
+        lib = without_spots(self.lib, {"srp_sb_bb_2max"})
 
         def near(lb, players, line, depth):
             s = fl.spot_setup(line, players, float(depth))
@@ -888,7 +892,7 @@ class TestHeadsUpSpotAtDepth(_Lib):
             return sp and sp["id"]
 
         for depth in (40, 50, 75, 150, 200):
-            self.assertEqual(near(lib, 2, "SB:r3,BB:c", depth), "srp_sb_bb_2max", depth)
+            self.assertEqual(near(self.lib, 2, "SB:r3,BB:c", depth), "srp_sb_bb_2max", depth)
         for players, line in [(6, "UTG:f,HJ:f,CO:f,BTN:f,SB:r3,BB:c"), (6, "UTG:f,HJ:f,CO:f,BTN:r2.5,SB:c,BB:f"),
                               (6, "UTG:f,HJ:f,CO:r2.5,BTN:f,SB:c,BB:f"),
                               (8, "UTG:f,UTG1:f,LJ:f,HJ:f,CO:f,BTN:r2.5,SB:c,BB:f")]:
@@ -924,7 +928,8 @@ class TestOtherGame(_Lib):
     def test_tiers(self):
         """Where no spot covers each range by NEAR_POT_COVER, a nearer one covering less (tier 1: the ante's SB vs BB
         off SB vs BB, the straddler's call of the BB's raise off it too), else a single-raised pot the BB defends at
-        about the same stack-to-pot ratio (tier 2: heads-up's raised pot and the ante's BTN vs BB off BTN vs BB, the
+        about the same stack-to-pot ratio (tier 2: heads-up's raised pot, before its own spot was stored (the index
+        without it), and the ante's BTN vs BB off BTN vs BB, the
         ante's SB flatting the CO off CO vs BB and the HJ off HJ vs BB, 1.44 and 1.50 apart), else such a pot at
         another stack-to-pot ratio, read for the hands held alone (tier 3: a straddled SB vs UTG off SB vs BB, at 50bb
         with an ante the BB's defence of the CO off BTN vs BB, not the SB vs BB, whose raiser's range is 83% held), else
@@ -947,16 +952,23 @@ class TestOtherGame(_Lib):
                  ("UTG:r2.5,HJ:f,CO:f,BTN:c,SB:f,BB:f", 6, {"ante": 0.125}, None, None),
                  ("UTG:f,HJ:f,CO:r2.5,BTN:r7.5,SB:f,BB:c,CO:f", 6, {}, None, None),
                  ("SB:r3,BB:r10,SB:c", 2, {}, None, None)]
+        hu = without_spots(self.lib, {"srp_sb_bb_2max"})
         for line, n, game, sid, tier in cases:
             st = fl.spot_setup(line, n, **game)
             last = [t.split(":")[0] for t in line.split(",") if t.split(":")[1].startswith("r")][-1]
             aggr = (st["oop"], st["ip"]).index(last)
-            sp = fa.near_spot(self.lib, st["full0"], st["full1"], st["pot"], st["stack"], aggr=aggr)
+            lib = hu if (line, n) == ("SB:r3,BB:c", 2) else self.lib
+            sp = fa.near_spot(lib, st["full0"], st["full1"], st["pot"], st["stack"], aggr=aggr)
             self.assertEqual(sp and sp["id"], sid, line)
             if sid is not None:
-                rows = {r["id"]: r for r in fa.near_candidates(self.lib, st["full0"], st["full1"], st["pot"],
+                rows = {r["id"]: r for r in fa.near_candidates(lib, st["full0"], st["full1"], st["pot"],
                                                                st["stack"], aggr=aggr)}
                 self.assertEqual(rows[sid]["tier"], tier, line)
+        hu_pot = fl.spot_setup("SB:r3,BB:c", 2)
+        fa._NEAR.clear()
+        self.assertEqual(fa.near_spot(self.lib, hu_pot["full0"], hu_pot["full1"], hu_pot["pot"], hu_pot["stack"],
+                                      aggr=1)["id"], "srp_sb_bb_2max")      # (its own spot now)
+        fa._NEAR.clear()
         rows = {r["id"]: r for r in fa.near_candidates(self.lib, st["full0"], st["full1"], st["pot"], st["stack"],
                                                        aggr=0)}
         self.assertEqual(rows["3bp_bb_btn"]["why"], "cover")          # (heads-up's 3bet pot: half its range unheld)
@@ -1018,13 +1030,25 @@ class TestOtherGame(_Lib):
         self.assertFalse([n for n in first["notes"] if "isn't shown" in n])   # (the SB's range: all held)
 
     def test_heads_up(self):
-        """Heads-up's raised pot reads BTN vs BB's entry of the flop at once, approximately: a hand that spot's BB
+        """Heads-up's raised pot is the library's own spot (srp_sb_bb_2max): a flop it stores is answered from its
+        entry, nothing solved (and nothing at once before that: instant's None on a library flop). Before it was stored
+        (the index without it) it read BTN vs BB's entry of the flop at once, approximately: a hand that spot's BB
         range holds gets its own mix there, one it doesn't (the heads-up big blind defends wider) its hand class's."""
-        sp = next(s for s in self.lib.index()["spots"] if s["id"] == "srp_btn_bb")
         board = "KhJd5c"
         hand = {"players": 2, "stack": 100, "preflop": parse_actions("SB:r3,BB:c"), "board": board, "turn": [],
                 "river": [], "hero": "BB", "flop": []}
+        own = next(s for s in self.lib.index()["spots"] if s["id"] == "srp_sb_bb_2max")
+        self.assertIn(fl.cards_str(fl.canonical(parse_cards(board))[0]), own["flops"])
         adv = advisor()
+        with mock.patch.object(A, "solve", side_effect=AssertionError("solved")):
+            self.assertIsNone(adv.instant(dict(hand, hole="Qh9h")))
+            res = adv.advise(dict(hand, hole="Qh9h"))
+        self.assertEqual(res["precomputed"]["spot"], "srp_sb_bb_2max")
+        names, mix = self.expected(board, "Qh9h", [], spot=own)
+        self.assertEqual([a["action"] for a in res["actions"]], names)
+        self.assertTrue(np.allclose([a["freq"] for a in res["actions"]], mix, atol=0.0006))
+        sp = next(s for s in self.lib.index()["spots"] if s["id"] == "srp_btn_bb")
+        adv = advisor(without_spots(self.lib, {"srp_sb_bb_2max"}))
         with mock.patch.object(A, "solve", side_effect=AssertionError("solved")):
             held = adv.instant(dict(hand, hole="Qh9h"))
             other = adv.instant(dict(hand, hole="7h2c"))

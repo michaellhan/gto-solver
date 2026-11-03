@@ -28,6 +28,9 @@ blind (flop_library.old_tree(), before every spot dealt it), which the index kee
 is solved again, and --keep-old leaves for a later run (a spot's flops not on disk first). The index is rewritten every
 --index-every entries and at the end. Progress lines go to stdout (one per entry: spot, flop, iterations,
 exploitability, seconds, bytes).
+
+--fresh solves each entry in a new worker process: one worker solving entry after entry keeps part of each solve's
+memory (its heap doesn't shrink back), so its peak grows past a fresh process's on the bigger trees.
 """
 from __future__ import annotations
 import argparse
@@ -310,6 +313,9 @@ def main(argv=None):
                     "EVs on the turn (flop_library.turn_evs)")
     ap.add_argument("--dry-run", action="store_true", help="list each spot's entries to solve and on disk, solving "
                     "and writing nothing")
+    ap.add_argument("--fresh", action="store_true", help="a new worker process for each entry: a worker's heap keeps "
+                    "0.5-1 GB of a solve, which adds to the next one's peak (a limped pot's two-tone flop: 2.3 GB on "
+                    "its own, 3.1 after three others)")
     a = ap.parse_args(argv)
     want = [x for x in a.spots.split(",") if x]
     tags = [x for x in a.format.split(",") if x]
@@ -361,7 +367,7 @@ def main(argv=None):
     t0 = time.time()
     done = 0
     if jobs:
-        with mp.get_context("spawn").Pool(a.jobs) as pool:
+        with mp.get_context("spawn").Pool(a.jobs, maxtasksperchild=1 if a.fresh else None) as pool:
             for msg in pool.imap_unordered(solve_entry, jobs):
                 done += 1
                 el = time.time() - t0

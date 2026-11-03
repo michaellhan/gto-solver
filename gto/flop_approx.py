@@ -403,7 +403,7 @@ def near_exact(lib, full0: np.ndarray, full1: np.ndarray, pot: float, stack: flo
         if lib.spot(key[0], key[1], pot, stack) is None:
             for sp in lib.index().get("spots", []):
                 if round(float(sp["pot"]), 2) != key[2] or round(float(sp["stack"]), 2) != key[3] or \
-                        fl.Format.parse(sp.get("game") or "").players == key[4]:
+                        (sp.get("game") or {}).get("players", fl.DEFAULT_FORMAT.players) == key[4]:
                     continue
                 st = _spot_ranges(sp)
                 if st is None:
