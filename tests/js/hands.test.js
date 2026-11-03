@@ -215,3 +215,27 @@ test("store and panel together: an export imported elsewhere, links and hand his
   assert.deepEqual(got.data.tags, ["x"]); assert.equal(got.data.source, "table");
   assert.equal(MH.searchText(got).includes("#x"), true);
 });
+
+test("an export carries each hand's #h= link, and an entry with only its link imports as that hand", async () => {
+  const enc = (s) => Buffer.from(JSON.stringify(s), "utf8").toString("base64");
+  const dec = (b) => JSON.parse(Buffer.from(b, "base64").toString("utf8"));
+  const st = createStore({ localStorage: fakeLocalStorage(), indexedDB: fakeIndexedDB(), broadcast: false, events: false });
+  await st.ready;
+  const a = await st.hands.save(played(), { tags: ["x"] });
+  const b = await st.hands.save(played({ hero: "BB", cards: ["Js", "Th", "Qs", "7h", "2c"] }));
+  const file = j(st.hands.exportFile([a, b], (s) => "https://example.test/gto-solver/#h=" + enc(s)));
+  assert.equal(file.hands.length, 2);
+  for (const h of file.hands) assert.deepEqual(dec(h.link.split("#h=")[1]), h.state);
+  assert.equal(j(st.hands.exportFile([a])).hands[0].link, undefined);   // (no link without the page's encoder)
+  const other = createStore({ localStorage: fakeLocalStorage(), indexedDB: fakeIndexedDB(), broadcast: false, events: false });
+  await other.ready;
+  const links = { format: file.format, hands: [{ link: file.hands[0].link, tags: ["y"] }, { link: file.hands[1].link }, { link: "#h=!!!" }, { link: "no link" }] };
+  assert.deepEqual(await other.hands.importFile(links, null, dec), { added: 2, merged: 0, skipped: 2 });
+  const got = await other.hands.list();
+  assert.deepEqual(got.map(r => r.data.sig).sort(), [a.data.sig, b.data.sig].sort());
+  assert.deepEqual(got.find(r => r.data.sig === a.data.sig).data.tags, ["y"]);
+  // the panel's export goes through the page's link (pageHost().link: the solver's URL and encodeState)
+  const src = fs.readFileSync(path.join(STATIC, "hands.js"), "utf8");
+  assert.equal((src.match(/H\.exportFile\(\[?\w+\]?, host\.link\)/g) || []).length, 2);
+  assert.match(src, /importFile\(p\.obj, host\.clean, host\.decode\)/);
+});

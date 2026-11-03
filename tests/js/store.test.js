@@ -180,7 +180,7 @@ test("without IndexedDB the records are kept in localStorage, without either in 
   assert.equal(st.get("gto-study"), null);
 });
 
-test("a backup holds everything but the API key: not as a record, not inside a note or a setting", async () => {
+test("a backup (and a hands export) holds everything but the API key: not as a record, not inside a note or a setting", async () => {
   const init = OLD_LS(), ls = fakeLocalStorage(init), idb = fakeIndexedDB();
   await seedOldDb(idb, "gto-session", "kv", { current: SESSION, history: HISTORY });
   const st = await open({ localStorage: ls, indexedDB: idb });
@@ -196,6 +196,9 @@ test("a backup holds everything but the API key: not as a record, not inside a n
   assert.deepEqual(b.counts, { kv: b.stores.kv.length, hands: 1, sessions: 2, blobs: 1 });
   assert.equal(b.stores.hands[0].data.note, "my key is [removed] oops");
   assert.ok(b.stores.kv.length >= 14);
+  // nor a hands export, its links made from the scrubbed hands
+  const ex = JSON.stringify(st.hands.exportFile([await st.hands.get(h.id)], (s) => "#h=" + Buffer.from(JSON.stringify(s)).toString("base64")));
+  assert.equal(ex.includes(KEY), false); assert.equal(ex.includes("my key is [removed] oops"), true);
   // the store itself is unchanged (only the file is scrubbed)
   assert.equal((await st.hands.get(h.id)).data.note.includes(KEY), true);
   assert.equal(ls.getItem("gto-anthropic-key"), KEY);

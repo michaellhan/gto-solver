@@ -296,7 +296,8 @@ row has the date, positions, cards, board, kind of pot, how far it went and your
 up; the search reads cards (`AhKd`, `AKo`, `77`), positions, the board, tags, notes and the site, and the list filters
 to reviewed, not reviewed or imported hands, or to one tag. A hand opens on the table (**Open**, to see or review it),
 in Study at your last decision (**Study**), or copies as its `#h=` link; it takes tags and a note; **Delete** has an
-Undo. **Export** downloads the hands listed (or one) as JSON (`gto-solver-hands`), and **Import a file…** or
+Undo. **Export** downloads the hands listed (or one) as JSON (`gto-solver-hands`: each hand's state, its `#h=` link, tags, note
+and, for an imported one, its site, hand number and history), and **Import a file…** or
 **Paste…** takes such a file, `#h=` links or hand histories (every hand of a session file). With 1,005 hands in the
 browser the list reads in 7 ms, the panel opens in 15 ms and a search filters in 7 ms; 1,000 hands import in 0.24 s.
 The panel is `gto/static/hands.js`, loaded when first opened.

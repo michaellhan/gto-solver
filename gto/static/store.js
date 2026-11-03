@@ -423,14 +423,20 @@
       remove: (id) => del("hands", id),
       // (Undo after a delete: the record as it was, back under its id)
       restore: (rec) => put("hands", rec.id, rec.data, +rec.created || 0),
-      // a My hands export file ({ format: "gto-solver-hands", hands: [{ state, tags, note, ... }] }) or a list of states
-      async importFile(obj, clean) {
+      // a My hands export file ({ format: "gto-solver-hands", hands: [{ state, link, tags, note, ... }] }) or a list of
+      // states; an entry with only its #h= link (decode: the page's decodeState) is that link's hand
+      async importFile(obj, clean, decode) {
         const list0 = obj && obj.format === HANDS_FILE && Array.isArray(obj.hands) ? obj.hands : Array.isArray(obj) ? obj : obj && obj.players && obj.actions ? [obj] : null;
         if (!list0) throw new Error("That file has no hands in it (a My hands export, or a hand's state JSON).");
         const out = { added: 0, merged: 0, skipped: 0 };
         const before = new Set((await hands.list()).map(r => r.id));
         for (const h0 of list0) {
-          const h = h0 && h0.state ? h0 : { state: h0 };
+          let h = h0 && h0.state ? h0 : { state: h0 };
+          if (h0 && !h0.state && !h0.players && typeof h0.link === "string") {
+            const m = h0.link.match(/#h=([A-Za-z0-9+/=]+)/);
+            let st = null; try { st = decode && m ? decode(m[1]) : null; } catch (e) {}
+            h = { ...h0, state: st };
+          }
           const st = clean ? clean(h.state) : h.state;
           if (!worth(st)) { out.skipped++; continue; }
           const rec = await hands.save(st, { source: h.source || "file", tags: Array.isArray(h.tags) ? h.tags : [], note: typeof h.note === "string" ? h.note : "",
@@ -439,11 +445,14 @@
         }
         return out;
       },
-      exportFile(recs) {
+      // (linkOf: each hand's #h= link, the page's, written beside its state; the stored Anthropic key's text, should a
+      // note or a history hold it, is scrubbed as in a backup, the link made from the scrubbed state)
+      exportFile(recs, linkOf) {
+        recs = scrub(recs.map(r => ({ id: r.id, created: r.created, data: r.data })), lsGet(AI_KEY));
         return { format: HANDS_FILE, version: 1, exported: new Date(now()).toISOString(),
                  hands: recs.map(r => ({ id: r.id, created: new Date(r.created).toISOString(), source: r.data.source, tags: r.data.tags || [], note: r.data.note || "",
                                          ...(r.data.site ? { site: r.data.site } : {}), ...(r.data.hhId ? { hhId: r.data.hhId } : {}), ...(r.data.hh ? { hh: r.data.hh } : {}),
-                                         state: r.data.state })) };
+                                         ...(linkOf ? { link: linkOf(r.data.state) } : {}), state: r.data.state })) };
       },
     };
 

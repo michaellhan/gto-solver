@@ -278,7 +278,7 @@
     if (p.kind === "backup") { draft = p.obj; draw(); return say("That's a backup of everything: restore it below."); }
     let r;
     try {
-      if (p.kind === "hands") r = await store().hands.importFile(p.obj, host.clean);
+      if (p.kind === "hands") r = await store().hands.importFile(p.obj, host.clean, host.decode);
       else if (p.kind === "links") {
         const states = p.links.map(b => { try { return host.decode(b); } catch (e) { return null; } }).filter(Boolean);
         r = await store().hands.importFile(states.map(state => ({ state, source: "link" })), host.clean);
@@ -306,8 +306,8 @@
     if (d.open != null) { const r = recOf(d.open); if (!r) return; close(); return host.open(r); }
     if (d.study != null) { const r = recOf(d.study); if (!r) return; close(); return host.study(r); }
     if (d.link != null) { const r = recOf(d.link); if (!r) return; const ok = await host.copy(host.link(r.data.state)); return say(ok ? "Link copied: it opens this hand on the solver's page." : "Couldn't copy the link."); }
-    if (d.json != null) { const r = recOf(d.json); if (r) download(fileName("hand", Date.now()), H.exportFile([r])); return; }
-    if (d.export != null) { const L = filterRecs(recs, ui); if (!L.length) return; const size = download(fileName("hands", Date.now()), H.exportFile(L)); return say(esc(`Exported ${L.length} hand${L.length === 1 ? "" : "s"} (${Math.max(1, Math.round(size / 1024))} KB).`)); }
+    if (d.json != null) { const r = recOf(d.json); if (r) download(fileName("hand", Date.now()), H.exportFile([r], host.link)); return; }
+    if (d.export != null) { const L = filterRecs(recs, ui); if (!L.length) return; const size = download(fileName("hands", Date.now()), H.exportFile(L, host.link)); return say(esc(`Exported ${L.length} hand${L.length === 1 ? "" : "s"} (${Math.max(1, Math.round(size / 1024))} KB).`)); }
     if (d.del != null) {
       const r = recOf(d.del); if (!r) return;
       await H.remove(r.id); openId = null; deleted = r; await refresh();
