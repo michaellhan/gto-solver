@@ -139,6 +139,15 @@ const SPOTS = {
   // store BB's AhKh after a check-through (QdJd it answers at once)
   "turn-co": base({ hero: "BB", hole: "JdTd", board: "Qh9c4d2s", preflop: CO_BB, flop: [X("BB"), B("CO", 1.8), C("BB")] }),
   "turn-co-x": base({ hero: "BB", hole: "AhKh", board: "Qh9c4d7h", preflop: CO_BB, flop: [X("BB"), X("CO")] }),
+  // a flop line the solve rarely takes, then answered (advisor.RARE_LINE), on a flop the library doesn't hold: HJ's 75% bet
+  // on Ah2h7d (0% of HJ's range) called by the BTN, and the BTN's 75% bet on 5c5d2h (0.3%) called by HJ
+  // (--session flop-rare,turn-rare: the flop asked first, as a page does, so the turn's narrowing finds its solve and
+  // only the play after the bet is solved again, advisor.RARE_RESOLVE)
+  "flop-rare": base({ hero: "HJ", hole: "KhQh", board: "Ah2h7d", preflop: [F("UTG"), R("HJ", 2.5), F("CO"), C("BTN"), F("SB"), F("BB")] }),
+  "turn-rare": base({ hero: "HJ", hole: "KhQh", board: "Ah2h7d4d", preflop: [F("UTG"), R("HJ", 2.5), F("CO"), C("BTN"), F("SB"), F("BB")],
+                      flop: [B("HJ", 5), C("BTN")] }),
+  "turn-rare-c": base({ hero: "HJ", hole: "AcKc", board: "5c5d2h9s", preflop: [F("UTG"), R("HJ", 2.5), F("CO"), C("BTN"), F("SB"), F("BB")],
+                        flop: [X("HJ"), B("BTN", 5), C("HJ")] }),
   // one hand street by street with your hand out of your range for its line (--hole: yours in every spot of the run):
   // --session flop-bb,turn,river --hole AhAd (the big blind 3bets aces rather than calls), flop-limp-ip,turn-limp-ip,
   // river-limp-ip --hole KhQh, flop-3bp-ip,turn-3bp-ip,river-3bp-ip --hole AhKh, flop-40,turn-40,river-40 --hole AhAd;

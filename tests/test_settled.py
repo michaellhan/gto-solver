@@ -20,9 +20,19 @@ LIMP = [F("UTG"), F("HJ"), F("CO"), F("BTN"), C("SB"), X("BB")]
 
 
 def cached(adv, n_board):
-    sols = [s for k, s in adv._cache.items() if len(k[2]) == n_board]
+    """The street's one solve from its start (no chips in, the first player to act)."""
+    sols = [s for k, s in adv._cache.items() if len(k[2]) == n_board and tuple(k[5]) == (0.0, 0.0) and k[6] == 0]
     assert len(sols) == 1, len(sols)
     return sols[0]
+
+
+def resolved(adv, res, street, n_board):
+    """The street's solves from a node (chips in, or the second player to act): each the play after a rare line
+    solved again (advisor.RARE_RESOLVE), as many as the answer's off_solution says were."""
+    sols = [s for k, s in adv._cache.items() if len(k[2]) == n_board and (tuple(k[5]) != (0.0, 0.0) or k[6] != 0)]
+    n = sum(1 for o in res.get("off_solution", []) if o.get("street") == street and o.get("resolved"))
+    assert len(sols) == n, (len(sols), n)
+    return sols
 
 
 class TestSettled(unittest.TestCase):
@@ -90,6 +100,9 @@ class TestSettled(unittest.TestCase):
         t = time.time()
         res = adv.advise(RIVER)
         self.assertIs(cached(adv, 4), turn)
+        # (BTN's 6 bb bet is under RARE_LINE of its range in this 1 s solve, ~5%: the rest of the turn is solved
+        # again from the bet, a solve of its own, not the turn's again)
+        resolved(adv, res, "turn", 4)
         self.assertGreaterEqual(turn.iters, n)
         self.assertNotIn("error", res)
         self.assertLess(time.time() - t, 2.5)
@@ -102,6 +115,7 @@ class TestSettled(unittest.TestCase):
         turn = cached(adv, 4)
         res = adv.advise(dict(RIVER, turn=[X("BB"), B("BTN", 4.5), C("BB")]))
         self.assertIs(cached(adv, 4), turn)
+        resolved(adv, res, "turn", 4)   # (its 33% is ~1% of BTN's range here: solved again from the bet)
         self.assertNotIn("error", res)
         self.assertTrue(any(n.startswith("turn: mapped 'bet 49%'") for n in res["notes"]), res["notes"])
 

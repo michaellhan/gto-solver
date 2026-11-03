@@ -188,6 +188,15 @@ ROOT_RAISE_EQ = 0.65  # multiway, 4+ players facing a bet and a call: the trials
                    # a call 0.65 gives up 1.49% of the pot to the solve's mix where none gave up 1.89% (0.55: 2.08,
                    # 0.6: 1.65, 0.7: 1.49); facing a lone bet any bar did worse (0.57 -> 0.64-0.70), so it isn't used there
 RARE_LINE = 0.10    # heads-up: widen the villain's range when the solve takes their line less often than this
+# Heads-up, an earlier street: the play after a rare line (the line itself read by the rules, RARE_LINE) is that street
+# solved again from the node, against the range the rules give the line (Advisor._rare_resolver, prior_budget), not read
+# off the street's own solve, which barely reaches the node and plays it against the sliver of a range it takes there.
+# Against exact solves rooted at the node (b-inary's postflop-solver) the next street's first two decisions gave up
+# 0.114% of the pot on average over 17 lines whose answer is common at equilibrium, where the solve's node gave up 0.159
+# and the rules' range for the answers too 0.333 (README, Earlier streets). A library flop that stores the node is read.
+RARE_RESOLVE = True
+RARE_RESOLVE_SETTLED = 0.1   # ...stopped at the first of HU_CHECKS (HU_SETTLED_FROM on) where it is this close (% pot):
+                             # 300 iterations natively, as close to the exact answers as 1000 (0.114 / 0.116)
 UNSETTLED = 3.0     # heads-up: a solve this far from equilibrium (% pot) hasn't settled (the page's "converged" cutoff)
 # Heads-up, earlier streets: narrowing follows a solve fully this close (% pot) to equilibrium, not at all this far,
 # linearly between; the rest of each action's weights are the betting rules' range for it (softened, as multiway),
@@ -4865,15 +4874,27 @@ class Advisor:
                 eff = min(stk[oop] - st.inv_start[oop], stk[ip] - st.inv_start[ip])
                 cfg = self._cfg_with_real_sizes(st, oop, ip, eff)
                 taken: List[str] = []
+                resolved: List[tuple] = []   # (_walk's: a solve from the node after a rare line, where taken was cut)
+                lib_off: List[dict] = []
                 hit = self._from_library(lib, full, sub_board, r0, r1, st, eff, cfg, oop, ip, notes,
                                          holes=(hole, adv_hole), borrow=not custom, players=len(positions),
                                          smoothing=self.prior_smoothing,
-                                         board=sub_board, rules=(0, 1), slow=slow_hu, taken=taken) \
+                                         board=sub_board, rules=(0, 1), slow=slow_hu, taken=taken, off=lib_off,
+                                         resolve=None if pool or adj else self._rare_resolver(
+                                             sub_board, st, eff, dataclasses.replace(
+                                                 cfg, **(self.prior_model or {}),
+                                                 **({"root_allin": False} if cfg.root_allin else {}))),
+                                         resolved=resolved) \
                     if lib is not None and st.name == "flop" else None
                 if hit is not None:
                     sol, node, c0, c1 = hit
                     notes.append(sol.note())
+                    off_solution.extend(lib_off)
+                    if resolved:   # (the walk went on in a solve from the node after a rare line: its tree from there)
+                        sol, cut = resolved[-1]
+                        taken = taken[cut:]
                 else:
+                    resolved.clear()   # (a library walk that went on in a new solve, then wasn't covered)
                     if self.prior_model:
                         cfg = dataclasses.replace(cfg, **self.prior_model)
                     if cfg.root_allin:
@@ -4912,7 +4933,11 @@ class Advisor:
                     taken = []
                     node, c0, c1 = self._walk(sol, st.actions, oop, ip, st.pot_start, eff, notes, st.name, self.prior_smoothing,
                                               board=sub_board, rules=(0, 1),
-                                              lock=mk_lock(sol), trust=trust, slow=slow_hu, taken=taken, off=off_solution)
+                                              lock=mk_lock(sol), trust=trust, slow=slow_hu, taken=taken, off=off_solution,
+                                              resolve=self._rare_resolver(sub_board, st, eff, cfg), resolved=resolved)
+                    if resolved:
+                        sol, cut = resolved[-1]
+                        taken = taken[cut:]
                     if s0 is not r0 or s1 is not r1:   # (and out again for the next street: _with_hero puts it back)
                         (c0 if adv_p == 0 else c1)[sol.ctx.active == COMBO_INDEX[(min(adv_hole), max(adv_hole))]] = 0.0
                 walked[st.name] = (sol, node, taken)
@@ -7499,17 +7524,17 @@ class Advisor:
         return seed
 
     def _solve_cached(self, board, r0, r1, pot, stack, budget, bets=(0.0, 0.0), to_act=0, n_raises=0, cfg=None,
-                      settle=False, seed=None):
+                      settle=False, seed=None, settled=None):
         """A heads-up solve, from the cache when it holds this spot and ranges (run on while it has had under 80% of
         `budget`), else a new one, warm from warm_from's solve of the spot (else from `seed`: _store_seed). With
         hu_settled set it stops at the first of HU_CHECKS where it is that close to equilibrium; one settled already
         isn't run on. A solve stopped part way (should_stop: Cancelled) stays cached, and the spot asked again goes
-        on from where it stopped."""
+        on from where it stopped. `settled`: hu_settled's target for this solve instead."""
         cfg = cfg or self.cfg
         key = self._solve_key(board, r0, r1, pot, stack, bets, to_act, n_raises, cfg)
         spot = key[2:]
         sol = self._cache.get(key)
-        target = self.hu_settled
+        target = self.hu_settled if settled is None else settled
         n = len(board)
         street = ("flop" if n == 3 else "river" if n == 5 else
                   "shallow" if stack <= self.spr_sizes.get("turn", (0.0, {}))[0] * pot else "turn")
@@ -8126,7 +8151,7 @@ class Advisor:
 
     def _walk(self, sol: Solution, acts: List[dict], oop, ip, pot, stack, notes, street, smoothing=0.0, only=None,
               widened=None, board=None, rules=None, lock=None, rare_lines=None, visited=None, trust=1.0, slow=None,
-              taken=None, off=None):
+              taken=None, off=None, resolve=None, resolved=None):
         """Follow real actions through the solved tree, narrowing ranges. Smoothing mixes each
         strategy with uniform so a line the solve rarely takes doesn't shrink a range to nothing.
         With `only` (0 = OOP, 1 = IP) and `board`, that player's actions are exact unless the solve
@@ -8144,11 +8169,16 @@ class Advisor:
         settled (trust_of). A call by the rules keeps the hands they have raising at SLOWPLAY when the player
         could have raised (_slowplayed; `slow`, {player: mask} carried from street to street, as multiway).
         `off` (the answer's off_solution) gets every line read by the rules: street, seat, the tree's action and the
-        share of their range the solve takes it with (%)."""
+        share of their range the solve takes it with (%), and "resolved" where the play after it was solved again.
+        `resolve` (_rare_resolver; not with `lock`): after a line read by the rules, the walk goes on in the street
+        solved again from the node with the ranges it reached it with (RARE_RESOLVE), but where a library flop stores
+        that node; `resolved` (a list) gets (that solve, the number of `taken` before it)."""
         rules = (only,) if rules is None and only is not None else rules or ()
         node = sol.root
         r0, r1 = sol.r0.copy(), sol.r1.copy()
         bets = [0.0, 0.0]
+        n_bets = 0          # bets and raises so far this street (the tree's n_raises)
+        after_rare = None   # with `resolve`: off's entry (or {}) for the rare line the rules read just before
         for a in acts:
             if not isinstance(node, Decision):
                 break
@@ -8158,6 +8188,20 @@ class Advisor:
             if p != node.player:
                 notes.append(f"{street}: action order mismatch at {a['pos']} {a['action']}; ignoring")
                 continue
+            # (a library flop: where it stores the node it's read; where it doesn't store the line up to it, it isn't used)
+            lib_sol = hasattr(sol, "covers")
+            if after_rare is not None and not (lib_sol and (sol.covers([node]) or not sol.covers(visited or []))):
+                got = resolve(expand(sol.ctx, r0), expand(sol.ctx, r1), (bets[0], bets[1]), p, n_bets)
+                if got is not None:
+                    sol, trust = got
+                    node = sol.root
+                    r0, r1 = sol.r0.copy(), sol.r1.copy()
+                    visited = None   # (the nodes from here are the new solve's)
+                    if resolved is not None:
+                        resolved.append((sol, len(taken) if taken is not None else 0))
+                    after_rare["resolved"] = True
+                    notes.append(f"{street}: the play after it solved again from there ({sol.iters} iterations)")
+            after_rare = None
             if visited is not None:
                 visited.append(node)
             name = self._tree_action_name(node, a, p, bets, pot, stack)
@@ -8223,9 +8267,12 @@ class Advisor:
                 if widened is not None and p == only:
                     widened.append(a["pos"])
                 share = float((rp * s).sum() / max(rp.sum(), 1e-12) * 100)
+                entry = {"street": street, "pos": a["pos"], "why": "rare", "action": node.names[k],
+                         "share": round(share, 1)}
                 if off is not None:
-                    off.append({"street": street, "pos": a["pos"], "why": "rare", "action": node.names[k],
-                                "share": round(share, 1)})
+                    off.append(entry)
+                if resolve is not None and lock is None:
+                    after_rare = entry
                 notes.append(f"{street}: the solve rarely has {a['pos']} {a['action']} here "
                              f"({share:.0f}% of their range), so their range "
                              + ("comes from simple betting rules instead" if not reraise else
@@ -8268,6 +8315,7 @@ class Advisor:
             if taken is not None:
                 taken.append(node.names[k])
             act = a["action"]
+            top = max(bets)
             if act in ("bet", "raise"):
                 amt = a.get("to") if a.get("to") is not None else a.get("amount")
                 if amt is None:
@@ -8277,8 +8325,27 @@ class Advisor:
                 bets[p] = stack
             elif act == "call":
                 bets[p] = min(bets[1 - p], stack)
+            if bets[p] > top + 1e-9:
+                n_bets += 1
             node = node.children[k]
         return node, r0, r1
+
+    def _rare_resolver(self, board, st, eff, cfg) -> Optional[Callable]:
+        """_walk's `resolve` on an earlier street (RARE_RESOLVE): (R0, R1, bets, to_act, n_raises) -> (the street
+        solved again from the node after a rare line, with the ranges the walk reached it with, at prior_budget, and its
+        trust_of), or None where it isn't solved (an answer that is instant or quick: the street's solve is read on)."""
+        if not RARE_RESOLVE or getattr(self, "_quick", False):
+            return None
+
+        def resolve(R0, R1, bets, to_act, n_raises):
+            b = (min(bets[0], eff), min(bets[1], eff))
+            try:
+                sol = self._solve_cached(board, R0, R1, st.pot_start, eff, self.prior_budget, bets=b, to_act=to_act,
+                                         n_raises=n_raises, cfg=cfg, settled=RARE_RESOLVE_SETTLED)
+            except (_NoInstant, _NotHeld):
+                return None
+            return sol, trust_of(self._expl(sol), st.name)
+        return resolve
 
     @staticmethod
     def _tree_action_name(node: Decision, a: dict, p: int, bets, pot, stack: float = float("inf")) -> str:

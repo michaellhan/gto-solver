@@ -148,6 +148,9 @@ test("an answer whose ranges left the solve earlier in the hand is badged off th
   assert.match(h, /<span class="conv ok" title="[^"]*" data-term="exploitability">converged · 0\.0% pot<\/span><span class="conv meh" title="Off the solved line: [^"]*not the whole hand's equilibrium\. Click for what this means\." data-term="offsolved">off the solved line<\/span>/);
   assert.match(h, /Off the solved line: HJ's bet 75% on the flop is never in the solve, so their range from there is the betting rules'; BTN's flop line left 6\.7 combos, so their range is filled out with the rest of their flop range; the turn solve hadn't settled, so ranges follow it 40% and the betting rules the rest; the turn is narrowed by the betting rules, not solved; BTN's raise to 13 on the flop is only 4\.2% in the solve, so their range from there is the betting rules'\. This street's solve is the best answer to those ranges/);
   assert.match(p.val(`offText({ off_solution: [{ street: "preflop", pos: "CO", why: "filled" }] })`), /^CO's preflop line isn't in the charts/);
+  // the play after a rare line solved again from the node (Advisor._rare_resolver)
+  assert.equal(p.val(`offText({ off_solution: [{ street: "flop", pos: "BB", why: "rare", action: "check", share: 0, resolved: true }] })`),
+    "BB's check on the flop is never in the solve, so their range from there is the betting rules' and the play after it is solved again from there");
   assert.equal(p.val(`gradeWith(JSON.parse(__res), { action: "fold" }).x`), 1);
   // on the solved line: neither, and the grade has no x
   p.ctx.__res = JSON.stringify(res);

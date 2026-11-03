@@ -1921,7 +1921,7 @@ const COLORS = (n) => n === "fold" ? "var(--fold)" : n === "in range" ? "var(--a
 // its mix is the best answer to those ranges, not the whole hand's equilibrium, so it isn't shown as plainly converged.
 const offSolution = (res) => !!(res && Array.isArray(res.off_solution) && res.off_solution.length);
 function offText(res) {
-  const one = (o) => o.why === "rare" ? `${o.pos}'s ${o.action} on the ${o.street} is ${o.share < 0.5 ? "never" : `only ${o.share}%`} in the solve, so their range from there is the betting rules'`
+  const one = (o) => o.why === "rare" ? `${o.pos}'s ${o.action} on the ${o.street} is ${o.share < 0.5 ? "never" : `only ${o.share}%`} in the solve, so their range from there is the betting rules'${o.resolved ? " and the play after it is solved again from there" : ""}`
     : o.why === "filled" ? (o.street === "preflop" ? `${o.pos}'s preflop line isn't in the charts, so their range is the hands that take its last action`
       : `${o.pos}'s ${o.street} line left ${o.combos} combos, so their range is filled out with the rest of their ${o.street} range`)
     : o.why === "rules" ? `the ${o.street} is narrowed by the betting rules, not solved`
