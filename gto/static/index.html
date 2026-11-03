@@ -1527,9 +1527,9 @@ async function jamGrade(key, rec) {
 }
 // a grade's note when your action was graded as the chart's nearest one (g.v: what you played)
 const gradeAs = (g) => g.v ? ` (graded as the ${g.vs ? "solver" : "chart"}'s ${g.m}: it has no ${g.v === "all-in" ? "all-in" : "smaller raise"} here)` : "";
-// A rough (unconverged) solve can't condemn a line: its worst grade is "~".
+// A rough (unconverged) solve can't condemn a line, nor can a line that gave up no EV: their worst grade is "~".
 const gradeClass = (g) => g.h != null ? (g.h <= HEUR_OK ? "ok" : g.h <= HEUR_MEH ? "meh" : "bad")
-  : g.f >= 0.15 ? "ok" : g.f >= 0.03 || g.r ? "meh" : "bad";
+  : g.f >= 0.15 ? "ok" : g.f >= 0.03 || g.r || g.l === 0 ? "meh" : "bad";
 const gradeMark = (g) => ({ ok: "✓", meh: "~", bad: "✗" })[gradeClass(g)];
 const sgn = (x) => (x > 0 ? "+" : x < 0 ? "−" : "") + Math.abs(x).toFixed(2);
 // An action your range almost never takes (the answer's rough_ev, advisor.RARE_BRANCH; a grade's rv): its EV with a "≈"
@@ -2742,6 +2742,14 @@ function studyPrefetch(st) {
   return true;
 }
 function studyHand() { return payload(); }
+// Study's "The hand on the table": the hand once it's finished. One still being entered opens at its game's first
+// decision, not at its spot: a spot of a hand in progress is only reviewed afterwards.
+function studyTable() {
+  const p = payload();
+  if (adviceOpen() || closed(simulate())) return p;
+  toast("Study opens at a hand's spots once it's finished. This is its game from the first decision.");
+  return { ...p, board: "", preflop: [], flop: [], turn: [], river: [] };
+}
 // Study at a hand's spot, for the whole range: a reviewed decision's "what if", a flop report's flop, a drill's hand.
 // spot: the precomputed spot it belongs to, else the hand on the table's entry.
 window.studySpot = async (st, spot) => {

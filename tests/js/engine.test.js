@@ -344,6 +344,9 @@ test("grades: marks, rough solves and the EV given up", () => {
   assert.deepEqual(g({ f: 0.05 }), ["meh", "~"]);
   assert.deepEqual(g({ f: 0.01 }), ["bad", "✗"]);
   assert.deepEqual(g({ f: 0.01, r: 1 }), ["meh", "~"]);
+  assert.deepEqual(g({ f: 0, l: 0 }), ["meh", "~"]);       // (off the mix, but it gave up nothing)
+  assert.deepEqual(g({ f: 0, l: 0.01 }), ["bad", "✗"]);
+  assert.deepEqual(g({ f: 0, l: null }), ["bad", "✗"]);    // (a preflop chart's: no EV to go by)
   assert.equal(p.run("sgn(-1.234)"), "−1.23");
   assert.equal(p.run("sgn(0)"), "0.00");
   // in Practice a recorded hero action is graded against the advice on screen for this exact spot

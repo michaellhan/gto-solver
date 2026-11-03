@@ -53,7 +53,7 @@ test("the help pages say what the page does: the badge's and the grades' thresho
   const grade = (g) => p.val(`gradeClass(${JSON.stringify(g)})`);
   assert.deepEqual([grade({ f: 0.15 }), grade({ f: 0.149 }), grade({ f: 0.03 }), grade({ f: 0.029 }), grade({ f: 0.01, r: 1 })], ["ok", "meh", "meh", "bad", "meh"]);
   const gl = Help.glossaryHtml();
-  assert.match(gl, /✓ \(the solver's mix takes it at least 15% of the time\), ~ \(3-15%\) or ✗ \(under 3%\); a rough solve never grades ✗/);
+  assert.match(gl, /✓ \(the solver's mix takes it at least 15% of the time\), ~ \(3-15%\) or ✗ \(under 3%\); a rough solve, or a line that gave up no EV, never grades ✗/);
   assert.deepEqual([p.val("HEUR_OK"), p.val("HEUR_MEH")], [3, 10]);
   assert.match(gl, /within 3% of the pot of the best is ✓, within 10% is ~/);
   assert.match(Help.fairplayHtml(), /Do not use it during a hand you are playing, online or live/);

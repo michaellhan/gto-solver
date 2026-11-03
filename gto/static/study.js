@@ -1022,7 +1022,7 @@
       return go(gameState(ST.pfGame));
     }
     if (spot === "table") {
-      const p = typeof globalThis.studyHand === "function" ? globalThis.studyHand() : null;
+      const p = typeof globalThis.studyTable === "function" ? globalThis.studyTable() : null;
       return go(p ? fromPayload(p) : fresh());
     }
     const sp = spot && index && index.spots.find(s => s.id === spot);

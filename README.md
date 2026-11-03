@@ -171,7 +171,7 @@ every turn and river on the turn, an even sample of flop runouts, `gto/breakdown
 is in, your action buttons switch to the solver's own sizes with its frequency on each,
 so what you record is exactly what was solved. Postflop, a badge shows how well the solve
 converged (exploitability in % of the pot: converged under 3%, fair under 10%, rough
-above) with a one-click re-solve on Accurate; a rough solve never grades a line ✗. A jam the solve's tree has no all-in
+above) with a one-click re-solve on Accurate; a rough solve, or a line that gave up no EV, never grades ✗. A jam the solve's tree has no all-in
 for (all-in is offered at 2.5 pots behind or less: a 15x-pot flop jam isn't in it) is solved for its grade: the spot is
 asked again with `"jam": true`, which offers all-in at every decision of the street advised on (`Config.root_allin`;
 not the earlier streets' narrowing solves, nor the flop libraries), and the grade, its EV and the coach's card fill in

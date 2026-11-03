@@ -441,6 +441,22 @@ test("Study: a reviewed decision's What if opens on that spot, without your hand
   assert.equal(JSON.parse(p.storage.get("handreview")).actions.river.length, 2);
 });
 
+test("Study's hand on the table: its game from the first decision while it's entered, its spot once it's finished", async () => {
+  const p = await page();
+  p.S = state(FLOP);
+  const open = j(p.run("studyTable()"));
+  assert.deepEqual([open.players, open.stack, open.board, open.preflop, open.flop], [6, 100, "", [], []]);
+  assert.match(p.byId("toast").innerHTML, /once it's finished/);
+  p.S = { ...state(FLOP), finished: true };
+  const done = j(p.run("studyTable()"));
+  assert.equal(done.board, "Kd7s2c");
+  assert.equal(done.flop.length, 1);
+  nothingAsked(p);
+  p.practice();
+  p.S = state(FLOP);
+  assert.equal(j(p.run("studyTable()")).board, "Kd7s2c");   // (Practice's hands aren't real)
+});
+
 test("Practice still answers as you play: advice on your turn, the speed it had, and no gate", async () => {
   const p = await page();
   p.practice();

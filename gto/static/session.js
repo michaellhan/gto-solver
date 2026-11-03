@@ -147,7 +147,7 @@
     for (const a of res.actions || []) m[/^fold/.test(a.action) ? "fold" : /^(check|call)/.test(a.action) ? "passive" : "aggr"] += a.freq || 0;
     return { fold: r2(m.fold * 100) / 100, passive: r2(m.passive * 100) / 100, aggr: r2(m.aggr * 100) / 100 };
   }
-  const gradeClass = (g) => g.f >= MIX_OK ? "ok" : g.f >= MIX_OFF || g.r ? "meh" : "bad";
+  const gradeClass = (g) => g.f >= MIX_OK ? "ok" : g.f >= MIX_OFF || g.r || g.l === 0 ? "meh" : "bad";
 
   // ---- a tournament's payouts, entered once for all its hands (tset: {key: {payouts, fieldN, fieldAvg}}): the prizes
   // still to pay, first place first, and the players left at other tables with their average stack (bb), as the

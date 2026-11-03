@@ -117,7 +117,7 @@ test("Study from My hands: the hand on the table, Study at your last decision", 
   vm.runInContext(fs.readFileSync(path.join(STATIC, "hands.js"), "utf8"), p.ctx, { filename: "hands.js" });
   p.run("globalThis.__views = []; openView = (n) => { __views.push(n); return Promise.resolve(); };");
   const st = played({ flop: [{ pos: "BB", action: "check" }, { pos: "BTN", action: "bet", to: 3 }, { pos: "BB", action: "call" }], cards: ["Ah", "Kd", "Qs", "7h", "2c", "9d"], turn: [{ pos: "BB", action: "check" }, { pos: "BTN", action: "check" }] });
-  const rec = j(await p.run(`GTOStore.hands.save(${JSON.stringify(st)})`));
+  const rec = j(await p.run(`GTOStore.hands.save(${JSON.stringify({ ...st, finished: true })})`));
   await p.run(`(async () => MyHands.pageHost().study(await GTOStore.hands.get(${JSON.stringify(rec.id)})))()`);
   assert.deepEqual(p.val("__views"), ["study"]);
   const at = p.val("STUDY_AT");
@@ -126,6 +126,18 @@ test("Study from My hands: the hand on the table, Study at your last decision", 
   assert.equal(at.state.turn.length, 1);          // (BB's check: your check back is the decision)
   assert.equal(at.state.flop.length, 3);
   assert.equal(p.S.actions.turn.length, 2);       // (the table keeps the whole hand)
+});
+
+test("Study from My hands: a hand still being entered stays on the table, and says why", async () => {
+  const p = await storePage();
+  vm.runInContext(fs.readFileSync(path.join(STATIC, "hands.js"), "utf8"), p.ctx, { filename: "hands.js" });
+  p.run("globalThis.__views = []; globalThis.__toasts = []; openView = (n) => { __views.push(n); return Promise.resolve(); }; toast = (m) => __toasts.push(m);");
+  const rec = j(await p.run(`GTOStore.hands.save(${JSON.stringify(played())})`));
+  await p.run(`(async () => MyHands.pageHost().study(await GTOStore.hands.get(${JSON.stringify(rec.id)})))()`);
+  assert.deepEqual(p.val("__views"), []);
+  assert.equal(p.val("globalThis.STUDY_AT"), undefined);
+  assert.ok(p.val("__toasts").some(m => /once it's finished/.test(m)));
+  assert.equal(p.S.actions.flop.length, 1);       // (it's on the table, as it was)
 });
 
 // ---- the panel's pure parts

@@ -17,11 +17,11 @@
   const fmt = (x) => (Math.round(x * 100) / 100).toString();
   const cardH = (c) => `<span class="mh-c ${c[1]}">${c[0]}${SUIT[c[1]]}</span>`;
   const cardsH = (cs) => cs.map(cardH).join("");
-  // a grade's class as the page's gradeClass (✓ in the solver's mix 15%+, ~ 3%+ or a rough solve, ✗ less; the betting
-  // rules' grades by the EV share given up)
+  // a grade's class as the page's gradeClass (✓ in the solver's mix 15%+, ~ 3%+, a rough solve or no EV given up, ✗
+  // less; the betting rules' grades by the EV share given up)
   /* global gradeClass */
   const gcls = (g) => typeof gradeClass === "function" ? gradeClass(g)
-    : g.h != null ? (g.h <= 0.03 ? "ok" : g.h <= 0.1 ? "meh" : "bad") : g.f >= 0.15 ? "ok" : g.f >= 0.03 || g.r ? "meh" : "bad";
+    : g.h != null ? (g.h <= 0.03 ? "ok" : g.h <= 0.1 ? "meh" : "bad") : g.f >= 0.15 ? "ok" : g.f >= 0.03 || g.r || g.l === 0 ? "meh" : "bad";
   const MARK = { ok: "✓", meh: "~", bad: "✗" };
 
   // ---- a hand at a glance: who, what, how far, how it graded
@@ -175,7 +175,7 @@
       if (H.sig(S) !== rec.data.sig) await H.update(rec.id, { state: S });
       H.onTable(S, { id: rec.id, source: rec.data.source });
     };
-    /* global S, cleanState, setPositions, payload, loadHandState, rewindTo, reviewHand, toast, encodeState, decodeState, ROOT, openView, loadJs, SY_VERSION, copyText, loadHH, splitHands, importHand, simulate, handDone, heldHand */
+    /* global S, cleanState, setPositions, payload, loadHandState, rewindTo, reviewHand, toast, closed, simulate, encodeState, decodeState, ROOT, openView, loadJs, SY_VERSION, copyText, loadHH, splitHands, importHand, simulate, handDone, heldHand */
     return {
       store: () => globalThis.GTOStore,
       table: () => clone(heldHand()),
@@ -194,9 +194,10 @@
           b.onclick = () => { t.hidden = true; reviewHand(); }; t.appendChild(b);
         }
       },
-      // Study at your last decision (the table keeps the whole hand)
+      // Study at your last decision (the table keeps the whole hand); a hand still being entered stays on the table
       async study(rec) {
         await onTable(rec);
+        if (!closed(simulate())) return toast("Study opens at a hand's spots once it's finished. Finish this hand first.");
         await loadJs("study.js?v=" + SY_VERSION, () => globalThis.Study);
         const at = lastDecision(S), old = S;
         let p = null;
