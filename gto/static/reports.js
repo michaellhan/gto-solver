@@ -133,7 +133,7 @@
     if (st.group) for (const g of groups(rs, st.group))
       body += `<tr class="rp-grp" data-group="${st.group}:${g.g}" tabindex="0"><td class="rp-f">${esc(g.label)}<small>${pct(g.w / tot, 1)}%</small></td><td class="rp-b">${bar(g.freqs, cols)}</td>${nums(g)}<td class="rp-tu"></td></tr>`;
     for (const r of rs)
-      body += `<tr data-flop="${r.f}" tabindex="0" title="Load this flop${r.bet ? ` (facing ${esc(r.bet)})` : ""}"><td class="rp-f"><span class="rp-cards">${flopHtml(r.f)}</span>${r.bet ? `<small>vs ${esc(r.bet.replace("bet ", ""))}</small>` : ""}</td><td class="rp-b">${bar(r.freqs, cols)}</td>${nums({ freqs: r.freqs, ev: r.ev, eq: r.eq })}`
+      body += `<tr data-flop="${r.f}" tabindex="0" title="Open this flop in Study${r.bet ? ` (facing ${esc(r.bet)})` : ""}"><td class="rp-f"><span class="rp-cards">${flopHtml(r.f)}</span>${r.bet ? `<small>vs ${esc(r.bet.replace("bet ", ""))}</small>` : ""}</td><td class="rp-b">${bar(r.freqs, cols)}</td>${nums({ freqs: r.freqs, ev: r.ev, eq: r.eq })}`
         + `<td class="rp-tu"><button class="ghost" data-turns="${r.f}" title="The turn report in Study: every turn card after the most reached flop line through ${esc(turnView(rep, r.f, st.view).label)}">Turns</button></td></tr>`;
     return `<table class="rp-t"><thead>${head}</thead><tbody>${body}</tbody></table>`;
   }
@@ -211,7 +211,7 @@
     const body = box.querySelector(".rp-body");
     if (!rep) { body.innerHTML = `<div class="rp-msg">Loading…</div>`; return; }
     body.innerHTML = controls() + `<div class="rp-scroll">${html(rep, ST)}</div>`
-      + `<div class="rp-note">${esc(rep.label)}, 100bb, flops up to suits, each weighted by the flops it stands for. Frequencies are the range's; EV in bb at the start of the flop (pot ${rep.pot}bb), equity range against range. ${"ontouchstart" in window ? "Tap" : "Click"} a flop to load it with a hand that mixes there.</div>`;
+      + `<div class="rp-note">${esc(rep.label)}, 100bb, flops up to suits, each weighted by the flops it stands for. Frequencies are the range's; EV in bb at the start of the flop (pot ${rep.pot}bb), equity range against range. ${"ontouchstart" in window ? "Tap" : "Click"} a flop to open it in Study.</div>`;
   }
   async function pick(id) {
     ST.spot = id; rep = null; draw();
@@ -228,7 +228,7 @@
       globalThis.STUDY_AT = { state: st, spot: ST.spot, report: true, ...turnView(rep, d.turns, ST.view) };
       return typeof globalThis.openView === "function" && globalThis.openView("study");
     }
-    else if (d.flop) { const st = stateFor(rep, d.flop, ST.view); close(); return window.loadHandState && window.loadHandState(st, `${rep.label}, ${d.flop}`); }
+    else if (d.flop) { const st = stateFor(rep, d.flop, ST.view); close(); return window.studySpot && window.studySpot(st, ST.spot); }   // (the page's table is for hands you played)
     else if (d.ctl === "spot") { store(); return pick(d.value); }
     else if (d.ctl === "group") ST.group = d.value;
     else if (d.ctl && d.ctl.startsWith("f:")) ST.filter = { ...ST.filter, [d.ctl.slice(2)]: d.value };

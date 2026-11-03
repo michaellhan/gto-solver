@@ -317,7 +317,7 @@
         + `<span>${g.ev === false ? "graded by how often the hand plays it (no EVs)" : g.loss > 0 ? `EV loss ${fmt(g.loss)}bb (${g.lossPct.toFixed(1)}% pot)` : "no EV lost"}</span></div>`
         + (pr.set && pr.played ? `<div class="dr-sub">In the hand you played ${esc(pr.played)}.</div>` : "")
         + `<table class="dr-t"><thead><tr><th>Action</th><th>GTO mix</th><th class="n">Freq</th><th class="n">EV bb</th></tr></thead><tbody>${rows}</tbody></table>`
-        + `<div class="dr-next"><button class="link" data-study>Open in the solver</button><button data-next class="active">Next hand <kbd>Space</kbd></button></div></div>`;
+        + `<div class="dr-next"><button class="link" data-study>Open in Study</button><button data-next class="active">Next hand <kbd>Space</kbd></button></div></div>`;
     }
     return `<div class="dr-sit">${situation(pr)}</div><div class="dr-cards">${pr.board.length ? `<div><small>Board</small><span>${pr.board.map(cardH).join("")}</span></div>` : ""}`
       + `<div><small>You (${esc(pr.hero)})</small><span>${pr.hand.map(cardH).join("")}</span></div></div><div class="dr-acts">${btns}</div>${fb}`;
@@ -345,8 +345,8 @@
     if (d.next != null) return deal();
     if (d.view) { ST.view = d.view; ST.session = emptyScore(); store(); return deal(); }
     if (d.reset != null) { delete ST.hist[hkey()]; store(); return draw(); }
-    if (d.study != null && ST.set) { const st = ST.pr.state; close(); return window.loadHandState && window.loadHandState(JSON.parse(JSON.stringify(st)), `${ST.set.name}: ${ST.pr.hand.join("")}`); }
-    if (d.study != null) { const st = stateFor(rep, ST.pr); close(); return window.loadHandState && window.loadHandState(st, `${rep.label}, ${ST.pr.board.join("")}`); }
+    if (d.study != null && ST.set) { const st = ST.pr.state; close(); return window.studySpot && window.studySpot(st); }
+    if (d.study != null) { const st = stateFor(rep, ST.pr); close(); return window.studySpot && window.studySpot(st, ST.spot); }
     if (d.again != null && ST.set) return startSet(ST.set);
     if (d.leave != null) { ST.set = null; ST.pr = null; ST.session = emptyScore(); return library(); }
     if (d.ctl === "spot") return pickSpot(d.value).catch(err => { ST.err = err.message; draw(); });

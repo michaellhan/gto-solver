@@ -1,15 +1,17 @@
 # GTO Solver
 
-A No-Limit Hold'em hand-review solver. Enter a hand seat by seat and it returns
-a GTO-style mixed strategy with EVs and sizes, preflop through river, in a few
-seconds. 2 to 9 players.
+A No-Limit Hold'em hand-review solver. Enter a hand you played seat by seat,
+finish it, and it grades each decision you made against a GTO-style mixed strategy
+with EVs and sizes, preflop through river, in a few seconds each. 2 to 9 players.
 
 Live at **https://www.michael-han.com/gto-solver/** (the solver runs in your
 browser via Pyodide, nothing is uploaded).
 
-It is a review tool for hands you have already played. There is deliberately no
-screen capture, table reading or live-play hook; using anything like that on a
-real-money site is against every site's terms.
+It is a review tool for hands you have already played, not for use during a hand.
+A hand being entered gets no advice and nothing is solved until it's finished
+([Review first](#review-first)). There is deliberately no screen capture, table
+reading or live-play hook; using anything like that on a real-money site is against
+every site's terms.
 
 ## Setup
 
@@ -106,9 +108,40 @@ the select), and amounts go in half-big-blind steps ($2.50 at $2/$5). The Rake s
 (1bb at $2/$5, 2.5bb at $1/$2). The stakes are saved with the hand and remembered for new hands (`gto-stakes` in
 the browser's storage, store.js); off, nothing changes.
 
-Whenever it becomes your turn the advice panel solves the spot. The **Quick / Fast /
-Accurate** toggle in the header (remembered between visits) picks the solve
-time: Quick is about 2 s either way (the requests Practice makes at Fast, below: `QUICK_BUDGETS`, `"quick": true`;
+#### Review first
+
+**Entering a hand.** The main screen records a hand; it doesn't answer one. While a hand is entered your decisions are
+recorded and the worker is asked nothing, whoever is to act: no solve, no pre-solve, no library fetch, no strategy, EV,
+equity or grade, and the action buttons stay plain ("Record what you did."). The panel lists what's recorded and how to
+review it. **Finish hand** (under the action buttons once your cards are in, key E; also while a card is asked for) ends a hand
+you don't know the end of; a hand is finished by itself at a fold or showdown, or when you fold (the others' actions
+aren't entered after that). `handDone(sim)` in `gto/static/index.html` is the rule, `closed(sim)` the same outside Practice, and
+`adviceOpen()` the gate: Practice, or a review running, or a decision of a finished hand stepped to. `analyze` and
+`renderAll` check it, so no route to a solve goes round it.
+
+**Reviewing it.** **Review whole hand** (key R) grades each decision you recorded, in turn; a decision you
+didn't record isn't reviewed, so finishing at your turn leaves that turn without advice (the panel says so). Click any decision, in
+the list or on the timeline, for its full advice: a step view (`stepView`, Previous, Next, Back to the hand; arrow
+keys) that leaves the hand as it was. **What if? Study this spot** opens that decision in Study for other
+lines. That is where a finished hand's Pool, locks and speeds apply: they're hidden while a hand is being entered (`body.unfinished .nofin`)
+and not sent. Once any of a hand's advice has shown it stays as entered (`S.reviewed`; a link and a reload keep it):
+Undo and the card slots refuse, and a line tried differently is Study's, or a new hand's. **Keep entering**, or Undo, reopens a
+finished hand that nothing has been shown for. Rewinding an unfinished hand truncates it and gives no advice, with a toast. A saved,
+shared or reloaded hand comes back as it was left: unfinished with no advice, finished with its review.
+
+**Every route onto the table.** An import (`hh.js`), a session's decision (`session.js`) and **Review hand** in the
+write-up open finished; a hand from My hands opens finished if it was imported or reviewed, else as it was left,
+with a toast saying what it needs. A share link keeps `finished` and `reviewed` as they are. **Open on table** in the write-up
+is an unfinished hand. Reports and drills open their spot in Study (`window.studySpot`), which needs no hand of yours; Practice's
+hands stay in Practice. `Advisor.presolve` and the worker's `presolve` request stay for `scripts/bench_browser.mjs --presolve`, unused by the page.
+
+These are limits on what the page offers, enforced in the page: a made-up action, or a link edited to say `finished`,
+gets a review of that decision. The rule against use during a hand is in Fair play and the terms.
+
+#### What a review shows
+
+Each decision opened solves the spot, and the **Fast / Accurate** toggle in the header (remembered between visits, and shown
+while reviewing) picks the solve time. (Practice at Fast asks for quick answers: about 2 s either way, `QUICK_BUDGETS`, `"quick": true`;
 rough on the turn, whose game is cut to fewer sizes when the whole one doesn't fit those 2 s, which the answer says; 3-way flops and turns solved in a smaller game, a 4-way flop left to the betting rules in the browser, and one whose tables can't be built in time anywhere); Fast is 8 s in the browser and 2.5 s against the local server (2.5 s per earlier street too); Accurate
 is about 60 s in the browser and 30 s locally (12 s per earlier street), with more time for the earlier
 streets used to narrow ranges. River spots are solid either way; turn spots need
@@ -118,9 +151,7 @@ flop's for the turn, the turn's for the river, or the street's own from your ear
 its precomputed solve's own turn, where the library has stored it) shows at once under the progress bar, marked
 approximate, until the answer replaces it. A flop or turn solved live then shows its own solve so far the same way
 (Fast at its 100th iteration, about half way to the answer, and at its 200th, 300th and 400th where it runs on past
-them; Accurate at its 100th, 300th and 600th), where the answer is more than a second off. In position, the street is solved while your
-opponent is to act, so the time you take entering their move counts toward the answer (a limped pot's turn answers
-in 3.2-3.4 s with the move entered 4 s in, against 7.0-7.3 s otherwise).
+them; Accurate at its 100th, 300th and 600th), where the answer is more than a second off.
 The panel shows the recommended action with its size (preflop: 2.5bb
 opens, 3bb from the small blind, 3x or 4x 3-bets, 2.3x 4-bets, then all-in; over limpers
 3x (4x from the blinds) plus 1bb a limper, and a squeeze adds one bet per caller;
@@ -136,7 +167,7 @@ range sorted high to low), with average equity, EV and the share of each range a
 3-way solves get the Breakdown only. Opening a tab asks again with `"breakdown": true` on the same state, answered
 from the solve the advice came from (no new solve; ~0.3 s native, ~0.5 s in the browser on a flop: the equities
 every turn and river on the turn, an even sample of flop runouts, `gto/breakdown.py`); the views are
-`gto/static/breakdown.js`, loaded when first opened, and the tab picked stays for later advice. Click an advice row to record it as what you did and keep going. Once the advice
+`gto/static/breakdown.js`, loaded when first opened, and the tab picked stays for later advice. In Practice, once the advice
 is in, your action buttons switch to the solver's own sizes with its frequency on each,
 so what you record is exactly what was solved. Postflop, a badge shows how well the solve
 converged (exploitability in % of the pot: converged under 3%, fair under 10%, rough
@@ -166,12 +197,10 @@ solves. Not against the pool or locks (the tab is hidden there); in a tournament
 prize equity as the advice's do, and the tab shows the tournament's notes. See [One bet size](#one-bet-size).
 
 Solver stats and the villain's inferred range (as text and as a 13x13 grid shaded by weight) sit behind a "Details" toggle.
-Each decision you record is marked against the advice that was showing (✓ in
-the mix, ~ rarely played, ✗ outside it, with the EV given up), and when the
-hand ends the advice panel lists them as a hand review with the EV given up per street.
-Click any of your decisions (in the review or the timeline) to replay the hand from that
-point; later actions and board cards are cleared, with Undo. While others act, the
-last advice stays visible but dimmed and labelled. The **⋯** menu has a four-colour
+A review marks each decision you recorded (✓ in
+the mix, ~ rarely played, ✗ outside it, with the EV given up) and lists them with the EV given up per street.
+In a hand being entered, clicking one of your decisions on the timeline goes back to it to enter it again,
+with Undo; in Practice the advice stays visible but dimmed and labelled while others act. The **⋯** menu has a four-colour
 deck (diamonds blue, clubs green), Sounds on/off, a switch that puts the advice on the left, and Reset layout.
 The menu is grouped: Review (Import hand, Analyze session), Study (Study, Preflop solve, Range builder, Drills, Flop
 reports), Help, and Settings (those switches, Reset practice, Reset layout); it scrolls on a short screen.
@@ -180,7 +209,7 @@ reports), Help, and Settings (those switches, Reset practice, Reset layout); it 
 (the table above) and tabs between them that move it: **Getting started** (reviewing a hand, a session, studying a
 spot, training, the settings worth knowing, with buttons that open each view), **About & accuracy** (the README's
 benchmarks in plain words: what "% of the pot from equilibrium" means, the comparison with postflop-solver, which
-spots are precomputed or solved live, Quick, Fast and Accurate, the known limits and where your data goes),
+spots are precomputed or solved live, Fast and Accurate, the known limits and where your data goes),
 **Glossary** (GTO, mix, EV and EV lost, equity and EQR, ranges and combos, exploitability, approximate, precomputed,
 borrowed, off the solved line, heuristic, the pool, node locks, ICM, the speeds, the grades, SPR, c-bet), a
 user-facing **Changelog** by week from the commit history, and **Fair play** (a study and review tool: not for use
@@ -207,9 +236,8 @@ become big blinds, antes are averaged per player, a 2bb straddle from the first 
 seats are dropped and returned bets are ignored; the history needs your hole cards. Every seat keeps its
 own stack (after the antes, as the history has it), so a short all-in, its side pot and an uncalled bet play
 out as they did. The parser is `gto/static/hh.js`,
-loaded only when the dialog opens. **Review whole hand** (offered after an import, and at the end of any
-hand with ungraded decisions) solves each of your decisions in order at the current Fast/Accurate setting,
-grades it as if it had been entered live and ends on the hand review; it shows "decision 2 of 5" while it
+loaded only when the dialog opens. **Review whole hand** (offered on any finished hand, an import straight away) solves each of your decisions in order at the current Fast/Accurate setting,
+grades it and ends on the hand review; it shows "decision 2 of 5" while it
 runs and can be cancelled, keeping the grades so far.
 
 **Write up a hand…** (beside Stakes) is for a hand played live, written up after the session on a phone. The game
@@ -267,8 +295,8 @@ solver's mix, the triage's confidence (high, medium, low) and sources; tables by
 (pot type, IP/OOP, facing a bet / first to act / checked to); your frequencies against the solver's for the same
 hands at the same decisions (opens, BB defence, folds and 4bets vs 3bets, flop c-bets, folds and raises vs c-bets,
 turn barrels, river bets, folds to turn and river bets); **This session's leaks** (the leaks below, over this
-session's decisions), each with its hands; the decisions by EV lost (a click opens that hand in the page rewound to
-that decision, Undo brings the rest back) and the clearest off-chart preflop plays. **Filters** narrow the tables and
+session's decisions), each with its hands; the decisions by EV lost (a click opens that hand finished, stepped to
+that decision, and Back to the hand or Undo shows the whole of it) and the clearest off-chart preflop plays. **Filters** narrow the tables and
 the list: street, position, pot type (single-raised, 3bet, 4bet+, limped, multiway), EV lost (any, 2% or 8% of the
 pot, 1bb or 5bb) and tags (in position, out of position, facing a bet, preflop raiser or caller, multiway, all-in,
 off the mix, flagged, checked at Fast, low confidence); a leak's **N hands** filters to its decisions. **Drill this
@@ -393,8 +421,8 @@ Pick an action (keys 1-4) and the hand's GTO mix and per-action EVs show at once
 highest EV, to the library's step of 1% of the pot), **Correct** (an action the hand plays 10% or more: "mixed"), or by
 the EV given up against the best, Inaccuracy (under 2% of the pot), Mistake (under 8%), Blunder. Space or Enter
 deals the next. The session's accuracy, average EV loss (bb and % of the pot) and streak show under the hand, and
-each drill's history (hands, accuracy, last 100, best streak) is kept in the browser; **Open in the solver** loads
-the hand into the page. `gto/static/drills.js` decodes the library's entries itself (no solver needed: answers are
+each drill's history (hands, accuracy, last 100, best streak) is kept in the browser; **Open in Study** opens
+the spot there. `gto/static/drills.js` decodes the library's entries itself (no solver needed: answers are
 instant, also before the in-browser solver has loaded) and reads the hand weights from `flop_library/<spot>/ranges.json`
 (both ranges entering the flop, written with the index, fingerprinted as the index's).
 
@@ -402,7 +430,7 @@ A **drill set** (Analyze session's **Drill this leak**) drills your own hands in
 (the line so far, the pot and the amount to call), the session's answer for it (its mix, and EVs where it had them),
 in a fresh order each round, graded on the same scale (an answer without EVs, a preflop chart's or a read at once, by
 frequency: Best the most played action, Correct 10% or more, else Inaccuracy or, under 3%, Mistake), with what you
-played in the hand after each; the summary at the end offers the set again. **Open in the solver** loads the spot.
+played in the hand after each; the summary at the end offers the set again. **Open in Study** opens the spot.
 
 **Study** (in the ⋯ menu) is a solution browser: walk a hand node by node with no cards of your own, and at each
 decision see the solver's answer for every hand of the player to act. Start from a precomputed spot's preflop line
@@ -2222,8 +2250,9 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   after them, except from a stored turn: below), a street solved already, pots four or more saw the flop (3-way
   ones: below), Practice (it grades your move against the answer), exploit mode, locks, custom sizes or
   ranges, tournaments, Study (but for a library flop's stored turn: below), the breakdown, a jam request.
-* **The street solved while your opponent is to act** (`Advisor.presolve`; the worker's `presolve` request; the
-  page's `presolveFor`, `stopPresolve`). In position, your answer can't start until you enter the opponent's move,
+* **The street solved while your opponent is to act** (`Advisor.presolve`; the worker's `presolve` request). Not asked
+  by the page any more: the main screen solves nothing until a hand is finished ([Review first](#review-first)), and Practice looks
+  ahead on its own. What follows is what it was built and measured for; `scripts/bench_browser.mjs --presolve` still runs it. In position, your answer can't start until you enter the opponent's move,
   and the worker sat idle meanwhile. Now, while your opponent is to act heads-up after the flop, the page asks the
   worker for the solve your next decision on the street reads: the street's solve with your cards, as your advice
   makes it, within the setting's own budget. Entering their move stops it through the shared stop flag (0.02-0.11 s

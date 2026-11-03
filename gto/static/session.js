@@ -588,14 +588,14 @@
 
   // ---- the page: its importer, engine, solver and grading (globals of index.html and hh.js)
   function pageHost() {
-    /* global importHand, modeReady, BUDGETS, MODE, S, cleanState, setPositions, simulate, payload, callAdvise, heuristic, gradeWith, jamOffTree, gradedMove, loadHandState, rewindTo, solving, pending, PRE, stopRequests */
+    /* global importHand, modeReady, BUDGETS, MODE, S, cleanState, setPositions, simulate, payload, callAdvise, heuristic, gradeWith, jamOffTree, gradedMove, loadHandState, rewindTo, solving, pending, stopRequests */
     const mine = new Map();   // our requests in flight: id -> stopped for the page
     // the page asking the solver itself: its advice solving, or a request of its own waiting in the browser's worker
-    // (Practice, Study, a Breakdown; not ours, nor a presolve, which waits for everything else)
+    // (Practice, Study, a Breakdown; not ours)
     const busy = () => {
       try {
         if (typeof solving !== "undefined" && solving) return true;
-        return MODE === "wasm" && typeof pending === "object" && Object.keys(pending).some(k => !mine.has(+k) && !(typeof PRE === "object" && PRE && +k === PRE.id));
+        return MODE === "wasm" && typeof pending === "object" && Object.keys(pending).some(k => !mine.has(+k));
       } catch (e) { return false; }
     };
     const step = () => { for (const [id, stopped] of mine) if (!stopped && busy() && stopRequests(id)) mine.set(id, true); };
@@ -635,8 +635,8 @@
       },
       grade: (res, rec) => gradeWith(res, rec),
       jamOffTree: (res, rec) => jamOffTree(res, rec),
-      // the whole hand, rewound to the decision (its Undo brings the rest back)
-      open: async (st, s, i) => { await loadHandState(clone(st)); rewindTo(s, i); },
+      // the whole hand, a hand played, at the decision's advice (Back to the hand brings the rest)
+      open: async (st, s, i) => { await loadHandState({ ...clone(st), finished: true }); rewindTo(s, i); },
     };
   }
 

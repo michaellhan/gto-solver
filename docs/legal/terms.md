@@ -19,7 +19,8 @@ helps you review hands after you have played them, drill spots and analyze sessi
 - It is **not gambling**. You can't stake, win or lose money on the Service.
 - It is **not advice to gamble**, and it guarantees no results. Strategies are approximations: the site's
   "About & accuracy" page says how close they are and where they are known to fall short.
-- It is for **study and review away from the table**. See section 4.
+- It is for **study and review away from the table**: you enter a hand you have played, finish it, and review it. A
+  hand gets no advice from the main screen until it is finished. See section 4.
 
 ## 2. Who may use it
 
@@ -40,7 +41,8 @@ are responsible for following the rules of any poker site, card room or tourname
 You agree **not** to:
 
 1. **Use the Service during a hand you are playing**, online or live, or in any way that gives you real-time
-   assistance at a table. This includes having another person consult it for you during a hand.
+   assistance at a table. This includes entering a hand that is still being played, marking an unfinished hand as
+   finished to see advice on it, and having another person consult it for you during a hand.
 2. Use bots, scripts, scrapers or automated tools with the Service, or access it through any interface other than the
    ones we provide. There is no public API.
 3. Copy, extract, download in bulk, resell, publish or otherwise redistribute the Service's solutions, reports,

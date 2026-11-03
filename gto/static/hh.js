@@ -248,7 +248,7 @@
   // there as at the table). If the two disagree the import stops there.
   function importHand(text) {
     const h = parseHandHistory(text), warnings = [...h.warnings];
-    const st = { players: h.players, hero: h.hero, stack: h.stack, stacks: { ...h.stacks },
+    const st = { finished: true, players: h.players, hero: h.hero, stack: h.stack, stacks: { ...h.stacks },   // (a hand played: its review is open)
                  cards: [...h.hole, ...h.board, null, null, null, null, null].slice(0, 7),
                  actions: { preflop: [], flop: [], turn: [], river: [] }, ...(h.ante ? { ante: h.ante } : {}), ...(h.straddle ? { straddle: true } : {}),
                  // (a tournament's hand keeps its tournament and takes no rake, whatever the page's: the page sends none for it)

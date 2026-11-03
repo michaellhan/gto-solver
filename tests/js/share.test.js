@@ -136,6 +136,8 @@ test("hand text: header, streets with boards, verdict marks, link and state JSON
   st.actions.flop[1].g = graded(0.1, 0.42);
   p.S = st;
   await p.ready();
+  assert.doesNotMatch(p.run("handText()"), /solver 62%/);   // (a hand being entered shows no grades)
+  p.S = { ...st, finished: true };
   const lines = p.run("handText()").split("\n");
   assert.equal(lines[0], "GTO Solver hand: 6-handed, 100bb effective, 0.1bb ante, UTG straddles 2bb, I am CO with AhQh");
   assert.equal(lines[1], "Preflop: HJ folds, CO raises to 6 [✓ solver 62%], BTN folds, SB folds, BB folds, UTG calls");

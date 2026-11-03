@@ -196,7 +196,7 @@ const lockBox = (p, seat, k) => [...lockRow(p, seat).walk()].find(e => e.tagName
 test("locks: a profile per opponent, sent preflop and after, and its numbers editable", async () => {
   const p = loadPage();
   await p.ready();
-  p.S = state(FLOP);
+  p.S = { ...state(FLOP), finished: true };   // (locks are for a finished hand's review)
   p.run("renderAll()");
   assert.equal("locks" in p.payload(), false);
   assert.deepEqual([...p.byId("lockIns").children].map(r => r.children[0].dataset.p), ["UTG", "HJ", "CO", "SB", "BB"]);
@@ -231,7 +231,7 @@ test("locks: a profile per opponent, sent preflop and after, and its numbers edi
 
 test("locks: share link round trip, the summary, the copied hand and the advice say so", async () => {
   const a = loadPage();
-  a.S = { ...state(FLOP), locks: { BB: { fold: 15 }, SB: { fold: 5, next_bet: 0 } } };
+  a.S = { ...state(FLOP), finished: true, locks: { BB: { fold: 15 }, SB: { fold: 5, next_bet: 0 } } };
   const text = a.run("handText()");
   const b = loadPage({ hash: linkOf(text).replace(/^[^#]*/, "") });
   assert.deepEqual(j(b.S), j(a.S));

@@ -186,6 +186,7 @@ test("after an all-in for an odd amount, an advised raise is offered at a size t
   const p = page(state({ cards: ["Ah", "Kh"], preflop: acts("UTG f, HJ r2.5, CO a") }), { CO: 12.3 });
   assert.equal(p.sim().toAct, "BTN");
   assert.equal(p.val("minRaiseTo(simulate().cur)"), 22.1);
+  p.practice();   // (advised sizes are on the buttons in Practice)
   p.ctx.__res = JSON.stringify({ street: "preflop", hero: "BTN", hand: "AKs", recommended: "raise", notes: [],
     actions: [{ action: "fold", freq: 0 }, { action: "call", freq: 0.4, amount_bb: 12.3 }, { action: "raise", freq: 0.6, amount_bb: 22.1 }] });
   p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");

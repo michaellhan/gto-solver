@@ -84,7 +84,7 @@ for (const [name, c] of Object.entries(CASES)) {
     // the setup inputs follow the imported hand, it's saved, and the hand review offers to grade it
     assert.equal(p.byId("stack").value, c.stack);
     assert.deepEqual(JSON.parse(p.storage.get("handreview")), S);
-    assert.match(p.byId("adviceNote").innerHTML, /id="reviewAll"/);
+    assert.match(p.buttons().find(b => b.id === "reviewAll").innerHTML, /^Review whole hand/);
     assert.match(p.byId("toast").innerHTML, new RegExp(`you are ${c.players === 2 && c.hero === "SB" ? "BTN/SB" : c.hero} with ${c.cards[0]}${c.cards[1]}`));
   });
 }
@@ -252,7 +252,7 @@ test("review whole hand: each decision is solved in order with progress, graded,
   const g = ["preflop", "flop", "turn", "river"].map(s => S.actions[s].find(a => a.pos === "BTN").g);
   assert.deepEqual(g.map(x => [x.m, x.f, x.l]), [["raise 2.5", 0.6, null], ["bet 33%", 0.7, 0], ["bet 33%", 0.7, 0], ["bet 33%", 0.7, 0]]);
   assert.match(p.byId("adviceNote").innerHTML, /Hand review<\/b> · 4 of 4 decisions in the solver's mix/);
-  assert.doesNotMatch(p.byId("adviceNote").innerHTML, /reviewAll/);
+  assert.match(p.buttons().find(b => b.id === "reviewAll").innerHTML, /^Review again/);   // (nothing left: at other settings, say)
   assert.deepEqual(JSON.parse(p.storage.get("handreview")), S);
 });
 
@@ -275,7 +275,7 @@ test("review whole hand respects Accurate, can be cancelled, and multiway spots 
   assert.equal(mine[0].g.m, "check");
   assert.equal(mine[1].g, null);              // multiway: reviewed, no grade
   assert.ok(!("g" in mine[2]) && !("g" in mine[3]));
-  assert.match(p.byId("adviceNote").innerHTML, /id="reviewAll"/);   // what's left can still be reviewed
+  assert.match(p.buttons().find(b => b.id === "reviewAll").innerHTML, /^Review whole hand/);   // what's left can still be reviewed
 });
 
 test("the import dialog names every site the importer reads", () => {

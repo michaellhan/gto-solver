@@ -345,7 +345,7 @@
     const TABLE = "gto-hands-table";
     function handSig(st) {
       if (!st || typeof st !== "object") return "";
-      const s = { ...st, actions: {} };
+      const { finished, reviewed, ...rest } = st, s = { ...rest, actions: {} };   // (a hand's review, not the hand)
       for (const k of STREETS) s.actions[k] = (st.actions && Array.isArray(st.actions[k]) ? st.actions[k] : []).map(a => { const { g, ...rest } = a || {}; return rest; });
       return hash(canon(s));
     }
@@ -363,7 +363,7 @@
     // b is a plays on from a (the same setup and cards so far, each street's actions a's and then more)
     function extendsHand(a, b) {
       if (!a || !b) return false;
-      const setup = (s) => { const { cards, actions, ...r } = s; return canon(r); };
+      const setup = (s) => { const { cards, actions, finished, reviewed, ...r } = s; return canon(r); };
       if (setup(a) !== setup(b)) return false;
       for (let i = 0; i < 7; i++) if (a.cards && a.cards[i] && (!b.cards || a.cards[i] !== b.cards[i])) return false;
       const bare = (x) => { const { g, ...r } = x || {}; return canon(r); };

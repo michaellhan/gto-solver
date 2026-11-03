@@ -192,7 +192,7 @@ test("the chooser's choices open Study, Practice, the session analyzer and the h
   const r = await go("welcomeReview");
   assert.deepEqual(r.pushed, []);
   assert.equal(r.byId("toast").hidden, false);
-  assert.match(r.byId("toast").innerHTML, /Pick your seat and cards in the setup panel, then enter the action seat by seat\./);
+  assert.match(r.byId("toast").innerHTML, /Pick your seat and cards in the setup panel, then enter the hand you played, seat by seat\. When it's finished, review it\./);
   const b = r.byId("toast").children.find(e => e.textContent === "Or import a hand history");
   b.onclick(); await flush();
   assert.equal(r.byId("importBox").hidden, false);
@@ -214,5 +214,6 @@ test("the chooser changes nothing the advice does", async () => {
   };
   const first = await run({}), seen = await run(SEEN);
   assert.deepEqual(first, seen);
-  assert.match(first.empty, /Advice appears here whenever it's your turn/);
+  assert.match(first.empty, /When it's finished, the solver reviews each decision you made/);
+  assert.deepEqual(first.sent, []);
 });

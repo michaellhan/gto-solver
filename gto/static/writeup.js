@@ -208,6 +208,7 @@
     const why = blockedWhy(!onTable);
     if (why) { err = why; draw(); return false; }
     const st = JSON.parse(JSON.stringify(W));
+    if (!onTable) st.finished = true;   // (just opened there, it stays open to enter)
     close();
     W = blank(st); err = ""; gameOpen = null; store();
     await loadHandState(st, "your write-up");

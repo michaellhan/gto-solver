@@ -169,15 +169,16 @@
   function pageHost() {
     // the hand on the table, as that record (the page's cleaned copy of it kept, should it differ: a file's hand)
     const onTable = async (rec) => {
-      const H = globalThis.GTOStore.hands;
-      await loadHandState(clone(rec.data.state));
+      const H = globalThis.GTOStore.hands, st = clone(rec.data.state);
+      if (rec.data.source === "import" || rec.data.source === "review") st.finished = true;   // (kept before hands were marked finished)
+      await loadHandState(st);
       if (H.sig(S) !== rec.data.sig) await H.update(rec.id, { state: S });
       H.onTable(S, { id: rec.id, source: rec.data.source });
     };
-    /* global S, cleanState, setPositions, payload, loadHandState, rewindTo, reviewHand, toast, encodeState, decodeState, ROOT, openView, loadJs, SY_VERSION, copyText, loadHH, splitHands, importHand, simulate */
+    /* global S, cleanState, setPositions, payload, loadHandState, rewindTo, reviewHand, toast, encodeState, decodeState, ROOT, openView, loadJs, SY_VERSION, copyText, loadHH, splitHands, importHand, simulate, handDone, heldHand */
     return {
       store: () => globalThis.GTOStore,
-      table: () => clone(S),
+      table: () => clone(heldHand()),
       clean: (st) => { try { return cleanState(clone(st)); } catch (e) { return null; } },
       link: (st) => location.origin + ROOT + "#h=" + encodeState(st),
       decode: (b64) => decodeState(b64),
@@ -186,8 +187,9 @@
         await onTable(rec);
         const ungraded = STREETS.some(s => S.actions[s].some(a => a.pos === S.hero && !a.g));
         const s = summary(S);
-        toast(`Opened your hand: ${esc(s.title)}${s.hole.length ? ", " + s.hole.join("") : ""}.`, null, 10000);
-        if (ungraded && S.cards[0] && S.cards[1]) {
+        const done = handDone(simulate());
+        toast(`Opened your hand: ${esc(s.title)}${s.hole.length ? ", " + s.hole.join("") : ""}.${done ? "" : " It isn't finished: enter the rest, or press Finish hand, to review it."}`, null, 10000);
+        if (ungraded && done) {
           const t = document.getElementById("toast"), b = document.createElement("button"); b.className = "link"; b.textContent = "Review whole hand";
           b.onclick = () => { t.hidden = true; reviewHand(); }; t.appendChild(b);
         }

@@ -273,12 +273,12 @@ test("a drill set's decisions graded on the same scale, by frequency where the a
 
 test("the drills open on a drill set: each decision once in a shuffled order, its line and the answer's amounts, the summary", async () => {
   const vm = require("node:vm");
-  const body = { innerHTML: "" }, keys = [], loaded = [];
-  const el = () => ({ hidden: false, dataset: {}, style: {}, innerHTML: "", setAttribute() {}, addEventListener() {}, appendChild() {}, focus() {},
+  const body = { innerHTML: "" }, keys = [], loaded = [], studied = [], clicks = [];
+  const el = () => ({ hidden: false, dataset: {}, style: {}, innerHTML: "", setAttribute() {}, addEventListener: (t, f) => { if (t === "click") clicks.push(f); }, appendChild() {}, focus() {},
                       querySelector: (s) => s === ".dr-body" ? body : null });
   const ctx = vm.createContext({
     document: { getElementById: () => null, createElement: el, head: el(), body: el() },
-    window: { addEventListener: (t, f) => { if (t === "keydown") keys.push(f); }, loadHandState: (st, label) => loaded.push([st, label]) },
+    window: { addEventListener: (t, f) => { if (t === "keydown") keys.push(f); }, loadHandState: (st, label) => loaded.push([st, label]), studySpot: (st, spot) => studied.push([st, spot]) },
     localStorage: { getItem: () => null, setItem() {} },
     fetch: async () => { throw new Error("no library in this test"); },
     FlopReports: globalThis.FlopReports, Blob, Response, DecompressionStream, TextDecoder,
@@ -311,4 +311,13 @@ test("the drills open on a drill set: each decision once in a shuffled order, it
   assert.equal(ST.hist["set:Flop vs c-bet: fold"].n, 3);
   await Dr.open();   // (opened again from the menu: the library's drills, the set left)
   assert.equal(ST.set, null);
+  // a drilled spot opens in Study: on the table it would be an unfinished hand with no advice
+  ctx.DRILL_SET = { name: "Flop vs c-bet: fold", items: [item(1)] };
+  await Dr.open();
+  press("1");
+  assert.match(body.innerHTML, /Open in Study/);
+  clicks[0]({ target: { closest: () => ({ dataset: { study: "" } }) } });
+  assert.equal(studied.length, 1);
+  assert.equal(studied[0][0].n, 1);
+  assert.deepEqual(loaded, []);
 });

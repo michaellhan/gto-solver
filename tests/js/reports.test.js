@@ -150,25 +150,29 @@ async function loaded(rep, f, view) {
   vm.runInContext(fs.readFileSync(RP_JS, "utf8"), p.ctx, { filename: "reports.js" });
   await p.ready();
   p.run("FlopReports")._set({ spots: [] }, rep);
-  Object.assign(p.run("FlopReports").state, { view });
+  Object.assign(p.run("FlopReports").state, { view, spot: "the-spot" });
+  p.run("window.studySpot = (st, spot) => { window.__study = { st, spot }; }");   // (studySpot itself: review.test.js)
   await p.run("FlopReports").act({ flop: f });
   return p;
 }
 
-test("a click on a flop loads that hand into the page", async () => {
+test("a click on a flop opens that spot in Study: the page's table is for hands you played", async () => {
   const p = await loaded(REP, "9c8c7c", "vsbet");
+  assert.deepEqual(p.val("S.actions"), { preflop: [], flop: [], turn: [], river: [] });   // (the table left as it was)
+  const { st: hand, spot } = p.val("window.__study");
+  assert.equal(spot, "the-spot");
+  p.S = hand;
   const S = p.S, sim = p.sim();
   assert.deepEqual([S.players, S.hero, S.stack, S.cards], [6, "BB", 100, ["Tc", "9d", "9c", "8c", "7c", null, null]]);
   assert.deepEqual(S.actions.flop, [{ pos: "BB", action: "check" }, { pos: "BTN", action: "bet", to: 1.82 }]);
   assert.deepEqual([sim.current, sim.toAct, sim.active], ["flop", "BB", ["BTN", "BB"]]);
-  assert.match(p.byId("toast").innerHTML, /Loaded BTN vs BB single-raised pot, 9c8c7c: you are BB with Tc9d/);
-  // the solver is asked about that spot
+  // Study is asked about that spot
   const st = p.payload();
   assert.deepEqual([st.hero, st.hole, st.board], ["BB", "Tc9d", "9c8c7c"]);
 });
 
 // the shipped reports: every spot's, as the build wrote them (scripts/build_flop_library.py)
-test("the shipped reports load, render and load a hand for every view", async () => {
+test("the shipped reports load, render and open a spot in Study for every view", async () => {
   const idx = JSON.parse(fs.readFileSync(path.join(LIB, "index.json"), "utf8"));
   assert.ok(idx.spots.length > 0);
   for (const sp of idx.spots) {
@@ -184,7 +188,9 @@ test("the shipped reports load, render and load a hand for every view", async ()
   const rep = JSON.parse(fs.readFileSync(path.join(LIB, idx.spots[0].id, "report.json"), "utf8"));
   for (const v of Object.keys(R.VIEWS)) {
     const f = rep.flops.find(x => R.nodeOf(rep, x, v)).f;
-    const p = await loaded(rep, f, v), S = p.S, sim = p.sim();
+    const p = await loaded(rep, f, v);
+    p.S = p.val("window.__study").st;
+    const S = p.S, sim = p.sim();
     assert.equal(sim.toAct, S.hero, v);
     assert.equal(sim.current, "flop");
     assert.ok(S.cards[0] && S.cards[1] && !S.cards.slice(2, 5).includes(S.cards[0]) && !S.cards.slice(2, 5).includes(S.cards[1]));

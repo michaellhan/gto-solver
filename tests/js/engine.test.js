@@ -110,11 +110,11 @@ test("action buttons: preflop sizes, postflop sizes, raises and pot odds", () =>
   let p = page(state({ cards: ["Ah", "Kh"] }));
   assert.deepEqual(sizes(p), ["Raise to 2.5 (open)", "Raise to (your size…)", "All-in (100 bb)"]);
   assert.equal(p.buttons().find(b => /your size/.test(b.innerHTML)).dataset.key, "r");   // (R opens it)
-  p = page(state({ cards: ["Ah", "Kh"], preflop: acts("UTG f, HJ f, CO f, BTN f") }));
+  p = page(state({ hero: "SB", cards: ["Ah", "Kh"], preflop: acts("UTG f, HJ f, CO f, BTN f") }));
   assert.deepEqual(sizes(p)[0], "Raise to 3 (open)");                          // SB opens 3x
   p = page(state({ cards: ["Ah", "Kh"], preflop: acts("UTG r2.5") }));
   assert.deepEqual(sizes(p)[0], "Raise to 7.5 (3x)");
-  p = page(state({ cards: ["Ah", "Kh"], preflop: acts("UTG r2.5, HJ f, CO f, BTN f") }));
+  p = page(state({ hero: "SB", cards: ["Ah", "Kh"], preflop: acts("UTG r2.5, HJ f, CO f, BTN f") }));
   assert.deepEqual(sizes(p)[0], "Raise to 10 (4x)");                           // blinds 3bet bigger
   p = page(state({ cards: ["Ah", "Kh"], straddle: true }));
   assert.deepEqual(sizes(p)[0], "Raise to 5 (open)");                          // 2.5x the straddle
@@ -131,11 +131,11 @@ test("action buttons: preflop sizes, postflop sizes, raises and pot odds", () =>
 // advisor's _default_size: 3x (4x from the blinds) plus 1bb a limper / one bet a caller of the open.
 test("preflop raise sizes over limpers and callers match the advisor", () => {
   const sizes = (p) => p.buttons().filter(b => b.className.startsWith("agg")).map(b => `${label(b)} (${sub(b)})`);
-  const first = (pre, extra) => sizes(page(state({ cards: ["Ah", "Kh"], preflop: acts(pre), ...extra })))[0];
+  const first = (pre, extra) => sizes(page(state({ hero: "HJ", cards: ["Ah", "Kh"], preflop: acts(pre), ...extra })))[0];   // (HJ: in every hand here)
   assert.equal(first("UTG c"), "Raise to 4 (iso)");                            // 3 + 1 limper
   assert.equal(first("UTG c, HJ c"), "Raise to 5 (iso)");                      // 3 + 2 limpers
-  assert.equal(first("UTG c, HJ f, CO f, BTN f"), "Raise to 5 (iso)");        // SB: 4x + 1
-  assert.equal(first("UTG c, HJ f, CO f, BTN f, SB c"), "Raise to 5.5 (iso)"); // BB: 4x + 1 + SB's 0.5
+  assert.equal(first("UTG c, HJ f, CO f, BTN f", { hero: "UTG" }), "Raise to 5 (iso)");        // SB: 4x + 1
+  assert.equal(first("UTG c, HJ f, CO f, BTN f, SB c", { hero: "UTG" }), "Raise to 5.5 (iso)"); // BB: 4x + 1 + SB's 0.5
   assert.equal(first("HJ c", { straddle: true }), "Raise to 8 (iso)");         // 3x the straddle + 2
   assert.equal(first("UTG r2.5, HJ c"), "Raise to 10 (4x)");                   // squeeze: 3x + the caller's 2.5
   assert.equal(first("UTG r2.5, HJ c, CO f, BTN f"), "Raise to 12.5 (5x)");    // from the SB: 4x + 2.5
@@ -147,7 +147,7 @@ test("preflop raise sizes over limpers and callers match the advisor", () => {
 test("raise-size labels describe the rounded size the button uses", () => {
   const sizes = (p) => p.buttons().filter(b => b.className.startsWith("agg")).map(b => [label(b), sub(b)]);
   for (const pre of ["UTG r2.5, HJ r7.5, CO f, BTN f, SB f, BB f", "UTG r2.5, HJ r8, CO f, BTN f, SB f, BB f", "UTG r3, HJ c"]) {
-    const p = page(state({ cards: ["Ah", "Kh"], preflop: acts(pre) }));
+    const p = page(state({ hero: "UTG", cards: ["Ah", "Kh"], preflop: acts(pre) }));
     const [lab, tag] = sizes(p)[0];
     const to = parseFloat(lab.replace("Raise to ", "")), cur = p.sim().streets.preflop.curBet;
     assert.equal(to * 2 % 1, 0, lab);
@@ -346,7 +346,8 @@ test("grades: marks, rough solves and the EV given up", () => {
   assert.deepEqual(g({ f: 0.01, r: 1 }), ["meh", "~"]);
   assert.equal(p.run("sgn(-1.234)"), "−1.23");
   assert.equal(p.run("sgn(0)"), "0.00");
-  // a recorded hero action is graded against the advice on screen for this exact spot
+  // in Practice a recorded hero action is graded against the advice on screen for this exact spot
+  p.practice();
   p.ctx.__res = JSON.stringify({ street: "flop", recommended: "bet 33%", solver: { exploitability_pct: 12, iterations: 50, solve_seconds: 2, active_combos: 300, tree_actions: ["check", "bet 33%", "bet 75%"] },
     actions: [{ action: "check", freq: 0.3, ev_bb: 4.0 }, { action: "bet 33%", amount_bb: 1.8, freq: 0.6, ev_bb: 4.25 }, { action: "bet 75%", amount_bb: 4.1, freq: 0.1, ev_bb: 4.2 }] });
   p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
@@ -354,17 +355,18 @@ test("grades: marks, rough solves and the EV given up", () => {
   assert.ok(p.buttons().find(b => label(b) === "Bet 2").className.includes("best"));
   p.act({ action: "bet", to: 4 });
   assert.deepEqual(p.S.actions.flop.at(-1).g, { m: "bet 75%", f: 0.1, b: "bet 33%", bf: 0.6, l: 0.05, e: 4.2, o: 4.25, r: 1 });
-  // undo returns to the spot the advice is for, so another line is graded too
-  p.run("undo()"); p.act({ action: "check" });
+  // back at the spot the advice is for, another line is graded too
+  p.run("S.actions.flop.pop(); renderAll()"); p.act({ action: "check" });
   assert.deepEqual(p.S.actions.flop.at(-1).g, { m: "check", f: 0.3, b: "bet 33%", bf: 0.6, l: 0.25, e: 4, o: 4.25, r: 1 });
   // but not when the advice on screen is for another spot
-  p.run("undo(); resultKey = 'another spot'"); p.act({ action: "check" });
+  p.run("S.actions.flop.pop(); resultKey = 'another spot'; renderAll()"); p.act({ action: "check" });
   assert.equal(p.S.actions.flop.at(-1).g, undefined);
 });
 
 test("a solved 3-way pot is shown and graded like a heads-up solve; the betting rules' answer isn't graded", () => {
   const st = state({ hero: "BB", cards: ["Ah", "Kh", "Kd", "7s", "2c"], preflop: acts("UTG f, HJ f, CO r2.5, BTN c, SB f, BB c") });
   const p = page(st);
+  p.practice();
   assert.equal(p.sim().toAct, "BB");
   const res = { street: "flop", hero: "BB", multiway: true, solved: true, opponents: ["CO", "BTN"], recommended: "check",
     solver: { exploitability_pct: 0.8, iterations: 120, solve_seconds: 20, active_combos: 600, tree_actions: ["check", "bet 33%"] },
@@ -379,6 +381,7 @@ test("a solved 3-way pot is shown and graded like a heads-up solve; the betting 
   assert.deepEqual(p.S.actions.flop.at(-1).g, { m: "check", f: 0.7, b: "check", bf: 0.7, l: 0, e: 3.1, o: 3.1 });
   // the betting rules (4+ players, or a 3-way spot the solve doesn't take) stay ungraded
   const q = page(st);
+  q.practice();
   q.ctx.__res = JSON.stringify({ ...res, solved: undefined, equity_vs_field: 0.4, recommended: "check",
     actions: [{ action: "check", freq: 1, ev_bb: 3.1 }, { action: "bet 33%", amount_bb: 2.5, freq: 0, ev_bb: 3.0 }] });
   q.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");

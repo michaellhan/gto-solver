@@ -13,18 +13,22 @@
 
   // ---- Getting started: what to do first, by what you came for
   function startHtml() {
-    return `<p class="hp-lead">GTO Solver works out what game theory says to do in a no-limit hold'em spot: 2 to 9 players,
-      preflop to river, cash games and tournaments. It runs in your browser, and nothing you enter is uploaded. It is a
-      tool for studying and for reviewing hands after you've played them, not for use during a hand (${to("fairplay", "Fair play")}).</p>
+    return `<p class="hp-lead">GTO Solver reviews no-limit hold'em hands you've already played: 2 to 9 players, preflop to
+      river, cash games and tournaments. Enter a hand you played, finish it, and the solver grades each decision you made.
+      It runs in your browser, and nothing you enter is uploaded. It is a tool for studying and for reviewing hands after
+      you've played them, not for use during a hand (${to("fairplay", "Fair play")}).</p>
     <h3>Review a hand you played</h3>
     <ol>
       <li>Set the number of players and the stacks in the setup panel, then pick your seat and your two cards (click a
         card slot, or on a keyboard type its rank then its suit, e.g. A then s for the ace of spades).</li>
       <li>Enter the action seat by seat with the buttons under the table. Deal the flop, turn and river the same way.</li>
-      <li>Whenever it's your turn, the advice panel shows the solver's ${term("mix", "mix")} for your hand, each action's
-        ${term("ev", "EV")}, and your whole range in a grid. Click the action you took to record it: each decision is
-        graded as you go. For a hand entered without advice (an imported one), <b>Review whole hand</b> at the end solves
-        and grades each of your decisions in turn.</li>
+      <li>Your decisions are recorded as you enter them. Nothing is solved and no advice shows while a hand is being
+        entered, whoever is to act.</li>
+      <li>The hand is finished when it ends, at a fold or a showdown, or when you press <b>Finish hand</b> (a hand you
+        don't know the end of). A decision you didn't record isn't reviewed.</li>
+      <li><b>Review whole hand</b> solves and grades each decision you made. Click a decision to see the solver's
+        ${term("mix", "mix")} for your hand, each action's ${term("ev", "EV")}, and your whole range in a grid. Once you've
+        seen a review the hand stays as entered; <b>What if?</b> opens that spot in Study to try other lines.</li>
     </ol>
     <p>Have a hand history? ${go("import", "Import hand…")} reads PokerStars, GGPoker, 888poker, partypoker, Winamax,
       WPN/ACR, Ignition/Bovada and iPoker hands, in the page.</p>
@@ -42,11 +46,11 @@
       ${go("rangeBuilder", "Range builder…")} lets you paint a whole range's strategy and scores it against the solver's.</p>
     <h3>Settings worth knowing</h3>
     <ul>
-      <li><b>Solve: Quick / Fast / Accurate</b> trades time for accuracy (${to("about", "how accurate each one is")}).
+      <li><b>Solve: Fast / Accurate</b> trades time for accuracy in a review (${to("about", "how accurate each one is")}).
         Fast is the default.</li>
-      <li><b>Opponents: GTO / Pool.</b> GTO assumes opponents who play perfectly; Pool assumes a typical online player
-        pool's leaks and gives the most profitable play against them.</li>
-      <li>Words on the advice panel, like <i>converged</i>, <i>precomputed</i> or <i>EQR</i>, are explained in the
+      <li><b>Opponents: GTO / Pool</b>, on a finished hand. GTO assumes opponents who play perfectly; Pool assumes a typical
+        online player pool's leaks and gives the most profitable play against them.</li>
+      <li>Words in a review, like <i>converged</i>, <i>precomputed</i> or <i>EQR</i>, are explained in the
         ${to("glossary", "Glossary")}. Click a badge on an answer to jump to its entry.</li>
     </ul>`;
   }
@@ -96,15 +100,16 @@
         the solve runs. Of all the decisions in a 6-max 100bb session, about 85% are answered from precomputed data and
         about 95% at once, counting the approximate ones.</li>
     </ul>
-    <h3>Quick, Fast and Accurate</h3>
+    <h3>Fast and Accurate</h3>
     <div class="hp-scroll"><table class="hp-t">
       <tr><th></th><th>Time per spot</th><th>What you get</th></tr>
-      <tr><td><b>Quick</b></td><td>about 2 s</td><td>Rivers close to exact (0.04% of the pot); turns approximate (6.4-6.9% of the pot from equilibrium in the browser). Practice uses Quick's answers at the Fast setting, to keep up with play.</td></tr>
       <tr><td><b>Fast</b> (default)</td><td>about 8 s in the browser</td><td>Rivers exact; single-raised turns give up about 0.2% of the pot; 3bet-pot turns near exact.</td></tr>
       <tr><td><b>Accurate</b></td><td>about 60 s in the browser</td><td>Turns within a fraction of a percent of a full solver (0.01% of the pot given up).</td></tr>
     </table></div>
     <p>The speeds are time budgets, not iteration counts: a slower or busier device runs fewer iterations in the same
-      time and gets a rougher answer, and the badge says so. The timings above were measured on desktop computers.</p>
+      time and gets a rougher answer, and the badge says so. The timings above were measured on desktop computers.
+      Practice at Fast works to about 2 s a spot to keep up with play: rivers close to exact (0.04% of the pot), turns
+      approximate (6.4-6.9% of the pot from equilibrium in the browser).</p>
     <h3>Known limits</h3>
     <ul>
       <li><b>Bet sizes are a menu.</b> Each street is solved with a few sizes (the library's flops bet a third and three
@@ -137,7 +142,7 @@
   // ---- the Glossary: [id, term, definition]; index.html's badges open it at their entry (data-term)
   const TERMS = [
     ["gto", "GTO, equilibrium", "Game-theory optimal: a strategy for every player such that no one can win more by changing theirs alone. Playing it can't be exploited, but it isn't the most profitable play against an opponent who makes mistakes; that's what Opponents: Pool and the opponent tendencies (nodelocking) are for."],
-    ["mix", "Mix, mixed strategy, frequency", "How often the solver takes each action with this hand, e.g. bet 60%, check 40%. A mix means the actions are worth about the same, so any action in the mix is fine. The grading gives ✓ to an action the solver takes at least 15% of the time, ~ at 3-15%, ✗ under 3%. Randomise (under Details) picks one for you at those frequencies."],
+    ["mix", "Mix, mixed strategy, frequency", "How often the solver takes each action with this hand, e.g. bet 60%, check 40%. A mix means the actions are worth about the same, so any action in the mix is fine. The grading gives ✓ to an action the solver takes at least 15% of the time, ~ at 3-15%, ✗ under 3%."],
     ["ev", "EV (expected value)", "The average a decision wins, in big blinds, over all the cards still to come and all the hands the opponents could hold. On the advice panel, EV is counted from now, relative to folding: fold is always 0, because the chips already in the pot are gone either way. A ≈ before an EV marks an action your range almost never takes, whose EV is rough (usually lower than exact)."],
     ["evlost", "EV lost", "How much less your action is worth than the solver's best one, in big blinds. Hand reviews, Practice and the session analyzer add it up to show where your mistakes cost the most."],
     ["equity", "Equity", "Your share of the pot if the hand went to showdown with no more betting: how often you win, ties counted as half, against the opponent's range with the rest of the board dealt."],
@@ -153,18 +158,21 @@
     ["pool", "Pool, exploit", "Opponents: Pool assumes opponents with a typical online player pool's leaks (folding too often to bets, bluffing and raising less, playing more hands preflop), and the advice is then the most profitable play against them, not GTO. GTO's own frequency still shows under each action."],
     ["nodelock", "Nodelocking, opponent tendencies", "Setting how an opponent plays (folds more, bluffs less, and so on) under Advanced. The solver then plays the best counter to that player, with GTO's frequencies alongside."],
     ["icm", "ICM", "The Independent Chip Model: in a tournament it values a stack by its share of the prize money, not its chips, so losing a chip costs more than winning one gains. With payouts set, the advice is in prize equity."],
-    ["speed", "Quick, Fast, Accurate", "How long the solver works on each spot: about 2 s, 8 s and 60 s in the browser. Longer means closer to equilibrium on the turn and flop; rivers are close to exact at every speed. See About & accuracy for the measurements."],
-    ["grades", "Grades", "Advice and reviews mark each decision ✓ (the solver's mix takes it at least 15% of the time), ~ (3-15%) or ✗ (under 3%); a rough solve never grades ✗. Practice names the same grades Best move, Good, Inaccuracy and Mistake. Drills grade by EV: Best, Correct, Inaccuracy (under 2% of the pot lost), Mistake (under 8%) and Blunder."],
+    ["speed", "Fast, Accurate", "How long the solver works on each spot in a review: about 8 s and 60 s in the browser. Longer means closer to equilibrium on the turn and flop; rivers are close to exact at both speeds. See About & accuracy for the measurements."],
+    ["grades", "Grades", "Reviews mark each decision ✓ (the solver's mix takes it at least 15% of the time), ~ (3-15%) or ✗ (under 3%); a rough solve never grades ✗. Practice names the same grades Best move, Good, Inaccuracy and Mistake. Drills grade by EV: Best, Correct, Inaccuracy (under 2% of the pot lost), Mistake (under 8%) and Blunder."],
     ["spr", "SPR (stack-to-pot ratio)", "The smaller stack behind divided by the pot. A low SPR (under about 4) means stacks go in easily; with a high one, hands play deeper and the turn and river matter more."],
     ["cbet", "C-bet, 3bet, 4bet, squeeze", "A c-bet (continuation bet) is a flop bet by the player who raised preflop. A 3bet is the first re-raise preflop (the open is the second bet), a 4bet the next one. A squeeze is a 3bet after an open and a call."],
   ];
   function glossaryHtml() {
-    return `<p class="hp-lead">The words you meet on the advice panel, in Study and in the reviews.</p><dl class="hp-dl">`
+    return `<p class="hp-lead">The words you meet in reviews, in Study and in Practice.</p><dl class="hp-dl">`
       + TERMS.map(([id, t, d]) => `<dt id="hp-${id}">${esc(t)}</dt><dd>${esc(d)}</dd>`).join("") + `</dl>`;
   }
 
   // ---- the Changelog: what changed for users, newest first, from the commit history
   const CHANGES = [
+    ["November 3", [
+      "Review first: a hand you enter is recorded, and the solver reviews it once it's finished. Advice no longer shows while a hand is being entered, nothing solves in the background, and Quick, Randomise and Pool leave the entry screen (Pool and locks are there on a finished hand). Finish hand marks a hand finished if you don't know the end of it. Practice, Study, the drills and reports work as before; a report's flop or a drill's spot now opens in Study.",
+    ]],
     ["November 1 - 2", [
       "My hands: every hand you enter, review or import is kept in this browser (New hand no longer replaces it), with search, tags, notes, export and import, and a backup file of everything the site keeps.",
       "Help pages: Getting started, About & accuracy, this Glossary, the Changelog and Fair play, in the ⋯ menu; a first-visit chooser; plainer tooltips on the speeds, Pool, Copy hand and the answer badges, which now open their Glossary entry.",
@@ -232,6 +240,9 @@
       <li><b>Live:</b> casinos and card rooms treat outside help during a hand as cheating too.</li>
       <li><b>By design</b> the tool reads only what you type or paste. There is no screen capture, table reading or
         connection to any poker client, and there won't be.</li>
+      <li><b>A hand you enter gets no advice until it's finished.</b> The page records your decisions and reviews the
+        ones you made after the hand is over. That is a limit on what the page offers, not a promise it can tell when or
+        where you're playing, so the rule above is still yours to keep.</li>
       <li><b>Hand histories</b> you import or analyze should be your own hands, after they're played.</li>
     </ul>
     <p>If you are unsure what a site allows, read its terms on third-party tools; when in doubt, close the solver

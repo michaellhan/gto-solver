@@ -59,10 +59,10 @@ test("payload: cards, board, actions in the advisor's format, optional fields on
   assert.equal(p.payload().hole, "");   // was 0 (null + null) in the copied "State JSON"
 });
 
-test("on your turn the worker gets the state as built, at the Fast budget", async () => {
+test("reviewing a decision the worker gets the state as built, at the Fast budget", async () => {
   const p = loadPage();
   await p.ready();
-  p.S = state(FLOP);
+  p.spot(state(FLOP));
   await flush();
   const m = p.posted.at(-1);
   assert.deepEqual(m.state, p.payload());
@@ -70,15 +70,16 @@ test("on your turn the worker gets the state as built, at the Fast budget", asyn
   assert.equal(p.workers.length, 1);
   assert.match(p.workers[0].url, /^worker\.js\?v=/);
   assert.deepEqual([m.state.budget, m.state.prior_budget, m.state.speed], [8, 3, "fast"]);
-  // the worker's answer is shown and the buttons switch to the solver's sizes
+  // the worker's answer is shown; the dock offers the other decisions, no move to record
   p.workers[0].onmessage({ data: { id: m.id, result: { street: "flop", hero: "BTN", hand: "AKs", recommended: "check", actions: [{ action: "check", freq: 0.7 }, { action: "bet 33%", amount_bb: 1.8, freq: 0.3 }] } } });
   await flush();
   assert.match(p.byId("result").innerHTML, /<span class="big">check<\/span>/);
-  assert.ok(p.buttons().some(b => b.innerHTML.startsWith('Bet 2<small>33% pot<span class="fq"> · 30%</span>')));
+  assert.deepEqual(p.buttons().map(b => b.id), ["stepPrev", "stepNext", "stepBack", "stepStudy"]);
 });
 
-test("on your turn before the solve starts (the page still finding its backend) the panel doesn't say it waits for your turn", async () => {
+test("on your turn in Practice before the solve starts (the page still finding its backend) the panel doesn't say it waits for your turn", async () => {
   const p = loadPage();
+  p.practice();
   p.S = state(FLOP);
   p.run("resetAdvice(); updateAdviceState()");   // as the page is right after a reload, before modeReady settles
   assert.doesNotMatch(p.byId("result").innerHTML, /Waiting for your turn/);
@@ -86,17 +87,23 @@ test("on your turn before the solve starts (the page still finding its backend) 
   p.S = state({ ...FLOP, flop: [] });   // BB to act: it does wait
   p.run("resetAdvice(); updateAdviceState()");
   assert.match(p.byId("result").innerHTML, /Waiting for your turn/);
+  // outside Practice nothing waits for your turn: the panel says it's recording
+  const q = loadPage();
+  q.S = state(FLOP);
+  q.run("resetAdvice(); updateAdviceState()");
+  assert.match(q.byId("result").innerHTML, /Recording your decisions/);
+  assert.doesNotMatch(q.byId("result").innerHTML, /Your turn|Waiting for your turn/);
 });
 
-test("a solve of a spot you've left doesn't hold up your next turn: it's stopped and the new spot asked at once", async () => {
+test("a solve of a spot you've left doesn't hold up the next one: it's stopped and the new spot asked at once", async () => {
   const p = loadPage();
   await p.ready();
-  p.S = state(FLOP);
+  p.spot(state(FLOP));
   await flush();
   const first = p.posted.at(-1);
   p.workers[0].onmessage({ data: { status: "Solving…" } });   // the runtime is up and solving that spot
   p.click("newhand");
-  p.S = state({ cards: ["9s", "9d", "Qc", "8h", "3d"], preflop: acts("UTG f, HJ f, CO f, BTN r2.5, SB f, BB c"), flop: acts("BB x") });
+  p.spot(state({ cards: ["9s", "9d", "Qc", "8h", "3d"], preflop: acts("UTG f, HJ f, CO f, BTN r2.5, SB f, BB c"), flop: acts("BB x") }));
   await flush(); await flush();
   const asked = p.posted.at(-1);
   assert.notEqual(asked.id, first.id);
@@ -114,11 +121,11 @@ test("a solve of a spot you've left doesn't hold up your next turn: it's stopped
   p.run("renderAll()");
   await flush();
   assert.equal(asks(), n);
-  assert.equal(p.posted.at(-1).prefetch.board, "Qc8h3d");
   p.run("renderAll()");
   await flush();
-  // (told the stopped worker as the hand was dealt, and the new one once)
-  assert.equal(p.posted.filter((m) => m.prefetch && m.prefetch.board === "Qc8h3d").length, 2);
+  assert.equal(asks(), n);
+  // (New hand stopped the solve there, so only the new worker is told the flop)
+  assert.equal(p.posted.filter((m) => m.prefetch && m.prefetch.board === "Qc8h3d").length, 1);
 });
 
 test("cross-origin isolated, a solve of a spot you've left is stopped through memory shared with the worker, which keeps running", async () => {
@@ -129,13 +136,13 @@ test("cross-origin isolated, a solve of a spot you've left is stopped through me
   assert.equal(Object.prototype.toString.call(told[0].stop), "[object SharedArrayBuffer]");
   const flag = new Int32Array(told[0].stop);
   const asks = () => p.posted.filter((m) => m.state);
-  p.S = state(FLOP);
+  p.spot(state(FLOP));
   await flush();
   const first = asks().at(-1);
   p.workers[0].onmessage({ data: { status: "Solving…" } });
   assert.deepEqual([...flag], [0, 0]);
   p.click("newhand");
-  p.S = state({ cards: ["9s", "9d", "Qc", "8h", "3d"], preflop: acts("UTG f, HJ f, CO f, BTN r2.5, SB f, BB c"), flop: acts("BB x") });
+  p.spot(state({ cards: ["9s", "9d", "Qc", "8h", "3d"], preflop: acts("UTG f, HJ f, CO f, BTN r2.5, SB f, BB c"), flop: acts("BB x") }));
   await flush(); await flush();
   const asked = asks().at(-1);
   assert.deepEqual(asked.state, p.payload());
@@ -165,49 +172,49 @@ test("cross-origin isolated, a solve of a spot you've left is stopped through me
   assert.equal(q.run("stopRequests()"), false);
 });
 
-test("once the flop is known the worker is told it, once a flop, to fetch the library's entries for it ahead", async () => {
+test("reviewing, once the flop is known the worker is told it, once a flop, to fetch the library's entries for it ahead; a hand being entered fetches nothing", async () => {
   const p = loadPage();
   await p.ready();
   const told = () => p.posted.filter((m) => m.prefetch).map((m) => m.prefetch);
-  p.S = state({ cards: FLOP.cards.slice(0, 2), preflop: FLOP.preflop });   // preflop: nothing to fetch
+  p.S = state({ ...FLOP, flop: [] });   // being entered: nothing told, whoever is to act
+  await flush();
+  p.S = state(FLOP);
   await flush();
   assert.equal(told().length, 0);
-  p.S = state({ ...FLOP, flop: [] });   // the BB to act first: no answer asked yet, the flop told
+  p.spot(state({ cards: FLOP.cards.slice(0, 2), preflop: acts("UTG f, HJ f, CO f") }));   // preflop: nothing to fetch
   await flush();
-  assert.deepEqual(told(), [p.payload()]);
-  p.S = state(FLOP);   // the hand goes on, an answer asked: the flop not told again
+  assert.equal(told().length, 0);
+  p.spot(state(FLOP));   // your flop decision: the flop told
   await flush();
   assert.equal(told().length, 1);
-  assert.ok(p.posted.at(-1).state);
-  p.S = state({ ...FLOP, cards: ["Ah", "Kh", "Qc", "8h", "3d", "2s"] });   // another flop (a turn too: the flop's own)
+  p.spot(state({ ...FLOP, cards: [...FLOP.cards, "9h"], flop: acts("BB x, BTN x"), turn: acts("BB x") }));   // your next decision on that flop: not told again
   await flush();
+  assert.equal(told().length, 1);
+  p.spot(state({ ...FLOP, cards: ["Ah", "Kh", "Qc", "8h", "3d", "2s"], flop: acts("BB x, BTN x"), turn: acts("BB x") }));   // another flop (a turn too: the flop's own)
+  await flush();
+  assert.equal(told().length, 2);
   assert.deepEqual(told().map((x) => [x.board, x.flop.length, x.turn.length]), [["Kd7s2c", 0, 0], ["Qc8h3d", 0, 0]]);
 });
 
-test("Quick asks for quick answers, about 2 s by street, and is remembered", async () => {
-  const p = loadPage();
-  await p.ready();
-  p.S = state(FLOP);
-  await flush();
-  await p.byId("solvectl").children[0].onclick();
-  await flush();
-  const pl = p.payload();
-  assert.deepEqual([pl.speed, pl.quick, pl.budget, pl.prior_budget], ["quick", true, ...p.val("QUICK_BUDGETS.flop")]);
-  assert.equal(p.storage.get("gto-speed"), "quick");
-  assert.deepEqual(p.posted.at(-1).state, pl);
+test("Quick left the main view: only Fast and Accurate are offered, and a stored Quick reads as Fast", async () => {
+  const html = require("node:fs").readFileSync(require("./page.js").HTML_PATH, "utf8");
+  assert.deepEqual([...html.matchAll(/<button data-m="(\w+)"/g)].map(m => m[1]), ["fast", "accurate"]);
   const q = loadPage({ storage: { "gto-speed": "quick" } });
   await q.ready();
-  assert.equal(q.val("SPEED"), "quick");
+  assert.equal(q.val("SPEED"), "fast");
+  assert.equal(q.storage.get("gto-speed"), "fast");
   assert.match(q.byId("solvectl").children[0].className, /active/);
+  assert.equal(q.payload().quick, undefined);
+  // (Practice's answers at Fast stay as they were: practice.test.js)
 });
 
-test("Accurate and Pool toggles change the state sent, and are remembered", async () => {
+test("reviewing, Accurate and Pool toggles change the state sent, and are remembered", async () => {
   const p = loadPage();
   await p.ready();
-  p.S = state(FLOP);
+  p.spot(state(FLOP));
   await flush();
   const n = p.posted.length;
-  await p.byId("solvectl").children[2].onclick();   // (Quick, Fast, Accurate)
+  await p.byId("solvectl").children[1].onclick();   // (Fast, Accurate)
   await p.byId("oppctl").children[1].onclick();
   await flush();
   const pl = p.payload();
@@ -262,7 +269,7 @@ test("with the local server the state is POSTed at the server's budgets", async 
   const p = loadPage({ server: true });
   await p.ready();
   assert.equal(p.run("MODE"), "server");
-  p.S = state(FLOP);
+  p.spot(state(FLOP));
   await flush();
   const pl = p.payload();
   assert.deepEqual([pl.budget, pl.prior_budget], [2.5, 2.5]);
@@ -326,6 +333,7 @@ test("hands played through the page: fixture for the Python advisor (tests/data/
 test("a jam the answer's tree has no all-in for is asked again with jam: true and graded against that answer", async () => {
   const p = loadPage();
   await p.ready();
+  p.practice();   // (a move is graded as it's recorded in Practice; a review's: hh.test.js)
   p.S = state(FLOP);
   await flush();
   const m = p.posted.at(-1);
@@ -391,7 +399,7 @@ test("an approximate answer the worker has at once is shown under the progress b
   const p = loadPage();
   await p.ready();
   const asks = () => p.posted.filter((m) => m.state);
-  p.S = state(FLOP);
+  p.spot(state(FLOP));
   await flush();
   const ask = asks().at(-1);
   assert.equal(ask.early, true);   // (the page's own advice asks for one)
@@ -432,7 +440,7 @@ test("an approximate answer the worker has at once is shown under the progress b
 test("an approximate turn answer from a format-2 turn file shows the stored range EVs, labelled as the range's", async () => {
   const p = loadPage();
   await p.ready();
-  p.S = state(FLOP);
+  p.spot(state(FLOP));
   await flush();
   const ask = p.posted.filter((m) => m.state).at(-1);
   p.workers[0].onmessage({ data: { status: "Solving…" } });
@@ -471,7 +479,7 @@ test("an approximate turn answer from a format-2 turn file shows the stored rang
 test("an action your range almost never takes (rough_ev) shows its EV with a ≈ and the tip; graded the same, its EV lost marked", async () => {
   const p = loadPage();
   await p.ready();
-  p.S = state(FLOP);
+  p.spot(state(FLOP));
   await flush();
   const ask = p.posted.filter((m) => m.state).at(-1);
   const res = { street: "flop", hero: "BTN", hand: "AKo", recommended: "bet 75%", pot_bb: 5.5,
@@ -483,7 +491,7 @@ test("an action your range almost never takes (rough_ev) shows its EV with a ≈
   const result = p.byId("result");
   assert.doesNotMatch(result.innerHTML, /≈|rough/);
   const plain = result.innerHTML;
-  p.S = state({ ...FLOP, cards: ["Ah", "Kc", "Kd", "7s", "2c"] });   // (another hand: a request of its own)
+  p.spot(state({ ...FLOP, cards: ["Ah", "Kc", "Kd", "7s", "2c"] }));   // (another hand: a request of its own)
   await flush();
   p.workers[0].onmessage({ data: { id: p.posted.filter((m) => m.state).at(-1).id, result: rough } });
   await flush();

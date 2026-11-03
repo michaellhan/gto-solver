@@ -344,8 +344,8 @@ const ready = (async () => {
              + "    except Exception:\n"
              + "        r = None\n"
              + "    return json.dumps(r) if r else ''\n"
-             // a presolve (the page's, while your opponent is to act): the solve your next decision on the street reads,
-             // made now and kept (Advisor.presolve); its answer is never shown, the request that follows goes on from it
+             // a presolve (the benchmark's, scripts/bench_browser.mjs --presolve; the page asks for none): the solve your next
+             // decision on the street reads, made now and kept (Advisor.presolve); the request that follows goes on from it
              + "def presolve(st, seat):\n"
              + "    try:\n"
              + "        r = advs.get(st.get('speed'), advs['fast']).presolve(st, seat)\n"
