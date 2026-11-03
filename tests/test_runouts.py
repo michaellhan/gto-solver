@@ -194,7 +194,12 @@ class TestReports(unittest.TestCase):
             self.assertAlmostEqual(sum(c["ev"]), r["pot_bb"], delta=0.03)
             self.assertTrue(0.0 <= min(c["ev"]) <= r["pot_bb"])
         # equities between Study's ranges entering the river (BTN's: its answer's bet share, which the walk to BB's
-        # call smooths a little where the solve rarely bets: Advisor._walk)
+        # call smooths a little where the solve rarely bets: Advisor._walk), both off the solve as the report reads it:
+        # BTN's answer asked again, as BB's ran the turn's solve on (the flop's cached by then, the turn gets the time
+        # its narrowing didn't spend: Advisor.spare_prior; on a loaded machine 81 iterations, then 325, and the first
+        # answer's range was 0.012-0.022 off in equity where the solve's own is 0.0001)
+        b_node = self.study(**st, turn=check)
+        self.assertEqual(b_node["solver"]["iterations"], c_node["solver"]["iterations"])
         _, r_btn = reach(b_node, bet["action"])
         _, r_bb = reach(c_node, "call")
         cs, eq, p = next_card_equities(cards(board), r_bb, r_btn)

@@ -190,7 +190,14 @@ class TestStudyPrev(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.adv = advisor()
-        cls.adv.study(STUDY_FLOP)
+        # the flop solved to a check by its iterations (the 400th of HU_CHECKS), not for advisor()'s 1 s: its lines'
+        # shares are the solve's at any machine's speed (the 75% bet, a rare line below, 17% of SB's range at 150
+        # iterations, 14% at 200, 9% at 300, 4% at 400; a loaded machine's 1 s ran 116-209). The same tree (a flop's
+        # isn't cut by the budget: Advisor._cells_cap); settled, it isn't run on.
+        cls.adv.hu_settled, cls.adv.hu_settled_from = 50.0, dict(A.HU_SETTLED_FROM, flop=400)
+        cls.adv.study(dict(STUDY_FLOP, budget=60))
+        cls.adv.hu_settled, cls.adv.hu_settled_from = None, dict(A.HU_SETTLED_FROM)
+        assert [s.iters for k, s in cls.adv._cache.items() if len(k[2]) == 3] == [400]
 
     @classmethod
     def tearDownClass(cls):
