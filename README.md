@@ -1054,8 +1054,9 @@ Off by default (the page's Rake select: off, 5% capped at 3bb, with stakes 10% c
 percent and cap; the setting is saved with the hand and carried by share links). Rake is taken "no flop, no
 drop": a pot that ends preflop isn't raked, so opens, steals and folds to them are unchanged. A tournament has
 none, whatever the setting: the page sends no rake with payouts or bounties set or for an imported tournament
-hand (`S.tournament`, from hh.js), and the advisor drops a request's rake when it has `payouts`, `bounties` or
-`tournament`.
+hand (hh.js's `importHand` keeps a tournament's header as `S.tournament` and doesn't copy the page's rake onto it,
+as it does a cash game's), the advisor drops a request's rake when it has `payouts`, `bounties` or `tournament`, and
+Practice doesn't rake a pot with payouts or bounties set.
 
 * Postflop, the solver's terminal payoffs are raked: the winner pays rake = min(rate x pot, cap) out
   of the pot it collects, at showdowns, equity leaves and folds (the pot without an uncalled bet,

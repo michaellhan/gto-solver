@@ -280,6 +280,21 @@ test("rake is taken from the called pot: a bet nobody calls goes back unraked", 
   assert.equal(h.result.net, 0.9);   // 4bb pot less 0.1 rake on the 2 called, less your 3
 });
 
+test("a tournament's pots aren't raked, whatever the Rake setting (as the page asks the solver)", async () => {
+  const p = loadPage();
+  await p.ready();
+  p.run(`Math.random = (() => { let s = 3; return () => (s = (s * 16807) % 2147483647) / 2147483647; })();`);
+  p.run("S.players = 2; S.rake = 5; S.rakeCap = 3; S.payouts = [50, 30, 20]; setPositions(2); save();");
+  vm.runInContext(PRACTICE, p.ctx, { filename: "practice.js" });
+  p.run("Practice.set(true)");
+  assert.equal(p.val("[RAKE(), TOURNEY()]").join(), "5,true");
+  // the same hand as above: limp-check to the flop, you bet 2bb and the opponent folds
+  const villain = (m) => ({ pos: m.play.seat, action: (m.state.flop || []).some(a => a.action === "bet") ? "fold" : "call" });
+  await playHand(p, villain, (sim) => p.S.cards[2] && !(sim.cur.curBet > 0) ? { action: "bet", to: 2 } : { action: "call" });
+  assert.equal(p.val("Practice.state.hand").result.net, 1);   // the 4bb pot whole, less your 3
+  assert.equal(p.payload().rake, undefined);
+});
+
 test("practice deals keep the Advanced setup (sizes, ranges, size optimization), as New hand does", async () => {
   const p = loadPage();
   await p.ready();

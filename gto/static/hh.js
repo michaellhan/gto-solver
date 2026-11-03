@@ -251,7 +251,8 @@
     const st = { players: h.players, hero: h.hero, stack: h.stack, stacks: { ...h.stacks },
                  cards: [...h.hole, ...h.board, null, null, null, null, null].slice(0, 7),
                  actions: { preflop: [], flop: [], turn: [], river: [] }, ...(h.ante ? { ante: h.ante } : {}), ...(h.straddle ? { straddle: true } : {}),
-                 ...(+S.rake > 0 ? { rake: S.rake, ...(+S.rakeCap > 0 ? { rakeCap: S.rakeCap } : {}) } : {}) };
+                 // (a tournament's hand keeps its tournament and takes no rake, whatever the page's: the page sends none for it)
+                 ...(h.tournament ? { tournament: h.tournament } : +S.rake > 0 ? { rake: S.rake, ...(+S.rakeCap > 0 ? { rakeCap: S.rakeCap } : {}) } : {}) };
     const old = S;
     S = st; setPositions(st.players);
     try {

@@ -68,11 +68,13 @@
   // ---- the pot to the best hands: chips in by seat (inv), the players still in (live), those all-in (allin: each
   // wins at most its stake from each player); each side pot goes to the best hand among the players in it, split
   // evenly on a tie, all of them short the rake (pots that saw a flop: raked) in proportion; a bet nobody matched
-  // goes back. Returns { pays: {seat: chips won}, pots: [{amount, eligible, winners}], winners, val: {seat: rank7} }.
+  // goes back; a tournament's pots (payouts or bounties set, or an imported tournament hand's) aren't raked, whatever
+  // the Rake setting, as the page asks the solver. Returns { pays: {seat: chips won}, pots: [{amount, eligible, winners}],
+  // winners, val: {seat: rank7} }.
   function settle(inv, live, allin, board, cards, raked) {
     let pot = POS.reduce((t, p) => t + (inv[p] || 0), 0);
     const most = POS.map(p => inv[p] || 0).sort((a, b) => b - a), uncalled = most[0] - (most[1] || 0);
-    if (raked && RAKE()) pot -= Math.min((pot - uncalled) * RAKE() / 100, RAKE_CAP() || Infinity);
+    if (raked && RAKE() && !TOURNEY() && !S.tournament) pot -= Math.min((pot - uncalled) * RAKE() / 100, RAKE_CAP() || Infinity);
     const r2 = (x) => Math.round(x * 100) / 100, pays = {};
     if (live.length < 2) { if (live[0]) pays[live[0]] = r2(pot); return { pays, pots: [], winners: live, val: {} }; }
     const val = Object.fromEntries(live.map(p => [p, rank7([...cards(p), ...board])]));

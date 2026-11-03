@@ -302,3 +302,16 @@ test("tournaments: the header's id, name, buy-in and level (Roman or not); a cas
   const ip = HH("ipoker_3bet_pot.xml").replace("<gametype>", "<tournamentcode>777123</tournamentcode><tournamentname>Sunday \"Big\"</tournamentname><gametype>");
   assert.deepEqual(j(parseHandHistory(ip).tournament), { id: "777123", name: "Sunday 'Big'" });
 });
+
+test("a tournament's hand takes no rake, whatever the page's Rake: its tournament is kept and the page sends none", async () => {
+  const withRake = { storage: { handreview: JSON.stringify({ players: 6, hero: "BTN", stack: 100, cards: [null, null, null, null, null, null, null],
+    actions: { preflop: [], flop: [], turn: [], river: [] }, rake: 10, rakeCap: 1 }) } };
+  const t = await imported(HH("stars_9max_mtt_ante"), withRake);
+  assert.deepEqual(j(t.S.tournament), { id: "3712345678", buyin: "$10+$1", level: 7 });
+  assert.equal("rake" in t.S, false);
+  assert.equal(t.payload().rake, undefined);
+  // a cash game's hand takes the page's rake, as before
+  const c = await imported(HH("stars_6max_srp"), withRake);
+  assert.equal("tournament" in c.S, false);
+  assert.equal(c.S.rake, 10); assert.equal(c.S.rakeCap, 1);
+});
