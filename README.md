@@ -70,7 +70,9 @@ spot in the reports or drills updates the URL. A URL opened directly opens its v
 `gto/static/index.html`; `gto/routes.py` reads it, and since GitHub Pages has no rewrites `scripts/deploy.sh`
 writes each URL's `index.html`, a copy of the page with a `<base href="../">` that points its scripts, worker and
 library fetches at `gto-solver/` (`gto/server.py` serves the same paths, and redirects `/practice` to `/practice/`
-as GitHub Pages does). (The same page is what is deployed to the
+as GitHub Pages does). A route that leaves the page moves to `RETIRED` in `gto/routes.py`: its address stays, as a small
+page that sends it to the same path under the frozen copy at /gto-solver-classic/, search and hash kept, with a plain
+link (never to /lizard/, which links here for what it doesn't have). (The same page is what is deployed to the
 website; there it detects that no server is present and runs the identical
 Python code in a web worker with Pyodide. Pyodide's numpy is 10 to 30 times slower
 per iteration than native, so the browser solves a smaller game (turn, river and flop solves run their iterations

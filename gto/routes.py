@@ -9,6 +9,10 @@ flop_library/, health.json, advise) the root's:
     python -m gto.routes <site dir>   writes <site dir>/<route>/index.html from <site dir>/index.html (deploy.sh)
 
 gto/server.py serves the same paths with page_for().
+
+A route that leaves the page moves to RETIRED: its old address stays, as a small stub that sends it to the frozen copy at
+/gto-solver-classic/ (scripts/publish_classic.sh), search and hash kept. Never to /lizard/: Lizard links here for what it
+doesn't have, so a redirect back would loop.
 """
 from __future__ import annotations
 import json
@@ -18,6 +22,8 @@ import sys
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 SLUG = re.compile(r"^[a-z0-9-]+$")
+CLASSIC = "/gto-solver-classic/"
+RETIRED: list[str] = []   # routes that have left the page's ROUTES
 
 
 def routes(html: str) -> tuple[list[str], list[str]]:
@@ -66,9 +72,36 @@ def with_base(html: str, depth: int) -> str:
     return out
 
 
+def stub(route: str) -> str:
+    """A retired route's page: a script that keeps the address's search and hash, a meta refresh where scripts don't run
+    (in <noscript>: beside the script, the refresh could win the race and lose them), and a plain link."""
+    url = f"{CLASSIC}{route}/"
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GTO Solver</title>
+<meta name="robots" content="noindex">
+<script>location.replace({json.dumps(url)} + location.search + location.hash);</script>
+<noscript><meta http-equiv="refresh" content="0; url={url}"></noscript>
+</head>
+<body>
+<p>This page is now in the <a href="{url}">classic GTO Solver</a>.</p>
+</body>
+</html>
+"""
+
+
+def _retired(names: list[str]) -> list[str]:
+    both = set(RETIRED) & set(names)
+    if both:
+        raise ValueError(f"both a route and RETIRED: {sorted(both)}")
+    return RETIRED
+
+
 def page_for(path: str, static: str = STATIC) -> str | None:
-    """The page served at a URL path ("/practice/", "/reports/srp-btn-bb/index.html"), or None if it isn't a
-    route. The root ("/") is the page itself."""
+    """The page served at a URL path ("/practice/", "/reports/srp-btn-bb/index.html"), a retired route's stub, or None
+    if it's neither. The root ("/") is the page itself."""
     p = path.split("?")[0].split("#")[0]
     if p.endswith("/index.html"):
         p = p[: -len("index.html")]
@@ -79,6 +112,8 @@ def page_for(path: str, static: str = STATIC) -> str | None:
     rel = p.strip("/")
     if rel == "":
         return html
+    if rel in _retired(routes(html)[0]):
+        return stub(rel)
     depth = pages(html, os.path.join(static, "flop_library")).get(rel)
     return with_base(html, depth) if depth else None
 
@@ -92,8 +127,8 @@ def is_route_without_slash(path: str, static: str = STATIC) -> bool:
 
 
 def write(site: str) -> list[str]:
-    """Writes each route's index.html under the site directory (from its index.html, already stamped);
-    returns the directories written."""
+    """Writes each route's index.html under the site directory (from its index.html, already stamped) and each
+    retired route's stub; returns the directories written."""
     with open(os.path.join(site, "index.html"), encoding="utf-8") as f:
         html = f.read()
     done = []
@@ -102,6 +137,12 @@ def write(site: str) -> list[str]:
         os.makedirs(d, exist_ok=True)
         with open(os.path.join(d, "index.html"), "w", encoding="utf-8") as f:
             f.write(with_base(html, depth))
+        done.append(rel)
+    for rel in _retired(routes(html)[0]):
+        d = os.path.join(site, rel)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "index.html"), "w", encoding="utf-8") as f:
+            f.write(stub(rel))
         done.append(rel)
     return done
 

@@ -7,6 +7,7 @@ import tempfile
 import threading
 import unittest
 from http.server import ThreadingHTTPServer
+from unittest import mock
 
 from gto import routes
 
@@ -63,6 +64,52 @@ class TestRoutes(unittest.TestCase):
             self.assertEqual(len(done), 13)   # (no flop_library here: no spot pages)
 
 
+class TestRetired(unittest.TestCase):
+    """A route that leaves the page keeps its address, as a stub to the frozen copy. Nothing's retired yet (a stage of
+    the cut-down moves a route across): "oldview" here is a route the page doesn't have."""
+
+    def test_nothing_is_both(self):
+        names, _ = routes.routes(HTML)
+        self.assertEqual(set(routes.RETIRED) & set(names), set())
+        for r in routes.RETIRED:
+            self.assertRegex(r, r"^[a-z0-9-]+$")
+
+    def test_stub(self):
+        page = routes.stub("oldview")
+        url = "/gto-solver-classic/oldview/"
+        self.assertIn(f'<meta http-equiv="refresh" content="0; url={url}">', page)
+        self.assertIn(f'location.replace("{url}" + location.search + location.hash);', page)   # search and hash kept
+        self.assertIn(f'<a href="{url}">', page)
+        self.assertNotIn("/lizard/", page)   # (Lizard links here: it would loop)
+        self.assertNotIn("<base", page)      # (the address is absolute, and nothing else loads)
+        self.assertLess(len(page), 600)
+
+    def test_written_and_served(self):
+        with mock.patch.object(routes, "RETIRED", ["oldview"]):
+            self.assertEqual(routes.page_for("/oldview/"), routes.stub("oldview"))
+            self.assertEqual(routes.page_for("/oldview/index.html?x=1"), routes.stub("oldview"))
+            self.assertTrue(routes.is_route_without_slash("/oldview"))
+            self.assertIsNone(routes.page_for("/oldview/more/"))
+            with tempfile.TemporaryDirectory() as d:
+                with open(os.path.join(d, "index.html"), "w", encoding="utf-8") as f:
+                    f.write(HTML)
+                done = routes.write(d)
+                self.assertIn("oldview", done)
+                self.assertEqual(open(os.path.join(d, "oldview", "index.html"), encoding="utf-8").read(), routes.stub("oldview"))
+                self.assertIn("practice", done)   # (the routes still there get their page)
+        self.assertIsNone(routes.page_for("/oldview/"))
+
+    def test_a_route_cant_be_both(self):
+        with mock.patch.object(routes, "RETIRED", ["practice"]):
+            with self.assertRaisesRegex(ValueError, "practice"):
+                routes.page_for("/practice/")
+            with tempfile.TemporaryDirectory() as d:
+                with open(os.path.join(d, "index.html"), "w", encoding="utf-8") as f:
+                    f.write(HTML)
+                with self.assertRaisesRegex(ValueError, "practice"):
+                    routes.write(d)
+
+
 class TestServer(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -106,6 +153,16 @@ class TestServer(unittest.TestCase):
         self.assertIn(b'<base href="../">', body)
         r, _ = self.get("/health.json")
         self.assertEqual(r.status, 200)
+
+    def test_retired(self):
+        with mock.patch.object(routes, "RETIRED", ["oldview"]):
+            r, body = self.get("/oldview/")
+            self.assertEqual(r.status, 200)
+            self.assertEqual(body.decode(), routes.stub("oldview"))
+            self.assertEqual(r.getheader("Content-Type"), "text/html; charset=utf-8")
+            r, _ = self.get("/oldview?x=1")
+            self.assertEqual(r.status, 301)
+            self.assertEqual(r.getheader("Location"), "/oldview/?x=1")
 
 
 if __name__ == "__main__":
