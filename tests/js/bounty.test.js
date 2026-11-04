@@ -84,7 +84,7 @@ test("mystery bounties: the average envelope, or the pool and the players left",
   assert.deepEqual(j(p.payload().bounties), { format: "mystery", envelope: 25, pool: 900, left: 30 });
 });
 
-test("a bounty change drops the shown advice; bounties survive a change of players and a new hand", async () => {
+test("a bounty change drops the shown advice; bounties don't carry to the next hand", async () => {
   const p = loadPage();
   await p.ready();
   p.S = state(PRE);
@@ -92,11 +92,12 @@ test("a bounty change drops the shown advice; bounties survive a change of playe
   p.byId("bountyFmt").onchange({ target: { value: "ko" } });
   assert.equal(p.byId("result").className, "empty");
   p.S = { ...state(PRE), bounty: { fmt: "ko", all: 5, seats: { SB: 12, UTG: 1 }, field: 6 } };
-  p.run('document.getElementById("players").children[3].onclick()');   // 5 players: UTG's own goes
+  p.run('document.getElementById("players").children[3].onclick()');   // 5 players
   assert.equal(p.S.players, 5);
-  assert.deepEqual(j(p.S.bounty), { fmt: "ko", all: 5, seats: { SB: 12 }, field: 6 });
+  assert.equal(p.S.bounty, undefined);
+  p.S = { ...state(PRE), bounty: { fmt: "ko", all: 5, seats: { SB: 12, UTG: 1 }, field: 6 } };
   p.byId("newhand").onclick();
-  assert.deepEqual(j(p.S.bounty), { fmt: "ko", all: 5, seats: { SB: 12 }, field: 6 });
+  assert.equal(p.S.bounty, undefined);
 });
 
 test("share link round trip with bounties, and the copied hand says it", async () => {

@@ -208,7 +208,7 @@ test("Quick left the main view: only Fast and Accurate are offered, and a stored
   // (Practice's answers at Fast stay as they were: practice.test.js)
 });
 
-test("reviewing, Accurate and Pool toggles change the state sent, and are remembered", async () => {
+test("reviewing, Accurate and Pool toggles change the state sent; Accurate is remembered, Pool is for the visit", async () => {
   const p = loadPage();
   await p.ready();
   p.spot(state(FLOP));
@@ -220,14 +220,14 @@ test("reviewing, Accurate and Pool toggles change the state sent, and are rememb
   const pl = p.payload();
   assert.deepEqual([pl.budget, pl.prior_budget, pl.speed, pl.opponents], [60, 12, "accurate", "pool"]);
   assert.equal(p.storage.get("gto-speed"), "accurate");
-  assert.equal(p.storage.get("gto-opponents"), "pool");
+  assert.equal(p.storage.has("gto-opponents"), false);
   assert.ok(p.workers[0].terminated === false || p.workers.length > 1);
   assert.deepEqual(p.posted.at(-1).state, pl);
   assert.ok(p.posted.length > n);
   const q = loadPage({ storage: { "gto-speed": "accurate", "gto-opponents": "pool" } });
   await q.ready();
   q.S = state(FLOP);
-  assert.deepEqual([q.payload().speed, q.payload().opponents], ["accurate", "pool"]);
+  assert.deepEqual([q.payload().speed, q.payload().opponents], ["accurate", undefined]);   // (saved_settings.test.js: a saved pool is refused)
 });
 
 test("the backend probe finds a file on the static site (no 404 logged on every load), and the server answers it", async () => {

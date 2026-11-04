@@ -42,10 +42,10 @@
   // other folders of the site repo), so nothing here clears the origin: no localStorage.clear(), no database or cache
   // that isn't named. SITE_KEYS is every localStorage and sessionStorage key gto/static's code uses and the frozen
   // copy's (/gto-solver-classic/, scripts/publish_classic.sh); tests/js/wipe.test.js greps gto/static and fails on a
-  // key that isn't here.
+  // key that isn't here, and pins the list: the keys of a module gone from gto/static stay, as the frozen copy writes them.
   const SITE_KEYS = [...KNOWN, ...LOCAL_ONLY, ...Object.keys(MOVED), SENTINEL,
     ...[...STORES, "meta"].map(s => "gto-store:" + s),   // (the records, without IndexedDB)
-    "gto-welcome", "gto-stakes", "gto-writeup",          // (taken in as any "gto-" key is)
+    "gto-welcome", "gto-stakes", "gto-writeup", "gto-pool-refused",   // (taken in as any "gto-" key is)
     "gto-isolate", "gto-isolate-classic"];               // (sessionStorage: the service worker's once-a-tab mark)
   const SITE_DATABASES = { [DB_NAME]: [...STORES, "meta"], "gto-session": ["kv"], "gto-pf": ["solves"] };
   const SITE_CACHES = ["gto-solver", "gto-solver-classic"];

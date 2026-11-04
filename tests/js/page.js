@@ -98,7 +98,8 @@ class El {
 // Options: hash (location.hash), path (location.pathname, default /gto-solver/: e.g. /gto-solver/practice/), search,
 // scripts (file name -> source run instead of gto/static's file when the page loads that script), protocol (location.protocol, default http:), storage (initial localStorage entries), server (true: /health answers ok,
 // so the page uses the local server's budgets and POSTs to /advise instead of the worker), isolated (true: the page is
-// cross-origin isolated, so it can share a SharedArrayBuffer with its worker).
+// cross-origin isolated, so it can share a SharedArrayBuffer with its worker), serviceWorker (true: a first visit whose
+// service worker is registering, so the page is about to reload under it).
 function loadPage(opts = {}) {
   const els = new Map(), staticNow = staticIds(), reg = { named: new Map(), written: new Map() };
   // the element with this id, if the page has one now: in its markup, given the id, or written into an element's HTML
@@ -210,7 +211,8 @@ function loadPage(opts = {}) {
       replaceState: (_s, _t, url) => { replaced.push(url); goTo(url); },
       pushState: (_s, _t, url) => { pushed.push(url); goTo(url); },
     },
-    navigator: { clipboard: fakeClipboard },
+    navigator: { clipboard: fakeClipboard, ...(opts.serviceWorker ? { serviceWorker: { controller: null, register: () => new Promise(() => {}), ready: new Promise(() => {}) } } : {}) },
+    ...(opts.serviceWorker ? { isSecureContext: true, sessionStorage: { getItem: () => null, setItem: () => {} } } : {}),
     ...(cbMode === "item" ? { ClipboardItem } : {}),
     Blob,
     localStorage: {

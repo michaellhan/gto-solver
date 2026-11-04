@@ -52,7 +52,7 @@
     for (const a of mine) if (a.g && typeof a.g === "object") { graded[gcls(a.g)]++; if (+a.g.l > 0) lost += +a.g.l; }
     const nGraded = graded.ok + graded.meh + graded.bad;
     const title = `${lab(hero)}${vs.length === 1 ? " vs " + lab(vs[0]) : vs.length > 1 ? `, ${vs.length + 1}-way` : ""}`;
-    const game = `${n}-handed, ${fmt(+st.stack || 100)}bb${+st.ante > 0 ? `, ${fmt(+st.ante)} ante` : ""}${st.straddle ? ", straddle" : ""}`;
+    const game = `${n}-handed, ${fmt(+st.stack || 100)}bb${+st.ante > 0 ? `, ${fmt(+st.ante)} ante` : ""}${st.straddle ? ", straddle" : ""}${st.payouts || st.bounty ? ", tournament settings" : ""}${st.sizes || st.ranges || st.optSizes || st.locks ? ", custom settings" : ""}`;
     return { hero, heroLabel: lab(hero), hole, board, players: n, pot, vs: vs.map(lab), folded, street: last, decisions: mine.length,
              graded, nGraded, lost: Math.round(lost * 100) / 100, title, game };
   }

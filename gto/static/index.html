@@ -765,6 +765,7 @@
         </div>
       </div>
       <div id="setupSum" class="setupsum" hidden></div>
+      <div id="savedSettings" class="muted" style="font-size:12px" hidden></div>
     </section>
 
     <section class="panel" id="pTable">
@@ -968,6 +969,23 @@ const OPP_RANGES = () => { const r = { ...S.ranges }; delete r[S.hero]; return O
 const ADV_TEXT = () => [S.sizes && "custom sizes", OPP_RANGES() && `custom ${Object.keys(OPP_RANGES()).join("/")} range`, S.optSizes && "optimized sizes",
   ...(document.body.classList.contains("unfinished") ? [] : Object.entries(OPP_LOCKS() || {}).map(([p, l]) => `${p} locked (${LOCK_TEXT(l)})`))].filter(Boolean).join(", ");
 const ADV_KEYS = ["sizes", "ranges", "optSizes", "locks"];
+// Removing a control removes the input, not the setting. A hand that has one of these keeps it, payload() goes on sending
+// it and savedHtml() says so, but the next hand doesn't get it: New hand and a new table size are its off switch. (The
+// settings with a control of their own, stacks, ante, straddle, rake and stakes, carry over. Nothing here touches a saved
+// hand: opening one must not change it.)
+const NOT_CARRIED = ["payouts", "fieldN", "fieldAvg", "bounty", ...ADV_KEYS];
+const LIZARD_TOURNAMENTS = "/lizard/tournaments", LIZARD_SOLVE = "/lizard/solve";
+// What the hand on the table holds of them, in one line, "" if nothing. It reads the hand, since a stored grade doesn't
+// say what it was made under, and what payload() sends, so a setting with no effect (one prize alone, your own seat's
+// lock) isn't shown. For a new spot it points to Lizard, never to "this hand there": Lizard doesn't take these hands.
+function savedHtml() {
+  const tour = ICM_TEXT(), adv = [S.sizes && "custom sizes", OPP_RANGES() && `custom ${Object.keys(OPP_RANGES()).join("/")} range`, S.optSizes && "optimized sizes"].filter(Boolean);
+  const locks = Object.entries(OPP_LOCKS() || {}).map(([p, l]) => `${p} locked (${LOCK_TEXT(l)})`);
+  const what = [tour, ...adv, ...locks].filter(Boolean);
+  if (!what.length) return "";
+  const go = [tour && `<a href="${LIZARD_TOURNAMENTS}">Lizard's tournaments</a>`, adv.length && `<a href="${LIZARD_SOLVE}">Lizard's solver</a>`].filter(Boolean);
+  return `Saved with this hand: ${what.join(", ")}. New hand clears ${what.length > 1 ? "them" : "it"}.${go.length ? ` For a new spot, use ${go.join(" or ")}.` : ""}`;
+}
 const IS_BLIND = (p) => p === "SB" || p === "BB" || p === STRADDLER();
 function setPositions(n) {
   POS = SEATS[n]; ORDER_PRE = POS;
@@ -997,9 +1015,10 @@ const pageStore = window.GTOStore || { getRaw: (k) => { try { return localStorag
 if (window.GTOStore) window.GTOStore.onChange((c) => { if (c.wiped && c.remote) location.reload(); });
 let SPEED = "fast";
 { const v = pageStore.getRaw("gto-speed"); if (v === "accurate") SPEED = v; }
-// opponents: "gto" (equilibrium) or "pool" (a typical player pool, exploited); a preference like the speed
+// opponents: "gto" (equilibrium) or "pool" (a typical player pool, exploited), for this visit. A saved "pool" is refused:
+// it lives in the browser, not the hand, so nothing on a page without the toggle would show it or turn it off. The key
+// stays as it is, for the frozen copy, which still writes it; "gto-pool-refused" keeps the notice to one showing.
 let OPP = "gto";
-if (pageStore.getRaw("gto-opponents") === "pool") OPP = "pool";
 // the first visit's chooser (#welcome, shown at the end): "due" on a first visit (no speed stored yet, which modeReady
 // stores on every load, so this is read before it can), "seen" once answered or dismissed, or for a visitor from
 // before the chooser existed
@@ -1105,7 +1124,6 @@ const modeReady = (async () => {
   const setOpp = (o) => {
     OPP = o;
     octl.querySelectorAll("button").forEach(x => x.classList.toggle("active", x.dataset.o === o));
-    pageStore.setRaw("gto-opponents", o);
   };
   setOpp(OPP);
   octl.querySelectorAll("button").forEach(b => b.onclick = async () => {
@@ -1687,10 +1705,12 @@ function renderSetup() {
   document.body.classList.toggle("setupopen", !!(full && started));
   document.getElementById("setupDone").hidden = !started;
   const sum = document.getElementById("setupSum"); sum.hidden = full;
-  sum.innerHTML = `<span><b>${S.players}-handed</b> ${STAKES() ? ` <span class="muted">·</span> <b>${STAKES_TEXT()}</b>` : ""} <span class="muted">·</span> you are <b>${SEAT_LABEL(S.hero, S.players)}</b> <span class="muted">·</span> <b>${fmt(S.stack)}bb</b>${withUsd(S.stack)} stacks${UNEQUAL() ? ` (${STACKS_TEXT()})` : ""}${ANTE() ? ` <span class="muted">·</span> ${fmt(ANTE())}bb${withUsd(ANTE())} ante` : ""}${STRADDLER() ? ` <span class="muted">·</span> ${SEAT_LABEL(STRADDLER(), S.players)} straddles` : ""}${RAKE() ? ` <span class="muted">·</span> ${RAKE_TEXT()}` : ""}${TOURNEY() ? ` <span class="muted">·</span> ${ICM_TEXT()}` : ""}${ADV_TEXT() ? ` <span class="muted">·</span> ${ADV_TEXT()}` : ""}</span>`;
+  sum.innerHTML = `<span><b>${S.players}-handed</b>${TOURNEY() || S.tournament ? "" : ` <span class="muted">·</span> cash`} ${STAKES() ? ` <span class="muted">·</span> <b>${STAKES_TEXT()}</b>` : ""} <span class="muted">·</span> you are <b>${SEAT_LABEL(S.hero, S.players)}</b> <span class="muted">·</span> <b>${fmt(S.stack)}bb</b>${withUsd(S.stack)} stacks${UNEQUAL() ? ` (${STACKS_TEXT()})` : ""}${ANTE() ? ` <span class="muted">·</span> ${fmt(ANTE())}bb${withUsd(ANTE())} ante` : ""}${STRADDLER() ? ` <span class="muted">·</span> ${SEAT_LABEL(STRADDLER(), S.players)} straddles` : ""}${RAKE() ? ` <span class="muted">·</span> ${RAKE_TEXT()}` : ""}${TOURNEY() ? ` <span class="muted">·</span> ${ICM_TEXT()}` : ""}${ADV_TEXT() ? ` <span class="muted">·</span> ${ADV_TEXT()}` : ""}</span>`;
   const e = document.createElement("button"); e.className = "link"; e.style.marginLeft = "auto"; e.textContent = "Edit"; e.onclick = () => { stepStop(); editSetup = true; renderAll(); };
   if (!review) sum.appendChild(e);
 
+  const saved = document.getElementById("savedSettings"), line = practicing() ? "" : savedHtml();
+  saved.hidden = !line; saved.innerHTML = line;
   document.getElementById("straddleBox").hidden = S.players < 3;
   syncStakes(); syncAdv(); renderSeatStacks(); syncIcm();
   const el = document.getElementById("seats"); el.innerHTML = "";
@@ -1698,7 +1718,7 @@ function renderSetup() {
     b.onclick = () => { S.hero = p; save(); renderAll(); }; el.appendChild(b); }
   const pl = document.getElementById("players"); pl.innerHTML = "";
   for (let n = 2; n <= 9; n++) { const b = document.createElement("button"); b.className = "small"; b.textContent = n; if (n === S.players) b.classList.add("active");
-    b.onclick = () => { if (n === S.players) return; S = { ...fresh(n), stakes: S.stakes, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, payouts: S.payouts, fieldN: S.fieldN, fieldAvg: S.fieldAvg, ...cleanBounty(S, SEATS[n]), ...cleanAdv(S, SEATS[n]), ...cleanStacks(S, SEATS[n]), cards: S.cards }; setPositions(n); selSlot = null; save(); resetAdvice(); renderAll(); }; pl.appendChild(b); }
+    b.onclick = () => { if (n === S.players) return; S = { ...fresh(n), stakes: S.stakes, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanStacks(S, SEATS[n]), cards: S.cards }; setPositions(n); selSlot = null; save(); resetAdvice(); renderAll(); }; pl.appendChild(b); }
 }
 function renderSlots(sim) {
   const fixed = fixedHand(sim), needIdx = dealing(sim) ? S.cards.findIndex((c, i) => !c && i >= 2 && i < 2 + NEED[sim.waiting]) : (!S.cards[0] ? 0 : !S.cards[1] ? 1 : -1);
@@ -2796,7 +2816,7 @@ document.getElementById("newhand").onclick = () => {
   keepHand("replaced");
   if (review) { review.cancel = "drop"; cancelSolve(); }
   if (stepView) { stepView = null; cancelSolve(); }
-  S = { ...fresh(S.players), hero: S.hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, payouts: S.payouts, fieldN: S.fieldN, fieldAvg: S.fieldAvg, ...cleanBounty(S, POS), ...cleanAdv(S, POS), ...cleanStacks(S, POS) }; selSlot = null; showDeck = false; editSetup = false; pendingRank = null; save(); handOnTable(); resetAdvice(); renderAll();
+  S = { ...fresh(S.players), ...(S.stakes ? { stakes: S.stakes } : {}), hero: S.hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanStacks(S, POS) }; selSlot = null; showDeck = false; editSetup = false; pendingRank = null; save(); handOnTable(); resetAdvice(); renderAll();
 };
 // ---- hand-history import (hh.js, loaded the first time the dialog opens)
 let hhLoad = null;
@@ -3088,6 +3108,24 @@ async function applyRoute(r) {
   syncRoute(true);   // (the URL as the view has it: /reports/ -> /reports/<the spot shown>/)
 }
 if (typeof window.addEventListener === "function") window.addEventListener("popstate", () => applyRoute(parseRoute(location.pathname)));
+// Two notices, once each, on the first load after these settings lost their carry. A hand not started yet is no saved
+// hand (store.js keeps none without actions): what it holds of them came from the last hand, so it goes. And a refused
+// "pool" (OPP, above).
+// (Not while the page is about to reload for its service worker: the reload would take the notice with it.)
+if (!isolating) {
+  const said = [], blank = !linkLoaded && !STREETS.some(s => S.actions[s].length), held = NOT_CARRIED.filter(k => k in S);
+  if (blank && held.length) {
+    const line = savedHtml();
+    for (const k of held) delete S[k];
+    save();
+    if (line) said.push("Settings from your last hand no longer carry over, so this new hand starts without them.");
+  }
+  if (pageStore.getRaw("gto-opponents") === "pool" && !pageStore.getRaw("gto-pool-refused")) {
+    pageStore.setRaw("gto-pool-refused", "1");
+    said.push("This page no longer solves against a player pool: answers are at equilibrium. Hands you reviewed against the pool keep those grades until you review them again.");
+  }
+  if (said.length) toast(said.join(" "), null, 10000);
+}
 renderAll();
 // a #h= link opens its spot in the solver (an old link is the root's; a link opened at /practice/ too)
 const startRoute = parseRoute(location.pathname);

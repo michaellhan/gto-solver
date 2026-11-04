@@ -186,9 +186,10 @@ test("hand text: the solver's advice", async () => {
 });
 
 test("against the pool the GTO % says where it comes from: the chart preflop, the same solve on the pool's ranges after", async () => {
-  const p = loadPage({ storage: { "gto-opponents": "pool" } });
+  const p = loadPage();
   p.S = state({ cards: ["Ah", "Kh", "Kd", "7s", "2c"], preflop: acts("UTG f, HJ f, CO f, BTN r2.5, SB f, BB c"), flop: acts("BB x") });
   await p.ready();
+  await p.byId("oppctl").children[1].onclick();
   assert.equal(p.payload().opponents, "pool");
   p.ctx.__res = JSON.stringify({ street: "flop", recommended: "bet 33%", actions: [{ action: "check", freq: 0, gto_freq: 0.6, ev_bb: 4 }, { action: "bet 33%", amount_bb: 1.8, freq: 1, gto_freq: 0.4, ev_bb: 4.4 }] });
   p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");

@@ -57,15 +57,16 @@ test("a payouts change drops the shown advice", async () => {
   assert.equal(p.byId("result").className, "empty");
 });
 
-test("the tournament survives a change of players and a new hand", async () => {
+test("the tournament doesn't carry to the next hand: a change of players or a new hand drops it", async () => {
   const p = loadPage();
   await p.ready();
   p.S = { ...state(PRE), payouts: [50, 30, 20], fieldN: 9, fieldAvg: 30 };
   p.run('document.getElementById("players").children[3].onclick()');   // 5 players
   assert.equal(p.S.players, 5);
-  assert.deepEqual([j(p.S.payouts), p.S.fieldN, p.S.fieldAvg], [[50, 30, 20], 9, 30]);
+  assert.deepEqual([p.S.payouts, p.S.fieldN, p.S.fieldAvg], [undefined, undefined, undefined]);
+  p.S = { ...state(PRE), payouts: [50, 30, 20], fieldN: 9, fieldAvg: 30 };
   p.byId("newhand").onclick();
-  assert.deepEqual([j(p.S.payouts), p.S.fieldN, p.S.fieldAvg], [[50, 30, 20], 9, 30]);
+  assert.deepEqual([p.S.payouts, p.S.fieldN, p.S.fieldAvg], [undefined, undefined, undefined]);
 });
 
 test("share link round trip with a tournament, and the copied hand says it", async () => {

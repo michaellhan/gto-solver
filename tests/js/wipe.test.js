@@ -54,6 +54,19 @@ test("every storage key in gto/static is in store.js's SITE_KEYS (a new key can'
   assert.match(fs.readFileSync(path.join(STATIC, "worker.js"), "utf8"), /caches\.open\("gto-solver"\)/);
 });
 
+// Every key at the cut-down's start. A module that leaves gto/static takes its keys out of the scan above, not out of the
+// list: the frozen copy at /gto-solver-classic/ shares this storage and goes on writing them, so they must stay deletable.
+const SITE_KEYS_SNAPSHOT = ["handreview", "fourcolor", "gto-speed", "gto-opponents", "gto-sound", "gto-layout", "gto-reports", "gto-drills", "gto-study",
+  "gto-practice", "gto-practice-habits", "gto-practice-state", "gto-practice-hand", "gto-practice-score", "gto-practice-seat", "gto-practice-review",
+  "gto-practice-drill", "gto-practice-hint", "gto-practice-table", "gto-practice-tables", "gto-practice-more", "gto-practice-detail",
+  "gto-mt", "gto-mt-score", "gto-mt-drill", "gto-mt-seat", "gto-hands-table", "gto-hands-ui", "gto-anthropic-key", "gto-explain-own", "gto-session-run",
+  "gto-session", "gto-session-history", "gto-store-mirror", "gto-store:kv", "gto-store:hands", "gto-store:sessions", "gto-store:blobs", "gto-store:meta",
+  "gto-welcome", "gto-stakes", "gto-writeup", "gto-pool-refused", "gto-isolate", "gto-isolate-classic"];
+
+test("SITE_KEYS is pinned: what leaves gto/static stays in the list, for the frozen copy", () => {
+  assert.deepEqual([...SITE_KEYS].sort(), [...SITE_KEYS_SNAPSHOT].sort());
+});
+
 test("no storage key is another app's, and nothing clears the origin", () => {
   // the keys the other folders of the site repo and Lizard use (read 2026-11-04): their prefixes
   const OTHERS = /^(lizard|tp\.|lb\.|hardest:|bj:|c2|pgstyle:|preflop-|humanizer:|sheephav-|initials-|supabase\.)/;

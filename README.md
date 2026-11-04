@@ -754,6 +754,11 @@ is needed the deck moves up under the setup; otherwise it's hidden behind **Edit
 advice with frequencies, EVs and sizes, the villain range, solver stats, a link
 that reopens the exact spot, and the raw state JSON for the API or CLI.
 The hand is kept in the browser between reloads; **New hand** starts a new one and keeps the old one in **My hands**.
+A hand keeps its settings and they go on being sent with it. Stacks, ante, straddle, rake and stakes carry to the next
+hand. Payouts, the field, bounties, sizes, ranges, size optimization and locks don't: a hand that has them says so in a
+line under the setup (pointing new spots to Lizard), and New hand or a new table size is their off switch. Opening a
+saved hand changes nothing in it. Pool opponents last for the visit: a saved `gto-opponents` is left as it is, for the
+frozen copy, and refused here with one notice.
 
 **Practice** in the header plays hands against GTO opponents (**Exit practice** in the same place goes back
 to the solver), with the player count, stacks (each seat's own, if set), antes, straddle and rake of the setup. The

@@ -55,7 +55,7 @@ test("the inputs set the state and the payload; sent from the flop on only", asy
   assert.deepEqual(p.payload().ranges, { BB: "KK" });
 });
 
-test("a change drops the shown advice; kept by a new hand, and by a change of players for seats still there", async () => {
+test("a change drops the shown advice; neither a new hand nor a change of players keeps these", async () => {
   const p = loadPage();
   await p.ready();
   p.S = state(FLOP);
@@ -64,14 +64,10 @@ test("a change drops the shown advice; kept by a new hand, and by a change of pl
   assert.equal(p.byId("result").className, "empty");
   p.S = { ...state({ ...FLOP, hero: "BB" }), ...ADV, ranges: { UTG1: "AA", BTN: "QQ+" } };
   p.byId("newhand").onclick();
-  assert.deepEqual(j(p.S.sizes), ADV.sizes); assert.equal(p.S.optSizes, true);
+  for (const k of ["sizes", "ranges", "optSizes", "locks"]) assert.equal(k in p.S, false, k);
+  p.S = { ...state({ ...FLOP, hero: "BB" }), ...ADV, ranges: { UTG1: "AA", BTN: "QQ+" } };
   p.run('document.getElementById("players").children[7].onclick()');   // 9 players
-  assert.deepEqual(j(p.S.ranges), { BTN: "QQ+" }) ;
-  p.run('document.getElementById("players").children[1].onclick()');   // 3 players: BTN SB BB
-  assert.deepEqual(j(p.S.ranges), { BTN: "QQ+" });
-  p.run('document.getElementById("players").children[0].onclick()');   // heads-up: no BTN seat
-  assert.equal("ranges" in p.S, false);
-  assert.deepEqual(j(p.S.sizes), ADV.sizes);
+  for (const k of ["sizes", "ranges", "optSizes", "locks"]) assert.equal(k in p.S, false, k);
 });
 
 test("share link round trip, the summary and the copied hand say so", async () => {
