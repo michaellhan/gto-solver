@@ -53,8 +53,6 @@ Open http://127.0.0.1:18877/ . Each view has its own URL, on the website and the
 | --- | --- |
 | `/gto-solver/` | the solver (advice); a share link `/gto-solver/#h=…` opens its spot here |
 | `/gto-solver/practice/` | Practice |
-| `/gto-solver/drills/`, `/gto-solver/drills/<spot>/` | Drills (on a spot: `srp-btn-bb`, `3bp-bb-btn`…, the flop library's ids with dashes) |
-| `/gto-solver/reports/`, `/gto-solver/reports/<spot>/` | Flop reports |
 | `/gto-solver/study/` | Study |
 | `/gto-solver/preflop/` | Preflop solve (Study on a game set in a form) |
 | `/gto-solver/session/` | Analyze session |
@@ -64,8 +62,7 @@ Open http://127.0.0.1:18877/ . Each view has its own URL, on the website and the
 
 (locally without the `/gto-solver` prefix: http://127.0.0.1:18877/practice/). Opening a view pushes its URL
 and closing it goes back to the solver's (or Practice's, when the view was opened over Practice); the browser's
-back and forward buttons switch views, the tab's title names the view ("Practice · GTO Solver"), and picking another
-spot in the reports or drills updates the URL. A URL opened directly opens its view: Practice is on at
+back and forward buttons switch views, and the tab's title names the view ("Practice · GTO Solver"). A URL opened directly opens its view: Practice is on at
 `/practice/` and off at the solver's URL (whatever it was on the last visit). The list is `ROUTES` in
 `gto/static/index.html`; `gto/routes.py` reads it, and since GitHub Pages has no rewrites `scripts/deploy.sh`
 writes each URL's `index.html`, a copy of the page with a `<base href="../">` that points its scripts, worker and
@@ -140,8 +137,7 @@ shared or reloaded hand comes back as it was left: unfinished with no advice, fi
 **Every route onto the table.** An import (`hh.js`), a session's decision (`session.js`) and **Review hand** in the
 write-up open finished; a hand from My hands opens finished if it was imported or reviewed, else as it was left,
 with a toast saying what it needs. A share link keeps `finished` and `reviewed` as they are. **Open on table** in the write-up
-is an unfinished hand. Reports and drills open their spot in Study (`window.studySpot`), which needs no hand of yours; Practice's
-hands stay in Practice. `Advisor.presolve` and the worker's `presolve` request stay for `scripts/bench_browser.mjs --presolve`, unused by the page.
+is an unfinished hand. Practice's hands stay in Practice. `Advisor.presolve` and the worker's `presolve` request stay for `scripts/bench_browser.mjs --presolve`, unused by the page.
 
 These are limits on what the page offers, enforced in the page: a made-up action, or a link edited to say `finished`,
 gets a review of that decision. The rule against use during a hand is in Fair play and the terms.
@@ -220,8 +216,7 @@ the mix, ~ rarely played, ✗ outside it, with the EV given up) and lists them w
 In a hand being entered, clicking one of your decisions on the timeline goes back to it to enter it again,
 with Undo; in Practice the advice stays visible but dimmed and labelled while others act. The **⋯** menu has a four-colour
 deck (diamonds blue, clubs green), Sounds on/off, a switch that puts the advice on the left, and Reset layout.
-The menu is grouped: Review (Import hand, Analyze session), Study (Study, Preflop solve, Range builder, Drills, Flop
-reports), Help, and Settings (those switches, Reset practice, Reset layout); it scrolls on a short screen.
+The menu is grouped: Review (Import hand, Analyze session), Study (Study, Preflop solve, Range builder), Help, and Settings (those switches, Reset practice, Reset layout); it scrolls on a short screen.
 
 **Help** (the **?** beside the ⋯ menu, and the menu's Help group) is five plain-language pages, each with its own URL
 (the table above) and tabs between them that move it: **Getting started** (reviewing a hand, a session, studying a
@@ -244,8 +239,7 @@ Getting started, About & accuracy and Fair play. Any choice, **Not now**, Escape
 opens views; it changes nothing about the advice.
 Sounds (on by default, kept in the browser) are short effects synthesized with Web Audio, no files: in Practice,
 the deal and each board card, a knock for a check, chips for a call, bet or all-in, a swish for a fold, a chime
-when your move is in the solver's mix and a low note for a mistake, and a pot won or lost; in Drills, each answer's
-verdict.
+when your move is in the solver's mix and a low note for a mistake, and a pot won or lost.
 
 **Import hand** (in the ⋯ menu) takes a pasted hand history: PokerStars, GGPoker/Natural8, 888poker,
 partypoker, Winamax, WPN/ACR, Ignition/Bovada and iPoker (its XML: Bet365, William Hill…), the site detected,
@@ -317,9 +311,7 @@ session's decisions), each with its hands; the decisions by EV lost (a click ope
 that decision, and Back to the hand or Undo shows the whole of it) and the clearest off-chart preflop plays. **Filters** narrow the tables and
 the list: street, position, pot type (single-raised, 3bet, 4bet+, limped, multiway), EV lost (any, 2% or 8% of the
 pot, 1bb or 5bb) and tags (in position, out of position, facing a bet, preflop raiser or caller, multiway, all-in,
-off the mix, flagged, checked at Fast, low confidence); a leak's **N hands** filters to its decisions. **Drill this
-leak** (or **Drill these decisions** on a filtered list) turns those decisions into a drill set in Drills (below): up to 40
-spots, the misses first. **Export CSV / JSON** downloads one row per decision (hand, site and number, file, seat,
+off the mix, flagged, checked at Fast, low confidence); a leak's **N hands** filters to its decisions. **Export CSV / JSON** downloads one row per decision (hand, site and number, file, seat,
 cards, board, situation, your action and its frequency, the solver's best, EVs, EV lost, grade, source, confidence,
 tags, and after Go deeper the triage's source, grade and EV lost). The panel is `gto/static/session.js`, loaded with
 `hh.js` when first opened (or at load, with a session left running).
@@ -334,8 +326,8 @@ bb/100 with a line of bb/100 over time (Forget removes one, Clear history all); 
 postflop-spot and frequency tables summed over every session.
 
 **My hands** (in the ⋯ menu, `/gto-solver/hands/`) keeps the hands you play on the table, in this browser. The hand
-on the table is saved when **New hand**, a share link, an imported history or a hand from the drills, reports or the
-analyzer takes its place (a drills or reports spot you didn't play on isn't), when **Review whole hand** finishes (with
+on the table is saved when **New hand**, a share link, an imported history or a hand from the analyzer takes its
+place (a write-up you didn't play on isn't), when **Review whole hand** finishes (with
 its grades), and when a history is imported (with its site, hand number and text). The same hand is one record however
 often it's saved (grades aside), and a hand opened from the list and played on is saved back into its own record. Each
 row has the date, positions, cards, board, kind of pot, how far it went and your decisions' grades with the EV given
@@ -376,30 +368,11 @@ the caches `gto-solver` and `gto-solver-classic`. The panel reports what it dele
 can't be deleted they stay with their localStorage copies, so nothing is half gone, and it says so; other tabs of this
 site stop writing and reload (a tab of the frozen copy can't be told, and the panel says to close it).
 My hands and the store stand on their own: `tests/js/floor.test.js` fails if `hands.js` or `store.js` gains a dependency
-on Practice, the session analyzer, drills, reports, Explain, Study or the write-up (a saved hand's Study button, which
+on Practice, the session analyzer, Explain, Study or the write-up (a saved hand's Study button, which
 loads Study when pressed, is the one exception), and restores a backup of all four stores with those files gone.
 
-**Flop reports** (in the ⋯ menu) are aggregate reports of the [precomputed flop library](#precomputed-flop-library):
-pick a spot (BTN vs BB, …) and a node (out of position first; in position after a check; out of position facing
-in position's most common bet after checking) for a table of its 184 flops: each flop's range frequencies as a
-stacked bar and numbers, both players' EV (bb, at the start of the flop) and range equity. Click a column to sort;
-filter by high card, suits (rainbow, two-tone, monotone), pairing and connectedness, or group by one of them for the
-groups' averages (each flop weighted by how many of the 22100 flops it stands for; a group row filters to it).
-Clicking a flop loads that hand: the spot's preflop action, the flop, the action up to the node, and you as the player
-to act with the hand that mixes most there, so the precomputed advice appears at once. The data is one small
-`flop_library/<spot>/report.json` per spot (~45 KB, ~12 KB gzipped; ~135 KB on 552 flops, 430 KB / 80 KB gzipped on all 1755, SB vs BB's 530 / 113 KB), written with the library's index
-(`flop_library.build_report`, see Building below); the panel is `gto/static/reports.js`, loaded when first opened.
-Each flop's **Turns** button opens its turn report in Study (below) on a line the flop library's stored turns hold:
-the most reached flop line through the view's decision (any line for out of position's first decision; one that
-starts with a check for in position's; check, a bet and a response facing a bet, the view's own bet size first),
-named in the report's header with how often the flop solve takes it (3bet CO vs HJ on 9c6d6c, where HJ always checks:
-"check, bet 12.5, call", 30% of the time, for every view; SB vs BB on Kc7d2h: "check, bet 6.6, call", 44%). Where
-no held line goes through the view (or the flop has no turn file: the single-raised spots), Study stays on the
-view's own line (checked through for out of position, else in position's most common bet after a check, called)
-and offers **Solve the flop** first, saying why.
-
 **Turn and river reports** (Study, at a closed flop or turn: **Turn report** / **River report** beside the next card's
-deal, or a flop's **Turns** in the flop reports) are the next street's first decision on every card, like GTO
+deal) are the next street's first decision on every card, like GTO
 Wizard's: a table of the 49 turns (48 rivers) with the acting range's mix as a stacked bar and numbers, both
 players' EV (bb, range against range: the two add up to the pot) and range equity (every river dealt under a turn),
 for the first player or the second after a check. Each card is classed by what it does to the board (completes a
@@ -442,26 +415,6 @@ browser on one thread under 0.01 s); else **Solve the flop** solves the closing 
 the 3-way library stores too, whose entries hold the flop only (6.2 s on one thread on Kh7d2c). On Kd8c3h each card
 class's first decision matched Study's answer at once on that turn (`Advisor._study_mw_prev`, off the same solve) to
 0.1 point. A pot four saw the flop has none, even with three left.
-
-**Drills** (in the ⋯ menu) drill one flop decision of the precomputed library, like GTO Wizard's trainer: pick a
-spot and a node (out of position first; in position after a check; out of position facing a bet after checking)
-and optionally a texture (the reports' high card, suits, pairing, connectedness). Each hand is a flop drawn by how
-often it comes (any stored bet size by how often in position makes it), a hand drawn from the acting player's range
-there (its weight entering the flop, off the board, times its own frequency of the line so far) in random suits.
-Pick an action (keys 1-4) and the hand's GTO mix and per-action EVs show at once with the grade: **Best** (the
-highest EV, to the library's step of 1% of the pot), **Correct** (an action the hand plays 10% or more: "mixed"), or by
-the EV given up against the best, Inaccuracy (under 2% of the pot), Mistake (under 8%), Blunder. Space or Enter
-deals the next. The session's accuracy, average EV loss (bb and % of the pot) and streak show under the hand, and
-each drill's history (hands, accuracy, last 100, best streak) is kept in the browser; **Open in Study** opens
-the spot there. `gto/static/drills.js` decodes the library's entries itself (no solver needed: answers are
-instant, also before the in-browser solver has loaded) and reads the hand weights from `flop_library/<spot>/ranges.json`
-(both ranges entering the flop, written with the index, fingerprinted as the index's).
-
-A **drill set** (Analyze session's **Drill this leak**) drills your own hands instead: each spot as you played it
-(the line so far, the pot and the amount to call), the session's answer for it (its mix, and EVs where it had them),
-in a fresh order each round, graded on the same scale (an answer without EVs, a preflop chart's or a read at once, by
-frequency: Best the most played action, Correct 10% or more, else Inaccuracy or, under 3%, Mistake), with what you
-played in the hand after each; the summary at the end offers the set again. **Open in Study** opens the spot.
 
 **Study** (in the ⋯ menu) is a solution browser: walk a hand node by node with no cards of your own, and at each
 decision see the solver's answer for every hand of the player to act. Start from a precomputed spot's preflop line

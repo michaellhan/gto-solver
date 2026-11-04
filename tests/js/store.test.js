@@ -276,10 +276,10 @@ test("hands: the same hand is one record (grades aside); a hand played on update
   assert.equal(H.table().id, r4.id);
 });
 
-test("hands.keep: the page's hooks (a hand replaced, reviewed, imported; an untouched drills spot isn't kept)", async () => {
+test("hands.keep: the page's hooks (a hand replaced, reviewed, imported; an untouched spot isn't kept)", async () => {
   const st = await open({ localStorage: fakeLocalStorage(), indexedDB: fakeIndexedDB() });
   const H = st.hands;
-  // a drills spot put on the table, then replaced untouched
+  // a spot put on the table, then replaced untouched
   const spot = hand({ hero: "BB" });
   H.onTable(spot, { spot: true });
   assert.equal(await H.keep("replaced", spot), null);

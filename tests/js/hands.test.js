@@ -1,5 +1,5 @@
 // My hands (gto/static/hands.js) and the page's hooks into the storage layer (store.js): the hand on the table kept when
-// New hand, a link or an import takes its place (an untouched drills spot isn't), an imported hand with its history, a
+// New hand, a link or an import takes its place (an untouched spot isn't), an imported hand with its history, a
 // hand opened from My hands saved back into its own record, Study at your last decision; and the panel's pure parts
 // (a hand's summary and line, search, filters, tags, the import's kinds, the rows' HTML escaped).
 "use strict";
@@ -65,15 +65,15 @@ test("a hand opened from My hands is saved back into its own record when it's re
   assert.deepEqual(hs[0].data.tags, ["river"]); assert.equal(hs[0].data.note, "check back?");
 });
 
-test("a drills or reports spot put on the table isn't kept untouched; played on, it is", async () => {
+test("a spot put on the table isn't kept untouched; played on, it is", async () => {
   const p = await storePage();
   const spot = state({ hero: "BB", cards: ["Js", "Ts", "9c", "8d", "2h"], preflop: OPEN });
-  await p.run(`loadHandState(${JSON.stringify(spot)}, "a drills spot")`);
+  await p.run(`loadHandState(${JSON.stringify(spot)}, "your write-up")`);
   assert.equal(JSON.parse(p.storage.get("gto-hands-table")).spot, true);
   p.click("newhand");
   await until(async () => true, 80);
   assert.equal((await p.hands()).length, 0);
-  await p.run(`loadHandState(${JSON.stringify(spot)}, "a drills spot")`);
+  await p.run(`loadHandState(${JSON.stringify(spot)}, "your write-up")`);
   p.act({ action: "check" });
   p.click("newhand");
   const hs = await until(async () => { const h = await p.hands(); return h.length && h; });

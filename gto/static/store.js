@@ -450,7 +450,7 @@
     //     same hand saved again is the same record), source: "table" | "review" | "import" | "file" | "link",
     //     reviewed: graded decisions in it, tags: [], note: "", site / hh: an imported hand's site and history }
     // The page tells it (gto-hands-table) which hand is on the table: the record it is (opened from My hands, saved,
-    // imported), or a spot the drills or reports put there (kept only once you play on from it).
+    // imported), or a spot put there (a write-up, the frozen copy's drills and reports: kept only once you play on from it).
     const TABLE = "gto-hands-table";
     function handSig(st) {
       if (!st || typeof st !== "object") return "";
@@ -510,15 +510,14 @@
     const hands = {
       sig: handSig, worth, extendsHand, handNumber,
       table: () => parse(getRaw(TABLE)) || {},
-      // the hand now on the table: the record it is (id), a drills or reports spot (spot), or where it came from (source)
+      // the hand now on the table: the record it is (id), a spot (spot), or where it came from (source)
       onTable(st, opts = {}) { setRaw(TABLE, JSON.stringify({ id: opts.id || null, sig: handSig(st), spot: !!opts.spot, ...(opts.source ? { source: opts.source } : {}) })); },
       async list() { return (await list("hands")).sort((a, b) => b.created - a.created); },
       get: (id) => getRec("hands", id),
       // save a hand: into the record it already is (same hand, or one it plays on from), else a new one
       save(st, opts = {}) { if (!worth(st)) return Promise.resolve(null); st = clone(st); return serial(() => saveNow(st, opts)); },
       update: (id, patch) => serial(() => updateNow(id, patch)),
-      // the page's hooks: "replaced" (the hand on the table is about to go: kept unless it's an untouched drills or
-      // reports spot), "review" (a whole-hand review finished), "import" (an imported hand). The hand is copied at once.
+      // the page's hooks: "replaced" (the hand on the table is about to go: kept unless it's an untouched spot), "review" (a whole-hand review finished), "import" (an imported hand). The hand is copied at once.
       keep(how, st, meta = {}) {
         if (!worth(st)) return Promise.resolve(null);
         st = clone(st);

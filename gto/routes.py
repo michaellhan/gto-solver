@@ -1,5 +1,6 @@
-"""The page's URLs: one per view (/practice/, /drills/, /reports/, /session/, /study/, /preflop/, /import/, and the
-help pages /start/, /about/, /glossary/, /changelog/, /fairplay/; the solver is /), and /reports/<spot>/ and /drills/<spot>/ for a precomputed spot (its id with dashes: srp_btn_bb -> srp-btn-bb).
+"""The page's URLs: one per view (/practice/, /session/, /study/, /preflop/, /import/, and the help pages /start/,
+/about/, /glossary/, /changelog/, /fairplay/; the solver is /), and /<route>/<spot>/ for a precomputed spot (its id with
+dashes: srp_btn_bb -> srp-btn-bb) under a view in SPOT_ROUTES (none now).
 
 The list lives in one place, gto/static/index.html's ROUTES and SPOT_ROUTES lines; this module reads it from
 there. The page is one file at the site's root (the static site has no rewrites), so each route gets a copy
@@ -23,7 +24,7 @@ import sys
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 SLUG = re.compile(r"^[a-z0-9-]+$")
 CLASSIC = "/gto-solver-classic/"
-RETIRED: list[str] = []   # routes that have left the page's ROUTES
+RETIRED: list[str] = ["drills", "reports"]   # routes that have left the page's ROUTES
 
 
 def routes(html: str) -> tuple[list[str], list[str]]:
@@ -40,7 +41,7 @@ def routes(html: str) -> tuple[list[str], list[str]]:
 
 
 def spot_slugs(lib_dir: str) -> list[str]:
-    """The URL names of the flop library's spots that have a report (what reports.js and drills.js offer)."""
+    """The URL names of the flop library's spots that have a report."""
     try:
         with open(os.path.join(lib_dir, "index.json")) as f:
             index = json.load(f)
@@ -100,7 +101,7 @@ def _retired(names: list[str]) -> list[str]:
 
 
 def page_for(path: str, static: str = STATIC) -> str | None:
-    """The page served at a URL path ("/practice/", "/reports/srp-btn-bb/index.html"), a retired route's stub, or None
+    """The page served at a URL path ("/practice/", "/session/index.html"), a retired route's stub, or None
     if it's neither. The root ("/") is the page itself."""
     p = path.split("?")[0].split("#")[0]
     if p.endswith("/index.html"):

@@ -9,7 +9,7 @@
 // charts, the flop library, reads off stored solves, else a Quick solve), each with how far to trust it; "Go deeper"
 // then asks the flagged ones again at Fast, the biggest pots first. The report: EV lost (bb, bb/100) by street,
 // position, postflop spot and preflop situation, your frequencies against the solver's on the same decisions, the
-// session's leaks with their hands (each a drill set: drills.js), the decisions filtered by street, position, pot
+// session's leaks with their hands, the decisions filtered by street, position, pot
 // type, EV lost and tags (a click opens that hand at that decision in the page), and the decisions as CSV or JSON.
 // Each session's summary is also kept (its own IndexedDB entry, "history") and summed across sessions: the leaks that
 // show over many sessions, and each session's EV lost over time.
@@ -221,9 +221,6 @@
     const todo = buildItems(sess.hands, scope).filter(it => !done.has(`${it.h}|${it.s}|${it.i}`));
     return { ...sess, scope, results: keep, items: [...keep.map(r => ({ h: r.h, s: r.s, i: r.i })), ...todo], next: keep.length, status: todo.length ? "paused" : "done" };
   }
-  // the answer's actions in brief, for a drill of the decision: [name, freq, EV bb (null: none), amount bb]
-  const r3 = (x) => Math.round(x * 1000) / 1000;
-  const actsOf = (res) => (res.actions || []).map(a => [a.action, r3(a.freq || 0), a.ev_bb == null ? null : r2(a.ev_bb), a.amount_bb == null ? null : r2(a.amount_bb)]);
   // one decision: the page's request for the spot (at Fast; Quick triage's "triage" request; a deeper one at Fast),
   // the answer, the grade
   async function processItem(sess, it, host) {
@@ -246,7 +243,7 @@
       if (r2 && !r2.error && !r2.cancelled && r2.actions) res = r2;
     }
     const g = host.grade(res, rec), t = res.triage;
-    return { ...base, status: g ? "ok" : "ungraded", ...(g ? { g } : {}), mix: mixOf(res), acts: actsOf(res),
+    return { ...base, status: g ? "ok" : "ungraded", ...(g ? { g } : {}), mix: mixOf(res),
              src: t ? t.source : res.precomputed ? "library" : it.s === "preflop" ? "chart" : res.multiway && !res.solved ? "rules" : "solve",
              ...tri, ...(t && t.label ? { tl: t.label } : {}) };
   }
@@ -396,7 +393,7 @@
   // ---- the decisions by street, position, pot type, EV lost and tags; a leak's decisions
   const POT_TYPES = ["SRP", "3bet pot", "4bet+ pot", "Limped", "Multiway"];
   const lossPct = (r) => r.g && r.g.l != null && r.pot > 0 ? r.g.l / r.pot * 100 : null;
-  // (on the drills' scale: under 2% of the pot an inaccuracy, under 8% a mistake, more a blunder)
+  // (under 2% of the pot an inaccuracy, under 8% a mistake, more a blunder)
   const LOSS = {
     lost: ["Any EV lost", (r) => r.g.l > 0.005],
     p2: ["2%+ of the pot (mistakes)", (r) => lossPct(r) >= 2],
@@ -435,32 +432,6 @@
       && (!tags.length || tags.every(t => tagsOf(r).includes(t))) && (!L || L(r)));
   }
   const filterOn = (F) => !!(F && (F.street || F.pos || F.pot || F.loss || (F.tags && F.tags.length) || F.leak));
-  // ---- a leak's decisions as a drill set (drills.js): each the spot as it stood (the hand, the board, the line), the
-  // answer's actions with their frequencies and EVs (none: graded by frequency) and amounts; the ones you got wrong
-  // first, then the others, up to SET_MAX (drills.js deals them shuffled)
-  const SET_MAX = 40;
-  const verb = (a) => a.action === "bet" ? `bets ${r2(a.to != null ? a.to : a.amount)}` : a.action === "raise" ? `raises to ${r2(a.to)}` : a.action === "all-in" ? "is all-in" : a.action + "s";
-  function lineOf(st, s, i) {
-    const out = [];
-    for (const t of STREETS.slice(0, STREETS.indexOf(s) + 1)) {
-      const acts = (st.actions[t] || []).slice(0, t === s ? i : undefined).filter(a => !(t === "preflop" && a.action === "fold"));
-      out.push(`${t[0].toUpperCase() + t.slice(1)}: ${acts.length ? acts.map(a => `${a.pos} ${verb(a)}`).join(", ") : t === "preflop" && i ? "folded to you" : "you first"}`);
-    }
-    return out.join(" · ");
-  }
-  function drillSet(sess, rows, name) {
-    const ok = (r) => gradeClass(r.g) === "ok", usable = rows.filter(r => r.g && r.acts && r.acts.length > 1);
-    const pickd = [...usable.filter(r => !ok(r)), ...usable.filter(ok)].slice(0, SET_MAX);
-    const items = pickd.map(r => {
-      const h = sess.hands[r.h];
-      return { key: `${h.site}|${h.id}|${r.s}|${r.i}`, hero: h.state.hero, hand: [h.hole.slice(0, 2), h.hole.slice(2, 4)],
-               board: boardAt(h.state, r.s).match(/../g) || [], street: r.s, sit: r.pf || r.spot || "", line: lineOf(h.state, r.s, r.i),
-               pot: r.pot, bet: r.bet || 0, names: r.acts.map(a => a[0]), freqs: r.acts.map(a => a[1]),
-               evs: r.acts.every(a => a[2] != null) ? r.acts.map(a => a[2]) : null, amounts: r.acts.map(a => a[3]),
-               played: r.g.m, src: r.src, state: spotState(h.state, r.s, r.i) };
-    });
-    return { name, items };
-  }
   // ---- export
   const boardAt = (st, s) => st.cards.slice(2, 2 + NEED[s]).filter(Boolean).join("");
   const COLS = ["hand", "hand_id", "site", "position", "hole", "street", "board", "situation", "action", "solver_freq", "best_action", "best_freq",
@@ -780,8 +751,7 @@
       rp.ungraded > rp.rules && `${rp.ungraded - rp.rules} decisions whose action the answer doesn't list (not graded)`, rp.errors && `${rp.errors} failed`].filter(Boolean);
     if (extra.length) h += `<div class="ss-note">${extra.join(" · ")}</div>`;
     h += triageHtml(rp);
-    if (rp.leaks.length) h += `<h3>This session's leaks</h3><ol class="ss-leaks">${rp.leaks.slice(0, 8).map((l, k) => `<li>${leakText(l)} <button class="link" data-leak="${k}">${l.rows} hands</button>`
-      + ` <button class="link" data-drill="${k}" title="Your decisions here as a drill: each graded against the solver's answer">Drill this leak</button></li>`).join("")}</ol>`;
+    if (rp.leaks.length) h += `<h3>This session's leaks</h3><ol class="ss-leaks">${rp.leaks.slice(0, 8).map((l, k) => `<li>${leakText(l)} <button class="link" data-leak="${k}">${l.rows} hands</button></li>`).join("")}</ol>`;
     const fp = filterOn(F) ? report(sess, 0, F) : rp;
     h += `<h2 class="ss-h2">${filterOn(F) ? `${fp.kept} decisions` : "All decisions"}</h2>` + filterHtml(rp);
     h += table("By street", fp.byStreet, "Street") + table("By position", fp.byPos, "Position")
@@ -790,8 +760,7 @@
     h += freqTable(fp.freqs, "Your frequencies vs GTO");
     if (filterOn(F)) {
       const rows = filterRows(sess.results.filter(r => r.status === "ok" || r.status === "ungraded"), F).sort(byLoss);
-      h += listHtml("Decisions", rows.slice(0, showN), "The most EV lost first. Click one to open the hand at that decision.", Math.max(0, rows.length - showN))
-        + (rows.some(r => r.acts && r.g) ? `<div class="ss-row"><button data-drillf>Drill these decisions</button></div>` : "");
+      h += listHtml("Decisions", rows.slice(0, showN), "The most EV lost first. Click one to open the hand at that decision.", Math.max(0, rows.length - showN));
       if (!rows.length) h += `<div class="ss-note">No decision passes the filter.</div>`;
     } else {
       h += listHtml("Biggest mistakes", rp.mistakes, "By EV given up. Click one to open the hand at that decision.");
@@ -903,14 +872,6 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   const fileBase = () => (sess.name || "session").replace(/\.[^.]*$/, "").replace(/[^\w.-]+/g, "_") + "-analysis";
-  const doneRows = () => sess.results.filter(r => r.status === "ok" || r.status === "ungraded");
-  // a set of decisions drilled (drills.js reads DRILL_SET when it opens)
-  function drill(rows, name) {
-    const set = drillSet(sess, rows, name);
-    if (!set.items.length) return;
-    globalThis.DRILL_SET = set;
-    if (typeof globalThis.openView === "function") globalThis.openView("drills");
-  }
   async function act(d) {
     if (d.scope) { scope = d.scope; return draw(); }
     if (d.go != null && draft) { const s = newSession(draft, scope, draft.name); draft = null; F = {}; showN = 25; return start(s); }
@@ -925,8 +886,6 @@
     if (d.k != null) { const r = sess.results[+d.k], h = sess.hands[r.h]; close(); return host.open(h.state, r.s, r.i); }
     if (d.leak != null) { const l = report(sess, 0).leaks[+d.leak]; if (l) { F = { ...F, leak: { kind: l.kind, key: l.key } }; showN = 25; } return draw(); }
     if (d.leakoff != null) { F = { ...F, leak: null }; return draw(); }
-    if (d.drill != null) { const l = report(sess, 0).leaks[+d.drill]; if (l) drill(doneRows().filter(leakTest(l)), l.key); return; }
-    if (d.drillf != null) return drill(filterRows(doneRows(), F).sort(byLoss), F.leak ? F.leak.key : "Filtered decisions");
     if (d.filter) { F = { ...F, [d.filter]: d.value || "" }; showN = 25; return draw(); }
     if (d.tag) { const t = F.tags || []; F = { ...F, tags: t.includes(d.tag) ? t.filter(x => x !== d.tag) : [...t, d.tag] }; showN = 25; return draw(); }
     if (d.clearf != null) { F = {}; showN = 25; return draw(); }
@@ -1046,7 +1005,7 @@
       document.body.appendChild(box);
       box.addEventListener("click", (e) => {
         if (e.target === box) return close();
-        const t = e.target.closest("[data-close],[data-scope],[data-go],[data-resume],[data-pause],[data-stop],[data-widen],[data-deep],[data-new],[data-csv],[data-json],[data-k],[data-forget],[data-clearhist],[data-leak],[data-leakoff],[data-drill],[data-drillf],[data-tag],[data-clearf],[data-more]");
+        const t = e.target.closest("[data-close],[data-scope],[data-go],[data-resume],[data-pause],[data-stop],[data-widen],[data-deep],[data-new],[data-csv],[data-json],[data-k],[data-forget],[data-clearhist],[data-leak],[data-leakoff],[data-tag],[data-clearf],[data-more]");
         if (!t || t.disabled) return;
         if (t.dataset.close != null) close(); else act(t.dataset);
       });
@@ -1080,7 +1039,7 @@
 
   const api = { handId, decisions, prepare, buildItems, inScope, spotState, preflopRaises, preflopSituation, classify, mixOf, newSession, widen,
                 processItem, runner, estimate, eta, report, tally, freqs, toCSV, toJSON, rowsOf, lsStore, idbStore, pageHost, open, close, resume, SCOPES,
-                hhFiles, filesName, withPayouts, tourSet, flagged, deepen, flaggedCount, agreement, filterRows, filterOn, tagsOf, leakTest, lineOf, drillSet, LOSS, TAGS, POT_TYPES, DEEP_LOSS, RUN_KEY,
+                hhFiles, filesName, withPayouts, tourSet, flagged, deepen, flaggedCount, agreement, filterRows, filterOn, tagsOf, leakTest, LOSS, TAGS, POT_TYPES, DEEP_LOSS, RUN_KEY,
                 summarize, remember, mergeRows, trends, leaks, historyHtml, get history() { return history; },
                 get session() { return sess; }, get runner_() { return run; } };
   if (typeof module === "object" && module.exports) module.exports = api; else globalThis.Session = api;

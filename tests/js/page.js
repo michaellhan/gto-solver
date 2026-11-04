@@ -23,9 +23,9 @@ const HTML_PATH = process.env.GTO_PAGE || path.join(__dirname, "..", "..", "gto"
 // entry goes with its code.
 const RUNTIME_IDS = {
   "index.html": ["customAmt", "customBox", "equityRetry", "explainBox", "solveBar", "solveMsg", "solveTime", "solverRetry"],
-  "breakdown.js": ["bdStyle"], "drills.js": ["drStyle"], "explain.js": ["pxKey"], "hands.js": ["mhStyle"], "help.js": ["hpStyle"],
+  "breakdown.js": ["bdStyle"], "explain.js": ["pxKey"], "hands.js": ["mhStyle"], "help.js": ["hpStyle"],
   "multitable.js": ["mtAmt", "mtStyle", "mtView", "mtTop", "mtTabs", "mtDock", "mtSide", "mtT0", "mtT1", "mtT2", "mtT3"],
-  "reports.js": ["rpStyle"], "runouts.js": ["roStyle"], "session.js": ["ssStyle"], "simple.js": ["osStyle"], "study.js": ["syStyle"], "writeup.js": ["wuStyle"],
+  "runouts.js": ["roStyle"], "session.js": ["ssStyle"], "simple.js": ["osStyle"], "study.js": ["syStyle"], "writeup.js": ["wuStyle"],
 };
 const RUNTIME = new Set(Object.values(RUNTIME_IDS).flat());
 // (the markup without the page's one inline script: its templates are the ids created at runtime)

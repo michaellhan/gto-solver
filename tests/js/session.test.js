@@ -447,7 +447,7 @@ test("history storage: its own key beside the session's", async () => {
   } finally { delete global.localStorage; }
 });
 
-// ---- several files, Quick triage and deeper, waiting for the page, filters, leaks and their drills
+// ---- several files, Quick triage and deeper, waiting for the page, filters, leaks
 test("prepare: several files at once, in order, a hand in two of them counted once, each hand with its file", async () => {
   const p = await page();
   const files = [{ name: "a.txt", text: HH("stars_6max_srp.txt") + "\n\n" + HH("stars_3bet_pot.txt") },
@@ -604,29 +604,17 @@ test("filters: street, position, pot type, EV lost and tags; a leak's decisions;
   assert.deepEqual([all.kept, all.lost, all.filtered, rp.filtered], [4, 4.55, false, true]);
 });
 
-test("a session's leaks with their decisions, and a leak's drill set: the spot as it stood, the answer's mix and EVs, misses first", () => {
+test("a session's leaks with their decisions", () => {
   const sess = stubSession(10);
-  const pfAnswer = [["raise", 0.9, null, 2.5], ["fold", 0.1, null, null]];
-  sess.results = Array.from({ length: 20 }, (_, n) => graded(n % 10, "preflop", { i: 3, pos: "BTN", pf: "RFI", cls: n < 12 ? "fold" : "aggr", act: n < 12 ? "fold" : "raise to 2.5", acts: pfAnswer,
+  sess.results = Array.from({ length: 20 }, (_, n) => graded(n % 10, "preflop", { i: 3, pos: "BTN", pf: "RFI", cls: n < 12 ? "fold" : "aggr", act: n < 12 ? "fold" : "raise to 2.5",
     mix: { fold: 0.1, passive: 0, aggr: 0.9 } }, { m: n < 12 ? "fold" : "raise", f: n < 12 ? 0.01 : 0.9, b: "raise", bf: 0.9, l: null }));
-  sess.results.push(graded(0, "flop", { i: 1, pos: "BTN", spot: "SRP · IP · checked to", potType: "SRP", ip: true, role: "PFR", pot: 5.5, bet: 0, act: "check", cls: "passive",
-    acts: [["check", 0.3, 2, null], ["bet 33%", 0.7, 2.5, 1.8]] }, { m: "check", f: 0.3, b: "bet 33%", bf: 0.7, l: 0.5, e: 2, o: 2.5 }));
+  sess.results.push(graded(0, "flop", { i: 1, pos: "BTN", spot: "SRP · IP · checked to", potType: "SRP", ip: true, role: "PFR", pot: 5.5, bet: 0, act: "check", cls: "passive" }, { m: "check", f: 0.3, b: "bet 33%", bf: 0.7, l: 0.5, e: 2, o: 2.5 }));
   sess.next = sess.results.length;
   const rp = SS.report(sess);
   const pf = rp.leaks.find(l => l.kind === "pf"), fq = rp.leaks.find(l => l.kind === "freq");
   assert.deepEqual([pf.key, pf.n, pf.rows], ["RFI", 20, 20]);
   assert.deepEqual([fq.key, fq.rows], ["Open (RFI)", 20]);
-  const set = SS.drillSet(sess, sess.results.filter(SS.leakTest(pf)), "RFI");
-  assert.equal(set.items.length, 20);
-  assert.ok(set.items.slice(0, 12).every(it => it.played === "fold") && set.items.slice(12).every(it => it.played === "raise"));   // (the misses first)
-  const it = set.items[0];
-  assert.deepEqual([it.hero, it.hand, it.board, it.names, it.freqs, it.evs, it.amounts, it.pot, it.street], ["BTN", ["Ah", "Qd"], [], ["raise", "fold"], [0.9, 0.1], null, [2.5, null], undefined, "preflop"]);
-  assert.equal(it.line, "Preflop: folded to you");
-  assert.deepEqual(it.state.actions.preflop.length, 3);   // the hand as it stood: the three folds before
-  const fl = SS.drillSet(sess, [sess.results[20]], "x").items[0];
-  assert.deepEqual([fl.board, fl.evs, fl.pot, fl.line], [["Qs", "8d", "3c"], [2, 2.5], 5.5, "Preflop: BTN raises to 2.5, BB calls · Flop: BB checks"]);
-  assert.deepEqual(fl.state.cards.slice(5), [null, null]);
-  assert.equal(SS.drillSet(sess, sess.results.map(r => ({ ...r, acts: undefined })), "x").items.length, 0);   // (no answer kept: nothing to drill)
+  assert.equal(sess.results.filter(SS.leakTest(pf)).length, 20);
 });
 
 test("a session left running: the page loads the analyzer and resumes it in the background, the panel closed", async () => {

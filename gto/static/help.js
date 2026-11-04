@@ -37,13 +37,11 @@
       grades it, and adds up the EV you lost by street, position and spot, with your biggest mistakes first.</p>
     <h3>Study a spot</h3>
     <p>${go("study", "Study…")} walks a hand node by node with no cards of your own: at each decision you see what the
-      solver does with every hand of the player to act, with EVs and equity. ${go("reports", "Flop reports…")} show a
-      precomputed spot's strategy across every flop, by texture. ${go("preflop", "Preflop solve…")} solves a game's
+      solver does with every hand of the player to act, with EVs and equity. ${go("preflop", "Preflop solve…")} solves a game's
       preflop for the players, stacks and sizes you set.</p>
     <h3>Train</h3>
     <p>${go("practice", "Practice")} deals random hands against opponents who play the solver's strategy, and grades each
-      of your decisions as you make it. ${go("drills", "Drills…")} repeat one flop spot hand after hand, graded at once.
-      ${go("rangeBuilder", "Range builder…")} lets you paint a whole range's strategy and scores it against the solver's.</p>
+      of your decisions as you make it. ${go("rangeBuilder", "Range builder…")} lets you paint a whole range's strategy and scores it against the solver's.</p>
     <h3>Settings worth knowing</h3>
     <ul>
       <li><b>Solve: Fast / Accurate</b> trades time for accuracy in a review (${to("about", "how accurate each one is")}).

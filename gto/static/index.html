@@ -648,7 +648,7 @@
   <button id="newhand" title="Shortcut: N">New hand <kbd>N</kbd></button>
   <span class="menuwrap">
     <button id="helpBtn" class="ghost" title="Help: getting started, how accurate the answers are, a glossary" aria-label="Help">?</button>
-    <button id="menuBtn" class="ghost" title="More: import and analyze hands, Study, drills and reports, help, settings" aria-label="More" aria-haspopup="true" aria-expanded="false" aria-controls="menu">⋯</button>
+    <button id="menuBtn" class="ghost" title="More: import and analyze hands, Study, help, settings" aria-label="More" aria-haspopup="true" aria-expanded="false" aria-controls="menu">⋯</button>
     <div class="menu" id="menu" hidden>
       <div class="mlbl">Review</div>
       <button id="myHands" title="Every hand you've entered, reviewed or imported, kept in this browser: search, tags, notes, open one in review or Study, export, back up">My hands…</button>
@@ -658,8 +658,6 @@
       <button id="study" title="Browse the solver's strategy for a whole range, node by node: every hand's mix, EV and equity; play any action, deal any card">Study…</button>
       <button id="pfSolve" class="sub" title="Study, starting at its preflop solve: set the players, stacks, ante, straddle, rake and raise sizes, then browse every hand's mix and EVs at every preflop decision">Preflop solve…</button>
       <button id="rangeBuilder" class="sub" title="Study, starting in its Build mode: paint a range's strategy yourself and score it against the solver's, on random flops of a precomputed spot">Range builder…</button>
-      <button id="drills" title="Drill one flop spot: random flops and hands from the precomputed solutions, each answer graded at once (keys 1-4, Space for the next)">Drills…</button>
-      <button id="flopReports" title="The precomputed spots' flop strategy across every flop, by texture; click a flop to open it in Study">Flop reports…</button>
       <div class="mlbl">Help</div>
       <button id="helpStart" title="What to do first, for reviewing hands, studying, practice or a whole session">Getting started…</button>
       <button id="helpAbout" title="How the answers are made and measured: exploitability, the benchmark against an open-source solver, Fast and Accurate, the known limits">About & accuracy…</button>
@@ -668,7 +666,7 @@
       <button id="helpFairplay" title="A study and review tool: not for use during a hand, online or live">Fair play…</button>
       <div class="mlbl">Settings</div>
       <button id="fourcolor" title="Four-colour deck: diamonds blue, clubs green">Four-colour deck</button>
-      <button id="soundBtn" title="Sound effects in Practice and Drills: cards, chips, checks, folds, each verdict and the pot">Sounds on</button>
+      <button id="soundBtn" title="Sound effects in Practice: cards, chips, checks, folds, each verdict and the pot">Sounds on</button>
       <button id="swapCols" class="wideonly" title="Put the advice on the left and the table on the right">Advice on the left</button>
       <div class="sep"></div>
       <button id="resetPractice" class="pxonly" title="Clear your practice score, mistakes and the table's stacks, and deal a new hand">Reset practice…</button>
@@ -1031,8 +1029,6 @@ const practicing = () => !!(window.Practice && window.Practice.on);
 const multiTabling = () => practicing() && window.Practice.state.tables > 1;
 const WORKER_VERSION = "14";   // scripts/deploy.sh replaces this with a hash of worker.js
 const HH_VERSION = "1";        // and this with a hash of hh.js (the hand-history importer, loaded on first use)
-const RP_VERSION = "1";        // and this with a hash of reports.js (the flop reports, loaded on first use)
-const DR_VERSION = "1";        // and this with a hash of drills.js (the drills, loaded on first use, after reports.js)
 const BD_VERSION = "1";        // and breakdown.js (the advice's Breakdown and Equity views, loaded on first use)
 const SS_VERSION = "1";        // and session.js (the session analyzer, loaded on first use, after hh.js)
 const SY_VERSION = "1";        // and study.js (Study mode, the solution browser, loaded on first use)
@@ -1048,35 +1044,35 @@ const HN_VERSION = "1";        // and hands.js (My hands, loaded the first time 
 // points it at their own site, ../gto-solver-library/ (scripts/deploy_library.sh). The worker is told it in its URL
 // (relative: worker.js is in the folder the page's URLs resolve against).
 const LIB_BASE = "flop_library/";
-// ---- the views' URLs: the solver is the root (/gto-solver/), the others /practice/, /drills/, /reports/,
-// /session/, /study/, /preflop/, /import/ and the help pages (/start/, /about/, /glossary/, /changelog/, /fairplay/) under it, and /reports/<spot>/, /drills/<spot>/ a precomputed spot (its id, dashes for
-// underscores). The static site has no rewrites: each URL is a copy of this page with a <base href="../"> that
-// points its relative URLs at the root. gto/routes.py reads these two lines (scripts/deploy.sh writes the copies,
+// ---- the views' URLs: the solver is the root (/gto-solver/), the others /practice/, /session/, /study/, /preflop/,
+// /import/ and the help pages (/start/, /about/, /glossary/, /changelog/, /fairplay/) under it. The static site has no
+// rewrites: each URL is a copy of this page with a <base href="../"> that points its relative URLs at the root.
+// gto/routes.py reads these two lines (SPOT_ROUTES: the views with a /<spot>/ level, none now; scripts/deploy.sh writes the copies,
 // gto/server.py serves them). Opening a view pushes its URL and closing it pushes the solver's (Practice's, if
 // that's on under it); back and forward switch views; a view's URL opened directly opens it (applyRoute, at the end).
-const ROUTES = { practice: "Practice", drills: "Drills", reports: "Flop reports", session: "Analyze session", study: "Study", preflop: "Preflop solve", import: "Import hand", hands: "My hands", start: "Getting started", about: "About & accuracy", glossary: "Glossary", changelog: "Changelog", fairplay: "Fair play" };
-const SPOT_ROUTES = ["drills", "reports"];
-const ROUTE_RE = new RegExp(`^(.*?/)(?:(${Object.keys(ROUTES).join("|")})(?:/([a-z0-9-]+))?/?)?(?:index\\.html)?$`);
-function parseRoute(pathname) {   // -> { root: the solver's path, view: "solver" or a ROUTES key, spot: a spot id or null }
+const ROUTES = { practice: "Practice", session: "Analyze session", study: "Study", preflop: "Preflop solve", import: "Import hand", hands: "My hands", start: "Getting started", about: "About & accuracy", glossary: "Glossary", changelog: "Changelog", fairplay: "Fair play" };
+const SPOT_ROUTES = [];
+const ROUTE_RE = new RegExp(`^(.*?/)(?:(${Object.keys(ROUTES).join("|")})/?)?(?:index\\.html)?$`);
+function parseRoute(pathname) {   // -> { root: the solver's path, view: "solver" or a ROUTES key }
   const m = String(pathname).match(ROUTE_RE);
-  if (!m) return { root: String(pathname).replace(/[^/]*$/, ""), view: "solver", spot: null };
-  return { root: m[1], view: m[2] || "solver", spot: m[3] && SPOT_ROUTES.includes(m[2]) ? m[3].replace(/-/g, "_") : null };
+  if (!m) return { root: String(pathname).replace(/[^/]*$/, ""), view: "solver" };
+  return { root: m[1], view: m[2] || "solver" };
 }
 const ROOT = parseRoute(location.pathname).root, TITLE = document.title || "GTO Solver";
 // a view's URL pushed (/study/, …) would move the page's relative URLs under it (a view's script, the worker, the
 // library: Study opened from the menu loaded /study/study.js, a 404): the solver's own page pins its base to the
 // root, as the views' copies do with theirs
 try { if (!document.querySelector("base")) { const b = document.createElement("base"); b.href = ROOT; document.head.prepend(b); } } catch (e) {}
-let overlay = null, overlaySpot = null, overlayLabel = null;   // the view open over the solver / Practice, if any
+let overlay = null;   // the view open over the solver / Practice, if any
 let routing = 1;   // > 0 while the URL's view is being opened (the URL is already its own): nothing is pushed
-const routeUrl = (v, spot) => ROOT + (v === "solver" ? "" : v + "/" + (spot && SPOT_ROUTES.includes(v) ? spot.replace(/_/g, "-") + "/" : "")) + (location.search || "");
-// the URL and title for the view showing, pushed (or replaced: a spot picked in an open view)
+const routeUrl = (v) => ROOT + (v === "solver" ? "" : v + "/") + (location.search || "");
+// the URL and title for the view showing, pushed (or replaced)
 function syncRoute(replace) {
   if (routing) return;
-  const v = overlay || (practicing() ? "practice" : "solver"), spot = overlay ? overlaySpot : null;
-  document.title = v === "solver" ? TITLE : [overlay && overlayLabel, ROUTES[v], TITLE].filter(Boolean).join(" · ");
-  const url = routeUrl(v, spot);
-  if (url !== location.pathname + (location.search || "")) try { history[replace ? "replaceState" : "pushState"]({ view: v, spot }, "", url); } catch (e) {}   // (file: pages can't)
+  const v = overlay || (practicing() ? "practice" : "solver");
+  document.title = v === "solver" ? TITLE : `${ROUTES[v]} · ${TITLE}`;
+  const url = routeUrl(v);
+  if (url !== location.pathname + (location.search || "")) try { history[replace ? "replaceState" : "pushState"]({ view: v }, "", url); } catch (e) {}   // (file: pages can't)
 }
 
 // ---- backend: the local Python server if present, otherwise the solver runs in the browser (Pyodide worker)
@@ -2739,7 +2735,7 @@ let four = pageStore.getRaw("fourcolor") === "1";
 applyFour(four);
 document.getElementById("fourcolor").onclick = () => { four = !four; applyFour(four); pageStore.setRaw("fourcolor", four ? "1" : "0"); };
 
-// ---- sound effects (per browser, on by default): short synthesized sounds for Practice and Drills (cards dealt,
+// ---- sound effects (per browser, on by default): short synthesized sounds for Practice (cards dealt,
 // checks, chips, folds, a verdict, a pot won), made with Web Audio so there are no files to load. sfx(name) does
 // nothing while they're off or where the browser has no Web Audio.
 const SFX = { on: true, ctx: null, played: [], seed: 1 };
@@ -2869,12 +2865,8 @@ function swapState(seed) {
   document.getElementById("stack").value = S.stack; document.getElementById("ante").value = ANTE(); document.getElementById("straddle").checked = !!S.straddle;
   save(); resetAdvice();
 }
-// ---- flop reports (reports.js, loaded the first time they're opened)
-document.getElementById("flopReports").onclick = () => openView("reports");
-// ---- drills (drills.js, which uses reports.js's textures; both loaded the first time the drills open)
 const loadJs = (src, ok) => ok() ? Promise.resolve() : new Promise((res, rej) => { const s = document.createElement("script"); s.src = src;
   s.onload = res; s.onerror = () => rej(new Error(`couldn't load ${src.split("?")[0]}`)); document.head.appendChild(s); });
-document.getElementById("drills").onclick = () => openView("drills");
 // ---- the session analyzer (session.js, after hh.js whose parser it uses; it runs on the page's engine, solver and grading)
 document.getElementById("analyzeSession").onclick = () => openView("session");
 // ---- Study mode (study.js): a hand walked node by node with the acting player's whole range (gto/advisor.py,
@@ -2920,13 +2912,9 @@ window.studySpot = async (st, spot) => {
 };
 // [budget, prior_budget] at a speed, for Study's turn and river reports' progress (the seconds a solve for one takes)
 function studyBudget(speed) { return BUDGETS[MODE || "wasm"][speed === "accurate" ? "accurate" : "fast"]; }
-// The views over the page: open (their scripts loaded first; spot: a precomputed spot's id, else the one last
-// picked), close, and what a failed load says. Their scripts report a spot picked (viewSpot) and closing (viewClosed).
+// The views over the page: open (their scripts loaded first), close, and what a failed load says. Their scripts report
+// closing (viewClosed).
 const VIEWS = {
-  reports: { open: (spot) => loadJs("reports.js?v=" + RP_VERSION, () => window.FlopReports).then(() => window.FlopReports.open(spot)),
-             close: () => window.FlopReports && window.FlopReports.close(), err: "Couldn't load the flop reports: " },
-  drills: { open: (spot) => loadJs("reports.js?v=" + RP_VERSION, () => window.FlopReports).then(() => loadJs("drills.js?v=" + DR_VERSION, () => window.Drills))
-              .then(() => window.Drills.open(spot)), close: () => window.Drills && window.Drills.close(), err: "Couldn't load the drills: " },
   session: { load: () => loadHH().then(() => loadJs("session.js?v=" + SS_VERSION, () => window.Session)),
              open: () => VIEWS.session.load().then(() => window.Session.open()),
              close: () => window.Session && window.Session.close(), err: "Couldn't load the session analyzer: " },
@@ -2940,19 +2928,18 @@ const VIEWS = {
 };
 // a session analysis left running when the page closed or reloaded goes on in the background (session.js resume)
 try { if (localStorage.getItem("gto-session-run")) modeReady.then(() => VIEWS.session.load()).then(() => window.Session.resume()).catch(() => {}); } catch (e) {}
-window.viewSpot = (name, spot, label) => { if (overlay !== name) return; overlaySpot = spot; overlayLabel = label || null; syncRoute(true); };
-window.viewClosed = (name) => { if (overlay !== name) return; overlay = overlaySpot = overlayLabel = null; syncRoute(); };
-function showOverlay(name, spot, push) {
-  overlay = name; overlaySpot = spot || null; overlayLabel = null;
+window.viewClosed = (name) => { if (overlay !== name) return; overlay = null; syncRoute(); };
+function showOverlay(name, push) {
+  overlay = name;
   if (push) syncRoute();
-  let p; try { p = VIEWS[name].open(spot || undefined); } catch (e) { p = Promise.reject(e); }
+  let p; try { p = VIEWS[name].open(); } catch (e) { p = Promise.reject(e); }
   return Promise.resolve(p).catch(e => { window.viewClosed(name); showErr(VIEWS[name].err + (e && e.message || e)); });
 }
 function openView(name) {   // the ⋯ menu's views
   document.getElementById("menu").hidden = true;
   if (overlay === name) return;
   if (overlay) VIEWS[overlay].close();
-  return showOverlay(name, null, true);
+  return showOverlay(name, true);
 }
 // ---- the help pages (help.js, loaded the first time one opens): one overlay with a tab per page, each page its own
 // URL. A tab picked moves the URL without closing the overlay (viewSwitch); the pages' buttons open a tool (helpGo).
@@ -2960,7 +2947,7 @@ const HELP_PAGES = ["start", "about", "glossary", "changelog", "fairplay"];
 const loadHelp = () => loadJs("help.js?v=" + HP_VERSION, () => window.Help);
 for (const page of HELP_PAGES)
   VIEWS[page] = { open: () => loadHelp().then(() => window.Help.open(page)), close: () => window.Help && window.Help.close(), err: "Couldn't load the help pages: " };
-window.viewSwitch = (name) => { if (!VIEWS[name] || overlay === name) return; overlay = name; overlaySpot = overlayLabel = null; syncRoute(); };
+window.viewSwitch = (name) => { if (!VIEWS[name] || overlay === name) return; overlay = name; syncRoute(); };
 function helpOpen(page) {
   document.getElementById("menu").hidden = true; document.getElementById("menuBtn").setAttribute("aria-expanded", "false");
   if (HELP_PAGES.includes(overlay) && window.Help) return window.Help.show(page);
@@ -3096,16 +3083,16 @@ document.getElementById("practiceBtn").onclick = () => loadPractice().then(P => 
 document.getElementById("resetPractice").onclick = () => { document.getElementById("menu").hidden = true; if (practicing()) window.Practice.startOver(); };
 // ---- routes: the URL's view (a back or forward, or the page opened at it), opened without pushing. Practice is on at
 // /practice/ and off at the solver's URL, whatever it was last time (its "gto-practice" is no longer read); a view over
-// the page (reports, drills, session, study, import) leaves Practice as it is.
+// the page (session, study, import) leaves Practice as it is.
 async function applyRoute(r) {
   routing++;
   try {
-    if (overlay && overlay !== r.view) { VIEWS[overlay].close(); overlay = overlaySpot = overlayLabel = null; }
+    if (overlay && overlay !== r.view) { VIEWS[overlay].close(); overlay = null; }
     if (r.view === "practice" && !practicing()) await loadPractice().then(P => P.set(true)).catch(e => showErr(String(e)));
     else if (r.view === "solver" && practicing()) window.Practice.set(false);
-    if (VIEWS[r.view] && (overlay !== r.view || (r.spot && r.spot !== overlaySpot))) await showOverlay(r.view, r.spot);
+    if (VIEWS[r.view] && overlay !== r.view) await showOverlay(r.view);
   } finally { routing--; }
-  syncRoute(true);   // (the URL as the view has it: /reports/ -> /reports/<the spot shown>/)
+  syncRoute(true);
 }
 if (typeof window.addEventListener === "function") window.addEventListener("popstate", () => applyRoute(parseRoute(location.pathname)));
 // Two notices, once each, on the first load after these settings lost their carry. A hand not started yet is no saved

@@ -68,8 +68,6 @@ cp "$HERE/gto/static/index.html" "$HERE/gto/static/worker.js" "$HERE/gto/static/
 # constant with its code from the page.
 MODULES="
 HH_VERSION hh.js
-RP_VERSION reports.js
-DR_VERSION drills.js reports.js
 BD_VERSION breakdown.js
 SS_VERSION session.js
 SY_VERSION study.js
@@ -123,7 +121,7 @@ if [ -f "$HERE/gto/static/flop_library/index.json" ]; then
   rm "$WORK/site/gto-solver/index.html.bak"
   grep -q '^const LIB_BASE = "../gto-solver-library/";' "$WORK/site/gto-solver/index.html"
 fi
-# Each view's URL (/gto-solver/practice/, /gto-solver/reports/srp-btn-bb/...: the page's ROUTES, gto/routes.py) is a copy
+# Each view's URL (/gto-solver/practice/...: the page's ROUTES, gto/routes.py) is a copy
 # of the stamped page with a <base href="../"> pointing its relative URLs at gto-solver/ (GitHub Pages has no rewrites).
 # (No 404.html: GitHub Pages only uses the site root's, which isn't this folder's.)
 (cd "$HERE" && "$PYTHON" -m gto.routes "$WORK/site/gto-solver")
