@@ -1,4 +1,4 @@
-// Explain with AI proxy (Cloudflare Worker; the entry point is src/index.js). Practice mode's "Explain with AI" (gto/static/practice.js)
+// Explain with AI proxy (Cloudflare Worker; the entry point is src/index.js). "Explain with AI" (gto/static/explain.js, in Practice and a finished hand's review)
 // POSTs {prompt} here; the worker builds the Claude Messages API request itself (fixed model, system prompt, token cap,
 // streamed) with the ANTHROPIC_API_KEY secret and streams the Server-Sent Events straight back. The client chooses
 // only the prompt text. Only the site's origins (ALLOWED_ORIGINS) may call it, and each IP and the whole proxy have
@@ -11,7 +11,7 @@ export const MODEL = "claude-sonnet-5-5";
 // max_tokens, so it could use up the 700 before the answer)
 export const MAX_TOKENS = 700;
 export const MAX_PROMPT = 8000;
-// (the same coach prompt as practice.js's AI_SYSTEM, which the own-key path sends; test/index.test.js keeps them equal)
+// (the same coach prompt as explain.js's AI_SYSTEM, which the own-key path sends; test/index.test.js keeps them equal)
 export const SYSTEM = "You coach no-limit hold'em players who are learning from a GTO solver. The user sends one decision from a practice hand, "
   + "with the solver's frequencies and EVs for their exact hand. Treat those numbers as ground truth: never contradict them or invent other "
   + "frequencies or EVs.\n\nReply in exactly this shape, 70 words at most in all:\n"

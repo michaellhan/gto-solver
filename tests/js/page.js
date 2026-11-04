@@ -17,6 +17,9 @@ require("node:v8").setFlagsFromString("--no-sparkplug");
 // GTO_PAGE=<file> tests another copy of the page (e.g. an older version, to see a test catch its bug)
 const HTML_PATH = process.env.GTO_PAGE || path.join(__dirname, "..", "..", "gto", "static", "index.html");
 
+// practice.js as the page loads it (loadPractice): explain.js first, whose hand strength and words it reads
+const PRACTICE = ["explain.js", "practice.js"].map(f => fs.readFileSync(path.join(path.dirname(HTML_PATH), f), "utf8")).join("\n");
+
 function pageScript() {
   const html = fs.readFileSync(HTML_PATH, "utf8");
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
@@ -285,4 +288,4 @@ function acts(str) {
   });
 }
 
-module.exports = { loadPage, state, acts, pageScript, HTML_PATH };
+module.exports = { loadPage, state, acts, pageScript, HTML_PATH, PRACTICE };

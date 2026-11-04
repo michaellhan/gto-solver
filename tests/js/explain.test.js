@@ -1,4 +1,4 @@
-// Practice mode's mistake explanations (gto/static/practice.js): Copy for AI (the decision as a prompt) and
+// Practice mode's mistake explanations (gto/static/explain.js, on practice.js's cards): Copy for AI (the decision as a prompt) and
 // Explain with AI (the Claude Messages API, streamed, with the user's own key), against a stubbed solver and fetch.
 "use strict";
 const test = require("node:test");
@@ -8,7 +8,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 const { loadPage } = require("./page.js");
 
-const PRACTICE = fs.readFileSync(path.join(__dirname, "..", "..", "gto", "static", "practice.js"), "utf8");
+const { PRACTICE } = require("./page.js");
 const flush = async (n = 4) => { for (let i = 0; i < n; i++) await new Promise(r => setImmediate(r)); };
 const ADVICE = { street: "flop", hero: "BTN", hand: "AKs", recommended: "call",
   actions: [{ action: "fold", freq: 0.2, ev_bb: 0 }, { action: "check", freq: 0.3, ev_bb: 0.4 }, { action: "call", freq: 0.5, ev_bb: 1 }] };
@@ -27,7 +27,7 @@ async function atDecision(storage = {}, api = null, { proxy = "" } = {}) {
   p.ctx.fetch = (url, init) => String(url).startsWith("https://api.anthropic.com") || (proxy && String(url) === proxy) ? (p.apiCalls.push({ url: String(url), init }), api(url, init)) : own(url, init);
   // (EXPLAIN_PROXY set to the test's proxy, or "" for your own key only, as before the worker's deploy)
   const src = PRACTICE.replace(/const EXPLAIN_PROXY = "[^"]*";/, `const EXPLAIN_PROXY = ${JSON.stringify(proxy)};`);
-  assert.ok(src.includes(`const EXPLAIN_PROXY = ${JSON.stringify(proxy)};`), "EXPLAIN_PROXY in practice.js");
+  assert.ok(src.includes(`const EXPLAIN_PROXY = ${JSON.stringify(proxy)};`), "EXPLAIN_PROXY in explain.js");
   vm.runInContext(src, p.ctx, { filename: "practice.js" });
   p.run("Practice.set(true)");
   const done = new Set();
@@ -199,7 +199,7 @@ test("the prompt on a later street: the board by street, each bet with the pot, 
 
 test("EXPLAIN_PROXY is the deployed worker's /explain, so explanations are free by default; no API key in the page", () => {
   assert.match(PRACTICE, /\n  const EXPLAIN_PROXY = "https:\/\/gto-explain\.[a-z0-9-]+\.workers\.dev\/explain";\n/);
-  assert.ok(!/sk-ant-api\d/.test(PRACTICE), "no API key in practice.js");
+  assert.ok(!/sk-ant-api\d/.test(PRACTICE), "no API key in explain.js or practice.js");
 });
 
 test("with the proxy: Explain with AI streams from it with no key, sending only the prompt; Use my own key and back", async () => {

@@ -101,10 +101,10 @@ test("the client can't choose the model, system prompt, tools or tokens: the wor
   });
 });
 
-test("the coach prompt is the same as the one practice.js sends with a user's own key", () => {
-  const src = fs.readFileSync(path.join(HERE, "..", "..", "..", "gto", "static", "practice.js"), "utf8");
+test("the coach prompt is the same as the one explain.js sends with a user's own key", () => {
+  const src = fs.readFileSync(path.join(HERE, "..", "..", "..", "gto", "static", "explain.js"), "utf8");
   const m = src.match(/const AI_SYSTEM = ([\s\S]*?);\n/);
-  assert.ok(m, "AI_SYSTEM in practice.js");
+  assert.ok(m, "AI_SYSTEM in explain.js");
   assert.equal(new Function("return " + m[1])(), SYSTEM);
 });
 

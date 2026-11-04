@@ -135,8 +135,10 @@
       hand histories and settings stay on your device, in its local storage. Clearing this site's data in your browser
       deletes them; <b>Back up everything</b> in My hands saves them to a file (without your Anthropic key), and Restore
       reads it back, in this browser or another. The page is hosted on GitHub Pages. The one
-      exception is <b>Explain with AI</b> in Practice: when you click it, that decision's summary is sent through our
-      proxy to Anthropic's Claude to write the explanation (or straight to Anthropic with your own key, if you set one).</p>`;
+      exception is <b>Explain with AI</b>, in Practice and in the review of a finished hand: when you click it, that decision's
+      summary (the game, your seat and cards, the board and betting, what you chose and the solver's numbers) is sent through
+      our proxy to Anthropic's Claude to write the explanation (or straight to Anthropic with your own key, if you set one).
+      Nothing is sent until you click it.</p>`;
   }
 
   // ---- the Glossary: [id, term, definition]; index.html's badges open it at their entry (data-term)
@@ -171,6 +173,7 @@
   // ---- the Changelog: what changed for users, newest first, from the commit history
   const CHANGES = [
     ["November 3", [
+      "Explain with AI in a hand's review: under a decision's Details, Claude explains that decision from the solver's numbers, as in Practice. Nothing is sent until you click it.",
       "Review first: a hand you enter is recorded, and the solver reviews it once it's finished. Advice no longer shows while a hand is being entered, nothing solves in the background, and Quick, Randomise and Pool leave the entry screen (Pool and locks are there on a finished hand). Finish hand marks a hand finished if you don't know the end of it. Practice, Study, the drills and reports work as before; a report's flop or a drill's spot now opens in Study.",
     ]],
     ["November 1 - 2", [

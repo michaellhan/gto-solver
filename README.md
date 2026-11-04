@@ -123,7 +123,13 @@ aren't entered after that). `handDone(sim)` in `gto/static/index.html` is the ru
 didn't record isn't reviewed, so finishing at your turn leaves that turn without advice (the panel says so). Click any decision, in
 the list or on the timeline, for its full advice: a step view (`stepView`, Previous, Next, Back to the hand; arrow
 keys) that leaves the hand as it was. **What if? Study this spot** opens that decision in Study for other
-lines. That is where a finished hand's Pool, locks and speeds apply: they're hidden while a hand is being entered (`body.unfinished .nofin`)
+lines. The step view's **Details** offers **Copy for AI** and **Explain with AI** for that decision, once its advice shows: the buttons,
+proxy, daily limit and own-key form of Practice (`explain.js`, loaded then; [Explain with AI proxy](#explain-with-ai-proxy)), the explanation streamed into
+the row alone so the advice under it stays as it is, and kept per decision and answer. The prompt is Practice's with the hand as played: that it's a
+real hand, what the solver's numbers assume (GTO, the pool, your lock), the hand up to that decision and never the cards after it, and this
+answer's grade (a jam off its tree keeps the review's). `explainable()` is its gate, on top of `adviceOpen()`: never on a hand being entered,
+nor while Review whole hand runs through the decisions (no grade yet), nor in Practice (the coach's cards have their own). Drawing the row
+sends nothing; only the button does, and seats go by position, never by player name. That is where a finished hand's Pool, locks and speeds apply: they're hidden while a hand is being entered (`body.unfinished .nofin`)
 and not sent. Once any of a hand's advice has shown it stays as entered (`S.reviewed`; a link and a reload keep it):
 Undo and the card slots refuse, and a line tried differently is Study's, or a new hand's. **Keep entering**, or Undo, reopens a
 finished hand that nothing has been shown for. Rewinding an unfinished hand truncates it and gives no advice, with a toast. A saved,
@@ -830,7 +836,7 @@ model left to it gets draws wrong), what you did, the solver's mix with each act
 and the verdict, and a request for a short answer: a one-sentence verdict, three reasons, one takeaway. **Explain
 with AI** streams Claude's explanation (Claude Sonnet 5.5, extended thinking off, at most about 70 words: a bold
 Verdict, three one-line reasons shown as a list, cut at three if it writes more, and a bold Takeaway; the solver's
-numbers and the hand reading taken as given) into the card. Through the proxy (`EXPLAIN_PROXY` in `practice.js`, see
+numbers and the hand reading taken as given) into the card. Through the proxy (`EXPLAIN_PROXY` in `explain.js`, see
 [Explain with AI proxy](#explain-with-ai-proxy)) it works for every visitor with no key, a few a day each; when they're
 used up the card says "Daily free explanations used up — add your own key" and offers the key form, and a small
 **Use my own key** link switches to your own key (and **Use free explanations** back). Without the proxy, or with
@@ -838,7 +844,7 @@ your own key chosen, it goes straight from the browser to the Claude Messages AP
 first time it asks for one (a link to console.anthropic.com to get one); the key is kept only in this browser's
 localStorage (never in a backup or an export) and sent only to api.anthropic.com (the site is static, nothing of ours in between), and **Forget key**
 removes it. A refused key (401), a rate limit (429) or no network say so in the card with **Try again**; each
-explanation is kept in memory for its decision, so opening it again costs nothing. The page loads `practice.js` the first time Practice is turned on.
+explanation is kept in memory for its decision, so opening it again costs nothing. The page loads `practice.js` the first time Practice is turned on, after `explain.js` (the buttons, the prompt, the streaming and the hand reading, shared with a finished hand's review; a review loads only `explain.js`, when a decision's advice first shows).
 
 **Tables** (1-4, under the spots) plays several tables at once, as on a multi-tabling site; 1 is the table above,
 unchanged. With 2-4 a view of their own takes the place of the page's table and coach (`multitable.js`, loaded the
@@ -896,8 +902,8 @@ in Pyodide, above). `MultiTable.metrics()` in the console gives a session's numb
 
 ## Explain with AI proxy
 
-`cloudflare/explain-proxy/` is a small Cloudflare Worker that lets Practice mode's **Explain with AI** work for
-visitors without their own API key. The page POSTs `{prompt}` (the Copy for AI text, at most 8000 characters) to
+`cloudflare/explain-proxy/` is a small Cloudflare Worker that lets **Explain with AI** (Practice and a finished hand's
+review) work for visitors without their own API key. The page POSTs `{prompt}` (the Copy for AI text, at most 8000 characters) to
 `/explain`; the worker builds the Claude Messages API request itself (Claude Sonnet 5.5, the coach system prompt,
 700 tokens at most, streamed: the page can't choose any of these) with the key kept as a Worker secret, and streams
 the answer back. Only `https://www.michael-han.com`, `https://michael-han.com` and `http://localhost:*` /
@@ -922,7 +928,7 @@ Cloudflare account is enough):
 5. `npx wrangler secret put ANTHROPIC_API_KEY` and paste the key when it asks (it's stored encrypted by Cloudflare,
    never in the repo)
 6. `npx wrangler deploy`: it prints the worker's URL, like `https://gto-explain.<your-subdomain>.workers.dev`
-7. Set `EXPLAIN_PROXY` in `gto/static/practice.js` to that URL plus `/explain` (or tell Claude the URL), then
+7. Set `EXPLAIN_PROXY` in `gto/static/explain.js` to that URL plus `/explain` (or tell Claude the URL), then
    deploy the site.
 
 To check it: `curl -i -X POST https://gto-explain.<your-subdomain>.workers.dev/explain -H 'Origin: https://michael-han.com' -H 'content-type: application/json' -d '{"prompt":"Is folding 72o UTG right?"}'`
@@ -4543,7 +4549,7 @@ python scripts/compare_mw_library.py --spot mw_co_btn_bb --boards Kh7d2c,9s8s5d 
 scripts/deploy.sh
 ```
 
-copies the page, the worker, `practice.js`, `multitable.js`, `reports.js`, `drills.js`, `breakdown.js`, `session.js`, `study.js`, `help.js`, `solver.zip` (the worker's Python code: every `gto/*.py` and treys, `scripts/build_bundle.py`), the `gto` sources and Study's stored preflop solves (`gto/static/pf/*.bin` as `pf/`) into the `gto-solver/` folder
+copies the page, the worker, `practice.js`, `explain.js`, `multitable.js`, `reports.js`, `drills.js`, `breakdown.js`, `session.js`, `study.js`, `help.js`, `solver.zip` (the worker's Python code: every `gto/*.py` and treys, `scripts/build_bundle.py`), the `gto` sources and Study's stored preflop solves (`gto/static/pf/*.bin` as `pf/`) into the `gto-solver/` folder
 of the michaellhan.github.io repo and pushes. The precomputed libraries (`gto/static/flop_library`: the heads-up and
 3-way indexes, entries and reports) go first to their own repo, michaellhan/gto-solver-library, served beside the page
 at /gto-solver-library/ (`scripts/deploy_library.sh`): one commit with no history, force-pushed on each publish and

@@ -1,6 +1,6 @@
 # Explain with AI proxy
 
-A Cloudflare Worker for Practice mode's **Explain with AI** (`gto/static/practice.js`, `EXPLAIN_PROXY`), so it works
+A Cloudflare Worker for **Explain with AI** in Practice mode and a finished hand's review (`gto/static/explain.js`, `EXPLAIN_PROXY`), so it works
 without each visitor's own API key. `POST /explain` with JSON `{"prompt": "..."}` (at most 8000 characters) from an
 allowed origin; the worker sends it to the Claude Messages API with its own fixed model (`claude-sonnet-5-5`), coach
 system prompt and `max_tokens` (700), streamed, and passes the Server-Sent Events back.

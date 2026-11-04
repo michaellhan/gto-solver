@@ -97,7 +97,7 @@ class TestServer(unittest.TestCase):
         self.assertEqual(r.getheader("Location"), "/practice/?x=1")
         r, _ = self.get("/nope/")
         self.assertEqual(r.status, 404)
-        for js in ("/practice.js", "/store.js", "/hands.js"):
+        for js in ("/practice.js", "/explain.js", "/store.js", "/hands.js"):
             r, body = self.get(js)
             self.assertEqual(r.status, 200, js)
             self.assertEqual(r.getheader("Content-Type"), "text/javascript")

@@ -61,7 +61,7 @@ fi
 if [ -z "${BUILD_ONLY:-}" ]; then gh repo clone michaellhan/michaellhan.github.io "$WORK/site" -- -q --depth 1; fi
 rm -rf "$WORK/site/gto-solver"
 mkdir -p "$WORK/site/gto-solver/gto"
-cp "$HERE/gto/static/index.html" "$HERE/gto/static/worker.js" "$HERE/gto/static/hh.js" "$HERE/gto/static/practice.js" "$HERE/gto/static/reports.js" "$HERE/gto/static/drills.js" "$HERE/gto/static/breakdown.js" "$HERE/gto/static/session.js" "$HERE/gto/static/study.js" "$HERE/gto/static/runouts.js" "$HERE/gto/static/simple.js" "$HERE/gto/static/multitable.js" "$HERE/gto/static/help.js" "$HERE/gto/static/store.js" "$HERE/gto/static/hands.js" "$HERE/gto/static/writeup.js" "$HERE/gto/static/sw.js" "$HERE/gto/static/health.json" "$WORK/site/gto-solver/"
+cp "$HERE/gto/static/index.html" "$HERE/gto/static/worker.js" "$HERE/gto/static/hh.js" "$HERE/gto/static/practice.js" "$HERE/gto/static/explain.js" "$HERE/gto/static/reports.js" "$HERE/gto/static/drills.js" "$HERE/gto/static/breakdown.js" "$HERE/gto/static/session.js" "$HERE/gto/static/study.js" "$HERE/gto/static/runouts.js" "$HERE/gto/static/simple.js" "$HERE/gto/static/multitable.js" "$HERE/gto/static/help.js" "$HERE/gto/static/store.js" "$HERE/gto/static/hands.js" "$HERE/gto/static/writeup.js" "$HERE/gto/static/sw.js" "$HERE/gto/static/health.json" "$WORK/site/gto-solver/"
 # the worker's Python code and treys in one zip (scripts/build_bundle.py); the separate gto/*.py files stay for pages
 # cached from before the bundle (index.html is cached up to 10 minutes, with the old worker's version)
 "$PYTHON" "$HERE/scripts/build_bundle.py" "$WORK/site/gto-solver/solver.zip" >/dev/null
@@ -146,6 +146,11 @@ TV="$(shasum "$HERE/gto/static/store.js" | cut -c1-10)"
 sed -i.bak -E "s#<script src=\"store\.js\?v=[^\"]*\"></script>#<script src=\"store.js?v=$TV\"></script>#" "$WORK/site/gto-solver/index.html"
 rm "$WORK/site/gto-solver/index.html.bak"
 grep -q "<script src=\"store.js?v=$TV\"></script>" "$WORK/site/gto-solver/index.html"
+# and Copy for AI, Explain with AI (explain.js: Practice's and a reviewed decision's)
+EV="$(shasum "$HERE/gto/static/explain.js" | cut -c1-10)"
+sed -i.bak -E "s/^const EX_VERSION = \"[^\"]*\";/const EX_VERSION = \"$EV\";/" "$WORK/site/gto-solver/index.html"
+rm "$WORK/site/gto-solver/index.html.bak"
+grep -q "const EX_VERSION = \"$EV\";" "$WORK/site/gto-solver/index.html"
 # and the write-up (writeup.js: Write up a hand)
 UV="$(shasum "$HERE/gto/static/writeup.js" | cut -c1-10)"
 sed -i.bak -E "s/^const WU_VERSION = \"[^\"]*\";/const WU_VERSION = \"$UV\";/" "$WORK/site/gto-solver/index.html"

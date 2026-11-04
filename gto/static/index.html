@@ -306,7 +306,8 @@
   .cx-acts .n { display: inline-flex; align-items: center; }
   .cx-acts .you { font-weight: 700; }
   .cx-acts .hd { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); }
-  /* Copy for AI / Explain with AI (in Details), the streamed explanation and the API key form */
+  /* Copy for AI / Explain with AI (in Details: Practice's cards, .cx-more, and a reviewed decision's advice, .rv-ai), the streamed explanation and the API key form */
+  .rv-ai { font-size: 13px; }
   .cx-aib { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
   .cx-aib button { background: none; color: var(--muted); border-color: var(--line2); font-weight: 600; }
   .cx-aib button:hover { color: var(--text); background: var(--panel2); }
@@ -317,13 +318,13 @@
   .cx-ai .err { font-size: 13px; }
   .cx-ai .acts2 { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
   .cx-ai .ft { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 11px; color: var(--faint); border-top: 1px solid var(--line); padding-top: 6px; }
-  .cx-more .cx-ai .link { margin-top: 0; font-size: 11px; }
+  .cx-more .cx-ai .link, .rv-ai .cx-ai .link { margin-top: 0; font-size: 11px; }
   .cx-ai.form label { display: block; font-weight: 600; margin-bottom: 6px; }
   .cx-ai .row { display: flex; gap: 6px; }
   .cx-ai input.cx-key { flex: 1; min-width: 0; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; font: 13px ui-monospace, Menlo, monospace; }
   .cx-ai .note { color: var(--muted); font-size: 12px; margin: 8px 0 4px; }
   .cx-ai a { color: var(--accent); }
-  .cx-more .cx-ai.form .link { margin-top: 4px; font-size: 12px; }
+  .cx-more .cx-ai.form .link, .rv-ai .cx-ai.form .link { margin-top: 4px; font-size: 12px; }
   /* the result */
   .cx-res { --c: var(--line2); text-align: center; padding: 16px 12px; border-radius: 10px; background: var(--panel2); border: 1px solid var(--line); }
   .cx-res.won { --c: var(--good); } .cx-res.lost { --c: var(--bad); }
@@ -1008,6 +1009,7 @@ const DR_VERSION = "1";        // and this with a hash of drills.js (the drills,
 const BD_VERSION = "1";        // and breakdown.js (the advice's Breakdown and Equity views, loaded on first use)
 const SS_VERSION = "1";        // and session.js (the session analyzer, loaded on first use, after hh.js)
 const SY_VERSION = "1";        // and study.js (Study mode, the solution browser, loaded on first use)
+const EX_VERSION = "1";        // and explain.js (Copy for AI, Explain with AI: Practice's and a reviewed decision's, loaded on first use)
 const WU_VERSION = "1";        // and writeup.js (Write up a hand: a played hand entered seat by seat, then reviewed)
 const RO_VERSION = "1";        // and runouts.js (Study's turn and river reports, loaded when one first opens)
 const SP_VERSION = "1";        // and simple.js (the one-size view: the advice's Simple tab and Study's, loaded on first use)
@@ -2086,6 +2088,7 @@ function renderResult(res, key) {
   if (res.grid && res.street !== "preflop" && !heuristic(res)) h += `<div class="segment vtabs">${["grid", "breakdown", ...(res.multiway ? [] : ["equity"]), ...(simpleOk(res, key) ? ["simple"] : [])].map(v => `<button data-v="${v}" class="${v === "grid" ? "active" : ""}">${v[0].toUpperCase() + v.slice(1)}</button>`).join("")}</div><div class="bdview" hidden></div>`;
   if (res.grid) h += `<div class="gridview">${renderGrid(res.grid, res.hand)}</div>`;
   h += `<details><summary>Details</summary>`;
+  if (explainable()) h += `<div class="rv-ai" id="explainBox"></div>`;
   if (res.villain_grid) h += `<div class="vgrid">${renderGrid(res.villain_grid, null, res.villain)}</div>`;
   if (res.villain_range) h += `<details><summary>${res.villain}'s range as text (${res.villain_range_combos} combos)</summary><div class="villain">${res.villain_range}</div></details>`;
   if (res.size_usage) h += `<div class="meta">Size optimization, your mix over the wide menu: ${SIZE_USAGE(res)}</div>`;
@@ -2100,8 +2103,35 @@ function renderResult(res, key) {
   if (vg) wireGrid(vg, res.villain_grid, null, res.villain);
   el.querySelectorAll(".vtabs button").forEach(b => b.onclick = () => showView(el, b.dataset.v, res, key));
   if (VIEW !== "grid" && !review && !practicing() && el.querySelector(`.vtabs [data-v="${VIEW}"]`)) showView(el, VIEW, res, key);
+  showExplain(res, key);
   updateAdviceState();
   renderAction(simulate());   // on your turn the buttons carry the solver's sizes and frequencies
+}
+// ---- Explain with AI on a decision of a finished hand, in Details: explain.js's row of buttons, the same proxy, quota and
+// key form as Practice's cards. It's for the decision looked at, once its advice shows: never on a hand being entered
+// (adviceOpen, the page's gate), nor while a review runs through the hand (no grade yet), nor in Practice (its cards have
+// their own). Drawing the row sends nothing: only its button does.
+const explainable = () => adviceOpen() && !practicing() && !!stepView;
+let reviewAi = null, explained = null;   // explain.js's panel for the review; the decision in it
+function drawExplain() {
+  const box = document.getElementById("explainBox");
+  if (box && explained && explainable()) { box.innerHTML = reviewAi.html(explained); reviewAi.wire(box); }
+}
+function showExplain(res, key) {
+  explained = null;
+  if (!explainable()) return;
+  loadJs("explain.js?v=" + EX_VERSION, () => window.Explain).then(() => {
+    if (lastResult !== res || !explainable()) return;   // (moved on while it loaded)
+    const X = window.Explain, s = stepView.s, a = stepView.full.actions[s][stepView.i], mv = gradedMove(simulate(), a);
+    const rec = { action: mv.action, ...(mv.to != null ? { to: mv.to } : {}) };
+    reviewAi = reviewAi || X.panel({ promptOf: (e) => X.prompt(e), show: drawExplain });
+    // (this answer's grade; a jam off its tree has only the review's, jamGrade's)
+    explained = { id: "r" + X.hash(key + JSON.stringify(rec)), played: true, street: s, rec, g: gradeFor(mv) || a.g || null, mix: X.mixOf(res),
+      ctx: X.spot(s, res.locked ? "Real opponents; the solver's numbers are its best response to the lock above"
+        : res.actions.some(x => x.gto_freq !== undefined) ? "Real opponents; the solver's numbers are its best response to a typical player pool"
+        : "Real opponents; the solver's numbers assume they play its GTO strategy") };
+    drawExplain();
+  }, () => { const box = document.getElementById("explainBox"); if (box) box.innerHTML = `<div class="err">Couldn't load Explain with AI (explain.js).</div>`; });
 }
 function gridClass(i, j) { return i === j ? RANKS[i] + RANKS[i] : i < j ? RANKS[i] + RANKS[j] + "s" : RANKS[j] + RANKS[i] + "o"; }
 // who: a villain's range (one "in range" action; cells shaded by weight), without the whole-range totals
@@ -2928,8 +2958,9 @@ function showSimple(box, res, key) {
 })();
 function loadPractice() {
   if (window.Practice) return Promise.resolve(window.Practice);
-  return new Promise((res, rej) => { const s = document.createElement("script"); s.src = "practice.js?v=" + WORKER_VERSION;
-    s.onload = () => res(window.Practice); s.onerror = () => rej(new Error("could not load practice.js")); document.head.appendChild(s); });
+  // (explain.js first: practice.js reads a hand's strength and a decision's words from it)
+  return loadJs("explain.js?v=" + EX_VERSION, () => window.Explain).then(() => new Promise((res, rej) => { const s = document.createElement("script"); s.src = "practice.js?v=" + WORKER_VERSION;
+    s.onload = () => res(window.Practice); s.onerror = () => rej(new Error("could not load practice.js")); document.head.appendChild(s); }));
 }
 document.getElementById("practiceBtn").onclick = () => loadPractice().then(P => P.set(!P.on)).catch(e => showErr(String(e)));
 // Reset practice (the ⋯ menu, shown while practising): the score's Start over

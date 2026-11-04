@@ -32,15 +32,15 @@ your own Anthropic API key (see A3).
 - **jsDelivr** (a public CDN) serves the Python runtime (Pyodide) and numpy the solver needs. It receives your IP
   address and browser details when your browser downloads them, under jsDelivr's privacy policy.
 
-### A3. "Explain with AI" (Practice)
+### A3. "Explain with AI" (Practice and the review of a finished hand)
 
 This is the only feature that sends anything you do to a server.
 
 - **Using our proxy (default).** When you click *Explain with AI*, your browser sends a short text summary of that
-  practice decision (the game, your seat and cards, the board and the betting, what you chose, and the solver's mix,
-  EVs and verdict for it) to our proxy on **Cloudflare Workers**,
+  decision (the game, your seat and cards, the board and the betting, what you chose, and the solver's mix, EVs and
+  verdict for it), a hand you practised or one you played and are reviewing, to our proxy on **Cloudflare Workers**,
   which forwards that text alone to **Anthropic** (the Claude API) and returns the explanation. Nothing else from
-  your device is sent.
+  your device is sent, and nothing at all until you click. The summary names seats by position, not by player name.
   - To limit abuse and cost, the proxy counts requests per IP address: up to 5 a minute and 20 a day per address, and
     1000 a day in total. The daily counters are stored under a one-way hash (SHA-256) of your IP address, not the
     address itself, and expire after 2 days. The per-minute limit uses Cloudflare's rate-limiting service.
