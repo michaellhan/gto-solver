@@ -28,20 +28,16 @@
         don't know the end of). A decision you didn't record isn't reviewed.</li>
       <li><b>Review whole hand</b> solves and grades each decision you made. Click a decision to see the solver's
         ${term("mix", "mix")} for your hand, each action's ${term("ev", "EV")}, and your whole range in a grid. Once you've
-        seen a review the hand stays as entered; <b>What if?</b> opens that spot in Study to try other lines.</li>
+        seen a review the hand stays as entered.</li>
     </ol>
     <p>Have a hand history? ${go("import", "Import hand…")} reads PokerStars, GGPoker, 888poker, partypoker, Winamax,
       WPN/ACR, Ignition/Bovada and iPoker hands, in the page.</p>
     <h3>Find your leaks over a session</h3>
     <p>${go("session", "Analyze session…")} takes a whole session's hand histories, solves each of your decisions and
       grades it, and adds up the EV you lost by street, position and spot, with your biggest mistakes first.</p>
-    <h3>Study a spot</h3>
-    <p>${go("study", "Study…")} walks a hand node by node with no cards of your own: at each decision you see what the
-      solver does with every hand of the player to act, with EVs and equity. ${go("preflop", "Preflop solve…")} solves a game's
-      preflop for the players, stacks and sizes you set.</p>
     <h3>Train</h3>
     <p>${go("practice", "Practice")} deals random hands against opponents who play the solver's strategy, and grades each
-      of your decisions as you make it. ${go("rangeBuilder", "Range builder…")} lets you paint a whole range's strategy and scores it against the solver's.</p>
+      of your decisions as you make it.</p>
     <h3>Settings worth knowing</h3>
     <ul>
       <li><b>Solve: Fast / Accurate</b> trades time for accuracy in a review (${to("about", "how accurate each one is")}).
@@ -87,8 +83,7 @@
     <h3>Precomputed or solved live</h3>
     <ul>
       <li><b>Preflop</b> comes from charts, written by hand and matched to published solves on 26 spots (0.96 percentage
-        points apart on average). Study's Preflop solve solves the preflop game itself, which opens tighter than the
-        charts in places (UTG 14.8% of hands against the charts' 18.7%).</li>
+        points apart on average).</li>
       <li><b>Flops</b> in common heads-up pots of 6-max 100bb cash (the button, cutoff, hijack, UTG and small blind
         against the big blind, five flatted opens and eight 3bet pots) come from a ${term("precomputed", "precomputed library")}
         and answer at once: 83.6% of heads-up flop decisions in that game. A 3-way library holds the first decisions of
@@ -164,7 +159,7 @@
     ["cbet", "C-bet, 3bet, 4bet, squeeze", "A c-bet (continuation bet) is a flop bet by the player who raised preflop. A 3bet is the first re-raise preflop (the open is the second bet), a 4bet the next one. A squeeze is a 3bet after an open and a call."],
   ];
   function glossaryHtml() {
-    return `<p class="hp-lead">The words you meet in reviews, in Study and in Practice.</p><dl class="hp-dl">`
+    return `<p class="hp-lead">The words you meet in reviews and in Practice.</p><dl class="hp-dl">`
       + TERMS.map(([id, t, d]) => `<dt id="hp-${id}">${esc(t)}</dt><dd>${esc(d)}</dd>`).join("") + `</dl>`;
   }
 

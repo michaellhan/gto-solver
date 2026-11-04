@@ -53,8 +53,6 @@ Open http://127.0.0.1:18877/ . Each view has its own URL, on the website and the
 | --- | --- |
 | `/gto-solver/` | the solver (advice); a share link `/gto-solver/#h=…` opens its spot here |
 | `/gto-solver/practice/` | Practice |
-| `/gto-solver/study/` | Study |
-| `/gto-solver/preflop/` | Preflop solve (Study on a game set in a form) |
 | `/gto-solver/session/` | Analyze session |
 | `/gto-solver/import/` | Import hand |
 | `/gto-solver/hands/` | My hands |
@@ -121,8 +119,7 @@ aren't entered after that). `handDone(sim)` in `gto/static/index.html` is the ru
 **Reviewing it.** **Review whole hand** (key R) grades each decision you recorded, in turn; a decision you
 didn't record isn't reviewed, so finishing at your turn leaves that turn without advice (the panel says so). Click any decision, in
 the list or on the timeline, for its full advice: a step view (`stepView`, Previous, Next, Back to the hand; arrow
-keys) that leaves the hand as it was. **What if? Study this spot** opens that decision in Study for other
-lines. The step view's **Details** offers **Copy for AI** and **Explain with AI** for that decision, once its advice shows: the buttons,
+keys) that leaves the hand as it was. The step view's **Details** offers **Copy for AI** and **Explain with AI** for that decision, once its advice shows: the buttons,
 proxy, daily limit and own-key form of Practice (`explain.js`, loaded then; [Explain with AI proxy](#explain-with-ai-proxy)), the explanation streamed into
 the row alone so the advice under it stays as it is, and kept per decision and answer. The prompt is Practice's with the hand as played: that it's a
 real hand, what the solver's numbers assume (GTO, the pool, your lock), the hand up to that decision and never the cards after it, and this
@@ -130,7 +127,7 @@ answer's grade (a jam off its tree keeps the review's). `explainable()` is its g
 nor while Review whole hand runs through the decisions (no grade yet), nor in Practice (the coach's cards have their own). Drawing the row
 sends nothing; only the button does, and seats go by position, never by player name. That is where a finished hand's Pool, locks and speeds apply: they're hidden while a hand is being entered (`body.unfinished .nofin`)
 and not sent. Once any of a hand's advice has shown it stays as entered (`S.reviewed`; a link and a reload keep it):
-Undo and the card slots refuse, and a line tried differently is Study's, or a new hand's. **Keep entering**, or Undo, reopens a
+Undo and the card slots refuse, and a line tried differently is a new hand's. **Keep entering**, or Undo, reopens a
 finished hand that nothing has been shown for. Rewinding an unfinished hand truncates it and gives no advice, with a toast. A saved,
 shared or reloaded hand comes back as it was left: unfinished with no advice, finished with its review.
 
@@ -216,11 +213,11 @@ the mix, ~ rarely played, ✗ outside it, with the EV given up) and lists them w
 In a hand being entered, clicking one of your decisions on the timeline goes back to it to enter it again,
 with Undo; in Practice the advice stays visible but dimmed and labelled while others act. The **⋯** menu has a four-colour
 deck (diamonds blue, clubs green), Sounds on/off, a switch that puts the advice on the left, and Reset layout.
-The menu is grouped: Review (Import hand, Analyze session), Study (Study, Preflop solve, Range builder), Help, and Settings (those switches, Reset practice, Reset layout); it scrolls on a short screen.
+The menu is grouped: Review (Import hand, Analyze session), Help, and Settings (those switches, Reset practice, Reset layout); it scrolls on a short screen.
 
 **Help** (the **?** beside the ⋯ menu, and the menu's Help group) is five plain-language pages, each with its own URL
-(the table above) and tabs between them that move it: **Getting started** (reviewing a hand, a session, studying a
-spot, training, the settings worth knowing, with buttons that open each view), **About & accuracy** (the README's
+(the table above) and tabs between them that move it: **Getting started** (reviewing a hand, a session,
+training, the settings worth knowing, with buttons that open each view), **About & accuracy** (the README's
 benchmarks in plain words: what "% of the pot from equilibrium" means, the comparison with postflop-solver, which
 spots are precomputed or solved live, Fast and Accurate, the known limits and where your data goes),
 **Glossary** (GTO, mix, EV and EV lost, equity and EQR, ranges and combos, exploitability, approximate, precomputed,
@@ -233,7 +230,7 @@ The thresholds the Glossary quotes are the code's: tests/js/help.test.js checks 
 `gradeClass` and `HEUR_OK`/`HEUR_MEH`.
 
 **First visit.** A first visit to the solver's URL (no `gto-speed` in the browser yet, not a view's URL or a `#h=`
-link) opens a small chooser over the page: Review a hand, Study a spot, Practice, Analyze a session, with links to
+link) opens a small chooser over the page: Review a hand, Practice, Analyze a session, with links to
 Getting started, About & accuracy and Fair play. Any choice, **Not now**, Escape or a click outside closes it for good
 (`gto-welcome` in localStorage: "due" until then, "seen" after; a returning visitor is "seen" from the start). It only
 opens views; it changes nothing about the advice.
@@ -281,7 +278,7 @@ Winamax, WPN/ACR, Ignition, iPoker), and before Analyze each tournament takes it
 the page's Payouts row takes them: the prizes still to pay, first place first, and the players left at other tables
 with their average stack (bb); from two prizes on its hands are solved in prize equity (ICM, as the advice is),
 without payouts in chips. The CSV names each decision's tournament. It runs in the background: the panel
-can be closed (the ⋯ menu's item shows how far it is), the page's own advice, Practice, Study and the Breakdown go
+can be closed (the ⋯ menu's item shows how far it is), the page's own advice, Practice and the Breakdown go
 first (the queue waits while the page asks the solver, and in the browser a decision in flight is stopped through the
 shared stop flag and asked again after), and the session is kept in the store (`blobs`) with a mark in `localStorage`
 while it runs (`gto-session-run`, never a record), so a reload, or the page opened again, picks it up where it stopped
@@ -332,8 +329,8 @@ its grades), and when a history is imported (with its site, hand number and text
 often it's saved (grades aside), and a hand opened from the list and played on is saved back into its own record. Each
 row has the date, positions, cards, board, kind of pot, how far it went and your decisions' grades with the EV given
 up; the search reads cards (`AhKd`, `AKo`, `77`), positions, the board, tags, notes and the site, and the list filters
-to reviewed, not reviewed or imported hands, or to one tag. A hand opens on the table (**Open**, to see or review it),
-in Study at your last decision (**Study**), or copies as its `#h=` link; it takes tags and a note; **Delete** has an
+to reviewed, not reviewed or imported hands, or to one tag. A hand opens on the table (**Open**, to see or review it)
+or copies as its `#h=` link; it takes tags and a note; **Delete** has an
 Undo. **Export** downloads the hands listed (or one) as JSON (`gto-solver-hands`: each hand's state, its `#h=` link, tags, note
 and, for an imported one, its site, hand number and history), and **Import a file…** or
 **Paste…** takes such a file, `#h=` links or hand histories (every hand of a session file). With 1,005 hands in the
@@ -343,14 +340,14 @@ The panel is `gto/static/hands.js`, loaded when first opened.
 **Your data in this browser** is kept in one place, `gto/static/store.js` (loaded before the page's script): an
 IndexedDB database `gto-store` of records `{ id, v (the schema), created, updated, dev (this browser's id), data }`,
 a deleted one kept as a tombstone (`deleted: true`) so that a later sync can tell it from one never seen, in four
-stores: `kv` (each setting and saved state: the hand on the table, Practice's score and mistakes, the drills'
-progress, Study's choices, the speed, the deck's colours…), `hands` (My hands), `sessions` (the analyzer's summaries)
+stores: `kv` (each setting and saved state: the hand on the table, Practice's score and mistakes, the speed,
+the deck's colours, and what the frozen copy keeps…), `hands` (My hands), `sessions` (the analyzer's summaries)
 and `blobs` (the analyzer's session in progress). The `kv` values are also kept in localStorage under their old names,
 so the page reads them at once as it starts; a key written there directly is taken in at the next load, and a value
 localStorage has no room for stays in its record. On its first load the store took in what the site kept before
 (every localStorage key, and the analyzer's IndexedDB `gto-session` or its localStorage fallback), leaving the old
 copies where they were. Without IndexedDB (some private windows) the records go to localStorage, else to memory.
-Study's solved preflop games (IndexedDB `gto-pf`) and the worker's cached files are caches and stay out of it.
+The frozen copy's solved preflop games (IndexedDB `gto-pf`) and the worker's cached files are caches and stay out of it.
 **Back up everything** (in My hands) downloads all of it as one file (`gto-solver-backup-<date>.json`: 772 KB with
 1,005 hands), and **Restore from a backup…** merges one in, here or in another browser: a record missing here is added,
 of one in both the newer stays, nothing here is deleted, and a hand already here under another id gets the backup's
@@ -368,334 +365,7 @@ the caches `gto-solver` and `gto-solver-classic`. The panel reports what it dele
 can't be deleted they stay with their localStorage copies, so nothing is half gone, and it says so; other tabs of this
 site stop writing and reload (a tab of the frozen copy can't be told, and the panel says to close it).
 My hands and the store stand on their own: `tests/js/floor.test.js` fails if `hands.js` or `store.js` gains a dependency
-on Practice, the session analyzer, Explain, Study or the write-up (a saved hand's Study button, which
-loads Study when pressed, is the one exception), and restores a backup of all four stores with those files gone.
-
-**Turn and river reports** (Study, at a closed flop or turn: **Turn report** / **River report** beside the next card's
-deal) are the next street's first decision on every card, like GTO
-Wizard's: a table of the 49 turns (48 rivers) with the acting range's mix as a stacked bar and numbers, both
-players' EV (bb, range against range: the two add up to the pot) and range equity (every river dealt under a turn),
-for the first player or the second after a check. Each card is classed by what it does to the board (completes a
-flush; completes a straight: three board ranks within a straight's five; pairs the board; overcard; undercard;
-brick, under every board card); sort by any column, filter to a class, or group by class, rank or suit (the mix
-averaged by the acting range on each card, EV and equity by the cards' chances given both ranges; a group row
-filters to it). **Cards** shows the same as a 13x4 grid. Click a card to deal it. The report comes from what's in
-hand first, at once: a library flop's stored turns (BTN vs BB's and the 3bet pots' turn files: 0.1 s; a file built
-with the flop solve's EVs, format 2, as the 3bet pots' files on the flops added for every flop are, fills the EV
-columns with each turn class's range EVs and gives each action's EV for the hands that take it in its bar's tip, where
-a strategies-only file, format 1, leaves them "—"; a line they don't hold offers the lines they do), or the solve
-Study's own answer made (a river report after Study answered the turn: 0.02 s natively; a flop solved live). Otherwise
-**Solve the flop** / **Solve the turn** solves that street at the speed picked, with a progress bar against the time
-it should take: on the local server the speed's budget (Fast: 2.5 s a street, and a river report's flop too where it
-isn't in hand: K72r's turn report took 1.2 s, a Q84 river report 6.8 s); in the browser, where the solves stop well
-inside their budgets (Fast 8 s, a river report 11; Accurate 60 and 72) once they reach the exploitability target, the
-time they took (`scripts/bench_browser.mjs`'s ro-* spots, each solved cold in a fresh worker, 8 threads as the site
-runs / 1 where the page isn't cross-origin isolated): Fast turn reports 0.3-1.2 s / 0.5-2.3 s (single-raised, 3bet,
-limped and two-tone flops), river reports 0.7-3.0 s / 1.3-7.1 s (after a bet, checked through, a 3bet pot); Accurate a
-turn report 1.3 s / 3.5 s, a river report 7.2 s / 30.5 s. The button and the bar say the slowest of those, rounded up
-(~2 s and ~3 s at Fast on 8 threads, ~31 s for an unthreaded Accurate river report), in between for 2-7 threads. Like
-Study, it reads the equilibrium: tournament payouts, locks and exploit settings are left out. The pure parts
-(`gto/runouts.py`'s equities, `gto/static/runouts.js`, loaded when one first opens) are tested from Python and Node.
-
-In a 3-way pot (three in from the flop) the report reads the hand's 3-way solve of the street that closed
-(`Advisor._mw_runouts`): Study's own answer at its closing decision, or an earlier one on the street whose tree holds
-the line, followed to the street's end. That solve plays the next street per card class (a rank's cards, a flush
-suit's apart) by hand buckets at one bet size (half the pot), so the report has the first decision's mix (its
-player's bucket mixes weighted by its range's mass in each bucket on the class's card), a river report the second
-player's after a check too, each card's chance given the three ranges (their card overlaps taken as independent), and
-no EV or equity columns (the solve's later streets have no per-hand EVs). Against each card's own solve (Study's
-answer once you deal it: per hand, with its sizes; BTN opens, SB and BB call, checked through), a card per class on
-Kd8c3h, As7c2d and Th9h4c, the turn's first decision bet 4 points apart on average (10 at most), and on every river
-class of Kd8c3h9s, As7c2dJh and Th9h4c2s the river's first decision 4 (14) and after a check 4 (11); a flop solve's
-turn after a check was far from the turn's own (Study's answers at once off it on 8 flops: 1.1% of the pot given up,
-betting 19 points less; after two checks 1.2% and 16 points), so a turn report has no tab after a check. After Study
-answered the flop's first decision (or the turn's, for a river report) it shows at once (natively in a few ms, in the
-browser on one thread under 0.01 s); else **Solve the flop** solves the closing decision live at Study's 3-way budget
-(up to 15 s at Fast; in the browser 5.7 s on one thread and 2.8 s on 8 on Kh8d3c, CO opens, BTN and BB call), a flop
-the 3-way library stores too, whose entries hold the flop only (6.2 s on one thread on Kh7d2c). On Kd8c3h each card
-class's first decision matched Study's answer at once on that turn (`Advisor._study_mw_prev`, off the same solve) to
-0.1 point. A pot four saw the flop has none, even with three left.
-
-**Study** (in the ⋯ menu) is a solution browser: walk a hand node by node with no cards of your own, and at each
-decision see the solver's answer for every hand of the player to act. Start from a precomputed spot's preflop line
-(BTN vs BB, …: instant on the library's flops), a new 6-max 100bb hand, or the hand on the page's table (its seats,
-stacks, antes, straddle, rake, tournament payouts and bounties, and action so far, without your cards, locks or
-exploit settings). In a tournament the answers are in prize equity, as the advice's are: preflop the charts' mix as
-the advice re-prices it, for the whole range (ICM's risk premium, a bounty's discount: as quick as in chips, ~0.01 s;
-six 20bb stacks, 50/30/20 to pay: the big blind facing the button's 2.2bb open jams 16% of hands and calls 41% where
-chips have 18% and 63%, the small blind calls the button's jam with 6% instead of 11%, and with 10 PKO on every head
-21% and 68%, 15%), after the flop solves that pay prizes, with the tournament's notes for the player to act (prize equity, bubble
-factors, who covers whom). The 13x13 grid shows
-each hand class's mix (each class's bar as tall as its share of the class's combos in the range), or by **EV** (bb
-from here, relative to folding now), **Equity** (against the opponent's range, the rest of the board dealt) or
-**EQR** (EV over equity times the pot), shaded red to green; **Breakdown** is the range by made hands and draws (as
-the advice's Breakdown tab, both players); **Simple** is the advice's one-size view for the player to act, with their
-whole range (heads-up, where they can bet or raise). The toggle beside the views shows the opponent's range instead (its
-weights and equity). Hover over an action for the hands that take it; hover over a class (or click to keep it) for
-its combos, best first, each with its own mix, EVs and equity. The actions table gives the range's frequency,
-combos and the EV of the hands that take each action; click one to play it and the next player's decision appears.
-When the betting closes, type the next card(s) or deal random ones; the line above the grid steps back to any earlier
-decision (Backspace steps back one). Fast or Accurate picks the solver's speed for live solves (turns and rivers, or
-flops the library doesn't hold: a Fast turn ~10 s in the browser), and answers already seen come back at once.
-On a library flop's turn where the spot's entry stores one (every BTN vs BB flop, and the 3bet pots' turn files: every
-CO vs HJ and BB vs SB flop, 1,698 of BB vs CO's, and the other five's 1,203 flops stored after their first 552) and
-the flop line is one it holds, the turn's first decision and the in-position player's
-after a check show at once the flop solve's own turn strategy, marked approximate, while the turn's own solve runs:
-the grid by strategy (each combo's stored mix, the card dealt read as its class's played card, the one bet size 75%
-of the pot), the range's frequency and combos per action, the opponent's range, each class's combos with their mix,
-and the range's EVs where the turn file holds them (format 2; strategies only from a format-1 file, as the site's
-are). The turn's solve replaces it when it lands, with every hand's EVs and equities, its own sizes, the Breakdown and
-Simple, as before. An action played on the approximate answer stops that solve and goes on at once (the next node's
-answer at once first, where the file has it). At Accurate a flop the library doesn't store (a library spot's other
-flops, a heads-up pot it holds no spot for, another stack depth: the advice's approximate flops) shows at once the
-same way, read off the stored flops most like it for every combo, with the flops, or the spot and depth it borrowed,
-named (KhJd6c, HJ vs CO: "the precomputed solves of the most similar flops (KhJd5c, KhJd7c, KhQd6c), by card
-substitution"), while the flop's own solve runs (0.45 s in the browser on one thread, where the solve takes 2-4 s);
-no EVs or equities until it lands. Fast's flop solve is about as quick as that, so Fast waits for it as before. At
-Accurate Study fetches the library files a flop reads as it asks for the flop's first answer, all at once (its entry
-and turn files, or the stored flops nearest it); at Fast a library flop's turn files once its answer is in. A turn
-after a flop Study solved live (a pot or a flop the library doesn't hold), and a river after a turn, show at once the
-street before's solve's own play of it for every combo (the flop solve's turn by card class and hand buckets, one bet
-size; the turn solve's river at its river sizes), marked approximate with that solve's iterations and distance from
-equilibrium, while the street's own solve runs (0.02-0.07 s in the browser on one thread, where the turn's solve takes 1.6-27 s); no EVs or equities until it lands.
-A flop or turn Study solves live then shows that solve so far the same way where the answer is more than a second off,
-the whole range's mix at the same looks, with its iterations and distance from
-equilibrium (a limped pot's turn, its flop solved first: at 3.6 s, the answer at 5.8, in the browser on one thread).
-Preflop it shows the charts' mix (no EVs or equities), or with **Solver** a solve of the game's preflop with every
-hand's EVs (below). After the flop it browses heads-up, 3-way and 4-way pots (a pot
-where 5+ players saw the flop is refused; a 4-way one by the 4-player solve, N-player pots in How it works). In a 3-way pot the toggle has each opponent (their ranges and combos), and the
-answer is the 3-player solve's: on the [3-way library](#precomputed-3-way-flop-library)'s flops their checked-to
-first decisions come straight from it (CO open, BTN and BB call on Kh7d2c: 1.1 s in the browser on one thread for the
-first, the library's file fetched, 0.5 s for the next, most of it the equities), and every other node is solved live
-from there, the ranges narrowed through the solves Study answered from (on one thread a flop facing a bet 1.9 s, a
-Fast 3-way turn 7 s at ~400 iterations and 0.04% of the pot, a river 0.4 s). A 3-way flop the library doesn't hold is solved live too, for at least 15 s
-(`MW_STUDY_FLOP_BUDGET`, stopping once settled; in numpy the advice's Fast 5 s rarely settled one: natively on a
-loaded machine 12-23 iterations, 17-40% of the pot, where 15 s ran 51-77, 1.1-1.9%; with the compiled multiway core
-5 s run 111-125, 0.7-1.05%). While it solves, Study shows at once the decisions the library would store (first to
-act, checked to once or twice) read off the spot's stored flops most like it, as a heads-up flop the library
-doesn't store (`MWLibrary.near`, `Advisor._study_mw_near`: the three nearest of the same pairing and suit pattern,
-each carried over by card substitution, a combo's mix its images' of the same hand class averaged, not the heads-up
-learned correction), the flops it read named, the mix alone (no EVs or equities until the solve lands); asked for at
-Fast too (a heads-up flop's Fast solve is as quick as the reading). Leaving each of the 740 stored flops out in turn
-and reading it off the others (`scripts/bench_mw_approx.py`), those decisions give up 0.14% of the pot on average
-by the flop's own EVs (median 0.10, 90th percentile 0.32; first to act 0.06, checked to once 0.15, twice 0.22; the
-worst low paired and connected boards 1.3-1.9), their range frequencies 7 points off (total variation); 16 of them (2%)
-have no stored flop near enough (6 rank steps), and nothing shows until the solve lands. In the browser on one
-thread (`scripts/bench_browser.mjs` study-mw-near, Kh8d3c) it shows in 0.7 s, the solve in 13 s. At the nodes after
-it, as heads-up, Study answers at once off the hand's earlier solve while the node's own runs
-(`Advisor._study_mw_prev`): checked to or facing a bet on a street whose first decision it solved, that solve's own
-play of the line since (every combo's mix; the solve's iterations and distance from equilibrium named); at the
-turn's first decision after a 3-way flop it solved live, the flop solve's view of the turn (by card class and hand
-buckets, 12 a player at Fast, one bet size), and at the turn's later decisions the turn's first decision's solve once
-it lands (read off the flop's buckets they were far from their own answers: 1.1% of the pot given up after a check,
-1.2% after two checks, on 8 flops). The opponents' ranges are the ones the node's own
-answer shows; no EVs or equities until it lands (natively 0.004-0.04 s; in the browser on one thread 0.01-0.04 s,
-where the node's own Fast solve takes 4.4-6.7 s, on 8 threads 1.5-2.3 s: study-mw-near-x, -near-turn,
--near-turn-x). 4-way, checked to on a
-street whose first decision Study solved, the same (the streets narrowed by the betting rules, as the node's own
-answer's); not facing a bet there (the 4-way tree lets only its first decision's player raise, and the node's own
-solve raises: BB 19% on 4c4sQs facing BTN's bet, the read giving up 1.1% of the pot) nor on the turn off a 4-way flop
-(its view of the turn's first decision gave up 0.6% of the pot, range frequencies 23 points apart). Not on a line a
-player of that solve takes under 10% of the time (`RARE_LINE`), on the turn after a library flop (the stored solve
-has no turn) or on the river (its solve takes 0.4 s). Walking Study node by node on 14 random flops the library
-doesn't hold (BTN or CO opens, two call; `scripts/bench_mw_prev.py`, Fast, natively), each answer at once priced by
-the EVs of the answer that replaces it: checked to once 0.002% of the pot given up on average (max 0.03), twice 0.008
-(0.07), facing a bet 0.11 (median 0.03, max 0.55), checked to on the turn 0.002 (0.06); the turn's first decision by
-buckets after a checked-through flop 0.13 (median 0.001, max 0.75) and after a flop bet called twice 0.38 (median
-0.20, max 0.83: every hand of a bucket plays the bucket's mix, so 22 on As4sTc9h bets 74-88% of the time as the
-bluffs it shares a bucket with, where its own solve checks it); range frequencies 1-7 points apart on average; 74 of
-76 nodes answered (two turns on a line under 10%). 4-way on 9 flops (HJ opens, CO, BTN and BB call): checked to once
-0.011 (max 0.03), twice 0.005 (0.03), three times 0.029 (0.12), on the turn 0.025 (0.06). While a 3-way or 4-way node solves live,
-Study counts its seconds beside the spinner up to the most it can take, with a bar (`study.js` mwSeconds: the speed's
-budget, a flop's 15 s at least; it stops sooner once settled, a river in about 0.4 s); the Turn and River
-reports read heads-up and 3-way pots, so a 4-way deal has none. Equity (and EQR)
-on every street, as a share of the pot at showdown against the two
-other ranges with the rest of the board dealt (`multiway_solver.showdown_equities`): on the turn every river with
-the exact three-way card removal (as the river's showdowns, ~0.1 s natively); on the flop all 1176 turn-and-river
-runouts with the solver's pairwise correction for the opponents' shared cards, scaled so each runout's shares add
-to the pot (~0.25 s natively; against the exact count over every runout of Kd7c2h and Jh8h4c, 0.2-0.3 points off on
-average and 1.5 at most, where sampling every 168th runout exactly was 1.6-1.9 and 7-9). The Breakdown's equities
-are the same numbers. A 4-way pot has equity on the river only (the pairwise count was 2.5-4 points low on strong
-hands); before it the views are Strategy, EV and Breakdown. Before the river the 3-way answer says what is per hand:
-each hand's mix and EVs on the street are its own, while the solve plays the streets after it by hand buckets (16 a
-player on each card in the library, on the turn and at Accurate; 12 in a Fast flop solve), so a hand's EV counts its later play as its
-bucket's. Lines the range takes under 1% of the time are marked rough, as heads-up. A 3-way spot the solver can't take (a bet
-bigger than the shortest stack can call, a solve still over 10% of the pot from equilibrium) is an error, not the
-betting rules. The panel is `gto/static/study.js`, loaded when first opened; it asks the solver with `"study": true`
-(see Use from the shell).
-
-**Bet sizes.** The **Sizes** menu under the speed (remembered; `study.js` SIZE_PRESETS, `Advisor.study`'s `"sizes"`,
-up to 5 a street: `STUDY_MAX_SIZES`) picks the trees Study's solves play after the flop, as a solution set does.
-**Standard** is the trees as they are: the flop library's 33% and 75% flop bets and 50% raise (its flops answer at
-once), the live solves' turn and river menus. **More sizes** bets 25, 33, 50, 75 and 125% of the pot on the flop (the
-turn and river as Standard): the library stores 33% and 75% only, so every flop is solved live (in the browser on one
-thread 1.0-3.5 s at Fast, 300 iterations, 0.08-0.15% of the pot from equilibrium, and 5-13 s at Accurate,
-1000 iterations, 0.01-0.02%, on Ks7d2c, 9h8h6c and the big blind's 3bet pot's Ks7d2c;
-natively 5.9 s for 1000 iterations of Kc7d2h against Standard's 2.5 s, each iteration 2.4x the work).
-On Kc7d2h after the big blind's check the button bets 25% 56% of the time, 33% 8%, 75% 13%, 125% 1% and checks 22%,
-where the library's entry has it bet 33% 49%, 75% 22% and check 29% (More at Fast, natively). **Custom…** takes each street's
-bets and the raises (every street's, % of the pot after the call) in boxes, up to 5 each, 5-500%, applied with Enter
-or **Apply** (a blank box: that street's standard; a box that can't be read says why and asks nothing). The note under
-the menu says what each street bets and what the menu costs. Flop or raise sizes other than the library's solve every
-flop live; turn and river sizes alone keep the library's flops (answered at once as before) and the turn's and the
-river's solves play them. A turn after a flop solved with a menu shows at once that flop solve's view of the turn
-while the turn's own solve runs, as after any flop solved live (on a line its range takes 10%+ of the time); a flop
-has no answer at once with a menu other than Standard (the library's and its nearest flops' reads are its own
-sizes). A turn after a flop played with More (Ks7d2c-Th, the button's 50% bet called) took 5.4 s at Fast (200
-iterations, 0.26% of the pot) and 27 s at Accurate in the browser (`scripts/bench_browser.mjs` study-*-more, Pyodide,
-one thread).
-
-**Preflop: Charts or Solver.** The **Charts | Solver** toggle over the grid at a preflop decision picks what Study
-shows there (remembered). **Charts**, the default, is the hand-written charts' mix the advice plays, without EVs.
-**Solver** is a solve of the game's whole preflop (`gto/pf_study.py`: `pf_game`'s tree for the table, its flops valued
-by the flop library as the other games' charts are; heads-up the small blind may limp, 7-handed at most two see a
-flop): at every preflop decision each hand class's mix with each action's EV (bb from here, relative to folding now)
-and the range's, so the EV view, a class's EVs, the actions table's EV column and Build's EV given up work preflop
-too. Its EVs are the solve's own, at its own equilibrium, and go with its mix, which is not the charts': the solve
-opens tighter than the published solves the charts match (6-max 100bb unraked, UTG to SB 14.8 / 18.3 / 24.8 / 37.0 /
-52.1% against the charts' 18.7 / 22.9 / 30.0 / 45.1 / 44.7; the big blind against a button open 40.8 / 47.7 / 11.5
-fold / call / 3bet unraked and 56.2 / 31.9 / 12.0 at 5% capped at 3bb, the charts 58.2 / 30.2 / 11.6 at 5% capped at
-4), so the advice keeps the charts (Preflop equilibrium in How it works), and the line under the grid says which
-it is. The charts' line re-valued wasn't offered instead: valued inside the same game the charts' mix isn't an
-equilibrium (each seat gains 0.15 bb/hand on average by best-responding to the others' charts, 0.87 summed over the
-six), so EVs read off them contradict their own mix (a hand mixing two actions has them 0.86 bb apart in median, and
-junk 4bets show +3.5 bb). The range's and each action's EV weigh a class by its combos times its chance against the
-others' ranges (card removal: 0.555 bb for the big blind's range against a button open, 0.544 by combos alone);
-frequencies and combos are the mix's alone.
-
-The standard games answer at once: 6-max 100bb unraked and 5% capped at 3bb (the page's "5-3" preset) are stored
-(`gto/static/pf/`, 84 and 89 KB: 1,500 iterations, 1.07 and 0.52 mbb/hand a seat from equilibrium;
-`scripts/build_pf_study.py`), in the browser loaded in 0.4 s, a game's first node 0.4 s and each one after ~1 ms.
-Any other game the table sets up (2-6 players in the browser, 7 with the local server; equal stacks of 10-250bb, an
-ante, a straddle, rake and its cap; not tournaments, refused with the reason) offers **Solve** with its time: the
-worker solves it in 4-second chunks, each going on from the last, and asks the node in view again after each, so its
-mix and EVs converge in view, with a bar, the iterations and the distance from equilibrium, until it is within 1.5
-mbb/hand a seat (a 2-4 handed tree to 2,000 iterations, seconds in all) or **Stop**; its nodes then answer as the
-stored ones do (three games held). A finished solve is also kept in the browser (IndexedDB: the six latest, from 8 KB
-3-handed to ~0.4 MB at 6-max, until the solver's code changes) and handed back to the worker when its game comes up
-again after a reload, so a game solved once answers at once ("solved earlier in this browser"; in Pyodide packing a
-6-max solve takes 0.3 s and taking it back 0.5 s with its first node).
-
-**Preflop solve…** in the ⋯ menu (`/gto-solver/preflop/`) is Study with the game set in a form over the line instead
-of a spot: players (2-6, 7 with the local server), stack, ante, straddle, rake and its cap, and the tree's raise
-sizes (the open and the small blind's in bb, 3bets in position and from a blind as multiples of the open, the 4bet
-of the 3bet; `pf_study.SIZE_LIMITS`), starting from the table's game; any change goes to that game's first decision
-with the Solver source (the standard games' answers at once, any other offered to solve; a solve running for another
-game stops). "Preflop solve: a game you set" in Study's start menu is the same. Measured in Pyodide on one thread (`pf_game` 2.3x quicker there than before:
-`Game._masses` takes each seat's card-removal product once a node instead of once a terminal, and einsum stands in
-for BLAS-less matmul; then ~1.5x again: that product is taken in its rank-13 form, `PAIR_COMPAT` being exactly
-1 - 4AAᵀ/(NNᵀ) + diag(1/N) with A[i, r] the number of class i's combos holding a given card of rank r, the rows a
-seat's current strategy never reaches skip their products (a third of the masses', a quarter of the showdowns'), the
-terminals' product over the other seats is taken in place, and an exploitability check's two passes share the
-terminals' values; regrets the same to 1e-11): heads-up 1.9 s, 3-handed 5.7 s (2,000 iterations, 0.54 mbb/hand a
-seat), 4-handed 27 s (1.03), 6-max 0.21 s an iteration and ~2.5 minutes to 1.5 mbb (~700 iterations; natively 0.12 s,
-~1.5 minutes), an exploitability check every 100 iterations 1.4 s (run as the worker does, in Pyodide under Node on
-one thread, the 6-max game raked 5% capped at 4bb stopped at 800 iterations, 1.21 mbb, in 3.0 minutes (averaged at t⁸, below: 700, 1.24 mbb, 2.6 minutes), 4.4 before
-on the same machine at the same load; 3- and 4-handed 6.7 and 37.5 s before; natively, BLAS keeping the full product, the stored games'
-settings from scratch at 800 and 700 iterations in 114 and 95 s before the checks shared their terminals' values). The average strategy weighed iteration t by t³ (it
-was linear): the 6-max game from scratch is 7.4 / 2.3 / 1.6 / 1.3 mbb/hand a seat at 250 / 500 / 750 / 1,000
-iterations, against 18.7 / 5.8 / 3.2 / 2.2 averaged linearly (5% capped at 3bb 10.6 / 2.8 / 1.3 / 0.85 against 25.0
-/ 6.9 / 3.4 / 2.1; 40bb deep 7.0 / 2.5 / 1.8 / 1.5 against 13.8 / 5.2 / 3.1 / 2.3); t⁵ was a little quicker still,
-DCFR's own discount of negative regrets (β 0.5) slower (`scripts/pf_study_convergence.py`). Against the same solve run
-on to 2,000 iterations (1.0 mbb), at 750 a class's EV of an action it plays (5% or more of the class) is off by
-0.001-0.008 bb on average at the first decisions and facing an open, 0.03-0.04 facing a 3bet (the worst class 0.45
-bb), the range's EV by 0.015 bb at most and the actions' frequencies by under a point; at 500 iterations (2.3 mbb)
-0.04-0.06 facing a 3bet, so the target went from 2 mbb to 1.5. The stored games, solved again this way, are nearer
-equilibrium (1.07 and 0.52 mbb at 1,500 iterations, were 1.34 and 0.94) and a quarter the size (316 KB before: the
-barely reached lines' late mixes are mostly pure and pack smaller); the two averagings' stored games agree at the
-six nodes above within 0.3 points of each action's frequency and 0.001-0.013 bb in a class's EV on average. Starting a game from the stored 100bb solve didn't
-help (linear averaging, the raked game from the unraked solve: 13.8 mbb at the start, then 4.0-12.0 after 700
-iterations against 3.4 from scratch at 750, over four ways to seed the regrets and averages; with t³ averaging the
-5%-capped-at-3bb game with its regrets seeded from the stored solve's strategy is 4.6-4.9 mbb at 500 iterations
-against 2.8 from scratch, a game with antes 3.9 against 3.3), so each starts from scratch. The average now weighs
-iteration t by t⁸ (`pf_study.AVG_POWER`; a ramp from t³ to t⁸ over the first 50 iterations, as postflop's, weighs them the same to 1e-12;
-t⁵ is between): the 6-max game is 2.0 / 1.5 mbb at 500 / 700 iterations against 2.3 / 1.7 at t³, the 5%-capped-at-4bb
-game 2.4 / 1.1 at 500 / 750 against 3.1 / 1.35, so it stops at 700 instead of 800, 4-handed raked 1.5 at 600 against
-2.0; where it stops the raked game's answers are as near the same solve run on to 2,000 iterations as t³'s at 800
-(a class's EV 0.002-0.013 bb off on average at the first decisions and facing an open, 0.039-0.049 facing a 3bet,
-against 0.002-0.012 and 0.033-0.036; the range's EV 0.04 at most, the actions' frequencies 1.4 points; the two
-averagings' 2,000-iteration solves agree to 0.0002-0.006 bb; the rarely played lines' losses to their best actions no
-bigger; `scripts/pf_study_convergence.py --game r5c4 --ev`). A game with many three-way flops levels off above 1.5 mbb whatever the averaging: a three-way
-pot's three shares are normalised over the three ranges (`pf_game._term_values`), so a seat's payoffs there move with
-its own range and the measure stops falling. 4-handed at 50bb with a 0.12 ante holds at ~1.8 from the 400th
-iteration where with at most two players seeing a flop it is 0.2 by the 1,200th; 6-max at 50bb with that ante levels
-off at 3.0, straddled at 3.1, 5-handed at 50bb with the ante at 2.4, at 100bb with the ante it falls only slowly (2.0
-at 1,500), and these ran on to 2,000 iterations. Their strategies settle all the same: where the rule below stops
-them, against the same solve run on to 2,000, 6-max at 50bb with the ante (900 iterations) has a class's EV
-0.001-0.004 bb off on average at the first decisions and facing an open and 0.007-0.026 facing a 3bet, straddled (900)
-0.001-0.003 at the first decisions and facing an open, at 100bb with the ante (1,700) 0.0006-0.003 and 0.010-0.012,
-75bb with a 0.25 ante (levelling off at 4.2; 700) 0.002-0.010 and 0.027-0.029, the actions' frequencies within a
-point or so (`tests/test_pf_study.py` checks a 4-handed one). So a solve with a target now
-also stops once a check is no nearer than 97% of the one 200 iterations before (`pf_study.STALL`, from the 600th
-iteration on), and says so under the grid: in Pyodide 6-max at 50bb with the ante stops at 900 iterations in 84 s
-(it ran on to 2,000 in 201 s, 2.99 mbb against 3.02), straddled at 900 in 79 s, 5-handed at 50bb with the ante at
-800, at 100bb with the ante at 1,700, 75bb with a 0.25 ante at 700; games that keep falling run on to the
-target (40bb and 200bb deep at 1,000, 5-handed raked at 600).
-A line the solve rarely or
-never plays is flagged under the grid (an opponent's range under a combo, a range it never brings there, or a mix
-giving up 0.05 bb a hand or more to its best actions at that node, `regret_bb`): the average strategy is barely
-solved there (the stored 6-max's nodes reached by 1% of hands or more give up at most 0.003 bb a hand, median 0;
-those reached by 0.0001-0.01% of hands 0.01 in median, 0.06 averaged linearly; lines almost never played far more). A player brought there by a 0% move is taken to make it with
-every hand it held, so its range is as before the move. Checked (`tests/test_pf_study.py`): wherever two players are
-left (every node heads-up, 829 of the stored 6-max's) each class's EVs equal a direct computation over pure class
-pairs with card-removal weights from the 1326 combos enumerated there (no reaches, masses or counterfactual values)
-to the answer's rounding, 0.0005 bb; and wherever three are left (every such node of a 3-handed solve, and all 1,079
-of the stored 6-max's that each seat reaches with 0.01% of its hands) a direct sum over class triples at every
-terminal below gives the same EVs to 0.0005 bb: each player's action probabilities on the way, a fold's or a heads-up
-showdown's payoff, and a three-way showdown's share of the pot (corr x equity x equity, normalised over the three
-ranges reaching that terminal, times the seat's realization), card removal from the enumerated combos. Wherever four
-to six are left (the first decisions, the opens and calls before the blinds act: every such node of a 4-handed solve,
-and all 593 of the stored 6-max's that each seat reaches with 0.01% of its hands, 9 with six left, 95 with five, 489
-with four; and all 5,051 nodes, two to six left, of twelve games set in the form: 2-6 players at 10-250bb with
-antes, a straddle, rake and other sizes, solved 300 iterations) the same sums, factored, give the same EVs to 0.0005
-bb: the game's card removal is pairwise with the player's class, so given that class the opponents' sums multiply (an opponent out of the pot at a terminal adds its own
-sum, its combos off the player's times its action probabilities from the root; a three-way share splits into a sum for
-each of the two others), and where two or three are left the factored sums equal the double and triple ones to 1e-9.
-They see the card removal of the players behind: without it UTG's open with AA is worth 7.67 bb instead of 6.70, and
-at the median one of the stored 6-max's 246 nodes reached by 1% of hands with four or more left a class's EVs
-move by 0.8 bb on average. Folding
-is 0; at the first decision the range's EV is the game's own value (`Game.values`, over the chance the others' cards
-don't collide). Not checked independently: the game's model itself. Its card removal is pairwise, each
-opponent's combos off the player's cards but not off each other's: counted exactly over combo triples under the same
-strategies, the EVs at the stored 6-max's 25 most played 3-way nodes (BTN, CO, HJ or UTG first in with the blinds
-behind, an open and a call facing the big blind, a squeeze) move by 0.001-0.09 bb on average (median 0.02, the worst
-class 0.9 bb), and by more where the ranges are narrow (after a jam and a call, lines played well under 0.01% of the
-time: the pairwise count weighs AA against two KK hands as 216 combo triples where there are 36). Three-way showdowns'
-shares are a measured correction to pairwise equities (`MW_CORR`, `MW_REALIZE`), not an equity count.
-
-The **All hands** menu beside the views filters the range to one made hand or draw, like GTO Wizard's filters (the
-Breakdown's categories: set, top pair by kicker, middle pair, no made hand, flush draw, open-ended, …, each with its
-share of the range): the grid then shows only those hands (a class as tall as its combos in the category), the
-actions table and the range's line give their frequencies, combos, EV and equity, and a hand's detail lists only
-its combos in the category. The filter stays on as you play through the hand (a draw's filter shows every hand on
-the river, where there are none); **✕ All hands** clears it. In the Breakdown, a row of the player to act offers
-**Show these hands in the grid**. Each combo of the answer carries its category (`"categories"`: the indices are into
-its made-hand and draw lists).
-
-When the flop's or turn's betting closes, **Turn report** / **River report** beside the next card's deal shows the
-next street's strategy on every card at once (see **Turn and river reports** above): a table, or **Cards**, a
-13x4 grid of the cards (suits down, ranks across; the board's blank), each card filled by the first player's mix
-there with the share that bets in its corner, and a tab for the second player's after a check (a 3-way pot's:
-strategies only, a turn's the first decision's alone). It is read off the
-stored turns of a library flop that has them, else one solve of the street that closed at the speed picked (in hand
-already where Study's own answer solved it: the river's at once from the turn solve Study answered the turn's last
-decision with; else a button solves it, Fast ~10 s in the browser): on the turn each card plays the flop solve's turn
-tree, one bet size (75%) and a rank's cards alike apart from a flush suit's (Fast's turn by hand buckets); on the
-river the turn solve's river sizes (33/75/125%; Fast on one thread 33/125%). Click a card to deal it; that street then
-solves on its own, with its full menu of sizes. A solve cut short (3% of the pot or more from equilibrium: a busy
-machine runs fewer iterations) says so above the cards, as a live answer does in the line under its grid.
-
-**✎ Build** (or the B key) in Study turns the decision into a range-building drill, like GTO Wizard's range builder:
-the grid shows the acting player's range with every hand at the passive action (fold, else check or call), and you
-paint the strategy yourself. Pick an action (keys 1-9) and a share (100/75/50/25%: the rest of the hand's mix keeps
-its proportions, so painting twice makes a mix), then click or drag over hands; **Fill all** paints the whole range,
-and the range's frequencies update as you paint. **Check my range** scores it against the solver: accuracy (one minus
-the share of the range, by combos, that you played differently), the EV given up (bb a combo and % of the pot, at
-each action's EV against the solver's opponent; not preflop, where the charts have no EVs), each action's share
-yours and the solver's, and the biggest differences. Each hand then shows the solver's mix above yours, outlined
-where they differ by 20% or more (red at 50%); a hand's detail compares the two mixes with each action's EV. **Try
-again** keeps your paint, **New flop** deals the same spot on a random flop, **Show the solution** leaves the drill.
-Any decision Study reaches can be built, preflop included (the charts' mix).
+on Practice, the session analyzer, Explain or the write-up, and restores a backup of all four stores with those files gone.
 
 The layout fits the window at any zoom. On a wide window each column scrolls on its own and
 the action buttons stay pinned to the bottom of theirs; drag the divider between the columns
@@ -4542,7 +4212,7 @@ python scripts/compare_mw_library.py --spot mw_co_btn_bb --boards Kh7d2c,9s8s5d 
 scripts/deploy.sh
 ```
 
-copies the page, the worker, `practice.js`, `explain.js`, `multitable.js`, `reports.js`, `drills.js`, `breakdown.js`, `session.js`, `study.js`, `help.js`, `solver.zip` (the worker's Python code: every `gto/*.py` and treys, `scripts/build_bundle.py`), the `gto` sources and Study's stored preflop solves (`gto/static/pf/*.bin` as `pf/`) into the `gto-solver/` folder
+copies the page, the worker, `practice.js`, `explain.js`, `multitable.js`, `breakdown.js`, `session.js`, `help.js`, `solver.zip` (the worker's Python code: every `gto/*.py` and treys, `scripts/build_bundle.py`), and the `gto` sources into the `gto-solver/` folder
 of the michaellhan.github.io repo and pushes. The precomputed libraries (`gto/static/flop_library`: the heads-up and
 3-way indexes, entries and reports) go first to their own repo, michaellhan/gto-solver-library, served beside the page
 at /gto-solver-library/ (`scripts/deploy_library.sh`): one commit with no history, force-pushed on each publish and

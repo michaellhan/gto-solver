@@ -83,10 +83,10 @@ test("a load that goes quiet for 3 minutes gives up; each word from the worker r
   assert.notEqual(p.val("worker"), null);
 });
 
-test("a view over the page (Study, My hands) gets the toast, with its own Try again above the view", async () => {
+test("a view over the page (My hands) gets the toast, with its own Try again above the view", async () => {
   const p = await asking();
   p.ctx.__got = () => {};
-  p.run('pending[79] = __got; overlay = "study"; document.getElementById("toast").hidden = true;');
+  p.run('pending[79] = __got; overlay = "hands"; document.getElementById("toast").hidden = true;');
   w(p).onmessage({ data: { loadFailed: "x" } });
   const toast = p.byId("toast");
   assert.ok(toast.textContent.includes(MESSAGE) || toast.innerHTML.includes(MESSAGE));

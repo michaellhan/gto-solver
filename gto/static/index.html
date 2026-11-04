@@ -42,10 +42,9 @@
   .menu button.active::after { content: "✓"; }
   .menu .sep { height: 1px; background: var(--line); margin: 4px 2px; }
   .menu .hint { font-size: 11px; color: var(--faint); padding: 4px 10px 2px; line-height: 1.5; }
-  /* the menu's groups (Review, Study, Help, Settings); Preflop solve and Range builder are Study's, indented under it */
+  /* the menu's groups (Review, Help, Settings) */
   .menu .mlbl { font-size: 10.5px; color: var(--faint); text-transform: uppercase; letter-spacing: .05em; padding: 8px 10px 2px; }
   .menu .mlbl:first-child { padding-top: 2px; }
-  .menu button.sub { padding-left: 22px; }
   #helpBtn { padding: 6px 10px; font-weight: 600; }
 
   /* ---- controls */
@@ -648,16 +647,12 @@
   <button id="newhand" title="Shortcut: N">New hand <kbd>N</kbd></button>
   <span class="menuwrap">
     <button id="helpBtn" class="ghost" title="Help: getting started, how accurate the answers are, a glossary" aria-label="Help">?</button>
-    <button id="menuBtn" class="ghost" title="More: import and analyze hands, Study, help, settings" aria-label="More" aria-haspopup="true" aria-expanded="false" aria-controls="menu">⋯</button>
+    <button id="menuBtn" class="ghost" title="More: import and analyze hands, help, settings" aria-label="More" aria-haspopup="true" aria-expanded="false" aria-controls="menu">⋯</button>
     <div class="menu" id="menu" hidden>
       <div class="mlbl">Review</div>
-      <button id="myHands" title="Every hand you've entered, reviewed or imported, kept in this browser: search, tags, notes, open one in review or Study, export, back up">My hands…</button>
+      <button id="myHands" title="Every hand you've entered, reviewed or imported, kept in this browser: search, tags, notes, open one in review, export, back up">My hands…</button>
       <button id="importHand" title="Paste a hand history (PokerStars, GGPoker, 888, partypoker, Winamax, WPN/ACR, Ignition/Bovada, iPoker) to replay and review it">Import hand…</button>
       <button id="analyzeSession" title="A whole session's hand histories: each of your decisions solved and graded, the EV lost by street, position, spot and preflop situation, the biggest mistakes">Analyze session…</button>
-      <div class="mlbl">Study</div>
-      <button id="study" title="Browse the solver's strategy for a whole range, node by node: every hand's mix, EV and equity; play any action, deal any card">Study…</button>
-      <button id="pfSolve" class="sub" title="Study, starting at its preflop solve: set the players, stacks, ante, straddle, rake and raise sizes, then browse every hand's mix and EVs at every preflop decision">Preflop solve…</button>
-      <button id="rangeBuilder" class="sub" title="Study, starting in its Build mode: paint a range's strategy yourself and score it against the solver's, on random flops of a precomputed spot">Range builder…</button>
       <div class="mlbl">Help</div>
       <button id="helpStart" title="What to do first, for reviewing hands, studying, practice or a whole session">Getting started…</button>
       <button id="helpAbout" title="How the answers are made and measured: exploitability, the benchmark against an open-source solver, Fast and Accurate, the known limits">About & accuracy…</button>
@@ -828,7 +823,6 @@
   <span class="muted" style="font-size:12px">GTO Solver works out what game theory does in any no-limit hold'em spot, in your browser: nothing you enter is uploaded. It's for studying and for reviewing hands after you've played them, not for use during a hand.</span>
   <div class="wgrid">
     <button id="welcomeReview"><b>Review a hand</b><span>Enter a hand you played, seat by seat, or paste its hand history, finish it, and see the solver's play at each decision</span></button>
-    <button id="welcomeStudy"><b>Study a spot</b><span>Browse the solver's strategy for a whole range, node by node</span></button>
     <button id="welcomePractice"><b>Practice</b><span>Play random hands against the solver, each decision graded as you go</span></button>
     <button id="welcomeSession"><b>Analyze a session</b><span>Paste a session's hand histories and see where you lost the most</span></button>
   </div>
@@ -1031,10 +1025,8 @@ const WORKER_VERSION = "14";   // scripts/deploy.sh replaces this with a hash of
 const HH_VERSION = "1";        // and this with a hash of hh.js (the hand-history importer, loaded on first use)
 const BD_VERSION = "1";        // and breakdown.js (the advice's Breakdown and Equity views, loaded on first use)
 const SS_VERSION = "1";        // and session.js (the session analyzer, loaded on first use, after hh.js)
-const SY_VERSION = "1";        // and study.js (Study mode, the solution browser, loaded on first use)
 const EX_VERSION = "1";        // and explain.js (Copy for AI, Explain with AI: Practice's and a reviewed decision's, loaded on first use)
 const WU_VERSION = "1";        // and writeup.js (Write up a hand: a played hand entered seat by seat, then reviewed)
-const RO_VERSION = "1";        // and runouts.js (Study's turn and river reports, loaded when one first opens)
 const SP_VERSION = "1";        // and simple.js (the one-size view: the advice's Simple tab and Study's, loaded on first use)
 const PR_VERSION = "1";        // and practice.js (Practice, loaded on first use, after explain.js)
 const MT_VERSION = "1";        // and multitable.js (Practice on 2-4 tables at once, loaded the first time Tables goes above 1)
@@ -1044,13 +1036,13 @@ const HN_VERSION = "1";        // and hands.js (My hands, loaded the first time 
 // points it at their own site, ../gto-solver-library/ (scripts/deploy_library.sh). The worker is told it in its URL
 // (relative: worker.js is in the folder the page's URLs resolve against).
 const LIB_BASE = "flop_library/";
-// ---- the views' URLs: the solver is the root (/gto-solver/), the others /practice/, /session/, /study/, /preflop/,
-// /import/ and the help pages (/start/, /about/, /glossary/, /changelog/, /fairplay/) under it. The static site has no
+// ---- the views' URLs: the solver is the root (/gto-solver/), the others /practice/, /session/, /import/, /hands/
+// and the help pages (/start/, /about/, /glossary/, /changelog/, /fairplay/) under it. The static site has no
 // rewrites: each URL is a copy of this page with a <base href="../"> that points its relative URLs at the root.
 // gto/routes.py reads these two lines (SPOT_ROUTES: the views with a /<spot>/ level, none now; scripts/deploy.sh writes the copies,
 // gto/server.py serves them). Opening a view pushes its URL and closing it pushes the solver's (Practice's, if
 // that's on under it); back and forward switch views; a view's URL opened directly opens it (applyRoute, at the end).
-const ROUTES = { practice: "Practice", session: "Analyze session", study: "Study", preflop: "Preflop solve", import: "Import hand", hands: "My hands", start: "Getting started", about: "About & accuracy", glossary: "Glossary", changelog: "Changelog", fairplay: "Fair play" };
+const ROUTES = { practice: "Practice", session: "Analyze session", import: "Import hand", hands: "My hands", start: "Getting started", about: "About & accuracy", glossary: "Glossary", changelog: "Changelog", fairplay: "Fair play" };
 const SPOT_ROUTES = [];
 const ROUTE_RE = new RegExp(`^(.*?/)(?:(${Object.keys(ROUTES).join("|")})/?)?(?:index\\.html)?$`);
 function parseRoute(pathname) {   // -> { root: the solver's path, view: "solver" or a ROUTES key }
@@ -1059,9 +1051,9 @@ function parseRoute(pathname) {   // -> { root: the solver's path, view: "solver
   return { root: m[1], view: m[2] || "solver" };
 }
 const ROOT = parseRoute(location.pathname).root, TITLE = document.title || "GTO Solver";
-// a view's URL pushed (/study/, …) would move the page's relative URLs under it (a view's script, the worker, the
-// library: Study opened from the menu loaded /study/study.js, a 404): the solver's own page pins its base to the
-// root, as the views' copies do with theirs
+// a view's URL pushed (/session/, …) would move the page's relative URLs under it (a view's script, the worker, the
+// library: /session/session.js, a 404): the solver's own page pins its base to the root, as the views' copies do with
+// theirs
 try { if (!document.querySelector("base")) { const b = document.createElement("base"); b.href = ROOT; document.head.prepend(b); } } catch (e) {}
 let overlay = null;   // the view open over the solver / Practice, if any
 let routing = 1;   // > 0 while the URL's view is being opened (the URL is already its own): nothing is pushed
@@ -1265,8 +1257,7 @@ async function cancelSolve() {
 // nothing is solved, fetched or shown. A hand is finished when it ended, when you folded, or when it was marked so
 // (S.finished: Finish hand, an imported hand, a write-up sent to review); then each decision you recorded can be reviewed
 // (reviewHand, all of them; stepTo, one). A decision you didn't record is never reviewed, and once a hand's advice has
-// been shown its line stays as it is (S.reviewed, fixedHand): other lines are Study's. Practice answers as you play, on
-// its own hands.
+// been shown its line stays as it is (S.reviewed, fixedHand). Practice answers as you play, on its own hands.
 let review = null;     // { n, k, what, cancel, full } while a review runs; cancel "restore" (its Cancel) or "drop" (a new hand)
 let stepView = null;   // { full, s, i }: a decision of a finished hand being looked at; S is the hand up to it
 function handDone(sim) { return !!S.cards[0] && !!S.cards[1] && (!!S.finished || !!sim.handOver || !sim.active.has(S.hero)); }
@@ -1276,7 +1267,7 @@ function adviceOpen() { return practicing() || reviewing(); }
 // the whole hand, while S is a review's decision (what's saved, kept and linked)
 function heldHand() { return review && review.cancel !== "drop" ? review.full : stepView ? stepView.full : S; }
 function fixedHand(sim) { return closed(sim) && (reviewing() || !!S.reviewed || STREETS.some(s => S.actions[s].some(a => a.g))); }
-const FIXED_HAND = "This hand has been reviewed, so it stays as entered. Try other lines in Study, or press N for a new hand.";
+const FIXED_HAND = "This hand has been reviewed, so it stays as entered. Press N for a new hand.";
 // advice has been shown for this hand (a review's or a decision's): from here its line is fixed
 function markReviewed() { if (!reviewing()) return; const h = heldHand(); if (!h.reviewed) { h.reviewed = true; save(); } }
 // your recorded decisions, [street, index], in order; and a hand up to one of them
@@ -1909,7 +1900,7 @@ function renderFinished(el, prompt, step, sim) {
     b.title = "Take the hand back to entering it"; b.onclick = keepEntering; el.appendChild(b);
   }
 }
-// One decision of a finished hand (stepTo): on to the others, back to the hand, or Study for the lines not taken
+// One decision of a finished hand (stepTo): on to the others, or back to the hand
 function renderStep(el, prompt, step, sim) {
   const full = stepView.full, all = heroSpots(full), k = all.findIndex(([s, i]) => s === stepView.s && i === stepView.i);
   step.textContent = `decision ${k + 1} of ${all.length}`;
@@ -1920,7 +1911,6 @@ function renderStep(el, prompt, step, sim) {
   mk("stepPrev", "Previous", () => stepBy(-1), "arrowleft", k <= 0);
   mk("stepNext", "Next", () => stepBy(1), "arrowright", k >= all.length - 1);
   mk("stepBack", "Back to the hand", stepStop);
-  mk("stepStudy", "What if? Study this spot", () => window.studySpot(S), null, false, "The solver's strategy here for every hand, and the lines you didn't take, in Study");
   el.appendChild(bar);
 }
 
@@ -2869,59 +2859,12 @@ const loadJs = (src, ok) => ok() ? Promise.resolve() : new Promise((res, rej) =>
   s.onload = res; s.onerror = () => rej(new Error(`couldn't load ${src.split("?")[0]}`)); document.head.appendChild(s); });
 // ---- the session analyzer (session.js, after hh.js whose parser it uses; it runs on the page's engine, solver and grading)
 document.getElementById("analyzeSession").onclick = () => openView("session");
-// ---- Study mode (study.js): a hand walked node by node with the acting player's whole range (gto/advisor.py,
-// Advisor.study), asked at the speed's budgets; it can start from the page's own hand (its advice payload)
-document.getElementById("study").onclick = () => openView("study");
-// the range builder: Study in its Build mode, from a random flop of its spot
-// the preflop solve of a game set in Study's form (study.js: the start "pfgame", /preflop/)
-document.getElementById("pfSolve").onclick = () => openView("preflop");
-document.getElementById("rangeBuilder").onclick = () => { window.STUDY_BUILD = true; openView("study"); };
-// onPartial (the browser's worker): Study's answer at once where one is in hand (a library flop's stored turn:
-// Advisor.instant), before the request's own; the promise's reqId stops it (simpleStop) once the mode is known
-function studyAsk(st, onPartial) {
-  if (!MODE) return modeReady.then(() => studyAsk(st, onPartial));
-  const [budget, prior_budget] = BUDGETS[MODE][st.speed === "accurate" ? "accurate" : "fast"];
-  return callAdvise({ ...st, budget, prior_budget }, null, onPartial);
-}
-// Study's flop: the library files its answers read fetched ahead, all at once (Advisor.prefetch: the flop's entry and
-// the turn files the index lists, or the stored flops nearest it), rather than one by one as the answers read them;
-// study.js asks before a flop's first answer at Accurate (its answer at once reads them) or a turn's, else once a
-// library flop's answer is in. True when asked.
-function studyPrefetch(st) {
-  if (MODE !== "wasm" || !worker || String(st.board || "").length < 6) return false;
-  worker.postMessage({ prefetch: { ...st, board: String(st.board).slice(0, 6), flop: [], turn: [], river: [] } });
-  return true;
-}
-function studyHand() { return payload(); }
-// Study's "The hand on the table": the hand once it's finished. One still being entered opens at its game's first
-// decision, not at its spot: a spot of a hand in progress is only reviewed afterwards.
-function studyTable() {
-  const p = payload();
-  if (adviceOpen() || closed(simulate())) return p;
-  toast("Study opens at a hand's spots once it's finished. This is its game from the first decision.");
-  return { ...p, board: "", preflop: [], flop: [], turn: [], river: [] };
-}
-// Study at a hand's spot, for the whole range: a reviewed decision's "what if", a flop report's flop, a drill's hand.
-// spot: the precomputed spot it belongs to, else the hand on the table's entry.
-window.studySpot = async (st, spot) => {
-  await loadJs("study.js?v=" + SY_VERSION, () => window.Study);
-  const hand = cleanState(JSON.parse(JSON.stringify(st)));
-  if (!hand) return;
-  window.STUDY_AT = { spot: spot || "table", state: window.Study.fromPayload(withHand(hand, payload)) };
-  return openView("study");
-};
-// [budget, prior_budget] at a speed, for Study's turn and river reports' progress (the seconds a solve for one takes)
-function studyBudget(speed) { return BUDGETS[MODE || "wasm"][speed === "accurate" ? "accurate" : "fast"]; }
 // The views over the page: open (their scripts loaded first), close, and what a failed load says. Their scripts report
 // closing (viewClosed).
 const VIEWS = {
   session: { load: () => loadHH().then(() => loadJs("session.js?v=" + SS_VERSION, () => window.Session)),
              open: () => VIEWS.session.load().then(() => window.Session.open()),
              close: () => window.Session && window.Session.close(), err: "Couldn't load the session analyzer: " },
-  study: { open: () => loadJs("study.js?v=" + SY_VERSION, () => window.Study).then(() => window.Study.open()),
-           close: () => window.Study && window.Study.close(), err: "Couldn't load Study mode: " },
-  preflop: { open: () => loadJs("study.js?v=" + SY_VERSION, () => window.Study).then(() => window.Study.open({ view: "preflop" })),
-             close: () => window.Study && window.Study.close(), err: "Couldn't load Study mode: " },
   import: { open: hhOpen, close: () => { hhBox.hidden = true; window.viewClosed("import"); }, err: "" },
   hands: { open: () => loadJs("hands.js?v=" + HN_VERSION, () => window.MyHands).then(() => window.MyHands.open()),
            close: () => window.MyHands && window.MyHands.close(), err: "Couldn't load My hands: " },
@@ -2955,7 +2898,6 @@ function helpOpen(page) {
 }
 window.helpGo = (what) => {
   if (what === "practice") return loadPractice().then(P => { if (!P.on) P.set(true); }).catch(e => showErr(String(e)));
-  if (what === "rangeBuilder") { window.STUDY_BUILD = true; return openView("study"); }
   if (VIEWS[what]) return openView(what);
 };
 for (const [id, page] of [["helpStart", "start"], ["helpAbout", "about"], ["helpGlossary", "glossary"], ["helpChangelog", "changelog"], ["helpFairplay", "fairplay"], ["helpBtn", "start"]])
@@ -3083,7 +3025,7 @@ document.getElementById("practiceBtn").onclick = () => loadPractice().then(P => 
 document.getElementById("resetPractice").onclick = () => { document.getElementById("menu").hidden = true; if (practicing()) window.Practice.startOver(); };
 // ---- routes: the URL's view (a back or forward, or the page opened at it), opened without pushing. Practice is on at
 // /practice/ and off at the solver's URL, whatever it was last time (its "gto-practice" is no longer read); a view over
-// the page (session, study, import) leaves Practice as it is.
+// the page (session, import) leaves Practice as it is.
 async function applyRoute(r) {
   routing++;
   try {
@@ -3130,7 +3072,6 @@ const WELCOME_GO = {
     const t = document.getElementById("toast"), b = document.createElement("button"); b.className = "link"; b.textContent = "Or import a hand history";
     b.onclick = () => { t.hidden = true; openView("import"); }; t.appendChild(b);
   },
-  welcomeStudy: () => openView("study"),
   welcomePractice: () => window.helpGo("practice"),
   welcomeSession: () => openView("session"),
   welcomeStart: () => helpOpen("start"), welcomeAbout: () => helpOpen("about"), welcomeFair: () => helpOpen("fairplay"),

@@ -12,8 +12,6 @@ const STATIC = path.join(__dirname, "..", "..", "gto", "static");
 
 const LEAVING = ["practice.js", "session.js", "drills.js", "reports.js", "explain.js", "study.js", "writeup.js"];
 const GLOBALS = { "practice.js": "Practice", "session.js": "Session", "drills.js": "Drills", "reports.js": "FlopReports", "explain.js": "Explain", "study.js": "Study", "writeup.js": "WriteUp" };
-// The one exception: a saved hand's Study button, which loads study.js when it's pressed, and goes with it.
-const STUDY_BUTTON = /await loadJs\("study\.js\?v=" \+ SY_VERSION, \(\) => globalThis\.Study\);|globalThis\.STUDY_AT = \{ spot: "table", state: globalThis\.Study\.fromPayload\(p\) \};/g;
 // the code alone: a comment may say where a thing comes from
 const code = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/\s\/\/ .*$/gm, "");
 function deps(text) {
@@ -29,11 +27,8 @@ function deps(text) {
 
 test("hands.js and store.js need none of the views that are to leave", () => {
   for (const f of ["hands.js", "store.js"]) {
-    const text = fs.readFileSync(path.join(STATIC, f), "utf8").replace(STUDY_BUTTON, "");
-    assert.deepEqual(deps(text), [], f);
+    assert.deepEqual(deps(fs.readFileSync(path.join(STATIC, f), "utf8")), [], f);
   }
-  // the one exception is still only that
-  assert.equal(fs.readFileSync(path.join(STATIC, "hands.js"), "utf8").match(STUDY_BUTTON).length, 2);
 });
 
 test("the guard catches what it's for", () => {

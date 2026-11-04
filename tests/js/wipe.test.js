@@ -50,7 +50,6 @@ test("every storage key in gto/static is in store.js's SITE_KEYS (a new key can'
   assert.deepEqual(Object.keys(SITE_DATABASES).sort(), ["gto-pf", "gto-session", "gto-store"]);
   assert.deepEqual(SITE_DATABASES["gto-pf"], ["solves"]);
   assert.deepEqual(SITE_CACHES, ["gto-solver", "gto-solver-classic"]);
-  assert.match(fs.readFileSync(path.join(STATIC, "study.js"), "utf8"), /indexedDB\.open\("gto-pf", 1\)/);
   assert.match(fs.readFileSync(path.join(STATIC, "worker.js"), "utf8"), /caches\.open\("gto-solver"\)/);
 });
 
@@ -148,7 +147,7 @@ test("wipe: nothing comes back on the next load, and the page works afterwards",
   assert.equal((await st2.hands.list()).length, 1);
 });
 
-test("wipe: the page's open connections don't stop it (the store's own, and Study's on gto-pf, which never closes)", async () => {
+test("wipe: the page's open connections don't stop it (the store's own, and the frozen copy's Study's on gto-pf, which never closes)", async () => {
   const idb = fakeIndexedDB(), s = await site({ idb });
   const study = await new Promise((ok) => { const q = idb.open("gto-pf", 1); q.onsuccess = () => ok(q.result); });
   idb.blockDelete = true;   // (a deleteDatabase would wait for it)

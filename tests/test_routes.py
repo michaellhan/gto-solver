@@ -19,7 +19,7 @@ LIB = os.path.join(ROOT, "gto", "static", "flop_library")
 class TestRoutes(unittest.TestCase):
     def test_table(self):
         names, spot = routes.routes(HTML)
-        self.assertEqual(names, ["practice", "session", "study", "preflop", "import", "hands",
+        self.assertEqual(names, ["practice", "session", "import", "hands",
                                  "start", "about", "glossary", "changelog", "fairplay"])
         self.assertEqual(spot, [])
 
@@ -71,7 +71,7 @@ class TestRetired(unittest.TestCase):
         self.assertEqual(set(routes.RETIRED) & set(names), set())
         for r in routes.RETIRED:
             self.assertRegex(r, r"^[a-z0-9-]+$")
-        self.assertEqual(routes.RETIRED, ["drills", "reports"])
+        self.assertEqual(routes.RETIRED, ["drills", "reports", "study", "preflop"])
         self.assertEqual(routes.page_for("/reports/"), routes.stub("reports"))
 
     def test_stub(self):

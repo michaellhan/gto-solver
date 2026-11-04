@@ -14,7 +14,7 @@
 //   blobs     big state kept whole: the analyzer's session in progress ("session-current")
 // On the first load it takes in what the site kept before (migrate): every localStorage key above (left where it is:
 // it's the mirror) and the analyzer's IndexedDB "gto-session" (its session in progress and history; the old database is
-// left as it was). Study's solved preflop games (IndexedDB "gto-pf") and the worker's files (Cache API) are caches of
+// left as it was). The frozen copy's solved preflop games (IndexedDB "gto-pf") and the worker's files (Cache API) are caches of
 // what can be solved or fetched again and stay where they are.
 // The Anthropic API key (Practice's Explain with AI, "gto-anthropic-key") and the choice to use it ("gto-explain-own")
 // never become records: they stay in localStorage only, and a backup never holds the key, even inside a note.
@@ -138,7 +138,7 @@
     });
   }
 
-  // a named database's stores emptied, whoever else has it open (Study keeps "gto-pf" open, and nothing closes it on
+  // a named database's stores emptied, whoever else has it open (the frozen copy's Study keeps "gto-pf" open, and nothing closes it on
   // versionchange, so deleting it would wait for that tab). True; false if it isn't there (it isn't created: an open that
   // would is aborted, as in readOldDb); rejects if it can't be done.
   function clearDb(idb, name, stores) {

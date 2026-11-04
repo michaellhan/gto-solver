@@ -211,7 +211,7 @@ test("a decision of a finished hand: its advice, the whole hand kept; a reload b
   p.workers.at(-1).onmessage(answer(m));
   await flush();
   assert.match(p.byId("result").innerHTML, /<span class="big">check<\/span>/);
-  assert.deepEqual(ids(p), ["stepPrev", "stepNext", "stepBack", "stepStudy"]);
+  assert.deepEqual(ids(p), ["stepPrev", "stepNext", "stepBack"]);
   assert.match(p.byId("actionArea").children[0].innerHTML, /Your flop decision/);
   assert.equal(p.byId("stepLabel").textContent, "decision 2 of 4");
   assert.equal(p.run('document.body.classList.contains("heroturn")'), true);   // (a phone puts this advice after the table)
@@ -240,7 +240,7 @@ test("a decision of a finished hand: its advice, the whole hand kept; a reload b
   assert.equal(p.byId("result").className, "empty");
 });
 
-test("once its advice has been seen a hand stays as entered: no Undo, no cards, a rewind only looks; other lines are Study's", async () => {
+test("once its advice has been seen a hand stays as entered: no Undo, no cards, a rewind only looks", async () => {
   const p = await reviewed(state(WHOLE));
   const whole = j(p.val("S.actions"));
   assert.equal(p.val("S.reviewed"), true);
@@ -426,22 +426,6 @@ test("a write-up sent to review is finished and reviewed; one opened on the tabl
   nothingAsked(b.p);
 });
 
-test("Study: a reviewed decision's What if opens on that spot, without your hand; the table keeps the hand", async () => {
-  const SCRIPTS = { "study.js": `globalThis.Study = { opened: 0, fromPayload: (p) => ({ board: p.board, flop: p.flop, hero: p.hero, hole: p.hole }), open() { this.opened++; return Promise.resolve(); }, close() { viewClosed("study"); } };` };
-  const p = await page({ isolated: true, scripts: SCRIPTS });
-  p.S = state(WHOLE);
-  p.run('rewindTo("flop", 1)');
-  await flush();
-  await press(p, "stepStudy");
-  await flush();
-  assert.equal(p.val("Study.opened"), 1);
-  const at = p.val("STUDY_AT");
-  assert.equal(at.spot, "table");
-  assert.equal(at.state.board, "Kd7s2c");
-  assert.equal(at.state.flop.length, 1);
-  assert.equal(JSON.parse(p.storage.get("handreview")).actions.river.length, 2);
-});
-
 test("a review that ends with the betting closed asks for your equity once, after the decisions; a hand being entered never does", async () => {
   const p = await reviewed(state(WHOLE));
   await flush();
@@ -454,22 +438,6 @@ test("a review that ends with the betting closed asks for your equity once, afte
   await flush();
   nothingAsked(q);
   assert.equal(q.byId("equity").hidden, true);
-});
-
-test("Study's hand on the table: its game from the first decision while it's entered, its spot once it's finished", async () => {
-  const p = await page();
-  p.S = state(FLOP);
-  const open = j(p.run("studyTable()"));
-  assert.deepEqual([open.players, open.stack, open.board, open.preflop, open.flop], [6, 100, "", [], []]);
-  assert.match(p.byId("toast").innerHTML, /once it's finished/);
-  p.S = { ...state(FLOP), finished: true };
-  const done = j(p.run("studyTable()"));
-  assert.equal(done.board, "Kd7s2c");
-  assert.equal(done.flop.length, 1);
-  nothingAsked(p);
-  p.practice();
-  p.S = state(FLOP);
-  assert.equal(j(p.run("studyTable()")).board, "Kd7s2c");   // (Practice's hands aren't real)
 });
 
 // ---- Explain with AI on a reviewed decision (index.html showExplain, explain.js): only behind a click, only there

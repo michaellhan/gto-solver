@@ -1,6 +1,6 @@
 // My hands (gto/static/hands.js) and the page's hooks into the storage layer (store.js): the hand on the table kept when
 // New hand, a link or an import takes its place (an untouched spot isn't), an imported hand with its history, a
-// hand opened from My hands saved back into its own record, Study at your last decision; and the panel's pure parts
+// hand opened from My hands saved back into its own record; and the panel's pure parts
 // (a hand's summary and line, search, filters, tags, the import's kinds, the rows' HTML escaped).
 "use strict";
 const test = require("node:test");
@@ -112,34 +112,6 @@ test("an imported hand is kept with its site, hand number and history", async ()
   assert.equal((await p.hands()).length, 1);
 });
 
-test("Study from My hands: the hand on the table, Study at your last decision", async () => {
-  const p = await storePage();
-  vm.runInContext(fs.readFileSync(path.join(STATIC, "hands.js"), "utf8"), p.ctx, { filename: "hands.js" });
-  p.run("globalThis.__views = []; openView = (n) => { __views.push(n); return Promise.resolve(); };");
-  const st = played({ flop: [{ pos: "BB", action: "check" }, { pos: "BTN", action: "bet", to: 3 }, { pos: "BB", action: "call" }], cards: ["Ah", "Kd", "Qs", "7h", "2c", "9d"], turn: [{ pos: "BB", action: "check" }, { pos: "BTN", action: "check" }] });
-  const rec = j(await p.run(`GTOStore.hands.save(${JSON.stringify({ ...st, finished: true })})`));
-  await p.run(`(async () => MyHands.pageHost().study(await GTOStore.hands.get(${JSON.stringify(rec.id)})))()`);
-  assert.deepEqual(p.val("__views"), ["study"]);
-  const at = p.val("STUDY_AT");
-  assert.equal(at.spot, "table");
-  assert.equal(at.state.board, "Qs7h2c9d");
-  assert.equal(at.state.turn.length, 1);          // (BB's check: your check back is the decision)
-  assert.equal(at.state.flop.length, 3);
-  assert.equal(p.S.actions.turn.length, 2);       // (the table keeps the whole hand)
-});
-
-test("Study from My hands: a hand still being entered stays on the table, and says why", async () => {
-  const p = await storePage();
-  vm.runInContext(fs.readFileSync(path.join(STATIC, "hands.js"), "utf8"), p.ctx, { filename: "hands.js" });
-  p.run("globalThis.__views = []; globalThis.__toasts = []; openView = (n) => { __views.push(n); return Promise.resolve(); }; toast = (m) => __toasts.push(m);");
-  const rec = j(await p.run(`GTOStore.hands.save(${JSON.stringify(played())})`));
-  await p.run(`(async () => MyHands.pageHost().study(await GTOStore.hands.get(${JSON.stringify(rec.id)})))()`);
-  assert.deepEqual(p.val("__views"), []);
-  assert.equal(p.val("globalThis.STUDY_AT"), undefined);
-  assert.ok(p.val("__toasts").some(m => /once it's finished/.test(m)));
-  assert.equal(p.S.actions.flop.length, 1);       // (it's on the table, as it was)
-});
-
 // ---- the panel's pure parts
 test("summary: who, the cards, the pot, how far it went, the grades", () => {
   const st = played({ river: [] });
@@ -204,15 +176,6 @@ test("an import's kinds: a My hands file, a backup, links, hand histories", () =
   assert.match(MH.parseImport("  ").error, /Nothing/);
   assert.equal(MH.backupText({ counts: { kv: 1, hands: 3, sessions: 0, blobs: 1 } }), "3 hands, 1 setting or saved state, a session in progress");
   assert.equal(MH.fileName("backup", Date.UTC(2026, 10, 2, 12)), "gto-solver-backup-2026-11-02.json");
-});
-
-test("lastDecision: the hand rewound to your last action (the cards after it gone)", () => {
-  const st = played({ cards: ["Ah", "Kd", "Qs", "7h", "2c", "9d", "3s"], flop: [{ pos: "BB", action: "check" }, { pos: "BTN", action: "bet", to: 3 }, { pos: "BB", action: "call" }], turn: [{ pos: "BB", action: "check" }, { pos: "BTN", action: "check" }], river: [{ pos: "BB", action: "bet", to: 5 }] });
-  const at = MH.lastDecision(st);
-  assert.deepEqual(at.actions.turn, [{ pos: "BB", action: "check" }]); assert.deepEqual(at.actions.river, []);
-  assert.deepEqual(at.cards, ["Ah", "Kd", "Qs", "7h", "2c", "9d", null]);
-  assert.equal(st.actions.river.length, 1);   // (a copy)
-  assert.equal(MH.lastDecision(state({ hero: "BB", preflop: [{ pos: "UTG", action: "fold" }] })), null);
 });
 
 test("store and panel together: an export imported elsewhere, links and hand histories through importFile", async () => {

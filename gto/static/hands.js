@@ -1,8 +1,7 @@
 // My hands, loaded by index.html the first time it opens (the ⋯ menu's My hands…, /gto-solver/hands/): the hands kept
 // in this browser by store.js (GTOStore.hands): each hand you played on the table (kept when New hand or another hand
 // takes its place), reviewed (Review whole hand, with its grades) or imported. Search, a filter by kind and tag, tags and
-// a note on each, delete (Undo); a hand opens on the table (to review it) or in Study at your last decision, and copies
-// as its #h= link; the list (or one hand) exports as JSON, and such a file, #h= links or hand histories import into it.
+// a note on each, delete (Undo); a hand opens on the table (to review it) and copies as its #h= link; the list (or one hand) exports as JSON, and such a file, #h= links or hand histories import into it.
 // Below the list, a backup of everything the site keeps in this browser and its restore (GTOStore.backup / restore), and
 // its delete (GTOStore.wipe), which asks first and then says what went.
 // Everything but the panel (open) and the page host is pure and tested in Node.
@@ -111,7 +110,6 @@
       + `${grades}${tags}</div>`;
     const note = d.note && !isOpen ? `<div class="mh-note1">${esc(d.note.split("\n")[0].slice(0, 140))}</div>` : "";
     const acts = `<div class="mh-acts"><button data-open="${id}" title="Put this hand on the table, to see it or review it">Open</button>`
-      + `<button data-study="${id}" title="Study this hand at your last decision: the solver's strategy for every hand of the range">Study</button>`
       + `<button data-link="${id}" title="Copy a link that opens this hand (#h=)">Copy link</button>`
       + `<button class="ghost" data-toggle="${id}" aria-expanded="${isOpen ? "true" : "false"}">${isOpen ? "Less" : "Tags, note…"}</button></div>`;
     const more = isOpen ? `<div class="mh-more">${lineHtml(d.state || {})}<div class="mh-sub">${esc(s.game)} · ${esc(SRC[d.source] || d.source || "")}</div>`
@@ -206,7 +204,7 @@
       if (H.sig(S) !== rec.data.sig) await H.update(rec.id, { state: S });
       H.onTable(S, { id: rec.id, source: rec.data.source });
     };
-    /* global S, cleanState, setPositions, payload, loadHandState, rewindTo, reviewHand, toast, closed, simulate, encodeState, decodeState, ROOT, openView, loadJs, SY_VERSION, copyText, loadHH, splitHands, importHand, simulate, handDone, heldHand */
+    /* global S, cleanState, loadHandState, rewindTo, reviewHand, toast, simulate, encodeState, decodeState, ROOT, copyText, loadHH, splitHands, importHand, simulate, handDone, heldHand */
     return {
       store: () => globalThis.GTOStore,
       table: () => clone(heldHand()),
@@ -225,36 +223,12 @@
           b.onclick = () => { t.hidden = true; reviewHand(); }; t.appendChild(b);
         }
       },
-      // Study at your last decision (the table keeps the whole hand); a hand still being entered stays on the table
-      async study(rec) {
-        await onTable(rec);
-        if (!closed(simulate())) return toast("Study opens at a hand's spots once it's finished. Finish this hand first.");
-        await loadJs("study.js?v=" + SY_VERSION, () => globalThis.Study);
-        const at = lastDecision(S), old = S;
-        let p = null;
-        try { if (at) { S = at; setPositions(S.players); } p = payload(); } finally { S = old; setPositions(old.players); }
-        globalThis.STUDY_AT = { spot: "table", state: globalThis.Study.fromPayload(p) };
-        return openView("study");
-      },
       async importHH(text) {
         await loadHH();
         return splitHands(text).map(h => { try { const r = importHand(h); return { state: r.state, site: r.hand.site, hh: h }; } catch (e) { return { error: e.message || String(e) }; } });
       },
     };
   }
-  // the hand rewound to your last decision (null if you have none): what Study opens
-  function lastDecision(st) {
-    let at = null;
-    for (const s of STREETS) (st.actions[s] || []).forEach((a, i) => { if (a.pos === st.hero) at = [s, i]; });
-    if (!at) return null;
-    const [s, i] = at, out = clone(st), k = STREETS.indexOf(s);
-    out.actions[s] = out.actions[s].slice(0, i);
-    for (const t of STREETS.slice(k + 1)) out.actions[t] = [];
-    const keep = { preflop: 2, flop: 5, turn: 6, river: 7 }[s];
-    for (let c = keep; c < 7; c++) out.cards[c] = null;
-    return out;
-  }
-
   // ---- the panel
   let deleted = null, box = null, host = null, recs = [], ui = { q: "", kind: "", tag: "" }, shown = PAGE, openId = null, msg = "", draft = null, unsub = null, noteT = null, loaded = false, wiping = null;
   const store = () => host.store();
@@ -341,7 +315,6 @@
     if (d.toggle != null) { openId = openId === d.toggle ? null : d.toggle; return drawList(); }
     if (d.savetable != null) { const r = await H.save(host.table(), { source: "table" }); await refresh(); return say(r ? "Saved the hand on the table." : "Nothing to save: the hand has no action yet."); }
     if (d.open != null) { const r = recOf(d.open); if (!r) return; close(); return host.open(r); }
-    if (d.study != null) { const r = recOf(d.study); if (!r) return; close(); return host.study(r); }
     if (d.link != null) { const r = recOf(d.link); if (!r) return; const ok = await host.copy(host.link(r.data.state)); return say(ok ? "Link copied: it opens this hand on the solver's page." : "Couldn't copy the link."); }
     if (d.json != null) { const r = recOf(d.json); if (r) download(fileName("hand", Date.now()), H.exportFile([r], host.link)); return; }
     if (d.export != null) { const L = filterRecs(recs, ui); if (!L.length) return; const size = download(fileName("hands", Date.now()), H.exportFile(L, host.link)); return say(esc(`Exported ${L.length} hand${L.length === 1 ? "" : "s"} (${Math.max(1, Math.round(size / 1024))} KB).`)); }
@@ -473,7 +446,7 @@
       box.setAttribute("aria-modal", "true"); box.setAttribute("aria-label", "My hands");
       box.innerHTML = `<div class="mh-card"><div class="mh-head"><b>My hands</b><span class="sub">every hand you've entered, reviewed or imported, kept in this browser</span><button class="ghost mh-x" data-close aria-label="Close">✕</button></div><div class="mh-body"></div></div>`;
       document.body.appendChild(box);
-      const keys = "[data-close],[data-clear],[data-kind],[data-tag],[data-more],[data-toggle],[data-savetable],[data-open],[data-study],[data-link],[data-json],[data-export],[data-del],[data-rmtag],[data-pastebox],[data-pastego],[data-backup],[data-restorego],[data-restorecancel],[data-reload],[data-undo],[data-wipe],[data-wipego],[data-wipecancel]";
+      const keys = "[data-close],[data-clear],[data-kind],[data-tag],[data-more],[data-toggle],[data-savetable],[data-open],[data-link],[data-json],[data-export],[data-del],[data-rmtag],[data-pastebox],[data-pastego],[data-backup],[data-restorego],[data-restorecancel],[data-reload],[data-undo],[data-wipe],[data-wipego],[data-wipecancel]";
       box.addEventListener("click", (e) => {
         if (e.target === box) return close();
         const t = e.target.closest(keys);
@@ -515,7 +488,7 @@
   }
 
   const api = { summary, lineHtml, searchText, matches, filterRecs, tagCounts, cleanTag, rowHtml, listHtml, toolbarHtml, parseImport, fileName, backupText,
-                wipeText, wipeHtml, lastDecision, pageHost, open, close, act, importText, useHost: (h) => { host = h; }, get recs() { return recs; }, get ui() { return ui; },
+                wipeText, wipeHtml, pageHost, open, close, act, importText, useHost: (h) => { host = h; }, get recs() { return recs; }, get ui() { return ui; },
                 get wiping() { return wiping; }, PAGE };
   if (typeof module === "object" && module.exports) module.exports = api; else globalThis.MyHands = api;
 })();

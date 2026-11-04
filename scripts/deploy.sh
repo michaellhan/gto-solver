@@ -70,8 +70,6 @@ MODULES="
 HH_VERSION hh.js
 BD_VERSION breakdown.js
 SS_VERSION session.js
-SY_VERSION study.js
-RO_VERSION runouts.js
 SP_VERSION simple.js
 PR_VERSION practice.js
 MT_VERSION multitable.js
@@ -87,10 +85,6 @@ done <<< "$MODULES"
 # cached from before the bundle (index.html is cached up to 10 minutes, with the old worker's version)
 "$PYTHON" "$HERE/scripts/build_bundle.py" "$WORK/site/gto-solver/solver.zip" >/dev/null
 cp "$HERE"/gto/*.py "$WORK/site/gto-solver/gto/"
-# Study's stored preflop solves (gto/pf_study.py STORED: pf/<game>.bin, ~300 KB each, read by the worker's siteFetch
-# when Study's Solver source opens one of those games)
-mkdir -p "$WORK/site/gto-solver/pf"
-cp "$HERE"/gto/static/pf/*.bin "$WORK/site/gto-solver/pf/"
 # Stamp the worker's cache-busting version with its content hash (and solver.zip's, which the worker fetches as
 # solver.zip?v=<this> and keeps in the Cache API under that URL), and each module's, so a changed file is never served
 # from a browser's cached copy. Before the library: a stamp that fails stops the deploy with nothing published.

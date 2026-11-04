@@ -74,7 +74,7 @@ test("reviewing a decision the worker gets the state as built, at the Fast budge
   p.workers[0].onmessage({ data: { id: m.id, result: { street: "flop", hero: "BTN", hand: "AKs", recommended: "check", actions: [{ action: "check", freq: 0.7 }, { action: "bet 33%", amount_bb: 1.8, freq: 0.3 }] } } });
   await flush();
   assert.match(p.byId("result").innerHTML, /<span class="big">check<\/span>/);
-  assert.deepEqual(p.buttons().map(b => b.id), ["stepPrev", "stepNext", "stepBack", "stepStudy"]);
+  assert.deepEqual(p.buttons().map(b => b.id), ["stepPrev", "stepNext", "stepBack"]);
 });
 
 test("on your turn in Practice before the solve starts (the page still finding its backend) the panel doesn't say it waits for your turn", async () => {

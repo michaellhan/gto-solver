@@ -15,8 +15,7 @@ const linkOf = (text) => text.match(/^Open this spot: (.*)$/m)[1];
 
 // stand-ins for the views' scripts (the real ones need a DOM): they record opening and report closing as the real ones do
 const SCRIPTS = { "hands.js": `globalThis.MyHands = { opened: 0, closed: 0, open() { this.opened++; return Promise.resolve(); }, close() { this.closed++; viewClosed("hands"); } };`,
-                  "session.js": `globalThis.Session = { opened: 0, open() { this.opened++; return Promise.resolve(); }, close() { viewClosed("session"); } };`,
-                  "study.js": `globalThis.Study = { opened: 0, open(o) { this.opened++; this.as = o && o.view || "study"; return Promise.resolve(); }, close() { viewClosed(this.as); } };` };
+                  "session.js": `globalThis.Session = { opened: 0, open() { this.opened++; return Promise.resolve(); }, close() { viewClosed("session"); } };` };
 const page = (opts = {}) => loadPage({ scripts: SCRIPTS, ...opts });
 
 test("paths parse to a view and the solver's root", () => {
@@ -97,20 +96,6 @@ test("a view's URL opened directly opens it", async () => {
   assert.deepEqual(s.scripts, ["hh.js", "session.js"]);
   assert.equal(s.val("Session.opened"), 1);
   assert.equal(s.ctx.document.title, "Analyze session · GTO Solver");
-  const y = page({ path: "/gto-solver/study/" });
-  await y.ready(); await flush();
-  assert.deepEqual(y.scripts, ["study.js"]);
-  assert.equal(y.val("Study.opened"), 1);
-  assert.equal(y.ctx.document.title, "Study · GTO Solver");
-  y.run("Study.close()");
-  assert.deepEqual(y.pushed, ["/gto-solver/"]);
-  const f = page({ path: "/gto-solver/preflop/" });   // (Study as the menu's Preflop solve: the game form)
-  await f.ready(); await flush();
-  assert.deepEqual(f.scripts, ["study.js"]);
-  assert.equal(f.val("Study.as"), "preflop");
-  assert.equal(f.ctx.document.title, "Preflop solve · GTO Solver");
-  f.run("Study.close()");
-  assert.deepEqual(f.pushed, ["/gto-solver/"]);
   const i = page({ path: "/gto-solver/import/" });
   await i.ready(); await flush();
   assert.equal(i.byId("importBox").hidden, false);
@@ -135,30 +120,8 @@ test("a view over Practice returns to /practice/ when closed; back to the solver
   assert.equal(p.val("practicing()"), false);
 });
 
-test("the menu's range builder opens Study at its URL, asking for its Build mode", async () => {
-  const p = page({ path: "/gto-solver/" });
-  await p.ready(); await flush();
-  p.click("rangeBuilder"); await flush();
-  assert.deepEqual(p.pushed, ["/gto-solver/study/"]);
-  assert.equal(p.val("Study.opened"), 1);
-  assert.equal(p.val("window.STUDY_BUILD"), true);
-});
-
-test("the menu's Preflop solve opens Study at /preflop/ as its game form; Study from the menu after it is Study again", async () => {
-  const p = page({ path: "/gto-solver/" });
-  await p.ready(); await flush();
-  p.click("pfSolve"); await flush();
-  assert.deepEqual(p.pushed, ["/gto-solver/preflop/"]);
-  assert.equal(p.val("Study.as"), "preflop");
-  assert.equal(p.val("overlay"), "preflop");
-  p.click("study"); await flush();
-  assert.deepEqual(p.pushed, ["/gto-solver/preflop/", "/gto-solver/", "/gto-solver/study/"]);   // (as between any two views)
-  assert.equal(p.val("Study.as"), "study");
-  assert.equal(p.val("Study.opened"), 2);
-});
-
 test("the solver's page pins its base to the root, so a view's URL pushed doesn't move its scripts", async () => {
-  // (Study opened from the menu at /gto-solver/study/ had loaded /gto-solver/study/study.js, a 404)
+  // (a view's script would load from under its URL, /gto-solver/session/session.js, a 404)
   const p = page({ path: "/gto-solver/" });
   await p.ready();
   assert.equal(p.val("document.head.children[0].tagName"), "BASE");
@@ -203,7 +166,7 @@ test("the route table is the one gto/routes.py reads, and deploy.sh writes each 
   assert.deepEqual(spot, p.val("SPOT_ROUTES"));
   assert.match(html, /^const ROUTES = \{.*\};$/m);
   // each label is the ⋯ menu's / header's (without its ellipsis)
-  for (const [id, r] of [["practiceBtn", "practice"], ["analyzeSession", "session"], ["study", "study"], ["pfSolve", "preflop"], ["importHand", "import"],
+  for (const [id, r] of [["practiceBtn", "practice"], ["analyzeSession", "session"], ["importHand", "import"],
                          ["helpStart", "start"], ["helpAbout", "about"], ["helpGlossary", "glossary"], ["helpChangelog", "changelog"], ["helpFairplay", "fairplay"], ["myHands", "hands"]]) {
     const label = html.match(new RegExp(`<button id="${id}"[^>]*>([^<]*)</button>`))[1].replace("…", "");
     assert.equal(p.val(`ROUTES[${JSON.stringify(r)}]`), label, id);
