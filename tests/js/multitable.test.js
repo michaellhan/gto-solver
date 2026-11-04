@@ -11,7 +11,7 @@ const vm = require("node:vm");
 const { loadPage } = require("./page.js");
 
 const STATIC = path.join(__dirname, "..", "..", "gto", "static");
-const { PRACTICE } = require("./page.js");
+const { PRACTICE } = require("./practice_src.js");
 const MT = fs.readFileSync(path.join(STATIC, "multitable.js"), "utf8");
 const flush = async (n = 4) => { for (let i = 0; i < n; i++) await new Promise(r => setImmediate(r)); };
 const ZERO = { hands: 0, decisions: 0, best: 0, good: 0, evDecisions: 0, evLost: 0, net: 0 };

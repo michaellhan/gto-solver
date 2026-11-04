@@ -128,7 +128,7 @@ function panel(p) {
   p.run(`var __box = document.createElement("div"), __grid = document.createElement("div"), __tabs = [];
     for (const v of ["grid", "breakdown", "equity"]) { const b = document.createElement("button"); b.dataset.v = v; __tabs.push(b); }
     var __el = { querySelector: (s) => s === ".bdview" ? __box : s === ".gridview" ? __grid : null, querySelectorAll: () => __tabs };
-    var __head = []; document.head = { appendChild: (s) => { __head.push(s); return s; } };`);
+    var __head = []; document.head = { appendChild: (s) => { if (s.src) __head.push(s); return s; } };`);   // (its scripts; the view adds its <style> too)
 }
 
 test("opening Breakdown loads breakdown.js once, then asks the solver with the flag", async () => {

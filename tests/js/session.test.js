@@ -636,7 +636,7 @@ test("a session left running: the page loads the analyzer and resumes it in the 
   const p = loadPage({ storage: { [SS.RUN_KEY]: JSON.stringify({ tab: "t", at: 0 }) } });
   await p.ready(); await flush();
   assert.deepEqual(p.scripts.filter(s => /^(hh|session)\.js$/.test(s)), ["hh.js", "session.js"]);
-  assert.ok(p.ctx.Session && !p.els.has("sessionBox"));
+  assert.ok(p.ctx.Session && !p.present("sessionBox"));
 });
 
 test("resume: a session saved while it ran goes on where it stopped, in this tab only, and is marked while it runs", async () => {

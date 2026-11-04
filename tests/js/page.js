@@ -17,8 +17,23 @@ require("node:v8").setFlagsFromString("--no-sparkplug");
 // GTO_PAGE=<file> tests another copy of the page (e.g. an older version, to see a test catch its bug)
 const HTML_PATH = process.env.GTO_PAGE || path.join(__dirname, "..", "..", "gto", "static", "index.html");
 
-// practice.js as the page loads it (loadPractice): explain.js first, whose hand strength and words it reads
-const PRACTICE = ["explain.js", "practice.js"].map(f => fs.readFileSync(path.join(path.dirname(HTML_PATH), f), "utf8")).join("\n");
+// The ids the page finds in its own HTML, and the ones it (or a module it loads) creates itself: a lookup of any other id
+// is a test failure, not an element made up on the spot, which hid broken wiring. A lookup of one of these while it isn't
+// there answers null, as a browser does. tests/js/harness.test.js checks this list against gto/static both ways, so an
+// entry goes with its code.
+const RUNTIME_IDS = {
+  "index.html": ["customAmt", "customBox", "equityRetry", "explainBox", "solveBar", "solveMsg", "solveTime", "solverRetry"],
+  "breakdown.js": ["bdStyle"], "drills.js": ["drStyle"], "explain.js": ["pxKey"], "hands.js": ["mhStyle"], "help.js": ["hpStyle"],
+  "multitable.js": ["mtAmt", "mtStyle", "mtView", "mtTop", "mtTabs", "mtDock", "mtSide", "mtT0", "mtT1", "mtT2", "mtT3"],
+  "reports.js": ["rpStyle"], "runouts.js": ["roStyle"], "session.js": ["ssStyle"], "simple.js": ["osStyle"], "study.js": ["syStyle"], "writeup.js": ["wuStyle"],
+};
+const RUNTIME = new Set(Object.values(RUNTIME_IDS).flat());
+// (the markup without the page's one inline script: its templates are the ids created at runtime)
+const staticIds = () => new Set([...fs.readFileSync(HTML_PATH, "utf8").replace(/<script>[\s\S]*?<\/script>/, "").matchAll(/\sid="([^"]+)"/g)].map(m => m[1]));
+// A lookup a page's own try/catch swallowed still fails the test it happened in
+const unknownIds = [];
+if (/\.test\.js$/.test(process.argv[1] || ""))   // (scripts/bench_session.mjs loads the page too)
+  require("node:test").afterEach(() => { if (unknownIds.length) throw new Error(`no element with id: ${unknownIds.splice(0).join(", ")} (not in index.html or RUNTIME_IDS, page.js)`); });
 
 function pageScript() {
   const html = fs.readFileSync(HTML_PATH, "utf8");
@@ -42,19 +57,24 @@ class ClassList {
 }
 
 class El {
-  constructor(tag, id) {
-    this.tagName = (tag || "div").toUpperCase(); this.id = id || "";
+  constructor(tag, id, reg) {
+    this.reg = reg; this._id = id || "";
+    this.tagName = (tag || "div").toUpperCase();
     this.className = ""; this.classList = new ClassList(this);
     this.style = {}; this.dataset = {}; this.children = []; this.listeners = {};
     this._html = ""; this.textContent = ""; this.hidden = false; this.value = ""; this.checked = false;
     this.disabled = false; this.title = ""; this.onclick = null; this.onchange = null;
   }
+  get id() { return this._id; }
+  set id(v) { this._id = String(v); if (this.reg && v) this.reg.named.set(this._id, this); }   // (document.getElementById finds it)
   get innerHTML() { return this._html; }
-  set innerHTML(v) { this._html = String(v); this.children = []; }
+  set innerHTML(v) { this._html = String(v); this.children = []; this._wrote(this._html); }
+  // ids in written HTML, which isn't parsed: there while this element's HTML says so
+  _wrote(h) { if (this.reg) for (const m of h.matchAll(/\sid="([^"]+)"/g)) this.reg.written.set(m[1], this); }
   appendChild(c) { this.children.push(c); return c; }
   prepend(c) { this.children.unshift(c); }
-  append(...xs) { for (const x of xs) if (typeof x === "string") this._html += x; else this.children.push(x); }
-  insertAdjacentHTML(_, h) { this._html += h; }
+  append(...xs) { for (const x of xs) if (typeof x === "string") { this._html += x; this._wrote(x); } else this.children.push(x); }
+  insertAdjacentHTML(_, h) { this._html += h; this._wrote(h); }
   addEventListener(t, f) { (this.listeners[t] = this.listeners[t] || []).push(f); }
   // appended descendants the page looks up by selector: the fold titles ("h2[data-fold]") and by id ("#early")
   querySelector(sel) {
@@ -80,8 +100,21 @@ class El {
 // so the page uses the local server's budgets and POSTs to /advise instead of the worker), isolated (true: the page is
 // cross-origin isolated, so it can share a SharedArrayBuffer with its worker).
 function loadPage(opts = {}) {
-  const els = new Map();
-  const byId = (id) => { if (!els.has(id)) els.set(id, new El("div", id)); return els.get(id); };
+  const els = new Map(), staticNow = staticIds(), reg = { named: new Map(), written: new Map() };
+  // the element with this id, if the page has one now: in its markup, given the id, or written into an element's HTML
+  const present = (id) => {
+    const n = reg.named.get(id), w = reg.written.get(id);
+    if (n && !n.removed) return n;
+    if (!staticNow.has(id) && !(w && !w.removed && w._html.includes(`id="${id}"`))) return null;
+    if (!els.has(id)) els.set(id, new El("div", id, reg));
+    return els.get(id);
+  };
+  const byId = (id) => {
+    const el = present(id);
+    if (el || RUNTIME.has(id)) return el;
+    unknownIds.push(id);
+    throw new Error(`no element with id "${id}": it's neither in index.html nor in RUNTIME_IDS (tests/js/page.js)`);
+  };
   const keydown = [];
   const storage = new Map(Object.entries(opts.storage || {}));
   const posted = [];      // messages the page sent to the solver worker / server
@@ -118,7 +151,7 @@ function loadPage(opts = {}) {
   }
   // the header's speed and opponents toggles (static markup in the page)
   for (const [id, key, vals] of [["solvectl", "m", ["fast", "accurate"]], ["oppctl", "o", ["gto", "pool"]]])
-    for (const v of vals) { const b = new El("button"); b.dataset[key] = v; byId(id).appendChild(b); }
+    if (staticNow.has(id)) for (const v of vals) { const b = new El("button"); b.dataset[key] = v; byId(id).appendChild(b); }
   const body = new El("body", "body");
   // a <script src> appended to the head runs (the page's own file, or opts.scripts') after the current task, then onload
   const head = new El("head");
@@ -139,7 +172,7 @@ function loadPage(opts = {}) {
   const document = {
     body, head, title: "GTO Solver",
     getElementById: byId,
-    createElement: (t) => new El(t),
+    createElement: (t) => new El(t, "", reg),
     // the page only looks up action buttons by data-key ("#actionArea [data-key=..]"); everything else is absent
     querySelector(sel) {
       const m = sel.match(/^#(\w+) \[data-key="(.*)"\]$/);
@@ -222,7 +255,7 @@ function loadPage(opts = {}) {
   // the value of an expression as a plain Node object (the page's own objects come from another realm)
   const val = (code) => { const t = run(`JSON.stringify(${code})`); return t === undefined ? undefined : JSON.parse(t); };
   const page = {
-    ctx, run, val, els, byId, storage, posted, workers, fetched, notFound, clipboard, location, replaced, pushed, scripts, rootProps, viewport,
+    ctx, run, val, els, byId, present, storage, posted, workers, fetched, notFound, clipboard, location, replaced, pushed, scripts, rootProps, viewport,
     // back or forward to a URL (an absolute path): location changes, then popstate
     popTo(url) { goTo(url); page.fire("popstate", { state: null }); },
     // fire a window event (e.g. "hashchange" after setting location.hash)
@@ -288,4 +321,4 @@ function acts(str) {
   });
 }
 
-module.exports = { loadPage, state, acts, pageScript, HTML_PATH, PRACTICE };
+module.exports = { loadPage, state, acts, pageScript, HTML_PATH, RUNTIME_IDS, staticIds, unknownIds };

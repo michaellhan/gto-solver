@@ -8,7 +8,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 const { loadPage } = require("./page.js");
 
-const { PRACTICE } = require("./page.js");
+const { PRACTICE } = require("./practice_src.js");
 const flush = async (n = 4) => { for (let i = 0; i < n; i++) await new Promise(r => setImmediate(r)); };
 const ADVICE = { street: "flop", hero: "BTN", hand: "AKs", recommended: "call",
   actions: [{ action: "fold", freq: 0.2, ev_bb: 0 }, { action: "check", freq: 0.3, ev_bb: 0.4 }, { action: "call", freq: 0.5, ev_bb: 1 }] };
