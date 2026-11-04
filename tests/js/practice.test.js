@@ -435,10 +435,8 @@ test("practice setup and states: a fixed or random seat, the buttons wait for th
   assert.ok(!/wait/.test(acts.className) && acts.children.every(b => !b.disabled));
   assert.match(p.byId("practiceBar").innerHTML, /Your turn/);
   // how the solver plays your whole range at your last decision: in its Details, shown only when asked for, never
-  // on your turn; the advice panel then shows only the range (Grid first, a view picked in solver mode aside)
-  p.run(`VIEW = "breakdown"; renderResult(lastResult, resultKey)`);
-  assert.match(p.byId("result").innerHTML, /<button data-v="grid" class="active">Grid<\/button>/);
-  assert.equal(p.val("VIEW"), "breakdown", "practice opens on the Grid without changing the solver's view");
+  // on your turn; the advice panel then shows only the range
+  assert.match(p.byId("result").innerHTML, /<div class="gridview">/);
   const street = p.sim().current, me = p.val("SEAT_LABEL(S.hero, S.players)");
   assert.equal(p.act({ action: "call" }), null); p.run("renderAll()");
   assert.ok(!p.ctx.document.body.className.includes("pxdetail"));

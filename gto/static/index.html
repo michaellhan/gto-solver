@@ -210,7 +210,7 @@
   .err { color: var(--bad); font-size: 12px; }
   .err:empty { display: none; }
   /* practice mode (practice.js): a coach panel (your seat, what's happening, the verdict on each decision, the result,
-     the score); your range at the last decision (the advice's Grid, Breakdown and Equity, nothing else) only when
+     the score); your range at the last decision (the advice's grid, nothing else) only when
      asked for, never on your turn; no editing the hand, no
      solver-only controls; big action buttons, and Next hand where they were once the hand is over */
   #pCoach { padding: 12px 14px; }
@@ -218,8 +218,7 @@
   body.unfinished .nofin { display: none !important; }   /* offered once a hand is finished: renderAll */
   body.practice:not(.pxdetail) #pAdvice, body.practice.heroturn #pAdvice, body.practice #adviceNote, body.practice #equity, body.practice .acts .fq { display: none !important; }
   body.practice #result.stale { opacity: 1; }
-  body.practice #result > :not(.vtabs):not(.bdview):not(.gridview) { display: none !important; }
-  body.practice #result .vtabs { margin-top: 8px; }
+  body.practice #result > :not(.gridview) { display: none !important; }
   body.practice #result .gridview > .meta:first-child { margin-top: 10px !important; }
   #pAdvice .pxhint { margin: -4px 0 0; font-size: 12px; }
   .cx-rangeb { display: block; margin-top: 10px; background: none; color: var(--accent); border-color: var(--line2); font-weight: 600; font-size: 13px; text-align: left; }
@@ -468,7 +467,6 @@
   .readout span.a::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; background: var(--c); }
   #pAdvice { container-type: inline-size; }
   /* range grid: capped so it never grows past ~440px; hover readout sits beside it when there's room */
-  .vtabs { margin-top: 14px; } .vtabs button { font-size: 12px; padding: 5px 12px; }
   .rangewrap { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px 16px; margin-top: 6px; }
   .rangewrap .grid { margin-top: 0; max-width: 440px; width: 100%; }
   @container (min-width: 620px) {
@@ -1023,11 +1021,9 @@ const practicing = () => !!(window.Practice && window.Practice.on);
 const multiTabling = () => practicing() && window.Practice.state.tables > 1;
 const WORKER_VERSION = "14";   // scripts/deploy.sh replaces this with a hash of worker.js
 const HH_VERSION = "1";        // and this with a hash of hh.js (the hand-history importer, loaded on first use)
-const BD_VERSION = "1";        // and breakdown.js (the advice's Breakdown and Equity views, loaded on first use)
 const SS_VERSION = "1";        // and session.js (the session analyzer, loaded on first use, after hh.js)
 const EX_VERSION = "1";        // and explain.js (Copy for AI, Explain with AI: Practice's and a reviewed decision's, loaded on first use)
 const WU_VERSION = "1";        // and writeup.js (Write up a hand: a played hand entered seat by seat, then reviewed)
-const SP_VERSION = "1";        // and simple.js (the one-size view: the advice's Simple tab and Study's, loaded on first use)
 const PR_VERSION = "1";        // and practice.js (Practice, loaded on first use, after explain.js)
 const MT_VERSION = "1";        // and multitable.js (Practice on 2-4 tables at once, loaded the first time Tables goes above 1)
 const HP_VERSION = "1";        // and help.js (the help pages: Getting started, About & accuracy, Glossary, Changelog, Fair play)
@@ -1977,10 +1973,6 @@ async function analyze(sim) {
   const key = JSON.stringify(payload());
   if (key === lastKey) return;
   lastKey = key;
-  if (window.Simple) {   // the one-size view's solves never hold up new advice (stopped first, as cancelSolve does)
-    const stops = []; window.Simple.stop(null, p => stops.push(simpleStop(p)));
-    if (stops.length) { await Promise.all(stops); if (lastKey !== key) return; }
-  }
   // It's your turn at another spot (a new hand, an undo, an edit): the solve of the one you left mustn't hold this
   // one up (in the browser a whole Accurate solve, with the panel still saying it waits for your turn).
   if (solving) { await cancelSolve(); if (lastKey !== key) return; }
@@ -2138,7 +2130,6 @@ function renderResult(res, key) {
   if (res.locked) h += `</div><div class="meta">${Object.entries(res.locked).map(([p, l]) => `Against your lock on ${p} (${LOCK_TEXT(l)})`).join("; ")}: ${res.street === "preflop" ? "your line re-priced against it" : "the best response"}, with GTO's frequency under each (${src}).`;
   else if (src) h += `</div><div class="meta">Against a typical player pool: the best response, with GTO's frequency under each (${src}).`;
   h += `</div><div class="meta">${hasEv ? "EV is in big blinds relative to folding now, so fold is 0: chips already in the pot are gone either way." + (res.actions.some(a => a.rough_ev) ? " ≈: an action your range almost never takes, whose EV is rough (usually lower than exact)." : "") : res.street === "preflop" ? "Preflop comes from charts, so there's no EV column." : ""}${res.widened && res.widened.length ? ` The solve rarely has ${res.widened.join(" and ")} play this way, so their range comes from simple betting rules instead; the EVs (and the pick) are against that range, so they can disagree with the solver's mix.` : conv && conv.cls !== "ok" ? " Actions the solver mixes should have near-equal EVs; gaps here mean the solve hasn't settled." : ""}</div>`;
-  if (res.grid && res.street !== "preflop" && !heuristic(res)) h += `<div class="segment vtabs">${["grid", "breakdown", ...(res.multiway ? [] : ["equity"]), ...(simpleOk(res, key) ? ["simple"] : [])].map(v => `<button data-v="${v}" class="${v === "grid" ? "active" : ""}">${v[0].toUpperCase() + v.slice(1)}</button>`).join("")}</div><div class="bdview" hidden></div>`;
   if (res.grid) h += `<div class="gridview">${renderGrid(res.grid, res.hand)}</div>`;
   h += `<details><summary>Details</summary>`;
   if (explainable()) h += `<div class="rv-ai" id="explainBox"></div>`;
@@ -2154,8 +2145,6 @@ function renderResult(res, key) {
   if (res.grid) wireGrid(el, res.grid, res.hand);
   const vg = el.querySelector(".vgrid");
   if (vg) wireGrid(vg, res.villain_grid, null, res.villain);
-  el.querySelectorAll(".vtabs button").forEach(b => b.onclick = () => showView(el, b.dataset.v, res, key));
-  if (VIEW !== "grid" && !review && !practicing() && el.querySelector(`.vtabs [data-v="${VIEW}"]`)) showView(el, VIEW, res, key);
   showExplain(res, key);
   updateAdviceState();
   renderAction(simulate());   // on your turn the buttons carry the solver's sizes and frequencies
@@ -2905,42 +2894,6 @@ for (const [id, page] of [["helpStart", "start"], ["helpAbout", "about"], ["help
 // an answer's badge clicked (data-term): the Glossary at that word
 function helpTerm(id) { window.HELP_TERM = id; return HELP_PAGES.includes(overlay) && window.Help ? window.Help.show("glossary", id) : openView("glossary"); }
 document.getElementById("result").addEventListener("click", (e) => { const t = e.target && e.target.closest && e.target.closest("[data-term]"); if (t) helpTerm(t.dataset.term); });
-// ---- the advice's Breakdown and Equity views (breakdown.js, loaded the first time one is opened): the advice's own
-// request again with "breakdown": true, answered from the solve it came from; the view picked stays for later advice
-let VIEW = "grid";
-function showView(el, v, res, key) {
-  VIEW = v;
-  el.querySelectorAll(".vtabs button").forEach(b => b.classList.toggle("active", b.dataset.v === v));
-  const box = el.querySelector(".bdview"); el.querySelector(".gridview").hidden = v !== "grid"; box.hidden = v === "grid";
-  if (v === "grid") return;
-  if (v === "simple") return showSimple(box, res, key);
-  const go = () => window.Breakdown.show(box, v, res, key, (st) => callAdvise(st));
-  if (window.Breakdown) return go();
-  box.innerHTML = `<div class="meta">Loading…</div>`;
-  const s = document.createElement("script"); s.src = "breakdown.js?v=" + BD_VERSION;
-  s.onload = go; s.onerror = () => { box.innerHTML = `<div class="err">Couldn't load the breakdown (breakdown.js).</div>`; }; document.head.appendChild(s);
-}
-// ---- the one-size view (simple.js, loaded the first time it's opened): the advice's decision solved again with one
-// bet size, for each candidate size, and with all of them mixed (gto/advisor.py Advisor._one_size_view, the request's
-// "one_size"), always at Fast, one solve a request; heads-up after the flop where you can bet (or, facing a bet, raise),
-// at equilibrium (not against the pool or a lock; a tournament's in prize equity). A new spot's advice stops its solves
-// (analyze); its answers stay.
-function simpleOk(res, key) {
-  let st = {}; try { st = JSON.parse(key); } catch (e) { return false; }
-  const can = res.actions.some(a => a.action === "check") || res.actions.some(a => a.action === "fold") && res.actions.some(a => /^(raise|all-in)/.test(a.action));
-  return !res.multiway && !res.solved && res.street !== "preflop" && can && !res.locked && st.opponents !== "pool";
-}
-function simpleAsk(st) {
-  const [budget, prior_budget] = BUDGETS[MODE].fast;
-  return callAdvise({ ...st, speed: "fast", budget, prior_budget });
-}
-function simpleStop(p) { return MODE === "server" ? fetch("cancel", { method: "POST" }).catch(() => {}) : p && p.reqId != null && stopRequests(p.reqId); }
-function showSimple(box, res, key) {
-  const go = () => window.Simple.show(box, res, key, simpleAsk, { stop: simpleStop, mode: MODE });
-  if (window.Simple) return go();
-  box.innerHTML = `<div class="meta">Loading…</div>`;
-  loadJs("simple.js?v=" + SP_VERSION, () => window.Simple).then(go, () => { box.innerHTML = `<div class="err">Couldn't load the one-size view (simple.js).</div>`; });
-}
 // ---- layout (per browser): column divider, table height, folded panels, columns swapped. Only in a real
 // browser (the tests' fake DOM has no window events), and never allowed to break the page.
 (function layout() {

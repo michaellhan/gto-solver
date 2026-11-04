@@ -248,7 +248,7 @@
              ...tri, ...(t && t.label ? { tl: t.label } : {}) };
   }
   // A runner over a session: run() works through its items until done, paused or stopped. While the page asks the
-  // solver itself (host.busy: its advice, Practice, Study) the queue waits (host.idle between looks), and a request
+  // solver itself (host.busy: its advice, Practice) the queue waits (host.idle between looks), and a request
   // of ours it stopped for that (yielded) is asked again once it's done; one the page cancelled otherwise is asked
   // again up to 3 times. A deeper item's answer replaces the triage one (results[k]), keeping it (t). save(sess) is
   // called every saveEvery ms and when it stops; update() after each decision.
@@ -562,7 +562,7 @@
     /* global importHand, modeReady, BUDGETS, MODE, S, cleanState, setPositions, simulate, payload, callAdvise, heuristic, gradeWith, jamOffTree, gradedMove, loadHandState, rewindTo, solving, pending, stopRequests */
     const mine = new Map();   // our requests in flight: id -> stopped for the page
     // the page asking the solver itself: its advice solving, or a request of its own waiting in the browser's worker
-    // (Practice, Study, a Breakdown; not ours)
+    // (Practice; not ours)
     const busy = () => {
       try {
         if (typeof solving !== "undefined" && solving) return true;

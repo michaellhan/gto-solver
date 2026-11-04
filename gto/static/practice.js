@@ -28,7 +28,7 @@
     drill: read(DRILL) || "any", tries: 0, hint: !!read(HINT), range: null, tables: [2, 3, 4].includes(read(TABLES)) ? read(TABLES) : 1 };
   // tables: how many tables at once (above 1: multitable.js's view, mt() while it's on)
   // range: { id, res, label } for your last decision, kept in memory while its solve is the page's advice (lastResult):
-  // how the solver plays your whole range there (the advice panel's Grid, Breakdown and Equity, nothing else)
+  // how the solver plays your whole range there (the advice panel's grid, nothing else)
   P.running = !!(P.hand && P.hand.run && !P.hand.run.done);   // (a run-out after your fold, resumed after a reload)
   const REVIEW_KEEP = 60, REVIEW_SHOW = 6;
   if (P.score.decisions && !(read(SCORE) || {}).good) P.score.good = P.score.best;   // (a score from before "good" was kept)

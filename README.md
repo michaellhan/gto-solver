@@ -169,16 +169,7 @@ opens, 3bb from the small blind, 3x or 4x 3-bets, 2.3x 4-bets, then all-in; over
 postflop: the solver's bet and raise sizes in big blinds), the mixed strategy for your exact
 hand with EVs, your whole range's totals at that spot (the percentage and number of
 combos that fold, call, check, bet or raise each size, with a bar), and a 13x13 grid of
-that range by hand with your hand boxed. Postflop, tabs beside the grid open GTO Wizard-style
-**Breakdown** and **Equity** views of the spot: your range by hand category (made hands: quads or better down to
-top pair by kicker, middle and weak pairs, ace high, nothing; draws: combo, flush draw, open-ended, gutshot,
-backdoor), each with its share of the range, a bar split by the solver's mix, its equity and EV, and the villain's
-range the same way without a mix; and each range's equity distribution (its hands' equities against the other
-range sorted high to low), with average equity, EV and the share of each range at 80%+ equity (the nut advantage).
-3-way solves get the Breakdown only. Opening a tab asks again with `"breakdown": true` on the same state, answered
-from the solve the advice came from (no new solve; ~0.3 s native, ~0.5 s in the browser on a flop: the equities
-every turn and river on the turn, an even sample of flop runouts, `gto/breakdown.py`); the views are
-`gto/static/breakdown.js`, loaded when first opened, and the tab picked stays for later advice. In Practice, once the advice
+that range by hand with your hand boxed. In Practice, once the advice
 is in, your action buttons switch to the solver's own sizes with its frequency on each,
 so what you record is exactly what was solved. Postflop, a badge shows how well the solve
 converged (exploitability in % of the pot: converged under 3%, fair under 10%, rough
@@ -189,23 +180,6 @@ not the earlier streets' narrowing solves, nor the flop libraries), and the grad
 when that answer is in (A2s on 776r behind a HJ check, 100bb: the jam 0% at -2.28 bb, the 75% bet +2.53). Always in
 the tree it cost too much: a K72T turn 60 iterations in was 4.0% of the pot from equilibrium against 1.6%.
 When you're facing a bet the prompt shows the pot odds a call needs.
-
-**Simple** (the tab after Equity, where you can bet or raise: heads-up after the flop) is a one-size view,
-like GTO Wizard's single-size solutions: your decision's street solved again with one bet size for each of 25, 33,
-50, 75, 100, 125 and 150% of the pot (the river 200% too; all-in where the tree offers it) and once with all of them
-to mix. It shows the **best single size** (the one that keeps your range the most EV, the opponent adapting to it), a
-table of every size with its bet share, EV and the **EV it gives up** against mixing every size (% of the pot; sizes
-within the solves' precision of the best marked tied), and the picked size's strategy: the range's check and bet
-frequencies, your hand's mix and EVs, and the 13x13 grid (click a row for another size's). Facing a bet it is the
-same for raise sizes: a raise to 2.5, 3, 4 and 5 times the bet (all-in where the tree offers it), each row with what
-it raises to, the range's raise share, and the fold, call and raise frequencies. Always at Fast. On the
-turn and river it starts when the tab opens, one size at a time with progress ("2 of 8 done · about 6 s left") and a
-Stop button (Continue picks up from there): a turn takes 1-22 s for every size in the browser, a river under a second.
-On the flop it waits for **Find the best size**, with its estimate (live flops take 1-3 s in all): the library's
-flops answer the advice at once, and solving every flop you look at would only load the machine. Answers are kept
-(by the page and the solver), so opening the tab again or coming back to the spot is instant; new advice stops its
-solves. Not against the pool or locks (the tab is hidden there); in a tournament (payouts or bounties) every solve pays
-prize equity as the advice's do, and the tab shows the tournament's notes. See [One bet size](#one-bet-size).
 
 Solver stats and the villain's inferred range (as text and as a 13x13 grid shaded by weight) sit behind a "Details" toggle.
 A review marks each decision you recorded (✓ in
@@ -278,7 +252,7 @@ Winamax, WPN/ACR, Ignition, iPoker), and before Analyze each tournament takes it
 the page's Payouts row takes them: the prizes still to pay, first place first, and the players left at other tables
 with their average stack (bb); from two prizes on its hands are solved in prize equity (ICM, as the advice is),
 without payouts in chips. The CSV names each decision's tournament. It runs in the background: the panel
-can be closed (the ⋯ menu's item shows how far it is), the page's own advice, Practice and the Breakdown go
+can be closed (the ⋯ menu's item shows how far it is), the page's own advice and Practice go
 first (the queue waits while the page asks the solver, and in the browser a decision in flight is stopped through the
 shared stop flag and asked again after), and the session is kept in the store (`blobs`) with a mark in `localStorage`
 while it runs (`gto-session-run`, never a record), so a reload, or the page opened again, picks it up where it stopped
@@ -460,7 +434,7 @@ nothing: within 3% Good, within 10% an Inaccuracy, more a Mistake; `HEUR_OK`, `H
 EV for each action and saying it's a heuristic, not a solve; **Details** opens why and each action's EV (the choice is remembered), and from there **See how the
 solver plays your whole range** opens your range at your last decision under the coach (never on your turn), headed
 "Your range · flop · BTN vs BB": the advice panel's Grid (every hand class's mix, yours outlined; hover or tap a hand
-for its mix), Breakdown and Equity, without the rows the verdict card already gives (a decision whose solve the page
+for its mix), without the rows the verdict card already gives (a decision whose solve the page
 has moved on from, or one from the lists below, has none). At the end the
 opponents' cards are shown at showdown with your result, the verdict on your last decision and the hand's
 decisions with the EV each gave up, and **Next hand** (N) takes the action buttons' place (N does nothing mid-hand). The score
@@ -1074,7 +1048,7 @@ range ...`). Heads-up responses also carry `villain_grid` (the villain's range b
 
 ### One bet size
 
-`"one_size"` (the page's **Simple** tab and Study's **Simple** view, `gto/static/simple.js`; `Advisor._one_size_view`)
+`"one_size"` (`Advisor._one_size_view`)
 answers how much a single bet size gives up, in place of the advice, at a heads-up decision where the player to act
 can bet, or facing a bet, raise (see Raise sizes below). The street is solved again from that decision with the
 ranges the advice reached it with: once with one size there for each candidate, and once with every candidate to mix

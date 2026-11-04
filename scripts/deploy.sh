@@ -68,9 +68,7 @@ cp "$HERE/gto/static/index.html" "$HERE/gto/static/worker.js" "$HERE/gto/static/
 # constant with its code from the page.
 MODULES="
 HH_VERSION hh.js
-BD_VERSION breakdown.js
 SS_VERSION session.js
-SP_VERSION simple.js
 PR_VERSION practice.js
 MT_VERSION multitable.js
 HP_VERSION help.js
