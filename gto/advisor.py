@@ -2099,7 +2099,7 @@ def _unusable(res) -> Optional[str]:
         return "no answer"
     if "error" in res:
         return f"the solve gave no answer ({res['error']})" if str(res["error"]).startswith(_SOLVE_ERRORS) else None
-    if any(k in res for k in ("skipped", "cancelled", "one_size")) or res.get("study") in ("deal", "over", "runouts"):
+    if any(k in res for k in ("skipped", "cancelled", "one_size", "showdown")) or res.get("study") in ("deal", "over", "runouts"):
         return None
     acts = res.get("actions")
     if not acts or not isinstance(acts, list):
@@ -2953,6 +2953,7 @@ class Advisor:
         self._mw_nolib = False    # a 3-way flop decision solved live though the 3-way library holds it (the report)
         self._mw_borrow = None    # the table's size, where a 3-way pot of another one may read a library spot (no
         # ranges of your own: MWLibrary.borrow), else None
+        self._showdown = False    # state "equity": hero's equity against the ranges once betting is closed (_equity_answer)
         self._req_sizes: Dict[str, List[float]] = {}   # the request's custom sizes (state "sizes"), as fractions
         self._one_size = None     # state "one_size": the one-size view's request (Advisor._one_size_view), else None
         # ...its solves stop this close to equilibrium (% of the pot, by street; the lower expl_target where set)
@@ -3933,6 +3934,9 @@ class Advisor:
             return {"error": "the one-size view is for bets after the flop: preflop is the charts' raise sizes"}
         if not board and state.get("study"):
             return self._study_preflop(hero, streets["preflop"], positions, stack, t0)
+        if not board and state.get("equity") and actor is None:
+            return self._showdown_preflop(hero, hole, streets["preflop"], positions, stack, t0,
+                                          pool=state.get("opponents") == "pool", locks=locks)
         if not board:
             return self._preflop(hero, hole, streets["preflop"], positions, stack, t0,
                                  pool=state.get("opponents") == "pool", locks=locks)
@@ -3978,6 +3982,9 @@ class Advisor:
             return {"skipped": "only flop spots are answered from the library"}
         self._study = bool(state.get("study")) and actor is None
         self._mw_borrow = None if custom else len(positions)
+        # "equity": once a street's betting is closed (checked through, called, or everyone all-in), the ranges narrowed
+        # through it as the next street's advice would narrow them, and your equity against them (_equity_answer)
+        self._showdown = bool(state.get("equity")) and actor is None and not self._study
         try:
             res = self._postflop(hero, hole, board, stack, streets, positions, t0,
                                  pool=state.get("opponents") == "pool", actor=actor, custom=custom,
@@ -3987,7 +3994,7 @@ class Advisor:
             return res
         finally:
             self.time_budget, self.prior_budget, self.cfg, self.root_sizes, self.spr_sizes = saved
-            self._breakdown = self._lib_only = self._jam = self._study = False
+            self._breakdown = self._lib_only = self._jam = self._study = self._showdown = False
             self._one_size = self._mw_borrow = None
 
     # ------------------------------------------------------------ preflop
@@ -4015,6 +4022,55 @@ class Advisor:
             for p in later:
                 res["notes"].append(f"locked: {p}'s lock ({', '.join(locks[p])}) acts after the flop only")
         return res
+
+    def _showdown_preflop(self, hero, hole, preflop, positions, stack, t0, pool=False, locks=None):
+        """State "equity" preflop: once the preflop betting is closed, your equity against the ranges that took the
+        line (the charts', with the pool's or your locks' preflop where set), over the board to come."""
+        cur = replay_hand(positions, stack, {"preflop": preflop}, 1)[0]
+        if hero not in cur.active:
+            return {"error": "hero has folded"}
+        if not cur.closed:
+            return {"error": "the preflop betting isn't over: equity is answered once nobody can bet any more"}
+        ranges = preflop_ranges(preflop, positions, stack, hero if pool else None, locks)
+        notes = [f"{p}'s preflop line isn't in the chart, so their range is the hands that take its last action"
+                 for p in getattr(ranges, "rebuilt", []) if p != hero and p in cur.active]
+        return self._equity_answer(hero, hole, [], {p: ranges[p] for p in pf.postflop_order(positions)
+                                                    if p in cur.active and p != hero}, cur, 1, notes, t0)
+
+    def _equity_answer(self, hero, hole, board, opps: Dict[str, np.ndarray], cur: "StreetState", n_streets: int,
+                       notes: List[str], t0) -> dict:
+        """Hero's share of the pot at showdown against the opponents' ranges `opps` (narrowed through the closed
+        street), over the cards to come (breakdown.hand_equity), and each opponent's range."""
+        from .breakdown import hand_equity
+        if not opps:
+            return {"error": "the hand is over: nobody is left to show down against"}
+        dead = np.prod([1.0 - MEMBER_FULL[c] for c in list(hole) + list(board)], axis=0)
+        e = hand_equity(hole, board, list(opps.values()))
+        pot = cur.pot_start + sum(cur.bets.values())
+        rnd = lambda x: None if x is None else round(x, 4)
+        villains = []
+        for (p, w), eq in zip(opps.items(), e["vs"]):
+            w = w * dead
+            villains.append({"seat": p, "equity": rnd(eq), "combos": round(float(w.sum()), 1),
+                             "range": range_to_text(w, 0.05)[:400],
+                             "grid": strategy_grid([np.ones(N_COMBOS)], ["in range"], w)})
+        if not e["exact"]:
+            notes.append(f"equity against several ranges preflop is over {e['runouts']} sampled boards (about ±1%)")
+        if len(opps) > 1:
+            notes.append("against several ranges their hands are taken as independent (one's cards don't block "
+                         "another's); a tie splits the pot among the tied")
+        return {
+            "showdown": True, "street": cur.name, "hero": hero, "hand": hand_class(hole), "board": cards_str(board),
+            # the next street to deal (None: the river's betting closed, it's the showdown), and whether anyone can
+            # still bet (False: everyone but at most one player is all-in, so the cards just run out)
+            "next": STREETS[n_streets] if n_streets < len(STREETS) else None,
+            "allin": sum(p not in cur.allin for p in cur.active) <= 1,
+            "pot_bb": round(pot, 2), "equity": rnd(e["equity"]), "win": rnd(e["win"]), "tie": rnd(e["tie"]),
+            # heads-up the whole pot is contested (an uncalled bet went back): your equity's share of it
+            **({"share_bb": round(e["equity"] * pot, 2)} if len(opps) == 1 and e["equity"] is not None else {}),
+            "villains": villains, "runouts": e["runouts"], "exact": e["exact"],
+            "notes": notes, "seconds": round(time.time() - t0, 2),
+        }
 
     def _preflop_play(self, hero, hole, preflop, positions, stack, t0, pool=False, locks=()):
         st = replay_hand(positions, stack, {"preflop": preflop}, 1)[0]
@@ -4689,9 +4745,11 @@ class Advisor:
         stk = _table_stacks(positions, stack)   # each seat's stack
         if hero not in cur.active:
             return {"error": "hero has folded"}
-        if cur.closed:
+        if cur.closed and not self._showdown:
             return {"error": "this street's betting is already closed (deal the next card)"}
-        if cur.to_act != (actor[0] if actor else hero):
+        if self._showdown and not cur.closed:
+            return {"error": "this street's betting isn't over: equity is answered once nobody can bet any more"}
+        if not self._showdown and cur.to_act != (actor[0] if actor else hero):
             return {"error": f"it is {cur.to_act}'s turn, not {actor[0] if actor else hero}'s"}
         # a copy: narrowing below replaces entries, and the cached dict is shared with later requests
         # (with your locks: their preflop decisions as locked, so a nit's 3bet pot starts from their tighter range)
@@ -4739,7 +4797,8 @@ class Advisor:
             return {"skipped": "multiway"}   # (a presolve: heads-up from the flop only, as an instant answer)
         # a 3-way flop's first decision the 3-way library holds: its precomputed solve answers (no narrowing needed)
         if len(cur.players_start) == 3 and actor is None and not pool and not optimize and not self._jam \
-                and getattr(self, "_icm", None) is None and self._one_size is None and not self._mw_nolib:
+                and getattr(self, "_icm", None) is None and self._one_size is None and not self._mw_nolib \
+                and not self._showdown:
             res = self._mw_from_library(hero, hole, board, ranges, cur, stk, streets, t0, notes, locks, positions)
             if res is not None:
                 return res
@@ -4754,6 +4813,8 @@ class Advisor:
         slow: Dict[str, np.ndarray] = {}
         by_rules = []
         for st in mw_streets:
+            if self._showdown and not st.actions:
+                continue   # (everyone all-in: nothing to narrow by)
             before = dict(ranges)
             _narrow_street(ranges, board[:{"flop": 3, "turn": 4, "river": 5}[st.name]], st, stk, hero, hole, slow)
             # 3-way: through the street's 3-way solve where there is one (the one your advice on it came from, or
@@ -4782,6 +4843,9 @@ class Advisor:
         hero_remaining = stk[hero] - cur.inv_start[hero] - cur.bets[hero]
 
         live_opps = [p for p in remaining if p != hero]
+        if self._showdown and (len(live_opps) != 1 or cur.players_start != remaining):
+            # (a street that began multiway is narrowed above, through its whole line)
+            return self._equity_answer(hero, hole, board, {p: ranges[p] for p in live_opps}, cur, n_streets, notes, t0)
         if len(live_opps) != 1 or cur.allin & set(remaining) - {hero} and len(remaining) > 2:
             if self._one_size is not None and not actor:
                 return {"error": f"the one-size view is for heads-up pots: {len(remaining)} players are in"}
@@ -4860,16 +4924,16 @@ class Advisor:
         slow_rules: Dict[str, np.ndarray] = {}   # ...the same by seat, for a street the rules narrow alone (quick)
         walked: Dict[str, tuple] = {}   # street -> (solve, node its line ends at, tree names taken): InstantSpot.prev
         if hu_from_start:
-            # narrow through earlier streets that were also heads-up between these two
-            for st in rep[1:-1]:
+            # narrow through earlier streets that were also heads-up between these two (equity: the closed street too)
+            for st in rep[1:] if self._showdown else rep[1:-1]:
                 sub_board = board[:{"flop": 3, "turn": 4, "river": 5}[st.name]]
                 # the next street's board: its ranges leave out the cards dealt by then, not later ones, so they are
                 # the ranges that street's own advice solved with, and its solve is found in the cache (the river's
                 # turn was solved again for its narrowing, its ranges short of the river card's combos: 3 s of the
                 # browser's 3.4 s river)
                 nxt_board = board[:len(sub_board) + 1]
-                if st.players_start != remaining:
-                    continue   # multiway: narrowed above
+                if st.players_start != remaining or (self._showdown and not st.actions):
+                    continue   # multiway: narrowed above (or everyone all-in: nothing to narrow by)
                 spare += self.prior_budget
                 eff = min(stk[oop] - st.inv_start[oop], stk[ip] - st.inv_start[ip])
                 cfg = self._cfg_with_real_sizes(st, oop, ip, eff)
@@ -4943,6 +5007,9 @@ class Advisor:
                 walked[st.name] = (sol, node, taken)
                 r0 = _post_floor(r0, expand(sol.ctx, c0), nxt_board, oop, st.name, notes, off_solution)
                 r1 = _post_floor(r1, expand(sol.ctx, c1), nxt_board, ip, st.name, notes, off_solution)
+            if self._showdown:
+                return self._equity_answer(hero, hole, board, {villain: r1 if hero_p == 0 else r0}, cur, n_streets,
+                                           notes, t0)
             eff = min(stk[oop] - cur.inv_start[oop], stk[ip] - cur.inv_start[ip])
             cfg = self._cfg_with_real_sizes(cur, oop, ip, eff)
             if seen is not None:

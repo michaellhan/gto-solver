@@ -32,9 +32,10 @@ async function reviewed(st, opts) {   // the whole hand reviewed: each decision 
   const p = await page(opts);
   p.S = st;
   const done = p.run("reviewHand()");
-  for (let n = 0; n < 60 && p.posted.filter(x => x.state).length < 4 + 1; n++) {
+  const solves = () => p.posted.filter(x => x.state && !x.state.equity);   // (the hand's equity follows the review)
+  for (let n = 0; n < 60 && solves().length < 4 + 1; n++) {
     await flush();
-    const m = p.posted.filter(x => x.state).at(-1);
+    const m = solves().at(-1);
     if (m && !m.answered) { m.answered = true; p.workers.at(-1).onmessage(answer(m)); }
     if (p.val("review") === null) break;
   }
@@ -225,12 +226,12 @@ test("a decision of a finished hand: its advice, the whole hand kept; a reload b
   await flush();
   assert.equal(p.val("stepView.s"), "flop");
   assert.equal(p.posted.filter(x => x.state && x.state.board === "Kd7s2c" && x.state.flop.length === 1).length, 1);   // (the answer in hand)
-  // a reload: the whole hand, no advice asked
+  // a reload: the whole hand, no decision's advice asked (a reviewed hand's equity is)
   const q = await page({ isolated: true, storage: Object.fromEntries(p.storage) });
   await flush();
   assert.equal(q.val("stepView"), null);
   assert.equal(q.sim().handOver, true);
-  nothingAsked(q);
+  assert.deepEqual(asked(q).map(m => !!m.state.equity), [true]);
   // back to the hand: Undo here, as the button
   p.run("undo()");
   await flush();
@@ -257,7 +258,7 @@ test("once its advice has been seen a hand stays as entered: no Undo, no cards, 
   await flush();
   assert.equal(p.val("stepView.s"), "flop");
   assert.deepEqual(j(p.val("stepView.full.actions")), whole);
-  assert.equal(p.posted.filter(m => m.state).length, 4);   // (the review's answer, not a new solve)
+  assert.equal(p.posted.filter(m => m.state && !m.state.equity).length, 4);   // (the review's answer, not a new solve)
   p.run("stepStop()");
   // the mark survives a reload and a link
   const q = await page({ isolated: true, storage: Object.fromEntries(p.storage) });
@@ -439,6 +440,20 @@ test("Study: a reviewed decision's What if opens on that spot, without your hand
   assert.equal(at.state.board, "Kd7s2c");
   assert.equal(at.state.flop.length, 1);
   assert.equal(JSON.parse(p.storage.get("handreview")).actions.river.length, 2);
+});
+
+test("a review that ends with the betting closed asks for your equity once, after the decisions; a hand being entered never does", async () => {
+  const p = await reviewed(state(WHOLE));
+  await flush();
+  const eq = p.posted.filter(m => m.state && m.state.equity);
+  assert.equal(eq.length, 1);
+  assert.equal(eq[0].state.board, "Kd7s2c9h3d");
+  assert.ok(p.posted.indexOf(eq[0]) > p.posted.findLastIndex(m => m.state && !m.state.equity));
+  const q = await page();
+  q.S = state({ ...FLOP, flop: acts("BB x, BTN x") });
+  await flush();
+  nothingAsked(q);
+  assert.equal(q.byId("equity").hidden, true);
 });
 
 test("Study's hand on the table: its game from the first decision while it's entered, its spot once it's finished", async () => {

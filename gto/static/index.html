@@ -217,7 +217,7 @@
   #pCoach { padding: 12px 14px; }
   body:not(.practice) #pCoach, body:not(.practice) .pxonly, body.practice .nopx { display: none !important; }
   body.unfinished .nofin { display: none !important; }   /* offered once a hand is finished: renderAll */
-  body.practice:not(.pxdetail) #pAdvice, body.practice.heroturn #pAdvice, body.practice #adviceNote, body.practice .acts .fq { display: none !important; }
+  body.practice:not(.pxdetail) #pAdvice, body.practice.heroturn #pAdvice, body.practice #adviceNote, body.practice #equity, body.practice .acts .fq { display: none !important; }
   body.practice #result.stale { opacity: 1; }
   body.practice #result > :not(.vtabs):not(.bdview):not(.gridview) { display: none !important; }
   body.practice #result .vtabs { margin-top: 8px; }
@@ -503,6 +503,11 @@
   summary:hover { color: var(--text); }
   summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .villain { font-size: 12px; color: var(--muted); word-break: break-word; margin-top: 6px; }
+  /* your equity once the betting is closed */
+  #equity { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+  #equity .verdict { margin-bottom: 8px; }
+  .eqrows { display: grid; grid-template-columns: max-content minmax(40px, 1fr) 56px max-content; gap: 6px 10px; align-items: center; font-size: 13px; }
+  .eqrows .bar > div { background: var(--accent); }
   details details { margin-top: 6px; }
   #result.empty:empty { display: none; }
 
@@ -806,6 +811,7 @@
       <h2><span class="nopx">Review</span><span class="pxonly" id="pxRangeHd">Your range</span></h2>
       <div class="pxonly meta pxhint">What the solver does with every hand you could hold here; your hand is outlined.</div>
       <div id="adviceNote" class="note" hidden></div>
+      <div id="equity" hidden></div>
       <div id="result" class="empty">Enter a hand you've played: your seat and cards, then the action seat by seat.<br>When it's finished, the solver reviews each decision you made.</div>
     </section>
   </div>
@@ -2231,6 +2237,60 @@ function updateAdviceState() {
   if (window.Practice) window.Practice.tick(sim);   // practice: deal, or move the seat to act
 }
 
+// ---- your equity on a reviewed hand you were still in when the betting closed (the street checked through or called and
+// the next card not entered, everyone all-in, the river's showdown): against the ranges that took the line, narrowed
+// through every street as the next street's advice narrows them (the advisor's "equity" request). Only once the hand is
+// reviewed (fixedHand), not as soon as it's finished: Keep entering would make that a way to see it mid-hand.
+let eqKey = null, eqReq = null;   // the request of the equity shown or in flight, and its id while it runs
+function equitySpot(sim) {
+  if (practicing() || reviewing() || !fixedHand(sim) || !sim.active.has(S.hero) || sim.active.size < 2) return false;
+  return !!sim.waiting || (sim.handOver && sim.current === "river");
+}
+async function updateEquity() {
+  const box = document.getElementById("equity");
+  await modeReady;
+  if (!equitySpot(simulate())) {   // (a decision or a review opened: its advice doesn't wait for this)
+    if (eqReq) { stopRequests(eqReq); eqReq = null; }
+    box.hidden = true; box.innerHTML = ""; eqKey = null; return;
+  }
+  const key = JSON.stringify({ ...payload(), equity: true });
+  if (key === eqKey) return;
+  eqKey = key; box.hidden = false;
+  if (cache.has(key)) { renderEquity(cache.get(key)); return; }
+  box.innerHTML = `<div class="solvehead muted"><span class="spinner"></span>Working out your equity against their ranges…</div>`;
+  let res;
+  try { const q = callAdvise(JSON.parse(key)); eqReq = q.reqId; res = await q; } catch (e) { res = { error: "Request failed: " + e }; }
+  if (eqKey !== key) return;                         // the spot moved on
+  eqReq = null;
+  if (res.cancelled) { eqKey = null; box.hidden = true; return; }
+  if (!res.error) cache.set(key, res);
+  renderEquity(res);
+}
+const TO_COME = { flop: "flop, turn and river to come", turn: "turn and river to come", river: "river to come" };
+function equityHtml(res) {
+  if (res.error) return `<div class="err">${res.error}</div>`;
+  const pct = (x) => x == null ? "–" : (x * 100).toFixed(1) + "%", vs = res.villains;
+  const when = !res.next ? "at showdown" : res.allin ? `all-in · ${TO_COME[res.next]}` : `${res.street} betting closed · ${TO_COME[res.next]}`;
+  const against = vs.length === 1 ? `${vs[0].seat}'s range` : `${vs.length} ranges`;
+  let h = `<div class="verdict" title="Your share of the pot if the hand goes to showdown from here (a tie counts half), against the hands the solver plays this line with: their ranges narrowed through every street"><span class="big">${pct(res.equity)}</span><span class="mix">your equity vs ${against} · ${when}</span></div>`;
+  const parts = [];
+  if (res.win != null) parts.push(`win ${pct(res.win)}`, `tie ${pct(res.tie)}`);
+  if (res.share_bb != null) parts.push(`≈ ${fmt(res.share_bb)} of the ${fmt(res.pot_bb)} bb pot`);
+  else parts.push(`pot ${fmt(res.pot_bb)} bb`);
+  h += `<div class="meta" style="margin:0 0 8px">${parts.join(" · ")}</div>`;
+  h += `<div class="eqrows">${vs.map(v => `<span>vs ${v.seat}${vs.length > 1 ? " alone" : ""}</span><div class="bar"><div style="width:${((v.equity || 0) * 100).toFixed(1)}%"></div></div><span class="num">${pct(v.equity)}</span><span class="num muted">${fmt(v.combos)} combos</span>`).join("")}</div>`;
+  const over = res.runouts == null ? "from the preflop hand-class equity table" : !res.exact ? `over ${res.runouts} sampled boards`
+    : res.runouts === 1 ? "on this board" : `over all ${res.runouts} runouts`;
+  h += `<details><summary>Their ranges</summary>${vs.map(v => `<div class="vgrid">${renderGrid(v.grid, null, v.seat)}</div><details><summary>${v.seat}'s range as text</summary><div class="villain">${v.range}</div></details>`).join("")}`;
+  h += `<div class="meta">Equity ${over}.${res.notes && res.notes.length ? "<br>" + res.notes.join("<br>") : ""}</div></details>`;
+  return h;
+}
+function renderEquity(res) {
+  const box = document.getElementById("equity");
+  box.innerHTML = equityHtml(res);
+  if (!res.error) box.querySelectorAll(".vgrid").forEach((g, i) => wireGrid(g, res.villains[i].grid, null, res.villains[i].seat));
+}
+
 // ------------------------------------------------------------------ wiring
 function renderAll() {
   const sim = simulate();
@@ -2244,6 +2304,7 @@ function renderAll() {
   if (open && sim.toAct === S.hero && S.cards[0] && S.cards[1] && !sim.handOver && !(practicing() && window.Practice.auto(sim)) && !multiTabling()) analyze(sim);
   else if (!S.cards[0] || !S.cards[1]) resetAdvice();
   updateAdviceState();
+  updateEquity();
   syncRoute();   // (Practice turned on or off: its URL)
 }
 // ---- review the whole hand, once it's finished: each of your recorded decisions is solved in turn (at the current

@@ -175,6 +175,7 @@
     ["November 3", [
       "Explain with AI in a hand's review: under a decision's Details, Claude explains that decision from the solver's numbers, as in Practice. Nothing is sent until you click it.",
       "Review first: a hand you enter is recorded, and the solver reviews it once it's finished. Advice no longer shows while a hand is being entered, nothing solves in the background, and Quick, Randomise and Pool leave the entry screen (Pool and locks are there on a finished hand). Finish hand marks a hand finished if you don't know the end of it. Practice, Study, the drills and reports work as before; a report's flop or a drill's spot now opens in Study.",
+      "A reviewed hand you were still in when the betting closed shows your equity against the ranges that took the line: your share of the pot at showdown, win and tie, and each opponent's range by hand.",
     ]],
     ["November 1 - 2", [
       "My hands: every hand you enter, review or import is kept in this browser (New hand no longer replaces it), with search, tags, notes, export and import, and a backup file of everything the site keeps.",

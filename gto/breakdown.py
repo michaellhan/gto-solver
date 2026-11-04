@@ -194,6 +194,64 @@ def range_equities(board: Sequence[int], w0: np.ndarray, w1: np.ndarray):
     return e0, e1
 
 
+SHOWDOWN_BOARDS = 3000   # hand_equity preflop against several ranges: boards sampled (from the flop on: every runout)
+
+
+def hand_equity(hole: Sequence[int], board: Sequence[int], villains: List[np.ndarray],
+                n_boards: int = SHOWDOWN_BOARDS, seed: int = 0) -> dict:
+    """One hand's share of the pot at showdown against the ranges `villains` (1326 weights each): "equity" against
+    all of them together, "win" (beats every one) and "tie" (splits with some), and "vs" its equity against each
+    alone. Over every runout from the flop on; preflop each alone comes from the hand-class table
+    (pf_classes.equity_vs) and several together from `n_boards` sampled boards ("exact": False). On a board a
+    villain holds their range less the cards out (hole and board), and the board is as likely as the ranges leave
+    it (the product of their live weight). Several villains are independent (their hands don't block each other's)
+    and a tie splits the pot among the tied."""
+    from .evaluator import eval_boards
+    from .solver import MEMBER_FULL
+    from .cards import COMBO_INDEX
+    hole, board = list(hole), list(board)
+    hi = COMBO_INDEX[(min(hole), max(hole))]
+    dead = np.prod([1.0 - MEMBER_FULL[c] for c in hole + board], axis=0)
+    ws = [np.asarray(v, dtype=float) * dead for v in villains]
+    if not ws or any(w.sum() <= 0 for w in ws):
+        return {"equity": None, "win": None, "tie": None, "vs": [None] * len(ws), "runouts": 0, "exact": True}
+    rest = [c for c in range(52) if c not in set(hole + board)]
+    k = 5 - len(board)
+    if k == 5:
+        from .pf_classes import equity_vs
+        vs = [float(equity_vs(np.asarray(v, dtype=float))[hi]) for v in villains]   # (its classes count the cards out)
+        if len(ws) == 1:
+            return {"equity": vs[0], "win": None, "tie": None, "vs": vs, "runouts": None, "exact": True}
+        r = np.random.default_rng(seed)
+        runs = np.array(rest)[np.argsort(r.random((n_boards, len(rest))), axis=1)[:, :5]]
+    else:
+        vs = None
+        runs = np.array([board + list(c) for c in itertools.combinations(rest, k)] if k else [board])
+    W = np.array(ws).T                                           # (1326, villains)
+    num = np.zeros(3); alone = np.zeros((2, len(ws)))            # [share, win, tie] weighted; each alone: [share, live]
+    den = 0.0
+    for b0 in range(0, len(runs), 128):
+        S = eval_boards(runs[b0:b0 + 128])
+        h = S[:, hi:hi + 1]
+        live = S >= 0
+        L = live @ W
+        B, T = ((S < h) & live) @ W, (S == h) @ W
+        alone += [((B + 0.5 * T)).sum(0), L.sum(0)]
+        ok = (L > 0).all(axis=1)
+        b, t, wb = B[ok] / L[ok], T[ok] / L[ok], np.prod(L[ok], axis=1)
+        poly = np.ones((len(b), 1))                              # P(k of them tie, the rest lose), k = 0..
+        for i in range(len(ws)):
+            poly = np.concatenate([poly * b[:, i:i + 1], np.zeros((len(b), 1))], axis=1) + \
+                np.concatenate([np.zeros((len(b), 1)), poly * t[:, i:i + 1]], axis=1)
+        share = (poly / np.arange(1, len(ws) + 2)).sum(axis=1)
+        num += [(wb * share).sum(), (wb * poly[:, 0]).sum(), (wb * poly[:, 1:].sum(axis=1)).sum()]
+        den += wb.sum()
+    eq, win, tie = (num / den if den > 0 else [None] * 3)
+    vs = vs or [float(a / l) if l > 0 else None for a, l in zip(*alone)]
+    return {"equity": float(eq) if eq is not None else None, "win": float(win) if win is not None else None,
+            "tie": float(tie) if tie is not None else None, "vs": vs, "runouts": len(runs), "exact": k < 5}
+
+
 def _curve(eq: np.ndarray, w: np.ndarray) -> List[float]:
     """The range's equities sorted high to low, read at CURVE_POINTS even steps of its weight."""
     m = (w > 0) & ~np.isnan(eq)

@@ -144,6 +144,16 @@ hands stay in Practice. `Advisor.presolve` and the worker's `presolve` request s
 These are limits on what the page offers, enforced in the page: a made-up action, or a link edited to say `finished`,
 gets a review of that decision. The rule against use during a hand is in Fair play and the terms.
 
+**Your equity.** A reviewed hand you were still in when the betting closed (a street checked through or called with the
+next card not entered, everyone all-in, or the river's showdown) also shows **your equity** against the ranges that took
+the line: your share of the pot at showdown (ties half), win and tie, heads-up its share of the pot in bb, against several
+players each one alone too, and each opponent's range by hand. The ranges are narrowed through every street the way the
+next street's advice narrows them (its solves, cached for that advice; the flop library where it holds the spot); the
+equity is over every runout from the flop on, and preflop from the hand-class table heads-up or 3000 sampled boards
+against several ranges (`"equity": true`, below). It waits for the review, not just for Finish hand (`equitySpot`,
+`fixedHand`): a reviewed hand can't be reopened, so it never reaches a hand in progress. Practice and a decision stepped
+to don't show it.
+
 #### What a review shows
 
 Each decision opened solves the spot, and the **Fast / Accurate** toggle in the header (remembered between visits, and shown
@@ -1074,6 +1084,16 @@ hand's pot, no EVs and `"solver": {"by": "the flop's solve" | "the turn's solve"
 "exploitability_pct"}`; `null` anywhere else (facing a turn bet on a library flop, a flop without a turn file, a line
 the stored flops or the solve take less than 10% of the time, a street before not solved yet, a tournament) and once
 the street's own solve is in hand (settled).
+
+`"equity": true` answers once the current street's betting is closed with hero still in (else an error): hero's
+equity against the opponents' ranges narrowed through the whole line, including the closed street (heads-up by the
+same solves and walk as the next street's advice, multiway by the betting rules or 3-way solves), over the cards to
+come (`breakdown.hand_equity`): `{"showdown": true, "street", "next" (the street to deal, null at the river),
+"allin" (nobody can bet any more), "pot_bb", "equity", "win", "tie", "share_bb" (heads-up), "villains": [{"seat",
+"equity" (against them alone), "combos", "range", "grid"}], "runouts", "exact", "notes"}`. Several opponents' hands are
+taken as independent (no card removal between them) and a tie splits the pot among the tied; preflop heads-up comes
+from the hand-class equity table (`win`/`tie` null), against several ranges from 3000 sampled boards (`exact` false,
+about ±1%).
 
 `"opponents": "pool"` (the page's Opponents: Pool toggle) is exploit mode: opponents play like a
 typical player pool instead of GTO. Preflop, hero's calls and raises are re-drawn against the pool's
