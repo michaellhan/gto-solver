@@ -297,6 +297,7 @@
       + `<div class="mh-paste" hidden><textarea data-paste rows="3" placeholder="Paste hand histories, #h= links or a My hands JSON export"></textarea><div class="mh-acts"><button data-pastego>Import</button></div></div>`
       + backupHtml() + wipeHtml(wiping);
   }
+  let wipeBusy = false;
   const wiped = () => !!(wiping && wiping.report && wiping.report.records);
   const countText = (n) => `${n === recs.length ? `${recs.length} hand${recs.length === 1 ? "" : "s"}` : `${n} of ${recs.length} hands`} · kept in this browser only`;
   const exportText = (n) => `Export ${n === recs.length ? "all" : n} as JSON`;
@@ -362,7 +363,10 @@
     if (d.wipe != null) { wiping = {}; return draw(); }
     if (d.wipecancel != null) { wiping = null; return draw(); }
     if (d.wipego != null) {
+      if (wipeBusy) return;   // (a second click would count an empty store and overwrite the first run's report)
+      wipeBusy = true;
       let r; try { r = await store().wipe(); } catch (e) { r = { ok: false, records: false, failed: [{ what: "records", why: e.message || String(e) }] }; }
+      wipeBusy = false;
       wiping = { report: r }; deleted = null; draft = null; msg = "";
       if (r.records) { recs = []; return draw(); }
       return refresh();

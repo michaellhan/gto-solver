@@ -293,3 +293,15 @@ test("Back up first keeps the confirm open and says what's in the file", async (
     await MH.act({ wipecancel: "" });
   } finally { delete globalThis.document; }
 });
+
+test("the panel: a second click while a delete runs starts no second delete", async () => {
+  let runs = 0, done;
+  MH.useHost({ store: () => ({ wipe: () => { runs++; return new Promise((r) => { done = r; }); }, hands: { list: async () => [] } }) });
+  await MH.act({ wipe: "" });
+  const first = MH.act({ wipego: "" });
+  await MH.act({ wipego: "" });
+  assert.equal(runs, 1);
+  done({ ok: true, records: true, deleted: { hands: 1 }, failed: [] });
+  await first;
+  assert.equal(MH.wiping.report.deleted.hands, 1);
+});
