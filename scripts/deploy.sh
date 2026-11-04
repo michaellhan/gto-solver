@@ -61,7 +61,30 @@ fi
 if [ -z "${BUILD_ONLY:-}" ]; then gh repo clone michaellhan/michaellhan.github.io "$WORK/site" -- -q --depth 1; fi
 rm -rf "$WORK/site/gto-solver"
 mkdir -p "$WORK/site/gto-solver/gto"
-cp "$HERE/gto/static/index.html" "$HERE/gto/static/worker.js" "$HERE/gto/static/hh.js" "$HERE/gto/static/practice.js" "$HERE/gto/static/explain.js" "$HERE/gto/static/reports.js" "$HERE/gto/static/drills.js" "$HERE/gto/static/breakdown.js" "$HERE/gto/static/session.js" "$HERE/gto/static/study.js" "$HERE/gto/static/runouts.js" "$HERE/gto/static/simple.js" "$HERE/gto/static/multitable.js" "$HERE/gto/static/help.js" "$HERE/gto/static/store.js" "$HERE/gto/static/hands.js" "$HERE/gto/static/writeup.js" "$HERE/gto/static/sw.js" "$HERE/gto/static/health.json" "$WORK/site/gto-solver/"
+cp "$HERE/gto/static/index.html" "$HERE/gto/static/worker.js" "$HERE/gto/static/store.js" "$HERE/gto/static/sw.js" "$HERE/gto/static/health.json" "$WORK/site/gto-solver/"
+# The modules the page loads on demand, one a line: the constant it loads the module with, then the files whose hash that
+# is (the module first; a module that loads another hashes both). Each is copied beside the page and its constant stamped
+# below, so a changed file is never served from a browser's cached copy. Removing a module is removing its line, and the
+# constant with its code from the page.
+MODULES="
+HH_VERSION hh.js
+RP_VERSION reports.js
+DR_VERSION drills.js reports.js
+BD_VERSION breakdown.js
+SS_VERSION session.js
+SY_VERSION study.js
+RO_VERSION runouts.js
+SP_VERSION simple.js
+PR_VERSION practice.js
+MT_VERSION multitable.js
+HP_VERSION help.js
+HN_VERSION hands.js
+EX_VERSION explain.js
+WU_VERSION writeup.js
+"
+while read -r constant module _; do
+  [ -z "$constant" ] || cp "$HERE/gto/static/$module" "$WORK/site/gto-solver/"
+done <<< "$MODULES"
 # the worker's Python code and treys in one zip (scripts/build_bundle.py); the separate gto/*.py files stay for pages
 # cached from before the bundle (index.html is cached up to 10 minutes, with the old worker's version)
 "$PYTHON" "$HERE/scripts/build_bundle.py" "$WORK/site/gto-solver/solver.zip" >/dev/null
@@ -70,6 +93,26 @@ cp "$HERE"/gto/*.py "$WORK/site/gto-solver/gto/"
 # when Study's Solver source opens one of those games)
 mkdir -p "$WORK/site/gto-solver/pf"
 cp "$HERE"/gto/static/pf/*.bin "$WORK/site/gto-solver/pf/"
+# Stamp the worker's cache-busting version with its content hash (and solver.zip's, which the worker fetches as
+# solver.zip?v=<this> and keeps in the Cache API under that URL), and each module's, so a changed file is never served
+# from a browser's cached copy. Before the library: a stamp that fails stops the deploy with nothing published.
+stamp() {
+  sed -i.bak -E "s/^const $1 = \"[^\"]*\";/const $1 = \"$2\";/" "$WORK/site/gto-solver/index.html"
+  rm "$WORK/site/gto-solver/index.html.bak"
+  grep -q "const $1 = \"$2\";" "$WORK/site/gto-solver/index.html"
+}
+WV="$(cat "$HERE/gto/static/worker.js" "$WORK/site/gto-solver/solver.zip" | shasum | cut -c1-10)"
+stamp WORKER_VERSION "$WV"
+while read -r constant files; do
+  [ -z "$constant" ] && continue
+  hash="$(cd "$HERE/gto/static" && cat $files | shasum | cut -c1-10)"   # ($files unquoted: a list of names)
+  stamp "$constant" "$hash"
+done <<< "$MODULES"
+# the storage layer the page loads before its own script (store.js: its <script src>'s ?v=)
+TV="$(shasum "$HERE/gto/static/store.js" | cut -c1-10)"
+sed -i.bak -E "s#<script src=\"store\.js\?v=[^\"]*\"></script>#<script src=\"store.js?v=$TV\"></script>#" "$WORK/site/gto-solver/index.html"
+rm "$WORK/site/gto-solver/index.html.bak"
+grep -q "<script src=\"store.js?v=$TV\"></script>" "$WORK/site/gto-solver/index.html"
 # the precomputed libraries (gto/flop_library.py, gto/mw_library.py: the indexes and one small file per spot and flop,
 # fetched by the worker when its spot comes up) are published first to their own site, gto-solver-library/ beside
 # gto-solver/ (scripts/deploy_library.sh: one commit with no history, so rebuilt entries don't pile up in the site
@@ -80,82 +123,6 @@ if [ -f "$HERE/gto/static/flop_library/index.json" ]; then
   rm "$WORK/site/gto-solver/index.html.bak"
   grep -q '^const LIB_BASE = "../gto-solver-library/";' "$WORK/site/gto-solver/index.html"
 fi
-# Stamp the worker's cache-busting version with its content hash (and practice.js's, loaded with the same
-# version, and solver.zip's, which the worker fetches as solver.zip?v=<this> and keeps in the Cache API under that
-# URL), so a changed worker.js or solver code is never served from a browser's cached copy.
-WV="$(cat "$HERE/gto/static/worker.js" "$HERE/gto/static/practice.js" "$WORK/site/gto-solver/solver.zip" | shasum | cut -c1-10)"
-sed -i.bak -E "s/^const WORKER_VERSION = \"[^\"]*\";/const WORKER_VERSION = \"$WV\";/" "$WORK/site/gto-solver/index.html"
-rm "$WORK/site/gto-solver/index.html.bak"
-grep -q "const WORKER_VERSION = \"$WV\";" "$WORK/site/gto-solver/index.html"
-# the same for the hand-history importer, which the page loads on demand
-HV="$(shasum "$HERE/gto/static/hh.js" | cut -c1-10)"
-sed -i.bak -E "s/^const HH_VERSION = \"[^\"]*\";/const HH_VERSION = \"$HV\";/" "$WORK/site/gto-solver/index.html"
-rm "$WORK/site/gto-solver/index.html.bak"
-grep -q "const HH_VERSION = \"$HV\";" "$WORK/site/gto-solver/index.html"
-# and for the flop reports (reports.js; each spot's report.json is cache-busted by its hash in the library's index)
-RV="$(shasum "$HERE/gto/static/reports.js" | cut -c1-10)"
-sed -i.bak -E "s/^const RP_VERSION = \"[^\"]*\";/const RP_VERSION = \"$RV\";/" "$WORK/site/gto-solver/index.html"
-rm "$WORK/site/gto-solver/index.html.bak"
-grep -q "const RP_VERSION = \"$RV\";" "$WORK/site/gto-solver/index.html"
-# and the drills (drills.js, which also loads reports.js: hashed together)
-DV="$(cat "$HERE/gto/static/drills.js" "$HERE/gto/static/reports.js" | shasum | cut -c1-10)"
-sed -i.bak -E "s/^const DR_VERSION = \"[^\"]*\";/const DR_VERSION = \"$DV\";/" "$WORK/site/gto-solver/index.html"
-rm "$WORK/site/gto-solver/index.html.bak"
-grep -q "const DR_VERSION = \"$DV\";" "$WORK/site/gto-solver/index.html"
-# and for the advice's Breakdown and Equity views (breakdown.js)
-BV="$(shasum "$HERE/gto/static/breakdown.js" | cut -c1-10)"
-sed -i.bak -E "s/^const BD_VERSION = \"[^\"]*\";/const BD_VERSION = \"$BV\";/" "$WORK/site/gto-solver/index.html"
-rm "$WORK/site/gto-solver/index.html.bak"
-grep -q "const BD_VERSION = \"$BV\";" "$WORK/site/gto-solver/index.html"
-# and the session analyzer (session.js; the hh.js it loads first has its own HH_VERSION)
-SV="$(shasum "$HERE/gto/static/session.js" | cut -c1-10)"
-sed -i.bak -E "s/^const SS_VERSION = \"[^\"]*\";/const SS_VERSION = \"$SV\";/" "$WORK/site/gto-solver/index.html"
-rm "$WORK/site/gto-solver/index.html.bak"
-grep -q "const SS_VERSION = \"$SV\";" "$WORK/site/gto-solver/index.html"
-# and Study mode (study.js)
-YV="$(shasum "$HERE/gto/static/study.js" | cut -c1-10)"
-sed -i.bak -E "s/^const SY_VERSION = \"[^\"]*\";/const SY_VERSION = \"$YV\";/" "$WORK/site/gto-solver/index.html"
-rm "$WORK/site/gto-solver/index.html.bak"
-grep -q "const SY_VERSION = \"$YV\";" "$WORK/site/gto-solver/index.html"
-# and Study's turn and river reports (runouts.js)
-OV="$(shasum "$HERE/gto/static/runouts.js" | cut -c1-10)"
-sed -i.bak -E "s/^const RO_VERSION = \"[^\"]*\";/const RO_VERSION = \"$OV\";/" "$WORK/site/gto-solver/index.html"
-rm "$WORK/site/gto-solver/index.html.bak"
-grep -q "const RO_VERSION = \"$OV\";" "$WORK/site/gto-solver/index.html"
-# and the one-size view (simple.js: the advice's Simple tab and Study's)
-PV="$(shasum "$HERE/gto/static/simple.js" | cut -c1-10)"
-sed -i.bak -E "s/^const SP_VERSION = \"[^\"]*\";/const SP_VERSION = \"$PV\";/" "$WORK/site/gto-solver/index.html"
-rm "$WORK/site/gto-solver/index.html.bak"
-grep -q "const SP_VERSION = \"$PV\";" "$WORK/site/gto-solver/index.html"
-# and multi-table practice (multitable.js: Practice on 2-4 tables at once)
-MV="$(shasum "$HERE/gto/static/multitable.js" | cut -c1-10)"
-sed -i.bak -E "s/^const MT_VERSION = \"[^\"]*\";/const MT_VERSION = \"$MV\";/" "$WORK/site/gto-solver/index.html"
-rm "$WORK/site/gto-solver/index.html.bak"
-grep -q "const MT_VERSION = \"$MV\";" "$WORK/site/gto-solver/index.html"
-# and the help pages (help.js: Getting started, About & accuracy, Glossary, Changelog, Fair play)
-HPV="$(shasum "$HERE/gto/static/help.js" | cut -c1-10)"
-sed -i.bak -E "s/^const HP_VERSION = \"[^\"]*\";/const HP_VERSION = \"$HPV\";/" "$WORK/site/gto-solver/index.html"
-rm "$WORK/site/gto-solver/index.html.bak"
-grep -q "const HP_VERSION = \"$HPV\";" "$WORK/site/gto-solver/index.html"
-# and My hands (hands.js), and the storage layer the page loads before its own script (store.js: its <script src>'s ?v=)
-NV="$(shasum "$HERE/gto/static/hands.js" | cut -c1-10)"
-sed -i.bak -E "s/^const HN_VERSION = \"[^\"]*\";/const HN_VERSION = \"$NV\";/" "$WORK/site/gto-solver/index.html"
-rm "$WORK/site/gto-solver/index.html.bak"
-grep -q "const HN_VERSION = \"$NV\";" "$WORK/site/gto-solver/index.html"
-TV="$(shasum "$HERE/gto/static/store.js" | cut -c1-10)"
-sed -i.bak -E "s#<script src=\"store\.js\?v=[^\"]*\"></script>#<script src=\"store.js?v=$TV\"></script>#" "$WORK/site/gto-solver/index.html"
-rm "$WORK/site/gto-solver/index.html.bak"
-grep -q "<script src=\"store.js?v=$TV\"></script>" "$WORK/site/gto-solver/index.html"
-# and Copy for AI, Explain with AI (explain.js: Practice's and a reviewed decision's)
-EV="$(shasum "$HERE/gto/static/explain.js" | cut -c1-10)"
-sed -i.bak -E "s/^const EX_VERSION = \"[^\"]*\";/const EX_VERSION = \"$EV\";/" "$WORK/site/gto-solver/index.html"
-rm "$WORK/site/gto-solver/index.html.bak"
-grep -q "const EX_VERSION = \"$EV\";" "$WORK/site/gto-solver/index.html"
-# and the write-up (writeup.js: Write up a hand)
-UV="$(shasum "$HERE/gto/static/writeup.js" | cut -c1-10)"
-sed -i.bak -E "s/^const WU_VERSION = \"[^\"]*\";/const WU_VERSION = \"$UV\";/" "$WORK/site/gto-solver/index.html"
-rm "$WORK/site/gto-solver/index.html.bak"
-grep -q "const WU_VERSION = \"$UV\";" "$WORK/site/gto-solver/index.html"
 # Each view's URL (/gto-solver/practice/, /gto-solver/reports/srp-btn-bb/...: the page's ROUTES, gto/routes.py) is a copy
 # of the stamped page with a <base href="../"> pointing its relative URLs at gto-solver/ (GitHub Pages has no rewrites).
 # (No 404.html: GitHub Pages only uses the site root's, which isn't this folder's.)

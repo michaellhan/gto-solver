@@ -1021,6 +1021,7 @@ const EX_VERSION = "1";        // and explain.js (Copy for AI, Explain with AI: 
 const WU_VERSION = "1";        // and writeup.js (Write up a hand: a played hand entered seat by seat, then reviewed)
 const RO_VERSION = "1";        // and runouts.js (Study's turn and river reports, loaded when one first opens)
 const SP_VERSION = "1";        // and simple.js (the one-size view: the advice's Simple tab and Study's, loaded on first use)
+const PR_VERSION = "1";        // and practice.js (Practice, loaded on first use, after explain.js)
 const MT_VERSION = "1";        // and multitable.js (Practice on 2-4 tables at once, loaded the first time Tables goes above 1)
 const HP_VERSION = "1";        // and help.js (the help pages: Getting started, About & accuracy, Glossary, Changelog, Fair play)
 const HN_VERSION = "1";        // and hands.js (My hands, loaded the first time it opens; store.js, loaded with the page, has ?v= of its own)
@@ -3067,7 +3068,7 @@ function showSimple(box, res, key) {
 function loadPractice() {
   if (window.Practice) return Promise.resolve(window.Practice);
   // (explain.js first: practice.js reads a hand's strength and a decision's words from it)
-  return loadJs("explain.js?v=" + EX_VERSION, () => window.Explain).then(() => new Promise((res, rej) => { const s = document.createElement("script"); s.src = "practice.js?v=" + WORKER_VERSION;
+  return loadJs("explain.js?v=" + EX_VERSION, () => window.Explain).then(() => new Promise((res, rej) => { const s = document.createElement("script"); s.src = "practice.js?v=" + PR_VERSION;
     s.onload = () => res(window.Practice); s.onerror = () => rej(new Error("could not load practice.js")); document.head.appendChild(s); }));
 }
 document.getElementById("practiceBtn").onclick = () => loadPractice().then(P => P.set(!P.on)).catch(e => showErr(String(e)));

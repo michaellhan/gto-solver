@@ -228,7 +228,14 @@ test("the route table is the one gto/routes.py reads, and deploy.sh writes each 
   const deploy = fs.readFileSync(path.join(ROOT, "scripts", "deploy.sh"), "utf8");
   const gen = deploy.indexOf('-m gto.routes "$WORK/site/gto-solver"');
   assert.ok(gen > 0, "deploy.sh doesn't run gto.routes on the site folder");
-  for (const v of ["WORKER", "HH", "RP", "DR", "BD", "SS", "SY", "RO", "SP", "MT", "HP", "HN"]) assert.ok(deploy.indexOf(`const ${v}_VERSION = \\"$`) < gen, `${v}_VERSION is stamped after the routes' pages are copied`);
+  // every version constant the page has is stamped, from one list of its modules, before the library is published
+  const modules = deploy.match(/^MODULES="\n([\s\S]*?)^"$/m)[1].trim().split("\n").map(l => l.split(/\s+/));
+  assert.deepEqual(["WORKER_VERSION", ...modules.map(m => m[0])].sort(), [...html.matchAll(/^const (\w+_VERSION) = /gm)].map(m => m[1]).sort());
+  for (const [, ...files] of modules) for (const f of files) assert.ok(fs.existsSync(path.join(ROOT, "gto", "static", f)), f);
+  const stamped = Math.max(deploy.indexOf("stamp WORKER_VERSION"), deploy.indexOf('stamp "$constant"'));
+  assert.ok(deploy.indexOf("stamp WORKER_VERSION") > 0 && deploy.indexOf('stamp "$constant"') > 0, "deploy.sh doesn't stamp the versions");
+  assert.ok(stamped < gen, "the versions are stamped after the routes' pages are copied");
+  assert.ok(stamped < deploy.indexOf('/scripts/deploy_library.sh"'), "the library is published before the versions are stamped: a stamp that fails would leave it published");
   const lib = deploy.indexOf('const LIB_BASE = "../gto-solver-library/"');   // (the library's own site, scripts/deploy_library.sh)
   assert.ok(lib > 0 && lib < gen, "LIB_BASE isn't stamped before the routes' pages are copied");
   assert.ok(gen < deploy.indexOf("git add -A"));

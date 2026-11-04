@@ -64,9 +64,9 @@ minute. Both touch only `gto-solver/` (rehearsed on 6273321be9: 18 files, all un
 
 ## A failed deploy isn't a no-op
 
-`deploy.sh` runs `deploy_library.sh`, which force-pushes the library, before it stamps the versions, writes the route
-copies and pushes the page. If anything after that fails (a stamp's check, `gto.routes`, or the push when another job got
-in first), the library is new and the page is old, and nothing says so. A deploy that works pushes the library first, so
+`deploy.sh` stamps the versions first, then runs `deploy_library.sh`, which force-pushes the library, then writes the route
+copies and pushes the page. If anything after the library fails (`gto.routes`, or the push when another job got in
+first), the library is new and the page is old, and nothing says so. A deploy that works pushes the library first, so
 after a failed one compare the dates of the library's commit and the newest deploy:
 
     gh api repos/michaellhan/gto-solver-library/commits/main \
