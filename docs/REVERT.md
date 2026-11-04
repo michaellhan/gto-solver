@@ -66,6 +66,22 @@ minute. Both touch only `gto-solver/` (rehearsed on 6273321be9: 18 files, all un
 
 `deploy.sh` runs `deploy_library.sh`, which force-pushes the library, before it stamps the versions, writes the route
 copies and pushes the page. If anything after that fails (a stamp's check, `gto.routes`, or the push when another job got
-in first), the library is new and the page is old, and nothing says so. After a failed deploy, compare the library's
-commit message with the live deploy. Deploying again finishes it; to go back instead, publish the library from the live
-deploy's solver commit, as above.
+in first), the library is new and the page is old, and nothing says so. A deploy that works pushes the library first, so
+after a failed one compare the dates of the library's commit and the newest deploy:
+
+    gh api repos/michaellhan/gto-solver-library/commits/main \
+      --jq '.commit.committer.date + " " + (.commit.message | split("\n")[0])'
+    gh api 'repos/michaellhan/michaellhan.github.io/commits?path=gto-solver&per_page=1' \
+      --jq '.[0].commit.committer.date + " " + (.[0].commit.message | split("\n")[0])'
+
+- **The library is older:** nothing to do. The two naming different solver commits is normal: `deploy_library.sh` makes
+  no commit when the files haven't changed, so the library keeps the name of the last commit that changed them (on
+  2026-11-04, `library: gto-solver bd89a095` under `gto-solver: deploy 1a14605e`, with the same entries).
+- **The library is newer:** the page never landed, unless it had nothing new (a deploy that changed only entries ends
+  with `Site already up to date.`, and leaves no deploy commit) or the library was published by itself, as above. To
+  tell, with the solver commits the two lines name, in the solver repo:
+
+      git diff --stat <deploy's commit> <library's commit> -- gto ':!gto/static/flop_library'
+
+  Nothing printed means the page has nothing to catch up on. Otherwise, deploying again finishes it; to go back instead,
+  publish the library from the live deploy's solver commit, as above.
