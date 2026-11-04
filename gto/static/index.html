@@ -993,6 +993,8 @@ function budgetsFor(speed, board) {
 // the reads while the page starts); without it (the tests' page) localStorage itself
 const pageStore = window.GTOStore || { getRaw: (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } },
                                        setRaw: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} } };
+// everything deleted from another tab (My hands' Delete everything this site keeps): what this tab holds goes with it
+if (window.GTOStore) window.GTOStore.onChange((c) => { if (c.wiped && c.remote) location.reload(); });
 let SPEED = "fast";
 { const v = pageStore.getRaw("gto-speed"); if (v === "accurate") SPEED = v; }
 // opponents: "gto" (equilibrium) or "pool" (a typical player pool, exploited); a preference like the speed
@@ -1059,6 +1061,9 @@ function syncRoute(replace) {
 
 // ---- backend: the local Python server if present, otherwise the solver runs in the browser (Pyodide worker)
 let MODE = null, worker = null, reqId = 0;
+let workerStatus = "", loadFailed = false, loadWatch = null;
+const LOAD_FAILED = "The solver couldn't load. Check your connection and try again.";
+const LOAD_QUIET_S = 180;   // no word from a loading worker for this long (its slowest stage: ~25 MB on a slow line)
 // A cross-origin isolated page stops a running solve through memory it shares with the worker (STOP: every request up
 // to the id in [0] is stopped, and the one in [1]; worker.js reads it between chunks of iterations, ~0.1 s), so the
 // worker keeps its solves, library entries and tables; elsewhere stopping one restarts the worker (cancelSolve).
@@ -1121,28 +1126,59 @@ function setStatus(msg) {
   m.textContent = msg;
   if (msg === "Solving…") solveStart = performance.now();   // runtime loading is done; time the solve itself
 }
-let workerStatus = "";
+// A load that fails (the worker's own script, Pyodide's CDN, the solver's code) or goes quiet is not waited for: the
+// worker is dropped, every request waiting answers LOAD_FAILED, and the next request or Try again starts a new one.
+function watchLoad(w) {
+  clearTimeout(loadWatch);
+  loadWatch = workerStatus === "Solving…" ? null : setTimeout(() => { if (worker === w) solverLoadFailed(); }, LOAD_QUIET_S * 1000);
+}
+function solverLoadFailed() {
+  if (!worker) return;
+  const waiting = Object.keys(pending).length > 0;
+  worker.onmessage = worker.onerror = null;
+  worker.terminate(); worker = null; workerStatus = ""; loadFailed = true; clearTimeout(loadWatch);
+  for (const k in pending) { pending[k]({ error: LOAD_FAILED, loadFailed: true }); delete pending[k]; delete partials[k]; delete sent[k]; }
+  if (!waiting || !overlay) return;   // (the solver's own panel shows it with its answer: renderResult)
+  toast(LOAD_FAILED, null, 60000);    // (a view over it, which shows its own error, has no way to restart the worker)
+  const t = document.getElementById("toast"), b = document.createElement("button");
+  t.style.zIndex = 100;               // (above the views)
+  b.className = "link"; b.textContent = "Try again"; b.onclick = () => { t.hidden = true; startWorker(); }; t.appendChild(b);
+}
+const retryHtml = (res, id) => res.loadFailed ? ` <button class="link" id="${id}">Try again</button>` : "";
+// Try again: a new worker, and what failed asked for again
+function retrySolver(again) {
+  startWorker();
+  if (again) return again();
+  lastKey = null; resultKey = null; lastResult = null; renderAll();
+}
 function startWorker() {
   if (worker || isolating) return;
+  loadFailed = false;
   worker = new Worker("worker.js?v=" + WORKER_VERSION + "&lib=" + encodeURIComponent(LIB_BASE));   // query busts the 4h GitHub Pages cache on redeploys
   prefetched = null;
   STOP = globalThis.crossOriginIsolated && typeof SharedArrayBuffer === "function" ? new Int32Array(new SharedArrayBuffer(8)) : null;
   if (STOP) worker.postMessage({ stop: STOP.buffer });
+  const w = worker;
+  watchLoad(w);
   worker.onmessage = (e) => {
     const m = e.data;
     if (m.pong != null) { pongs = Math.max(pongs, m.pong); return; }
-    if (m.status) { workerStatus = m.status; setStatus(m.status); }
+    if (m.loadFailed != null) return solverLoadFailed();
+    if (m.status) { workerStatus = m.status; setStatus(m.status); watchLoad(w); }
     if (m.partial) { if (m.id != null && pending[m.id] && partials[m.id]) partials[m.id](m.partial); return; }
     if (m.id != null && pending[m.id]) { pending[m.id](m.error ? { error: m.error } : m.result); delete pending[m.id]; delete partials[m.id]; }
     if (m.id != null && !m.partial) delete sent[m.id];
   };
-  worker.onerror = (e) => { for (const k in pending) { pending[k]({ error: "solver worker failed: " + e.message }); delete pending[k]; } };
+  worker.onerror = (e) => {
+    if (workerStatus !== "Solving…") return solverLoadFailed();
+    for (const k in pending) { pending[k]({ error: "solver worker failed: " + e.message }); delete pending[k]; }
+  };
 }
 // Once the hand's flop is known, whoever is to act, the browser's worker is told (a "prefetch": Advisor.prefetch
 // names the flop library's files the flop's answers read, and the worker fetches them ahead), so an answer the
 // library holds needs no request of its own (each took 0.13-0.67 s through the CDN, where the answer takes 10-40 ms)
 function prefetchLibrary() {
-  if (MODE !== "wasm" || boardCards().length < 3 || !S.cards[0] || !S.cards[1]) return;
+  if (MODE !== "wasm" || loadFailed || boardCards().length < 3 || !S.cards[0] || !S.cards[1]) return;
   const p = payload(), flop = { ...p, board: p.board.slice(0, 6), flop: [], turn: [], river: [] };
   const k = JSON.stringify(flop);
   if (k === prefetched) return;
@@ -2070,7 +2106,11 @@ function renderEarly(res) {
 function renderResult(res, key) {
   lastResult = res; resultKey = key;
   const el = document.getElementById("result"); el.className = "";
-  if (res.error) { el.innerHTML = `<div class="err">${res.error}</div>`; updateAdviceState(); renderAction(simulate()); return; }
+  if (res.error) {
+    el.innerHTML = `<div class="err">${res.error}${retryHtml(res, "solverRetry")}</div>`;
+    if (res.loadFailed) document.getElementById("solverRetry").onclick = () => retrySolver();
+    updateAdviceState(); renderAction(simulate()); return;
+  }
   markReviewed();
   setColors([...res.actions.map(a => a.action), ...(res.grid ? res.grid.actions : [])]);
   const conv = convergence(res);
@@ -2268,7 +2308,7 @@ async function updateEquity() {
 }
 const TO_COME = { flop: "flop, turn and river to come", turn: "turn and river to come", river: "river to come" };
 function equityHtml(res) {
-  if (res.error) return `<div class="err">${res.error}</div>`;
+  if (res.error) return `<div class="err">${res.error}${retryHtml(res, "equityRetry")}</div>`;
   const pct = (x) => x == null ? "–" : (x * 100).toFixed(1) + "%", vs = res.villains;
   const when = !res.next ? "at showdown" : res.allin ? `all-in · ${TO_COME[res.next]}` : `${res.street} betting closed · ${TO_COME[res.next]}`;
   const against = vs.length === 1 ? `${vs[0].seat}'s range` : `${vs.length} ranges`;
@@ -2288,6 +2328,7 @@ function equityHtml(res) {
 function renderEquity(res) {
   const box = document.getElementById("equity");
   box.innerHTML = equityHtml(res);
+  if (res.loadFailed) document.getElementById("equityRetry").onclick = () => retrySolver(() => { eqKey = null; updateEquity(); });
   if (!res.error) box.querySelectorAll(".vgrid").forEach((g, i) => wireGrid(g, res.villains[i].grid, null, res.villains[i].seat));
 }
 
@@ -2333,6 +2374,7 @@ async function reviewHand() {
       await new Promise(r => setTimeout(r, 300)); done = solving ? null : analyze(simulate());
     }
     if (rv.cancel || JSON.stringify(S) !== spot) break;
+    if (lastResult && lastResult.loadFailed) { rv.failed = true; break; }   // (the rest would only fail the same way)
     const mv = gradedMove(sim, a);
     a.g = gradeFor(mv);   // null (multiway, failed solve): reviewed, no grade
     if (!a.g && jamOffTree(lastResult, mv)) a.g = await jamGrade(resultKey, mv);
@@ -2344,6 +2386,11 @@ async function reviewHand() {
     keepHand("review", full, back ? {} : { table: false });
   }
   renderAll();
+  if (rv.failed && rv.cancel !== "drop") {   // (the review's last answer went with the hand: said again, its Try again the whole review)
+    const el = document.getElementById("result"); el.className = "";
+    el.innerHTML = `<div class="err">${LOAD_FAILED}${retryHtml({ loadFailed: true }, "solverRetry")}</div>`;
+    document.getElementById("solverRetry").onclick = () => retrySolver(reviewHand);
+  }
 }
 const EMPTY_ADVICE = "Enter a hand you've played: your seat and cards, then the action seat by seat.<br>When it's finished, the solver reviews each decision you made.";
 const RECORDING = "Recording your decisions. Nothing is solved while you enter a hand.<br>When the hand ends, or you press Finish hand, you can review each decision you recorded.";

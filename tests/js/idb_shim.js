@@ -2,7 +2,8 @@
 // whose transaction is aborted leaves no database, as the browser does), object stores with a keyPath or out-of-line
 // keys, transactions that complete once their requests are answered (each answered on its own turn, in order) and
 // roll back on abort, and get / getAll / getAllKeys / put / delete / clear. Values are structured clones.
-// fakeIndexedDB({ failOpen: true }) refuses every open (a browser whose IndexedDB is off).
+// fakeIndexedDB({ failOpen: true }) refuses every open (a browser whose IndexedDB is off); on the factory, failClear makes a
+// store's clear() fail, failDelete a deleteDatabase, blockDelete leaves one waiting for good (a connection that won't close).
 "use strict";
 
 const tick = (f) => setImmediate(f);
@@ -64,7 +65,7 @@ class ObjectStore {
   put(v, key) { this._write(); const k = this._key(v, key), c = structuredClone(v); return this.tx._req(() => { this._s.data.set(k, c); return k; }); }
   add(v, key) { this._write(); const k = this._key(v, key), c = structuredClone(v); return this.tx._req(() => { if (this._s.data.has(k)) throw err("ConstraintError"); this._s.data.set(k, c); return k; }); }
   delete(key) { this._write(); return this.tx._req(() => { this._s.data.delete(key); }); }
-  clear() { this._write(); return this.tx._req(() => { this._s.data.clear(); }); }
+  clear() { this._write(); return this.tx._req(() => { if (this.tx.db._rec.factory && this.tx.db._rec.factory.failClear) throw err("UnknownError", "clear failed"); this._s.data.clear(); }); }
 }
 const cmp = (a, b) => (typeof a === typeof b ? (a < b ? -1 : a > b ? 1 : 0) : typeof a === "number" ? -1 : 1);
 
@@ -102,7 +103,7 @@ function fakeIndexedDB(opts = {}) {
         const existed = !!rec, old = existed ? rec.version : 0;
         const v = version === undefined ? (existed ? rec.version : 1) : version;
         if (!(v >= 1) || v < old) { q.error = err("VersionError"); if (q.onerror) q.onerror({ target: q }); return; }
-        if (!existed) { rec = { name, version: v, stores: new Map() }; dbs.set(name, rec); }
+        if (!existed) { rec = { name, version: v, stores: new Map(), factory }; dbs.set(name, rec); }
         const db = new DB(rec);
         if (v > old) {
           const before = new Map([...rec.stores].map(([n, s]) => [n, s]));
@@ -123,11 +124,21 @@ function fakeIndexedDB(opts = {}) {
       });
       return q;
     },
-    deleteDatabase(name) { dbs.delete(name); const q = new Request(null); tick(() => { if (q.onsuccess) q.onsuccess({ target: q }); }); return q; },
+    deleteDatabase(name) {
+      const q = new Request(null);
+      if (factory.blockDelete) return q;
+      tick(() => {
+        if (factory.failDelete) { q.error = err("UnknownError", "delete failed"); if (q.onerror) q.onerror({ target: q }); return; }
+        dbs.delete(name); if (q.onsuccess) q.onsuccess({ target: q });
+      });
+      return q;
+    },
     async databases() { return [...dbs.values()].map(d => ({ name: d.name, version: d.version })); },
     // (tests) a database's store as a plain object, key -> value
     dump(name, store) { const r = dbs.get(name); if (!r || !r.stores.has(store)) return null; return Object.fromEntries([...r.stores.get(store).data].map(([k, v]) => [k, structuredClone(v)])); },
     has: (name) => dbs.has(name),
+    // (tests) a value written straight into a database's store, as another tab's write would land
+    poke(name, store, key, value) { dbs.get(name).stores.get(store).data.set(key, value); },
   };
   return factory;
 }

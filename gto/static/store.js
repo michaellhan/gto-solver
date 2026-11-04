@@ -19,6 +19,7 @@
 // The Anthropic API key (Practice's Explain with AI, "gto-anthropic-key") and the choice to use it ("gto-explain-own")
 // never become records: they stay in localStorage only, and a backup never holds the key, even inside a note.
 // Without IndexedDB (some private modes) the records are kept in localStorage ("gto-store:<store>"), else in memory.
+// wipe() deletes all of it, by name (SITE_KEYS, SITE_DATABASES, SITE_CACHES): My hands' "Delete everything this site keeps".
 (function () {
   "use strict";
   const DB_NAME = "gto-store", DB_VERSION = 1, SCHEMA = 1;
@@ -37,6 +38,17 @@
   const DEVICE_ONLY = new Set(["gto-layout", "gto-hands-table"]);   // backed up, never synced (this screen's column widths; which record the hand on this table is)
   const BACKUP = "gto-solver-backup", HANDS_FILE = "gto-solver-hands";
   const STREETS = ["preflop", "flop", "turn", "river"];
+  // Everything this site keeps in this browser, by name, for wipe(). The origin serves other sites (Lizard, and the 22
+  // other folders of the site repo), so nothing here clears the origin: no localStorage.clear(), no database or cache
+  // that isn't named. SITE_KEYS is every localStorage and sessionStorage key gto/static's code uses and the frozen
+  // copy's (/gto-solver-classic/, scripts/publish_classic.sh); tests/js/wipe.test.js greps gto/static and fails on a
+  // key that isn't here.
+  const SITE_KEYS = [...KNOWN, ...LOCAL_ONLY, ...Object.keys(MOVED), SENTINEL,
+    ...[...STORES, "meta"].map(s => "gto-store:" + s),   // (the records, without IndexedDB)
+    "gto-welcome", "gto-stakes", "gto-writeup",          // (taken in as any "gto-" key is)
+    "gto-isolate", "gto-isolate-classic"];               // (sessionStorage: the service worker's once-a-tab mark)
+  const SITE_DATABASES = { [DB_NAME]: [...STORES, "meta"], "gto-session": ["kv"], "gto-pf": ["solves"] };
+  const SITE_CACHES = ["gto-solver", "gto-solver-classic"];
 
   const clone = (x) => x === undefined ? undefined : JSON.parse(JSON.stringify(x));
   const parse = (s) => { if (s == null) return null; try { return JSON.parse(s); } catch (e) { return null; } };
@@ -78,6 +90,20 @@
         for (const b of batch) t.objectStore(b.store).put(b.rec);
         await done(t);
       },
+      async clear(stores) { const d = await open(), t = d.transaction(stores, "readwrite"); for (const s of stores) t.objectStore(s).clear(); await done(t); },
+      // the database itself, where its stores wouldn't clear: this tab's connection closed first, the others' close on
+      // versionchange (above; a connection that doesn't keeps it open, which is reported after `wait` ms)
+      async drop(wait) {
+        try { if (dbp) (await dbp).close(); } catch (e) {}
+        dbp = null;
+        await new Promise((res, rej) => {
+          const t = setTimeout(() => rej(new Error("another tab has it open")), wait);
+          const end = (f, x) => { clearTimeout(t); f(x); };
+          let q; try { q = idb.deleteDatabase(DB_NAME); } catch (e) { return end(rej, e); }
+          q.onsuccess = () => end(res);
+          q.onerror = () => end(rej, q.error || new Error("IndexedDB refused"));
+        });
+      },
     };
   }
   function mapBackend(load, save, kind) {   // localStorage ("gto-store:<store>", a JSON object by id) or memory
@@ -92,6 +118,7 @@
         for (const b of batch) { get(b.store)[b.rec.id] = clone(b.rec); touched.add(b.store); }
         for (const s of touched) save(s, m[s]);
       },
+      async clear(stores) { for (const s of stores) { m[s] = {}; save(s, m[s]); } },
     };
   }
   // an old IndexedDB database's object store, read whole (null if the database isn't there: opening it doesn't create it)
@@ -111,9 +138,30 @@
     });
   }
 
+  // a named database's stores emptied, whoever else has it open (Study keeps "gto-pf" open, and nothing closes it on
+  // versionchange, so deleting it would wait for that tab). True; false if it isn't there (it isn't created: an open that
+  // would is aborted, as in readOldDb); rejects if it can't be done.
+  function clearDb(idb, name, stores) {
+    return new Promise((res, rej) => {
+      let q; try { q = idb.open(name); } catch (e) { return rej(e); }
+      let created = false;
+      q.onupgradeneeded = () => { created = true; try { q.transaction.abort(); } catch (e) {} };
+      q.onerror = () => created ? res(false) : rej(q.error || new Error("IndexedDB refused"));
+      q.onsuccess = () => {
+        const d = q.result, have = stores.filter(s => d.objectStoreNames.contains(s));
+        if (created || !have.length) { d.close(); return res(false); }
+        let t; try { t = d.transaction(have, "readwrite"); for (const s of have) t.objectStore(s).clear(); } catch (e) { d.close(); return rej(e); }
+        t.oncomplete = () => { d.close(); res(true); };
+        t.onerror = t.onabort = () => { d.close(); rej(t.error || new Error("IndexedDB refused")); };
+      };
+    });
+  }
+
   function createStore(env = {}) {
     const ls = env.localStorage === undefined ? (() => { try { return globalThis.localStorage || null; } catch (e) { return null; } })() : env.localStorage;
     const idb = env.indexedDB === undefined ? (() => { try { return globalThis.indexedDB || null; } catch (e) { return null; } })() : env.indexedDB;
+    const ss = env.sessionStorage === undefined ? (() => { try { return globalThis.sessionStorage || null; } catch (e) { return null; } })() : env.sessionStorage;
+    const cs = env.caches === undefined ? (() => { try { return globalThis.caches || null; } catch (e) { return null; } })() : env.caches;
     const now = env.now || (() => Date.now());
     const lsGet = (k) => { try { return ls ? ls.getItem(k) : null; } catch (e) { return null; } };
     const lsSet = (k, v) => { try { if (!ls) return false; ls.setItem(k, v); return true; } catch (e) { return false; } };
@@ -127,6 +175,7 @@
     const pending = new Map();        // "store\0id" -> { store, id, data (null: delete), t }
     const listeners = new Set();
     let timer = null, flushing = Promise.resolve();
+    let sealed = false;               // wipe() took the records: nothing is written again until the page loads again
     const chan = (() => { try { return typeof BroadcastChannel === "function" && env.broadcast !== false ? new BroadcastChannel(DB_NAME) : null; } catch (e) { return null; } })();
     if (chan && typeof chan.unref === "function") chan.unref();   // (Node: a channel doesn't keep the process up)
 
@@ -134,14 +183,16 @@
       if (!cache[store]) { const m = new Map(); for (const r of await backend.getAll(store)) if (r && r.id != null) m.set(r.id, r); cache[store] = m; }
       return cache[store];
     }
-    function changed(stores, remote) {
-      for (const f of listeners) try { f({ stores, remote: !!remote }); } catch (e) {}
-      if (!remote && chan) try { chan.postMessage({ stores }); } catch (e) {}
+    function changed(stores, remote, wiped) {
+      for (const f of listeners) try { f({ stores, remote: !!remote, ...(wiped ? { wiped } : {}) }); } catch (e) {}
+      if (!remote && chan) try { chan.postMessage({ stores, ...(wiped ? { wiped } : {}) }); } catch (e) {}
     }
+    const seal = () => { sealed = true; if (timer) { clearTimeout(timer); timer = null; } pending.clear(); };
     if (chan) chan.onmessage = (e) => {   // another tab wrote: what it changed is read again
-      const stores = (e.data && e.data.stores || []).filter(s => STORES.includes(s));
+      const stores = (e.data && e.data.stores || []).filter(s => STORES.includes(s)), wiped = !!(e.data && e.data.wiped);
+      if (wiped) seal();
       for (const s of stores) delete cache[s];
-      if (stores.length) changed(stores, true);
+      if (stores.length) changed(stores, true, wiped);
     };
 
     // a record of data (null: a tombstone) over the one before it
@@ -152,6 +203,7 @@
     }
     const same = (store, base, data) => base && !base.deleted && (store === "kv" ? base.data && base.data.raw === data.raw : canon(base.data) === canon(data));
     function queue(store, id, data, t, extra) {
+      if (sealed) return;
       pending.set(store + "\0" + id, { store, id, data, t: t || now(), ...(extra || {}) });
       if (!timer && isReady) timer = setTimeout(() => { timer = null; flush(); }, 30);
     }
@@ -254,6 +306,7 @@
     }
     function setRaw(k, raw) {
       raw = String(raw);
+      if (sealed) return;
       if (LOCAL_ONLY.has(k)) { lsSet(k, raw); return; }
       const full = !lsSet(k, raw) && !!ls;
       if (full) lsDel(k);   // (localStorage full: not an older value left in the mirror)
@@ -333,6 +386,62 @@
       }
       await backend.write(batch);
       if (batch.length) changed([...new Set(batch.map(b => b.store))]);
+      return out;
+    }
+
+    // ---- Delete everything this site keeps: what's here and in the other named places, nothing else on the origin.
+    // The records and the mirror go together or not at all. A load takes a mirror key back in as a record and writes a
+    // lost mirror back from the records (reconcile), so with the records still there the mirror stays and the page goes
+    // on as it was; only the keys that are never records go (the API key). The report says what went and what didn't:
+    //   { ok, records: the records and the mirror went, deleted: { hands, sessions, kv, blobs }, aiKey, keys, databases,
+    //     caches, failed: [{ what: "records", a database's or a cache's name, or "tab", why }] }
+    // Once the records are gone the store is sealed until the page loads again (and other tabs of this code with it,
+    // onChange's { wiped }): what the page holds in memory, the hand on the table first, isn't written back. A tab of the
+    // frozen copy can't be told more than to read again, so the page asks for other tabs to be closed first.
+    async function wipe() {
+      await ready;
+      seal();
+      await flushing;
+      const out = { ok: false, records: false, deleted: {}, aiKey: false, keys: [], databases: [], caches: [], failed: [] };
+      const fail = (what, e) => out.failed.push({ what, why: e && e.message || String(e || "") });
+      const counts = {}, ids = [];
+      for (const s of STORES) {
+        counts[s] = 0;
+        try { const m = await load(s); counts[s] = [...m.values()].filter(r => !r.deleted).length; if (s === "kv") ids.push(...m.keys()); } catch (e) {}
+      }
+      const whole = SITE_DATABASES[DB_NAME];
+      try { await backend.clear(whole); out.records = true; }
+      catch (e) {
+        if (!backend.drop) fail("records", e);
+        else try { await backend.drop(env.wipeWait || 5000); out.records = true; } catch (e2) { fail("records", e2); }
+      }
+      for (const s of STORES) delete cache[s];
+      if (out.records) {
+        out.deleted = counts;
+        out.databases.push(DB_NAME);
+        meta = { ...meta, device: uid() };   // (what's been migrated stays marked: nothing is taken in again)
+        try { await backend.write([{ store: "meta", rec: meta }]); } catch (e) {}
+      }
+      if (idb) {
+        // (running without IndexedDB, it wouldn't open: whatever it holds couldn't be read, so couldn't be said to be gone)
+        if (backend.kind !== "indexeddb") try { if (await clearDb(idb, DB_NAME, whole)) out.databases.push(DB_NAME); } catch (e) { fail(DB_NAME, e); }
+        for (const name of Object.keys(SITE_DATABASES)) {
+          if (name === DB_NAME) continue;
+          try { if (await clearDb(idb, name, SITE_DATABASES[name])) out.databases.push(name); } catch (e) { fail(name, e); }
+        }
+      }
+      out.aiKey = lsGet(AI_KEY) != null;
+      for (const k of out.records ? new Set([...SITE_KEYS, ...ids.filter(adoptable)]) : LOCAL_ONLY) {
+        if (lsGet(k) != null) out.keys.push(k);
+        lsDel(k);
+        try { if (ss) ss.removeItem(k); } catch (e) {}
+      }
+      // (a tab that wrote in the meantime: this is what's there now, not what was cleared)
+      if (out.records) try { for (const s of STORES) if ((await backend.getAll(s)).length) { fail("tab", new Error("another tab saved again")); break; } } catch (e) {}
+      if (cs) for (const name of SITE_CACHES) { try { if (await cs.delete(name)) out.caches.push(name); } catch (e) { fail(name, e); } }
+      out.ok = !out.failed.length;
+      sealed = out.records;
+      changed(STORES, false, out.records);
       return out;
     }
 
@@ -457,16 +566,16 @@
     };
 
     return {
-      ready, SCHEMA, STORES, KNOWN, LOCAL_ONLY, DEVICE_ONLY, BACKUP, HANDS_FILE,
+      ready, SCHEMA, STORES, KNOWN, LOCAL_ONLY, DEVICE_ONLY, BACKUP, HANDS_FILE, SITE_KEYS, SITE_DATABASES, SITE_CACHES,
       get backend() { return backend ? backend.kind : null; }, get device() { return meta ? meta.device : null; },
       get: (k) => parse(getRaw(k)), getRaw, set: (k, v) => setRaw(k, JSON.stringify(v)), setRaw, remove,
       list, record: getRec, put, del, blob, sessions, flush: flushNow, reconcile: () => ready.then(reconcile),
-      backup, restore, hands, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); },
+      backup, restore, wipe, hands, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); },
       _: { canon, hash, pending, cache, meta: () => meta },
     };
   }
 
-  const api = { createStore };
+  const api = { createStore, SITE_KEYS, SITE_DATABASES, SITE_CACHES };
   if (typeof module === "object" && module.exports) module.exports = api;
   else { globalThis.GTOStoreLib = api; try { globalThis.GTOStore = createStore(); } catch (e) {} }
 })();

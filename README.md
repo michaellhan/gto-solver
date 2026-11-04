@@ -363,6 +363,19 @@ of one in both the newer stays, nothing here is deleted, and a hand already here
 tags (and its note, if it had none); settings take effect on the next load. Your Anthropic API key (Explain with AI)
 is never a record and never in a backup or export, not even pasted into a note; nor is the analyzer's mark of a run
 going in a tab (`gto-session-run`).
+**Delete everything this site keeps** (in My hands) asks first, says what goes, and offers **Back up first**: saved hands,
+sessions, drill and practice progress, settings, the saved AI key and the cached solver files, in this browser, the
+frozen copy at /gto-solver-classic/ included since it shares the storage (Lizard's own data stays, but Lizard could no
+longer import these hands). The site's origin serves other sites, so it goes by name, never the whole origin: the store
+lists every key the site's code uses (`SITE_KEYS`, with `SITE_DATABASES` and `SITE_CACHES`, in `store.js`;
+`tests/js/wipe.test.js` greps `gto/static` and fails on a key that isn't there), and clears `gto-store`, `gto-session`
+and `gto-pf` (the stores, as an open tab can't block that; `gto-store` is deleted instead if its stores won't clear) and
+the caches `gto-solver` and `gto-solver-classic`. The panel reports what it deleted and what it couldn't. If the records
+can't be deleted they stay with their localStorage copies, so nothing is half gone, and it says so; other tabs of this
+site stop writing and reload (a tab of the frozen copy can't be told, and the panel says to close it).
+My hands and the store stand on their own: `tests/js/floor.test.js` fails if `hands.js` or `store.js` gains a dependency
+on Practice, the session analyzer, drills, reports, Explain, Study or the write-up (a saved hand's Study button, which
+loads Study when pressed, is the one exception), and restores a backup of all four stores with those files gone.
 
 **Flop reports** (in the ⋯ menu) are aggregate reports of the [precomputed flop library](#precomputed-flop-library):
 pick a spot (BTN vs BB, …) and a node (out of position first; in position after a check; out of position facing
@@ -4597,6 +4610,16 @@ skips them, for emergencies only. `BUILD_ONLY=<dir> scripts/deploy.sh` builds th
 (versions stamped, each view's URL written) into `<dir>/site/gto-solver`, and the library into
 `<dir>/site/gto-solver-library`, without the checks, cloning or pushing, to
 try the static site: `python3 -m http.server -d <dir>/site 8000`, then http://127.0.0.1:8000/gto-solver/practice/.
+
+`scripts/publish_classic.sh` publishes a frozen copy of the last full build at /gto-solver-classic/, once: the site as
+it was at 1a14605e (`CLASSIC_COMMIT`), built by that commit's own `deploy.sh` in a temporary worktree. It's 6.7 MB and 70
+files, as the 334 MB library is read from the live /gto-solver-library/, so a library publish reaches it too. It differs
+from that build in two lines, each replaced by a check that fails unless the text is there exactly once: the worker's
+cache (`gto-solver-classic`, as two sites on one cache evict each other's bundle) and the once-a-tab mark for its service
+worker (`gto-isolate-classic`, as sessionStorage is the origin's: a tab that had visited /gto-solver/ never registered
+this folder's worker, and ran on one thread). It stops if the folder is there unless `FORCE=1`; `BUILD_ONLY=<dir>`
+writes `<dir>/site/gto-solver-classic` and pushes nothing. `deploy.sh` wipes only `gto-solver/`, so a deploy leaves it
+alone. To take the live site back to an earlier deploy, see [docs/REVERT.md](docs/REVERT.md).
 
 Tune with `Config` in `gto/solver.py` (`depth`, sizes, sample counts) or the
 `--budget` / `--depth` flags. `depth=3` from the flop is the full tree; it is

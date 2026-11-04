@@ -41,7 +41,9 @@ bundle.catch(() => {});   // awaited (and reported) in the setup below
 // the HTTP cache (jsdelivr caches versioned files for a year) rather than starting it once the runtime is up. The name
 // is pyodide-lock.json's for 0.26.4; were it wrong, this request would just fail and loadPackage fetch numpy itself.
 fetch(PYODIDE + "numpy-1.26.4-cp312-cp312-pyodide_2024_0_wasm32.whl").then((r) => r.arrayBuffer()).catch(() => {});
-importScripts(PYODIDE + "pyodide.js");
+// (a failure here is the setup's, reported as any other: this script goes on, so its onmessage is there to answer)
+let scriptError = null;
+try { importScripts(PYODIDE + "pyodide.js"); } catch (err) { scriptError = err; }
 
 // The precomputed flop library (gto/flop_library.py): the Python side asks for its index once and for an entry
 // (<spot>/<flop>.bin, 1.5-6 KB) only when a flop spot it holds comes up. The solver runs synchronously, so it reads
@@ -155,6 +157,7 @@ async function loadCore(py, file, pre, name) {
 // The setup, in the stages the page shows; their seconds come back with "Solving…" (setup: for
 // scripts/bench_browser.mjs and the console).
 const ready = (async () => {
+  if (scriptError) throw scriptError;
   const setup = {}; let t = T0;
   const lap = (k) => { const n = performance.now(); setup[k] = +((n - t) / 1000).toFixed(2); t = n; };
   postMessage({ status: "Loading the solver runtime (1 of 3: Python and numpy, about 25 MB, cached after the first visit)…" });
@@ -372,6 +375,13 @@ function idle() {
   }, 30);
 }
 ready.then(idle, () => {});
+// A load that fails is said at once ({loadFailed}: the page offers Try again), not only to the requests that come after
+// (each still answers {id, error}). The script's own failure also stays an error on the worker, as it was before
+// the try above: Lizard's worker-transport hears of it by onerror.
+ready.catch((err) => {
+  postMessage({ loadFailed: String(err && err.message || err) });
+  if (err === scriptError && typeof reportError === "function") reportError(err);
+});
 
 // Stopping a request. Before it starts: a "cancel" message (the page's, while the runtime loads). Once it runs it
 // blocks this thread, so messages wait: where the page is cross-origin isolated it hands over a SharedArrayBuffer

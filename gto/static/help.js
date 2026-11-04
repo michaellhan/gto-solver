@@ -132,9 +132,9 @@
     </ul>
     <h3>Your data</h3>
     <p>The solver runs in your browser (Pyodide, Python compiled to WebAssembly, loaded from jsDelivr), so your hands,
-      hand histories and settings stay on your device, in its local storage. Clearing this site's data in your browser
-      deletes them; <b>Back up everything</b> in My hands saves them to a file (without your Anthropic key), and Restore
-      reads it back, in this browser or another. The page is hosted on GitHub Pages. The one
+      hand histories and settings stay on your device, in its local storage. <b>Delete everything this site keeps</b> in
+      My hands deletes them and nothing else on this domain; <b>Back up everything</b> saves them to a file first (without
+      your Anthropic key), and Restore reads it back, in this browser or another. The page is hosted on GitHub Pages. The one
       exception is <b>Explain with AI</b>, in Practice and in the review of a finished hand: when you click it, that decision's
       summary (the game, your seat and cards, the board and betting, what you chose and the solver's numbers) is sent through
       our proxy to Anthropic's Claude to write the explanation (or straight to Anthropic with your own key, if you set one).

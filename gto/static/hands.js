@@ -3,7 +3,8 @@
 // takes its place), reviewed (Review whole hand, with its grades) or imported. Search, a filter by kind and tag, tags and
 // a note on each, delete (Undo); a hand opens on the table (to review it) or in Study at your last decision, and copies
 // as its #h= link; the list (or one hand) exports as JSON, and such a file, #h= links or hand histories import into it.
-// Below the list, a backup of everything the site keeps in this browser and its restore (GTOStore.backup / restore).
+// Below the list, a backup of everything the site keeps in this browser and its restore (GTOStore.backup / restore), and
+// its delete (GTOStore.wipe), which asks first and then says what went.
 // Everything but the panel (open) and the page host is pure and tested in Node.
 (function () {
   "use strict";
@@ -165,6 +166,36 @@
     return blob.size;
   }
 
+  // ---- Delete everything this site keeps: what it says first, and what it says it did (GTOStore.wipe's report)
+  const WIPE_WHAT = { records: "your saved hands, sessions, progress and settings", "gto-store": "whatever this browser's IndexedDB holds",
+                      "gto-session": "your older analyzed sessions", "gto-pf": "Study's stored preflop solves",
+                      "gto-solver": "the cached solver files", "gto-solver-classic": "the frozen copy's cached solver files" };
+  function wipeText(r) {
+    const gone = [];
+    if (r.records) { const b = backupText({ counts: r.deleted }); if (b !== "nothing") gone.push(b); }
+    if (r.aiKey) gone.push("your saved AI key");
+    if ((r.caches || []).length || (r.databases || []).includes("gto-pf")) gone.push("the cached solver files");
+    const said = gone.length ? `Deleted ${gone.join(", ")}.` : "Nothing was left to delete.";
+    const left = (r.failed || []).filter(f => f.what !== "tab");
+    const back = left.length ? ` Couldn't delete ${[...new Set(left.map(f => WIPE_WHAT[f.what] || f.what))].join(", ")}: ${left[0].why || "this browser refused"}. ${r.records ? "" : "They're still here. "}` : "";
+    const tab = (r.failed || []).some(f => f.what === "tab") ? " Another tab of this site saved something again: close it and delete again." : "";
+    return (said + back + tab).trim();
+  }
+  function wipeHtml(w) {
+    if (!w) return `<div class="mh-backup"><div class="mh-acts"><button class="ghost mh-danger" data-wipe>Delete everything this site keeps</button></div></div>`;
+    if (w.report) {
+      const r = w.report;
+      return `<div class="mh-backup" role="status"><b>${r.ok ? "Deleted" : "Not everything was deleted"}</b><div class="mh-sub">${esc(wipeText(r))}${r.ok ? " Lizard's own data wasn't touched." : ""}</div>
+        <div class="mh-acts">${r.ok ? "" : `<button data-wipego>Try again</button>`}${r.records ? `<button${r.ok ? ` class="active"` : ""} data-reload>Reload the page</button>` : ""}${r.records ? "" : `<button class="ghost" data-wipecancel>Close</button>`}</div></div>`;
+    }
+    return `<div class="mh-backup"><b>Delete everything this site keeps?</b>
+      <div class="mh-sub">This can't be undone. It deletes all of this from this browser: your saved hands, sessions, drill and practice progress, settings, the saved AI key and the cached solver files (those download again when needed).</div>
+      <div class="mh-sub">That includes the frozen copy at /gto-solver-classic/, because it shares this storage. Lizard's own data stays, but Lizard could no longer import these hands.</div>
+      <div class="mh-sub">Close any other tab of this site first: one left open can save its hand again.</div>
+      ${w.backedUp ? `<div class="mh-sub">${esc(w.backedUp)}</div>` : ""}
+      <div class="mh-acts"><button data-backup>Back up first</button><button class="mh-danger" data-wipego>Delete everything</button><button class="ghost" data-wipecancel>Cancel</button></div></div>`;
+  }
+
   // ---- the page (globals of index.html; session.js's host does the same)
   function pageHost() {
     // the hand on the table, as that record (the page's cleaned copy of it kept, should it differ: a file's hand)
@@ -225,7 +256,7 @@
   }
 
   // ---- the panel
-  let deleted = null, box = null, host = null, recs = [], ui = { q: "", kind: "", tag: "" }, shown = PAGE, openId = null, msg = "", draft = null, unsub = null, noteT = null, loaded = false;
+  let deleted = null, box = null, host = null, recs = [], ui = { q: "", kind: "", tag: "" }, shown = PAGE, openId = null, msg = "", draft = null, unsub = null, noteT = null, loaded = false, wiping = null;
   const store = () => host.store();
   // the panel's edits to a hand, one after another (a tag and a note written at once don't undo each other)
   let edits = Promise.resolve();
@@ -254,6 +285,7 @@
     if (!box || box.hidden) return;
     const body = box.querySelector(".mh-body");
     if (!loaded) { body.innerHTML = `<div class="mh-sub">Loading…</div>`; return; }
+    if (wiped()) { body.innerHTML = wipeHtml(wiping); return; }   // (only its report and the reload: the page still holds what went)
     const n = filterRecs(recs, ui).length;
     body.innerHTML = tableHtml() + toolbarHtml(recs, ui)
       + `<div class="mh-msg" role="status"${msg ? "" : " hidden"}>${msg}</div>`
@@ -263,8 +295,9 @@
       + `<label class="mh-file ghost"><input type="file" data-importfile accept=".json,.txt,.xml,.log,application/json,text/plain"><span>Import a file…</span></label>`
       + `<button class="ghost" data-pastebox>Paste…</button></div>`
       + `<div class="mh-paste" hidden><textarea data-paste rows="3" placeholder="Paste hand histories, #h= links or a My hands JSON export"></textarea><div class="mh-acts"><button data-pastego>Import</button></div></div>`
-      + backupHtml();
+      + backupHtml() + wipeHtml(wiping);
   }
+  const wiped = () => !!(wiping && wiping.report && wiping.report.records);
   const countText = (n) => `${n === recs.length ? `${recs.length} hand${recs.length === 1 ? "" : "s"}` : `${n} of ${recs.length} hands`} · kept in this browser only`;
   const exportText = (n) => `Export ${n === recs.length ? "all" : n} as JSON`;
   function drawList() {
@@ -322,7 +355,17 @@
     if (d.pastego != null) { const t = box.querySelector("[data-paste]"); return importText(t.value, ""); }
     if (d.backup != null) {
       const b = await store().backup(), size = download(fileName("backup", Date.now()), b);
-      return say(esc(`Backed up ${backupText(b)} (${Math.max(1, Math.round(size / 1024))} KB). Keep the file somewhere safe; Restore from a backup brings it back, here or in another browser.`));
+      const text = `Backed up ${backupText(b)} (${Math.max(1, Math.round(size / 1024))} KB). Keep the file somewhere safe; Restore from a backup brings it back, here or in another browser.`;
+      if (wiping) { wiping.backedUp = text; draw(); }
+      return say(esc(text));
+    }
+    if (d.wipe != null) { wiping = {}; return draw(); }
+    if (d.wipecancel != null) { wiping = null; return draw(); }
+    if (d.wipego != null) {
+      let r; try { r = await store().wipe(); } catch (e) { r = { ok: false, records: false, failed: [{ what: "records", why: e.message || String(e) }] }; }
+      wiping = { report: r }; deleted = null; draft = null; msg = "";
+      if (r.records) { recs = []; return draw(); }
+      return refresh();
     }
     if (d.restorecancel != null) { draft = null; return draw(); }
     if (d.restorego != null) {
@@ -400,6 +443,7 @@
   .mh-file span { border: 1px solid var(--line2); border-radius: 6px; background: var(--panel); }
   .mh-file:focus-within span { outline: 2px solid var(--accent); }
   .mh-backup { display: flex; flex-direction: column; gap: 6px; padding-top: 10px; border-top: 1px solid var(--line2); font-size: 13px; }
+  .mh-danger, button.mh-danger { color: var(--bad); }
   .mh-moreb { align-self: center; font-size: 12px; margin-top: 6px; }
   @media (max-width: 600px) {
     .mh { padding: 0; }
@@ -409,6 +453,7 @@
     .mh-tools input[type=search], .mh-more textarea, .mh-paste textarea, .mh-tagrow input { font-size: 16px; }
   }`;
   function close() {
+    if (wiped()) return location.reload();   // (not back to a page holding what was deleted)
     if (box) box.hidden = true;
     if (noteT) { clearTimeout(noteT); noteT = null; const t = box && box.querySelector("textarea[data-note]"); if (t) upd(t.dataset.note, { note: t.value }); }
     const m = document.getElementById("menuBtn"); if (m) m.focus();
@@ -424,7 +469,7 @@
       box.setAttribute("aria-modal", "true"); box.setAttribute("aria-label", "My hands");
       box.innerHTML = `<div class="mh-card"><div class="mh-head"><b>My hands</b><span class="sub">every hand you've entered, reviewed or imported, kept in this browser</span><button class="ghost mh-x" data-close aria-label="Close">✕</button></div><div class="mh-body"></div></div>`;
       document.body.appendChild(box);
-      const keys = "[data-close],[data-clear],[data-kind],[data-tag],[data-more],[data-toggle],[data-savetable],[data-open],[data-study],[data-link],[data-json],[data-export],[data-del],[data-rmtag],[data-pastebox],[data-pastego],[data-backup],[data-restorego],[data-restorecancel],[data-reload],[data-undo]";
+      const keys = "[data-close],[data-clear],[data-kind],[data-tag],[data-more],[data-toggle],[data-savetable],[data-open],[data-study],[data-link],[data-json],[data-export],[data-del],[data-rmtag],[data-pastebox],[data-pastego],[data-backup],[data-restorego],[data-restorecancel],[data-reload],[data-undo],[data-wipe],[data-wipego],[data-wipecancel]";
       box.addEventListener("click", (e) => {
         if (e.target === box) return close();
         const t = e.target.closest(keys);
@@ -459,13 +504,14 @@
       window.addEventListener("keydown", (e) => { if (box.hidden || box.contains(e.target)) return; e.stopPropagation(); if (e.key === "Escape") close(); }, true);
       unsub = store().onChange((c) => { if (c.remote && c.stores.includes("hands") && !box.hidden) refresh(); });
     }
-    box.hidden = false; msg = ""; draft = null; shown = PAGE; draw();
+    box.hidden = false; msg = ""; draft = null; shown = PAGE; wiping = null; draw();
     await store().ready;
     await refresh();
     const q = box.querySelector("[data-q]"); if (q) q.focus();
   }
 
   const api = { summary, lineHtml, searchText, matches, filterRecs, tagCounts, cleanTag, rowHtml, listHtml, toolbarHtml, parseImport, fileName, backupText,
-                lastDecision, pageHost, open, close, act, importText, get recs() { return recs; }, get ui() { return ui; }, PAGE };
+                wipeText, wipeHtml, lastDecision, pageHost, open, close, act, importText, useHost: (h) => { host = h; }, get recs() { return recs; }, get ui() { return ui; },
+                get wiping() { return wiping; }, PAGE };
   if (typeof module === "object" && module.exports) module.exports = api; else globalThis.MyHands = api;
 })();

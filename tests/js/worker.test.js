@@ -15,8 +15,8 @@ const plain = (x) => JSON.parse(JSON.stringify(x));   // (the vm's objects, comp
 
 // worker.js with `answers` standing in for the Python side: by the call's name (early, progress, answer, presolve), a
 // list of what each call returns in turn (a JSON string; '' for none). `ran`: every runPython's code.
-function loadWorker(answers) {
-  const posted = [], ran = [];
+function loadWorker(answers, over = {}) {
+  const posted = [], ran = [], reported = [];
   const py = {
     globals: { set() {} },
     FS: { readFile() { throw new Error("no core here"); } },   // (loadCore: no compiled core, numpy answers)
@@ -35,11 +35,13 @@ function loadWorker(answers) {
     importScripts() {},
     loadPyodide: async () => py,
     postMessage: (m) => posted.push(m),
+    reportError: (e) => reported.push(String(e.message || e)),
+    ...over,
   };
   ctx.self = ctx;
   vm.createContext(ctx);
   vm.runInContext(SRC, ctx);
-  return { posted, ran, send: (data) => ctx.onmessage({ data }) };
+  return { posted, ran, reported, ctx, send: (data) => ctx.onmessage({ data }) };
 }
 
 const STATE = { board: "Ks7d2cTh", hero: "BB", hole: "QhJh" };
@@ -82,4 +84,38 @@ test("the speeds' looks: Fast at the 100th iteration and at the 200th-400th, Acc
   assert.ok(cfg.includes("advs['fast'].first_look = {'flop': (100, 200, 300, 400), 'turn': (100, 200, 300, 400)}"));
   assert.ok(cfg.includes("advs['accurate'].first_look = {'flop': (100, 300, 600), 'turn': (100, 300, 600)}"));
   assert.match(w.ran.find((c) => c.includes("def progress")), /def progress\(st\):\n    try:\n        r = advs\.get\(st\.get\('speed'\), advs\['fast'\]\)\.progress\(st\)\n    except Cancelled:\n        r = \{'result': \{'cancelled': True\}\}\n    except Exception:\n        r = None/);
+});
+
+// ---- a failed load: the page is told ({ loadFailed }), every request is answered, nothing hangs
+test("Pyodide's script won't load: the worker still runs, says so, and answers a request; the page's onerror hears it too", async () => {
+  const w = loadWorker({}, { importScripts() { throw new Error("NetworkError: pyodide.js"); } });
+  assert.equal(typeof w.ctx.onmessage, "function");   // (it used to die before it listened)
+  await tick(); await tick();
+  assert.match(plain(w.posted).find((m) => m.loadFailed).loadFailed, /NetworkError/);
+  assert.deepEqual(w.reported, ["NetworkError: pyodide.js"]);   // (Lizard's transport: its w.onerror is how it hears of a failed boot)
+  await w.send({ id: 3, state: STATE });
+  assert.match(plain(w.posted).find((m) => m.id === 3).error, /NetworkError/);
+});
+
+for (const [name, over, re] of [
+  ["the bundle's fetch fails", { fetch: async () => { throw new TypeError("Failed to fetch"); } }, /fetch/],
+  ["the bundle answers 404", { fetch: async () => ({ ok: false, status: 404 }) }, /404/],
+  ["Pyodide's CDN won't serve the runtime", { loadPyodide: async () => { throw new Error("could not load pyodide.asm"); } }, /pyodide\.asm/],
+]) {
+  test(`${name}: the page is told and a request is answered, not left waiting`, async () => {
+    const w = loadWorker({}, over);
+    await new Promise((ok) => setTimeout(ok, 5));
+    assert.match(plain(w.posted).find((m) => m.loadFailed).loadFailed, re);
+    assert.deepEqual(w.reported, []);    // (no second report: only the script's failure happens outside the page's message)
+    assert.ok(!plain(w.posted).some((m) => m.status === "Solving…"));
+    await w.send({ id: 4, state: STATE });
+    assert.match(plain(w.posted).find((m) => m.id === 4).error, re);
+  });
+}
+
+test("a load that works says nothing of failing, and ends on the status string Lizard reads", async () => {
+  const w = loadWorker({});
+  await new Promise((ok) => setTimeout(ok, 5));
+  assert.ok(!plain(w.posted).some((m) => "loadFailed" in m));
+  assert.ok(plain(w.posted).some((m) => m.status === "Solving…"));
 });
