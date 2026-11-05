@@ -373,15 +373,16 @@ test("a solved 3-way pot is shown and graded like a heads-up solve; the betting 
   p.ctx.__res = JSON.stringify(res);
   p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
   const html = p.byId("result").innerHTML;
-  assert.ok(html.includes("3 players in · 3-way solve"));
-  assert.ok(html.includes("Solver mix") && !html.includes("heuristic, not a solve"));
+  assert.ok(html.includes("Solved live, 3-way, 0.80% of the pot from equilibrium."));
+  assert.ok(html.includes("<th>Solver</th>") && !html.includes("not a solve"));
   assert.deepEqual(p.val('gradeFor({ action: "check" })'), { m: "check", f: 0.7, b: "check", bf: 0.7, l: 0, e: 3.1, o: 3.1 });
   // the betting rules (4+ players, or a 3-way spot the solve doesn't take) stay ungraded
   const q = page(st);
   q.ctx.__res = JSON.stringify({ ...res, solved: undefined, equity_vs_field: 0.4, recommended: "check",
     actions: [{ action: "check", freq: 1, ev_bb: 3.1 }, { action: "bet 33%", amount_bb: 2.5, freq: 0, ev_bb: 3.0 }] });
   q.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
-  assert.ok(q.byId("result").innerHTML.includes("heuristic, not a solve"));
+  assert.ok(q.byId("result").innerHTML.includes("Betting rules, not a solve: too many players in for one here. 40% equity against the field."));
+  assert.ok(q.byId("result").innerHTML.includes("<th>Rules</th>"));
   assert.equal(q.val('gradeFor({ action: "check" })'), null);
 });
 
@@ -390,11 +391,13 @@ test("convergence labels", () => {
   const c = (x) => p.val(`convergence({ solver: { exploitability_pct: ${x} } })`);
   assert.equal(c(1).cls, "ok"); assert.equal(c(3).cls, "meh"); assert.equal(c(9.9).cls, "meh"); assert.equal(c(10).cls, "bad");
   assert.equal(p.val("convergence({})"), null);
+  const line = (solver) => p.val(`sourceOf(${JSON.stringify({ street: "turn", actions: [], solver })})[0]`);
   // a solve that ran short (solver.approximate: gto/advisor.py _flag_short), under 3% all the same
   const a = p.val("convergence({ solver: { exploitability_pct: 2.4, approximate: true, target_pct: 0.2 } })");
-  assert.deepEqual([a.cls, a.label, a.target], ["bad", "approximate", 0.2]);
-  assert.match(p.val("convTip(" + JSON.stringify(a) + ")"), /Answers here are 0.2% or less: this solve ran short/);
-  assert.match(p.val("convTip(convergence({ solver: { exploitability_pct: 1 } }))"), /Under 3% is close to a full solver/);
+  assert.deepEqual([a.cls, a.target], ["bad", 0.2]);
+  assert.match(line({ exploitability_pct: 2.4, approximate: true, target_pct: 0.2 }), /^Solved live, 2\.40% of the pot from equilibrium\. It ran short: answers here are 0\.2% or less, so its mix and EVs are a rough guide\.$/);
+  assert.equal(line({ exploitability_pct: 1 }), "Solved live, 1.00% of the pot from equilibrium.");
+  assert.match(line({ exploitability_pct: 5 }), /gaps here mean the solve hasn't settled/);
 });
 
 test("bet sizes are shaded light to dark by size", () => {
@@ -403,7 +406,10 @@ test("bet sizes are shaded light to dark by size", () => {
   assert.deepEqual(p.val('["bet 33%", "bet 75%", "bet 125%", "all-in", "fold", "call", "check"].map(COLORS)'),
     ["var(--agg0)", "var(--agg1)", "var(--agg2)", "var(--allin)", "var(--fold)", "var(--passive)", "var(--passive)"]);
   p.run('setColors(["fold", "call", "raise 2.5x", "raise 4x"])');
-  assert.deepEqual(p.val('["raise 2.5x", "raise 4x"].map(COLORS)'), ["var(--agg0)", "var(--agg2)"]);
+  assert.deepEqual(p.val('["raise 2.5x", "raise 4x"].map(COLORS)'), ["var(--agg0)", "var(--agg1)"]);
+  // (an answer's actions and its grid's name the same sizes: each is one shade)
+  p.run('setColors(["check", "bet 33%", "bet 75%", "bet 125%", "check", "bet 33%", "bet 75%", "bet 125%"])');
+  assert.deepEqual(p.val('["bet 33%", "bet 75%", "bet 125%"].map(COLORS)'), ["var(--agg0)", "var(--agg1)", "var(--agg2)"]);
   p.run('setColors(["check", "bet 50%"])');
   assert.equal(p.run('COLORS("bet 50%")'), "var(--agg1)");
   assert.equal(p.run('gridClass(0, 0) + gridClass(0, 1) + gridClass(1, 0)'), "AAAKsAKo");

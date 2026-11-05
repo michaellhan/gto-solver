@@ -141,10 +141,10 @@ test("a raise's amount isn't repeated when its name already says it, in the advi
     { action: "raise to 24.5", amount_bb: 24.5, freq: 0.4 }, { action: "raise to 30bb", amount_bb: 30, freq: 0.05 }, { action: "all-in", amount_bb: 97.5, freq: 0.05 }] });
   p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
   const html = p.byId("result").innerHTML;
-  assert.match(html, /<span class="name">raise to 24.5<\/span>/);
-  assert.match(html, /<span class="name">raise to 30bb<\/span>/);
-  assert.match(html, /<span class="name">call<small>5 bb<\/small><\/span>/);
-  assert.match(html, /<span class="name">all-in<small>97.5 bb<\/small><\/span>/);
+  assert.match(html, /<\/i>Raise <small>to 24\.5 bb<\/small><\/div>/);
+  assert.match(html, /<\/i>Raise <small>to 30 bb<\/small><\/div>/);
+  assert.match(html, /<\/i>Call <small>5 bb<\/small><\/div>/);
+  assert.match(html, /<\/i>All-in <small>97\.5 bb<\/small><\/div>/);
 });
 
 test("Share puts the hand's link on the clipboard", async () => {

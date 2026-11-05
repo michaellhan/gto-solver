@@ -78,6 +78,6 @@ test("a stopped solve that never answers (stuck where it can't read the stop): a
     p.workers[1].onmessage({ data: { status: "Solving…" } });
     p.workers[1].onmessage({ data: { id: ask.id, result: { street: "flop", hero: "BTN", hand: "AKs", recommended: "check", actions: [{ action: "check", freq: 1 }] } } });
     await flush();
-    assert.match(p.byId("result").innerHTML, /<span class="big">check<\/span>/);
+    assert.match(p.byId("result").innerHTML, /<tr class="best">.*?<\/i>Check/s);
   }
 });

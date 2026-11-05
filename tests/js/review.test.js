@@ -43,7 +43,7 @@ async function reviewed(st, opts) {   // the whole hand reviewed: each decision 
   return p;
 }
 const ids = (p) => p.buttons().map(b => b.id).filter(Boolean);
-const press = (p, id) => p.buttons().find(b => b.id === id).onclick();
+const press = (p, id) => (p.buttons().find(b => b.id === id) || p.byId(id)).onclick();
 
 test("a whole hand entered, button by button: the worker is asked nothing, on any street, whoever is to act", async () => {
   const p = await page();
@@ -69,8 +69,8 @@ test("a whole hand entered, button by button: the worker is asked nothing, on an
   assert.equal(p.sim().handOver, true);
   nothingAsked(p);   // (over, it waits for you to ask)
   assert.deepEqual(ids(p), ["reviewAll"]);
-  assert.match(p.byId("adviceNote").innerHTML, /<b>Your decisions<\/b>/);
-  assert.equal((p.byId("adviceNote").innerHTML.match(/not reviewed yet/g) || []).length, 4);
+  assert.equal(p.byId("reviewCount").textContent, "Your decisions");
+  assert.equal((p.byId("adviceNote").innerHTML.match(/Not reviewed yet/g) || []).length, 4);
   assert.equal(p.buttons().find(b => b.id === "reviewAll").className, "nexth");
   assert.match(fs.readFileSync(HTML_PATH, "utf8"), /#actionArea \.nexth \{ display: block; width: 100%;/);   // (the page's main action, not a plain small button)
 });
@@ -86,7 +86,7 @@ test("the panel shows nothing of a hand being entered, no grade or mix whatever 
   const line = [...p.byId("timeline").walk()].map(e => e.innerHTML).join(" ");
   assert.match(line, /BTN raises 2\.5/);
   assert.doesNotMatch(line, /class="g /);
-  assert.equal(p.run('document.body.classList.contains("heroturn")'), false);   // (a phone keeps the table and dock first)
+  assert.equal(p.run("document.body.dataset.s"), "enter");   // (a phone keeps the table and dock first)
   nothingAsked(p);
 });
 
@@ -142,7 +142,7 @@ test("Finish hand at your turn: what you recorded is reviewed, the decision you 
   assert.deepEqual(ids(p), ["reviewAll", "keepEntering"]);
   assert.match(p.byId("actionArea").children[0].innerHTML, /Hand finished/);
   assert.match(p.byId("adviceNote").innerHTML, /Your flop decision wasn't recorded, so it isn't reviewed\./);
-  assert.equal(p.run('document.body.classList.contains("heroturn")'), false);
+  assert.equal(p.run("document.body.dataset.s"), "enter");
   assert.ok(p.byId("felt").children.every(s => !/toact/.test(s.className) && !/to act/.test(s.innerHTML)));   // (nobody's to act now)
   nothingAsked(p);
   const done = p.run("reviewHand()");
@@ -155,7 +155,7 @@ test("Finish hand at your turn: what you recorded is reviewed, the decision you 
   assert.equal(p.posted.filter(m => m.state).length, 1);   // nothing for the flop, then or after
   assert.equal(p.sim().toAct, "BTN");
   assert.equal(p.val("S.actions.flop.length"), 1);
-  assert.match(p.byId("adviceNote").innerHTML, /<b>Hand review<\/b> · 1 of 1 decisions/);
+  assert.equal(p.byId("reviewCount").textContent, "1 of 1 in the solver's mix");
   assert.match(p.byId("adviceNote").innerHTML, /Your flop decision wasn't recorded/);
   // nor by a hand-made step to it
   p.run('rewindTo("flop", 1)'); p.run('stepTo("flop", 0)');   // (past the end, and BB's check)
@@ -211,11 +211,15 @@ test("a decision of a finished hand: its advice, the whole hand kept; a reload b
   assert.equal(m.state.board, "Kd7s2c");
   p.workers.at(-1).onmessage(answer(m));
   await flush();
-  assert.match(p.byId("result").innerHTML, /<span class="big">check<\/span>/);
-  assert.deepEqual(ids(p), ["stepPrev", "stepNext", "stepBack"]);
-  assert.match(p.byId("actionArea").children[0].innerHTML, /Your flop decision/);
-  assert.match(p.byId("actionArea").children[0].innerHTML, /Decision 2 of 4/);
-  assert.equal(p.run('document.body.classList.contains("heroturn")'), true);   // (a phone puts this advice after the table)
+  assert.match(p.byId("result").innerHTML, /<th>Solver<\/th>.*<tr class="best">.*<\/i>Check/s);
+  assert.deepEqual(ids(p), []);   // (the dock is shut: the panel's Back, Previous and Next are the way on)
+  assert.equal(p.byId("pAction").hidden, true);
+  assert.equal(p.byId("stepTop").hidden, false);
+  assert.equal(p.byId("stepNav").hidden, false);
+  assert.ok(!p.byId("stepPrev").hidden && !p.byId("stepNext").hidden);
+  assert.match(p.byId("stepHead").innerHTML, /<h2 class="street">Flop · /);
+  assert.equal(p.byId("stepOf").textContent, "Decision 2 of 4");
+  assert.equal(p.run("document.body.dataset.s"), "decision");   // (a phone shows this panel alone)
   // saved whole, and no move can be recorded from here
   assert.equal(JSON.parse(p.storage.get("handreview")).actions.river.length, 2);
   assert.equal(p.act({ action: "check" }), "This hand is finished.");
@@ -245,9 +249,9 @@ test("once its advice has been seen a hand stays as entered: no Undo, no cards, 
   const p = await reviewed(state(WHOLE));
   const whole = j(p.val("S.actions"));
   assert.equal(p.val("S.reviewed"), true);
-  assert.match(p.byId("adviceNote").innerHTML, /<b>Hand review<\/b> · 3 of 3 decisions/);   // (the fixture answer has no call, so the river stays ungraded)
-  assert.match(p.byId("adviceNote").innerHTML, /no grade/);
-  assert.match(p.buttons().find(b => b.id === "reviewAll").innerHTML, /^Review again/);
+  assert.equal(p.byId("reviewCount").textContent, "3 of 3 in the solver's mix");   // (the fixture answer has no call, so the river stays ungraded)
+  assert.match(p.byId("adviceNote").innerHTML, /Reviewed, no grade/);
+  assert.equal(p.byId("reviewAgain").hidden, false);
   assert.equal(p.byId("result").className, "empty");   // (no decision's advice left under the whole hand)
   p.run("undo()");
   assert.deepEqual(j(p.val("S.actions")), whole);
@@ -312,7 +316,7 @@ test("a hand hh.js read reviews straight away", async () => {
   await p.run("loadHandState(importHand(__t).state)");
   await flush();
   assert.equal(p.val("S.finished"), true);
-  assert.match(p.byId("adviceNote").innerHTML, /Your decisions/);
+  assert.equal(p.byId("reviewCount").textContent, "Your decisions");
   assert.ok(ids(p).includes("reviewAll") && !ids(p).includes("keepEntering"));   // (it's all there: nothing more to enter)
   nothingAsked(p);   // (it waits to be asked)
   p.run('rewindTo("flop", 1)');

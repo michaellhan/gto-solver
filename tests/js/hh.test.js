@@ -231,8 +231,8 @@ test("review whole hand: each decision is solved in order with progress, graded,
   assert.deepEqual(S.cards, full.cards);
   const g = ["preflop", "flop", "turn", "river"].map(s => S.actions[s].find(a => a.pos === "BTN").g);
   assert.deepEqual(g.map(x => [x.m, x.f, x.l]), [["raise 2.5", 0.6, null], ["bet 33%", 0.7, 0], ["bet 33%", 0.7, 0], ["bet 33%", 0.7, 0]]);
-  assert.match(p.byId("adviceNote").innerHTML, /Hand review<\/b> · 4 of 4 decisions in the solver's mix/);
-  assert.match(p.buttons().find(b => b.id === "reviewAll").innerHTML, /^Review again/);   // (nothing left: at other settings, say)
+  assert.equal(p.byId("reviewCount").textContent, "4 of 4 in the solver's mix");
+  assert.equal(p.byId("reviewAgain").hidden, false);   // (nothing left: at other settings, say)
   assert.deepEqual(JSON.parse(p.storage.get("handreview")), S);
 });
 

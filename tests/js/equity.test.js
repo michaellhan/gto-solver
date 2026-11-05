@@ -34,7 +34,7 @@ test("a reviewed hand whose flop was checked through: the page asks for your equ
   await flush();
   const h = p.byId("equity").innerHTML;
   assert.match(h, /89\.8%/);
-  assert.match(h, /BB's range · flop betting closed · turn and river to come/);
+  assert.match(h, /BB's range \(\d+(\.\d+)? combos\), flop betting closed, turn and river to come, over all 1081 runouts\./);
   assert.match(h, /4\.94 of the 5\.5 bb pot/);
   assert.match(h, /over all 1081 runouts/);
   // the same spot again (a re-render) asks nothing more; the answer is kept for it

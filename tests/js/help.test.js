@@ -33,12 +33,12 @@ test("About and Fair play build, each page's title is its URL's, and each links 
   assert.equal(Help.pageHtml("nope"), Help.pageHtml("about"));
 });
 
-test("the pages say what the page does: the badge's and the grades' thresholds are index.html's", () => {
+test("the pages say what the page does: the source line's and the grades' thresholds are index.html's", () => {
   const p = page();
-  const conv = (x) => p.val(`convergence({ solver: { exploitability_pct: ${x} } }).label`);
-  assert.deepEqual([conv(2.99), conv(3), conv(9.99), conv(10)], ["converged", "fair", "fair", "rough"]);
+  const conv = (x) => p.val(`convergence({ solver: { exploitability_pct: ${x} } }).cls`);
+  assert.deepEqual([conv(2.99), conv(3), conv(9.99), conv(10)], ["ok", "meh", "meh", "bad"]);
   const about = Help.aboutHtml();
-  assert.match(about, /converged<\/span> under 3%, <span class="hp-b meh">fair<\/span> under 10%/);
+  assert.match(about, /source line gives it: under 3% is close to a full solver, and above that\s+the line says the solve hasn't settled/);
   const grade = (g) => p.val(`gradeClass(${JSON.stringify(g)})`);
   assert.deepEqual([grade({ f: 0.15 }), grade({ f: 0.149 }), grade({ f: 0.03 }), grade({ f: 0.029 }), grade({ f: 0.01, r: 1 })], ["ok", "meh", "meh", "bad", "meh"]);
   assert.match(about, /✓ \(the solver's mix takes it at least 15% of the time\), ~ \(3-15%\) or ✗ \(under 3%\); a rough solve, or a line that gave up no EV, never grades ✗/);

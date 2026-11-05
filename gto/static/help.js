@@ -14,8 +14,8 @@
       (${to("fairplay", "Fair play")}).</p>
     <h3>How accurate it is</h3>
     <p>A solve is measured by its exploitability: how much a perfect opponent who knew the whole strategy could win
-      against it, in percent of the pot. The badge on each answer shows it: <span class="hp-b ok">converged</span> under 3%, <span class="hp-b meh">fair</span> under 10%,
-      <span class="hp-b bad">rough</span> above. Answers were benchmarked against b-inary's open-source
+      against it, in percent of the pot. Each answer's source line gives it: under 3% is close to a full solver, and above that
+      the line says the solve hasn't settled. Answers were benchmarked against b-inary's open-source
       <a href="https://github.com/b-inary/postflop-solver" target="_blank" rel="noopener">postflop-solver</a>, which solved
       each game exactly and then measured ours (medians, on a 10-core laptop, 2026-10-29):</p>
     <div class="hp-scroll"><table class="hp-t">
@@ -26,7 +26,7 @@
       <tr><td>Precomputed flop</td><td>within 0.15% in its own game</td><td>0.2-0.5% against every card dealt</td></tr>
     </table></div>
     <p>A turn or river takes about 8 s a decision in the browser. That's a time budget, so a slower device gets a rougher
-      answer, and the badge says so.</p>
+      answer, and its source line says so.</p>
     <ul>
       <li><b>Preflop</b> comes from charts, matched to published solves on 26 spots (0.96 percentage points apart on
         average), so it has no EV.</li>
@@ -95,8 +95,6 @@
   .hp-t { border-collapse: collapse; font-size: 13px; margin: 6px 0; min-width: 480px; width: 100%; }
   .hp-t th, .hp-t td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
   .hp-t th { color: var(--muted); font-weight: 500; }
-  .hp-b { font-size: 11px; padding: 1px 6px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
-  .hp-b.ok { color: var(--good); } .hp-b.meh { color: var(--muted); } .hp-b.bad { color: var(--bad); }
   @media (max-width: 760px) {
     .hp { padding: 0; }
     .hp-card { max-height: 100dvh; height: 100dvh; border-radius: 0; border: 0; width: 100%; }

@@ -70,11 +70,12 @@ test("reviewing a decision the worker gets the state as built, at the Fast budge
   assert.equal(p.workers.length, 1);
   assert.match(p.workers[0].url, /^worker\.js\?v=/);
   assert.deepEqual([m.state.budget, m.state.prior_budget, m.state.speed], [8, 3, "fast"]);
-  // the worker's answer is shown; the dock offers the other decisions, no move to record
+  // the worker's answer is shown; no move to record, the panel leads to the other decisions
   p.workers[0].onmessage({ data: { id: m.id, result: { street: "flop", hero: "BTN", hand: "AKs", recommended: "check", actions: [{ action: "check", freq: 0.7 }, { action: "bet 33%", amount_bb: 1.8, freq: 0.3 }] } } });
   await flush();
-  assert.match(p.byId("result").innerHTML, /<span class="big">check<\/span>/);
-  assert.deepEqual(p.buttons().map(b => b.id), ["stepPrev", "stepNext", "stepBack"]);
+  assert.match(p.byId("result").innerHTML, /<tr class="best">.*?<\/i>Check/s);
+  assert.equal(p.byId("pAction").hidden, true);
+  assert.ok(!p.byId("stepTop").hidden && !p.byId("stepNav").hidden);
 });
 
 test("nothing waits for your turn on a hand being entered: the panel says when it will answer", () => {
@@ -147,7 +148,7 @@ test("cross-origin isolated, a solve of a spot you've left is stopped through me
   assert.match(p.byId("result").innerHTML, /Solving the flop/);
   p.workers[0].onmessage({ data: { id: asked.id, result: { street: "flop", hero: "BTN", hand: "99", recommended: "check", actions: [{ action: "check", freq: 1 }] } } });
   await flush();
-  assert.match(p.byId("result").innerHTML, /<span class="big">check<\/span>/);
+  assert.match(p.byId("result").innerHTML, /<tr class="best">.*?<\/i>Check/s);
   // one request alone (the equity's): stopRequests(id)
   const a = p.run("window.__a = callAdvise({ x: 1 }); __a.reqId"), b = p.run("window.__b = callAdvise({ x: 2 }); __b.reqId");
   assert.equal(p.run(`stopRequests(${a})`), true);
@@ -374,8 +375,8 @@ test("an approximate answer the worker has at once is shown under the progress b
   await flush();
   const box = result.children.at(-1);
   assert.equal(box.id, "early");
-  assert.match(box.innerHTML, /<span class="big">bet 75%<\/span><span class="conv meh"[^>]*>approximate<\/span>/);
-  assert.match(box.innerHTML, /60\.0%/);
+  assert.match(box.innerHTML, /<div class="hd">Bet 75%<\/div><p>Approximate, at once: the preflop's view\. The flop's own solve, running above, replaces it\.<\/p>/);
+  assert.match(box.innerHTML, /<td class="n">60%<\/td>/);
   assert.match(box.innerHTML, /<small>4\.13 bb<\/small>/);
   assert.match(result.innerHTML, /Solving the flop/);   // (the progress stays above it)
   assert.equal(p.run("lastResult"), null);                // not an answer to grade or record
@@ -384,12 +385,12 @@ test("an approximate answer the worker has at once is shown under the progress b
   p.workers[0].onmessage({ data: { id: ask.id, partial: { ...approx, notes: ["approximate, at once: x", cut] } } });
   await flush();
   assert.equal(result.children.filter((c) => c.id === "early").length, 1);
-  assert.ok(result.children.at(-1).innerHTML.includes("<br>" + cut));
+  assert.ok(result.children.at(-1).innerHTML.includes(`<p class="meta">${cut}</p>`));
   assert.doesNotMatch(result.children.at(-1).innerHTML, /approximate, at once: x/);
   p.workers[0].onmessage({ data: { id: ask.id, result: { street: "flop", hero: "BTN", hand: "AKs", recommended: "check", actions: [{ action: "check", freq: 1 }] } } });
   await flush();
   assert.equal(result.children.length, 0);
-  assert.match(result.innerHTML, /<span class="big">check<\/span>/);
+  assert.match(result.innerHTML, /<tr class="best">.*?<\/i>Check/s);
   assert.doesNotMatch(result.innerHTML, /approximate/);
   // a partial for a request no longer pending is dropped
   p.workers[0].onmessage({ data: { id: ask.id, partial: approx } });
@@ -411,7 +412,7 @@ test("an approximate turn answer from a format-2 turn file shows the stored rang
   p.workers[0].onmessage({ data: { id: ask.id, partial: approx } });
   await flush();
   let box = result.children.at(-1);
-  assert.match(box.innerHTML, /class="arows noev"/);
+  assert.match(box.innerHTML, /<th>Solver<\/th><\/tr>/);
   assert.doesNotMatch(box.innerHTML, /range EV|Range EV/);
   // format 2: each action's range EV and both ranges', never as the hand's own EV
   p.workers[0].onmessage({ data: { id: ask.id, partial: { ...approx, range_ev_bb: 4.54, villain_range_ev_bb: 4.96,
@@ -419,20 +420,19 @@ test("an approximate turn answer from a format-2 turn file shows the stored rang
   await flush();
   box = result.children.at(-1);
   assert.equal(result.children.filter((c) => c.id === "early").length, 1);
-  assert.match(box.innerHTML, /class="arows"/);
-  assert.match(box.innerHTML, /<span class="num" title="The EV of the hands in your range that take this action \(not your hand's own\)[^"]*">Range EV<\/span>/);
-  assert.match(box.innerHTML, /<span class="num pos"[^>]*>\+3\.20 bb<\/span>/);
-  assert.match(box.innerHTML, /<span class="num neg"[^>]*>-0\.41 bb<\/span>/);
+  assert.match(box.innerHTML, /<th title="The EV of the hands in your range that take this action \(not your hand's own\)[^"]*">Range EV, bb<\/th>/);
+  assert.match(box.innerHTML, /<td class="n">3\.20<\/td>/);
+  assert.match(box.innerHTML, /<td class="n">−0\.41<\/td>/);
   assert.match(box.innerHTML, /range EV: yours \+4\.54 bb · theirs \+4\.96 bb of the 9\.5 bb pot/);
   assert.match(box.innerHTML, /not your hand's own; your hand's EVs come with the solve/);
-  assert.doesNotMatch(box.innerHTML, />EV</);
+  assert.doesNotMatch(box.innerHTML, />EV, bb</);
   // in position after a check: the actions' range EVs, no range line (one action nobody takes: no EV)
   p.workers[0].onmessage({ data: { id: ask.id, partial: { ...approx, actions: [{ ...approx.actions[0], range_ev_bb: 2.5 }, { ...approx.actions[1], range_ev_bb: null }] } } });
   await flush();
   box = result.children.at(-1);
   assert.match(box.innerHTML, /Range EV/);
   assert.doesNotMatch(box.innerHTML, /range EV: yours/);
-  assert.match(box.innerHTML, /7\.13 bb<\/small><\/span><div class="bar">.*?<\/div><\/div><span class="num">30\.0%<\/span><span><\/span><\/div>/);
+  assert.match(box.innerHTML, /7\.13 bb<\/small><\/div><\/td><td class="n">30%<\/td><td class="n"><\/td><\/tr>/);
   assert.equal(p.run("lastResult"), null);
 });
 
@@ -456,9 +456,9 @@ test("an action your range almost never takes (rough_ev) shows its EV with a ≈
   p.workers[0].onmessage({ data: { id: p.posted.filter((m) => m.state).at(-1).id, result: rough } });
   await flush();
   const html = result.innerHTML;
-  assert.match(html, /<span class="num pos rough" title="Your range almost never takes this, so how the opponent answers it is barely solved: its EV is rough, usually lower than exact\.">≈ \+4\.50 bb<\/span>/);
-  assert.match(html, /<span class="num pos">\+4\.88 bb<\/span>/);   // (the others as before)
-  assert.match(html, /≈: an action your range almost never takes, whose EV is rough \(usually lower than exact\)\./);
+  assert.match(html, /<td class="n" title="Your range almost never takes this, so how the opponent answers it is barely solved: its EV is rough, usually lower than exact\.">≈ 4\.50<\/td>/);
+  assert.match(html, /<td class="n">4\.88<\/td>/);   // (the others as before)
+  assert.match(html, /≈ is a rough EV\./);
   assert.equal((html.match(/≈/g) || []).length, (plain.match(/≈/g) || []).length + 2);
   // grading: the same verdict and EV lost; the EV lost and the move's EV carry a ≈ and the tip
   const g0 = p.val(`gradeWith(${JSON.stringify(res)}, { action: "bet", to: 2 })`);
@@ -468,8 +468,10 @@ test("an action your range almost never takes (rough_ev) shows its EV with a ≈
   assert.equal(g0.rv, undefined);
   assert.equal(p.val(`gradeClass(${JSON.stringify(g)})`), p.val(`gradeClass(${JSON.stringify(g0)})`));
   assert.equal(p.val(`gradeWith(${JSON.stringify(rough)}, { action: "check" })`).rv, undefined);   // (your move's own EV is what counts)
-  assert.match(p.run(`evLossHtml(${JSON.stringify(g)})`), /EV ≈ \+4\.50 vs GTO \+4\.90 · <span class="num neg" title="Your range almost never[^"]*">≈ −0\.40 bb<\/span>/);
-  assert.equal(p.run(`evLossHtml(${JSON.stringify(g0)})`), `EV +4.50 vs GTO +4.90 · <span class="num neg">−0.40 bb</span>`);
+  assert.match(p.run(`lossHtml(${JSON.stringify(g)})`), /<span class="l bad" title="Your range almost never[^"]*">≈ −0\.40 bb<\/span>/);
+  assert.equal(p.run(`lossHtml(${JSON.stringify(g0)})`), `<span class="l bad">−0.40 bb</span>`);
+  assert.match(p.run(`verdictText(${JSON.stringify(g)})`), / ≈ 0\.40 bb lost\.$/);
+  assert.match(p.run(`verdictText(${JSON.stringify(g0)})`), /[^≈] 0\.40 bb lost\.$/);
   assert.match(p.run(`gradeTip(${JSON.stringify(g)})`), /EV ≈ \+4\.50 bb vs GTO \+4\.90 bb \(−0\.40 bb\)\. Your range almost never takes this/);
   assert.doesNotMatch(p.run(`gradeTip(${JSON.stringify(g0)})`), /≈|almost never/);
 });

@@ -119,7 +119,7 @@ aren't entered after that). `handDone(sim)` in `gto/static/index.html` is the ru
 
 **Reviewing it.** **Review whole hand** (key R) grades each decision you recorded, in turn; a decision you
 didn't record isn't reviewed, so finishing at your turn leaves that turn without advice (the panel says so). Click any decision, in
-the list or on the timeline, for its full advice: a step view (`stepView`, Previous, Next, Back to the hand; arrow
+the list or on the timeline, for its full advice: a step view (`stepView`, Previous, Next, Back to review; arrow
 keys) that leaves the hand as it was.
 Once any of a hand's advice has shown it stays as entered (`S.reviewed`; a link and a reload keep it):
 Undo and the card slots refuse, and a line tried differently is a new hand's. **Keep entering**, or Undo, reopens a
@@ -135,7 +135,7 @@ gets a review of that decision. The rule against use during a hand is in Fair pl
 **Your equity.** A reviewed hand you were still in when the betting closed (a street checked through or called with the
 next card not entered, everyone all-in, or the river's showdown) also shows **your equity** against the ranges that took
 the line: your share of the pot at showdown (ties half), win and tie, heads-up its share of the pot in bb, against several
-players each one alone too, and each opponent's range by hand. The ranges are narrowed through every street the way the
+players each one alone too. The ranges are narrowed through every street the way the
 next street's advice narrows them (its solves, cached for that advice; the flop library where it holds the spot); the
 equity is over every runout from the flop on, and preflop from the hand-class table heads-up or 3000 sampled boards
 against several ranges (`"equity": true`, below). It waits for the review, not just for Finish hand (`equitySpot`,
@@ -157,11 +157,11 @@ The panel shows the recommended action with its size (preflop: 2.5bb
 opens, 3bb from the small blind, 3x or 4x 3-bets, 2.3x 4-bets, then all-in; over limpers
 3x (4x from the blinds) plus 1bb a limper, and a squeeze adds one bet per caller;
 postflop: the solver's bet and raise sizes in big blinds), the mixed strategy for your exact
-hand with EVs, your whole range's totals at that spot (the percentage and number of
-combos that fold, call, check, bet or raise each size, with a bar), and a 13x13 grid of
-that range by hand with your hand boxed. Postflop, a badge shows how well the solve
-converged (exploitability in % of the pot: converged under 3%, fair under 10%, rough
-above); a rough solve, or a line that gave up no EV, never grades ✗. A jam the solve's tree has no all-in
+hand with EVs, your whole range's totals at that spot (the percentage of combos that fold,
+call, check, bet or raise each size, with a bar), and a 13x13 grid of that range by hand with
+your hand outlined: each cell's mix by width, its share of the range by opacity (.3 + .7 × weight), and a line
+under the grid reads the cell you point at. A solve at 3% of the pot from equilibrium or more says it hasn't
+settled; a rough solve, or a line that gave up no EV, never grades ✗. A jam the solve's tree has no all-in
 for (all-in is offered at 2.5 pots behind or less: a 15x-pot flop jam isn't in it) is solved for its grade: the spot is
 asked again with `"jam": true`, which offers all-in at every decision of the street advised on (`Config.root_allin`;
 not the earlier streets' narrowing solves, nor the flop libraries), and the grade and its EV fill in
@@ -169,12 +169,16 @@ when that answer is in (A2s on 776r behind a HJ check, 100bb: the jam 0% at -2.2
 the tree it cost too much: a K72T turn 60 iterations in was 4.0% of the pot from equilibrium against 1.6%.
 When you're facing a bet the prompt shows the pot odds a call needs.
 
-Solver stats and the villain's inferred range (as text and as a 13x13 grid shaded by weight) sit behind a "Details" toggle.
+A "Details" toggle holds the answer's notes and, with size optimization, the sizes it kept; it's there only when there are any.
 A review marks each decision you recorded (✓ in
-the mix, ~ rarely played, ✗ outside it, with the EV given up) and lists them with the EV given up per street.
+the mix, ~ rarely played, ✗ outside it) on the timeline and in a row of its own: street and action, the EV given up
+and how often the solver plays it; the top line counts those in the mix and totals the EV given up.
 In a hand being entered, clicking one of your decisions on the timeline goes back to it to enter it again,
-with Undo. The advice's badges (precomputed, borrowed, approximate, the convergence pill, off the solved line,
-heuristic) say what they mean in their tooltip.
+with Undo. A decision opens on a verdict ("You checked. The solver bets 125% every time. 0.74 bb lost."), its action
+table (you tagged, a move the chart leaves out at 0%) and a source line that says where the numbers came from: from the
+preflop chart, not a solve (no EV), betting rules, precomputed, borrowed from another table size, or solved live, with
+how far from equilibrium, and whether it ran short or left the solved line (`sourceOf`, `sourceHtml`). A review row says
+the same in a word or two, once the answer has been seen in that page: the source isn't saved with the grades.
 
 **Review whole hand** (offered on any finished hand) solves each of your decisions in order,
 grades it and ends on the hand review; it shows "decision 2 of 5" while it

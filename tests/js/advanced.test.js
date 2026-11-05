@@ -1,7 +1,7 @@
 // What a saved hand may hold of the Advanced settings, which have no control now: custom postflop bet sizes (S.sizes, %
 // of the pot), ranges entering the flop by seat (S.ranges) and size optimization (S.optSizes), sent as sizes / ranges /
-// optimize_sizes from the flop on, kept with the hand and by share links; locks; the villain's range grid in the advice's
-// Details and the answer's badges.
+// optimize_sizes from the flop on, kept with the hand and by share links; locks; the size usage in the advice's Details
+// and the answer's source line.
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -69,7 +69,7 @@ test("bad Advanced fields in a link or storage are dropped", () => {
   assert.equal("sizes" in p2.S, false); assert.equal("ranges" in p2.S, false);
 });
 
-test("the villain's range grid and the size usage render in Details", async () => {
+test("the size usage renders in Details; the grid is your range, never the villain's", async () => {
   const p = loadPage();
   await p.ready();
   p.S = state(FLOP);
@@ -79,30 +79,30 @@ test("the villain's range grid and the size usage render in Details", async () =
     actions: [{ action: "check", freq: 1, ev_bb: 1 }] });
   p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
   const h = p.byId("result").innerHTML;
-  assert.match(h, /<div class="vgrid">.*BB's range by hand/s);
-  assert.equal((h.match(/class="cell/g) || []).length, 169);   // one grid (no hero grid in this result)
-  assert.match(h, /data-h="AKs" style="opacity:0.625"/);
+  assert.equal((h.match(/class="cell/g) || []).length, 0);   // (no hero grid in this result, and the villain's isn't drawn)
+  assert.ok(!h.includes("range by hand"));
+  assert.match(h, /No range grid here: this answer is for your hand alone\./);
   assert.match(h, /check 20% · 33% 50% · 125% 30%; kept 33%, 125%/);
 });
 
-test("a precomputed answer is badged; one borrowed from another table size's library spot says so and how far", async () => {
+test("a precomputed answer says so; one borrowed from another table size's library spot says so and how far", async () => {
   const p = loadPage();
   await p.ready();
   p.S = state(FLOP);
-  const pre = { spot: "srp_btn_bb", label: "BTN vs BB single-raised pot", iterations: 300, same_tree: false };
+  const pre = { spot: "srp_btn_bb", label: "BTN vs BB single-raised pot", iterations: 300, same_tree: false, exploitability_pct: 0.11 };
   const res = { street: "flop", hero: "BTN", hand: "AKs", recommended: "check", actions: [{ action: "check", freq: 1, ev_bb: 1 }], precomputed: pre };
   p.ctx.__res = JSON.stringify(res);
   p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
   let h = p.byId("result").innerHTML;
-  assert.match(h, /<span class="conv ok" title="Solved offline \(BTN vs BB single-raised pot, 300 iterations\) with a finer flop model than a live solve's: instant.">precomputed<\/span>/);
+  assert.match(h, /<p class="meta">Precomputed, 0\.11% of the pot from equilibrium\.<\/p>/);
   const text = "this table's ranges differ from that spot's by 0.4% of their weight at most";
   p.ctx.__res = JSON.stringify({ ...res, precomputed: { ...pre, label: "6-max " + pre.label, borrowed: { spot: "srp_btn_bb", cover: [1, 0.9996], dist: [0.0088, 0.0025], text } } });
   p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
   h = p.byId("result").innerHTML;
-  assert.match(h, /<span class="conv meh" title="Solved offline \(6-max BTN vs BB single-raised pot, 300 iterations\)[^"]* Approximate: that spot read as this one \(this table's ranges differ from that spot's by 0\.4% of their weight at most\)\.">precomputed · borrowed<\/span>/);
+  assert.match(h, /<p class="meta">Precomputed for another table size and read as this one \(this table's ranges differ from that spot's by 0\.4% of their weight at most\), 0\.11% of the pot from equilibrium\.<\/p>/);
 });
 
-test("an answer whose ranges left the solve earlier in the hand is badged off the solved line, with why", async () => {
+test("an answer whose ranges left the solve earlier in the hand says it's off the solved line, with why", async () => {
   // (gto/advisor.py off_solution: HJ KhQh's 75% flop bet the solve takes with 0% of its range, read by the betting
   // rules; a line that left a few combos, filled out; an unsettled earlier solve; a Quick answer's rules)
   const p = loadPage();
@@ -115,7 +115,7 @@ test("an answer whose ranges left the solve earlier in the hand is badged off th
   p.ctx.__res = JSON.stringify({ ...res, off_solution: off });
   p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
   const h = p.byId("result").innerHTML;
-  assert.match(h, /<span class="conv ok" title="[^"]*">converged · 0\.0% pot<\/span><span class="conv meh" title="Off the solved line: [^"]*not the whole hand's equilibrium\.">off the solved line<\/span>/);
+  assert.match(h, /<p class="meta">Solved live, 0\.01% of the pot from equilibrium\.<\/p><p class="meta">Off the solved line: [^<]*not the whole hand's equilibrium\.<\/p>/);
   assert.match(h, /Off the solved line: HJ's bet 75% on the flop is never in the solve, so their range from there is the betting rules'; BTN's flop line left 6\.7 combos, so their range is filled out with the rest of their flop range; the turn solve hadn't settled, so ranges follow it 40% and the betting rules the rest; the turn is narrowed by the betting rules, not solved; BTN's raise to 13 on the flop is only 4\.2% in the solve, so their range from there is the betting rules'\. This street's solve is the best answer to those ranges/);
   assert.match(p.val(`offText({ off_solution: [{ street: "preflop", pos: "CO", why: "filled" }] })`), /^CO's preflop line isn't in the charts/);
   // the play after a rare line solved again from the node (Advisor._rare_resolver)
