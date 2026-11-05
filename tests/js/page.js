@@ -25,14 +25,13 @@ const RUNTIME_IDS = {
   "index.html": ["customAmt", "customBox", "equityRetry", "explainBox", "solveBar", "solveMsg", "solveTime", "solverRetry"],
   "explain.js": ["pxKey"], "hands.js": ["mhStyle"], "help.js": ["hpStyle"],
   "multitable.js": ["mtAmt", "mtStyle", "mtView", "mtTop", "mtTabs", "mtDock", "mtSide", "mtT0", "mtT1", "mtT2", "mtT3"],
-  "session.js": ["ssStyle"],
 };
 const RUNTIME = new Set(Object.values(RUNTIME_IDS).flat());
 // (the markup without the page's one inline script: its templates are the ids created at runtime)
 const staticIds = () => new Set([...fs.readFileSync(HTML_PATH, "utf8").replace(/<script>[\s\S]*?<\/script>/, "").matchAll(/\sid="([^"]+)"/g)].map(m => m[1]));
 // A lookup a page's own try/catch swallowed still fails the test it happened in
 const unknownIds = [];
-if (/\.test\.js$/.test(process.argv[1] || ""))   // (scripts/bench_session.mjs loads the page too)
+if (/\.test\.js$/.test(process.argv[1] || ""))
   require("node:test").afterEach(() => { if (unknownIds.length) throw new Error(`no element with id: ${unknownIds.splice(0).join(", ")} (not in index.html or RUNTIME_IDS, page.js)`); });
 
 function pageScript() {

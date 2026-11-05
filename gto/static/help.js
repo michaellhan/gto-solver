@@ -30,11 +30,6 @@
         ${term("mix", "mix")} for your hand, each action's ${term("ev", "EV")}, and your whole range in a grid. Once you've
         seen a review the hand stays as entered.</li>
     </ol>
-    <p>Have a hand history? ${go("import", "Import hand…")} reads PokerStars, GGPoker, 888poker, partypoker, Winamax,
-      WPN/ACR, Ignition/Bovada and iPoker hands, in the page.</p>
-    <h3>Find your leaks over a session</h3>
-    <p>${go("session", "Analyze session…")} takes a whole session's hand histories, solves each of your decisions and
-      grades it, and adds up the EV you lost by street, position and spot, with your biggest mistakes first.</p>
     <h3>Train</h3>
     <p>${go("practice", "Practice")} deals random hands against opponents who play the solver's strategy, and grades each
       of your decisions as you make it.</p>
@@ -240,7 +235,6 @@
       <li><b>A hand you enter gets no advice until it's finished.</b> The page records your decisions and reviews the
         ones you made after the hand is over. That is a limit on what the page offers, not a promise it can tell when or
         where you're playing, so the rule above is still yours to keep.</li>
-      <li><b>Hand histories</b> you import or analyze should be your own hands, after they're played.</li>
     </ul>
     <p>If you are unsure what a site allows, read its terms on third-party tools; when in doubt, close the solver
       while you play.</p>`;

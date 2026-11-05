@@ -96,24 +96,6 @@ test("a #h= link: the hand it replaces is kept, and the linked hand when it's re
   assert.deepEqual(hs.map(h => h.data.source).sort(), ["link", "table"]);
 });
 
-test("an imported hand is kept with its site, hand number and history", async () => {
-  const p = await storePage();
-  const text = HH("stars_6max_srp.txt");
-  p.byId("hhText").value = text;
-  await p.click("hhGo");
-  const hs = await until(async () => { const h = await p.hands(); return h.length && h; });
-  assert.equal(hs.length, 1);
-  const d = hs[0].data;
-  assert.equal(d.source, "import"); assert.equal(d.site, "PokerStars"); assert.equal(d.hhId, "249012345678");
-  assert.equal(d.hh, text.trim());
-  assert.deepEqual(d.state.cards.slice(0, 2), ["Ah", "Qd"]);
-  // the same history again: the same record
-  p.byId("hhText").value = text;
-  await p.click("hhGo");
-  await until(async () => true, 80);
-  assert.equal((await p.hands()).length, 1);
-});
-
 // ---- the panel's pure parts
 test("summary: who, the cards, the pot, how far it went, the grades", () => {
   const st = played({ river: [] });
@@ -168,12 +150,10 @@ test("rows and lists: escaped, the empty and no-match cases, a page at a time", 
   assert.match(h, /Show 50 more \(70 left\)/);
 });
 
-test("an import's kinds: a My hands file, a backup, links, hand histories", () => {
+test("a restored file's kinds: a My hands file, a backup", () => {
   assert.equal(MH.parseImport('{"format":"gto-solver-hands","hands":[]}').kind, "hands");
   assert.equal(MH.parseImport('[{"players":6}]').kind, "hands");
   assert.equal(MH.parseImport('{"format":"gto-solver-backup","stores":{}}').kind, "backup");
-  assert.deepEqual(MH.parseImport("https://www.michael-han.com/gto-solver/#h=eyJhIjoxfQ==\nand #h=eyJiIjoyfQ==").links, ["eyJhIjoxfQ==", "eyJiIjoyfQ=="]);
-  assert.equal(MH.parseImport(HH("stars_6max_srp.txt")).kind, "hh");
   assert.match(MH.parseImport("{nope").error, /valid JSON/);
   assert.match(MH.parseImport("  ").error, /Nothing/);
   assert.equal(MH.backupText({ counts: { kv: 1, hands: 3, sessions: 0, blobs: 1 } }), "3 hands, 1 setting or saved state, a session in progress");

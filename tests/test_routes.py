@@ -19,18 +19,17 @@ LIB = os.path.join(ROOT, "gto", "static", "flop_library")
 class TestRoutes(unittest.TestCase):
     def test_table(self):
         names, spot = routes.routes(HTML)
-        self.assertEqual(names, ["practice", "session", "import", "hands",
-                                 "start", "about", "glossary", "changelog", "fairplay"])
+        self.assertEqual(names, ["practice", "hands", "start", "about", "glossary", "changelog", "fairplay"])
         self.assertEqual(spot, [])
 
     def test_pages_and_base(self):
         pages = routes.pages(HTML, LIB)
         self.assertEqual(pages["practice"], 1)
         # (no view has a /<spot>/ level now: a page that lists one still gets them)
-        spotted = routes.pages(HTML.replace("const SPOT_ROUTES = [];", 'const SPOT_ROUTES = ["session"];'), LIB)
+        spotted = routes.pages(HTML.replace("const SPOT_ROUTES = [];", 'const SPOT_ROUTES = ["hands"];'), LIB)
         for s in routes.spot_slugs(LIB):
             self.assertRegex(s, r"^[a-z0-9-]+$")
-            self.assertEqual(spotted[f"session/{s}"], 2)
+            self.assertEqual(spotted[f"hands/{s}"], 2)
         page = routes.with_base(HTML, 2)
         head = page[page.index("<head>"): page.index("</head>")]
         # the base comes after the charset and before anything that loads a URL
@@ -42,10 +41,10 @@ class TestRoutes(unittest.TestCase):
     def test_page_for(self):
         self.assertEqual(routes.page_for("/"), HTML)
         self.assertIn('<base href="../">', routes.page_for("/practice/"))
-        self.assertIn('<base href="../">', routes.page_for("/session/index.html?x=1"))
+        self.assertIn('<base href="../">', routes.page_for("/hands/index.html?x=1"))
         self.assertIsNone(routes.page_for("/nope/"))
         self.assertIsNone(routes.page_for("/practice"))
-        self.assertIsNone(routes.page_for("/session/not-a-spot/"))
+        self.assertIsNone(routes.page_for("/hands/not-a-spot/"))
         self.assertTrue(routes.is_route_without_slash("/practice"))
         self.assertFalse(routes.is_route_without_slash("/practice.js"))
         self.assertFalse(routes.is_route_without_slash("/practice/"))
@@ -71,7 +70,7 @@ class TestRetired(unittest.TestCase):
         self.assertEqual(set(routes.RETIRED) & set(names), set())
         for r in routes.RETIRED:
             self.assertRegex(r, r"^[a-z0-9-]+$")
-        self.assertEqual(routes.RETIRED, ["drills", "reports", "study", "preflop"])
+        self.assertEqual(routes.RETIRED, ["drills", "reports", "study", "preflop", "session", "import"])
         self.assertEqual(routes.page_for("/reports/"), routes.stub("reports"))
 
     def test_stub(self):

@@ -1,4 +1,4 @@
-// Hand-history import (gto/static/hh.js, loaded on demand) and the whole-hand review it leads to.
+// Hand-history import (gto/static/hh.js, in the repo, unpublished: the page no longer loads it) and the review of a hand it reads.
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -16,14 +16,17 @@ const r2 = (x) => Math.round(x * 100) / 100;
 const flush = () => new Promise(r => setImmediate(r));
 const flushAll = async () => { for (let i = 0; i < 5; i++) await flush(); };
 
-// a page with hh.js loaded (as the browser does once the dialog opens) and a hand imported through the dialog
-async function imported(text, opts) {
+// a page with hh.js loaded, and a hand it read put on the page's table
+async function withHH(opts) {
   const p = loadPage(opts);
   vm.runInContext(fs.readFileSync(HH_JS, "utf8"), p.ctx, { filename: "hh.js" });
   await p.ready();
-  p.click("importHand");
-  p.byId("hhText").value = text;
-  await p.click("hhGo");
+  return p;
+}
+async function imported(text, opts) {
+  const p = await withHH(opts);
+  p.ctx.__t = text;
+  await p.run("loadHandState(importHand(__t).state)");
   return p;
 }
 
@@ -72,8 +75,6 @@ for (const [name, c] of Object.entries(CASES)) {
   test(`imports ${name}`, async () => {
     const p = await imported(HH(name));
     const S = j(p.S);
-    assert.equal(p.byId("hhErr").textContent, "");
-    assert.equal(p.byId("importBox").hidden, true);
     assert.deepEqual([S.players, S.hero, S.stack, S.ante, !!S.straddle], [c.players, c.hero, c.stack, c.ante, !!c.straddle]);
     if (c.stacks) assert.deepEqual(S.stacks, c.stacks);
     assert.deepEqual(S.cards, c.cards);
@@ -85,7 +86,6 @@ for (const [name, c] of Object.entries(CASES)) {
     assert.equal(p.byId("stack").value, c.stack);
     assert.deepEqual(JSON.parse(p.storage.get("handreview")), S);
     assert.match(p.buttons().find(b => b.id === "reviewAll").innerHTML, /^Review whole hand/);
-    assert.match(p.byId("toast").innerHTML, new RegExp(`you are ${c.players === 2 && c.hero === "SB" ? "BTN/SB" : c.hero} with ${c.cards[0]}${c.cards[1]}`));
   });
 }
 
@@ -128,7 +128,7 @@ test("other sites: detected, seats, amounts and the hero", () => {
 
 test("mutated histories never crash the importer", async () => {
   // lines dropped, cut, swapped, duplicated or with an amount changed, in every fixture: a clear Error or a playable state
-  const p = await imported("");
+  const p = await withHH();
   const texts = fs.readdirSync(HH_DIR).map(f => HH(f));
   let seed = 7, ok = 0;
   const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648, pick = (a) => a[Math.floor(rnd() * a.length)];
@@ -181,11 +181,6 @@ test("errors: no hero cards, not Hold'em, not a hand history", async () => {
   assert.throws(() => parseHandHistory(HH("stars_6max_srp").replace("Hold'em No Limit", "Omaha Pot Limit")), /Only Hold'em/);
   assert.throws(() => parseHandHistory(HH("stars_6max_srp").replace("[Ah Qd]", "[Ah Qd 7c 2c]")), /Only Hold'em/);
   assert.throws(() => parseHandHistory("hello"), /No players found/);
-  // in the dialog the message shows and the hand on the page is kept
-  const p = await imported("UTG raises, I call, flop A72");
-  assert.match(p.byId("hhErr").textContent, /No players found/);
-  assert.equal(p.byId("importBox").hidden, false);
-  assert.deepEqual(p.S.cards, [null, null, null, null, null, null, null]);
 });
 
 test("a short all-in: every seat plays its own stack, the all-in player is out of the betting", async () => {
@@ -202,21 +197,6 @@ test("a short all-in: every seat plays its own stack, the all-in player is out o
   assert.deepEqual(S.actions.turn, j(acts("BB b20, BTN f")));
   const sim = p.sim();   // BB's uncalled turn bet comes back; BB and CO go to showdown for the 90.5bb pot
   assert.deepEqual([sim.waiting, sim.pot, sim.allin, sim.active], ["river", 90.5, ["CO"], ["CO", "BB"]]);
-  assert.doesNotMatch(p.byId("toast").innerHTML, /all-in for less|equal stacks/);
-});
-
-test("hh.js is loaded only when the import dialog opens", async () => {
-  assert.doesNotMatch(pageScript(), /parseHandHistory/);
-  const p = loadPage();
-  const added = [];
-  p.ctx.document.head = { appendChild: (s) => added.push(s) };
-  await p.ready();
-  p.click("importHand");
-  assert.equal(p.byId("importBox").hidden, false);
-  assert.equal(added.length, 1);
-  assert.match(added[0].src, /^hh\.js\?v=/);
-  p.click("importHand");   // opening it again doesn't load it twice
-  assert.equal(added.length, 1);
 });
 
 // ---- review the whole hand
@@ -276,14 +256,6 @@ test("review whole hand respects Accurate, can be cancelled, and multiway spots 
   assert.equal(mine[1].g, null);              // multiway: reviewed, no grade
   assert.ok(!("g" in mine[2]) && !("g" in mine[3]));
   assert.match(p.buttons().find(b => b.id === "reviewAll").innerHTML, /^Review whole hand/);   // what's left can still be reviewed
-});
-
-test("the import dialog names every site the importer reads", () => {
-  const html = fs.readFileSync(require("./page.js").HTML_PATH, "utf8");
-  const dialog = html.match(/<div id="importBox"[\s\S]*?<\/div>/)[0].replace(/<[^>]*>/g, " ");
-  const sites = new Set(fs.readdirSync(HH_DIR).map(f => parseHandHistory(HH(f)).site));
-  assert.ok(sites.size >= 8);
-  for (const s of sites) assert.ok(dialog.includes(s), `${s} isn't named in the dialog: ${dialog.trim()}`);
 });
 
 test("tournaments: the header's id, name, buy-in and level (Roman or not); a cash game has none", () => {

@@ -16,7 +16,6 @@ const SCRIPTS = {
   "help.js": `globalThis.Help = { opened: [], page: null, open(page) { this.opened.push(page); this.page = page; this.term = globalThis.HELP_TERM; globalThis.HELP_TERM = null; },
     show(page, term) { if (term) this.term = term; if (page !== this.page) { this.page = page; viewSwitch(page); } },
     close() { const p = this.page; this.page = null; viewClosed(p); }, get shown() { return this.page; } };`,
-  "session.js": `globalThis.Session = { opened: 0, open() { this.opened++; return Promise.resolve(); }, close() { viewClosed("session"); } };`,
 };
 const SEEN = { "gto-welcome": "seen" };   // (a visitor who has answered the chooser)
 const page = (opts = {}) => loadPage({ scripts: SCRIPTS, storage: SEEN, ...opts });
@@ -123,9 +122,6 @@ test("the help pages' buttons open the tools", async () => {
   assert.equal(p.val("practicing()"), true);
   p.run("helpGo('practice')"); await flush();     // (already on: stays on)
   assert.equal(p.val("practicing()"), true);
-  p.run("helpGo('import')"); await flush();
-  assert.equal(p.byId("importBox").hidden, false);
-  assert.equal(p.val("overlay"), "import");
 });
 
 test("a first visit at the solver's URL shows the chooser once; Not now dismisses it for good", async () => {
@@ -153,7 +149,7 @@ test("the chooser isn't shown to a returning visitor, at a view's URL or with a 
   await r.ready();
   assert.equal(r.byId("welcome").hidden, true);
   assert.equal(r.storage.get("gto-welcome"), "seen");
-  const v = loadPage({ scripts: SCRIPTS, path: "/gto-solver/session/" });
+  const v = loadPage({ scripts: SCRIPTS, path: "/gto-solver/about/" });
   await v.ready(); await flush();
   assert.equal(v.byId("welcome").hidden, true);
   assert.equal(v.storage.get("gto-welcome"), "seen");
@@ -168,28 +164,21 @@ test("the chooser isn't shown to a returning visitor, at a view's URL or with a 
   assert.equal(l.storage.get("gto-welcome"), "seen");
 });
 
-test("the chooser's choices open Practice, the session analyzer and the help pages, and dismiss it", async () => {
+test("the chooser's choices open Practice and the help pages, and dismiss it", async () => {
   const go = async (id) => { const p = loadPage({ scripts: SCRIPTS }); await p.ready(); await flush(); p.click(id); await flush();
     assert.equal(p.byId("welcome").hidden, true, id); assert.equal(p.storage.get("gto-welcome"), "seen", id); return p; };
   const x = await go("welcomePractice");
   assert.equal(x.val("practicing()"), true);
   assert.deepEqual(x.pushed, ["/gto-solver/practice/"]);
-  const s = await go("welcomeSession");
-  assert.deepEqual(s.scripts, ["hh.js", "session.js"]);
-  assert.deepEqual(s.pushed, ["/gto-solver/session/"]);
   for (const [id, route] of [["welcomeStart", "start"], ["welcomeAbout", "about"], ["welcomeFair", "fairplay"]]) {
     const h = await go(id);
     assert.deepEqual(h.pushed, [`/gto-solver/${route}/`], id);
   }
-  // Review a hand: the solver as it is, with a hint and a way to paste a hand history instead
+  // Review a hand: the solver as it is, with a hint
   const r = await go("welcomeReview");
   assert.deepEqual(r.pushed, []);
   assert.equal(r.byId("toast").hidden, false);
   assert.match(r.byId("toast").innerHTML, /Pick your seat and cards in the setup panel, then enter the hand you played, seat by seat\. When it's finished, review it\./);
-  const b = r.byId("toast").children.find(e => e.textContent === "Or import a hand history");
-  b.onclick(); await flush();
-  assert.equal(r.byId("importBox").hidden, false);
-  assert.deepEqual(r.pushed, ["/gto-solver/import/"]);
   // Escape dismisses it too
   const e = loadPage({ scripts: SCRIPTS }); await e.ready();
   e.key("Escape");

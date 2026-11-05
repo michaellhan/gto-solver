@@ -509,7 +509,6 @@
   #result.empty:empty { display: none; }
 
   .importbox { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); width: min(620px, calc(100% - 32px)); z-index: 80; background: var(--panel2); border: 1px solid var(--line2); border-radius: var(--r); padding: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.5), 0 0 0 100vmax rgba(0,0,0,.55); display: flex; flex-direction: column; gap: 8px; }
-  .importbox textarea { width: 100%; height: 40vh; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 8px; font: 12px/1.4 ui-monospace, Menlo, monospace; resize: vertical; }
   /* the first visit's chooser (#welcome) */
   .welcome { gap: 10px; }
   .welcome .wgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -614,7 +613,7 @@
   }
   @media (pointer: coarse) {
     button:not(.link), select, input[type=number], input[type=text] { min-height: 40px; }
-    input[type=number], select, .importbox textarea, input[type=text], #lockIns select { font-size: 16px; }
+    input[type=number], select, input[type=text], #lockIns select { font-size: 16px; }
     .acts button { min-height: 44px; }
     .pc { height: 38px; }
     .panel h2[data-fold] { min-height: 40px; margin-top: -10px; }
@@ -649,10 +648,8 @@
     <div class="menu" id="menu" hidden>
       <div class="mlbl">Review</div>
       <button id="myHands" title="Every hand you've entered, reviewed or imported, kept in this browser: search, tags, notes, open one in review, export, back up">My hands…</button>
-      <button id="importHand" title="Paste a hand history (PokerStars, GGPoker, 888, partypoker, Winamax, WPN/ACR, Ignition/Bovada, iPoker) to replay and review it">Import hand…</button>
-      <button id="analyzeSession" title="A whole session's hand histories: each of your decisions solved and graded, the EV lost by street, position, spot and preflop situation, the biggest mistakes">Analyze session…</button>
       <div class="mlbl">Help</div>
-      <button id="helpStart" title="What to do first, for reviewing hands, studying, practice or a whole session">Getting started…</button>
+      <button id="helpStart" title="What to do first">Getting started…</button>
       <button id="helpAbout" title="How the answers are made and measured: exploitability, the benchmark against an open-source solver, Fast and Accurate, the known limits">About & accuracy…</button>
       <button id="helpGlossary" title="The words in a review: EV, EQR, exploitability, mix, precomputed, borrowed, off the solved line…">Glossary…</button>
       <button id="helpChangelog" title="What's new">Changelog…</button>
@@ -808,20 +805,12 @@
   </div>
 </main>
 <div id="toast" class="toast" hidden></div>
-<div id="importBox" class="importbox" role="dialog" aria-modal="true" aria-label="Import a hand history" hidden>
-  <b>Import a hand history</b>
-  <span class="muted" style="font-size:12px">Paste one hand as your poker client saved it: PokerStars, GGPoker/Natural8, 888poker, partypoker, Winamax, WPN/ACR, Ignition/Bovada or iPoker (its XML). It's read here in the page; nothing is uploaded.</span>
-  <textarea id="hhText" spellcheck="false" placeholder="PokerStars Hand #…, Poker Hand #…, Winamax Poker…"></textarea>
-  <div class="err" id="hhErr"></div>
-  <div class="row"><button id="hhGo" class="active">Import</button><button id="hhCancel" class="ghost">Cancel</button></div>
-</div>
 <div id="welcome" class="importbox welcome" role="dialog" aria-modal="true" aria-labelledby="welcomeTitle" hidden>
   <b id="welcomeTitle">Welcome. What would you like to do first?</b>
   <span class="muted" style="font-size:12px">GTO Solver works out what game theory does in any no-limit hold'em spot, in your browser: nothing you enter is uploaded. It's for studying and for reviewing hands after you've played them, not for use during a hand.</span>
   <div class="wgrid">
-    <button id="welcomeReview"><b>Review a hand</b><span>Enter a hand you played, seat by seat, or paste its hand history, finish it, and see the solver's play at each decision</span></button>
+    <button id="welcomeReview"><b>Review a hand</b><span>Enter a hand you played, seat by seat, finish it, and see the solver's play at each decision</span></button>
     <button id="welcomePractice"><b>Practice</b><span>Play random hands against the solver, each decision graded as you go</span></button>
-    <button id="welcomeSession"><b>Analyze a session</b><span>Paste a session's hand histories and see where you lost the most</span></button>
   </div>
   <div class="row wfoot"><button class="link" id="welcomeStart">Getting started</button><button class="link" id="welcomeAbout">How accurate is it?</button><button class="link" id="welcomeFair">Fair play</button><button id="welcomeClose" class="ghost">Not now</button></div>
 </div>
@@ -1019,9 +1008,7 @@ const practicing = () => !!(window.Practice && window.Practice.on);
 // hand (the one-table Practice hand) waits, unsolved, and the keys go to the tables
 const multiTabling = () => practicing() && window.Practice.state.tables > 1;
 const WORKER_VERSION = "14";   // scripts/deploy.sh replaces this with a hash of worker.js
-const HH_VERSION = "1";        // and this with a hash of hh.js (the hand-history importer, loaded on first use)
-const SS_VERSION = "1";        // and session.js (the session analyzer, loaded on first use, after hh.js)
-const EX_VERSION = "1";        // and explain.js (Copy for AI, Explain with AI: Practice's and a reviewed decision's, loaded on first use)
+const EX_VERSION = "1";        // and this with a hash of explain.js (Copy for AI, Explain with AI: Practice's and a reviewed decision's, loaded on first use)
 const PR_VERSION = "1";        // and practice.js (Practice, loaded on first use, after explain.js)
 const MT_VERSION = "1";        // and multitable.js (Practice on 2-4 tables at once, loaded the first time Tables goes above 1)
 const HP_VERSION = "1";        // and help.js (the help pages: Getting started, About & accuracy, Glossary, Changelog, Fair play)
@@ -1030,13 +1017,13 @@ const HN_VERSION = "1";        // and hands.js (My hands, loaded the first time 
 // points it at their own site, ../gto-solver-library/ (scripts/deploy_library.sh). The worker is told it in its URL
 // (relative: worker.js is in the folder the page's URLs resolve against).
 const LIB_BASE = "flop_library/";
-// ---- the views' URLs: the solver is the root (/gto-solver/), the others /practice/, /session/, /import/, /hands/
+// ---- the views' URLs: the solver is the root (/gto-solver/), the others /practice/, /hands/
 // and the help pages (/start/, /about/, /glossary/, /changelog/, /fairplay/) under it. The static site has no
 // rewrites: each URL is a copy of this page with a <base href="../"> that points its relative URLs at the root.
 // gto/routes.py reads these two lines (SPOT_ROUTES: the views with a /<spot>/ level, none now; scripts/deploy.sh writes the copies,
 // gto/server.py serves them). Opening a view pushes its URL and closing it pushes the solver's (Practice's, if
 // that's on under it); back and forward switch views; a view's URL opened directly opens it (applyRoute, at the end).
-const ROUTES = { practice: "Practice", session: "Analyze session", import: "Import hand", hands: "My hands", start: "Getting started", about: "About & accuracy", glossary: "Glossary", changelog: "Changelog", fairplay: "Fair play" };
+const ROUTES = { practice: "Practice", hands: "My hands", start: "Getting started", about: "About & accuracy", glossary: "Glossary", changelog: "Changelog", fairplay: "Fair play" };
 const SPOT_ROUTES = [];
 const ROUTE_RE = new RegExp(`^(.*?/)(?:(${Object.keys(ROUTES).join("|")})/?)?(?:index\\.html)?$`);
 function parseRoute(pathname) {   // -> { root: the solver's path, view: "solver" or a ROUTES key }
@@ -1045,8 +1032,8 @@ function parseRoute(pathname) {   // -> { root: the solver's path, view: "solver
   return { root: m[1], view: m[2] || "solver" };
 }
 const ROOT = parseRoute(location.pathname).root, TITLE = document.title || "GTO Solver";
-// a view's URL pushed (/session/, …) would move the page's relative URLs under it (a view's script, the worker, the
-// library: /session/session.js, a 404): the solver's own page pins its base to the root, as the views' copies do with
+// a view's URL pushed (/hands/, …) would move the page's relative URLs under it (a view's script, the worker, the
+// library: /hands/hands.js, a 404): the solver's own page pins its base to the root, as the views' copies do with
 // theirs
 try { if (!document.querySelector("base")) { const b = document.createElement("base"); b.href = ROOT; document.head.prepend(b); } } catch (e) {}
 let overlay = null;   // the view open over the solver / Practice, if any
@@ -1513,7 +1500,7 @@ function gradeFor(rec) {
   if (!r || r.error || resultKey !== JSON.stringify(payload())) return null;
   return gradeWith(r, rec);
 }
-function gradeWith(r, rec) {   // (also the session analyzer's, on its own answers)
+function gradeWith(r, rec) {
   let m, v = null;
   const pre = r.street === "preflop", raise = (a) => /^(bet|raise)/.test(a.action) && a.amount_bb != null;
   if (["fold", "check", "call", "all-in"].includes(rec.action)) {
@@ -2747,33 +2734,8 @@ document.getElementById("newhand").onclick = () => {
   if (stepView) { stepView = null; cancelSolve(); }
   S = { ...fresh(S.players), ...(S.stakes ? { stakes: S.stakes } : {}), hero: S.hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanStacks(S, POS) }; selSlot = null; showDeck = false; editSetup = false; pendingRank = null; save(); handOnTable(); resetAdvice(); renderAll();
 };
-// ---- hand-history import (hh.js, loaded the first time the dialog opens)
-let hhLoad = null;
-const loadHH = () => typeof importHand === "function" ? Promise.resolve() : hhLoad = hhLoad || new Promise((res, rej) => {
-  const s = document.createElement("script"); s.src = "hh.js?v=" + HH_VERSION; s.onload = res;
-  s.onerror = () => { hhLoad = null; rej(new Error("Couldn't load the importer (hh.js).")); }; document.head.appendChild(s);
-});
-const hhBox = document.getElementById("importBox"), hhErr = document.getElementById("hhErr"), hhText = document.getElementById("hhText");
-const hhOpen = () => { hhBox.hidden = false; hhErr.textContent = ""; loadHH().catch(e => hhErr.textContent = e.message); hhText.focus(); };
-document.getElementById("importHand").onclick = () => openView("import");
 document.getElementById("myHands").onclick = () => openView("hands");
-const hhClose = () => { hhBox.hidden = true; window.viewClosed("import"); document.getElementById("menuBtn").focus(); };
-document.getElementById("hhCancel").onclick = hhClose;
-hhBox.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.stopPropagation(); hhClose(); } });
-// a click outside the dialog closes it, and goes no further (the page behind is dimmed)
-document.addEventListener("click", (e) => { if (!hhBox.hidden && !hhBox.contains(e.target) && !e.target.closest("#importHand")) { e.stopPropagation(); e.preventDefault(); hhClose(); } }, true);
-hhText.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) document.getElementById("hhGo").click(); });
-document.getElementById("hhGo").onclick = async () => {
-  let r;
-  try { await loadHH(); r = importHand(hhText.value); } catch (e) { hhErr.textContent = e.message || String(e); return; }
-  const text = hhText.value;
-  await loadHandState(r.state); keepHand("import", S, { site: r.hand.site, hh: text }); hhBox.hidden = true; hhText.value = ""; window.viewClosed("import");
-  const h = r.hand;
-  toast(`Imported ${h.site === "generic" ? "a" : h.site} hand: ${h.players}-handed, you are ${SEAT_LABEL(h.hero, h.players)} with ${h.hole.join("")}, ${fmt(h.effective)}bb effective${S.stacks ? ` (you have ${fmt(S.stack)}bb; every seat plays its own stack)` : ""}.${r.warnings.length ? " " + r.warnings.join(" ") : ""}`, null, 15000);
-  const b = document.createElement("button"); b.className = "link"; b.textContent = "Review whole hand";
-  b.onclick = () => { document.getElementById("toast").hidden = true; reviewHand(); }; document.getElementById("toast").appendChild(b);
-};
-// A whole hand replaces the page's (an imported one, one from My hands or the analyzer): a review, not a practice deal.
+// A whole hand replaces the page's (one from My hands or a link): a review, not a practice deal.
 // A hand that wasn't finished stays unfinished: nothing is solved for it. The hand it replaces is kept in My hands.
 // from: a link's.
 async function loadHandState(st, from) {
@@ -2799,20 +2761,12 @@ function swapState(seed) {
 }
 const loadJs = (src, ok) => ok() ? Promise.resolve() : new Promise((res, rej) => { const s = document.createElement("script"); s.src = src;
   s.onload = res; s.onerror = () => rej(new Error(`couldn't load ${src.split("?")[0]}`)); document.head.appendChild(s); });
-// ---- the session analyzer (session.js, after hh.js whose parser it uses; it runs on the page's engine, solver and grading)
-document.getElementById("analyzeSession").onclick = () => openView("session");
 // The views over the page: open (their scripts loaded first), close, and what a failed load says. Their scripts report
 // closing (viewClosed).
 const VIEWS = {
-  session: { load: () => loadHH().then(() => loadJs("session.js?v=" + SS_VERSION, () => window.Session)),
-             open: () => VIEWS.session.load().then(() => window.Session.open()),
-             close: () => window.Session && window.Session.close(), err: "Couldn't load the session analyzer: " },
-  import: { open: hhOpen, close: () => { hhBox.hidden = true; window.viewClosed("import"); }, err: "" },
   hands: { open: () => loadJs("hands.js?v=" + HN_VERSION, () => window.MyHands).then(() => window.MyHands.open()),
            close: () => window.MyHands && window.MyHands.close(), err: "Couldn't load My hands: " },
 };
-// a session analysis left running when the page closed or reloaded goes on in the background (session.js resume)
-try { if (localStorage.getItem("gto-session-run")) modeReady.then(() => VIEWS.session.load()).then(() => window.Session.resume()).catch(() => {}); } catch (e) {}
 window.viewClosed = (name) => { if (overlay !== name) return; overlay = null; syncRoute(); };
 function showOverlay(name, push) {
   overlay = name;
@@ -2931,7 +2885,7 @@ document.getElementById("practiceBtn").onclick = () => loadPractice().then(P => 
 document.getElementById("resetPractice").onclick = () => { document.getElementById("menu").hidden = true; if (practicing()) window.Practice.startOver(); };
 // ---- routes: the URL's view (a back or forward, or the page opened at it), opened without pushing. Practice is on at
 // /practice/ and off at the solver's URL, whatever it was last time (its "gto-practice" is no longer read); a view over
-// the page (session, import) leaves Practice as it is.
+// the page leaves Practice as it is.
 async function applyRoute(r) {
   routing++;
   try {
@@ -2975,11 +2929,8 @@ function welcomeDone() { welcomeBox.hidden = true; WELCOME = "seen"; try { local
 const WELCOME_GO = {
   welcomeReview: () => {
     toast("Pick your seat and cards in the setup panel, then enter the hand you played, seat by seat. When it's finished, review it.", null, 9000);
-    const t = document.getElementById("toast"), b = document.createElement("button"); b.className = "link"; b.textContent = "Or import a hand history";
-    b.onclick = () => { t.hidden = true; openView("import"); }; t.appendChild(b);
   },
   welcomePractice: () => window.helpGo("practice"),
-  welcomeSession: () => openView("session"),
   welcomeStart: () => helpOpen("start"), welcomeAbout: () => helpOpen("about"), welcomeFair: () => helpOpen("fairplay"),
   welcomeClose: () => {},
 };

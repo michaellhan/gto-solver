@@ -322,12 +322,11 @@ test("Pool and locks aren't offered or in effect until a hand is finished; Rando
   assert.equal(p.posted.filter(m => m.state).at(-1).state.opponents, "pool");
 });
 
-test("an imported hand reviews straight away", async () => {
+test("a hand hh.js read reviews straight away", async () => {
   const p = await page({ isolated: true });
   vm.runInContext(fs.readFileSync(path.join(STATIC, "hh.js"), "utf8"), p.ctx, { filename: "hh.js" });
-  p.click("importHand");
-  p.byId("hhText").value = HH("stars_6max_srp.txt");
-  await p.click("hhGo");
+  p.ctx.__t = HH("stars_6max_srp.txt");
+  await p.run("loadHandState(importHand(__t).state)");
   await flush();
   assert.equal(p.val("S.finished"), true);
   assert.match(p.byId("adviceNote").innerHTML, /Your decisions/);
@@ -392,17 +391,6 @@ test("My hands: an imported or reviewed hand opens finished, one left part way o
   nothingAsked(p);
   p.click("newhand");
 });
-
-test("the analyzer's Open: a decision of the session's hand, its advice at once, the hand finished", async () => {
-  const p = await page();
-  vm.runInContext(fs.readFileSync(path.join(STATIC, "session.js"), "utf8"), p.ctx, { filename: "session.js" });
-  await p.run(`Session.pageHost().open(${JSON.stringify(state(WHOLE))}, "flop", 1)`);
-  await flush();
-  assert.equal(p.val("stepView.s"), "flop");
-  assert.equal(p.val("stepView.full.finished"), true);
-  assert.equal(p.posted.filter(m => m.state).at(-1).state.board, "Kd7s2c");
-});
-
 
 test("a review that ends with the betting closed asks for your equity once, after the decisions; a hand being entered never does", async () => {
   const p = await reviewed(state(WHOLE));
@@ -587,9 +575,8 @@ test("Explain with AI on a review says who the numbers are against, grades what 
 test("an imported hand's prompt names seats by position: no screen name, table, hand number or money", async () => {
   const p = await aiPage();
   vm.runInContext(fs.readFileSync(path.join(STATIC, "hh.js"), "utf8"), p.ctx, { filename: "hh.js" });
-  p.click("importHand");
-  p.byId("hhText").value = HH("stars_6max_srp.txt");
-  await p.click("hhGo");
+  p.ctx.__t = HH("stars_6max_srp.txt");
+  await p.run("loadHandState(importHand(__t).state)");
   await flush();
   p.run('rewindTo("flop", 1)');
   await flush();

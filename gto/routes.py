@@ -1,4 +1,4 @@
-"""The page's URLs: one per view (/practice/, /session/, /import/, /hands/ and the help pages /start/, /about/,
+"""The page's URLs: one per view (/practice/, /hands/ and the help pages /start/, /about/,
 /glossary/, /changelog/, /fairplay/; the solver is /), and /<route>/<spot>/ for a precomputed spot (its id with
 dashes: srp_btn_bb -> srp-btn-bb) under a view in SPOT_ROUTES (none now).
 
@@ -24,7 +24,7 @@ import sys
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 SLUG = re.compile(r"^[a-z0-9-]+$")
 CLASSIC = "/gto-solver-classic/"
-RETIRED: list[str] = ["drills", "reports", "study", "preflop"]   # routes that have left the page's ROUTES
+RETIRED: list[str] = ["drills", "reports", "study", "preflop", "session", "import"]   # routes that have left the page's ROUTES
 
 
 def routes(html: str) -> tuple[list[str], list[str]]:

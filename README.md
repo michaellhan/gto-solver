@@ -53,8 +53,6 @@ Open http://127.0.0.1:18877/ . Each view has its own URL, on the website and the
 | --- | --- |
 | `/gto-solver/` | the solver (advice); a share link `/gto-solver/#h=…` opens its spot here |
 | `/gto-solver/practice/` | Practice |
-| `/gto-solver/session/` | Analyze session |
-| `/gto-solver/import/` | Import hand |
 | `/gto-solver/hands/` | My hands |
 | `/gto-solver/start/`, `/about/`, `/glossary/`, `/changelog/`, `/fairplay/` | Help: Getting started, About & accuracy, Glossary, Changelog, Fair play |
 
@@ -131,7 +129,7 @@ Undo and the card slots refuse, and a line tried differently is a new hand's. **
 finished hand that nothing has been shown for. Rewinding an unfinished hand truncates it and gives no advice, with a toast. A saved,
 shared or reloaded hand comes back as it was left: unfinished with no advice, finished with its review.
 
-**Every route onto the table.** An import (`hh.js`) and a session's decision (`session.js`) open finished; a hand from My hands opens finished if it was imported or reviewed, else as it was left,
+**Every route onto the table.** A hand from My hands opens finished if it was imported or reviewed, else as it was left,
 with a toast saying what it needs. A share link keeps `finished` and `reviewed` as they are. Practice's hands stay in Practice. `Advisor.presolve` and the worker's `presolve` request stay for `scripts/bench_browser.mjs --presolve`, unused by the page.
 
 These are limits on what the page offers, enforced in the page: a made-up action, or a link edited to say `finished`,
@@ -202,7 +200,7 @@ The thresholds the Glossary quotes are the code's: tests/js/help.test.js checks 
 `gradeClass` and `HEUR_OK`/`HEUR_MEH`.
 
 **First visit.** A first visit to the solver's URL (no `gto-speed` in the browser yet, not a view's URL or a `#h=`
-link) opens a small chooser over the page: Review a hand, Practice, Analyze a session, with links to
+link) opens a small chooser over the page: Review a hand, Practice, with links to
 Getting started, About & accuracy and Fair play. Any choice, **Not now**, Escape or a click outside closes it for good
 (`gto-welcome` in localStorage: "due" until then, "seen" after; a returning visitor is "seen" from the start). It only
 opens views; it changes nothing about the advice.
@@ -210,92 +208,23 @@ Sounds (on by default, kept in the browser) are short effects synthesized with W
 the deal and each board card, a knock for a check, chips for a call, bet or all-in, a swish for a fold, a chime
 when your move is in the solver's mix and a low note for a mistake, and a pot won or lost.
 
-**Import hand** (in the ⋯ menu) takes a pasted hand history: PokerStars, GGPoker/Natural8, 888poker,
-partypoker, Winamax, WPN/ACR, Ignition/Bovada and iPoker (its XML: Bet365, William Hill…), the site detected,
-2 to 9 players, cash or tournament. Seats map onto the page's positions from the big blind, amounts
-become big blinds, antes are averaged per player, a 2bb straddle from the first seat is kept, sitting-out
-seats are dropped and returned bets are ignored; the history needs your hole cards. Every seat keeps its
-own stack (after the antes, as the history has it), so a short all-in, its side pot and an uncalled bet play
-out as they did. The parser is `gto/static/hh.js`,
-loaded only when the dialog opens. **Review whole hand** (offered on any finished hand, an import straight away) solves each of your decisions in order at the current Fast/Accurate setting,
+**Review whole hand** (offered on any finished hand) solves each of your decisions in order at the current Fast/Accurate setting,
 grades it and ends on the hand review; it shows "decision 2 of 5" while it
 runs and can be cancelled, keeping the grades so far.
 
-**Analyze session** (in the ⋯ menu) reviews whole sessions, like GTO Wizard's analyzer: drop, choose or paste
-hand-history files of any number of hands (any site above, mixed sites too), several files at once, or **a folder**
-(its `.txt`, `.xml`, `.log` and `.hh` files, in path order; a dropped folder is walked too). `hh.js`'s `splitHands`
-cuts each file at each hand's header (iPoker: a `<session>` per `<game>`), each hand is imported as above, and hands
-that aren't Hold'em, lack your hole cards, have no decision of yours (a walk), repeat one already read (in any of the
-files: a hand in two exports is counted once), or can't be read are counted and skipped, with the file each came
-from. Pick a scope: **Preflop only** (the charts: instant), **Flop-library spots** (preflop plus the flops the
-[precomputed library](#precomputed-flop-library) holds, asked with `"library_only": true` so any other flop is
-skipped rather than solved: instant), **Quick triage** (the default: every street, from the library and reads at once
-first, else a Quick solve, `"triage": true` above; each grade carries its confidence) or **All streets at Fast**
-(every flop, turn and river solved at Fast); each shows its decision count and estimated time. A queue then asks each
-decision in order (the page's request against GTO, graded as Review whole hand grades), with progress, an ETA from
-the measured time per street, Pause (after the decision in flight) and Stop. Tournament hands are kept together by
-tournament (`hh.js` reads each hand's tournament id, name, buy-in and level: PokerStars, GGPoker, 888, partypoker,
-Winamax, WPN/ACR, Ignition, iPoker), and before Analyze each tournament takes its payouts once, for all its hands, as
-the page's Payouts row takes them: the prizes still to pay, first place first, and the players left at other tables
-with their average stack (bb); from two prizes on its hands are solved in prize equity (ICM, as the advice is),
-without payouts in chips. The CSV names each decision's tournament. It runs in the background: the panel
-can be closed (the ⋯ menu's item shows how far it is), the page's own advice and Practice go
-first (the queue waits while the page asks the solver, and in the browser a decision in flight is stopped through the
-shared stop flag and asked again after), and the session is kept in the store (`blobs`) with a mark in `localStorage`
-while it runs (`gto-session-run`, never a record), so a reload, or the page opened again, picks it up where it stopped
-(not twice: another tab running it keeps it). A finished preflop or library scope can be widened.
-
-After a Quick triage, **Go deeper** asks again at Fast the decisions it flags, the biggest pots first: those graded
-out of the solver's mix (under 15%), losing 2% of the pot or more, answered with low confidence, or not graded (not
-the charts' or the library's own spot, which Fast answers the same); **All N at Fast** asks every one of those. Each
-answer replaces the triage's and keeps it, so the report shows how often the two agree. On a generated 1,000-hand
-6-max session (`scripts/bench_session.py`: 984 hands with a decision of yours, 1,446 decisions, 427 after the flop)
-the triage graded 94% of all decisions and 80% of the postflop ones as Fast does (the library 47 of 47, a stored turn
-13 of 13, a Quick solve within 1% of equilibrium 88%, a read off the nearest flops or an earlier street's solve 62%);
-it flagged 302 of the 427, and after the deeper pass 97.7% of the postflop grades are Fast's, 219 of Fast's 229
-postflop mistakes found (that player is a poor one: Fast puts 54% of their postflop decisions out of the mix or 2%+
-of the pot down; a better one has fewer flagged). Natively on one thread: Preflop only 4.2 s (~14,000 hands a
-minute), the triage 280 s (211 hands a minute), All streets at Fast 998 s (59 a minute; flop 1.9 s, turn 4.6, river
-0.26 a decision), the deeper pass on the flagged 842 s. In the browser (scripts/bench_session.mjs: the page's requests answered by the worker under Pyodide in Node; every 10th hand of the same session, 99 hands and 146 decisions) on one thread: the triage 24-27 s (220-250 hands a minute), All streets at Fast 129 s (46 a minute; a turn 7.8 s), the deeper pass on the 23 the triage flagged 117-125 s (a turn at Fast 9-10 s after the library's flop); on 22 of those the triage's grade was Fast's 14 times, milder 7, harsher 1. At 8 threads (every 20th hand, 50 hands and 76 decisions): the triage 10.7 s (280 hands a minute: its Quick solves keep their budget), All streets at Fast 21.1 s (142 a minute; a turn 2.2 s), the deeper pass on the 13 flagged 16.0 s (Fast's grade on 8, milder 4, harsher 1). So on one thread the triage takes a fifth of All streets at Fast's time, at 8 threads half, and there All streets at Fast takes less than the triage and its deeper pass together; the panel's estimate for each scope follows the browser's solver threads (pageHost.threads).
-
-The report: hands, decisions graded, EV lost (bb and bb/100; postflop only, as preflop chart answers carry no EVs and
-are graded by frequency; a read at once has no EVs either and is graded by frequency, "no EVs"), share in the
-solver's mix, the triage's confidence (high, medium, low) and sources; tables by street, position, preflop situation
-(RFI, vs limp, vs open, squeeze spots, SB vs open, BB defence, vs 3bet, cold vs 3bet, vs 4bet+) and postflop spot
-(pot type, IP/OOP, facing a bet / first to act / checked to); your frequencies against the solver's for the same
-hands at the same decisions (opens, BB defence, folds and 4bets vs 3bets, flop c-bets, folds and raises vs c-bets,
-turn barrels, river bets, folds to turn and river bets); **This session's leaks** (the leaks below, over this
-session's decisions), each with its hands; the decisions by EV lost (a click opens that hand finished, stepped to
-that decision, and Back to the hand or Undo shows the whole of it) and the clearest off-chart preflop plays. **Filters** narrow the tables and
-the list: street, position, pot type (single-raised, 3bet, 4bet+, limped, multiway), EV lost (any, 2% or 8% of the
-pot, 1bb or 5bb) and tags (in position, out of position, facing a bet, preflop raiser or caller, multiway, all-in,
-off the mix, flagged, checked at Fast, low confidence); a leak's **N hands** filters to its decisions. **Export CSV / JSON** downloads one row per decision (hand, site and number, file, seat,
-cards, board, situation, your action and its frequency, the solver's best, EVs, EV lost, grade, source, confidence,
-tags, and after Go deeper the triage's source, grade and EV lost). The panel is `gto/static/session.js`, loaded with
-`hh.js` when first opened (or at load, with a session left running).
-
-Each analyzed session's summary (not its hands) is also kept in the browser (IndexedDB, up to 200 sessions; a file
-analyzed again, in any scope, replaces its earlier entry), and **Across your sessions** (or **Your sessions so far**
-before a new one) sums them: sessions, hands, bb/100 lost, share in the solver's mix; the **leaks** that show over many
-sessions, ranked by how far off times the square root of the decisions (a frequency of yours 10+ points from the
-solver's on the same hands over 15+ decisions, a preflop situation with under 80% of your actions in the chart's mix
-over 15+, a postflop spot losing 0.5bb+ a decision over 10+); each session's date, file, hands, share in the mix and
-bb/100 with a line of bb/100 over time (Forget removes one, Clear history all); and the street, preflop-situation,
-postflop-spot and frequency tables summed over every session.
-
 **My hands** (in the ⋯ menu, `/gto-solver/hands/`) keeps the hands you play on the table, in this browser. The hand
-on the table is saved when **New hand**, a share link, an imported history or a hand from the analyzer takes its
-place, when **Review whole hand** finishes (with
-its grades), and when a history is imported (with its site, hand number and text). The same hand is one record however
+on the table is saved when **New hand** or a share link takes its
+place and when **Review whole hand** finishes (with
+its grades). The same hand is one record however
 often it's saved (grades aside), and a hand opened from the list and played on is saved back into its own record. Each
 row has the date, positions, cards, board, kind of pot, how far it went and your decisions' grades with the EV given
 up; the search reads cards (`AhKd`, `AKo`, `77`), positions, the board, tags, notes and the site, and the list filters
 to reviewed, not reviewed or imported hands, or to one tag. A hand opens on the table (**Open**, to see or review it)
 or copies as its `#h=` link; it takes tags and a note; **Delete** has an
 Undo. **Export** downloads the hands listed (or one) as JSON (`gto-solver-hands`: each hand's state, its `#h=` link, tags, note
-and, for an imported one, its site, hand number and history), and **Import a file…** or
-**Paste…** takes such a file, `#h=` links or hand histories (every hand of a session file). With 1,005 hands in the
-browser the list reads in 7 ms, the panel opens in 15 ms and a search filters in 7 ms; 1,000 hands import in 0.24 s.
+and, for an imported one, its site, hand number and history), and **Restore from a backup…** takes such a file too. The
+frozen copy's imported hands stay in the list and open like any other. With 1,005 hands in the
+browser the list reads in 7 ms, the panel opens in 15 ms and a search filters in 7 ms; 1,000 hands come back from a file in 0.24 s.
 The panel is `gto/static/hands.js`, loaded when first opened.
 
 **Your data in this browser** is kept in one place, `gto/static/store.js` (loaded before the page's script): an
@@ -617,9 +546,9 @@ range, and solver stats. With `"breakdown": true` a postflop answer also carries
 `actions`, `pot`, `hero` and `villains`, each with `made` and `draws` categories (`c` combos, `eq` equity, the
 hero's `f` per action and `ev`), the range's `eq`, `ev`, `nuts` (share at `nut_eq`, 0.8, or more) and `curve`
 (equities sorted high to low at every 2% of the range; heads-up only), and the hero's own categories (`mine`);
-`null` where the betting rules answered. `"library_only": true` (the session analyzer's instant scope) answers a
+`null` where the betting rules answered. `"library_only": true` answers a
 flop only from the precomputed library and returns `{"skipped": …}` for any other postflop spot instead of solving it.
-`"triage": true` (the session analyzer's Quick triage, `Advisor.triage`) answers from what is in hand first: preflop
+`"triage": true` (`Advisor.triage`) answers from what is in hand first: preflop
 the charts, a flop the library holds (as `library_only`), else a read at once (`Advisor.instant`: a library flop's
 stored turn, the nearest stored flops, the library's answers facing another bet size, the previous street's live
 solve), else a Quick solve at `TRIAGE_BUDGETS` (flop and turn 1.5 s plus 0.3 per earlier street, river 0.8 s), and
@@ -4171,7 +4100,7 @@ python scripts/compare_mw_library.py --spot mw_co_btn_bb --boards Kh7d2c,9s8s5d 
 scripts/deploy.sh
 ```
 
-copies the page, the worker, `practice.js`, `explain.js`, `multitable.js`, `breakdown.js`, `session.js`, `help.js`, `solver.zip` (the worker's Python code: every `gto/*.py` and treys, `scripts/build_bundle.py`), and the `gto` sources into the `gto-solver/` folder
+copies the page, the worker, `practice.js`, `explain.js`, `multitable.js`, `help.js`, `hands.js`, `store.js`, `solver.zip` (the worker's Python code: every `gto/*.py` and treys, `scripts/build_bundle.py`), and the `gto` sources into the `gto-solver/` folder
 of the michaellhan.github.io repo and pushes. The precomputed libraries (`gto/static/flop_library`: the heads-up and
 3-way indexes, entries and reports) go first to their own repo, michaellhan/gto-solver-library, served beside the page
 at /gto-solver-library/ (`scripts/deploy_library.sh`): one commit with no history, force-pushed on each publish and

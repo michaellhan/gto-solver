@@ -67,8 +67,6 @@ cp "$HERE/gto/static/index.html" "$HERE/gto/static/worker.js" "$HERE/gto/static/
 # below, so a changed file is never served from a browser's cached copy. Removing a module is removing its line, and the
 # constant with its code from the page.
 MODULES="
-HH_VERSION hh.js
-SS_VERSION session.js
 PR_VERSION practice.js
 MT_VERSION multitable.js
 HP_VERSION help.js

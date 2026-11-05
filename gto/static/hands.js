@@ -1,7 +1,7 @@
 // My hands, loaded by index.html the first time it opens (the ⋯ menu's My hands…, /gto-solver/hands/): the hands kept
 // in this browser by store.js (GTOStore.hands): each hand you played on the table (kept when New hand or another hand
-// takes its place), reviewed (Review whole hand, with its grades) or imported. Search, a filter by kind and tag, tags and
-// a note on each, delete (Undo); a hand opens on the table (to review it) and copies as its #h= link; the list (or one hand) exports as JSON, and such a file, #h= links or hand histories import into it.
+// takes its place) or reviewed (Review whole hand, with its grades), and those the frozen copy imported. Search, a filter by kind and tag, tags and
+// a note on each, delete (Undo); a hand opens on the table (to review it) and copies as its #h= link; the list (or one hand) exports as JSON, and Restore takes such a file back.
 // Below the list, a backup of everything the site keeps in this browser and its restore (GTOStore.backup / restore), and
 // its delete (GTOStore.wipe), which asks first and then says what went.
 // Everything but the panel (open) and the page host is pure and tested in Node.
@@ -121,7 +121,7 @@
   }
   function listHtml(recs, ui, shown, openId) {
     const L = filterRecs(recs, ui);
-    if (!recs.length) return `<div class="mh-empty">No hands yet. Every hand you enter is kept here when you start a new one (New hand), and so are the hands you review or import.</div>`;
+    if (!recs.length) return `<div class="mh-empty">No hands yet. Every hand you enter is kept here when you start a new one (New hand), and so are the hands you review.</div>`;
     if (!L.length) return `<div class="mh-empty">No hand matches. <button class="link" data-clear>Show every hand</button></div>`;
     return `<ul class="mh-list">${L.slice(0, shown).map(r => rowHtml(r, r.id === openId)).join("")}</ul>`
       + (L.length > shown ? `<button class="ghost mh-moreb" data-more>Show ${Math.min(PAGE, L.length - shown)} more (${L.length - shown} left)</button>` : "");
@@ -137,18 +137,13 @@
   }
 
   // ---- files
-  // what an import's text is: a My hands export or a state's JSON, a backup, #h= links, or hand histories
+  // what a restored file holds: a My hands export or a state's JSON, or a backup
   function parseImport(text) {
     const t = String(text || "").trim();
     if (!t) return { error: "Nothing to import." };
-    if (t[0] === "{" || t[0] === "[") {
-      let obj; try { obj = JSON.parse(t); } catch (e) { return { error: "That isn't valid JSON." }; }
-      if (obj && obj.format === "gto-solver-backup") return { kind: "backup", obj };
-      return { kind: "hands", obj };
-    }
-    const links = [...t.matchAll(/#h=([A-Za-z0-9+/=]+)/g)].map(m => m[1]);
-    if (links.length) return { kind: "links", links };
-    return { kind: "hh", text: t };
+    let obj; try { obj = JSON.parse(t); } catch (e) { return { error: "That isn't valid JSON." }; }
+    if (obj && obj.format === "gto-solver-backup") return { kind: "backup", obj };
+    return { kind: "hands", obj };
   }
   const fileName = (what, t) => `gto-solver-${what}-${day(t)}.json`;
   function backupText(b) {
@@ -194,7 +189,7 @@
       <div class="mh-acts"><button data-backup>Back up first</button><button class="mh-danger" data-wipego>Delete everything</button><button class="ghost" data-wipecancel>Cancel</button></div></div>`;
   }
 
-  // ---- the page (globals of index.html; session.js's host does the same)
+  // ---- the page (globals of index.html)
   function pageHost() {
     // the hand on the table, as that record (the page's cleaned copy of it kept, should it differ: a file's hand)
     const onTable = async (rec) => {
@@ -204,7 +199,7 @@
       if (H.sig(S) !== rec.data.sig) await H.update(rec.id, { state: S });
       H.onTable(S, { id: rec.id, source: rec.data.source });
     };
-    /* global S, cleanState, loadHandState, rewindTo, reviewHand, toast, simulate, encodeState, decodeState, ROOT, copyText, loadHH, splitHands, importHand, simulate, handDone, heldHand */
+    /* global S, cleanState, loadHandState, rewindTo, reviewHand, toast, simulate, encodeState, decodeState, ROOT, copyText, handDone, heldHand */
     return {
       store: () => globalThis.GTOStore,
       table: () => clone(heldHand()),
@@ -222,10 +217,6 @@
           const t = document.getElementById("toast"), b = document.createElement("button"); b.className = "link"; b.textContent = "Review whole hand";
           b.onclick = () => { t.hidden = true; reviewHand(); }; t.appendChild(b);
         }
-      },
-      async importHH(text) {
-        await loadHH();
-        return splitHands(text).map(h => { try { const r = importHand(h); return { state: r.state, site: r.hand.site, hh: h }; } catch (e) { return { error: e.message || String(e) }; } });
       },
     };
   }
@@ -265,10 +256,7 @@
       + `<div class="mh-msg" role="status"${msg ? "" : " hidden"}>${msg}</div>`
       + `<div class="mh-listbox">${listHtml(recs, ui, shown, openId)}</div>`
       + `<div class="mh-io"><span class="mh-sub mh-count">${countText(n)}</span>`
-      + `<button class="ghost" data-export${n ? "" : " disabled"} title="Download the hands listed as a JSON file">${exportText(n)}</button>`
-      + `<label class="mh-file ghost"><input type="file" data-importfile accept=".json,.txt,.xml,.log,application/json,text/plain"><span>Import a file…</span></label>`
-      + `<button class="ghost" data-pastebox>Paste…</button></div>`
-      + `<div class="mh-paste" hidden><textarea data-paste rows="3" placeholder="Paste hand histories, #h= links or a My hands JSON export"></textarea><div class="mh-acts"><button data-pastego>Import</button></div></div>`
+      + `<button class="ghost" data-export${n ? "" : " disabled"} title="Download the hands listed as a JSON file">${exportText(n)}</button></div>`
       + backupHtml() + wipeHtml(wiping);
   }
   let wipeBusy = false;
@@ -288,21 +276,7 @@
     if (p.error) return say(esc(p.error));
     if (p.kind === "backup") { draft = p.obj; draw(); return say("That's a backup of everything: restore it below."); }
     let r;
-    try {
-      if (p.kind === "hands") r = await store().hands.importFile(p.obj, host.clean, host.decode);
-      else if (p.kind === "links") {
-        const states = p.links.map(b => { try { return host.decode(b); } catch (e) { return null; } }).filter(Boolean);
-        r = await store().hands.importFile(states.map(state => ({ state, source: "link" })), host.clean);
-        r.skipped += p.links.length - states.length;
-      } else {
-        const hs = await host.importHH(text);
-        const ok = hs.filter(h => h.state);
-        r = await store().hands.importFile(ok.map(h => ({ state: h.state, source: "import", site: h.site, hh: h.hh, hhId: store().hands.handNumber(h.hh) })), host.clean);
-        r.skipped += hs.length - ok.length;
-        if (!ok.length && hs.length) return say(esc(`No hand could be read${hs[0].error ? ": " + hs[0].error : "."}`));
-        if (!hs.length) return say("No hand history found in that text.");
-      }
-    } catch (e) { return say(esc(e.message || String(e))); }
+    try { r = await store().hands.importFile(p.obj, host.clean, host.decode); } catch (e) { return say(esc(e.message || String(e))); }
     await refresh();
     say(esc(`${name ? name + ": " : ""}${r.added} hand${r.added === 1 ? "" : "s"} added${r.merged ? `, ${r.merged} already here` : ""}${r.skipped ? `, ${r.skipped} skipped (no action, or unreadable)` : ""}.`));
   }
@@ -325,8 +299,6 @@
     }
     if (d.undo != null) { const r = deleted; deleted = null; if (!r) return; await H.restore(r); await refresh(); return say(`Brought back ${esc(summary(r.data.state).title)}.`); }
     if (d.rmtag != null) { const r = recOf(d.id); if (!r) return; r.data.tags = (r.data.tags || []).filter(t => t !== d.rmtag); drawKeep(); return upd(r.id, { tags: r.data.tags }); }
-    if (d.pastebox != null) { const p = box.querySelector(".mh-paste"); p.hidden = !p.hidden; if (!p.hidden) p.querySelector("textarea").focus(); return; }
-    if (d.pastego != null) { const t = box.querySelector("[data-paste]"); return importText(t.value, ""); }
     if (d.backup != null) {
       const b = await store().backup(), size = download(fileName("backup", Date.now()), b);
       const text = `Backed up ${backupText(b)} (${Math.max(1, Math.round(size / 1024))} KB). Keep the file somewhere safe; Restore from a backup brings it back, here or in another browser.`;
@@ -409,7 +381,7 @@
   .mh-chip { font-size: 11px; border: 1px solid var(--line2); border-radius: 10px; padding: 0 4px 0 8px; display: inline-flex; align-items: center; gap: 2px; }
   .mh-chip button { padding: 0 4px; }
   .mh-tagrow input { width: 12em; font-size: 12px; }
-  .mh-more textarea, .mh-paste textarea { width: 100%; box-sizing: border-box; font: 12px/1.4 inherit; resize: vertical; }
+  .mh-more textarea { width: 100%; box-sizing: border-box; font: 12px/1.4 inherit; resize: vertical; }
   .mh-del { color: var(--bad); margin-left: auto; }
   .mh-table { font-size: 12px; border: 1px dashed var(--line2); border-radius: 8px; padding: 6px 10px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
   .mh-msg { font-size: 12px; border-left: 3px solid var(--accent); padding: 4px 8px; background: var(--line); border-radius: 4px; }
@@ -427,7 +399,7 @@
     .mh-card { max-height: 100dvh; height: 100dvh; border-radius: 0; border: 0; width: 100%; }
     .mh-head .sub { display: none; }
     .mh-when { min-width: 0; }
-    .mh-tools input[type=search], .mh-more textarea, .mh-paste textarea, .mh-tagrow input { font-size: 16px; }
+    .mh-tools input[type=search], .mh-more textarea, .mh-tagrow input { font-size: 16px; }
   }`;
   function close() {
     if (wiped()) return location.reload();   // (not back to a page holding what was deleted)
@@ -444,9 +416,9 @@
     if (!box) {
       box = document.createElement("div"); box.id = "handsBox"; box.className = "mh"; box.setAttribute("role", "dialog");
       box.setAttribute("aria-modal", "true"); box.setAttribute("aria-label", "My hands");
-      box.innerHTML = `<div class="mh-card"><div class="mh-head"><b>My hands</b><span class="sub">every hand you've entered, reviewed or imported, kept in this browser</span><button class="ghost mh-x" data-close aria-label="Close">✕</button></div><div class="mh-body"></div></div>`;
+      box.innerHTML = `<div class="mh-card"><div class="mh-head"><b>My hands</b><span class="sub">every hand you've entered or reviewed, kept in this browser</span><button class="ghost mh-x" data-close aria-label="Close">✕</button></div><div class="mh-body"></div></div>`;
       document.body.appendChild(box);
-      const keys = "[data-close],[data-clear],[data-kind],[data-tag],[data-more],[data-toggle],[data-savetable],[data-open],[data-link],[data-json],[data-export],[data-del],[data-rmtag],[data-pastebox],[data-pastego],[data-backup],[data-restorego],[data-restorecancel],[data-reload],[data-undo],[data-wipe],[data-wipego],[data-wipecancel]";
+      const keys = "[data-close],[data-clear],[data-kind],[data-tag],[data-more],[data-toggle],[data-savetable],[data-open],[data-link],[data-json],[data-export],[data-del],[data-rmtag],[data-backup],[data-restorego],[data-restorecancel],[data-reload],[data-undo],[data-wipe],[data-wipego],[data-wipecancel]";
       box.addEventListener("click", (e) => {
         if (e.target === box) return close();
         const t = e.target.closest(keys);
@@ -465,13 +437,11 @@
         e.stopPropagation();
         if (e.key === "Escape") close();
         else if (d.addtag != null && (e.key === "Enter" || e.key === ",")) { e.preventDefault(); addTag(d.addtag, e.target); }
-        else if (d.paste != null && e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); importText(e.target.value, ""); }
       });
       box.addEventListener("change", (e) => {
         const d = e.target.dataset || {}, f = e.target.files && e.target.files[0];
         if (!f) return;
-        if (d.importfile != null) f.text().then(t => importText(t, f.name));
-        else if (d.restorefile != null) f.text().then(t => {
+        if (d.restorefile != null) f.text().then(t => {
           let obj = null; try { obj = JSON.parse(t); } catch (err) {}
           if (!obj || obj.format !== "gto-solver-backup") { if (obj && (obj.format === "gto-solver-hands" || Array.isArray(obj))) return importText(t, f.name); return say("That isn't a GTO Solver backup file."); }
           draft = obj; draw();
