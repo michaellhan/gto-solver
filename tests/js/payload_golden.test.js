@@ -4,9 +4,9 @@
 // Accurate speed), reached the ways a hand reaches the page: this browser's saved hand, a #h= link, a decision of a
 // reviewed hand. Removing a control removes the input, not the setting, so every entry must keep answering the same.
 //
-// One exception, and only one: once the Fast / Accurate control is gone from the page (#solvectl, stage 4 of the
-// cut-down) the page always solves at Fast, so the entries recorded at Accurate then expect speed "fast" and Fast's two
-// budgets. Nothing else may differ, and while the control is on the page nothing at all may.
+// One exception, and only one: the Fast / Accurate control has left and the page always solves at Fast, so the entries
+// recorded at Accurate (with gto-speed still stored here, which the page no longer reads) expect speed "fast" and Fast's
+// two budgets. Nothing else may differ.
 //
 // UPDATE_GOLDEN=1 node --test tests/js/payload_golden.test.js adds entries for new cases. It never changes an entry
 // that's there: a different payload for a saved hand is a bug, or a decision to take back to the file by hand.
@@ -15,7 +15,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { loadPage, state, acts, HTML_PATH } = require("./page.js");
+const { loadPage, state, acts } = require("./page.js");
 
 const GOLDEN = path.join(__dirname, "..", "data", "payload_golden.json");
 const flush = () => new Promise(r => setImmediate(r));
@@ -80,11 +80,10 @@ async function boot(c, how) {
   return p;
 }
 
-// The payload a golden entry expects now: the entry, or (the exception above) at Fast once the control has gone.
+// The payload a golden entry expects now: the entry, or (the exception above) at Fast.
 const FAST = { wasm: [8, 3], server: [2.5, 2.5] };
-const hasSpeedControl = () => fs.readFileSync(HTML_PATH, "utf8").includes('id="solvectl"');
 function expected(g) {
-  if (hasSpeedControl() || g.payload.speed === "fast") return g.payload;
+  if (g.payload.speed === "fast") return g.payload;
   const [budget, prior_budget] = FAST[g.server ? "server" : "wasm"];
   return { ...g.payload, budget, prior_budget, speed: "fast" };
 }

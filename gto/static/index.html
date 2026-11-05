@@ -34,8 +34,6 @@
   header .spacer { flex: 1; }
   header a { padding: 6px 11px; color: var(--muted); text-decoration: none; }
   header a:hover { color: var(--text); }
-  header .ctl { display: inline-flex; align-items: center; gap: 6px; }
-  header .ctl > .lbl { font-size: 11px; color: var(--faint); }
 
   /* ---- controls */
   button { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 6px 11px; font: inherit; cursor: pointer; }
@@ -212,7 +210,6 @@
   .review .streetsum { margin-top: 6px; color: var(--muted); }
   .review .streetsum.total { color: inherit; border-top: 1px solid var(--line); padding-top: 6px; }
   #result.stale { opacity: .45; }
-  #result.stale #goAccurate { display: none; }
   .verdict { display: flex; gap: 12px; align-items: baseline; margin: 2px 0 12px; flex-wrap: wrap; }
   .verdict .big { font-size: 24px; font-weight: 700; letter-spacing: -.01em; }
   .verdict .mix { color: var(--muted); font-size: 13px; }
@@ -318,7 +315,6 @@
     body.heroturn #pAdvice { order: 25; }
     body.needcard #pCards { order: 15; }
     .dock { margin: 0 -10px; border-radius: var(--r) var(--r) 0 0; border-width: 1px 0 0; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
-    header .ctl > .lbl { display: none; }
   }
   /* short windows (a zoomed-in page): drop the dock's second line */
   @media (max-height: 620px) { .prompt .ask { display: none; } .prompt { margin-bottom: 6px; } }
@@ -384,10 +380,6 @@
 <header>
   <h1>GTO Solver</h1>
   <span class="spacer"></span>
-  <span class="ctl nofin" id="oppctl"><span class="lbl">Opponents</span>
-    <div class="segment"><button data-o="gto" class="active" title="Opponents play the equilibrium (GTO): advice that can't be exploited, whoever you face.">GTO</button><button data-o="pool" title="Opponents play like a typical online player pool instead of perfectly: they fold too often to bets of every size (most of all small ones), raise less and bluff less, fitted to published population data from online cash games. Preflop they play more hands, 3bet more and fold less to 3bets. Your preflop calls and raises adjust to those ranges (opens follow the chart); after the flop, the advice is the most profitable play against them, with GTO's frequency shown under each action.">Pool</button></div></span>
-  <span class="ctl" id="solvectl"><span class="lbl">Solve</span>
-    <div class="segment"><button data-m="fast" class="active" title="How long a review takes over each decision. The default: about 8 s a decision in the browser (2.5 s with the local server). Rivers come out exact; a single-raised turn gives up about 0.2% of the pot to a perfect opponent, a 3bet pot's turn almost nothing; precomputed flops answer at once. More: ⋯ > About &amp; accuracy.">Fast</button><button data-m="accurate" title="How long a review takes over each decision: about a minute in the browser (30 s with the local server). Turns come within a fraction of a percent of a full solver: a single-raised turn gives up about 0.01% of the pot to a perfect opponent. More: ⋯ > About &amp; accuracy.">Accurate</button></div></span>
   <button id="share" title="Copy a link that opens this hand">Share</button>
   <button id="newhand" title="Shortcut: N">New hand <kbd>N</kbd></button>
   <button id="myHands" class="ghost" title="Every hand you've entered or reviewed, kept in this browser: search, tags, notes, open one in review, export, back up">Hands</button>
@@ -681,22 +673,14 @@ const STREETS = ["preflop", "flop", "turn", "river"];
 const NEED = { preflop: 0, flop: 3, turn: 4, river: 5 };
 const SLOT_NAMES = ["your first card", "your second card", "flop card 1", "flop card 2", "flop card 3", "the turn", "the river"];
 const SLOT_WHERE = ["in your hand", "in your hand", "on the flop", "on the flop", "on the flop", "on the turn", "on the river"];
-// seconds per solve for each speed setting: [current street, each earlier street used for range narrowing]
-const BUDGETS = { server: { fast: [2.5, 2.5], accurate: [30, 12] }, wasm: { fast: [8, 3], accurate: [60, 12] } };
-// a request's [budget, prior_budget] at a speed
-function budgetsFor(speed) { return MODE ? BUDGETS[MODE][speed] : [null, null]; }   // (null: the backend not known yet)
+// seconds per solve: [current street, each earlier street used for range narrowing]
+const BUDGETS = { server: [2.5, 2.5], wasm: [8, 3] };
 // this browser's storage (store.js: IndexedDB records, each small key also kept in localStorage under its own name for
 // the reads while the page starts); without it (the tests' page) localStorage itself
 const pageStore = window.GTOStore || { getRaw: (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } },
                                        setRaw: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} } };
 // everything deleted from another tab (My hands' Delete everything this site keeps): what this tab holds goes with it
 if (window.GTOStore) window.GTOStore.onChange((c) => { if (c.wiped && c.remote) location.reload(); });
-let SPEED = "fast";
-{ const v = pageStore.getRaw("gto-speed"); if (v === "accurate") SPEED = v; }
-// opponents: "gto" (equilibrium) or "pool" (a typical player pool, exploited), for this visit. A saved "pool" is refused:
-// it lives in the browser, not the hand, so nothing on a page without the toggle would show it or turn it off. The key
-// stays as it is, for the frozen copy, which still writes it; "gto-pool-refused" keeps the notice to one showing.
-let OPP = "gto";
 const WORKER_VERSION = "14";   // scripts/deploy.sh replaces this with a hash of worker.js
 const HP_VERSION = "1";        // and this with a hash of help.js (About and Fair play)
 const HN_VERSION = "1";        // and hands.js (My hands, loaded the first time it opens; store.js, loaded with the page, has ?v= of its own)
@@ -768,31 +752,6 @@ const modeReady = (async () => {
   try { const r = await fetch("health.json", { cache: "no-store" }); if (r.ok && (await r.json()).ok) MODE = "server"; } catch (e) {}
   if (MODE === "server" && worker) { worker.terminate(); worker = null; workerStatus = ""; }   // (a proxied local server)
   if (!MODE) { MODE = "wasm"; startWorker(); }   // start loading the in-browser solver while the hand is entered
-  const ctl = document.getElementById("solvectl");
-  const setSpeed = (m) => {
-    SPEED = m;
-    ctl.querySelectorAll("button").forEach(x => x.classList.toggle("active", x.dataset.m === m));
-    pageStore.setRaw("gto-speed", m);
-  };
-  setSpeed(SPEED);
-  const octl = document.getElementById("oppctl");
-  const setOpp = (o) => {
-    OPP = o;
-    octl.querySelectorAll("button").forEach(x => x.classList.toggle("active", x.dataset.o === o));
-  };
-  setOpp(OPP);
-  octl.querySelectorAll("button").forEach(b => b.onclick = async () => {
-    if (b.dataset.o === OPP) return;
-    setOpp(b.dataset.o);
-    await cancelSolve();
-    lastKey = null; renderAll();
-  });
-  ctl.querySelectorAll("button").forEach(b => b.onclick = async () => {
-    if (b.dataset.m === SPEED) return;
-    setSpeed(b.dataset.m);
-    await cancelSolve();   // don't make the new speed wait behind a solve at the old one
-    lastKey = null; renderAll();
-  });
 })();
 let solveStart = 0;
 function setStatus(msg) {
@@ -1218,7 +1177,7 @@ const gradeClass = (g) => g.h != null ? (g.h <= HEUR_OK ? "ok" : g.h <= HEUR_MEH
 const gradeMark = (g) => ({ ok: "✓", meh: "~", bad: "✗" })[gradeClass(g)];
 const sgn = (x) => (x > 0 ? "+" : x < 0 ? "−" : "") + Math.abs(x).toFixed(2);
 // An action your range almost never takes (the answer's rough_ev, advisor.RARE_BRANCH; a grade's rv): its EV with a "≈"
-// and this tip. Against exact EVs of the same strategy they are 1-10% of the pot off at Fast, under 1% at Accurate.
+// and this tip. Against exact EVs of the same strategy they are 1-10% of the pot off.
 const ROUGH_EV_TIP = "Your range almost never takes this, so how the opponent answers it is barely solved: its EV is rough, usually lower than exact.";
 // Your EV vs the GTO-best EV for one decision, plus the EV lost.
 const evLossHtml = (g) => g.e == null ? `<span class="muted">no EV (preflop chart)</span>` : `EV ${g.rv ? "≈ " : ""}${sgn(g.e)} vs GTO ${sgn(g.o)} · ${g.l > 0.005 ? `<span class="num neg"${g.rv ? ` title="${ROUGH_EV_TIP}"` : ""}>${g.rv ? "≈ " : ""}−${g.l.toFixed(2)} bb</span>` : `<span class="num pos">0.00 bb</span>`}`;
@@ -1495,7 +1454,7 @@ function renderFinished(el, prompt, step, sim) {
   if (mine.length) {
     const b = document.createElement("button"); b.id = "reviewAll"; b.dataset.key = "r";
     b.className = todo ? "nexth" : "small"; b.innerHTML = todo ? "Review whole hand<kbd>R</kbd>" : "Review again";
-    if (!todo) b.title = "Solve each decision again, at the speed and against the opponents now set";
+    if (!todo) b.title = "Solve each decision again";
     b.onclick = reviewHand; el.appendChild(b);
   }
   if (S.finished && !sim.handOver && sim.active.has(S.hero) && !fixedHand(sim)) {   // (more of the hand to enter)
@@ -1554,7 +1513,7 @@ function payload() {
   // sizes, ranges and size optimization change postflop solves only: sent from the flop on, so preflop advice (and its
   // cache) is the same; locks act preflop too (gto/exploit.py lock_preflop), so they're always sent
   const post = boardCards().length >= 3, adv = { ...(post ? { ...(S.sizes ? { sizes: S.sizes } : {}), ...(OPP_RANGES() ? { ranges: OPP_RANGES() } : {}), ...(S.optSizes ? { optimize_sizes: true } : {}) } : {}), ...(OPP_LOCKS() ? { locks: OPP_LOCKS() } : {}) };
-  const [budget, prior_budget] = budgetsFor(SPEED);
+  const [budget, prior_budget] = MODE ? BUDGETS[MODE] : [null, null];   // (null: the backend not known yet)
   return { players: S.players, hero: S.hero, hole: (S.cards[0] || "") + (S.cards[1] || ""), board: boardCards().join(""), stack: S.stack,
            ...(UNEQUAL() ? { stacks: Object.fromEntries(POS.map(p => [p, STACK(p)])) } : {}),
            ...(ANTE() ? { ante: ANTE() } : {}), ...(STRADDLER() ? { straddle: true } : {}),
@@ -1563,13 +1522,7 @@ function payload() {
            ...(RAKE() && !TOURNEY() && !S.tournament ? { rake: RAKE() / 100, ...(RAKE_CAP() ? { rake_cap: RAKE_CAP() } : {}) } : {}),
            ...(TOURNEY() ? { ...(PAYOUTS().length ? { payouts: PAYOUTS() } : {}), ...(FIELD_AVG() ? { field: { players: FIELD_N(), chips: FIELD_N() * FIELD_AVG() } } : {}) } : {}),
            ...(BOUNTY() ? { bounties: BOUNTY_SPEC() } : {}),
-           preflop: conv(S.actions.preflop), flop: conv(S.actions.flop), turn: conv(S.actions.turn), river: conv(S.actions.river), budget, prior_budget, speed: SPEED,
-           ...(OPP === "pool" ? { opponents: "pool" } : {}), ...adv };
-}
-// the payload key of the same spot at another speed
-function keyFor(key, speed) {
-  const [budget, prior_budget] = budgetsFor(speed);
-  return JSON.stringify({ ...JSON.parse(key), budget, prior_budget, speed });
+           preflop: conv(S.actions.preflop), flop: conv(S.actions.flop), turn: conv(S.actions.turn), river: conv(S.actions.river), budget, prior_budget, speed: "fast", ...adv };
 }
 async function analyze(sim) {
   if (!S.cards[0] || !S.cards[1]) return;
@@ -1579,27 +1532,20 @@ async function analyze(sim) {
   if (key === lastKey) return;
   lastKey = key;
   // It's your turn at another spot (a new hand, an undo, an edit): the solve of the one you left mustn't hold this
-  // one up (in the browser a whole Accurate solve, with the panel still saying it waits for your turn).
+  // one up.
   if (solving) { await cancelSolve(); if (lastKey !== key) return; }
   if (cache.has(key)) { renderResult(cache.get(key), key); return; }
-  // an answer for this spot at the slower speed beats a re-solve at this one
-  const slower = SPEED === "accurate" ? null : cache.get(keyFor(key, "accurate"));
-  if (slower) { cache.set(key, slower); renderResult(slower, key); return; }
   solving = true;
   const gen = ++solveGen;
   const el = document.getElementById("result");
   el.className = "";
-  el.innerHTML = `<div class="solvehead muted"><span class="spinner"></span><span id="solveMsg">Solving the ${sim.current}…${sim.current !== "preflop" && SPEED === "accurate" ? ` (Accurate mode: this can take ${MODE === "wasm" ? "a minute or more" : "up to a minute"})` : ""}</span><span class="num" id="solveTime"></span></div>${sim.current === "preflop" ? "" : '<div class="prog"><div id="solveBar"></div></div>'}`;
+  el.innerHTML = `<div class="solvehead muted"><span class="spinner"></span><span id="solveMsg">Solving the ${sim.current}…</span><span class="num" id="solveTime"></span></div>${sim.current === "preflop" ? "" : '<div class="prog"><div id="solveBar"></div></div>'}`;
   solveStart = performance.now();
   if (MODE === "wasm" && workerStatus !== "Solving…") setStatus(workerStatus || "Loading the solver runtime…");   // runtime still loading
   const kp = JSON.parse(key);
   let est = kp.budget + kp.prior_budget * Math.max(0, STREETS.indexOf(sim.current) - 1);   // earlier postflop streets are re-solved to narrow ranges
-  // the local server's Fast gives a 3-way flop or turn 5 s, not its 2.5 (gto/native.py MW_FAST_BUDGET)
-  if (MODE === "server" && SPEED === "fast" && sim.active.size === 3 && ["flop", "turn"].includes(sim.current)) est = Math.max(est, 5);
-  if (SPEED === "accurate") {   // Accurate continues from a Fast solve of this spot, counting its time
-    const f = cache.get(keyFor(key, "fast"));
-    if (f && f.seconds) est = Math.round(Math.max(est * 0.2, est - f.seconds));
-  }
+  // the local server gives a 3-way flop or turn 5 s, not its 2.5 (gto/native.py MW_FAST_BUDGET)
+  if (MODE === "server" && sim.active.size === 3 && ["flop", "turn"].includes(sim.current)) est = Math.max(est, 5);
   const tick = setInterval(() => {
     const t = (performance.now() - solveStart) / 1000, tm = document.getElementById("solveTime"), bar = document.getElementById("solveBar");
     if (MODE === "wasm" && workerStatus !== "Solving…") { if (tm) tm.textContent = ""; return; }   // runtime still loading: no solve clock yet
@@ -1632,7 +1578,7 @@ function setColors(names) {
 const amtOf = (a) => { if (a.amount_bb == null) return null; const m = /(\d+(?:\.\d+)?)(?:bb)?$/.exec(a.action); return m && Math.abs(+m[1] - a.amount_bb) < 0.01 ? null : a.amount_bb; };
 const COLORS = (n) => n === "fold" ? "var(--fold)" : n === "in range" ? "var(--accent)" : n === "check" || n === "call" ? "var(--passive)" : n === "all-in" ? "var(--allin)" : CMAP[n] || "var(--agg1)";
 // Convergence of the solve, from exploitability in % of the pot (0 = exact equilibrium of the tree); "approximate" where
-// it is over 10 times what answers at its speed reach (solver.approximate, gto/advisor.py _flag_short: the solve ran
+// it is over 10 times what answers reach (solver.approximate, gto/advisor.py _flag_short: the solve ran
 // short, on a busy device or in numpy after the compiled solver failed)
 // Where the ranges an answer is solved against left the solves (Advisor's off_solution: a line the solve rarely took,
 // read by the betting rules; a range filled out; an earlier street narrowed by the rules or by an unsettled solve):
@@ -1658,23 +1604,15 @@ const SIZE_USAGE = (r) => Object.entries(r.size_usage).map(([k, v]) => `${k} ${(
   + (r.sizes_custom ? ` (your sizes ${r.sizes_custom.join(", ")} were in the menu${r.sizes_custom.every(s => !r.sizes_kept || !r.sizes_kept.includes(s)) ? ", not kept" : ""})` : "");
 // a flop answer read from the precomputed library (gto/flop_library.py) instead of solved live
 // (borrowed: another table size's pot read off the library spot whose ranges are a few combos away, flop_approx.near_exact)
-const PRE_TIP = (p) => `Solved offline (${p.label}, ${p.iterations} iterations)${p.same_tree ? "" : " with Accurate's flop model"}: instant, at either speed.`
+const PRE_TIP = (p) => `Solved offline (${p.label}, ${p.iterations} iterations)${p.same_tree ? "" : " with a finer flop model than a live solve's"}: instant.`
   + (p.borrowed ? ` Approximate: that spot read as this one (${p.borrowed.text}).` : "");
 const PRE_BADGE = (p) => `<span class="conv ${p.borrowed ? "meh" : "ok"}" title="${PRE_TIP(p)}">${p.borrowed ? "precomputed · borrowed" : "precomputed"}</span>`;
 const HEUR_TIP = "Too many players in for a solve here: this answer comes from your equity against the field and betting rules fitted to the solver's play.";
-const convTip = (c) => `Exploitability ${c.x.toFixed(1)}% of the pot: a perfect counter-strategy would win that much from this solve. ${c.target != null ? `Answers at this speed are ${c.target}% or less: this solve ran short, so its mix and EVs are a rough guide.` : "Under 3% is close to a full solver."}`;
+const convTip = (c) => `Exploitability ${c.x.toFixed(1)}% of the pot: a perfect counter-strategy would win that much from this solve. ${c.target != null ? `Answers here are ${c.target}% or less: this solve ran short, so its mix and EVs are a rough guide.` : "Under 3% is close to a full solver."}`;
 
-// Where the GTO % under an exploit's mix (the pool, your locks) comes from: preflop the chart; after it the
-// equilibrium of the same solve the exploit is built on. Against the pool, or a player you locked (whose preflop
-// follows the lock), that solve starts from those ranges into the flop, so its GTO can differ from what the GTO setting
-// shows for the hand (which may come from the precomputed flop library, on the charts' ranges).
-function gtoSource(res, key) {
-  if (res.street === "preflop") return "the preflop chart's mix";
-  let pool = false; try { pool = JSON.parse(key).opponents === "pool"; } catch (e) {}
-  const from = pool ? "the pool's ranges" : res.locked ? "the ranges your lock leaves" : "";
-  return from ? `the equilibrium of this same solve, which starts from ${from} into the flop: the GTO setting's advice, on the charts' ranges, can differ`
-    : "the equilibrium of this same solve";
-}
+// Where the GTO % under a lock's mix comes from: preflop the chart; after it the equilibrium of the same solve the
+// exploit is built on, which starts from the ranges the lock leaves (the seat's preflop follows it).
+const gtoSource = (res) => res.street === "preflop" ? "the preflop chart's mix" : "the equilibrium of this same solve, which starts from the ranges your lock leaves into the flop";
 // An approximate answer while the solve runs (Advisor.instant: e.g. the flop's solve read for the turn): the verdict
 // and the mix, labelled, under the progress bar; not the answer graded, reviewed or recorded (lastResult stays). A
 // library flop's stored turn in format 2 adds the flop solve's range EVs (never your hand's own: that's the solve's
@@ -1717,7 +1655,7 @@ function renderResult(res, key) {
   const board = res.board ? res.board.match(/../g).map(cardHtml).join(" ") : "";
   let h = `<div class="meta" style="margin:0 0 4px">${res.street} · ${res.hero} ${res.hand}${res.position ? " · " + res.position : ""}${board ? " · " + board : ""}${res.pot_bb ? " · pot " + res.pot_bb + " bb" : ""}</div>`;
   if (heuristic(res)) h += `<div class="verdict"><span class="big">${res.recommended}</span><span class="mix">${res.opponents.length + 1} players in · equity vs field ${(res.equity_vs_field * 100).toFixed(0)}% · <span title="${HEUR_TIP}">heuristic, not a solve</span></span></div>`;
-  else h += `<div class="verdict"><span class="big">${res.recommended}</span>${res.solved ? `<span class="mix">${res.opponents.length + 1} players in · 3-way solve</span>` : ""}${conv ? `<span class="conv ${conv.cls}" title="${convTip(conv)}">${conv.label} · ${conv.x.toFixed(1)}% pot</span>` : ""}${offSolution(res) ? `<span class="conv meh" title="${OFF_TIP}">off the solved line</span>` : ""}${res.precomputed ? PRE_BADGE(res.precomputed) : ""}${conv && conv.cls === "bad" && SPEED !== "accurate" ? `<button class="link" id="goAccurate">Solve again on Accurate</button>` : ""}</div>`;
+  else h += `<div class="verdict"><span class="big">${res.recommended}</span>${res.solved ? `<span class="mix">${res.opponents.length + 1} players in · 3-way solve</span>` : ""}${conv ? `<span class="conv ${conv.cls}" title="${convTip(conv)}">${conv.label} · ${conv.x.toFixed(1)}% pot</span>` : ""}${offSolution(res) ? `<span class="conv meh" title="${OFF_TIP}">off the solved line</span>` : ""}${res.precomputed ? PRE_BADGE(res.precomputed) : ""}</div>`;
   // the advisor's catch-all (gto/advisor.py Advisor._rules): the solve failed, so the chart, the betting rules or equity answered
   if (offSolution(res)) h += `<div class="meta" style="color:var(--meh);margin:0 0 6px">Off the solved line: ${offText(res)}. This street's solve is the best answer to those ranges, not the whole hand's equilibrium.</div>`;
   if (res.fallback) h += `<div class="meta" style="color:var(--meh);margin:0 0 6px">The solver couldn't answer this spot, so this is ${{ chart: "the preflop chart's mix", rules: "the betting rules' answer", equity: "a rough equity estimate" }[res.fallback] || "a fallback"}, not a solve.</div>`;
@@ -1727,9 +1665,8 @@ function renderResult(res, key) {
     const ev = hasEv ? (a.ev_bb !== undefined ? `<span class="num ${a.ev_bb > 0.005 ? "pos" : a.ev_bb < -0.005 ? "neg" : ""}${a.rough_ev ? ` rough" title="${ROUGH_EV_TIP}` : ""}">${a.rough_ev ? "≈ " : ""}${a.ev_bb > 0 ? "+" : ""}${a.ev_bb.toFixed(2)} bb</span>` : "<span></span>") : "";
     h += `<div class="arow ${a.action === res.recommended ? "best" : ""}" ><span class="name">${a.action}${amtOf(a) != null ? `<small>${amtOf(a)} bb</small>` : ""}</span><div class="bar"><div style="width:${(a.freq * 100).toFixed(1)}%;background:${COLORS(a.action)}"></div></div><span class="num"${a.gto_freq !== undefined ? ` title="GTO plays this ${(a.gto_freq * 100).toFixed(1)}% of the time (${res.street === "preflop" ? "the chart" : "this solve's equilibrium"})"` : ""}>${(a.freq * 100).toFixed(1)}%${a.gto_freq !== undefined ? `<small class="muted" style="display:block;font-size:10px">GTO ${(a.gto_freq * 100).toFixed(0)}%</small>` : ""}</span>${ev}</div>`;
   }
-  const src = res.actions.some(a => a.gto_freq !== undefined) ? gtoSource(res, key) : "";
+  const src = res.actions.some(a => a.gto_freq !== undefined) ? gtoSource(res) : "";
   if (res.locked) h += `</div><div class="meta">${Object.entries(res.locked).map(([p, l]) => `Against your lock on ${p} (${LOCK_TEXT(l)})`).join("; ")}: ${res.street === "preflop" ? "your line re-priced against it" : "the best response"}, with GTO's frequency under each (${src}).`;
-  else if (src) h += `</div><div class="meta">Against a typical player pool: the best response, with GTO's frequency under each (${src}).`;
   h += `</div><div class="meta">${hasEv ? "EV is in big blinds relative to folding now, so fold is 0: chips already in the pot are gone either way." + (res.actions.some(a => a.rough_ev) ? " ≈: an action your range almost never takes, whose EV is rough (usually lower than exact)." : "") : res.street === "preflop" ? "Preflop comes from charts, so there's no EV column." : ""}${res.widened && res.widened.length ? ` The solve rarely has ${res.widened.join(" and ")} play this way, so their range comes from simple betting rules instead; the EVs (and the pick) are against that range, so they can disagree with the solver's mix.` : conv && conv.cls !== "ok" ? " Actions the solver mixes should have near-equal EVs; gaps here mean the solve hasn't settled." : ""}</div>`;
   if (res.grid) h += `<div class="gridview">${renderGrid(res.grid, res.hand)}</div>`;
   h += `<details><summary>Details</summary>`;
@@ -1740,8 +1677,6 @@ function renderResult(res, key) {
   if (res.notes && res.notes.length) h += `<div class="meta">${res.notes.join("<br>")}</div>`;
   h += `</details>`;
   el.innerHTML = h;
-  const ga = el.querySelector("#goAccurate");
-  if (ga) ga.onclick = () => document.querySelector('#solvectl button[data-m="accurate"]').click();
   if (res.grid) wireGrid(el, res.grid, res.hand);
   const vg = el.querySelector(".vgrid");
   if (vg) wireGrid(vg, res.villain_grid, null, res.villain);
@@ -1902,8 +1837,7 @@ function renderAll() {
   updateAdviceState();
   updateEquity();
 }
-// ---- review the whole hand, once it's finished: each of your recorded decisions is solved in turn (at the current
-// speed) and graded
+// ---- review the whole hand, once it's finished: each of your recorded decisions is solved in turn and graded
 const didText = (a) => a.action === "bet" ? "bet " + fmt(a.to) : a.action === "raise" ? "raised to " + fmt(a.to) : a.action === "all-in" ? "went all-in" : a.action + "ed";
 async function reviewHand() {
   if (review) return;
@@ -1922,7 +1856,7 @@ async function reviewHand() {
     const sim = simulate();
     if (!sim.cur || sim.toAct !== S.hero) continue;
     let done = analyze(sim); renderAll();
-    for (;;) {   // a solve the speed or opponents toggle restarted has to finish first
+    for (;;) {   // a solve cancelled from outside has to run again
       await done;
       if (rv.cancel || resultKey === JSON.stringify(payload())) break;
       await new Promise(r => setTimeout(r, 300)); done = solving ? null : analyze(simulate());
@@ -2366,8 +2300,9 @@ async function applyRoute(r) {
 }
 if (typeof window.addEventListener === "function") window.addEventListener("popstate", () => applyRoute(parseRoute(location.pathname)));
 // Two notices, once each, on the first load after these settings lost their carry. A hand not started yet is no saved
-// hand (store.js keeps none without actions): what it holds of them came from the last hand, so it goes. And a refused
-// "pool" (OPP, above).
+// hand (store.js keeps none without actions): what it holds of them came from the last hand, so it goes. And a saved
+// "pool" is refused: it lives in the browser, not the hand, so nothing here would show it or turn it off. The key stays
+// as it is, for the frozen copy, which still writes it; "gto-pool-refused" keeps the notice to one showing.
 // (Not while the page is about to reload for its service worker: the reload would take the notice with it.)
 if (!isolating) {
   const said = [], blank = !linkLoaded && !STREETS.some(s => S.actions[s].length), held = NOT_CARRIED.filter(k => k in S);

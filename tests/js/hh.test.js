@@ -236,11 +236,11 @@ test("review whole hand: each decision is solved in order with progress, graded,
   assert.deepEqual(JSON.parse(p.storage.get("handreview")), S);
 });
 
-test("review whole hand respects Accurate, can be cancelled, and multiway spots are reviewed without a grade", async () => {
+test("review whole hand solves at Fast, can be cancelled, and multiway spots are reviewed without a grade", async () => {
   const p = await imported(HH("gg_limped_multiway"), { storage: { "gto-speed": "accurate" } });
   const done = p.run("reviewHand()");
   await flushAll();
-  assert.equal(p.posted.at(-1).state.speed, "accurate");
+  assert.equal(p.posted.at(-1).state.speed, "fast");
   await respond(p);   // preflop check
   const m = p.posted.at(-1);   // the flop check: three players in
   p.workers.at(-1).onmessage({ data: { id: m.id, result: { street: "flop", hero: "BB", hand: "76s", multiway: true, recommended: "check", opponents: ["SB", "UTG", "CO"], equity_vs_field: 0.3, actions: [{ action: "check", freq: 1 }] } } });

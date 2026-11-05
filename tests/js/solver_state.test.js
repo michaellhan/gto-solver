@@ -186,37 +186,23 @@ test("reviewing, once the flop is known the worker is told it, once a flop, to f
   assert.deepEqual(told().map((x) => [x.board, x.flop.length, x.turn.length]), [["Kd7s2c", 0, 0], ["Qc8h3d", 0, 0]]);
 });
 
-test("Quick left the main view: only Fast and Accurate are offered, and a stored Quick reads as Fast", async () => {
+test("the page always solves at Fast: a stored speed isn't read or changed, and none is written", async () => {
   const html = require("node:fs").readFileSync(require("./page.js").HTML_PATH, "utf8");
-  assert.deepEqual([...html.matchAll(/<button data-m="(\w+)"/g)].map(m => m[1]), ["fast", "accurate"]);
-  const q = loadPage({ storage: { "gto-speed": "quick" } });
-  await q.ready();
-  assert.equal(q.val("SPEED"), "fast");
-  assert.equal(q.storage.get("gto-speed"), "fast");
-  assert.match(q.byId("solvectl").children[0].className, /active/);
-  assert.equal(q.payload().quick, undefined);
-});
-
-test("reviewing, Accurate and Pool toggles change the state sent; Accurate is remembered, Pool is for the visit", async () => {
+  assert.doesNotMatch(html, /solvectl|gto-speed/);
+  for (const stored of ["quick", "fast", "accurate"]) {
+    const q = loadPage({ storage: { "gto-speed": stored } });
+    await q.ready();
+    q.S = state(FLOP);
+    assert.deepEqual([q.payload().budget, q.payload().prior_budget, q.payload().speed, q.payload().quick], [8, 3, "fast", undefined]);
+    assert.equal(q.storage.get("gto-speed"), stored);   // (Lizard and the frozen copy read it)
+  }
   const p = loadPage();
   await p.ready();
-  p.spot(state(FLOP));
-  await flush();
-  const n = p.posted.length;
-  await p.byId("solvectl").children[1].onclick();   // (Fast, Accurate)
-  await p.byId("oppctl").children[1].onclick();
-  await flush();
-  const pl = p.payload();
-  assert.deepEqual([pl.budget, pl.prior_budget, pl.speed, pl.opponents], [60, 12, "accurate", "pool"]);
-  assert.equal(p.storage.get("gto-speed"), "accurate");
-  assert.equal(p.storage.has("gto-opponents"), false);
-  assert.ok(p.workers[0].terminated === false || p.workers.length > 1);
-  assert.deepEqual(p.posted.at(-1).state, pl);
-  assert.ok(p.posted.length > n);
-  const q = loadPage({ storage: { "gto-speed": "accurate", "gto-opponents": "pool" } });
-  await q.ready();
-  q.S = state(FLOP);
-  assert.deepEqual([q.payload().speed, q.payload().opponents], ["accurate", undefined]);   // (saved_settings.test.js: a saved pool is refused)
+  assert.equal(p.storage.has("gto-speed"), false);
+  const local = loadPage({ server: true });
+  await local.ready();
+  local.S = state(FLOP);
+  assert.deepEqual([local.payload().budget, local.payload().prior_budget, local.payload().speed], [2.5, 2.5, "fast"]);
 });
 
 test("the backend probe finds a file on the static site (no 404 logged on every load), and the server answers it", async () => {

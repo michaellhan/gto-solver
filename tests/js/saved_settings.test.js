@@ -266,7 +266,6 @@ for (const store of [false, true])
     assert.equal(p.posted.filter(m => m.state).at(-1).state.opponents, undefined);
     assert.match(p.byId("toast").innerHTML, /no longer solves against a player pool/);
     assert.equal(p.storage.get("gto-opponents"), "pool");
-    assert.ok(p.byId("oppctl").children[0].className.includes("active"));
     if (store) assert.equal(await p.run('GTOStore.ready.then(() => GTOStore.getRaw("gto-opponents"))'), "pool");
     const q = await mk(Object.fromEntries(p.storage), store ? { indexedDB: p.ctx.indexedDB } : {});
     assert.equal(q.byId("toast").innerHTML, "");                   // (once)

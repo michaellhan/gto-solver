@@ -116,7 +116,7 @@ test("a precomputed answer is badged; one borrowed from another table size's lib
   p.ctx.__res = JSON.stringify(res);
   p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
   let h = p.byId("result").innerHTML;
-  assert.match(h, /<span class="conv ok" title="Solved offline \(BTN vs BB single-raised pot, 300 iterations\) with Accurate's flop model: instant, at either speed.">precomputed<\/span>/);
+  assert.match(h, /<span class="conv ok" title="Solved offline \(BTN vs BB single-raised pot, 300 iterations\) with a finer flop model than a live solve's: instant.">precomputed<\/span>/);
   const text = "this table's ranges differ from that spot's by 0.4% of their weight at most";
   p.ctx.__res = JSON.stringify({ ...res, precomputed: { ...pre, label: "6-max " + pre.label, borrowed: { spot: "srp_btn_bb", cover: [1, 0.9996], dist: [0.0088, 0.0025], text } } });
   p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");

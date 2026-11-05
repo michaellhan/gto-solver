@@ -142,9 +142,6 @@ function loadPage(opts = {}) {
     postMessage(m) { posted.push(m.stop ? { stop: m.stop } : JSON.parse(JSON.stringify(m))); }   // (the stop flag: shared, as is)
     terminate() { this.terminated = true; }
   }
-  // the header's speed and opponents toggles (static markup in the page)
-  for (const [id, key, vals] of [["solvectl", "m", ["fast", "accurate"]], ["oppctl", "o", ["gto", "pool"]]])
-    if (staticNow.has(id)) for (const v of vals) { const b = new El("button"); b.dataset[key] = v; byId(id).appendChild(b); }
   const body = new El("body", "body");
   // a <script src> appended to the head runs (the page's own file, or opts.scripts') after the current task, then onload
   const head = new El("head");

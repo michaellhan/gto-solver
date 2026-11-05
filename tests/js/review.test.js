@@ -295,7 +295,6 @@ test("a review cancelled before any advice leaves the hand open; one cancelled a
 
 test("Pool and locks aren't offered or in effect until a hand is finished; Randomise and recording off the advice are gone", async () => {
   const html = fs.readFileSync(HTML_PATH, "utf8");
-  assert.match(html, /<span class="ctl nofin" id="oppctl">/);
   assert.match(html, /<div class="row nofin" id="lockIns"/);
   assert.match(html, /body\.unfinished \.nofin \{ display: none !important; \}/);
   assert.doesNotMatch(html, /randomise|Randomise/);
@@ -317,9 +316,6 @@ test("Pool and locks aren't offered or in effect until a hand is finished; Rando
   assert.equal(unfinished(), false);
   await flush();
   assert.deepEqual(j(p.posted.filter(m => m.state).at(-1).state.locks), { BB: { fold: 15 } });
-  await p.byId("oppctl").children[1].onclick();
-  await flush();
-  assert.equal(p.posted.filter(m => m.state).at(-1).state.opponents, "pool");
 });
 
 test("a hand hh.js read reviews straight away", async () => {
