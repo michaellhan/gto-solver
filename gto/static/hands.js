@@ -1,4 +1,4 @@
-// My hands, loaded by index.html the first time it opens (the ⋯ menu's My hands…, /gto-solver/hands/): the hands kept
+// My hands, loaded by index.html the first time it opens (the header's Hands, /gto-solver/hands/): the hands kept
 // in this browser by store.js (GTOStore.hands): each hand you played on the table (kept when New hand or another hand
 // takes its place) or reviewed (Review whole hand, with its grades), and those the frozen copy imported. Search, a filter by kind and tag, tags and
 // a note on each, delete (Undo); a hand opens on the table (to review it) and copies as its #h= link; the list (or one hand) exports as JSON, and Restore takes such a file back.
@@ -373,7 +373,7 @@
   .mh-when { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; min-width: 9.5em; }
   .mh-hole, .mh-board { white-space: nowrap; }
   .mh-c { display: inline-block; min-width: 1.5em; padding: 0 2px; margin-right: 2px; border-radius: 3px; background: #f5f5f0; color: #111; font-weight: 700; text-align: center; font-size: 11px; line-height: 1.5; }
-  .mh-c.h, .mh-c.d { color: #c62828; } body.four .mh-c.d { color: #1565c0; } body.four .mh-c.c { color: #2e7d32; }
+  .mh-c.h, .mh-c.d { color: #c62828; }
   .mh-g { font-size: 11px; font-weight: 700; white-space: nowrap; } .mh-g.ok { color: var(--good); } .mh-g.meh { color: var(--meh, #d9a400); } .mh-g.bad { color: var(--bad); }
   .mh-lost { color: var(--bad); font-size: 11px; font-variant-numeric: tabular-nums; }
   .mh-note1 { color: var(--muted); font-size: 12px; font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -409,7 +409,7 @@
     if (wiped()) return location.reload();   // (not back to a page holding what was deleted)
     if (box) box.hidden = true;
     if (noteT) { clearTimeout(noteT); noteT = null; const t = box && box.querySelector("textarea[data-note]"); if (t) upd(t.dataset.note, { note: t.value }); }
-    const m = document.getElementById("menuBtn"); if (m) m.focus();
+    const m = document.getElementById("myHands"); if (m) m.focus();
     if (globalThis.viewClosed) globalThis.viewClosed("hands");
   }
   async function open(h) {
@@ -419,8 +419,8 @@
     if (!document.getElementById("mhStyle")) { const s = document.createElement("style"); s.id = "mhStyle"; s.textContent = CSS_TEXT; document.head.appendChild(s); }
     if (!box) {
       box = document.createElement("div"); box.id = "handsBox"; box.className = "mh"; box.setAttribute("role", "dialog");
-      box.setAttribute("aria-modal", "true"); box.setAttribute("aria-label", "My hands");
-      box.innerHTML = `<div class="mh-card"><div class="mh-head"><b>My hands</b><span class="sub">every hand you've entered or reviewed, kept in this browser</span><button class="ghost mh-x" data-close aria-label="Close">✕</button></div><div class="mh-body"></div></div>`;
+      box.setAttribute("aria-modal", "true"); box.setAttribute("aria-label", "Hands");
+      box.innerHTML = `<div class="mh-card"><div class="mh-head"><b>Hands</b><span class="sub">every hand you've entered or reviewed, kept in this browser</span><button class="ghost mh-x" data-close aria-label="Close">✕</button></div><div class="mh-body"></div></div>`;
       document.body.appendChild(box);
       const keys = "[data-close],[data-clear],[data-kind],[data-tag],[data-more],[data-toggle],[data-savetable],[data-open],[data-link],[data-json],[data-export],[data-del],[data-rmtag],[data-backup],[data-restorego],[data-restorecancel],[data-reload],[data-undo],[data-wipe],[data-wipego],[data-wipecancel]";
       box.addEventListener("click", (e) => {

@@ -116,12 +116,12 @@ test("a precomputed answer is badged; one borrowed from another table size's lib
   p.ctx.__res = JSON.stringify(res);
   p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
   let h = p.byId("result").innerHTML;
-  assert.match(h, /<span class="conv ok" title="Solved offline \(BTN vs BB single-raised pot, 300 iterations\) with Accurate's flop model: instant, at either speed. Click for what this means." data-term="precomputed">precomputed<\/span>/);
+  assert.match(h, /<span class="conv ok" title="Solved offline \(BTN vs BB single-raised pot, 300 iterations\) with Accurate's flop model: instant, at either speed.">precomputed<\/span>/);
   const text = "this table's ranges differ from that spot's by 0.4% of their weight at most";
   p.ctx.__res = JSON.stringify({ ...res, precomputed: { ...pre, label: "6-max " + pre.label, borrowed: { spot: "srp_btn_bb", cover: [1, 0.9996], dist: [0.0088, 0.0025], text } } });
   p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
   h = p.byId("result").innerHTML;
-  assert.match(h, /<span class="conv meh" title="Solved offline \(6-max BTN vs BB single-raised pot, 300 iterations\)[^"]* Approximate: that spot read as this one \(this table's ranges differ from that spot's by 0\.4% of their weight at most\)\. Click for what this means\." data-term="borrowed">precomputed · borrowed<\/span>/);
+  assert.match(h, /<span class="conv meh" title="Solved offline \(6-max BTN vs BB single-raised pot, 300 iterations\)[^"]* Approximate: that spot read as this one \(this table's ranges differ from that spot's by 0\.4% of their weight at most\)\.">precomputed · borrowed<\/span>/);
 });
 
 test("an answer whose ranges left the solve earlier in the hand is badged off the solved line, with why", async () => {
@@ -137,7 +137,7 @@ test("an answer whose ranges left the solve earlier in the hand is badged off th
   p.ctx.__res = JSON.stringify({ ...res, off_solution: off });
   p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
   const h = p.byId("result").innerHTML;
-  assert.match(h, /<span class="conv ok" title="[^"]*" data-term="exploitability">converged · 0\.0% pot<\/span><span class="conv meh" title="Off the solved line: [^"]*not the whole hand's equilibrium\. Click for what this means\." data-term="offsolved">off the solved line<\/span>/);
+  assert.match(h, /<span class="conv ok" title="[^"]*">converged · 0\.0% pot<\/span><span class="conv meh" title="Off the solved line: [^"]*not the whole hand's equilibrium\.">off the solved line<\/span>/);
   assert.match(h, /Off the solved line: HJ's bet 75% on the flop is never in the solve, so their range from there is the betting rules'; BTN's flop line left 6\.7 combos, so their range is filled out with the rest of their flop range; the turn solve hadn't settled, so ranges follow it 40% and the betting rules the rest; the turn is narrowed by the betting rules, not solved; BTN's raise to 13 on the flop is only 4\.2% in the solve, so their range from there is the betting rules'\. This street's solve is the best answer to those ranges/);
   assert.match(p.val(`offText({ off_solution: [{ street: "preflop", pos: "CO", why: "filled" }] })`), /^CO's preflop line isn't in the charts/);
   // the play after a rare line solved again from the node (Advisor._rare_resolver)

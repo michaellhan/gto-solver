@@ -41,7 +41,7 @@ test("every storage key in gto/static is in store.js's SITE_KEYS (a new key can'
     for (const k of scan(text)) seen.add(k);
   }
   // the scan finds what it must, the ones with no gto- prefix and the ones in constants among them
-  for (const k of ["handreview", "fourcolor", "gto-anthropic-key", "gto-explain-own", "gto-session-run", "gto-writeup", "gto-stakes", "gto-welcome", "gto-isolate", "gto-hands-ui", "gto-practice-review", "gto-store-mirror"]) assert.ok(seen.has(k), k);
+  for (const k of ["handreview", "gto-anthropic-key", "gto-explain-own", "gto-session-run", "gto-writeup", "gto-stakes", "gto-welcome", "gto-isolate", "gto-hands-ui", "gto-practice-review", "gto-store-mirror"]) assert.ok(seen.has(k), k);
   // and it would catch these
   for (const [src, k] of [['localStorage.setItem("gto-brand-new", 1)', "gto-brand-new"], ['pageStore.setRaw("plainkey", x)', "plainkey"],
                           ['const NEWKEY = "other"; sessionStorage.getItem(NEWKEY)', "other"], ['KV.set("a-key", v)', "a-key"], ['const K = `gto-x${n}`', "gto-x"]])

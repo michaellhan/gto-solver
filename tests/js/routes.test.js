@@ -47,7 +47,7 @@ test("a view: opening pushes its URL, closing pushes the solver's, back and forw
   await p.ready();
   p.click("myHands"); await flush();
   assert.deepEqual(p.pushed, ["/gto-solver/hands/"]);
-  assert.equal(p.ctx.document.title, "My hands · GTO Solver");
+  assert.equal(p.ctx.document.title, "Hands · GTO Solver");
   p.run("MyHands.close()");
   assert.deepEqual(p.pushed, ["/gto-solver/hands/", "/gto-solver/"]);
   assert.equal(p.ctx.document.title, "GTO Solver");
@@ -112,9 +112,9 @@ test("the route table is the one gto/routes.py reads, and deploy.sh writes each 
   assert.deepEqual(names, p.val("Object.keys(ROUTES)"));
   assert.deepEqual(spot, p.val("SPOT_ROUTES"));
   assert.match(html, /^const ROUTES = \{.*\};$/m);
-  // each label is the ⋯ menu's / header's (without its ellipsis)
-  for (const [id, r] of [["helpStart", "start"], ["helpAbout", "about"], ["helpGlossary", "glossary"], ["helpChangelog", "changelog"], ["helpFairplay", "fairplay"], ["myHands", "hands"]]) {
-    const label = html.match(new RegExp(`<button id="${id}"[^>]*>([^<]*)</button>`))[1].replace("…", "");
+  // each label is the header's
+  for (const [id, r] of [["helpAbout", "about"], ["myHands", "hands"]]) {
+    const label = html.match(new RegExp(`<button id="${id}"[^>]*>([^<]*)</button>`))[1];
     assert.equal(p.val(`ROUTES[${JSON.stringify(r)}]`), label, id);
   }
   const deploy = fs.readFileSync(path.join(ROOT, "scripts", "deploy.sh"), "utf8");

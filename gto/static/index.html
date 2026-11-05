@@ -32,20 +32,10 @@
   header { display: flex; align-items: center; gap: 10px; padding: max(8px, env(safe-area-inset-top)) 16px 8px; border-bottom: 1px solid var(--line); flex-wrap: wrap; background: var(--bg); }
   header h1 { font-size: 14px; margin: 0 6px 0 0; font-weight: 650; letter-spacing: .01em; }
   header .spacer { flex: 1; }
+  header a { padding: 6px 11px; color: var(--muted); text-decoration: none; }
+  header a:hover { color: var(--text); }
   header .ctl { display: inline-flex; align-items: center; gap: 6px; }
   header .ctl > .lbl { font-size: 11px; color: var(--faint); }
-  .menuwrap { position: relative; }
-  .menu { position: absolute; right: 0; top: calc(100% + 6px); background: var(--panel2); border: 1px solid var(--line2); border-radius: var(--r); padding: 6px; min-width: 200px; z-index: 60; box-shadow: 0 10px 30px rgba(0,0,0,.5); display: flex; flex-direction: column; gap: 2px; max-height: calc(100dvh - 72px); overflow-y: auto; }
-  .menu button { background: none; border: 0; text-align: left; padding: 7px 10px; border-radius: 6px; width: 100%; display: flex; justify-content: space-between; gap: 12px; }
-  .menu button:hover { background: var(--line); }
-  .menu button.active { background: none; color: var(--accent); font-weight: 500; }
-  .menu button.active::after { content: "✓"; }
-  .menu .sep { height: 1px; background: var(--line); margin: 4px 2px; }
-  .menu .hint { font-size: 11px; color: var(--faint); padding: 4px 10px 2px; line-height: 1.5; }
-  /* the menu's groups (Review, Help, Settings) */
-  .menu .mlbl { font-size: 10.5px; color: var(--faint); text-transform: uppercase; letter-spacing: .05em; padding: 8px 10px 2px; }
-  .menu .mlbl:first-child { padding-top: 2px; }
-  #helpBtn { padding: 6px 10px; font-weight: 600; }
 
   /* ---- controls */
   button { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 6px 11px; font: inherit; cursor: pointer; }
@@ -83,7 +73,7 @@
   input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
   /* keyboard focus (Tab); a click or tap shows none */
   button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .segment button:focus-visible, .menu button:focus-visible { outline-offset: -2px; }
+  .segment button:focus-visible { outline-offset: -2px; }
   .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .muted { color: var(--muted); }
   .seats button { min-width: 46px; padding: 5px 8px; }
@@ -139,8 +129,6 @@
   .pc.used:hover { transform: none; box-shadow: none; }
   .pc.pend { outline: 2px solid var(--accent); }
   .h, .d { color: var(--red) !important; }
-  .four .d { color: var(--blue) !important; }
-  .four .c { color: var(--green) !important; }
   .typehint { font-size: 12px; color: var(--faint); margin-top: 8px; }
   .typehint b { color: var(--accent); font-family: ui-monospace, Menlo, monospace; }
 
@@ -298,24 +286,12 @@
   details details { margin-top: 6px; }
   #result.empty:empty { display: none; }
 
-  .importbox { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); width: min(620px, calc(100% - 32px)); z-index: 80; background: var(--panel2); border: 1px solid var(--line2); border-radius: var(--r); padding: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.5), 0 0 0 100vmax rgba(0,0,0,.55); display: flex; flex-direction: column; gap: 8px; }
-  /* the first visit's chooser (#welcome) */
-  .welcome { gap: 10px; }
-  .welcome .wgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .welcome .wgrid button { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; padding: 10px 12px; min-height: 64px; }
-  .welcome .wgrid button span { color: var(--muted); font-size: 12px; line-height: 1.35; }
-  .welcome .wgrid button:hover { border-color: var(--accent); }
-  .welcome .wfoot { gap: 14px; }
-  .welcome #welcomeClose { margin-left: auto; }
-  @media (max-width: 560px) { .welcome .wgrid { grid-template-columns: 1fr; } }
-  /* an answer's badge opens its Glossary entry (help.js) */
-  [data-term] { cursor: help; }
   .toast { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); background: #232932; border: 1px solid var(--line2); border-radius: var(--r); padding: 9px 14px; display: flex; gap: 14px; align-items: center; box-shadow: 0 8px 30px rgba(0,0,0,.5); z-index: 70; width: max-content; max-width: calc(100% - 32px); font-size: 13px; }
 
   /* ---- layout
      Wide screens: the page fills the window; each column scrolls on its own and the action dock stays pinned
      to the bottom of its column, so it's on screen at any zoom. Drag the divider to resize the columns,
-     the bar under the table to resize the table; the menu swaps the columns. */
+     the bar under the table to resize the table. */
   .dock { position: -webkit-sticky; position: sticky; bottom: var(--kb); z-index: 5; margin-top: auto; margin-bottom: 0; box-shadow: 0 -10px 18px -6px var(--bg); border: 1px solid var(--line); }
   .split { display: none; }
   /* while a card is needed the deck is the input: it moves up under the setup and the dock stops floating */
@@ -329,8 +305,6 @@
     .split { display: block; cursor: col-resize; position: relative; touch-action: none; }
     .split::before { content: ""; position: absolute; top: 10px; bottom: 10px; left: 4px; width: 1px; background: var(--line); }
     .split:hover::before, .split.drag::before { background: var(--accent); width: 2px; left: 3.5px; }
-    body.swap #colL { order: 3; } body.swap .split { order: 2; } body.swap #colR { order: 1; padding: 10px 4px 10px 0; }
-    body.swap main { grid-template-columns: minmax(320px, 1fr) 9px minmax(340px, var(--left)); }
     body.dragging { cursor: col-resize; -webkit-user-select: none; user-select: none; }
     body.dragging-v { cursor: ns-resize; -webkit-user-select: none; user-select: none; }
     #pAdvice { margin-bottom: 0; min-height: 100%; }
@@ -344,7 +318,6 @@
     body.heroturn #pAdvice { order: 25; }
     body.needcard #pCards { order: 15; }
     .dock { margin: 0 -10px; border-radius: var(--r) var(--r) 0 0; border-width: 1px 0 0; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
-    .menu .wideonly { display: none; }
     header .ctl > .lbl { display: none; }
   }
   /* short windows (a zoomed-in page): drop the dock's second line */
@@ -417,26 +390,9 @@
     <div class="segment"><button data-m="fast" class="active" title="How long a review takes over each decision. The default: about 8 s a decision in the browser (2.5 s with the local server). Rivers come out exact; a single-raised turn gives up about 0.2% of the pot to a perfect opponent, a 3bet pot's turn almost nothing; precomputed flops answer at once. More: ⋯ > About &amp; accuracy.">Fast</button><button data-m="accurate" title="How long a review takes over each decision: about a minute in the browser (30 s with the local server). Turns come within a fraction of a percent of a full solver: a single-raised turn gives up about 0.01% of the pot to a perfect opponent. More: ⋯ > About &amp; accuracy.">Accurate</button></div></span>
   <button id="share" title="Copy a link that opens this hand">Share</button>
   <button id="newhand" title="Shortcut: N">New hand <kbd>N</kbd></button>
-  <span class="menuwrap">
-    <button id="helpBtn" class="ghost" title="Help: getting started, how accurate the answers are, a glossary" aria-label="Help">?</button>
-    <button id="menuBtn" class="ghost" title="More: your hands, help, settings" aria-label="More" aria-haspopup="true" aria-expanded="false" aria-controls="menu">⋯</button>
-    <div class="menu" id="menu" hidden>
-      <div class="mlbl">Review</div>
-      <button id="myHands" title="Every hand you've entered or reviewed, kept in this browser: search, tags, notes, open one in review, export, back up">My hands…</button>
-      <div class="mlbl">Help</div>
-      <button id="helpStart" title="What to do first">Getting started…</button>
-      <button id="helpAbout" title="How the answers are made and measured: exploitability, the benchmark against an open-source solver, Fast and Accurate, the known limits">About & accuracy…</button>
-      <button id="helpGlossary" title="The words in a review: EV, EQR, exploitability, mix, precomputed, borrowed, off the solved line…">Glossary…</button>
-      <button id="helpChangelog" title="What's new">Changelog…</button>
-      <button id="helpFairplay" title="A study and review tool: not for use during a hand, online or live">Fair play…</button>
-      <div class="mlbl">Settings</div>
-      <button id="fourcolor" title="Four-colour deck: diamonds blue, clubs green">Four-colour deck</button>
-      <button id="swapCols" class="wideonly" title="Put the advice on the left and the table on the right">Advice on the left</button>
-      <div class="sep"></div>
-      <button id="resetLayout" title="Default column widths, table size and panels">Reset layout</button>
-      <div class="hint wideonly">Drag the divider between the columns, or the bar under the table, to resize. Click a panel's title to fold it.</div>
-    </div>
-  </span>
+  <button id="myHands" class="ghost" title="Every hand you've entered or reviewed, kept in this browser: search, tags, notes, open one in review, export, back up">Hands</button>
+  <button id="helpAbout" class="ghost" title="What this is, how accurate it is, what stays on your device">About</button>
+  <a href="/lizard/">Lizard</a>
 </header>
 
 <main>
@@ -568,15 +524,6 @@
   </div>
 </main>
 <div id="toast" class="toast" hidden></div>
-<div id="welcome" class="importbox welcome" role="dialog" aria-modal="true" aria-labelledby="welcomeTitle" hidden>
-  <b id="welcomeTitle">Welcome. What would you like to do first?</b>
-  <span class="muted" style="font-size:12px">GTO Solver works out what game theory does in any no-limit hold'em spot, in your browser: nothing you enter is uploaded. It's for studying and for reviewing hands after you've played them, not for use during a hand.</span>
-  <div class="wgrid">
-    <button id="welcomeReview"><b>Review a hand</b><span>Enter a hand you played, seat by seat, finish it, and see the solver's play at each decision</span></button>
-  </div>
-  <div class="row wfoot"><button class="link" id="welcomeStart">Getting started</button><button class="link" id="welcomeAbout">How accurate is it?</button><button class="link" id="welcomeFair">Fair play</button><button id="welcomeClose" class="ghost">Not now</button></div>
-</div>
-
 <script src="store.js?v=1"></script>
 <script>
 const RANKS = "AKQJT98765432";
@@ -750,25 +697,19 @@ let SPEED = "fast";
 // it lives in the browser, not the hand, so nothing on a page without the toggle would show it or turn it off. The key
 // stays as it is, for the frozen copy, which still writes it; "gto-pool-refused" keeps the notice to one showing.
 let OPP = "gto";
-// the first visit's chooser (#welcome, shown at the end): "due" on a first visit (no speed stored yet, which modeReady
-// stores on every load, so this is read before it can), "seen" once answered or dismissed, or for a visitor from
-// before the chooser existed
-let WELCOME = null;
-try { WELCOME = localStorage.getItem("gto-welcome"); if (!WELCOME) localStorage.setItem("gto-welcome", WELCOME = localStorage.getItem("gto-speed") ? "seen" : "due"); } catch (e) {}
 const WORKER_VERSION = "14";   // scripts/deploy.sh replaces this with a hash of worker.js
-const HP_VERSION = "1";        // and this with a hash of help.js (the help pages: Getting started, About & accuracy, Glossary, Changelog, Fair play)
+const HP_VERSION = "1";        // and this with a hash of help.js (About and Fair play)
 const HN_VERSION = "1";        // and hands.js (My hands, loaded the first time it opens; store.js, loaded with the page, has ?v= of its own)
 // where the precomputed libraries are (flop_library/: the local server's, gto/static/flop_library); scripts/deploy.sh
 // points it at their own site, ../gto-solver-library/ (scripts/deploy_library.sh). The worker is told it in its URL
 // (relative: worker.js is in the folder the page's URLs resolve against).
 const LIB_BASE = "flop_library/";
-// ---- the views' URLs: the solver is the root (/gto-solver/), the others /hands/
-// and the help pages (/start/, /about/, /glossary/, /changelog/, /fairplay/) under it. The static site has no
-// rewrites: each URL is a copy of this page with a <base href="../"> that points its relative URLs at the root.
+// ---- the views' URLs: the solver is the root (/gto-solver/), the others /hands/, /about/ and /fairplay/ under it.
+// The static site has no rewrites: each URL is a copy of this page with a <base href="../"> that points its relative URLs at the root.
 // gto/routes.py reads these two lines (SPOT_ROUTES: the views with a /<spot>/ level, none now; scripts/deploy.sh writes the copies,
 // gto/server.py serves them). Opening a view pushes its URL and closing it pushes the solver's;
 // back and forward switch views; a view's URL opened directly opens it (applyRoute, at the end).
-const ROUTES = { hands: "My hands", start: "Getting started", about: "About & accuracy", glossary: "Glossary", changelog: "Changelog", fairplay: "Fair play" };
+const ROUTES = { hands: "Hands", about: "About", fairplay: "Fair play" };
 const SPOT_ROUTES = [];
 const ROUTE_RE = new RegExp(`^(.*?/)(?:(${Object.keys(ROUTES).join("|")})/?)?(?:index\\.html)?$`);
 function parseRoute(pathname) {   // -> { root: the solver's path, view: "solver" or a ROUTES key }
@@ -1719,9 +1660,7 @@ const SIZE_USAGE = (r) => Object.entries(r.size_usage).map(([k, v]) => `${k} ${(
 // (borrowed: another table size's pot read off the library spot whose ranges are a few combos away, flop_approx.near_exact)
 const PRE_TIP = (p) => `Solved offline (${p.label}, ${p.iterations} iterations)${p.same_tree ? "" : " with Accurate's flop model"}: instant, at either speed.`
   + (p.borrowed ? ` Approximate: that spot read as this one (${p.borrowed.text}).` : "");
-const PRE_BADGE = (p) => `<span class="conv ${p.borrowed ? "meh" : "ok"}" title="${PRE_TIP(p)} ${TERM_HINT}" data-term="${p.borrowed ? "borrowed" : "precomputed"}">${p.borrowed ? "precomputed · borrowed" : "precomputed"}</span>`;
-// a badge's word clicked opens the Glossary at its entry (help.js; the click is wired with the help pages' views)
-const TERM_HINT = "Click for what this means.";
+const PRE_BADGE = (p) => `<span class="conv ${p.borrowed ? "meh" : "ok"}" title="${PRE_TIP(p)}">${p.borrowed ? "precomputed · borrowed" : "precomputed"}</span>`;
 const HEUR_TIP = "Too many players in for a solve here: this answer comes from your equity against the field and betting rules fitted to the solver's play.";
 const convTip = (c) => `Exploitability ${c.x.toFixed(1)}% of the pot: a perfect counter-strategy would win that much from this solve. ${c.target != null ? `Answers at this speed are ${c.target}% or less: this solve ran short, so its mix and EVs are a rough guide.` : "Under 3% is close to a full solver."}`;
 
@@ -1750,7 +1689,7 @@ function renderEarly(res) {
   const label = res.approximate.label;
   const rev = res.actions.some(a => a.range_ev_bb != null);
   const bb = (x) => `${x > 0 ? "+" : ""}${x.toFixed(2)} bb`;
-  let h = `<div class="verdict"><span class="big">${res.recommended}</span><span class="conv meh" title="Approximate: ${label}. ${TERM_HINT}" data-term="approximate">approximate</span>${res.range_ev_bb != null ? `<span class="mix" title="Range EVs at this turn's first decision, in big blinds relative to folding now: the flop solve's stored turn EVs, by card class">range EV: yours ${bb(res.range_ev_bb)} · theirs ${bb(res.villain_range_ev_bb)} of the ${res.pot_bb} bb pot</span>` : ""}</div>`;
+  let h = `<div class="verdict"><span class="big">${res.recommended}</span><span class="conv meh" title="Approximate: ${label}.">approximate</span>${res.range_ev_bb != null ? `<span class="mix" title="Range EVs at this turn's first decision, in big blinds relative to folding now: the flop solve's stored turn EVs, by card class">range EV: yours ${bb(res.range_ev_bb)} · theirs ${bb(res.villain_range_ev_bb)} of the ${res.pot_bb} bb pot</span>` : ""}</div>`;
   h += `<div class="arows${rev ? "" : " noev"}"><div class="arow head"><span>Action</span><span>Solver mix</span><span class="num">Freq</span>${rev ? `<span class="num" title="${RANGE_EV_TIP}">Range EV</span>` : ""}</div>`;
   for (const a of res.actions) {
     const ev = !rev ? "" : a.range_ev_bb == null ? "<span></span>" : `<span class="num ${a.range_ev_bb > 0.005 ? "pos" : a.range_ev_bb < -0.005 ? "neg" : ""}" title="${RANGE_EV_TIP}">${bb(a.range_ev_bb)}</span>`;
@@ -1777,8 +1716,8 @@ function renderResult(res, key) {
   const conv = convergence(res);
   const board = res.board ? res.board.match(/../g).map(cardHtml).join(" ") : "";
   let h = `<div class="meta" style="margin:0 0 4px">${res.street} · ${res.hero} ${res.hand}${res.position ? " · " + res.position : ""}${board ? " · " + board : ""}${res.pot_bb ? " · pot " + res.pot_bb + " bb" : ""}</div>`;
-  if (heuristic(res)) h += `<div class="verdict"><span class="big">${res.recommended}</span><span class="mix">${res.opponents.length + 1} players in · equity vs field ${(res.equity_vs_field * 100).toFixed(0)}% · <span title="${HEUR_TIP} ${TERM_HINT}" data-term="heuristic">heuristic, not a solve</span></span></div>`;
-  else h += `<div class="verdict"><span class="big">${res.recommended}</span>${res.solved ? `<span class="mix">${res.opponents.length + 1} players in · 3-way solve</span>` : ""}${conv ? `<span class="conv ${conv.cls}" title="${convTip(conv)} ${TERM_HINT}" data-term="${conv.label === "approximate" ? "approximate" : "exploitability"}">${conv.label} · ${conv.x.toFixed(1)}% pot</span>` : ""}${offSolution(res) ? `<span class="conv meh" title="${OFF_TIP} ${TERM_HINT}" data-term="offsolved">off the solved line</span>` : ""}${res.precomputed ? PRE_BADGE(res.precomputed) : ""}${conv && conv.cls === "bad" && SPEED !== "accurate" ? `<button class="link" id="goAccurate">Solve again on Accurate</button>` : ""}</div>`;
+  if (heuristic(res)) h += `<div class="verdict"><span class="big">${res.recommended}</span><span class="mix">${res.opponents.length + 1} players in · equity vs field ${(res.equity_vs_field * 100).toFixed(0)}% · <span title="${HEUR_TIP}">heuristic, not a solve</span></span></div>`;
+  else h += `<div class="verdict"><span class="big">${res.recommended}</span>${res.solved ? `<span class="mix">${res.opponents.length + 1} players in · 3-way solve</span>` : ""}${conv ? `<span class="conv ${conv.cls}" title="${convTip(conv)}">${conv.label} · ${conv.x.toFixed(1)}% pot</span>` : ""}${offSolution(res) ? `<span class="conv meh" title="${OFF_TIP}">off the solved line</span>` : ""}${res.precomputed ? PRE_BADGE(res.precomputed) : ""}${conv && conv.cls === "bad" && SPEED !== "accurate" ? `<button class="link" id="goAccurate">Solve again on Accurate</button>` : ""}</div>`;
   // the advisor's catch-all (gto/advisor.py Advisor._rules): the solve failed, so the chart, the betting rules or equity answered
   if (offSolution(res)) h += `<div class="meta" style="color:var(--meh);margin:0 0 6px">Off the solved line: ${offText(res)}. This street's solve is the best answer to those ranges, not the whole hand's equilibrium.</div>`;
   if (res.fallback) h += `<div class="meta" style="color:var(--meh);margin:0 0 6px">The solver couldn't answer this spot, so this is ${{ chart: "the preflop chart's mix", rules: "the betting rules' answer", equity: "a rough equity estimate" }[res.fallback] || "a fallback"}, not a solve.</div>`;
@@ -2284,12 +2223,6 @@ document.getElementById("adv").open = !!(S.sizes || S.ranges || S.optSizes || S.
 document.getElementById("setupDone").onclick = () => { editSetup = false; renderAll(); };
 document.getElementById("editCards").onclick = () => { if (needCard(simulate())) { showDeck = false; selSlot = null; pendingRank = null; } else showDeck = true; renderAll(); };
 
-// ---- four-colour deck (per browser)
-function applyFour(on) { document.body.classList.toggle("four", on); document.getElementById("fourcolor").classList.toggle("active", on); }
-let four = pageStore.getRaw("fourcolor") === "1";
-applyFour(four);
-document.getElementById("fourcolor").onclick = () => { four = !four; applyFour(four); pageStore.setRaw("fourcolor", four ? "1" : "0"); };
-
 // ---- keyboard: cards are typed as rank+suit while a card is needed, otherwise keys pick actions
 document.addEventListener("keydown", (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey || /input|textarea|select/i.test(e.target.tagName)) return;
@@ -2349,30 +2282,20 @@ function showOverlay(name, push) {
   let p; try { p = VIEWS[name].open(); } catch (e) { p = Promise.reject(e); }
   return Promise.resolve(p).catch(e => { window.viewClosed(name); showErr(VIEWS[name].err + (e && e.message || e)); });
 }
-function openView(name) {   // the ⋯ menu's views
-  document.getElementById("menu").hidden = true;
+function openView(name) {   // the header's views
   if (overlay === name) return;
   if (overlay) VIEWS[overlay].close();
   return showOverlay(name, true);
 }
-// ---- the help pages (help.js, loaded the first time one opens): one overlay with a tab per page, each page its own
-// URL. A tab picked moves the URL without closing the overlay (viewSwitch).
-const HELP_PAGES = ["start", "about", "glossary", "changelog", "fairplay"];
+// ---- About and Fair play (help.js, loaded the first time one opens): one overlay, each page its own URL. A link from
+// one to the other moves the URL without closing the overlay (viewSwitch).
+const HELP_PAGES = ["about", "fairplay"];
 const loadHelp = () => loadJs("help.js?v=" + HP_VERSION, () => window.Help);
 for (const page of HELP_PAGES)
-  VIEWS[page] = { open: () => loadHelp().then(() => window.Help.open(page)), close: () => window.Help && window.Help.close(), err: "Couldn't load the help pages: " };
+  VIEWS[page] = { open: () => loadHelp().then(() => window.Help.open(page)), close: () => window.Help && window.Help.close(), err: "Couldn't load this page: " };
 window.viewSwitch = (name) => { if (!VIEWS[name] || overlay === name) return; overlay = name; syncRoute(); };
-function helpOpen(page) {
-  document.getElementById("menu").hidden = true; document.getElementById("menuBtn").setAttribute("aria-expanded", "false");
-  if (HELP_PAGES.includes(overlay) && window.Help) return window.Help.show(page);
-  return openView(page);
-}
-for (const [id, page] of [["helpStart", "start"], ["helpAbout", "about"], ["helpGlossary", "glossary"], ["helpChangelog", "changelog"], ["helpFairplay", "fairplay"], ["helpBtn", "start"]])
-  document.getElementById(id).onclick = () => helpOpen(page);
-// an answer's badge clicked (data-term): the Glossary at that word
-function helpTerm(id) { window.HELP_TERM = id; return HELP_PAGES.includes(overlay) && window.Help ? window.Help.show("glossary", id) : openView("glossary"); }
-document.getElementById("result").addEventListener("click", (e) => { const t = e.target && e.target.closest && e.target.closest("[data-term]"); if (t) helpTerm(t.dataset.term); });
-// ---- layout (per browser): column divider, table height, folded panels, columns swapped. Only in a real
+document.getElementById("helpAbout").onclick = () => openView("about");
+// ---- layout (per browser): column divider, table height, folded panels. Only in a real
 // browser (the tests' fake DOM has no window events), and never allowed to break the page.
 (function layout() {
   if (typeof window.addEventListener !== "function" || typeof document.documentElement === "undefined") return;
@@ -2383,8 +2306,6 @@ document.getElementById("result").addEventListener("click", (e) => { const t = e
     const apply = () => {
       if (L.left) root.style.setProperty("--left", L.left + "px"); else root.style.removeProperty("--left");
       if (L.felt) root.style.setProperty("--felt-h", L.felt + "px"); else root.style.removeProperty("--felt-h");
-      document.body.classList.toggle("swap", !!L.swap);
-      document.getElementById("swapCols").classList.toggle("active", !!L.swap);
       for (const id of ["pTable", "pHistory"]) {
         const p = document.getElementById(id), folded = !!(L.folded || {})[id];
         p.classList.toggle("collapsed", folded);
@@ -2406,8 +2327,7 @@ document.getElementById("result").addEventListener("click", (e) => { const t = e
     const main = document.querySelector("main"), split = document.getElementById("split");
     drag(split, "dragging", (ev) => {
       const r = main.getBoundingClientRect();
-      const x = L.swap ? r.right - ev.clientX - 6 : ev.clientX - r.left - 12;
-      L.left = Math.round(Math.max(340, Math.min(r.width - 340, x))); apply();
+      L.left = Math.round(Math.max(340, Math.min(r.width - 340, ev.clientX - r.left - 12))); apply();
     });
     split.addEventListener("dblclick", () => { delete L.left; apply(); store(); });
     const grip = document.getElementById("feltGrip"), felt = document.getElementById("felt");
@@ -2433,16 +2353,6 @@ document.getElementById("result").addEventListener("click", (e) => { const t = e
       };
       vv.addEventListener("resize", kb); vv.addEventListener("scroll", kb);
     }
-    // the ⋯ menu
-    const btn = document.getElementById("menuBtn"), menu = document.getElementById("menu");
-    // right-aligned to the button, unless that runs past the window's left edge (the header wraps ⋯ leftwards)
-    const show = (on) => { menu.hidden = !on; btn.setAttribute("aria-expanded", on ? "true" : "false");
-      if (on) { menu.style.right = ""; menu.style.left = ""; if (menu.getBoundingClientRect().left < 4) { menu.style.right = "auto"; menu.style.left = "0"; } } };
-    btn.addEventListener("click", (e) => { e.stopPropagation(); show(menu.hidden); });
-    document.addEventListener("click", (e) => { if (!menu.hidden && !e.target.closest(".menuwrap")) show(false); });
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape") show(false); });
-    document.getElementById("swapCols").addEventListener("click", () => { L.swap = !L.swap; apply(); store(); });
-    document.getElementById("resetLayout").addEventListener("click", () => { L = {}; apply(); store(); show(false); });
   } catch (e) {}
 })();
 // ---- routes: the URL's view (a back or forward, or the page opened at it), opened without pushing.
@@ -2475,27 +2385,8 @@ if (!isolating) {
 }
 renderAll();
 // (a #h= link opens its spot in the solver)
-const startRoute = parseRoute(location.pathname);
 routing--;
-applyRoute(startRoute);
-// ---- the first visit's chooser (#welcome): shown once, at the solver's own URL without a link's spot, once the page
-// isn't about to reload (isolating: it shows after the reload). Any choice, Not now, Escape or a click outside
-// dismisses it for good ("gto-welcome": "seen"); its choices open what the menu and header open, nothing else.
-const welcomeBox = document.getElementById("welcome");
-function welcomeDone() { welcomeBox.hidden = true; WELCOME = "seen"; try { localStorage.setItem("gto-welcome", "seen"); } catch (e) {} }
-const WELCOME_GO = {
-  welcomeReview: () => {
-    toast("Pick your seat and cards in the setup panel, then enter the hand you played, seat by seat. When it's finished, review it.", null, 9000);
-  },
-  welcomeStart: () => helpOpen("start"), welcomeAbout: () => helpOpen("about"), welcomeFair: () => helpOpen("fairplay"),
-  welcomeClose: () => {},
-};
-for (const [id, go] of Object.entries(WELCOME_GO)) document.getElementById(id).onclick = () => { welcomeDone(); return go(); };
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !welcomeBox.hidden) welcomeDone(); });
-document.addEventListener("click", (e) => { if (!welcomeBox.hidden && welcomeBox.contains && !welcomeBox.contains(e.target)) { e.stopPropagation(); e.preventDefault(); welcomeDone(); } }, true);
-welcomeBox.hidden = !(WELCOME === "due" && !isolating && startRoute.view === "solver" && !linkLoaded);
-if (!welcomeBox.hidden) document.getElementById("welcomeReview").focus();
-else if (WELCOME === "due" && !isolating) welcomeDone();   // (a first visit to a view or a link: it came for that)
+applyRoute(parseRoute(location.pathname));
 </script>
 </body>
 </html>
