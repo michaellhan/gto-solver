@@ -622,18 +622,18 @@ const pageStore = window.GTOStore || { getRaw: (k) => { try { return localStorag
 // everything deleted from another tab (Hands' Delete everything this site keeps): what this tab holds goes with it
 if (window.GTOStore) window.GTOStore.onChange((c) => { if (c.wiped && c.remote) location.reload(); });
 const WORKER_VERSION = "14";   // scripts/deploy.sh replaces this with a hash of worker.js
-const HP_VERSION = "1";        // and this with a hash of help.js (About and Fair play)
+const HP_VERSION = "1";        // and this with a hash of help.js (About)
 const HN_VERSION = "1";        // and hands.js (Hands, loaded the first time it opens; store.js, loaded with the page, has ?v= of its own)
 // where the precomputed libraries are (flop_library/: the local server's, gto/static/flop_library); scripts/deploy.sh
 // points it at their own site, ../gto-solver-library/ (scripts/deploy_library.sh). The worker is told it in its URL
 // (relative: worker.js is in the folder the page's URLs resolve against).
 const LIB_BASE = "flop_library/";
-// ---- the views' URLs: the solver is the root (/gto-solver/), the others /hands/, /about/ and /fairplay/ under it.
+// ---- the views' URLs: the solver is the root (/gto-solver/), the others /hands/ and /about/ under it.
 // The static site has no rewrites: each URL is a copy of this page with a <base href="../"> that points its relative URLs at the root.
 // gto/routes.py reads these two lines (SPOT_ROUTES: the views with a /<spot>/ level, none now; scripts/deploy.sh writes the copies,
 // gto/server.py serves them). Opening a view pushes its URL and closing it pushes the solver's;
 // back and forward switch views; a view's URL opened directly opens it (applyRoute, at the end).
-const ROUTES = { hands: "Hands", about: "About", fairplay: "Fair play" };
+const ROUTES = { hands: "Hands", about: "About" };
 const SPOT_ROUTES = [];
 const ROUTE_RE = new RegExp(`^(.*?/)(?:(${Object.keys(ROUTES).join("|")})/?)?(?:index\\.html)?$`);
 function parseRoute(pathname) {   // -> { root: the solver's path, view: "solver" or a ROUTES key }
@@ -2166,13 +2166,8 @@ function openView(name) {   // the header's views
   if (overlay) VIEWS[overlay].close();
   return showOverlay(name, true);
 }
-// ---- About and Fair play (help.js, loaded the first time one opens): one overlay, each page its own URL. A link from
-// one to the other moves the URL without closing the overlay (viewSwitch).
-const HELP_PAGES = ["about", "fairplay"];
-const loadHelp = () => loadJs("help.js?v=" + HP_VERSION, () => window.Help);
-for (const page of HELP_PAGES)
-  VIEWS[page] = { open: () => loadHelp().then(() => window.Help.open(page)), close: () => window.Help && window.Help.close(), err: "Couldn't load this page: " };
-window.viewSwitch = (name) => { if (!VIEWS[name] || overlay === name) return; overlay = name; syncRoute(); };
+// ---- About (help.js, loaded the first time it opens)
+VIEWS.about = { open: () => loadJs("help.js?v=" + HP_VERSION, () => window.Help).then(() => window.Help.open()), close: () => window.Help && window.Help.close(), err: "Couldn't load this page: " };
 document.getElementById("helpAbout").onclick = () => openView("about");
 // ---- the on-screen keyboard: iOS Safari (and Chrome on Android) shrink only the visual viewport, so the dock, stuck to the
 // bottom of the layout viewport, sat under the keyboard while another amount was typed. --kb lifts it by the part of the

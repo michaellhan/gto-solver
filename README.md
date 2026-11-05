@@ -53,10 +53,10 @@ on the website and the local server alike:
 | --- | --- |
 | `/gto-solver/` | the solver; a share link `/gto-solver/#h=…` opens its spot here |
 | `/gto-solver/hands/` | Hands |
-| `/gto-solver/about/`, `/fairplay/` | About, Fair play |
+| `/gto-solver/about/` | About |
 
 (locally without the `/gto-solver` prefix: http://127.0.0.1:18877/hands/). The header has Hands, About
-and a link to Lizard (/lizard/); Fair play is reached from About. Opening a view pushes its URL
+and a link to Lizard (/lizard/). Opening a view pushes its URL
 and closing it goes back to the solver's; the browser's
 back and forward buttons switch views, and the tab's title names the view ("Hands · GTO Solver"). A URL opened directly opens its view. The list is `ROUTES` in
 `gto/static/index.html`; `gto/routes.py` reads it, and since GitHub Pages has no rewrites `scripts/deploy.sh`
@@ -129,7 +129,7 @@ shared or reloaded hand comes back as it was left: unfinished with no advice, fi
 with a toast saying what it needs. A share link keeps `finished` and `reviewed` as they are. `Advisor.presolve` and the worker's `presolve` request stay for `scripts/bench_browser.mjs --presolve`, unused by the page.
 
 These are limits on what the page offers, enforced in the page: a made-up action, or a link edited to say `finished`,
-gets a review of that decision. The rule against use during a hand is in Fair play and the terms.
+gets a review of that decision. The rule against use during a hand is in the terms.
 
 **Your equity.** A reviewed hand you were still in when the betting closed (a street checked through or called with the
 next card not entered, everyone all-in, or the river's showdown) also shows **your equity** against the ranges that took
@@ -184,9 +184,9 @@ the same in a word or two, once the answer has been seen in that page: the sourc
 grades it and ends on the hand review; it shows "decision 2 of 5" while it
 runs and can be cancelled, keeping the grades so far.
 
-**About** and **Fair play** are `gto/static/help.js`, one overlay loaded when first opened (`HP_VERSION`, stamped by
-deploy.sh): what the page is, how accurate it is, what stays on your device and where the rest went, in plain words;
-and what the tool is for (not for use during a hand, online or live). The thresholds About quotes are the code's:
+**About** is `gto/static/help.js`, an overlay loaded when first opened (`HP_VERSION`, stamped by
+deploy.sh): what the page is, how accurate it is, what stays on your device and where the rest went, in plain words.
+The thresholds About quotes are the code's:
 tests/js/help.test.js checks them against `convergence()`, `gradeClass` and `HEUR_OK`/`HEUR_MEH`.
 
 **Hands** (`/gto-solver/hands/`) keeps the hands you play on the table, in this browser. The hand

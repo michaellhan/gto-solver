@@ -1,17 +1,12 @@
-// About and Fair play (the header's About; /about/ and /fairplay/): one overlay, each page linking to the other. Loaded
-// the first time one opens. Every number here comes from the README's measurements or the commit messages (git log);
-// change them there first. The page provides window.viewSwitch(page) to move the URL when a link is followed.
+// About (the header's About; /about/): an overlay, loaded the first time it opens. Every number here comes from the
+// README's measurements or the commit messages (git log); change them there first.
 (function () {
   "use strict";
-  const PAGES = [["about", "About"], ["fairplay", "Fair play"]];
-  const to = (page, label) => `<button class="link" data-page="${page}">${label}</button>`;
-
-  // ---- About: what it is, how accurate, what stays on your device, where the rest went
+  // what it is, how accurate, what stays on your device, where the rest went
   function aboutHtml() {
     return `<p class="hp-lead">GTO Solver reviews no-limit hold'em hands you've already played, 2 to 9 players, preflop
       to river. Enter a hand, finish it, and the solver shows what game theory does at each decision you made and what your
-      play cost. It's for reviewing hands after you've played them, not for use during a hand
-      (${to("fairplay", "Fair play")}).</p>
+      play cost. It's for reviewing hands after you've played them.</p>
     <h3>How accurate it is</h3>
     <p>A solve is measured by its exploitability: how much a perfect opponent who knew the whole strategy could win
       against it, in percent of the pot. Each answer's source line gives it: under 3% is close to a full solver, and above that
@@ -54,29 +49,6 @@
       on in <a href="/lizard/">Lizard</a>.</p>`;
   }
 
-  // ---- Fair play
-  function fairplayHtml() {
-    return `<p class="hp-lead">GTO Solver is a study and review tool. Use it away from the table, after a session, to
-      review. Do not use it during a hand you are playing, online or live.</p>
-    <ul>
-      <li><b>Online:</b> almost every poker site bans real-time assistance (solvers, charts or advice tools consulted
-        while you are in a hand) and can close your account and keep your balance for it. Their terms apply to you, not
-        to this site.</li>
-      <li><b>Live:</b> casinos and card rooms treat outside help during a hand as cheating too.</li>
-      <li><b>By design</b> the tool reads only what you enter. There is no screen capture, table reading or connection
-        to any poker client, and there won't be.</li>
-      <li><b>A hand you enter gets no advice until it's finished.</b> The page records your decisions and reviews the
-        ones you made after the hand is over. That is a limit on what the page offers, not a promise it can tell when or
-        where you're playing, so the rule above is still yours to keep.</li>
-    </ul>
-    <p>If you are unsure what a site allows, read its terms on third-party tools; when in doubt, close the solver
-      while you play. ${to("about", "Back to About")}</p>`;
-  }
-
-  const BUILD = { about: aboutHtml, fairplay: fairplayHtml };
-  const isPage = (p) => Object.prototype.hasOwnProperty.call(BUILD, p);
-  function pageHtml(page) { return BUILD[isPage(page) ? page : "about"](); }
-
   const CSS = `
   .hp { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,.55); display: flex; justify-content: center; align-items: flex-start; padding: 28px 16px 16px; }
   .hp-card { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: var(--r); width: min(820px, 100%); max-height: calc(100dvh - 44px); display: flex; flex-direction: column; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
@@ -91,7 +63,6 @@
   .hp-body li { margin: 4px 0; }
   .hp-body a { color: var(--text); }
   .hp-lead { color: var(--text) !important; margin-top: 12px; }
-  .hp-body button.link { color: var(--text); font-size: inherit; }
   .hp-scroll { overflow-x: auto; }
   .hp-t { border-collapse: collapse; font-size: 13px; margin: 6px 0; width: 100%; }
   .hp-t th, .hp-t td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
@@ -101,21 +72,8 @@
     .hp-card { max-height: 100dvh; height: 100dvh; border-radius: 0; border: 0; width: 100%; }
   }`;
 
-  let box = null, shown = null;
-  function render(page) {
-    shown = isPage(page) ? page : "about";
-    const title = PAGES.find(([p]) => p === shown)[1];
-    box.querySelector(".hp-title").textContent = title;
-    box.setAttribute("aria-label", title);
-    const body = box.querySelector(".hp-body");
-    body.innerHTML = pageHtml(shown); body.scrollTop = 0;
-  }
-  // a link followed: its page, and the URL moved without closing (index.html's viewSwitch)
-  function show(page) {
-    if (!box || box.hidden) return open(page);
-    if (page !== shown) { render(page); if (globalThis.viewSwitch) globalThis.viewSwitch(shown); }
-  }
-  function open(page) {
+  let box = null;
+  function open() {
     if (!document.getElementById("hpStyle")) {
       const s = document.createElement("style"); s.id = "hpStyle"; s.textContent = CSS; document.head.appendChild(s);
     }
@@ -124,13 +82,7 @@
       box.setAttribute("aria-modal", "true");
       box.innerHTML = `<div class="hp-card" tabindex="-1"><div class="hp-head"><b class="hp-title"></b><button class="ghost hp-x" data-close aria-label="Close">✕</button></div><div class="hp-body"></div></div>`;
       document.body.appendChild(box);
-      box.addEventListener("click", (e) => {
-        if (e.target === box) return close();
-        const b = e.target.closest("[data-close],[data-page]");
-        if (!b) return;
-        if ("close" in b.dataset) return close();
-        show(b.dataset.page);
-      });
+      box.addEventListener("click", (e) => { if (e.target === box || e.target.closest("[data-close]")) close(); });
       // the page's own shortcuts (N, card keys, action keys) don't see keys pressed in here
       box.addEventListener("keydown", (e) => {
         e.stopPropagation();
@@ -138,16 +90,19 @@
       });
     }
     box.hidden = false;
-    render(page);
+    box.querySelector(".hp-title").textContent = "About";
+    box.setAttribute("aria-label", "About");
+    const body = box.querySelector(".hp-body");
+    body.innerHTML = aboutHtml(); body.scrollTop = 0;
     box.querySelector(".hp-card").focus({ preventScroll: true });
   }
   function close() {
     if (!box || box.hidden) return;
     box.hidden = true;
     const a = document.getElementById("helpAbout"); if (a) a.focus();
-    if (globalThis.viewClosed) globalThis.viewClosed(shown);
+    if (globalThis.viewClosed) globalThis.viewClosed("about");
   }
 
-  const api = { PAGES, pageHtml, aboutHtml, fairplayHtml, open, show, close, get shown() { return box && !box.hidden ? shown : null; } };
+  const api = { aboutHtml, open, close };
   if (typeof module === "object" && module.exports) module.exports = api; else globalThis.Help = api;
 })();
