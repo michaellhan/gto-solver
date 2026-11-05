@@ -79,8 +79,7 @@ test("the banner shows what is sent: mid-hand too, and not what has no effect", 
   const p = loadPage();
   await p.ready();
   p.S = played({ locks: { BB: LOCK } });
-  assert.equal(p.run('document.body.classList.contains("unfinished")'), true);
-  assert.match(banner(p).innerHTML, /BB locked/);                  // (ADV_TEXT hides a lock on an unfinished hand)
+  assert.match(banner(p).innerHTML, /BB locked/);
   for (const o of [{ locks: { BTN: LOCK } }, { ranges: { BTN: "AA" } }, { payouts: [100] }, { bounty: { fmt: "ko" } }]) {
     p.S = played(o);
     assert.equal(banner(p).hidden, true, JSON.stringify(o));

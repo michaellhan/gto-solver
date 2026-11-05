@@ -1,66 +1,46 @@
-// The setup's Advanced disclosure: custom postflop bet sizes (S.sizes, % of the pot), ranges entering the flop
-// by seat (S.ranges) and size optimization (S.optSizes); sent as sizes / ranges / optimize_sizes from the flop
-// on, kept with the hand and by share links, and the villain's range grid in the advice's Details.
+// What a saved hand may hold of the Advanced settings, which have no control now: custom postflop bet sizes (S.sizes, %
+// of the pot), ranges entering the flop by seat (S.ranges) and size optimization (S.optSizes), sent as sizes / ranges /
+// optimize_sizes from the flop on, kept with the hand and by share links; locks; the villain's range grid in the advice's
+// Details and the answer's badges.
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { loadPage, state, acts } = require("./page.js");
+const { loadPage, state, acts, HTML_PATH } = require("./page.js");
 
 const j = (x) => JSON.parse(JSON.stringify(x));
 const FLOP = { cards: ["Ah", "Kh", "Kd", "7s", "2c"], preflop: acts("UTG f, HJ f, CO f, BTN r2.5, SB f, BB c"), flop: acts("BB x") };
 const ADV = { sizes: { flop: [33, 125], raise: [60] }, ranges: { BB: "22+,A2s+,KTo+" }, optSizes: true };
-const rangeBoxes = (p) => [...p.byId("rangeIns").walk()].filter(e => e.tagName === "INPUT");
 
-test("unset by default: nothing sent, empty boxes", async () => {
+test("unset by default: nothing sent, and no control offers them", async () => {
   const p = loadPage();
   await p.ready();
   p.S = state(FLOP);
-  for (const k of ["sizes", "ranges", "optimize_sizes"]) assert.equal(k in p.payload(), false, k);
-  assert.equal(p.byId("sz_flop").value, "");
-  assert.equal(p.byId("optSizes").checked, false);
-  assert.deepEqual(rangeBoxes(p).map(i => i.dataset.p), ["UTG", "HJ", "CO", "SB", "BB"]);   // everyone but you
-  assert.equal(p.byId("adv").open, false);
+  for (const k of ["sizes", "ranges", "optimize_sizes", "locks"]) assert.equal(k in p.payload(), false, k);
+  const html = fs.readFileSync(HTML_PATH, "utf8");
+  for (const id of ['adv"', "sz_", "optSizes", "rangeIns", "lockIns", "payouts", "bountyFmt"]) assert.doesNotMatch(html, new RegExp(`id="${id}`), id);
 });
 
-test("the inputs set the state and the payload; sent from the flop on only", async () => {
+test("a hand that has them sends them, from the flop on only", async () => {
   const p = loadPage();
   await p.ready();
-  p.S = state(FLOP);
-  p.byId("sz_flop").onchange({ target: { value: "33, 125% 33 7000 x" } });   // duplicates, junk and > 500% dropped
-  p.byId("sz_raise").onchange({ target: { value: "60" } });
-  p.byId("sz_turn").onchange({ target: { value: "10 20 30 40" } });          // at most 3
-  p.byId("optSizes").onchange({ target: { checked: true } });
-  rangeBoxes(p).find(i => i.dataset.p === "BB").onchange({ target: { value: " 22+,A2s+,KTo+ " } });
-  assert.deepEqual(j(p.S.sizes), { flop: [33, 125], turn: [10, 20, 30], raise: [60] });
-  assert.deepEqual(p.payload().sizes, { flop: [33, 125], turn: [10, 20, 30], raise: [60] });
-  assert.deepEqual(p.payload().ranges, { BB: "22+,A2s+,KTo+" });
+  p.S = { ...state(FLOP), ...ADV };
+  assert.deepEqual(j(p.payload().sizes), ADV.sizes);
+  assert.deepEqual(j(p.payload().ranges), ADV.ranges);
   assert.equal(p.payload().optimize_sizes, true);
   assert.equal(JSON.parse(p.storage.get("handreview")).optSizes, true);   // saved with the hand
-  assert.equal(p.byId("sz_flop").value, "33 125");
-  assert.equal(rangeBoxes(p).find(i => i.dataset.p === "BB").value, "22+,A2s+,KTo+");
-  // clearing a box goes back to the default
-  p.byId("sz_turn").onchange({ target: { value: "" } });
-  p.byId("optSizes").onchange({ target: { checked: false } });
-  assert.deepEqual(j(p.S.sizes), { flop: [33, 125], raise: [60] });
-  assert.equal("optSizes" in p.S, false);
-  assert.equal("optimize_sizes" in p.payload(), false);
   // preflop the solve doesn't use them, so they aren't sent (the preflop advice and its cache stay the same)
   p.S = { ...state({ cards: ["Ah", "Kh"] }), ...ADV };
   for (const k of ["sizes", "ranges", "optimize_sizes"]) assert.equal(k in p.payload(), false, k);
-  // your own seat's range isn't sent (its box hides while you sit there)
+  // your own seat's range isn't sent
   p.S = { ...state(FLOP), ranges: { BTN: "AA", BB: "KK" } };
-  assert.deepEqual(p.payload().ranges, { BB: "KK" });
+  assert.deepEqual(j(p.payload().ranges), { BB: "KK" });
 });
 
-test("a change drops the shown advice; neither a new hand nor a change of players keeps these", async () => {
+test("neither a new hand nor a change of players keeps these", async () => {
   const p = loadPage();
   await p.ready();
-  p.S = state(FLOP);
-  p.byId("result").className = "advice"; p.byId("result").innerHTML = "old advice";
-  p.byId("sz_flop").onchange({ target: { value: "50" } });
-  assert.equal(p.byId("result").className, "empty");
   p.S = { ...state({ ...FLOP, hero: "BB" }), ...ADV, ranges: { UTG1: "AA", BTN: "QQ+" } };
   p.byId("newhand").onclick();
   for (const k of ["sizes", "ranges", "optSizes", "locks"]) assert.equal(k in p.S, false, k);
@@ -69,16 +49,14 @@ test("a change drops the shown advice; neither a new hand nor a change of player
   for (const k of ["sizes", "ranges", "optSizes", "locks"]) assert.equal(k in p.S, false, k);
 });
 
-test("share link round trip, and the summary says so", async () => {
+test("share link round trip, and the line under the setup says so", async () => {
   const a = loadPage();
   a.S = { ...state(FLOP), ...ADV };
     const b = loadPage({ hash: a.run("shareLink()").replace(/^[^#]*/, "") });
   assert.deepEqual(j(b.S), j(a.S));
   await a.ready(); await b.ready();
   assert.deepEqual(b.payload(), a.payload());
-  assert.equal(b.byId("adv").open, true);
-  b.run("editSetup = false; renderAll()");
-  assert.match(b.byId("setupSum").innerHTML, /custom sizes/);
+  assert.match(b.byId("savedSettings").innerHTML, /custom sizes/);
 });
 
 test("bad Advanced fields in a link or storage are dropped", () => {
@@ -152,17 +130,10 @@ test("an answer whose ranges left the solve earlier in the hand is badged off th
   assert.equal(p.val("offSolution({ off_solution: [] })"), false);
 });
 
-test("custom sizes with size optimization: the hint says they compete in its menu, the advice whether they were kept", async () => {
+test("custom sizes with size optimization: the advice says whether they were kept", async () => {
   const p = loadPage();
   await p.ready();
-  p.S = state(FLOP);
-  p.byId("sz_flop").onchange({ target: { value: "40 120" } });
-  assert.equal(p.byId("optSizesHint").hidden, true);   // (no optimization)
-  p.byId("optSizes").onchange({ target: { checked: true } });
-  assert.equal(p.byId("optSizesHint").hidden, false);
-  p.byId("sz_flop").onchange({ target: { value: "" } });
-  p.byId("sz_raise").onchange({ target: { value: "60" } });
-  assert.equal(p.byId("optSizesHint").hidden, true);   // (a raise size isn't a street's bet menu)
+  p.S = { ...state(FLOP), sizes: { flop: [40, 120] }, optSizes: true };
   const res = { street: "flop", recommended: "check", size_usage: { check: 0.2, "33%": 0.5, "40%": 0.3 }, sizes_kept: ["33%", "40%"], sizes_custom: ["40%", "120%"],
     actions: [{ action: "check", freq: 1, ev_bb: 1 }] };
   p.ctx.__res = JSON.stringify(res);
@@ -181,38 +152,14 @@ test("the advisor reads the Advanced keys the page sends", () => {
 
 // Locks (S.locks, sent as "locks"): an opponent's tendencies, re-priced against preflop and best-responded to after the
 // flop (gto/exploit.py)
-const lockRow = (p, seat) => [...p.byId("lockIns").children].find(r => r.children[0].dataset.p === seat);
-const lockSel = (p, seat) => lockRow(p, seat).children[0];
-const lockBox = (p, seat, k) => [...lockRow(p, seat).walk()].find(e => e.tagName === "INPUT" && e.dataset.k === k);
-
-test("locks: a profile per opponent, sent preflop and after, and its numbers editable", async () => {
+test("locks: sent preflop and after, not your own seat's", async () => {
   const p = loadPage();
   await p.ready();
-  p.S = { ...state(FLOP), finished: true };   // (locks are for a finished hand's review)
-  p.run("renderAll()");
-  assert.equal("locks" in p.payload(), false);
-  assert.deepEqual([...p.byId("lockIns").children].map(r => r.children[0].dataset.p), ["UTG", "HJ", "CO", "SB", "BB"]);
-  assert.equal(lockSel(p, "BB").value, "");
-  assert.equal(lockBox(p, "BB", "fold"), undefined);       // GTO: no inputs
-  lockSel(p, "BB").onchange({ target: { value: "station" } });
-  assert.deepEqual(j(p.S.locks), { BB: { fold: -20, bluff: -50, raise: -50 } });
+  p.S = { ...state(FLOP), locks: { BB: { fold: -20, bluff: -50, raise: -50 } } };
   assert.deepEqual(j(p.payload().locks), { BB: { fold: -20, bluff: -50, raise: -50 } });
-  assert.equal(lockSel(p, "BB").value, "station");
-  assert.match(p.run("ADV_TEXT()"), /BB locked \(calling station\)/);
-  // a number edited: Custom, the rest kept; out of bounds clamped, a cleared box dropped
-  lockBox(p, "BB", "next_fold").onchange({ target: { value: "160" } });
-  lockBox(p, "BB", "raise").onchange({ target: { value: "" } });
-  assert.deepEqual(j(p.S.locks), { BB: { fold: -20, bluff: -50, next_fold: 100 } });
-  assert.equal(lockSel(p, "BB").value, "custom");
-  assert.match(p.run("ADV_TEXT()"), /BB locked \(fold -20, bluff -50, next fold 100%\)/);
-  // Custom from GTO shows the inputs without locking anything yet
-  lockSel(p, "SB").onchange({ target: { value: "custom" } });
-  assert.equal("SB" in p.S.locks, false);
-  lockBox(p, "SB", "bet").onchange({ target: { value: "40" } });
-  assert.deepEqual(j(p.S.locks.SB), { bet: 40 });
-  // back to GTO: unlocked
-  lockSel(p, "SB").onchange({ target: { value: "" } });
-  assert.deepEqual(Object.keys(p.S.locks), ["BB"]);
+  assert.match(p.byId("savedSettings").innerHTML, /BB locked \(calling station\)/);
+  p.S = { ...state(FLOP), locks: { BB: { fold: -20, bluff: -50, next_fold: 100 } } };
+  assert.match(p.byId("savedSettings").innerHTML, /BB locked \(fold -20, bluff -50, next fold 100%\)/);
   // preflop the locks are sent too (they act there), the other Advanced fields aren't; your own seat's lock never is
   p.S = { ...state({ cards: ["Ah", "Kh"] }), locks: { BB: { fold: 10 } }, sizes: { flop: [50] } };
   assert.deepEqual(j(p.payload().locks), { BB: { fold: 10 } });
@@ -221,20 +168,19 @@ test("locks: a profile per opponent, sent preflop and after, and its numbers edi
   assert.deepEqual(j(p.payload().locks), { BB: { bet: -20 } });
 });
 
-test("locks: share link round trip, and the summary and the advice say so", async () => {
+test("locks: share link round trip, and the line under the setup and the advice say so", async () => {
   const a = loadPage();
   a.S = { ...state(FLOP), finished: true, locks: { BB: { fold: 15 }, SB: { fold: 5, next_bet: 0 } } };
     const b = loadPage({ hash: a.run("shareLink()").replace(/^[^#]*/, "") });
   assert.deepEqual(j(b.S), j(a.S));
   await a.ready(); await b.ready();
   assert.deepEqual(b.payload(), a.payload());
-  assert.equal(b.byId("adv").open, true);
-  b.run("editSetup = false; renderAll()");
-  assert.match(b.byId("setupSum").innerHTML, /BB locked \(overfolds to bets\)/);
+  assert.match(b.byId("savedSettings").innerHTML, /BB locked \(overfolds to bets\)/);
   b.ctx.__res = JSON.stringify({ street: "flop", hero: "BTN", villain: "BB", hand: "AKs", recommended: "bet 75%", locked: { BB: { fold: 15 } },
     actions: [{ action: "check", freq: 0, gto_freq: 0.4, ev_bb: 1 }, { action: "bet 75%", freq: 1, gto_freq: 0.6, ev_bb: 2 }], notes: [] });
   b.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
-  assert.match(b.byId("result").innerHTML, /Against your lock on BB \(overfolds to bets\): the best response/);
+  assert.match(b.byId("result").innerHTML, /Against your lock on BB \(overfolds to bets\): the best response, with GTO's frequency under each \(the equilibrium of this same solve, which starts from the ranges your lock leaves into the flop\)/);
+  assert.match(b.byId("result").innerHTML, /title="GTO plays this 40.0% of the time \(this solve's equilibrium\)"/);
   assert.match(b.byId("result").innerHTML, /GTO 40%/);
 
   // preflop: re-priced against the lock, the chart's mix as GTO %
@@ -258,7 +204,6 @@ test("locks: the page's keys, bounds and presets are the advisor's", () => {
   const py = Object.fromEntries([...block.matchAll(/"(\w+)": \((-?\d+), (-?\d+)\)/g)].map(m => [m[1], [+m[2], +m[3]]]));
   const p = loadPage();
   assert.deepEqual(j(p.run("LOCK_KEYS")), py);
-  for (const [k] of p.run("LOCK_INPUTS")) assert.ok(k in py, k);
   const pre = src.slice(src.indexOf("LOCK_PRESETS = {"), src.indexOf("LOCK_WORDS"));
   for (const [k, [, v]] of Object.entries(p.run("LOCK_PRESETS")))
     assert.ok(pre.includes(`"${k}": ${JSON.stringify(v).replace(/"(\w+)":/g, '"$1": ').replace(/,/g, ", ")}`), k);

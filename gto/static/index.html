@@ -14,7 +14,7 @@
     /* bet/raise sizes, smallest to largest: light to dark so neighbours stay distinct */
     --agg0: #f4a261; --agg1: #e0603a; --agg2: #b3302a; --agg3: #7a1a3a;
     --good: #6bd394; --meh: #f5b942; --bad: #f28b82;
-    --red: #d3232a; --blue: #1f5fd1; --green: #1c8a3c;
+    --red: #d3232a;
     --felt-h: clamp(190px, 32vh, 270px);
     --left: 500px;
     --r: 10px;
@@ -59,15 +59,6 @@
   input[type=checkbox]:hover { border-color: var(--muted); }
   input[type=checkbox]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   #rakeCustom input { width: 60px; }
-  /* Advanced: custom sizes, ranges, size optimization (the global details margin is for the advice's) */
-  #adv { margin: 0 0 8px; } #adv .row { margin-top: 6px; }
-  #adv input[type=text] { padding: 4px 6px; font-size: 12px; width: 64px; }
-  #adv .advh { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); margin-top: 12px; }
-  #adv .who { width: 52px; flex: none; }
-  #lockIns > div { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; width: 100%; font-size: 12px; }
-  #lockIns .who { order: -1; }
-  #lockIns select { padding: 3px 22px 3px 6px; font-size: 12px; background-position: right 7px center; } #lockIns input[type=text] { width: 48px; }
-  #rangeIns label { display: flex; gap: 8px; align-items: center; width: 100%; font-size: 12px; } #rangeIns input[type=text] { flex: 1; min-width: 0; }
   input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
   /* keyboard focus (Tab); a click or tap shows none */
   button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -95,8 +86,6 @@
   .anteg { display: inline-flex; gap: 8px; align-items: center; margin-left: 12px; flex: 1; }
   .anteg > .muted:first-child { font-size: 12px; }
   #straddleBox { display: inline-flex; align-items: center; gap: 4px; }
-  #bountyBox input, #mysteryBox input { width: 64px; } #fieldBox { flex-wrap: wrap; }
-  #bountySeatIns { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 4px 8px; flex: 1; } #bountySeatIns label { font-size: 12px; white-space: nowrap; display: flex; gap: 4px; align-items: center; justify-content: flex-end; } #bountySeatIns input { width: 62px; padding-left: 6px; padding-right: 4px; }
   #seatStackIns { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 4px 8px; flex: 1; } #seatStackIns label { font-size: 12px; white-space: nowrap; display: flex; gap: 4px; align-items: center; justify-content: flex-end; } #seatStackIns input { width: 62px; padding-left: 6px; padding-right: 4px; }
   .seat .stk { font-weight: 400; font-size: 10px; color: var(--muted); margin-left: 3px; }
   .felt .side { font-size: 11px; color: #b7c9bc; font-variant-numeric: tabular-nums; }
@@ -192,7 +181,6 @@
   .custom.open { display: flex; }
   .err { color: var(--bad); font-size: 12px; }
   .err:empty { display: none; }
-  body.unfinished .nofin { display: none !important; }   /* offered once a hand is finished: renderAll */
   /* the dealer button on its seat */
   .seat .dbtn { position: absolute; right: -7px; bottom: -7px; width: 18px; height: 18px; border-radius: 50%; background: #f5f5f0; color: #111; font-size: 10px; font-weight: 800; line-height: 18px; box-shadow: 0 1px 3px rgba(0,0,0,.5); transition: none; }
 
@@ -358,7 +346,7 @@
   }
   @media (pointer: coarse) {
     button:not(.link), select, input[type=number], input[type=text] { min-height: 40px; }
-    input[type=number], select, input[type=text], #lockIns select { font-size: 16px; }
+    input[type=number], select, input[type=text] { font-size: 16px; }
     .acts button { min-height: 44px; }
     .pc { height: 38px; }
     .panel h2[data-fold] { min-height: 40px; margin-top: -10px; }
@@ -425,46 +413,6 @@
             <input type="number" id="rakeCap" min="0" step="0.5" title="Most rake per pot, in big blinds (0 = no cap)"><span class="muted" id="rakeCapUnit">bb</span>
           </span>
         </div>
-        <div class="row setuprow" title="A tournament: the prizes still to be paid, first place first, in any unit (50 30 20). The advice is then in prize equity (ICM): calls and raises that risk your stack need more equity, push/fold and the postflop solves (heads-up, 3- and 4-way) pay prizes, not chips. Give each seat's stack with per seat…; players at other tables count too. Empty: a cash game.">
-          <span class="muted">Payouts</span>
-          <input type="text" id="payouts" placeholder="cash game" style="width:130px">
-          <span class="row" id="fieldBox" hidden><span class="muted">+</span>
-            <input type="number" id="fieldN" min="0" step="1" style="width:56px" title="Players left at other tables"><span class="muted">others, avg</span>
-            <input type="number" id="fieldAvg" min="0" step="1" style="width:56px" title="Their average stack, in big blinds"><span class="muted">bb</span>
-            <span class="row" id="fieldBountyBox" hidden><span class="muted">bounty</span>
-            <input type="number" id="fieldBounty" min="0" step="any" style="width:56px" title="Their average bounty, in the payouts' units (empty: the table's average)"></span>
-          </span>
-        </div>
-        <div class="row setuprow" title="A bounty tournament: KO pays a player's whole bounty to whoever busts them, PKO half of it at once (the other half goes on the winner's own head), a mystery bounty an envelope from the pool. In the payouts' units; only a player who covers another can bust them. Each player owns their chip share of the bounties in play (the proportional model), so calls and shoves widen against players you cover with a bounty. No payouts: chips are chip EV, the prizes left taken as equal to the bounties in play.">
-          <span class="muted">Bounties</span>
-          <select id="bountyFmt" title="The bounty format">
-            <option value="off">off</option><option value="ko">KO</option><option value="pko">PKO</option><option value="mystery">mystery</option>
-          </select>
-          <span class="row" id="bountyBox" hidden>
-            <input type="number" id="bountyAll" min="0" step="any" title="Every seat's bounty, in the payouts' units (per seat… to give some their own)"><span class="muted">each</span>
-            <button class="link" id="bountySeatsEdit" title="Give some seats a different bounty">per seat…</button>
-          </span>
-          <span class="row" id="mysteryBox" hidden>
-            <input type="number" id="bountyEnv" min="0" step="any" title="The average envelope left, in the payouts' units"><span class="muted">avg envelope, or pool</span>
-            <input type="number" id="bountyPool" min="0" step="any" title="The money left in envelopes (with the bounties left: pool / left is the average envelope)"><span class="muted">/</span>
-            <input type="number" id="bountyLeft" min="0" step="1" title="Bounties (envelopes) left to be drawn"><span class="muted">left</span>
-          </span>
-        </div>
-        <div class="row setuprow seatstacks" id="bountySeats" hidden title="Each seat's bounty in the payouts' units (the others have the table's)">
-          <span class="muted">Per seat</span><span class="row" id="bountySeatIns"></span>
-          <button class="link" id="bountySame">all equal</button>
-        </div>
-        <details id="adv"><summary>Advanced</summary>
-          <div class="advh">Postflop bet sizes, % of the pot</div>
-          <div class="row muted" title="Postflop bet sizes in % of the pot, up to 3 a street (e.g. 33 75); raises are % of the pot after calling. Empty: the solver's own. Fewer sizes solve faster.">
-            <label>flop <input type="text" id="sz_flop" placeholder="auto"></label><label>turn <input type="text" id="sz_turn" placeholder="auto"></label>
-            <label>river <input type="text" id="sz_river" placeholder="auto"></label><label>raise <input type="text" id="sz_raise" placeholder="auto"></label></div>
-          <label class="row muted" title="Heads-up, when you can bet: a first solve over 25-200% of the pot (a third of the time) keeps the sizes the equilibrium uses, and the advice is solved with those. Custom sizes for that street join the menu: kept only if that solve uses them. Best on Accurate."><input type="checkbox" id="optSizes"> Optimize bet sizes <span id="optSizesHint" class="muted" hidden>(your sizes compete in its menu)</span></label>
-          <div class="advh">Ranges into the flop</div>
-          <div class="row" id="rangeIns" title="Ranges entering the flop, PIO style (22+, A2s+, KTo+, QJo:0.5). Empty: the preflop charts' range for the action."></div>
-          <div class="advh nofin">Opponent tendencies (preflop, and heads-up postflop)</div>
-          <div class="row nofin" id="lockIns" title="Tell the solver how an opponent plays, and the advice becomes the best counter to it (nodelocking), with GTO's frequencies alongside. It works preflop (their opens, 3bets, calls and folds; your line is re-priced against them) and heads-up after the flop, on top of GTO or of the pool (Opponents: Pool). fold: how many percentage points more of their range folds to a bet or raise (negative: they call more). bluff, bet, raise: how much more or less often, from -100 (never) to +100 (always); bluff is the bets of their weak hands; preflop, bet means their opens and raise their 3bets and 4bets. next: their fold % to your bet, and their bet % when you check, at their very next decision after the flop."></div>
-        </details>
         <div class="row">
           <span class="muted" style="width:58px;font-size:12px">You are</span>
           <div class="row seats" id="seats"></div>
@@ -608,11 +556,12 @@ const FIELD_N = () => (ICM() || BOUNTY()) && +S.fieldN > 0 ? Math.min(10000, Mat
 const FIELD_AVG = () => FIELD_N() && +S.fieldAvg > 0 ? +S.fieldAvg : 0;
 const ICM_TEXT = () => !TOURNEY() ? "" : [ICM() ? `tournament, payouts ${PAYOUTS().map(fmt).join("/")}` : `tournament${PAYOUTS().length ? `, prize pool ${fmt(PAYOUTS()[0])}` : ""}`, BOUNTY_TEXT()].filter(Boolean).join(", ")
   + (FIELD_N() && FIELD_AVG() ? ` (+${FIELD_N()} at other tables)` : "");
-// Advanced: postflop bet sizes (S.sizes: flop/turn/river/raise -> up to 3 % of the pot), ranges entering the
-// flop by seat (S.ranges: PIO strings) and size optimization (S.optSizes); unset = the default game
+// What a saved hand may hold of the Advanced settings: postflop bet sizes (S.sizes: flop/turn/river/raise -> up to 3 % of
+// the pot), ranges entering the flop by seat (S.ranges: PIO strings) and size optimization (S.optSizes); unset = the
+// default game
 const SIZE_KEYS = ["flop", "turn", "river", "raise"];
 const parseSizes = (v) => [...new Set((Array.isArray(v) ? v : String(v ?? "").split(/[\s,%]+/)).map(parseFloat).filter(x => x > 0 && x <= 500))].slice(0, 3);
-function cleanAdv(st, seats) {   // st's Advanced fields that are valid at a table of these seats
+function cleanAdv(st, seats) {   // st's fields of these that are valid at a table of these seats
   const o = {}, sz = {}, rg = {};
   for (const k of SIZE_KEYS) { const v = parseSizes(st.sizes && typeof st.sizes === "object" && st.sizes[k] || []); if (v.length) sz[k] = v; }
   for (const [p, r] of Object.entries(st.ranges && typeof st.ranges === "object" ? st.ranges : {}))
@@ -626,10 +575,9 @@ function cleanAdv(st, seats) {   // st's Advanced fields that are valid at a tab
   return o;
 }
 // Locks (S.locks: seat -> {fold, bluff, bet, raise, next_fold, next_bet, ...}, numbers): an opponent's tendencies, sent as
-// "locks" (gto/exploit.py LOCK_KEYS has the same keys and bounds); a preset only fills the numbers
+// "locks" (gto/exploit.py LOCK_KEYS has the same keys and bounds); a preset is a name for its numbers
 const LOCK_KEYS = { fold: [-100, 100], fold_flop: [-100, 100], fold_turn: [-100, 100], fold_river: [-100, 100], bluff: [-100, 100],
   bet: [-100, 100], raise: [-100, 100], next_fold: [0, 100], next_raise: [0, 100], next_bet: [0, 100] };
-const LOCK_INPUTS = [["fold", "fold ±"], ["bluff", "bluff ±%"], ["bet", "bet ±%"], ["raise", "raise ±%"], ["next_fold", "next: fold %"], ["next_bet", "bet %"]];
 const LOCK_PRESETS = { station: ["Calling station", { fold: -20, bluff: -50, raise: -50 }], nit: ["Nit", { fold: 15, bluff: -60, bet: -25, raise: -30 }],
   maniac: ["Maniac", { fold: -10, bluff: 50, bet: 30, raise: 60 }], overfolder: ["Overfolds to bets", { fold: 15 }] };
 function cleanLock(l) {   // one seat's lock: known keys, numbers within bounds (zero profile values dropped); null if empty
@@ -644,9 +592,7 @@ function cleanLock(l) {   // one seat's lock: known keys, numbers within bounds 
 const lockPreset = (l) => Object.keys(LOCK_PRESETS).find(k => JSON.stringify(cleanLock(LOCK_PRESETS[k][1])) === JSON.stringify(l)) || null;
 const LOCK_TEXT = (l) => { const k = lockPreset(l); return k ? LOCK_PRESETS[k][0].toLowerCase() : Object.entries(l).map(([k, v]) => `${k.replace("_", " ")} ${k.startsWith("next_") ? v + "%" : (v > 0 ? "+" : "") + v}`).join(", "); };
 const OPP_LOCKS = () => { const r = { ...S.locks }; delete r[S.hero]; return Object.keys(r).length ? r : null; };
-const OPP_RANGES = () => { const r = { ...S.ranges }; delete r[S.hero]; return Object.keys(r).length ? r : null; };   // (a seat's box hides while it's yours)
-const ADV_TEXT = () => [S.sizes && "custom sizes", OPP_RANGES() && `custom ${Object.keys(OPP_RANGES()).join("/")} range`, S.optSizes && "optimized sizes",
-  ...(document.body.classList.contains("unfinished") ? [] : Object.entries(OPP_LOCKS() || {}).map(([p, l]) => `${p} locked (${LOCK_TEXT(l)})`))].filter(Boolean).join(", ");
+const OPP_RANGES = () => { const r = { ...S.ranges }; delete r[S.hero]; return Object.keys(r).length ? r : null; };
 const ADV_KEYS = ["sizes", "ranges", "optSizes", "locks"];
 // Removing a control removes the input, not the setting. A hand that has one of these keeps it, payload() goes on sending
 // it and savedHtml() says so, but the next hand doesn't get it: New hand and a new table size are its off switch. (The
@@ -1286,14 +1232,14 @@ function renderSetup() {
   document.body.classList.toggle("setupopen", !!(full && started));
   document.getElementById("setupDone").hidden = !started;
   const sum = document.getElementById("setupSum"); sum.hidden = full;
-  sum.innerHTML = `<span><b>${S.players}-handed</b>${TOURNEY() || S.tournament ? "" : ` <span class="muted">·</span> cash`} ${STAKES() ? ` <span class="muted">·</span> <b>${STAKES_TEXT()}</b>` : ""} <span class="muted">·</span> you are <b>${SEAT_LABEL(S.hero, S.players)}</b> <span class="muted">·</span> <b>${fmt(S.stack)}bb</b>${withUsd(S.stack)} stacks${UNEQUAL() ? ` (${STACKS_TEXT()})` : ""}${ANTE() ? ` <span class="muted">·</span> ${fmt(ANTE())}bb${withUsd(ANTE())} ante` : ""}${STRADDLER() ? ` <span class="muted">·</span> ${SEAT_LABEL(STRADDLER(), S.players)} straddles` : ""}${RAKE() ? ` <span class="muted">·</span> ${RAKE_TEXT()}` : ""}${TOURNEY() ? ` <span class="muted">·</span> ${ICM_TEXT()}` : ""}${ADV_TEXT() ? ` <span class="muted">·</span> ${ADV_TEXT()}` : ""}</span>`;
+  sum.innerHTML = `<span><b>${S.players}-handed</b>${TOURNEY() || S.tournament ? "" : ` <span class="muted">·</span> cash`} ${STAKES() ? ` <span class="muted">·</span> <b>${STAKES_TEXT()}</b>` : ""} <span class="muted">·</span> you are <b>${SEAT_LABEL(S.hero, S.players)}</b> <span class="muted">·</span> <b>${fmt(S.stack)}bb</b>${withUsd(S.stack)} stacks${UNEQUAL() ? ` (${STACKS_TEXT()})` : ""}${ANTE() ? ` <span class="muted">·</span> ${fmt(ANTE())}bb${withUsd(ANTE())} ante` : ""}${STRADDLER() ? ` <span class="muted">·</span> ${SEAT_LABEL(STRADDLER(), S.players)} straddles` : ""}${RAKE() ? ` <span class="muted">·</span> ${RAKE_TEXT()}` : ""}</span>`;
   const e = document.createElement("button"); e.className = "link"; e.style.marginLeft = "auto"; e.textContent = "Edit"; e.onclick = () => { stepStop(); editSetup = true; renderAll(); };
   if (!review) sum.appendChild(e);
 
   const saved = document.getElementById("savedSettings"), line = savedHtml();
   saved.hidden = !line; saved.innerHTML = line;
   document.getElementById("straddleBox").hidden = S.players < 3;
-  syncStakes(); syncAdv(); renderSeatStacks(); syncIcm();
+  syncStakes(); renderSeatStacks();
   const el = document.getElementById("seats"); el.innerHTML = "";
   for (const p of POS) { const b = document.createElement("button"); b.textContent = SEAT_LABEL(p, POS.length); if (p === S.hero) b.classList.add("active");
     b.onclick = () => { S.hero = p; save(); renderAll(); }; el.appendChild(b); }
@@ -1828,7 +1774,6 @@ function renderAll() {
   if (!needCard(sim)) pendingRank = null;
   document.body.classList.toggle("needcard", needCard(sim));
   document.getElementById("pCards").hidden = !needCard(sim);   // the deck shows while a card is needed, or on request
-  document.body.classList.toggle("unfinished", !handDone(sim));   // (Pool and locks: offered once it's finished)
   renderSetup(); renderSlots(sim); renderPicker(sim); renderTable(sim); renderAction(sim); renderTimeline(sim);
   const open = reviewing();   // (no solve or fetch while a hand is being entered)
   if (open) prefetchLibrary();
@@ -2042,118 +1987,6 @@ for (const id of ["stakeSb", "stakeBb"]) document.getElementById(id).onchange = 
   const sb = parseFloat(document.getElementById("stakeSb").value), bb = parseFloat(document.getElementById("stakeBb").value);
   if (sb > 0 && bb > 0 && sb <= bb) setStakes({ sb, bb }); else renderAll();
 };
-// tournament payouts, and the players at other tables (shown once there are payouts)
-// (an input being typed in keeps its text)
-function syncIcm() {
-  setIn("payouts", PAYOUTS().map(fmt).join(" "));
-  const f = BOUNTY_FMT();
-  document.getElementById("fieldBox").hidden = !(ICM() || f);
-  setIn("fieldN", +S.fieldN > 0 ? S.fieldN : "");
-  setIn("fieldAvg", +S.fieldAvg > 0 ? S.fieldAvg : "");
-  // bounties: the format, every seat's (KO, PKO) or the envelopes (mystery), the other tables' average bounty
-  const b = S.bounty || {};
-  document.getElementById("bountyFmt").value = f || "off";
-  document.getElementById("bountyBox").hidden = !(f === "ko" || f === "pko");
-  document.getElementById("mysteryBox").hidden = f !== "mystery";
-  document.getElementById("fieldBountyBox").hidden = !(f === "ko" || f === "pko");
-  setIn("bountyAll", posNum(b.all) ? b.all : ""); setIn("fieldBounty", posNum(b.field) ? b.field : "");
-  setIn("bountyEnv", posNum(b.env) ? b.env : ""); setIn("bountyPool", posNum(b.pool) ? b.pool : ""); setIn("bountyLeft", posNum(b.left) ? b.left : "");
-  renderBountySeats();
-}
-function setIcm(f) {
-  f();
-  const pay = parsePayouts(S.payouts);
-  if (pay.length) S.payouts = pay; else delete S.payouts;
-  const bty = cleanBounty(S, POS); delete S.bounty; Object.assign(S, bty);
-  for (const k of ["fieldN", "fieldAvg"]) if (!(+S[k] > 0) || !(pay.length || bty.bounty)) delete S[k];
-  syncIcm(); save(); resetAdvice(); renderAll();
-}
-// The seats' own bounties (Bounties: "per seat"): a row of boxes, one per seat, as the stacks'
-let bountySeatsOpen = false;
-const BOUNTY_UNEQUAL = () => !!(S.bounty && S.bounty.seats && Object.keys(S.bounty.seats).length);
-function renderBountySeats() {
-  const f = BOUNTY_FMT(), open = (f === "ko" || f === "pko") && (bountySeatsOpen || BOUNTY_UNEQUAL()), box = document.getElementById("bountySeatIns");
-  document.getElementById("bountySeats").hidden = !open; document.getElementById("bountySeatsEdit").hidden = open;
-  document.getElementById("bountySame").textContent = BOUNTY_UNEQUAL() ? "all equal" : "close";
-  if (!open) { box.innerHTML = ""; delete box.dataset.seats; return; }
-  if (box.dataset.seats === POS.join() && box.dataset.vals === POS.map(BOUNTY_OF).join()) return;   // (keep a box being typed in)
-  box.innerHTML = ""; box.dataset.seats = POS.join(); box.dataset.vals = POS.map(BOUNTY_OF).join();
-  for (const p of POS) {
-    const l = document.createElement("label"); l.className = "muted"; l.textContent = SEAT_LABEL(p, S.players) + " ";
-    const i = document.createElement("input"); i.type = "number"; i.min = "0"; i.step = "any"; i.value = fmt(BOUNTY_OF(p)); i.dataset.p = p;
-    i.title = `${SEAT_LABEL(p, S.players)}'s bounty in the payouts' units`;
-    i.onchange = (e) => setIcm(() => {
-      const x = parseFloat(e.target.value), o = { ...(S.bounty.seats || {}) };
-      if (isFinite(x) && x >= 0) o[p] = x; else delete o[p];
-      S.bounty = { ...S.bounty, seats: o };
-    });
-    l.appendChild(i); box.appendChild(l);
-  }
-}
-const setBountyKey = (k, v) => setIcm(() => { S.bounty = { ...(S.bounty || {}), [k]: v }; });
-document.getElementById("bountyFmt").onchange = (e) => setIcm(() => { if (BOUNTY_FMTS[e.target.value]) S.bounty = { ...(S.bounty || {}), fmt: e.target.value }; else delete S.bounty; });
-document.getElementById("bountyAll").onchange = (e) => setBountyKey("all", +e.target.value || 0);
-document.getElementById("fieldBounty").onchange = (e) => setBountyKey("field", +e.target.value || 0);
-document.getElementById("bountyEnv").onchange = (e) => setBountyKey("env", +e.target.value || 0);
-document.getElementById("bountyPool").onchange = (e) => setBountyKey("pool", +e.target.value || 0);
-document.getElementById("bountyLeft").onchange = (e) => setBountyKey("left", Math.floor(+e.target.value || 0));
-document.getElementById("bountySeatsEdit").onclick = () => { bountySeatsOpen = true; renderBountySeats(); };
-document.getElementById("bountySame").onclick = () => { bountySeatsOpen = false; if (BOUNTY_UNEQUAL()) setIcm(() => { delete S.bounty.seats; }); else renderBountySeats(); };
-document.getElementById("payouts").onchange = (e) => setIcm(() => { S.payouts = e.target.value; });
-document.getElementById("fieldN").onchange = (e) => setIcm(() => { S.fieldN = Math.floor(+e.target.value || 0); });
-document.getElementById("fieldAvg").onchange = (e) => setIcm(() => { S.fieldAvg = +e.target.value || 0; });
-syncIcm();
-// Advanced: the inputs show S (renderSetup calls syncAdv); a change is cleaned like a share link's
-function setAdv(f) { f(); const a = cleanAdv(S, POS); for (const k of ADV_KEYS) delete S[k]; Object.assign(S, a); save(); resetAdvice(); renderAll(); }
-function syncAdv() {
-  for (const k of SIZE_KEYS) { const el = document.getElementById("sz_" + k); if (document.activeElement !== el) el.value = (S.sizes && S.sizes[k] || []).join(" "); }
-  document.getElementById("optSizes").checked = !!S.optSizes;
-  // (both set: the optimizer doesn't replace a street's custom sizes, they join its menu)
-  document.getElementById("optSizesHint").hidden = !(S.optSizes && S.sizes && ["flop", "turn", "river"].some(k => S.sizes[k]));
-  syncLocks();
-  const box = document.getElementById("rangeIns"), key = POS.join() + S.hero + JSON.stringify(S.ranges || {});
-  if (box.dataset.k === key) return;   // rebuilt only when it changes, so a box being typed in keeps its focus
-  box.dataset.k = key; box.innerHTML = "";
-  for (const p of POS) if (p !== S.hero) {
-    const l = document.createElement("label"), i = document.createElement("input");
-    i.type = "text"; i.placeholder = "preflop chart"; i.value = S.ranges && S.ranges[p] || ""; i.dataset.p = p;
-    i.onchange = (e) => setAdv(() => { S.ranges = { ...S.ranges, [p]: e.target.value }; });
-    const w = document.createElement("span"); w.className = "who"; w.textContent = SEAT_LABEL(p, POS.length);
-    i.setAttribute("aria-label", `${SEAT_LABEL(p, POS.length)}'s range`);
-    l.append(w, i); box.appendChild(l);
-  }
-}
-// one row per opponent: a profile (GTO, the presets, or Custom) and, once locked, its numbers
-const lockOpen = new Set();   // seats switched to Custom with no numbers yet: their inputs show, nothing is locked
-function syncLocks() {
-  const box = document.getElementById("lockIns"), key = POS.join() + S.hero + JSON.stringify(S.locks || {}) + [...lockOpen];
-  if (box.dataset.k === key) return;
-  box.dataset.k = key; box.innerHTML = "";
-  for (const p of POS) if (p !== S.hero) {
-    const lk = S.locks && S.locks[p] || null, row = document.createElement("div"), sel = document.createElement("select");
-    sel.dataset.p = p;
-    for (const [v, t] of [["", "GTO"], ...Object.entries(LOCK_PRESETS).map(([k, [t]]) => [k, t]), ["custom", "Custom"]]) {
-      const o = document.createElement("option"); o.value = v; o.textContent = t; sel.appendChild(o);
-    }
-    sel.value = lk ? lockPreset(lk) || "custom" : lockOpen.has(p) ? "custom" : "";
-    sel.onchange = (e) => { const v = e.target.value;
-      if (v === "custom") { lockOpen.add(p); syncLocks(); return; }   // (the numbers are kept, now edited)
-      lockOpen.delete(p); setAdv(() => { S.locks = { ...S.locks, [p]: v ? { ...LOCK_PRESETS[v][1] } : null }; }); };
-    const w = document.createElement("span"); w.className = "who"; w.textContent = SEAT_LABEL(p, POS.length);
-    sel.setAttribute("aria-label", `How ${SEAT_LABEL(p, POS.length)} plays`);
-    row.append(sel, w);   // (the label shows first: CSS order)
-    if (lk || lockOpen.has(p)) for (const [k, t] of LOCK_INPUTS) {
-      const l = document.createElement("label"), i = document.createElement("input");
-      i.type = "text"; i.inputMode = "numeric"; i.placeholder = k.startsWith("next_") ? "GTO" : "0"; i.value = lk && lk[k] != null ? lk[k] : ""; i.dataset.p = p; i.dataset.k = k;
-      i.onchange = (e) => setAdv(() => { S.locks = { ...S.locks, [p]: { ...lk, [k]: e.target.value.trim() === "" ? null : parseFloat(e.target.value) } }; });
-      l.append(t + " ", i); row.appendChild(l);
-    }
-    box.appendChild(row);
-  }
-}
-for (const k of SIZE_KEYS) document.getElementById("sz_" + k).onchange = (e) => setAdv(() => { S.sizes = { ...S.sizes, [k]: parseSizes(e.target.value) }; });
-document.getElementById("optSizes").onchange = (e) => setAdv(() => { S.optSizes = e.target.checked; });
-document.getElementById("adv").open = !!(S.sizes || S.ranges || S.optSizes || S.locks);
 document.getElementById("setupDone").onclick = () => { editSetup = false; renderAll(); };
 document.getElementById("editCards").onclick = () => { if (needCard(simulate())) { showDeck = false; selSlot = null; pendingRank = null; } else showDeck = true; renderAll(); };
 

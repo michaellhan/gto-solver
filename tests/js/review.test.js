@@ -293,27 +293,12 @@ test("a review cancelled before any advice leaves the hand open; one cancelled a
   assert.equal(q.val("S.reviewed"), true);
 });
 
-test("Pool and locks aren't offered or in effect until a hand is finished; Randomise and recording off the advice are gone", async () => {
+test("a saved lock goes with a decision's request; Randomise and recording off the advice are gone", async () => {
   const html = fs.readFileSync(HTML_PATH, "utf8");
-  assert.match(html, /<div class="row nofin" id="lockIns"/);
-  assert.match(html, /body\.unfinished \.nofin \{ display: none !important; \}/);
   assert.doesNotMatch(html, /randomise|Randomise/);
   assert.doesNotMatch(html, /data-act=|applyAction/);
   const p = await page();
-  const unfinished = () => p.run('document.body.classList.contains("unfinished")');
-  assert.equal(unfinished(), true);
-  p.S = { ...state(FLOP), locks: { BB: { fold: 15 } } };
-  assert.equal(unfinished(), true);
-  assert.doesNotMatch(p.run("ADV_TEXT()"), /locked/);
-  assert.doesNotMatch(p.byId("setupSum").innerHTML, /locked/);
-  p.run("finishHand()");
-  assert.equal(unfinished(), false);
-  assert.match(p.run("ADV_TEXT()"), /BB locked/);
-  p.run("keepEntering()");
-  assert.equal(unfinished(), true);
-  // a decision looked at: on offer, and its request carries them
   p.spot({ ...state(FLOP), locks: { BB: { fold: 15 } } });
-  assert.equal(unfinished(), false);
   await flush();
   assert.deepEqual(j(p.posted.filter(m => m.state).at(-1).state.locks), { BB: { fold: 15 } });
 });

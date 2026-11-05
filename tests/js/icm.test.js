@@ -1,6 +1,6 @@
-// Tournament settings: the prizes still to be paid (S.payouts) and the players at other tables (S.fieldN of them,
-// S.fieldAvg bb on average), kept in the state, sent to the solver as payouts and field (two prizes or more: the advice
-// is then in prize equity) and carried by share links.
+// What a saved hand may hold of the tournament settings, which have no control now: the prizes still to be paid
+// (S.payouts) and the players at other tables (S.fieldN of them, S.fieldAvg bb on average), kept in the state, sent to the
+// solver as payouts and field (two prizes or more: the advice is then in prize equity) and carried by share links.
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -11,49 +11,29 @@ const { loadPage, state, acts } = require("./page.js");
 const j = (x) => JSON.parse(JSON.stringify(x));
 const PRE = { cards: ["Ah", "Jd"], preflop: acts("UTG f, HJ f, CO f, BTN r2") };
 
-test("no tournament by default: nothing sent, the field hidden", async () => {
+test("no tournament by default: nothing sent", async () => {
   const p = loadPage();
   await p.ready();
   p.S = state(PRE);
   const pl = p.payload();
   assert.equal("payouts" in pl, false);
   assert.equal("field" in pl, false);
-  assert.equal(p.byId("payouts").value, "");
-  assert.equal(p.byId("fieldBox").hidden, true);
 });
 
-test("payouts typed in: sent with two prizes or more, the field once both its numbers are in", async () => {
+test("a hand's payouts: sent with two prizes or more, the field once both its numbers are in", async () => {
   const p = loadPage();
   await p.ready();
-  p.S = state(PRE);
-  p.byId("payouts").onchange({ target: { value: "50, 30 / 20" } });
-  assert.deepEqual(j(p.S.payouts), [50, 30, 20]);
+  p.S = { ...state(PRE), payouts: [50, 30, 20] };
   assert.deepEqual(j(p.payload().payouts), [50, 30, 20]);
-  assert.equal(p.byId("fieldBox").hidden, false);
   assert.equal(JSON.parse(p.storage.get("handreview")).payouts.length, 3);   // saved with the hand
-  p.byId("fieldN").onchange({ target: { value: "12.7" } });
-  assert.equal(p.S.fieldN, 12);
-  assert.equal("field" in p.payload(), false);   // no average stack yet
-  p.byId("fieldAvg").onchange({ target: { value: "35" } });
+  p.S = { ...state(PRE), payouts: [50, 30, 20], fieldN: 12 };
+  assert.equal("field" in p.payload(), false);   // no average stack
+  p.S = { ...state(PRE), payouts: [50, 30, 20], fieldN: 12, fieldAvg: 35 };
   assert.deepEqual(j(p.payload().field), { players: 12, chips: 420 });
-  p.byId("fieldAvg").onchange({ target: { value: "0" } });
-  assert.equal("fieldAvg" in p.S, false);
-  assert.equal("field" in p.payload(), false);
-  // one prize is a cash game's all-or-nothing: not a tournament, nothing sent, the field dropped
-  p.byId("payouts").onchange({ target: { value: "100" } });
+  // one prize is a cash game's all-or-nothing: not a tournament, nothing sent
+  p.S = { ...state(PRE), payouts: [100], fieldN: 12, fieldAvg: 35 };
   assert.equal("payouts" in p.payload(), false);
-  assert.equal(p.byId("fieldBox").hidden, true);
-  p.byId("payouts").onchange({ target: { value: "" } });
-  assert.equal("payouts" in p.S, false); assert.equal("fieldN" in p.S, false);
-});
-
-test("a payouts change drops the shown advice", async () => {
-  const p = loadPage();
-  await p.ready();
-  p.S = state(PRE);
-  p.byId("result").className = "advice"; p.byId("result").innerHTML = "old advice";
-  p.byId("payouts").onchange({ target: { value: "50 30 20" } });
-  assert.equal(p.byId("result").className, "empty");
+  assert.equal("field" in p.payload(), false);
 });
 
 test("the tournament doesn't carry to the next hand: a change of players or a new hand drops it", async () => {

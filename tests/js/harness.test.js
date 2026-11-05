@@ -56,7 +56,6 @@ test("every id gto/static looks up is in the page's markup or RUNTIME_IDS", () =
   const known = new Set([...staticIds(), ...Object.values(RUNTIME_IDS).flat()]);
   for (const [f, src] of sources())
     for (const m of src.matchAll(/getElementById\(\s*["']([^"']+)["']\s*\)/g)) {
-      if (m[1].endsWith("_")) continue;   // (a prefix: "sz_" + k, the id in the markup)
       assert.ok(known.has(m[1]), `${f} looks up "${m[1]}", which is neither in index.html's markup nor in RUNTIME_IDS (tests/js/page.js)`);
     }
 });
