@@ -129,6 +129,45 @@ test("a review waiting on the solver stops at the failure, keeps the hand, and T
   assert.ok(p.posted.length > before);
 });
 
+test("a failed review says it once: one Try again, no count, no equity asked, the dock gone; a hand back to entering loses the message", async () => {
+  const p = await asking();
+  // (decided: the flop checked through, so the hand would ask for equity; a decision graded before the failure)
+  p.S = { ...state({ cards: ["Ah", "Kd", "Ks", "7d", "2c"], preflop: OPENED, flop: acts("BB x, BTN x") }), finished: true };
+  const done = p.run("reviewHand()");
+  await flush();
+  w(p).onmessage({ data: { status: "Solving…" } });
+  const first = p.posted.filter(m => m.state).at(-1);
+  w(p).onmessage({ data: { id: first.id, result: { street: "preflop", hero: "BTN", hand: "AKo", recommended: "raise 2.5", actions: [{ action: "raise 2.5", amount_bb: 2.5, freq: 1 }], notes: [] } } });
+  await flush();
+  p.run("solverLoadFailed()");
+  await done; await flush();
+  assert.ok(p.val("S.actions.preflop.find(a => a.pos === S.hero).g"));
+  assert.equal(p.run("fixedHand(simulate())"), true);
+  assert.ok(result(p).includes(MESSAGE));
+  assert.equal(p.byId("reviewCount").textContent, "");
+  assert.equal(p.byId("equity").hidden, true);
+  assert.equal(p.posted.filter(m => m.state && m.state.equity).length, 0);
+  assert.equal(p.byId("pAction").hidden, true);
+  assert.equal(p.byId("reviewAgain").hidden, true);
+  assert.deepEqual(p.buttons(), []);
+});
+
+test("a failed review with nothing graded: Keep entering is left, and it takes the failure with it", async () => {
+  const p = await asking();
+  p.S = { ...state({ cards: ["Ah", "Kd", "Ks", "7d", "2c"], preflop: OPENED, flop: acts("BB x") }), finished: true };
+  const done = p.run("reviewHand()");
+  await flush();
+  w(p).onmessage({ data: { loadFailed: "x" } });
+  await done; await flush();
+  assert.equal(p.run("document.body.dataset.s"), "review");
+  assert.equal(p.byId("reviewCount").textContent, "");
+  assert.deepEqual(p.buttons().map(b => b.id), ["keepEntering"]);
+  p.run("keepEntering()");
+  assert.equal(p.val("reviewFailed"), false);
+  assert.equal(p.run("document.body.dataset.s"), "enter");
+  assert.ok(!result(p).includes(MESSAGE));
+});
+
 test("the equity panel: the same message, and its Try again asks again", async () => {
   const p = loadPage({ protocol: "https:", isolated: true });
   await p.ready();

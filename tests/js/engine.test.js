@@ -109,7 +109,7 @@ test("action buttons: preflop sizes, postflop sizes, raises and pot odds", () =>
   const sizes = (p) => p.buttons().filter(b => b.className.startsWith("agg")).map(b => `${label(b)} (${sub(b)})`);
   let p = page(state({ cards: ["Ah", "Kh"] }));
   assert.deepEqual(sizes(p), ["Raise to 2.5 (open)", "All-in 100 ()"]);
-  assert.match(p.byId("customBox").innerHTML, /<input id="customAmt" inputmode="decimal" data-key="r"[^>]* placeholder="Raise to, bb"/);   // (R goes to it)
+  assert.match(p.byId("customBox").innerHTML, /<input id="customAmt" type="text" inputmode="decimal" data-key="r"[^>]* placeholder="Raise to, bb"/);   // (R goes to it)
   p = page(state({ hero: "SB", cards: ["Ah", "Kh"], preflop: acts("UTG f, HJ f, CO f, BTN f") }));
   assert.deepEqual(sizes(p)[0], "Raise to 3 (open)");                          // SB opens 3x
   p = page(state({ cards: ["Ah", "Kh"], preflop: acts("UTG r2.5") }));

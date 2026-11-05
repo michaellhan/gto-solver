@@ -107,9 +107,12 @@ test("bets in dollars: the buttons, the prompt, a typed size, the hand panel", a
   assert.ok(raise, html(p));
   assert.match(raise.innerHTML, /^Raise to \$\d[\d.,]*<small>\d[\d.]*bb · /);
   // the typed size is in dollars, rounded to the page's half big blind ($2.50 steps here)
-  assert.match(custom(p).innerHTML, /<input id="customAmt" inputmode="decimal"[^>]* placeholder="Raise to, \$"/);
+  assert.match(custom(p).innerHTML, /<input id="customAmt" type="text" inputmode="decimal"[^>]* placeholder="Raise to, \$"/);
   assert.equal(p.val("amountIn('$40')"), 8);
   assert.equal(p.val("amountIn('41')"), 8.2);
+  assert.equal(p.val("amountIn('12,50')"), 2.5);      // (a phone's decimal comma: $12.50, not $1250)
+  assert.equal(p.val("amountIn('$1,250')"), 250);
+  assert.equal(p.val("amountIn('1.250,50')"), 250.1);
   p.byId("customAmt").value = "40";
   custom(p).children.find(e => e.tagName === "BUTTON").onclick();
   assert.deepEqual(p.S.actions.preflop.at(-1), { pos: "BTN", action: "raise", to: 8 });
@@ -127,6 +130,19 @@ test("bets in dollars: the buttons, the prompt, a typed size, the hand panel", a
   p.byId("customAmt").value = "8";
   custom(p).children.find(e => e.tagName === "BUTTON").onclick();
   assert.deepEqual(p.S.actions.preflop.at(-1), { pos: "BTN", action: "raise", to: 8 });
+});
+
+test("a typed amount in big blinds: a decimal comma, a thousands comma, and what isn't a number", async () => {
+  const p = loadPage();
+  await p.ready();
+  assert.equal(p.val("amountIn('2,5')"), 2.5);
+  assert.equal(p.val("amountIn('2,55')"), 2.55);
+  assert.equal(p.val("amountIn('1,000')"), 1000);
+  assert.equal(p.val("amountIn('1,000.5')"), 1000.5);
+  assert.equal(p.val("amountIn('2.5')"), 2.5);
+  assert.equal(p.val("amountIn(40)"), 40);
+  assert.equal(p.val("Number.isNaN(amountIn(''))"), true);
+  assert.equal(p.val("Number.isNaN(amountIn('abc'))"), true);
 });
 
 test("per-seat stacks in dollars", async () => {

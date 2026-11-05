@@ -133,7 +133,7 @@
     const n = (k) => filterRecs(recs, { kind: k }).length;
     const kinds = KINDS.map(([k, t]) => `<button data-kind="${k}" class="${(ui.kind || "") === k ? "active" : ""}">${t} <small>${n(k)}</small></button>`).join("");
     const tags = tagCounts(recs);
-    return `<div class="mh-tools"><input type="search" data-q value="${esc(ui.q || "")}" placeholder="Search: cards (AKs, Ah), positions, board, tags, notes…" aria-label="Search your hands">`
+    return `<div class="mh-tools"><input type="search" data-q value="${esc(ui.q || "")}" placeholder="Search cards, board, tags…" aria-label="Search your hands">`
       + `<span class="segment">${kinds}</span></div>`
       + (tags.length ? `<div class="mh-tags">${tags.map(([t, c]) => `<button class="mh-tag${ui.tag === t ? " active" : ""}" data-tag="${esc(t)}">#${esc(t)} <small>${c}</small></button>`).join("")}</div>` : "")
       + `<datalist id="mhTags">${tags.map(([t]) => `<option value="${esc(t)}">`).join("")}</datalist>`;

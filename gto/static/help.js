@@ -33,7 +33,7 @@
       <li><b>Flops</b> in common heads-up pots of 6-max 100bb cash are precomputed and answer at once. Other flops,
         turns and rivers are solved live in your browser.</li>
       <li><b>Multiway pots are simplified.</b> 3-way and 4-way pots are solved in smaller games, and flops and turns
-        with 5 or more players use betting rules, marked heuristic, not a solve.</li>
+        with 5 or more players use simple rules, marked Betting rules, not a solve.</li>
       <li><b>Other games are adjustments.</b> Preflop at other stacks, with antes or a straddle or at 7-9 handed tables is
         the 100bb charts moved by solves of those games. Rake is paid in the postflop solves.</li>
       <li><b>Every spot gets an answer, but not always a solve.</b> When the solver can't answer, the advice says what it

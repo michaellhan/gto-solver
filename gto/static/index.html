@@ -23,7 +23,7 @@
     :root {
       --bg: #f4f5f7; --panel: #fff; --panel2: #eef0f3; --line: #e1e4e9; --line2: #c9ced6;
       --text: #16191d; --muted: #5a626d; --primary: #16191d; --on-primary: #fff;
-      --felt: #2c6b50; --felt-text: #e3efe8; --good: #14804a; --bad: #c9352b; --suit: #cf2229;
+      --felt: #2c6b50; --felt-text: #e3efe8; --good: #117c47; --bad: #c9352b; --suit: #cf2229;
       color-scheme: light;
     }
   }
@@ -57,7 +57,7 @@
   input[type=number] { width: 72px; }
   input[type=search] { -webkit-appearance: none; appearance: none; }
   select { -webkit-appearance: none; appearance: none; padding-right: 26px; cursor: pointer;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238a919c' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23828994' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
     background-repeat: no-repeat; background-position: right 9px center; }
   select:hover, input[type=number]:hover, input[type=text]:hover, input[type=search]:hover, textarea:hover { border-color: var(--line2); }
   input[type=checkbox] { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; margin: 0 4px 0 0; flex: none; border: 1px solid var(--line2); border-radius: 4px; background: var(--panel2); cursor: pointer; vertical-align: -3px; display: inline-grid; place-content: center; transition: background .12s, border-color .12s; }
@@ -78,6 +78,7 @@
   .segment button { border: 0; border-radius: 0; min-width: 30px; min-height: 0; padding: 5px 10px; background: none; }
   .segment button + button { border-left: 1px solid var(--line); }
   .segment button.active { background: var(--primary); }
+  .segment button.active:focus-visible { outline-color: var(--on-primary); }
 
   /* ---- sections */
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 14px; }
@@ -135,6 +136,7 @@
   .bc { width: 30px; height: 42px; border-radius: 4px; background: #fff; border: 1px solid #d3d6db; color: #15171a; font-weight: 700; font-size: 14px; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.05; }
   .bc.empty { background: rgba(0,0,0,.18); border: 1px dashed rgba(255,255,255,.35); color: #fff; font-size: 16px; font-weight: 400; padding: 0; min-height: 0; }
   button.bc { cursor: pointer; }
+  .felt .center .bc:focus-visible { outline-color: #fff; }
   .seat .bc.empty { background: none; border-color: var(--line2); color: var(--muted); }
   .felt .pot { margin-top: 6px; font-size: 12px; color: var(--felt-text); }
   .felt .side { font-size: 11px; color: var(--felt-text); }
@@ -147,7 +149,6 @@
   .seat .hc { display: flex; gap: 3px; justify-content: center; margin: 3px 0 2px; }
   .seat.folded { background: var(--panel); color: var(--muted); }
   .seat.toact:not(.hero) { border-color: var(--text); }
-  .seat.allin .amt { color: var(--agg1); }
   .seat.clickable { cursor: pointer; }
   .seat.clickable:hover { border-color: var(--line2); }
 
@@ -166,9 +167,9 @@
 
   /* ---- action dock */
   #actionArea { display: grid; gap: 10px; }
-  .prompt { display: flex; align-items: baseline; gap: 4px 10px; flex-wrap: wrap; }
+  .prompt { display: flex; justify-content: space-between; align-items: baseline; gap: 4px 10px; flex-wrap: wrap; }
   .prompt .who { font-size: 14px; font-weight: 600; }
-  .prompt .pot { margin-left: auto; color: var(--muted); font-size: 13px; }
+  .prompt .pot { color: var(--muted); font-size: 13px; }
   .prompt .ask { width: 100%; color: var(--muted); font-size: 12px; }
   .acts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
   .acts button { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 50px; padding: 6px; line-height: 1.25; border-bottom: 3px solid var(--k, var(--line)); }
@@ -243,10 +244,11 @@
   .cell .st { position: absolute; inset: 0; display: flex; }
   .cell .st i { display: block; height: 100%; background: var(--k); }
   .cell .lbl { position: absolute; left: 2px; top: 1px; color: var(--muted); font-weight: 600; z-index: 1; }
-  .cell.in .lbl { color: #fff; text-shadow: 0 0 3px #000; }
+  .cell.in .lbl { color: #fff; text-shadow: 0 0 2px #000, 0 0 2px #000, 0 0 2px #000; }
   .grid .cell.me, .grid .cell.sel { overflow: visible; z-index: 2; }
   .cell.me { outline: 2px solid var(--text); outline-offset: 0; }
   .cell.sel { outline: 1px solid var(--text); }
+  .grid .cell:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; z-index: 3; }
   .read { min-height: 40px; margin: 8px 0 0; font-size: 13px; color: var(--muted); }
   .read b { color: var(--text); }
   .pn { display: flex; justify-content: space-between; margin-top: 12px; }
@@ -268,7 +270,7 @@
   summary:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
   #result.empty:empty { display: none; }
 
-  .toast { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); background: var(--panel2); border: 1px solid var(--line2); border-radius: var(--r); padding: 9px 14px; display: flex; gap: 14px; align-items: center; box-shadow: 0 8px 30px rgba(0,0,0,.5); z-index: 70; width: max-content; max-width: calc(100% - 32px); font-size: 13px; }
+  .toast { position: fixed; left: 50%; top: max(4px, env(safe-area-inset-top)); transform: translateX(-50%); background: var(--panel2); border: 1px solid var(--line2); border-radius: var(--r); padding: 9px 14px; display: flex; gap: 14px; align-items: center; box-shadow: 0 8px 30px rgba(0,0,0,.5); z-index: 70; width: max-content; max-width: calc(100% - 32px); font-size: 13px; }
 
   /* ---- layout
      Two columns in one centred page that scrolls as a whole; a phone or a zoomed-in window gets one column. The
@@ -277,7 +279,7 @@
   .col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
   .dock { position: -webkit-sticky; position: sticky; bottom: var(--kb); z-index: 5; }
   /* while a card is needed the deck is the input: it moves up under the setup and the dock stops floating */
-  body.needcard .dock { position: static; }
+  body.needcard .dock, body.editing .dock { position: static; }
   #pSetup { order: -2; } body.needcard #pCards { order: -1; }
   @media (max-width: 860px) {
     header { padding: max(8px, env(safe-area-inset-top)) 12px 8px; }
@@ -288,7 +290,9 @@
     body.needcard #pCards { order: 15; }
     /* a phone shows one thing: the review without the table, a decision alone */
     body[data-s="review"] #pTable, body[data-s="review"] #pHistory { display: none; }
-    body[data-s="decision"] #pSetup, body[data-s="decision"] #pTable, body[data-s="decision"] #pCards, body[data-s="decision"] #pHistory, body[data-s="decision"] #pAction { display: none; }
+    body[data-s="decision"] #pTable, body[data-s="decision"] #pCards, body[data-s="decision"] #pHistory, body[data-s="decision"] #pAction { display: none; }
+    /* (what the hand was saved with stays with the numbers it changes) */
+    body[data-s="decision"] #pSetup > :not(#savedSettings), body[data-s="decision"] #pSetup:has(> #savedSettings[hidden]) { display: none; }
     .felt { height: 208px; }
     button, button.small, .seats button, .segment button { min-height: 44px; }
     button.link, button.back, .bc.empty { min-height: 0; }
@@ -298,6 +302,7 @@
   }
   @media (max-width: 560px) {
     .toast { flex-wrap: wrap; gap: 6px 14px; }
+    .acts .usd small { display: none; }   /* ("Raise to $100" takes the button's two lines) */
     .pc { height: 30px; font-size: 11px; }
     .slot { width: 32px; height: 46px; font-size: 15px; }
     .slots { gap: 10px; }
@@ -321,14 +326,16 @@
     .chip.rewind { min-height: 0; position: relative; }
     .chip.rewind::after { content: ""; position: absolute; inset: -9px 0; }
     button.link { padding: 11px 6px; margin: -11px -6px; }
+    .setup .edit { padding: 12px 10px; margin: -8px -6px; }
+    .back { padding: 13px 0; margin: -7px 0; }
     header nav button.link { padding: 6px 0; margin: 0; }
     summary { padding: 11px 0; margin: -11px 0; }
     input[type=checkbox] { width: 20px; height: 20px; margin: 0 4px 0 0; }
     label:has(> input[type=checkbox]) { min-height: 44px; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .slot.need, .slot.flash { animation: none; }
-    .prog > div { transition: none; }
+    .slot.need, .slot.flash, .spinner { animation: none; }
+    .prog > div, summary::before { transition: none; }
   }
 </style>
 </head>
@@ -422,7 +429,7 @@
     <section class="panel" id="pAdvice">
       <div class="top" id="stepTop" hidden><button class="back" id="stepBack">‹ Back to review</button><span id="stepOf"></span></div>
       <div id="stepHead" hidden></div>
-      <div class="sum" id="reviewHead"><h2>Review</h2><span class="muted" id="reviewCount"></span></div>
+      <div class="sum" id="reviewHead"><h2>Review</h2><span class="muted" id="reviewCount" aria-live="polite"></span></div>
       <div id="adviceNote" hidden></div>
       <div id="equity" class="eq" hidden></div>
       <div id="result" class="empty">Finish the hand to see how each decision compares with the solver. Nothing is solved until then.</div>
@@ -465,8 +472,14 @@ const usd = (d) => { const c = cents(d), w = Math.abs(c - Math.round(c)) < 1e-9;
 const DOLLARS = (x) => STAKES() ? usd(x * STAKES().bb) : "";   // an amount in big blinds in dollars ("" without stakes)
 const withUsd = (x, pre = " (", post = ")") => STAKES() ? pre + DOLLARS(x) + post : "";
 const STAKES_TEXT = () => { const k = STAKES(); return k ? `${usd(k.sb)}/${usd(k.bb)}` : ""; };
-// A typed amount in big blinds: with stakes it's in dollars (a "$" or "," in it ignored), NaN if it isn't one
-function amountIn(v) { if (!STAKES()) return parseFloat(v); const x = parseFloat(String(v ?? "").replace(/[$,\s]/g, "")); return isFinite(x) ? x / STAKES().bb : x; }
+// A typed number: a "$" ignored; a comma before one or two digits at the end is a decimal point (a phone's comma key:
+// "2,5", "12,50", "1.000,50"), any other a thousands comma ("1,000"). The amount box is text, so nothing else normalises it.
+function typedNumber(v) {
+  const t = String(v ?? "").replace(/[$\s]/g, ""), m = /^(.*),(\d{1,2})$/.exec(t);
+  return parseFloat(m ? m[1].replace(/[.,]/g, "") + "." + m[2] : t.replace(/,/g, ""));
+}
+// A typed amount in big blinds: with stakes it's in dollars, NaN if it isn't one
+function amountIn(v) { const x = typedNumber(v); return STAKES() && isFinite(x) ? x / STAKES().bb : x; }
 // an amount in big blinds as an input shows it: dollars to the cent with stakes
 const amountOut = (x) => STAKES() ? String(cents(x * STAKES().bb)) : fmt(x);
 // amounts as the hand shows them: "13 bb" ("13 bb ($65)" with stakes); a button's "5 bb" ("$25 · 5bb"); a short one
@@ -1106,6 +1119,8 @@ const gradeAs = (g) => g.v ? ` (graded as the ${g.vs ? "solver" : "chart"}'s ${g
 const gradeClass = (g) => g.h != null ? (g.h <= HEUR_OK ? "ok" : g.h <= HEUR_MEH ? "meh" : "bad")
   : g.f >= 0.15 ? "ok" : g.f >= 0.03 || g.r || g.l === 0 ? "meh" : "bad";
 const gradeMark = (g) => ({ ok: "✓", meh: "~", bad: "✗" })[gradeClass(g)];
+// In the solver's mix, as the verdict says: "Rare in the solver's mix" counts (a ~ that's a rough solve's 0% doesn't)
+const inMix = (g) => g.h != null ? gradeClass(g) === "ok" : g.f >= 0.03;
 const sgn = (x) => (x > 0 ? "+" : x < 0 ? "−" : "") + Math.abs(x).toFixed(2);
 // An action your range almost never takes (the answer's rough_ev, advisor.RARE_BRANCH; a grade's rv): its EV with a "≈"
 // and this tip. Against exact EVs of the same strategy they are 1-10% of the pot off.
@@ -1173,6 +1188,7 @@ function undo() {
 function finishHand() {
   if (review || !S.cards[0] || !S.cards[1] || S.finished) return;
   S.finished = true; selSlot = null; showDeck = false; pendingRank = null; save(); renderAll();
+  const next = document.querySelector('#actionArea [data-key="r"]'); if (next) next.focus();   // (Finish hand has gone)
 }
 function keepEntering() {
   if (review || stepView || !S.finished || fixedHand(simulate())) return;
@@ -1181,11 +1197,12 @@ function keepEntering() {
 // One recorded decision of a finished hand: the table at that point, its advice in the panel. Nothing is lost: S is a
 // copy of the hand up to it, and Back to the hand (or Undo) brings the whole hand back.
 function stepTo(s, i) {
-  const full = stepView ? stepView.full : S;
+  const full = stepView ? stepView.full : S, entering = !stepView;
   if (review || !full.actions[s] || !full.actions[s][i] || full.actions[s][i].pos !== full.hero) return;
   stepView = { full, s, i }; S = spotOf(full, s, i);
   lastKey = null; selSlot = null; showDeck = false; editSetup = false; pendingRank = null;
   renderAll(); toTop();
+  if (entering) document.getElementById("stepBack").focus({ preventScroll: true });   // (the row pressed has gone; Prev and Next keep theirs)
 }
 const toTop = () => { if (typeof window.scrollTo === "function") window.scrollTo(0, 0); };
 function stepBy(d) {
@@ -1195,9 +1212,12 @@ function stepBy(d) {
 }
 function stepStop() {
   if (!stepView) return;
+  const { s, i } = stepView;
   S = stepView.full; stepView = null; selSlot = null; showDeck = false;
   if (solving) cancelSolve();
   resetAdvice(); renderAll(); toTop();
+  const row = document.getElementById("adviceNote").querySelector(`.rowb[data-s="${s}"][data-i="${i}"]`);
+  if (row) row.focus({ preventScroll: true });
 }
 
 // ------------------------------------------------------------------ cards
@@ -1355,7 +1375,7 @@ function renderAction(sim) {
     const shade = !facing && street !== "preflop" ? ["var(--agg0)", "var(--agg1)"] : ["var(--agg1)", "var(--agg2)"];
     for (const [v, l] of sizes) if (v < myBet + remaining - 1e-9 && v >= minTo - 1e-9) {
       const bet = !facing && street !== "preflop";
-      mk(bet ? `Bet ${l}` : `${verb} ${AMT(v)}`, "agg", { action: "bet", to: v }, bet ? AMT_SUB(v) : (STAKES() ? fmt(v) + "bb · " : "") + l, String(k + 1), shade[k]); k++;
+      mk(bet ? `Bet ${l}` : `${verb} ${AMT(v)}`, !bet && STAKES() ? "agg usd" : "agg", { action: "bet", to: v }, bet ? AMT_SUB(v) : (STAKES() ? fmt(v) + "bb · " : "") + l, String(k + 1), shade[k]); k++;
     }
   }
   el.appendChild(acts);
@@ -1367,7 +1387,7 @@ function renderAction(sim) {
     let go = null;
     if (canRaiseNow) {
       const what = facing || info.curBet > 0 ? "Raise to" : "Other amount";
-      cb.innerHTML = `<input id="customAmt" inputmode="decimal" data-key="r" title="Shortcut: R" placeholder="${what}, ${STAKES() ? "$" : "bb"}" aria-label="${what}, in ${STAKES() ? "dollars" : "bb"}">`;
+      cb.innerHTML = `<input id="customAmt" type="text" inputmode="decimal" data-key="r" title="Shortcut: R" placeholder="${what}, ${STAKES() ? "$" : "bb"}" aria-label="${what}, in ${STAKES() ? "dollars" : "bb"}">`;
       go = document.createElement("button"); go.textContent = "Apply"; go.hidden = true;
       go.onclick = () => { showErr(act({ action: "bet", to: amountIn(document.getElementById("customAmt").value) })); renderAll(); };
       cb.appendChild(go);
@@ -1399,7 +1419,9 @@ function finishButton(el) {
 // A finished hand not reviewed yet: its review, or back to entering it while no advice has been seen. Reviewed, the
 // right panel has it all and the dock goes (Review again is with New hand and Share).
 function renderFinished(el, prompt, sim) {
-  const mine = heroSpots(S).map(([s, i]) => S.actions[s][i]), todo = mine.some(a => !("g" in a));
+  // (not reviewed: a decision not reached, or no advice came back at all, every solve having failed. After a failed load
+  // the message's Try again is the one way to review it again.)
+  const mine = heroSpots(S).map(([s, i]) => S.actions[s][i]), todo = !reviewFailed && mine.length > 0 && (!fixedHand(sim) || mine.some(a => !("g" in a)));
   const more = S.finished && !sim.handOver && sim.active.has(S.hero) && !fixedHand(sim);   // (more of the hand to enter)
   if (mine.length && !todo && !more) { document.getElementById("pAction").hidden = true; return; }
   prompt.innerHTML = `<span class="who">${sim.handOver ? "Hand over" : !sim.active.has(S.hero) ? "You folded" : "Hand finished"}</span><span class="pot">pot ${BBX(sim.pot)}</span><span class="ask">${todo ? "Review it: the solver goes through each decision you recorded." : mine.length ? "" : "You recorded no decision, so there's nothing to review."}</span>`;
@@ -1494,7 +1516,7 @@ async function analyze(sim) {
   }, 100);
   let res;
   // (an approximate answer may come first: shown under the progress bar until this one replaces it)
-  const early = (r) => { if (gen === solveGen && solving) renderEarly(r); };
+  const early = (r) => { if (gen === solveGen && solving && !review) renderEarly(r); };   // (a review's rows fill in as it goes)
   try { res = await callAdvise(JSON.parse(key), early); }
   catch (e) { res = { error: "Request failed: " + e }; }
   clearInterval(tick);
@@ -1566,7 +1588,7 @@ function actionTable(res, you, ev = "ev_bb") {
     const gto = a.gto_freq !== undefined ? ` title="GTO plays this ${(a.gto_freq * 100).toFixed(1)}% of the time (${res.street === "preflop" ? "the chart" : "this solve's equilibrium"})"` : "";
     h += `<tr${a.action === res.recommended ? ' class="best"' : ""}><td><div class="an"><i class="sw" style="--k:${COLORS(a.action)}"></i>${actName(a)}${a.action === you ? ' <span class="you">you</span>' : ""}</div></td>`
       + `<td class="n"${gto}>${pct0(a.freq)}${a.gto_freq !== undefined ? `<small>GTO ${(a.gto_freq * 100).toFixed(0)}%</small>` : ""}</td>`
-      + (hasEv ? `<td class="n"${a.rough_ev ? ` title="${ROUGH_EV_TIP}"` : ""}>${a[ev] == null ? "" : (a.rough_ev ? "≈ " : "") + evText(a[ev])}</td>` : "") + `</tr>`;
+      + (hasEv ? `<td class="n"${a.rough_ev ? ` title="${ROUGH_EV_TIP}"` : ""}>${a[ev] == null ? "–" : (a.rough_ev ? "≈ " : "") + evText(a[ev])}</td>` : "") + `</tr>`;
   }
   return h + `</tbody></table>`;
 }
@@ -1743,13 +1765,13 @@ function updateAdviceState() {
   const mine = all.filter(([, a]) => a.g && done);   // (a grade shows on a finished hand)
   const withEv = mine.filter(([, a]) => a.g.l != null), totalLost = withEv.reduce((t, [, a]) => t + a.g.l, 0);
   const rough = withEv.some(([, a]) => a.g.rv && a.g.l > 0.005) ? "≈ " : "";
-  const total = !mine.length ? "" : !withEv.length ? `<strong class="dim">no EV</strong>` : totalLost > 0.005 ? `<strong class="bad">${rough}−${totalLost.toFixed(2)} bb</strong>` : `<strong>0.00 bb</strong>`;
+  const total = review || !mine.length ? "" : !withEv.length ? `<strong class="dim">no EV</strong>` : totalLost > 0.005 ? `<strong class="bad">${rough}−${totalLost.toFixed(2)} bb</strong>` : `<strong>0.00 bb</strong>`;
   const board = hand.cards.slice(2).filter(Boolean), line = hand.cards[0] && hand.cards[1] ? cardsInl(hand.cards.slice(0, 2)) + (board.length ? ` on ${cardsInl(board)}` : " preflop") : "";
   const open = done && !review;
   let msg = "", count = "";
   if (!looking && done && all.length) {
-    const good = mine.filter(([, a]) => gradeClass(a.g) === "ok").length;
-    count = review ? "" : mine.length ? `${good} of ${mine.length} in the solver's mix` : "Your decisions";
+    const good = mine.filter(([, a]) => inMix(a.g)).length;
+    count = review || reviewFailed ? "" : mine.length ? `${good} of ${mine.length} in the solver's mix` : "Your decisions";
     msg = (review ? `<p class="note">Reviewing decision ${review.k} of ${review.n} · ${review.what} <button class="link" id="reviewStop">Cancel</button></p>` : "")
       + `<div class="sum hand"><span>${line}</span>${total}</div><div class="rows">${all.map(([s, a]) => rowHtml(hand, s, a, done, open)).join("")}</div>`
       + (heroTurn && !review ? `<p class="note">Your ${sim.current} decision wasn't recorded, so it isn't reviewed.</p>` : "");
@@ -1763,7 +1785,7 @@ function updateAdviceState() {
     : reviewing() ? "Getting the solver ready…" : !done ? EMPTY_ADVICE : all.length ? "" : "Nothing to review: you recorded no decision in this hand.";
   document.getElementById("doneBtns").hidden = !done || looking || !!review;
   document.getElementById("doneNew").hidden = stage !== "review" || reviewFailed;
-  document.getElementById("reviewAgain").hidden = stage !== "review" || !!review || !all.length || all.some(([, a]) => !("g" in a));
+  document.getElementById("reviewAgain").hidden = stage !== "review" || !!review || reviewFailed || !all.length || all.some(([, a]) => !("g" in a));
   renderReady();
 }
 
@@ -1773,7 +1795,7 @@ function updateAdviceState() {
 // reviewed (fixedHand), not as soon as it's finished: Keep entering would make that a way to see it mid-hand.
 let eqKey = null, eqReq = null;   // the request of the equity shown or in flight, and its id while it runs
 function equitySpot(sim) {
-  if (reviewing() || !fixedHand(sim) || !sim.active.has(S.hero) || sim.active.size < 2) return false;
+  if (reviewing() || reviewFailed || !fixedHand(sim) || !sim.active.has(S.hero) || sim.active.size < 2) return false;
   return !!sim.waiting || (sim.handOver && sim.current === "river");
 }
 async function updateEquity() {
@@ -1796,7 +1818,6 @@ async function updateEquity() {
   if (!res.error) cache.set(key, res);
   renderEquity(res);
 }
-const TO_COME = { flop: "flop, turn and river to come", turn: "turn and river to come", river: "river to come" };
 function equityHtml(res) {
   if (res.error) return `<div class="err">${res.error}${retryHtml(res, "equityRetry")}</div>`;
   const pct = (x) => x == null ? "–" : (x * 100).toFixed(1) + "%", vs = res.villains;
@@ -1805,13 +1826,12 @@ function equityHtml(res) {
   parts.push(res.share_bb != null ? `about ${fmt(res.share_bb)} of the ${fmt(res.pot_bb)} bb pot` : `pot ${fmt(res.pot_bb)} bb`);
   const seats = vs.map((v, i) => i ? `${v.seat}'s (${fmt(v.combos)} combos)` : `${v.seat}'s range (${fmt(v.combos)} combos)`);
   const against = `Against ${andList(seats)}`;
-  const when = !res.next ? "" : res.allin ? `all-in, ${TO_COME[res.next]}` : `${res.street} betting closed, ${TO_COME[res.next]}`;
   const over = res.runouts == null ? "from the preflop hand-class equity table" : !res.exact ? `over ${res.runouts} sampled boards`
     : res.runouts === 1 ? "on this board" : `over all ${res.runouts} ${res.next === "river" ? "rivers" : "runouts"}`;
   const alone = vs.length > 1 ? ` Alone: ${vs.map(v => `${pct(v.equity)} vs ${v.seat}`).join(", ")}.` : "";
-  const notes = (res.notes || []).filter(n => !/^\w+: (mapped|precomputed)/.test(n)).map(n => `<p class="note">${n}</p>`).join("");   // (how the line was read is the decisions' to say)
+  const notes = (res.notes || []).filter(n => !/^\w+: (mapped|precomputed)/.test(n)).map(n => `<p class="meta">${n}</p>`).join("");   // (how the line was read is the decisions' to say)
   return `<div class="big" title="Your share of the pot if the hand goes to showdown from here (a tie counts half), against the hands the solver plays this line with: their ranges narrowed through every street"><span>Your equity at the end</span><b>${pct(res.equity)}</b></div>`
-    + `<p class="note">${cap(parts.join(", "))}. ${[against, when, over].filter(Boolean).join(", ")}.${alone}</p>${notes}`;
+    + `<p class="note">${cap(parts.join(", "))}. ${against}, ${over}.${alone}</p>${notes ? `<details><summary>Details</summary>${notes}</details>` : ""}`;
 }
 function renderEquity(res) {
   const box = document.getElementById("equity");
@@ -1822,8 +1842,10 @@ function renderEquity(res) {
 // ------------------------------------------------------------------ wiring
 function renderAll() {
   const sim = simulate();
+  if (reviewFailed && !review && !handDone(sim)) resetAdvice();   // (Keep entering, Undo: back to entering it)
   if (!needCard(sim)) pendingRank = null;
   document.body.classList.toggle("needcard", needCard(sim));
+  document.body.classList.toggle("editing", editSetup);
   document.getElementById("pCards").hidden = !needCard(sim);   // the deck shows while a card is needed, or on request
   renderSetup(); renderSlots(sim); renderPicker(sim); renderTable(sim); renderAction(sim); renderTimeline(sim);
   const open = reviewing();   // (no solve or fetch while a hand is being entered)
@@ -1862,7 +1884,7 @@ async function reviewHand() {
     const mv = gradedMove(sim, a);
     a.g = gradeFor(mv);   // null (multiway, failed solve): reviewed, no grade
     if (!a.g && jamOffTree(lastResult, mv)) a.g = await jamGrade(resultKey, mv);
-    if (lastResult) answered.set(a, lastResult);
+    if (lastResult && lastResult.actions) answered.set(a, lastResult);   // (an error says nothing about where a number came from)
   }
   review = null;
   if (rv.cancel !== "drop") {   // (a review dropped for another hand: kept as it went, keepHand "replaced")
@@ -2105,7 +2127,7 @@ function showOverlay(name, push) {
   overlay = name;
   if (push) syncRoute();
   let p; try { p = VIEWS[name].open(); } catch (e) { p = Promise.reject(e); }
-  return Promise.resolve(p).catch(e => { window.viewClosed(name); showErr(VIEWS[name].err + (e && e.message || e)); });
+  return Promise.resolve(p).catch(e => { window.viewClosed(name); toast(VIEWS[name].err + (e && e.message || e), null, 8000); });
 }
 function openView(name) {   // the header's views
   if (overlay === name) return;

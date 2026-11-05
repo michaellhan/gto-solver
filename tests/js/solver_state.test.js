@@ -432,7 +432,7 @@ test("an approximate turn answer from a format-2 turn file shows the stored rang
   box = result.children.at(-1);
   assert.match(box.innerHTML, /Range EV/);
   assert.doesNotMatch(box.innerHTML, /range EV: yours/);
-  assert.match(box.innerHTML, /7\.13 bb<\/small><\/div><\/td><td class="n">30%<\/td><td class="n"><\/td><\/tr>/);
+  assert.match(box.innerHTML, /7\.13 bb<\/small><\/div><\/td><td class="n">30%<\/td><td class="n">–<\/td><\/tr>/);
   assert.equal(p.run("lastResult"), null);
 });
 

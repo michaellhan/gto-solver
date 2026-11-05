@@ -285,18 +285,128 @@ test("a review cancelled before any advice leaves the hand open; one cancelled a
   await done; await flush();
   assert.equal(p.val("S.reviewed"), undefined);
   assert.ok(ids(p).includes("keepEntering"));
-  // an approximate answer counts: it's advice seen
+  // a review shows no approximate answer, its rows fill in as it goes: none seen, so none counts
   const q = await page();
   q.S = state(WHOLE);
   const d2 = q.run("reviewHand()");
   await flush();
   const m = q.posted.filter(x => x.state).at(-1);
-  q.workers.at(-1).onmessage({ data: { id: m.id, partial: { street: "flop", hero: "BTN", recommended: "check", approximate: { source: "prev", label: "x" }, actions: [{ action: "check", freq: 1 }] } } });
+  const partial = { street: "flop", hero: "BTN", recommended: "check", approximate: { source: "prev", label: "x" }, actions: [{ action: "check", freq: 1 }] };
+  q.workers.at(-1).onmessage({ data: { id: m.id, partial } });
   await flush();
+  assert.doesNotMatch(q.byId("result").children.map(c => c.innerHTML).join(""), /Approximate/);
   q.run('review.cancel = "restore"; cancelSolve()');
   q.workers.at(-1).onmessage({ data: { id: m.id, result: { cancelled: true } } });
   await d2; await flush();
-  assert.equal(q.val("S.reviewed"), true);
+  assert.equal(q.val("S.reviewed"), undefined);
+  // on a decision opened it shows, and that's advice seen
+  const r = await page();
+  r.S = state(WHOLE);
+  r.run('stepTo("flop", 1)');
+  await flush();
+  const o = r.posted.filter(x => x.state).at(-1);
+  r.workers.at(-1).onmessage({ data: { id: o.id, partial } });
+  await flush();
+  assert.match(r.byId("result").children.map(c => c.innerHTML).join(""), /Approximate/);
+  assert.equal(r.val("stepView.full.reviewed"), true);
+});
+
+// The review's run against answers: ans(message, nth solve)
+async function runReview(p, ans) {
+  const done = p.run("reviewHand()");
+  const solves = () => p.posted.filter(x => x.state && !x.state.equity);
+  for (let n = 0; n < 60; n++) {
+    await flush();
+    const m = solves().at(-1);
+    if (m && !m.answered) { m.answered = true; p.workers.at(-1).onmessage(ans(m, solves().length)); }
+    if (p.val("review") === null) break;
+  }
+  await done; await flush();
+}
+const failed = (m) => ({ data: { id: m.id, error: "solver error: boom" } });
+
+test("one decision's solve fails in a review: the review ends, that row has no grade, and the page goes on", async () => {
+  const p = await page();
+  p.S = state(WHOLE);
+  await runReview(p, (m, n) => n === 2 ? failed(m) : answer(m));
+  assert.equal(p.val("review"), null);
+  assert.equal(p.val("solving"), false);
+  assert.equal(p.val("S.actions.flop[1].g"), null);
+  assert.ok(p.val("S.actions.preflop.find(a => a.pos === S.hero).g"));
+  assert.match(p.byId("adviceNote").innerHTML, /<b>Flop<\/b> · bet 3<\/span><span class="l"><\/span><span class="s">Reviewed, no grade<\/span>/);
+  p.run("renderAll()");                                 // (a later render reads the rows again)
+  assert.equal(p.run("document.body.dataset.s"), "review");
+  assert.equal(p.byId("reviewAgain").hidden, false);    // (and it can be asked again)
+  p.run("reviewHand()");
+  await flush();
+  assert.ok(p.val("review") !== null);
+});
+
+test("every solve fails in a review: no advice was seen, so the hand can be reviewed again", async () => {
+  const p = await page();
+  p.S = state(WHOLE);
+  await runReview(p, failed);
+  assert.equal(p.val("review"), null);
+  assert.equal(p.val("S.reviewed"), undefined);
+  assert.equal(p.run("document.body.dataset.s"), "enter");
+  assert.equal(p.byId("reviewAgain").hidden, true);
+  assert.deepEqual(p.buttons().map(b => b.id), ["reviewAll"]);
+  const before = p.posted.filter(x => x.state).length;
+  p.key("r");
+  await flush();
+  assert.ok(p.val("review") !== null);                  // (R goes to it as well)
+  assert.ok(p.posted.filter(x => x.state).length > before);
+});
+
+test("the betting rules' hand with no grade to give stays reviewed: no second way to review it", async () => {
+  const p = await page();
+  p.S = state(FLOP);
+  p.run("finishHand()");
+  await runReview(p, (m) => answer(m, { multiway: true, actions: [{ action: "check", freq: 1 }] }));
+  assert.equal(p.val("S.reviewed"), true);
+  assert.equal(p.byId("reviewAgain").hidden, false);
+  assert.deepEqual(p.buttons().map(b => b.id).filter(x => x === "reviewAll"), []);
+});
+
+test("during a review the total waits: no 0.00 before the costly decision is graded", async () => {
+  const p = await page();
+  p.S = state(WHOLE);
+  const done = p.run("reviewHand()");
+  await flush();
+  p.workers.at(-1).onmessage(answer(p.posted.filter(x => x.state).at(-1)));
+  await flush();
+  assert.ok(p.val("review.k") >= 2);
+  assert.doesNotMatch(p.byId("adviceNote").innerHTML, /<strong/);
+  p.run('review.cancel = "restore"; cancelSolve()');
+  await done; await flush();
+  assert.match(p.byId("adviceNote").innerHTML, /<strong/);
+});
+
+test("focus goes with the screen: into a decision to its Back, back to the row; Prev and Next keep theirs; the count is announced", async () => {
+  const p = await page();
+  p.S = state(WHOLE);
+  await runReview(p, (m) => answer(m));
+  p.run('stepTo("flop", 1)');
+  assert.equal(p.focused(), p.byId("stepBack"));
+  p.byId("stepNext").focus();
+  p.run("stepBy(1)");
+  assert.equal(p.focused(), p.byId("stepNext"));
+  assert.match(fs.readFileSync(HTML_PATH, "utf8"), /id="reviewCount" aria-live="polite"/);
+  const q = await page();
+  q.S = state({ cards: ["Ah", "Kh", "Kd", "7s", "2c"], preflop: OPENED, flop: acts("BB x, BTN x") });
+  q.button("Finish hand").onclick();
+  assert.equal(q.focused(), q.buttons().find(b => b.id === "reviewAll"));
+});
+
+test("the setup editor stops the dock floating over the page", async () => {
+  const p = await page();
+  p.S = state({ cards: ["Ah", "Kh"] });
+  assert.equal(p.run('document.body.classList.contains("editing")'), false);
+  p.byId("setupEdit").onclick();
+  assert.equal(p.run('document.body.classList.contains("editing")'), true);
+  assert.match(fs.readFileSync(HTML_PATH, "utf8"), /body\.editing \.dock \{ position: static; \}/);
+  p.byId("setupDone").onclick();
+  assert.equal(p.run('document.body.classList.contains("editing")'), false);
 });
 
 test("a saved lock goes with a decision's request; Randomise and recording off the advice are gone", async () => {

@@ -81,7 +81,19 @@ test("a view's script that fails to load leaves its URL", async () => {
   await p.ready();
   p.click("myHands"); await flush();
   assert.deepEqual(p.pushed, ["/gto-solver/hands/", "/gto-solver/"]);
-  assert.match(p.err(), /Couldn't load Hands/);
+  assert.equal(p.byId("toast").hidden, false);
+  assert.match(p.byId("toast").innerHTML, /Couldn't load Hands/);
+});
+
+test("over a reviewed hand, where the dock is hidden, it still says so", async () => {
+  const p = loadPage({ scripts: { ...SCRIPTS, "hands.js": null } });
+  await p.ready();
+  p.S = { ...state({ cards: ["Ah", "Kd"], preflop: acts("UTG f, HJ f, CO f, BTN r2.5, SB f, BB f") }), reviewed: true };
+  p.run(`S.actions.preflop.find(a => a.pos === "BTN").g = { m: "raise 2.5", f: 1, b: "raise 2.5", bf: 1, l: null }; renderAll()`);
+  assert.equal(p.byId("pAction").hidden, true);
+  p.click("myHands"); await flush();
+  assert.equal(p.byId("toast").hidden, false);
+  assert.match(p.byId("toast").innerHTML, /Couldn't load Hands/);
 });
 
 test("share links built on a view's URL are the solver's, and open there (old links too)", async () => {

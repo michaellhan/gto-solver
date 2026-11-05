@@ -77,7 +77,7 @@ class El {
   // appended descendants the page looks up by selector: by id ("#early")
   querySelector(sel) { return sel.startsWith("#") ? [...this.walk()].find(e => e.id === sel.slice(1)) || null : null; }
   querySelectorAll(sel) { return sel === "button" ? [...this.walk()].filter(e => e.tagName === "BUTTON") : []; }
-  focus() {} blur() {} click() { if (this.onclick) this.onclick({ target: this }); }
+  focus() { if (this.reg) this.reg.focused = this; } blur() {} click() { if (this.onclick) this.onclick({ target: this }); }
   setAttribute(k, v) { this[k] = String(v); }
   getAttribute(k) { return k in this ? this[k] : null; }
   closest() { return null; }
@@ -264,6 +264,7 @@ function loadPage(opts = {}) {
     // press a key on the page (no target input focused)
     key(k) { const e = { key: k, metaKey: false, ctrlKey: false, altKey: false, target: { tagName: "BODY" }, preventDefault() {} }; for (const f of keydown) f(e); },
     // the buttons currently in the action panel, by label
+    focused() { return reg.focused || null; },
     buttons() { return [...byId("actionArea").walk()].filter(e => e.tagName === "BUTTON"); },
     button(label) {
       const b = page.buttons().find(e => e.innerHTML.replace(/<[^>]*>.*$/, "").trim() === label || e.innerHTML.startsWith(label));

@@ -3,7 +3,8 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { loadPage, state, acts } = require("./page.js");
+const fs = require("node:fs");
+const { loadPage, state, acts, HTML_PATH } = require("./page.js");
 
 const flush = async (n = 6) => { for (let i = 0; i < n; i++) await new Promise(r => setImmediate(r)); };
 const HAND = { cards: ["Ah", "Kd", "Ks", "7d", "2c", "5h"], preflop: acts("UTG f, HJ f, CO f, BTN r2.5, SB f, BB c"), flop: acts("BB x, BTN b2, BB c"), turn: acts("BB x, BTN x") };
@@ -209,7 +210,36 @@ test("your equity's notes are what bears on it, not how the line was read", () =
     villains: [{ seat: "BB", combos: 75.8, equity: 0.569 }], notes: ["flop: mapped 'bet 36%' to tree action 'bet 33%'", "flop: precomputed solution (x)", "against several ranges their hands are taken as independent"] };
   const h = p.val(`equityHtml(${JSON.stringify(eq)})`);
   assert.match(h, /<span>Your equity at the end<\/span><b>56\.9%<\/b>/);
-  assert.match(h, /<p class="note">About 114\.04 of the 200\.5 bb pot\. Against BB's range \(75\.8 combos\), all-in, flop, turn and river to come, from the preflop hand-class equity table\.<\/p>/);
-  assert.match(h, /taken as independent/);
-  assert.doesNotMatch(h, /mapped|precomputed/);
+  assert.match(h, /<p class="note">About 114\.04 of the 200\.5 bb pot\. Against BB's range \(75\.8 combos\), from the preflop hand-class equity table\.<\/p>/);
+  assert.match(h, /<details><summary>Details<\/summary><p class="meta">against several ranges their hands are taken as independent<\/p><\/details>$/);
+  assert.doesNotMatch(h, /<details open|mapped|precomputed/);
+  // nothing left to fold away: the one line
+  const bare = p.val(`equityHtml(${JSON.stringify({ ...eq, notes: eq.notes.slice(0, 2) })})`);
+  assert.doesNotMatch(bare, /<details/);
+});
+
+test("the action table: a dash for an action with no EV, so your row's cell isn't blank", () => {
+  const p = loadPage();
+  const res = { street: "turn", hero: "BB", actions: [{ action: "check", freq: 1, ev_bb: 18 }] };
+  const h = p.val(`actionTable(${JSON.stringify(res)}, "all-in")`);
+  assert.match(h, /<span class="you">you<\/span><\/div><\/td><td class="n">0%<\/td><td class="n">–<\/td><\/tr>/);
+});
+
+test("the count goes with the verdict: rare in the mix is in the mix, a ~ the solver never plays isn't", async () => {
+  const p = loadPage();
+  await p.ready();
+  const mix = (g) => p.val(`inMix(${JSON.stringify(g)})`);
+  assert.equal(mix({ f: 0.04, l: 0.1 }), true);       // (~, "Rare in the solver's mix, at 4%")
+  assert.equal(mix({ f: 0.5, l: 0 }), true);
+  assert.equal(mix({ f: 0, l: 0 }), false);           // (~: no EV given up, but "The solver bets every time")
+  assert.equal(mix({ f: 0, l: 1, r: 1 }), false);     // (~: a rough solve)
+  assert.equal(mix({ f: 0, l: 0, h: 1 }), true);      // (the betting rules: by EV)
+  assert.equal(mix({ f: 0, l: 1, h: 20 }), false);
+});
+
+test("the grid's labels have a dark edge in every scheme, and a focused cell a ring selection doesn't take", () => {
+  const html = fs.readFileSync(HTML_PATH, "utf8");
+  assert.match(html, /\.cell\.in \.lbl \{ color: #fff; text-shadow: 0 0 2px #000, 0 0 2px #000, 0 0 2px #000; \}/);
+  const sel = html.indexOf(".cell.sel { outline"), focus = html.indexOf(".grid .cell:focus-visible");
+  assert.ok(sel > 0 && focus > sel);
 });
