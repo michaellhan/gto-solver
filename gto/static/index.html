@@ -97,6 +97,7 @@
   .setup b { color: var(--text); font-weight: 600; }
   .setup .edit { color: var(--muted); font-size: inherit; padding: 4px; flex: none; }
   .setup .new { margin-left: auto; white-space: nowrap; flex: none; }
+  .setup .new + .new { margin-left: 0; }
   #setupFull { margin-top: 8px; }
   #savedSettings { margin-top: 4px; }
 
@@ -302,6 +303,8 @@
     .cell .lbl { left: 1px; top: 0; }
   }
   @media (max-width: 560px) {
+    .setup { flex-wrap: wrap; }
+    #setupSum { flex-basis: 100%; }   /* (the two buttons beside it left it a word a line) */
     .toast { flex-wrap: wrap; gap: 6px 14px; }
     .acts .usd small { display: none; }   /* ("Raise to $100" takes the button's two lines) */
     .pc { height: 30px; font-size: 11px; }
@@ -364,7 +367,7 @@
 <main class="app">
   <div class="col">
     <section id="pSetup">
-      <div class="setup"><span id="setupSum"></span><button class="link edit" id="setupEdit">Edit</button><button class="link edit" id="copyhand" title="Copy the hand so far as text: the table, your cards and each street's actions">Copy hand</button><button class="new" id="newhand" data-cap="N">New hand</button></div>
+      <div class="setup"><span id="setupSum"></span><button class="link edit" id="setupEdit">Edit</button><button class="new" id="copyhand" title="Copy the hand so far as text: the table, your cards and each street's actions">Copy hand</button><button class="new" id="newhand" data-cap="N">New hand</button></div>
       <div id="setupFull" class="panel" hidden>
         <div class="row setuprow">
           <span class="muted">Stakes</span>
