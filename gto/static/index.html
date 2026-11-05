@@ -200,225 +200,15 @@
   .acts button.agg { background: rgba(224,96,58,.09); border-color: rgba(224,96,58,.40); }
   .acts button:hover { filter: brightness(1.25); }
   .acts button small { display: block; font-weight: 400; font-size: 11px; color: var(--muted); }
-  .acts button small .fq { color: var(--text); font-weight: 600; }
-  .acts button.best { box-shadow: 0 0 0 2px var(--accent); }
-  .acts.solver::before { content: "Solver sizes"; width: 100%; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); }
   .acts button kbd, .shortcut kbd { position: absolute; top: 3px; right: 3px; margin: 0; font-size: 9px; padding: 0 3px; line-height: 13px; border-color: transparent; color: var(--faint); }
   .shortcut { position: relative; padding-right: 24px !important; }
   .custom { display: none; gap: 6px; align-items: center; margin-bottom: 8px; }
   .custom.open { display: flex; }
   .err { color: var(--bad); font-size: 12px; }
   .err:empty { display: none; }
-  /* practice mode (practice.js): a coach panel (your seat, what's happening, the verdict on each decision, the result,
-     the score); your range at the last decision (the advice's grid, nothing else) only when
-     asked for, never on your turn; no editing the hand, no
-     solver-only controls; big action buttons, and Next hand where they were once the hand is over */
-  #pCoach { padding: 12px 14px; }
-  body:not(.practice) #pCoach, body:not(.practice) .pxonly, body.practice .nopx { display: none !important; }
   body.unfinished .nofin { display: none !important; }   /* offered once a hand is finished: renderAll */
-  body.practice:not(.pxdetail) #pAdvice, body.practice.heroturn #pAdvice, body.practice #adviceNote, body.practice #equity, body.practice .acts .fq { display: none !important; }
-  body.practice #result.stale { opacity: 1; }
-  body.practice #result > :not(.gridview) { display: none !important; }
-  body.practice #result .gridview > .meta:first-child { margin-top: 10px !important; }
-  #pAdvice .pxhint { margin: -4px 0 0; font-size: 12px; }
-  .cx-rangeb { display: block; margin-top: 10px; background: none; color: var(--accent); border-color: var(--line2); font-weight: 600; font-size: 13px; text-align: left; }
-  .cx-rangeb:hover { background: var(--panel2); border-color: var(--accent); }
-  .cx-rangeb[aria-expanded="true"] { color: var(--text); border-color: var(--muted); }
-  body.practice .acts button.best { box-shadow: none; }
-  body.practice .seat, body.practice #seats, body.practice .rewind, body.practice #result .arow { pointer-events: none; }
-  body.practice #tableHint, body.practice #editCards, body.practice #timeline > button, body.practice .shortcut, body.practice #pCards,
-  body.practice #share, body.practice #newhand, body.practice .prompt .ask, body.practice .acts.solver::before { display: none !important; }
-  body.practice .acts button { min-height: 54px; font-size: 15px; max-width: none; }
-  @media (min-width: 561px) { body.practice .acts button { min-width: max-content; flex: 1 1 auto; padding: 8px 30px 8px 12px; } }   /* (one row where they fit, else two: a label never runs under its key) */
-  @media (max-width: 560px) { body.practice #solvectl { display: none; } }   /* (the header on one line) */
-  body.practice .acts.wait button { opacity: .4; }
-  body.practice .acts button kbd { top: 5px; right: 5px; font-size: 11px; line-height: 15px; padding: 0 4px; color: var(--muted); border-color: var(--line2); }
-  #actionArea .nexth { display: block; width: 100%; min-height: 54px; font-size: 16px; font-weight: 700; background: var(--accent); color: #1a1200; border-color: var(--accent); }
-  #actionArea .nexth:hover { filter: brightness(1.08); }
-  #actionArea .nexth kbd { color: #1a1200; border-color: rgba(0,0,0,.25); }
-  #practiceBtn.active { background: var(--panel2); color: var(--text); border-color: var(--line2); }
-  /* the coach: one card system (radius 10, 12px padding, 4/8px rhythm, tinted by the verdict's colour --c) */
-  #pCoach h2 { margin-bottom: 8px; }
-  #pxHandNo { font-variant-numeric: tabular-nums; }
-  /* your seat: a segmented row of seats (Random first), not the browser's select */
-  .cx-seats { display: flex; flex-wrap: wrap; gap: 2px; padding: 2px; margin-bottom: 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); }
-  .cx-seats button { flex: 1 1 auto; min-width: 0; padding: 5px 6px; font-size: 12px; font-weight: 600; color: var(--muted); background: none; border: 0; border-radius: 7px; white-space: nowrap; }
-  .cx-seats button:not([aria-checked="true"]):not(:disabled):hover { color: var(--text); background: var(--panel2); }
-  .cx-seats button:disabled { color: var(--line2); cursor: default; }
-  #pxSeat { margin-bottom: 4px; } #pxDrill { margin-bottom: 12px; }
-  .cx-seats button[aria-checked="true"] { background: var(--accent); color: #1a1200; }
-  .cx-seats button.rnd { flex-grow: 1.6; }
-  .cx-seats button.cur:not([aria-checked="true"]) { color: var(--accent); box-shadow: inset 0 0 0 1px rgba(242,181,68,.45); }   /* (Random: this hand's seat) */
-  .cx-seats button:focus-visible { outline-offset: -2px; }
-  .cx-tables { display: flex; align-items: center; gap: 10px; }   /* Tables: 1-4 (2-4: multitable.js's view) */
-  .cx-tables .lbl { font-size: 12px; color: var(--muted); }
-  .cx-tables .cx-seats { flex: 1; max-width: 220px; }
-  .cx-now { display: flex; align-items: center; gap: 14px; padding: 12px; min-height: 84px; border-radius: 10px; background: var(--panel2); border: 1px solid var(--line); transition: border-color .15s, box-shadow .15s; }
-  .cx-now.mine { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(242,181,68,.10); }
-  .cx-now.err { border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
-  .cx-now .t { font-size: 17px; font-weight: 700; display: flex; align-items: center; }
-  .cx-now.mine .t { color: var(--accent); }
-  .cx-now.wait .t { color: var(--muted); }
-  .cx-now .sub { color: var(--muted); font-size: 13px; margin-top: 4px; line-height: 1.5; font-variant-numeric: tabular-nums; }
-  .cx-now .sub b { color: var(--text); }
-  .cx-now .err { font-size: 13px; }
-  .cx-cards { display: flex; gap: 4px; flex: none; }
-  .cx-cards .bc { width: 38px; height: 54px; font-size: 17px; box-shadow: 0 2px 6px rgba(0,0,0,.35); }
-  .cx-now .bc.sm, .cx-show .bc.sm { width: 26px; height: 37px; font-size: 12px; box-shadow: none; }
-  .cx-board { display: flex; gap: 4px; margin-top: 8px; }
-  .cx-made { color: var(--muted); font-size: 13px; margin-top: 6px; } .cx-made b { color: var(--text); font-weight: 600; }
-  .cx-fb { --tint: color-mix(in srgb, var(--c) 9%, var(--panel2)); margin-top: 12px; padding: 12px; border-radius: 10px; background: var(--panel2); background: var(--tint);
-    border: 1px solid var(--line); border-color: color-mix(in srgb, var(--c) 35%, var(--line)); }
-  .cx-fb.empty { --c: var(--line2); background: none; border-style: dashed; border-color: var(--line2); color: var(--muted); font-size: 13px; text-align: center; padding: 16px 12px; }
-  .cx-hint { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; padding: 10px 12px; border-radius: 10px; font-size: 13px; line-height: 1.5; color: var(--muted);
-    background: color-mix(in srgb, var(--accent) 7%, var(--panel2)); border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line)); }
-  .cx-hint b { color: var(--accent); } .cx-hint button { flex: none; }
-  .cx-fb .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: -2px 0 6px; }
-  .cx-fb.old { opacity: .6; transition: opacity .15s; } .cx-fb.old:hover, .cx-fb.old:focus-within, .cx-fb.old:has(.cx-ai) { opacity: 1; }
-  .cx-fb .head { display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap; }
-  .cx-fb .ico { flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--c); color: #111; font-size: 12px; font-weight: 900; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
-  .cx-fb .verdict { display: inline; margin: 0; font-size: 18px; font-weight: 800; color: var(--c); letter-spacing: -.01em; }
-  .cx-fb .what { color: var(--muted); font-size: 13px; }
-  .cx-fb .what b { color: var(--text); }
-  .cx-fb .cost { margin-left: auto; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
-  .cx-fb .cost.neg { background: color-mix(in srgb, var(--bad) 16%, transparent); }
-  .cx-fb .cost.soft { color: var(--muted); background: var(--line); font-weight: 600; }
-  .cx-fb .cost.pos { background: color-mix(in srgb, var(--good) 14%, transparent); font-weight: 600; }
-  .cx-mix { display: flex; gap: 2px; height: 20px; border-radius: 6px; overflow: hidden; margin: 12px 0 8px; background: var(--bg); }
-  .cx-mix div { height: 100%; min-width: 0; display: flex; align-items: center; padding: 0 6px; overflow: hidden; }
-  .cx-mix span { font-size: 11px; font-weight: 700; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.5); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
-  .cx-mix div:first-child { border-radius: 6px 0 0 6px; } .cx-mix div:last-child { border-radius: 0 6px 6px 0; }
-  .cx-leg { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .cx-leg > span { display: inline-flex; align-items: center; white-space: nowrap; }
-  .cx-leg > span::before, .cx-acts .n::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; background: var(--c); flex: none; }
-  .cx-leg b { color: var(--text); font-weight: 600; margin-left: 4px; }
-  .cx-leg .you { color: var(--text); }
-  .cx-leg > span.muted { opacity: .5; }
-  .cx-fb .tag { font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: #1a1200; background: var(--accent); border-radius: 3px; padding: 1px 4px; margin-left: 6px; line-height: 1.2; }
-  /* Details: a chevron, not the browser's disclosure triangle */
-  .cx-more { margin-top: 8px; font-size: 13px; border-top: 1px solid color-mix(in srgb, var(--c) 18%, var(--line)); padding-top: 4px; }
-  .cx-more > summary { display: inline-flex; padding: 4px 0; font-weight: 600; }
-  .cx-more .why { margin: 4px 0 8px; line-height: 1.5; }
-  .cx-more .link { margin-top: 8px; }
-  .cx-acts { display: grid; grid-template-columns: 1fr auto auto; gap: 4px 16px; font-size: 13px; font-variant-numeric: tabular-nums; padding: 8px 0 0; }
-  .cx-acts .n { display: inline-flex; align-items: center; }
-  .cx-acts .you { font-weight: 700; }
-  .cx-acts .hd { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); }
-  /* Copy for AI / Explain with AI (in Details: Practice's cards, .cx-more, and a reviewed decision's advice, .rv-ai), the streamed explanation and the API key form */
-  .rv-ai { font-size: 13px; }
-  .cx-aib { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-  .cx-aib button { background: none; color: var(--muted); border-color: var(--line2); font-weight: 600; }
-  .cx-aib button:hover { color: var(--text); background: var(--panel2); }
-  .cx-aib button[aria-expanded="true"] { color: var(--text); border-color: var(--muted); }
-  .cx-ai { margin-top: 8px; padding: 10px 12px; border-radius: 8px; background: var(--bg); border: 1px solid var(--line); line-height: 1.55; overflow-wrap: anywhere; }
-  .cx-ai p { margin: 0 0 8px; } .cx-ai b { color: var(--text); }
-  .cx-ai ul { margin: 0 0 8px; padding-left: 18px; } .cx-ai li { margin: 0 0 4px; } .cx-ai li::marker { color: var(--muted); }
-  .cx-ai .err { font-size: 13px; }
-  .cx-ai .acts2 { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-  .cx-ai .ft { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 11px; color: var(--faint); border-top: 1px solid var(--line); padding-top: 6px; }
-  .cx-more .cx-ai .link, .rv-ai .cx-ai .link { margin-top: 0; font-size: 11px; }
-  .cx-ai.form label { display: block; font-weight: 600; margin-bottom: 6px; }
-  .cx-ai .row { display: flex; gap: 6px; }
-  .cx-ai input.cx-key { flex: 1; min-width: 0; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; font: 13px ui-monospace, Menlo, monospace; }
-  .cx-ai .note { color: var(--muted); font-size: 12px; margin: 8px 0 4px; }
-  .cx-ai a { color: var(--accent); }
-  .cx-more .cx-ai.form .link, .rv-ai .cx-ai.form .link { margin-top: 4px; font-size: 12px; }
-  /* the result */
-  .cx-res { --c: var(--line2); text-align: center; padding: 16px 12px; border-radius: 10px; background: var(--panel2); border: 1px solid var(--line); }
-  .cx-res.won { --c: var(--good); } .cx-res.lost { --c: var(--bad); }
-  .cx-res.won, .cx-res.lost { background: color-mix(in srgb, var(--c) 7%, var(--panel2)); border-color: color-mix(in srgb, var(--c) 30%, var(--line)); }
-  .cx-res > div:first-child { display: flex; justify-content: center; align-items: baseline; flex-wrap: wrap; gap: 0 10px; }
-  .cx-res .big { font-size: 22px; font-weight: 800; letter-spacing: -.01em; }
-  .cx-res .net { font-size: 18px; font-weight: 700; }
-  .cx-show { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 16px; margin-top: 12px; font-size: 12px; color: var(--muted); }
-  .cx-show > span { display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px 4px; border-radius: 8px; }
-  .cx-show > span .bc + .bc { margin-left: -2px; }
-  .cx-show b { color: var(--text); min-width: 24px; text-align: right; }
-  .cx-show .win { background: color-mix(in srgb, var(--good) 12%, transparent); }
-  .cx-show .win b { color: var(--good); }
-  .cx-res .pots { font-size: 12px; color: var(--muted); margin-top: 8px; font-variant-numeric: tabular-nums; }
-  /* lists (this hand's decisions, Review mistakes): one grid, so every row's columns line up */
-  .cx-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content max-content; gap: 4px 0; }
-  .cx-list li { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; column-gap: 12px; align-items: center; font-size: 13px; padding: 6px 12px; border-radius: 8px; background: var(--panel2); border: 1px solid transparent; }
-  .cx-list .st { text-transform: uppercase; font-size: 10px; letter-spacing: .08em; color: var(--muted); white-space: nowrap; }
-  .cx-list .pill { font-size: 11px; font-weight: 700; color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); border-radius: 999px; padding: 1px 8px; white-space: nowrap; justify-self: start; }
-  .cx-list li > .num { min-width: 56px; text-align: right; }
-  .cx-h { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 16px 0 0; }
-  .cx-h .num { font-size: 11px; letter-spacing: 0; text-transform: none; }
-  /* the score: four figures, then Review mistakes and Reset */
-  .cx-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); }
-  .cx-stats > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; line-height: 1.3; }
-  .cx-stats b { color: var(--text); font-size: 16px; font-weight: 700; text-align: left; }
-  .cx-tools { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
-  .cx-tools .rev { display: inline-flex; align-items: center; gap: 6px; }
-  .cx-tools .rev .n { font-size: 11px; font-weight: 700; border-radius: 999px; padding: 0 6px; background: color-mix(in srgb, var(--bad) 20%, transparent); color: var(--bad); font-variant-numeric: tabular-nums; }
-  .cx-tools .rev[aria-expanded="true"] { border-color: var(--line2); background: var(--line); }
-  .cx-tools #pxReset { margin-left: auto; }
-  .cx-rev { margin-top: 8px; }
-  .cx-empty { font-size: 13px; color: var(--muted); text-align: center; padding: 12px; margin-top: 8px; border: 1px dashed var(--line2); border-radius: 8px; }
-  .cx-list li.pick { cursor: pointer; transition: background .12s, border-color .12s; } .cx-list li.pick:hover { background: var(--line); }
-  .cx-list li.pick.on { border-color: var(--line2); background: var(--line); }
-  .cx-list li.pick:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
-  .cx-list .hole { margin-right: 4px; }
-  .cx-list .hole span { margin-right: 2px; font-weight: 700; }
-  .cx-list li.spot { display: block; background: none; padding: 0 0 8px; }
-  .cx-list li.spot > .muted { font-size: 12px; padding: 0 4px; }
-  .cx-list li.spot .cx-fb { margin-top: 6px; }
-  /* recent decisions: wide screens only (on a phone the coach is already a long scroll) */
-  @media (max-width: 900px), (max-height: 559px) { .cx-recent { display: none; } }
-  /* the table while practising: your seat marked, the seat to act lit (an opponent's pulses while it thinks), cards as cards */
-  body.pxseek #felt, body.pxseek #timeline, body.pxseek .cx-now .cx-cards { opacity: .35; }
-  body.practice .seat.hero { border-color: var(--accent); }
-  body.practice .seat.hero::before { content: "you"; position: absolute; left: 50%; top: 0; transform: translate(-50%, -60%); font-size: 9px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: #1a1200; background: var(--accent); border-radius: 999px; padding: 1px 6px; line-height: 1.3; }
-  body.practice .seat.hero.folded::before { background: var(--line2); color: var(--muted); }
-  body.practice .seat.toact:not(.hero) { animation: think 1.4s ease-in-out infinite; }
-  @keyframes think { 50% { box-shadow: 0 0 0 3px rgba(242,181,68,.25), 0 0 16px rgba(242,181,68,.35); } }
-  body.practice .seat .hc { display: flex; justify-content: center; gap: 2px; margin: 2px 0 1px; }
-  body.practice .seat .hc > span { background: #f5f5f0; border-radius: 3px; padding: 0 2px; line-height: 1.35; color: #111; }
-  /* the dealer button on its seat; at the end of a hand the seats that collected chips */
+  /* the dealer button on its seat */
   .seat .dbtn { position: absolute; right: -7px; bottom: -7px; width: 18px; height: 18px; border-radius: 50%; background: #f5f5f0; color: #111; font-size: 10px; font-weight: 800; line-height: 18px; box-shadow: 0 1px 3px rgba(0,0,0,.5); transition: none; }
-  .seat.won { border-color: var(--good); box-shadow: 0 0 0 2px color-mix(in srgb, var(--good) 25%, transparent); }
-  .seat.won .amt { color: var(--good); font-weight: 700; }
-  /* after your fold: Run it out (or Show hands) beside Next hand */
-  #actionArea .pxend { display: flex; gap: 8px; }
-  #actionArea .pxend .nexth { flex: 2 1 0; }
-  #actionArea .pxend .runit { flex: 1 1 0; min-height: 54px; font-weight: 700; }
-  /* the table: your seat's stack, the button moving, Reset stacks */
-  .cx-tbl { display: flex; align-items: center; gap: 8px; margin: -4px 0 12px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .cx-tbl b { color: var(--text); } .cx-tbl button { margin-left: auto; flex: none; }
-  .cx-run { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
-  .cx-run .cx-show { margin-top: 6px; }
-  .cx-res .says { font-size: 13px; color: var(--text); margin-top: 8px; }
-  /* a phone: the table and the dock already say whose turn it is, so the verdict comes straight under the table,
-     and the dock carries it in one line (the coach is often below the fold); the line is always there, so the
-     dock never changes height */
-  .pxstrip { display: none; }
-  @media (max-width: 900px), (max-height: 559px) {
-    .cx-now:not(.err) { display: none; } .cx-now:not(.err) + .cx-fb { margin-top: 0; }
-    .cx-fb.empty { display: none; }   /* (the dock's line says it) */
-    .cx-fb.empty + .cx-stats { margin-top: 0; border-top: 0; padding-top: 0; }
-    body.practice .pxstrip { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 0; height: 40px; margin: -2px 0 8px; padding: 0 10px 0 12px;
-      overflow: hidden; white-space: nowrap; text-align: left; font-size: 13px; background: var(--panel2); background: color-mix(in srgb, var(--c, var(--line)) 9%, var(--panel2));
-      border: 1px solid var(--line); border-color: color-mix(in srgb, var(--c, var(--line)) 35%, var(--line)); border-radius: 10px; color: var(--text); font-variant-numeric: tabular-nums; }
-    body.practice .pxstrip::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--line2)); }
-    .pxstrip > * { flex: none; } .pxstrip > .fit { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-    .pxstrip .go { margin-left: auto; color: var(--muted); font-size: 18px; line-height: 1; }
-    /* the verdict, the result and the score first, straight under the table; the seat and spot pickers (settings,
-       rarely touched mid-session) after them */
-    body.practice #pCoach { display: flex; flex-direction: column; }
-    body.practice #practiceBar { order: -1; margin-bottom: 14px; }
-    body.practice #practiceBar[hidden] { display: none; }
-  }
-  @media (max-width: 560px) {
-    .cx-leg > span.muted { display: none; }   /* (the solver's 0% actions: in Details) */
-    .cx-stats b { font-size: 15px; }
-    .cx-list li { column-gap: 8px; padding: 6px 8px; }
-    .cx-fb .verdict { font-size: 17px; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    body.practice .seat.toact:not(.hero) { animation: none; }
-    summary::before, .cx-now, .cx-seats button, .cx-rev li.pick { transition: none; }
-  }
 
   /* ---- advice */
   .conv { font-size: 11px; font-weight: 600; border-radius: 999px; padding: 1px 8px; border: 1px solid currentColor; white-space: nowrap; }
@@ -544,21 +334,13 @@
     body.dragging { cursor: col-resize; -webkit-user-select: none; user-select: none; }
     body.dragging-v { cursor: ns-resize; -webkit-user-select: none; user-select: none; }
     #pAdvice { margin-bottom: 0; min-height: 100%; }
-    body.practice #colL > * { flex-shrink: 0; }
-    body.practice #colL > #pHistory { flex-shrink: 1; min-height: 88px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line2) transparent; }
-    /* (the setup opened mid-hand: a smaller table, and the column scrolls as one, the dock in it, rather than
-       squeeze the Hand panel behind the dock) */
-    body.practice.setupopen { --felt-h: clamp(190px, 28vh, 210px); }
-    body.practice.setupopen #colL > #pHistory { flex-shrink: 0; }
-    body.practice.setupopen .dock { position: static; box-shadow: none; }
-    body.practice #pHistory h2 { position: sticky; top: -12px; margin: -12px -14px 8px; padding: 12px 14px 4px; background: var(--panel); z-index: 1; }
   }
   /* Narrow screens (phones, or a zoomed-in window): one column that scrolls; the action dock sticks to the
      bottom of the window. On your turn the advice comes straight after the table. */
   @media (max-width: 900px), (max-height: 559px) {
     main { display: flex; flex-direction: column; padding: 10px 10px 0; }
     .col { display: contents; }
-    #pSetup { order: 10; } #pTable { order: 20; } #pCoach { order: 22; } #pCards { order: 30; } #pAdvice { order: 40; } #pHistory { order: 50; } #pAction { order: 90; }
+    #pSetup { order: 10; } #pTable { order: 20; } #pCards { order: 30; } #pAdvice { order: 40; } #pHistory { order: 50; } #pAction { order: 90; }
     body.heroturn #pAdvice { order: 25; }
     body.needcard #pCards { order: 15; }
     .dock { margin: 0 -10px; border-radius: var(--r) var(--r) 0 0; border-width: 1px 0 0; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
@@ -577,15 +359,11 @@
     .seat { width: 56px; padding: 3px 2px; }
     .seat .pos { font-size: 11px; }
     .bc { width: 24px; height: 34px; font-size: 11px; }
-    /* Practice: the board and your own cards are what you look at most, so bigger than the rest of the table */
-    body.practice .bc { width: 28px; height: 39px; font-size: 13px; }
-    body.practice .seat.hero { width: 70px; }
-    body.practice .seat.hero .hc { font-size: 15px; }
     .pc { height: 30px; font-size: 11px; }
     .slot { width: 32px; height: 46px; font-size: 15px; }
     .slots { gap: 10px; }
     .acts button { padding: 6px 16px 6px 8px; min-width: 0; flex: 1 1 calc(33% - 6px); max-width: none; }
-    .prompt .ask, .acts.solver::before { display: none; }
+    .prompt .ask { display: none; }
     .prompt { margin-bottom: 6px; }
     .arow { grid-template-columns: 104px 1fr 48px 62px; gap: 8px; }
     .arows.noev .arow { grid-template-columns: 104px 1fr 48px; }
@@ -600,9 +378,7 @@
     .slot.filled:hover { opacity: 1; }
     .pc:hover { transform: none; box-shadow: none; }
     .acts button:hover { filter: none; }
-    .cx-more > summary, .setupsum .link, #setupDone { min-height: 40px; }
-    .cx-aib button, .cx-ai .acts2 button, .cx-ai .row button { min-height: 40px; padding: 6px 12px; }
-    .cx-ai input.cx-key { font-size: 16px; }
+    .setupsum .link, #setupDone { min-height: 40px; }
   }
   /* a touch screen without a mouse has no keyboard to speak of: the shortcut keys only crowded the labels
      (on a 320px phone "Raise to 2.5" ran into its "1") */
@@ -635,19 +411,18 @@
 <header>
   <h1>GTO Solver</h1>
   <span class="spacer"></span>
-  <span class="ctl nopx nofin" id="oppctl"><span class="lbl">Opponents</span>
+  <span class="ctl nofin" id="oppctl"><span class="lbl">Opponents</span>
     <div class="segment"><button data-o="gto" class="active" title="Opponents play the equilibrium (GTO): advice that can't be exploited, whoever you face.">GTO</button><button data-o="pool" title="Opponents play like a typical online player pool instead of perfectly: they fold too often to bets of every size (most of all small ones), raise less and bluff less, fitted to published population data from online cash games. Preflop they play more hands, 3bet more and fold less to 3bets. Your preflop calls and raises adjust to those ranges (opens follow the chart); after the flop, the advice is the most profitable play against them, with GTO's frequency shown under each action.">Pool</button></div></span>
   <span class="ctl" id="solvectl"><span class="lbl">Solve</span>
     <div class="segment"><button data-m="fast" class="active" title="How long a review takes over each decision. The default: about 8 s a decision in the browser (2.5 s with the local server). Rivers come out exact; a single-raised turn gives up about 0.2% of the pot to a perfect opponent, a 3bet pot's turn almost nothing; precomputed flops answer at once. Practice answers in about 2 s here: rivers close to exact, turns approximate. More: ⋯ > About &amp; accuracy.">Fast</button><button data-m="accurate" title="How long a review takes over each decision: about a minute in the browser (30 s with the local server). Turns come within a fraction of a percent of a full solver: a single-raised turn gives up about 0.01% of the pot to a perfect opponent. More: ⋯ > About &amp; accuracy.">Accurate</button></div></span>
-  <button id="practiceBtn" title="Practice against GTO: random hands, the other seats play the solver's strategy for their cards, and each of your decisions is graded">Practice</button>
   <button id="share" title="Copy a link that opens this hand">Share</button>
   <button id="newhand" title="Shortcut: N">New hand <kbd>N</kbd></button>
   <span class="menuwrap">
     <button id="helpBtn" class="ghost" title="Help: getting started, how accurate the answers are, a glossary" aria-label="Help">?</button>
-    <button id="menuBtn" class="ghost" title="More: import and analyze hands, help, settings" aria-label="More" aria-haspopup="true" aria-expanded="false" aria-controls="menu">⋯</button>
+    <button id="menuBtn" class="ghost" title="More: your hands, help, settings" aria-label="More" aria-haspopup="true" aria-expanded="false" aria-controls="menu">⋯</button>
     <div class="menu" id="menu" hidden>
       <div class="mlbl">Review</div>
-      <button id="myHands" title="Every hand you've entered, reviewed or imported, kept in this browser: search, tags, notes, open one in review, export, back up">My hands…</button>
+      <button id="myHands" title="Every hand you've entered or reviewed, kept in this browser: search, tags, notes, open one in review, export, back up">My hands…</button>
       <div class="mlbl">Help</div>
       <button id="helpStart" title="What to do first">Getting started…</button>
       <button id="helpAbout" title="How the answers are made and measured: exploitability, the benchmark against an open-source solver, Fast and Accurate, the known limits">About & accuracy…</button>
@@ -656,10 +431,8 @@
       <button id="helpFairplay" title="A study and review tool: not for use during a hand, online or live">Fair play…</button>
       <div class="mlbl">Settings</div>
       <button id="fourcolor" title="Four-colour deck: diamonds blue, clubs green">Four-colour deck</button>
-      <button id="soundBtn" title="Sound effects in Practice: cards, chips, checks, folds, each verdict and the pot">Sounds on</button>
       <button id="swapCols" class="wideonly" title="Put the advice on the left and the table on the right">Advice on the left</button>
       <div class="sep"></div>
-      <button id="resetPractice" class="pxonly" title="Clear your practice score, mistakes and the table's stacks, and deal a new hand">Reset practice…</button>
       <button id="resetLayout" title="Default column widths, table size and panels">Reset layout</button>
       <div class="hint wideonly">Drag the divider between the columns, or the bar under the table, to resize. Click a panel's title to fold it.</div>
     </div>
@@ -745,9 +518,8 @@
           <div class="row nofin" id="lockIns" title="Tell the solver how an opponent plays, and the advice becomes the best counter to it (nodelocking), with GTO's frequencies alongside. It works preflop (their opens, 3bets, calls and folds; your line is re-priced against them) and heads-up after the flop, on top of GTO or of the pool (Opponents: Pool). fold: how many percentage points more of their range folds to a bet or raise (negative: they call more). bluff, bet, raise: how much more or less often, from -100 (never) to +100 (always); bluff is the bets of their weak hands; preflop, bet means their opens and raise their 3bets and 4bets. next: their fold % to your bet, and their bet % when you check, at their very next decision after the flop."></div>
         </details>
         <div class="row">
-          <span class="muted nopx" style="width:58px;font-size:12px">You are</span>
-          <div class="row seats nopx" id="seats"></div>
-          <span class="muted pxonly" style="font-size:12px">A change to the table deals a new hand.</span>
+          <span class="muted" style="width:58px;font-size:12px">You are</span>
+          <div class="row seats" id="seats"></div>
           <button class="link" id="setupDone" style="margin-left:auto" hidden>Done</button>
         </div>
       </div>
@@ -779,7 +551,6 @@
     </section>
 
     <section class="panel dock" id="pAction">
-      <button class="pxstrip" id="pxStrip" title="Show the coach's verdict"></button>
       <div class="err" id="err"></div>
       <div id="actionArea"></div>
     </section>
@@ -788,16 +559,8 @@
   <div class="split" id="split" title="Drag to resize · double-click to reset"></div>
 
   <div class="col" id="colR">
-    <section class="panel" id="pCoach">
-      <h2 id="pxSeatLbl">Your seat <span class="right num" id="pxHandNo"></span></h2>
-      <div class="cx-seats" id="pxSeat" role="radiogroup" aria-labelledby="pxSeatLbl" title="Practice from one seat, or a random seat each hand"></div>
-      <div class="cx-seats" id="pxDrill" role="radiogroup" aria-label="Spots to practise" title="Every hand, or only one kind of pot (its preflop played for you)"></div>
-      <div class="cx-tables"><span class="lbl" id="pxTablesLbl">Tables</span><div class="cx-seats" id="pxTables" role="radiogroup" aria-labelledby="pxTablesLbl" title="Play one table, or two to four at once"></div></div>
-      <div id="practiceBar" hidden></div>
-    </section>
     <section class="panel" id="pAdvice">
-      <h2><span class="nopx">Review</span><span class="pxonly" id="pxRangeHd">Your range</span></h2>
-      <div class="pxonly meta pxhint">What the solver does with every hand you could hold here; your hand is outlined.</div>
+      <h2>Review</h2>
       <div id="adviceNote" class="note" hidden></div>
       <div id="equity" hidden></div>
       <div id="result" class="empty">Enter a hand you've played: your seat and cards, then the action seat by seat.<br>When it's finished, the solver reviews each decision you made.</div>
@@ -810,7 +573,6 @@
   <span class="muted" style="font-size:12px">GTO Solver works out what game theory does in any no-limit hold'em spot, in your browser: nothing you enter is uploaded. It's for studying and for reviewing hands after you've played them, not for use during a hand.</span>
   <div class="wgrid">
     <button id="welcomeReview"><b>Review a hand</b><span>Enter a hand you played, seat by seat, finish it, and see the solver's play at each decision</span></button>
-    <button id="welcomePractice"><b>Practice</b><span>Play random hands against the solver, each decision graded as you go</span></button>
   </div>
   <div class="row wfoot"><button class="link" id="welcomeStart">Getting started</button><button class="link" id="welcomeAbout">How accurate is it?</button><button class="link" id="welcomeFair">Fair play</button><button id="welcomeClose" class="ghost">Not now</button></div>
 </div>
@@ -964,7 +726,6 @@ function savedHtml() {
   const go = [tour && `<a href="${LIZARD_TOURNAMENTS}">Lizard's tournaments</a>`, adv.length && `<a href="${LIZARD_SOLVE}">Lizard's solver</a>`].filter(Boolean);
   return `Saved with this hand: ${what.join(", ")}. New hand clears ${what.length > 1 ? "them" : "it"}.${go.length ? ` For a new spot, use ${go.join(" or ")}.` : ""}`;
 }
-const IS_BLIND = (p) => p === "SB" || p === "BB" || p === STRADDLER();
 function setPositions(n) {
   POS = SEATS[n]; ORDER_PRE = POS;
   ORDER_POST = n === 2 ? ["BB", "SB"] : ["SB", "BB", ...POS.filter(p => p !== "SB" && p !== "BB")];
@@ -975,16 +736,8 @@ const SLOT_NAMES = ["your first card", "your second card", "flop card 1", "flop 
 const SLOT_WHERE = ["in your hand", "in your hand", "on the flop", "on the flop", "on the flop", "on the turn", "on the river"];
 // seconds per solve for each speed setting: [current street, each earlier street used for range narrowing]
 const BUDGETS = { server: { fast: [2.5, 2.5], accurate: [30, 12] }, wasm: { fast: [8, 3], accurate: [60, 12] } };
-// Practice at Fast answers in about 2 s (the request's "quick": no second budget for an unsettled street,
-// 3-way solves on the river only, gto/advisor.py): [street, each earlier postflop street], by street (a river settles
-// in less), either backend
-const QUICK_BUDGETS = { flop: [1.5, 0.3], turn: [1.5, 0.3], river: [0.8, 0.3] };   // (a 3-way river 1.8: advisor.MW_QUICK_BUDGET)
-// a request's [budget, prior_budget, quick] at a speed, for a board (cards as a string)
-function budgetsFor(speed, board) {
-  const st = { 6: "flop", 8: "turn", 10: "river" }[board.length];
-  if (!MODE) return [null, null, false];   // (the backend not known yet)
-  return st && practicing() && speed === "fast" ? [...QUICK_BUDGETS[st], true] : [...BUDGETS[MODE][speed], false];
-}
+// a request's [budget, prior_budget] at a speed
+function budgetsFor(speed) { return MODE ? BUDGETS[MODE][speed] : [null, null]; }   // (null: the backend not known yet)
 // this browser's storage (store.js: IndexedDB records, each small key also kept in localStorage under its own name for
 // the reads while the page starts); without it (the tests' page) localStorage itself
 const pageStore = window.GTOStore || { getRaw: (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } },
@@ -1002,28 +755,20 @@ let OPP = "gto";
 // before the chooser existed
 let WELCOME = null;
 try { WELCOME = localStorage.getItem("gto-welcome"); if (!WELCOME) localStorage.setItem("gto-welcome", WELCOME = localStorage.getItem("gto-speed") ? "seen" : "due"); } catch (e) {}
-// practice mode: random hands against GTO opponents (gto/static/practice.js, loaded on first use)
-const practicing = () => !!(window.Practice && window.Practice.on);
-// Practice on 2-4 tables (multitable.js): each table keeps its own hand and asks the solver itself; the page's own
-// hand (the one-table Practice hand) waits, unsolved, and the keys go to the tables
-const multiTabling = () => practicing() && window.Practice.state.tables > 1;
 const WORKER_VERSION = "14";   // scripts/deploy.sh replaces this with a hash of worker.js
-const EX_VERSION = "1";        // and this with a hash of explain.js (Copy for AI, Explain with AI: Practice's and a reviewed decision's, loaded on first use)
-const PR_VERSION = "1";        // and practice.js (Practice, loaded on first use, after explain.js)
-const MT_VERSION = "1";        // and multitable.js (Practice on 2-4 tables at once, loaded the first time Tables goes above 1)
-const HP_VERSION = "1";        // and help.js (the help pages: Getting started, About & accuracy, Glossary, Changelog, Fair play)
+const HP_VERSION = "1";        // and this with a hash of help.js (the help pages: Getting started, About & accuracy, Glossary, Changelog, Fair play)
 const HN_VERSION = "1";        // and hands.js (My hands, loaded the first time it opens; store.js, loaded with the page, has ?v= of its own)
 // where the precomputed libraries are (flop_library/: the local server's, gto/static/flop_library); scripts/deploy.sh
 // points it at their own site, ../gto-solver-library/ (scripts/deploy_library.sh). The worker is told it in its URL
 // (relative: worker.js is in the folder the page's URLs resolve against).
 const LIB_BASE = "flop_library/";
-// ---- the views' URLs: the solver is the root (/gto-solver/), the others /practice/, /hands/
+// ---- the views' URLs: the solver is the root (/gto-solver/), the others /hands/
 // and the help pages (/start/, /about/, /glossary/, /changelog/, /fairplay/) under it. The static site has no
 // rewrites: each URL is a copy of this page with a <base href="../"> that points its relative URLs at the root.
 // gto/routes.py reads these two lines (SPOT_ROUTES: the views with a /<spot>/ level, none now; scripts/deploy.sh writes the copies,
-// gto/server.py serves them). Opening a view pushes its URL and closing it pushes the solver's (Practice's, if
-// that's on under it); back and forward switch views; a view's URL opened directly opens it (applyRoute, at the end).
-const ROUTES = { practice: "Practice", hands: "My hands", start: "Getting started", about: "About & accuracy", glossary: "Glossary", changelog: "Changelog", fairplay: "Fair play" };
+// gto/server.py serves them). Opening a view pushes its URL and closing it pushes the solver's;
+// back and forward switch views; a view's URL opened directly opens it (applyRoute, at the end).
+const ROUTES = { hands: "My hands", start: "Getting started", about: "About & accuracy", glossary: "Glossary", changelog: "Changelog", fairplay: "Fair play" };
 const SPOT_ROUTES = [];
 const ROUTE_RE = new RegExp(`^(.*?/)(?:(${Object.keys(ROUTES).join("|")})/?)?(?:index\\.html)?$`);
 function parseRoute(pathname) {   // -> { root: the solver's path, view: "solver" or a ROUTES key }
@@ -1036,13 +781,13 @@ const ROOT = parseRoute(location.pathname).root, TITLE = document.title || "GTO 
 // library: /hands/hands.js, a 404): the solver's own page pins its base to the root, as the views' copies do with
 // theirs
 try { if (!document.querySelector("base")) { const b = document.createElement("base"); b.href = ROOT; document.head.prepend(b); } } catch (e) {}
-let overlay = null;   // the view open over the solver / Practice, if any
+let overlay = null;   // the view open over the solver, if any
 let routing = 1;   // > 0 while the URL's view is being opened (the URL is already its own): nothing is pushed
 const routeUrl = (v) => ROOT + (v === "solver" ? "" : v + "/") + (location.search || "");
 // the URL and title for the view showing, pushed (or replaced)
 function syncRoute(replace) {
   if (routing) return;
-  const v = overlay || (practicing() ? "practice" : "solver");
+  const v = overlay || "solver";
   document.title = v === "solver" ? TITLE : `${ROUTES[v]} · ${TITLE}`;
   const url = routeUrl(v);
   if (url !== location.pathname + (location.search || "")) try { history[replace ? "replaceState" : "pushState"]({ view: v }, "", url); } catch (e) {}   // (file: pages can't)
@@ -1175,14 +920,12 @@ function prefetchLibrary() {
   prefetched = k;
   worker.postMessage({ prefetch: flop });
 }
-// play: {seat, hole} asks for that seat's GTO move instead (a practice opponent; Advisor.play). onPartial (the browser's
-// worker): called with an approximate answer, where one is in hand at once, before the request's own (Advisor.instant;
+// onPartial (the browser's worker): called with an approximate answer, where one is in hand at once, before the request's own (Advisor.instant;
 // partials, by request id)
-function callAdvise(state, play, onPartial) {
-  if (MODE === "server") return fetch(play ? "play" : "advise", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(play ? { state, ...play } : state) }).then(r => r.json());
+function callAdvise(state, onPartial) {
+  if (MODE === "server") return fetch("advise", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(state) }).then(r => r.json());
   startWorker();
-  const early = !play && !!onPartial;
-  const id = ++reqId, p = new Promise(res => { pending[id] = res; if (early) partials[id] = onPartial; post(play ? { id, state, play } : early ? { id, state, early } : { id, state }); });
+  const id = ++reqId, p = new Promise(res => { pending[id] = res; if (onPartial) partials[id] = onPartial; post(onPartial ? { id, state, early: true } : { id, state }); });
   p.reqId = id;   // (stopRequests(id))
   return p;
 }
@@ -1238,16 +981,14 @@ async function cancelSolve() {
 // nothing is solved, fetched or shown. A hand is finished when it ended, when you folded, or when it was marked so
 // (S.finished: Finish hand, an imported hand); then each decision you recorded can be reviewed
 // (reviewHand, all of them; stepTo, one). A decision you didn't record is never reviewed, and once a hand's advice has
-// been shown its line stays as it is (S.reviewed, fixedHand). Practice answers as you play, on its own hands.
+// been shown its line stays as it is (S.reviewed, fixedHand).
 let review = null;     // { n, k, what, cancel, full } while a review runs; cancel "restore" (its Cancel) or "drop" (a new hand)
 let stepView = null;   // { full, s, i }: a decision of a finished hand being looked at; S is the hand up to it
 function handDone(sim) { return !!S.cards[0] && !!S.cards[1] && (!!S.finished || !!sim.handOver || !sim.active.has(S.hero)); }
-function closed(sim) { return !practicing() && handDone(sim); }
 function reviewing() { return !!(review || stepView); }
-function adviceOpen() { return practicing() || reviewing(); }
 // the whole hand, while S is a review's decision (what's saved, kept and linked)
 function heldHand() { return review && review.cancel !== "drop" ? review.full : stepView ? stepView.full : S; }
-function fixedHand(sim) { return closed(sim) && (reviewing() || !!S.reviewed || STREETS.some(s => S.actions[s].some(a => a.g))); }
+function fixedHand(sim) { return handDone(sim) && (reviewing() || !!S.reviewed || STREETS.some(s => S.actions[s].some(a => a.g))); }
 const FIXED_HAND = "This hand has been reviewed, so it stays as entered. Press N for a new hand.";
 // advice has been shown for this hand (a review's or a decision's): from here its line is fixed
 function markReviewed() { if (!reviewing()) return; const h = heldHand(); if (!h.reviewed) { h.reviewed = true; save(); } }
@@ -1275,15 +1016,12 @@ let lastResult = null;
 const cache = new Map();  // payload -> result, so undo/redo doesn't re-solve
 
 function fresh(n) { n = n || 6; return { players: n, hero: n === 2 ? "SB" : "BTN", stack: 100, cards: [null, null, null, null, null, null, null], actions: { preflop: [], flop: [], turn: [], river: [] }, ...stakesPref() }; }
-// Practice and the solver each keep their own hand and setup: the solver's under "handreview", Practice's under
-// "gto-practice-state"; turning Practice on or off puts one away and brings the other back (swapState)
-function stateKey() { return practicing() ? "gto-practice-state" : "handreview"; }
-function save() { pageStore.setRaw(stateKey(), JSON.stringify(heldHand())); }
-function load() { try { const s = pageStore.getRaw(stateKey()); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
+function save() { pageStore.setRaw("handreview", JSON.stringify(heldHand())); }
+function load() { try { const s = pageStore.getRaw("handreview"); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
 // My hands (store.js, GTOStore.hands): the hand on the table is kept before another takes its place (New hand, a hand
-// loaded, a link; a review's whole hand while it runs), and a reviewed or imported hand is saved. Not while practising.
+// loaded, a link; a review's whole hand while it runs), and a reviewed hand is saved.
 function keepHand(how, st, meta) {
-  try { if (window.GTOStore && !practicing()) return window.GTOStore.hands.keep(how, st || heldHand(), meta); } catch (e) {}
+  try { if (window.GTOStore) return window.GTOStore.hands.keep(how, st || heldHand(), meta); } catch (e) {}
   return Promise.resolve(null);
 }
 function handOnTable(opts) { try { if (window.GTOStore) window.GTOStore.hands.onTable(S, opts); } catch (e) {} }
@@ -1415,20 +1153,12 @@ function simulate() {
   }
   out.cur = out.current && !out.streets[out.current].closed ? out.streets[out.current] : null;
   out.pot = Object.values(inv).reduce((a, b) => a + b, 0) + (out.cur ? Object.values(out.cur.bets).reduce((a, b) => a + b, 0) : 0);
-  // practice: your fold ends it, also when it closes the street with others still in (the street's bets so far,
-  // blinds and straddle included, are then in: no street is in progress to hold them); unless you run it out
-  if ((out.cur || out.waiting) && !active.has(S.hero) && practicing() && !window.Practice.running) {
-    if (out.cur) for (const p of POS) inv[p] += out.cur.bets[p];
-    out.handOver = true; out.cur = null; out.toAct = null; out.waiting = null; out.current = out.current || STREETS.filter(s => out.streets[s]).pop(); }
   return out;
 }
 // Whether p (to act) may bet or raise: not shut out by an all-in for less than a full raise, and someone else
 // still has chips to face it. The smallest raise is to minRaiseTo (all-in for less is always allowed).
 const canRaise = (sim, p) => !sim.cur.locked.has(p) && [...sim.active].some(q => q !== p && !sim.allin.has(q));
 const minRaiseTo = (info) => info.curBet + info.minRaise;
-// a size as act() takes it (gto/advisor.py _legal_to): the nearest half big blind, at least the smallest raise rounded
-// up to a half big blind (after an all-in for an odd amount the smallest raise is one too: rounding alone fell under it)
-const legalTo = (to, info) => Math.max(Math.round(to * 2) / 2, Math.ceil(minRaiseTo(info) * 2 - 1e-9) / 2);
 // Main pot and side pots from each seat's chips in (tot) and the players still in: each all-in player's stake
 // caps what they can win from everyone. [{amount, eligible}], main pot first; one entry without side pots.
 function sidePots(tot, live, allin) {
@@ -1459,34 +1189,20 @@ function recordOf(sim, a) {
   else if (a.action === "call") rec = facing ? { action: "call" } : { action: "check" };
   else if (a.action === "all-in") rec = raiseOk || remaining <= toCall + 1e-9 ? { action: "all-in" } : facing ? { action: "call" } : { action: "check" };
   else {
-    let to = Math.round(a.to * 2) / 2;
+    const to = Math.round(a.to * 2) / 2;
     if (!(to > 0)) return "Enter an amount.";
     if (to <= info.curBet + 1e-9 && to < allInTo - 1e-9) return `${fmt(to)}bb isn't a raise, the bet is ${fmt(info.curBet)}bb.`;
-    if (!raiseOk) { if (!a.clamp) return noRaise(); rec = facing ? { action: "call" } : { action: "check" }; }
-    else {
-      // (a practice opponent's size is lifted to the minimum; a typed one is refused)
-      if (to < minRaiseTo(info) - 1e-9 && to < allInTo - 1e-9) { if (!a.clamp) return `The smallest ${facing || info.curBet > 0 ? "raise is to" : "bet is"} ${fmt(Math.min(minRaiseTo(info), allInTo))}bb.`; to = minRaiseTo(info); }
-      if (to >= allInTo - 1e-9) rec = { action: "all-in" };
-      else rec = { action: facing || info.curBet > 0 ? "raise" : "bet", to };
-    }
+    if (!raiseOk) return noRaise();
+    if (to < minRaiseTo(info) - 1e-9 && to < allInTo - 1e-9) return `The smallest ${facing || info.curBet > 0 ? "raise is to" : "bet is"} ${fmt(Math.min(minRaiseTo(info), allInTo))}bb.`;
+    rec = to >= allInTo - 1e-9 ? { action: "all-in" } : { action: facing || info.curBet > 0 ? "raise" : "bet", to };
   }
   return rec;
 }
 function act(a) {
   const sim = simulate(), rec = recordOf(sim, a);
   if (typeof rec === "string") return rec;
-  if (S.finished && !practicing()) return "This hand is finished.";
-  const p = sim.toAct;
-  // (practice: a drill plays your preflop for you (a.auto), not graded)
-  if (p === S.hero && practicing() && !a.auto && resultKey !== JSON.stringify(payload())) return "One moment: the spot is being solved, so your move can be graded.";
-  const move = p === S.hero ? gradedMove(sim, rec) : rec;
-  if (p === S.hero && practicing() && !a.auto) { const g = gradeFor(move); if (g) rec.g = g; }
-  const shown = resultKey === JSON.stringify(payload()) ? lastResult : null, key = resultKey;
-  const logged = p === S.hero && practicing() && !a.auto ? window.Practice.graded(sim.current, rec, shown) : null;
-  const entry = { pos: p, ...rec };
-  S.actions[sim.current].push(entry); save();
-  if (p === S.hero && practicing() && !a.auto && !rec.g && jamOffTree(shown, move))
-    jamGrade(key, move).then(g => { if (!g) return; entry.g = g; save(); if (logged) window.Practice.regraded(logged, g, g.res); renderAll(); });
+  if (S.finished) return "This hand is finished.";
+  S.actions[sim.current].push({ pos: sim.toAct, ...rec }); save();
   return null;
 }
 // A multiway result from the betting rules (4+ players on the flop or turn, or a spot the solvers don't take), not a solve.
@@ -1551,9 +1267,7 @@ async function jamGrade(key, rec) {
   if (!key) return null;
   const res = await callAdvise({ ...JSON.parse(key), jam: true });
   if (!res || res.error || res.cancelled || !res.actions) return null;
-  const g = gradeWith(res, rec);
-  if (g) Object.defineProperty(g, "res", { value: res, enumerable: false });   // (Practice's mix; not saved with the grade)
-  return g;
+  return gradeWith(res, rec);
 }
 // a grade's note when your action was graded as the chart's nearest one (g.v: what you played)
 const gradeAs = (g) => g.v ? ` (graded as the ${g.vs ? "solver" : "chart"}'s ${g.m}: it has no ${g.v === "all-in" ? "all-in" : "smaller raise"} here)` : "";
@@ -1596,7 +1310,7 @@ function autoRest(street, action) {
 // cards are cleared; no advice comes back with it); on a finished hand to see its advice (stepTo).
 function rewindTo(street, i) {
   if (review) return;
-  if (closed(simulate())) return stepTo(street, i);
+  if (handDone(simulate())) return stepTo(street, i);
   const before = JSON.stringify(S);
   const si = STREETS.indexOf(street);
   S.actions[street] = S.actions[street].slice(0, i);
@@ -1606,7 +1320,7 @@ function rewindTo(street, i) {
   toast(`Back to your ${street} decision. Enter it again.`, () => { S = JSON.parse(before); save(); renderAll(); }, 8000);
 }
 function undo() {
-  if (practicing() || review) return;
+  if (review) return;
   if (stepView) return stepStop();
   if (fixedHand(simulate())) return toast(FIXED_HAND);
   if (S.finished) return keepEntering();
@@ -1614,7 +1328,7 @@ function undo() {
   save(); renderAll();
 }
 function finishHand() {
-  if (practicing() || review || !S.cards[0] || !S.cards[1] || S.finished) return;
+  if (review || !S.cards[0] || !S.cards[1] || S.finished) return;
   S.finished = true; selSlot = null; showDeck = false; pendingRank = null; save(); renderAll();
 }
 function keepEntering() {
@@ -1643,7 +1357,7 @@ function stepStop() {
 }
 
 // ------------------------------------------------------------------ cards
-function dealing(sim) { return !!sim.waiting && !closed(sim); }   // (a finished hand's next card is never needed)
+function dealing(sim) { return !!sim.waiting && !handDone(sim); }   // (a finished hand's next card is never needed)
 function needCard(sim) { return !S.cards[0] || !S.cards[1] || dealing(sim) || selSlot !== null || showDeck; }
 function nextSlot() { if (selSlot !== null) return selSlot; const i = S.cards.findIndex(c => !c); return i < 0 ? null : i; }
 function placeCard(c) {
@@ -1676,7 +1390,7 @@ function renderSetup() {
   const e = document.createElement("button"); e.className = "link"; e.style.marginLeft = "auto"; e.textContent = "Edit"; e.onclick = () => { stepStop(); editSetup = true; renderAll(); };
   if (!review) sum.appendChild(e);
 
-  const saved = document.getElementById("savedSettings"), line = practicing() ? "" : savedHtml();
+  const saved = document.getElementById("savedSettings"), line = savedHtml();
   saved.hidden = !line; saved.innerHTML = line;
   document.getElementById("straddleBox").hidden = S.players < 3;
   syncStakes(); syncAdv(); renderSeatStacks(); syncIcm();
@@ -1733,25 +1447,22 @@ function renderPicker(sim) {
 function renderTable(sim) {
   const el = document.getElementById("felt"); el.innerHTML = "";
   const n = POS.length, hi = Math.max(0, POS.indexOf(S.hero));
-  const toAct = closed(sim) && !stepView ? null : sim.toAct;   // (a hand finished at someone's turn: nobody's to act)
+  const toAct = handDone(sim) && !stepView ? null : sim.toAct;   // (a hand finished at someone's turn: nobody's to act)
   POS.forEach((p, i) => {
     const d = document.createElement("div");
     const folded = !sim.active.has(p), bet = sim.cur ? sim.cur.bets[p] : 0, total = sim.invested[p] + bet;
-    const clickable = !closed(sim) && !folded && sim.cur && sim.toAct !== p && !sim.allin.has(p);
+    const clickable = !handDone(sim) && !folded && sim.cur && sim.toAct !== p && !sim.allin.has(p);
     const th = (90 + (i - hi) * 360 / n) * Math.PI / 180;   // hero at the bottom, action runs clockwise
     d.style.left = (50 + 43 * Math.cos(th)) + "%"; d.style.top = (50 + 40 * Math.sin(th)) + "%";
     d.className = "seat" + (p === S.hero ? " hero" : "") + (folded ? " folded" : "") + (toAct === p ? " toact" : "") + (sim.allin.has(p) ? " allin" : "") + (clickable ? " clickable" : "");
     const amt = folded ? "folded" : sim.allin.has(p) ? "all-in" : bet > 0 ? (STAKES() ? DOLLARS(bet) : fmt(bet) + " bb") : total > 0 ? "in " + AMT(total) : "";
-    const shown = p === S.hero ? (S.cards[0] && S.cards[1] ? S.cards.slice(0, 2) : null) : window.Practice && window.Practice.shown(p);
+    const shown = p === S.hero && S.cards[0] && S.cards[1] ? S.cards.slice(0, 2) : null;
     const hc = shown ? `<span class="hc">${cardHtml(shown[0])}${cardHtml(shown[1])}</span>` : p === S.hero ? '<span class="you">you</span>' : "";
     const ta = toAct === p ? `<span class="ta">to act</span>` : "";
-    // (stacks that differ, or practice at a table: each seat's chips behind beside its name, once the hand's over
-    // its chips after it, and what it won)
-    const tv = window.Practice && window.Practice.seatView && window.Practice.seatView(p);
-    const stk = (UNEQUAL() && !folded) || tv ? `<span class="stk" title="${SEAT_LABEL(p, n)}'s stack${tv && tv.after != null ? "" : " behind"}">${AMT(tv && tv.after != null ? tv.after : Math.max(0, STACK(p) - total))}</span>` : "";
-    if (tv && tv.won > 0) d.classList.add("won");
+    // (stacks that differ: each seat's chips behind beside its name)
+    const stk = UNEQUAL() && !folded ? `<span class="stk" title="${SEAT_LABEL(p, n)}'s stack behind">${AMT(Math.max(0, STACK(p) - total))}</span>` : "";
     const btn = p === (n === 2 ? "SB" : "BTN") ? '<span class="dbtn" title="The dealer button">D</span>' : "";
-    d.innerHTML = `<span class="pos">${SEAT_LABEL(p, n)}${stk}</span>${hc}<span class="amt">${tv && tv.won > 0 ? `wins ${AMT(tv.won)}` : amt}${ta}</span>${btn}`;
+    d.innerHTML = `<span class="pos">${SEAT_LABEL(p, n)}${stk}</span>${hc}<span class="amt">${amt}${ta}</span>${btn}`;
     if (clickable) { d.title = `Everyone before ${p} folds`; d.onclick = () => { showErr(advanceTo(p)); renderAll(); }; }
     el.appendChild(d);
   });
@@ -1761,7 +1472,7 @@ function renderTable(sim) {
   const side = pots.length > 1 ? `<div class="side">${pots.map((x, i) => `${i ? "side" : "main"} ${AMT(x.amount)}`).join(" · ")}</div>` : "";
   center.innerHTML = `<div class="board">${b}</div><div class="pot">pot ${BBX(sim.pot)}</div>${side}`;
   el.appendChild(center);
-  document.getElementById("tableHint").innerHTML = sim.cur && !closed(sim) ? `${TAP.toLowerCase()} a seat to fold to it` : "";
+  document.getElementById("tableHint").innerHTML = sim.cur && !handDone(sim) ? `${TAP.toLowerCase()} a seat to fold to it` : "";
   const ec = document.getElementById("editCards"), auto = !S.cards[0] || !S.cards[1] || dealing(sim);
   ec.hidden = auto || fixedHand(sim); ec.textContent = needCard(sim) ? "Hide cards" : "Edit cards";
 }
@@ -1771,18 +1482,9 @@ function renderAction(sim) {
   const step = document.getElementById("stepLabel");
   const prompt = document.createElement("div"); prompt.className = "prompt";
   if (!S.cards[0] || !S.cards[1]) { step.textContent = ""; prompt.innerHTML = `<span class="ask">Place your two hole cards to start.</span>`; el.appendChild(prompt); return; }
-  if (sim.handOver && practicing()) {   // practice: the one way on is Next hand (or N), where the action buttons were
-    step.textContent = "hand over"; prompt.innerHTML = `<span class="who">Hand over</span><span class="pot">pot ${BBX(sim.pot)}</span>`;
-    const b = document.createElement("button"); b.className = "nexth"; b.id = "pxNext"; b.innerHTML = "Next hand<kbd>N</kbd>";
-    b.onclick = () => window.Practice.next(); el.append(prompt);
-    const run = window.Practice.runLabel();   // (after your fold: everyone's cards, or the hand played on)
-    if (run) { const r = document.createElement("button"); r.className = "runit"; r.id = "pxRun"; r.textContent = run; r.onclick = () => window.Practice.runOut();
-      const row = document.createElement("div"); row.className = "pxend"; row.append(r, b); el.append(row); } else el.append(b);
-    return;
-  }
   if (review) { step.textContent = "review"; prompt.innerHTML = `<span class="who"><span class="spinner"></span>Reviewing your decisions</span><span class="ask">Decision ${review.k} of ${review.n}: ${review.what}.</span>`; el.appendChild(prompt); return; }
   if (stepView) { renderStep(el, prompt, step, sim); return; }
-  if (closed(sim)) { renderFinished(el, prompt, step, sim); return; }
+  if (handDone(sim)) { renderFinished(el, prompt, step, sim); return; }
   if (sim.waiting) {
     step.textContent = sim.waiting;
     prompt.innerHTML = `<span class="who">Deal the ${sim.waiting}</span><span class="pot">pot ${BBX(sim.pot)}</span><span class="ask">${sim.runout ? "Everyone is all-in. " : ""}Click or type the ${sim.waiting === "flop" ? "three flop cards" : sim.waiting + " card"} above.</span>`;
@@ -1792,36 +1494,19 @@ function renderAction(sim) {
   const myBet = info.bets[p], toCall = info.curBet - myBet, remaining = STACK(p) - sim.invested[p] - myBet, facing = toCall > 1e-9;
   step.textContent = street;
   const callAmt = Math.min(toCall, remaining), need = callAmt / (info.pot + callAmt);
-  // practice: the other seats move by themselves (and a drill's preflop yours: "Dealing a 3-bet pot…"); on your
-  // turn the buttons wait for the spot's solve (to grade your move)
-  const px = practicing(), wait = px && isHero && resultKey !== JSON.stringify(payload());
-  if (px && (!isHero || window.Practice.auto(sim))) { prompt.innerHTML = `<span class="who">${window.Practice.seeking() || SEAT_LABEL(p, POS.length) + " is thinking…"}</span><span class="pot">pot ${BBX(info.pot)}</span>`; el.appendChild(prompt); return; }
-  prompt.innerHTML = `<span class="who ${isHero ? "hero" : ""}">${wait ? '<span class="spinner"></span>Solving your spot…' : isHero ? "Your turn" : p + " to act"}</span><span class="pot">pot ${BBX(info.pot)}${facing ? ` · ${fmt(callAmt)}${withUsd(callAmt)} to call · <span title="Pot odds: the equity a call needs to break even${TOURNEY() ? " in chips (in a tournament your prize equity asks more, bounties less: the advice's notes give it)" : ""}">need ${(need * 100).toFixed(0)}%${TOURNEY() ? " in chips" : ""}</span>` : ""}</span><span class="ask">${isHero ? (px ? "Check the advice, then record what you did." : "Record what you did.") : "What did " + p + " do?"}</span>`;
+  prompt.innerHTML = `<span class="who ${isHero ? "hero" : ""}">${isHero ? "Your turn" : p + " to act"}</span><span class="pot">pot ${BBX(info.pot)}${facing ? ` · ${fmt(callAmt)}${withUsd(callAmt)} to call · <span title="Pot odds: the equity a call needs to break even${TOURNEY() ? " in chips (in a tournament your prize equity asks more, bounties less: the advice's notes give it)" : ""}">need ${(need * 100).toFixed(0)}%${TOURNEY() ? " in chips" : ""}</span>` : ""}</span><span class="ask">${isHero ? "Record what you did." : "What did " + p + " do?"}</span>`;
   el.appendChild(prompt);
 
-  // On your turn, once the advice for this exact spot is in, the buttons use the solver's sizes and show its mix.
-  const res = px && isHero && lastResult && !lastResult.error && !heuristic(lastResult) && resultKey === JSON.stringify(payload()) ? lastResult : null;
-  const solverAct = (name) => res && res.actions.find(x => x.action === name);
-  const pct = (x) => x ? `<span class="fq"> · ${(x.freq * 100).toFixed(0)}%</span>` : "";
-  const acts = document.createElement("div"); acts.className = "acts" + (res ? " solver" : "");
-  const mk = (label, cls, a, sub, key, sa) => { const b = document.createElement("button"); b.className = cls + (sa && sa.action === res.recommended ? " best" : ""); b.innerHTML = label + (sub ? `<small>${sub}</small>` : "") + (key ? `<kbd>${key}</kbd>` : "");
+  const acts = document.createElement("div"); acts.className = "acts";
+  const mk = (label, cls, a, sub, key) => { const b = document.createElement("button"); b.className = cls; b.innerHTML = label + (sub ? `<small>${sub}</small>` : "") + (key ? `<kbd>${key}</kbd>` : "");
     if (key) b.dataset.key = key.toLowerCase();
     b.onclick = () => { showErr(act(a)); renderAll(); }; acts.appendChild(b); return b; };
-  if (facing) { mk("Fold", "fold", { action: "fold" }, res ? pct(solverAct("fold")).replace("> · ", ">") : "", "F", solverAct("fold")); mk("Call", "pass", { action: "call" }, AMT_SUB(callAmt) + pct(solverAct("call")), "C", solverAct("call")); }
-  else mk("Check", "pass", { action: "check" }, res ? pct(solverAct("check")).replace("> · ", ">") : "", "C", solverAct("check"));
+  if (facing) { mk("Fold", "fold", { action: "fold" }, "", "F"); mk("Call", "pass", { action: "call" }, AMT_SUB(callAmt), "C"); }
+  else mk("Check", "pass", { action: "check" }, "", "C");
   // (no raise once an all-in for less than a full raise has closed the betting to you, or nobody has chips to call)
   const raiseOk = canRaise(sim, p), canRaiseNow = remaining > toCall + 1e-9 && raiseOk, minTo = minRaiseTo(info);
   const verb = facing || info.curBet > 0 ? "Raise to" : "Bet";
-  if (canRaiseNow && res) {
-    let k = 0;
-    for (const x of res.actions) {
-      if (!/^(bet|raise)/.test(x.action) || x.amount_bb == null) continue;
-      const v = legalTo(x.amount_bb, info);
-      if (!(v < myBet + remaining - 1e-9)) continue;
-      const tag = /%$/.test(x.action) ? x.action.replace(/^bet /, "") + " pot" : street === "preflop" ? (info.nRaises === 0 ? "open" : (v / info.curBet).toFixed(1) + "x") : (v / info.curBet).toFixed(1) + "x";
-      mk(`${verb} ${AMT(v)}`, "agg", { action: "bet", to: v }, (STAKES() ? fmt(v) + "bb · " : "") + tag + pct(x), String(++k), x);
-    }
-  } else if (canRaiseNow) {
+  if (canRaiseNow) {
     // sizes are rounded to 0.5bb before a label is worked out from them, so a label describes the size used
     const half = (x) => Math.round(x * 2) / 2;
     let sizes;
@@ -1831,14 +1516,11 @@ function renderAction(sim) {
     else sizes = [[half(info.curBet + 0.75 * (info.pot + toCall)), "¾ pot"], [half(info.curBet + info.pot + toCall), "pot"]];
     let k = 0;
     for (const [v, l] of sizes) if (v < myBet + remaining - 1e-9 && v >= minTo - 1e-9) mk(`${verb} ${AMT(v)}`, "agg", { action: "bet", to: v }, (STAKES() ? fmt(v) + "bb · " : "") + l, String(++k));
-  }
-  if (canRaiseNow) {
     const custom = document.createElement("button"); custom.className = "agg"; custom.innerHTML = `${verb}<small>your size…</small><kbd>R</kbd>`; custom.dataset.key = "r";   // (a bare "Raise to …" read as a cut-off label)
     custom.onclick = () => { document.getElementById("customBox").classList.toggle("open"); document.getElementById("customAmt").focus(); };
     acts.appendChild(custom);
   }
-  if (remaining > 0 && (raiseOk || remaining <= toCall + 1e-9)) mk("All-in", "agg", { action: "all-in" }, AMT_SUB(myBet + remaining) + pct(solverAct("all-in")), "A", solverAct("all-in"));
-  if (wait) { acts.classList.add("wait"); for (const b of acts.children) b.disabled = true; }
+  if (remaining > 0 && (raiseOk || remaining <= toCall + 1e-9)) mk("All-in", "agg", { action: "all-in" }, AMT_SUB(myBet + remaining), "A");
   el.appendChild(acts);
 
   const cb = document.createElement("div"); cb.className = "custom"; cb.id = "customBox";
@@ -1858,7 +1540,7 @@ function renderAction(sim) {
 }
 // Finish hand: the hand ends here for the review, whoever is to act (a decision of yours not recorded isn't reviewed)
 function finishButton(el) {
-  if (practicing() || !STREETS.some(s => S.actions[s].length)) return;
+  if (!STREETS.some(s => S.actions[s].length)) return;
   const b = document.createElement("button"); b.className = "small shortcut"; b.id = "finishHand"; b.innerHTML = "Finish hand<kbd>E</kbd>"; b.dataset.key = "e";
   b.title = "End the hand here and review the decisions you recorded. A decision you haven't recorded isn't reviewed.";
   b.onclick = finishHand; el.appendChild(b);
@@ -1910,7 +1592,7 @@ function preflopSize(sim, p) {
 function renderTimeline(sim) {
   const el = document.getElementById("timeline"); el.innerHTML = "";
   let any = false;
-  const shut = closed(sim), g = (a) => (practicing() || shut) && a.g;   // (a grade shows on a finished hand)
+  const shut = handDone(sim), g = (a) => shut && a.g;   // (a grade shows on a finished hand)
   for (const s of STREETS) {
     const acts = S.actions[s]; if (!acts.length) continue; any = true;
     const line = document.createElement("div"); line.className = "tl";
@@ -1931,7 +1613,7 @@ function payload() {
   // sizes, ranges and size optimization change postflop solves only: sent from the flop on, so preflop advice (and its
   // cache) is the same; locks act preflop too (gto/exploit.py lock_preflop), so they're always sent
   const post = boardCards().length >= 3, adv = { ...(post ? { ...(S.sizes ? { sizes: S.sizes } : {}), ...(OPP_RANGES() ? { ranges: OPP_RANGES() } : {}), ...(S.optSizes ? { optimize_sizes: true } : {}) } : {}), ...(OPP_LOCKS() ? { locks: OPP_LOCKS() } : {}) };
-  const [budget, prior_budget, quick] = budgetsFor(SPEED, boardCards().join(""));
+  const [budget, prior_budget] = budgetsFor(SPEED);
   return { players: S.players, hero: S.hero, hole: (S.cards[0] || "") + (S.cards[1] || ""), board: boardCards().join(""), stack: S.stack,
            ...(UNEQUAL() ? { stacks: Object.fromEntries(POS.map(p => [p, STACK(p)])) } : {}),
            ...(ANTE() ? { ante: ANTE() } : {}), ...(STRADDLER() ? { straddle: true } : {}),
@@ -1940,20 +1622,18 @@ function payload() {
            ...(RAKE() && !TOURNEY() && !S.tournament ? { rake: RAKE() / 100, ...(RAKE_CAP() ? { rake_cap: RAKE_CAP() } : {}) } : {}),
            ...(TOURNEY() ? { ...(PAYOUTS().length ? { payouts: PAYOUTS() } : {}), ...(FIELD_AVG() ? { field: { players: FIELD_N(), chips: FIELD_N() * FIELD_AVG() } } : {}) } : {}),
            ...(BOUNTY() ? { bounties: BOUNTY_SPEC() } : {}),
-           preflop: conv(S.actions.preflop), flop: conv(S.actions.flop), turn: conv(S.actions.turn), river: conv(S.actions.river), budget, prior_budget, speed: SPEED, ...(quick ? { quick } : {}),
-           ...(OPP === "pool" && !practicing() ? { opponents: "pool" } : {}), ...adv };   // (practice opponents play GTO)
+           preflop: conv(S.actions.preflop), flop: conv(S.actions.flop), turn: conv(S.actions.turn), river: conv(S.actions.river), budget, prior_budget, speed: SPEED,
+           ...(OPP === "pool" ? { opponents: "pool" } : {}), ...adv };
 }
 // the payload key of the same spot at another speed
 function keyFor(key, speed) {
-  const { quick: _, ...p } = JSON.parse(key), [budget, prior_budget, quick] = budgetsFor(speed, p.board);
-  // (quick right after speed, where payload() puts it)
-  const o = {}; for (const [k, v] of Object.entries({ ...p, budget, prior_budget, speed })) { o[k] = v; if (k === "speed" && quick) o.quick = true; }
-  return JSON.stringify(o);
+  const [budget, prior_budget] = budgetsFor(speed);
+  return JSON.stringify({ ...JSON.parse(key), budget, prior_budget, speed });
 }
 async function analyze(sim) {
   if (!S.cards[0] || !S.cards[1]) return;
   await modeReady;
-  if (!adviceOpen()) return;   // (the one gate: nothing else on this page asks for the hand's advice)
+  if (!reviewing()) return;   // (the one gate: nothing else on this page asks for the hand's advice)
   const key = JSON.stringify(payload());
   if (key === lastKey) return;
   lastKey = key;
@@ -1973,8 +1653,8 @@ async function analyze(sim) {
   if (MODE === "wasm" && workerStatus !== "Solving…") setStatus(workerStatus || "Loading the solver runtime…");   // runtime still loading
   const kp = JSON.parse(key);
   let est = kp.budget + kp.prior_budget * Math.max(0, STREETS.indexOf(sim.current) - 1);   // earlier postflop streets are re-solved to narrow ranges
-  // the local server's Fast gives a 3-way flop or turn 5 s, not its 2.5 (gto/native.py MW_FAST_BUDGET; not Practice's quick)
-  if (MODE === "server" && SPEED === "fast" && !kp.quick && sim.active.size === 3 && ["flop", "turn"].includes(sim.current)) est = Math.max(est, 5);
+  // the local server's Fast gives a 3-way flop or turn 5 s, not its 2.5 (gto/native.py MW_FAST_BUDGET)
+  if (MODE === "server" && SPEED === "fast" && sim.active.size === 3 && ["flop", "turn"].includes(sim.current)) est = Math.max(est, 5);
   if (SPEED === "accurate") {   // Accurate continues from a Fast solve of this spot, counting its time
     const f = cache.get(keyFor(key, "fast"));
     if (f && f.seconds) est = Math.round(Math.max(est * 0.2, est - f.seconds));
@@ -1986,11 +1666,9 @@ async function analyze(sim) {
     if (bar) bar.style.width = Math.min(97, t / est * 100) + "%";
   }, 100);
   let res;
-  // (practice: the answer the look-ahead already asked for, else once its request is out of the way)
-  // (an approximate answer may come first: shown under the progress bar until this one replaces it; not in Practice,
-  // which grades your move against the answer)
-  const early = practicing() ? null : (r) => { if (gen === solveGen && solving) renderEarly(r); };
-  try { res = (practicing() && await window.Practice.fromAhead(key)) || await callAdvise(JSON.parse(key), null, early); }
+  // (an approximate answer may come first: shown under the progress bar until this one replaces it)
+  const early = (r) => { if (gen === solveGen && solving) renderEarly(r); };
+  try { res = await callAdvise(JSON.parse(key), early); }
   catch (e) { res = { error: "Request failed: " + e }; }
   clearInterval(tick);
   if (gen !== solveGen) return;                                         // cancelled here; a newer solve owns the panel
@@ -2116,7 +1794,6 @@ function renderResult(res, key) {
   h += `</div><div class="meta">${hasEv ? "EV is in big blinds relative to folding now, so fold is 0: chips already in the pot are gone either way." + (res.actions.some(a => a.rough_ev) ? " ≈: an action your range almost never takes, whose EV is rough (usually lower than exact)." : "") : res.street === "preflop" ? "Preflop comes from charts, so there's no EV column." : ""}${res.widened && res.widened.length ? ` The solve rarely has ${res.widened.join(" and ")} play this way, so their range comes from simple betting rules instead; the EVs (and the pick) are against that range, so they can disagree with the solver's mix.` : conv && conv.cls !== "ok" ? " Actions the solver mixes should have near-equal EVs; gaps here mean the solve hasn't settled." : ""}</div>`;
   if (res.grid) h += `<div class="gridview">${renderGrid(res.grid, res.hand)}</div>`;
   h += `<details><summary>Details</summary>`;
-  if (explainable()) h += `<div class="rv-ai" id="explainBox"></div>`;
   if (res.villain_grid) h += `<div class="vgrid">${renderGrid(res.villain_grid, null, res.villain)}</div>`;
   if (res.villain_range) h += `<details><summary>${res.villain}'s range as text (${res.villain_range_combos} combos)</summary><div class="villain">${res.villain_range}</div></details>`;
   if (res.size_usage) h += `<div class="meta">Size optimization, your mix over the wide menu: ${SIZE_USAGE(res)}</div>`;
@@ -2129,35 +1806,7 @@ function renderResult(res, key) {
   if (res.grid) wireGrid(el, res.grid, res.hand);
   const vg = el.querySelector(".vgrid");
   if (vg) wireGrid(vg, res.villain_grid, null, res.villain);
-  showExplain(res, key);
   updateAdviceState();
-  renderAction(simulate());   // on your turn the buttons carry the solver's sizes and frequencies
-}
-// ---- Explain with AI on a decision of a finished hand, in Details: explain.js's row of buttons, the same proxy, quota and
-// key form as Practice's cards. It's for the decision looked at, once its advice shows: never on a hand being entered
-// (adviceOpen, the page's gate), nor while a review runs through the hand (no grade yet), nor in Practice (its cards have
-// their own). Drawing the row sends nothing: only its button does.
-const explainable = () => adviceOpen() && !practicing() && !!stepView;
-let reviewAi = null, explained = null;   // explain.js's panel for the review; the decision in it
-function drawExplain() {
-  const box = document.getElementById("explainBox");
-  if (box && explained && explainable()) { box.innerHTML = reviewAi.html(explained); reviewAi.wire(box); }
-}
-function showExplain(res, key) {
-  explained = null;
-  if (!explainable()) return;
-  loadJs("explain.js?v=" + EX_VERSION, () => window.Explain).then(() => {
-    if (lastResult !== res || !explainable()) return;   // (moved on while it loaded)
-    const X = window.Explain, s = stepView.s, a = stepView.full.actions[s][stepView.i], mv = gradedMove(simulate(), a);
-    const rec = { action: mv.action, ...(mv.to != null ? { to: mv.to } : {}) };
-    reviewAi = reviewAi || X.panel({ promptOf: (e) => X.prompt(e), show: drawExplain });
-    // (this answer's grade; a jam off its tree has only the review's, jamGrade's)
-    explained = { id: "r" + X.hash(key + JSON.stringify(rec)), played: true, street: s, rec, g: gradeFor(mv) || a.g || null, mix: X.mixOf(res),
-      ctx: X.spot(s, res.locked ? "Real opponents; the solver's numbers are its best response to the lock above"
-        : res.actions.some(x => x.gto_freq !== undefined) ? "Real opponents; the solver's numbers are its best response to a typical player pool"
-        : "Real opponents; the solver's numbers assume they play its GTO strategy") };
-    drawExplain();
-  }, () => { const box = document.getElementById("explainBox"); if (box) box.innerHTML = `<div class="err">Couldn't load Explain with AI (explain.js).</div>`; });
 }
 function gridClass(i, j) { return i === j ? RANKS[i] + RANKS[i] : i < j ? RANKS[i] + RANKS[j] + "s" : RANKS[j] + RANKS[i] + "o"; }
 // who: a villain's range (one "in range" action; cells shaded by weight), without the whole-range totals
@@ -2208,53 +1857,40 @@ function wireGrid(root, grid, heroHand, who) {
   g.addEventListener("mouseleave", () => { if (hov) hov.classList.remove("hov"); hov = null; show(heroHand); });
   show(heroHand);
 }
-// Say what the panel is showing: the decisions recorded so far, a finished hand's review, a decision looked at, or
-// (Practice) live advice and old advice from an earlier decision.
+// Say what the panel is showing: the decisions recorded so far, a finished hand's review, a decision looked at.
 function updateAdviceState() {
   const sim = simulate(), note = document.getElementById("adviceNote"), el = document.getElementById("result");
-  const px = practicing(), done = closed(sim), hand = heldHand();
+  const done = handDone(sim), hand = heldHand();
   const heroTurn = sim.toAct === S.hero && !!sim.cur && S.cards[0] && S.cards[1];
-  document.body.classList.toggle("heroturn", !!heroTurn && adviceOpen());
+  document.body.classList.toggle("heroturn", !!heroTurn && reviewing());
   const live = heroTurn && (solving || resultKey === JSON.stringify(payload()));
   el.classList.toggle("stale", !!lastResult && !live && !solving);
   const all = []; for (const s of STREETS) for (const a of hand.actions[s]) if (a.pos === hand.hero) all.push([s, a]);
-  const mine = all.filter(([, a]) => a.g && (px || done));   // (a grade shows on a finished hand)
+  const mine = all.filter(([, a]) => a.g && done);   // (a grade shows on a finished hand)
   const perStreet = STREETS.map(s => [s, mine.filter(([ms]) => ms === s).reduce((t, [, a]) => t + (a.g.l || 0), 0)]).filter(([s]) => mine.some(([ms]) => ms === s));
   const streetSum = perStreet.length > 1 ? `<li class="streetsum">EV given up: ${perStreet.map(([s, l]) => `${s} ${l > 0.005 ? `<span class="num neg">−${l.toFixed(2)}</span>` : "0"}`).join(" · ")}</li>` : "";
   const withEv = mine.filter(([, a]) => a.g.l != null), totalLost = withEv.reduce((t, [, a]) => t + a.g.l, 0);
   const totalSum = withEv.length ? `<li class="streetsum total"><b>EV loss vs GTO: ${totalLost > 0.005 ? `<span class="num neg">−${totalLost.toFixed(2)} bb</span>` : `<span class="num pos">0.00 bb</span>`}</b>${withEv.length < mine.length ? ` <span class="muted">(${withEv.length} of ${mine.length} decisions have EVs)</span>` : ""}</li>` : "";
   const what = (a) => a.action === "bet" ? "bet " + fmt(a.to) : a.action === "raise" ? "raise to " + fmt(a.to) : a.action;
   const open = (s, a) => done && !review ? ` class="rewind${stepView && stepView.s === s && stepView.i === hand.actions[s].indexOf(a) ? " cur" : ""}" data-s="${s}" data-i="${hand.actions[s].indexOf(a)}"` : "";
-  const graded = ([s, a]) => `<li${px ? ` class="rewind" data-s="${s}" data-i="${hand.actions[s].indexOf(a)}"` : open(s, a)} title="${px ? "Replay from here." : "See the advice for this decision."} ${gradeTip(a.g)}"><span class="st">${s}</span><span class="g ${gradeClass(a.g)}" style="margin:0">${gradeMark(a.g)}</span><span><b>${what(a)}</b> · solver ${(a.g.f * 100).toFixed(0)}%${a.g.v ? ` <span class="muted">as the chart's ${a.g.m}</span>` : ""} ·${a.g.e != null || !a.g.l ? evLossHtml(a.g) : `<span class="num neg">−${a.g.l.toFixed(2)} bb</span>`}${a.g.r ? ` <span class="muted">(rough solve)</span>` : ""}</span></li>`;
+  const graded = ([s, a]) => `<li${open(s, a)} title="See the advice for this decision. ${gradeTip(a.g)}"><span class="st">${s}</span><span class="g ${gradeClass(a.g)}" style="margin:0">${gradeMark(a.g)}</span><span><b>${what(a)}</b> · solver ${(a.g.f * 100).toFixed(0)}%${a.g.v ? ` <span class="muted">as the chart's ${a.g.m}</span>` : ""} ·${a.g.e != null || !a.g.l ? evLossHtml(a.g) : `<span class="num neg">−${a.g.l.toFixed(2)} bb</span>`}${a.g.r ? ` <span class="muted">(rough solve)</span>` : ""}</span></li>`;
   const plain = ([s, a]) => `<li${open(s, a)}><span class="st">${s}</span><span><b>${what(a)}</b>${done ? ` <span class="muted">${"g" in a ? "no grade" : "not reviewed yet"}</span>` : ""}</span></li>`;
-  const list = px ? (mine.length ? `<ul class="review">${mine.map(graded).join("")}${streetSum}${totalSum}</ul>` : "")
-    : all.length ? `<ul class="review">${all.map(x => x[1].g && done ? graded(x) : plain(x)).join("")}${streetSum}${totalSum}</ul>` : "";
+  const list = all.length ? `<ul class="review">${all.map(x => x[1].g && done ? graded(x) : plain(x)).join("")}${streetSum}${totalSum}</ul>` : "";
   let msg = "";
   if (review) msg = `<b>Reviewing decision ${review.k} of ${review.n}</b> · ${review.what} <button class="link" id="reviewStop">Cancel</button>${list}`;
   else if (stepView) msg = `<b>Your ${stepView.s} decision</b>${list}`;
-  else if (!px) {
+  else if (done) {
     const good = mine.filter(([, a]) => gradeClass(a.g) === "ok").length;
-    if (done) msg = (mine.length ? `<b>Hand review</b> · ${good} of ${mine.length} decisions in the solver's mix` : all.length ? `<b>Your decisions</b>` : "") + list
+    msg = (mine.length ? `<b>Hand review</b> · ${good} of ${mine.length} decisions in the solver's mix` : all.length ? `<b>Your decisions</b>` : "") + list
       + (all.length ? `<div class="muted" style="margin-top:4px">${TAP} a decision to see the solver's advice for it.</div>` : "")
       + (heroTurn ? `<div class="muted" style="margin-top:4px">Your ${sim.current} decision wasn't recorded, so it isn't reviewed.</div>` : "");
-    else if (all.length) msg = `<b>Recorded so far</b>${list}`;
-  }
-  else if (sim.handOver && S.cards[0] && S.cards[1]) {
-    const good = mine.filter(([, a]) => gradeClass(a.g) === "ok").length;
-    msg = mine.length ? `<b>Hand review</b> · ${good} of ${mine.length} decisions in the solver's mix${list}` : `<b>Hand over.</b>`;
-  } else if (lastResult && !live && !solving) {
-    msg = `<b>Advice from your last decision (${lastResult.street || "earlier"}).</b> New advice appears when it's your turn again.${list}`;
-  } else if (!heroTurn && mine.length) msg = `<b>Your decisions so far</b>${list}`;
+  } else if (all.length) msg = `<b>Recorded so far</b>${list}`;
   note.hidden = !msg; note.innerHTML = msg;
   const rs = note.querySelector("#reviewStop");
   if (rs) rs.onclick = () => { review.cancel = "restore"; cancelSolve(); };
   note.querySelectorAll("li.rewind").forEach(li => li.onclick = () => rewindTo(li.dataset.s, +li.dataset.i));
-  if (px && sim.handOver && mine.length) note.insertAdjacentHTML("beforeend", `<div class="muted" style="margin-top:4px">${TAP} a decision to replay the hand from there.</div>`);
   if (el.classList.contains("empty")) el.innerHTML = !S.cards[0] || !S.cards[1] ? EMPTY_ADVICE
-    : px ? (sim.handOver ? (msg ? "" : "Hand over.") : heroTurn ? "Your turn: getting the solver ready…"   // (until analyze starts)
-      : "Waiting for your turn.<br>Enter what the others do; advice appears when the action reaches you.")
     : reviewing() ? "Getting the solver ready…" : !done ? RECORDING : all.length ? "" : "Nothing to review: you recorded no decision in this hand.";
-  if (window.Practice) window.Practice.tick(sim);   // practice: deal, or move the seat to act
 }
 
 // ---- your equity on a reviewed hand you were still in when the betting closed (the street checked through or called and
@@ -2263,7 +1899,7 @@ function updateAdviceState() {
 // reviewed (fixedHand), not as soon as it's finished: Keep entering would make that a way to see it mid-hand.
 let eqKey = null, eqReq = null;   // the request of the equity shown or in flight, and its id while it runs
 function equitySpot(sim) {
-  if (practicing() || reviewing() || !fixedHand(sim) || !sim.active.has(S.hero) || sim.active.size < 2) return false;
+  if (reviewing() || !fixedHand(sim) || !sim.active.has(S.hero) || sim.active.size < 2) return false;
   return !!sim.waiting || (sim.handOver && sim.current === "river");
 }
 async function updateEquity() {
@@ -2318,21 +1954,20 @@ function renderAll() {
   if (!needCard(sim)) pendingRank = null;
   document.body.classList.toggle("needcard", needCard(sim));
   document.getElementById("pCards").hidden = !needCard(sim);   // the deck shows while a card is needed, or on request
-  document.body.classList.toggle("unfinished", !practicing() && !handDone(sim));   // (Pool and locks: offered once it's finished)
+  document.body.classList.toggle("unfinished", !handDone(sim));   // (Pool and locks: offered once it's finished)
   renderSetup(); renderSlots(sim); renderPicker(sim); renderTable(sim); renderAction(sim); renderTimeline(sim);
-  const open = adviceOpen();   // (no solve, fetch or look-ahead while a hand is being entered)
-  if (open && !multiTabling()) prefetchLibrary();
-  if (open && sim.toAct === S.hero && S.cards[0] && S.cards[1] && !sim.handOver && !(practicing() && window.Practice.auto(sim)) && !multiTabling()) analyze(sim);
+  const open = reviewing();   // (no solve or fetch while a hand is being entered)
+  if (open) prefetchLibrary();
+  if (open && sim.toAct === S.hero && S.cards[0] && S.cards[1] && !sim.handOver) analyze(sim);
   else if (!S.cards[0] || !S.cards[1]) resetAdvice();
   updateAdviceState();
   updateEquity();
-  syncRoute();   // (Practice turned on or off: its URL)
 }
 // ---- review the whole hand, once it's finished: each of your recorded decisions is solved in turn (at the current
 // speed) and graded
 const didText = (a) => a.action === "bet" ? "bet " + fmt(a.to) : a.action === "raise" ? "raised to " + fmt(a.to) : a.action === "all-in" ? "went all-in" : a.action + "ed";
 async function reviewHand() {
-  if (review || practicing()) return;   // (an import's toast can outlive it)
+  if (review) return;
   stepStop();
   if (!handDone(simulate())) return;
   document.getElementById("toast").hidden = true;
@@ -2655,57 +2290,9 @@ let four = pageStore.getRaw("fourcolor") === "1";
 applyFour(four);
 document.getElementById("fourcolor").onclick = () => { four = !four; applyFour(four); pageStore.setRaw("fourcolor", four ? "1" : "0"); };
 
-// ---- sound effects (per browser, on by default): short synthesized sounds for Practice (cards dealt,
-// checks, chips, folds, a verdict, a pot won), made with Web Audio so there are no files to load. sfx(name) does
-// nothing while they're off or where the browser has no Web Audio.
-const SFX = { on: true, ctx: null, played: [], seed: 1 };
-const sfxRand = () => (SFX.seed = (SFX.seed * 16807) % 2147483647) / 2147483647;
-SFX.on = pageStore.getRaw("gto-sound") !== "0";
-function applySound() { const b = document.getElementById("soundBtn"); b.classList.toggle("active", SFX.on); b.textContent = SFX.on ? "Sounds on" : "Sounds off"; }
-applySound();
-document.getElementById("soundBtn").onclick = () => { SFX.on = !SFX.on; applySound(); pageStore.setRaw("gto-sound", SFX.on ? "1" : "0"); if (SFX.on) sfx("good"); };
-// each sound: tones [start (s), frequency, end frequency, length, wave, volume]; a card is a soft wooden tick, not a
-// swish of noise (heard on every street, it grated)
-// (their jitter has its own generator: Math.random deals Practice's hands)
-const SOUNDS = (() => {
-  const clicks = (n, gap, vol) => Array.from({ length: n }, (_, i) => [i * gap + sfxRand() * 0.01, 2600 + sfxRand() * 900, 1800, 0.03, "triangle", vol]);
-  const tick = (at, vol) => [at, 1250, 800, 0.035, "sine", vol];
-  return {
-    card: () => [tick(0, 0.1)],
-    deal: () => [tick(0, 0.08), tick(0.09, 0.08)],
-    check: () => [[0, 170, 110, 0.07, "sine", 0.5], [0.12, 170, 110, 0.07, "sine", 0.5]],
-    call: () => clicks(3, 0.045, 0.12),
-    bet: () => clicks(5, 0.04, 0.13),
-    allin: () => [...clicks(9, 0.035, 0.13), [0, 120, 60, 0.25, "sine", 0.45]],
-    fold: () => [[0, 420, 260, 0.12, "sine", 0.08]],
-    good: () => [[0, 1047, 1047, 0.12, "sine", 0.18], [0.09, 1319, 1319, 0.18, "sine", 0.18]],
-    bad: () => [[0, 330, 300, 0.14, "triangle", 0.2], [0.12, 247, 220, 0.22, "triangle", 0.2]],
-    win: () => [...[523, 659, 784, 1047].map((f, i) => [i * 0.08, f, f, 0.2, "sine", 0.16]), ...clicks(6, 0.04, 0.1).map(c => [c[0] + 0.3, ...c.slice(1)])],
-    lose: () => [[0, 392, 370, 0.16, "sine", 0.14], [0.14, 294, 262, 0.3, "sine", 0.14]],
-  };
-})();
-function sfx(name, delay = 0) {
-  if (!SFX.on || !SOUNDS[name]) return;
-  SFX.played.push(name); if (SFX.played.length > 50) SFX.played.shift();   // (the last few, for the tests)
-  const AC = window.AudioContext || window.webkitAudioContext;
-  if (!AC) return;
-  try {
-    const c = SFX.ctx || (SFX.ctx = new AC());
-    if (c.state === "suspended") c.resume();
-    const t0 = c.currentTime + 0.01 + delay;
-    for (const [at, f0, f1, len, wave, vol] of SOUNDS[name]()) {
-      const t = t0 + at, g = c.createGain(), o = c.createOscillator();
-      o.type = wave; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + len);
-      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, t + len);
-      o.connect(g); g.connect(c.destination); o.start(t); o.stop(t + len + 0.02);
-    }
-  } catch (e) {}
-}
-
 // ---- keyboard: cards are typed as rank+suit while a card is needed, otherwise keys pick actions
 document.addEventListener("keydown", (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey || /input|textarea|select/i.test(e.target.tagName)) return;
-  if (multiTabling() && !overlay) { if (window.MultiTable) window.MultiTable.key(e); return; }   // (the table in front's keys)
   const k = e.key, low = k.toLowerCase();
   if (k === "Escape") { pendingRank = null; selSlot = null; showDeck = false; const cb = document.getElementById("customBox"); if (cb) cb.classList.remove("open"); renderAll(); return; }
   if (low === "n") { e.preventDefault(); document.getElementById("newhand").click(); return; }
@@ -2728,36 +2315,24 @@ document.addEventListener("keydown", (e) => {
   if (b) { e.preventDefault(); b.click(); }
 });
 document.getElementById("newhand").onclick = () => {
-  if (practicing()) { if (simulate().handOver) window.Practice.next(); return; }   // (practice: N is Next hand; a stray N mid-hand doesn't throw it away)
   keepHand("replaced");
   if (review) { review.cancel = "drop"; cancelSolve(); }
   if (stepView) { stepView = null; cancelSolve(); }
   S = { ...fresh(S.players), ...(S.stakes ? { stakes: S.stakes } : {}), hero: S.hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanStacks(S, POS) }; selSlot = null; showDeck = false; editSetup = false; pendingRank = null; save(); handOnTable(); resetAdvice(); renderAll();
 };
 document.getElementById("myHands").onclick = () => openView("hands");
-// A whole hand replaces the page's (one from My hands or a link): a review, not a practice deal.
+// A whole hand replaces the page's (one from My hands).
 // A hand that wasn't finished stays unfinished: nothing is solved for it. The hand it replaces is kept in My hands.
 // from: a link's.
 async function loadHandState(st, from) {
-  const out = practicing() ? null : JSON.parse(JSON.stringify(heldHand()));
+  const out = JSON.parse(JSON.stringify(heldHand()));
   if (review) review.cancel = "drop";
   stepView = null;
-  if (practicing()) window.Practice.set(false);
   await cancelSolve();
   keepHand("replaced", out);
   S = cleanState(st); setPositions(S.players); selSlot = null; showDeck = false; editSetup = false; pendingRank = null;
   document.getElementById("stack").value = S.stack; document.getElementById("ante").value = ANTE(); document.getElementById("straddle").checked = !!S.straddle;
   save(); handOnTable(from ? { source: from } : {}); resetAdvice(); renderAll();
-}
-// Practice turned on or off (Practice.set, its state already switched): the page takes that mode's own hand and setup,
-// or seed (Practice's first time: the solver's setup, no hand) when it has none yet
-function swapState(seed) {
-  if (review) review.cancel = "drop";
-  stepView = null;
-  cancelSolve();
-  S = cleanState(load()) || seed || fresh(); setPositions(S.players); selSlot = null; showDeck = false; editSetup = false; pendingRank = null;
-  document.getElementById("stack").value = S.stack; document.getElementById("ante").value = ANTE(); document.getElementById("straddle").checked = !!S.straddle;
-  save(); resetAdvice();
 }
 const loadJs = (src, ok) => ok() ? Promise.resolve() : new Promise((res, rej) => { const s = document.createElement("script"); s.src = src;
   s.onload = res; s.onerror = () => rej(new Error(`couldn't load ${src.split("?")[0]}`)); document.head.appendChild(s); });
@@ -2781,7 +2356,7 @@ function openView(name) {   // the ⋯ menu's views
   return showOverlay(name, true);
 }
 // ---- the help pages (help.js, loaded the first time one opens): one overlay with a tab per page, each page its own
-// URL. A tab picked moves the URL without closing the overlay (viewSwitch); the pages' buttons open a tool (helpGo).
+// URL. A tab picked moves the URL without closing the overlay (viewSwitch).
 const HELP_PAGES = ["start", "about", "glossary", "changelog", "fairplay"];
 const loadHelp = () => loadJs("help.js?v=" + HP_VERSION, () => window.Help);
 for (const page of HELP_PAGES)
@@ -2792,10 +2367,6 @@ function helpOpen(page) {
   if (HELP_PAGES.includes(overlay) && window.Help) return window.Help.show(page);
   return openView(page);
 }
-window.helpGo = (what) => {
-  if (what === "practice") return loadPractice().then(P => { if (!P.on) P.set(true); }).catch(e => showErr(String(e)));
-  if (VIEWS[what]) return openView(what);
-};
 for (const [id, page] of [["helpStart", "start"], ["helpAbout", "about"], ["helpGlossary", "glossary"], ["helpChangelog", "changelog"], ["helpFairplay", "fairplay"], ["helpBtn", "start"]])
   document.getElementById(id).onclick = () => helpOpen(page);
 // an answer's badge clicked (data-term): the Glossary at that word
@@ -2874,24 +2445,11 @@ document.getElementById("result").addEventListener("click", (e) => { const t = e
     document.getElementById("resetLayout").addEventListener("click", () => { L = {}; apply(); store(); show(false); });
   } catch (e) {}
 })();
-function loadPractice() {
-  if (window.Practice) return Promise.resolve(window.Practice);
-  // (explain.js first: practice.js reads a hand's strength and a decision's words from it)
-  return loadJs("explain.js?v=" + EX_VERSION, () => window.Explain).then(() => new Promise((res, rej) => { const s = document.createElement("script"); s.src = "practice.js?v=" + PR_VERSION;
-    s.onload = () => res(window.Practice); s.onerror = () => rej(new Error("could not load practice.js")); document.head.appendChild(s); }));
-}
-document.getElementById("practiceBtn").onclick = () => loadPractice().then(P => P.set(!P.on)).catch(e => showErr(String(e)));
-// Reset practice (the ⋯ menu, shown while practising): the score's Start over
-document.getElementById("resetPractice").onclick = () => { document.getElementById("menu").hidden = true; if (practicing()) window.Practice.startOver(); };
-// ---- routes: the URL's view (a back or forward, or the page opened at it), opened without pushing. Practice is on at
-// /practice/ and off at the solver's URL, whatever it was last time (its "gto-practice" is no longer read); a view over
-// the page leaves Practice as it is.
+// ---- routes: the URL's view (a back or forward, or the page opened at it), opened without pushing.
 async function applyRoute(r) {
   routing++;
   try {
     if (overlay && overlay !== r.view) { VIEWS[overlay].close(); overlay = null; }
-    if (r.view === "practice" && !practicing()) await loadPractice().then(P => P.set(true)).catch(e => showErr(String(e)));
-    else if (r.view === "solver" && practicing()) window.Practice.set(false);
     if (VIEWS[r.view] && overlay !== r.view) await showOverlay(r.view);
   } finally { routing--; }
   syncRoute(true);
@@ -2916,9 +2474,8 @@ if (!isolating) {
   if (said.length) toast(said.join(" "), null, 10000);
 }
 renderAll();
-// a #h= link opens its spot in the solver (an old link is the root's; a link opened at /practice/ too)
+// (a #h= link opens its spot in the solver)
 const startRoute = parseRoute(location.pathname);
-if (linkLoaded && startRoute.view === "practice") startRoute.view = "solver";
 routing--;
 applyRoute(startRoute);
 // ---- the first visit's chooser (#welcome): shown once, at the solver's own URL without a link's spot, once the page
@@ -2930,7 +2487,6 @@ const WELCOME_GO = {
   welcomeReview: () => {
     toast("Pick your seat and cards in the setup panel, then enter the hand you played, seat by seat. When it's finished, review it.", null, 9000);
   },
-  welcomePractice: () => window.helpGo("practice"),
   welcomeStart: () => helpOpen("start"), welcomeAbout: () => helpOpen("about"), welcomeFair: () => helpOpen("fairplay"),
   welcomeClose: () => {},
 };

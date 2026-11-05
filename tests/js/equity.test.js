@@ -1,7 +1,7 @@
 // Your equity on a reviewed hand (index.html's updateEquity): once a hand is reviewed the page asks the advisor
 // ("equity": true) if the betting closed with you still in (the next card not entered, everyone all-in, the river's
 // showdown), and shows the answer with the review. It asks nothing while a hand is entered or just finished, on a
-// decision stepped to, on your turn, after your fold or in Practice.
+// decision stepped to, on your turn or after your fold.
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -89,8 +89,4 @@ test("no equity on your turn, after your fold, before the street closes, or in P
     assert.equal(asks(p).length, 0);
     assert.equal(p.byId("equity").hidden, true);
   }
-  const p = loadPage(); await p.ready();
-  p.practice();
-  p.S = state({ cards: ["Ah", "Kd", "Ks", "7d", "2c"], preflop: PRE, flop: acts("BB x, BTN x") }); await flush();
-  assert.equal(asks(p).length, 0);
 });

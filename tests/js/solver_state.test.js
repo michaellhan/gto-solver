@@ -77,17 +77,7 @@ test("reviewing a decision the worker gets the state as built, at the Fast budge
   assert.deepEqual(p.buttons().map(b => b.id), ["stepPrev", "stepNext", "stepBack"]);
 });
 
-test("on your turn in Practice before the solve starts (the page still finding its backend) the panel doesn't say it waits for your turn", async () => {
-  const p = loadPage();
-  p.practice();
-  p.S = state(FLOP);
-  p.run("resetAdvice(); updateAdviceState()");   // as the page is right after a reload, before modeReady settles
-  assert.doesNotMatch(p.byId("result").innerHTML, /Waiting for your turn/);
-  assert.match(p.byId("result").innerHTML, /Your turn/);
-  p.S = state({ ...FLOP, flop: [] });   // BB to act: it does wait
-  p.run("resetAdvice(); updateAdviceState()");
-  assert.match(p.byId("result").innerHTML, /Waiting for your turn/);
-  // outside Practice nothing waits for your turn: the panel says it's recording
+test("nothing waits for your turn on a hand being entered: the panel says it's recording", () => {
   const q = loadPage();
   q.S = state(FLOP);
   q.run("resetAdvice(); updateAdviceState()");
@@ -205,7 +195,6 @@ test("Quick left the main view: only Fast and Accurate are offered, and a stored
   assert.equal(q.storage.get("gto-speed"), "fast");
   assert.match(q.byId("solvectl").children[0].className, /active/);
   assert.equal(q.payload().quick, undefined);
-  // (Practice's answers at Fast stay as they were: practice.test.js)
 });
 
 test("reviewing, Accurate and Pool toggles change the state sent; Accurate is remembered, Pool is for the visit", async () => {
@@ -333,36 +322,24 @@ test("hands played through the page: fixture for the Python advisor (tests/data/
 test("a jam the answer's tree has no all-in for is asked again with jam: true and graded against that answer", async () => {
   const p = loadPage();
   await p.ready();
-  p.practice();   // (a move is graded as it's recorded in Practice; a review's: hh.test.js)
   p.S = state(FLOP);
-  await flush();
-  const m = p.posted.at(-1);
   // a deep flop: the tree's bets are a third and three quarters of the pot, no all-in
   const deep = { street: "flop", hero: "BTN", hand: "AKs", recommended: "bet 75%", pot_bb: 5.5,
     actions: [{ action: "check", freq: 0.1, ev_bb: 2.4 }, { action: "bet 33%", amount_bb: 1.8, freq: 0.1, ev_bb: 2.6 }, { action: "bet 75%", amount_bb: 4, freq: 0.8, ev_bb: 2.7 }] };
-  p.workers[0].onmessage({ data: { id: m.id, result: deep } });
+  const jam = { ...deep, actions: [...deep.actions, { action: "all-in", amount_bb: 97.5, freq: 0, ev_bb: -2.3 }] };
+  const move = "gradedMove(simulate(), { action: 'all-in' })";
+  assert.equal(p.val(`jamOffTree(${JSON.stringify(deep)}, ${move})`), true);
+  assert.equal(p.val(`jamOffTree(${JSON.stringify(jam)}, ${move})`), false);   // (an answer with an all-in grades it at once)
+  const key = JSON.stringify(p.payload());
+  const graded = p.run(`jamGrade(${JSON.stringify(key)}, ${move})`);
   await flush();
-  const n = p.posted.length;
-  assert.equal(p.act({ action: "all-in" }), null);
-  const rec = () => p.val("S.actions.flop.at(-1)");
-  assert.equal(rec().g, undefined);   // not gradeable yet
-  const again = p.posted.slice(n).find(x => x.state && x.state.jam);
+  const again = p.posted.find(x => x.state && x.state.jam);
   assert.ok(again, "the spot asked again with jam: true");
-  assert.deepEqual({ ...again.state, jam: undefined }, { ...m.state, jam: undefined });   // (the spot before the jam)
-  p.workers[0].onmessage({ data: { id: again.id, result: { ...deep, actions: [...deep.actions, { action: "all-in", amount_bb: 97.5, freq: 0, ev_bb: -2.3 }] } } });
-  await flush();
-  assert.deepEqual([rec().g.m, rec().g.f, rec().g.l], ["all-in", 0, 5]);
-  assert.equal(p.val("gradeClass(S.actions.flop.at(-1).g)"), "bad");
-  // an answer with an all-in grades the jam at once, with no second request (another hand: not the cached spot)
-  p.S = state({ ...FLOP, cards: ["Qh", "Qd", "Kd", "7s", "2c"] });
-  await flush();
-  const m2 = p.posted.at(-1);
-  p.workers[0].onmessage({ data: { id: m2.id, result: { ...deep, actions: [...deep.actions, { action: "all-in", amount_bb: 97.5, freq: 0, ev_bb: -2.3 }] } } });
-  await flush();
-  const n2 = p.posted.length;
-  assert.equal(p.act({ action: "all-in" }), null);
-  assert.equal(rec().g.m, "all-in");
-  assert.ok(!p.posted.slice(n2).some(x => x.state && x.state.jam));
+  assert.deepEqual({ ...again.state, jam: undefined }, { ...JSON.parse(key), jam: undefined });   // (the spot before the jam)
+  p.workers[0].onmessage({ data: { id: again.id, result: jam } });
+  const g = await graded;
+  assert.deepEqual([g.m, g.f, g.l], ["all-in", 0, 5]);
+  assert.equal(p.run(`gradeClass(${JSON.stringify(g)})`), "bad");
 });
 
 test("after the flop a raise the tree has only an all-in for is graded as its all-in; a 4+-way jam is asked again too", async () => {
@@ -432,9 +409,6 @@ test("an approximate answer the worker has at once is shown under the progress b
   p.workers[0].onmessage({ data: { id: ask.id, partial: approx } });
   await flush();
   assert.equal(result.children.length, 0);
-  // a practice opponent's move (play) and Practice's own asks don't ask for one
-  p.run("callAdvise({ x: 1 }, { seat: 'BB', hole: 'AhAd' }, () => {})");
-  assert.equal(asks().at(-1).early, undefined);
 });
 
 test("an approximate turn answer from a format-2 turn file shows the stored range EVs, labelled as the range's", async () => {

@@ -3,8 +3,8 @@
 //   { id, v: schema, created, updated, dev: this browser's id, data } (a deleted one: { id, v, created, updated, dev,
 //   deleted: true }, a tombstone, so a later sync can tell a deletion from a record never seen)
 // in four stores:
-//   kv        each small setting or state the page and its views keep (the solver's hand "handreview", Practice's score
-//             and review, the drills' progress, Study's preferences, the speed...): id = its localStorage key, data
+//   kv        each small setting or state the page and its views keep (the solver's hand "handreview", the speed, and what
+//             the frozen copy keeps: Practice's score and review, the drills' progress, Study's preferences...): id = its localStorage key, data
 //             { raw: the string }. The page reads these synchronously while it starts, so each is also kept in
 //             localStorage under its own key (the mirror, exactly what was there before): set() writes both, get()
 //             reads the mirror. A key written to localStorage directly (code that doesn't use the store yet) is taken
@@ -16,7 +16,7 @@
 // it's the mirror) and the analyzer's IndexedDB "gto-session" (its session in progress and history; the old database is
 // left as it was). The frozen copy's solved preflop games (IndexedDB "gto-pf") and the worker's files (Cache API) are caches of
 // what can be solved or fetched again and stay where they are.
-// The Anthropic API key (Practice's Explain with AI, "gto-anthropic-key") and the choice to use it ("gto-explain-own")
+// The Anthropic API key (the frozen copy's Explain with AI, "gto-anthropic-key") and the choice to use it ("gto-explain-own")
 // never become records: they stay in localStorage only, and a backup never holds the key, even inside a note.
 // Without IndexedDB (some private modes) the records are kept in localStorage ("gto-store:<store>"), else in memory.
 // wipe() deletes all of it, by name (SITE_KEYS, SITE_DATABASES, SITE_CACHES): My hands' "Delete everything this site keeps".

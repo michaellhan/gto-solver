@@ -1,13 +1,11 @@
 // The help pages (index.html's ⋯ menu, Help; /start/, /about/, /glossary/, /changelog/ and /fairplay/): Getting
 // started, About & accuracy, the Glossary, the Changelog and Fair play, one overlay with a tab per page. Loaded the
 // first time one opens. Every number here comes from the README's measurements or the commit messages (git log);
-// change them there first. The page provides window.helpGo(what) for the buttons that open a tool, and
-// window.viewSwitch(page) to move the URL when a tab is picked.
+// change them there first. The page provides window.viewSwitch(page) to move the URL when a tab is picked.
 (function () {
   "use strict";
   const PAGES = [["start", "Getting started"], ["about", "About & accuracy"], ["glossary", "Glossary"], ["changelog", "Changelog"], ["fairplay", "Fair play"]];
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
-  const go = (what, label) => `<button class="hp-go" data-go="${what}">${label}</button>`;
   const to = (page, label) => `<button class="link" data-page="${page}">${label}</button>`;
   const term = (id, label) => `<button class="link" data-term="${id}">${label}</button>`;
 
@@ -30,9 +28,6 @@
         ${term("mix", "mix")} for your hand, each action's ${term("ev", "EV")}, and your whole range in a grid. Once you've
         seen a review the hand stays as entered.</li>
     </ol>
-    <h3>Train</h3>
-    <p>${go("practice", "Practice")} deals random hands against opponents who play the solver's strategy, and grades each
-      of your decisions as you make it.</p>
     <h3>Settings worth knowing</h3>
     <ul>
       <li><b>Solve: Fast / Accurate</b> trades time for accuracy in a review (${to("about", "how accurate each one is")}).
@@ -95,9 +90,7 @@
       <tr><td><b>Accurate</b></td><td>about 60 s in the browser</td><td>Turns within a fraction of a percent of a full solver (0.01% of the pot given up).</td></tr>
     </table></div>
     <p>The speeds are time budgets, not iteration counts: a slower or busier device runs fewer iterations in the same
-      time and gets a rougher answer, and the badge says so. The timings above were measured on desktop computers.
-      Practice at Fast works to about 2 s a spot to keep up with play: rivers close to exact (0.04% of the pot), turns
-      approximate (6.4-6.9% of the pot from equilibrium in the browser).</p>
+      time and gets a rougher answer, and the badge says so. The timings above were measured on desktop computers.</p>
     <h3>Known limits</h3>
     <ul>
       <li><b>Bet sizes are a menu.</b> Each street is solved with a few sizes (the library's flops bet a third and three
@@ -119,14 +112,10 @@
         lines, the answer is marked ${term("offsolved", "off the solved line")}.</li>
     </ul>
     <h3>Your data</h3>
-    <p>The solver runs in your browser (Pyodide, Python compiled to WebAssembly, loaded from jsDelivr), so your hands,
-      hand histories and settings stay on your device, in its local storage. <b>Delete everything this site keeps</b> in
+    <p>The solver runs in your browser (Pyodide, Python compiled to WebAssembly, loaded from jsDelivr), so your hands
+      and settings stay on your device, in its local storage. <b>Delete everything this site keeps</b> in
       My hands deletes them and nothing else on this domain; <b>Back up everything</b> saves them to a file first (without
-      your Anthropic key), and Restore reads it back, in this browser or another. The page is hosted on GitHub Pages. The one
-      exception is <b>Explain with AI</b>, in Practice and in the review of a finished hand: when you click it, that decision's
-      summary (the game, your seat and cards, the board and betting, what you chose and the solver's numbers) is sent through
-      our proxy to Anthropic's Claude to write the explanation (or straight to Anthropic with your own key, if you set one).
-      Nothing is sent until you click it.</p>`;
+      your Anthropic key), and Restore reads it back, in this browser or another. The page is hosted on GitHub Pages.</p>`;
   }
 
   // ---- the Glossary: [id, term, definition]; index.html's badges open it at their entry (data-term)
@@ -134,7 +123,7 @@
     ["gto", "GTO, equilibrium", "Game-theory optimal: a strategy for every player such that no one can win more by changing theirs alone. Playing it can't be exploited, but it isn't the most profitable play against an opponent who makes mistakes; that's what Opponents: Pool and the opponent tendencies (nodelocking) are for."],
     ["mix", "Mix, mixed strategy, frequency", "How often the solver takes each action with this hand, e.g. bet 60%, check 40%. A mix means the actions are worth about the same, so any action in the mix is fine. The grading gives ✓ to an action the solver takes at least 15% of the time, ~ at 3-15%, ✗ under 3%."],
     ["ev", "EV (expected value)", "The average a decision wins, in big blinds, over all the cards still to come and all the hands the opponents could hold. On the advice panel, EV is counted from now, relative to folding: fold is always 0, because the chips already in the pot are gone either way. A ≈ before an EV marks an action your range almost never takes, whose EV is rough (usually lower than exact)."],
-    ["evlost", "EV lost", "How much less your action is worth than the solver's best one, in big blinds. Hand reviews, Practice and the session analyzer add it up to show where your mistakes cost the most."],
+    ["evlost", "EV lost", "How much less your action is worth than the solver's best one, in big blinds. Hand reviews add it up to show where your mistakes cost the most."],
     ["equity", "Equity", "Your share of the pot if the hand went to showdown with no more betting: how often you win, ties counted as half, against the opponent's range with the rest of the board dealt."],
     ["eqr", "EQR (equity realization)", "How much of your equity you actually turn into winnings: EV divided by equity times the pot. Above 1 your hand wins more than its share (it's easy to play, or in position); below 1 less (it often has to fold before showdown)."],
     ["range", "Range", "All the hands a player could have in this spot, given how they've played so far, each with its weight. The solver plays against a range, never against one known hand. The grid shows a range by hand class (pairs on the diagonal, suited hands above it, offsuit below)."],
@@ -149,12 +138,12 @@
     ["nodelock", "Nodelocking, opponent tendencies", "Setting how an opponent plays (folds more, bluffs less, and so on) under Advanced. The solver then plays the best counter to that player, with GTO's frequencies alongside."],
     ["icm", "ICM", "The Independent Chip Model: in a tournament it values a stack by its share of the prize money, not its chips, so losing a chip costs more than winning one gains. With payouts set, the advice is in prize equity."],
     ["speed", "Fast, Accurate", "How long the solver works on each spot in a review: about 8 s and 60 s in the browser. Longer means closer to equilibrium on the turn and flop; rivers are close to exact at both speeds. See About & accuracy for the measurements."],
-    ["grades", "Grades", "Reviews mark each decision ✓ (the solver's mix takes it at least 15% of the time), ~ (3-15%) or ✗ (under 3%); a rough solve, or a line that gave up no EV, never grades ✗. Practice names the same grades Best move, Good, Inaccuracy and Mistake. Drills grade by EV: Best, Correct, Inaccuracy (under 2% of the pot lost), Mistake (under 8%) and Blunder."],
+    ["grades", "Grades", "Reviews mark each decision ✓ (the solver's mix takes it at least 15% of the time), ~ (3-15%) or ✗ (under 3%); a rough solve, or a line that gave up no EV, never grades ✗."],
     ["spr", "SPR (stack-to-pot ratio)", "The smaller stack behind divided by the pot. A low SPR (under about 4) means stacks go in easily; with a high one, hands play deeper and the turn and river matter more."],
     ["cbet", "C-bet, 3bet, 4bet, squeeze", "A c-bet (continuation bet) is a flop bet by the player who raised preflop. A 3bet is the first re-raise preflop (the open is the second bet), a 4bet the next one. A squeeze is a 3bet after an open and a call."],
   ];
   function glossaryHtml() {
-    return `<p class="hp-lead">The words you meet in reviews and in Practice.</p><dl class="hp-dl">`
+    return `<p class="hp-lead">The words you meet in reviews.</p><dl class="hp-dl">`
       + TERMS.map(([id, t, d]) => `<dt id="hp-${id}">${esc(t)}</dt><dd>${esc(d)}</dd>`).join("") + `</dl>`;
   }
 
@@ -264,7 +253,6 @@
   .hp-body li { margin: 4px 0; }
   .hp-body a { color: var(--accent); }
   .hp-lead { color: var(--text) !important; margin-top: 12px; }
-  .hp-go { padding: 3px 9px; font-size: 13px; margin: 1px 0; }
   .hp-body button.link { color: var(--accent); font-size: inherit; }
   .hp-scroll { overflow-x: auto; }
   .hp-t { border-collapse: collapse; font-size: 13px; margin: 6px 0; min-width: 480px; width: 100%; }
@@ -314,10 +302,9 @@
       document.body.appendChild(box);
       box.addEventListener("click", (e) => {
         if (e.target === box) return close();
-        const b = e.target.closest("[data-close],[data-page],[data-term],[data-go]");
+        const b = e.target.closest("[data-close],[data-page],[data-term]");
         if (!b) return;
         if ("close" in b.dataset) return close();
-        if (b.dataset.go) { close(); if (globalThis.helpGo) globalThis.helpGo(b.dataset.go); return; }
         if (b.dataset.term) return show("glossary", b.dataset.term);
         show(b.dataset.page);
       });

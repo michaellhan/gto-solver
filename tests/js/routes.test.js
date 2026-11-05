@@ -21,48 +21,25 @@ test("paths parse to a view and the solver's root", () => {
   const r = (x) => p.val(`parseRoute(${JSON.stringify(x)})`);
   assert.deepEqual(r("/gto-solver/"), { root: "/gto-solver/", view: "solver" });
   assert.deepEqual(r("/gto-solver/index.html"), { root: "/gto-solver/", view: "solver" });
-  assert.deepEqual(r("/gto-solver/practice/"), { root: "/gto-solver/", view: "practice" });
-  assert.deepEqual(r("/gto-solver/practice"), { root: "/gto-solver/", view: "practice" });
-  assert.deepEqual(r("/gto-solver/practice/index.html"), { root: "/gto-solver/", view: "practice" });
   assert.deepEqual(r("/gto-solver/hands/"), { root: "/gto-solver/", view: "hands" });
+  assert.deepEqual(r("/gto-solver/hands"), { root: "/gto-solver/", view: "hands" });
+  assert.deepEqual(r("/gto-solver/hands/index.html"), { root: "/gto-solver/", view: "hands" });
   assert.deepEqual(r("/"), { root: "/", view: "solver" });                    // the local server
 });
 
-test("the solver's URL: nothing pushed, Practice stays off even if it was on last time", async () => {
-  const p = page({ storage: { "gto-practice": "1" } });
+test("the solver's URL: nothing pushed", async () => {
+  const p = page();
   await p.ready(); await flush();
   assert.deepEqual(p.pushed, []);
   assert.deepEqual(p.replaced, []);
-  assert.ok(!p.scripts.includes("practice.js"));
-  assert.equal(p.val("practicing()"), false);
   assert.equal(p.ctx.document.title, "GTO Solver");
-});
-
-test("/practice/ opens Practice; its button and back/forward switch between it and the solver", async () => {
-  const p = page({ path: "/gto-solver/practice/" });
-  await p.ready(); await flush();
-  assert.ok(p.scripts.includes("practice.js"));
-  assert.equal(p.val("practicing()"), true);
-  assert.equal(p.ctx.document.title, "Practice · GTO Solver");
-  assert.deepEqual(p.pushed, []);                    // (opened at its own URL)
-  await p.click("practiceBtn"); await flush();       // Exit practice
-  assert.equal(p.val("practicing()"), false);
-  assert.deepEqual(p.pushed, ["/gto-solver/"]);
-  assert.equal(p.ctx.document.title, "GTO Solver");
-  p.popTo("/gto-solver/practice/"); await flush();   // back
-  assert.equal(p.val("practicing()"), true);
-  p.popTo("/gto-solver/"); await flush();            // forward
-  assert.equal(p.val("practicing()"), false);
-  assert.deepEqual(p.pushed, ["/gto-solver/"]);      // (back and forward push nothing)
-  await p.click("practiceBtn"); await flush();
-  assert.deepEqual(p.pushed, ["/gto-solver/", "/gto-solver/practice/"]);
 });
 
 test("the query string stays on every view's URL", async () => {
   const p = page({ search: "?debug=1" });
   await p.ready();
-  await p.click("practiceBtn"); await flush();
-  assert.deepEqual(p.pushed, ["/gto-solver/practice/?debug=1"]);
+  await p.click("myHands"); await flush();
+  assert.deepEqual(p.pushed, ["/gto-solver/hands/?debug=1"]);
 });
 
 test("a view: opening pushes its URL, closing pushes the solver's, back and forward open and close it", async () => {
@@ -91,22 +68,6 @@ test("a view's URL opened directly opens it", async () => {
   assert.deepEqual(r.pushed, []);
 });
 
-test("a view over Practice returns to /practice/ when closed; back to the solver turns Practice off", async () => {
-  const p = page({ path: "/gto-solver/practice/" });
-  await p.ready(); await flush();
-  p.click("myHands"); await flush();
-  assert.deepEqual(p.pushed, ["/gto-solver/hands/"]);
-  p.run("MyHands.close()");
-  assert.deepEqual(p.pushed, ["/gto-solver/hands/", "/gto-solver/practice/"]);
-  assert.equal(p.val("practicing()"), true);
-  p.popTo("/gto-solver/hands/"); await flush();   // back to My hands: Practice stays on under it
-  assert.equal(p.val("overlay"), "hands");
-  assert.equal(p.val("practicing()"), true);
-  p.popTo("/gto-solver/"); await flush();
-  assert.equal(p.val("overlay"), null);
-  assert.equal(p.val("practicing()"), false);
-});
-
 test("the solver's page pins its base to the root, so a view's URL pushed doesn't move its scripts", async () => {
   // (a view's script would load from under its URL, /gto-solver/hands/hands.js, a 404)
   const p = page({ path: "/gto-solver/" });
@@ -130,12 +91,11 @@ test("share links built on a view's URL are the solver's, and open there (old li
   const link = a.run("shareLink()");
   assert.match(link, /^https:\/\/www\.michael-han\.com\/gto-solver\/#h=/);
   const hash = link.slice(link.indexOf("#"));
-  for (const where of ["/gto-solver/", "/gto-solver/index.html", "/gto-solver/practice/"]) {
+  for (const where of ["/gto-solver/", "/gto-solver/index.html"]) {
     const b = page({ path: where, hash });
     await b.ready(); await flush();
     assert.equal(b.S.hero, "CO", where);
     assert.deepEqual(b.S.cards.slice(0, 2), ["Ah", "Kd"], where);
-    assert.equal(b.val("practicing()"), false, where);   // (a link opened at /practice/ shows its spot, in the solver)
     assert.equal(b.location.pathname, "/gto-solver/", where);   // (index.html too: the solver's URL)
     assert.equal(b.location.hash, "");
     assert.deepEqual(b.pushed, [], where);
@@ -153,8 +113,7 @@ test("the route table is the one gto/routes.py reads, and deploy.sh writes each 
   assert.deepEqual(spot, p.val("SPOT_ROUTES"));
   assert.match(html, /^const ROUTES = \{.*\};$/m);
   // each label is the ⋯ menu's / header's (without its ellipsis)
-  for (const [id, r] of [["practiceBtn", "practice"],
-                         ["helpStart", "start"], ["helpAbout", "about"], ["helpGlossary", "glossary"], ["helpChangelog", "changelog"], ["helpFairplay", "fairplay"], ["myHands", "hands"]]) {
+  for (const [id, r] of [["helpStart", "start"], ["helpAbout", "about"], ["helpGlossary", "glossary"], ["helpChangelog", "changelog"], ["helpFairplay", "fairplay"], ["myHands", "hands"]]) {
     const label = html.match(new RegExp(`<button id="${id}"[^>]*>([^<]*)</button>`))[1].replace("…", "");
     assert.equal(p.val(`ROUTES[${JSON.stringify(r)}]`), label, id);
   }

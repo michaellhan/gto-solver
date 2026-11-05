@@ -19,12 +19,12 @@ LIB = os.path.join(ROOT, "gto", "static", "flop_library")
 class TestRoutes(unittest.TestCase):
     def test_table(self):
         names, spot = routes.routes(HTML)
-        self.assertEqual(names, ["practice", "hands", "start", "about", "glossary", "changelog", "fairplay"])
+        self.assertEqual(names, ["hands", "start", "about", "glossary", "changelog", "fairplay"])
         self.assertEqual(spot, [])
 
     def test_pages_and_base(self):
         pages = routes.pages(HTML, LIB)
-        self.assertEqual(pages["practice"], 1)
+        self.assertEqual(pages["hands"], 1)
         # (no view has a /<spot>/ level now: a page that lists one still gets them)
         spotted = routes.pages(HTML.replace("const SPOT_ROUTES = [];", 'const SPOT_ROUTES = ["hands"];'), LIB)
         for s in routes.spot_slugs(LIB):
@@ -40,22 +40,22 @@ class TestRoutes(unittest.TestCase):
 
     def test_page_for(self):
         self.assertEqual(routes.page_for("/"), HTML)
-        self.assertIn('<base href="../">', routes.page_for("/practice/"))
+        self.assertIn('<base href="../">', routes.page_for("/hands/"))
         self.assertIn('<base href="../">', routes.page_for("/hands/index.html?x=1"))
         self.assertIsNone(routes.page_for("/nope/"))
-        self.assertIsNone(routes.page_for("/practice"))
+        self.assertIsNone(routes.page_for("/hands"))
         self.assertIsNone(routes.page_for("/hands/not-a-spot/"))
-        self.assertTrue(routes.is_route_without_slash("/practice"))
-        self.assertFalse(routes.is_route_without_slash("/practice.js"))
-        self.assertFalse(routes.is_route_without_slash("/practice/"))
+        self.assertTrue(routes.is_route_without_slash("/hands"))
+        self.assertFalse(routes.is_route_without_slash("/hands.js"))
+        self.assertFalse(routes.is_route_without_slash("/hands/"))
 
     def test_write(self):
         with tempfile.TemporaryDirectory() as d:
             with open(os.path.join(d, "index.html"), "w", encoding="utf-8") as f:
                 f.write(HTML.replace('const WORKER_VERSION = "', 'const WORKER_VERSION = "stamped'))
             done = routes.write(d)
-            self.assertIn("practice", done)
-            page = open(os.path.join(d, "practice", "index.html"), encoding="utf-8").read()
+            self.assertIn("hands", done)
+            page = open(os.path.join(d, "hands", "index.html"), encoding="utf-8").read()
             self.assertIn('<base href="../">', page)
             self.assertIn('WORKER_VERSION = "stamped', page)   # a copy of the stamped page
             self.assertEqual(len(done), 13)   # (the routes and the retired ones' stubs)
@@ -70,7 +70,7 @@ class TestRetired(unittest.TestCase):
         self.assertEqual(set(routes.RETIRED) & set(names), set())
         for r in routes.RETIRED:
             self.assertRegex(r, r"^[a-z0-9-]+$")
-        self.assertEqual(routes.RETIRED, ["drills", "reports", "study", "preflop", "session", "import"])
+        self.assertEqual(routes.RETIRED, ["drills", "reports", "study", "preflop", "session", "import", "practice"])
         self.assertEqual(routes.page_for("/reports/"), routes.stub("reports"))
 
     def test_stub(self):
@@ -95,17 +95,17 @@ class TestRetired(unittest.TestCase):
                 done = routes.write(d)
                 self.assertIn("oldview", done)
                 self.assertEqual(open(os.path.join(d, "oldview", "index.html"), encoding="utf-8").read(), routes.stub("oldview"))
-                self.assertIn("practice", done)   # (the routes still there get their page)
+                self.assertIn("hands", done)   # (the routes still there get their page)
         self.assertIsNone(routes.page_for("/oldview/"))
 
     def test_a_route_cant_be_both(self):
-        with mock.patch.object(routes, "RETIRED", ["practice"]):
-            with self.assertRaisesRegex(ValueError, "practice"):
-                routes.page_for("/practice/")
+        with mock.patch.object(routes, "RETIRED", ["hands"]):
+            with self.assertRaisesRegex(ValueError, "hands"):
+                routes.page_for("/hands/")
             with tempfile.TemporaryDirectory() as d:
                 with open(os.path.join(d, "index.html"), "w", encoding="utf-8") as f:
                     f.write(HTML)
-                with self.assertRaisesRegex(ValueError, "practice"):
+                with self.assertRaisesRegex(ValueError, "hands"):
                     routes.write(d)
 
 
@@ -134,16 +134,16 @@ class TestServer(unittest.TestCase):
         r, body = self.get("/")
         self.assertEqual(r.status, 200)
         self.assertEqual(body.decode(), HTML)
-        r, body = self.get("/practice/")
+        r, body = self.get("/hands/")
         self.assertEqual(r.status, 200)
         self.assertIn(b'<base href="../">', body)
         self.assertEqual(r.getheader("Content-Type"), "text/html; charset=utf-8")
-        r, _ = self.get("/practice?x=1")
+        r, _ = self.get("/hands?x=1")
         self.assertEqual(r.status, 301)
-        self.assertEqual(r.getheader("Location"), "/practice/?x=1")
+        self.assertEqual(r.getheader("Location"), "/hands/?x=1")
         r, _ = self.get("/nope/")
         self.assertEqual(r.status, 404)
-        for js in ("/practice.js", "/explain.js", "/store.js", "/hands.js"):
+        for js in ("/store.js", "/hands.js"):
             r, body = self.get(js)
             self.assertEqual(r.status, 200, js)
             self.assertEqual(r.getheader("Content-Type"), "text/javascript")

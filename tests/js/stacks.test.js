@@ -94,9 +94,6 @@ test("the smallest bet and raise: a full raise, all-in for less allowed", () => 
   const p = page(state({ cards: ["Ah", "Kh"], preflop: acts("UTG r3") }));
   assert.equal(p.act({ action: "bet", to: 4.5 }), "The smallest raise is to 5bb.");
   assert.equal(p.act({ action: "bet", to: 5 }), null);
-  // a practice opponent's size under the minimum is lifted to it
-  assert.equal(p.act({ action: "bet", to: 6, clamp: true }), null);
-  assert.deepEqual(p.S.actions.preflop.at(-1), { pos: "CO", action: "raise", to: 7 });
   // a 4bb stack may go all-in for less than the minimum raise
   const q = page(state({ cards: ["Ah", "Kh"], preflop: acts("UTG r3") }), { HJ: 4 });
   assert.equal(q.act({ action: "bet", to: 4 }), null);
@@ -172,18 +169,3 @@ test("share links and saved hands carry the stacks; old ones without play equal 
 });
 
 
-test("after an all-in for an odd amount, an advised raise is offered at a size the page takes", () => {
-  // CO's 12.3bb all-in over HJ's 2.5 is a full raise: the smallest raise is to 22.1, so the advice's 22.1 (or 22,
-  // rounded) would be refused; its button is 22.5 (gto/advisor.py _legal_to's rule), and the move goes through
-  const p = page(state({ cards: ["Ah", "Kh"], preflop: acts("UTG f, HJ r2.5, CO a") }), { CO: 12.3 });
-  assert.equal(p.sim().toAct, "BTN");
-  assert.equal(p.val("minRaiseTo(simulate().cur)"), 22.1);
-  p.practice();   // (advised sizes are on the buttons in Practice)
-  p.ctx.__res = JSON.stringify({ street: "preflop", hero: "BTN", hand: "AKs", recommended: "raise", notes: [],
-    actions: [{ action: "fold", freq: 0 }, { action: "call", freq: 0.4, amount_bb: 12.3 }, { action: "raise", freq: 0.6, amount_bb: 22.1 }] });
-  p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
-  const b = p.button("Raise to 22.5");
-  b.click();
-  const { pos, action, to } = p.S.actions.preflop.at(-1);
-  assert.deepEqual({ pos, action, to }, { pos: "BTN", action: "raise", to: 22.5 });
-});

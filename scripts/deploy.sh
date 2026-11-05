@@ -5,7 +5,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 # BUILD_ONLY=<dir> builds the site into <dir>/site/gto-solver (as published: stamped versions, each view's URL) and
 # stops there, without the checks, cloning or pushing: to try the static site locally, e.g.
-#   BUILD_ONLY=/tmp/gto scripts/deploy.sh && python3 -m http.server -d /tmp/gto/site 8000   (then /gto-solver/practice/)
+#   BUILD_ONLY=/tmp/gto scripts/deploy.sh && python3 -m http.server -d /tmp/gto/site 8000   (then /gto-solver/hands/)
 if [ -n "${BUILD_ONLY:-}" ]; then WORK="$BUILD_ONLY"; SKIP_CHECKS=1; mkdir -p "$WORK/site"; else WORK="$(mktemp -d)"; fi
 # Published from an up-to-date checkout only: one behind origin/main would take back what was deployed since.
 if [ -z "${BUILD_ONLY:-}" ] && [ "${DRY_RUN:-0}" != "1" ]; then
@@ -67,11 +67,8 @@ cp "$HERE/gto/static/index.html" "$HERE/gto/static/worker.js" "$HERE/gto/static/
 # below, so a changed file is never served from a browser's cached copy. Removing a module is removing its line, and the
 # constant with its code from the page.
 MODULES="
-PR_VERSION practice.js
-MT_VERSION multitable.js
 HP_VERSION help.js
 HN_VERSION hands.js
-EX_VERSION explain.js
 "
 while read -r constant module _; do
   [ -z "$constant" ] || cp "$HERE/gto/static/$module" "$WORK/site/gto-solver/"
@@ -110,7 +107,7 @@ if [ -f "$HERE/gto/static/flop_library/index.json" ]; then
   rm "$WORK/site/gto-solver/index.html.bak"
   grep -q '^const LIB_BASE = "../gto-solver-library/";' "$WORK/site/gto-solver/index.html"
 fi
-# Each view's URL (/gto-solver/practice/...: the page's ROUTES, gto/routes.py) is a copy
+# Each view's URL (/gto-solver/hands/...: the page's ROUTES, gto/routes.py) is a copy
 # of the stamped page with a <base href="../"> pointing its relative URLs at gto-solver/ (GitHub Pages has no rewrites).
 # (No 404.html: GitHub Pages only uses the site root's, which isn't this folder's.)
 (cd "$HERE" && "$PYTHON" -m gto.routes "$WORK/site/gto-solver")

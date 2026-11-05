@@ -1,4 +1,4 @@
-"""The page's URLs: one per view (/practice/, /hands/ and the help pages /start/, /about/,
+"""The page's URLs: one per view (/hands/ and the help pages /start/, /about/,
 /glossary/, /changelog/, /fairplay/; the solver is /), and /<route>/<spot>/ for a precomputed spot (its id with
 dashes: srp_btn_bb -> srp-btn-bb) under a view in SPOT_ROUTES (none now).
 
@@ -24,7 +24,7 @@ import sys
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 SLUG = re.compile(r"^[a-z0-9-]+$")
 CLASSIC = "/gto-solver-classic/"
-RETIRED: list[str] = ["drills", "reports", "study", "preflop", "session", "import"]   # routes that have left the page's ROUTES
+RETIRED: list[str] = ["drills", "reports", "study", "preflop", "session", "import", "practice"]   # routes that have left the page's ROUTES
 
 
 def routes(html: str) -> tuple[list[str], list[str]]:
@@ -101,7 +101,7 @@ def _retired(names: list[str]) -> list[str]:
 
 
 def page_for(path: str, static: str = STATIC) -> str | None:
-    """The page served at a URL path ("/practice/", "/session/index.html"), a retired route's stub, or None
+    """The page served at a URL path ("/hands/", "/about/index.html"), a retired route's stub, or None
     if it's neither. The root ("/") is the page itself."""
     p = path.split("?")[0].split("#")[0]
     if p.endswith("/index.html"):
@@ -120,7 +120,7 @@ def page_for(path: str, static: str = STATIC) -> str | None:
 
 
 def is_route_without_slash(path: str, static: str = STATIC) -> bool:
-    """"/practice" (a route's directory without its slash: the static host redirects it to "/practice/")."""
+    """"/hands" (a route's directory without its slash: the static host redirects it to "/hands/")."""
     p = path.split("?")[0]
     if p.endswith("/") or "." in p.rsplit("/", 1)[-1]:
         return False

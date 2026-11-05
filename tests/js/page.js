@@ -22,9 +22,8 @@ const HTML_PATH = process.env.GTO_PAGE || path.join(__dirname, "..", "..", "gto"
 // there answers null, as a browser does. tests/js/harness.test.js checks this list against gto/static both ways, so an
 // entry goes with its code.
 const RUNTIME_IDS = {
-  "index.html": ["customAmt", "customBox", "equityRetry", "explainBox", "solveBar", "solveMsg", "solveTime", "solverRetry"],
-  "explain.js": ["pxKey"], "hands.js": ["mhStyle"], "help.js": ["hpStyle"],
-  "multitable.js": ["mtAmt", "mtStyle", "mtView", "mtTop", "mtTabs", "mtDock", "mtSide", "mtT0", "mtT1", "mtT2", "mtT3"],
+  "index.html": ["customAmt", "customBox", "equityRetry", "solveBar", "solveMsg", "solveTime", "solverRetry"],
+  "hands.js": ["mhStyle"], "help.js": ["hpStyle"],
 };
 const RUNTIME = new Set(Object.values(RUNTIME_IDS).flat());
 // (the markup without the page's one inline script: its templates are the ids created at runtime)
@@ -261,10 +260,8 @@ function loadPage(opts = {}) {
     get S() { return val("S"); },
     set S(v) { ctx.__tmp = JSON.stringify(v); run("S = JSON.parse(__tmp); setPositions(S.players); save(); renderAll();"); },
     ready: () => run("modeReady"),
-    // Practice on, as far as the page can tell (its own hooks answer nothing): advice as you play, your moves graded
-    practice() { run("window.Practice = new Proxy({ on: true }, { get: (t, k) => k in t ? t[k] : () => null })"); },
     // the hand st, you to act, as its review shows that decision: the hand played on from there (you fold), finished,
-    // that decision looked at. This is how advice reaches the page outside Practice. S is then the hand up to it.
+    // that decision looked at. This is how advice reaches the page. S is then the hand up to it.
     spot(st) {
       ctx.__tmp = JSON.stringify(st);
       run(`(() => { if (stepView) stepStop(); S = JSON.parse(__tmp); setPositions(S.players); const s = simulate().current;

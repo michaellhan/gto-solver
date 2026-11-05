@@ -349,27 +349,20 @@ test("grades: marks, rough solves and the EV given up", () => {
   assert.deepEqual(g({ f: 0, l: null }), ["bad", "✗"]);    // (a preflop chart's: no EV to go by)
   assert.equal(p.run("sgn(-1.234)"), "−1.23");
   assert.equal(p.run("sgn(0)"), "0.00");
-  // in Practice a recorded hero action is graded against the advice on screen for this exact spot
-  p.practice();
+  // a decision is graded against the answer for this exact spot
   p.ctx.__res = JSON.stringify({ street: "flop", recommended: "bet 33%", solver: { exploitability_pct: 12, iterations: 50, solve_seconds: 2, active_combos: 300, tree_actions: ["check", "bet 33%", "bet 75%"] },
     actions: [{ action: "check", freq: 0.3, ev_bb: 4.0 }, { action: "bet 33%", amount_bb: 1.8, freq: 0.6, ev_bb: 4.25 }, { action: "bet 75%", amount_bb: 4.1, freq: 0.1, ev_bb: 4.2 }] });
   p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
-  assert.equal(label(p.button("Bet 2")), "Bet 2");          // solver sizes on the buttons, rounded to 0.5
-  assert.ok(p.buttons().find(b => label(b) === "Bet 2").className.includes("best"));
-  p.act({ action: "bet", to: 4 });
-  assert.deepEqual(p.S.actions.flop.at(-1).g, { m: "bet 75%", f: 0.1, b: "bet 33%", bf: 0.6, l: 0.05, e: 4.2, o: 4.25, r: 1 });
-  // back at the spot the advice is for, another line is graded too
-  p.run("S.actions.flop.pop(); renderAll()"); p.act({ action: "check" });
-  assert.deepEqual(p.S.actions.flop.at(-1).g, { m: "check", f: 0.3, b: "bet 33%", bf: 0.6, l: 0.25, e: 4, o: 4.25, r: 1 });
-  // but not when the advice on screen is for another spot
-  p.run("S.actions.flop.pop(); resultKey = 'another spot'; renderAll()"); p.act({ action: "check" });
-  assert.equal(p.S.actions.flop.at(-1).g, undefined);
+  assert.deepEqual(p.val('gradeFor({ action: "bet", to: 4 })'), { m: "bet 75%", f: 0.1, b: "bet 33%", bf: 0.6, l: 0.05, e: 4.2, o: 4.25, r: 1 });
+  assert.deepEqual(p.val('gradeFor({ action: "check" })'), { m: "check", f: 0.3, b: "bet 33%", bf: 0.6, l: 0.25, e: 4, o: 4.25, r: 1 });
+  // but not when the answer is for another spot
+  p.run("resultKey = 'another spot'");
+  assert.equal(p.val('gradeFor({ action: "check" })'), null);
 });
 
 test("a solved 3-way pot is shown and graded like a heads-up solve; the betting rules' answer isn't graded", () => {
   const st = state({ hero: "BB", cards: ["Ah", "Kh", "Kd", "7s", "2c"], preflop: acts("UTG f, HJ f, CO r2.5, BTN c, SB f, BB c") });
   const p = page(st);
-  p.practice();
   assert.equal(p.sim().toAct, "BB");
   const res = { street: "flop", hero: "BB", multiway: true, solved: true, opponents: ["CO", "BTN"], recommended: "check",
     solver: { exploitability_pct: 0.8, iterations: 120, solve_seconds: 20, active_combos: 600, tree_actions: ["check", "bet 33%"] },
@@ -379,18 +372,14 @@ test("a solved 3-way pot is shown and graded like a heads-up solve; the betting 
   const html = p.byId("result").innerHTML;
   assert.ok(html.includes("3 players in · 3-way solve"));
   assert.ok(html.includes("Solver mix") && !html.includes("heuristic, not a solve"));
-  assert.ok(p.buttons().find(b => label(b) === "Bet 2.5"));        // the solve's size on the button
-  p.act({ action: "check" });
-  assert.deepEqual(p.S.actions.flop.at(-1).g, { m: "check", f: 0.7, b: "check", bf: 0.7, l: 0, e: 3.1, o: 3.1 });
+  assert.deepEqual(p.val('gradeFor({ action: "check" })'), { m: "check", f: 0.7, b: "check", bf: 0.7, l: 0, e: 3.1, o: 3.1 });
   // the betting rules (4+ players, or a 3-way spot the solve doesn't take) stay ungraded
   const q = page(st);
-  q.practice();
   q.ctx.__res = JSON.stringify({ ...res, solved: undefined, equity_vs_field: 0.4, recommended: "check",
     actions: [{ action: "check", freq: 1, ev_bb: 3.1 }, { action: "bet 33%", amount_bb: 2.5, freq: 0, ev_bb: 3.0 }] });
   q.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
   assert.ok(q.byId("result").innerHTML.includes("heuristic, not a solve"));
-  q.act({ action: "check" });
-  assert.equal(q.S.actions.flop.at(-1).g, undefined);
+  assert.equal(q.val('gradeFor({ action: "check" })'), null);
 });
 
 test("convergence labels", () => {

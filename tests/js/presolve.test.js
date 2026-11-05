@@ -45,14 +45,6 @@ test("hidden and shown again, or left: nothing starts", async () => {
   assert.equal(p.ctx.presolveFor, undefined);   // (the page has no pre-solve left to start)
 });
 
-test("Practice looks ahead on its own: the worker gets no presolve there either", async () => {
-  const { p, pres } = await solving();
-  p.practice();
-  p.S = state(OOP_TO_ACT);
-  await flush();
-  assert.equal(pres().length, 0);
-});
-
 test("a stopped solve that never answers (stuck where it can't read the stop): after 15 s the worker is restarted and the advice waiting behind it goes to the new one", async () => {
   for (const stuck of [false, true]) {
     const { p, asks } = await solving();

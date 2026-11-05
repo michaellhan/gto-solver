@@ -20,10 +20,9 @@ const SCRIPTS = {
 const SEEN = { "gto-welcome": "seen" };   // (a visitor who has answered the chooser)
 const page = (opts = {}) => loadPage({ scripts: SCRIPTS, storage: SEEN, ...opts });
 
-test("each help page builds, its links go to pages, glossary entries and tools that exist", () => {
+test("each help page builds, its links go to pages and glossary entries that exist", () => {
   assert.deepEqual(Help.PAGES.map(([p]) => p), ["start", "about", "glossary", "changelog", "fairplay"]);
   const p = page();
-  const views = p.val("Object.keys(VIEWS)");
   const terms = new Set(Help.TERMS.map(([id]) => id));
   assert.equal(terms.size, Help.TERMS.length, "a glossary id is used twice");
   for (const [id, label] of Help.PAGES) {
@@ -32,7 +31,6 @@ test("each help page builds, its links go to pages, glossary entries and tools t
     assert.equal(p.val(`ROUTES[${JSON.stringify(id)}]`), label, id);   // (the tab's name is the URL's title)
     for (const [, t] of h.matchAll(/data-term="([^"]+)"/g)) assert.ok(terms.has(t), `${id}: no glossary entry ${t}`);
     for (const [, g] of h.matchAll(/data-page="([^"]+)"/g)) assert.ok(Help.PAGES.some(([x]) => x === g), `${id}: no page ${g}`);
-    for (const [, g] of h.matchAll(/data-go="([^"]+)"/g)) assert.ok(g === "practice" || views.includes(g), `${id}: the page can't open ${g}`);
   }
   const g = Help.pageHtml("glossary");
   for (const id of terms) assert.match(g, new RegExp(`<dt id="hp-${id}">`));
@@ -115,15 +113,6 @@ test("an answer's badge opens the Glossary at its word", async () => {
   assert.deepEqual(p.val("Help.opened"), ["glossary"]);
 });
 
-test("the help pages' buttons open the tools", async () => {
-  const p = page();
-  await p.ready(); await flush();
-  p.run("helpGo('practice')"); await flush();
-  assert.equal(p.val("practicing()"), true);
-  p.run("helpGo('practice')"); await flush();     // (already on: stays on)
-  assert.equal(p.val("practicing()"), true);
-});
-
 test("a first visit at the solver's URL shows the chooser once; Not now dismisses it for good", async () => {
   const p = loadPage({ scripts: SCRIPTS });
   await p.ready(); await flush();
@@ -164,12 +153,9 @@ test("the chooser isn't shown to a returning visitor, at a view's URL or with a 
   assert.equal(l.storage.get("gto-welcome"), "seen");
 });
 
-test("the chooser's choices open Practice and the help pages, and dismiss it", async () => {
+test("the chooser's choices open the help pages, and dismiss it", async () => {
   const go = async (id) => { const p = loadPage({ scripts: SCRIPTS }); await p.ready(); await flush(); p.click(id); await flush();
     assert.equal(p.byId("welcome").hidden, true, id); assert.equal(p.storage.get("gto-welcome"), "seen", id); return p; };
-  const x = await go("welcomePractice");
-  assert.equal(x.val("practicing()"), true);
-  assert.deepEqual(x.pushed, ["/gto-solver/practice/"]);
   for (const [id, route] of [["welcomeStart", "start"], ["welcomeAbout", "about"], ["welcomeFair", "fairplay"]]) {
     const h = await go(id);
     assert.deepEqual(h.pushed, [`/gto-solver/${route}/`], id);

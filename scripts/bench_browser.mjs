@@ -49,7 +49,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const STATIC = path.join(ROOT, "gto", "static");
 
 // the page's budgets in the browser (index.html BUDGETS.wasm): [street, each earlier postflop street]
-// (BENCH_BUDGETS='{"fast":[1.5,0.25]}' tries others, BENCH_STATE='{"quick":true}' adds request fields, e.g. Practice's;
+// (BENCH_BUDGETS='{"fast":[1.5,0.25]}' tries others, BENCH_STATE='{"quick":true}' adds request fields, e.g. the frozen copy's Practice's;
 // children inherit both)
 // BENCH_NET_MS: each library file's request takes this long (the CDN measured 130-670 ms an entry, 0.8-4.9 s the index)
 const NET_MS = +(process.env.BENCH_NET_MS || 0);
