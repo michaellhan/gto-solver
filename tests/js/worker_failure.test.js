@@ -119,6 +119,8 @@ test("a review waiting on the solver stops at the failure, keeps the hand, and T
   assert.equal(p.val("review"), null);
   assert.equal(p.S.cards[6], "3d");           // (the whole hand back on the table)
   assert.ok(result(p).includes(MESSAGE));
+  assert.equal(p.run("document.body.dataset.s"), "review");   // (a phone keeps the panel and its message up, not under the table)
+  assert.equal(p.byId("doneNew").hidden, true);               // (Try again is what's asked; New hand is on the setup line)
   const n = p.workers.length, before = p.posted.length;
   p.byId("solverRetry").onclick();
   await flush();

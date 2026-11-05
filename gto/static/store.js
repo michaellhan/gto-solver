@@ -9,7 +9,7 @@
 //             localStorage under its own key (the mirror, exactly what was there before): set() writes both, get()
 //             reads the mirror. A key written to localStorage directly (code that doesn't use the store yet) is taken
 //             in at the next load and before a backup (reconcile).
-//   hands     My hands: a saved hand each (hands below)
+//   hands     Hands: a saved hand each (hands below)
 //   sessions  the frozen copy's session analyzer's summary of each session (id: the session's)
 //   blobs     big state kept whole: that analyzer's session in progress ("session-current")
 // On the first load it takes in what the site kept before (migrate): every localStorage key above (left where it is:
@@ -19,7 +19,7 @@
 // The Anthropic API key (the frozen copy's Explain with AI, "gto-anthropic-key") and the choice to use it ("gto-explain-own")
 // never become records: they stay in localStorage only, and a backup never holds the key, even inside a note.
 // Without IndexedDB (some private modes) the records are kept in localStorage ("gto-store:<store>"), else in memory.
-// wipe() deletes all of it, by name (SITE_KEYS, SITE_DATABASES, SITE_CACHES): My hands' "Delete everything this site keeps".
+// wipe() deletes all of it, by name (SITE_KEYS, SITE_DATABASES, SITE_CACHES): Hands' "Delete everything this site keeps".
 (function () {
   "use strict";
   const DB_NAME = "gto-store", DB_VERSION = 1, SCHEMA = 1;
@@ -429,11 +429,11 @@
       return out;
     }
 
-    // ---- My hands: the hands you've played on the table, reviewed or imported, each a record of
+    // ---- Hands: the hands you've played on the table, reviewed or imported, each a record of
     //   { state: the page's hand (S: setup, cards, actions with their grades), sig: the hand without its grades (the
     //     same hand saved again is the same record), source: "table" | "review" | "import" | "file" | "link",
     //     reviewed: graded decisions in it, tags: [], note: "", site / hh: an imported hand's site and history }
-    // The page tells it (gto-hands-table) which hand is on the table: the record it is (opened from My hands, saved,
+    // The page tells it (gto-hands-table) which hand is on the table: the record it is (opened from Hands, saved,
     // imported), or a spot put there (the frozen copy's write-ups, drills and reports: kept only once you play on from it).
     // A record the page repaired to open it stays as it was (opening changes nothing): the table's entry then holds the
     // copy that was opened ("opened"), and the record takes the hand only if it comes to differ from that copy.
@@ -477,7 +477,7 @@
       if (opts.tags) data.tags = [...new Set([...(data.tags || []), ...opts.tags])];
       if (opts.note && !data.note) data.note = opts.note;
       const id = base ? base.id : uid();
-      const rec = await put("hands", id, data);
+      const rec = await put("hands", id, data, base ? 0 : opts.created);   // (a record it isn't yet: from opts.created, a restored file's date)
       if (opts.table !== false) hands.onTable(st, { id, source: data.source });
       return rec;
     }
@@ -518,13 +518,14 @@
       remove: (id) => del("hands", id),
       // (Undo after a delete: the record as it was, back under its id)
       restore: (rec) => put("hands", rec.id, rec.data, +rec.created || 0),
-      // a My hands export file ({ format: "gto-solver-hands", hands: [{ state, link, tags, note, ... }] }) or a list of
+      // a Hands export file ({ format: "gto-solver-hands", hands: [{ state, link, tags, note, ... }] }) or a list of
       // states; an entry with only its #h= link (decode: the page's decodeState) is that link's hand. A hand already here
       // keeps its state, so an older file can't take back grades made since: as in a backup, the file's tags join and its
-      // note fills an empty one. Only the file's grades come in, on a hand here that has none.
+      // note fills an empty one. Only the file's grades come in, on a hand here that has none. A hand added keeps the date
+      // the file gives it (exportFile's ISO date, or a record's number); one it can't read is today's.
       async importFile(obj, clean, decode) {
         const list0 = obj && obj.format === HANDS_FILE && Array.isArray(obj.hands) ? obj.hands : Array.isArray(obj) ? obj : obj && obj.players && obj.actions ? [obj] : null;
-        if (!list0) throw new Error("That file has no hands in it (a My hands export, or a hand's state JSON).");
+        if (!list0) throw new Error("That file has no hands in it (a Hands export, or a hand's state JSON).");
         const out = { added: 0, merged: 0, skipped: 0 };
         const held = await hands.list(), before = new Set(held.map(r => r.id)), bySig = new Map(held.filter(r => r.data).map(r => [r.data.sig, r]));
         for (const h0 of list0) {
@@ -543,8 +544,9 @@
             out.merged++;
             continue;
           }
+          const when = typeof h.created === "string" ? Date.parse(h.created) : +h.created;
           const rec = await hands.save(st, { source: h.source || "file", tags: Array.isArray(h.tags) ? h.tags : [], note: typeof h.note === "string" ? h.note : "",
-                                             site: h.site, hh: h.hh, hhId: h.hhId, table: false });
+                                             site: h.site, hh: h.hh, hhId: h.hhId, table: false, ...(when > 0 ? { created: when } : {}) });
           if (rec && before.has(rec.id)) out.merged++; else if (rec) { out.added++; before.add(rec.id); }
           if (rec) bySig.set(rec.data.sig, rec);
         }

@@ -2,7 +2,7 @@
 
 A No-Limit Hold'em hand-review solver. Enter a hand you played seat by seat,
 finish it, and it grades each decision you made against a GTO-style mixed strategy
-with EVs and sizes, preflop through river, in a few seconds each. 2 to 9 players.
+with EVs and sizes, preflop through river, in seconds each. 2 to 9 players.
 
 Live at **https://www.michael-han.com/gto-solver/** (the solver runs in your
 browser via Pyodide, nothing is uploaded).
@@ -80,11 +80,11 @@ and the stacks (one for the table; **per seat…** gives any seat its own, shown
 the table), click cards into your
 hand and the board (click a placed card in its slot to remove it; cards already
 on the table can't be picked again), or type them as rank then suit (`Ah`, `Tc`).
-The setup folds into one line once the hand starts, and the deck only shows
-while a card is needed ("Show deck" opens it otherwise). Enter the action seat
-by seat with the buttons or keys: F fold, C check or call, 1 to 3 preset sizes
-(preflop the advisor's default raise, limpers and callers included),
-R custom size, A all-in, S the context shortcut, U undo. A table view shows who
+The setup is one line ("6-handed · you are BTN · 100bb") and **Edit** opens its controls; the deck only shows
+while a card is needed (**Edit cards** opens it otherwise). Enter the action seat
+by seat with the buttons or keys: F fold, C check or call, 1 and 2 preset sizes
+(33% and 75% of the pot, ¾ pot and pot facing a bet; preflop the advisor's default raise, limpers and callers included),
+R another amount, A all-in, S the context shortcut, U undo. A table view shows who
 has folded, who is to act, the board and the pot; clicking a seat folds
 everyone before it (checking where there's nothing to call, and stopping at your own turn),
 and a single context shortcut ("Fold to me", "Everyone checks", "Everyone else folds",
@@ -110,8 +110,7 @@ the browser's storage, store.js); off, nothing changes.
 
 **Entering a hand.** The main screen records a hand; it doesn't answer one. While a hand is entered your decisions are
 recorded and the worker is asked nothing, whoever is to act: no solve, no pre-solve, no library fetch, no strategy, EV,
-equity or grade, and the action buttons stay plain ("Record what you did."). The panel lists what's recorded and how to
-review it. **Finish hand** (under the action buttons once your cards are in, key E; also while a card is asked for) ends a hand
+equity or grade, and the action buttons stay plain. The Review panel says nothing is solved until the hand is finished. **Finish hand** (under the action buttons once your cards are in, key E; also while a card is asked for) ends a hand
 you don't know the end of; a hand is finished by itself at a fold or showdown, or when you fold (the others' actions
 aren't entered after that). `handDone(sim)` in `gto/static/index.html` is the rule, and
 `reviewing()` the gate: a review running, or a decision of a finished hand stepped to. `analyze` and
@@ -144,8 +143,9 @@ to doesn't show it.
 
 #### What a review shows
 
-Each decision opened solves the spot at Fast: 8 s in the browser and 2.5 s against the local server (2.5 s per earlier
-street too). River spots are solid; on the turn the request's `"speed": "accurate"` gets closer to a full solver (see
+Each decision opened solves the spot at Fast: in the browser 8 s plus 3 s for each earlier postflop street (a flop 8 s,
+a turn 11 s, a river 14 s: the estimate its progress bar counts down and About quotes), against the local server 2.5 s
+plus 2.5 s for each. River spots are solid; on the turn the request's `"speed": "accurate"` gets closer to a full solver (see
 Accuracy vs speed below), and the page doesn't ask for it.
 While a heads-up turn or river solves in the browser, an approximate answer read off the solve before it (a live
 flop's for the turn, the turn's for the river, or the street's own from your earlier decision; after a library flop,
@@ -190,7 +190,7 @@ and what the tool is for (not for use during a hand, online or live). The thresh
 tests/js/help.test.js checks them against `convergence()`, `gradeClass` and `HEUR_OK`/`HEUR_MEH`.
 
 **Hands** (`/gto-solver/hands/`) keeps the hands you play on the table, in this browser. The hand
-on the table is saved when **New hand** or a share link takes its
+on the table is saved when **New hand**, a new table size or a share link takes its
 place and when **Review whole hand** finishes (with
 its grades). The same hand is one record however
 often it's saved (grades aside), and a hand opened from the list and played on is saved back into its own record. Each
@@ -199,7 +199,7 @@ up; the search reads cards (`AhKd`, `AKo`, `77`), positions, the board, tags, no
 to reviewed, not reviewed or imported hands, or to one tag. A hand opens on the table (**Open**, to see or review it)
 or copies as its `#h=` link; it takes tags and a note; **Delete** has an
 Undo. **Export** downloads the hands listed (or one) as JSON (`gto-solver-hands`: each hand's state, its `#h=` link, tags, note
-and, for an imported one, its site, hand number and history), and **Restore from a backup…** takes such a file too. The
+and, for an imported one, its site, hand number and history), and **Restore from a backup…** takes such a file too, each hand it adds keeping its date. The
 frozen copy's imported hands stay in the list and open like any other. A record the page can't put on the table (a state
 `cleanState` refuses) lists, takes tags and a note, deletes, exports and backs up all the same; **Open** says so and links
 to the frozen copy. With 1,005 hands in the
@@ -239,9 +239,11 @@ on a view that left (Practice, the session analyzer, Explain), and restores a ba
 
 The layout fits the window at any zoom. On a wide window it's two columns, the hand on the left
 (the setup line, the table, the actions so far, the action buttons) and one Review panel on the right,
-and the page scrolls as one with the action buttons pinned to the bottom of the screen. On a narrow window
-(a phone, or a zoomed-in page) it's one column, the buttons pinned the same way. While a card
-is needed the deck moves up under the setup; otherwise it's hidden behind **Edit cards**.
+and the page scrolls as one with the action buttons pinned to the bottom of the screen. At 860 px or less
+(a phone, or a zoomed-in page) it's one column, the buttons pinned the same way and 44 px tall: a review
+drops the table and the actions so far, and a decision shows the panel alone (`body[data-s]`). While a card
+is needed the deck moves up under the setup; otherwise it's hidden behind **Edit cards**. If the solver can't load,
+the panel says so with **Try again**, and a review it stopped stays up on a phone, its rows "not reviewed yet".
 The look follows the device's light or dark setting; there's no toggle. On a first visit Review says the solver is
 getting ready, about 9 MB (Pyodide, numpy and the solver, measured); later visits have them cached.
 **Share**, under a finished hand's review, copies a link that reopens the hand exactly as it stands.

@@ -33,6 +33,8 @@
   html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; touch-action: manipulation; }
   body { margin: 0; padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left); background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; font-variant-numeric: tabular-nums; }
 
+  a { color: var(--text); text-underline-offset: 2px; }
+
   /* ---- top bar */
   header { display: flex; align-items: center; gap: 16px; padding: max(12px, env(safe-area-inset-top)) 20px 12px; border-bottom: 1px solid var(--line); background: var(--bg); }
   header h1 { font-size: 15px; margin: 0; font-weight: 650; }
@@ -50,13 +52,14 @@
   button.link { background: none; border: 0; padding: 0; min-height: 0; color: var(--muted); font-size: 12px; text-decoration: underline; text-underline-offset: 2px; }
   button.link:hover { color: var(--text); background: none; }
   button:disabled { opacity: .35; cursor: default; }
-  input[type=number], input[type=text], select, textarea { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; font: inherit; }
+  input[type=number], input[type=text], input[type=search], select, textarea { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; font: inherit; }
   ::placeholder { color: var(--muted); opacity: 1; }
   input[type=number] { width: 72px; }
+  input[type=search] { -webkit-appearance: none; appearance: none; }
   select { -webkit-appearance: none; appearance: none; padding-right: 26px; cursor: pointer;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238a919c' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
     background-repeat: no-repeat; background-position: right 9px center; }
-  select:hover, input[type=number]:hover, input[type=text]:hover, textarea:hover { border-color: var(--line2); }
+  select:hover, input[type=number]:hover, input[type=text]:hover, input[type=search]:hover, textarea:hover { border-color: var(--line2); }
   input[type=checkbox] { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; margin: 0 4px 0 0; flex: none; border: 1px solid var(--line2); border-radius: 4px; background: var(--panel2); cursor: pointer; vertical-align: -3px; display: inline-grid; place-content: center; transition: background .12s, border-color .12s; }
   input[type=checkbox]::after { content: ""; width: 4px; height: 8px; border: solid var(--on-primary); border-width: 0 2px 2px 0; transform: rotate(45deg) translate(-1px, -1px); opacity: 0; }
   input[type=checkbox]:checked { background: var(--primary); border-color: var(--primary); }
@@ -179,6 +182,8 @@
   #actionArea .nexth { display: block; width: 100%; background: var(--primary); color: var(--on-primary); border-color: var(--primary); font-weight: 600; }
   .err { color: var(--bad); font-size: 12px; }
   .err:empty { display: none; }
+  .err button.link { color: var(--text); }
+  #result > .err { margin-top: 10px; }
 
   /* ---- the answers */
   .note, #result.empty { color: var(--muted); font-size: 13px; margin: 0; }
@@ -285,8 +290,8 @@
     body[data-s="review"] #pTable, body[data-s="review"] #pHistory { display: none; }
     body[data-s="decision"] #pSetup, body[data-s="decision"] #pTable, body[data-s="decision"] #pCards, body[data-s="decision"] #pHistory, body[data-s="decision"] #pAction { display: none; }
     .felt { height: 208px; }
-    button { min-height: 44px; }
-    button.link, button.small, button.back, .bc.empty, .seats button, .segment button { min-height: 0; }
+    button, button.small, .seats button, .segment button { min-height: 44px; }
+    button.link, button.back, .bc.empty { min-height: 0; }
     .acts button { min-height: 54px; }
     .grid .cell { font-size: 8.5px; }
     .cell .lbl { left: 1px; top: 0; }
@@ -299,19 +304,19 @@
   }
   @media (max-width: 340px) {
     .acts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .slots { gap: 8px; }
     .seat { width: 58px; }
     .grid .cell { font-size: 7px; }
   }
-  /* touch screens: no hover, so hover effects would stick after a tap; targets at least 40px tall; 16px
+  /* touch screens: no hover, so hover effects would stick after a tap; targets at least 44px tall; 16px
      inputs, or iOS zooms the page in when one is focused */
   @media (hover: none) {
     .slot.filled:hover { opacity: 1; }
     .pc:hover { transform: none; box-shadow: none; }
-    #setupDone { min-height: 40px; }
   }
   @media (pointer: coarse) {
-    button:not(.link):not(.back):not(.cell), select, input[type=number], input[type=text] { min-height: 40px; }
-    input[type=number], select, input[type=text] { font-size: 16px; }
+    button:not(.link):not(.back):not(.cell):not(.bc), select, input[type=number], input[type=text], input[type=search] { min-height: 44px; }
+    input[type=number], select, input[type=text], input[type=search] { font-size: 16px; }
     .pc { height: 38px; }
     .chip.rewind { min-height: 0; position: relative; }
     .chip.rewind::after { content: ""; position: absolute; inset: -9px 0; }
@@ -319,7 +324,7 @@
     header nav button.link { padding: 6px 0; margin: 0; }
     summary { padding: 11px 0; margin: -11px 0; }
     input[type=checkbox] { width: 20px; height: 20px; margin: 0 4px 0 0; }
-    label:has(> input[type=checkbox]) { min-height: 40px; }
+    label:has(> input[type=checkbox]) { min-height: 44px; }
   }
   @media (prefers-reduced-motion: reduce) {
     .slot.need, .slot.flash { animation: none; }
@@ -589,11 +594,11 @@ const BUDGETS = { server: [2.5, 2.5], wasm: [8, 3] };
 // the reads while the page starts); without it (the tests' page) localStorage itself
 const pageStore = window.GTOStore || { getRaw: (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } },
                                        setRaw: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} } };
-// everything deleted from another tab (My hands' Delete everything this site keeps): what this tab holds goes with it
+// everything deleted from another tab (Hands' Delete everything this site keeps): what this tab holds goes with it
 if (window.GTOStore) window.GTOStore.onChange((c) => { if (c.wiped && c.remote) location.reload(); });
 const WORKER_VERSION = "14";   // scripts/deploy.sh replaces this with a hash of worker.js
 const HP_VERSION = "1";        // and this with a hash of help.js (About and Fair play)
-const HN_VERSION = "1";        // and hands.js (My hands, loaded the first time it opens; store.js, loaded with the page, has ?v= of its own)
+const HN_VERSION = "1";        // and hands.js (Hands, loaded the first time it opens; store.js, loaded with the page, has ?v= of its own)
 // where the precomputed libraries are (flop_library/: the local server's, gto/static/flop_library); scripts/deploy.sh
 // points it at their own site, ../gto-solver-library/ (scripts/deploy_library.sh). The worker is told it in its URL
 // (relative: worker.js is in the folder the page's URLs resolve against).
@@ -804,6 +809,7 @@ async function cancelSolve() {
 // (S.finished: Finish hand, an imported hand); then each decision you recorded can be reviewed
 // (reviewHand, all of them; stepTo, one). A decision you didn't record is never reviewed, and once a hand's advice has
 // been shown its line stays as it is (S.reviewed, fixedHand).
+let reviewFailed = false;   // a review stopped by the solver failing to load; its message is showing
 let review = null;     // { n, k, what, cancel, full } while a review runs; cancel "restore" (its Cancel) or "drop" (a new hand)
 let stepView = null;   // { full, s, i }: a decision of a finished hand being looked at; S is the hand up to it
 function handDone(sim) { return !!S.cards[0] && !!S.cards[1] && (!!S.finished || !!sim.handOver || !sim.active.has(S.hero)); }
@@ -827,7 +833,7 @@ let S = cleanState(load()) || fresh();
 setPositions(S.players);
 let selSlot = null;       // board/hand slot the user picked by hand
 let showDeck = false;     // deck opened manually while no card is needed
-let editSetup = false;    // setup panel expanded mid-hand
+let editSetup = false;    // the setup line's controls open (Edit)
 let seatStacksOpen = false;  // the per-seat stack boxes shown (they always are while the stacks differ)
 let pendingRank = null;   // first half of a typed card ("A" of "Ah")
 let lastKey = null;       // payload of the solve in flight or last shown
@@ -840,11 +846,17 @@ const cache = new Map();  // payload -> result, so undo/redo doesn't re-solve
 function fresh(n) { n = n || 6; return { players: n, hero: n === 2 ? "SB" : "BTN", stack: 100, cards: [null, null, null, null, null, null, null], actions: { preflop: [], flop: [], turn: [], river: [] }, ...stakesPref() }; }
 function save() { pageStore.setRaw("handreview", JSON.stringify(heldHand())); }
 function load() { try { const s = pageStore.getRaw("handreview"); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
-// My hands (store.js, GTOStore.hands): the hand on the table is kept before another takes its place (New hand, a hand
+// Hands (store.js, GTOStore.hands): the hand on the table is kept before another takes its place (New hand, a hand
 // loaded, a link; a review's whole hand while it runs), and a reviewed hand is saved.
 function keepHand(how, st, meta) {
   try { if (window.GTOStore) return window.GTOStore.hands.keep(how, st || heldHand(), meta); } catch (e) {}
   return Promise.resolve(null);
+}
+// the hand on the table is going (New hand, a new table size): kept first, and whatever was running on it stopped
+function leaveHand() {
+  keepHand("replaced");
+  if (review) { review.cancel = "drop"; cancelSolve(); }
+  if (stepView) { stepView = null; cancelSolve(); }
 }
 function handOnTable(opts) { try { if (window.GTOStore) window.GTOStore.hands.onTable(S, opts); } catch (e) {} }
 // the board up to its first empty slot: with an earlier card removed, later ones wait for it rather than slide down
@@ -1226,7 +1238,7 @@ function renderSetup() {
     b.onclick = () => { S.hero = p; save(); renderAll(); }; el.appendChild(b); }
   const pl = document.getElementById("players"); pl.innerHTML = "";
   for (let n = 2; n <= 9; n++) { const b = document.createElement("button"); b.className = "small"; b.textContent = n; if (n === S.players) b.classList.add("active");
-    b.onclick = () => { if (n === S.players) return; S = { ...fresh(n), stakes: S.stakes, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanStacks(S, SEATS[n]), cards: S.cards }; setPositions(n); selSlot = null; save(); resetAdvice(); renderAll(); }; pl.appendChild(b); }
+    b.onclick = () => { if (n === S.players) return; leaveHand(); S = { ...fresh(n), stakes: S.stakes, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanStacks(S, SEATS[n]), cards: S.cards }; setPositions(n); selSlot = null; save(); handOnTable(); resetAdvice(); renderAll(); }; pl.appendChild(b); }
 }
 function renderSlots(sim) {
   const fixed = fixedHand(sim), needIdx = dealing(sim) ? S.cards.findIndex((c, i) => !c && i >= 2 && i < 2 + NEED[sim.waiting]) : (!S.cards[0] ? 0 : !S.cards[1] ? 1 : -1);
@@ -1721,7 +1733,7 @@ function renderStepHead(sim) {
 function updateAdviceState() {
   const sim = simulate(), note = document.getElementById("adviceNote"), el = document.getElementById("result");
   const done = handDone(sim), hand = heldHand(), looking = !!stepView;
-  const reviewedNow = done && fixedHand(sim), stage = looking ? "decision" : reviewedNow ? "review" : "enter";
+  const reviewedNow = done && fixedHand(sim), stage = looking ? "decision" : reviewedNow || reviewFailed ? "review" : "enter";
   document.body.dataset.s = stage;   // (a phone drops the table for the review, and everything else for a decision)
   for (const id of ["stepTop", "stepHead", "stepNav"]) document.getElementById(id).hidden = !looking;
   document.getElementById("reviewHead").hidden = looking;
@@ -1750,7 +1762,7 @@ function updateAdviceState() {
   if (el.classList.contains("empty")) el.innerHTML = !S.cards[0] || !S.cards[1] ? EMPTY_ADVICE
     : reviewing() ? "Getting the solver ready…" : !done ? EMPTY_ADVICE : all.length ? "" : "Nothing to review: you recorded no decision in this hand.";
   document.getElementById("doneBtns").hidden = !done || looking || !!review;
-  document.getElementById("doneNew").hidden = stage !== "review";
+  document.getElementById("doneNew").hidden = stage !== "review" || reviewFailed;
   document.getElementById("reviewAgain").hidden = stage !== "review" || !!review || !all.length || all.some(([, a]) => !("g" in a));
   renderReady();
 }
@@ -1858,8 +1870,9 @@ async function reviewHand() {
     if (back) { S = full; save(); resetAdvice(); }   // (the last decision's advice isn't left under the whole hand)
     keepHand("review", full, back ? {} : { table: false });
   }
+  reviewFailed = !!rv.failed && rv.cancel !== "drop";   // (on a phone the panel stays where the review put it, not under the table)
   renderAll();
-  if (rv.failed && rv.cancel !== "drop") {   // (the review's last answer went with the hand: said again, its Try again the whole review)
+  if (reviewFailed) {   // (the review's last answer went with the hand: said again, its Try again the whole review)
     const el = document.getElementById("result"); el.className = "";
     el.innerHTML = `<div class="err">${LOAD_FAILED}${retryHtml({ loadFailed: true }, "solverRetry")}</div>`;
     document.getElementById("solverRetry").onclick = () => retrySolver(reviewHand);
@@ -1867,7 +1880,7 @@ async function reviewHand() {
 }
 const EMPTY_ADVICE = "Finish the hand to see how each decision compares with the solver. Nothing is solved until then.";
 function resetAdvice() {
-  const el = document.getElementById("result"); lastKey = null; lastResult = null; resultKey = null;
+  const el = document.getElementById("result"); lastKey = null; lastResult = null; resultKey = null; reviewFailed = false;
   if (el.className !== "empty") { el.className = "empty"; el.innerHTML = EMPTY_ADVICE; }
 }
 // ---- share: a link that reopens the hand
@@ -2057,9 +2070,7 @@ document.addEventListener("keydown", (e) => {
   if (b) { e.preventDefault(); if (b.tagName === "INPUT") b.focus(); else b.click(); }
 });
 document.getElementById("newhand").onclick = () => {
-  keepHand("replaced");
-  if (review) { review.cancel = "drop"; cancelSolve(); }
-  if (stepView) { stepView = null; cancelSolve(); }
+  leaveHand();
   S = { ...fresh(S.players), ...(S.stakes ? { stakes: S.stakes } : {}), hero: S.hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanStacks(S, POS) }; selSlot = null; showDeck = false; editSetup = false; pendingRank = null; save(); handOnTable(); resetAdvice(); renderAll();
 };
 document.getElementById("doneNew").onclick = () => document.getElementById("newhand").click();
@@ -2068,8 +2079,8 @@ document.getElementById("stepBack").onclick = stepStop;
 document.getElementById("stepPrev").onclick = () => stepBy(-1);
 document.getElementById("stepNext").onclick = () => stepBy(1);
 document.getElementById("myHands").onclick = () => openView("hands");
-// A whole hand replaces the page's (one from My hands).
-// A hand that wasn't finished stays unfinished: nothing is solved for it. The hand it replaces is kept in My hands.
+// A whole hand replaces the page's (one from Hands).
+// A hand that wasn't finished stays unfinished: nothing is solved for it. The hand it replaces is kept in Hands.
 // from: a link's.
 async function loadHandState(st, from) {
   const out = JSON.parse(JSON.stringify(heldHand()));
@@ -2087,7 +2098,7 @@ const loadJs = (src, ok) => ok() ? Promise.resolve() : new Promise((res, rej) =>
 // closing (viewClosed).
 const VIEWS = {
   hands: { open: () => loadJs("hands.js?v=" + HN_VERSION, () => window.MyHands).then(() => window.MyHands.open()),
-           close: () => window.MyHands && window.MyHands.close(), err: "Couldn't load My hands: " },
+           close: () => window.MyHands && window.MyHands.close(), err: "Couldn't load Hands: " },
 };
 window.viewClosed = (name) => { if (overlay !== name) return; overlay = null; syncRoute(); };
 function showOverlay(name, push) {

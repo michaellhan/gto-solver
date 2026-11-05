@@ -200,7 +200,7 @@ for (const [name, set] of [["fails", (i) => { i.failDelete = true; }], ["is bloc
     assert.equal((await (await reload(s)).hands.list()).length, 1);
     const text = MH.wipeText(r);
     assert.match(text, /^Deleted your saved AI key/);
-    assert.match(text, /Couldn't delete your saved hands, sessions, progress and settings/);
+    assert.match(text, /Couldn't delete your saved hands and settings and what the frozen copy keeps/);
     assert.match(text, /They're still here/);
     // the page goes on saving, and a second try does the rest
     s.st.setRaw("gto-speed", "fast");
@@ -267,6 +267,8 @@ test("the panel: one control, a confirm that says plainly what goes, Back up fir
   await MH.act({ wipe: "" });
   const c = MH.wipeHtml(MH.wiping);
   for (const t of ["saved hands", "sessions", "drill and practice progress", "settings", "saved AI key", "cached solver files", "/gto-solver-classic/", "shares this storage", "Lizard's own data stays", "Lizard could no longer import these hands", "can't be undone"]) assert.ok(c.includes(t), t);
+  assert.match(c, /frozen copy at \/gto-solver-classic\/ keeps[^.]*analyzed sessions, drill and practice progress, Study's solves and the saved AI key\./);   // (what isn't this page's says whose it is)
+  assert.doesNotMatch(c.slice(0, c.indexOf("frozen copy")), /Practice|practice|drill|Study/);
   assert.match(c, /<button data-backup>Back up first<\/button>/);
   assert.match(c, /data-wipego>Delete everything</);
   assert.match(c, /data-wipecancel>Cancel</);

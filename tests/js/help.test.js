@@ -43,6 +43,9 @@ test("the pages say what the page does: the source line's and the grades' thresh
   assert.deepEqual([grade({ f: 0.15 }), grade({ f: 0.149 }), grade({ f: 0.03 }), grade({ f: 0.029 }), grade({ f: 0.01, r: 1 })], ["ok", "meh", "meh", "bad", "meh"]);
   assert.match(about, /✓ \(the solver's mix takes it at least 15% of the time\), ~ \(3-15%\) or ✗ \(under 3%\); a rough solve, or a line that gave up no EV, never grades ✗/);
   assert.deepEqual([p.val("HEUR_OK"), p.val("HEUR_MEH")], [3, 10]);
+  // the times are the page's estimate: the street's budget plus a narrowing budget for each earlier postflop street
+  const [own, prior] = p.val("BUDGETS").wasm;
+  assert.match(Help.aboutHtml(), new RegExp(`a live flop takes about ${own} s a decision, a turn ${own + prior} s and a river ${own + 2 * prior} s`));
   assert.match(about, /within 3% of the pot of the best is ✓, within 10% is ~/);
   assert.match(about, /postflop-solver/);
 });

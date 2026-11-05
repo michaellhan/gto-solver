@@ -25,8 +25,8 @@
       <tr><td>3bet-pot turn</td><td>0.01%</td><td>under 0.005%</td></tr>
       <tr><td>Precomputed flop</td><td>within 0.15% in its own game</td><td>0.2-0.5% against every card dealt</td></tr>
     </table></div>
-    <p>A turn or river takes about 8 s a decision in the browser. That's a time budget, so a slower device gets a rougher
-      answer, and its source line says so.</p>
+    <p>In the browser a live flop takes about 8 s a decision, a turn 11 s and a river 14 s. That's a time budget, so a slower
+      device gets a rougher answer, and its source line says so.</p>
     <ul>
       <li><b>Preflop</b> comes from charts, matched to published solves on 26 spots (0.96 percentage points apart on
         average), so it has no EV.</li>
@@ -79,11 +79,12 @@
 
   const CSS = `
   .hp { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,.55); display: flex; justify-content: center; align-items: flex-start; padding: 28px 16px 16px; }
-  .hp-card { background: var(--panel2); color: var(--text); border: 1px solid var(--line2); border-radius: var(--r); width: min(820px, 100%); max-height: calc(100dvh - 44px); display: flex; flex-direction: column; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+  .hp-card { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: var(--r); width: min(820px, 100%); max-height: calc(100dvh - 44px); display: flex; flex-direction: column; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
   .hp-card:focus { outline: none; }
-  .hp-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px 6px; }
+  .hp-head { display: flex; align-items: center; gap: 10px; padding: 8px 8px 6px 16px; }
   .hp-x { margin-left: auto; padding: 2px 8px; }
   .hp-body { padding: 4px 16px 18px; overflow: auto; line-height: 1.55; font-size: 14px; }
+  .hp-title { font-weight: 600; }
   .hp-body h3 { font-size: 14px; margin: 18px 0 6px; color: var(--text); font-weight: 600; }
   .hp-body p, .hp-body li { color: var(--text); }
   .hp-body ul { padding-left: 20px; margin: 6px 0; }
@@ -92,9 +93,9 @@
   .hp-lead { color: var(--text) !important; margin-top: 12px; }
   .hp-body button.link { color: var(--text); font-size: inherit; }
   .hp-scroll { overflow-x: auto; }
-  .hp-t { border-collapse: collapse; font-size: 13px; margin: 6px 0; min-width: 480px; width: 100%; }
+  .hp-t { border-collapse: collapse; font-size: 13px; margin: 6px 0; width: 100%; }
   .hp-t th, .hp-t td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
-  .hp-t th { color: var(--muted); font-weight: 500; }
+  .hp-t th { color: var(--muted); font-weight: 400; font-size: 12px; }
   @media (max-width: 760px) {
     .hp { padding: 0; }
     .hp-card { max-height: 100dvh; height: 100dvh; border-radius: 0; border: 0; width: 100%; }

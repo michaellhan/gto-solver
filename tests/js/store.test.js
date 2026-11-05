@@ -339,6 +339,17 @@ test("hands: tags, a note, delete and undo (in its place in the list), export an
   assert.deepEqual(await c.hands.importFile(file), { added: 0, merged: 2, skipped: 0 });
   const got = await c.hands.list();
   assert.deepEqual(got.find(x => x.data.sig === a.data.sig).data.tags, ["bluff", "river"]);
+  // each keeps its date, in the file's order; a date in the file that can't be read is today's, and a hand already here keeps its own
+  const dated = { format: file.format, hands: [{ ...file.hands[0], created: "2025-03-04T05:06:07.000Z" }, { ...file.hands[1], created: 1700000000000 }] };
+  const d = await open({ localStorage: fakeLocalStorage(), indexedDB: fakeIndexedDB() });
+  await d.hands.importFile(dated);
+  assert.deepEqual((await d.hands.list()).map(x => x.created), [1741064767000, 1700000000000]);
+  await d.hands.importFile({ format: file.format, hands: [{ ...file.hands[0], created: "2020-01-01T00:00:00.000Z" }] });
+  assert.equal((await d.hands.list())[0].created, 1741064767000);
+  const e = await open({ localStorage: fakeLocalStorage(), indexedDB: fakeIndexedDB() });
+  const t0 = Date.now();
+  await e.hands.importFile({ format: file.format, hands: [{ ...file.hands[0], created: "not a date" }, { ...file.hands[1], created: null }] });
+  for (const r of await e.hands.list()) assert.ok(r.created >= t0);
   // a state's JSON, a list of them, one with no action (skipped), and the page's clean applied
   const out = await c.hands.importFile([hand({ hero: "BB", cards: ["Js", "Th"] }), hand({ preflop: [] })], (s) => ({ ...s, cleaned: true }));
   assert.deepEqual(out, { added: 1, merged: 0, skipped: 1 });

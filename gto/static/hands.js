@@ -1,4 +1,4 @@
-// My hands, loaded by index.html the first time it opens (the header's Hands, /gto-solver/hands/): the hands kept
+// Hands, loaded by index.html the first time it opens (the header's Hands, /gto-solver/hands/): the hands kept
 // in this browser by store.js (GTOStore.hands): each hand you played on the table (kept when New hand or another hand
 // takes its place) or reviewed (Review whole hand, with its grades), and those the frozen copy imported. Search, a filter by kind and tag, tags and
 // a note on each, delete (Undo); a hand opens on the table (to review it) and copies as its #h= link; the list (or one hand) exports as JSON, and Restore takes such a file back.
@@ -140,7 +140,7 @@
   }
 
   // ---- files
-  // what a restored file holds: a My hands export or a state's JSON, or a backup
+  // what a restored file holds: a Hands export or a state's JSON, or a backup
   function parseImport(text) {
     const t = String(text || "").trim();
     if (!t) return { error: "Nothing to import." };
@@ -163,8 +163,8 @@
   }
 
   // ---- Delete everything this site keeps: what it says first, and what it says it did (GTOStore.wipe's report)
-  const WIPE_WHAT = { records: "your saved hands, sessions, progress and settings", "gto-store": "whatever this browser's IndexedDB holds",
-                      "gto-session": "your older analyzed sessions", "gto-pf": "Study's stored preflop solves",
+  const WIPE_WHAT = { records: "your saved hands and settings and what the frozen copy keeps", "gto-store": "whatever this browser's IndexedDB holds",
+                      "gto-session": "the frozen copy's older analyzed sessions", "gto-pf": "the frozen copy's stored preflop solves",
                       "gto-solver": "the cached solver files", "gto-solver-classic": "the frozen copy's cached solver files" };
   function wipeText(r) {
     const gone = [];
@@ -185,8 +185,8 @@
         <div class="mh-acts">${r.ok ? "" : `<button data-wipego>Try again</button>`}${r.records ? `<button${r.ok ? ` class="active"` : ""} data-reload>Reload the page</button>` : ""}${r.records ? "" : `<button class="ghost" data-wipecancel>Close</button>`}</div></div>`;
     }
     return `<div class="mh-backup"><b>Delete everything this site keeps?</b>
-      <div class="mh-sub">This can't be undone. It deletes all of this from this browser: your saved hands, sessions, drill and practice progress, settings, the saved AI key and the cached solver files (those download again when needed).</div>
-      <div class="mh-sub">That includes the frozen copy at /gto-solver-classic/, because it shares this storage. Lizard's own data stays, but Lizard could no longer import these hands.</div>
+      <div class="mh-sub">This can't be undone. It deletes from this browser your saved hands, your settings and the cached solver files (those download again when needed).</div>
+      <div class="mh-sub">It also deletes what the frozen copy at /gto-solver-classic/ keeps, because it shares this storage: analyzed sessions, drill and practice progress, Study's solves and the saved AI key. Lizard's own data stays, but Lizard could no longer import these hands.</div>
       <div class="mh-sub">Close any other tab of this site first: one left open can save its hand again.</div>
       ${w.backedUp ? `<div class="mh-sub">${esc(w.backedUp)}</div>` : ""}
       <div class="mh-acts"><button data-backup>Back up first</button><button class="mh-danger" data-wipego>Delete everything</button><button class="ghost" data-wipecancel>Cancel</button></div></div>`;
@@ -245,8 +245,8 @@
     if (draft) return `<div class="mh-backup"><b>Restore this backup?</b><div class="mh-sub">Exported ${esc(when(Date.parse(draft.exported)))}${draft.device && draft.device === store().device ? " from this browser" : " from another browser"}: ${esc(backupText(draft))}.
       What's missing here is added and, of a record in both, the newer one stays: nothing here is deleted. Settings take effect when the page loads again.</div>
       <div class="mh-acts"><button class="active" data-restorego>Restore</button><button class="ghost" data-restorecancel>Cancel</button></div></div>`;
-    return `<div class="mh-backup"><b>Backup</b><div class="mh-sub">Everything this site keeps in this browser in one file: these hands, your analyzed sessions, Practice's score and
-      mistakes, the drills' progress, Study's and the page's settings. Your Anthropic API key (Explain with AI) is never in it.</div>
+    return `<div class="mh-backup"><b>Backup</b><div class="mh-sub">Everything this site keeps in this browser in one file: these hands, your settings, and what the frozen copy at
+      /gto-solver-classic/ keeps (analyzed sessions, Practice, the drills, Study). A saved AI key is never in it.</div>
       <div class="mh-acts"><button data-backup>Back up everything</button><label class="mh-file"><input type="file" data-restorefile accept=".json,application/json"><span>Restore from a backup…</span></label></div></div>`;
   }
   function draw() {
@@ -354,56 +354,69 @@
   }
   const CSS_TEXT = `
   .mh { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,.55); display: flex; justify-content: center; align-items: flex-start; padding: 40px 16px 16px; }
-  .mh-card { background: var(--panel2); color: var(--text); border: 1px solid var(--line2); border-radius: var(--r); width: min(820px, 100%); max-height: calc(100dvh - 56px); display: flex; flex-direction: column; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
-  .mh-head { display: flex; align-items: baseline; gap: 10px; padding: 10px 12px 6px; }
+  .mh-card { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: var(--r); width: min(820px, 100%); max-height: calc(100dvh - 56px); display: flex; flex-direction: column; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+  .mh-head { display: flex; align-items: center; gap: 10px; padding: 8px 8px 6px 14px; }
   .mh-head .sub { color: var(--muted); font-size: 12px; flex: 1; }
   .mh-x { margin-left: auto; padding: 2px 8px; }
-  .mh-body { display: flex; flex-direction: column; gap: 8px; padding: 0 12px 12px; overflow: auto; }
+  .mh-body { display: flex; flex-direction: column; gap: 10px; padding: 0 14px 14px; overflow: auto; }
   .mh-body > * { flex-shrink: 0; }
   .mh-sub, .mh-empty { color: var(--muted); font-size: 12px; line-height: 1.45; }
   .mh-empty { padding: 18px 4px; }
   .mh-tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .mh-tools input[type=search] { flex: 1 1 240px; min-width: 0; }
   .mh-tags { display: flex; gap: 4px; flex-wrap: wrap; }
-  .mh-tag { padding: 1px 7px; font-size: 11px; border-radius: 10px; } .mh-tag small { color: var(--muted); }
+  button.mh-tag { padding: 1px 8px; min-height: 26px; font-size: 12px; border-radius: 999px; } .mh-tag small { color: var(--muted); } .mh-tag.active small { color: inherit; }
   .mh-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-  .mh-row { border-bottom: 1px solid var(--line); padding: 7px 2px; display: flex; flex-direction: column; gap: 4px; }
-  .mh-row.open { background: var(--line); border-radius: 6px; padding: 7px 8px; }
+  .mh-row { border-bottom: 1px solid var(--line); padding: 8px 2px; display: flex; flex-direction: column; gap: 6px; }
+  .mh-row.open { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
   .mh-top { display: flex; gap: 6px 8px; align-items: center; flex-wrap: wrap; font-size: 13px; }
   .mh-when { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; min-width: 9.5em; }
   .mh-hole, .mh-board { white-space: nowrap; }
-  .mh-c { display: inline-block; min-width: 1.5em; padding: 0 2px; margin-right: 2px; border-radius: 3px; background: #fff; color: #15171a; font-weight: 700; text-align: center; font-size: 11px; line-height: 1.5; }
-  .mh-c.h, .mh-c.d { color: #cf2229; }
+  .mh-c { display: inline-block; min-width: 1.5em; padding: 0 2px; margin-right: 2px; border-radius: 3px; border: 1px solid #d3d6db; background: #fff; color: #15171a; font-weight: 700; text-align: center; font-size: 11px; line-height: 1.4; }
+  .mh-c.h, .mh-c.d { color: #cf2229 !important; }
   .mh-g { font-size: 11px; font-weight: 700; white-space: nowrap; } .mh-g.ok { color: var(--good); } .mh-g.meh { color: var(--muted); } .mh-g.bad { color: var(--bad); }
   .mh-lost { color: var(--bad); font-size: 11px; font-variant-numeric: tabular-nums; }
   .mh-note1 { color: var(--muted); font-size: 12px; font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mh-acts { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-  .mh-acts button, .mh-io button, .mh-file span { font-size: 12px; padding: 3px 9px; }
+  .mh-acts button, .mh-io button, .mh-file span { font-size: 13px; padding: 3px 12px; }
   .mh-more { display: flex; flex-direction: column; gap: 6px; padding-top: 4px; }
   .mh-st { font-size: 12px; line-height: 1.5; } .mh-sn { color: var(--muted); display: inline-block; min-width: 4.5em; }
   .mh-tagrow { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
-  .mh-chip { font-size: 11px; border: 1px solid var(--line2); border-radius: 10px; padding: 0 4px 0 8px; display: inline-flex; align-items: center; gap: 2px; }
+  .mh-chip { font-size: 12px; border: 1px solid var(--line2); border-radius: 999px; padding: 0 4px 0 8px; display: inline-flex; align-items: center; gap: 2px; }
   .mh-chip button { padding: 0 4px; }
   .mh-tagrow input { width: 12em; font-size: 12px; }
-  .mh-more textarea { width: 100%; box-sizing: border-box; font: 12px/1.4 inherit; resize: vertical; }
-  .mh-del { color: var(--bad); margin-left: auto; }
-  .mh-table { font-size: 12px; border: 1px dashed var(--line2); border-radius: 8px; padding: 6px 10px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-  .mh-msg { font-size: 12px; border-left: 3px solid var(--line2); padding: 4px 8px; background: var(--line); border-radius: 4px; }
-  .mh-io { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding-top: 4px; border-top: 1px solid var(--line2); }
+  .mh-more textarea { width: 100%; box-sizing: border-box; font-size: 13px; resize: vertical; }
+  button.mh-del { color: var(--bad); margin-left: auto; }
+  .mh-table { font-size: 13px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .mh-msg { font-size: 13px; padding: 8px 12px; background: var(--panel2); border-radius: 8px; }
+  .mh-io { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .mh-io .mh-sub { flex: 1 1 auto; }
   .mh-file { position: relative; display: inline-flex; cursor: pointer; }
   .mh-file input { position: absolute; width: 1px; height: 1px; opacity: 0; }
-  .mh-file span { border: 1px solid var(--line2); border-radius: 6px; background: var(--panel); }
+  .mh-file span { display: inline-flex; align-items: center; min-height: 38px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel2); }
+  .mh-file:hover span { border-color: var(--line2); }
   .mh-file:focus-within span { outline: 2px solid var(--text); }
-  .mh-backup { display: flex; flex-direction: column; gap: 6px; padding-top: 10px; border-top: 1px solid var(--line2); font-size: 13px; }
+  .mh-backup { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .mh-backup b { font-weight: 600; }
   .mh-danger, button.mh-danger { color: var(--bad); }
   .mh-moreb { align-self: center; font-size: 12px; margin-top: 6px; }
+  @media (max-width: 860px) {
+    .mh-file span { min-height: 44px; }
+    button.mh-tag { min-height: 32px; }
+    .mh-chip button { min-height: 0; }
+  }
+  @media (pointer: coarse) {
+    .mh-file span { min-height: 44px; }
+    button.mh-tag { min-height: 32px; }
+  }
   @media (max-width: 600px) {
     .mh { padding: 0; }
     .mh-card { max-height: 100dvh; height: 100dvh; border-radius: 0; border: 0; width: 100%; }
     .mh-head .sub { display: none; }
     .mh-when { min-width: 0; }
     .mh-tools input[type=search], .mh-more textarea, .mh-tagrow input { font-size: 16px; }
+    .mh-tools .segment { display: flex; width: 100%; }
+    .mh-tools .segment button { flex: 1 1 auto; padding: 5px 6px; font-size: 13px; white-space: nowrap; }
   }`;
   function close() {
     if (wiped()) return location.reload();   // (not back to a page holding what was deleted)
@@ -461,7 +474,7 @@
     const q = box.querySelector("[data-q]"); if (q) q.focus();
   }
 
-  const api = { summary, lineHtml, searchText, matches, filterRecs, tagCounts, cleanTag, rowHtml, listHtml, toolbarHtml, parseImport, fileName, backupText,
+  const api = { summary, lineHtml, searchText, matches, filterRecs, tagCounts, cleanTag, rowHtml, listHtml, toolbarHtml, parseImport, fileName, backupText, backupHtml,
                 wipeText, wipeHtml, tableHtml, pageHost, open, close, act, importText, useHost: (h) => { host = h; }, get recs() { return recs; }, get ui() { return ui; },
                 get wiping() { return wiping; }, get msg() { return msg; }, PAGE };
   if (typeof module === "object" && module.exports) module.exports = api; else globalThis.MyHands = api;

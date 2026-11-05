@@ -81,7 +81,7 @@ test("a view's script that fails to load leaves its URL", async () => {
   await p.ready();
   p.click("myHands"); await flush();
   assert.deepEqual(p.pushed, ["/gto-solver/hands/", "/gto-solver/"]);
-  assert.match(p.err(), /Couldn't load My hands/);
+  assert.match(p.err(), /Couldn't load Hands/);
 });
 
 test("share links built on a view's URL are the solver's, and open there (old links too)", async () => {

@@ -47,6 +47,21 @@ test("New hand keeps the hand on the table in My hands (handreview is no longer 
   assert.equal(p.storage.get("gto-store-mirror") != null, true);
 });
 
+test("a new table size keeps the hand on the table in My hands first, as New hand does; an empty one isn't kept", async () => {
+  const p = await storePage();
+  p.S = played(); p.run("save()");
+  p.run('document.getElementById("players").children[7].onclick()');   // 9 players
+  assert.equal(p.S.players, 9);
+  const recs = await until(async () => { const r = await p.hands(); return r.length && r; });
+  assert.equal(recs.length, 1);
+  assert.equal(recs[0].data.state.players, 6);
+  assert.deepEqual(recs[0].data.state.actions, j(played().actions));
+  assert.deepEqual(j(await p.run("GTOStore.hands.table()")).id, null);   // (what's on the table now isn't that record)
+  p.run('document.getElementById("players").children[4].onclick()');     // 6 again: nothing recorded on the 9-handed table
+  await p.run("GTOStore.flush()");
+  assert.equal((await p.hands()).length, 1);
+});
+
 test("a hand opened from My hands is saved back into its own record when it's replaced, not as a copy", async () => {
   const p = await storePage();
   p.S = played();
@@ -221,6 +236,9 @@ test("a restored file's kinds: a My hands file, a backup", () => {
   assert.match(MH.parseImport("{nope").error, /valid JSON/);
   assert.match(MH.parseImport("  ").error, /Nothing/);
   assert.equal(MH.backupText({ counts: { kv: 1, hands: 3, sessions: 0, blobs: 1 } }), "3 hands, 1 setting or saved state, a session in progress");
+  // what isn't this page's says whose it is
+  const bk = MH.backupHtml(); assert.match(bk, /what the frozen copy at\s+\/gto-solver-classic\/ keeps \(analyzed sessions, Practice, the drills, Study\)/);
+  assert.doesNotMatch(bk.slice(0, bk.indexOf("frozen copy")), /Practice|drills|Study|Explain/);
   assert.equal(MH.fileName("backup", Date.UTC(2026, 10, 2, 12)), "gto-solver-backup-2026-11-02.json");
 });
 
