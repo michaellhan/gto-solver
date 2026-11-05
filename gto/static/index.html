@@ -444,7 +444,7 @@
       <div class="sum" id="reviewHead"><h2 id="reviewTitle">Review</h2><span class="muted" id="reviewCount" aria-live="polite"></span></div>
       <div id="adviceNote" hidden></div>
       <div id="equity" class="eq" hidden></div>
-      <div id="result" class="empty">Press Solve at your turn to see this spot solved. Finish the hand to see how each decision compares with the solver.</div>
+      <div id="result" class="empty">Your turns are solved as you reach them. Finish the hand to see how each decision compares with the solver.</div>
       <div class="pn" id="stepNav" hidden><span><button id="stepPrev" data-cap="←"></button></span><span><button id="stepNext" data-cap="→"></button></span></div>
       <p id="solverReady" hidden></p>
       <div class="btns" id="doneBtns" hidden><button class="primary" id="doneNew" data-cap="N">New hand</button><button id="share" title="Copy a link that opens this hand">Share</button><button class="ghost" id="reviewAgain" data-cap="R" title="Solve each decision again" hidden>Review again</button></div>
@@ -830,31 +830,19 @@ async function cancelSolve() {
   } else for (const k in pending) worker.postMessage({ cancel: +k });   // still loading: skip it once loaded
 }
 
-// ---- solving a hand. While a hand is entered your decisions are recorded and nothing is solved, fetched or shown unless
-// you ask: Solve at your turn answers that spot (liveKey, solveSpot), and the answer goes when the spot does. That changes
-// nothing about the hand, which stays open to Undo and to its review. A hand is finished when it ended, when you folded,
+// ---- solving a hand. While a hand is entered each of your turns is solved as it comes (liveSpot), and the answer goes when
+// the spot does; nothing is solved, fetched or shown at anyone else's turn. That changes nothing about the hand, which
+// stays open to Undo and to its review. A hand is finished when it ended, when you folded,
 // or when it was marked so (S.finished: Finish hand, an imported hand); then each decision you recorded can be reviewed
 // (reviewHand, all of them; stepTo, one). A decision you didn't record is never reviewed, and once a hand's advice has
 // been shown by a review its line stays as it is (S.reviewed, fixedHand).
 let reviewFailed = false;   // a review stopped by the solver failing to load; its message is showing
 let review = null;     // { n, k, what, cancel, full } while a review runs; cancel "restore" (its Cancel) or "drop" (a new hand)
 let stepView = null;   // { full, s, i }: a decision of a finished hand being looked at; S is the hand up to it
-let liveKey = null;    // the payload of the spot Solve was pressed on, in a hand being entered; null once it's left
+let live = false;      // the panel is on your turn in a hand being entered (an answer, or its solve running)
 function handDone(sim) { return !!S.cards[0] && !!S.cards[1] && (!!S.finished || !!sim.handOver || !sim.active.has(S.hero)); }
 function reviewing() { return !!(review || stepView); }
-function liveSpot(sim) { return !!liveKey && !reviewing() && canSolve(sim) && JSON.stringify(payload()) === liveKey; }
-function canSolve(sim) { return !handDone(sim) && !sim.waiting && !!sim.cur && sim.toAct === S.hero; }
-// Solve, at your turn in a hand being entered: this spot's answer in the panel, as a decision of a review has it
-async function solveSpot() {
-  await modeReady;   // (the payload's budgets are the backend's)
-  if (reviewing() || !canSolve(simulate())) return;
-  liveKey = JSON.stringify(payload()); lastKey = null;
-  renderAll(); toPanel();
-}
-function toPanel() {   // (a phone has the panel under the dock; the answer makes the page long enough to scroll to it)
-  const box = document.getElementById("pAdvice");
-  if (window.matchMedia && window.matchMedia("(max-width: 860px)").matches && box.scrollIntoView) box.scrollIntoView();
-}
+function liveSpot(sim) { return !reviewing() && !!S.cards[0] && !!S.cards[1] && !handDone(sim) && !sim.waiting && !!sim.cur && sim.toAct === S.hero; }
 // the whole hand, while S is a review's decision (what's saved, kept and linked)
 function heldHand() { return review && review.cancel !== "drop" ? review.full : stepView ? stepView.full : S; }
 function fixedHand(sim) { return handDone(sim) && (reviewing() || !!S.reviewed || STREETS.some(s => S.actions[s].some(a => a.g))); }
@@ -1193,7 +1181,7 @@ function autoRest(street, action) {
   return null;
 }
 // Go back to one of your decisions: on a hand still being entered to enter it again (later actions and later board
-// cards are cleared; no advice comes back with it); on a finished hand to see its advice (stepTo).
+// cards are cleared); on a finished hand to see its advice (stepTo).
 function rewindTo(street, i) {
   if (review) return;
   if (handDone(simulate())) return stepTo(street, i);
@@ -1435,10 +1423,6 @@ function renderAction(sim) {
   else if (!isHero && facing) sc = ["Everyone else folds", () => autoRest(street, "fold")];
   else if (!isHero && !facing && street !== "preflop") sc = ["Everyone checks", () => autoRest(street, "check")];
   if (sc) { const b = document.createElement("button"); b.innerHTML = sc[0]; b.dataset.key = "s"; b.dataset.cap = "S"; b.onclick = () => { showErr(sc[1]()); renderAll(); }; el.appendChild(b); }
-  if (isHero && (!liveSpot(sim) || (lastResult && lastResult.error))) {
-    const b = document.createElement("button"); b.id = "solveSpot"; b.innerHTML = "Solve"; b.dataset.key = "s"; b.dataset.cap = "S";
-    b.title = "See what the solver does here, then record what you did"; b.onclick = solveSpot; el.appendChild(b);
-  }
   finishButton(el);
 }
 // Finish hand: the hand ends here for the review, whoever is to act (a decision of yours not recorded isn't reviewed)
@@ -1521,6 +1505,7 @@ function payload() {
 async function analyze(sim) {
   if (!S.cards[0] || !S.cards[1]) return;
   await modeReady;
+  sim = simulate();                             // (the hand may have moved on while the solver was getting ready)
   if (!reviewing() && !liveSpot(sim)) return;   // (the one gate: nothing else on this page asks for the hand's advice)
   const key = JSON.stringify(payload());
   if (key === lastKey) return;
@@ -1698,7 +1683,6 @@ function renderResult(res, key) {
   el.innerHTML = h;
   if (res.grid) wireGrid(el, res.grid, res.hand, res.street === "preflop");
   updateAdviceState();
-  if (liveKey) toPanel();
 }
 function gridClass(i, j) { return i === j ? RANKS[i] + RANKS[i] : i < j ? RANKS[i] + RANKS[j] + "s" : RANKS[j] + RANKS[i] + "o"; }
 // Your whole range: how it plays the spot, and by hand. Each cell's w is its average combo weight, so combos = w x (6
@@ -1792,7 +1776,7 @@ function updateAdviceState() {
   document.body.dataset.s = stage;   // (a phone drops the table for the review, and everything else for a decision)
   for (const id of ["stepTop", "stepHead", "stepNav"]) document.getElementById(id).hidden = !looking;
   document.getElementById("reviewHead").hidden = looking;
-  document.getElementById("reviewTitle").textContent = liveKey ? "Solver" : "Review";
+  document.getElementById("reviewTitle").textContent = live ? "Solver" : "Review";
   if (looking) renderStepHead(sim);
   const heroTurn = sim.toAct === S.hero && !!sim.cur && S.cards[0] && S.cards[1];
   const all = []; for (const s of STREETS) for (const a of hand.actions[s]) if (a.pos === hand.hero) all.push([s, a]);
@@ -1816,7 +1800,7 @@ function updateAdviceState() {
   if (rs) rs.onclick = () => { review.cancel = "restore"; cancelSolve(); };
   note.querySelectorAll("button").forEach(b => { if (b.classList.contains("rowb")) b.onclick = () => rewindTo(b.dataset.s, +b.dataset.i); });
   if (el.classList.contains("empty")) el.innerHTML = !S.cards[0] || !S.cards[1] ? EMPTY_ADVICE
-    : reviewing() || liveKey ? "Getting the solver ready…" : !done ? EMPTY_ADVICE : all.length ? "" : "Nothing to review: you recorded no decision in this hand.";
+    : reviewing() || live ? "Getting the solver ready…" : !done ? EMPTY_ADVICE : all.length ? "" : "Nothing to review: you recorded no decision in this hand.";
   document.getElementById("doneBtns").hidden = !done || looking || !!review;
   document.getElementById("doneNew").hidden = stage !== "review" || reviewFailed;
   document.getElementById("reviewAgain").hidden = stage !== "review" || !!review || reviewFailed || !all.length || all.some(([, a]) => !("g" in a));
@@ -1877,13 +1861,15 @@ function renderEquity(res) {
 function renderAll() {
   const sim = simulate();
   if (reviewFailed && !review && !handDone(sim)) resetAdvice();   // (Keep entering, Undo: back to entering it)
-  if (liveKey && !liveSpot(sim)) { liveKey = null; if (solving) cancelSolve(); resetAdvice(); }   // (the spot moved on: an answer for this one is asked for)
+  const on = liveSpot(sim);
+  if (live && !on) { if (solving) cancelSolve(); resetAdvice(); }   // (your turn has gone: its answer and any solve of it go too)
+  live = on;
   if (!needCard(sim)) pendingRank = null;
   document.body.classList.toggle("needcard", needCard(sim));
   document.body.classList.toggle("editing", editSetup);
   document.getElementById("pCards").hidden = !needCard(sim);   // the deck shows while a card is needed, or on request
   renderSetup(); renderSlots(sim); renderPicker(sim); renderTable(sim); renderAction(sim); renderTimeline(sim);
-  const open = reviewing() || !!liveKey;   // (no solve or fetch while a hand is being entered, unless you ask)
+  const open = reviewing() || on;   // (no solve or fetch at anyone else's turn)
   if (open) prefetchLibrary();
   if (open && sim.toAct === S.hero && S.cards[0] && S.cards[1] && !sim.handOver) analyze(sim);
   else if (!S.cards[0] || !S.cards[1]) resetAdvice();
@@ -1935,7 +1921,7 @@ async function reviewHand() {
     document.getElementById("solverRetry").onclick = () => retrySolver(reviewHand);
   }
 }
-const EMPTY_ADVICE = "Press Solve at your turn to see this spot solved. Finish the hand to see how each decision compares with the solver.";
+const EMPTY_ADVICE = "Your turns are solved as you reach them. Finish the hand to see how each decision compares with the solver.";
 function resetAdvice() {
   const el = document.getElementById("result"); lastKey = null; lastResult = null; resultKey = null; reviewFailed = false;
   if (el.className !== "empty") { el.className = "empty"; el.innerHTML = EMPTY_ADVICE; }

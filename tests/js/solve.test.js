@@ -1,5 +1,5 @@
-// Solve in the middle of a hand (index.html: solveSpot, liveSpot, liveKey): at your turn in a hand being entered the
-// button asks for that spot and nothing else, the answer goes when the spot does, and the hand stays as open as it was.
+// Solving in the middle of a hand (index.html: liveSpot, live): each of your turns in a hand being entered is solved as it
+// comes, the answer goes when the spot does, and the hand stays as open as it was.
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -20,55 +20,22 @@ async function page(st) {
   return p;
 }
 const solves = (p) => p.posted.filter(m => m.state);
-const hasSolve = (p) => p.buttons().some(b => b.id === "solveSpot");
-const pressSolve = async (p) => { p.buttons().find(b => b.id === "solveSpot").onclick(); await flush(); };
+const WAITING = /Your turns are solved as you reach them/;
 
-test("your turn offers Solve, and asks nothing until it's pressed", async () => {
+test("your turn is solved without being asked, once, and the hand stays as it was", async () => {
   const p = await page(YOUR_FLOP);
-  assert.equal(hasSolve(p), true);
-  assert.equal(p.buttons().find(b => b.id === "solveSpot").dataset.key, "s");
-  assert.match(p.byId("result").innerHTML, /Press Solve at your turn/);
-  assert.equal(p.byId("reviewTitle").textContent, "Review");
-  assert.deepEqual(solves(p), []);
-});
-
-test("S presses it", async () => {
-  const p = await page(YOUR_FLOP);
-  p.key("s"); await flush();
-  assert.equal(solves(p).length, 1);
-  assert.equal(p.byId("reviewTitle").textContent, "Solver");
-});
-
-test("no Solve at someone else's turn, while a card is needed, or on a finished hand", async () => {
-  const p = await page(THEIR_FLOP);
-  assert.equal(hasSolve(p), false);
-  p.S = state({ cards: ["Ah", "Kh"], preflop: OPENED });   // (the flop to deal)
-  await flush(); p.run("renderAll()");
-  assert.ok(p.sim().waiting);
-  assert.equal(hasSolve(p), false);
-  p.S = { ...state(YOUR_FLOP), finished: true };
-  await flush(); p.run("renderAll()");
-  assert.equal(hasSolve(p), false);
-  await p.run("solveSpot()"); await flush();   // (and the function itself refuses)
-  assert.deepEqual(solves(p), []);
-});
-
-test("Solve answers this spot in the panel, once, and leaves the hand as it was", async () => {
-  const p = await page(YOUR_FLOP);
-  await pressSolve(p);
   const asked = solves(p);
   assert.equal(asked.length, 1);
   assert.equal(asked[0].state.board, "Kd7s2c");
   assert.equal(asked[0].state.speed, "fast");
   assert.deepEqual(asked[0].state.flop, [{ pos: "BB", action: "check" }]);
-  assert.equal(hasSolve(p), false);
   assert.equal(p.byId("reviewTitle").textContent, "Solver");
   assert.match(p.byId("result").innerHTML, /Solving the flop/);
   p.workers.at(-1).onmessage(answer(asked[0])); await flush();
-  assert.match(p.byId("result").innerHTML, /Check/);
   assert.match(p.byId("result").innerHTML, /70%/);
   assert.equal(p.run("document.body.dataset.s"), "enter");   // (the table and dock stay)
   assert.ok(p.buttons().some(b => /^Check/.test(b.innerHTML)));
+  assert.equal(p.buttons().some(b => b.id === "solveSpot"), false);
   p.run("renderAll()"); await flush();
   assert.equal(solves(p).length, 1);                         // (a re-render asks nothing more)
   assert.equal(p.val("S.reviewed"), undefined);              // (no lock: it can be undone and entered on)
@@ -77,47 +44,73 @@ test("Solve answers this spot in the panel, once, and leaves the hand as it was"
   assert.equal(p.S.actions.flop.length, 0);
 });
 
-test("recording your action takes the answer away, and the next spot waits to be asked", async () => {
+test("nothing is solved at someone else's turn, while a card is needed, or on a finished hand", async () => {
+  const p = await page(THEIR_FLOP);
+  assert.equal(p.byId("reviewTitle").textContent, "Review");
+  assert.match(p.byId("result").innerHTML, WAITING);
+  p.S = state({ cards: ["Ah", "Kh"], preflop: OPENED });   // (the flop to deal)
+  await flush(); p.run("renderAll()");
+  assert.ok(p.sim().waiting);
+  p.S = { ...state(YOUR_FLOP), finished: true };
+  await flush(); p.run("renderAll()");
+  await p.run("analyze(simulate())"); await flush();       // (even called directly)
+  assert.deepEqual(solves(p), []);
+});
+
+test("recording your action takes the answer away, and your next turn is solved when it comes", async () => {
   const p = await page(YOUR_FLOP);
-  await pressSolve(p);
   p.workers.at(-1).onmessage(answer(solves(p)[0])); await flush();
   p.button("Bet 33%").onclick(); await flush();
-  assert.match(p.byId("result").innerHTML, /Press Solve at your turn/);
+  assert.match(p.byId("result").innerHTML, WAITING);
   assert.equal(p.byId("reviewTitle").textContent, "Review");
   p.button("Call").onclick(); p.run('placeCard("9h")'); await flush();
-  p.button("Check").onclick(); await flush();   // BB checks the turn: your turn again
-  assert.equal(hasSolve(p), true);
   assert.equal(solves(p).length, 1);
-  await pressSolve(p);
+  p.button("Check").onclick(); await flush();   // BB checks the turn: your turn again
   assert.equal(solves(p).length, 2);
   assert.equal(solves(p)[1].state.board, "Kd7s2c9h");
+  assert.match(p.byId("result").innerHTML, /Solving the turn/);
 });
 
 test("leaving a spot mid-solve stops it, and its answer isn't shown", async () => {
   const p = await page(YOUR_FLOP);
-  await pressSolve(p);
   const m = solves(p)[0];
   p.button("Check").onclick(); await flush();
   assert.equal(p.val("solving"), false);
-  assert.match(p.byId("result").innerHTML, /Press Solve at your turn/);
+  assert.match(p.byId("result").innerHTML, WAITING);
   p.workers.at(-1).onmessage(answer(m)); await flush();
-  assert.match(p.byId("result").innerHTML, /Press Solve at your turn/);
-  assert.equal(p.val("liveKey"), null);
+  assert.match(p.byId("result").innerHTML, WAITING);
+  assert.equal(p.val("live"), false);
 });
 
-test("Finish hand at a solved spot goes to the review, without the answer left on the panel", async () => {
+test("back at a spot already answered, the answer comes from the page's cache", async () => {
   const p = await page(YOUR_FLOP);
-  await pressSolve(p);
+  p.workers.at(-1).onmessage(answer(solves(p)[0])); await flush();
+  p.button("Check").onclick(); await flush();
+  p.run("undo()"); await flush();
+  assert.equal(solves(p).length, 1);
+  assert.match(p.byId("result").innerHTML, /70%/);
+});
+
+test("your action before the solver is ready: the spot you left isn't solved", async () => {
+  const p = loadPage({ isolated: true });
+  p.S = state(YOUR_FLOP);             // (your turn, the page still finding its backend)
+  p.button("Check").onclick();
+  await p.ready(); await flush();
+  assert.deepEqual(solves(p), []);
+  assert.equal(p.val("solving"), false);
+});
+
+test("Finish hand at your turn goes to the review, without the answer left on the panel", async () => {
+  const p = await page(YOUR_FLOP);
   p.workers.at(-1).onmessage(answer(solves(p)[0])); await flush();
   p.run("finishHand()"); await flush();
-  assert.equal(p.val("liveKey"), null);
+  assert.equal(p.val("live"), false);
   assert.equal(p.byId("reviewTitle").textContent, "Review");
   assert.doesNotMatch(p.byId("result").innerHTML, /70%/);
 });
 
-test("a spot solved during the hand isn't solved again by its review", async () => {
+test("a turn solved during the hand isn't solved again by its review", async () => {
   const p = await page(YOUR_FLOP);
-  await pressSolve(p);
   p.workers.at(-1).onmessage(answer(solves(p)[0])); await flush();
   p.button("Check").onclick(); await flush();                  // your check, recorded
   p.run("finishHand()"); await flush();
@@ -133,26 +126,22 @@ test("a spot solved during the hand isn't solved again by its review", async () 
   assert.equal(p.S.actions.flop.find(a => a.pos === "BTN").g.m, "check");
 });
 
-test("on a phone the answer is scrolled to when it comes, the page being too short before it", async () => {
-  const p = await page(YOUR_FLOP);
+test("on a phone the page stays where it is: scrolling to each answer would take the dock away", async () => {
+  const p = await page(THEIR_FLOP);
   let scrolled = 0;
   p.run('window.matchMedia = () => ({ matches: true })');
   p.byId("pAdvice").scrollIntoView = () => scrolled++;
-  await pressSolve(p);
-  const before = scrolled;
+  p.button("Check").onclick(); await flush();   // BB checks: your turn
   p.workers.at(-1).onmessage(answer(solves(p)[0])); await flush();
-  assert.equal(scrolled, before + 1);
-  p.run('window.matchMedia = () => ({ matches: false })');   // (wide: the panel is beside the table)
-  p.button("Check").onclick(); await flush();
-  assert.equal(scrolled, before + 1);
+  assert.match(p.byId("result").innerHTML, /70%/);
+  assert.equal(scrolled, 0);
 });
 
-test("a failed solve offers Solve again", async () => {
+test("a failed solve says so, and an undo and the same spot ask again", async () => {
   const p = await page(YOUR_FLOP);
-  await pressSolve(p);
-  p.workers.at(-1).onmessage({ data: { id: solves(p)[0].id, result: { error: "no" } } }); await flush();
-  assert.match(p.byId("result").innerHTML, /no/);
-  assert.equal(hasSolve(p), true);
-  await pressSolve(p);
+  p.workers.at(-1).onmessage({ data: { id: solves(p)[0].id, result: { error: "no answer" } } }); await flush();
+  assert.match(p.byId("result").innerHTML, /no answer/);
+  p.run("undo()"); await flush();
+  p.button("Check").onclick(); await flush();
   assert.equal(solves(p).length, 2);
 });

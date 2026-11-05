@@ -78,11 +78,11 @@ test("reviewing a decision the worker gets the state as built, at the Fast budge
   assert.ok(!p.byId("stepTop").hidden && !p.byId("stepNav").hidden);
 });
 
-test("nothing waits for your turn on a hand being entered: the panel says when it will answer", () => {
+test("your turn on a hand being entered, the solver still loading: the panel says so, not that it's waiting for you", () => {
   const q = loadPage();
   q.S = state(FLOP);
   q.run("resetAdvice(); updateAdviceState()");
-  assert.match(q.byId("result").innerHTML, /Finish the hand to see how each decision compares with the solver\./);
+  assert.match(q.byId("result").innerHTML, /Getting the solver ready/);
   assert.doesNotMatch(q.byId("result").innerHTML, /Your turn|Waiting for your turn/);
 });
 
@@ -163,13 +163,11 @@ test("cross-origin isolated, a solve of a spot you've left is stopped through me
   assert.equal(q.run("stopRequests()"), false);
 });
 
-test("reviewing, once the flop is known the worker is told it, once a flop, to fetch the library's entries for it ahead; a hand being entered fetches nothing", async () => {
+test("at your turn or reviewing, once the flop is known the worker is told it, once a flop, to fetch the library's entries for it ahead; anyone else's turn fetches nothing", async () => {
   const p = loadPage();
   await p.ready();
   const told = () => p.posted.filter((m) => m.prefetch).map((m) => m.prefetch);
-  p.S = state({ ...FLOP, flop: [] });   // being entered: nothing told, whoever is to act
-  await flush();
-  p.S = state(FLOP);
+  p.S = state({ ...FLOP, flop: [] });   // BB to act: nothing told
   await flush();
   assert.equal(told().length, 0);
   p.spot(state({ cards: FLOP.cards.slice(0, 2), preflop: acts("UTG f, HJ f, CO f") }));   // preflop: nothing to fetch

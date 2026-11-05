@@ -1,5 +1,5 @@
-// Pre-solves are gone from the main screen (review first): while a hand is entered the worker is asked nothing, whoever
-// is to act, so nothing solves ahead of your decision. What stays from these tests: a stopped solve that never answers doesn't hold the next request up.
+// Pre-solves are gone from the main screen: while a hand is entered the worker is asked for your turn when it comes and
+// nothing at anyone else's, so nothing solves ahead of your decision. What stays from these tests: a stopped solve that never answers doesn't hold the next request up.
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -19,16 +19,17 @@ async function solving(opts = { isolated: true }) {
   return { p, flag, pres, asks };
 }
 
-test("your opponent to act: the worker is asked nothing, and your move asks nothing either", async () => {
+test("your opponent to act: the worker is asked nothing, and your turn asks for that spot once it's there", async () => {
   const { p, pres, asks } = await solving();
   p.S = state(OOP_TO_ACT);
   await flush();
   p.run("renderAll()");
   await flush();
-  p.act({ action: "check" });   // BB checks: your turn, heads-up on the flop, where a presolve went on to your advice
-  await flush();
   assert.deepEqual([pres().length, asks().length], [0, 0]);
   assert.match(p.byId("result").innerHTML, /Finish the hand to see how each decision compares with the solver\./);
+  p.act({ action: "check" });   // BB checks: your turn, heads-up on the flop
+  await flush();
+  assert.deepEqual([pres().length, asks().length], [0, 1]);
 });
 
 test("hidden and shown again, or left: nothing starts", async () => {

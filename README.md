@@ -1,7 +1,7 @@
 # GTO Solver
 
-A No-Limit Hold'em hand-review solver. Enter a hand seat by seat, solve any spot of
-yours in the middle of it, and finish it to have each decision you made graded against
+A No-Limit Hold'em hand-review solver. Enter a hand seat by seat, see each of your
+turns solved as you reach it, and finish it to have each decision you made graded against
 a GTO-style mixed strategy with EVs and sizes, preflop through river, in seconds each.
 2 to 9 players.
 
@@ -9,7 +9,7 @@ Live at **https://www.michael-han.com/gto-solver/** (the solver runs in your
 browser via Pyodide, nothing is uploaded).
 
 It is a study tool, not for use at a real-money table. A hand being entered is
-solved when you ask, a spot at a time ([Solve](#solving-a-hand)), and graded once it's
+solved at each of your turns ([Solving a hand](#solving-a-hand)), and graded once it's
 finished. There is deliberately no screen capture, table reading or live-play hook;
 using a solver during a real-money hand, or anything like that, is against every
 site's terms.
@@ -109,18 +109,18 @@ the browser's storage, store.js); off, nothing changes.
 
 #### Solving a hand
 
-**Entering a hand.** While a hand is entered your decisions are recorded and the worker is asked nothing until you ask,
-whoever is to act: no solve, no pre-solve, no library fetch, no strategy, EV, equity or grade, and the action buttons stay
-plain. **Solve** (at your turn, key S) answers that spot in the panel, with the action table, source line and range grid a
-review's decision has, at the same Fast budget; it's a button rather than automatic because each answer is seconds of
-CPU and leaving one half solved can restart the worker. `liveKey` holds the spot asked about: record your action, undo,
-edit a card or start a new hand and the answer goes (and a solve running stops), and the next spot waits to be asked.
-Nothing about the hand changes: it isn't marked reviewed, Undo and the cards still work, and its review reads the same
-answer from the page's cache instead of solving it again. **Finish hand** (under the action buttons once your cards are in, key E; also while a card is asked for) ends a hand
+**Entering a hand.** Your decisions are recorded as you enter a hand, and each of your turns is solved as you reach it
+(`liveSpot`), in the panel, with the action table, source line and range grid a review's decision has, at the same Fast
+budget. At anyone else's turn the worker is asked nothing: no solve, no pre-solve, no library fetch. The action buttons
+stay plain, so the answer is the panel's; on a phone that's under the dock, and the page doesn't scroll there by itself,
+which would take the dock away at every turn. Record your action, undo, edit a card or start a new hand and the answer
+goes (a solve running stops, and a spot already answered comes back from the page's cache). Nothing about the hand
+changes: it isn't marked reviewed, Undo and the cards still work, and its review reads the same answers from the cache
+instead of solving them again. **Finish hand** (under the action buttons once your cards are in, key E; also while a card is asked for) ends a hand
 you don't know the end of; a hand is finished by itself at a fold or showdown, or when you fold (the others' actions
 aren't entered after that). `handDone(sim)` in `gto/static/index.html` is the rule, and
-`reviewing()` and `liveSpot(sim)` the gate: a review running, a decision of a finished hand stepped to, or the spot
-Solve was pressed on. `analyze` and `renderAll` check it, so no route to a solve goes round it.
+`reviewing()` and `liveSpot(sim)` the gate: a review running, a decision of a finished hand stepped to, or your turn in
+a hand being entered. `analyze` and `renderAll` check it, so no route to a solve goes round it.
 
 **Reviewing it.** **Review whole hand** (key R) grades each decision you recorded, in turn; a decision you
 didn't record isn't reviewed, so finishing at your turn leaves that turn without advice (the panel says so). Click any decision, in
@@ -128,11 +128,11 @@ the list or on the timeline, for its full advice: a step view (`stepView`, Previ
 keys) that leaves the hand as it was.
 Once any of a hand's advice has shown it stays as entered (`S.reviewed`; a link and a reload keep it):
 Undo and the card slots refuse, and a line tried differently is a new hand's. **Keep entering**, or Undo, reopens a
-finished hand that nothing has been shown for. Rewinding an unfinished hand truncates it and gives no advice, with a toast. A saved,
-shared or reloaded hand comes back as it was left: unfinished with no advice, finished with its review.
+finished hand that nothing has been shown for. Rewinding an unfinished hand truncates it, with a toast, and your turn there is solved again. A saved,
+shared or reloaded hand comes back as it was left: unfinished with your turn solved if it's yours, finished with its review.
 
 **Every route onto the table.** A hand from Hands opens finished if it was imported or reviewed, else as it was left,
-with a toast saying what it needs. A share link keeps `finished` and `reviewed` as they are, and asks for no answer. `Advisor.presolve` and the worker's `presolve` request stay for `scripts/bench_browser.mjs --presolve`, unused by the page.
+with a toast saying what it needs. A share link keeps `finished` and `reviewed` as they are. `Advisor.presolve` and the worker's `presolve` request stay for `scripts/bench_browser.mjs --presolve`, unused by the page.
 
 A made-up action, or a link edited to say `finished`, gets a review of that decision. The rule against use during a
 real-money hand is every site's terms.
@@ -1628,7 +1628,7 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   ones: below), Practice (it grades your move against the answer), exploit mode, locks, custom sizes or
   ranges, tournaments, Study (but for a library flop's stored turn: below), the breakdown, a jam request.
 * **The street solved while your opponent is to act** (`Advisor.presolve`; the worker's `presolve` request). Not asked
-  by the page any more: the main screen solves nothing until you ask ([Solving a hand](#solving-a-hand)), and Practice looks
+  by the page any more: the main screen solves your turn when it comes and nothing ahead of it ([Solving a hand](#solving-a-hand)), and Practice looks
   ahead on its own. What follows is what it was built and measured for; `scripts/bench_browser.mjs --presolve` still runs it. In position, your answer can't start until you enter the opponent's move,
   and the worker sat idle meanwhile. Now, while your opponent is to act heads-up after the flop, the page asks the
   worker for the solve your next decision on the street reads: the street's solve with your cards, as your advice

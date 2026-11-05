@@ -1,5 +1,5 @@
 // Solving a hand (index.html's gate: handDone, reviewing, liveSpot, analyze): while a hand is entered your decisions are
-// recorded and nothing goes to the solver unless you press Solve (solve.test.js). A hand is finished when it ended, when you folded, or when it was marked so, and each
+// recorded and only your turn goes to the solver (solve.test.js). A hand is finished when it ended, when you folded, or when it was marked so, and each
 // decision you recorded can then be reviewed, all together (reviewHand) or one by one (stepTo). Every route onto the
 // table keeps to that.
 "use strict";
@@ -45,29 +45,33 @@ async function reviewed(st, opts) {   // the whole hand reviewed: each decision 
 const ids = (p) => p.buttons().map(b => b.id).filter(Boolean);
 const press = (p, id) => (p.buttons().find(b => b.id === id) || p.byId(id)).onclick();
 
-test("a whole hand entered, button by button: the worker is asked nothing, on any street, whoever is to act", async () => {
+test("a whole hand entered, button by button: each of your turns asks once, and nobody else's asks anything", async () => {
   const p = await page();
   p.run('placeCard("Ah"); placeCard("Kh")');
-  const check = async () => { await flush(); nothingAsked(p); assert.match(p.byId("result").innerHTML, /Finish the hand to see how each decision compares with the solver\./); };
-  await check();
+  const boards = () => p.posted.filter(m => m.state).map(m => m.state.board);
+  const theirs = async (n) => { await flush(); assert.equal(boards().length, n); assert.match(p.byId("result").innerHTML, /Finish the hand to see how each decision compares with the solver\./); };
+  const yours = async (n) => { await flush(); assert.equal(boards().length, n); assert.match(p.byId("result").innerHTML, /Solving the/); };
+  await theirs(0);
   assert.ok(p.buttons().every(b => !/best/.test(b.className)));
-  p.button("Fold").onclick(); await check();     // UTG
-  p.button("Fold to me").onclick(); await check();   // to you
-  p.button("Raise to 2.5").onclick(); await check();
+  p.button("Fold").onclick(); await theirs(0);   // UTG
+  p.button("Fold to me").onclick(); await yours(1);
+  p.button("Raise to 2.5").onclick(); await theirs(1);
   p.button("Fold").onclick(); p.button("Call").onclick(); await flush();   // SB, BB
   for (const c of ["Kd", "7s", "2c"]) p.run(`placeCard("${c}")`);
-  await check();
-  p.button("Check").onclick(); await check();    // BB
+  await theirs(1);
+  p.button("Check").onclick(); await yours(2);   // BB
   assert.match(p.buttons().find(b => /Check/.test(b.innerHTML)).innerHTML, /^Check/);   // your turn: the plain buttons, no mix
   assert.doesNotMatch(p.byId("actionArea").innerHTML, /·\s*\d+%/);
   assert.match(p.byId("actionArea").children[0].innerHTML, /Your action/);
-  p.button("Bet 33%").onclick(); await check();
-  p.button("Call").onclick(); p.run('placeCard("9h")'); await check();
-  p.button("Check").onclick(); p.button("Check").onclick(); p.run('placeCard("3d")'); await check();
-  p.button("Check").onclick(); p.button("Check").onclick();
+  p.button("Bet 33%").onclick(); await theirs(2);
+  p.button("Call").onclick(); p.run('placeCard("9h")'); await theirs(2);
+  p.button("Check").onclick(); await yours(3);
+  p.button("Check").onclick(); p.run('placeCard("3d")'); await theirs(3);
+  p.button("Check").onclick(); await yours(4);
+  p.button("Check").onclick();
   await flush();
   assert.equal(p.sim().handOver, true);
-  nothingAsked(p);   // (over, it waits for you to ask)
+  assert.deepEqual(boards(), ["", "Kd7s2c", "Kd7s2c9h", "Kd7s2c9h3d"]);   // (over, the review waits for you to ask)
   assert.deepEqual(ids(p), ["reviewAll"]);
   assert.equal(p.byId("reviewCount").textContent, "Your decisions");
   assert.equal((p.byId("adviceNote").innerHTML.match(/Not reviewed yet/g) || []).length, 4);
@@ -75,22 +79,21 @@ test("a whole hand entered, button by button: the worker is asked nothing, on an
   assert.match(fs.readFileSync(HTML_PATH, "utf8"), /#actionArea \.nexth \{ display: block; width: 100%;/);   // (the page's main action, not a plain small button)
 });
 
-test("the panel shows nothing of a hand being entered, no grade or mix whatever it carries", async () => {
+test("a hand being entered shows no grade, whatever it carries, and its table and dock stay", async () => {
   const p = await page();
   const st = j(state(FLOP));
   st.actions.preflop[3].g = { m: "raise 2.5", f: 0.6, b: "raise 2.5", bf: 0.6, l: 0 };   // (a hand from before review first)
   p.S = st;
   await flush();
   assert.equal(p.byId("adviceNote").hidden, true);
-  assert.match(p.byId("result").innerHTML, /Press Solve at your turn/);
+  assert.match(p.byId("result").innerHTML, /Solving the flop/);
   const line = [...p.byId("timeline").walk()].map(e => e.innerHTML).join(" ");
   assert.match(line, /BTN raises 2\.5/);
   assert.doesNotMatch(line, /class="g /);
   assert.equal(p.run("document.body.dataset.s"), "enter");   // (a phone keeps the table and dock first)
-  nothingAsked(p);
 });
 
-test("rewinding a hand being entered brings no advice, nor do undo, a reload, or a saved or shared unfinished hand", async () => {
+test("rewinding a hand being entered, undo, a reload, or a saved or shared unfinished hand: your turn is solved, nobody else's", async () => {
   const p = await page();
   p.S = state({ ...WHOLE, river: acts("BB b8") });   // you to act on the river
   await flush();
@@ -99,37 +102,46 @@ test("rewinding a hand being entered brings no advice, nor do undo, a reload, or
   assert.equal(p.sim().toAct, "BTN");
   assert.deepEqual(p.val("S.actions.flop"), [{ pos: "BB", action: "check" }]);
   assert.match(p.byId("toast").innerHTML, /Back to your flop decision\. Enter it again\./);
-  nothingAsked(p);
-  p.run("undo()"); p.act({ action: "check" });
+  const flopped = (q) => { const m = q.posted.filter(x => x.state).at(-1); assert.equal(m.state.board, "Kd7s2c"); assert.deepEqual(m.state.flop, [{ pos: "BB", action: "check" }]); };
+  flopped(p);
+  p.run("undo()"); await flush();    // (BB's check goes: nobody's turn of yours)
+  assert.equal(p.val("solving"), false);
+  assert.match(p.byId("result").innerHTML, /Your turns are solved as you reach them/);
+  p.act({ action: "check" });
   await flush();
-  nothingAsked(p);
+  flopped(p);
   // a reload at your turn
   const again = await page({ isolated: true, storage: Object.fromEntries(p.storage) });
   await flush();
   assert.equal(again.sim().toAct, "BTN");
-  nothingAsked(again);
+  flopped(again);
   // a link to an unfinished hand, at load and in a tab already open; the page's loader
   const b64 = Buffer.from(JSON.stringify(state(FLOP))).toString("base64");
   const link = await page({ isolated: true, hash: "#h=" + b64 });
   await flush();
   assert.equal(link.sim().toAct, "BTN");
-  nothingAsked(link);
+  flopped(link);
   again.location.hash = "#h=" + b64; again.fire("hashchange");
   await flush();
   await again.run(`loadHandState(${JSON.stringify(state(FLOP))})`);
   await flush();
   assert.equal(again.sim().toAct, "BTN");
-  nothingAsked(again);
+  flopped(again);
 });
 
-test("the page has one way to ask for a hand's advice, and it's shut on a hand being entered", async () => {
+test("the page has one way to ask for a hand's advice, shut at anyone else's turn; an unfinished hand isn't reviewed", async () => {
   const p = await page();
-  p.S = state(FLOP);
+  p.S = state({ ...FLOP, flop: [] });   // BB to act
   await p.run("analyze(simulate())");   // (even called directly)
   await p.run("reviewHand()");          // (and a stale toast's Review whole hand)
   await flush();
   nothingAsked(p);
   assert.equal(p.val("review"), null);
+  p.S = state(FLOP);                    // your turn
+  await p.run("reviewHand()");
+  await flush();
+  assert.equal(p.val("review"), null);
+  assert.equal(p.posted.filter(m => m.state).length, 1);
 });
 
 test("Finish hand at your turn: what you recorded is reviewed, the decision you didn't record isn't", async () => {
@@ -144,15 +156,15 @@ test("Finish hand at your turn: what you recorded is reviewed, the decision you 
   assert.match(p.byId("adviceNote").innerHTML, /Your flop decision wasn't recorded, so it isn't reviewed\./);
   assert.equal(p.run("document.body.dataset.s"), "enter");
   assert.ok(p.byId("felt").children.every(s => !/toact/.test(s.className) && !/to act/.test(s.innerHTML)));   // (nobody's to act now)
-  nothingAsked(p);
-  const done = p.run("reviewHand()");
+  assert.equal(p.val("solving"), false);            // (your turn's solve stops with the hand)
+  const before = p.posted.filter(m => m.state).length, done = p.run("reviewHand()");
   await flush();
-  const asks = p.posted.filter(m => m.state);
+  const asks = p.posted.filter(m => m.state).slice(before);
   assert.equal(asks.length, 1);
   assert.equal(asks[0].state.board, "");            // your preflop open
   p.workers.at(-1).onmessage(answer(asks[0], { street: "preflop", actions: [{ action: "fold", freq: 0.4 }, { action: "raise 2.5", amount_bb: 2.5, freq: 0.6 }] }));
   await done; await flush();
-  assert.equal(p.posted.filter(m => m.state).length, 1);   // nothing for the flop, then or after
+  assert.equal(p.posted.filter(m => m.state).length, before + 1);   // nothing for the flop, then or after
   assert.equal(p.sim().toAct, "BTN");
   assert.equal(p.val("S.actions.flop.length"), 1);
   assert.equal(p.byId("reviewCount").textContent, "1 of 1 in the solver's mix");
@@ -161,7 +173,7 @@ test("Finish hand at your turn: what you recorded is reviewed, the decision you 
   p.run('rewindTo("flop", 1)'); p.run('stepTo("flop", 0)');   // (past the end, and BB's check)
   await flush();
   assert.equal(p.val("stepView"), null);
-  assert.equal(p.posted.filter(m => m.state).length, 1);
+  assert.equal(p.posted.filter(m => m.state).length, before + 1);
 });
 
 test("Finish hand goes back: before any advice Keep entering (or Undo) reopens it; a card isn't asked for once it's finished", async () => {
@@ -182,7 +194,7 @@ test("Finish hand goes back: before any advice Keep entering (or Undo) reopens i
   assert.equal(p.val("S.actions.flop.length"), 1);
   p.run("undo()");
   assert.equal(p.val("S.actions.flop.length"), 0);   // (the next Undo takes an action back)
-  nothingAsked(p);
+  assert.equal(p.val("solving"), false);             // (BB to act: nothing running)
 });
 
 test("your fold finishes the hand: nothing more to enter, and the review is there", async () => {
@@ -195,7 +207,8 @@ test("your fold finishes the hand: nothing more to enter, and the review is ther
   assert.deepEqual(ids(p), ["reviewAll"]);
   assert.equal(p.byId("felt").children.filter(s => /clickable/.test(s.className)).length, 0);
   assert.equal(p.run("needCard(simulate())"), false);
-  nothingAsked(p);
+  assert.equal(p.val("solving"), false);
+  assert.equal(p.posted.filter(m => m.state).length, 0);   // (folded at once: that turn's solve never started)
 });
 
 test("a decision of a finished hand: its advice, the whole hand kept; a reload brings the hand back, not the spot", async () => {
@@ -465,7 +478,7 @@ test("a share link carries a finished hand as finished, and from a decision look
   nothingAsked(q);
 });
 
-test("My hands: an imported or reviewed hand opens finished, one left part way opens as it was, without advice", async () => {
+test("My hands: an imported or reviewed hand opens finished, one left part way opens as it was, at your turn solved", async () => {
   const p = loadPage({ store: true, isolated: true });
   await p.ready();
   await p.run("GTOStore.ready");
@@ -481,11 +494,11 @@ test("My hands: an imported or reviewed hand opens finished, one left part way o
   assert.equal(p.sim().toAct, "BTN");
   assert.match(p.byId("toast").innerHTML, /It isn't finished: enter the rest, or press Finish hand, to review it\./);
   assert.equal(p.byId("toast").children.filter(e => e.textContent === "Review whole hand").length, 0);
-  nothingAsked(p);
+  assert.equal(p.posted.filter(m => m.state).length, 1);
   await open(state({ ...FLOP, cards: ["9s", "9d", "Kd", "7s", "2c"] }), "import");   // (kept before hands were marked finished)
   assert.equal(p.val("S.finished"), true);
   assert.equal(p.byId("toast").children.filter(e => e.textContent === "Review whole hand").length, 1);
-  nothingAsked(p);
+  assert.equal(p.posted.filter(m => m.state).length, 1);   // (a finished hand waits for its review)
   p.click("newhand");
 });
 

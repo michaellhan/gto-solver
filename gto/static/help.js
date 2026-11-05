@@ -6,7 +6,7 @@
   function aboutHtml() {
     return `<p class="hp-lead">GTO Solver reviews no-limit hold'em hands you've already played, 2 to 9 players, preflop
       to river. Enter a hand, finish it, and the solver shows what game theory does at each decision you made and what your
-      play cost. Press Solve at your turn to see a spot solved while you enter the hand. Don't use it during a hand at a
+      play cost. Each of your turns is solved as you reach it while you enter the hand. Don't use it during a hand at a
       real-money table: every site's terms forbid it.</p>
     <h3>How accurate it is</h3>
     <p>A solve is measured by its exploitability: how much a perfect opponent who knew the whole strategy could win
