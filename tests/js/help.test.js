@@ -69,8 +69,8 @@ test("the header: Hands, About, Lizard, and no menu", () => {
   const head = HTML.slice(HTML.indexOf("<header>"), HTML.indexOf("</header>"));
   assert.match(head, /<button id="myHands"[^>]*>Hands<\/button>/);
   assert.match(head, /<button id="helpAbout"[^>]*>About<\/button>/);
-  assert.match(head, /<a href="\/lizard\/">Lizard<\/a>/);
-  assert.deepEqual([...head.matchAll(/<(?:button id="(\w+)"|a href)/g)].map(m => m[1]), ["share", "newhand", "myHands", "helpAbout", undefined]);
+  assert.match(head, /<a href="\/lizard\/">Lizard →<\/a>/);
+  assert.deepEqual([...head.matchAll(/<(?:button id="(\w+)"|a href)/g)].map(m => m[1]), ["myHands", "helpAbout", undefined]);
   assert.doesNotMatch(HTML, /id="menu|id="welcome|data-term/);
 });
 
@@ -109,6 +109,6 @@ test("a first visit opens on the page itself, with nothing in the way", async ()
   const p = page();
   await p.ready(); await flush();
   assert.deepEqual(p.pushed, []);
-  assert.match(p.byId("result").innerHTML, /When it's finished, the solver reviews each decision you made/);
+  assert.match(p.byId("result").innerHTML, /Finish the hand to see how each decision compares with the solver\./);
   assert.equal(p.storage.has("gto-welcome"), false);
 });

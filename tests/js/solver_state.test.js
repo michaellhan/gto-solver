@@ -77,11 +77,11 @@ test("reviewing a decision the worker gets the state as built, at the Fast budge
   assert.deepEqual(p.buttons().map(b => b.id), ["stepPrev", "stepNext", "stepBack"]);
 });
 
-test("nothing waits for your turn on a hand being entered: the panel says it's recording", () => {
+test("nothing waits for your turn on a hand being entered: the panel says when it will answer", () => {
   const q = loadPage();
   q.S = state(FLOP);
   q.run("resetAdvice(); updateAdviceState()");
-  assert.match(q.byId("result").innerHTML, /Recording your decisions/);
+  assert.match(q.byId("result").innerHTML, /Finish the hand to see how each decision compares with the solver\./);
   assert.doesNotMatch(q.byId("result").innerHTML, /Your turn|Waiting for your turn/);
 });
 

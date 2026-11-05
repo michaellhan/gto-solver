@@ -84,19 +84,19 @@
   .hp-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px 6px; }
   .hp-x { margin-left: auto; padding: 2px 8px; }
   .hp-body { padding: 4px 16px 18px; overflow: auto; line-height: 1.55; font-size: 14px; }
-  .hp-body h3 { font-size: 14px; margin: 18px 0 6px; color: var(--accent); font-weight: 600; }
-  .hp-body p, .hp-body li { color: #c9cdd3; }
+  .hp-body h3 { font-size: 14px; margin: 18px 0 6px; color: var(--text); font-weight: 600; }
+  .hp-body p, .hp-body li { color: var(--text); }
   .hp-body ul { padding-left: 20px; margin: 6px 0; }
   .hp-body li { margin: 4px 0; }
-  .hp-body a { color: var(--accent); }
+  .hp-body a { color: var(--text); }
   .hp-lead { color: var(--text) !important; margin-top: 12px; }
-  .hp-body button.link { color: var(--accent); font-size: inherit; }
+  .hp-body button.link { color: var(--text); font-size: inherit; }
   .hp-scroll { overflow-x: auto; }
   .hp-t { border-collapse: collapse; font-size: 13px; margin: 6px 0; min-width: 480px; width: 100%; }
   .hp-t th, .hp-t td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
   .hp-t th { color: var(--muted); font-weight: 500; }
   .hp-b { font-size: 11px; padding: 1px 6px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
-  .hp-b.ok { color: var(--good); } .hp-b.meh { color: var(--meh); } .hp-b.bad { color: var(--bad); }
+  .hp-b.ok { color: var(--good); } .hp-b.meh { color: var(--muted); } .hp-b.bad { color: var(--bad); }
   @media (max-width: 760px) {
     .hp { padding: 0; }
     .hp-card { max-height: 100dvh; height: 100dvh; border-radius: 0; border: 0; width: 100%; }

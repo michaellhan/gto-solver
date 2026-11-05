@@ -24,7 +24,7 @@ test("no stakes by default: big blinds, as before", async () => {
   assert.equal(p.byId("straddleTxt").textContent, "straddle");
   assert.equal(p.byId("stack").value, 100);
   assert.equal("stakes" in p.S, false);
-  assert.match(p.byId("actionArea").children[0].innerHTML, /pot 5\.5 bb<\/span>/);
+  assert.match(p.byId("felt").children.at(-1).innerHTML, /pot 5\.5 bb</);
 });
 
 test("a preset: saved, remembered, the stack and ante in dollars, the payload unchanged", async () => {
@@ -53,7 +53,7 @@ test("a preset: saved, remembered, the stack and ante in dollars, the payload un
   assert.equal(p.S.ante, 0.5);
   assert.equal(p.payload().stack, 250); assert.equal(p.payload().ante, 0.5);
   // the summary names the stakes and the dollars
-  assert.match(p.byId("setupSum").innerHTML, /<b>\$2\/\$5<\/b>.*<b>250bb<\/b> \(\$1,250\) stacks.*0\.5bb \(\$2\.50\) ante/);
+  assert.match(p.byId("setupSum").innerHTML, /<b>\$2\/\$5<\/b>.*<b>250bb<\/b> \(\$1,250\).*0\.5bb \(\$2\.50\) ante/);
   // $1/$2: the small blind is half the big one, no note
   pick(p, "1-2");
   assert.equal(p.byId("stakesNote").textContent, "");
@@ -101,22 +101,22 @@ test("bets in dollars: the buttons, the prompt, a typed size, the hand panel", a
   const prompt = p.byId("actionArea").children[0].innerHTML;
   assert.match(prompt, /pot 4 bb \(\$20\) · 2\.5 \(\$12\.50\) to call/);
   assert.match(html(p), /Call<small>\$12\.50 · 2\.5bb<\/small>/);
-  assert.match(html(p), /All-in<small>\$500 · 100bb<\/small>/);
+  assert.match(html(p), /All-in \$500/);
   // the default raise sizes, labelled in dollars with the big blinds under them
   const raise = p.buttons().find(b => /^Raise to \$/.test(b.innerHTML));
   assert.ok(raise, html(p));
   assert.match(raise.innerHTML, /^Raise to \$\d[\d.,]*<small>\d[\d.]*bb · /);
   // the typed size is in dollars, rounded to the page's half big blind ($2.50 steps here)
-  assert.match(custom(p).innerHTML, /\$<\/span><input type="number" id="customAmt" step="any" min="0"><span class="muted">\(\$2\.50 steps\)/);
+  assert.match(custom(p).innerHTML, /<input id="customAmt" inputmode="decimal"[^>]* placeholder="Raise to, \$"/);
   assert.equal(p.val("amountIn('$40')"), 8);
   assert.equal(p.val("amountIn('41')"), 8.2);
   p.byId("customAmt").value = "40";
   custom(p).children.find(e => e.tagName === "BUTTON").onclick();
   assert.deepEqual(p.S.actions.preflop.at(-1), { pos: "BTN", action: "raise", to: 8 });
   // the hand panel and the felt
-  const tl = p.byId("timeline").children.map(e => e.innerHTML).join(" ");
-  assert.match(tl, /HJ raises to 2\.5 \(\$12\.50\)/);
-  assert.match(tl, /BTN raises to 8 \(\$40\)/);
+  const tl = [...p.byId("timeline").walk()].map(e => e.innerHTML).join(" ");
+  assert.match(tl, /HJ raises 2\.5 \(\$12\.50\)/);
+  assert.match(tl, /BTN raises 8 \(\$40\)/);
   const felt = p.byId("felt").children;
   assert.match(felt.at(-1).innerHTML, /pot 12 bb \(\$60\)/);
   assert.ok(felt.some(e => /<span class="amt">\$40</.test(e.innerHTML)));

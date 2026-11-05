@@ -21,10 +21,10 @@ test("a short stack's all-in: calls for less, the side pot, and the pot shown ma
   assert.deepEqual([s.current, s.toAct, s.pot], ["turn", "BB", 130.5]);
   assert.deepEqual(p.val("potsNow(simulate())"), [{ amount: 90.5, eligible: ["CO", "BTN", "BB"] }, { amount: 40, eligible: ["BTN", "BB"] }]);
   assert.match(p.byId("felt").children.at(-1).innerHTML, /pot 130.5 bb<\/div><div class="side">main 90.5 · side 40<\/div>/);
-  // each seat's chips behind show beside its name while the stacks differ
+  // each seat shows its chips behind
   const seat = (q) => p.byId("felt").children.find(e => e.innerHTML.startsWith(`<span class="pos">${q}`)).innerHTML;
-  assert.match(seat("CO"), /<span class="stk"[^>]*>0<\/span>/);
-  assert.match(seat("BTN"), /<span class="stk"[^>]*>50<\/span>/);
+  assert.match(seat("CO"), /<span class="amt">all-in<\/span>/);
+  assert.match(seat("BTN"), /<span class="amt">50<\/span>/);
   // BB jams the turn, BTN calls: the side pot grows, the main pot stays
   p.act({ action: "all-in" }); p.act({ action: "call" });
   s = p.sim();
@@ -56,7 +56,7 @@ test("a hand that ends on a fold to a bet: the uncalled part goes back, the pot 
   assert.deepEqual([s.handOver, s.pot, s.invested.BTN, s.streets.flop.returned], [true, 17.5, 8.5, { BTN: 14.5 }]);
   p.run("renderAll()");
   assert.match(p.byId("felt").children.at(-1).innerHTML, /pot 17.5 bb/);
-  assert.match(p.byId("felt").children.find(e => e.innerHTML.startsWith('<span class="pos">BTN')).innerHTML, /in 8.5/);
+  assert.match(p.byId("felt").children.find(e => e.innerHTML.startsWith('<span class="pos">BTN')).innerHTML, /<span class="amt">91\.5<\/span>/);
   // everyone folds to the big blind: its blind isn't called past the small blind's
   const q = page(state({ hero: "BB", cards: BOARD.slice(0, 2), preflop: acts("UTG f, HJ f, CO f, BTN f, SB f") }));
   assert.deepEqual([q.sim().handOver, q.sim().pot, q.sim().streets.preflop.returned], [true, 1, { BB: 0.5 }]);

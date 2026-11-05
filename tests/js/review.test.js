@@ -48,7 +48,7 @@ const press = (p, id) => p.buttons().find(b => b.id === id).onclick();
 test("a whole hand entered, button by button: the worker is asked nothing, on any street, whoever is to act", async () => {
   const p = await page();
   p.run('placeCard("Ah"); placeCard("Kh")');
-  const check = async () => { await flush(); nothingAsked(p); assert.match(p.byId("result").innerHTML, /Recording your decisions/); };
+  const check = async () => { await flush(); nothingAsked(p); assert.match(p.byId("result").innerHTML, /Finish the hand to see how each decision compares with the solver\./); };
   await check();
   assert.ok(p.buttons().every(b => !/best/.test(b.className)));
   p.button("Fold").onclick(); await check();     // UTG
@@ -60,8 +60,8 @@ test("a whole hand entered, button by button: the worker is asked nothing, on an
   p.button("Check").onclick(); await check();    // BB
   assert.match(p.buttons().find(b => /Check/.test(b.innerHTML)).innerHTML, /^Check/);   // your turn: the plain buttons, no mix
   assert.doesNotMatch(p.byId("actionArea").innerHTML, /·\s*\d+%/);
-  assert.match(p.byId("actionArea").children[0].innerHTML, /Record what you did/);
-  p.button("Bet 2").onclick(); await check();
+  assert.match(p.byId("actionArea").children[0].innerHTML, /Your action/);
+  p.button("Bet 33%").onclick(); await check();
   p.button("Call").onclick(); p.run('placeCard("9h")'); await check();
   p.button("Check").onclick(); p.button("Check").onclick(); p.run('placeCard("3d")'); await check();
   p.button("Check").onclick(); p.button("Check").onclick();
@@ -75,17 +75,17 @@ test("a whole hand entered, button by button: the worker is asked nothing, on an
   assert.match(fs.readFileSync(HTML_PATH, "utf8"), /#actionArea \.nexth \{ display: block; width: 100%;/);   // (the page's main action, not a plain small button)
 });
 
-test("the panel says what's recorded; no grade or mix shows on a hand being entered, whatever it carries", async () => {
+test("the panel shows nothing of a hand being entered, no grade or mix whatever it carries", async () => {
   const p = await page();
   const st = j(state(FLOP));
   st.actions.preflop[3].g = { m: "raise 2.5", f: 0.6, b: "raise 2.5", bf: 0.6, l: 0 };   // (a hand from before review first)
   p.S = st;
   await flush();
-  const note = p.byId("adviceNote").innerHTML;
-  assert.match(note, /<b>Recorded so far<\/b>/);
-  assert.match(note, /raise to 2.5/);
-  assert.doesNotMatch(note, /solver|class="rewind|Review whole hand/);
-  assert.doesNotMatch(p.byId("timeline").innerHTML, /class="g /);
+  assert.equal(p.byId("adviceNote").hidden, true);
+  assert.match(p.byId("result").innerHTML, /Nothing is solved until then/);
+  const line = [...p.byId("timeline").walk()].map(e => e.innerHTML).join(" ");
+  assert.match(line, /BTN raises 2\.5/);
+  assert.doesNotMatch(line, /class="g /);
   assert.equal(p.run('document.body.classList.contains("heroturn")'), false);   // (a phone keeps the table and dock first)
   nothingAsked(p);
 });
@@ -214,7 +214,7 @@ test("a decision of a finished hand: its advice, the whole hand kept; a reload b
   assert.match(p.byId("result").innerHTML, /<span class="big">check<\/span>/);
   assert.deepEqual(ids(p), ["stepPrev", "stepNext", "stepBack"]);
   assert.match(p.byId("actionArea").children[0].innerHTML, /Your flop decision/);
-  assert.equal(p.byId("stepLabel").textContent, "decision 2 of 4");
+  assert.match(p.byId("actionArea").children[0].innerHTML, /Decision 2 of 4/);
   assert.equal(p.run('document.body.classList.contains("heroturn")'), true);   // (a phone puts this advice after the table)
   // saved whole, and no move can be recorded from here
   assert.equal(JSON.parse(p.storage.get("handreview")).actions.river.length, 2);
@@ -389,3 +389,36 @@ test("a review that ends with the betting closed asks for your equity once, afte
   assert.equal(q.byId("equity").hidden, true);
 });
 
+
+// The Review panel's first-visit line: the download while it's happening, in a browser that hasn't got it yet.
+test("the first visit's download shows while the solver loads, not on a later visit, a server, or once it's up", async () => {
+  const ready = (p) => { p.run("resetAdvice(); updateAdviceState()"); return p.byId("solverReady").hidden ? null : p.byId("solverReady").textContent; };
+  const up = (p) => p.workers.at(-1).onmessage({ data: { status: "Solving…" } });
+  const first = loadPage();
+  await first.ready();
+  assert.equal(ready(first), "Getting the solver ready, about 9 MB on first visit.");
+  first.workers.at(-1).onmessage({ data: { status: "Loading numpy (2 of 3)…" } });
+  assert.equal(ready(first), "Getting the solver ready, about 9 MB on first visit.");
+  up(first);
+  assert.equal(ready(first), null);
+  // the worker's bundle in the Cache API, of any version: this browser has been here
+  let asked = null;
+  const later = loadPage({ caches: { match: async (...a) => { asked = a; return {}; } } });
+  await later.ready(); await flush();
+  assert.equal(ready(later), null);
+  assert.equal(asked[0], "solver.zip"); assert.equal(asked[1].ignoreSearch, true);
+  // none there, or the Cache API refusing: a first visit
+  for (const match of [async () => undefined, async () => { throw new Error("denied"); }]) {
+    const p = loadPage({ caches: { match } });
+    await p.ready(); await flush();
+    assert.ok(ready(p));
+  }
+  const server = loadPage({ server: true });
+  await server.ready(); await flush();
+  assert.equal(ready(server), null);
+  // a load that failed says so where it's asked for, not here
+  const failed = loadPage();
+  await failed.ready();
+  failed.workers.at(-1).onerror({ message: "x" });
+  assert.equal(ready(failed), null);
+});

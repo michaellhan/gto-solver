@@ -1,34 +1,10 @@
-// The page's layout code (folding panels, the on-screen keyboard offset) and copying on iOS.
+// The on-screen keyboard offset and copying on iOS.
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { loadPage } = require("./page.js");
 
 const flush = () => new Promise(r => setImmediate(r));
-const title = (p, id) => p.byId(id).querySelector("h2[data-fold]");
-const press = (el, key) => { let stopped = false; for (const f of el.listeners.keydown || []) f({ key, target: el, preventDefault() {}, stopPropagation() { stopped = true; } }); return stopped; };
-
-test("a panel folds from the keyboard as well as by a click, and says whether it's open", () => {
-  const p = loadPage({ layout: true });
-  const h = title(p, "pTable");
-  assert.equal(h["aria-expanded"], "true");
-  assert.equal(press(h, "Enter"), true);
-  assert.ok(p.byId("pTable").classList.contains("collapsed"));
-  assert.equal(h["aria-expanded"], "false");
-  assert.deepEqual(JSON.parse(p.storage.get("gto-layout")).folded, { pTable: true });
-  press(h, " ");
-  assert.ok(!p.byId("pTable").classList.contains("collapsed"));
-  assert.equal(h["aria-expanded"], "true");
-  // other keys are left to the page's shortcuts
-  assert.equal(press(h, "n"), false);
-  assert.ok(!p.byId("pTable").classList.contains("collapsed"));
-  for (const f of title(p, "pHistory").listeners.click) f({ target: title(p, "pHistory") });
-  assert.ok(p.byId("pHistory").classList.contains("collapsed"));
-  // a folded panel stays folded on reload
-  const q = loadPage({ layout: true, storage: { "gto-layout": p.storage.get("gto-layout") } });
-  assert.ok(q.byId("pHistory").classList.contains("collapsed"));
-  assert.equal(title(q, "pHistory")["aria-expanded"], "false");
-});
 
 // Bug: on iOS Safari the keyboard shrinks only the visual viewport, so the action dock (stuck to the bottom of
 // the layout viewport) sat under the keyboard while a custom bet size was typed.

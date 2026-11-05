@@ -453,15 +453,15 @@ test("no notice for a saved gto, and none while the page is about to reload for 
   assert.equal(q.storage.has("gto-pool-refused"), false);          // (kept for the load after it)
 });
 
-test("the setup line says cash, except for a tournament; My hands marks these hands", async () => {
+test("the setup line says tournament for one, and nothing for a cash game; My hands marks these hands", async () => {
   const p = loadPage();
   await p.ready();
   p.S = played();
-  assert.match(p.byId("setupSum").innerHTML, /<b>6-handed<\/b> <span class="muted">·<\/span> cash/);
+  assert.match(p.byId("setupSum").innerHTML, /^<b>6-handed<\/b> <span class="muted">·<\/span> you are <b>BTN<\/b> <span class="muted">·<\/span> <b>100bb<\/b>$/);
   p.S = played(TOURNEY);
-  assert.doesNotMatch(p.byId("setupSum").innerHTML, /cash/);
+  assert.match(p.byId("setupSum").innerHTML, /<b>6-handed<\/b> <span class="muted">·<\/span> tournament/);
   p.S = played({ tournament: true });
-  assert.doesNotMatch(p.byId("setupSum").innerHTML, /cash/);
+  assert.match(p.byId("setupSum").innerHTML, /<b>6-handed<\/b> <span class="muted">·<\/span> tournament/);
   const game = (o) => MH.summary(played(o)).game;
   assert.equal(game({}), "6-handed, 100bb");
   assert.equal(game({ payouts: [50, 30] }), "6-handed, 100bb, tournament settings");

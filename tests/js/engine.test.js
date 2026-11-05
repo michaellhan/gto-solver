@@ -108,8 +108,8 @@ test("a call for less than the bet puts the caller all-in", () => {
 test("action buttons: preflop sizes, postflop sizes, raises and pot odds", () => {
   const sizes = (p) => p.buttons().filter(b => b.className.startsWith("agg")).map(b => `${label(b)} (${sub(b)})`);
   let p = page(state({ cards: ["Ah", "Kh"] }));
-  assert.deepEqual(sizes(p), ["Raise to 2.5 (open)", "Raise to (your size…)", "All-in (100 bb)"]);
-  assert.equal(p.buttons().find(b => /your size/.test(b.innerHTML)).dataset.key, "r");   // (R opens it)
+  assert.deepEqual(sizes(p), ["Raise to 2.5 (open)", "All-in 100 ()"]);
+  assert.match(p.byId("customBox").innerHTML, /<input id="customAmt" inputmode="decimal" data-key="r"[^>]* placeholder="Raise to, bb"/);   // (R goes to it)
   p = page(state({ hero: "SB", cards: ["Ah", "Kh"], preflop: acts("UTG f, HJ f, CO f, BTN f") }));
   assert.deepEqual(sizes(p)[0], "Raise to 3 (open)");                          // SB opens 3x
   p = page(state({ cards: ["Ah", "Kh"], preflop: acts("UTG r2.5") }));
@@ -119,8 +119,11 @@ test("action buttons: preflop sizes, postflop sizes, raises and pot odds", () =>
   p = page(state({ cards: ["Ah", "Kh"], straddle: true }));
   assert.deepEqual(sizes(p)[0], "Raise to 5 (open)");                          // 2.5x the straddle
   p = page(state({ cards: ["Ah", "Kh", "Kd", "7s", "2c"], preflop: acts("UTG f, HJ f, CO f, BTN r2.5, SB f, BB c") }));
-  assert.deepEqual(sizes(p).slice(0, 3), ["Bet 2 (⅓ pot)", "Bet 3.5 (⅔ pot)", "Bet 5.5 (pot)"]);
-  assert.match(p.byId("actionArea").children[0].innerHTML, /pot 5.5 bb<\/span>/);
+  assert.deepEqual(sizes(p), ["Bet 33% (2 bb)", "Bet 75% (4 bb)", "All-in 97.5 ()"]);
+  assert.match(p.byId("felt").children.at(-1).innerHTML, /pot 5.5 bb/);                      // (the pot is on the table,
+  assert.doesNotMatch(p.byId("actionArea").children[0].innerHTML, /pot/);                    // not repeated with nothing to call)
+  assert.match(p.byId("actionArea").children[0].innerHTML, /BB to act/);
+  assert.match(p.byId("customBox").innerHTML, /placeholder="Other amount, bb"/);
   p.act({ action: "bet", to: 4 });
   assert.deepEqual(sizes(p).slice(0, 2), ["Raise to 14 (¾ pot)", "Raise to 17.5 (pot)"]);   // 4 + ¾(9.5 + 4) = 14.125; 4 + (9.5 + 4)
   assert.equal(sub(p.button("Call")), "4 bb");
@@ -170,9 +173,9 @@ test("postflop default bet and raise sizes match the advisor", () => {
   // 12 + 0.75 * (21.5 + 8) = 34.125, rounded to 34
   p = page(state({ hero: "CO", cards: ["Ah", "Kh", "Kd", "7s", "2c"], preflop: acts("UTG f, HJ f, CO r2.5, BTN f, SB f, BB c"), flop: acts("BB x, CO b4, BB r12") }));
   assert.deepEqual(sizes(p).slice(0, 2), ["Raise to 34 (¾ pot)", "Raise to 41.5 (pot)"]);
-  // unopened: the advisor's default bet is 66% of the pot, the page's ⅔ button
+  // unopened: 33% and 75% of the pot, to the half big blind
   p = page(state({ hero: "BB", cards: ["Ah", "Kh", "Kd", "7s", "2c"], preflop: pre }));
-  assert.deepEqual(sizes(p).slice(0, 3), ["Bet 2.5 (⅓ pot)", "Bet 5.5 (⅔ pot)", "Bet 8 (pot)"]);
+  assert.deepEqual(sizes(p).slice(0, 2), ["Bet 33% (2.5 bb)", "Bet 75% (6 bb)"]);
 });
 
 test("undo removes the last action, across streets", () => {

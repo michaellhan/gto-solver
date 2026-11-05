@@ -74,11 +74,8 @@ class El {
   append(...xs) { for (const x of xs) if (typeof x === "string") { this._html += x; this._wrote(x); } else this.children.push(x); }
   insertAdjacentHTML(_, h) { this._html += h; this._wrote(h); }
   addEventListener(t, f) { (this.listeners[t] = this.listeners[t] || []).push(f); }
-  // appended descendants the page looks up by selector: the fold titles ("h2[data-fold]") and by id ("#early")
-  querySelector(sel) {
-    if (sel.startsWith("#")) return [...this.walk()].find(e => e.id === sel.slice(1)) || null;
-    return sel === "h2[data-fold]" ? [...this.walk()].find(e => e.tagName === "H2" && "fold" in e.dataset) || null : null;
-  }
+  // appended descendants the page looks up by selector: by id ("#early")
+  querySelector(sel) { return sel.startsWith("#") ? [...this.walk()].find(e => e.id === sel.slice(1)) || null : null; }
   querySelectorAll(sel) { return sel === "button" ? [...this.walk()].filter(e => e.tagName === "BUTTON") : []; }
   focus() {} blur() {} click() { if (this.onclick) this.onclick({ target: this }); }
   setAttribute(k, v) { this[k] = String(v); }
@@ -94,7 +91,7 @@ class El {
 }
 
 // Options: hash (location.hash), path (location.pathname, default /gto-solver/: e.g. /gto-solver/hands/), search,
-// scripts (file name -> source run instead of gto/static's file when the page loads that script), protocol (location.protocol, default http:), storage (initial localStorage entries), server (true: /health answers ok,
+// scripts (file name -> source run instead of gto/static's file when the page loads that script), protocol (location.protocol, default http:), storage (initial localStorage entries), caches (the Cache API's stand-in), server (true: /health answers ok,
 // so the page uses the local server's budgets and POSTs to /advise instead of the worker), isolated (true: the page is
 // cross-origin isolated, so it can share a SharedArrayBuffer with its worker), serviceWorker (true: a first visit whose
 // service worker is registering, so the page is about to reload under it).
@@ -177,25 +174,22 @@ function loadPage(opts = {}) {
     },
   };
   El.selected = null; El.iosSelect = !!opts.iosSelect;
-  // opts.layout: run the page's layout code (it only runs where window has events): the fold titles of the
-  // Table and Hand panels, the root element's style properties and a visualViewport whose events the test fires
+  // opts.layout: run the page's layout code (it only runs where window has events): the root element's style properties
+  // and a visualViewport whose events the test fires
   const rootProps = {}, winListeners = {}, vvListeners = {};
   const viewport = { height: 800, offsetTop: 0, scale: 1, addEventListener: (t, f) => (vvListeners[t] = vvListeners[t] || []).push(f) };
   if (opts.layout) {
-    for (const id of ["pTable", "pHistory"]) {
-      const h = new El("h2"); h.dataset.fold = ""; h.parentElement = byId(id); byId(id).appendChild(h);
-    }
     document.documentElement = {
       clientHeight: 800,
       style: { setProperty: (k, v) => { rootProps[k] = v; }, removeProperty: (k) => { delete rootProps[k]; } },
     };
-    document.querySelectorAll = (sel) => sel === "h2[data-fold]" ? ["pTable", "pHistory"].map(id => byId(id).querySelector(sel)) : [];
     const addEv = document.addEventListener;
     document.addEventListener = (t, f) => { if (t === "keydown") addEv(t, f); };
   }
   const ctx = {
     document, location, console,
     ...(opts.isolated ? { crossOriginIsolated: true } : {}),
+    ...(opts.caches ? { caches: opts.caches } : {}),
     history: {
       replaceState: (_s, _t, url) => { replaced.push(url); goTo(url); },
       pushState: (_s, _t, url) => { pushed.push(url); goTo(url); },

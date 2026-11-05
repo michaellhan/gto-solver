@@ -372,9 +372,9 @@
   .mh-top { display: flex; gap: 6px 8px; align-items: center; flex-wrap: wrap; font-size: 13px; }
   .mh-when { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; min-width: 9.5em; }
   .mh-hole, .mh-board { white-space: nowrap; }
-  .mh-c { display: inline-block; min-width: 1.5em; padding: 0 2px; margin-right: 2px; border-radius: 3px; background: #f5f5f0; color: #111; font-weight: 700; text-align: center; font-size: 11px; line-height: 1.5; }
-  .mh-c.h, .mh-c.d { color: #c62828; }
-  .mh-g { font-size: 11px; font-weight: 700; white-space: nowrap; } .mh-g.ok { color: var(--good); } .mh-g.meh { color: var(--meh, #d9a400); } .mh-g.bad { color: var(--bad); }
+  .mh-c { display: inline-block; min-width: 1.5em; padding: 0 2px; margin-right: 2px; border-radius: 3px; background: #fff; color: #15171a; font-weight: 700; text-align: center; font-size: 11px; line-height: 1.5; }
+  .mh-c.h, .mh-c.d { color: #cf2229; }
+  .mh-g { font-size: 11px; font-weight: 700; white-space: nowrap; } .mh-g.ok { color: var(--good); } .mh-g.meh { color: var(--muted); } .mh-g.bad { color: var(--bad); }
   .mh-lost { color: var(--bad); font-size: 11px; font-variant-numeric: tabular-nums; }
   .mh-note1 { color: var(--muted); font-size: 12px; font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mh-acts { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
@@ -388,13 +388,13 @@
   .mh-more textarea { width: 100%; box-sizing: border-box; font: 12px/1.4 inherit; resize: vertical; }
   .mh-del { color: var(--bad); margin-left: auto; }
   .mh-table { font-size: 12px; border: 1px dashed var(--line2); border-radius: 8px; padding: 6px 10px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-  .mh-msg { font-size: 12px; border-left: 3px solid var(--accent); padding: 4px 8px; background: var(--line); border-radius: 4px; }
+  .mh-msg { font-size: 12px; border-left: 3px solid var(--line2); padding: 4px 8px; background: var(--line); border-radius: 4px; }
   .mh-io { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding-top: 4px; border-top: 1px solid var(--line2); }
   .mh-io .mh-sub { flex: 1 1 auto; }
   .mh-file { position: relative; display: inline-flex; cursor: pointer; }
   .mh-file input { position: absolute; width: 1px; height: 1px; opacity: 0; }
   .mh-file span { border: 1px solid var(--line2); border-radius: 6px; background: var(--panel); }
-  .mh-file:focus-within span { outline: 2px solid var(--accent); }
+  .mh-file:focus-within span { outline: 2px solid var(--text); }
   .mh-backup { display: flex; flex-direction: column; gap: 6px; padding-top: 10px; border-top: 1px solid var(--line2); font-size: 13px; }
   .mh-danger, button.mh-danger { color: var(--bad); }
   .mh-moreb { align-self: center; font-size: 12px; margin-top: 6px; }

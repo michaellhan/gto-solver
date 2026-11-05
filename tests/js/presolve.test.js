@@ -28,7 +28,7 @@ test("your opponent to act: the worker is asked nothing, and your move asks noth
   p.act({ action: "check" });   // BB checks: your turn, heads-up on the flop, where a presolve went on to your advice
   await flush();
   assert.deepEqual([pres().length, asks().length], [0, 0]);
-  assert.match(p.byId("result").innerHTML, /Recording your decisions/);
+  assert.match(p.byId("result").innerHTML, /Finish the hand to see how each decision compares with the solver\./);
 });
 
 test("hidden and shown again, or left: nothing starts", async () => {

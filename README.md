@@ -55,7 +55,7 @@ on the website and the local server alike:
 | `/gto-solver/hands/` | Hands |
 | `/gto-solver/about/`, `/fairplay/` | About, Fair play |
 
-(locally without the `/gto-solver` prefix: http://127.0.0.1:18877/hands/). The header has Share, New hand, Hands, About
+(locally without the `/gto-solver` prefix: http://127.0.0.1:18877/hands/). The header has Hands, About
 and a link to Lizard (/lizard/); Fair play is reached from About. Opening a view pushes its URL
 and closing it goes back to the solver's; the browser's
 back and forward buttons switch views, and the tab's title names the view ("Hands · GTO Solver"). A URL opened directly opens its view. The list is `ROUTES` in
@@ -233,13 +233,14 @@ site stop writing and reload (a tab of the frozen copy can't be told, and the pa
 Hands and the store stand on their own: `tests/js/floor.test.js` fails if `hands.js` or `store.js` gains a dependency
 on a view that left (Practice, the session analyzer, Explain), and restores a backup of all four stores with those files gone.
 
-The layout fits the window at any zoom. On a wide window each column scrolls on its own and
-the action buttons stay pinned to the bottom of theirs; drag the divider between the columns
-to resize them, drag the bar under the table to resize it, and click the Table or Hand title
-to fold that panel (all remembered in the browser). On a narrow window (a phone, or a zoomed-in
-page) it's one column with the action buttons pinned to the bottom of the screen. While a card
+The layout fits the window at any zoom. On a wide window it's two columns, the hand on the left
+(the setup line, the table, the actions so far, the action buttons) and one Review panel on the right,
+and the page scrolls as one with the action buttons pinned to the bottom of the screen. On a narrow window
+(a phone, or a zoomed-in page) it's one column, the buttons pinned the same way. While a card
 is needed the deck moves up under the setup; otherwise it's hidden behind **Edit cards**.
-**Share** in the header copies a link that reopens the hand exactly as it stands.
+The look follows the device's light or dark setting; there's no toggle. On a first visit Review says the solver is
+getting ready, about 9 MB (Pyodide, numpy and the solver, measured); later visits have them cached.
+**Share**, under a finished hand's review, copies a link that reopens the hand exactly as it stands.
 The hand is kept in the browser between reloads; **New hand** starts a new one and keeps the old one in **Hands**.
 A hand keeps its settings and they go on being sent with it. Stacks, ante, straddle, rake and stakes carry to the next
 hand. Payouts, the field, bounties, sizes, ranges, size optimization and locks don't: a hand that has them says so in a

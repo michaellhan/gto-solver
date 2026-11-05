@@ -3,200 +3,194 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0d0f12">
-<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0e1013" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f4f5f7" media="(prefers-color-scheme: light)">
+<meta name="color-scheme" content="dark light">
 <title>GTO Solver</title>
 <style>
   :root {
-    --bg: #0d0f12; --panel: #14171b; --panel2: #1b1f25; --line: #252a32; --line2: #323944;
-    --text: #e7e9ec; --muted: #8a919c; --faint: #5c636e; --accent: #f2b544;
+    --bg: #0e1013; --panel: #16191e; --panel2: #1e2228; --line: #272c34; --line2: #39404a;
+    --text: #e8eaed; --muted: #99a1ac; --primary: #e8eaed; --on-primary: #0e1013;
+    --felt: #1b4a37; --felt-text: #cfe0d6; --good: #55c98a; --bad: #f0847a; --suit: #f0727a;
     --fold: #4a7bd0; --passive: #3fae6a; --allin: #8b5cc9;
     /* bet/raise sizes, smallest to largest: light to dark so neighbours stay distinct */
     --agg0: #f4a261; --agg1: #e0603a; --agg2: #b3302a; --agg3: #7a1a3a;
-    --good: #6bd394; --meh: #f5b942; --bad: #f28b82;
-    --red: #d3232a;
-    --felt-h: clamp(190px, 32vh, 270px);
-    --left: 500px;
     --r: 10px;
     --kb: 0px;   /* how far the on-screen keyboard covers the layout viewport (set from visualViewport) */
     color-scheme: dark;   /* dark scrollbars, number spinners, selects and checkboxes in every browser */
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f4f5f7; --panel: #fff; --panel2: #eef0f3; --line: #e1e4e9; --line2: #c9ced6;
+      --text: #16191d; --muted: #5a626d; --primary: #16191d; --on-primary: #fff;
+      --felt: #2c6b50; --felt-text: #e3efe8; --good: #14804a; --bad: #c9352b; --suit: #cf2229;
+      color-scheme: light;
+    }
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
   /* manipulation: no double-tap zoom (picking cards quickly zoomed the page on iOS); pinch zoom still works */
   html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; touch-action: manipulation; }
-  body { margin: 0; padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left); background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif; }
+  body { margin: 0; padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left); background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; font-variant-numeric: tabular-nums; }
   kbd { font: 10px ui-monospace, Menlo, monospace; border: 1px solid var(--line2); border-radius: 4px; padding: 0 4px; margin-left: 6px; color: var(--muted); }
 
   /* ---- top bar */
-  header { display: flex; align-items: center; gap: 10px; padding: max(8px, env(safe-area-inset-top)) 16px 8px; border-bottom: 1px solid var(--line); flex-wrap: wrap; background: var(--bg); }
-  header h1 { font-size: 14px; margin: 0 6px 0 0; font-weight: 650; letter-spacing: .01em; }
-  header .spacer { flex: 1; }
-  header a { padding: 6px 11px; color: var(--muted); text-decoration: none; }
-  header a:hover { color: var(--text); }
+  header { display: flex; align-items: center; gap: 16px; padding: max(12px, env(safe-area-inset-top)) 20px 12px; border-bottom: 1px solid var(--line); background: var(--bg); }
+  header h1 { font-size: 15px; margin: 0; font-weight: 650; }
+  header nav { margin-left: auto; display: flex; align-items: center; gap: 18px; color: var(--muted); }
+  header nav a, header nav button.link { color: inherit; padding: 6px 0; text-decoration: none; font: inherit; }
+  header nav a:hover, header nav button.link:hover { color: var(--text); }
 
   /* ---- controls */
-  button { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 6px 11px; font: inherit; cursor: pointer; }
-  button:hover { border-color: var(--line2); background: #21262d; }
-  button.active { background: var(--accent); color: #1a1200; border-color: var(--accent); font-weight: 600; }
-  button.small { padding: 3px 8px; font-size: 12px; }
+  button { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; min-height: 38px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--line2); }
+  button.active, .primary { background: var(--primary); color: var(--on-primary); border-color: var(--primary); font-weight: 600; }
+  button.small { padding: 3px 8px; min-height: 0; font-size: 12px; }
   button.ghost { background: none; border-color: transparent; color: var(--muted); }
   button.ghost:hover { color: var(--text); background: var(--panel2); }
-  button.link { background: none; border: 0; padding: 0; color: var(--accent); font-size: 12px; }
-  button.link:hover { text-decoration: underline; background: none; }
+  button.link { background: none; border: 0; padding: 0; min-height: 0; color: var(--muted); font-size: 12px; text-decoration: underline; text-underline-offset: 2px; }
+  button.link:hover { color: var(--text); background: none; }
   button:disabled { opacity: .35; cursor: default; }
-  input[type=number], input[type=text], select, textarea { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; font: inherit; }
-  ::placeholder { color: var(--faint); opacity: 1; }
+  input[type=number], input[type=text], select, textarea { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; font: inherit; }
+  ::placeholder { color: var(--muted); opacity: 1; }
   input[type=number] { width: 72px; }
   select { -webkit-appearance: none; appearance: none; padding-right: 26px; cursor: pointer;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238a919c' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
     background-repeat: no-repeat; background-position: right 9px center; }
   select:hover, input[type=number]:hover, input[type=text]:hover, textarea:hover { border-color: var(--line2); }
   input[type=checkbox] { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; margin: 0 4px 0 0; flex: none; border: 1px solid var(--line2); border-radius: 4px; background: var(--panel2); cursor: pointer; vertical-align: -3px; display: inline-grid; place-content: center; transition: background .12s, border-color .12s; }
-  input[type=checkbox]::after { content: ""; width: 4px; height: 8px; border: solid #1a1200; border-width: 0 2px 2px 0; transform: rotate(45deg) translate(-1px, -1px); opacity: 0; }
-  input[type=checkbox]:checked { background: var(--accent); border-color: var(--accent); }
+  input[type=checkbox]::after { content: ""; width: 4px; height: 8px; border: solid var(--on-primary); border-width: 0 2px 2px 0; transform: rotate(45deg) translate(-1px, -1px); opacity: 0; }
+  input[type=checkbox]:checked { background: var(--primary); border-color: var(--primary); }
   input[type=checkbox]:checked::after { opacity: 1; }
   input[type=checkbox]:hover { border-color: var(--muted); }
-  input[type=checkbox]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  input[type=checkbox]:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
   #rakeCustom input { width: 60px; }
-  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--text); }
   /* keyboard focus (Tab); a click or tap shows none */
-  button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button:focus-visible, a:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
   .segment button:focus-visible { outline-offset: -2px; }
   .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .muted { color: var(--muted); }
-  .seats button { min-width: 46px; padding: 5px 8px; }
-  .segment { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: var(--panel2); }
-  .segment button { border: 0; border-radius: 0; min-width: 30px; padding: 5px 10px; background: none; }
+  .seats button { min-width: 46px; min-height: 0; padding: 5px 8px; }
+  .segment { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel2); }
+  .segment button { border: 0; border-radius: 0; min-width: 30px; min-height: 0; padding: 5px 10px; background: none; }
   .segment button + button { border-left: 1px solid var(--line); }
-  .segment button.active { background: var(--accent); }
+  .segment button.active { background: var(--primary); }
 
   /* ---- sections */
-  .panel { background: var(--panel); border-radius: var(--r); padding: 12px 14px; margin-bottom: 10px; }
-  .panel h2 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .09em; color: var(--faint); font-weight: 600; display: flex; align-items: center; gap: 8px; -webkit-user-select: none; user-select: none; }
-  .panel h2 .right { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--muted); }
-  .panel h2[data-fold] { cursor: pointer; }
-  .panel h2[data-fold]::before { content: ""; width: 0; height: 0; border-left: 4px solid currentColor; border-top: 4px solid transparent; border-bottom: 4px solid transparent; transform: rotate(90deg); transition: transform .12s; }
-  .panel.collapsed h2[data-fold]::before { transform: none; }
-  .panel.collapsed > :not(h2) { display: none !important; }
-  .panel.collapsed h2 { margin-bottom: 0; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 14px; }
+  .panel h2 { margin: 0 0 6px; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .panel h2 .right { margin-left: auto; font-size: 12px; font-weight: 400; color: var(--muted); }
   .setuprow { margin-bottom: 8px; }
   .setuprow > .muted:first-child { width: 58px; flex: none; font-size: 12px; }
-  /* ante and straddle: one group, so a narrow screen wraps it whole onto its own line */
-  .anteg { display: inline-flex; gap: 8px; align-items: center; margin-left: 12px; flex: 1; }
-  .anteg > .muted:first-child { font-size: 12px; }
+  /* ante and straddle: one group on its own line */
+  .anteg { display: inline-flex; gap: 8px; align-items: center; flex: 1 1 100%; }
+  .anteg > .muted:first-child { font-size: 12px; width: 58px; flex: none; }
   #straddleBox { display: inline-flex; align-items: center; gap: 4px; }
   #seatStackIns { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 4px 8px; flex: 1; } #seatStackIns label { font-size: 12px; white-space: nowrap; display: flex; gap: 4px; align-items: center; justify-content: flex-end; } #seatStackIns input { width: 62px; padding-left: 6px; padding-right: 4px; }
-  .seat .stk { font-weight: 400; font-size: 10px; color: var(--muted); margin-left: 3px; }
-  .felt .side { font-size: 11px; color: #b7c9bc; font-variant-numeric: tabular-nums; }
-
-  /* setup summary (collapsed once the hand starts) */
-  #pSetup.slim { background: none; padding: 2px 4px 8px; margin-bottom: 4px; }
-  .setupsum { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
-  .setupsum b { font-weight: 600; color: var(--text); }
+  /* the setup line: what the hand is, Edit opens its controls */
+  .setup { display: flex; align-items: center; gap: 8px; min-height: 38px; color: var(--muted); }
+  .setup b { color: var(--text); font-weight: 600; }
+  .setup .edit { color: var(--muted); font-size: inherit; padding: 4px; flex: none; }
+  .setup .new { margin-left: auto; white-space: nowrap; flex: none; }
+  #setupFull { margin-top: 8px; }
+  #savedSettings { margin-top: 4px; }
 
   /* ---- cards */
   .slots { display: flex; gap: 14px; flex-wrap: wrap; }
   .slots + .picker { margin-top: 10px; }
   .slotgroup { display: flex; flex-direction: column; gap: 4px; }
-  .slotgroup label { font-size: 10px; color: var(--faint); text-transform: uppercase; letter-spacing: .08em; }
+  .slotgroup label { font-size: 12px; color: var(--muted); }
   .slotrow { display: flex; gap: 5px; }
   .slot { width: 36px; height: 50px; border-radius: 6px; border: 1px dashed var(--line2); background: var(--panel2); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 16px; cursor: pointer; }
-  .slot.filled { border-style: solid; border-color: transparent; background: #f5f5f0; color: #111; }
+  .slot.filled { border: 1px solid #d3d6db; background: #fff; color: #15171a; }
   .slot.filled:hover { opacity: .55; }
-  .slot.sel, .slot.need { outline: 2px solid var(--accent); border-color: var(--accent); }
+  .slot.sel, .slot.need { outline: 2px solid var(--text); border-color: var(--text); }
   .slot.need { animation: pulse 1.2s ease-in-out infinite; }
   .slot.flash { animation: flash .35s ease-in-out 3; }
   @keyframes pulse { 50% { outline-color: transparent; } }
-  @keyframes flash { 50% { outline: 3px solid var(--accent); transform: translateY(-3px); } }
+  @keyframes flash { 50% { outline: 3px solid var(--text); transform: translateY(-3px); } }
   .picker { display: grid; grid-template-columns: repeat(13, 1fr); gap: 3px; }
-  .pc { height: 32px; border-radius: 5px; background: #f5f5f0; color: #111; font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center; cursor: pointer; -webkit-user-select: none; user-select: none; }
+  .pc { height: 32px; border-radius: 5px; border: 1px solid #d3d6db; background: #fff; color: #15171a; font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center; cursor: pointer; -webkit-user-select: none; user-select: none; }
   .pc:hover { transform: translateY(-1px); box-shadow: 0 2px 6px rgba(0,0,0,.4); }
   .pc.used { opacity: .15; cursor: not-allowed; }
   .pc.used:hover { transform: none; box-shadow: none; }
-  .pc.pend { outline: 2px solid var(--accent); }
-  .h, .d { color: var(--red) !important; }
-  .typehint { font-size: 12px; color: var(--faint); margin-top: 8px; }
-  .typehint b { color: var(--accent); font-family: ui-monospace, Menlo, monospace; }
+  .pc.pend { outline: 2px solid var(--text); }
+  /* a suit in text is the theme's red; on a white card, always the card's */
+  .h, .d { color: var(--suit) !important; }
+  .bc.h, .bc.d, .pc.h, .pc.d, .slot.filled.h, .slot.filled.d { color: #cf2229 !important; }
+  .typehint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .typehint b { color: var(--text); font-family: ui-monospace, Menlo, monospace; }
 
   /* ---- table */
-  #pTable { padding-bottom: 4px; }
-  .felt { position: relative; height: var(--felt-h); margin: 0 0 2px; }
-  .felt::before { content: ""; position: absolute; inset: 13% 9%; border-radius: 999px; background: radial-gradient(ellipse at center, #1d533b 0%, #163c2b 70%, #112f20 100%); border: 6px solid #241c16; box-shadow: inset 0 0 30px rgba(0,0,0,.45); }
-  .felt .center { position: absolute; left: 50%; top: 45%; transform: translate(-50%, -50%); text-align: center; }
+  #pTable { position: relative; }
+  #editCards { position: absolute; top: 8px; right: 12px; z-index: 3; }
+  .felt { position: relative; height: 230px; }
+  .felt::before { content: ""; position: absolute; inset: 12% 8%; border-radius: 999px; background: var(--felt); }
+  .felt .center { position: absolute; left: 50%; top: 46%; transform: translate(-50%, -50%); text-align: center; }
   .board { display: flex; gap: 4px; justify-content: center; }
-  .bc { width: 30px; height: 42px; border-radius: 4px; background: #f5f5f0; color: #111; font-weight: 700; font-size: 13px; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.05; }
-  .bc.empty { background: rgba(0,0,0,.18); border: 1px dashed rgba(255,255,255,.16); }
-  .felt .pot { margin-top: 5px; font-size: 12px; color: #d2e2d7; font-variant-numeric: tabular-nums; }
-  .seat { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 4px 4px; text-align: center; position: absolute; width: 70px; transform: translate(-50%, -50%); z-index: 2; line-height: 1.3; }
-  .seat .pos { font-weight: 700; font-size: 12px; }
-  .seat .you { display: block; font-size: 9px; letter-spacing: .1em; color: var(--accent); text-transform: uppercase; }
-  .seat .hc { display: block; font-weight: 700; font-size: 12px; }
-  .seat .amt { display: block; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; min-height: 14px; }
-  .seat.folded { opacity: .3; }
-  .seat.folded .pos { text-decoration: line-through; }
-  .seat.hero { border-color: #574622; }
-  .seat.toact { border-color: var(--accent); background: #29230f; box-shadow: 0 0 12px rgba(242,181,68,.3); }
-  .seat .ta { color: var(--accent); display: block; }
+  .bc { width: 30px; height: 42px; border-radius: 4px; background: #fff; border: 1px solid #d3d6db; color: #15171a; font-weight: 700; font-size: 14px; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.05; }
+  .bc.empty { background: rgba(0,0,0,.18); border: 1px dashed rgba(255,255,255,.35); color: #fff; font-size: 16px; font-weight: 400; padding: 0; min-height: 0; }
+  button.bc { cursor: pointer; }
+  .seat .bc.empty { background: none; border-color: var(--line2); color: var(--muted); }
+  .felt .pot { margin-top: 6px; font-size: 12px; color: var(--felt-text); }
+  .felt .side { font-size: 11px; color: var(--felt-text); }
+  .seat { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 3px 4px; text-align: center; position: absolute; width: 68px; transform: translate(-50%, -50%); z-index: 2; font-size: 12px; line-height: 1.3; }
+  .seat .pos { display: block; font-weight: 600; }
+  .seat .amt { display: block; font-size: 11px; color: var(--muted); min-height: 14px; }
+  .seat.hero { width: 84px; border-color: var(--line2); }
+  .seat.hero .pos, .seat.hero .amt { display: inline; }
+  .seat.hero .amt { font-size: 12px; margin-left: 3px; }
+  .seat .hc { display: flex; gap: 3px; justify-content: center; margin: 3px 0 2px; }
+  .seat.folded { background: var(--panel); color: var(--muted); }
+  .seat.toact:not(.hero) { border-color: var(--text); }
   .seat.allin .amt { color: var(--agg1); }
   .seat.clickable { cursor: pointer; }
-  .seat.clickable:hover { border-color: #4a5566; }
-  .grip { height: 12px; margin: 0 -14px; cursor: ns-resize; display: flex; align-items: center; justify-content: center; touch-action: none; position: relative; }
-  .grip::after { content: ""; position: absolute; inset: -6px 0; }   /* a taller target than the bar it draws */
-  .grip::before { content: ""; width: 34px; height: 3px; border-radius: 2px; background: var(--line2); }
-  .grip:hover::before { background: var(--muted); }
+  .seat.clickable:hover { border-color: var(--line2); }
 
   /* ---- history */
-  .tl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 10px; align-items: baseline; font-size: 13px; margin-bottom: 5px; }
-  .tl .st { color: var(--faint); text-transform: uppercase; font-size: 10px; letter-spacing: .08em; white-space: nowrap; min-width: 56px; }
-  .tl .st span { color: var(--text); }
-  .tl .line { display: flex; gap: 4px; flex-wrap: wrap; }
-  .chip { background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; white-space: nowrap; font-size: 12px; }
-  .chip.hero { border-color: var(--accent); }
-  .chip.agg { border-color: #7a3a29; }
-  .chip.fold { opacity: .55; }
+  .tl { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 6px 8px; align-items: baseline; }
+  .tl + .tl { margin-top: 6px; }
+  .tl .st { font-size: 12px; color: var(--muted); }
+  .tl .line { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+  .chip { background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; white-space: nowrap; font-size: 12px; }
+  .chip.hero { border-color: var(--line2); font-weight: 600; }
   .chip.rewind, .review li.rewind { cursor: pointer; }
   .chip.rewind:hover { background: var(--line); }
+  button.undo { padding: 0 4px; }
   .g { font-weight: 800; margin-left: 5px; }
-  .g.ok { color: var(--good); } .g.meh { color: var(--meh); } .g.bad { color: var(--bad); }
+  .g.ok { color: var(--good); } .g.meh { color: var(--muted); } .g.bad { color: var(--bad); }
 
   /* ---- action dock */
-  #pAction { padding: 10px 14px 12px; }
-  .prompt { display: flex; align-items: baseline; gap: 4px 10px; margin: 0 0 8px; flex-wrap: wrap; }
-  .prompt .who { font-size: 15px; font-weight: 700; }
-  .prompt .who.hero { color: var(--accent); }
-  .prompt .pot { margin-left: auto; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
-  .prompt .ask { width: 100%; color: var(--faint); font-size: 12px; }
-  .acts { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
-  .acts button { flex: 1 1 auto; min-width: 62px; max-width: 170px; padding: 7px 18px 7px 10px; font-weight: 600; position: relative; text-align: left; line-height: 1.25; white-space: nowrap; }
-  .acts button.fold { background: rgba(74,123,208,.10); border-color: rgba(74,123,208,.45); }
-  .acts button.pass { background: rgba(63,174,106,.10); border-color: rgba(63,174,106,.45); }
-  .acts button.agg { background: rgba(224,96,58,.09); border-color: rgba(224,96,58,.40); }
-  .acts button:hover { filter: brightness(1.25); }
-  .acts button small { display: block; font-weight: 400; font-size: 11px; color: var(--muted); }
-  .acts button kbd, .shortcut kbd { position: absolute; top: 3px; right: 3px; margin: 0; font-size: 9px; padding: 0 3px; line-height: 13px; border-color: transparent; color: var(--faint); }
-  .shortcut { position: relative; padding-right: 24px !important; }
-  .custom { display: none; gap: 6px; align-items: center; margin-bottom: 8px; }
-  .custom.open { display: flex; }
+  #actionArea { display: grid; gap: 10px; }
+  .prompt { display: flex; align-items: baseline; gap: 4px 10px; flex-wrap: wrap; }
+  .prompt .who { font-size: 14px; font-weight: 600; }
+  .prompt .pot { margin-left: auto; color: var(--muted); font-size: 13px; }
+  .prompt .ask { width: 100%; color: var(--muted); font-size: 12px; }
+  .acts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .acts button { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 50px; padding: 6px; line-height: 1.25; border-bottom: 3px solid var(--k, var(--line)); }
+  .acts button small { font-size: 12px; color: var(--muted); }
+  .custom { display: flex; gap: 6px; align-items: center; }
+  .custom input { flex: 1; min-width: 0; height: 40px; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; font: inherit; font-size: 16px; }
+  .custom input:hover { border-color: var(--line2); }
+  .custom .allin { border-bottom: 3px solid var(--allin); white-space: nowrap; }
+  .fin { width: 100%; }
+  #actionArea > button.small { justify-self: start; }
   .err { color: var(--bad); font-size: 12px; }
   .err:empty { display: none; }
-  /* the dealer button on its seat */
-  .seat .dbtn { position: absolute; right: -7px; bottom: -7px; width: 18px; height: 18px; border-radius: 50%; background: #f5f5f0; color: #111; font-size: 10px; font-weight: 800; line-height: 18px; box-shadow: 0 1px 3px rgba(0,0,0,.5); transition: none; }
 
   /* ---- advice */
   .conv { font-size: 11px; font-weight: 600; border-radius: 999px; padding: 1px 8px; border: 1px solid currentColor; white-space: nowrap; }
-  .conv.ok { color: var(--good); } .conv.meh { color: var(--meh); } .conv.bad { color: var(--bad); }
+  .conv.ok { color: var(--good); } .conv.meh { color: var(--muted); } .conv.bad { color: var(--bad); }
   .note { font-size: 12px; color: var(--muted); background: var(--panel2); border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; line-height: 1.6; }
   .note b { color: var(--text); }
   .review { list-style: none; margin: 6px 0 0; padding: 0; }
   .review li { display: flex; gap: 8px; align-items: baseline; }
   .review li.rewind:hover b { text-decoration: underline; }
-  .review li.cur b { color: var(--accent); }
-  #actionArea .nexth { display: block; width: 100%; min-height: 54px; font-size: 16px; font-weight: 700; background: var(--accent); color: #1a1200; border-color: var(--accent); }
-  #actionArea .nexth:hover { filter: brightness(1.08); }
-  #actionArea .nexth kbd { color: #1a1200; border-color: rgba(0,0,0,.25); }
-  #actionArea .stepbar { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-  .review .st { text-transform: uppercase; font-size: 10px; letter-spacing: .08em; width: 52px; flex: none; }
+  .review li.cur b { color: var(--text); }
+  #actionArea .nexth { display: block; width: 100%; background: var(--primary); color: var(--on-primary); border-color: var(--primary); font-weight: 600; }
+  #actionArea .stepbar { display: flex; flex-wrap: wrap; gap: 6px; }
+  .review .st { font-size: 12px; width: 52px; flex: none; }
   .review .streetsum { margin-top: 6px; color: var(--muted); }
   .review .streetsum.total { color: inherit; border-top: 1px solid var(--line); padding-top: 6px; }
   #result.stale { opacity: .45; }
@@ -206,8 +200,8 @@
   .arows { display: flex; flex-direction: column; gap: 4px; }
   .arow { display: grid; grid-template-columns: minmax(0, 140px) minmax(40px, 1fr) 62px 84px; gap: 10px; align-items: center; padding: 7px 10px; border-radius: 8px; background: var(--panel2); border: 1px solid transparent; }
   .arows.noev .arow { grid-template-columns: minmax(0, 140px) minmax(40px, 1fr) 62px; }
-  .arow.best { border-color: var(--accent); }
-  .arow.head { white-space: nowrap; background: none; cursor: default; padding: 0 10px; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); }
+  .arow.best { border-color: var(--text); }
+  .arow.head { white-space: nowrap; background: none; cursor: default; padding: 0 10px; font-size: 12px; color: var(--muted); }
   .arow .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .arow .name small { color: var(--muted); font-weight: 400; margin-left: 6px; }
   .bar { height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; }
@@ -217,15 +211,15 @@
   .num.rough { opacity: .7; }   /* an EV of an action your range almost never takes (rough_ev): "≈" */
   .meta { color: var(--muted); font-size: 12px; margin-top: 10px; line-height: 1.6; }
   .grid { display: grid; grid-template-columns: repeat(13, 1fr); gap: 2px; margin-top: 6px; }
-  .cell { aspect-ratio: 1; border-radius: 3px; position: relative; background: #111418; font-size: 10px; overflow: hidden; cursor: crosshair; }
-  .cell .lbl { position: absolute; left: 3px; top: 2px; color: #fff; text-shadow: 0 0 3px #000; font-weight: 600; z-index: 2; pointer-events: none; }
+  .cell { aspect-ratio: 1; border-radius: 3px; position: relative; background: var(--panel2); font-size: 10px; overflow: hidden; cursor: crosshair; }
+  .cell .lbl { position: absolute; left: 3px; top: 2px; color: var(--muted); font-weight: 600; z-index: 2; pointer-events: none; }
+  .cell.in .lbl { color: #fff; text-shadow: 0 0 3px #000; }
   .cell .stack { position: absolute; inset: 0; display: flex; pointer-events: none; }
   .cell .stack div { height: 100%; }
-  .cell.pair .lbl { color: #ffe9b0; }
-  .cell.hov { outline: 2px solid #fff; outline-offset: -1px; z-index: 3; }
-  .cell.me { outline: 3px solid var(--accent); outline-offset: -1px; z-index: 3; opacity: 1 !important; transform: scale(1.18); box-shadow: 0 0 0 3px var(--bg), 0 0 14px 2px rgba(242,181,68,.8); overflow: visible; border-radius: 4px; }
+  .cell.hov { outline: 1px solid var(--text); outline-offset: 0; z-index: 3; }
+  .cell.me { outline: 2px solid var(--text); outline-offset: 0; z-index: 3; opacity: 1 !important; overflow: visible; }
   .cell.me .lbl { font-weight: 800; }
-  .cell.me .you { position: absolute; right: -2px; bottom: -2px; background: var(--accent); color: #1a1200; font-size: 8px; font-weight: 800; letter-spacing: .08em; padding: 1px 4px; border-radius: 3px; z-index: 4; pointer-events: none; }
+  .cell.me .you { position: absolute; right: -2px; bottom: -2px; background: var(--primary); color: var(--on-primary); font-size: 8px; font-weight: 800; letter-spacing: .08em; padding: 1px 4px; border-radius: 3px; z-index: 4; pointer-events: none; }
   .readout { margin-top: 0; font-size: 13px; min-height: 20px; font-variant-numeric: tabular-nums; }
   .readout b { font-weight: 700; margin-right: 6px; }
   .readout span.a { margin-right: 10px; white-space: nowrap; }
@@ -241,21 +235,23 @@
   }
   .legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; color: var(--muted); }
   .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; background: var(--c); }
-  .legend .mehint::before { background: transparent; outline: 2px solid var(--accent); }
+  .legend .mehint::before { background: transparent; outline: 2px solid var(--text); }
   /* whole-range totals above the grid */
-  .rangebar { display: flex; height: 10px; border-radius: 4px; overflow: hidden; margin-top: 6px; background: #111418; }
+  .rangebar { display: flex; height: 10px; border-radius: 4px; overflow: hidden; margin-top: 6px; background: var(--panel2); }
   .rangebar div { height: 100%; }
   .rangetot { display: flex; gap: 6px 14px; flex-wrap: wrap; margin-top: 6px; font-size: 13px; font-variant-numeric: tabular-nums; }
   .rangetot span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; background: var(--c); }
   .rangetot b { font-weight: 700; }
   .rangetot small { color: var(--muted); }
-  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -3px; margin-right: 8px; }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--text); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -3px; margin-right: 8px; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .prog { height: 3px; background: var(--panel2); border-radius: 2px; overflow: hidden; margin-top: 10px; }
-  .prog > div { height: 100%; width: 0; background: var(--accent); transition: width .1s linear; }
+  .prog > div { height: 100%; width: 0; background: var(--text); transition: width .1s linear; }
   .solvehead { display: flex; align-items: center; }
   .solvehead .num { margin-left: auto; color: var(--muted); font-size: 12px; }
-  .empty { color: var(--muted); padding: 30px 10px; text-align: center; line-height: 1.7; }
+  .empty, #solverReady { color: var(--muted); font-size: 13px; }
+  #solverReady { margin: 4px 0 0; }
+  .btns { display: flex; gap: 8px; margin-top: 12px; }
   details { margin-top: 12px; }
   /* disclosures: a chevron, not the browser's triangle */
   summary { color: var(--muted); font-size: 12px; cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; width: max-content; max-width: 100%; border-radius: 4px; -webkit-user-select: none; user-select: none; }
@@ -263,71 +259,53 @@
   summary::before { content: ""; flex: none; width: 6px; height: 6px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: rotate(-45deg); transition: transform .15s; margin: 0 2px 0 1px; }
   details[open] > summary::before { transform: rotate(45deg) translate(-2px, -1px); }
   summary:hover { color: var(--text); }
-  summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  summary:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
   .villain { font-size: 12px; color: var(--muted); word-break: break-word; margin-top: 6px; }
   /* your equity once the betting is closed */
   #equity { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
   #equity .verdict { margin-bottom: 8px; }
   .eqrows { display: grid; grid-template-columns: max-content minmax(40px, 1fr) 56px max-content; gap: 6px 10px; align-items: center; font-size: 13px; }
-  .eqrows .bar > div { background: var(--accent); }
+  .eqrows .bar > div { background: var(--text); }
   details details { margin-top: 6px; }
   #result.empty:empty { display: none; }
 
-  .toast { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); background: #232932; border: 1px solid var(--line2); border-radius: var(--r); padding: 9px 14px; display: flex; gap: 14px; align-items: center; box-shadow: 0 8px 30px rgba(0,0,0,.5); z-index: 70; width: max-content; max-width: calc(100% - 32px); font-size: 13px; }
+  .toast { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); background: var(--panel2); border: 1px solid var(--line2); border-radius: var(--r); padding: 9px 14px; display: flex; gap: 14px; align-items: center; box-shadow: 0 8px 30px rgba(0,0,0,.5); z-index: 70; width: max-content; max-width: calc(100% - 32px); font-size: 13px; }
 
   /* ---- layout
-     Wide screens: the page fills the window; each column scrolls on its own and the action dock stays pinned
-     to the bottom of its column, so it's on screen at any zoom. Drag the divider to resize the columns,
-     the bar under the table to resize the table. */
-  .dock { position: -webkit-sticky; position: sticky; bottom: var(--kb); z-index: 5; margin-top: auto; margin-bottom: 0; box-shadow: 0 -10px 18px -6px var(--bg); border: 1px solid var(--line); }
-  .split { display: none; }
+     Two columns in one centred page that scrolls as a whole; a phone or a zoomed-in window gets one column. The
+     action dock sticks to the bottom of the window whenever it would fall below it. */
+  .app { display: grid; grid-template-columns: minmax(0, 460px) minmax(0, 1fr); gap: 16px; max-width: 1120px; margin: 0 auto; padding: 16px 20px max(32px, env(safe-area-inset-bottom)); align-items: start; }
+  .col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .dock { position: -webkit-sticky; position: sticky; bottom: var(--kb); z-index: 5; }
   /* while a card is needed the deck is the input: it moves up under the setup and the dock stops floating */
-  body.needcard .dock { position: static; box-shadow: none; }
+  body.needcard .dock { position: static; }
   #pSetup { order: -2; } body.needcard #pCards { order: -1; }
-  @media (min-width: 901px) and (min-height: 560px) {
-    body { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
-    main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(340px, var(--left)) 9px minmax(320px, 1fr); padding: 0 6px env(safe-area-inset-bottom) 12px; }
-    .col { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding: 10px 4px 10px 0; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line2) transparent; }
-    #colR { padding: 10px 6px 10px 2px; }
-    .split { display: block; cursor: col-resize; position: relative; touch-action: none; }
-    .split::before { content: ""; position: absolute; top: 10px; bottom: 10px; left: 4px; width: 1px; background: var(--line); }
-    .split:hover::before, .split.drag::before { background: var(--accent); width: 2px; left: 3.5px; }
-    body.dragging { cursor: col-resize; -webkit-user-select: none; user-select: none; }
-    body.dragging-v { cursor: ns-resize; -webkit-user-select: none; user-select: none; }
-    #pAdvice { margin-bottom: 0; min-height: 100%; }
-  }
-  /* Narrow screens (phones, or a zoomed-in window): one column that scrolls; the action dock sticks to the
-     bottom of the window. On your turn the advice comes straight after the table. */
-  @media (max-width: 900px), (max-height: 559px) {
-    main { display: flex; flex-direction: column; padding: 10px 10px 0; }
+  @media (max-width: 860px) {
+    header { padding: max(8px, env(safe-area-inset-top)) 12px 8px; }
+    header nav { gap: 14px; }
+    .app { display: flex; flex-direction: column; align-items: stretch; gap: 12px; padding: 12px 12px max(24px, env(safe-area-inset-bottom)); }
     .col { display: contents; }
-    #pSetup { order: 10; } #pTable { order: 20; } #pCards { order: 30; } #pAdvice { order: 40; } #pHistory { order: 50; } #pAction { order: 90; }
+    #pSetup { order: 10; } #pTable { order: 20; } #pCards { order: 30; } #pHistory { order: 40; } #pAction { order: 50; } #pAdvice { order: 60; }
     body.heroturn #pAdvice { order: 25; }
     body.needcard #pCards { order: 15; }
-    .dock { margin: 0 -10px; border-radius: var(--r) var(--r) 0 0; border-width: 1px 0 0; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+    .felt { height: 208px; }
+    button { min-height: 44px; }
+    button.link, button.small, .bc.empty, .seats button, .segment button { min-height: 0; }
+    .acts button { min-height: 54px; }
   }
-  /* short windows (a zoomed-in page): drop the dock's second line */
-  @media (max-height: 620px) { .prompt .ask { display: none; } .prompt { margin-bottom: 6px; } }
   @media (max-width: 560px) {
-    header { padding: max(8px, env(safe-area-inset-top)) 12px 8px; gap: 6px; }
-    .panel { padding: 10px 12px; }
-    .anteg { flex-basis: 100%; margin-left: 0; }
-    .anteg > .muted:first-child { width: 58px; flex: none; }
     .toast { flex-wrap: wrap; gap: 6px 14px; }
-    .felt::before { inset: 12% 5%; }
-    .seat { width: 56px; padding: 3px 2px; }
-    .seat .pos { font-size: 11px; }
-    .bc { width: 24px; height: 34px; font-size: 11px; }
     .pc { height: 30px; font-size: 11px; }
     .slot { width: 32px; height: 46px; font-size: 15px; }
     .slots { gap: 10px; }
-    .acts button { padding: 6px 16px 6px 8px; min-width: 0; flex: 1 1 calc(33% - 6px); max-width: none; }
-    .prompt .ask { display: none; }
-    .prompt { margin-bottom: 6px; }
     .arow { grid-template-columns: 104px 1fr 48px 62px; gap: 8px; }
     .arows.noev .arow { grid-template-columns: 104px 1fr 48px; }
     .cell { font-size: 7px; }
     .cell .lbl { left: 1px; top: 1px; }
+  }
+  @media (max-width: 340px) {
+    .acts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .seat { width: 58px; }
   }
   /* touch screens: no hover, so hover effects would stick after a tap; targets at least 40px tall; 16px
      inputs, or iOS zooms the page in when one is focused */
@@ -336,51 +314,41 @@
     .hoveronly { display: none; } .touchonly { display: inline; }
     .slot.filled:hover { opacity: 1; }
     .pc:hover { transform: none; box-shadow: none; }
-    .acts button:hover { filter: none; }
-    .setupsum .link, #setupDone { min-height: 40px; }
-  }
-  /* a touch screen without a mouse has no keyboard to speak of: the shortcut keys only crowded the labels
-     (on a 320px phone "Raise to 2.5" ran into its "1") */
-  @media (hover: none) and (pointer: coarse) {
-    kbd { display: none; }
-    .acts button { padding-right: 8px; }
-    .shortcut { padding-right: 11px !important; }
+    #setupDone { min-height: 40px; }
   }
   @media (pointer: coarse) {
     button:not(.link), select, input[type=number], input[type=text] { min-height: 40px; }
     input[type=number], select, input[type=text] { font-size: 16px; }
-    .acts button { min-height: 44px; }
     .pc { height: 38px; }
-    .panel h2[data-fold] { min-height: 40px; margin-top: -10px; }
-    .panel.collapsed h2[data-fold] { margin-bottom: -10px; }
-    .grip { height: 20px; }
-    .chip.rewind { padding: 7px 12px; }
+    .chip.rewind { min-height: 0; position: relative; }
+    .chip.rewind::after { content: ""; position: absolute; inset: -9px 0; }
     button.link { padding: 11px 6px; margin: -11px -6px; }
+    header nav button.link { padding: 6px 0; margin: 0; }
     summary { padding: 11px 0; margin: -11px 0; }
     input[type=checkbox] { width: 20px; height: 20px; margin: 0 4px 0 0; }
     label:has(> input[type=checkbox]) { min-height: 40px; }
   }
   @media (prefers-reduced-motion: reduce) {
     .slot.need, .slot.flash { animation: none; }
-    .panel h2[data-fold]::before, .prog > div { transition: none; }
+    .prog > div { transition: none; }
   }
 </style>
 </head>
 <body>
 <header>
   <h1>GTO Solver</h1>
-  <span class="spacer"></span>
-  <button id="share" title="Copy a link that opens this hand">Share</button>
-  <button id="newhand" title="Shortcut: N">New hand <kbd>N</kbd></button>
-  <button id="myHands" class="ghost" title="Every hand you've entered or reviewed, kept in this browser: search, tags, notes, open one in review, export, back up">Hands</button>
-  <button id="helpAbout" class="ghost" title="What this is, how accurate it is, what stays on your device">About</button>
-  <a href="/lizard/">Lizard</a>
+  <nav>
+    <button id="myHands" class="link" title="Every hand you've entered or reviewed, kept in this browser: search, tags, notes, open one in review, export, back up">Hands</button>
+    <button id="helpAbout" class="link" title="What this is, how accurate it is, what stays on your device">About</button>
+    <a href="/lizard/">Lizard →</a>
+  </nav>
 </header>
 
-<main>
+<main class="app">
   <div class="col">
-    <section class="panel" id="pSetup">
-      <div id="setupFull">
+    <section id="pSetup">
+      <div class="setup"><span id="setupSum"></span><button class="link edit" id="setupEdit">Edit</button><button class="new" id="newhand" title="Shortcut: N">New hand</button></div>
+      <div id="setupFull" class="panel" hidden>
         <div class="row setuprow">
           <span class="muted">Stakes</span>
           <select id="stakes" title="Live stakes: bets, stacks and rake are typed in dollars and shown in dollars beside the big blinds (the solver plays in big blinds, the small blind as half of one). Remembered for new hands.">
@@ -418,17 +386,15 @@
         <div class="row">
           <span class="muted" style="width:58px;font-size:12px">You are</span>
           <div class="row seats" id="seats"></div>
-          <button class="link" id="setupDone" style="margin-left:auto" hidden>Done</button>
+          <button class="link" id="setupDone" style="margin-left:auto">Done</button>
         </div>
       </div>
-      <div id="setupSum" class="setupsum" hidden></div>
       <div id="savedSettings" class="muted" style="font-size:12px" hidden></div>
     </section>
 
     <section class="panel" id="pTable">
-      <h2 data-fold tabindex="0" role="button" aria-expanded="true">Table <span class="right" id="tableHint"></span><button class="link" id="editCards" title="Change your hand or the board">Cards</button></h2>
+      <button class="link" id="editCards" title="Change your hand or the board">Edit cards</button>
       <div id="felt" class="felt"></div>
-      <div class="grip" id="feltGrip" title="Drag to resize the table · double-click to reset"></div>
     </section>
 
     <section class="panel" id="pCards">
@@ -444,7 +410,6 @@
     </section>
 
     <section class="panel" id="pHistory">
-      <h2 data-fold tabindex="0" role="button" aria-expanded="true">Hand <span class="right" id="stepLabel"></span></h2>
       <div id="timeline"></div>
     </section>
 
@@ -454,14 +419,15 @@
     </section>
   </div>
 
-  <div class="split" id="split" title="Drag to resize · double-click to reset"></div>
 
-  <div class="col" id="colR">
+  <div class="col">
     <section class="panel" id="pAdvice">
       <h2>Review</h2>
       <div id="adviceNote" class="note" hidden></div>
       <div id="equity" hidden></div>
-      <div id="result" class="empty">Enter a hand you've played: your seat and cards, then the action seat by seat.<br>When it's finished, the solver reviews each decision you made.</div>
+      <div id="result" class="empty">Finish the hand to see how each decision compares with the solver. Nothing is solved until then.</div>
+      <p id="solverReady" hidden></p>
+      <div class="btns" id="doneBtns" hidden><button id="share" title="Copy a link that opens this hand">Share</button></div>
     </section>
   </div>
 </main>
@@ -700,7 +666,19 @@ const modeReady = (async () => {
   try { const r = await fetch("health.json", { cache: "no-store" }); if (r.ok && (await r.json()).ok) MODE = "server"; } catch (e) {}
   if (MODE === "server" && worker) { worker.terminate(); worker = null; workerStatus = ""; }   // (a proxied local server)
   if (!MODE) { MODE = "wasm"; startWorker(); }   // start loading the in-browser solver while the hand is entered
+  renderReady();
 })();
+// The first visit's download while a hand is entered. 9 MB is what the browser fetched, compressed, 2026-11-04: Pyodide and
+// numpy 8.02 MB from the CDN, solver.zip 0.70, the libraries' indexes 0.30, worker.js 0.01. The worker keeps solver.zip in
+// the Cache API, so finding one there, of any version, means this browser has been here: the rest is in its cache too.
+const FIRST_VISIT = "Getting the solver ready, about 9 MB on first visit.";
+let visited = typeof caches === "undefined" ? false : null;   // (null: not known yet)
+if (visited === null) Promise.resolve().then(() => caches.match("solver.zip", { ignoreSearch: true })).then(r => !!r, () => false).then(v => { visited = v; renderReady(); });
+function renderReady() {
+  const el = document.getElementById("solverReady");
+  el.hidden = visited !== false || MODE !== "wasm" || loadFailed || workerStatus === "Solving…" || !document.getElementById("result").classList.contains("empty") || reviewing();
+  el.textContent = FIRST_VISIT;
+}
 let solveStart = 0;
 function setStatus(msg) {
   const m = document.getElementById("solveMsg"); if (!m) return;
@@ -745,7 +723,7 @@ function startWorker() {
     const m = e.data;
     if (m.pong != null) { pongs = Math.max(pongs, m.pong); return; }
     if (m.loadFailed != null) return solverLoadFailed();
-    if (m.status) { workerStatus = m.status; setStatus(m.status); watchLoad(w); }
+    if (m.status) { workerStatus = m.status; setStatus(m.status); watchLoad(w); renderReady(); }
     if (m.partial) { if (m.id != null && pending[m.id] && partials[m.id]) partials[m.id](m.partial); return; }
     if (m.id != null && pending[m.id]) { pending[m.id](m.error ? { error: m.error } : m.result); delete pending[m.id]; delete partials[m.id]; }
     if (m.id != null && !m.partial) delete sent[m.id];
@@ -1227,15 +1205,11 @@ function removeCard(i) {
   });
 }
 function renderSetup() {
-  const started = (S.cards[0] && S.cards[1]) || STREETS.some(s => S.actions[s].length);
-  const full = !started || editSetup;
-  document.getElementById("setupFull").hidden = !full;
-  document.getElementById("pSetup").classList.toggle("slim", !full);
-  document.getElementById("setupDone").hidden = !started;
-  const sum = document.getElementById("setupSum"); sum.hidden = full;
-  sum.innerHTML = `<span><b>${S.players}-handed</b>${TOURNEY() || S.tournament ? "" : ` <span class="muted">·</span> cash`} ${STAKES() ? ` <span class="muted">·</span> <b>${STAKES_TEXT()}</b>` : ""} <span class="muted">·</span> you are <b>${SEAT_LABEL(S.hero, S.players)}</b> <span class="muted">·</span> <b>${fmt(S.stack)}bb</b>${withUsd(S.stack)} stacks${UNEQUAL() ? ` (${STACKS_TEXT()})` : ""}${ANTE() ? ` <span class="muted">·</span> ${fmt(ANTE())}bb${withUsd(ANTE())} ante` : ""}${STRADDLER() ? ` <span class="muted">·</span> ${SEAT_LABEL(STRADDLER(), S.players)} straddles` : ""}${RAKE() ? ` <span class="muted">·</span> ${RAKE_TEXT()}` : ""}</span>`;
-  const e = document.createElement("button"); e.className = "link"; e.style.marginLeft = "auto"; e.textContent = "Edit"; e.onclick = () => { stepStop(); editSetup = true; renderAll(); };
-  if (!review) sum.appendChild(e);
+  document.getElementById("setupFull").hidden = !editSetup;
+  document.getElementById("setupEdit").hidden = editSetup || !!review;
+  const sum = document.getElementById("setupSum");
+  const dot = ' <span class="muted">·</span> ';
+  sum.innerHTML = `<b>${S.players}-handed</b>${TOURNEY() || S.tournament ? `${dot}tournament` : ""}${STAKES() ? `${dot}<b>${STAKES_TEXT()}</b>` : ""}${dot}you are <b>${SEAT_LABEL(S.hero, S.players)}</b>${dot}<b>${fmt(S.stack)}bb</b>${withUsd(S.stack)}${UNEQUAL() ? ` stacks (${STACKS_TEXT()})` : ""}${ANTE() ? `${dot}${fmt(ANTE())}bb${withUsd(ANTE())} ante` : ""}${STRADDLER() ? `${dot}${SEAT_LABEL(STRADDLER(), S.players)} straddles` : ""}${RAKE() ? `${dot}${RAKE_TEXT()}` : ""}`;
 
   const saved = document.getElementById("savedSettings"), line = savedHtml();
   saved.hidden = !line; saved.innerHTML = line;
@@ -1291,8 +1265,12 @@ function renderPicker(sim) {
 }
 
 // ------------------------------------------------------------------ table + action
+// A card on the table; a slot not filled, a + that picks it (nothing to pick once the hand is fixed)
+const cardBox = (c) => `<div class="bc ${c[1]}">${c[0]}<span>${SUIT_SYM[c[1]]}</span></div>`;
+const addBox = (i, fixed) => fixed ? `<div class="bc empty"></div>` : `<button class="bc empty" data-i="${i}" aria-label="Add ${SLOT_NAMES[i]}">+</button>`;
 function renderTable(sim) {
   const el = document.getElementById("felt"); el.innerHTML = "";
+  const fixed = fixedHand(sim);
   const n = POS.length, hi = Math.max(0, POS.indexOf(S.hero));
   const toAct = handDone(sim) && !stepView ? null : sim.toAct;   // (a hand finished at someone's turn: nobody's to act)
   POS.forEach((p, i) => {
@@ -1300,56 +1278,50 @@ function renderTable(sim) {
     const folded = !sim.active.has(p), bet = sim.cur ? sim.cur.bets[p] : 0, total = sim.invested[p] + bet;
     const clickable = !handDone(sim) && !folded && sim.cur && sim.toAct !== p && !sim.allin.has(p);
     const th = (90 + (i - hi) * 360 / n) * Math.PI / 180;   // hero at the bottom, action runs clockwise
-    d.style.left = (50 + 43 * Math.cos(th)) + "%"; d.style.top = (50 + 40 * Math.sin(th)) + "%";
+    d.style.left = (50 + 44 * Math.cos(th)) + "%"; d.style.top = (p === S.hero ? 86 : 50 + 43 * Math.sin(th)) + "%";
     d.className = "seat" + (p === S.hero ? " hero" : "") + (folded ? " folded" : "") + (toAct === p ? " toact" : "") + (sim.allin.has(p) ? " allin" : "") + (clickable ? " clickable" : "");
-    const amt = folded ? "folded" : sim.allin.has(p) ? "all-in" : bet > 0 ? (STAKES() ? DOLLARS(bet) : fmt(bet) + " bb") : total > 0 ? "in " + AMT(total) : "";
-    const shown = p === S.hero && S.cards[0] && S.cards[1] ? S.cards.slice(0, 2) : null;
-    const hc = shown ? `<span class="hc">${cardHtml(shown[0])}${cardHtml(shown[1])}</span>` : p === S.hero ? '<span class="you">you</span>' : "";
-    const ta = toAct === p ? `<span class="ta">to act</span>` : "";
-    // (stacks that differ: each seat's chips behind beside its name)
-    const stk = UNEQUAL() && !folded ? `<span class="stk" title="${SEAT_LABEL(p, n)}'s stack behind">${AMT(Math.max(0, STACK(p) - total))}</span>` : "";
-    const btn = p === (n === 2 ? "SB" : "BTN") ? '<span class="dbtn" title="The dealer button">D</span>' : "";
-    d.innerHTML = `<span class="pos">${SEAT_LABEL(p, n)}${stk}</span>${hc}<span class="amt">${amt}${ta}</span>${btn}`;
+    // each seat's chips behind; a live bet in their place
+    const amt = folded ? "folded" : sim.allin.has(p) ? "all-in" : bet > 0 ? (STAKES() ? DOLLARS(bet) : fmt(bet) + " bb") : AMT(Math.max(0, STACK(p) - total));
+    d.innerHTML = `<span class="pos">${SEAT_LABEL(p, n)}</span><span class="amt">${amt}</span>${p === S.hero ? `<span class="hc">${[0, 1].map(i => S.cards[i] ? cardBox(S.cards[i]) : addBox(i, fixed)).join("")}</span>` : ""}`;
     if (clickable) { d.title = `Everyone before ${p} folds`; d.onclick = () => { showErr(advanceTo(p)); renderAll(); }; }
     el.appendChild(d);
   });
   const center = document.createElement("div"); center.className = "center";
-  const b = S.cards.slice(2).map(c => c ? `<div class="bc ${c[1]}">${c[0]}<span>${SUIT_SYM[c[1]]}</span></div>` : `<div class="bc empty"></div>`).join("");
+  const b = S.cards.map((c, i) => i < 2 ? "" : c ? cardBox(c) : addBox(i, fixed)).join("");
   const pots = sim.active.size > 1 ? potsNow(sim) : [];
   const side = pots.length > 1 ? `<div class="side">${pots.map((x, i) => `${i ? "side" : "main"} ${AMT(x.amount)}`).join(" · ")}</div>` : "";
   center.innerHTML = `<div class="board">${b}</div><div class="pot">pot ${BBX(sim.pot)}</div>${side}`;
   el.appendChild(center);
-  document.getElementById("tableHint").innerHTML = sim.cur && !handDone(sim) ? `${TAP.toLowerCase()} a seat to fold to it` : "";
+  el.querySelectorAll("button.bc").forEach(a => a.onclick = (e) => { e.stopPropagation(); selSlot = +a.dataset.i; renderAll(); });
   const ec = document.getElementById("editCards"), auto = !S.cards[0] || !S.cards[1] || dealing(sim);
-  ec.hidden = auto || fixedHand(sim); ec.textContent = needCard(sim) ? "Hide cards" : "Edit cards";
+  ec.hidden = auto || fixed; ec.textContent = needCard(sim) ? "Hide cards" : "Edit cards";
 }
 
 function renderAction(sim) {
   const el = document.getElementById("actionArea"); el.innerHTML = "";
-  const step = document.getElementById("stepLabel");
   const prompt = document.createElement("div"); prompt.className = "prompt";
-  if (!S.cards[0] || !S.cards[1]) { step.textContent = ""; prompt.innerHTML = `<span class="ask">Place your two hole cards to start.</span>`; el.appendChild(prompt); return; }
-  if (review) { step.textContent = "review"; prompt.innerHTML = `<span class="who"><span class="spinner"></span>Reviewing your decisions</span><span class="ask">Decision ${review.k} of ${review.n}: ${review.what}.</span>`; el.appendChild(prompt); return; }
-  if (stepView) { renderStep(el, prompt, step, sim); return; }
-  if (handDone(sim)) { renderFinished(el, prompt, step, sim); return; }
+  if (!S.cards[0] || !S.cards[1]) { prompt.innerHTML = `<span class="ask">Place your two hole cards to start.</span>`; el.appendChild(prompt); return; }
+  if (review) { prompt.innerHTML = `<span class="who"><span class="spinner"></span>Reviewing your decisions</span><span class="ask">Decision ${review.k} of ${review.n}: ${review.what}.</span>`; el.appendChild(prompt); return; }
+  if (stepView) { renderStep(el, prompt, sim); return; }
+  if (handDone(sim)) { renderFinished(el, prompt, sim); return; }
   if (sim.waiting) {
-    step.textContent = sim.waiting;
     prompt.innerHTML = `<span class="who">Deal the ${sim.waiting}</span><span class="pot">pot ${BBX(sim.pot)}</span><span class="ask">${sim.runout ? "Everyone is all-in. " : ""}Click or type the ${sim.waiting === "flop" ? "three flop cards" : sim.waiting + " card"} above.</span>`;
     el.appendChild(prompt); finishButton(el); return;
   }
   const street = sim.current, info = sim.cur, p = sim.toAct, isHero = p === S.hero;
   const myBet = info.bets[p], toCall = info.curBet - myBet, remaining = STACK(p) - sim.invested[p] - myBet, facing = toCall > 1e-9;
-  step.textContent = street;
   const callAmt = Math.min(toCall, remaining), need = callAmt / (info.pot + callAmt);
-  prompt.innerHTML = `<span class="who ${isHero ? "hero" : ""}">${isHero ? "Your turn" : p + " to act"}</span><span class="pot">pot ${BBX(info.pot)}${facing ? ` · ${fmt(callAmt)}${withUsd(callAmt)} to call · <span title="Pot odds: the equity a call needs to break even${TOURNEY() ? " in chips (in a tournament your prize equity asks more, bounties less: the advice's notes give it)" : ""}">need ${(need * 100).toFixed(0)}%${TOURNEY() ? " in chips" : ""}</span>` : ""}</span><span class="ask">${isHero ? "Record what you did." : "What did " + p + " do?"}</span>`;
+  // (the pot is on the table; here what facing a bet costs)
+  prompt.innerHTML = `<span class="who ${isHero ? "hero" : ""}">${isHero ? "Your action" : p + " to act"}</span>${facing ? `<span class="pot">pot ${BBX(info.pot)} · ${fmt(callAmt)}${withUsd(callAmt)} to call · <span title="Pot odds: the equity a call needs to break even${TOURNEY() ? " in chips (in a tournament your prize equity asks more, bounties less: the advice's notes give it)" : ""}">need ${(need * 100).toFixed(0)}%${TOURNEY() ? " in chips" : ""}</span></span>` : ""}${isHero ? "" : `<span class="ask">What did ${p} do?</span>`}`;
   el.appendChild(prompt);
 
   const acts = document.createElement("div"); acts.className = "acts";
-  const mk = (label, cls, a, sub, key) => { const b = document.createElement("button"); b.className = cls; b.innerHTML = label + (sub ? `<small>${sub}</small>` : "") + (key ? `<kbd>${key}</kbd>` : "");
-    if (key) b.dataset.key = key.toLowerCase();
-    b.onclick = () => { showErr(act(a)); renderAll(); }; acts.appendChild(b); return b; };
-  if (facing) { mk("Fold", "fold", { action: "fold" }, "", "F"); mk("Call", "pass", { action: "call" }, AMT_SUB(callAmt), "C"); }
-  else mk("Check", "pass", { action: "check" }, "", "C");
+  const mk = (label, cls, a, sub, key, k, into = acts) => { const b = document.createElement("button"); b.className = cls; b.innerHTML = label + (sub ? `<small>${sub}</small>` : "");
+    if (key) { b.dataset.key = key.toLowerCase(); b.title = "Shortcut: " + key; }
+    if (k) b.setAttribute("style", `--k:${k}`);
+    b.onclick = () => { showErr(act(a)); renderAll(); }; into.appendChild(b); return b; };
+  if (facing) { mk("Fold", "fold", { action: "fold" }, "", "F", "var(--fold)"); mk("Call", "pass", { action: "call" }, AMT_SUB(callAmt), "C", "var(--passive)"); }
+  else mk("Check", "pass", { action: "check" }, "", "C", "var(--passive)");
   // (no raise once an all-in for less than a full raise has closed the betting to you, or nobody has chips to call)
   const raiseOk = canRaise(sim, p), canRaiseNow = remaining > toCall + 1e-9 && raiseOk, minTo = minRaiseTo(info);
   const verb = facing || info.curBet > 0 ? "Raise to" : "Bet";
@@ -1358,62 +1330,74 @@ function renderAction(sim) {
     const half = (x) => Math.round(x * 2) / 2;
     let sizes;
     if (street === "preflop") { const v = half(preflopSize(sim, p)); sizes = [[v, info.nRaises === 0 ? (v > OPEN_X(p) * info.curBet + 1e-9 ? "iso" : "open") : fmt(v / info.curBet) + "x"]]; }
-    // as the advisor's _default_size: a bet is 66% of the pot; a raise is the bet plus 75% of the pot after calling it
-    else if (!facing) sizes = [[half(info.pot / 3), "⅓ pot"], [half(info.pot * 0.66), "⅔ pot"], [half(info.pot), "pot"]];
+    else if (!facing) sizes = [[half(info.pot * 0.33), "33%"], [half(info.pot * 0.75), "75%"]];
+    // as the advisor's _default_size: a raise is the bet plus 75% of the pot after calling it
     else sizes = [[half(info.curBet + 0.75 * (info.pot + toCall)), "¾ pot"], [half(info.curBet + info.pot + toCall), "pot"]];
     let k = 0;
-    for (const [v, l] of sizes) if (v < myBet + remaining - 1e-9 && v >= minTo - 1e-9) mk(`${verb} ${AMT(v)}`, "agg", { action: "bet", to: v }, (STAKES() ? fmt(v) + "bb · " : "") + l, String(++k));
-    const custom = document.createElement("button"); custom.className = "agg"; custom.innerHTML = `${verb}<small>your size…</small><kbd>R</kbd>`; custom.dataset.key = "r";   // (a bare "Raise to …" read as a cut-off label)
-    custom.onclick = () => { document.getElementById("customBox").classList.toggle("open"); document.getElementById("customAmt").focus(); };
-    acts.appendChild(custom);
+    const shade = !facing && street !== "preflop" ? ["var(--agg0)", "var(--agg1)"] : ["var(--agg1)", "var(--agg2)"];
+    for (const [v, l] of sizes) if (v < myBet + remaining - 1e-9 && v >= minTo - 1e-9) {
+      const bet = !facing && street !== "preflop";
+      mk(bet ? `Bet ${l}` : `${verb} ${AMT(v)}`, "agg", { action: "bet", to: v }, bet ? AMT_SUB(v) : (STAKES() ? fmt(v) + "bb · " : "") + l, String(k + 1), shade[k]); k++;
+    }
   }
-  if (remaining > 0 && (raiseOk || remaining <= toCall + 1e-9)) mk("All-in", "agg", { action: "all-in" }, AMT_SUB(myBet + remaining), "A");
   el.appendChild(acts);
 
-  const cb = document.createElement("div"); cb.className = "custom"; cb.id = "customBox";
-  cb.innerHTML = `<span class="muted">${facing || info.curBet > 0 ? "raise to" : "bet"}</span>${STAKES() ? '<span class="muted">$</span>' : ""}<input type="number" id="customAmt" step="${STAKES() ? "any" : "0.5"}" min="0"><span class="muted">${STAKES() ? `(${usd(STAKES().bb / 2)} steps)` : "bb"}</span>`;
-  const go = document.createElement("button"); go.className = "small"; go.textContent = "Apply";
-  go.onclick = () => { showErr(act({ action: "bet", to: amountIn(document.getElementById("customAmt").value) })); renderAll(); };
-  cb.appendChild(go); el.appendChild(cb);
-  document.getElementById("customAmt").addEventListener("keydown", (e) => { if (e.key === "Enter") go.click(); if (e.key === "Escape") { cb.classList.remove("open"); e.target.blur(); } });
+  // another amount, and the all-in beside it
+  const allinOk = remaining > 0 && (raiseOk || remaining <= toCall + 1e-9);
+  if (canRaiseNow || allinOk) {
+    const cb = document.createElement("div"); cb.className = "custom"; cb.id = "customBox";
+    let go = null;
+    if (canRaiseNow) {
+      const what = facing || info.curBet > 0 ? "Raise to" : "Other amount";
+      cb.innerHTML = `<input id="customAmt" inputmode="decimal" data-key="r" title="Shortcut: R" placeholder="${what}, ${STAKES() ? "$" : "bb"}" aria-label="${what}, in ${STAKES() ? "dollars" : "bb"}">`;
+      go = document.createElement("button"); go.textContent = "Apply"; go.hidden = true;
+      go.onclick = () => { showErr(act({ action: "bet", to: amountIn(document.getElementById("customAmt").value) })); renderAll(); };
+      cb.appendChild(go);
+    }
+    if (allinOk) mk(`All-in ${AMT(myBet + remaining)}`, "agg allin", { action: "all-in" }, "", "A", "", cb);
+    el.appendChild(cb);
+    const amt = document.getElementById("customAmt");
+    if (amt) {
+      amt.addEventListener("input", () => { go.hidden = !amt.value.trim(); });
+      amt.addEventListener("keydown", (e) => { if (e.key === "Enter") go.click(); if (e.key === "Escape") { amt.value = ""; go.hidden = true; e.target.blur(); } });
+    }
+  }
 
   // one shortcut
   let sc = null;
   if (!isHero && sim.active.has(S.hero) && !sim.allin.has(S.hero) && info.order.indexOf(S.hero) > info.order.indexOf(p)) sc = [facing || street === "preflop" ? "Fold to me" : "Check to me", () => advanceTo(S.hero)];
   else if (!isHero && facing) sc = ["Everyone else folds", () => autoRest(street, "fold")];
   else if (!isHero && !facing && street !== "preflop") sc = ["Everyone checks", () => autoRest(street, "check")];
-  if (sc) { const b = document.createElement("button"); b.className = "small shortcut"; b.innerHTML = sc[0] + "<kbd>S</kbd>"; b.dataset.key = "s"; b.onclick = () => { showErr(sc[1]()); renderAll(); }; el.appendChild(b); }
+  if (sc) { const b = document.createElement("button"); b.innerHTML = sc[0]; b.title = "Shortcut: S"; b.dataset.key = "s"; b.onclick = () => { showErr(sc[1]()); renderAll(); }; el.appendChild(b); }
   finishButton(el);
 }
 // Finish hand: the hand ends here for the review, whoever is to act (a decision of yours not recorded isn't reviewed)
 function finishButton(el) {
   if (!STREETS.some(s => S.actions[s].length)) return;
-  const b = document.createElement("button"); b.className = "small shortcut"; b.id = "finishHand"; b.innerHTML = "Finish hand<kbd>E</kbd>"; b.dataset.key = "e";
-  b.title = "End the hand here and review the decisions you recorded. A decision you haven't recorded isn't reviewed.";
+  const b = document.createElement("button"); b.className = "primary fin"; b.id = "finishHand"; b.innerHTML = "Finish hand"; b.dataset.key = "e";
+  b.title = "End the hand here and review the decisions you recorded. A decision you haven't recorded isn't reviewed. Shortcut: E";
   b.onclick = finishHand; el.appendChild(b);
 }
 // A finished hand: its review, or back to entering it while no advice has been seen
-function renderFinished(el, prompt, step, sim) {
+function renderFinished(el, prompt, sim) {
   const mine = heroSpots(S).map(([s, i]) => S.actions[s][i]), todo = mine.some(a => !("g" in a));
-  step.textContent = "finished";
   prompt.innerHTML = `<span class="who">${sim.handOver ? "Hand over" : !sim.active.has(S.hero) ? "You folded" : "Hand finished"}</span><span class="pot">pot ${BBX(sim.pot)}</span><span class="ask">${mine.length ? (todo ? "Review it: the solver goes through each decision you recorded." : `${TAP} a decision to see its advice.`) + " " : "You recorded no decision, so there's nothing to review. "}Press <kbd style="margin:0">N</kbd> for a new hand.</span>`;
   el.appendChild(prompt);
   if (mine.length) {
     const b = document.createElement("button"); b.id = "reviewAll"; b.dataset.key = "r";
-    b.className = todo ? "nexth" : "small"; b.innerHTML = todo ? "Review whole hand<kbd>R</kbd>" : "Review again";
-    if (!todo) b.title = "Solve each decision again";
+    b.className = todo ? "nexth" : "small"; b.innerHTML = todo ? "Review whole hand" : "Review again";
+    b.title = todo ? "Shortcut: R" : "Solve each decision again";
     b.onclick = reviewHand; el.appendChild(b);
   }
   if (S.finished && !sim.handOver && sim.active.has(S.hero) && !fixedHand(sim)) {   // (more of the hand to enter)
-    const b = document.createElement("button"); b.id = "keepEntering"; b.className = "small"; b.textContent = "Keep entering"; b.style.marginTop = "6px";
+    const b = document.createElement("button"); b.id = "keepEntering"; b.className = "small"; b.textContent = "Keep entering";
     b.title = "Take the hand back to entering it"; b.onclick = keepEntering; el.appendChild(b);
   }
 }
 // One decision of a finished hand (stepTo): on to the others, or back to the hand
-function renderStep(el, prompt, step, sim) {
+function renderStep(el, prompt, sim) {
   const full = stepView.full, all = heroSpots(full), k = all.findIndex(([s, i]) => s === stepView.s && i === stepView.i);
-  step.textContent = `decision ${k + 1} of ${all.length}`;
-  prompt.innerHTML = `<span class="who hero">Your ${stepView.s} decision</span><span class="pot">pot ${BBX(sim.cur ? sim.cur.pot : sim.pot)}</span><span class="ask">You ${didText(full.actions[stepView.s][stepView.i])}.</span>`;
+  prompt.innerHTML = `<span class="who hero">Your ${stepView.s} decision</span><span class="pot">Decision ${k + 1} of ${all.length}</span><span class="ask">You ${didText(full.actions[stepView.s][stepView.i])}.</span>`;
   el.appendChild(prompt);
   const bar = document.createElement("div"); bar.className = "stepbar";
   const mk = (id, label, on, key, off, title) => { const b = document.createElement("button"); b.className = "small"; b.id = id; b.textContent = label; if (key) b.dataset.key = key; b.disabled = !!off; if (title) b.title = title; b.onclick = on; bar.appendChild(b); };
@@ -1438,20 +1422,21 @@ function preflopSize(sim, p) {
 
 function renderTimeline(sim) {
   const el = document.getElementById("timeline"); el.innerHTML = "";
-  let any = false;
+  let any = false, last = null;
   const shut = handDone(sim), g = (a) => shut && a.g;   // (a grade shows on a finished hand)
   for (const s of STREETS) {
     const acts = S.actions[s]; if (!acts.length) continue; any = true;
     const line = document.createElement("div"); line.className = "tl";
-    const chips = acts.map((a, i) => `<span data-s="${s}" data-i="${i}" class="chip${a.pos === S.hero ? " hero rewind" : ""}${["bet", "raise", "all-in"].includes(a.action) ? " agg" : ""}${a.action === "fold" ? " fold" : ""}" title="${a.pos === S.hero ? (shut ? "See the advice for this decision. " : "Go back and enter this decision again. ") : ""}${g(a) ? gradeTip(a.g) : ""}">${a.pos} ${a.action === "bet" ? "bets " + fmt(a.to) + withUsd(a.to) : a.action === "raise" ? "raises to " + fmt(a.to) + withUsd(a.to) : a.action === "all-in" ? "all-in" : a.action + "s"}${g(a) ? `<span class="g ${gradeClass(a.g)}">${gradeMark(a.g)}</span>` : ""}</span>`).join("");
-    const b = s === "preflop" ? "" : ` <span class="muted">${boardCards().slice(NEED[s] - (s === "flop" ? 3 : 1), NEED[s]).map(cardHtml).join(" ")}</span>`;
-    line.innerHTML = `<span class="st">${s}${b}</span><span class="line">${chips}</span>`;
-    line.querySelectorAll(".rewind").forEach(c => c.onclick = () => rewindTo(c.dataset.s, +c.dataset.i));
-    el.appendChild(line);
+    const chips = acts.map((a, i) => `<span data-s="${s}" data-i="${i}" class="chip${a.pos === S.hero ? " hero rewind" : ""}" title="${a.pos === S.hero ? (shut ? "See the advice for this decision. " : "Go back and enter this decision again. ") : ""}${g(a) ? gradeTip(a.g) : ""}">${a.pos} ${a.action === "bet" ? "bets " + fmt(a.to) + withUsd(a.to) : a.action === "raise" ? "raises " + fmt(a.to) + withUsd(a.to) : a.action === "all-in" ? "all-in" : a.action + "s"}${g(a) ? `<span class="g ${gradeClass(a.g)}">${gradeMark(a.g)}</span>` : ""}</span>`).join("");
+    line.innerHTML = `<span class="st">${s[0].toUpperCase() + s.slice(1)}</span>`;
+    const ln = document.createElement("div"); ln.className = "line"; ln.innerHTML = chips;
+    ln.querySelectorAll(".rewind").forEach(c => c.onclick = () => rewindTo(c.dataset.s, +c.dataset.i));
+    line.appendChild(ln); el.appendChild(line); last = ln;
   }
   document.getElementById("pHistory").hidden = !any;
-  const u = document.createElement("button"); u.className = "small"; u.innerHTML = "Undo<kbd>U</kbd>"; u.disabled = !any; u.onclick = undo; u.style.marginTop = "6px";
-  el.appendChild(u);
+  if (!last || fixedHand(sim)) return;
+  const u = document.createElement("button"); u.className = "link undo"; u.textContent = "Undo"; u.title = "Shortcut: U"; u.onclick = undo;
+  last.appendChild(u);
 }
 
 // ------------------------------------------------------------------ advice
@@ -1523,7 +1508,7 @@ function setColors(names) {
 }
 // an advice row's amount, unless its name already says it ("raise to 24.5", not "raise to 24.5 24.5 bb")
 const amtOf = (a) => { if (a.amount_bb == null) return null; const m = /(\d+(?:\.\d+)?)(?:bb)?$/.exec(a.action); return m && Math.abs(+m[1] - a.amount_bb) < 0.01 ? null : a.amount_bb; };
-const COLORS = (n) => n === "fold" ? "var(--fold)" : n === "in range" ? "var(--accent)" : n === "check" || n === "call" ? "var(--passive)" : n === "all-in" ? "var(--allin)" : CMAP[n] || "var(--agg1)";
+const COLORS = (n) => n === "fold" ? "var(--fold)" : n === "in range" ? "var(--muted)" : n === "check" || n === "call" ? "var(--passive)" : n === "all-in" ? "var(--allin)" : CMAP[n] || "var(--agg1)";
 // Convergence of the solve, from exploitability in % of the pot (0 = exact equilibrium of the tree); "approximate" where
 // it is over 10 times what answers reach (solver.approximate, gto/advisor.py _flag_short: the solve ran
 // short, on a busy device or in numpy after the compiled solver failed)
@@ -1604,8 +1589,8 @@ function renderResult(res, key) {
   if (heuristic(res)) h += `<div class="verdict"><span class="big">${res.recommended}</span><span class="mix">${res.opponents.length + 1} players in · equity vs field ${(res.equity_vs_field * 100).toFixed(0)}% · <span title="${HEUR_TIP}">heuristic, not a solve</span></span></div>`;
   else h += `<div class="verdict"><span class="big">${res.recommended}</span>${res.solved ? `<span class="mix">${res.opponents.length + 1} players in · 3-way solve</span>` : ""}${conv ? `<span class="conv ${conv.cls}" title="${convTip(conv)}">${conv.label} · ${conv.x.toFixed(1)}% pot</span>` : ""}${offSolution(res) ? `<span class="conv meh" title="${OFF_TIP}">off the solved line</span>` : ""}${res.precomputed ? PRE_BADGE(res.precomputed) : ""}</div>`;
   // the advisor's catch-all (gto/advisor.py Advisor._rules): the solve failed, so the chart, the betting rules or equity answered
-  if (offSolution(res)) h += `<div class="meta" style="color:var(--meh);margin:0 0 6px">Off the solved line: ${offText(res)}. This street's solve is the best answer to those ranges, not the whole hand's equilibrium.</div>`;
-  if (res.fallback) h += `<div class="meta" style="color:var(--meh);margin:0 0 6px">The solver couldn't answer this spot, so this is ${{ chart: "the preflop chart's mix", rules: "the betting rules' answer", equity: "a rough equity estimate" }[res.fallback] || "a fallback"}, not a solve.</div>`;
+  if (offSolution(res)) h += `<div class="meta" style="color:var(--text);margin:0 0 6px">Off the solved line: ${offText(res)}. This street's solve is the best answer to those ranges, not the whole hand's equilibrium.</div>`;
+  if (res.fallback) h += `<div class="meta" style="color:var(--text);margin:0 0 6px">The solver couldn't answer this spot, so this is ${{ chart: "the preflop chart's mix", rules: "the betting rules' answer", equity: "a rough equity estimate" }[res.fallback] || "a fallback"}, not a solve.</div>`;
   const hasEv = res.actions.some(a => a.ev_bb !== undefined);
   h += `<div class="arows${hasEv ? "" : " noev"}"><div class="arow head"><span>Action</span><span>${heuristic(res) ? "" : "Solver mix"}</span><span class="num">${heuristic(res) ? "" : "Freq"}</span>${hasEv ? '<span class="num" title="Expected value of taking this action, in big blinds">EV</span>' : ""}</div>`;
   for (const a of res.actions) {
@@ -1658,7 +1643,7 @@ function gridCells(grid, heroHand, legend) {
     const op = c.w <= 0 ? 0.08 : 0.25 + 0.75 * Math.min(1, c.w);
     let stack = "";
     if (c.w > 0) for (let a = 0; a < names.length; a++) stack += `<div style="width:${(c.f[a] * 100).toFixed(1)}%;background:${COLORS(names[a])}"></div>`;
-    h += `<div class="cell${i === j ? " pair" : ""}${me ? " me" : ""}" data-h="${cls}" style="opacity:${op}"><div class="stack">${stack}</div><span class="lbl">${cls}</span>${me ? '<span class="you">YOU</span>' : ""}</div>`;
+    h += `<div class="cell${c.w > 0 ? " in" : ""}${i === j ? " pair" : ""}${me ? " me" : ""}" data-h="${cls}" style="opacity:${op}"><div class="stack">${stack}</div><span class="lbl">${cls}</span>${me ? '<span class="you">YOU</span>' : ""}</div>`;
   }
   return h + `</div><div class="rangeside"><div class="readout"></div><div class="legend">${legend}</div></div></div>`;
 }
@@ -1705,13 +1690,15 @@ function updateAdviceState() {
     msg = (mine.length ? `<b>Hand review</b> · ${good} of ${mine.length} decisions in the solver's mix` : all.length ? `<b>Your decisions</b>` : "") + list
       + (all.length ? `<div class="muted" style="margin-top:4px">${TAP} a decision to see the solver's advice for it.</div>` : "")
       + (heroTurn ? `<div class="muted" style="margin-top:4px">Your ${sim.current} decision wasn't recorded, so it isn't reviewed.</div>` : "");
-  } else if (all.length) msg = `<b>Recorded so far</b>${list}`;
+  }
   note.hidden = !msg; note.innerHTML = msg;
   const rs = note.querySelector("#reviewStop");
   if (rs) rs.onclick = () => { review.cancel = "restore"; cancelSolve(); };
   note.querySelectorAll("li.rewind").forEach(li => li.onclick = () => rewindTo(li.dataset.s, +li.dataset.i));
   if (el.classList.contains("empty")) el.innerHTML = !S.cards[0] || !S.cards[1] ? EMPTY_ADVICE
-    : reviewing() ? "Getting the solver ready…" : !done ? RECORDING : all.length ? "" : "Nothing to review: you recorded no decision in this hand.";
+    : reviewing() ? "Getting the solver ready…" : !done ? EMPTY_ADVICE : all.length ? "" : "Nothing to review: you recorded no decision in this hand.";
+  document.getElementById("doneBtns").hidden = !done;
+  renderReady();
 }
 
 // ---- your equity on a reviewed hand you were still in when the betting closed (the street checked through or called and
@@ -1826,8 +1813,7 @@ async function reviewHand() {
     document.getElementById("solverRetry").onclick = () => retrySolver(reviewHand);
   }
 }
-const EMPTY_ADVICE = "Enter a hand you've played: your seat and cards, then the action seat by seat.<br>When it's finished, the solver reviews each decision you made.";
-const RECORDING = "Recording your decisions. Nothing is solved while you enter a hand.<br>When the hand ends, or you press Finish hand, you can review each decision you recorded.";
+const EMPTY_ADVICE = "Finish the hand to see how each decision compares with the solver. Nothing is solved until then.";
 function resetAdvice() {
   const el = document.getElementById("result"); lastKey = null; lastResult = null; resultKey = null;
   if (el.className !== "empty") { el.className = "empty"; el.innerHTML = EMPTY_ADVICE; }
@@ -1988,6 +1974,7 @@ for (const id of ["stakeSb", "stakeBb"]) document.getElementById(id).onchange = 
   const sb = parseFloat(document.getElementById("stakeSb").value), bb = parseFloat(document.getElementById("stakeBb").value);
   if (sb > 0 && bb > 0 && sb <= bb) setStakes({ sb, bb }); else renderAll();
 };
+document.getElementById("setupEdit").onclick = () => { stepStop(); editSetup = true; renderAll(); };
 document.getElementById("setupDone").onclick = () => { editSetup = false; renderAll(); };
 document.getElementById("editCards").onclick = () => { if (needCard(simulate())) { showDeck = false; selSlot = null; pendingRank = null; } else showDeck = true; renderAll(); };
 
@@ -1995,7 +1982,7 @@ document.getElementById("editCards").onclick = () => { if (needCard(simulate()))
 document.addEventListener("keydown", (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey || /input|textarea|select/i.test(e.target.tagName)) return;
   const k = e.key, low = k.toLowerCase();
-  if (k === "Escape") { pendingRank = null; selSlot = null; showDeck = false; const cb = document.getElementById("customBox"); if (cb) cb.classList.remove("open"); renderAll(); return; }
+  if (k === "Escape") { pendingRank = null; selSlot = null; showDeck = false; renderAll(); return; }
   if (low === "n") { e.preventDefault(); document.getElementById("newhand").click(); return; }
   const sim = simulate();
   if (needCard(sim)) {
@@ -2013,7 +2000,7 @@ document.addEventListener("keydown", (e) => {
   if (low === "u" || k === "Backspace") { e.preventDefault(); undo(); return; }
   const key = low === "x" ? "c" : low;   // X also checks
   const b = document.querySelector(`#actionArea [data-key="${CSS.escape(key)}"]`);
-  if (b) { e.preventDefault(); b.click(); }
+  if (b) { e.preventDefault(); if (b.tagName === "INPUT") b.focus(); else b.click(); }
 });
 document.getElementById("newhand").onclick = () => {
   keepHand("replaced");
@@ -2063,57 +2050,14 @@ for (const page of HELP_PAGES)
   VIEWS[page] = { open: () => loadHelp().then(() => window.Help.open(page)), close: () => window.Help && window.Help.close(), err: "Couldn't load this page: " };
 window.viewSwitch = (name) => { if (!VIEWS[name] || overlay === name) return; overlay = name; syncRoute(); };
 document.getElementById("helpAbout").onclick = () => openView("about");
-// ---- layout (per browser): column divider, table height, folded panels. Only in a real
-// browser (the tests' fake DOM has no window events), and never allowed to break the page.
-(function layout() {
+// ---- the on-screen keyboard: iOS Safari (and Chrome on Android) shrink only the visual viewport, so the dock, stuck to the
+// bottom of the layout viewport, sat under the keyboard while another amount was typed. --kb lifts it by the part of the
+// layout viewport the keyboard covers (0 without a keyboard, or when zoomed). Only in a real browser (the tests' fake DOM
+// has no window events unless asked), and never allowed to break the page.
+(function keyboard() {
   if (typeof window.addEventListener !== "function" || typeof document.documentElement === "undefined") return;
   try {
-    const root = document.documentElement, KEY = "gto-layout";
-    let L = {}; try { L = JSON.parse(pageStore.getRaw(KEY)) || {}; } catch (e) {}
-    const store = () => pageStore.setRaw(KEY, JSON.stringify(L));
-    const apply = () => {
-      if (L.left) root.style.setProperty("--left", L.left + "px"); else root.style.removeProperty("--left");
-      if (L.felt) root.style.setProperty("--felt-h", L.felt + "px"); else root.style.removeProperty("--felt-h");
-      for (const id of ["pTable", "pHistory"]) {
-        const p = document.getElementById(id), folded = !!(L.folded || {})[id];
-        p.classList.toggle("collapsed", folded);
-        p.querySelector("h2[data-fold]").setAttribute("aria-expanded", folded ? "false" : "true");
-      }
-    };
-    apply();
-    // drag with the pointer; onMove gets the pointer event, done() saves
-    const drag = (el, cls, onMove) => {
-      el.addEventListener("pointerdown", (e) => {
-        if (e.button !== 0) return;
-        e.preventDefault(); try { el.setPointerCapture(e.pointerId); } catch (err) {} el.classList.add("drag"); document.body.classList.add(cls);
-        const move = (ev) => onMove(ev, e);
-        const up = () => { el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up); el.removeEventListener("pointercancel", up);
-          el.classList.remove("drag"); document.body.classList.remove(cls); store(); };
-        el.addEventListener("pointermove", move); el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up);
-      });
-    };
-    const main = document.querySelector("main"), split = document.getElementById("split");
-    drag(split, "dragging", (ev) => {
-      const r = main.getBoundingClientRect();
-      L.left = Math.round(Math.max(340, Math.min(r.width - 340, ev.clientX - r.left - 12))); apply();
-    });
-    split.addEventListener("dblclick", () => { delete L.left; apply(); store(); });
-    const grip = document.getElementById("feltGrip"), felt = document.getElementById("felt");
-    drag(grip, "dragging-v", (ev) => {
-      const top = felt.getBoundingClientRect().top;
-      L.felt = Math.round(Math.max(140, Math.min(560, ev.clientY - top))); apply();
-    });
-    grip.addEventListener("dblclick", () => { delete L.felt; apply(); store(); });
-    for (const h of document.querySelectorAll("h2[data-fold]")) {
-      const fold = () => { const id = h.parentElement.id; L.folded = L.folded || {}; L.folded[id] = !L.folded[id]; apply(); store(); };
-      h.addEventListener("click", (e) => { if (!e.target.closest("button")) fold(); });
-      // a focused title folds with Enter or Space, like a button (the page's own shortcuts don't see these keys)
-      h.addEventListener("keydown", (e) => { if (e.target === h && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); e.stopPropagation(); fold(); } });
-    }
-    // The on-screen keyboard: iOS Safari (and Chrome on Android) shrink only the visual viewport, so the dock,
-    // stuck to the bottom of the layout viewport, sat under the keyboard while a custom size was typed. --kb
-    // lifts it by the part of the layout viewport the keyboard covers (0 without a keyboard, or when zoomed).
-    const vv = window.visualViewport;
+    const root = document.documentElement, vv = window.visualViewport;
     if (vv) {
       const kb = () => {
         const o = root.clientHeight - vv.height - vv.offsetTop;
