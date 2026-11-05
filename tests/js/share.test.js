@@ -184,3 +184,26 @@ test("Share falls back to execCommand, then a prompt, when the clipboard API ref
   assert.equal(p.byId("share").textContent, "Share");
   await flush();
 });
+
+test("Copy hand: the table, your cards and the actions so far, in a few lines", () => {
+  const p = loadPage();
+  p.S = { players: 6, hero: "BTN", stack: 100, cards: ["Ah", "Kh", "Kd", "7s", "2c", null, null], actions: {
+    preflop: [{ pos: "UTG", action: "fold" }, { pos: "HJ", action: "raise", to: 2.5 }, { pos: "CO", action: "fold" }, { pos: "BTN", action: "call" }, { pos: "SB", action: "fold" }, { pos: "BB", action: "fold" }],
+    flop: [{ pos: "HJ", action: "bet", to: 2 }], turn: [], river: [] } };
+  assert.equal(p.run("handText()"), [
+    "6-handed, 100bb stacks, I am BTN with AhKh",
+    "Preflop: UTG folds, HJ raises to 2.5, CO folds, BTN calls, SB folds, BB folds",
+    "Flop (Kd 7s 2c): HJ bets 2. BTN to act, pot 8.5bb"].join("\n"));
+  p.run("S.actions.flop = []; S.cards = ['Ah', 'Kh', null, null, null, null, null]; S.actions.preflop = []; S.finished = false");
+  assert.equal(p.run("handText()"), "6-handed, 100bb stacks, I am BTN with AhKh\nPreflop: UTG to act, pot 1.5bb");
+});
+
+test("Copy hand copies the text and says so", async () => {
+  const p = loadPage();
+  await p.ready();
+  await p.click("copyhand");
+  assert.equal(p.clipboard.text, p.run("handText()"));
+  assert.equal(p.byId("copyhand").textContent, "Copied");
+  await flush();
+});
+

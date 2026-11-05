@@ -364,7 +364,7 @@
 <main class="app">
   <div class="col">
     <section id="pSetup">
-      <div class="setup"><span id="setupSum"></span><button class="link edit" id="setupEdit">Edit</button><button class="new" id="newhand" data-cap="N">New hand</button></div>
+      <div class="setup"><span id="setupSum"></span><button class="link edit" id="setupEdit">Edit</button><button class="link edit" id="copyhand" title="Copy the hand so far as text: the table, your cards and each street's actions">Copy hand</button><button class="new" id="newhand" data-cap="N">New hand</button></div>
       <div id="setupFull" class="panel" hidden>
         <div class="row setuprow">
           <span class="muted">Stakes</span>
@@ -1945,13 +1945,31 @@ function copyText(text) {
     return false;
   });
 }
-document.getElementById("share").onclick = () => {
-  const b = document.getElementById("share");
-  return copyText(shareLink()).then((ok) => {
-    b.textContent = ok ? "Copied" : "Share";
-    if (ok) setTimeout(() => b.textContent = "Share", 1500);
+// The hand so far in a few lines of text. In a decision of a review, the hand up to that decision.
+function handText() {
+  const n = S.players, sim = simulate(), held = S.cards[0] && S.cards[1] ? S.cards[0] + S.cards[1] : "??";
+  const lines = [[`${n}-handed`, ...(STAKES() ? [STAKES_TEXT()] : []), `${fmt(S.stack)}bb${withUsd(S.stack)} stacks${UNEQUAL() ? ` (${STACKS_TEXT()})` : ""}`,
+    ...(ANTE() ? [`${fmt(ANTE())}bb${withUsd(ANTE())} ante`] : []), ...(STRADDLER() ? [`${SEAT_LABEL(STRADDLER(), n)} straddles 2bb`] : []), ...(RAKE() ? [RAKE_TEXT()] : []),
+    `I am ${SEAT_LABEL(S.hero, n)} with ${held}`].join(", ")];
+  const act = (a) => `${SEAT_LABEL(a.pos, n)} ${a.action === "bet" ? "bets " + fmt(a.to) + withUsd(a.to) : a.action === "raise" ? "raises to " + fmt(a.to) + withUsd(a.to) : a.action === "all-in" ? "all-in" : a.action + "s"}`;
+  const board = (s) => s === "preflop" ? "" : ` (${boardCards().slice(NEED[s] - (s === "flop" ? 3 : 1), NEED[s]).join(" ")})`;
+  for (const s of STREETS) {
+    const toAct = sim.current === s && sim.cur && !handDone(sim) && !dealing(sim);
+    if (!S.actions[s].length && !toAct) continue;
+    const said = S.actions[s].map(act).join(", ");
+    lines.push(`${s[0].toUpperCase() + s.slice(1)}${board(s)}: ${said}${toAct ? `${said ? ". " : ""}${SEAT_LABEL(sim.toAct, n)} to act, pot ${fmt(sim.cur.pot)}bb${withUsd(sim.cur.pot)}` : ""}`);
+  }
+  return lines.join("\n");
+}
+const copyButton = (id, label, text) => {
+  const b = document.getElementById(id);
+  b.onclick = () => copyText(text()).then((ok) => {
+    b.textContent = ok ? "Copied" : label;
+    if (ok) setTimeout(() => b.textContent = label, 1500);
   });
 };
+copyButton("share", "Share", shareLink);
+copyButton("copyhand", "Copy hand", handText);
 function linkState() {   // the spot a #h= link carries (null if none), the hash cleared
   const m = location.hash.match(/#h=([A-Za-z0-9+/=]+)/);
   if (!m) return null;
