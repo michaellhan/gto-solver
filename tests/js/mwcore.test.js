@@ -11,12 +11,12 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const ROOT = path.join(__dirname, "..", "..");
-const MAGIC = 0x6d776333;
+const MAGIC = 0x6d776334;
 
 // Players 0, 1 and 2 each pick one of two actions (RDEC: regrets, sums, a kept strategy and its flag per decision),
 // then a fold (RFOLD) leaves one of them the pot: 8 leaves, a pass's tasks. n combos, some sharing a card.
 function mwGame(ex, n) {
-  const MAGIC = 0x6d776333;
+  const MAGIC = 0x6d776334;
   ex.mw_reset();
   const base = ex.mw_base() >>> 0;
   const put = (words, Arr) => {
@@ -32,11 +32,11 @@ function mwGame(ex, n) {
   const regret = put(new Array(len).fill(0), Float32Array), ssum = put(new Array(len).fill(0), Float32Array);
   const sig = put(new Array(len).fill(0), Float32Array), flags = put(new Array(ndec).fill(0), Int32Array);
   const arrs = put([regret, ssum, len], Int32Array);
-  // the records after the header's 26 words: decision d at depth q (player q), its children next
+  // the records after the header's 35 words: decision d at depth q (player q), its children next
   const words = [];
   let dec = 0, leaf = 0;
   const node = (q) => {
-    const at = 26 + words.length;
+    const at = 35 + words.length;
     if (q === 3) {
       const l = leaf++;
       words.push(2, l % 3, f(3 + l), f(1 + (l % 2)), f(1), f(0.5 * l));
@@ -45,12 +45,12 @@ function mwGame(ex, n) {
     const d = dec++;
     words.push(1, q, 2, regret + 8 * n * d, ssum + 8 * n * d, sig + 8 * n * d, d, 0, 0);
     const a = node(q + 1), b = node(q + 1);
-    words[at - 26 + 7] = a;
-    words[at - 26 + 8] = b;
+    words[at - 35 + 7] = a;
+    words[at - 35 + 8] = b;
     return at;
   };
   const root = node(0);
-  const prog = put([MAGIC, 3, n, 1, 1, root, ca, cb, 0, 0, 0, 0, 1, arrs, 0, R0, 0, 0, 0, flags, ndec, 0, 0, 0, 0, 0, ...words], Int32Array);
+  const prog = put([MAGIC, 3, n, 1, 1, root, ca, cb, 0, 0, 0, 0, 1, arrs, 0, R0, 0, 0, 0, flags, ndec, ...new Array(14).fill(0), ...words], Int32Array);
   const iters = 40;
   const t = [...Array(iters).keys()].map((i) => i + 1);
   const fac = put(t.flatMap((x) => [x ** 1.5 / (x ** 1.5 + 1), 0.5, (x / (x + 1)) ** 2]), Float32Array);

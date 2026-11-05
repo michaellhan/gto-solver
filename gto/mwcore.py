@@ -24,8 +24,8 @@ import weakref
 
 import numpy as np
 
-MAGIC = 0x6d776333
-RDEC, RFOLD, REXIT, BDEC, BTERM, BEXIT, BTERMW, RSHOW = 1, 2, 3, 4, 5, 6, 7, 8
+MAGIC = 0x6d776334
+RDEC, RFOLD, REXIT, BDEC, BTERM, BEXIT, BTERMW, RSHOW, RRUN = 1, 2, 3, 4, 5, 6, 7, 8, 9
 ALT, BR, EV = 0, 1, 2
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "core", "mwcore.c")
@@ -243,14 +243,14 @@ class Program:
         from . import multiway_solver as MW
         self.MW = MW
         cfg = s.cfg
-        self.river = not s.levels
+        self.river = len(s.board) == 5
         if self.river:
-            if s.np != 3 or s._pw or len(s.board) != 5 or not cfg.exact or not cfg.alternate or cfg.allin and \
-                    len(cfg.allin) > 1:
+            if s.np != 3 or s._pw or not cfg.exact or not cfg.alternate or cfg.allin and len(cfg.allin) > 1:
                 raise Unsupported("not a 3-way river")
-        elif s.tabs is None or not cfg.alternate or s.np not in (2, 3, 4) or (s._pw and s.np != 4):
+        elif (s.tabs is None and not s.builder.runouts) or not cfg.alternate or s.np not in (2, 3, 4) or \
+                (s._pw and s.np != 4):
             raise Unsupported("not a bucketed 2-, 3- or 4-player solve")
-        elif s.tabs.K > MAX_K or len(cfg.allin) > 1:
+        elif (s.tabs is not None and s.tabs.K > MAX_K) or len(cfg.allin) > 1:
             raise Unsupported("buckets or all-ins")
         self.L, self.s = L, weakref.ref(s)
         L.reset()
@@ -259,7 +259,7 @@ class Program:
         self.bytes = 0
         tb = s.tabs
         self.np, self.n = s.np, s.hands.n
-        self.K, self.C = (0, 0) if self.river else (tb.K, tb.C)
+        self.K, self.C = (0, 0) if tb is None else (tb.K, tb.C)     # (no line left to bet on: all-ins and folds only)
         self.nflag = 0                # records with a current strategy kept (its flag: 1 while it's current)
         self.at = {}                  # id(root-street node) -> its record
         self._bitc = {}
@@ -275,13 +275,16 @@ class Program:
         self.push(flags=False)
         self.w = [MAGIC, s.np, self.n, self.K, self.C, 0,
                   self._up(s.hands.ca, np.int32), self._up(s.hands.cb, np.int32), 0, 0, 0, 0, 0, 0,
-                  _mask(cfg.allin), self._up(s.reach0[:, 0, :], np.float32)] + [0] * 10
+                  _mask(cfg.allin), self._up(s.reach0[:, 0, :], np.float32)] + [0] * 19
         if s.np == 4:      # (the root street's deals' weight: pairwise, each player's overlap correction)
             self.w[21] = self._up(np.concatenate([s._pw_corr(p) for p in range(4)]), np.float32)
         if self.river:
             self._river(s)
         else:
-            self._buckets(s)
+            if tb is not None:
+                self._buckets(s)
+            if s.builder.runouts:
+                self._runouts(s)
         self.w[5] = self._root(s.root)
         # (the discount: one run of regrets and one of sums)
         arrs = np.array([[self.reg, self.ssum, self.total]], dtype=np.int64)
@@ -315,6 +318,31 @@ class Program:
         self.w[23] = self._up(order, np.int32)
         self.w[24] = self._up(gend, np.int32)
         self.w[25] = self._up(sm, np.int32)
+
+    def _runouts(self, s):
+        """What every root-street all-in of a solve shares. The rows walked for a pot of three (the header's rb, rord,
+        rgend, rmk): the combos by strength on each runout, each one's tie group's end in that order, and the combos each
+        leaves live. The heads-up table (rt, built by the core on first use, MultiwaySolver._allin_table): its space, and
+        every runout's strengths (rf, rfs; -1: holds a card of it), and how many of them a compatible pair sees (rpair)."""
+        bd = s.builder.runouts[0].bd
+        node = s.builder.runouts[0]
+        if bd.s.max() >= 2 ** 31:
+            raise Unsupported("a board's strengths")
+        ss = np.take_along_axis(bd.s, bd.order, axis=1)
+        gend = np.stack([np.searchsorted(r, r, "right") for r in ss])
+        self.w[26] = bd.B
+        self.w[27] = self._up(bd.order, np.int32)
+        self.w[28] = self._up(gend, np.int32)
+        self.w[29] = self._up(node.masks, np.float32)
+        rows, pairs = s.builder.every
+        from .evaluator import eval_boards
+        st = eval_boards(rows, s.hands.active)
+        if st.max() >= 2 ** 31:
+            raise Unsupported("a board's strengths")
+        self.w[30] = self._space(4 * self.n * self.n)
+        self.w[31] = len(rows)
+        self.w[32] = self._up(st, np.int32)
+        self.w[33] = pairs
 
     def _buckets(self, s):
         """A bucketed solve's tables: the classes' masks, each combo's bucket, the showdown tensors, the root Exits'
@@ -398,10 +426,11 @@ class Program:
                 kid = self._root(ch)
                 w[at + 7 + a] = kid
             return at
-        if isinstance(node, MW.Terminal) and len(node.live) > 1 and self.river and node.bd.B == 1:
-            # a river's showdown: per player its weight on the deals' weight and on its share of each pot (chips: minus
-            # its chips in, and each pot less the rake; a tournament's Terminal.W), the pots layered by the players'
-            # stakes (MultiwaySolver._term)
+        if isinstance(node, MW.Terminal) and len(node.live) > 1 and (isinstance(node, MW.Runout) or self.river and
+                                                                     node.bd.B == 1):
+            # a river's showdown or a root-street all-in: per player its weight on the deals' weight and on its share of
+            # each pot (chips: minus its chips in, and each pot less the rake; a tournament's Terminal.W), the pots
+            # layered by the players' stakes (MultiwaySolver._term)
             if node.lay is None:
                 node.lay = s._lay(node.live, node.c, node.pot)
             net = node.pot - node.rake
@@ -412,7 +441,7 @@ class Program:
             else:
                 b = [-x for x in node.c]
                 a = [[x] * s.np for x, _ in pots]
-            w += [RSHOW, _mask(node.live), len(pots)] + [_f(x) for x in b]
+            w += [RRUN if isinstance(node, MW.Runout) else RSHOW, _mask(node.live), len(pots)] + [_f(x) for x in b]
             for (_, lv), ak in zip(pots, a):
                 w += [_mask(lv)] + [_f(x) for x in ak]
             return at

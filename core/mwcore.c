@@ -30,6 +30,7 @@
  *                                                                deals' weight plus wA_p (wS_p) times its share of
  *                                                                the main (side) pot (MultiwaySolver._icm_setup)
  *   RSHOW [8, live, npot, b_0 .. b_np-1, (mask_k, a_k0 .. a_k,np-1) x npot]  a river root's showdown: show()
+ *   RRUN  [9, as RSHOW]                                          a root-street all-in, cards to come: runout()
  * (c: each player's chips in, as floats; arrs: here one run of every decision's regrets and one of their sums)
  * tens: per player p, J's tensor at [p] and live set L's shares at [np + L * np + p] (offsets; 0 none); ids (np, C, n)
  * each combo's bucket; masks, wmask (C, n); arrs (narr, 3): every decision's regret, ssum and length (the discount);
@@ -42,7 +43,11 @@
  * A river root (three players, no later streets: no buckets, C = K = 0) has showdowns on the root street, per combo
  * with exact card removal, and the header's words after pwc: str (n) each combo's strength, ord (n) the combos by
  * strength, gend (n) the end of each one's tie group in that order, sm (52, 52) the strength of the combo {c, d} at
- * [c][d] (int32); 0 for any other program.
+ * [c][d] (int32); 0 for any other program. After them rb, the rows walked for a root-street all-in of three (runouts),
+ * rord (rb, n) the combos by strength on each, rgend (rb, n) the end of each one's tie group in that order, rmk (rb, n)
+ * the combos each leaves live; rt the heads-up table's space (n, n float32), rf every runout, rfs (rf, n) strengths on
+ * each (-1: the combo holds a card of it), rpair how many of them a compatible pair of combos sees, rdone the table's
+ * built; 0 with no all-in. A solve with no line left to bet on has C = K = 0.
  *
  * Four players (nobody all-in) contract (C, K_o0, K_o1, K_o2, K_p) tensors over three reaches, with no fold reductions.
  */
@@ -74,8 +79,8 @@ extern unsigned char __heap_base;
 #define MAXT 1
 #endif
 
-#define MAGIC 0x6d776333 /* "mwc3" */
-enum { RDEC = 1, RFOLD = 2, REXIT = 3, BDEC = 4, BTERM = 5, BEXIT = 6, BTERMW = 7, RSHOW = 8 };
+#define MAGIC 0x6d776334 /* "mwc3" */
+enum { RDEC = 1, RFOLD = 2, REXIT = 3, BDEC = 4, BTERM = 5, BEXIT = 6, BTERMW = 7, RSHOW = 8, RRUN = 9 };
 enum { ALT = 0, BR = 1, EV = 2 };
 
 /* ------------------------------------------------------------------ arena */
@@ -154,6 +159,9 @@ static int NP, N, K, C, ALLIN;
 static const i32 *CA, *CB, *IDS, *PERM, *SEG;
 static const f32 *MASKS, *WMASK, *MKP, *PWC;
 static const i32 *STR, *ORD, *GEND, *SM;   /* (a river root's) */
+static int RB;                             /* (a root-street all-in's runouts) */
+static const i32 *RORD, *RGEND;
+static const f32 *RMK, *RT;
 static i32 *FLAGS;
 static int NFLAG;
 static const u32 *TENS;
@@ -166,6 +174,31 @@ static inline f32 fbits(i32 w) {
   return u.f;
 }
 static inline int pop(int m) { return __builtin_popcount((unsigned)m); }
+
+/* MultiwaySolver._allin_table: T[q][h], combo h's share of a pot against combo q over every runout (a win 1, a tie a
+   half, 0 if they share a card), counted in half-wins and then divided by the runouts a compatible pair sees. */
+static void equity_table(void) {
+  int rows = W[31];
+  const i32 *st = PI(W[32]);
+  i32 *T = PI(W[30]);
+  for (size_t j = 0; j < (size_t)N * N; j++) T[j] = 0;
+  for (int b = 0; b < rows; b++) {
+    const i32 *s = st + (size_t)b * N;
+    for (int q = 0; q < N; q++) {
+      i32 sq = s[q], *t = T + (size_t)q * N;
+      if (sq < 0) continue;
+      for (int h = 0; h < N; h++) t[h] += (s[h] > sq) + (s[h] >= sq);
+    }
+  }
+  f32 sc = 0.5f / (f32)W[33];
+  f32 *F = PF(W[30]);
+  for (int q = 0; q < N; q++)
+    for (int h = 0; h < N; h++) {
+      size_t o = (size_t)q * N + h;
+      F[o] = (CA[q] == CA[h] || CA[q] == CB[h] || CB[q] == CA[h] || CB[q] == CB[h]) ? 0.0f : (f32)T[o] * sc;
+    }
+  ((i32 *)W)[34] = 1;
+}
 
 static void load(u32 prog) {
   W = PI(prog);
@@ -190,6 +223,12 @@ static void load(u32 prog) {
   ORD = W[23] ? PI(W[23]) : 0;
   GEND = W[24] ? PI(W[24]) : 0;
   SM = W[25] ? PI(W[25]) : 0;
+  RB = W[26];
+  RORD = W[27] ? PI(W[27]) : 0;
+  RGEND = W[28] ? PI(W[28]) : 0;
+  RMK = W[29] ? PF(W[29]) : 0;
+  RT = W[30] ? PF(W[30]) : 0;
+  if (RT && !W[34]) equity_table();
 }
 
 static const f32 *tensor(int key, int p) { /* key: -1 J, else a live set's mask */
@@ -762,7 +801,7 @@ static void deal_mass(Lane *L, const f32 *R, int p, f32 *m) {
         tot[r] += (f64)R[(size_t)q * N + h] * x;
       }
     }
-    f64 sc = tot[1] > 1e-280 ? tot[0] / tot[1] : 1.0;
+    f64 sc = tot[1] > 1e-280 && tot[1] > 1e-9 * (tot[0] < 0 ? -tot[0] : tot[0]) ? tot[0] / tot[1] : 1.0;
     sc = sc < 0.5 ? 0.5 : sc > 2.0 ? 2.0 : sc;
     if (p != 0)
       for (int h = 0; h < N; h++) m[h] = (f32)(m[h] * sc);
@@ -912,6 +951,165 @@ static void show(Lane *L, const i32 *w, const f32 *R, f32 *v, int p) {
   L->top = mark;
 }
 
+/* ------------------------------------------------------------------ a root-street all-in's runouts */
+/* RRUN: nobody can bet, so p's value per combo h is the deals' weight m(h) (deal_mass, as a fold's) times b_p plus
+   a_kp times h's own share of each pot k it contests, over the runouts (MultiwaySolver._term_runout). Heads-up the
+   table (equity_table): RT x the other's reach (weighted by what the hands of the players out of that pot leave it)
+   over its compatible reach, O(n^2) with a thin range cheaper. Against
+   two others q and r the rows: W_q W_r + E_q E_r / 12 over U_q U_r (W = weaker + tied / 2 of the reach, independent
+   given h and the row), each summed over the rows h is live on before dividing: one walk up the combos by strength
+   per row and player, O(rows n). Three players: a pot's shares scaled to add up to every deal's. */
+static void runout_kernels(const f32 *x, const f32 *mk, const i32 *ord, const i32 *gend, f32 *y, f64 *cc, f64 *ku,
+                           f64 *kw, f64 *ke) {
+  f64 tot = 0;
+  f64 *Cc = cc, *Lc = cc + 52, *Tc = cc + 104;
+  for (int c = 0; c < 156; c++) cc[c] = 0;
+  for (int i = 0; i < N; i++) {
+    y[i] = x[i] * mk[i];
+    Cc[CA[i]] += y[i];
+    Cc[CB[i]] += y[i];
+    tot += y[i];
+  }
+  f64 XL = 0;
+  for (int i = 0; i < N;) {
+    int end = gend[i];
+    f64 XE = 0;
+    for (int j = i; j < end; j++) {
+      int g = ord[j];
+      Tc[CA[g]] += y[g];
+      Tc[CB[g]] += y[g];
+      XE += y[g];
+    }
+    for (int j = i; j < end; j++) {
+      int h = ord[j], e = CA[h], f = CB[h];
+      f64 kl = XL - Lc[e] - Lc[f], k = XE - Tc[e] - Tc[f] + y[h];
+      ku[h] = tot - Cc[e] - Cc[f] + y[h];
+      kw[h] = kl + 0.5 * k;
+      ke[h] = k;
+    }
+    for (int j = i; j < end; j++) {
+      int g = ord[j], a = CA[g], b = CB[g];
+      Lc[a] += Tc[a], Tc[a] = 0;
+      Lc[b] += Tc[b], Tc[b] = 0;
+    }
+    XL += XE;
+    i = end;
+  }
+}
+
+static void runout(Lane *L, const i32 *w, const f32 *R, f32 *v, int p) {
+  int npot = w[2];
+  const i32 *pots = w + 3 + NP;
+  size_t mark = L->top, stride = 1 + (size_t)NP, nn = (size_t)npot * NP * N;
+  f32 *M = salloc(L, sizeof(f32) * (size_t)NP * N), *y = salloc(L, sizeof(f32) * N), *x = salloc(L, sizeof(f32) * N);
+  f64 *val = salloc(L, sizeof(f64) * N), *cc = salloc(L, sizeof(f64) * 156);
+  f64 *num = salloc(L, sizeof(f64) * nn), *den = salloc(L, sizeof(f64) * nn);
+  f64 *T = salloc(L, sizeof(f64) * 3 * (size_t)NP * N);
+  int tabs = 0, masses = 1 << p;            /* whose rows' kernels; whose deals' weights (three: to scale the shares) */
+  for (int k = 0; k < npot; k++) {
+    int mask = pots[(size_t)k * stride];
+    if (!(mask >> p & 1) || pop(mask) < 2) continue;
+    if (pop(mask) > 2) tabs |= NP == 3 ? mask : mask & ~(1 << p);
+    if (NP == 3) masses |= mask;
+  }
+  for (int j = 0; j < NP; j++)
+    if (masses >> j & 1) deal_mass(L, R, j, M + (size_t)j * N);
+  for (size_t j = 0; j < nn; j++) num[j] = den[j] = 0;
+  for (int k = 0; k < npot; k++) {  /* heads-up: the table, linear in the other's reach */
+    int mask = pots[(size_t)k * stride];
+    if (!(mask >> p & 1) || pop(mask) != 2) continue;
+    for (int l = 0; l < NP; l++) {
+      if (!(mask >> l & 1) || (NP == 3 ? 0 : l != p)) continue;
+      f64 *nk = num + ((size_t)k * NP + l) * N, *dk = den + ((size_t)k * NP + l) * N;
+      int o = __builtin_ctz((unsigned)(mask & ~(1 << l)));
+      for (int h = 0; h < N; h++) x[h] = R[(size_t)o * N + h];
+      for (int j = 0; j < NP; j++) /* a player out of this pot still holds cards: o's weight given them */
+        if (j != l && j != o) {
+          kmass(L, R + (size_t)j * N, y);
+          for (int h = 0; h < N; h++) x[h] *= y[h];
+        }
+      for (int h = 0; h < N; h++) y[h] = 0;
+      for (int q = 0; q < N; q++) {
+        f32 xq = x[q];
+        const f32 *t = RT + (size_t)q * N;
+        if (xq > 0)
+          for (int h = 0; h < N; h++) y[h] += xq * t[h];
+      }
+      for (int h = 0; h < N; h++) nk[h] = y[h];
+      kmass(L, x, y);
+      for (int h = 0; h < N; h++) dk[h] = y[h];
+    }
+  }
+  for (int b = 0; tabs && b < RB; b++) {
+    const i32 *ord = RORD + (size_t)b * N, *gend = RGEND + (size_t)b * N;
+    const f32 *mk = RMK + (size_t)b * N;
+    for (int j = 0; j < NP; j++)
+      if (tabs >> j & 1) {
+        f64 *t = T + 3 * (size_t)j * N;
+        runout_kernels(R + (size_t)j * N, mk, ord, gend, y, cc, t, t + N, t + 2 * (size_t)N);
+      }
+    for (int k = 0; k < npot; k++) {
+      int mask = pots[(size_t)k * stride];
+      if (!(mask >> p & 1) || pop(mask) < 3) continue;
+      for (int l = 0; l < NP; l++) {
+        if (!(mask >> l & 1) || (NP != 3 && l != p)) continue;
+        f64 *nk = num + ((size_t)k * NP + l) * N, *dk = den + ((size_t)k * NP + l) * N;
+        int o[3], no = 0;
+        for (int j = 0; j < NP; j++)
+          if (j != l && (mask >> j & 1)) o[no++] = j;
+        const f64 *t0 = T + 3 * (size_t)o[0] * N, *t1 = T + 3 * (size_t)o[1] * N;
+        if (no == 2) {
+          const f64 *e0 = t0 + 2 * (size_t)N, *e1 = t1 + 2 * (size_t)N;
+          for (int h = 0; h < N; h++) {
+            nk[h] += (t0[N + h] * t1[N + h] + e0[h] * e1[h] / 12.0) * mk[h];
+            dk[h] += t0[h] * t1[h] * mk[h];
+          }
+        } else {
+          const f64 *t2 = T + 3 * (size_t)o[2] * N;
+          for (int h = 0; h < N; h++) {
+            nk[h] += t0[N + h] * t1[N + h] * t2[N + h] * mk[h];
+            dk[h] += t0[h] * t1[h] * t2[h] * mk[h];
+          }
+        }
+      }
+    }
+  }
+  f32 bp = fbits(w[3 + p]);
+  for (int h = 0; h < N; h++) val[h] = bp;
+  for (int k = 0; k < npot; k++) {
+    const i32 *pk = pots + (size_t)k * stride;
+    int mask = pk[0];
+    if (!(mask >> p & 1)) continue;
+    f64 a = fbits(pk[1 + p]);
+    if (pop(mask) == 1) {
+      for (int h = 0; h < N; h++) val[h] += a;
+      continue;
+    }
+    f64 tot = 0, whole = 0;
+    for (int l = 0; l < NP; l++) {
+      if (!(mask >> l & 1) || (NP != 3 && l != p)) continue;
+      f64 *nk = num + ((size_t)k * NP + l) * N, *dk = den + ((size_t)k * NP + l) * N; /* num becomes the share */
+      const f32 *rl = R + (size_t)l * N, *ml = M + (size_t)l * N;
+      f64 tl = 0, wl = 0;
+      for (int h = 0; h < N; h++) {
+        f64 s = dk[h] > 0 ? nk[h] / dk[h] : 0;
+        s = s < 0 ? 0 : s > 1 ? 1 : s;
+        nk[h] = s;
+        tl += (f64)rl[h] * ml[h] * s;
+        wl += (f64)rl[h] * ml[h];
+      }
+      tot += tl;
+      if (!whole) whole = wl;
+    }
+    if (NP == 3 && tot > 1e-300) a *= whole / tot;
+    const f64 *sp = num + ((size_t)k * NP + p) * N;
+    for (int h = 0; h < N; h++) val[h] += a * sp[h];
+  }
+  const f32 *mp = M + (size_t)p * N;
+  for (int h = 0; h < N; h++) v[h] = (f32)(val[h] * mp[h]);
+  L->top = mark;
+}
+
 /* each player's reach (C, K) per class and bucket: the sums of its combos' reaches times the class's mask, a bucket's
    combos in a run (PERM, SEG, MKP) */
 static void to_buckets(const f32 *R, f32 *X) {
@@ -979,6 +1177,8 @@ static void leaf(Lane *L, const i32 *w, const f32 *R, f32 *v, int mode, int p) {
     from_buckets(vb, p, v);
   } else if (w[0] == RSHOW) {
     show(L, w, R, v, p);
+  } else if (w[0] == RRUN) {
+    runout(L, w, R, v, p);
   } else {
     __builtin_trap();
   }
@@ -1072,6 +1272,9 @@ static size_t need(i32 node) {
   if (w[0] == RSHOW) /* (a fold's, and its own) */
     return 16 * al + 4 * n + 4 * 5 * n + 8 * 52 * 4 + 8 * 4 * n + 4 * 2 * n + 8 * al + 2 * 4 * 52 * 52 + 8 * 52 * 9 +
            4 * 52 * 6 + 52;
+  if (w[0] == RRUN) /* (a fold's, and its own) */
+    return 16 * al + 4 * n + 4 * 5 * n + 8 * 52 * 4 + 8 * 4 * n + 4 * 2 * n + 8 * al + 4 * ((size_t)NP + 2) * n +
+           8 * n + 8 * 156 + 2 * 8 * (size_t)w[2] * NP * n + 8 * 3 * (size_t)NP * n;
   size_t m = 0;
   for (int a = 0; a < w[2]; a++) {
     size_t k = need(w[7 + a]);

@@ -137,7 +137,8 @@ CAP_ITERS = 30     # (at 10, the floor, a limped turn's uncut tree ran 19 iterat
 SLOW = 2.0
 TRIMS = ("one raise size", "one raise size, and one bet size on the later streets",
          "one bet size and one raise size a street", "one bet size and one raise size a street, and one raise")
-MW_SETTLED = 0.1   # a 3-way solve stops once its players' mean best-response gain is under this (% of the pot)...
+MW_SETTLED = 0.02  # a 3-way solve stops once its players' mean best-response gain is under this (% of the pot; at
+                   # 0.1 a turn stopped at 50 iterations with a thin spot's shove 4.9 bb from its settled EV)...
 MW_CHECKS = (25, 50, 100, 200, 400, 700)   # ...checked at these iterations (about two iterations' time each). The
                    # browser's Accurate ran a 3-way river 60 s to 386 iterations, 0.01% of the pot, and a turn 330, 0.03%
 MW_RESERVE = 2.5   # 3-way solves stop this many iterations' time short of the budget: best-response gains and EVs after
@@ -3446,6 +3447,8 @@ class Advisor:
                         node = _mw_follow(node, R, a, pl, rare=0.0)
                 except _NoInstant:
                     continue
+                if isinstance(node, MW.Runout):
+                    return node
                 loc = next(((g, b) for g in sol.levels[0] for b, (e, _) in enumerate(g.blocks) if e is node), None)
                 if isinstance(node, MW.Exit) and loc is not None:
                     return sol, pl, expl, R, node, loc
@@ -3463,6 +3466,8 @@ class Advisor:
             if self._runout_held:
                 raise _NotHeld()
             return {"error": f"no {nxt} to report on: the 3-way solve doesn't play the {nxt} on this line"}
+        if isinstance(got, MW.Runout):
+            return {"error": f"no {nxt} to report on: nobody can bet any more"}
         sol, pl, expl, R, node, (g, b) = got
         tb = sol.tabs
         if not isinstance(g.tree, MW.BDecision):

@@ -24,7 +24,8 @@ Why and how (docs/multiway_research.md has the sources):
 * Streets: the root street is solved per combo. With later="buckets" the streets after it are bet on by hand
   buckets (see the section "later streets by hand buckets"); with later="deal" (`depth`) they are dealt out: from
   the turn every river card is a batch row under a chance node (or a subset, `rivers`), from the flop the turns
-  are sampled (`turns`) and the river is an equity leaf (checked down over `leaf_rivers` rivers per turn).
+  are sampled (`turns`) and the river is an equity leaf (checked down over `leaf_rivers` rivers per turn). A root-street
+  all-in has nothing left to bet, so buckets or not its cards are dealt out, per combo (Runout).
 
 Units: big blinds. Players 0..n-1 in postflop acting order. Values are chips relative to the
 contributions at the root street's start (u = share x (pot - rake) - chips put in); action EVs are
@@ -87,6 +88,8 @@ class MWConfig:
     buckets: int = 16            # hand buckets per player and card below the root street
     classes: bool = True         # the next card as one per class (a rank; a suit with two or more board cards apart)
     bucket_river_step: int = 1   # from a flop: the turn's showdown tensors average every step-th river card
+    allin_step: int = 11         # from a flop: a three-way root-street all-in's runouts (Runout), every step-th of the
+                                 # turn and river cards' spacings (11: ~147 of 1176, even over the cards; 1: every one)
     # allin: the players all-in at the root (their indices; three players: at most one, more is pairwise): they never
     # act. A player all-in for less, at the root or below it (stacks differ: MultiwaySolver's `stack` per player),
     # contests the pot up to its stake: a showdown pays each layer of the pot (MultiwaySolver._layers: the main pot,
@@ -132,8 +135,9 @@ def discount_factors(cfg: MWConfig, t):
 def _pw_scale(want, have):
     """The pairwise terminals' per-board correction want / have, a factor near 1 (the pairs' overlap: ~0.9-1.1), held to
     [0.5, 2]: on a line its players almost never take, both are products of five or more near-zero reaches, and their
-    ratio (denormal floats) overflowed the regrets to inf within ten iterations."""
-    ok = have > 1e-280
+    ratio (denormal floats) overflowed the regrets to inf within ten iterations. A seat with no deals at all (its hands
+    all blocked by another's range) has no total to match, only rounding: 1, as the compiled core's float32 sees it."""
+    ok = have > np.maximum(1e-280, 1e-9 * np.abs(want))
     return np.clip(np.where(ok, want / np.where(ok, have, 1.0), 1.0), 0.5, 2.0)
 
 
@@ -324,6 +328,20 @@ class Terminal:
         self.W = None       # a tournament's weights (np, 1 + layers): see MWConfig.icm
 
 
+class Runout(Terminal):
+    """A root-street all-in with cards to come, in a solve whose later streets are by hand buckets: nobody can bet, so
+    there is nothing for buckets to abstract, and each combo takes its own share of the pot
+    (MultiwaySolver._term_runout). Heads-up over every runout (a table of combo against combo); against two others bd
+    holds the runouts walked (one row each, Builder._allin), masks (rows, n) which leave a combo live. (Through a
+    bucket a combo took its bucket's average: 16 buckets of a 94-combo range put TT's shove on Ks7s2h2c at +6.5 bb
+    where its calls count -2.6.)"""
+    __slots__ = ("masks",)
+
+    def __init__(self, bd, live, pot, c, rake, masks):
+        super().__init__(bd, live, pot, c, rake, "show")
+        self.masks = masks
+
+
 class Chance:
     __slots__ = ("bd", "child", "K", "masks", "w")
 
@@ -468,6 +486,9 @@ class Builder:
         self.rng = random.Random(cfg.seed)
         self.decisions: List[Decision] = []
         self.exits: List[Exit] = []
+        self.runouts: List[Runout] = []
+        self._rows = None      # (boards, masks) of the root street's all-ins (Runout)
+        self.every = None      # (boards, each compatible pair of hands' count of them): every one of their runouts
         self.n_nodes = 0
         self._bd: Dict[tuple, Boards] = {}
         self.root_len = 5
@@ -504,7 +525,7 @@ class Builder:
         alone = len(_acting(self.cfg, live, behind)) < 2
         if self.cfg.later == "buckets" and street_len < 5 and len(live) > 1:
             if alone:
-                behind = (0.0,) * self.np
+                return self._allin(boards[0], live, pot, c2)
             e = Exit(live, folded, pot, c2, behind)
             self.exits.append(e)
             self.n_nodes += 1
@@ -521,6 +542,31 @@ class Builder:
     def _terminal(self, boards, live, pot, c, kind):
         self.n_nodes += 1
         return Terminal(self.boards(boards), live, pot, np.array(c, dtype=np.float64), self.cfg.rake(pot), kind)
+
+    def _allin(self, board, live, pot, c):
+        """A root-street all-in in a bucket solve (Runout). Every all-in of the solve shares its rows: from a turn every
+        river; from a flop, for the pots of three, the pairs of cards at every allin_step-th spacing around the deck (each
+        card in as many rows, spacings that step through the suits, so flushes and pairs come up about as often as they
+        do: 1-1.5% off a combo's share where every runout's table would cost more than the rest of the solve)."""
+        if self._rows is None:
+            cs = self._cards_after(board)
+            A = len(cs)
+            if len(board) == 4:
+                deals = every = [(x,) for x in cs]
+                pairs = A - 4
+            else:
+                every = list(itertools.combinations(sorted(cs), 2))
+                deals = sorted({tuple(sorted((cs[i], cs[(i + d) % A]))) for d in range(1, A // 2 + 1, self.cfg.allin_step)
+                                for i in range(A)})
+                pairs = (A - 4) * (A - 5) // 2
+            masks = np.stack([np.prod(self.h.notmine[:, list(x)], axis=1) for x in deals])
+            self._rows = [tuple(board) + x for x in deals], masks
+            self.every = [tuple(board) + x for x in every], pairs
+        rows, masks = self._rows
+        self.n_nodes += 1
+        node = Runout(self.boards(rows), live, pot, np.array(c, dtype=np.float64), self.cfg.rake(pot), masks)
+        self.runouts.append(node)
+        return node
 
     def _cards_after(self, b):
         return [x for x in range(52) if x not in self.dead and x not in b]
@@ -1768,6 +1814,95 @@ class MultiwaySolver:
         return out
 
     # -- four or more players: pairwise terminals and layered pots
+    def _deal_mass(self, R, p):
+        """Player p's deals' weight per combo on the root's board, (1, n): the others' hands compatible with it."""
+        bd = self.root_bd
+        others = [j for j in range(self.np) if j != p]
+        if self.np == 2:
+            return bd.k_u(R[others[0]])[0]
+        return self._pw_masses(bd, R)[0][p] if self._pw else self._mass_exact(bd, R, *others)
+
+    def _allin_table(self):
+        """(n, n) T[q, h]: combo h's share of a pot against combo q over every runout of the root street's all-ins (a win
+        1, a tie a half; 0 if they share a card): (reach @ T) / the reach compatible with h is h's share against a
+        range, and heads-up that's linear in the range, so one table serves every all-in. core/mwcore.c equity_table()."""
+        T = self.__dict__.get("_table")
+        if T is None:
+            n, (rows, pairs) = self.hands.n, self.builder.every
+            T = np.zeros((n, n), dtype=np.float32)
+            for st in eval_boards(rows, self.hands.active).astype(np.int64):
+                q = st >= 0
+                T[q] += (st[None, :] > st[q, None]).astype(np.float32) + (st[None, :] >= st[q, None])
+            mem = self.hands.mem.astype(np.float32)
+            T[mem @ mem.T > 0] = 0.0
+            self._table = T = T / (2.0 * pairs)
+        return T
+
+    def _term_runout(self, node: Runout, R, need=None):
+        """(np, 1, n) values at a root-street all-in: u_p = the deals' weight x (share of each pot x the pot - chips in),
+        as _term, each combo's share of a pot being its own over the runouts. Heads-up the table (_allin_table), the other
+        player's reach weighted by what the hands of the players out of that pot leave it. Against two others, on each row the weaker + tied / 2 of their reach over their compatible reach, the rows added up before
+        dividing: q and r independent given the combo and the row (W_q W_r + E_q E_r / 12). With three players a pot's
+        shares are scaled to add up to every deal's, as _term's pairwise rows: the game stays constant-sum.
+        core/mwcore.c runout()."""
+        npl, n, masks = self.np, self.hands.n, node.masks
+        kern, mass = {}, {}
+
+        def tables(j):
+            if j not in kern:
+                Rc = R[j, 0, None, :] * masks
+                kl, ke = node.bd.k_le(Rc)
+                kern[j] = (node.bd.k_u(Rc)[0], kl + 0.5 * ke, ke)
+            return kern[j]
+
+        def weight(p):
+            if p not in mass:
+                mass[p] = self._deal_mass(R, p)[0]
+            return mass[p]
+
+        def share(p, live):
+            opp = [j for j in live if j != p]
+            if len(opp) == 1:
+                x = R[opp[0], 0, None, :]
+                for j in range(npl):
+                    if j != p and j != opp[0]:          # (a player out of this pot still holds cards: q's weight given
+                        x = x * self.root_bd.k_u(R[j])[0]    # them, or the shares add up to 102% on a thin range)
+                num, den = x[0] @ self._allin_table(), self.root_bd.k_u(x)[0][0]
+            else:
+                win, den = 1.0, 1.0
+                for j in opp:
+                    win, den = win * tables(j)[1], den * tables(j)[0]
+                if len(opp) == 2:
+                    win = win + tables(opp[0])[2] * tables(opp[1])[2] / 12.0
+                num, den = (win * masks).sum(axis=0), (den * masks).sum(axis=0)
+            return np.clip(np.where(den > 0, num / np.where(den > 0, den, 1.0), 0.0), 0.0, 1.0)
+
+        if node.lay is None:
+            node.lay = self._lay(node.live, node.c, node.pot)
+        net = node.pot - node.rake
+        pots = [(net, node.live)] if len(node.lay) == 1 else [(net * amt / node.pot, lv) for amt, lv in node.lay]
+        W = node.W          # (a tournament's weights: the deals' weight's, then each pot's)
+        them = range(npl) if need is None else [need]
+        out = {p: np.full(n, float(W[p, 0]) if W is not None else -float(node.c[p])) for p in them}
+        for k, (net_k, live) in enumerate(pots):
+            todo = [p for p in them if p in live]
+            if not todo:
+                continue
+            if len(live) == 1:
+                sh, sc = {live[0]: 1.0}, 1.0
+            elif npl == 3:
+                sh = {p: share(p, live) for p in live}
+                tot = sum((R[p, 0] * weight(p) * sh[p]).sum() for p in live)
+                sc = (R[live[0], 0] * weight(live[0])).sum() / tot if tot > 1e-300 else 1.0
+            else:
+                sh, sc = {p: share(p, live) for p in todo}, 1.0
+            for p in todo:
+                out[p] = out[p] + (float(W[p, 1 + k]) if W is not None else net_k) * sc * sh[p]
+        v = np.zeros((npl, 1, n))
+        for p in them:
+            v[p, 0] = out[p] * weight(p)
+        return v
+
     def _layers(self, live, c, pot):
         """[(chips, players who contest them)]: the pot layered by the live players' stakes, each seat's chips in
         (MWConfig.inv0, each player's before the root street (none given: the same for everyone), plus `c`, its chips
@@ -1912,6 +2047,9 @@ class MultiwaySolver:
         the average strategies; "br": player p best-responds to the others' average strategies (p's values only);
         "alt": the traverser p's regrets and average strategy only (alternating updates), p's values.
         `rho`: an equity leaf's overlap ratios, from the board above its runouts (see _leaf_rho)."""
+        if isinstance(node, Runout):
+            v = self._term_runout(node, R, None if mode not in ("br", "alt") else p)
+            return v[p] if mode in ("br", "alt") else v
         if isinstance(node, Terminal):
             v = self._term(node, R, None if mode not in ("br", "alt") else p, rho, memo=mode == "alt")
             return v[p] if mode in ("br", "alt") else v
@@ -2000,7 +2138,7 @@ class MultiwaySolver:
 
     def _core(self):
         """The compiled core's program for this solve (gto/mwcore.py: a bucketed solve, or a 3-way river), or None."""
-        if not self.levels and len(self.board) != 5:
+        if not self.levels and len(self.board) != 5 and not self.builder.runouts:
             return None
         from . import mwcore
         return mwcore.program(self)
@@ -2208,8 +2346,10 @@ class MultiwaySolver:
                 return np.where(mass > 1e-12, kids / np.where(mass > 1e-12, mass, 1.0), 0.0) + self._fold_base(node)
         if self.levels:
             self._later(node, R, "avg", None)
-        for ch in node.children:
-            v = self._walk(ch, R, "avg")[p]
+        sig = node.avg_strategy()
+        for a, ch in enumerate(node.children):
+            Ra = R.copy(); Ra[p] = R[p] * sig[:, a, :]      # (an all-in's shares are scaled by everyone's reach there)
+            v = self._walk(ch, Ra, "avg")[p]
             evs.append(np.where(mass > 1e-12, v / np.where(mass > 1e-12, mass, 1.0), 0.0) + self._fold_base(node))
         return np.stack(evs)[:, 0, :]
 
