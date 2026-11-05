@@ -38,6 +38,7 @@ class TestPublish(unittest.TestCase):
             git("add", "-A", cwd=other)
             git("commit", "-q", "-m", f"site {i}", cwd=other)
         git("push", "-q", "origin", "main", cwd=other)
+        self.page = "new page\n"
         self.site = os.path.join(tmp.name, "site")
         git("clone", "-q", "--depth", "1", self.url, self.site)    # as deploy.sh's gh repo clone
         with open(os.path.join(ROOT, "scripts", "deploy.sh")) as f:
@@ -50,7 +51,7 @@ class TestPublish(unittest.TestCase):
         git("push", "-q", "origin", "main", cwd=self.rival)
 
     def deploy(self):
-        write(os.path.join(self.site, "gto-solver/index.html"), "new page\n")
+        write(os.path.join(self.site, "gto-solver/index.html"), self.page)
         script = f'set -euo pipefail\nHERE="{ROOT}"\ncd "{self.site}"\n{self.publish}'
         return subprocess.run(["bash", "-c", script], env=ENV, capture_output=True, text=True)
 
@@ -63,7 +64,7 @@ class TestPublish(unittest.TestCase):
     def test_an_uncontested_push(self):
         r = self.deploy()
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertNotIn("rejected;", r.stdout)
+        self.assertNotIn("replaying", r.stdout)
         self.assertEqual(self.remote("gto-solver/index.html"), "new page")
 
     def test_a_lost_race_goes_on_top_of_what_won(self):
@@ -71,11 +72,30 @@ class TestPublish(unittest.TestCase):
         won = git("rev-parse", "main", cwd=self.bare)
         r = self.deploy()
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("rejected;", r.stdout)
+        self.assertIn("replaying", r.stdout)
         self.assertEqual(self.remote("gto-solver/index.html"), "new page")
         self.assertEqual(self.remote("lizard/index.html"), "lizard new")
         self.assertEqual(git("rev-parse", "main~1", cwd=self.bare), won)     # nothing of theirs is lost
         self.assertEqual(git("rev-list", "--count", "main", cwd=self.bare), "5")
+
+    # A rival's deploy of gto-solver/ that a rebase takes without a conflict: this page over its worker, built by neither.
+    def another_deploy_stops(self, path, text):
+        self.rival_pushes(path, text)
+        won = git("rev-parse", "main", cwd=self.bare)
+        r = self.deploy()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("another deploy changed gto-solver/", r.stderr)
+        self.assertIn("nothing was published", r.stderr)
+        self.assertEqual(git("rev-parse", "main", cwd=self.bare), won)
+
+    def test_another_deploy_of_a_different_file_stops(self):
+        self.another_deploy_stops("gto-solver/worker.js", "their worker\n")
+
+    def test_another_deploy_of_a_different_hunk_stops(self):
+        self.rival_pushes("gto-solver/index.html", "top\n" + "".join(f"line {i}\n" for i in range(12)) + "bottom\n")
+        git("pull", "-q", "--ff-only", "origin", "main", cwd=self.site)
+        self.page = "OURS\n" + "".join(f"line {i}\n" for i in range(12)) + "bottom\n"
+        self.another_deploy_stops("gto-solver/index.html", "top\n" + "".join(f"line {i}\n" for i in range(12)) + "THEIRS\n")
 
     def test_a_conflict_stops_with_nothing_published(self):
         self.rival_pushes("gto-solver/index.html", "their page\n")

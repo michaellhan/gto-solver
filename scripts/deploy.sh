@@ -118,11 +118,17 @@ if git diff --cached --quiet; then echo "Site already up to date."; exit 0; fi
 git commit -q -m "gto-solver: deploy $(cd "$HERE" && git rev-parse --short HEAD)"
 # Lizard's deploys push to the same repo: a push that lost the race goes on top of what won, once, and is never forced.
 # (The depth-1 clone is enough: the fetch brings what's new down to the commit it was cloned at.) A conflict, or losing
-# again, stops here with nothing published.
+# again, stops here with nothing published. So does another deploy of gto-solver/ itself, conflict or not: a rebase that
+# went through would publish its worker with this page, a mix neither built. Only what's outside gto-solver/ is replayed over.
+BUILT="$(git rev-parse HEAD:gto-solver)"
 if ! git push -q origin main; then
-  echo "Push rejected; replaying the deploy on the site's main and pushing once more..."
+  echo "The push didn't go through; replaying the deploy on the site's main and pushing once more..."
   if ! git pull -q --rebase origin main; then
-    echo "Deploy aborted: the site's main changed the same files; nothing was published. Run scripts/deploy.sh again." >&2
+    echo "Deploy aborted: couldn't replay onto the site's main (a conflict, or no access); nothing was published. Run scripts/deploy.sh again." >&2
+    exit 1
+  fi
+  if [ "$(git rev-parse HEAD:gto-solver)" != "$BUILT" ]; then
+    echo "Deploy aborted: another deploy changed gto-solver/; nothing was published. Run scripts/deploy.sh again." >&2
     exit 1
   fi
   git push -q origin main
