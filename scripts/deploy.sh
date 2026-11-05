@@ -116,5 +116,15 @@ cd "$WORK/site"
 git add -A
 if git diff --cached --quiet; then echo "Site already up to date."; exit 0; fi
 git commit -q -m "gto-solver: deploy $(cd "$HERE" && git rev-parse --short HEAD)"
-git push -q origin main
+# Lizard's deploys push to the same repo: a push that lost the race goes on top of what won, once, and is never forced.
+# (The depth-1 clone is enough: the fetch brings what's new down to the commit it was cloned at.) A conflict, or losing
+# again, stops here with nothing published.
+if ! git push -q origin main; then
+  echo "Push rejected; replaying the deploy on the site's main and pushing once more..."
+  if ! git pull -q --rebase origin main; then
+    echo "Deploy aborted: the site's main changed the same files; nothing was published. Run scripts/deploy.sh again." >&2
+    exit 1
+  fi
+  git push -q origin main
+fi
 echo "Deployed. GitHub Pages will update https://www.michael-han.com/gto-solver/ in about a minute."
