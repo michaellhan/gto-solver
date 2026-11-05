@@ -710,6 +710,7 @@ function solverLoadFailed() {
   const waiting = Object.keys(pending).length > 0;
   worker.onmessage = worker.onerror = null;
   worker.terminate(); worker = null; workerStatus = ""; loadFailed = true; clearTimeout(loadWatch);
+  renderReady();
   for (const k in pending) { pending[k]({ error: LOAD_FAILED, loadFailed: true }); delete pending[k]; delete partials[k]; delete sent[k]; }
   if (!waiting || !overlay) return;   // (the solver's own panel shows it with its answer: renderResult)
   toast(LOAD_FAILED, null, 60000);    // (a view over it has no way to restart the worker)

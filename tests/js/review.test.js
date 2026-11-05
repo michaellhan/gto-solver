@@ -527,6 +527,12 @@ test("the first visit's download shows while the solver loads, not on a later vi
     await p.ready(); await flush();
     assert.ok(ready(p));
   }
+  // a load that fails takes the line away by itself, with nothing asked of the page
+  const noLoad = loadPage();
+  await noLoad.ready();
+  assert.equal(ready(noLoad), "Getting the solver ready, about 9 MB on first visit.");
+  noLoad.workers.at(-1).onmessage({ data: { loadFailed: true } });
+  assert.equal(noLoad.byId("solverReady").hidden, true);
   const server = loadPage({ server: true });
   await server.ready(); await flush();
   assert.equal(ready(server), null);
