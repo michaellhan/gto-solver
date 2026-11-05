@@ -1,6 +1,6 @@
 // Loads gto/static/index.html's inline script into a Node vm context with a minimal fake DOM, so the
-// page's logic (hand simulation, action recording, share links, the state sent to the solver, the
-// copied hand text) can be tested without a browser. Each loadPage() call is a fresh page.
+// page's logic (hand simulation, action recording, share links, the state sent to the solver) can
+// be tested without a browser. Each loadPage() call is a fresh page.
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");

@@ -273,7 +273,7 @@ const flag = (name) => process.argv.includes("--" + name);
 
 // a Study node's answer in brief: its range's frequency per action
 const mixOf = (r) => (r.actions || []).map((a) => `${a.action} ${Math.round(a.freq * 100)}%`).join(" / ");
-// the page's estimate (index.html analyze(): the bar's "of ~N s"; a report: study.js estimate())
+// the page's estimate (index.html analyze(): the bar's "of ~N s")
 function pageBudget(state, speed, fastSeconds) {
   if (state.runouts) return state.board.length === 8 ? BUDGETS[speed][0] + BUDGETS[speed][1] : BUDGETS[speed][0];
   const street = STREET_IDX[state.board.length / 2];

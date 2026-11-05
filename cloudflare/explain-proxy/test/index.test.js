@@ -1,13 +1,10 @@
 // The Explain with AI proxy (src/index.js, src/proxy.js) against a mocked fetch, env (secret, KV, rate limiter) and clock.
 import test from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import crypto from "node:crypto";
 import worker from "../src/index.js";
 import { originAllowed, SYSTEM, MODEL, MAX_TOKENS, MAX_PROMPT, UPSTREAM } from "../src/proxy.js";
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FAKE = "test-secret-not-a-real-key";
 const SITE = "https://www.michael-han.com";
 
@@ -101,11 +98,9 @@ test("the client can't choose the model, system prompt, tools or tokens: the wor
   });
 });
 
-test("the coach prompt is the same as the one explain.js sends with a user's own key", () => {
-  const src = fs.readFileSync(path.join(HERE, "..", "..", "..", "gto", "static", "explain.js"), "utf8");
-  const m = src.match(/const AI_SYSTEM = ([\s\S]*?);\n/);
-  assert.ok(m, "AI_SYSTEM in explain.js");
-  assert.equal(new Function("return " + m[1])(), SYSTEM);
+// explain.js left this repo; its last copy is the frozen one, built from 1a14605e (scripts/publish_classic.sh), which can't change.
+test("the coach prompt is the one the frozen copy's explain.js sends with a user's own key (AI_SYSTEM at 1a14605e)", () => {
+  assert.equal(crypto.createHash("sha256").update(SYSTEM).digest("hex"), "578e742de3e6223bd1159b02af8fab052a265e1b24bea95bde6e61b5cabce684");
 });
 
 test("streaming: the SSE body passes straight through, with CORS and none of the upstream's headers", async () => {

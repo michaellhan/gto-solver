@@ -164,7 +164,6 @@ converged (exploitability in % of the pot: converged under 3%, fair under 10%, r
 above); a rough solve, or a line that gave up no EV, never grades ✗. A jam the solve's tree has no all-in
 for (all-in is offered at 2.5 pots behind or less: a 15x-pot flop jam isn't in it) is solved for its grade: the spot is
 asked again with `"jam": true`, which offers all-in at every decision of the street advised on (`Config.root_allin`;
-not the earlier streets' narrowing solves, nor the flop libraries), and the grade, its EV and the coach's card fill in
 not the earlier streets' narrowing solves, nor the flop libraries), and the grade and its EV fill in
 when that answer is in (A2s on 776r behind a HJ check, 100bb: the jam 0% at -2.28 bb, the 75% bet +2.53). Always in
 the tree it cost too much: a K72T turn 60 iterations in was 4.0% of the pot from equilibrium against 1.6%.

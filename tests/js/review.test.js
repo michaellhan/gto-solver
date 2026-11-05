@@ -71,6 +71,8 @@ test("a whole hand entered, button by button: the worker is asked nothing, on an
   assert.deepEqual(ids(p), ["reviewAll"]);
   assert.match(p.byId("adviceNote").innerHTML, /<b>Your decisions<\/b>/);
   assert.equal((p.byId("adviceNote").innerHTML.match(/not reviewed yet/g) || []).length, 4);
+  assert.equal(p.buttons().find(b => b.id === "reviewAll").className, "nexth");
+  assert.match(fs.readFileSync(HTML_PATH, "utf8"), /#actionArea \.nexth \{ display: block; width: 100%;/);   // (the page's main action, not a plain small button)
 });
 
 test("the panel says what's recorded; no grade or mix shows on a hand being entered, whatever it carries", async () => {

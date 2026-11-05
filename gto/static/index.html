@@ -45,13 +45,13 @@
   button.link { background: none; border: 0; padding: 0; color: var(--accent); font-size: 12px; }
   button.link:hover { text-decoration: underline; background: none; }
   button:disabled { opacity: .35; cursor: default; }
-  input[type=number], input[type=text], input[type=password], input:not([type]), select, textarea { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; font: inherit; }
+  input[type=number], input[type=text], select, textarea { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; font: inherit; }
   ::placeholder { color: var(--faint); opacity: 1; }
   input[type=number] { width: 72px; }
   select { -webkit-appearance: none; appearance: none; padding-right: 26px; cursor: pointer;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238a919c' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
     background-repeat: no-repeat; background-position: right 9px center; }
-  select:hover, input[type=number]:hover, input[type=text]:hover, input[type=password]:hover, textarea:hover { border-color: var(--line2); }
+  select:hover, input[type=number]:hover, input[type=text]:hover, textarea:hover { border-color: var(--line2); }
   input[type=checkbox] { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; margin: 0 4px 0 0; flex: none; border: 1px solid var(--line2); border-radius: 4px; background: var(--panel2); cursor: pointer; vertical-align: -3px; display: inline-grid; place-content: center; transition: background .12s, border-color .12s; }
   input[type=checkbox]::after { content: ""; width: 4px; height: 8px; border: solid #1a1200; border-width: 0 2px 2px 0; transform: rotate(45deg) translate(-1px, -1px); opacity: 0; }
   input[type=checkbox]:checked { background: var(--accent); border-color: var(--accent); }
@@ -159,7 +159,6 @@
   .chip.rewind:hover { background: var(--line); }
   .g { font-weight: 800; margin-left: 5px; }
   .g.ok { color: var(--good); } .g.meh { color: var(--meh); } .g.bad { color: var(--bad); }
-  #timeline:empty { display: none; }
 
   /* ---- action dock */
   #pAction { padding: 10px 14px 12px; }
@@ -193,6 +192,9 @@
   .review li { display: flex; gap: 8px; align-items: baseline; }
   .review li.rewind:hover b { text-decoration: underline; }
   .review li.cur b { color: var(--accent); }
+  #actionArea .nexth { display: block; width: 100%; min-height: 54px; font-size: 16px; font-weight: 700; background: var(--accent); color: #1a1200; border-color: var(--accent); }
+  #actionArea .nexth:hover { filter: brightness(1.08); }
+  #actionArea .nexth kbd { color: #1a1200; border-color: rgba(0,0,0,.25); }
   #actionArea .stepbar { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
   .review .st { text-transform: uppercase; font-size: 10px; letter-spacing: .08em; width: 52px; flex: none; }
   .review .streetsum { margin-top: 6px; color: var(--muted); }
@@ -211,7 +213,7 @@
   .bar { height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; }
   .bar > div { height: 100%; border-radius: 4px; }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
-  .num.pos { color: var(--good); } .num.neg { color: var(--bad); } .num.soft { color: var(--muted); }
+  .num.pos { color: var(--good); } .num.neg { color: var(--bad); }
   .num.rough { opacity: .7; }   /* an EV of an action your range almost never takes (rough_ev): "≈" */
   .meta { color: var(--muted); font-size: 12px; margin-top: 10px; line-height: 1.6; }
   .grid { display: grid; grid-template-columns: repeat(13, 1fr); gap: 2px; margin-top: 6px; }
@@ -376,10 +378,10 @@
 </header>
 
 <main>
-  <div class="col" id="colL">
+  <div class="col">
     <section class="panel" id="pSetup">
       <div id="setupFull">
-        <div class="row setuprow" id="stakesRow">
+        <div class="row setuprow">
           <span class="muted">Stakes</span>
           <select id="stakes" title="Live stakes: bets, stacks and rake are typed in dollars and shown in dollars beside the big blinds (the solver plays in big blinds, the small blind as half of one). Remembered for new hands.">
             <option value="off">big blinds</option><option value="1-2">$1/$2</option><option value="1-3">$1/$3</option><option value="2-5">$2/$5</option><option value="5-10">$5/$10</option><option value="custom">custom $</option>
@@ -718,7 +720,7 @@ function solverLoadFailed() {
   worker.terminate(); worker = null; workerStatus = ""; loadFailed = true; clearTimeout(loadWatch);
   for (const k in pending) { pending[k]({ error: LOAD_FAILED, loadFailed: true }); delete pending[k]; delete partials[k]; delete sent[k]; }
   if (!waiting || !overlay) return;   // (the solver's own panel shows it with its answer: renderResult)
-  toast(LOAD_FAILED, null, 60000);    // (a view over it, which shows its own error, has no way to restart the worker)
+  toast(LOAD_FAILED, null, 60000);    // (a view over it has no way to restart the worker)
   const t = document.getElementById("toast"), b = document.createElement("button");
   t.style.zIndex = 100;               // (above the views)
   b.className = "link"; b.textContent = "Try again"; b.onclick = () => { t.hidden = true; startWorker(); }; t.appendChild(b);
@@ -1229,7 +1231,6 @@ function renderSetup() {
   const full = !started || editSetup;
   document.getElementById("setupFull").hidden = !full;
   document.getElementById("pSetup").classList.toggle("slim", !full);
-  document.body.classList.toggle("setupopen", !!(full && started));
   document.getElementById("setupDone").hidden = !started;
   const sum = document.getElementById("setupSum"); sum.hidden = full;
   sum.innerHTML = `<span><b>${S.players}-handed</b>${TOURNEY() || S.tournament ? "" : ` <span class="muted">·</span> cash`} ${STAKES() ? ` <span class="muted">·</span> <b>${STAKES_TEXT()}</b>` : ""} <span class="muted">·</span> you are <b>${SEAT_LABEL(S.hero, S.players)}</b> <span class="muted">·</span> <b>${fmt(S.stack)}bb</b>${withUsd(S.stack)} stacks${UNEQUAL() ? ` (${STACKS_TEXT()})` : ""}${ANTE() ? ` <span class="muted">·</span> ${fmt(ANTE())}bb${withUsd(ANTE())} ante` : ""}${STRADDLER() ? ` <span class="muted">·</span> ${SEAT_LABEL(STRADDLER(), S.players)} straddles` : ""}${RAKE() ? ` <span class="muted">·</span> ${RAKE_TEXT()}` : ""}</span>`;
@@ -1614,7 +1615,7 @@ function renderResult(res, key) {
   const src = res.actions.some(a => a.gto_freq !== undefined) ? gtoSource(res) : "";
   if (res.locked) h += `</div><div class="meta">${Object.entries(res.locked).map(([p, l]) => `Against your lock on ${p} (${LOCK_TEXT(l)})`).join("; ")}: ${res.street === "preflop" ? "your line re-priced against it" : "the best response"}, with GTO's frequency under each (${src}).`;
   h += `</div><div class="meta">${hasEv ? "EV is in big blinds relative to folding now, so fold is 0: chips already in the pot are gone either way." + (res.actions.some(a => a.rough_ev) ? " ≈: an action your range almost never takes, whose EV is rough (usually lower than exact)." : "") : res.street === "preflop" ? "Preflop comes from charts, so there's no EV column." : ""}${res.widened && res.widened.length ? ` The solve rarely has ${res.widened.join(" and ")} play this way, so their range comes from simple betting rules instead; the EVs (and the pick) are against that range, so they can disagree with the solver's mix.` : conv && conv.cls !== "ok" ? " Actions the solver mixes should have near-equal EVs; gaps here mean the solve hasn't settled." : ""}</div>`;
-  if (res.grid) h += `<div class="gridview">${renderGrid(res.grid, res.hand)}</div>`;
+  if (res.grid) h += `<div>${renderGrid(res.grid, res.hand)}</div>`;
   h += `<details><summary>Details</summary>`;
   if (res.villain_grid) h += `<div class="vgrid">${renderGrid(res.villain_grid, null, res.villain)}</div>`;
   if (res.villain_range) h += `<details><summary>${res.villain}'s range as text (${res.villain_range_combos} combos)</summary><div class="villain">${res.villain_range}</div></details>`;

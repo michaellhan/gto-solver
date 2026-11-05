@@ -277,7 +277,7 @@
   async function importText(text, name) {
     const p = parseImport(text);
     if (p.error) return say(esc(p.error));
-    if (p.kind === "backup") { draft = p.obj; draw(); return say("That's a backup of everything: restore it below."); }
+    if (p.kind === "backup") { draft = p.obj; draw(); return say("That's a backup of everything: restore it below."); }   // (the file input sends these to Restore itself; only floor.test.js comes this way)
     let r;
     try { r = await store().hands.importFile(p.obj, host.clean, host.decode); } catch (e) { return say(esc(e.message || String(e))); }
     await refresh();
