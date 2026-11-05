@@ -307,6 +307,28 @@ test("keyboard actions: F, C, X, A, digits, U", () => {
   assert.deepEqual(q.S.actions.flop, acts("BB x"));
 });
 
+test("each button's key label is the key that presses it", () => {
+  const caps = (p) => Object.fromEntries(p.buttons().filter(b => b.dataset.cap).map(b => [b.innerHTML.replace(/<.*/, ""), b.dataset.cap]));
+  const p = page(state({ hero: "BTN", cards: ["Ah", "Kh"], preflop: acts("UTG f, HJ r2.5, CO f") }));
+  const c = caps(p);
+  assert.equal(c.Fold, "F"); assert.equal(c.Call, "C");
+  for (const [label, cap] of Object.entries(c)) {
+    const q = page(state({ hero: "BTN", cards: ["Ah", "Kh"], preflop: acts("UTG f, HJ r2.5, CO f") }));
+    const before = JSON.stringify(q.S.actions);
+    q.key(cap.toLowerCase());
+    assert.notEqual(JSON.stringify(q.S.actions) + q.val("!!S.finished"), before + "false", label);
+  }
+});
+
+test("U takes an action back while a card is being dealt; a typed rank keeps the keys", () => {
+  const p = page(state({ cards: ["Ah", "Kh"], preflop: acts("UTG f, HJ f, CO f, BTN r2.5, SB f, BB c") }));
+  assert.equal(p.run("needCard(simulate())"), true);
+  p.key("k"); p.key("u");
+  assert.equal(p.S.actions.preflop.length, 6);
+  p.key("Escape"); p.key("u");
+  assert.equal(p.S.actions.preflop.length, 5);
+});
+
 test("setup: players, stack, ante and straddle inputs; new hand", () => {
   const p = page(state({ hero: "CO", stack: 60, ante: 0.1, straddle: true, cards: ["Ah", "Kh"], preflop: acts("HJ f") }));
   p.run('document.getElementById("players").children[7].onclick()');   // 9 players

@@ -175,6 +175,7 @@
   .acts button { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 50px; padding: 6px; line-height: 1.25; border-bottom: 3px solid var(--k, var(--line)); }
   .acts button small { font-size: 12px; color: var(--muted); }
   .custom { display: flex; gap: 6px; align-items: center; }
+  .custom .amt { position: relative; display: flex; flex: 1; min-width: 0; }
   .custom input { flex: 1; min-width: 0; height: 40px; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; font: inherit; font-size: 16px; }
   .custom input:hover { border-color: var(--line2); }
   .custom .allin { border-bottom: 3px solid var(--allin); white-space: nowrap; }
@@ -333,6 +334,17 @@
     input[type=checkbox] { width: 20px; height: 20px; margin: 0 4px 0 0; }
     label:has(> input[type=checkbox]) { min-height: 44px; }
   }
+  /* The keyboard's shortcuts, on the buttons they press: where there's a keyboard, and not while keys are typing cards. */
+  .keycap { display: none; }
+  @media (hover: hover) and (pointer: fine) and (min-width: 561px) {
+    [data-cap]::after, .keycap { display: inline-block; padding: 0 4px; border: 1px solid currentColor; border-radius: 4px; font: 400 11px/15px ui-monospace, Menlo, monospace; opacity: .65; text-decoration: none; }
+    [data-cap]::after { content: attr(data-cap); margin-left: 8px; }
+    .acts button { position: relative; padding-inline: 18px; }
+    .acts button::after { position: absolute; top: 5px; right: 5px; margin: 0; }
+    .keycap { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+    #customAmt:focus + .keycap, #customAmt:not(:placeholder-shown) + .keycap { display: none; }
+    body.needcard #actionArea [data-cap]:not(#finishHand)::after, body.needcard .keycap { display: none; }
+  }
   @media (prefers-reduced-motion: reduce) {
     .slot.need, .slot.flash, .spinner { animation: none; }
     .prog > div, summary::before { transition: none; }
@@ -352,7 +364,7 @@
 <main class="app">
   <div class="col">
     <section id="pSetup">
-      <div class="setup"><span id="setupSum"></span><button class="link edit" id="setupEdit">Edit</button><button class="new" id="newhand" title="Shortcut: N">New hand</button></div>
+      <div class="setup"><span id="setupSum"></span><button class="link edit" id="setupEdit">Edit</button><button class="new" id="newhand" data-cap="N">New hand</button></div>
       <div id="setupFull" class="panel" hidden>
         <div class="row setuprow">
           <span class="muted">Stakes</span>
@@ -427,15 +439,15 @@
 
   <div class="col">
     <section class="panel" id="pAdvice">
-      <div class="top" id="stepTop" hidden><button class="back" id="stepBack">‹ Back to review</button><span id="stepOf"></span></div>
+      <div class="top" id="stepTop" hidden><button class="back" id="stepBack" data-cap="Esc">‹ Back to review</button><span id="stepOf"></span></div>
       <div id="stepHead" hidden></div>
       <div class="sum" id="reviewHead"><h2>Review</h2><span class="muted" id="reviewCount" aria-live="polite"></span></div>
       <div id="adviceNote" hidden></div>
       <div id="equity" class="eq" hidden></div>
       <div id="result" class="empty">Finish the hand to see how each decision compares with the solver. Nothing is solved until then.</div>
-      <div class="pn" id="stepNav" hidden><span><button id="stepPrev" title="Shortcut: left arrow"></button></span><span><button id="stepNext" title="Shortcut: right arrow"></button></span></div>
+      <div class="pn" id="stepNav" hidden><span><button id="stepPrev" data-cap="←"></button></span><span><button id="stepNext" data-cap="→"></button></span></div>
       <p id="solverReady" hidden></p>
-      <div class="btns" id="doneBtns" hidden><button class="primary" id="doneNew" title="Shortcut: N">New hand</button><button id="share" title="Copy a link that opens this hand">Share</button><button class="ghost" id="reviewAgain" title="Solve each decision again" hidden>Review again</button></div>
+      <div class="btns" id="doneBtns" hidden><button class="primary" id="doneNew" data-cap="N">New hand</button><button id="share" title="Copy a link that opens this hand">Share</button><button class="ghost" id="reviewAgain" data-cap="R" title="Solve each decision again" hidden>Review again</button></div>
     </section>
   </div>
 </main>
@@ -1356,7 +1368,7 @@ function renderAction(sim) {
 
   const acts = document.createElement("div"); acts.className = "acts";
   const mk = (label, cls, a, sub, key, k, into = acts) => { const b = document.createElement("button"); b.className = cls; b.innerHTML = label + (sub ? `<small>${sub}</small>` : "");
-    if (key) { b.dataset.key = key.toLowerCase(); b.title = "Shortcut: " + key; }
+    if (key) { b.dataset.key = key.toLowerCase(); b.dataset.cap = key; }
     if (k) b.setAttribute("style", `--k:${k}`);
     b.onclick = () => { showErr(act(a)); renderAll(); }; into.appendChild(b); return b; };
   if (facing) { mk("Fold", "fold", { action: "fold" }, "", "F", "var(--fold)"); mk("Call", "pass", { action: "call" }, AMT_SUB(callAmt), "C", "var(--passive)"); }
@@ -1388,7 +1400,7 @@ function renderAction(sim) {
     let go = null;
     if (canRaiseNow) {
       const what = facing || info.curBet > 0 ? "Raise to" : "Other amount";
-      cb.innerHTML = `<input id="customAmt" type="text" inputmode="decimal" data-key="r" title="Shortcut: R" placeholder="${what}, ${STAKES() ? "$" : "bb"}" aria-label="${what}, in ${STAKES() ? "dollars" : "bb"}">`;
+      cb.innerHTML = `<span class="amt"><input id="customAmt" type="text" inputmode="decimal" data-key="r" placeholder="${what}, ${STAKES() ? "$" : "bb"}" aria-label="${what}, in ${STAKES() ? "dollars" : "bb"}"><span class="keycap" aria-hidden="true">R</span></span>`;
       go = document.createElement("button"); go.textContent = "Apply"; go.hidden = true;
       go.onclick = () => { showErr(act({ action: "bet", to: amountIn(document.getElementById("customAmt").value) })); renderAll(); };
       cb.appendChild(go);
@@ -1407,14 +1419,14 @@ function renderAction(sim) {
   if (!isHero && sim.active.has(S.hero) && !sim.allin.has(S.hero) && info.order.indexOf(S.hero) > info.order.indexOf(p)) sc = [facing || street === "preflop" ? "Fold to me" : "Check to me", () => advanceTo(S.hero)];
   else if (!isHero && facing) sc = ["Everyone else folds", () => autoRest(street, "fold")];
   else if (!isHero && !facing && street !== "preflop") sc = ["Everyone checks", () => autoRest(street, "check")];
-  if (sc) { const b = document.createElement("button"); b.innerHTML = sc[0]; b.title = "Shortcut: S"; b.dataset.key = "s"; b.onclick = () => { showErr(sc[1]()); renderAll(); }; el.appendChild(b); }
+  if (sc) { const b = document.createElement("button"); b.innerHTML = sc[0]; b.dataset.key = "s"; b.dataset.cap = "S"; b.onclick = () => { showErr(sc[1]()); renderAll(); }; el.appendChild(b); }
   finishButton(el);
 }
 // Finish hand: the hand ends here for the review, whoever is to act (a decision of yours not recorded isn't reviewed)
 function finishButton(el) {
   if (!STREETS.some(s => S.actions[s].length)) return;
-  const b = document.createElement("button"); b.className = "primary fin"; b.id = "finishHand"; b.innerHTML = "Finish hand"; b.dataset.key = "e";
-  b.title = "End the hand here and review the decisions you recorded. A decision you haven't recorded isn't reviewed. Shortcut: E";
+  const b = document.createElement("button"); b.className = "primary fin"; b.id = "finishHand"; b.innerHTML = "Finish hand"; b.dataset.key = "e"; b.dataset.cap = "E";
+  b.title = "End the hand here and review the decisions you recorded. A decision you haven't recorded isn't reviewed.";
   b.onclick = finishHand; el.appendChild(b);
 }
 // A finished hand not reviewed yet: its review, or back to entering it while no advice has been seen. Reviewed, the
@@ -1428,8 +1440,8 @@ function renderFinished(el, prompt, sim) {
   prompt.innerHTML = `<span class="who">${sim.handOver ? "Hand over" : !sim.active.has(S.hero) ? "You folded" : "Hand finished"}</span><span class="pot">pot ${BBX(sim.pot)}</span><span class="ask">${todo ? "Review it: the solver goes through each decision you recorded." : mine.length ? "" : "You recorded no decision, so there's nothing to review."}</span>`;
   el.appendChild(prompt);
   if (todo) {
-    const b = document.createElement("button"); b.id = "reviewAll"; b.dataset.key = "r";
-    b.className = "nexth"; b.innerHTML = "Review whole hand"; b.title = "Shortcut: R";
+    const b = document.createElement("button"); b.id = "reviewAll"; b.dataset.key = "r"; b.dataset.cap = "R";
+    b.className = "nexth"; b.innerHTML = "Review whole hand";
     b.onclick = reviewHand; el.appendChild(b);
   }
   if (more) {
@@ -1466,7 +1478,7 @@ function renderTimeline(sim) {
   }
   document.getElementById("pHistory").hidden = !any;
   if (!last || fixedHand(sim)) return;
-  const u = document.createElement("button"); u.className = "link undo"; u.textContent = "Undo"; u.title = "Shortcut: U"; u.onclick = undo;
+  const u = document.createElement("button"); u.className = "link undo"; u.textContent = "Undo"; u.dataset.cap = "U"; u.onclick = undo;
   last.appendChild(u);
 }
 
@@ -2070,7 +2082,7 @@ document.getElementById("editCards").onclick = () => { if (needCard(simulate()))
 document.addEventListener("keydown", (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey || /input|textarea|select/i.test(e.target.tagName)) return;
   const k = e.key, low = k.toLowerCase();
-  if (k === "Escape") { pendingRank = null; selSlot = null; showDeck = false; renderAll(); return; }
+  if (k === "Escape") { if (stepView) return stepStop(); pendingRank = null; selSlot = null; showDeck = false; renderAll(); return; }
   if (low === "n") { e.preventDefault(); document.getElementById("newhand").click(); return; }
   if (stepView && (k === "ArrowLeft" || k === "ArrowRight")) { e.preventDefault(); stepBy(k === "ArrowLeft" ? -1 : 1); return; }
   const sim = simulate();
@@ -2083,6 +2095,7 @@ document.addEventListener("keydown", (e) => {
     if (pendingRank === "1" && k === "0") { e.preventDefault(); pendingRank = "T"; renderAll(); return; }
     if (k.length === 1 && (RANKS.includes(k.toUpperCase()) || k === "1")) { e.preventDefault(); pendingRank = k.toUpperCase(); renderAll(); return; }
     if (k === "Backspace" && pendingRank) { e.preventDefault(); pendingRank = null; renderAll(); return; }
+    if (low === "u" && !pendingRank) { e.preventDefault(); undo(); return; }
     if (low === "e" && !pendingRank) { const b = document.querySelector('#actionArea [data-key="e"]'); if (b) { e.preventDefault(); b.click(); } }
     return;
   }

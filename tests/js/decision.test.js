@@ -124,6 +124,8 @@ test("a right play reads fine, a preflop decision has no EV and shows the chart"
   assert.doesNotMatch(h, /<b>\d+\.\d%<\/b>/);       // (a key without shares)
   assert.doesNotMatch(h, /<details>/);              // (the chart note says nothing the source line doesn't)
   assert.equal(p.byId("stepPrev").hidden, true);
+  p.key("Escape");                                  // (its label on Back to review)
+  assert.notEqual(p.run("document.body.dataset.s"), "decision");
 });
 
 test("the verdict's sentence, and the row's, for every kind of grade", () => {
