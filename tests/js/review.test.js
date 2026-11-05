@@ -1,5 +1,5 @@
-// Review first (index.html's gate: handDone, reviewing, analyze): while a hand is entered your decisions are recorded
-// and nothing goes to the solver. A hand is finished when it ended, when you folded, or when it was marked so, and each
+// Solving a hand (index.html's gate: handDone, reviewing, liveSpot, analyze): while a hand is entered your decisions are
+// recorded and nothing goes to the solver unless you press Solve (solve.test.js). A hand is finished when it ended, when you folded, or when it was marked so, and each
 // decision you recorded can then be reviewed, all together (reviewHand) or one by one (stepTo). Every route onto the
 // table keeps to that.
 "use strict";
@@ -82,7 +82,7 @@ test("the panel shows nothing of a hand being entered, no grade or mix whatever 
   p.S = st;
   await flush();
   assert.equal(p.byId("adviceNote").hidden, true);
-  assert.match(p.byId("result").innerHTML, /Nothing is solved until then/);
+  assert.match(p.byId("result").innerHTML, /Press Solve at your turn/);
   const line = [...p.byId("timeline").walk()].map(e => e.innerHTML).join(" ");
   assert.match(line, /BTN raises 2\.5/);
   assert.doesNotMatch(line, /class="g /);

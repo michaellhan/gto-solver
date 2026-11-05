@@ -313,6 +313,7 @@ test("each button's key label is the key that presses it", () => {
   const c = caps(p);
   assert.equal(c.Fold, "F"); assert.equal(c.Call, "C");
   for (const [label, cap] of Object.entries(c)) {
+    if (label === "Solve") continue;   // (it changes nothing in the hand: solve.test.js presses it)
     const q = page(state({ hero: "BTN", cards: ["Ah", "Kh"], preflop: acts("UTG f, HJ r2.5, CO f") }));
     const before = JSON.stringify(q.S.actions);
     q.key(cap.toLowerCase());
