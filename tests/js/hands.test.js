@@ -1,7 +1,8 @@
 // My hands (gto/static/hands.js) and the page's hooks into the storage layer (store.js): the hand on the table kept when
 // New hand, a link or an import takes its place (an untouched spot isn't), an imported hand with its history, a
 // hand opened from My hands saved back into its own record; and the panel's pure parts
-// (a hand's summary and line, search, filters, tags, the import's kinds, the rows' HTML escaped).
+// (a hand's summary and line, search, filters, tags, the import's kinds, the rows' HTML escaped); a record the page
+// can't open.
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -97,6 +98,69 @@ test("a #h= link: the hand it replaces is kept, and the linked hand when it's re
 });
 
 // ---- the panel's pure parts
+// the panel's actions over the real page's host, records in the store as another page or version left them
+async function panelWith(recs) {
+  const p = await storePage();
+  await p.run('loadJs("hands.js?v=" + HN_VERSION, () => window.MyHands).then(() => MyHands.useHost(MyHands.pageHost()))');
+  p.ctx.__recs = recs;
+  for (const i of recs.keys()) await p.run(`GTOStore.put("hands", "r${i}", __recs[${i}])`);
+  p.list = () => p.run('MyHands.act({ savetable: "" })');   // (the list read again: an empty table saves nothing)
+  await p.list();
+  // a download: what the file says
+  p.ctx.Blob = class { constructor(parts) { p.file = JSON.parse(parts.join("")); this.size = 1; } };
+  p.ctx.URL = { createObjectURL: () => "blob:x", revokeObjectURL: () => {} };
+  return p;
+}
+const NOT_OPENABLE = [{ source: "drill", state: null }, { source: "table", state: {} }, { state: { players: 11, cards: [], actions: {} }, note: "the river" },
+                      { source: "import", site: "Other", hh: "a history", state: { players: 6, cards: "AhKd", actions: null } }];
+
+test("a record this page can't open lists, exports, backs up and deletes, and Open says so with a link to the frozen copy", async () => {
+  const p = await panelWith(NOT_OPENABLE);
+  const has = (id) => p.run(`MyHands.recs.some(r => r.id === "${id}")`);
+  assert.equal(p.run("MyHands.recs.length"), NOT_OPENABLE.length);
+  const list = p.run("MyHands.listHtml ? MyHands.recs.map(r => MyHands.rowHtml(r, true)).join('') : ''");
+  assert.equal(list.match(/data-row=/g).length, NOT_OPENABLE.length);
+  assert.equal(p.run('MyHands.filterRecs(MyHands.recs, { q: "river" }).length'), 1);
+  p.S = played();
+  const table = p.storage.get("handreview");
+  for (const key of ["open", "link"]) for (const i of NOT_OPENABLE.keys()) {
+    await p.run(`MyHands.act({ clear: "" }); MyHands.act({ ${key}: "r${i}" })`);
+    assert.match(p.run("MyHands.msg"), /can't open that hand/, `${key} ${i}`);
+    assert.match(p.run("MyHands.msg"), /<a href="\/gto-solver-classic\/hands\/">the frozen copy<\/a>/);
+  }
+  assert.equal(p.storage.get("handreview"), table, "the table is as it was");
+  assert.equal(p.clipboard.text, null, "no link copied");
+  // the list as a file, with no link for a hand that can't open; one hand; a backup
+  await p.run('MyHands.act({ export: "" })');
+  assert.equal(p.file.hands.length, NOT_OPENABLE.length);
+  assert.ok(p.file.hands.every(h => !("link" in h)));
+  assert.deepEqual(p.file.hands.find(h => h.site === "Other").state, NOT_OPENABLE[3].state);
+  assert.equal(p.file.hands.find(h => h.site === "Other").hh, "a history");
+  await p.run('MyHands.act({ json: "r1" })');
+  assert.deepEqual(p.file.hands[0].state, {});
+  assert.equal(j(await p.run("GTOStore.backup()")).counts.hands, NOT_OPENABLE.length);
+  // kept as they were: nothing here rewrote them
+  const kept = await p.hands();
+  for (const [i, data] of NOT_OPENABLE.entries()) assert.deepEqual(kept.find(r => r.id === `r${i}`).data, data);
+  await p.run('MyHands.act({ del: "r0" })');
+  assert.match(p.run("MyHands.msg"), /Deleted/);
+  assert.equal(has("r0"), false);
+  await p.run('MyHands.act({ undo: "" })');
+  assert.equal(has("r0"), true);
+});
+
+test("every kind a record is saved as opens on the table, a hand imported in the frozen copy with its history too", async () => {
+  const st = played();
+  const recs = ["table", "review", "link", "file", "import"].map(source => ({ source, state: st, ...(source === "import" ? { site: "PokerStars", hh: "a history" } : {}) }));
+  const p = await panelWith(recs);
+  for (const i of recs.keys()) {
+    p.S = state({ hero: "CO" });
+    await p.run(`MyHands.act({ open: "r${i}" })`);
+    assert.deepEqual(p.S.cards.slice(0, 5), ["Ah", "Kd", "Qs", "7h", "2c"], recs[i].source);
+    assert.doesNotMatch(p.run("MyHands.msg"), /can't open/, recs[i].source);
+  }
+});
+
 test("summary: who, the cards, the pot, how far it went, the grades", () => {
   const st = played({ river: [] });
   st.actions.flop.push({ pos: "BTN", action: "bet", to: 2, g: { f: 0.6, l: 0 } }, { pos: "BB", action: "raise", to: 8 }, { pos: "BTN", action: "fold", g: { f: 0.01, l: 1.234 } });
@@ -193,6 +257,7 @@ test("an export carries each hand's #h= link, and an entry with only its link im
   assert.deepEqual(got.find(r => r.data.sig === a.data.sig).data.tags, ["y"]);
   // the panel's export goes through the page's link (pageHost().link: the solver's URL and encodeState)
   const src = fs.readFileSync(path.join(STATIC, "hands.js"), "utf8");
-  assert.equal((src.match(/H\.exportFile\(\[?\w+\]?, host\.link\)/g) || []).length, 2);
+  assert.equal((src.match(/H\.exportFile\(\[?\w+\]?, linkFor\)/g) || []).length, 2);
+  assert.match(src, /linkFor = \(st\) => host\.clean\(st\) \? host\.link\(st\) : undefined/);
   assert.match(src, /importFile\(p\.obj, host\.clean, host\.decode\)/);
 });

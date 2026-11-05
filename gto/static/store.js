@@ -10,8 +10,8 @@
 //             reads the mirror. A key written to localStorage directly (code that doesn't use the store yet) is taken
 //             in at the next load and before a backup (reconcile).
 //   hands     My hands: a saved hand each (hands below)
-//   sessions  the session analyzer's summary of each session (id: the session's)
-//   blobs     big state kept whole: the analyzer's session in progress ("session-current")
+//   sessions  the frozen copy's session analyzer's summary of each session (id: the session's)
+//   blobs     big state kept whole: that analyzer's session in progress ("session-current")
 // On the first load it takes in what the site kept before (migrate): every localStorage key above (left where it is:
 // it's the mirror) and the analyzer's IndexedDB "gto-session" (its session in progress and history; the old database is
 // left as it was). The frozen copy's solved preflop games (IndexedDB "gto-pf") and the worker's files (Cache API) are caches of
@@ -319,22 +319,6 @@
     async function getRec(store, id) { await ready; await flushNow(); const r = (await load(store)).get(id); return r ? clone(r) : null; }
     async function put(store, id, data, created) { await ready; queue(store, String(id), clone(data), 0, { created }); await flushNow(); return getRec(store, String(id)); }
     async function del(store, id) { await ready; queue(store, String(id), null); await flushNow(); }
-    // session.js's store interface ({ get, set, del }) over a blob, and over the sessions' summaries (a list, newest first)
-    const blob = (id) => ({ get: async () => { const r = await getRec("blobs", id); return r && !r.deleted ? r.data : null; },
-                            set: (v) => put("blobs", id, v).then(() => {}), del: () => del("blobs", id) });
-    const sessions = {
-      get: async () => (await list("sessions")).map(r => r.data).sort((a, b) => (b.date || 0) - (a.date || 0)),
-      async set(arr) {
-        await ready;
-        const ids = new Set();
-        for (const x of Array.isArray(arr) ? arr : []) if (x && x.id != null) { ids.add(String(x.id)); queue("sessions", String(x.id), clone(x)); }
-        for (const r of await list("sessions")) if (!ids.has(r.id)) queue("sessions", r.id, null);
-        await flushNow();
-      },
-      async del() { await ready; for (const r of await list("sessions")) queue("sessions", r.id, null); await flushNow(); },
-    };
-
-    // ---- backup and restore: every record but tombstones, the local-only keys and the key itself
     function scrub(x, key) {
       if (!key || key.length < 8) return x;
       if (typeof x === "string") return x.split(key).join("[removed]");
@@ -458,8 +442,7 @@
       for (const k of STREETS) s.actions[k] = (st.actions && Array.isArray(st.actions[k]) ? st.actions[k] : []).map(a => { const { g, ...rest } = a || {}; return rest; });
       return hash(canon(s));
     }
-    // the site's hand number in a hand history ("PokerStars Hand #2498…", "Poker Hand #HD20…", iPoker's gamecode), as
-    // session.js reads it
+    // the site's hand number in a hand history ("PokerStars Hand #2498…", "Poker Hand #HD20…", iPoker's gamecode)
     function handNumber(text) {
       const x = String(text).match(/gamecode="([^"]+)"/);
       if (x) return x[1];
@@ -568,7 +551,7 @@
       ready, SCHEMA, STORES, KNOWN, LOCAL_ONLY, DEVICE_ONLY, BACKUP, HANDS_FILE, SITE_KEYS, SITE_DATABASES, SITE_CACHES,
       get backend() { return backend ? backend.kind : null; }, get device() { return meta ? meta.device : null; },
       get: (k) => parse(getRaw(k)), getRaw, set: (k, v) => setRaw(k, JSON.stringify(v)), setRaw, remove,
-      list, record: getRec, put, del, blob, sessions, flush: flushNow, reconcile: () => ready.then(reconcile),
+      list, record: getRec, put, del, flush: flushNow, reconcile: () => ready.then(reconcile),
       backup, restore, wipe, hands, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); },
       _: { canon, hash, pending, cache, meta: () => meta },
     };

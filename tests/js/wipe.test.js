@@ -98,7 +98,7 @@ async function site(opts = {}) {
   await st.ready;
   await st.hands.save(HAND, { table: false });
   await st.put("sessions", "s2", { id: "s2", date: 2 });
-  await st.blob("session-current").set({ v: 1 });
+  await st.put("blobs", "session-current", { v: 1 });
   await st.flush();
   return { st, idb, ls, ss, caches };
 }
@@ -130,7 +130,7 @@ test("wipe: nothing comes back on the next load, and the page works afterwards",
   assert.deepEqual(await st.hands.list(), []);
   assert.deepEqual(await st.list("kv"), []);
   assert.deepEqual(await st.list("sessions"), []);
-  assert.equal(await st.blob("session-current").get(), null);
+  assert.deepEqual(await st.list("blobs"), []);
   const b = await st.backup();
   assert.deepEqual(b.counts, { kv: 0, hands: 0, sessions: 0, blobs: 0 });
   // the database still opens, and keeps what's saved from here on

@@ -79,7 +79,7 @@ test("a decision opened while it runs: the equity request is stopped, and asked 
   assert.equal(p.byId("equity").hidden, false);
 });
 
-test("no equity on your turn, after your fold, before the street closes, or in Practice", async () => {
+test("no equity on your turn, after your fold, or before the street closes", async () => {
   for (const s of [
     reviewed({ cards: ["Ah", "Kd", "Ks", "7d", "2c"], preflop: PRE, flop: acts("BB x") }),               // your turn
     reviewed({ cards: ["Ah", "Kd"], preflop: acts("UTG f, HJ f, CO f, BTN r2.5, SB f, BB r10, BTN f") }),  // folded

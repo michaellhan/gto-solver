@@ -1,7 +1,7 @@
-// Review first (index.html's gate: handDone, adviceOpen, analyze): while a hand is entered your decisions are recorded
+// Review first (index.html's gate: handDone, reviewing, analyze): while a hand is entered your decisions are recorded
 // and nothing goes to the solver. A hand is finished when it ended, when you folded, or when it was marked so, and each
 // decision you recorded can then be reviewed, all together (reviewHand) or one by one (stepTo). Every route onto the
-// table keeps to that. Practice answers as you play, and is untouched.
+// table keeps to that.
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");

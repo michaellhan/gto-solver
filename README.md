@@ -208,7 +208,9 @@ to reviewed, not reviewed or imported hands, or to one tag. A hand opens on the 
 or copies as its `#h=` link; it takes tags and a note; **Delete** has an
 Undo. **Export** downloads the hands listed (or one) as JSON (`gto-solver-hands`: each hand's state, its `#h=` link, tags, note
 and, for an imported one, its site, hand number and history), and **Restore from a backup…** takes such a file too. The
-frozen copy's imported hands stay in the list and open like any other. With 1,005 hands in the
+frozen copy's imported hands stay in the list and open like any other. A record the page can't put on the table (a state
+`cleanState` refuses) lists, takes tags and a note, deletes, exports and backs up all the same; **Open** says so and links
+to the frozen copy. With 1,005 hands in the
 browser the list reads in 7 ms, the panel opens in 15 ms and a search filters in 7 ms; 1,000 hands come back from a file in 0.24 s.
 The panel is `gto/static/hands.js`, loaded when first opened.
 

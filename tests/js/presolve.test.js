@@ -1,6 +1,5 @@
 // Pre-solves are gone from the main screen (review first): while a hand is entered the worker is asked nothing, whoever
-// is to act, so nothing solves ahead of your decision; Practice looks ahead on its own (practice.js ahead, its tests in
-// practice.test.js). What stays from these tests: a stopped solve that never answers doesn't hold the next request up.
+// is to act, so nothing solves ahead of your decision. What stays from these tests: a stopped solve that never answers doesn't hold the next request up.
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");

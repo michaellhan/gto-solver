@@ -20,7 +20,6 @@ test("the page loads with only index.html beside it: no module is read at load",
     const out = execFileSync(process.execPath, ["-e", code], { env: { ...process.env, GTO_PAGE: path.join(dir, "index.html") }, encoding: "utf8" });
     assert.equal(out.trim(), "6");
   } finally { fs.rmSync(dir, { recursive: true }); }
-  assert.doesNotMatch(fs.readFileSync(path.join(__dirname, "page.js"), "utf8"), /require\("\.\/practice_src/);
 });
 
 test("exactly one bare inline script", () => {

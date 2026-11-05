@@ -148,7 +148,7 @@ test("cross-origin isolated, a solve of a spot you've left is stopped through me
   p.workers[0].onmessage({ data: { id: asked.id, result: { street: "flop", hero: "BTN", hand: "99", recommended: "check", actions: [{ action: "check", freq: 1 }] } } });
   await flush();
   assert.match(p.byId("result").innerHTML, /<span class="big">check<\/span>/);
-  // one request alone (Practice's look-ahead): stopRequests(id)
+  // one request alone (the equity's): stopRequests(id)
   const a = p.run("window.__a = callAdvise({ x: 1 }); __a.reqId"), b = p.run("window.__b = callAdvise({ x: 2 }); __b.reqId");
   assert.equal(p.run(`stopRequests(${a})`), true);
   assert.deepEqual([flag[0], flag[1]], [first.id, a]);

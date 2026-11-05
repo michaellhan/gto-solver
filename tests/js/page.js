@@ -93,7 +93,7 @@ class El {
   *walk() { for (const c of this.children) { yield c; yield* c.walk(); } }
 }
 
-// Options: hash (location.hash), path (location.pathname, default /gto-solver/: e.g. /gto-solver/practice/), search,
+// Options: hash (location.hash), path (location.pathname, default /gto-solver/: e.g. /gto-solver/hands/), search,
 // scripts (file name -> source run instead of gto/static's file when the page loads that script), protocol (location.protocol, default http:), storage (initial localStorage entries), server (true: /health answers ok,
 // so the page uses the local server's budgets and POSTs to /advise instead of the worker), isolated (true: the page is
 // cross-origin isolated, so it can share a SharedArrayBuffer with its worker), serviceWorker (true: a first visit whose

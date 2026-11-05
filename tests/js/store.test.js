@@ -36,6 +36,9 @@ const OLD_LS = () => ({
   "other-site": "not ours",
 });
 const SESSION = { v: 1, created: 1699990000000, name: "Tuesday", scope: "all", status: "paused", items: [{ id: 0, hand: 0, s: "flop", i: 1 }], hands: [{ id: "h1", text: "PokerStars Hand #1: ..." }] };
+// what the frozen copy's analyzer keeps: its summaries, newest first, and its session in progress
+const sessions = async (st) => (await st.list("sessions")).map(r => r.data).sort((a, b) => (b.date || 0) - (a.date || 0));
+const current = async (st) => { const r = await st.record("blobs", "session-current"); return r && !r.deleted ? r.data : null; };
 const HISTORY = [{ id: 1699990000000, fp: "abc", name: "Tuesday", date: 1699990000000, hands: 120, decisions: 300 },
                  { id: 1699900000000, fp: "def", name: "Monday", date: 1699900000000, hands: 80, decisions: 210 }];
 
@@ -54,8 +57,8 @@ test("first load: every localStorage key and the analyzer's database are taken i
   assert.deepEqual(Object.keys(r).sort(), ["created", "data", "dev", "id", "updated", "v"]);
   assert.equal(r.v, st.SCHEMA); assert.equal(r.created, now.t); assert.equal(r.updated, now.t); assert.equal(r.dev, st.device);
   // the analyzer: its session in progress a blob, its history a record per session (ids as strings), newest first
-  assert.deepEqual(await st.blob("session-current").get(), SESSION);
-  assert.deepEqual(await st.sessions.get(), HISTORY);
+  assert.deepEqual(await current(st), SESSION);
+  assert.deepEqual(await sessions(st), HISTORY);
   assert.deepEqual((await st.list("sessions")).map(x => x.id).sort(), ["1699900000000", "1699990000000"]);
   // the old database is left as it was
   assert.deepEqual(idb.dump("gto-session", "kv"), { current: SESSION, history: HISTORY });
@@ -69,11 +72,11 @@ test("the migration runs once: a session deleted after it isn't taken in again",
   const ls = fakeLocalStorage(), idb = fakeIndexedDB();
   await seedOldDb(idb, "gto-session", "kv", { current: SESSION, history: HISTORY });
   const a = await open({ localStorage: ls, indexedDB: idb });
-  await a.sessions.set([HISTORY[0]]);
-  await a.blob("session-current").del();
+  await a.del("sessions", String(HISTORY[1].id));
+  await a.del("blobs", "session-current");
   const b = await open({ localStorage: ls, indexedDB: idb });
-  assert.deepEqual(await b.sessions.get(), [HISTORY[0]]);
-  assert.equal(await b.blob("session-current").get(), null);
+  assert.deepEqual(await sessions(b), [HISTORY[0]]);
+  assert.equal(await current(b), null);
   // the deleted one is a tombstone (a later sync can tell it from one never seen)
   const dead = (await b.list("sessions", { deleted: true })).find(r => r.id === "1699900000000");
   assert.equal(dead.deleted, true); assert.equal(dead.data, undefined);
@@ -83,8 +86,8 @@ test("the migration runs once: a session deleted after it isn't taken in again",
 test("the analyzer's localStorage fallback is taken in, and no empty database is made for it", async () => {
   const ls = fakeLocalStorage({ "gto-session": JSON.stringify(SESSION), "gto-session-history": JSON.stringify(HISTORY) }), idb = fakeIndexedDB();
   const st = await open({ localStorage: ls, indexedDB: idb });
-  assert.deepEqual(await st.blob("session-current").get(), SESSION);
-  assert.equal((await st.sessions.get()).length, 2);
+  assert.deepEqual(await current(st), SESSION);
+  assert.equal((await sessions(st)).length, 2);
   assert.equal(idb.has("gto-session"), false);
   assert.equal(st.getRaw("gto-session") != null, true);          // (left as it was)
   assert.equal((await st.list("kv")).some(r => r.id.startsWith("gto-session")), false);   // (not a kv record too)
@@ -166,7 +169,7 @@ test("without IndexedDB the records are kept in localStorage, without either in 
     await st.hands.save(hand());
     st = await open({ localStorage: ls, indexedDB: idb });
     assert.equal((await st.hands.list()).length, 1);
-    assert.equal((await st.sessions.get()).length, 2);
+    assert.equal((await sessions(st)).length, 2);
     assert.equal(st.getRaw("gto-speed"), "fast");
     assert.ok(JSON.parse(ls.getItem("gto-store:hands")));
   }
@@ -208,8 +211,8 @@ test("restore: into a new browser everything comes back; here the newer stays an
   const now = clock();
   const a = await open({ localStorage: fakeLocalStorage(OLD_LS()), indexedDB: fakeIndexedDB(), now });
   await a.hands.save(hand(), { tags: ["3bet"], note: "fold?" });
-  await a.sessions.set(HISTORY);
-  await a.blob("session-current").set(SESSION);
+  for (const x of HISTORY) await a.put("sessions", x.id, x);
+  await a.put("blobs", "session-current", SESSION);
   const b = await a.backup();
   // a new browser: everything added, the settings in its localStorage
   const ls2 = fakeLocalStorage(), c = await open({ localStorage: ls2, indexedDB: fakeIndexedDB(), now });
@@ -218,8 +221,8 @@ test("restore: into a new browser everything comes back; here the newer stays an
   assert.equal(ls2.getItem("gto-speed"), "accurate");
   assert.equal(ls2.getItem("gto-anthropic-key"), null);
   assert.deepEqual((await c.hands.list())[0].data.tags, ["3bet"]);
-  assert.deepEqual(await c.sessions.get(), HISTORY);
-  assert.deepEqual(await c.blob("session-current").get(), SESSION);
+  assert.deepEqual(await sessions(c), HISTORY);
+  assert.deepEqual(await current(c), SESSION);
   // the same backup again: all kept
   assert.equal((await c.restore(b)).added, 0);
   // here: a newer setting stays, an older one is replaced, a hand deleted here comes back, one added here stays
@@ -342,22 +345,6 @@ test("hands: tags, a note, delete and undo (in its place in the list), export an
   assert.equal((await c.hands.list()).find(x => x.data.state.hero === "BB").data.state.cleaned, true);
   assert.equal((await c.hands.list()).find(x => x.data.state.hero === "BB").data.source, "file");
   await assert.rejects(c.hands.importFile({ foo: 1 }), /no hands/);
-});
-
-test("sessions and blobs: session.js's { get, set, del } over the records", async () => {
-  const st = await open({ localStorage: fakeLocalStorage(), indexedDB: fakeIndexedDB() });
-  assert.deepEqual(await st.sessions.get(), []);
-  await st.sessions.set(HISTORY);
-  assert.deepEqual(await st.sessions.get(), HISTORY);
-  await st.sessions.set([{ ...HISTORY[1], name: "Mon" }]);
-  assert.deepEqual(await st.sessions.get(), [{ ...HISTORY[1], name: "Mon" }]);
-  await st.sessions.del();
-  assert.deepEqual(await st.sessions.get(), []);
-  const cur = st.blob("session-current");
-  assert.equal(await cur.get(), null);
-  await cur.set(SESSION); assert.deepEqual(await cur.get(), SESSION);
-  await cur.set({ ...SESSION, status: "done" }); assert.equal((await cur.get()).status, "done");
-  await cur.del(); assert.equal(await cur.get(), null);
 });
 
 test("a change is told to listeners (and to the other tabs)", async () => {

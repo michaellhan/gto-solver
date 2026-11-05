@@ -2,6 +2,8 @@
 // in this browser by store.js (GTOStore.hands): each hand you played on the table (kept when New hand or another hand
 // takes its place) or reviewed (Review whole hand, with its grades), and those the frozen copy imported. Search, a filter by kind and tag, tags and
 // a note on each, delete (Undo); a hand opens on the table (to review it) and copies as its #h= link; the list (or one hand) exports as JSON, and Restore takes such a file back.
+// A record the page can't put on the table (a state cleanState refuses) lists, deletes, exports and backs up like any
+// other; opening it says so and links to the frozen copy.
 // Below the list, a backup of everything the site keeps in this browser and its restore (GTOStore.backup / restore), and
 // its delete (GTOStore.wipe), which asks first and then says what went.
 // Everything but the panel (open) and the page host is pure and tested in Node.
@@ -11,6 +13,7 @@
   const SUIT = { s: "♠", h: "♥", d: "♦", c: "♣" };
   const KINDS = [["", "All"], ["reviewed", "Reviewed"], ["unreviewed", "Not reviewed"], ["import", "Imported"]];
   const PAGE = 50, UI_KEY = "gto-hands-ui";
+  const NO_OPEN = `This page can't open that hand. It's still kept here, and <a href="/gto-solver-classic/hands/">the frozen copy</a>, which shares this browser's storage, may open it.`;
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   const clone = (x) => JSON.parse(JSON.stringify(x));
   const okCard = (c) => typeof c === "string" && /^[AKQJT98765432][shdc]$/.test(c);
@@ -280,6 +283,7 @@
     await refresh();
     say(esc(`${name ? name + ": " : ""}${r.added} hand${r.added === 1 ? "" : "s"} added${r.merged ? `, ${r.merged} already here` : ""}${r.skipped ? `, ${r.skipped} skipped (no action, or unreadable)` : ""}.`));
   }
+  const linkFor = (st) => host.clean(st) ? host.link(st) : undefined;   // (a hand that can't open has no link to carry)
   async function act(d, el) {
     const H = store().hands;
     if (d.clear != null) { ui = { q: "", kind: "", tag: "" }; shown = PAGE; saveUi(); return draw(); }
@@ -288,10 +292,10 @@
     if (d.more != null) { shown += PAGE; return drawList(); }
     if (d.toggle != null) { openId = openId === d.toggle ? null : d.toggle; return drawList(); }
     if (d.savetable != null) { const r = await H.save(host.table(), { source: "table" }); await refresh(); return say(r ? "Saved the hand on the table." : "Nothing to save: the hand has no action yet."); }
-    if (d.open != null) { const r = recOf(d.open); if (!r) return; close(); return host.open(r); }
-    if (d.link != null) { const r = recOf(d.link); if (!r) return; const ok = await host.copy(host.link(r.data.state)); return say(ok ? "Link copied: it opens this hand on the solver's page." : "Couldn't copy the link."); }
-    if (d.json != null) { const r = recOf(d.json); if (r) download(fileName("hand", Date.now()), H.exportFile([r], host.link)); return; }
-    if (d.export != null) { const L = filterRecs(recs, ui); if (!L.length) return; const size = download(fileName("hands", Date.now()), H.exportFile(L, host.link)); return say(esc(`Exported ${L.length} hand${L.length === 1 ? "" : "s"} (${Math.max(1, Math.round(size / 1024))} KB).`)); }
+    if (d.open != null) { const r = recOf(d.open); if (!r) return; if (!host.clean(r.data.state)) return say(NO_OPEN); close(); return host.open(r); }
+    if (d.link != null) { const r = recOf(d.link); if (!r) return; if (!host.clean(r.data.state)) return say(NO_OPEN); const ok = await host.copy(host.link(r.data.state)); return say(ok ? "Link copied: it opens this hand on the solver's page." : "Couldn't copy the link."); }
+    if (d.json != null) { const r = recOf(d.json); if (r) download(fileName("hand", Date.now()), H.exportFile([r], linkFor)); return; }
+    if (d.export != null) { const L = filterRecs(recs, ui); if (!L.length) return; const size = download(fileName("hands", Date.now()), H.exportFile(L, linkFor)); return say(esc(`Exported ${L.length} hand${L.length === 1 ? "" : "s"} (${Math.max(1, Math.round(size / 1024))} KB).`)); }
     if (d.del != null) {
       const r = recOf(d.del); if (!r) return;
       await H.remove(r.id); openId = null; deleted = r; await refresh();
@@ -459,6 +463,6 @@
 
   const api = { summary, lineHtml, searchText, matches, filterRecs, tagCounts, cleanTag, rowHtml, listHtml, toolbarHtml, parseImport, fileName, backupText,
                 wipeText, wipeHtml, pageHost, open, close, act, importText, useHost: (h) => { host = h; }, get recs() { return recs; }, get ui() { return ui; },
-                get wiping() { return wiping; }, PAGE };
+                get wiping() { return wiping; }, get msg() { return msg; }, PAGE };
   if (typeof module === "object" && module.exports) module.exports = api; else globalThis.MyHands = api;
 })();
