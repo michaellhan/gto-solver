@@ -217,7 +217,8 @@ The frozen copy's solved preflop games (IndexedDB `gto-pf`) and the worker's cac
 **Back up everything** (in Hands) downloads all of it as one file (`gto-solver-backup-<date>.json`: 772 KB with
 1,005 hands), and **Restore from a backup…** merges one in, here or in another browser: a record missing here is added,
 of one in both the newer stays, nothing here is deleted, and a hand already here under another id gets the backup's
-tags (and its note, if it had none); settings take effect on the next load. The Anthropic API key the frozen copy's Explain with AI can keep
+tags (and its note, if it had none); settings take effect on the next load. It takes a Hands export too, on the same
+terms: a hand already here keeps its state, so an older file can't undo a review, unless only the file has grades. The Anthropic API key the frozen copy's Explain with AI can keep
 is never a record and never in a backup or export, not even pasted into a note; nor is the analyzer's mark of a run
 going in a tab (`gto-session-run`).
 **Delete everything this site keeps** (in Hands) asks first, says what goes, and offers **Back up first**: saved hands,
@@ -244,7 +245,9 @@ The hand is kept in the browser between reloads; **New hand** starts a new one a
 A hand keeps its settings and they go on being sent with it. Stacks, ante, straddle, rake and stakes carry to the next
 hand. Payouts, the field, bounties, sizes, ranges, size optimization and locks don't: a hand that has them says so in a
 line under the setup (pointing new spots to Lizard), and New hand or a new table size is their off switch. Opening a
-saved hand changes nothing in it. What the frozen copy saved stays for it, unread here: the speed (`gto-speed`; this page
+saved hand changes nothing in it, even one the page has to repair to show: the repaired copy goes in only if the hand
+changes from there. A blank hand left by the frozen copy starts here without those settings, in memory only: the shared
+`handreview` changes when you first enter something here. What the frozen copy saved stays for it, unread here: the speed (`gto-speed`; this page
 always solves at Fast and neither reads nor writes it), the deck's colours, the first-visit mark. A saved `gto-opponents`
 (pool opponents) is left as it is and refused here with one notice.
 

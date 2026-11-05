@@ -218,6 +218,148 @@ test("an exported file's hand comes back as the same hand: merged, not added", a
   assert.deepEqual((await p.hands())[0].data.state, rec.data.state);
 });
 
+const GRADE = { cls: "good", ev: 1.5 };
+const withGrade = (st) => { const x = j(st); x.actions.preflop[3].g = GRADE; return x; };
+const fileOf = (st, o = {}) => JSON.stringify({ format: "gto-solver-hands", version: 1, hands: [{ state: st, source: "file", tags: [], note: "", ...o }] });
+
+test("an older export over a hand reviewed since keeps its grades: only its tags and note come in", async () => {
+  const p = await storePage();
+  const rec = await saved(p, played());
+  await p.run(`GTOStore.hands.update(${JSON.stringify(rec.id)}, { tags: ["mine"], state: ${JSON.stringify(withGrade(rec.data.state))} })`);
+  const before = (await p.hands())[0];
+  assert.deepEqual(before.data.state.actions.preflop[3].g, GRADE);
+  assert.equal(before.data.reviewed, true);
+  p.ctx.__file = fileOf(rec.data.state);
+  assert.deepEqual(j(await p.run("GTOStore.hands.importFile(JSON.parse(__file), cleanState)")), { added: 0, merged: 1, skipped: 0 });
+  assert.deepEqual((await p.hands())[0], before);                  // (nothing to take: the record isn't written)
+  p.ctx.__file = fileOf(rec.data.state, { tags: ["theirs"], note: "from the file" });
+  assert.deepEqual(j(await p.run("GTOStore.hands.importFile(JSON.parse(__file), cleanState)")), { added: 0, merged: 1, skipped: 0 });
+  const after = (await p.hands())[0];
+  assert.deepEqual(after.data.state, before.data.state);
+  assert.equal(after.data.reviewed, true);
+  assert.deepEqual(after.data.tags, ["mine", "theirs"]);
+  assert.equal(after.data.note, "from the file");
+  p.ctx.__file = fileOf(rec.data.state, { note: "another" });
+  await p.run("GTOStore.hands.importFile(JSON.parse(__file), cleanState)");
+  assert.equal((await p.hands())[0].data.note, "from the file");   // (a note here stays)
+});
+
+test("an export with grades fills in a hand here that has none; a hand here with grades keeps its own", async () => {
+  const p = await storePage();
+  const rec = await saved(p, played());
+  p.ctx.__file = fileOf(withGrade(rec.data.state));
+  assert.deepEqual(j(await p.run("GTOStore.hands.importFile(JSON.parse(__file), cleanState)")), { added: 0, merged: 1, skipped: 0 });
+  const after = (await p.hands())[0];
+  assert.deepEqual(after.data.state.actions.preflop[3].g, GRADE);
+  assert.equal(after.data.reviewed, true);
+  const other = withGrade(rec.data.state); other.actions.preflop[3].g = { cls: "bad", ev: -3 };
+  p.ctx.__file = fileOf(other);
+  await p.run("GTOStore.hands.importFile(JSON.parse(__file), cleanState)");
+  assert.deepEqual((await p.hands())[0].data.state.actions.preflop[3].g, GRADE);
+});
+
+test("two entries of one hand in a file are one record", async () => {
+  const p = await storePage();
+  const st = j(played());
+  p.ctx.__file = JSON.stringify({ format: "gto-solver-hands", version: 1, hands: [{ state: st, tags: ["a"] }, { state: st, tags: ["b"] }] });
+  assert.deepEqual(j(await p.run("GTOStore.hands.importFile(JSON.parse(__file), cleanState)")), { added: 1, merged: 1, skipped: 0 });
+  const hs = await p.hands();
+  assert.equal(hs.length, 1);
+  assert.deepEqual(hs[0].data.tags, ["a", "b"]);
+});
+
+// Records cleanState would change (older or foreign ones: the page writes none of these itself).
+const REPAIRED = {
+  "an action by a seat not at the table": (s) => { s.actions.flop.push({ pos: "LJ", action: "check" }); },
+  "a card twice": (s) => { s.cards[3] = s.cards[0]; },
+  "a rake out of range": (s) => { s.rake = 30; s.rakeCap = 3; },
+  "field numbers with no payouts": (s) => { s.fieldN = 40; s.fieldAvg = 55; },
+  "a lock of an unknown kind": (s) => { s.locks = { BB: { fold: -20, nope: 1 } }; },
+  "a range for a seat not at the table": (s) => { s.ranges = { LJ: "AA" }; },
+  "five cards in the list": (s) => { s.cards = s.cards.slice(0, 5); },
+};
+const putRecord = async (p, st, o = {}) => {
+  p.ctx.__rec = JSON.stringify({ state: st, sig: p.val(`GTOStore.hands.sig(${JSON.stringify(st)})`), tags: ["t"], note: "n", source: "table", reviewed: false, ...o });
+  await p.run('GTOStore.put("hands", "old", JSON.parse(__rec))');
+  return (await p.hands())[0];
+};
+const repaired = (name) => { const s = j(played()); REPAIRED[name](s); return s; };
+
+for (const name of Object.keys(REPAIRED))
+  test(`opening a record the page would repair leaves it as it was: ${name}`, async () => {
+    const p = await storePage();
+    const rec = await putRecord(p, repaired(name));
+    assert.notEqual(p.val("GTOStore.hands.sig(S)"), rec.data.sig);
+    await openRecord(p, rec.id);
+    assert.deepEqual((await p.hands())[0], rec);
+    assert.notEqual(p.val("GTOStore.hands.sig(S)"), rec.data.sig, "the table has the cleaned copy");
+    // over a reload too, and New hand leaves one record, not rewritten
+    const q = await storePage({ storage: Object.fromEntries(p.storage), indexedDB: p.ctx.indexedDB });
+    await flush();
+    q.click("newhand");
+    await flush();
+    assert.deepEqual(j(await q.hands()), [rec]);
+  });
+
+test("a repaired record opened twice stays one untouched record", async () => {
+  const p = await storePage();
+  const rec = await putRecord(p, repaired("a card twice"));
+  await openRecord(p, rec.id);
+  await openRecord(p, rec.id);
+  assert.deepEqual(await p.hands(), [rec]);
+});
+
+test("a repaired record played on from, or reviewed, is the hand you changed: its record takes it, and only then", async () => {
+  const p = await storePage();
+  const rec = await putRecord(p, repaired("a rake out of range"));
+  await openRecord(p, rec.id);
+  p.run('S.actions.flop.push({ pos: "BTN", action: "check" }); save();');
+  p.click("newhand");
+  await flush();
+  let hs = await p.hands();
+  assert.deepEqual(hs.map(h => h.id), ["old"]);
+  assert.equal(hs[0].data.state.actions.flop.length, 2);
+  assert.equal("rake" in hs[0].data.state, false);
+  assert.deepEqual([hs[0].data.tags, hs[0].data.note], [["t"], "n"]);
+
+  const q = await storePage();
+  const r2 = await putRecord(q, repaired("field numbers with no payouts"));
+  await openRecord(q, r2.id);
+  q.run("S.actions.preflop[3].g = { cls: 'good', ev: 1 };");
+  await q.run('keepHand("review", S)');
+  await flush();
+  hs = await q.hands();
+  assert.deepEqual(hs.map(h => h.id), ["old"]);
+  assert.equal(hs[0].data.reviewed, true);
+  assert.equal(q.val("GTOStore.hands.table().opened === undefined"), true);
+});
+
+test("a hand marked finished only to open it isn't written back either", async () => {
+  const p = await storePage();
+  const rec = await putRecord(p, j(played()), { source: "review" });
+  await openRecord(p, rec.id);
+  assert.equal(p.S.finished, true);
+  p.click("newhand");
+  await flush();
+  assert.deepEqual(await p.hands(), [rec]);
+});
+
+test("a clean record opened leaves no copy in gto-hands-table, and My hands doesn't offer to save a repaired one again", async () => {
+  const p = await storePage();
+  const rec = await saved(p, played());
+  await openRecord(p, rec.id);
+  assert.equal("opened" in JSON.parse(p.storage.get("gto-hands-table")), false);
+  const q = await storePage();
+  const r2 = await putRecord(q, repaired("a card twice"));
+  await q.run('loadJs("hands.js?v=" + HN_VERSION, () => window.MyHands).then(() => MyHands.useHost(MyHands.pageHost()))');
+  await q.run('MyHands.act({ savetable: "" })');                   // (the list read: an empty table saves nothing)
+  await q.run('MyHands.pageHost().open(MyHands.recs[0])');
+  await flush();
+  assert.equal(q.run("MyHands.tableHtml()"), "");
+  q.run('S.actions.flop.push({ pos: "BTN", action: "check" }); save();');
+  assert.match(q.run("MyHands.tableHtml()"), /data-savetable/);
+});
+
 test("reviewing again sends the hand's settings: no stored grade decides what the numbers were against", async () => {
   const p = loadPage();
   await p.ready();
@@ -229,8 +371,11 @@ test("reviewing again sends the hand's settings: no stored grade decides what th
 
 test("a hand not started when the page loads drops them, with one notice; no record is touched", async () => {
   const blank = { ...state({ cards: ["Ah", "Kh"] }), ...TOURNEY, ...ADV, ...CARRIED };
-  const p = await storePage({ storage: { handreview: JSON.stringify(blank) } });
+  const raw = JSON.stringify(blank);
+  const p = await storePage({ storage: { handreview: raw } });
   await flush();
+  assert.equal(p.storage.get("handreview"), raw);                  // (the frozen copy's: only what you enter here changes it)
+  assert.equal(await p.run('GTOStore.ready.then(() => GTOStore.getRaw("handreview"))'), raw);
   for (const k of NOT_CARRIED) assert.equal(k in p.S, false, k);
   assert.equal(p.S.stack, 80);                                     // (what has a control stays)
   assert.equal(p.S.rake, 5);
@@ -240,7 +385,11 @@ test("a hand not started when the page loads drops them, with one notice; no rec
   assert.equal(banner(p).hidden, true);
   assert.deepEqual(await p.hands(), []);
   const again = await storePage({ storage: Object.fromEntries(p.storage), indexedDB: p.ctx.indexedDB });
-  assert.equal(again.byId("toast").innerHTML, "");
+  assert.equal(again.byId("toast").innerHTML, "");                 // (once, though handreview still holds them)
+  assert.equal(again.storage.get("handreview"), raw);
+  for (const k of NOT_CARRIED) assert.equal(k in again.S, false, k);
+  again.run('document.getElementById("seats").children[0].onclick()');   // (the first thing entered here saves the hand without them)
+  assert.equal("payouts" in JSON.parse(again.storage.get("handreview")), false);
   // one with nothing in effect goes without a word
   const quiet = await storePage({ storage: { handreview: JSON.stringify({ ...state({}), payouts: [100] }) } });
   assert.equal("payouts" in quiet.S, false);
@@ -254,6 +403,27 @@ test("a link's hand with no action yet isn't touched: only a hand from the last 
   assert.deepEqual(j(p.S.payouts), TOURNEY.payouts);
   assert.match(banner(p).innerHTML, /payouts/);
 });
+
+for (const serviceWorker of [false, true])
+  test(`a link's hand with no action yet keeps its settings over a reload${serviceWorker ? ": the service worker's, on a first visit" : ""}; New hand then drops them`, async () => {
+    const st = { ...state({ cards: ["Ah", "Kh"] }), ...TOURNEY, ...ADV, locks: { BB: LOCK } };
+    const p = await storePage({ hash: "#h=" + btoa(JSON.stringify(st)), serviceWorker });
+    await flush();
+    assert.equal(p.run("isolating"), serviceWorker);
+    assert.deepEqual(j(p.S.payouts), TOURNEY.payouts);
+    const q = await storePage({ storage: Object.fromEntries(p.storage), indexedDB: p.ctx.indexedDB });
+    await flush();
+    for (const k of NOT_CARRIED.filter(k => k !== "bounty")) assert.equal(k in q.S, true, k);
+    assert.deepEqual(j(JSON.parse(q.storage.get("handreview")).payouts), TOURNEY.payouts);
+    assert.match(banner(q).innerHTML, /payouts 50\/30\/20/);
+    assert.doesNotMatch(q.byId("toast").innerHTML, /carry/);
+    q.click("newhand");
+    await flush();
+    for (const k of NOT_CARRIED) assert.equal(k in q.S, false, k);
+    const r = await storePage({ storage: { ...Object.fromEntries(q.storage), handreview: JSON.stringify({ ...q.S, ...TOURNEY }) }, indexedDB: q.ctx.indexedDB });
+    await flush();
+    assert.equal("payouts" in r.S, false);                         // (no longer the link's hand: the rule for a blank hand again)
+  });
 
 for (const store of [false, true])
   test(`a saved "pool" is refused: not sent, not rewritten, said once (${store ? "with the store" : "localStorage"})`, async () => {

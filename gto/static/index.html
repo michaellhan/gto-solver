@@ -2132,18 +2132,23 @@ async function applyRoute(r) {
   syncRoute(true);
 }
 if (typeof window.addEventListener === "function") window.addEventListener("popstate", () => applyRoute(parseRoute(location.pathname)));
-// Two notices, once each, on the first load after these settings lost their carry. A hand not started yet is no saved
-// hand (store.js keeps none without actions): what it holds of them came from the last hand, so it goes. And a saved
-// "pool" is refused: it lives in the browser, not the hand, so nothing here would show it or turn it off. The key stays
-// as it is, for the frozen copy, which still writes it; "gto-pool-refused" keeps the notice to one showing.
+// Two notices, once each, now these settings have lost their carry. A hand not started yet is no saved hand (store.js
+// keeps none without actions): what it holds of them came from the last hand, so this page starts it without them. That's
+// in memory only: handreview is shared with the frozen copy, which carries them on purpose, so it changes when you first
+// enter something here. A link's hand isn't the last hand's, however often it's loaded. And a saved "pool" is refused:
+// it lives in the browser, not the hand, so nothing here would show it or turn it off. The key stays as it is, for the
+// frozen copy, which still writes it. "gto-carry-notice" and "gto-pool-refused" keep each notice to one showing.
 // (Not while the page is about to reload for its service worker: the reload would take the notice with it.)
 if (!isolating) {
-  const said = [], blank = !linkLoaded && !STREETS.some(s => S.actions[s].length), held = NOT_CARRIED.filter(k => k in S);
+  const fromLink = linkLoaded || !!(window.GTOStore && window.GTOStore.hands.table().source === "link");
+  const said = [], blank = !fromLink && !STREETS.some(s => S.actions[s].length), held = NOT_CARRIED.filter(k => k in S);
   if (blank && held.length) {
     const line = savedHtml();
     for (const k of held) delete S[k];
-    save();
-    if (line) said.push("Settings from your last hand no longer carry over, so this new hand starts without them.");
+    if (line && !pageStore.getRaw("gto-carry-notice")) {
+      pageStore.setRaw("gto-carry-notice", "1");
+      said.push("Settings from your last hand no longer carry over, so this new hand starts without them.");
+    }
   }
   if (pageStore.getRaw("gto-opponents") === "pool" && !pageStore.getRaw("gto-pool-refused")) {
     pageStore.setRaw("gto-pool-refused", "1");

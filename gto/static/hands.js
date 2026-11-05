@@ -194,15 +194,15 @@
 
   // ---- the page (globals of index.html)
   function pageHost() {
-    // the hand on the table, as that record (the page's cleaned copy of it kept, should it differ: a file's hand)
+    // the hand on the table, as that record. The record isn't written: the page's cleaned copy, should it differ, goes
+    // into it only if the hand changes from there (store.js).
     const onTable = async (rec) => {
       const H = globalThis.GTOStore.hands, st = clone(rec.data.state);
       if (rec.data.source === "import" || rec.data.source === "review") st.finished = true;   // (kept before hands were marked finished)
       await loadHandState(st);
-      if (H.sig(S) !== rec.data.sig) await H.update(rec.id, { state: S });
-      H.onTable(S, { id: rec.id, source: rec.data.source });
+      H.onTable(S, { id: rec.id, source: rec.data.source, from: rec.data.state });
     };
-    /* global S, cleanState, loadHandState, rewindTo, reviewHand, toast, simulate, encodeState, decodeState, ROOT, copyText, handDone, heldHand */
+    /* global S, cleanState, loadHandState, reviewHand, toast, simulate, encodeState, decodeState, ROOT, copyText, handDone, heldHand */
     return {
       store: () => globalThis.GTOStore,
       table: () => clone(heldHand()),
@@ -236,7 +236,7 @@
     let st = null; try { st = host.table(); } catch (e) {}
     const H = store().hands;
     if (!st || !H.worth(st)) return "";
-    const sig = H.sig(st), saved = recs.some(r => r.data && r.data.sig === sig);
+    const sig = H.sig(st), t = H.table(), saved = recs.some(r => r.data && r.data.sig === sig || t.opened && r.id === t.id && t.sig === sig);
     if (saved) return "";
     const s = summary(st);
     return `<div class="mh-table">On the table: <b>${esc(s.title)}</b> ${cardsH(s.hole)} ${cardsH(s.board)} <span class="mh-sub">not saved yet (it's kept when you start a new hand)</span> <button data-savetable>Save it now</button></div>`;
@@ -462,7 +462,7 @@
   }
 
   const api = { summary, lineHtml, searchText, matches, filterRecs, tagCounts, cleanTag, rowHtml, listHtml, toolbarHtml, parseImport, fileName, backupText,
-                wipeText, wipeHtml, pageHost, open, close, act, importText, useHost: (h) => { host = h; }, get recs() { return recs; }, get ui() { return ui; },
+                wipeText, wipeHtml, tableHtml, pageHost, open, close, act, importText, useHost: (h) => { host = h; }, get recs() { return recs; }, get ui() { return ui; },
                 get wiping() { return wiping; }, get msg() { return msg; }, PAGE };
   if (typeof module === "object" && module.exports) module.exports = api; else globalThis.MyHands = api;
 })();

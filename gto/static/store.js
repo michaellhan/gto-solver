@@ -45,7 +45,7 @@
   // key that isn't here, and pins the list: the keys of a module gone from gto/static stay, as the frozen copy writes them.
   const SITE_KEYS = [...KNOWN, ...LOCAL_ONLY, ...Object.keys(MOVED), SENTINEL,
     ...[...STORES, "meta"].map(s => "gto-store:" + s),   // (the records, without IndexedDB)
-    "gto-welcome", "gto-stakes", "gto-writeup", "gto-pool-refused",   // (taken in as any "gto-" key is)
+    "gto-welcome", "gto-stakes", "gto-writeup", "gto-pool-refused", "gto-carry-notice",   // (taken in as any "gto-" key is)
     "gto-isolate", "gto-isolate-classic"];               // (sessionStorage: the service worker's once-a-tab mark)
   const SITE_DATABASES = { [DB_NAME]: [...STORES, "meta"], "gto-session": ["kv"], "gto-pf": ["solves"] };
   const SITE_CACHES = ["gto-solver", "gto-solver-classic"];
@@ -435,6 +435,8 @@
     //     reviewed: graded decisions in it, tags: [], note: "", site / hh: an imported hand's site and history }
     // The page tells it (gto-hands-table) which hand is on the table: the record it is (opened from My hands, saved,
     // imported), or a spot put there (the frozen copy's write-ups, drills and reports: kept only once you play on from it).
+    // A record the page repaired to open it stays as it was (opening changes nothing): the table's entry then holds the
+    // copy that was opened ("opened"), and the record takes the hand only if it comes to differ from that copy.
     const TABLE = "gto-hands-table";
     function handSig(st) {
       if (!st || typeof st !== "object") return "";
@@ -465,7 +467,8 @@
       await ready;
       const sig = handSig(st), m = await load("hands");
       let base = opts.id ? m.get(opts.id) : null;
-      if (base && (base.deleted || !base.data || !(base.data.sig === sig || extendsHand(base.data.state, st)))) base = null;
+      const same = (a) => handSig(a) === sig || extendsHand(a, st);
+      if (base && (base.deleted || !base.data || !(same(base.data.state) || opts.opened && same(opts.opened)))) base = null;
       if (!base) for (const r of m.values()) if (!r.deleted && r.data && r.data.sig === sig) { base = r; break; }
       const d = base ? base.data : { tags: [], note: "", source: opts.source || "table" };
       const data = { ...d, state: st, sig, reviewed: graded(st) || !!d.reviewed && d.sig === sig };
@@ -494,7 +497,8 @@
       sig: handSig, worth, extendsHand, handNumber,
       table: () => parse(getRaw(TABLE)) || {},
       // the hand now on the table: the record it is (id), a spot (spot), or where it came from (source)
-      onTable(st, opts = {}) { setRaw(TABLE, JSON.stringify({ id: opts.id || null, sig: handSig(st), spot: !!opts.spot, ...(opts.source ? { source: opts.source } : {}) })); },
+      // (from: the record's state, when st is a copy of it opened on the table)
+      onTable(st, opts = {}) { setRaw(TABLE, JSON.stringify({ id: opts.id || null, sig: handSig(st), spot: !!opts.spot, ...(opts.source ? { source: opts.source } : {}), ...(opts.from && canon(opts.from) !== canon(st) ? { opened: st } : {}) })); },
       async list() { return (await list("hands")).sort((a, b) => b.created - a.created); },
       get: (id) => getRec("hands", id),
       // save a hand: into the record it already is (same hand, or one it plays on from), else a new one
@@ -505,22 +509,24 @@
         if (!worth(st)) return Promise.resolve(null);
         st = clone(st);
         const t = hands.table(), sig = handSig(st);
-        if (how === "replaced" && t.spot && t.sig === sig) return Promise.resolve(null);
+        if (how === "replaced" && (t.spot && t.sig === sig || t.opened && canon(t.opened) === canon(st))) return Promise.resolve(null);
         const source = how === "import" ? "import" : meta.source || (t.spot ? "table" : t.source) || "table";
         const hh = typeof meta.hh === "string" && meta.hh.trim() ? meta.hh.trim().slice(0, 20000) : null;
-        return hands.save(st, { ...meta, hh, hhId: meta.hhId || (hh ? handNumber(hh) : null), id: t.id, source,
+        return hands.save(st, { ...meta, hh, hhId: meta.hhId || (hh ? handNumber(hh) : null), id: t.id, opened: t.opened, source,
                                 table: how !== "replaced" && meta.table !== false }).catch(() => null);
       },
       remove: (id) => del("hands", id),
       // (Undo after a delete: the record as it was, back under its id)
       restore: (rec) => put("hands", rec.id, rec.data, +rec.created || 0),
       // a My hands export file ({ format: "gto-solver-hands", hands: [{ state, link, tags, note, ... }] }) or a list of
-      // states; an entry with only its #h= link (decode: the page's decodeState) is that link's hand
+      // states; an entry with only its #h= link (decode: the page's decodeState) is that link's hand. A hand already here
+      // keeps its state, so an older file can't take back grades made since: as in a backup, the file's tags join and its
+      // note fills an empty one. Only the file's grades come in, on a hand here that has none.
       async importFile(obj, clean, decode) {
         const list0 = obj && obj.format === HANDS_FILE && Array.isArray(obj.hands) ? obj.hands : Array.isArray(obj) ? obj : obj && obj.players && obj.actions ? [obj] : null;
         if (!list0) throw new Error("That file has no hands in it (a My hands export, or a hand's state JSON).");
         const out = { added: 0, merged: 0, skipped: 0 };
-        const before = new Set((await hands.list()).map(r => r.id));
+        const held = await hands.list(), before = new Set(held.map(r => r.id)), bySig = new Map(held.filter(r => r.data).map(r => [r.data.sig, r]));
         for (const h0 of list0) {
           let h = h0 && h0.state ? h0 : { state: h0 };
           if (h0 && !h0.state && !h0.players && typeof h0.link === "string") {
@@ -530,9 +536,17 @@
           }
           const st = clean ? clean(h.state) : h.state;
           if (!worth(st)) { out.skipped++; continue; }
+          const here = bySig.get(handSig(st));
+          if (here && (graded(here.data.state) || !graded(st))) {
+            const d = here.data, tags = [...new Set([...(d.tags || []), ...(Array.isArray(h.tags) ? h.tags : [])])], note = d.note || (typeof h.note === "string" ? h.note : "");
+            if (tags.length !== (d.tags || []).length || note !== (d.note || "")) bySig.set(d.sig, await hands.update(here.id, { tags, note }));
+            out.merged++;
+            continue;
+          }
           const rec = await hands.save(st, { source: h.source || "file", tags: Array.isArray(h.tags) ? h.tags : [], note: typeof h.note === "string" ? h.note : "",
                                              site: h.site, hh: h.hh, hhId: h.hhId, table: false });
           if (rec && before.has(rec.id)) out.merged++; else if (rec) { out.added++; before.add(rec.id); }
+          if (rec) bySig.set(rec.data.sig, rec);
         }
         return out;
       },
