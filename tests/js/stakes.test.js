@@ -7,7 +7,6 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { loadPage, state, acts } = require("./page.js");
 
-const linkOf = (text) => text.match(/^Open this spot: (.*)$/m)[1];
 const PRE = { cards: ["Ah", "Kh"], preflop: acts("UTG f, HJ r2.5, CO f") };   // BTN (you) to act, facing 2.5bb
 const FLOP = { cards: ["Ah", "Kh", "Kd", "7s", "2c"], preflop: acts("UTG f, HJ f, CO f, BTN r2.5, SB f, BB c"), flop: acts("BB x") };
 const pick = (p, v) => p.byId("stakes").onchange({ target: { value: v } });
@@ -53,9 +52,8 @@ test("a preset: saved, remembered, the stack and ante in dollars, the payload un
   p.byId("ante").onchange({ target: { value: "2.5" } });
   assert.equal(p.S.ante, 0.5);
   assert.equal(p.payload().stack, 250); assert.equal(p.payload().ante, 0.5);
-  // the summary and the hand's text name the stakes and the dollars
+  // the summary names the stakes and the dollars
   assert.match(p.byId("setupSum").innerHTML, /<b>\$2\/\$5<\/b>.*<b>250bb<\/b> \(\$1,250\) stacks.*0\.5bb \(\$2\.50\) ante/);
-  assert.match(p.run("handText()"), /^GTO Solver hand: 6-handed, \$2\/\$5, 250bb \(\$1,250\) effective, 0\.5bb \(\$2\.50\) ante/);
   // $1/$2: the small blind is half the big one, no note
   pick(p, "1-2");
   assert.equal(p.byId("stakesNote").textContent, "");
@@ -119,7 +117,6 @@ test("bets in dollars: the buttons, the prompt, a typed size, the hand panel", a
   const tl = p.byId("timeline").children.map(e => e.innerHTML).join(" ");
   assert.match(tl, /HJ raises to 2\.5 \(\$12\.50\)/);
   assert.match(tl, /BTN raises to 8 \(\$40\)/);
-  assert.match(p.run("handText()"), /BTN raises to 8 \(\$40\)/);
   const felt = p.byId("felt").children;
   assert.match(felt.at(-1).innerHTML, /pot 12 bb \(\$60\)/);
   assert.ok(felt.some(e => /<span class="amt">\$40</.test(e.innerHTML)));
@@ -169,7 +166,7 @@ test("share links carry the stakes; table size changes keep them", async () => {
   const a = loadPage();
   await a.ready();
   a.S = { ...state(FLOP), stakes: { sb: 1, bb: 3 } };
-  const b = loadPage({ hash: linkOf(a.run("handText()")).replace(/^[^#]*/, "") });
+  const b = loadPage({ hash: a.run("shareLink()").replace(/^[^#]*/, "") });
   await b.ready();
   assert.deepEqual(b.S.stakes, { sb: 1, bb: 3 });
   assert.equal(b.byId("stakes").value, "1-3");

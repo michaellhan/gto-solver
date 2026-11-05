@@ -171,14 +171,6 @@ test("share links and saved hands carry the stacks; old ones without play equal 
   assert.equal(p.S.stacks, undefined);
 });
 
-test("hand text names the stacks", async () => {
-  const p = loadPage();
-  await p.ready();
-  p.S = { ...state({ cards: ["Ah", "Kh"] }), stacks: { CO: 35, BB: 250 } };
-  assert.match(p.run("handText()"), /^GTO Solver hand: 6-handed, 100bb stacks \(CO 35, BB 250\), I am BTN with AhKh/);
-  p.S = state({ cards: ["Ah", "Kh"] });
-  assert.match(p.run("handText()"), /^GTO Solver hand: 6-handed, 100bb effective, I am BTN/);
-});
 
 test("after an all-in for an odd amount, an advised raise is offered at a size the page takes", () => {
   // CO's 12.3bb all-in over HJ's 2.5 is a full raise: the smallest raise is to 22.1, so the advice's 22.1 (or 22,

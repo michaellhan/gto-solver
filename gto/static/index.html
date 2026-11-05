@@ -227,7 +227,7 @@
   body.practice .acts button.best { box-shadow: none; }
   body.practice .seat, body.practice #seats, body.practice .rewind, body.practice #result .arow { pointer-events: none; }
   body.practice #tableHint, body.practice #editCards, body.practice #timeline > button, body.practice .shortcut, body.practice #pCards,
-  body.practice #copyhand, body.practice #newhand, body.practice .prompt .ask, body.practice .acts.solver::before { display: none !important; }
+  body.practice #share, body.practice #newhand, body.practice .prompt .ask, body.practice .acts.solver::before { display: none !important; }
   body.practice .acts button { min-height: 54px; font-size: 15px; max-width: none; }
   @media (min-width: 561px) { body.practice .acts button { min-width: max-content; flex: 1 1 auto; padding: 8px 30px 8px 12px; } }   /* (one row where they fit, else two: a label never runs under its key) */
   @media (max-width: 560px) { body.practice #solvectl { display: none; } }   /* (the header on one line) */
@@ -641,7 +641,7 @@
   <span class="ctl" id="solvectl"><span class="lbl">Solve</span>
     <div class="segment"><button data-m="fast" class="active" title="How long a review takes over each decision. The default: about 8 s a decision in the browser (2.5 s with the local server). Rivers come out exact; a single-raised turn gives up about 0.2% of the pot to a perfect opponent, a 3bet pot's turn almost nothing; precomputed flops answer at once. Practice answers in about 2 s here: rivers close to exact, turns approximate. More: ⋯ > About &amp; accuracy.">Fast</button><button data-m="accurate" title="How long a review takes over each decision: about a minute in the browser (30 s with the local server). Turns come within a fraction of a percent of a full solver: a single-raised turn gives up about 0.01% of the pot to a perfect opponent. More: ⋯ > About &amp; accuracy.">Accurate</button></div></span>
   <button id="practiceBtn" title="Practice against GTO: random hands, the other seats play the solver's strategy for their cards, and each of your decisions is graded">Practice</button>
-  <button id="copyhand" title="Copy this hand as text: the action, the advice for the decision you are reviewing (its mix, EVs and the opponent's range), a link that reopens the hand, and the raw state (State JSON, for the command line)">Copy hand</button>
+  <button id="share" title="Copy a link that opens this hand">Share</button>
   <button id="newhand" title="Shortcut: N">New hand <kbd>N</kbd></button>
   <span class="menuwrap">
     <button id="helpBtn" class="ghost" title="Help: getting started, how accurate the answers are, a glossary" aria-label="Help">?</button>
@@ -680,7 +680,6 @@
           </select>
           <span class="row" id="stakesCustom" hidden><span class="muted">$</span><input type="number" id="stakeSb" min="0" step="any" style="width:56px" title="The small blind, in dollars"><span class="muted">/ $</span><input type="number" id="stakeBb" min="0" step="any" style="width:56px" title="The big blind, in dollars"></span>
           <span class="muted" id="stakesNote" style="font-size:12px"></span>
-          <button class="link" id="writeupBtn" style="margin-left:auto" title="Enter a hand you've played, seat by seat with amounts in dollars, then review every decision you made in it (made for phones: write up your session's hands afterwards)">Write up a hand…</button>
         </div>
         <div class="row setuprow">
           <span class="muted">Players</span>
@@ -1023,7 +1022,6 @@ const WORKER_VERSION = "14";   // scripts/deploy.sh replaces this with a hash of
 const HH_VERSION = "1";        // and this with a hash of hh.js (the hand-history importer, loaded on first use)
 const SS_VERSION = "1";        // and session.js (the session analyzer, loaded on first use, after hh.js)
 const EX_VERSION = "1";        // and explain.js (Copy for AI, Explain with AI: Practice's and a reviewed decision's, loaded on first use)
-const WU_VERSION = "1";        // and writeup.js (Write up a hand: a played hand entered seat by seat, then reviewed)
 const PR_VERSION = "1";        // and practice.js (Practice, loaded on first use, after explain.js)
 const MT_VERSION = "1";        // and multitable.js (Practice on 2-4 tables at once, loaded the first time Tables goes above 1)
 const HP_VERSION = "1";        // and help.js (the help pages: Getting started, About & accuracy, Glossary, Changelog, Fair play)
@@ -1251,7 +1249,7 @@ async function cancelSolve() {
 
 // ---- review first. This page is for hands you have played: while a hand is entered your decisions are recorded and
 // nothing is solved, fetched or shown. A hand is finished when it ended, when you folded, or when it was marked so
-// (S.finished: Finish hand, an imported hand, a write-up sent to review); then each decision you recorded can be reviewed
+// (S.finished: Finish hand, an imported hand); then each decision you recorded can be reviewed
 // (reviewHand, all of them; stepTo, one). A decision you didn't record is never reviewed, and once a hand's advice has
 // been shown its line stays as it is (S.reviewed, fixedHand). Practice answers as you play, on its own hands.
 let review = null;     // { n, k, what, cancel, full } while a review runs; cancel "restore" (its Cancel) or "drop" (a new hand)
@@ -1461,8 +1459,7 @@ function sidePots(tot, live, allin) {
 // the pots of the hand on the table now (bets of the street in progress included)
 const potsNow = (sim) => sidePots(Object.fromEntries(POS.map(p => [p, sim.invested[p] + (sim.cur ? sim.cur.bets[p] : 0)])), POS.filter(p => sim.active.has(p)), sim.allin);
 
-// The record of action a by whoever is to act (sim: simulate()'s), or why it can't be taken (a string). The write-up
-// (writeup.js) records its hand's actions with it too.
+// The record of action a by whoever is to act (sim: simulate()'s), or why it can't be taken (a string).
 function recordOf(sim, a) {
   if (!sim.cur) return sim.waiting ? "Deal the next card first." : "The hand is over.";
   const p = sim.toAct, info = sim.cur;
@@ -2394,42 +2391,11 @@ function resetAdvice() {
   const el = document.getElementById("result"); lastKey = null; lastResult = null; resultKey = null;
   if (el.className !== "empty") { el.className = "empty"; el.innerHTML = EMPTY_ADVICE; }
 }
-// ---- share: plain-text summary + link that reopens the spot
-function handText() {
-  const n = S.players, seat = SEAT_LABEL(S.hero, n), sim = simulate(), shown = practicing() || closed(sim);
-  const lines = [`GTO Solver hand: ${n}-handed, ${STAKES() ? `${STAKES_TEXT()}, ` : ""}${UNEQUAL() ? `${S.stack}bb${withUsd(S.stack)} stacks (${STACKS_TEXT()})` : `${S.stack}bb${withUsd(S.stack)} effective`}${ANTE() ? `, ${fmt(ANTE())}bb${withUsd(ANTE())} ante` : ""}${STRADDLER() ? `, ${SEAT_LABEL(STRADDLER(), n)} straddles 2bb` : ""}${RAKE() ? `, ${RAKE_TEXT()}` : ""}${TOURNEY() ? `, ${ICM_TEXT()}` : ""}${ADV_TEXT() ? `, ${ADV_TEXT()}` : ""}, I am ${seat} with ${S.cards[0] || "?"}${S.cards[1] || "?"}`];
-  const act = (a) => `${SEAT_LABEL(a.pos, n)} ${a.action === "bet" ? "bets " + fmt(a.to) + withUsd(a.to) : a.action === "raise" ? "raises to " + fmt(a.to) + withUsd(a.to) : a.action === "all-in" ? "all-in" : a.action + "s"}${a.g && shown ? ` [${gradeMark(a.g)} solver ${(a.g.f * 100).toFixed(0)}%${a.g.v ? ` as the chart's ${a.g.m}` : ""}${a.g.l ? `, -${a.g.l.toFixed(2)}bb` : ""}]` : ""}`;
-  const bd = (s) => s === "preflop" ? "" : " (" + boardCards().slice(NEED[s] - (s === "flop" ? 3 : 1), NEED[s]).join(" ") + ")";
-  for (const s of STREETS) {
-    if (!S.actions[s].length && !(sim.current === s && sim.cur)) continue;
-    let line = `${s[0].toUpperCase() + s.slice(1)}${bd(s)}: ` + S.actions[s].map(act).join(", ");
-    if (sim.current === s && sim.cur) line += `${S.actions[s].length ? " — " : ""}${SEAT_LABEL(sim.toAct, n)} to act, pot ${fmt(sim.cur.pot)}bb${withUsd(sim.cur.pot)}`;
-    lines.push(line);
-  }
-  const r = lastResult;
-  if (r && !r.error) {
-    const vs = r.locked ? `, vs ${Object.entries(r.locked).map(([p, l]) => `${p} locked (${LOCK_TEXT(l)})`).join(", ")}${r.notes && r.notes.some(n => n.startsWith("exploit mode")) ? " on the pool" : ""}` : r.actions.some(a => a.gto_freq !== undefined) ? ", vs a typical player pool" : "";
-    lines.push(`Advice (${r.street}${r.position ? ", " + r.position : ""}${vs}): ${r.recommended}`);
-    lines.push("  " + r.actions.map(a => `${a.action}${amtOf(a) != null ? " " + amtOf(a) + "bb" : ""} ${(a.freq * 100).toFixed(1)}%${a.gto_freq !== undefined ? ` (GTO ${(a.gto_freq * 100).toFixed(0)}%)` : ""}${a.ev_bb !== undefined ? " EV " + (a.ev_bb > 0 ? "+" : "") + a.ev_bb.toFixed(2) : ""}`).join(" | "));
-    if (r.actions.some(a => a.gto_freq !== undefined)) lines.push(`  GTO %: ${gtoSource(r, resultKey)}`);
-    if (r.range_action_freq) lines.push("  whole range: " + Object.entries(r.range_action_freq).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(", "));
-    if (r.villain_range) lines.push(`  ${r.villain} range (${r.villain_range_combos} combos): ${r.villain_range}`);
-    if (r.size_usage) lines.push(`  size optimization: ${SIZE_USAGE(r)}`);
-    if (r.solved) lines.push(`  3-way solve against ${r.opponents.join(" and ")}`);
-    else if (r.multiway) lines.push(`  equity vs field ${(r.equity_vs_field * 100).toFixed(0)}% (heuristic, ${r.opponents.length + 1} players)`);
-    if (r.solver) lines.push(`  solver: ${r.solver.iterations} iterations, ${r.solver.solve_seconds}s, ${r.solver.active_combos} combos, sizes ${r.solver.tree_actions.join(", ")}`);
-    if (r.notes && r.notes.length) lines.push("  notes: " + r.notes.join("; "));
-  }
-  const link = location.origin + ROOT + "#h=" + encodeState(heldHand());   // (the solver's URL, from any view's)
-  lines.push("Open this spot: " + link);
-  lines.push("State JSON: " + JSON.stringify(payload()));
-  return lines.join("\n");
-}
-// Copying keeps the click: Safari lets a page write to the clipboard only during the user's gesture, and an
-// await before the write could end it, so the first copy after load (still waiting on the backend) failed.
-// The clipboard call is made synchronously in the click; while the backend (whose budgets the copied state
-// carries) isn't known yet, a ClipboardItem takes the text as a promise. If the clipboard API refuses, a
-// selected hidden textarea and execCommand("copy") is tried, then a prompt to copy by hand.
+// ---- share: a link that reopens the hand
+const shareLink = () => location.origin + ROOT + "#h=" + encodeState(heldHand());   // (the solver's URL, from any view's)
+// Copying keeps the click: Safari lets a page write to the clipboard only during the user's gesture, so the clipboard
+// call is made synchronously in it. If the clipboard API refuses, a selected hidden textarea and execCommand("copy")
+// is tried, then a prompt to copy by hand.
 function copyByCommand(text) {
   const ta = document.createElement("textarea");
   ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.top = "0"; ta.style.opacity = "0";
@@ -2442,27 +2408,21 @@ function copyByCommand(text) {
   ta.remove();
   return ok;
 }
-function copyText(textOrPromise) {
+function copyText(text) {
   const cb = navigator.clipboard;
   let write;
-  try {
-    if (typeof textOrPromise === "string") write = cb && cb.writeText ? cb.writeText(textOrPromise) : Promise.reject();
-    else if (cb && cb.write && typeof ClipboardItem !== "undefined")
-      write = cb.write([new ClipboardItem({ "text/plain": textOrPromise.then(t => new Blob([t], { type: "text/plain" })) })]);
-    else write = textOrPromise.then(t => cb && cb.writeText ? cb.writeText(t) : Promise.reject());
-  } catch (e) { write = Promise.reject(e); }
-  return Promise.resolve(write).then(() => true, async () => {
-    const text = await textOrPromise;
+  try { write = cb && cb.writeText ? cb.writeText(text) : Promise.reject(); } catch (e) { write = Promise.reject(e); }
+  return Promise.resolve(write).then(() => true, () => {
     if (copyByCommand(text)) return true;
     window.prompt("Copy this:", text);
     return false;
   });
 }
-document.getElementById("copyhand").onclick = () => {
-  const b = document.getElementById("copyhand");
-  return copyText(MODE ? handText() : modeReady.then(() => handText())).then((ok) => {
-    b.textContent = ok ? "Copied" : "Copy hand";
-    if (ok) setTimeout(() => b.textContent = "Copy hand", 1500);
+document.getElementById("share").onclick = () => {
+  const b = document.getElementById("share");
+  return copyText(shareLink()).then((ok) => {
+    b.textContent = ok ? "Copied" : "Share";
+    if (ok) setTimeout(() => b.textContent = "Share", 1500);
   });
 };
 function linkState() {   // the spot a #h= link carries (null if none), the hash cleared
@@ -2476,7 +2436,7 @@ function linkState() {   // the spot a #h= link carries (null if none), the hash
 let linkLoaded = false;
 (function loadFromLink() { const st = linkState(); if (st) { keepHand("replaced"); S = st; setPositions(S.players); save(); handOnTable({ source: "link" }); linkLoaded = true; } })();
 // A link opened in a tab already showing the page only changes its hash (no reload): load the spot then too.
-if (typeof window.addEventListener === "function") window.addEventListener("hashchange", () => { const st = linkState(); if (st) loadHandState(st, null, "link"); });
+if (typeof window.addEventListener === "function") window.addEventListener("hashchange", () => { const st = linkState(); if (st) loadHandState(st, "link"); });
 document.getElementById("stack").value = S.stack;
 document.getElementById("stack").onchange = (e) => { const v = amountIn(e.target.value); S.stack = v > 0 ? v : 100; e.target.value = STAKES() ? amountOut(S.stack) : S.stack; const o = S.stacks; delete S.stacks; Object.assign(S, cleanStacks({ ...S, stacks: o }, POS)); save(); renderAll(); };
 // The seats' own stacks (Stacks: "per seat"): a row of boxes, one per seat; a seat left at the table's stack has none.
@@ -2587,12 +2547,6 @@ for (const id of ["stakeSb", "stakeBb"]) document.getElementById(id).onchange = 
   const sb = parseFloat(document.getElementById("stakeSb").value), bb = parseFloat(document.getElementById("stakeBb").value);
   if (sb > 0 && bb > 0 && sb <= bb) setStakes({ sb, bb }); else renderAll();
 };
-// ---- Write up a hand (writeup.js, loaded the first time it opens): a hand you played entered seat by seat (amounts in
-// dollars with stakes), then reviewed. Its draft is a hand like S, kept apart, that the page's engine plays: withHand
-// runs f with it in place of the page's own (S and the seats), which it puts back.
-function withHand(st, f) { const s0 = S; S = st; setPositions(st.players); try { return f(); } finally { S = s0; setPositions(s0.players); } }
-document.getElementById("writeupBtn").onclick = () => loadJs("writeup.js?v=" + WU_VERSION, () => window.WriteUp).then(() => window.WriteUp.open())
-  .catch(e => showErr("Couldn't load the write-up: " + (e && e.message || e)));
 // tournament payouts, and the players at other tables (shown once there are payouts)
 // (an input being typed in keeps its text)
 function syncIcm() {
@@ -2820,9 +2774,9 @@ document.getElementById("hhGo").onclick = async () => {
   b.onclick = () => { document.getElementById("toast").hidden = true; reviewHand(); }; document.getElementById("toast").appendChild(b);
 };
 // A whole hand replaces the page's (an imported one, one from My hands or the analyzer): a review, not a practice deal.
-// A hand that wasn't finished stays unfinished: nothing is solved for it. The hand it replaces is kept in My hands; a
-// write-up (note) only once you play on from it. from: a link's.
-async function loadHandState(st, note, from) {
+// A hand that wasn't finished stays unfinished: nothing is solved for it. The hand it replaces is kept in My hands.
+// from: a link's.
+async function loadHandState(st, from) {
   const out = practicing() ? null : JSON.parse(JSON.stringify(heldHand()));
   if (review) review.cancel = "drop";
   stepView = null;
@@ -2831,8 +2785,7 @@ async function loadHandState(st, note, from) {
   keepHand("replaced", out);
   S = cleanState(st); setPositions(S.players); selSlot = null; showDeck = false; editSetup = false; pendingRank = null;
   document.getElementById("stack").value = S.stack; document.getElementById("ante").value = ANTE(); document.getElementById("straddle").checked = !!S.straddle;
-  save(); handOnTable(note ? { spot: true } : from ? { source: from } : {}); resetAdvice(); renderAll();
-  if (note) toast(`Loaded ${note}: you are ${SEAT_LABEL(S.hero, S.players)} with ${S.cards[0]}${S.cards[1]}.`);
+  save(); handOnTable(from ? { source: from } : {}); resetAdvice(); renderAll();
 }
 // Practice turned on or off (Practice.set, its state already switched): the page takes that mode's own hand and setup,
 // or seed (Practice's first time: the solver's setup, no hand) when it has none yet

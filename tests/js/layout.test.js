@@ -51,9 +51,9 @@ test("the action dock is lifted above the on-screen keyboard", () => {
 test("the execCommand fallback selects the text the way iOS needs", async () => {
   const p = loadPage({ clipboard: "denied", iosSelect: true });
   await p.ready();
-  await p.click("copyhand");
+  await p.click("share");
   assert.equal(p.clipboard.via, "execCommand");
-  assert.equal(p.clipboard.text, p.run("handText()"));
+  assert.equal(p.clipboard.text, p.run("shareLink()"));
   assert.deepEqual(p.clipboard.prompts, []);
   await flush();
 });

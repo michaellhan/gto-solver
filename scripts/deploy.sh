@@ -74,7 +74,6 @@ MT_VERSION multitable.js
 HP_VERSION help.js
 HN_VERSION hands.js
 EX_VERSION explain.js
-WU_VERSION writeup.js
 "
 while read -r constant module _; do
   [ -z "$constant" ] || cp "$HERE/gto/static/$module" "$WORK/site/gto-solver/"

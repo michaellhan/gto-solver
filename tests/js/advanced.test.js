@@ -9,7 +9,6 @@ const path = require("node:path");
 const { loadPage, state, acts } = require("./page.js");
 
 const j = (x) => JSON.parse(JSON.stringify(x));
-const linkOf = (text) => text.match(/^Open this spot: (.*)$/m)[1];
 const FLOP = { cards: ["Ah", "Kh", "Kd", "7s", "2c"], preflop: acts("UTG f, HJ f, CO f, BTN r2.5, SB f, BB c"), flop: acts("BB x") };
 const ADV = { sizes: { flop: [33, 125], raise: [60] }, ranges: { BB: "22+,A2s+,KTo+" }, optSizes: true };
 const rangeBoxes = (p) => [...p.byId("rangeIns").walk()].filter(e => e.tagName === "INPUT");
@@ -70,16 +69,14 @@ test("a change drops the shown advice; neither a new hand nor a change of player
   for (const k of ["sizes", "ranges", "optSizes", "locks"]) assert.equal(k in p.S, false, k);
 });
 
-test("share link round trip, the summary and the copied hand say so", async () => {
+test("share link round trip, and the summary says so", async () => {
   const a = loadPage();
   a.S = { ...state(FLOP), ...ADV };
-  const text = a.run("handText()");
-  const b = loadPage({ hash: linkOf(text).replace(/^[^#]*/, "") });
+    const b = loadPage({ hash: a.run("shareLink()").replace(/^[^#]*/, "") });
   assert.deepEqual(j(b.S), j(a.S));
   await a.ready(); await b.ready();
   assert.deepEqual(b.payload(), a.payload());
   assert.equal(b.byId("adv").open, true);
-  assert.match(text.split("\n")[0], /, custom sizes, custom BB range, optimized sizes, I am BTN/);
   b.run("editSetup = false; renderAll()");
   assert.match(b.byId("setupSum").innerHTML, /custom sizes/);
 });
@@ -108,7 +105,6 @@ test("the villain's range grid and the size usage render in Details", async () =
   assert.equal((h.match(/class="cell/g) || []).length, 169);   // one grid (no hero grid in this result)
   assert.match(h, /data-h="AKs" style="opacity:0.625"/);
   assert.match(h, /check 20% · 33% 50% · 125% 30%; kept 33%, 125%/);
-  assert.match(p.run("handText()"), /size optimization: check 20% · 33% 50% · 125% 30%; kept 33%, 125%/);
 });
 
 test("a precomputed answer is badged; one borrowed from another table size's library spot says so and how far", async () => {
@@ -174,7 +170,7 @@ test("custom sizes with size optimization: the hint says they compete in its men
   assert.match(p.byId("result").innerHTML, /kept 33%, 40% \(your sizes 40%, 120% were in the menu\)/);
   p.ctx.__res = JSON.stringify({ ...res, sizes_kept: ["33%"] });
   p.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
-  assert.match(p.run("handText()"), /kept 33% \(your sizes 40%, 120% were in the menu, not kept\)/);
+  assert.match(p.byId("result").innerHTML, /kept 33% \(your sizes 40%, 120% were in the menu, not kept\)/);
 });
 
 test("the advisor reads the Advanced keys the page sends", () => {
@@ -225,16 +221,14 @@ test("locks: a profile per opponent, sent preflop and after, and its numbers edi
   assert.deepEqual(j(p.payload().locks), { BB: { bet: -20 } });
 });
 
-test("locks: share link round trip, the summary, the copied hand and the advice say so", async () => {
+test("locks: share link round trip, and the summary and the advice say so", async () => {
   const a = loadPage();
   a.S = { ...state(FLOP), finished: true, locks: { BB: { fold: 15 }, SB: { fold: 5, next_bet: 0 } } };
-  const text = a.run("handText()");
-  const b = loadPage({ hash: linkOf(text).replace(/^[^#]*/, "") });
+    const b = loadPage({ hash: a.run("shareLink()").replace(/^[^#]*/, "") });
   assert.deepEqual(j(b.S), j(a.S));
   await a.ready(); await b.ready();
   assert.deepEqual(b.payload(), a.payload());
   assert.equal(b.byId("adv").open, true);
-  assert.match(text.split("\n")[0], /BB locked \(overfolds to bets\), SB locked \(fold \+5, next bet 0%\)/);
   b.run("editSetup = false; renderAll()");
   assert.match(b.byId("setupSum").innerHTML, /BB locked \(overfolds to bets\)/);
   b.ctx.__res = JSON.stringify({ street: "flop", hero: "BTN", villain: "BB", hand: "AKs", recommended: "bet 75%", locked: { BB: { fold: 15 } },
@@ -242,7 +236,6 @@ test("locks: share link round trip, the summary, the copied hand and the advice 
   b.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
   assert.match(b.byId("result").innerHTML, /Against your lock on BB \(overfolds to bets\): the best response/);
   assert.match(b.byId("result").innerHTML, /GTO 40%/);
-  assert.match(b.run("handText()"), /Advice \(flop, vs BB locked \(overfolds to bets\)\): bet 75%/);
 
   // preflop: re-priced against the lock, the chart's mix as GTO %
   b.ctx.__res = JSON.stringify({ street: "preflop", hero: "BTN", hand: "AKs", recommended: "raise", locked: { BB: { fold: 15 } },

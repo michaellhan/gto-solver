@@ -160,7 +160,7 @@ test("the chooser isn't shown to a returning visitor, at a view's URL or with a 
   const a = page();
   await a.ready();
   a.S = state({ hero: "CO", cards: ["Ah", "Kd"], preflop: acts("UTG f, HJ f") });
-  const link = a.run("handText()").match(/^Open this spot: (.*)$/m)[1];
+  const link = a.run("shareLink()");
   const l = loadPage({ scripts: SCRIPTS, hash: link.slice(link.indexOf("#")) });
   await l.ready(); await flush();
   assert.equal(l.S.hero, "CO");

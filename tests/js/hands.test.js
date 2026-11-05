@@ -65,15 +65,17 @@ test("a hand opened from My hands is saved back into its own record when it's re
   assert.deepEqual(hs[0].data.tags, ["river"]); assert.equal(hs[0].data.note, "check back?");
 });
 
-test("a spot put on the table isn't kept untouched; played on, it is", async () => {
+test("a spot the frozen copy put on the table isn't kept untouched; played on, it is", async () => {
   const p = await storePage();
   const spot = state({ hero: "BB", cards: ["Js", "Ts", "9c", "8d", "2h"], preflop: OPEN });
-  await p.run(`loadHandState(${JSON.stringify(spot)}, "your write-up")`);
+  await p.run(`loadHandState(${JSON.stringify(spot)})`);
+  p.run("GTOStore.hands.onTable(S, { spot: true })");
   assert.equal(JSON.parse(p.storage.get("gto-hands-table")).spot, true);
   p.click("newhand");
   await until(async () => true, 80);
   assert.equal((await p.hands()).length, 0);
-  await p.run(`loadHandState(${JSON.stringify(spot)}, "your write-up")`);
+  await p.run(`loadHandState(${JSON.stringify(spot)})`);
+  p.run("GTOStore.hands.onTable(S, { spot: true })");
   p.act({ action: "check" });
   p.click("newhand");
   const hs = await until(async () => { const h = await p.hands(); return h.length && h; });

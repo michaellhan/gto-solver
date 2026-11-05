@@ -334,7 +334,6 @@ test("a preflop jam the chart doesn't list is graded as the chart's raise (or 0%
     actions: { preflop: [{ pos: "UTG", action: "fold" }, { pos: "HJ", action: "raise", to: 2.5 }, { pos: "CO", action: "all-in", g }, { pos: "BTN", action: "fold" }, { pos: "SB", action: "fold" }, { pos: "BB", action: "fold" }, { pos: "HJ", action: "fold" }], flop: [], turn: [], river: [] } };
   p.run("renderAll()");
   assert.match(p.byId("adviceNote").innerHTML + p.byId("result").innerHTML, /<b>all-in<\/b> · solver 40% <span class="muted">as the chart's raise to 7.5<\/span>/);
-  assert.match(p.run("handText()"), /CO all-in \[✓ solver 40% as the chart's raise to 7.5\]/);
 });
 
 test("the report counts decisions left ungraded by why: the betting rules' multiway answers apart from the rest", () => {

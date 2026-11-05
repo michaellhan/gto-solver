@@ -131,10 +131,8 @@ Undo and the card slots refuse, and a line tried differently is a new hand's. **
 finished hand that nothing has been shown for. Rewinding an unfinished hand truncates it and gives no advice, with a toast. A saved,
 shared or reloaded hand comes back as it was left: unfinished with no advice, finished with its review.
 
-**Every route onto the table.** An import (`hh.js`), a session's decision (`session.js`) and **Review hand** in the
-write-up open finished; a hand from My hands opens finished if it was imported or reviewed, else as it was left,
-with a toast saying what it needs. A share link keeps `finished` and `reviewed` as they are. **Open on table** in the write-up
-is an unfinished hand. Practice's hands stay in Practice. `Advisor.presolve` and the worker's `presolve` request stay for `scripts/bench_browser.mjs --presolve`, unused by the page.
+**Every route onto the table.** An import (`hh.js`) and a session's decision (`session.js`) open finished; a hand from My hands opens finished if it was imported or reviewed, else as it was left,
+with a toast saying what it needs. A share link keeps `finished` and `reviewed` as they are. Practice's hands stay in Practice. `Advisor.presolve` and the worker's `presolve` request stay for `scripts/bench_browser.mjs --presolve`, unused by the page.
 
 These are limits on what the page offers, enforced in the page: a made-up action, or a link edited to say `finished`,
 gets a review of that decision. The rule against use during a hand is in Fair play and the terms.
@@ -223,17 +221,6 @@ loaded only when the dialog opens. **Review whole hand** (offered on any finishe
 grades it and ends on the hand review; it shows "decision 2 of 5" while it
 runs and can be cancelled, keeping the grades so far.
 
-**Write up a hand…** (beside Stakes) is for a hand played live, written up after the session on a phone. The game
-is one line (stakes, players, stacks in dollars or big blinds with each seat's own if set, a straddle, rake;
-**edit** opens it), then your seat and your two cards (typed: `AhKd`, `A♥K♦`, `10h 9h`), then the action seat
-by seat: who is to act, with the pot and the price in dollars and big blinds, buttons for fold, check, call and
-all-in, a box for a bet or raise in dollars (one under the minimum says the smallest), and **Folds to** any later
-seat, which folds every seat before it (checks after the flop). A street that closes asks for its cards. **Undo**
-takes back the last action or street's cards, **New hand** starts again in the same game, and the draft is kept
-in the browser. **Open on table** puts the hand on the page's table; **Review hand** puts it there and grades each
-of your decisions as **Review whole hand** does (once there is one). The page's own hand and its advice are left
-alone while you write. The box is `gto/static/writeup.js`, loaded the first time it opens.
-
 **Analyze session** (in the ⋯ menu) reviews whole sessions, like GTO Wizard's analyzer: drop, choose or paste
 hand-history files of any number of hands (any site above, mixed sites too), several files at once, or **a folder**
 (its `.txt`, `.xml`, `.log` and `.hh` files, in path order; a dropped folder is walked too). `hh.js`'s `splitHands`
@@ -298,7 +285,7 @@ postflop-spot and frequency tables summed over every session.
 
 **My hands** (in the ⋯ menu, `/gto-solver/hands/`) keeps the hands you play on the table, in this browser. The hand
 on the table is saved when **New hand**, a share link, an imported history or a hand from the analyzer takes its
-place (a write-up you didn't play on isn't), when **Review whole hand** finishes (with
+place, when **Review whole hand** finishes (with
 its grades), and when a history is imported (with its site, hand number and text). The same hand is one record however
 often it's saved (grades aside), and a hand opened from the list and played on is saved back into its own record. Each
 row has the date, positions, cards, board, kind of pot, how far it went and your decisions' grades with the EV given
@@ -339,7 +326,7 @@ the caches `gto-solver` and `gto-solver-classic`. The panel reports what it dele
 can't be deleted they stay with their localStorage copies, so nothing is half gone, and it says so; other tabs of this
 site stop writing and reload (a tab of the frozen copy can't be told, and the panel says to close it).
 My hands and the store stand on their own: `tests/js/floor.test.js` fails if `hands.js` or `store.js` gains a dependency
-on Practice, the session analyzer, Explain or the write-up, and restores a backup of all four stores with those files gone.
+on Practice, the session analyzer or Explain, and restores a backup of all four stores with those files gone.
 
 The layout fits the window at any zoom. On a wide window each column scrolls on its own and
 the action buttons stay pinned to the bottom of theirs; drag the divider between the columns
@@ -347,9 +334,7 @@ to resize them, drag the bar under the table to resize it, and click the Table o
 to fold that panel (all remembered in the browser). On a narrow window (a phone, or a zoomed-in
 page) it's one column with the action buttons pinned to the bottom of the screen. While a card
 is needed the deck moves up under the setup; otherwise it's hidden behind **Edit cards**.
-**Copy hand** puts a plain-text summary on the clipboard: the full action, the
-advice with frequencies, EVs and sizes, the villain range, solver stats, a link
-that reopens the exact spot, and the raw state JSON for the API or CLI.
+**Share** in the header copies a link that reopens the hand exactly as it stands.
 The hand is kept in the browser between reloads; **New hand** starts a new one and keeps the old one in **My hands**.
 A hand keeps its settings and they go on being sent with it. Stacks, ante, straddle, rake and stakes carry to the next
 hand. Payouts, the field, bounties, sizes, ranges, size optimization and locks don't: a hand that has them says so in a

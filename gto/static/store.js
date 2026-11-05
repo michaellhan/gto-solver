@@ -450,7 +450,7 @@
     //     same hand saved again is the same record), source: "table" | "review" | "import" | "file" | "link",
     //     reviewed: graded decisions in it, tags: [], note: "", site / hh: an imported hand's site and history }
     // The page tells it (gto-hands-table) which hand is on the table: the record it is (opened from My hands, saved,
-    // imported), or a spot put there (a write-up, the frozen copy's drills and reports: kept only once you play on from it).
+    // imported), or a spot put there (the frozen copy's write-ups, drills and reports: kept only once you play on from it).
     const TABLE = "gto-hands-table";
     function handSig(st) {
       if (!st || typeof st !== "object") return "";

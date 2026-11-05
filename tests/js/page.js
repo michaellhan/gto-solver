@@ -25,7 +25,7 @@ const RUNTIME_IDS = {
   "index.html": ["customAmt", "customBox", "equityRetry", "explainBox", "solveBar", "solveMsg", "solveTime", "solverRetry"],
   "explain.js": ["pxKey"], "hands.js": ["mhStyle"], "help.js": ["hpStyle"],
   "multitable.js": ["mtAmt", "mtStyle", "mtView", "mtTop", "mtTabs", "mtDock", "mtSide", "mtT0", "mtT1", "mtT2", "mtT3"],
-  "session.js": ["ssStyle"], "writeup.js": ["wuStyle"],
+  "session.js": ["ssStyle"],
 };
 const RUNTIME = new Set(Object.values(RUNTIME_IDS).flat());
 // (the markup without the page's one inline script: its templates are the ids created at runtime)
@@ -121,8 +121,7 @@ function loadPage(opts = {}) {
   const posted = [];      // messages the page sent to the solver worker / server
   const workers = [];
   const fetched = [], notFound = [];   // URLs the page fetched; those the static site doesn't have (404s)
-  // The clipboard. opts.clipboard: "text" (default: navigator.clipboard.writeText only), "item" (also
-  // write() with ClipboardItem, whose data may be a promise, as Safari and recent Chrome), "denied" (the
+  // The clipboard. opts.clipboard: "text" (default: navigator.clipboard.writeText), "denied" (the
   // clipboard API always refuses). opts.gesture: like Safari, clipboard writes and execCommand("copy") work
   // only while a user gesture is being handled (page.click() runs a click handler as one, synchronously).
   const clipboard = { text: null, gesture: false, prompts: [], via: null };
@@ -130,11 +129,6 @@ function loadPage(opts = {}) {
   const allowed = () => cbMode !== "denied" && (!opts.gesture || clipboard.gesture);
   const fakeClipboard = {
     writeText: async (t) => { if (!allowed()) throw new Error("NotAllowedError"); clipboard.text = t; clipboard.via = "writeText"; },
-  };
-  class ClipboardItem { constructor(items) { this.items = items; } }
-  if (cbMode === "item") fakeClipboard.write = (items) => {
-    if (!allowed()) return Promise.reject(new Error("NotAllowedError"));
-    return (async () => { clipboard.text = await (await items[0].items["text/plain"]).text(); clipboard.via = "write"; })();
   };
   const location = { hash: opts.hash || "", origin: "https://www.michael-han.com", pathname: opts.path || "/gto-solver/", search: opts.search || "", protocol: opts.protocol || "http:" };
   const replaced = [], pushed = [];   // the URLs history.replaceState / pushState were given
@@ -213,7 +207,6 @@ function loadPage(opts = {}) {
     },
     navigator: { clipboard: fakeClipboard, ...(opts.serviceWorker ? { serviceWorker: { controller: null, register: () => new Promise(() => {}), ready: new Promise(() => {}) } } : {}) },
     ...(opts.serviceWorker ? { isSecureContext: true, sessionStorage: { getItem: () => null, setItem: () => {} } } : {}),
-    ...(cbMode === "item" ? { ClipboardItem } : {}),
     Blob,
     localStorage: {
       getItem: (k) => storage.has(k) ? storage.get(k) : null,

@@ -83,7 +83,6 @@ test("the panel says what's recorded; no grade or mix shows on a hand being ente
   assert.match(note, /<b>Recorded so far<\/b>/);
   assert.match(note, /raise to 2.5/);
   assert.doesNotMatch(note, /solver|class="rewind|Review whole hand/);
-  assert.doesNotMatch(p.run("handText()"), /solver 60%/);
   assert.doesNotMatch(p.byId("timeline").innerHTML, /class="g /);
   assert.equal(p.run('document.body.classList.contains("heroturn")'), false);   // (a phone keeps the table and dock first)
   nothingAsked(p);
@@ -360,7 +359,7 @@ test("a share link carries a finished hand as finished, and from a decision look
   p.S = state(WHOLE);
   p.run('rewindTo("turn", 1)');
   await flush();
-  const b64 = p.run("handText()").match(/#h=([A-Za-z0-9+/=]+)/)[1];
+  const b64 = p.run("shareLink()").match(/#h=([A-Za-z0-9+/=]+)/)[1];
   const st = JSON.parse(Buffer.from(b64, "base64").toString());
   assert.equal(st.actions.river.length, 2);
   const q = await page({ isolated: true, hash: "#h=" + b64 });
@@ -404,27 +403,6 @@ test("the analyzer's Open: a decision of the session's hand, its advice at once,
   assert.equal(p.posted.filter(m => m.state).at(-1).state.board, "Kd7s2c");
 });
 
-test("a write-up sent to review is finished and reviewed; one opened on the table stays open to enter", async () => {
-  const hand = (p) => { p.ctx.__w = JSON.stringify(state({ ...FLOP, flop: acts("BB x, BTN b3") })); p.run("WriteUp._set && WriteUp._set(JSON.parse(__w))"); };
-  const go = async (arg) => {
-    const p = await page();
-    p.click("writeupBtn"); await flush();
-    for (const c of ["setHole('AhKh')", "skipTo('BTN')", "record({ amount: '2.5' })"]) p.val(`WriteUp.${c}`);
-    const r = await p.run(`WriteUp.review(${arg})`);
-    await flush();
-    return { p, r };
-  };
-  assert.equal(typeof hand, "function");
-  const a = await go("");
-  assert.equal(a.r, true);
-  assert.equal(a.p.val("review && review.n"), 1);
-  assert.equal(a.p.posted.filter(m => m.state).length, 1);
-  const b = await go("true");
-  assert.equal(b.r, true);
-  assert.equal(b.p.val("S.finished"), undefined);
-  assert.equal(b.p.val("review"), null);
-  nothingAsked(b.p);
-});
 
 test("a review that ends with the betting closed asks for your equity once, after the decisions; a hand being entered never does", async () => {
   const p = await reviewed(state(WHOLE));

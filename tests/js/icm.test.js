@@ -9,7 +9,6 @@ const path = require("node:path");
 const { loadPage, state, acts } = require("./page.js");
 
 const j = (x) => JSON.parse(JSON.stringify(x));
-const linkOf = (text) => text.match(/^Open this spot: (.*)$/m)[1];
 const PRE = { cards: ["Ah", "Jd"], preflop: acts("UTG f, HJ f, CO f, BTN r2") };
 
 test("no tournament by default: nothing sent, the field hidden", async () => {
@@ -69,20 +68,15 @@ test("the tournament doesn't carry to the next hand: a change of players or a ne
   assert.deepEqual([p.S.payouts, p.S.fieldN, p.S.fieldAvg], [undefined, undefined, undefined]);
 });
 
-test("share link round trip with a tournament, and the copied hand says it", async () => {
+test("share link round trip with a tournament", async () => {
   const T = { ...state(PRE), payouts: [50, 30, 20] };
   for (const st of [T, { ...T, fieldN: 20, fieldAvg: 25 }, state(PRE)]) {
     const a = loadPage();
     a.S = st;
-    const text = a.run("handText()");
-    const b = loadPage({ hash: linkOf(text).replace(/^[^#]*/, "") });
+        const b = loadPage({ hash: a.run("shareLink()").replace(/^[^#]*/, "") });
     assert.deepEqual(j(b.S), j(st));
     await a.ready(); await b.ready();
     assert.deepEqual(b.payload(), a.payload());
-    const first = text.split("\n")[0];
-    if (st.fieldN) assert.match(first, /, tournament, payouts 50\/30\/20 \(\+20 at other tables\), I am /);
-    else if (st.payouts) assert.match(first, /, tournament, payouts 50\/30\/20, I am /);
-    else assert.doesNotMatch(first, /tournament/);
   }
 });
 

@@ -8,7 +8,6 @@ const path = require("node:path");
 const { loadPage, state, acts } = require("./page.js");
 
 const j = (x) => JSON.parse(JSON.stringify(x));
-const linkOf = (text) => text.match(/^Open this spot: (.*)$/m)[1];
 const FLOP = { cards: ["Ah", "Kh", "Kd", "7s", "2c"], preflop: acts("UTG f, HJ f, CO f, BTN r2.5, SB f, BB c"), flop: acts("BB x") };
 const withRake = (st, rake, rakeCap) => ({ ...st, rake, ...(rakeCap !== undefined ? { rakeCap } : {}) });
 
@@ -93,20 +92,15 @@ test("rake survives a change of players and a new hand", async () => {
   assert.equal("rake" in p.S, false); assert.equal("rakeCap" in p.S, false);
 });
 
-test("share link round trip with rake, and the copied hand says it", async () => {
+test("share link round trip with rake", async () => {
   for (const st of [withRake(state(FLOP), 5, 3), withRake(state(FLOP), 7.5), state(FLOP)]) {
     const a = loadPage();
     a.S = st;
-    const text = a.run("handText()");
-    const b = loadPage({ hash: linkOf(text).replace(/^[^#]*/, "") });
+        const b = loadPage({ hash: a.run("shareLink()").replace(/^[^#]*/, "") });
     assert.deepEqual(j(b.S), st);
     await a.ready(); await b.ready();
     assert.deepEqual(b.payload(), a.payload());
     assert.equal(b.byId("rake").value, !st.rake ? "off" : st.rakeCap === 3 && st.rake === 5 ? "5-3" : "custom");
-    const first = text.split("\n")[0];
-    if (st.rake === 5) assert.match(first, /, 5% rake \(cap 3bb\), I am BTN/);
-    else if (st.rake) assert.match(first, /, 7\.5% rake \(no cap\), I am BTN/);
-    else assert.doesNotMatch(first, /rake/);
   }
 });
 

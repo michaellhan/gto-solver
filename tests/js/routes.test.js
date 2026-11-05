@@ -140,7 +140,7 @@ test("share links built on a view's URL are the solver's, and open there (old li
   const a = page({ path: "/gto-solver/hands/" });
   await a.ready(); await flush();
   a.S = state({ hero: "CO", cards: ["Ah", "Kd"], preflop: acts("UTG f, HJ f") });
-  const link = linkOf(a.run("handText()"));
+  const link = a.run("shareLink()");
   assert.match(link, /^https:\/\/www\.michael-han\.com\/gto-solver\/#h=/);
   const hash = link.slice(link.indexOf("#"));
   for (const where of ["/gto-solver/", "/gto-solver/index.html", "/gto-solver/practice/"]) {
