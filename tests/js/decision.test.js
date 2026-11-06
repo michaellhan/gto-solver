@@ -80,6 +80,20 @@ test("a cash hand is graded against the typical player: by the EV given up, with
   assert.equal(p.run(`gradeClass(${JSON.stringify(g)})`), "meh");                   // (7.8% of the pot)
   assert.match(p.run(`verdictText(${JSON.stringify(g)})`), /Against a typical player the best play is bet 125%\. 0\.74 bb lost, 7\.8% of the pot\./);
   assert.match(p.run("handText()"), /Against a typical player: bet 125%\. Lost 0\.74bb\./);
+  // EVs inside the answer's ev_tie are tied, and the advice's own action is the best of a tie
+  const graded = (m, tie) => p.run(`gradeWith({ pot_bb: 10, recommended: "bet 33%", ${tie == null ? "" : `ev_tie: ${tie}, `}actions: [
+    { action: "check", freq: 0, ev_bb: 9.6 }, { action: "bet 33%", freq: 1, ev_bb: 9.95, amount_bb: 7 }, { action: "bet 75%", freq: 0, ev_bb: 9.97, amount_bb: 15 }] }, ${JSON.stringify(m)})`);
+  const small = { action: "bet", to: 7 }, big = { action: "bet", to: 15 };
+  let t = graded(small, 0.1);
+  assert.deepEqual([t.b, t.l, t.o], ["bet 33%", 0, 9.95]);
+  t = graded(big, 0.1);                                                       // (the other side of the tie has lost nothing either)
+  assert.deepEqual([t.b, t.l], ["bet 75%", 0]);
+  t = graded({ action: "check" }, 0.1);
+  assert.deepEqual([t.b, t.l, t.h], ["bet 33%", 0.35, 3.5]);
+  t = graded(small, 0.01);                                                      // (past the tie the top EV is the best)
+  assert.deepEqual([t.b, t.l], ["bet 75%", 0.02]);
+  t = graded(small);                                                            // (an answer without one, as before)
+  assert.deepEqual([t.b, t.l], ["bet 75%", 0.02]);
   // a hand you'd already reviewed keeps its grade until you review it again
   assert.equal(p.run(`gradeClass({ f: 0.2, l: 1 })`), "ok");
   p.run('rewindTo("turn", 1)');

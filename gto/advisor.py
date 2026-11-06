@@ -5192,6 +5192,13 @@ class Advisor:
             notes.append("hero's hand was not solved; frequencies are uniform")
         best = max(acts_out, key=lambda a: a["freq"])["action"]
         sampled = self._sample(acts_out)
+        if exploit and ci is not None:
+            # (the table shows EVs to the cent, and a tie can leave the advice's action just under another's: say so)
+            top = max(acts_out, key=lambda a: a["ev_bb"])
+            gap = top["ev_bb"] - next(a["ev_bb"] for a in acts_out if a["action"] == best)
+            if gap >= 0.01:
+                notes.append(f"{top['action']} shows {gap:.2f} bb more, within this solve's margin of {tol:.2f} bb, "
+                             "so the two count as tied")
         if widened and ci is not None and not exploit and node is not sol.root:
             # (only when the spot wasn't solved again: our decision came before the rare line) The solve's
             # mix assumes the villain almost never plays this way; against the range they showed, go with the EVs.
@@ -5231,6 +5238,8 @@ class Advisor:
             "pot_bb": round(node.pot_now, 2), "to_call_bb": round(min(to_call, hero_remaining), 2),
             "stack_bb": round(min(eff - max(node.bets), hero_remaining), 2),
             "actions": acts_out, "recommended": best, "sampled": sampled,
+            # (exploit mode: EVs this close to the best are tied, bb; the page's grade goes by it)
+            **({"ev_tie": round(tol, 2)} if exploit else {}),
             "grid": strategy_grid([sf[a] for a in range(len(node.names))], list(node.names), hero_r),
             "range_action_freq": range_freq,
             "hero_range_combos": round(float(hero_r.sum()), 1),
@@ -6530,7 +6539,7 @@ class Advisor:
                "players": len(remaining), "multiway": True, "opponents": opps,
                "equity_vs_field": round(eq, 3), "pot_bb": round(pot, 2), "to_call_bb": round(call_amt, 2),
                "actions": acts, "recommended": acts[pick]["action"], "sampled": acts[pick]["action"],
-               "notes": notes + [f"{len(remaining)} players in the pot: not a solve here (the solvers take heads-up and 3-way pots and 4+ way rivers), this is a Monte Carlo heuristic"],
+               "notes": notes + [f"{len(remaining)} players in the pot: not a solve here, this is a Monte Carlo heuristic"],
                "seconds": round(time.time() - t0, 2)}
         if ls_stats["bets"]:
             n_b = ls_stats["bets"]

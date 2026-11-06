@@ -1115,9 +1115,13 @@ function gradeWith(r, rec) {
   if (heuristic(r)) return null;
   // (against the typical player the answer is the best response: one action at 100%, so what's graded is the EV you
   // gave up, as a share of the pot, not a mix. p: this kind of grade. A preflop chart has no EV, and is graded by its mix)
+  // (an EV within the answer's ev_tie of the best is tied with it, and the advice's own action is the best of a tie: a
+  // play it takes 100% hasn't lost 0.02 bb to one it never takes)
   if (TYPICAL() && hasEv && r.pot_bb > 0) {
-    const b = m.ev_bb === top ? m : r.actions.find(a => a.ev_bb === top);
-    return { m: m.action, f: m.freq, b: b.action, bf: b.freq, ...(b.action === "raise" && b.amount_bb != null ? { ba: b.amount_bb } : {}), l: r2(loss), e: r2(m.ev_bb), o: r2(top), h: Math.round(loss / r.pot_bb * 1000) / 10, p: 1, ...(m.rough_ev ? { rv: 1 } : {}), ...(conv && conv.cls === "bad" ? { r: 1 } : {}), ...(v ? { v, vs: 1 } : {}) };
+    const rec = r.ev_tie != null ? r.actions.find(a => a.action === r.recommended && a.ev_bb !== undefined) : null;
+    const tied = !!rec && top - rec.ev_bb <= r.ev_tie, o = tied ? rec.ev_bb : top, lost = Math.max(0, o - m.ev_bb);
+    const b = m.ev_bb >= o ? m : tied ? rec : r.actions.find(a => a.ev_bb === top);
+    return { m: m.action, f: m.freq, b: b.action, bf: b.freq, ...(b.action === "raise" && b.amount_bb != null ? { ba: b.amount_bb } : {}), l: r2(lost), e: r2(m.ev_bb), o: r2(o), h: Math.round(lost / r.pot_bb * 1000) / 10, p: 1, ...(m.rough_ev ? { rv: 1 } : {}), ...(conv && conv.cls === "bad" ? { r: 1 } : {}), ...(v ? { v, vs: 1 } : {}) };
   }
   // (rv: your move is one your range almost never takes, so its EV and the EV lost are rough: shown with a "≈", graded the same)
   return { m: m.action, f: m.freq, b: best.action, bf: best.freq, ...(best.action === "raise" && best.amount_bb != null ? { ba: best.amount_bb } : {}), l: loss == null ? null : r2(loss), ...(hasEv ? { e: r2(m.ev_bb), o: r2(top) } : {}), ...(hasEv && m.rough_ev ? { rv: 1 } : {}), ...(conv && conv.cls === "bad" ? { r: 1 } : {}), ...(offSolution(r) ? { x: 1 } : {}), ...(v ? { v, ...(pre ? {} : { vs: 1 }) } : {}) };
@@ -1693,9 +1697,11 @@ function renderResult(res, key) {
   setColors([...res.actions.map(a => a.action), ...(res.grid ? res.grid.actions : [])]);
   const d = decisionOpen(res);
   if (d) answered.set(d.a, res);
-  let h = (d ? verdictHtml(d, res) : "") + actionTable(res, d && d.g ? d.g.m : null) + sourceHtml(res);
+  // (a tie that leaves the advice's action just under another's EV is said under the table, where the numbers are)
+  const tied = (n) => n.endsWith("so the two count as tied");
+  let h = (d ? verdictHtml(d, res) : "") + actionTable(res, d && d.g ? d.g.m : null) + (res.notes || []).filter(tied).map(n => `<p class="meta">${cap(n)}.</p>`).join("") + sourceHtml(res);
   h += res.grid ? rangeHtml(res) : `<p class="meta">No range grid here: this answer is for your hand alone.</p>`;
-  const more = [...(res.size_usage ? [`Size optimization, your mix over the wide menu: ${SIZE_USAGE(res)}`] : []), ...(res.notes || []).filter(n => !n.startsWith("preflop: chart approximation"))];
+  const more = [...(res.size_usage ? [`Size optimization, your mix over the wide menu: ${SIZE_USAGE(res)}`] : []), ...(res.notes || []).filter(n => !n.startsWith("preflop: chart approximation") && !tied(n))];
   if (more.length) h += `<details><summary>Details</summary>${more.map(n => `<p class="meta">${n}</p>`).join("")}</details>`;
   el.innerHTML = h;
   if (res.grid) wireGrid(el, res.grid, res.hand, res.street === "preflop");

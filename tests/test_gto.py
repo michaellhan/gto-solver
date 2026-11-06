@@ -2346,6 +2346,12 @@ class TestExploit(unittest.TestCase):
         for a in rough["actions"]:
             if a["ev_bb"] >= best - tol and a["gto_freq"] > 0.05:
                 self.assertGreater(a["freq"], 0.0, rough["actions"])       # a tied action keeps its GTO share
+        # the tie goes out with the answer, and the advice's action sitting under another's EV is said
+        self.assertAlmostEqual(rough["ev_tie"], tol, delta=0.006)
+        gap = best - next(a["ev_bb"] for a in rough["actions"] if a["action"] == rough["recommended"])
+        self.assertLessEqual(gap, rough["ev_tie"] + 0.011)
+        said = [n for n in rough["notes"] if n.endswith("so the two count as tied")]
+        self.assertEqual(len(said), 1 if gap >= 0.01 else 0, rough["notes"])
 
     def test_pool_preflop_flats_and_3bets_more(self):
         """Population HUD stats (GGPoker 6-max NL50-500: 3bet 8.9% against the charts' 8.7%, VPIP 28.75
