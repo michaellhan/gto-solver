@@ -473,6 +473,12 @@ tournament (`S.tournament`, its header), and the advisor drops a request's rake 
   the leaf never pays out. The exploitability shown counts what each best response
   gains over its own raked payoff (a raked game isn't zero-sum). With no rake the numbers are
   bit-identical to the unraked solver.
+* A preflop price counts what the players it is against still owe (advisor._owed): a limper behind a raise, an opener
+  behind a 3bet. Its equity is against them, so their chips are in the pot, up to what your call matches and what they
+  have. UTG limps, LJ raises to 4, HJ calls: the big blind's 3bb was 22% (3 / 13.5) against all three and is 18% (3 /
+  16.5), and it continues 12.9% of its hands where it continued 3.7%, a flop range of 119 combos where it was filled to
+  the 8-combo floor. Spots where nobody owes keep their price. The call is priced as if all of them come along; if a
+  limper folds, the pot is smaller and the equity is better (A4s here: 25.6% for 22%, against 21.8% for 18%).
 * Preflop, the charts are fixed and calls that see a flop are re-priced through the off-chart
   re-pricing (see Preflop): the pot a call would win is short the rake it goes on to pay, taken on
   2.5x the pot the call takes to the flop (later streets grow it; no more than the stacks allow), to

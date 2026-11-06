@@ -1606,6 +1606,17 @@ def _pf_cached(key, fn):
     return _PF_CACHE[key]
 
 
+def _owed(st: "StreetState", opp: List[str], level: float, positions, stack: float) -> float:
+    """What the players `opp` still have to put in to match `level`, hero's bet once it has called: a limper behind a
+    raise, an opener behind a 3bet. The price a call pays is counted with this in the pot, as its equity is counted
+    against them: UTG limps, LJ raises to 4, HJ calls, and the big blind's A4s is 3bb to call into 10.5. Against all
+    three it has 21.8% for a 16.5bb pot (18.2%), and with UTG out 25.6% for 13.5bb (22.2%); 21.8% against 22.2% was
+    the two mixed, with UTG's equity and not UTG's chips, and the big blind continued 3.7% of its hands. Each seat pays
+    what it has, and only up to what hero's call matches (a side pot isn't hero's to win)."""
+    stacks = _table_stacks(positions, stack)
+    return sum(max(min(level, stacks[p] - st.inv_start[p]) - st.bets[p], 0.0) for p in opp if p not in st.allin)
+
+
 def preflop_strategy(p: str, before: List[dict], positions, stack: float) -> Dict[str, np.ndarray]:
     """p's preflop strategy per combo after the actions `before`: the chart, adjusted like hero's."""
     positions = pf.at_depth(positions, stack)
@@ -4265,11 +4276,11 @@ class Advisor:
         player pool's (exploit.pool_preflop), so this runs even in the chart's own spot: calls follow
         equity against what the pool actually plays, and bluff raises grow (up to 1.5x) when the pool
         folds more often."""
-        def priced(s, stk, table=None, raked_chart=False):
+        def priced(s, stk, table=None, raked_chart=False, seats=positions):
             opp = [p for p in s.order if p in s.active and p != hero and
                    (p in s.acted or s.bets[p] > s.posted.get(p, 0.0) + 1e-9)]
             call = min(s.cur_bet - s.bets[hero], stk - s.inv_start[hero] - s.bets[hero])
-            pot = s.pot_start + sum(s.bets.values())
+            pot = s.pot_start + sum(s.bets.values()) + _owed(s, opp, s.bets[hero] + call, seats, stk)
             # with rake, the pot hero wins is short the rake it goes on to pay (_call_rake)
             behind = stk - s.inv_start[hero] - s.bets[hero] - call
             rk = _call_rake(table, pot + call, behind, raked_chart)
@@ -4332,7 +4343,7 @@ class Advisor:
         icm_on = getattr(positions, "icm", None) is not None
         prem = _icm_premium(positions, st, hero, raisers[-1:] or opp, call, pot, behind)[0] if icm_on else 0.0
         need += prem
-        opp_std, need_std, _, _, behind_std = priced(std, cs)
+        opp_std, need_std, _, _, behind_std = priced(std, cs, seats=table)
         # implied odds: pairs and suited hands win more when they hit, by the stack behind. Deeper or
         # shallower than the charts moves their price by how their odds with those winnings change at
         # this price, so 20bb shallower costs a small pair a little of the implied odds it had at chart
@@ -4587,7 +4598,7 @@ class Advisor:
         if priced:
             eq0 = np.nan_to_num(_preflop_equity_multi([arr0[p] for p in opp]), nan=0.0)
             eqL = np.nan_to_num(_preflop_equity_multi([arrL[p] for p in opp]), nan=0.0)
-            pot = st.pot_start + sum(st.bets.values())
+            pot = st.pot_start + sum(st.bets.values()) + _owed(st, opp, st.bets[hero] + to_call, positions, stack)
             left = stack - st.inv_start[hero] - st.bets[hero] - to_call
             need = to_call / max(pot + to_call - _call_rake(positions, pot + to_call, left), 1e-9)
             k = need / max(_quantile(eq0, w, q0), 1e-6)
