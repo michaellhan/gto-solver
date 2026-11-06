@@ -367,7 +367,7 @@
 <main class="app">
   <div class="col">
     <section id="pSetup">
-      <div class="setup"><span id="setupSum"></span><button class="link edit" id="setupEdit">Edit</button><button class="new" id="copyhand" title="Copy the hand so far as text: the table, your cards and each street's actions">Copy hand</button><button class="new" id="newhand" data-cap="N">New hand</button></div>
+      <div class="setup"><span id="setupSum"></span><button class="link edit" id="setupEdit">Edit</button><button class="new" id="copyhand" title="Copy the hand so far as text: the table, your cards, each street's actions, and your decisions with the solver's answers">Copy hand</button><button class="new" id="newhand" data-cap="N">New hand</button></div>
       <div id="setupFull" class="panel" hidden>
         <div class="row setuprow">
           <span class="muted">Stakes</span>
@@ -1065,7 +1065,9 @@ function act(a) {
   const sim = simulate(), rec = recordOf(sim, a);
   if (typeof rec === "string") return rec;
   if (S.finished) return "This hand is finished.";
-  S.actions[sim.current].push({ pos: sim.toAct, ...rec }); save();
+  // (a.adv: the answer on screen at your turn, in a grade's shape, for Copy hand. Not a grade: a.g is the review's)
+  const adv = liveSpot(sim) ? gradeFor(gradedMove(sim, rec)) : null;
+  S.actions[sim.current].push({ pos: sim.toAct, ...rec, ...(adv ? { adv } : {}) }); save();
   return null;
 }
 // A multiway result from the betting rules (4+ players on the flop or turn, or a spot the solvers don't take), not a solve.
@@ -1109,7 +1111,7 @@ function gradeWith(r, rec) {
     return { m: m.action, f: m.freq, b: best.action, bf: best.freq, l: r2(loss), e: r2(m.ev_bb), o: r2(top), h: Math.round(loss / r.pot_bb * 1000) / 10 };
   if (heuristic(r)) return null;
   // (rv: your move is one your range almost never takes, so its EV and the EV lost are rough: shown with a "≈", graded the same)
-  return { m: m.action, f: m.freq, b: best.action, bf: best.freq, l: loss == null ? null : r2(loss), ...(hasEv ? { e: r2(m.ev_bb), o: r2(top) } : {}), ...(hasEv && m.rough_ev ? { rv: 1 } : {}), ...(conv && conv.cls === "bad" ? { r: 1 } : {}), ...(offSolution(r) ? { x: 1 } : {}), ...(v ? { v, ...(pre ? {} : { vs: 1 }) } : {}) };
+  return { m: m.action, f: m.freq, b: best.action, bf: best.freq, ...(best.action === "raise" && best.amount_bb != null ? { ba: best.amount_bb } : {}), l: loss == null ? null : r2(loss), ...(hasEv ? { e: r2(m.ev_bb), o: r2(top) } : {}), ...(hasEv && m.rough_ev ? { rv: 1 } : {}), ...(conv && conv.cls === "bad" ? { r: 1 } : {}), ...(offSolution(r) ? { x: 1 } : {}), ...(v ? { v, ...(pre ? {} : { vs: 1 }) } : {}) };
 }
 // The move a recorded action is graded as: an all-in that puts in no more than anyone left can match (a stack that
 // doesn't cover the call, or nobody else with chips behind the bet) is a call, or a check: the answers list it so.
@@ -1742,10 +1744,11 @@ const answered = new WeakMap();   // your recorded action -> the answer to it
 const betPct = (a, g, pot) => { const m = a.action === "bet" && g && /^bet (\d+)%$/.exec(g.m); return m && Math.abs(Math.round(pot * m[1] / 50) / 2 - a.to) < 1e-9 ? m[1] : null; };
 // The hand up to a recorded decision, simulated
 function simAt(hand, s, i) { const now = S; S = spotOf(hand, s, i); try { return simulate(); } finally { S = now; } }
+const moveText = (a) => a.action === "bet" ? "bet " + fmt(a.to) : a.action === "raise" ? "raise to " + fmt(a.to) : a.action;
 function rowHtml(hand, s, a, done, open) {
   const g = done ? a.g : null, i = hand.actions[s].indexOf(a), bet = betPct(a, g, simAt(hand, s, i).pot), res = answered.get(a);
   const src = res ? sourceOf(res)[1] : g && s === "preflop" && g.e == null ? "from the chart" : "";
-  const what = bet ? `bet ${bet}%` : a.action === "bet" ? "bet " + fmt(a.to) : a.action === "raise" ? "raise to " + fmt(a.to) : a.action;
+  const what = bet ? `bet ${bet}%` : moveText(a);
   const bad = g && gradeClass(g) === "bad";
   const sub = !g ? (done && "g" in a ? "Reviewed, no grade" : "Not reviewed yet")
     : g.h != null ? `Betting rules, ${g.b} is best`
@@ -1956,7 +1959,27 @@ function copyText(text) {
     return false;
   });
 }
-// The hand so far in a few lines of text. In a decision of a review, the hand up to that decision.
+// An answer's action with its size where the name doesn't have one (the preflop chart's "raise")
+const sizedMove = (name, to) => name === "raise" && to != null ? `raise to ${fmt(to)}` : name;
+// One of your decisions and the solver's answer to it, which may differ: from the review's grade, or from the answer
+// that was on screen when you acted (a.adv). pot: the pot at that decision.
+function decisionLine(a, pot) {
+  const g = a.g || a.adv, bet = betPct(a, g, pot), mine = bet ? `bet ${bet}%` : moveText(a);
+  if (!g) return `  Me: ${mine}. Solver: ${"g" in a ? "no grade" : "no answer yet"}`;
+  const who = g.h != null ? "Betting rules" : "Solver", same = g.m === g.b, freq = g.h != null ? "" : ` (${pct0(g.bf)})`;
+  const asked = same || g.h != null ? "" : ` (solver ${pct0(g.f)}${g.m === mine || g.m === a.action ? "" : ` as its ${g.m}`})`;
+  const lost = g.l > 0.005 ? ` Lost ${g.rv ? "≈ " : ""}${g.l.toFixed(2)}bb.` : "";
+  return `  Me: ${mine}${asked}. ${who}: ${sizedMove(g.b, g.ba)}${freq}.${lost}${g.r ? " Rough solve." : ""}`;
+}
+// The answer showing for the spot on the table, as its mix
+function shownAdvice() {
+  const r = lastResult;
+  if (!r || r.error || !r.actions || resultKey !== JSON.stringify(payload())) return null;
+  const mix = r.actions.filter(a => a.freq >= 0.005).sort((a, b) => b.freq - a.freq).map(a => `${sizedMove(a.action, a.amount_bb)} (${pct0(a.freq)})`).join(", ");
+  return mix ? `  ${heuristic(r) ? "Betting rules" : "Solver"}: ${mix}` : null;
+}
+// The hand so far in a few lines of text, your decisions and the solver's answers under each street's. In a decision of
+// a review, the hand up to that decision and that decision.
 function handText() {
   const n = S.players, sim = simulate(), held = S.cards[0] && S.cards[1] ? S.cards[0] + S.cards[1] : "??";
   const lines = [[`${n}-handed`, ...(STAKES() ? [STAKES_TEXT()] : []), `${fmt(S.stack)}bb${withUsd(S.stack)} stacks${UNEQUAL() ? ` (${STACKS_TEXT()})` : ""}`,
@@ -1966,9 +1989,13 @@ function handText() {
   const board = (s) => s === "preflop" ? "" : ` (${boardCards().slice(NEED[s] - (s === "flop" ? 3 : 1), NEED[s]).join(" ")})`;
   for (const s of STREETS) {
     const toAct = sim.current === s && sim.cur && !handDone(sim) && !dealing(sim);
-    if (!S.actions[s].length && !toAct) continue;
+    const viewed = stepView && stepView.s === s ? stepView.full.actions[s][stepView.i] : null;
+    if (!S.actions[s].length && !toAct && !viewed) continue;
     const said = S.actions[s].map(act).join(", ");
-    lines.push(`${s[0].toUpperCase() + s.slice(1)}${board(s)}: ${said}${toAct ? `${said ? ". " : ""}${SEAT_LABEL(sim.toAct, n)} to act, pot ${fmt(sim.cur.pot)}bb${withUsd(sim.cur.pot)}` : ""}`);
+    lines.push(`${s[0].toUpperCase() + s.slice(1)}${board(s)}: ${said}${toAct ? `${said ? ". " : ""}${SEAT_LABEL(sim.toAct, n)} to act, pot ${fmt(sim.cur.pot)}bb${withUsd(sim.cur.pot)}` : ""}`.trimEnd());
+    S.actions[s].forEach((a, i) => { if (a.pos === S.hero) lines.push(decisionLine(a, simAt(S, s, i).pot)); });
+    if (viewed) lines.push(decisionLine(viewed, sim.pot));
+    else if (toAct && sim.toAct === S.hero) { const shown = shownAdvice(); if (shown) lines.push(shown); }
   }
   return lines.join("\n");
 }

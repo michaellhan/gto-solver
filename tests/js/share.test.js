@@ -193,9 +193,48 @@ test("Copy hand: the table, your cards and the actions so far, in a few lines", 
   assert.equal(p.run("handText()"), [
     "6-handed, 100bb stacks, I am BTN with AhKh",
     "Preflop: UTG folds, HJ raises to 2.5, CO folds, BTN calls, SB folds, BB folds",
+    "  Me: call. Solver: no answer yet",
     "Flop (Kd 7s 2c): HJ bets 2. BTN to act, pot 8.5bb"].join("\n"));
   p.run("S.actions.flop = []; S.cards = ['Ah', 'Kh', null, null, null, null, null]; S.actions.preflop = []; S.finished = false");
   assert.equal(p.run("handText()"), "6-handed, 100bb stacks, I am BTN with AhKh\nPreflop: UTG to act, pot 1.5bb");
+});
+
+test("Copy hand: each of your decisions beside the solver's answer, which may differ", () => {
+  const p = loadPage();
+  const line = (a) => p.run(`decisionLine(${JSON.stringify(a)}, 10)`);
+  const call = { pos: "BTN", action: "call" };
+  assert.equal(line({ ...call, g: { m: "call", f: 0.62, b: "call", bf: 0.62, l: 0, e: 1, o: 1 } }), "  Me: call. Solver: call (62%).");
+  assert.equal(line({ ...call, g: { m: "call", f: 0.38, b: "raise to 8", bf: 0.62, l: 0.12, e: 1, o: 1.12 } }), "  Me: call (solver 38%). Solver: raise to 8 (62%). Lost 0.12bb.");
+  // (no grade yet: the answer that was on screen; a review's grade goes first)
+  const seen = { m: "fold", f: 0, b: "call", bf: 1, l: 1.5 }, seenRow = { pos: "BTN", action: "fold", adv: seen };
+  assert.equal(line(seenRow), "  Me: fold (solver 0%). Solver: call (100%). Lost 1.50bb.");
+  assert.equal(line({ ...seenRow, g: { ...seen, f: 0.5, bf: 0.5, l: 0 } }), "  Me: fold (solver 50%). Solver: call (50%).");
+  // a size the solver doesn't have, graded as its nearest; a rough EV; a rough solve; the betting rules; a chart
+  assert.equal(line({ pos: "BTN", action: "bet", to: 5, g: { m: "bet 33%", f: 0.2, b: "check", bf: 0.8, l: 0.3, rv: 1, r: 1 } }), "  Me: bet 5 (solver 20% as its bet 33%). Solver: check (80%). Lost ≈ 0.30bb. Rough solve.");
+  assert.equal(line({ ...call, g: { m: "call", f: 0, b: "raise to 9", bf: 1, l: 2, h: 20, e: 1, o: 3 } }), "  Me: call. Betting rules: raise to 9. Lost 2.00bb.");
+  assert.equal(line({ ...call, g: { m: "call", f: 1, b: "call", bf: 1, l: null } }), "  Me: call. Solver: call (100%).");
+  assert.equal(line({ ...call, g: { m: "call", f: 0, b: "raise", ba: 7.5, bf: 1, l: null } }), "  Me: call (solver 0%). Solver: raise to 7.5 (100%).");
+  assert.equal(line({ pos: "BTN", action: "raise", to: 8, g: { m: "raise", f: 1, b: "raise", ba: 7.5, bf: 1, l: null } }), "  Me: raise to 8. Solver: raise to 7.5 (100%).");
+  assert.equal(line({ ...call, g: null }), "  Me: call. Solver: no grade");
+});
+
+test("Copy hand: at your turn, the answer on screen; and your action keeps it", () => {
+  const p = loadPage();
+  p.S = { players: 6, hero: "UTG", stack: 100, cards: ["Ah", "Kh", null, null, null, null, null], actions: { preflop: [], flop: [], turn: [], river: [] } };
+  const res = { street: "preflop", pot_bb: 1.5, actions: [{ action: "fold", freq: 0.25 }, { action: "raise to 2.5", amount_bb: 2.5, freq: 0.75 }, { action: "all-in", freq: 0 }] };
+  p.run(`lastResult = ${JSON.stringify(res)}; resultKey = JSON.stringify(payload())`);
+  assert.equal(p.run("handText()").split("\n").at(-1), "  Solver: raise to 2.5 (75%), fold (25%)");
+  p.run("act({ action: 'fold' })");
+  const a = p.run("S.actions.preflop[0]");
+  assert.equal(a.adv.b, "raise to 2.5");
+  p.run(`S.actions.preflop = []; lastResult = ${JSON.stringify({ ...res, actions: [{ action: "fold", freq: 0.25 }, { action: "raise", amount_bb: 2.5, freq: 0.75 }] })}; resultKey = JSON.stringify(payload())`);
+  assert.equal(p.run("handText()").split("\n").at(-1), "  Solver: raise to 2.5 (75%), fold (25%)");
+  p.run("act({ action: 'fold' })");
+  assert.equal("g" in a, false);   // (not a grade: the hand isn't reviewed)
+  assert.equal(p.run("handText()").split("\n")[2], "  Me: fold (solver 25%). Solver: raise to 2.5 (75%).");
+  // someone else's turn, or an answer for another spot: nothing kept
+  p.run("S.actions.preflop = []; resultKey = 'other'; act({ action: 'fold' })");
+  assert.equal("adv" in p.run("S.actions.preflop[0]"), false);
 });
 
 test("Copy hand copies the text and says so", async () => {
