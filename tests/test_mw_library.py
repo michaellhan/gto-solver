@@ -215,6 +215,7 @@ class TestMWLibrary(unittest.TestCase):
                 want = ref.nodes[tuple("check" for _ in flops[seat])].avg_strategy()[0][:, ci]
                 np.testing.assert_allclose([a["freq"] for a in r["actions"]], want, atol=0.006)
                 self.assertEqual(any("isn't in your range" in n for n in r["notes"]), not full)
+                self.assertEqual(all("ev_bb" in a for a in r["actions"]), full)   # (stored off-range EVs aren't read)
         # the next opponent's move, from the solve the hero's advice came from
         adv = self._advisor()
         st = {"hero": "BB", "hole": _hole_in(s["ranges"][0], BOARD), "board": BOARD, "preflop": self.pre, "stack": 100}

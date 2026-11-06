@@ -258,6 +258,40 @@ test("a decision of a finished hand: its advice, the whole hand kept; a reload b
   assert.equal(p.byId("result").className, "empty");
 });
 
+test("a decision looked at is reviewed: Esc comes back to its grade, kept over a reload, the others still to review", async () => {
+  const p = await page();
+  p.S = state(WHOLE);
+  const open = async (s, i) => { p.run(`rewindTo("${s}", ${i})`); await flush(); const m = p.posted.filter(x => x.state).at(-1); p.workers.at(-1).onmessage(answer(m)); await flush(); };
+  await open("flop", 1);
+  p.key("Escape");
+  await flush();
+  const rows = () => p.byId("adviceNote").innerHTML;
+  assert.equal(p.val("stepView"), null);
+  assert.equal((rows().match(/Not reviewed yet/g) || []).length, 3);
+  assert.match(rows(), /Flop<\/b> · bet/);
+  assert.match(rows(), /Solver 30%/);
+  assert.equal(p.val("S.actions.flop[1].g.m"), "bet 33%");
+  assert.deepEqual(ids(p), ["reviewAll"]);   // (the rest of the hand's review is still there)
+  const q = await page({ isolated: true, storage: Object.fromEntries(p.storage) });
+  await flush();
+  assert.equal((q.byId("adviceNote").innerHTML.match(/Not reviewed yet/g) || []).length, 3);
+  for (const [s, i] of [["preflop", 3], ["turn", 1], ["river", 1]]) { await open(s, i); p.key("Escape"); await flush(); }
+  assert.doesNotMatch(rows(), /Not reviewed yet/);
+  assert.equal(p.byId("reviewAgain").hidden, false);   // (every decision seen: no dock, Review again as after a review)
+  assert.deepEqual(ids(p).includes("reviewAll"), false);
+});
+
+test("Esc before the answer comes: nothing was seen, so the decision isn't reviewed", async () => {
+  const p = await page();
+  p.S = state(WHOLE);
+  p.run('rewindTo("flop", 1)');
+  await flush();
+  p.key("Escape");
+  await flush();
+  assert.equal((p.byId("adviceNote").innerHTML.match(/Not reviewed yet/g) || []).length, 4);
+  assert.equal("g" in p.val("S.actions.flop[1]"), false);
+});
+
 test("once its advice has been seen a hand stays as entered: no Undo, no cards, a rewind only looks", async () => {
   const p = await reviewed(state(WHOLE));
   const whole = j(p.val("S.actions"));

@@ -3561,6 +3561,12 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   never make, say), it is added to the solve as a near-zero-weight combo so it
   still gets a strategy and EVs without changing anyone else's play; the next street
   narrows the ranges through that same solve (Accuracy vs speed, "Your hand out of your range").
+  Multiway too, and no hand is priced as random play there any more: a hand with no
+  strategy sums at a decision now plays its current strategy (`Decision.avg_strategy`,
+  `core/mwcore.c`), where it played uniformly, calling and folding a bet alike (A4s in a
+  4-way flop read check 1.82 where it is 3.83, the bet graded "0% in the mix, 0.00 bb
+  lost"). A stored 3-way flop was built before this: its EVs for such a hand aren't read,
+  so a quick answer gives the mix alone and any other solves the hand live.
 * If a preflop line leaves a player with fewer than 8 combos (a flat the charts never
   4bet from, then a 4bet; a cold call of a 3bet, then a call of the 4bet), the hands
   that take the last such action from scratch are mixed in, weighing 1 - combos / 8

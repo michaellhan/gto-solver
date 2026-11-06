@@ -9,7 +9,8 @@ library's (gto/flop_library.py, whose entry format this reuses: one mask per pla
 from the flop's start per spot and flop stores the street's first decisions (STORED: first to act, checked to once,
 checked to twice): each combo's average strategy and EV per action, plus range aggregates. The solve takes every hand
 the flop doesn't block (multiway_solver's `include`: ~7% more time), so a hand off its player's range (a cold call
-the charts 3bet or fold) is answered too, by its current (regret-matching) strategy, as a live solve answers it; the
+the charts 3bet or fold) is held too, by its current (regret-matching) strategy; its stored EVs aren't read (they have
+it playing uniformly at its later decisions): a quick answer gives its mix alone, any other solves it live. The
 masks then hold every hand. Lines through a bet are not stored: they are solved live (or, in a quick answer, left to the rules) as before.
 
 Files (gto/static/flop_library/, deployed with the heads-up library): mw_index.json lists the spots (their ranges'

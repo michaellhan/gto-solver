@@ -198,6 +198,7 @@ RARE_LINE = 0.10    # heads-up: widen the villain's range when the solve takes t
 RARE_RESOLVE = True
 RARE_RESOLVE_SETTLED = 0.1   # ...stopped at the first of HU_CHECKS (HU_SETTLED_FROM on) where it is this close (% pot):
                              # 300 iterations natively, as close to the exact answers as 1000 (0.114 / 0.116)
+MW_OFF_RANGE = 1e-10   # multiway: the weight of your hand where your range holds none of it (under the 1e-9 that says so)
 UNSETTLED = 3.0     # heads-up: a solve this far from equilibrium (% pot) hasn't settled (the page's "converged" cutoff)
 # Heads-up, earlier streets: narrowing follows a solve fully this close (% pot) to equilibrium, not at all this far,
 # linearly between; the rest of each action's weights are the betting rules' range for it (softened, as multiway),
@@ -5391,9 +5392,12 @@ class Advisor:
         hp = players.index(hero)
         hi = COMBO_INDEX[(min(hole), max(hole))] if hole else None     # (Study: no cards of the actor's own)
         rs = [ranges.get(p, np.ones(N_COMBOS)) for p in players]
-        if hi is not None and rs[hp][hi] <= 1e-9:
-            notes.append("your hand isn't in your range for this line: its mix is the solve's current (regret-matching) "
-                         "strategy for it, against the ranges as they are")
+        off = hi if hi is not None and rs[hp][hi] <= 1e-9 else None
+        if off is not None:
+            # (near-zero, not out: a hand with no weight has no average strategy at any later decision, so its EVs read
+            # uniform play there: calling and folding to a bet alike. It changes nobody's play)
+            rs[hp] = rs[hp].copy(); rs[hp][off] = MW_OFF_RANGE
+            notes.append("your hand isn't in your range for this line, so it was solved as a near-zero-weight combo")
         pending = {i for i, p in enumerate(players) if p not in cur.acted}
         pending.add(hp)
         n_act = len(players) - len(shoved)
@@ -5450,7 +5454,7 @@ class Advisor:
         inc = () if hi is None or any(r[hi] > 0 for r in rs) else (hi,)    # (a hand nobody's range holds still gets solved)
         key = (tuple(board), tuple(_range_key(r) for r in rs), round(pot0, 2),
                tuple(round(x, 2) for x in stacks) if isinstance(stacks, tuple) else round(S, 2), tuple(round(b, 2) for b in bets),
-               hp, cur.n_raises, tuple(sorted(pending)), repr(mcfg), inc)
+               hp, cur.n_raises, tuple(sorted(pending)), repr(mcfg), inc, off)
         # the budget covers the whole answer: the tree and bucket tables (a flop's take 1-2 s natively, a few in the
         # browser), the iterations, and the gains and EVs read off after them (MW_RESERVE iterations' time)
         # (a solve its budget ran out on isn't run again: a later request for the spot gets the same answer)
@@ -6919,9 +6923,14 @@ class Advisor:
             return self._study_mw_near(sol, node, path, players, hp, stk[hero] - cur.inv_start[hero],
                                        min(stk[p] - cur.inv_start[p] for p in players), board, positions or [],
                                        notes, t0, None if self._study else hole)
-        if ci is not None and sol.reach0[hp, 0, ci] <= 1e-12:
+        # (a hand off its range: the stored EVs play it uniformly at its later decisions, so they aren't read. A live
+        # solve answers it, _multiway_solve; a quick answer, which has no time for one, gives its mix alone)
+        off = ci is not None and sol.reach0[hp, 0, ci] <= 1e-12
+        if off:
+            if not getattr(self, "_quick", False):
+                return None
             notes.append("your hand isn't in your range for this line: its mix is the solve's current (regret-matching) "
-                         "strategy for it, against the ranges as they are")
+                         "strategy for it, against the ranges as they are, with no EVs")
         R = sol.reach_at(path)
         expl = sol.exploitability()
         gains = sol.br_gains() / sol.root_pot() * 100
@@ -6943,7 +6952,7 @@ class Advisor:
                                        solver, notes + [lib_note, "best-response gains (% pot): " + ", ".join(
                                            f"{p} {g:.2f}" for p, g in zip(players, gains))], t0, precomputed=sol.info())
         mine = strat[:, ci]
-        acts = [{"action": name, "freq": round(float(mine[a]), 3), "ev_bb": round(float(evs[a, ci]), 2),
+        acts = [{"action": name, "freq": round(float(mine[a]), 3), **({} if off else {"ev_bb": round(float(evs[a, ci]), 2)}),
                  "amount_bb": None if node.amounts[a] is None else round(float(node.amounts[a]), 2)}
                 for a, name in enumerate(shown)]
         best = max(acts, key=lambda x: x["freq"])["action"]

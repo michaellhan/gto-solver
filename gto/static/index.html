@@ -1635,12 +1635,13 @@ function sourceHtml(res) {
   if (res.widened && res.widened.length) out.push(`The solve rarely has ${andList([...new Set(res.widened)])} play this way, so their range comes from simple betting rules instead; the EVs (and the pick) are against that range, so they can disagree with the solver's mix.`);
   return out.filter(x => x.trim()).map(x => `<p class="meta">${x}</p>`).join("");
 }
-// The decision open and its grade: stored by the review, else this answer's (nothing stored: a decision looked at before
-// any review keeps no grade). The hand up to it is S.
+// The decision open and its grade: the review's, else this answer's, kept with the hand as a review keeps it (its row,
+// a reload, Hands). The hand up to it is S.
 function decisionOpen(res) {
   if (!stepView) return null;
-  const a = stepView.full.actions[stepView.s][stepView.i];
-  return { a, g: a.g || gradeWith(res, gradedMove(simulate(), a)) };
+  const a = stepView.full.actions[stepView.s][stepView.i], g = a.g || gradeWith(res, gradedMove(simulate(), a));
+  if (!("g" in a) && resultKey === JSON.stringify(payload())) { a.g = g; save(); keepHand("review", stepView.full); }
+  return { a, g };
 }
 function verdictHtml({ a, g }, res) {
   const bet = betPct(a, g, simulate().pot);

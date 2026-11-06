@@ -529,7 +529,7 @@ static void apply(const f32 *M0, const f32 *M1, f32 w0, f32 w1, const f32 *xq, f
 }
 
 /* ------------------------------------------------------------------ strategies */
-/* sig (rows, A, w) by regret matching on r (rows, A, w): the positive part normalized, uniform where none (avg: the
+/* sig (rows, A, w) by regret matching on r (rows, A, w): the positive part normalized, uniform where none (else: the
    strategy sums normalized, uniform where they are 0). Vectorized along w, JB entries at a time. */
 #define JB 64
 static void normalize(const f32 *restrict r, f32 *restrict sig, int rows, int A, int w, int pos) {
@@ -561,7 +561,23 @@ static void normalize(const f32 *restrict r, f32 *restrict sig, int rows, int A,
   }
 }
 static void match(const f32 *r, f32 *sig, int rows, int A, int w) { normalize(r, sig, rows, A, w, 1); }
-static void average(const f32 *sm, f32 *sig, int rows, int A, int w) { normalize(sm, sig, rows, A, w, 0); }
+/* The average strategy (Decision.avg_strategy): where a hand has no strategy sums (no reach ever brought it here) its
+   current strategy, not uniform: its regrets still learn, and uniform would call and fold a bet alike in its EVs. */
+static void average(const f32 *sm, const f32 *reg, f32 *sig, int rows, int A, int w) {
+  normalize(sm, sig, rows, A, w, 0);
+  for (int x = 0; x < rows; x++)
+    for (int j = 0; j < w; j++) {
+      f32 tot = 0, pos = 0;
+      for (int a = 0; a < A; a++) tot += sm[((size_t)x * A + a) * w + j];
+      if (tot > 0) continue;
+      for (int a = 0; a < A; a++) { f32 r = reg[((size_t)x * A + a) * w + j]; pos += r > 0 ? r : 0; }
+      if (pos > 0)
+        for (int a = 0; a < A; a++) {
+          f32 r = reg[((size_t)x * A + a) * w + j];
+          sig[((size_t)x * A + a) * w + j] = r > 0 ? r / pos : 0;
+        }
+    }
+}
 
 /* a decision's strategy in a pass, kept between passes: in training the current one (flag 1), else the average (2),
    computed where the kept one is the other or stale (0) */
@@ -569,7 +585,7 @@ static const f32 *strategy(int mode, const f32 *reg, const f32 *ssum, f32 *kept,
   int want = mode == ALT ? 1 : 2;
   if (FLAGS[flag] != want) {
     if (want == 1) match(reg, kept, rows, A, w);
-    else average(ssum, kept, rows, A, w);
+    else average(ssum, reg, kept, rows, A, w);
     FLAGS[flag] = want;
   }
   return kept;

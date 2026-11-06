@@ -367,8 +367,11 @@ class Decision:
         return np.where(s > 0, r / np.where(s > 0, s, 1.0), 1.0 / len(self.children))
 
     def avg_strategy(self):
+        """The average strategy; where a hand has no strategy sums (no reach ever brought it here: another player's
+        hand, or one its range doesn't hold) its current strategy: its regrets still learn from the counterfactual
+        values, which don't depend on its own weight. Not uniform, which calls and folds a bet alike in its EVs."""
         s = self.ssum.sum(axis=1, keepdims=True)
-        return np.where(s > 0, self.ssum / np.where(s > 0, s, 1.0), 1.0 / len(self.children))
+        return np.where(s > 0, self.ssum / np.where(s > 0, s, 1.0), self.strategy())
 
 
 STREET = {3: "flop", 4: "turn", 5: "river"}
@@ -2361,13 +2364,9 @@ class MultiwaySolver:
         return float(node.c[node.player])
 
     def hand_strategy(self, ci: int, p: int, node: Optional[Decision] = None) -> np.ndarray:
-        """Player p's mix at the node (the root) for combo ci: the average strategy, or where p's range gives the hand
-        no weight (the average is undefined there) the current regret-matching one: its regrets still learn from
-        the counterfactual values, which don't depend on its own weight."""
-        node = node or self.root
-        if self.reach0[p, 0, ci] > 1e-12:
-            return node.avg_strategy()[0][:, ci]
-        return node.strategy()[0][:, ci]
+        """Player p's mix at the node (the root) for combo ci: its average strategy, a hand p's range gives no weight
+        its current one (Decision.avg_strategy)."""
+        return (node or self.root).avg_strategy()[0][:, ci]
 
     def showdown_share(self, ci: int) -> float:
         """Combo ci's share of the pot against the other two ranges at showdown on the root's board (river)."""
