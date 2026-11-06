@@ -84,7 +84,7 @@ class TestInstant(unittest.TestCase):
         self.assertIsNone(self.adv.instant(FLOP))   # (its solve is cached: the answer is quick)
 
     def test_none_where_more_than_the_equilibrium_is_asked(self):
-        for extra in ({"opponents": "pool"}, {"locks": {"BB": {"fold": 10}}}, {"study": True}, {"jam": True},
+        for extra in ({"opponents": "pool"}, {"locks": {"BB": {"fold": 10}}}, {"jam": True},
                       {"breakdown": True}, {"sizes": {"turn": [50]}}):
             self.assertIsNone(self.adv.instant(dict(TURN, **extra)), extra)
 
@@ -284,7 +284,8 @@ class TestStudyPrev(unittest.TestCase):
     def test_none_where_it_doesnt_apply(self):
         """Before the flop is solved, the river before the turn is, a line the flop's solve takes under 10% of the
         time (SB's turn lead; a flop bet of 75%, where the walk gives SB's range to the betting rules), the flop
-        itself (quick: its solve is cached), the hand's own advice: none."""
+        itself (quick: its solve is cached): none. The hand's own advice reads the turn Study solved: your cards don't
+        change anyone's range, so it's the same solve."""
         self.assertIsNone(advisor().instant(STUDY_TURN))
         self.assertIsNone(self.adv.instant(STUDY_RIVER))
         lead = self.adv.instant(STUDY_TURN)["actions"][1]["freq"]
@@ -297,7 +298,7 @@ class TestStudyPrev(unittest.TestCase):
         self.assertIsNone(self.adv.instant(dict(STUDY_TURN, flop=[B("SB", 1.5), C("BB")])))
         self.assertEqual(self.adv.instant(dict(STUDY_TURN, flop=[B("SB", 1), C("BB")]))["approximate"]["source"], "prev")
         self.assertIsNone(self.adv.instant(STUDY_FLOP))
-        self.assertIsNone(self.adv.instant(dict(TURN)))   # (another solve: your cards out of their range)
+        self.assertEqual(self.adv.instant(dict(TURN))["hand"], "QJs")
 
 
 if __name__ == "__main__":

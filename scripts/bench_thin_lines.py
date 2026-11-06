@@ -128,7 +128,7 @@ def mw_street_ranges(n, stack, preflop, board, streets):
     for st in rep[1:]:
         before = dict(ranges)
         bk = board[:{"flop": 3, "turn": 4, "river": 5}[st.name]]
-        A._narrow_street(ranges, bk, st, stk, None, (), slow)
+        A._narrow_street(ranges, bk, st, stk, slow)
         for p in st.players_start:
             if p in ranges and p in before:
                 ranges[p] = A._post_floor(before[p], ranges[p], bk, p, st.name, [])
@@ -156,7 +156,7 @@ def census_mw(args, out):
                             if len(st.players_start) != 3:
                                 continue
                             ranges = dict(before)
-                            A._narrow_street(ranges, board, st, A._table_stacks(table(n), stack), None, (), dict(slow0))
+                            A._narrow_street(ranges, board, st, A._table_stacks(table(n), stack), dict(slow0))
                             live = live_mask(board)
                             acted = {a["pos"] for a in acts}
                             thin = [(p, round(float((ranges[p] * live).sum()), 2), round(float((before[p] * live).sum()), 2))
@@ -344,7 +344,7 @@ def replay_at(n, stack, streets, street, acts, n_st):
 def after_line(n, stack, streets, street, acts, before, board, n_st, slow):
     st = replay_at(n, stack, streets, street, acts, n_st)
     r = dict(before)
-    A._narrow_street(r, board, st, A._table_stacks(table(n), stack), None, (), dict(slow))
+    A._narrow_street(r, board, st, A._table_stacks(table(n), stack), dict(slow))
     return r, st
 
 
@@ -499,7 +499,7 @@ def one(ev, args, adv=None):
         before = {q: got[q][0] for q in got}
         fin = {q: got[q][1] for q in got}
         at = dict(before)
-        A._narrow_street(at, board, cur, A._table_stacks(table(n), stack), None, (), {}, check_whole=True)
+        A._narrow_street(at, board, cur, A._table_stacks(table(n), stack), {}, check_whole=True)
     b = before[p] * live
     a = fin[p] * live
     c = float(a.sum())

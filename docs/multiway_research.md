@@ -314,5 +314,20 @@ T = the line's own, the case where the floor needn't have fired.
 **The hand that asked.** BTN ThTs facing CO's 34 into 45.5 (README, Root-street all-ins). The reference at T = 8 is JJ
 36%, AQo 19, KQs 12, 77 8: Kx and 77 about 20%, not the rule's ~50, and from either seed. In the benchmark's own solve
 (12 buckets, ranges not conditioned on hero's cards) TT folds against the reference, call -0.76 at T = 8 and -3.56 at T = 5, and calling
-is within 0.1 bb of folding on the current and the scaled ranges alike. Through the Advisor the same two ranges read
-+1.40 and -6.87. That gap is unexplained, and it's wider than the difference this benchmark measures.
+is within 0.1 bb of folding on the current and the scaled ranges alike. This study first reported that through the Advisor
+"the same two ranges" read +1.40 and -6.87, unexplained. They weren't the same ranges: the Advisor took hero's cards out
+of the opponents' ranges before the rules and the floor read them, and solved those. One change at a time on that turn
+(16 buckets, 400 iterations, TT's call and shove):
+
+| ranges | BB, CO, BTN combos | call | shove |
+|---|---|---|---|
+| Advisor as it was: lines read after hero's cards | 8.1, 11.3, 94.5 | +1.48 | +1.45 |
+| whole ranges (the benchmark's) | 9.3, 12.6, 94.5 | 0.00 (15%) | -14.66 |
+| whole ranges, then hero's cards out | 7.4, 9.7, 94.5 | 0.00 (4%) | -4.51 |
+
+Buckets and iterations weren't it (12 or 16, 100 to 400 iterations: the call moves under 0.2 bb). The first and third rows
+differ only in reading the line after hero's cards: filler. The second and third differ only in the game: with hero's cards
+out, the opponents' strategy answers a BTN whose every hand plays as if it held ThTs's blockers, and the shove reads 10 bb
+high (README, Your cards stay out of everyone's range). The Advisor now solves the second row, so it and this benchmark
+agree; scaled in the same solve TT folds at 100%, call -0.18, shove -16.48, and the call stays within 0.2 bb of folding on
+either fill.

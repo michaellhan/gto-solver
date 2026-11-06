@@ -1218,7 +1218,7 @@ def _preflop_equity_multi_calc(villains: List[np.ndarray]) -> np.ndarray:
     return np.where(den_c[CLASS_OF] > 0, num_c[CLASS_OF] / np.maximum(den_c[CLASS_OF], 1), np.nan)
 
 
-def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack, hero=None, hole=(),
+def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack,
                    slow: Optional[Dict[str, np.ndarray]] = None, check_whole: bool = False) -> None:
     """Narrow each player's range (in place) by what they did on a street that started multiway,
     with the multiway rules: a check drops most of the hands that would have bet, a bet or raise
@@ -1226,9 +1226,10 @@ def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack,
     Hands a rule rules out keep some weight (players don't follow our rules), see _soften. `slow`
     (carried from street to street): per player, the combos a call has already slowplayed. `stack`: everyone's
     stack in bb, or {seat: stack}. `check_whole`: a check keeps the range whole, as a heads-up street's rules do
-    (Advisor._walk at trust 0: heads-up the rules' check took the value out of ranges that check nearly all of it)."""
+    (Advisor._walk at trust 0: heads-up the rules' check took the value out of ranges that check nearly all of it).
+    Your own cards play no part: a player's line doesn't depend on what you hold, so it is read off their whole range
+    (what you block comes out only when the hand is counted against those ranges: the solve's card removal)."""
     sc, rank, bluff = _street_info(tuple(board))
-    dead = [MEMBER_FULL[c] for c in hole]
     bets = {p: 0.0 for p in st.inv_start}
     cur = 0.0
     active = set(st.players_start)
@@ -1249,8 +1250,6 @@ def _narrow_street(ranges: Dict[str, np.ndarray], board, st: StreetState, stack,
         # on K84 where T8o and A8o were whole).
         src = start[p] if p in checked and act in ("bet", "raise", "all-in") else ranges[p]
         r = src * (sc >= 0)
-        for d in dead if p != hero else ():   # opponents can't hold our cards
-            r = r * (1.0 - d)
         if r.sum() <= 0:
             continue
         n = len(active) - 1
@@ -3818,7 +3817,7 @@ class Advisor:
                         ranges[p] = r
                 for st in rep[1:-1] + [cur]:
                     try:
-                        _narrow_street(ranges, board[:{"flop": 3, "turn": 4, "river": 5}[st.name]], st, stk, hero, hole, {})
+                        _narrow_street(ranges, board[:{"flop": 3, "turn": 4, "river": 5}[st.name]], st, stk, {})
                     except Exception as e:   # noqa: BLE001
                         failed.append(f"narrowing the {st.name}, {type(e).__name__}")
                         break
@@ -4821,7 +4820,7 @@ class Advisor:
             if self._showdown and not st.actions:
                 continue   # (everyone all-in: nothing to narrow by)
             before = dict(ranges)
-            _narrow_street(ranges, board[:{"flop": 3, "turn": 4, "river": 5}[st.name]], st, stk, hero, hole, slow)
+            _narrow_street(ranges, board[:{"flop": 3, "turn": 4, "river": 5}[st.name]], st, stk, slow)
             # 3-way: through the street's 3-way solve where there is one (the one your advice on it came from, or
             # one from the street's start), as far as it has settled; the rest by the rules
             # (a street nobody has acted on yet, the current one at its first decision, has nothing to narrow)
@@ -4895,19 +4894,16 @@ class Advisor:
         lib = self.library if self.library is not None and not pool and not optimize and not (locks or {}).get(villain) \
             and not getattr(self, "_jam", False) and getattr(self, "_icm", None) is None else None
         lib_sol = None
+        # (No one's cards come out of the ranges: both play the whole range they got here with, and the solve's card
+        # removal keeps your row off what you block. Out of the villain's range they'd make a different game, where
+        # every other hand of yours plays as if it held your blockers too: TT called a 4bet pot's turn bet 100% where it
+        # folds 79%, KK read that call 6 bb short on another board.)
         # (play's fallback, an opponent's move from its own seat: `seen` is the hand of the player practising, the
-        # villain here, and the ranges are the ones that player's advice solved with, its cards out of this seat's
-        # range and its hand in at a near-zero weight where its range doesn't hold it, so the earlier streets' solves
-        # are the ones that advice cached, and this street's too where this seat's hand has weight in it: as when
-        # the move is read off that advice's solve, this seat's own cards stay in the other's range, a blocker's edge)
+        # villain here, in at a near-zero weight where its range doesn't hold it, so the earlier streets' solves are the
+        # ones that player's advice cached, and this street's too where this seat's hand has weight in it)
         seen = getattr(self, "_seen_from", None)
         seen = tuple(seen[1]) if seen is not None and seen[0] == villain and seen[1] and \
             cur.players_start == remaining else None   # (a pot heads-up from this street's start: solves to reuse)
-        for c in (hole if seen is None else seen):  # villain can't hold hero's cards (play's fallback: the other way)
-            if (hero_p == 0) == (seen is None):
-                r1 = r1 * (1.0 - MEMBER_FULL[c])
-            else:
-                r0 = r0 * (1.0 - MEMBER_FULL[c])
         adv_p, adv_hole = (hero_p, hole) if seen is None else (1 - hero_p, seen)   # (the hand _as_advised puts in)
 
         hu_from_start = cur.players_start == remaining
@@ -4982,7 +4978,7 @@ class Advisor:
                         # half a second). The betting rules narrow it, as they would have; one solved already (your
                         # advice on that street) is still walked.
                         rs = {oop: r0, ip: r1}
-                        _narrow_street(rs, sub_board, st, stk, hero, hole, slow_rules, check_whole=True)
+                        _narrow_street(rs, sub_board, st, stk, slow_rules, check_whole=True)
                         notes.append(f"{st.name}: ranges narrowed by simple betting rules (a quick answer: the street "
                                      f"isn't solved)")
                         off_solution.append({"street": st.name, "why": "rules"})
@@ -5205,7 +5201,8 @@ class Advisor:
                              f"from equilibrium, so its mix ({best} most often) hasn't caught up")
                 best = sampled = top["action"]
         hero_r = expand(sol.ctx, n_r0 if hero_p == 0 else n_r1)
-        vill_r = expand(sol.ctx, n_r1 if hero_p == 0 else n_r0)
+        # (what they can hold given your cards: the solve's ranges are whole, card removal in its rows)
+        vill_r = expand(sol.ctx, n_r1 if hero_p == 0 else n_r0) * np.prod([1.0 - MEMBER_FULL[c] for c in hole], axis=0)
         if to_call > 1e-9 and (bn := _beats_note(hole, board, villain, vill_r)):
             notes.append(bn)
         w = hero_r / max(hero_r.sum(), 1e-12)
@@ -5526,11 +5523,13 @@ class Advisor:
         w = hero_r / max(hero_r.sum(), 1e-12)
         sf = np.zeros((len(root.names), N_COMBOS)); sf[:, sol.hands.active] = strat
         opps = [p for p in players if p != hero]
+        # (what they can hold given your cards: the solve's ranges are the whole ranges, card removal in its rows)
+        unblocked = np.prod([1.0 - MEMBER_FULL[c] for c in hole], axis=0)
         if self._breakdown and not self._study:   # hero's categories and the opponents' (no equity view 3-way)
             from . import breakdown as BD
             ev_full = np.zeros(N_COMBOS); ev_full[sol.hands.active] = (strat * evs).sum(axis=0)
             bd = BD.breakdown(board, shown, hero, hero_r, sf, ev_full,
-                              {p: sol.expand(sol.reach0[i][0]) for i, p in enumerate(players) if p != hero},
+                              {p: sol.expand(sol.reach0[i][0]) * unblocked for i, p in enumerate(players) if p != hero},
                               root.pot_now, equity=False, hole=hole)
         to_call = max(bets) - bets[hp]
         bettor = next((a["pos"] for a in reversed(cur.actions) if a["action"] in ("bet", "raise", "all-in")), None)
@@ -5597,7 +5596,8 @@ class Advisor:
                "grid": strategy_grid([sf[a] for a in range(len(root.names))], shown, hero_r),
                "range_action_freq": {name: round(float((sf[a] * w).sum()), 3) for a, name in enumerate(shown)},
                "hero_range_combos": round(float(hero_r.sum()), 1),
-               "opponent_range_combos": {p: round(float(sol.reach0[i][0].sum()), 1) for i, p in enumerate(players) if p != hero},
+               "opponent_range_combos": {p: round(float((sol.expand(sol.reach0[i][0]) * unblocked).sum()), 1)
+                                         for i, p in enumerate(players) if p != hero},
                "solver": {"iterations": sol.iters, "solve_seconds": round(sol.seconds, 2), "nodes": sol.builder.n_nodes,
                           "active_combos": sol.hands.n, "tree_actions": shown,
                           # the mean of the three players' best-response gains, % of the pot (heads-up: the same mean of two)
@@ -6535,8 +6535,7 @@ class Advisor:
         the chart's, after the flop the solve's). `state` is the hand as the page sends it, from the player
         practising (its "hero" and "hole"; GTO opponents whatever its "opponents" says). Heads-up after the
         flop the move is read off that player's own solve of the street, so one solve serves the villain's
-        move and the hero's advice (the villain's range there leaves out the hero's cards, as in the hero's
-        advice: an edge the size of a blocker). Otherwise (preflop, multiway, a pot that became heads-up this
+        move and the hero's advice. Otherwise (preflop, multiway, a pot that became heads-up this
         street, a line of the hero's the solve rarely takes, a hand it gives no weight) it's the advice for
         `seat` holding `hole`, heads-up with the hero's advice's ranges (its earlier streets' solves are the
         cached ones). `seed` makes the draw repeatable.
@@ -7872,7 +7871,8 @@ class Advisor:
         R0, R1 = expand(sol.ctx, n_r0), expand(sol.ctx, n_r1)
         target = self.one_size_settled[street] if self.expl_target is None else \
             min(self.one_size_settled[street], self.expl_target)
-        spot = (self._solve_key(board, R0, R1, cur.pot_start, eff, bets, hero_p, cur.n_raises, base), target)
+        # (the rows hold your hand's line, and every hand of a node has the same ranges: by hand too)
+        spot = (self._solve_key(board, R0, R1, cur.pot_start, eff, bets, hero_p, cur.n_raises, base), target, tuple(hole))
         full_menu = [frac[c] for c, _ in cands]
         level = self._one_size_trim(board, R0, R1, cur, eff, bets, hero_p, base, full_menu, facing)
         cfg0 = base if not level else self._trim_cfg(base, street, level)

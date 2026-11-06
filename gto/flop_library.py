@@ -1146,8 +1146,8 @@ class FlopLibrary:
                  pot: float, stack: float, cfg: Config, borrow: Optional[dict] = None,
                  need: Sequence[int] = (), unraked: bool = False) -> Optional[LibrarySolution]:
         """The stored solve for this flop spot, or None. full0, full1: the two ranges entering the flop (they pick
-        the spot); r0, r1: the ranges the advisor solves with (the villain's less the hero's cards, which are dropped
-        from the entry's), every combo of which the entry must hold; cfg: the advisor's tree for the street.
+        the spot); r0, r1: the ranges the advisor solves with (narrowed by an earlier line), every combo of which the
+        entry must hold; cfg: the advisor's tree for the street.
         borrow: another spot read as this pot's own (flop_approx.near_exact's {"spot", "cover", "dist"}; the same pot
         and stack): the combos its entry doesn't hold are left out of r0 and r1, but for those in `need` (combo
         indices: your hand), where it is None; the solution's `borrowed` says so.

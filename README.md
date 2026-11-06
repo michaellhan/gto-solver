@@ -3221,17 +3221,32 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   Side pots go by the layers' own players, a player out of a pot still holds cards (the other's reach weighted by what
   they leave it: 2% of a share on thin ranges), and with three players a pot's shares are scaled to add up to it, as
   `_term`'s. CO's bar on that hand is 51 / 215.5 = 23.67%: JJ at 23.7% now calls for ~0 EV, TT at 24.1% for +0.95, 99 at
-  22.8% folds -1.94; solver and count agree to ~0.1 bb a class (0.6 at most). The advice there: fold 0, call 100% +1.40,
-  all-in 0 at -0.84 bb (settled, 16 buckets: 94/6 at +1.46 each; 24 and 32 buckets pure call, +2.46 v +2.16 and +2.85 v
-  +1.55). `MW_SETTLED` went from 0.1 to 0.02% of the pot on the way: at 0.1 that turn stopped at 50 iterations 4.9 bb
+  22.8% folds -1.94; solver and count agree to ~0.1 bb a class (0.6 at most). The advice there at the time: fold 0, call 100% +1.40,
+  all-in 0 at -0.84 bb; the next item moved it. `MW_SETTLED` went from 0.1 to 0.02% of the pot on the way: at 0.1 that turn stopped at 50 iterations 4.9 bb
   from its shove's settled EV. Range-wide exploitability is an average: the same solve at 100 iterations still has that
   hand's shove 2.3 bb from its settled EV at 0.02%, on the same side of the call. 3-way flops cost more natively (a 3bet
   pot's 0.18 -> 1.9 s, 400 iterations, a deep one 0.8 -> 2.1 s, 700, 0.01%; a short-stack flop of 1027 combos still takes its 5 s
   budget, 158 iterations, 0.06%). Below the root street an all-in stays by buckets, and the 3-way flop library's stored
-  entries were solved before this. What remains on this hand is the ranges: CO's line left 3.6 combos and the floor
-  (`pf.thin_line`) fills it to 11.3 with the rest of their turn range, halving the value in it (~50 -> 26%); filled to 8
-  in the line's own shape TT folds (call -6.7), on the raw line -14.4. A broad measurement found no better filler than
-  this one (Known limits); this call stays close, and an estimate.
+  entries were solved before this. What remains on this hand is the ranges: CO's line left 4.6 combos and the floor
+  (`pf.thin_line`) fills it to 12.6 with the rest of their turn range, 9.7 less what TT blocks. A broad measurement found
+  no better filler than this one (Known limits).
+* **Your cards stay out of everyone's range** (`_narrow_street`, `Advisor._postflop`; `tests/test_your_cards.py`). The
+  advice took your hand out of the opponents' ranges before anything else read them, heads-up and multiway, and that
+  made two errors a blocker's size doesn't cover. The rules and the floor read a line after your cards were gone: on
+  that hand CO's turn range came to 11.3 combos holding TT, 9.7 once it's read whole and TT's blockers come out, the
+  difference filler, and the filler is what the call was beating. And the solve played a different game. Equilibrium
+  strategies don't depend on the card you hold, so the game is the whole ranges, with card removal in your hand's row
+  (which the solvers do for every row). With your cards out of the villain's range every other hand of yours plays as
+  if it held your blockers too: AKo there saw a CO who never has TT, shoved 2.7 combos of 6.4, BTN's whole shove fell
+  from 31 combos to 21, CO's JJ called it 30% of the time, not 71%, and TT's own shove read -4.5 where it is -14.7.
+  That hand, 3-way, 16 buckets, settled: fold 85 / call 15 at 0, all-in -14.7, where it read call 94 / all-in 6 at +1.5
+  (Fast: fold 87, call -0.25, all-in -14.1; the study's reference has TT folding too, Thin lines). Heads-up, Accurate, 3bet
+  and 4bet pots' turns where a bet is faced, cards out of the villain's range -> whole: TT on Ks7s2h 2c in a 4bet pot call
+  100% +1.05 -> fold 79 / call 21 at 0; KK on Ah9d4c 7c call +0.86 -> +6.79, its shove -10.7 -> -3.4; AKo on Qd8c3h 9s
+  fold either way, its shove -8.2 -> -14.9; AQo on Ah9d4c 7c raise 55 -> call 100, +29.3 -> +31.0; TT in the 3bet pot +4.56
+  -> +2.22, QQ on Td6s3s 2d +42.3 -> +44.8; two of the eight moved under 0.6 bb, and the reported ranges (villain and
+  opponents' combos, grids, Breakdown, the river's beats note) still leave out what you hold. A side effect: every hand
+  of yours at a node reads one solve, where each had its own.
 * **3-way rivers in the compiled core** (`RSHOW`, `show()` in `core/mwcore.c`; `Program._river` in `gto/mwcore.py`;
   `MultiwaySolver._core`). The 3-way river was the one multiway solve still run per combo in numpy: `mw-river` took
   8.0 s on the live page (Fast ran out its budget at 93-95 iterations, Accurate 8.5-8.7 s). Now the core runs it, the
@@ -3747,8 +3762,8 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
 * **Lines**: the advisor walks the actual flop action through the stored nodes (sizes taken more than 15% off the
   tree's, more raises than it allows, or a line through a re-raise fall back to the live solve, as does a raise in an
   entry built before raises were stored). The spots' reports and drills keep to the first decisions. Turn and river
-  spots narrow the flop's ranges through it as well, instead of the earlier street's short solve. The entry ignores
-  the hero's cards in the villain's range (the live solve drops them): an edge the size of a blocker.
+  spots narrow the flop's ranges through it as well, instead of the earlier street's short solve. The entry keeps
+  the hero's cards in the villain's range, as the live solve does: card removal is in the hand's own row.
 * **Flops not stored** are solved live from scratch; meanwhile the stored flops most like it answer approximately
   (Accuracy vs speed, A library spot's flop the library doesn't store). A warm start from the
   spot's most similar stored flop (same pairing and suit pattern, nearest ranks; strategies carried over by card
@@ -4080,7 +4095,7 @@ their products batched: `core.LEAF_ROWS_BLAS`).
   card (heads-up, per combo, seven flops) bets 3 points more (64% against 60%); the ranges are worth 6 points 3-way;
   rake (5%, 3bb cap) and a 75% turn and river size moved a flop by 0-4 points.
 * A rule-narrowed line under `MIN_LINE_COMBOS` (`pf.thin_line`) is an estimate, filled with the rest of the street's
-  range, and a call or fold facing a big bet can turn on it (Root-street all-ins by each combo's cards, in Accuracy vs
+  range, and a call or fold facing a big bet can turn on it (Your cards stay out of everyone's range, in Accuracy vs
   speed). Filling it to 8 combos in the line's own shape does no better: `scripts/bench_thin_lines.py`, 227 thin lines
   of heads-up and 3-way pots against a reference that forces the line, gives up 0.32 / 0.58 / 0.73% of the pot on the
   next decision where the current filler gives up 0.37 / 0.60 / 0.68 and the raw line 0.72 / 0.66 / 0.68 (the three

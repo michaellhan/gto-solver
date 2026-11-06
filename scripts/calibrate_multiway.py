@@ -95,7 +95,7 @@ def heuristic(args):
     rep = A.replay_hand(positions, 100.0, {"preflop": PRE, "flop": st["flop"]}, 2)
     cur = rep[-1]
     ranges = pf.replay_ranges(PRE, positions)
-    A._narrow_street(ranges, board, cur, 100.0, hero, hole)
+    A._narrow_street(ranges, board, cur, 100.0)
     remaining = [p for p in cur.order if p in cur.active]
     adv = A.Advisor(time_budget=8)
     adv.mw_trials = 1200   # a fixed number of trials: the same score however loaded the machine is
