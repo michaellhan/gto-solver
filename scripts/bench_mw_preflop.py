@@ -21,13 +21,15 @@ still to act can answer hero's call (branches) a sample of flops is solved with 
 - Each flop is one job and one small npz in the cache, so a stopped run resumes where it stopped.
 
 The river: the solve plays the turn and river by hand buckets, the river on the turn's boards without its card, so a
-flush that comes in on the river isn't paid as it should be (--river-check measures that, and gto/advisor.py RIVER_FIX is
-the heads-up form of it). `river_fix` in the report is EV with that correction applied to the class's equity share.
+flush that comes in on the river isn't paid as it should be. Measuring that three-way needs the river dealt in the tree,
+which the compiled core doesn't run: in numpy 1956 nodes reached 2.4 GB and the memory guard stopped it. So `river` in
+the data is the heads-up measurement instead (advisor.RIVER_FIX, _river_fix: suited hands +0.10 of their equity, 22-66
+and connectors more, offsuit hands -0.05), and every figure is given without it and with it (--river).
 
     python scripts/bench_mw_preflop.py --minutes 9            # solve what's left (resumable, one process)
     python scripts/bench_mw_preflop.py --wide --minutes 9     # the same with every other seat's range a bit wider
     python scripts/bench_mw_preflop.py --freeze               # data file from the cache, the advice as it is as "before"
-    python scripts/bench_mw_preflop.py --report               # the table, the advice as it is now beside it
+    python scripts/bench_mw_preflop.py --report [--river]     # the table, the advice as it is now beside it
 """
 from __future__ import annotations
 import argparse
@@ -42,12 +44,14 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, HERE)
 import gto.native  # noqa: F401  (one BLAS thread per process)
 import numpy as np
+from gto.cards import ALL_COMBOS as ALL  # noqa: E402
 
 EPS = 1e-3
 CACHE = os.path.join(ROOT, ".pf_cache", "mw_preflop")
 DATA = os.path.join(ROOT, "docs", "mw_preflop_reference.json")
 K = 169
 RK = (0.05, 4.0)
+MANY = 150         # flops of equity alone behind each branch's solved ones (excess_cv)
 RAMP = 0.3         # bb of EV over which a hand goes into the next round's range
 MIN_BRANCH = 0.06  # a branch rarer than this isn't solved (the others share its weight)
 MIN_CONT = 0.08    # round 1 takes at least this share of a seat-to-act's range continuing, so a branch measures it
@@ -185,7 +189,7 @@ def setup(spot, wide=False):
     return meta, rng
 
 
-def branches(meta, rates=None):
+def branches(meta, rates=None, keep_all=False):
     """[(the seats that continue, weight)], and the weight of someone raising. `rates`: {seat: continue rate} of the
     round before, for the advice's."""
     pend = meta["pend"]
@@ -197,6 +201,8 @@ def branches(meta, rates=None):
         f = max(1.0 - c - r, 0.0)
         no_raise *= c + f
         out = [(k + (d["pos"],), w * c) for k, w in out] + [(k, w * f) for k, w in out]
+    if keep_all:
+        return out, 1.0 - no_raise
     keep = [(k, w) for k, w in out if w >= MIN_BRANCH * no_raise]
     tot = sum(w for _, w in keep)
     return [(k, w * no_raise / tot) for k, w in keep], 1.0 - no_raise
@@ -218,9 +224,10 @@ def flops(n, offset):
     return [tuple(int(c) for c in f[i]) for i in idx]
 
 
-def branch_flops(rnd, weight):
+def branch_flops(rnd, weight, n_players=3):
+    """A 3-way branch that's rare gets half the flops; four players cost a tenth as much, so they all get them all."""
     cfg = ROUNDS[rnd]
-    return flops(cfg["flops"] if weight >= THIN or rnd == 1 else cfg["flops"] // 2, cfg["offset"])
+    return flops(cfg["flops"] if weight >= THIN or rnd == 1 or n_players != 3 else cfg["flops"] // 2, cfg["offset"])
 
 
 def mw_config(n_players, rake):
@@ -289,6 +296,86 @@ def branch_game(meta, rng, seats, hero_w, pend_w):
     return players, rs, pot, 100.0 - meta["level"]
 
 
+def flop_equity(board, villains, runs=30, seed=1):
+    """Per class on this flop: the summed all-in equity against `villains` over `runs` runouts, each combo's boards as
+    likely as the villains leave them, and that weight. As advisor._preflop_equity_multi, on the flop's own boards: a
+    cheap stand-in for a solve's equity, on many more flops than can be solved."""
+    from gto.multiway_solver import Boards, Hands
+    from gto.pf_classes import CLASS_OF
+    rng = np.random.default_rng(seed + sum(board))
+    rest = np.array([c for c in range(52) if c not in board])
+    bds = [tuple(board) + tuple(int(c) for c in rng.choice(rest, 2, replace=False)) for _ in range(runs)]
+    active = np.array([i for i, (a, b) in enumerate(ALL) if a not in board and b not in board])
+    bd = Boards(Hands(active), bds)
+    live = (bd.s >= 0).astype(float)
+    p = live.copy()
+    bw = live.copy()
+    for w in villains:
+        x = w[active][None, :] * live
+        kl, ke = bd.k_le(x)
+        ku = bd.k_u(x)[0]
+        p = p * np.where(ku > 0, (kl + 0.5 * ke) / np.maximum(ku, 1e-300), 0.0)
+        bw = bw * ku / max(float(w.sum()), 1e-12)
+    c = CLASS_OF[active]
+    return np.bincount(c, (p * bw).sum(axis=0), K) / runs, np.bincount(c, bw.sum(axis=0), K) / runs
+
+
+def many_flops(spot, wide, rnd, seats, name, villains, fl):
+    """flop_equity on the flops `fl`, kept per branch and player."""
+    tag = "+".join(seats) or "none"
+    path = os.path.join(CACHE, f"eq_{spot}{'_wide' if wide else ''}_r{rnd}_{tag}_{name}_{len(fl)}.npz")
+    if os.path.exists(path):
+        z = np.load(path)
+        return z["x"], z["m"]
+    got = [flop_equity(f, villains) for f in fl]
+    x, m = np.array([g[0] for g in got]), np.array([g[1] for g in got])
+    np.savez(path, x=x, m=m)
+    return x, m
+
+
+FAMILY = None
+
+
+def families():
+    """Pairs, suited, offsuit: 0, 1, 2 per class."""
+    global FAMILY
+    if FAMILY is None:
+        from gto.pf_classes import CLASSES
+        FAMILY = np.array([0 if len(c) == 2 else 1 if c[2] == "s" else 2 for c in CLASSES])
+    return FAMILY
+
+
+def shape(x):
+    return np.stack([np.ones_like(x), x, x * x, x ** 3], axis=-1)
+
+
+def excess_cv(ys, ms, xs, xm, many_x, many_m):
+    """Per class the mean excess (share - equity, in shares of the pot) with what it owes to how the flops hit the hand
+    taken out: excess(flop, class) is fit on the class's equity on that flop (a cubic per family of hands, over the
+    solved flops), and the fit's mean over the many flops replaces its mean over the solved ones. Unbiased however
+    the fit does, since the flops are random.
+    ys, ms: (solved flops, K) excess summed over the deals and the mass. xs, xm: flop_equity on those. many_x, many_m:
+    on the many."""
+    fam = families()
+    den = ms.sum(axis=0)
+    raw = ys.sum(axis=0) / np.maximum(den, 1e-300)
+    px = np.where(xm > 0, xs / np.maximum(xm, 1e-300), 0.0)              # (solved, K) equity on the flop
+    py = np.where(ms > 0, ys / np.maximum(ms, 1e-300), 0.0)
+    mx = np.where(many_m > 0, many_x / np.maximum(many_m, 1e-300), 0.0)
+    out = np.zeros(K)
+    for g in range(3):
+        sel = fam == g
+        A = shape(px[:, sel]).reshape(-1, 4)
+        wt = np.sqrt(np.maximum(xm[:, sel].ravel(), 0.0))
+        beta = np.linalg.lstsq(A * wt[:, None], py[:, sel].ravel() * wt, rcond=None)[0]
+        fit_s = shape(px[:, sel]) @ beta
+        fit_m = shape(mx[:, sel]) @ beta
+        out[sel] = raw[sel] - (fit_s * ms[:, sel]).sum(axis=0) / np.maximum(den[sel], 1e-300) \
+            + (fit_m * many_m[:, sel]).sum(axis=0) / np.maximum(many_m[:, sel].sum(axis=0), 1e-300)
+    return out
+
+
+RIVER_SCALE = {0: 1.0, 1: 1.0, 2: 0.5}   # as advisor.RIVER_FIX: the river's correction by the raises called
 _ROUND: dict = {}
 
 
@@ -307,7 +394,7 @@ def _round_inputs(spot, wide, rnd):
         hero_w = rng["hero_call"] + EPS * w_all
         pend_w = {d["pos"]: rng[f"pend_cont_{d['pos']}"] + EPS * rng[f"pend_all_{d['pos']}"] for d in meta["pend"]}
         return meta, rng, hero_w, pend_w, None
-    res = estimate(spot, wide, 1)
+    res = estimate(spot, wide, 1, cv=False)
     if res is None or any(b["flops"] < ROUNDS[1]["flops"] for b in res["branches"]):
         return None
     from gto.pf_classes import CLASS_OF
@@ -338,78 +425,120 @@ def jobs(spot, wide, rnd):
     for seats, weight in branches(meta, rates)[0]:
         players, rs, pot, stack = branch_game(meta, rng, seats, hero_w, pend_w)
         iters = cfg["iters3"] if len(players) <= 3 else cfg["iters4"]
-        for f in branch_flops(rnd, weight):
+        for f in branch_flops(rnd, weight, len(players)):
             path = job_path(spot, wide, rnd, seats, f)
             if not os.path.exists(path):
                 out.append((path, f, rs, players, pot, stack, iters, SPOTS[spot][3]))
     return out
 
 
-def estimate(spot, wide, rnd, resample=None):
+def estimate(spot, wide, rnd, resample=None, cv=True):
     """Per class hero's EV of calling (and a seat-to-act's of its own call) from the flops solved so far, None until a
-    branch has flops. `resample`: a numpy generator, each branch's flops drawn again with it (the bootstrap)."""
-    from gto.pf_classes import CLASS_OF
+    branch has flops. `resample`: a numpy generator, each branch's flops drawn again with it (the bootstrap). `cv`:
+    excess_cv, else the plain mean over the flops. In round 2 the branches are weighted by how often the seats to act
+    continue as round 2 itself measures it."""
+    from gto.advisor import _preflop_equity_multi, _preflop_equity
+    from gto.pf_classes import CLASS_OF, to_classes
     got = round_inputs(spot, wide, rnd)
     if got is None:
         return None
     meta, rng, hero_w, pend_w, rates = got
     hero = meta["hero"]
-    br, p_raise = branches(meta, rates)
-    ev = np.zeros(K) - p_raise * meta["call"]
-    pend_ev = {d["pos"]: np.zeros(K) for d in meta["pend"]}
-    pend_w_sum = {d["pos"]: 0.0 for d in meta["pend"]}
-    info = []
-    gaps, secs = [], 0.0
+    rake = SPOTS[spot][3]
+    pend = {d["pos"]: d for d in meta["pend"]}
+    br, _ = branches(meta, rates)
+    info, gaps, secs = [], [], 0.0
+    size = np.bincount(CLASS_OF, np.ones(len(CLASS_OF)), K)
     for seats, weight in br:
         players, rs, pot, stack = branch_game(meta, rng, seats, hero_w, pend_w)
         recs = []
-        fl = branch_flops(rnd, weight)
+        fl = branch_flops(rnd, weight, len(players))
         draw = [1] * len(fl) if resample is None else np.bincount(resample.integers(0, len(fl), len(fl)), minlength=len(fl))
         for f, n in zip(fl, draw):
             path = job_path(spot, wide, rnd, seats, f)
             if os.path.exists(path):
-                z = np.load(path)
+                z = _load(path)
                 if n:
-                    recs.append((n, z))
+                    recs.append((int(n), z, f))
                 gaps.append(float(z["gap"]))
                 secs += float(z["seconds"])
         if not recs:
             return None
-
-        def excess(name):
-            num = sum(n * (z[f"v_{name}"] - z[f"e_{name}"]) for n, z in recs)
-            den = sum(n * z[f"m_{name}"] for n, z in recs)
-            return np.where(den > 0, num / np.maximum(den, 1e-300), 0.0), \
-                np.where(den > 0, sum(n * z[f"e_{name}"] for n, z in recs) / np.maximum(den, 1e-300), 0.0)
+        net = pot if not rake else pot - min(rake[0] * pot, rake[1] if rake[1] is not None else 1e9)
 
         def share(name):
-            from gto.advisor import _preflop_equity_multi, _preflop_equity
-            key = ("eq", spot, wide, rnd, seats, name)
+            bare = [(rng[f"seat_{q}"] if q in meta["live"] else (hero_w if q == hero else pend_w[q]))
+                    for q in players if q != name]
+            key = (spot, wide, rnd, seats, name)
             if key not in _EQ:
-                bare = [(rng[f"seat_{q}"] if q in meta["live"] else
-                         (hero_w if q == hero else pend_w[q])) for q in players if q != name]
-                _EQ[key] = np.nan_to_num(_preflop_equity_multi(bare) if len(bare) > 1 else _preflop_equity(bare[0]))
-                _EQ[key] = np.bincount(CLASS_OF, _EQ[key], K) / np.bincount(CLASS_OF, np.ones(len(CLASS_OF)), K)
-            x, e = excess(name)
-            rake = SPOTS[spot][3]
-            net = pot if not rake else pot - min(rake[0] * pot, rake[1] if rake[1] is not None else 1e9)
-            return x + net * _EQ[key], x, e / max(pot, 1e-9), _EQ[key]
+                eq = _preflop_equity_multi(bare) if len(bare) > 1 else _preflop_equity(bare[0])
+                _EQ[key] = np.bincount(CLASS_OF, np.nan_to_num(eq), K) / size
+            den = sum(n * z[f"m_{name}"] for n, z, _ in recs)
+            num = sum(n * (z[f"v_{name}"] - z[f"e_{name}"]) for n, z, _ in recs)
+            x = np.where(den > 0, num / np.maximum(den, 1e-300), 0.0)
+            if cv and len(recs) >= 4:
+                mx, mm = many_flops(spot, wide, rnd, seats, name, bare, flops(MANY, 0.5))
+                ys, ms, xs, xm = [], [], [], []
+                for n, z, f in recs:
+                    a, b = _flop_eq(key, f, bare)
+                    ys += [(z[f"v_{name}"] - z[f"e_{name}"]) / pot] * n
+                    ms += [z[f"m_{name}"]] * n
+                    xs += [a] * n
+                    xm += [b] * n
+                x = excess_cv(np.array(ys), np.array(ms), np.array(xs), np.array(xm), mx, mm) * pot
+            return x + net * _EQ[key], x, _EQ[key]
 
-        sh, x, eflop, eq = share(hero)
-        ev += weight * (sh - meta["call"])
+        sh, x, eq = share(hero)
         info.append(dict(seats=list(seats), weight=weight, players=players, pot=pot, flops=len(recs), excess=x, eq=eq,
-                         eq_flop=eflop))
-        for d in meta["pend"]:
-            p = d["pos"]
-            if p in seats:
-                pend_ev[p] = pend_ev[p] + weight * (share(p)[0] - d["owed"])
-                pend_w_sum[p] += weight
-    pend = {p: v / pend_w_sum[p] for p, v in pend_ev.items() if pend_w_sum[p] > 0}
-    return dict(ev=ev, pend=pend, branches=info, p_raise=p_raise, gap=float(np.mean(gaps)), seconds=secs, meta=meta,
-                rng=rng, rates=rates)
+                         share=sh, pend={p: share(p)[0] - pend[p]["owed"] for p in seats}))
+    # the seats to act: their own EV of continuing, over the branches they're in
+    pend_ev = {}
+    for p in pend:
+        tot = sum(b["weight"] for b in info if p in b["seats"])
+        if tot > 0:
+            pend_ev[p] = sum(b["weight"] * b["pend"][p] for b in info if p in b["seats"]) / tot
+    measured = dict(rates or {})
+    if rnd == 2:
+        for p, v in pend_ev.items():
+            a = rng[f"pend_all_{p}"]
+            c = np.maximum(a * np.clip(0.5 + v / RAMP, 0.0, 1.0)[CLASS_OF] - rng[f"pend_raise_{p}"], 0.0)
+            measured[p] = float(c.sum() / max(a.sum(), 1e-12))
+    every, p_raise = branches(meta, measured, keep_all=True)
+    weights = dict(every)
+    tot = sum(weights.get(tuple(b["seats"]), 0.0) for b in info)
+    ev = np.zeros(K) - p_raise * meta["call"]
+    river = np.zeros(K)
+    from gto.advisor import _river_fix
+    scale = RIVER_SCALE.get(sum(a["action"] == "raise" for a in meta["line"]), 0.0)
+    for b in info:
+        b["weight"] = weights.get(tuple(b["seats"]), 0.0) * (1.0 - p_raise) / max(tot, 1e-9)
+        ev = ev + b["weight"] * (b["share"] - meta["call"])
+        river = river + b["weight"] * scale * _river_fix() * b["eq"] * b["pot"]
+    return dict(ev=ev, river=river, pend=pend_ev, branches=info, p_raise=p_raise, gap=float(np.mean(gaps)), seconds=secs, meta=meta,
+                rng=rng, rates=measured)
 
 
+def _load(path):
+    if path not in _Z:
+        with np.load(path) as z:
+            _Z[path] = {k: z[k] for k in z.files}
+    return _Z[path]
+
+
+def _flop_eq(key, f, villains):
+    k = key + (f,)
+    if k not in _FE:
+        _FE[k] = flop_equity(f, villains)
+    return _FE[k]
+
+
+_Z: dict = {}
+_FE: dict = {}
 _EQ: dict = {}
+
+
+def complete(spot, wide):
+    return bool(round_inputs(spot, wide, 2)) and not jobs(spot, wide, 2)
 
 
 def run(args):
@@ -433,15 +562,16 @@ def hero_weights(rng):
     return to_classes(rng["hero_all"])
 
 
-def advice(spot, res):
+def advice(spot):
     """The advice as the code stands: (call, raise) per class as a share of the hero's combos of the class."""
-    from gto.advisor import preflop_strategy
-    from gto.pf_classes import to_classes, CLASSES
+    from gto.advisor import preflop_ranges, preflop_strategy
+    from gto.pf_classes import to_classes
     from gto import preflop as pf
     T = table(spot)
-    pre = res["meta"]["line"]
-    s = preflop_strategy(res["meta"]["hero"], pre, T, 100)
-    w = res["rng"]["hero_all"]
+    hero = SPOTS[spot][1]
+    pre = full_line(T, hero, SPOTS[spot][2])[0]
+    s = preflop_strategy(hero, pre, T, 100)
+    w = preflop_ranges(pre, T, 100)[hero]
     den = np.maximum(to_classes(w), 1e-12)
     return to_classes(w * s["call"]) / den, to_classes(w * s.get("raise", np.zeros(pf.N_COMBOS))) / den
 
@@ -472,9 +602,6 @@ def bootstrap(spot, wide, rnd=2, n=60, seed=5):
     return float(np.std(shares)), np.std(evs, axis=0)
 
 
-CHECK = ("A4s", "A5s", "A9s", "K9s", "T9s", "76s", "54s", "33", "66", "99", "AJo", "KQo", "K9o")
-
-
 def freeze(args):
     from gto.pf_classes import CLASSES
     path = args.data
@@ -487,12 +614,12 @@ def freeze(args):
     for spot in SPOTS:
         for wide in (False, True):
             res = estimate(spot, wide, 2)
-            if res is None or any(b["flops"] < 0.8 * len(branch_flops(2, b["weight"])) for b in res["branches"]):
+            if res is None or not complete(spot, wide):
                 continue
             key = spot + ("_wide" if wide else "")
             n = hero_weights(res["rng"])
             sd, se = bootstrap(spot, wide)
-            call, raise_ = advice(spot, res)
+            call, raise_ = advice(spot)
             prev = out.get("spots", {}).get(key, {})
             out.setdefault("spots", {})[key] = {
                 "seats": SPOTS[spot][0], "hero": SPOTS[spot][1], "line": SPOTS[spot][2], "rake": SPOTS[spot][3],
@@ -503,6 +630,7 @@ def freeze(args):
                 "gap_pct_pot": round(res["gap"], 3), "solve_seconds": round(res["seconds"]),
                 "combos": [round(float(x), 2) for x in n],
                 "ev": [round(float(x), 3) for x in res["ev"]], "se": [round(float(x), 3) for x in se],
+                "river": [round(float(x), 3) for x in res["river"]],
                 "share": round(float(((res["ev"] > 0) * n).sum() / n.sum()), 4), "share_sd": round(sd, 4),
                 "advisor_before": prev.get("advisor_before") or {"call": [round(float(x), 3) for x in call],
                                                                   "raise": [round(float(x), 3) for x in raise_]},
@@ -512,29 +640,31 @@ def freeze(args):
     print(f"{path}: {os.path.getsize(path) / 1024:.0f} KB, {len(out.get('spots', {}))} spots")
 
 
-def report(args):
+def report(args, stream=sys.stdout):
+    """The table: per spot the +EV calls, the advice now and as it was, and the EV the advice gives up on calls and folds
+    (a raise isn't judged by the EV of a call). --river: with the river's correction added to the EVs."""
     from gto.pf_classes import CLASSES
     with open(args.data) as fh:
         D = json.load(fh)
     idx = {c: i for i, c in enumerate(CLASSES)}
     tot = np.zeros(3)
-    n_sp = 0
-    print(f"{'spot':16s} {'+EV calls':>10s} {'advice':>7s} {'before':>7s}   EV lost bb/hand now (before)   "
-          f"{' '.join(f'{c:>5s}' for c in ('A4s', 'A9s', '76s', '33', 'K9o'))}")
+    show = ("A4s", "A9s", "76s", "33", "K9o")
+    print(f"{'spot':16s} {'+EV calls':>10s} {'advice':>7s} {'before':>7s}   EV lost, bb per hand: now (before)   "
+          + " ".join(f"{c:>5s}" for c in show), file=stream)
     for key, r in D["spots"].items():
         spot = key[:-5] if key.endswith("_wide") else key
         if key != spot and not args.wide:
             continue
-        ev, n = np.array(r["ev"]), np.array(r["combos"])
-        res = estimate(spot, r["wide"], 2)
-        call, raise_ = advice(spot, res) if res else (np.zeros(K), np.zeros(K))
+        ev, n = np.array(r["ev"]) + (np.array(r["river"]) if args.river else 0.0), np.array(r["combos"])
+        call, raise_ = advice(spot)
         a = score(ev, call, raise_, n)
         b = score(ev, np.array(r["advisor_before"]["call"]), np.array(r["advisor_before"]["raise"]), n)
-        print(f"{key:16s} {r['share'] * 100:6.1f}±{r['share_sd'] * 100:3.1f} {a[0] * 100:7.1f} {b[0] * 100:7.1f}   "
-              f"{a[1] + a[2]:.3f} ({b[1] + b[2]:.3f}) {'':10s}  "
-              + " ".join(f"{ev[idx[c]]:5.2f}" for c in ("A4s", "A9s", "76s", "33", "K9o")))
+        print(f"{key:16s} {float(((ev > 0) * n).sum() / n.sum()) * 100:6.1f}±{r['share_sd'] * 100:3.1f} {a[0] * 100:7.1f} "
+              f"{b[0] * 100:7.1f}   {a[1] + a[2]:.3f} ({b[1] + b[2]:.3f}) {'':16s} "
+              + " ".join(f"{ev[idx[c]]:5.2f}" for c in show), file=stream)
         tot += np.array([a[1] + a[2], b[1] + b[2], 1.0])
-    print(f"mean EV lost per hand: now {tot[0] / tot[2]:.3f} bb, before {tot[1] / tot[2]:.3f} bb")
+    print(f"mean EV lost per hand: now {tot[0] / tot[2]:.3f} bb, before {tot[1] / tot[2]:.3f} bb", file=stream)
+    return tot[0] / tot[2], tot[1] / tot[2]
 
 
 def main():
@@ -544,6 +674,7 @@ def main():
     ap.add_argument("--wide", action="store_true")
     ap.add_argument("--freeze", action="store_true")
     ap.add_argument("--report", action="store_true")
+    ap.add_argument("--river", action="store_true")
     ap.add_argument("--data", default=DATA)
     args = ap.parse_args()
     if args.freeze:
