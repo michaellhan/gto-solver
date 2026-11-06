@@ -264,3 +264,55 @@ See `tests/test_multiway_solver.py` and `scripts/compare_multiway.py` (numbers i
   pot) by the solve's EVs. They disagree most when first to act (river: the rules bet 1% of the strong-leaning
   sample, the solve 25%; turn: 26% against 3%) and when checked to (54-55% against 79-83%). Facing a bet and a
   call they agree 84-95% of the time.
+
+## Thin lines: how the floor should fill them
+
+Rule narrowing can leave a line with very few combos. Under `MIN_LINE_COMBOS` (8) `_post_floor` adds lam x the street's
+range, lam = 1 - combos / 8, so the fill grows with that range, not with the shortfall: a line of 5 combos from a range
+of 139 becomes about 60. It is shared by heads-up and multiway pots. Filling to exactly 8 in the line's own shape looks
+like the obvious repair. `scripts/bench_thin_lines.py` measures that, and it doesn't win.
+
+**The reference.** A street-start solve can't be one: the lines the floor fills are the ones it hardly reaches (a 75%
+turn bet from CO, 0.00 combos, whose shape changes with the iteration count and buckets). The benchmark solves the
+game with the line forced instead: player p takes it with at least T combos of the street's range and everyone
+best-responds, by fictitious play (6 steps of 100 iterations, each solving the line and the node without it). Nothing
+knows how rare the line really is, so T runs at 8, at 5 and at the line's own combos.
+
+Two earlier forms misled, each to a different winner. A best reply of exactly T combos took medium hands when more than
+T preferred the line, and scale looked clearly better. One that counted combos outside the range (a bucket's EV reaches
+them) took losing hands past T, and the current filler looked clearly better. The final form agrees with itself: from
+the narrow and the wide seed, at 200 iterations and 10 steps on 20 lines, the median difference is 0.0 combos
+(correlation 0.99).
+
+**The measure.** The next decision by someone else: their mix from a solve with the candidate range, valued by the
+reference solve's action EVs, as % of the pot. 227 lines from a census of 41,502, 12 spots, 73 spot-flops; heads-up
+flop and turn, 3-way flop, turn and river; noise ~0.02.
+
+| Mean % of the pot given up | T = 8 | T = 5 | T = line's own |
+|---|---|---|---|
+| Raw line | 0.72 | 0.66 | 0.68 |
+| Current filler | 0.37 | 0.60 | 0.68 |
+| Scaled in shape to 8 | 0.32 | 0.58 | 0.73 |
+| Uniform to 8 | 0.35 | 0.62 | 0.76 |
+| Whole street's range | 0.51 | 0.82 | 0.93 |
+| Scaled less current (95%, by spot-flop) | -0.05 [-0.15, +0.03] | -0.03 [-0.14, +0.07] | +0.05 [-0.04, +0.14] |
+
+The median difference is 0.00 at every T. By street, scaled less current at the three T: 3-way flop -0.07 / +0.02 /
++0.17, turn -0.01 / +0.06 / +0.06, river -0.04 / -0.07 / -0.02; heads-up turn -0.31 / -0.35 / -0.17 (intervals reach
+zero), heads-up flop +0.50 / +0.49 / +0.47.
+
+The tie hides large lines on both sides. Scaled saves 7.0% of the pot where the current filler holds 28 combos and the
+reference 8 (Jh9h4c2c3d, a 3bet pot's check-call) and 4.6 at 36 against 12. It loses 3.0, 1.7 and 1.0 on called flop
+raises in 3bet pots that the reference plays with 28-45 combos, which 8 can't hold. With the street's range under 40
+combos T = 8 binds on 90% of lines; from 40 up on 20% (the reference's median is 17 combos). Picking between them by
+that split would be fitted to this sample, and the signal that separates them is the reference itself, ~15 s a line.
+
+So the filler stays, as does the shape it doesn't keep. The rule's shape isn't the thing to preserve: the raw line is
+0.48 from the reference by total variation against 0.32-0.35 for the fills, and a line that stays raw only ties at
+T = the line's own, the case where the floor needn't have fired.
+
+**The hand that asked.** BTN ThTs facing CO's 34 into 45.5 (README, Root-street all-ins). The reference at T = 8 is JJ
+36%, AQo 19, KQs 12, 77 8: Kx and 77 about 20%, not the rule's ~50, and from either seed. In the benchmark's own solve
+(12 buckets, ranges not conditioned on hero's cards) TT folds against the reference, call -0.76 at T = 8 and -3.56 at T = 5, and calling
+is within 0.1 bb of folding on the current and the scaled ranges alike. Through the Advisor the same two ranges read
++1.40 and -6.87. That gap is unexplained, and it's wider than the difference this benchmark measures.

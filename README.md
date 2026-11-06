@@ -3230,8 +3230,8 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   budget, 158 iterations, 0.06%). Below the root street an all-in stays by buckets, and the 3-way flop library's stored
   entries were solved before this. What remains on this hand is the ranges: CO's line left 3.6 combos and the floor
   (`pf.thin_line`) fills it to 11.3 with the rest of their turn range, halving the value in it (~50 -> 26%); filled to 8
-  in the line's own shape TT folds (call -6.7), on the raw line -14.4. Rule narrowing a rarely played line stays an
-  estimate, and a stable reference for it needs its own study (Known limits).
+  in the line's own shape TT folds (call -6.7), on the raw line -14.4. A broad measurement found no better filler than
+  this one (Known limits); this call stays close, and an estimate.
 * **3-way rivers in the compiled core** (`RSHOW`, `show()` in `core/mwcore.c`; `Program._river` in `gto/mwcore.py`;
   `MultiwaySolver._core`). The 3-way river was the one multiway solve still run per combo in numpy: `mw-river` took
   8.0 s on the live page (Fast ran out its budget at 93-95 iterations, Accurate 8.5-8.7 s). Now the core runs it, the
@@ -4079,9 +4079,14 @@ their products batched: `core.LEAF_ROWS_BLAS`).
   sizes don't close the rest (as heads-up, a second size takes bets from the small one); playing the river with its
   card (heads-up, per combo, seven flops) bets 3 points more (64% against 60%); the ranges are worth 6 points 3-way;
   rake (5%, 3bb cap) and a 75% turn and river size moved a flop by 0-4 points.
-* A rule-narrowed line under `MIN_LINE_COMBOS` (`pf.thin_line`) is filled with the rest of the street's range, not in
-  the line's own shape, so a strong, rare line reads weaker than it is: a facing-a-big-turn-bet call or fold can turn on
-  it (Root-street all-ins by each combo's cards, in Accuracy vs speed).
+* A rule-narrowed line under `MIN_LINE_COMBOS` (`pf.thin_line`) is an estimate, filled with the rest of the street's
+  range, and a call or fold facing a big bet can turn on it (Root-street all-ins by each combo's cards, in Accuracy vs
+  speed). Filling it to 8 combos in the line's own shape does no better: `scripts/bench_thin_lines.py`, 227 thin lines
+  of heads-up and 3-way pots against a reference that forces the line, gives up 0.32 / 0.58 / 0.73% of the pot on the
+  next decision where the current filler gives up 0.37 / 0.60 / 0.68 and the raw line 0.72 / 0.66 / 0.68 (the three
+  reference sizes). The differences' intervals all hold zero and the median is 0.00, so the filler stays: the two fail
+  on different lines, the current one by overfilling a line the reference keeps at 8-12 combos, the other by
+  underfilling one the reference plays with 28-45 (`docs/multiway_research.md`, Thin lines).
 * 4-way flops and turns are solved live in a smaller game than 3-way ones: one bet a street (a third of the pot on
   the flop, half after), no raise but yours, everyone at the shortest stack behind, this street's card removal pair
   by pair. No 4-way flop library is built: 4-way flops are 0.10% of the flops seen in 6-max 100bb (3-way 4.2%,
