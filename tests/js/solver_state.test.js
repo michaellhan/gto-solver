@@ -45,7 +45,7 @@ test("payload: cards, board, actions in the advisor's format, optional fields on
     players: 6, hero: "BTN", hole: "AhKh", board: "Kd7s2c", stack: 100,
     preflop: [{ pos: "UTG", action: "fold" }, { pos: "HJ", action: "fold" }, { pos: "CO", action: "fold" }, { pos: "BTN", action: "raise", to: 2.5 }, { pos: "SB", action: "fold" }, { pos: "BB", action: "call" }],
     flop: [{ pos: "BB", action: "check" }, { pos: "BTN", action: "bet", amount: 2 }, { pos: "BB", action: "raise", to: 7 }, { pos: "BTN", action: "all-in" }],
-    turn: [], river: [], budget: 8, prior_budget: 3, speed: "fast",
+    turn: [], river: [], budget: 8, prior_budget: 3, speed: "fast", opponents: "pool",
   });
   p.S = state({ ...FLOP, ante: 0.1, straddle: true });
   assert.equal(p.payload().ante, 0.1);
@@ -276,7 +276,7 @@ function playHands(nHands, seed, unequal = false) {
       if (sim.handOver) break;
       if (sim.waiting) { p.run(`placeCard("${deck[next++]}")`); continue; }
       const info = sim.cur, who = sim.toAct;
-      if (who === p.S.hero || R() < 0.2) out.push({ hand: h + (unequal ? 1000 : 0), state: (({ budget, prior_budget, speed, ...rest }) => rest)(p.payload()), page: { street: sim.current, to_act: who, pot: sim.pot, cur_bet: info.curBet, active: sim.active, allin: sim.allin } });
+      if (who === p.S.hero || R() < 0.2) out.push({ hand: h + (unequal ? 1000 : 0), state: (({ opponents, budget, prior_budget, speed, ...rest }) => rest)(p.payload()), page: { street: sim.current, to_act: who, pot: sim.pot, cur_bet: info.curBet, active: sim.active, allin: sim.allin } });
       const facing = info.curBet - info.bets[who] > 1e-9, x = R();
       let a;
       if (facing) a = x < 0.35 ? { action: "fold" } : x < 0.75 ? { action: "call" } : x < 0.95 ? { action: "bet", to: info.curBet * (2 + 2 * R()) } : { action: "all-in" };
@@ -329,6 +329,7 @@ test("a jam the answer's tree has no all-in for is asked again with jam: true an
 
 test("after the flop a raise the tree has only an all-in for is graded as its all-in; a 4+-way jam is asked again too", async () => {
   const p = await (async () => { const q = loadPage(); await q.ready(); return q; })();
+  p.run("S.tournament = true");   // (at equilibrium: graded by its mix)
   // facing a 4bet: fold, call or all-in
   const r = { street: "flop", pot_bb: 60, actions: [{ action: "fold", freq: 0.3, ev_bb: 0 }, { action: "call", freq: 0.5, amount_bb: 23, ev_bb: 4 },
     { action: "all-in", freq: 0.2, amount_bb: 97.5, ev_bb: 3.9 }] };
@@ -468,8 +469,8 @@ test("an action your range almost never takes (rough_ev) shows its EV with a ≈
   assert.equal(p.val(`gradeWith(${JSON.stringify(rough)}, { action: "check" })`).rv, undefined);   // (your move's own EV is what counts)
   assert.match(p.run(`lossHtml(${JSON.stringify(g)})`), /<span class="l bad" title="Your range almost never[^"]*">≈ −0\.40 bb<\/span>/);
   assert.equal(p.run(`lossHtml(${JSON.stringify(g0)})`), `<span class="l bad">−0.40 bb</span>`);
-  assert.match(p.run(`verdictText(${JSON.stringify(g)})`), / ≈ 0\.40 bb lost\.$/);
-  assert.match(p.run(`verdictText(${JSON.stringify(g0)})`), /[^≈] 0\.40 bb lost\.$/);
-  assert.match(p.run(`gradeTip(${JSON.stringify(g)})`), /EV ≈ \+4\.50 bb vs GTO \+4\.90 bb \(−0\.40 bb\)\. Your range almost never takes this/);
+  assert.match(p.run(`verdictText(${JSON.stringify(g)})`), / ≈ 0\.40 bb lost, /);
+  assert.match(p.run(`verdictText(${JSON.stringify(g0)})`), /[^≈] 0\.40 bb lost, /);
+  assert.match(p.run(`gradeTip(${JSON.stringify(g)})`), /EV ≈ \+4\.50 bb vs \+4\.90 bb \(−0\.40 bb, 7\.3% of the pot\)\. Your range almost never takes this/);
   assert.doesNotMatch(p.run(`gradeTip(${JSON.stringify(g0)})`), /≈|almost never/);
 });

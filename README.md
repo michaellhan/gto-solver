@@ -261,7 +261,7 @@ saved hand changes nothing in it, even one the page has to repair to show: the r
 changes from there. A blank hand left by the frozen copy starts here without those settings, in memory only: the shared
 `handreview` changes when you first enter something here. What the frozen copy saved stays for it, unread here: the speed (`gto-speed`; this page
 always solves at Fast and neither reads nor writes it), the deck's colours, the first-visit mark. A saved `gto-opponents`
-(pool opponents) is left as it is and refused here with one notice.
+(pool opponents) is left as it is and unread here: every cash hand already plays against the pool, every tournament hand at equilibrium.
 
 ## Where the rest went
 
@@ -452,7 +452,7 @@ typical player pool instead of GTO. Preflop, hero's calls and raises are re-draw
 ranges and responses; after the flop the advice is the best response (each hand's highest-EV action,
 `freq` 0 or 1, with `gto_freq` alongside). See Exploit mode below. `gto_freq` is the chart's mix preflop and
 after it the equilibrium of the same solve, which starts from the pool's ranges into the flop (and is never the
-precomputed library's), so it can differ from the GTO setting's answer for the same hand. The page doesn't offer it.
+precomputed library's), so it can differ from the equilibrium answer for the same hand. The page sends it for every cash hand, and grades by the EV given up against that opponent, as a share of the pot; a tournament hand stays at equilibrium (the pool data is cash).
 
 ### Rake
 

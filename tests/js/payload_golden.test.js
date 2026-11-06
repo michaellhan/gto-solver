@@ -83,9 +83,12 @@ async function boot(c, how) {
 // The payload a golden entry expects now: the entry, or (the exception above) at Fast.
 const FAST = { wasm: [8, 3], server: [2.5, 2.5] };
 function expected(g) {
-  if (g.payload.speed === "fast") return g.payload;
+  // (the second exception: cash hands are answered against the typical player, tournaments at equilibrium)
+  const cash = !g.payload.payouts && !g.payload.bounties && !/tournament/.test(g.name);
+  const p = cash ? Object.fromEntries(Object.entries(g.payload).flatMap(([k, v]) => k === "preflop" ? [["opponents", "pool"], [k, v]] : [[k, v]])) : g.payload;
+  if (p.speed === "fast") return p;
   const [budget, prior_budget] = FAST[g.server ? "server" : "wasm"];
-  return { ...g.payload, budget, prior_budget, speed: "fast" };
+  return { ...p, budget, prior_budget, speed: "fast" };
 }
 function same(got, g, how) {
   const want = expected(g);

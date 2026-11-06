@@ -176,6 +176,12 @@ test("every kind a record is saved as opens on the table, a hand imported in the
   }
 });
 
+test("a typical-player grade is counted by the share of the pot given up", () => {
+  const st = played({ river: [] });
+  st.actions.flop.push({ pos: "BTN", action: "bet", to: 2, g: { f: 0, l: 0.2, h: 3.6, p: 1 } }, { pos: "BB", action: "raise", to: 8 }, { pos: "BTN", action: "fold", g: { f: 0, l: 3, h: 20, p: 1 } });
+  assert.deepEqual(MH.summary(st).graded, { ok: 0, meh: 1, bad: 1 });
+});
+
 test("summary: who, the cards, the pot, how far it went, the grades", () => {
   const st = played({ river: [] });
   st.actions.flop.push({ pos: "BTN", action: "bet", to: 2, g: { f: 0.6, l: 0 } }, { pos: "BB", action: "raise", to: 8 }, { pos: "BTN", action: "fold", g: { f: 0.01, l: 1.234 } });

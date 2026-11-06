@@ -1,6 +1,6 @@
 // Removing a control removes the input, not the setting. A hand keeps its settings and payload() keeps sending them
 // (payload_golden.test.js pins that); a setting with no control shows in a one-line banner and isn't carried to the next
-// hand, so New hand is its off switch; opening a saved hand changes nothing in it; a saved "pool" is refused, because it's
+// hand, so New hand is its off switch; opening a saved hand changes nothing in it; a saved "pool" is ignored, because it's
 // in the browser, not the hand. Lizard skips a hand with payouts or bounties on import (classic.ts), so a hand that lost
 // them in a load would turn up there as a plain hand: these tests keep the record as it was.
 "use strict";
@@ -425,32 +425,21 @@ for (const serviceWorker of [false, true])
     assert.equal("payouts" in r.S, false);                         // (no longer the link's hand: the rule for a blank hand again)
   });
 
-for (const store of [false, true])
-  test(`a saved "pool" is refused: not sent, not rewritten, said once (${store ? "with the store" : "localStorage"})`, async () => {
-    const mk = async (storage, o = {}) => { const p = store ? await storePage({ storage, ...o }) : loadPage({ storage }); if (!store) await p.ready(); await flush(); return p; };
-    const p = await mk({ "gto-opponents": "pool" });
+test("the frozen copy's saved opponents setting changes nothing: cash at the typical player, a tournament at equilibrium", async () => {
+  for (const v of ["pool", "gto"]) {
+    const p = loadPage({ storage: { "gto-opponents": v } });
+    await p.ready();
     p.spot(played());
     await flush();
-    assert.equal(p.payload().opponents, undefined);
-    assert.equal(p.posted.filter(m => m.state).at(-1).state.opponents, undefined);
-    assert.match(p.byId("toast").innerHTML, /no longer solves against a player pool/);
-    assert.equal(p.storage.get("gto-opponents"), "pool");
-    if (store) assert.equal(await p.run('GTOStore.ready.then(() => GTOStore.getRaw("gto-opponents"))'), "pool");
-    const q = await mk(Object.fromEntries(p.storage), store ? { indexedDB: p.ctx.indexedDB } : {});
-    assert.equal(q.byId("toast").innerHTML, "");                   // (once)
-    assert.equal(q.storage.get("gto-opponents"), "pool");
-    assert.equal(q.payload().opponents, undefined);
-  });
-
-test("no notice for a saved gto, and none while the page is about to reload for its service worker", async () => {
-  const p = loadPage({ storage: { "gto-opponents": "gto" } });
-  await p.ready();
-  assert.equal(p.byId("toast").innerHTML, "");
-  assert.equal(p.storage.has("gto-pool-refused"), false);
-  const q = loadPage({ storage: { "gto-opponents": "pool" }, serviceWorker: true });
+    assert.equal(p.payload().opponents, "pool");
+    assert.equal(p.posted.filter(m => m.state).at(-1).state.opponents, "pool");
+    assert.equal(p.byId("toast").innerHTML, "");
+    assert.equal(p.storage.get("gto-opponents"), v);
+  }
+  const q = loadPage();
   await q.ready();
-  assert.equal(q.run("isolating"), true);
-  assert.equal(q.storage.has("gto-pool-refused"), false);          // (kept for the load after it)
+  q.spot({ ...played(), payouts: [50, 30, 20] });
+  assert.equal(q.payload().opponents, undefined);
 });
 
 test("the setup line says tournament for one, and nothing for a cash game; My hands marks these hands", async () => {

@@ -22,7 +22,7 @@ async function page(opts = { isolated: true }) {
   if (p.workers[0]) p.workers[0].onmessage({ data: { status: "Solving…" } });
   return p;
 }
-async function reviewed(st = { ...state(HAND), finished: true }) {
+async function reviewed(st = { ...state(HAND), finished: true, tournament: true }) {   // (a tournament: at equilibrium)
   const p = await page();
   p.S = st;
   await flush();
@@ -65,6 +65,35 @@ test("the review: the count, the hand and its total, a row a decision, the marks
   assert.match(again, /Solver 100%, from the chart/);   // (a chart's answer is known without it)
   assert.match(again, /<span class="s">Solver 63%<\/span>/);
   assert.match(again, /<span class="s">Solver 0%, it bets 125%<\/span>/);
+});
+
+test("a cash hand is graded against the typical player: by the EV given up, with GTO under each action", async () => {
+  const p = await reviewed({ ...state(HAND), finished: true });
+  assert.equal(p.payload().opponents, "pool");
+  assert.match(p.byId("reviewCount").textContent, /of 3 good against a typical player$/);
+  const n = p.byId("adviceNote").innerHTML;
+  assert.match(n, /Best against a typical player/);                                 // (a tie: your action counts as the best)
+  assert.match(n, /Against a typical player, bet 125% is best/);
+  assert.doesNotMatch(n, /in the solver's mix|Solver 0%/);
+  const g = p.val("S.actions.turn[1].g");
+  assert.deepEqual([g.p, g.l, g.b], [1, 0.74, "bet 125%"]);
+  assert.equal(p.run(`gradeClass(${JSON.stringify(g)})`), "meh");                   // (7.8% of the pot)
+  assert.match(p.run(`verdictText(${JSON.stringify(g)})`), /Against a typical player the best play is bet 125%\. 0\.74 bb lost, 7\.8% of the pot\./);
+  assert.match(p.run("handText()"), /Against a typical player: bet 125%\. Lost 0\.74bb\./);
+  // a hand you'd already reviewed keeps its grade until you review it again
+  assert.equal(p.run(`gradeClass({ f: 0.2, l: 1 })`), "ok");
+  p.run('rewindTo("turn", 1)');
+  await flush();
+  const h = p.byId("result").innerHTML;
+  const withGto = { ...TURN, actions: TURN.actions.map((a, i) => ({ ...a, gto_freq: i === 3 ? 1 : 0 })) };
+  assert.match(p.run(`actionTable(${JSON.stringify(withGto)}, null)`), /<small>GTO 100%<\/small>/);
+  assert.match(h, /Against a typical online player, who folds too much to bets/);
+});
+
+test("the typical player's numbers are cash: a tournament stays at equilibrium, its grades by the mix", async () => {
+  const p = await reviewed();
+  assert.equal(p.payload().opponents, undefined);
+  assert.equal("p" in p.val("S.actions.flop[1].g"), false);
 });
 
 test("a decision: where you are, the verdict, the table with your action, where it came from, your range", async () => {

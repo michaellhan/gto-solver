@@ -269,7 +269,7 @@ test("a decision looked at is reviewed: Esc comes back to its grade, kept over a
   assert.equal(p.val("stepView"), null);
   assert.equal((rows().match(/Not reviewed yet/g) || []).length, 3);
   assert.match(rows(), /Flop<\/b> · bet/);
-  assert.match(rows(), /Solver 30%/);
+  assert.match(rows(), /Against a typical player, check is best/);
   assert.equal(p.val("S.actions.flop[1].g.m"), "bet 33%");
   assert.deepEqual(ids(p), ["reviewAll"]);   // (the rest of the hand's review is still there)
   const q = await page({ isolated: true, storage: Object.fromEntries(p.storage) });
@@ -296,7 +296,7 @@ test("once its advice has been seen a hand stays as entered: no Undo, no cards, 
   const p = await reviewed(state(WHOLE));
   const whole = j(p.val("S.actions"));
   assert.equal(p.val("S.reviewed"), true);
-  assert.equal(p.byId("reviewCount").textContent, "3 of 3 in the solver's mix");   // (the fixture answer has no call, so the river stays ungraded)
+  assert.equal(p.byId("reviewCount").textContent, "3 of 3 good against a typical player");   // (the fixture answer has no call, so the river stays ungraded)
   assert.match(p.byId("adviceNote").innerHTML, /Reviewed, no grade/);
   assert.equal(p.byId("reviewAgain").hidden, false);
   assert.equal(p.byId("result").className, "empty");   // (no decision's advice left under the whole hand)

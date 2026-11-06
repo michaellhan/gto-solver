@@ -519,6 +519,9 @@ const BOUNTY_OF = (p) => { const b = S.bounty || {}; return b.seats && b.seats[p
 const MYSTERY_ENV = () => { const b = S.bounty || {}; return posNum(b.env) || (posNum(b.pool) && posNum(b.left) ? b.pool / b.left : 0); };
 const BOUNTY = () => { const f = BOUNTY_FMT(); return !f ? null : f === "mystery" ? (MYSTERY_ENV() > 0 ? f : null) : POS.some(p => BOUNTY_OF(p) > 0) ? f : null; };
 const TOURNEY = () => ICM() || !!BOUNTY();
+// Cash hands are answered and graded against a typical online player (gto/exploit.py: "opponents": "pool"), as nobody
+// plays perfectly; its numbers are cash pools', so a tournament stays at equilibrium.
+const TYPICAL = () => !TOURNEY() && !S.tournament;
 function BOUNTY_SPEC() {
   const b = S.bounty, f = BOUNTY();
   if (f === "mystery") return { format: f, ...(posNum(b.env) ? { envelope: posNum(b.env) } : {}), ...(posNum(b.pool) ? { pool: posNum(b.pool) } : {}), ...(posNum(b.left) ? { left: posNum(b.left) } : {}) };
@@ -1110,6 +1113,12 @@ function gradeWith(r, rec) {
   if (heuristic(r) && hasEv && r.pot_bb > 0)   // (the rules' best by EV, not by its 0/1 frequency)
     return { m: m.action, f: m.freq, b: best.action, bf: best.freq, l: r2(loss), e: r2(m.ev_bb), o: r2(top), h: Math.round(loss / r.pot_bb * 1000) / 10 };
   if (heuristic(r)) return null;
+  // (against the typical player the answer is the best response: one action at 100%, so what's graded is the EV you
+  // gave up, as a share of the pot, not a mix. p: this kind of grade. A preflop chart has no EV, and is graded by its mix)
+  if (TYPICAL() && hasEv && r.pot_bb > 0) {
+    const b = m.ev_bb === top ? m : r.actions.find(a => a.ev_bb === top);
+    return { m: m.action, f: m.freq, b: b.action, bf: b.freq, ...(b.action === "raise" && b.amount_bb != null ? { ba: b.amount_bb } : {}), l: r2(loss), e: r2(m.ev_bb), o: r2(top), h: Math.round(loss / r.pot_bb * 1000) / 10, p: 1, ...(m.rough_ev ? { rv: 1 } : {}), ...(conv && conv.cls === "bad" ? { r: 1 } : {}), ...(v ? { v, vs: 1 } : {}) };
+  }
   // (rv: your move is one your range almost never takes, so its EV and the EV lost are rough: shown with a "≈", graded the same)
   return { m: m.action, f: m.freq, b: best.action, bf: best.freq, ...(best.action === "raise" && best.amount_bb != null ? { ba: best.amount_bb } : {}), l: loss == null ? null : r2(loss), ...(hasEv ? { e: r2(m.ev_bb), o: r2(top) } : {}), ...(hasEv && m.rough_ev ? { rv: 1 } : {}), ...(conv && conv.cls === "bad" ? { r: 1 } : {}), ...(offSolution(r) ? { x: 1 } : {}), ...(v ? { v, ...(pre ? {} : { vs: 1 }) } : {}) };
 }
@@ -1137,7 +1146,7 @@ async function jamGrade(key, rec) {
 // a grade's note when your action was graded as the chart's nearest one (g.v: what you played)
 const gradeAs = (g) => g.v ? ` (graded as the ${g.vs ? "solver" : "chart"}'s ${g.m}: it has no ${g.v === "all-in" ? "all-in" : "smaller raise"} here)` : "";
 // A rough (unconverged) solve can't condemn a line, nor can a line that gave up no EV: their worst grade is "~".
-const gradeClass = (g) => g.h != null ? (g.h <= HEUR_OK ? "ok" : g.h <= HEUR_MEH ? "meh" : "bad")
+const gradeClass = (g) => g.h != null ? (g.h <= HEUR_OK ? "ok" : g.h <= HEUR_MEH || g.r ? "meh" : "bad")
   : g.f >= 0.15 ? "ok" : g.f >= 0.03 || g.r || g.l === 0 ? "meh" : "bad";
 const gradeMark = (g) => ({ ok: "✓", meh: "~", bad: "✗" })[gradeClass(g)];
 // In the solver's mix, as the verdict says: "Rare in the solver's mix" counts (a ~ that's a rough solve's 0% doesn't)
@@ -1152,6 +1161,7 @@ const pct0 = (f) => f > 0 && f < 0.005 ? "<1%" : (f * 100).toFixed(0) + "%";
 // "bet 125%" -> "bets 125%", "raise to 7" -> "raises to 7"
 const verbOf = (m) => m === "all-in" ? "goes all-in" : String(m).replace(/^(bet|raise|check|call|fold)\b/, "$1s");
 function verdictText(g) {
+  if (g.p) return (g.m === g.b ? "The best play against a typical player." : `Against a typical player the best play is ${g.b}. ${g.rv ? "≈ " : ""}${g.l.toFixed(2)} bb lost, ${g.h}% of the pot.`) + (g.v ? gradeAs(g) : "") + (g.r ? " Rough solve: treat this as a hint, not a verdict." : "");
   if (g.h != null) return `The betting rules pick ${g.b}. ${g.l.toFixed(2)} bb lost, ${g.h}% of the pot.`;
   const lost = g.l == null ? "" : ` ${g.rv ? "≈ " : ""}${g.l.toFixed(2)} bb lost.`;
   const often = g.bf >= 0.995 ? "every time" : `${pct0(g.bf)} of the time`, ok = gradeClass(g) === "ok";
@@ -1160,7 +1170,7 @@ function verdictText(g) {
     : ok ? `In the solver's mix at ${pct0(g.f)}.` : g.f >= 0.03 ? `Rare in the solver's mix, at ${pct0(g.f)}.` : `The solver ${verbOf(g.b)} ${often}.`;
   return line + lost + (g.v ? gradeAs(g) : "") + (g.r ? " Rough solve: treat this as a hint, not a verdict." : "");
 }
-const gradeTip = (g) => g.h != null ? `Betting rules (no solve in this multiway spot): best ${g.b}. Your line (${g.m}) EV ${sgn(g.e)} bb vs ${sgn(g.o)} bb (${g.l > 0.005 ? "−" + g.l.toFixed(2) : "0.00"} bb, ${g.h}% of the pot).` : `Solver: ${g.b} ${(g.bf * 100).toFixed(0)}%. Your line (${g.v || g.m}) ${(g.f * 100).toFixed(0)}%${gradeAs(g)}${g.e != null ? `, EV ${g.rv ? "≈ " : ""}${sgn(g.e)} bb vs GTO ${sgn(g.o)} bb (${g.l > 0.005 ? "−" + g.l.toFixed(2) : "0.00"} bb)` : g.l ? `, ${g.l.toFixed(2)} bb below the best EV` : ""}.${g.rv ? " " + ROUGH_EV_TIP : ""}${g.r ? " Rough solve: treat this as a hint, not a verdict." : ""}`;
+const gradeTip = (g) => g.p ? `Against a typical player: best ${g.b}. Your line (${g.m}) EV ${g.rv ? "≈ " : ""}${sgn(g.e)} bb vs ${sgn(g.o)} bb (${g.l > 0.005 ? "−" + g.l.toFixed(2) : "0.00"} bb, ${g.h}% of the pot).${g.rv ? " " + ROUGH_EV_TIP : ""}` : g.h != null ? `Betting rules (no solve in this multiway spot): best ${g.b}. Your line (${g.m}) EV ${sgn(g.e)} bb vs ${sgn(g.o)} bb (${g.l > 0.005 ? "−" + g.l.toFixed(2) : "0.00"} bb, ${g.h}% of the pot).` : `Solver: ${g.b} ${(g.bf * 100).toFixed(0)}%. Your line (${g.v || g.m}) ${(g.f * 100).toFixed(0)}%${gradeAs(g)}${g.e != null ? `, EV ${g.rv ? "≈ " : ""}${sgn(g.e)} bb vs GTO ${sgn(g.o)} bb (${g.l > 0.005 ? "−" + g.l.toFixed(2) : "0.00"} bb)` : g.l ? `, ${g.l.toFixed(2)} bb below the best EV` : ""}.${g.rv ? " " + ROUGH_EV_TIP : ""}${g.r ? " Rough solve: treat this as a hint, not a verdict." : ""}`;
 
 // Everyone before pos folds (checks when there's nothing to call), but never you: it stops at your turn.
 function advanceTo(pos) {
@@ -1504,7 +1514,7 @@ function payload() {
            // S.tournament from hh.js; the advisor drops it too)
            ...(RAKE() && !TOURNEY() && !S.tournament ? { rake: RAKE() / 100, ...(RAKE_CAP() ? { rake_cap: RAKE_CAP() } : {}) } : {}),
            ...(TOURNEY() ? { ...(PAYOUTS().length ? { payouts: PAYOUTS() } : {}), ...(FIELD_AVG() ? { field: { players: FIELD_N(), chips: FIELD_N() * FIELD_AVG() } } : {}) } : {}),
-           ...(BOUNTY() ? { bounties: BOUNTY_SPEC() } : {}),
+           ...(BOUNTY() ? { bounties: BOUNTY_SPEC() } : {}), ...(TYPICAL() ? { opponents: "pool" } : {}),
            preflop: conv(S.actions.preflop), flop: conv(S.actions.flop), turn: conv(S.actions.turn), river: conv(S.actions.river), budget, prior_budget, speed: "fast", ...adv };
 }
 async function analyze(sim) {
@@ -1629,7 +1639,8 @@ function sourceOf(res) {
   return [`Solved live${ways ? ", " + ways : ""}${far(res.solver.exploitability_pct)}.${short}`, "solved live"];
 }
 function sourceHtml(res) {
-  const out = [sourceOf(res)[0] + (res.actions.some(a => a.rough_ev) ? " ≈ is a rough EV." : "")];
+  const out = [...(TYPICAL() ? [`Against a typical online player, who folds too much to bets and raises and bluffs too little: the best answer to that, not perfect play.${res.actions.some(a => a.gto_freq !== undefined) ? " GTO under each action is the equilibrium's." : ""}`] : []),
+    sourceOf(res)[0] + (res.actions.some(a => a.rough_ev) ? " ≈ is a rough EV." : "")];
   if (res.locked) { const src = res.actions.some(a => a.gto_freq !== undefined) ? gtoSource(res) : ""; out.push(`${Object.entries(res.locked).map(([p, l]) => `Against your lock on ${p} (${LOCK_TEXT(l)})`).join("; ")}: ${res.street === "preflop" ? "your line re-priced against it" : "the best response"}, with GTO's frequency under each (${src}).`); }
   if (offSolution(res)) out.push(`Off the solved line: ${offText(res)}. This street's solve is the best answer to those ranges, not the whole hand's equilibrium.`);
   if (res.widened && res.widened.length) out.push(`The solve rarely has ${andList([...new Set(res.widened)])} play this way, so their range comes from simple betting rules instead; the EVs (and the pick) are against that range, so they can disagree with the solver's mix.`);
@@ -1752,6 +1763,7 @@ function rowHtml(hand, s, a, done, open) {
   const what = bet ? `bet ${bet}%` : moveText(a);
   const bad = g && gradeClass(g) === "bad";
   const sub = !g ? (done && "g" in a ? "Reviewed, no grade" : "Not reviewed yet")
+    : g.p ? (g.m === g.b ? "Best against a typical player" : `Against a typical player, ${g.b} is best`) + (g.r ? " (rough solve)" : "")
     : g.h != null ? `Betting rules, ${g.b} is best`
     : `Solver ${pct0(g.f)}${g.v ? ` as its ${g.m}` : ""}${bad ? `, it ${verbOf(g.b)}${src ? ". " + cap(src) : ""}` : src ? ", " + src : ""}${g.r ? " (rough solve)" : ""}`;
   const tag = open ? "button" : "div";
@@ -1796,7 +1808,7 @@ function updateAdviceState() {
   let msg = "", count = "";
   if (!looking && done && all.length) {
     const good = mine.filter(([, a]) => inMix(a.g)).length;
-    count = review || reviewFailed ? "" : mine.length ? `${good} of ${mine.length} in the solver's mix` : "Your decisions";
+    count = review || reviewFailed ? "" : mine.length ? `${good} of ${mine.length} ${mine.some(([, a]) => a.g.p) ? "good against a typical player" : "in the solver's mix"}` : "Your decisions";
     msg = (review ? `<p class="note">Reviewing decision ${review.k} of ${review.n} · ${review.what} <button class="link" id="reviewStop">Cancel</button></p>` : "")
       + `<div class="sum hand"><span>${line}</span>${total}</div><div class="rows">${all.map(([s, a]) => rowHtml(hand, s, a, done, open)).join("")}</div>`
       + (heroTurn && !review ? `<p class="note">Your ${sim.current} decision wasn't recorded, so it isn't reviewed.</p>` : "");
@@ -1967,7 +1979,7 @@ const sizedMove = (name, to) => name === "raise" && to != null ? `raise to ${fmt
 function decisionLine(a, pot) {
   const g = a.g || a.adv, bet = betPct(a, g, pot), mine = bet ? `bet ${bet}%` : moveText(a);
   if (!g) return `  Me: ${mine}. Solver: ${"g" in a ? "no grade" : "no answer yet"}`;
-  const who = g.h != null ? "Betting rules" : "Solver", same = g.m === g.b, freq = g.h != null ? "" : ` (${pct0(g.bf)})`;
+  const who = g.p ? "Against a typical player" : g.h != null ? "Betting rules" : "Solver", same = g.m === g.b, freq = g.h != null ? "" : ` (${pct0(g.bf)})`;
   const asked = same || g.h != null ? "" : ` (solver ${pct0(g.f)}${g.m === mine || g.m === a.action ? "" : ` as its ${g.m}`})`;
   const lost = g.l > 0.005 ? ` Lost ${g.rv ? "≈ " : ""}${g.l.toFixed(2)}bb.` : "";
   return `  Me: ${mine}${asked}. ${who}: ${sizedMove(g.b, g.ba)}${freq}.${lost}${g.r ? " Rough solve." : ""}`;
@@ -2235,12 +2247,11 @@ async function applyRoute(r) {
   syncRoute(true);
 }
 if (typeof window.addEventListener === "function") window.addEventListener("popstate", () => applyRoute(parseRoute(location.pathname)));
-// Two notices, once each, now these settings have lost their carry. A hand not started yet is no saved hand (store.js
+// A notice, once, now these settings have lost their carry. A hand not started yet is no saved hand (store.js
 // keeps none without actions): what it holds of them came from the last hand, so this page starts it without them. That's
 // in memory only: handreview is shared with the frozen copy, which carries them on purpose, so it changes when you first
-// enter something here. A link's hand isn't the last hand's, however often it's loaded. And a saved "pool" is refused:
-// it lives in the browser, not the hand, so nothing here would show it or turn it off. The key stays as it is, for the
-// frozen copy, which still writes it. "gto-carry-notice" and "gto-pool-refused" keep each notice to one showing.
+// enter something here. A link's hand isn't the last hand's, however often it's loaded. "gto-carry-notice" keeps the
+// notice to one showing.
 // (Not while the page is about to reload for its service worker: the reload would take the notice with it.)
 if (!isolating) {
   const fromLink = linkLoaded || !!(window.GTOStore && window.GTOStore.hands.table().source === "link");
@@ -2252,10 +2263,6 @@ if (!isolating) {
       pageStore.setRaw("gto-carry-notice", "1");
       said.push("Settings from your last hand no longer carry over, so this new hand starts without them.");
     }
-  }
-  if (pageStore.getRaw("gto-opponents") === "pool" && !pageStore.getRaw("gto-pool-refused")) {
-    pageStore.setRaw("gto-pool-refused", "1");
-    said.push("This page no longer solves against a player pool: answers are at equilibrium. Hands you reviewed against the pool keep those grades until you review them again.");
   }
   if (said.length) toast(said.join(" "), null, 10000);
 }

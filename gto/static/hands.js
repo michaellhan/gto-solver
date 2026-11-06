@@ -21,10 +21,10 @@
   const cardH = (c) => `<span class="mh-c ${c[1]}">${c[0]}${SUIT[c[1]]}</span>`;
   const cardsH = (cs) => cs.map(cardH).join("");
   // a grade's class as the page's gradeClass (✓ in the solver's mix 15%+, ~ 3%+, a rough solve or no EV given up, ✗
-  // less; the betting rules' grades by the EV share given up)
+  // less; a typical-player grade and the betting rules' by the share of the pot given up: 3, then 10)
   /* global gradeClass */
   const gcls = (g) => typeof gradeClass === "function" ? gradeClass(g)
-    : g.h != null ? (g.h <= 0.03 ? "ok" : g.h <= 0.1 ? "meh" : "bad") : g.f >= 0.15 ? "ok" : g.f >= 0.03 || g.r || g.l === 0 ? "meh" : "bad";
+    : g.h != null ? (g.h <= 3 ? "ok" : g.h <= 10 || g.r ? "meh" : "bad") : g.f >= 0.15 ? "ok" : g.f >= 0.03 || g.r || g.l === 0 ? "meh" : "bad";
   const MARK = { ok: "✓", meh: "~", bad: "✗" };
 
   // ---- a hand at a glance: who, what, how far, how it graded
@@ -72,7 +72,7 @@
         const t = `${esc(lab(a.pos))} ${word(a)}`;
         if (a.pos !== st.hero) return t;
         const g = a.g && typeof a.g === "object" ? a.g : null, c = g && gcls(g);
-        return `<b>${t}</b>${g ? ` <span class="mh-g ${c}" title="the solver plays it ${Math.round((+g.f || 0) * 100)}%${+g.l > 0 ? `, ${fmt(+g.l)} bb given up` : ""}">${MARK[c]}${+g.l > 0.005 ? ` −${fmt(+g.l)}` : ""}</span>` : ""}`;
+        return `<b>${t}</b>${g ? ` <span class="mh-g ${c}" title="${g.p ? (+g.l > 0.005 ? `against a typical player, ${fmt(+g.l)} bb given up` : "the best play against a typical player") : `the solver plays it ${Math.round((+g.f || 0) * 100)}%${+g.l > 0 ? `, ${fmt(+g.l)} bb given up` : ""}`}">${MARK[c]}${+g.l > 0.005 ? ` −${fmt(+g.l)}` : ""}</span>` : ""}`;
       });
       out.push(`<div class="mh-st"><span class="mh-sn">${k[0].toUpperCase() + k.slice(1)}${bd.filter(okCard).length ? " " + cardsH(bd.filter(okCard)) : ""}</span> ${items.join(", ") || "<small>—</small>"}</div>`);
     }
@@ -105,7 +105,7 @@
 
   function rowHtml(rec, isOpen) {
     const d = rec.data || {}, s = summary(d.state), id = esc(rec.id);
-    const grades = s.nGraded ? `<span class="mh-grades" title="your decisions graded: in the solver's mix, a little off, a mistake">${["ok", "meh", "bad"].filter(k => s.graded[k]).map(k => `<span class="mh-g ${k}">${MARK[k]}${s.graded[k]}</span>`).join(" ")}${s.lost > 0.005 ? ` <span class="mh-lost">−${fmt(s.lost)} bb</span>` : ""}</span>`
+    const grades = s.nGraded ? `<span class="mh-grades" title="your decisions graded: good, a little off, a mistake">${["ok", "meh", "bad"].filter(k => s.graded[k]).map(k => `<span class="mh-g ${k}">${MARK[k]}${s.graded[k]}</span>`).join(" ")}${s.lost > 0.005 ? ` <span class="mh-lost">−${fmt(s.lost)} bb</span>` : ""}</span>`
       : s.decisions ? `<span class="mh-sub">${s.decisions} decision${s.decisions > 1 ? "s" : ""}, not reviewed</span>` : "";
     const tags = (d.tags || []).map(t => `<button class="mh-tag" data-tag="${esc(t)}" title="Only hands tagged ${esc(t)}">#${esc(t)}</button>`).join("");
     const head = `<div class="mh-top"><span class="mh-when">${esc(when(rec.created))}</span><b>${esc(s.title)}</b>${s.hole.length ? `<span class="mh-hole">${cardsH(s.hole)}</span>` : ""}`

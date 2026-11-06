@@ -5,9 +5,15 @@
   // what it is, how accurate, what stays on your device, where the rest went
   function aboutHtml() {
     return `<p class="hp-lead">GTO Solver reviews no-limit hold'em hands you've already played, 2 to 9 players, preflop
-      to river. Enter a hand, finish it, and the solver shows what game theory does at each decision you made and what your
-      play cost. Each of your turns is solved as you reach it while you enter the hand. Don't use it during a hand at a
+      to river. Enter a hand, finish it, and the solver shows the best play at each decision you made against a typical online
+      player, what your play cost against that player, and what game theory does beside it. A tournament hand shows game
+      theory alone. Each of your turns is solved as you reach it while you enter the hand. Don't use it during a hand at a
       real-money table: every site's terms forbid it.</p>
+    <h3>The typical player</h3>
+    <p>Nobody plays game theory perfectly, so cash hands are answered against one model of online players at NL50 and up,
+      built from published population data: they fold too much to bets of every size, most of all small ones, and raise and
+      bluff too little. The answer is the best play against that model, which is rarely a mix. A real opponent can differ, and
+      the benchmark below measures the game-theory solve, not the model.</p>
     <h3>How accurate it is</h3>
     <p>A solve is measured by its exploitability: how much a perfect opponent who knew the whole strategy could win
       against it, in percent of the pot. Each answer's source line gives it: under 3% is close to a full solver, and above that

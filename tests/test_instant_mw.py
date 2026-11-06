@@ -151,10 +151,13 @@ class TestBorrowMultiway(unittest.TestCase):
         spot, each combo's mix the one Study shows."""
         adv = advisor("fast")
         st = dict(ST, players=8, preflop=PRE8 + PRE, board="Kc7d2h")
-        r = adv.advise(dict(st, hero="SB", hole="KdQd"))
+        r = adv.advise(dict(st, hero="SB", hole="KhJh"))
         self.assertEqual(r["precomputed"]["borrowed"]["spot"], "mw_btn_sb_bb")
         self.assertTrue(r["solved"] and all("ev_bb" in a for a in r["actions"]))
         self.assertTrue(any("approximate: that spot read as this one" in n for n in r["notes"]))
+        off = adv.advise(dict(st, hero="SB", hole="KdQd"))   # (not in that spot's SB range: its stored EVs would be random play)
+        self.assertNotIn("precomputed", off)
+        self.assertTrue(any("isn't in your range" in n for n in off["notes"]))
         st = dict(st, board="Kd8c3h")
         s = adv.instant(dict(st, study=True))
         self.assertRegex(s["approximate"]["label"], r"in the library's 6-max BTN open, SB and BB call, that spot read "
