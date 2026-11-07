@@ -331,3 +331,109 @@ out, the opponents' strategy answers a BTN whose every hand plays as if it held 
 high (README, Your cards stay out of everyone's range). The Advisor now solves the second row, so it and this benchmark
 agree; scaled in the same solve TT folds at 100%, call -0.18, shove -16.48, and the call stays within 0.2 bb of folding on
 either fill.
+
+## 4-way flops
+
+Four see a flop and the hand goes on. A 3-way flop read the next street's ranges through the solve the player's advice
+came from (`Advisor._mw_walk`); a 4-way flop used the betting rules, though its solve was already stored in `_mw_lines`.
+Only `len(st.players_start) == 3` stood in the way, so the walk costs no solve time. Whether it should run is what
+`scripts/bench_mw4_narrowing.py` measures. It now does, on the flop, for a line with a bet near the tree's size.
+
+**The reference.** Accurate can't be one: it plays the same game as Fast (one size, 33%, and no raise but the root
+player's), so it would agree with whatever that game gets wrong. The reference is a 4-player solve from the flop's start
+with a raise for everyone on the flop, two flop sizes (33 and 75%, or the line's own size and 75 or 100), 8 buckets on
+every third river, 250 iterations (0.05-0.2% of the pot of best-response gain a player), followed fully and unsmoothed.
+12 buckets on every second river didn't finish.
+
+**The sample.** 18 spot-flops: 7-handed limp-raise (the hand), HJ open, UTG open, limped, and a 40bb pot; 4 flops each, 2
+at 40bb. 14 lines: on the tree, or a bet of 25, 39, 50 or 75% (the 25% on 4 spot-flops), or a villain's raise, or checked
+through. 2 turn cards and 10 hands drawn by weight per line: 476 decisions. A
+candidate's mix is valued by the EVs of the solve from the reference's ranges, in % of the pot given up against that
+solve's own mix. `ref-early`, the reference at half its iterations, is the noise. Intervals are 95% bootstrap over
+spot-flops. The solves read 0.27% of the pot from equilibrium at Fast (median, 0.76 worst, 75 iterations, where a quiet
+machine reaches about 200), 0.02% at Accurate (400) and 1.9% at Quick (30).
+
+| decisions | n | rules | Fast | Accurate | Fast less rules | Accurate less rules |
+|---|---|---|---|---|---|---|
+| on the tree, all | 324 | 0.480 | 0.352 | 0.343 | -0.126 [-0.210, -0.032] | -0.136 [-0.212, -0.051] |
+| heads-up next | 252 | 0.452 | 0.320 | 0.316 | -0.129 [-0.241, -0.008] | |
+| 3-way next | 36 | 1.036 | 0.739 | 0.758 | -0.298 [-0.493, -0.137] | |
+| checked through, 4-way next | 36 | 0.119 | 0.192 | 0.114 | +0.073 [-0.021, +0.173] | -0.005 [-0.115, +0.101] |
+| a 25% bet read as 33 | 8 | 0.181 | 0.083 | | -0.098 [-0.194, -0.016] | |
+| a 39% bet | 36 | 0.623 | 0.400 | 0.378 | -0.222 [-0.373, -0.091] | |
+| a 50% bet | 36 | 0.786 | 0.462 | 0.407 | -0.323 [-0.484, -0.182] | |
+| a 75% bet | 36 | 0.857 | 1.217 | 1.052 | +0.361 [+0.059, +0.713] | +0.195 [-0.158, +0.580] |
+| a villain's raise (not on the tree) | 36 | 1.158 | 1.158 | 1.158 | the rules, all three | |
+
+`ref-early` gives up 0.037, so what the walk leaves (0.35) isn't noise: the walk's game is smaller than the reference's.
+On the tree Fast's top action is the reference's 67% of the time against the rules' 59, and action EVs move 13.0% of the
+pot from the reference's against 19.8.
+
+As shipped the walk runs on 365 of those decisions (the tree's lines bar the check-through, and the 25, 39 and 50%): rules
+0.553, Fast 0.380, Accurate 0.369, Fast less rules -0.174 [-0.254, -0.093]. By spot: limp-raise -0.218, HJ open -0.053
+[-0.200, +0.089], UTG open -0.246, limped -0.144 [-0.291, +0.027], 40bb -0.243. No spot is worse; two aren't resolved on 4
+flops each. Line by line three aren't resolved either way: `a33 d` +0.039 [-0.300, +0.447], `axxx d33 a` +0.053 [-0.286,
++0.464], `ax b33 a` -0.029 [-0.271, +0.191]. The other walked lines gain 0.10 to 0.39.
+
+The ranges say the same, total variation from the reference on live cards:
+
+| lines | rules | Quick | Fast | no smoothing | Accurate | `ref-early` |
+|---|---|---|---|---|---|---|
+| on the tree | 0.468 | 0.400 | 0.377 | 0.360 | 0.319 | 0.069 |
+| heads-up next | 0.504 | | 0.398 | | 0.341 | |
+| 3-way next | 0.483 | | 0.382 | | 0.335 | |
+| checked through | 0.198 | | 0.220 | | 0.155 | |
+| 39% | 0.501 | | 0.370 | | 0.328 | |
+| 50% | 0.539 | | 0.409 | | 0.380 | |
+| 75% | 0.500 | | 0.426 | | 0.401 | |
+
+**A size off the tree.** `_mw_pick` takes the nearest size however far it is. A 75% bet read as 33 is closer to the
+reference's range than the rules are (0.426 against 0.500), yet the answers on it are worse (1.217 against 0.857). Why isn't
+settled; the measure that counts is the answers. So 4-way the walk stops at `MW4_WALK_OFF`, 1.75 times the tree's size, 58%
+of the pot: 50% (1.5x) wins by more than any on-tree total and 75% (2.3x) loses, with nothing measured between them, so the
+cut itself is a judgment within that gap. The rules take the street and the answer's notes say why. 3-way doesn't change:
+its tree has a 75%.
+
+**A street checked through.** Fast's walk gives up 0.192 to the rules' 0.119, not resolved,
+Accurate's 0.114 level with them, and Fast's ranges are no closer (0.220 against 0.198). The walk gains nothing there, so
+`MW4_WALK_CHECKS` leaves it to the rules. This is the one call that could go either way.
+
+**Rare lines.** `_mw_walk` doesn't send a rarely taken line to the rules: at 3-way that made the turn's ranges worse
+(`compare_multiway.py --narrowing`), and it holds 4-way. Opponents' total variation from the reference, by the rarest
+action's share of its player's range in the reference:
+
+| rarest action | n | rules | Quick | Fast | Accurate |
+|---|---|---|---|---|---|
+| 0-5% | 134 | 0.403 | 0.349 | 0.353 | 0.313 |
+| 5-15% | 74 | 0.617 | 0.524 | 0.466 | 0.399 |
+| 15-40% | 84 | 0.547 | 0.452 | 0.399 | 0.322 |
+| 40%+ | 32 | 0.188 | 0.186 | 0.210 | 0.155 |
+
+`_post_floor` still runs after the walk, as it did after the rules: a line left under `pf.MIN_LINE_COMBOS` is filled out
+(no longer for a player who folded, whose range nothing reads). `off_solution` is unchanged: a multiway street on the rules
+is a note, as it was.
+
+**What stays as it was.** The 15% smoothing: unsmoothed and fully followed (`fast-raw`, 0.372 on the tree against 0.352)
+goes either way by line (`a33 b`
+0.317 against 0.378, `a33 bc` 0.832 against 0.739, 39% 0.469 against 0.400, 50% 0.493 against 0.462). Blends of the rules' and
+the solve's range land between the two (8 spot-flops, offline), so a plain walk. `trust_of`'s band: Quick's 30 iterations
+(4.1% on the hand's flop, trust 0.22) land between, `a33 b` 0.597 by the rules, 0.473, 0.378 at Fast. In the browser Quick
+has no 4-way flop solve, so the rules answer as before. A street that started 4-way after the flop stays with the rules:
+nothing here measures that walk to the river.
+
+**The largest loss left** is a villain's raise, 1.158 for all: the tree has none (`root_raise`), so the rules read it.
+
+**The hand.** 7-handed, 100bb, BB As4s, UTG limps, LJ raises to 4, HJ calls, BB and UTG call; 2s4d6c, BB bets 6.5 (39%, read
+as 33), UTG folds, LJ calls, HJ folds; the turn 6h. In the reference (39 and 75%) BB leads 0.08% of its range and LJ calls with
+25% of theirs. Through the bench's solves, each set of LJ's ranges answered the same way:
+
+| LJ's turn range from | combos | from the reference | As4s's turn, the pick's EV (bet 33%, bet 75%, check) |
+|---|---|---|---|
+| rules | 100 | 0.505 | bet 75% (6.35, 6.69, 6.29) |
+| Fast's walk (75 iterations) | 110 | 0.427 | check (8.39, 6.85, 9.10) |
+| Accurate's walk | 91 | 0.311 | check (0.99, 1.56, 4.25) |
+| reference | 46 | | check (1.32, 0.70, 1.93) |
+
+Through the advisor itself at Fast: before, bet 75% at 100%, 6.86, LJ 100 combos; after, check at 100%, 8.70, bet 33% 6.79, bet
+75% 4.99, LJ 108 combos, 1.6 s, the flop's 199 iterations read at 0.1%. The answer is the reference's, but on one hand. EVs
+stay high, and LJ's range is still more than twice the reference's: the walk is closer, not close.

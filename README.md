@@ -500,7 +500,7 @@ the street's own solve is in hand (settled).
 
 `"equity": true` answers once the current street's betting is closed with hero still in (else an error): hero's
 equity against the opponents' ranges narrowed through the whole line, including the closed street (heads-up by the
-same solves and walk as the next street's advice, multiway by the betting rules or 3-way solves), over the cards to
+same solves and walk as the next street's advice, multiway by the betting rules or the 3- and 4-way solves), over the cards to
 come (`breakdown.hand_equity`): `{"showdown": true, "street", "next" (the street to deal, null at the river),
 "allin" (nobody can bet any more), "pot_bb", "equity", "win", "tie", "share_bb" (heads-up), "villains": [{"seat",
 "equity" (against them alone), "combos", "range", "grid"}], "runouts", "exact", "notes"}`. Several opponents' hands are
@@ -4196,6 +4196,16 @@ their products batched: `core.LEAF_ROWS_BLAS`).
   pool bluffs on the flop and turn, and how its extra preflop hands split between opens, open-limps, flats
   and the big blind outside the small blind, are still judgment calls. On a rough (Fast, flop or turn)
   solve the best response also picks up the solve's own noise.
+* A 4-way flop narrows the next street's ranges through the solve your advice on it came from too (`_mw_walk`: no solve of
+  its own, in the same trust band and smoothing), where the betting rules did. Against a reference with a raise for everyone
+  and the line's own size (`scripts/bench_mw4_narrowing.py`, 18 spot-flops; docs/multiway_research.md, 4-way flops), your
+  next decision gives up 0.380% of the pot at Fast and 0.369 at Accurate, 0.553 by the rules (Fast less the rules -0.174,
+  95% interval -0.254 to -0.093; the noise is 0.04), with most left to the smaller game. The rules keep what it reads worse: a
+  bet over 1.75 times the tree's one size, 58% of the pot (`MW4_WALK_OFF`: a 75% bet read as 33 gives up 1.22, 0.86 by the
+  rules; a 50% bet 0.46 against 0.79), a street checked through (0.19 against 0.12, level at Accurate), a villain's raise (no
+  such line in the tree) and a street that started 4-way after the flop. A 4-way flop in the browser's Quick has no solve,
+  so it's the rules as before. The hand that asked (BB As4s leading 39% of the pot on 2s4d6c, LJ calling, turn 6h): the rules
+  bet 75% with 100 combos in LJ's range, Fast's walk checks with 108, the reference checks with 46.
 * 3-way solves play two flop bet sizes (33 and 75%), one turn and river size and one raise; they start from the node
   in front of you. This street's earlier actions and earlier 3-way streets narrow the ranges through the solve your
   advice there came from, followed as far as it had settled (advisor.trust_of), else by the betting rules: against

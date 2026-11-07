@@ -177,6 +177,13 @@ OVERCALL = 0.25    # multiway narrowing: a call behind another caller continues 
                    # 3-way solves (UTG bets a third into both blinds, the SB calls 53-78%) the BB overcalls 3.5-20% of its
                    # range (13% on average, eight flops), where the first caller's share kept 57% (compare_multiway.py
                    # --narrowing: the turn's ranges 0.52 off -> 0.44, and 0.52 -> 0.46 on four other flops)
+MW4_WALK_OFF = 1.75 # 4-way flops: the walk through the solve (Advisor._mw_walk) reads a bet of up to this many times the
+                   # tree's one size by that size (58% of the pot for its 33%); over it the street stays with the betting
+                   # rules, who play the real size. Against references with the line's own size in their tree, the walk
+                   # less the rules (scripts/bench_mw4_narrowing.py, % of the pot given up): 25% -0.10, 33% -0.22, 39% -0.22,
+                   # 50% -0.32 (1.5x), 75% +0.36 (2.3x)
+MW4_WALK_CHECKS = False   # ...and a street checked through stays with the rules: Fast's walk +0.07 [-0.02, +0.17], Accurate's
+                   # -0.005, and no better a read of the ranges (0.22 and 0.16 from the reference; the rules 0.20)
 SLOWPLAY = 0.5      # multiway narrowing: weight a call keeps on the hands RAISE_SHARE has raising (judgment)
 SLOWPLAY_AGAIN = 0.85  # ...and on a later street's call, for a hand that already slowplayed one (judgment)
 LEAD_EQ = 0.5       # multiway, later streets: we lead when our equity beats this vs every calling range
@@ -2142,6 +2149,25 @@ def _mw_pick(node, a: dict) -> Optional[int]:
     to = 1e9 if a["action"] == "all-in" else a.get("to") if a.get("to") is not None else a.get("amount")
     return cand[0] if to is None else min(cand, key=lambda i: (abs((node.amounts[i] or 0.0) - float(to)),
                                                                kind.index(node.names[i].split()[0])))
+
+
+def _mw_walks(st: "StreetState") -> bool:
+    """Whether Advisor._mw_walk narrows this street: 3-way ones, and a 4-way flop (MW4_WALK_OFF). A 4-way turn stays with
+    the betting rules: nothing has measured its walk to the river."""
+    n = len(st.players_start)
+    return n == 3 or n == 4 and st.name == "flop"
+
+
+def _mw_off_size(node, i: int, a: dict) -> bool:
+    """Whether the tree's action i at `node` is too small to read the real `a` by: a bet or raise over MW4_WALK_OFF
+    times its size, or an all-in it has no all-in for."""
+    kind = node.names[i].split()[0]
+    if kind not in ("bet", "raise", "all-in"):
+        return False
+    if a["action"] == "all-in":
+        return kind != "all-in"
+    to = a.get("to") if a.get("to") is not None else a.get("amount")
+    return to is not None and bool(node.amounts[i]) and float(to) > MW4_WALK_OFF * float(node.amounts[i])
 
 
 def _mw_follow(node, R, a: dict, players, rare: float = RARE_LINE):
@@ -4953,17 +4979,18 @@ class Advisor:
                 continue   # (everyone all-in: nothing to narrow by)
             before = dict(ranges)
             _narrow_street(ranges, board[:{"flop": 3, "turn": 4, "river": 5}[st.name]], st, stk, slow)
-            # 3-way: through the street's 3-way solve where there is one (the one your advice on it came from, or
-            # one from the street's start), as far as it has settled; the rest by the rules
+            # 3-way, and a 4-way flop: through the street's solve where there is one (the one your advice on it came
+            # from, or at 3-way one from the street's start), as far as it has settled; the rest by the rules
             # (a street nobody has acted on yet, the current one at its first decision, has nothing to narrow)
-            if not (len(st.players_start) == 3 and self._mw_walk(ranges, before, board, st, stk, hero, hole, streets,
-                                                                  notes, current=st is cur)) and st.actions:
+            if not (_mw_walks(st) and self._mw_walk(ranges, before, board, st, stk, hero, hole, streets, notes,
+                                                    current=st is cur)) and st.actions:
                 by_rules.append(st.name)
             # (a line the rules leave nearly face-up is filled out as heads-up streets are: a 3bet pot's turn
             # pot-sized bet into two kept 1.9 combos, and heads-up on the river the check left 0.5, where
             # checking and jamming tied for every hand)
+            folded = {a["pos"] for a in st.actions if a["action"] == "fold"}
             for p in st.players_start:
-                if p in ranges and p in before and p != hero:
+                if p in ranges and p in before and p != hero and p not in folded:
                     ranges[p] = _post_floor(before[p], ranges[p], board, p, st.name, notes)
             if self._wider and hero in before:
                 ranges[hero] = _wider_line(before[hero], ranges[hero], hole)
@@ -5719,7 +5746,8 @@ class Advisor:
                      + (f"one bet size ({sizes[0] * 100:.0f}% pot)" if len(sizes) == 1 else
                         f"bets of {', '.join(f'{x * 100:.0f}' for x in sizes)}% pot")
                      + f", {raises} and all-in; {street_note[cur.name]}")
-        if (cur.acted or cur.n_raises) and not any(n.startswith(f"{cur.name}: 3-way, ranges narrowed") for n in notes):
+        if (cur.acted or cur.n_raises) and not any(n.startswith((f"{cur.name}: 3-way, ranges narrowed", f"{cur.name}: 4-way, ranges narrowed"))
+                                                     for n in notes):
             notes.append("this street's earlier actions narrow the ranges by the betting rules; the solve starts from here")
         if isinstance(stacks, tuple):
             notes.append("stacks differ: each player bets their own stack (" + ", ".join(
@@ -6744,14 +6772,16 @@ class Advisor:
         return out
 
     def _mw_walk(self, ranges, before, board, st: StreetState, stk, hero, hole, streets, notes, current=False) -> bool:
-        """Narrow the ranges (in place, already narrowed by the rules) through a 3-way street's solve: the latest one
-        your advice on the street came from (its root's ranges are the rules' up to there), else, for an earlier
-        street the speed solves (mw_solve_streets) when mw_prior_solve is on, one from the street's start
-        (prior_budget). Each action since the solve's root multiplies its player's range by the solve's average
+        """Narrow the ranges (in place, already narrowed by the rules) through a 3-way street's or a 4-way flop's solve
+        (_mw_walks): the latest one your advice on the street came from (its root's ranges are the rules' up to there),
+        else, for an earlier 3-way street the speed solves (mw_solve_streets) when mw_prior_solve is on, one from the
+        street's start (prior_budget; a 4-way flop is only ever read off the solve already paid for). Each action since the solve's root multiplies its player's range by the solve's average
         strategy for it (smoothed by prior_smoothing, as heads-up), and the result counts by how settled the solve
         is (trust_of; the rest stays the rules'). The smoothing keeps a line the solve rarely takes from leaving a
         sliver (the heads-up walk's RARE_LINE fallback to the rules made the turn's ranges worse here: scripts/
-        compare_multiway.py --narrowing). False when no solve was followed or its tree lacks a line's action."""
+        compare_multiway.py --narrowing). False when no solve was followed, its tree lacks a line's action (a 4-way
+        tree has no raise but the root's), or on a 4-way flop a bet is too far over its size (_mw_off_size) or the
+        street so far is all checks (MW4_WALK_CHECKS)."""
         from . import multiway_solver as MW
         acts = list(streets.get(st.name) or [])
         bk = board[:{"flop": 3, "turn": 4, "river": 5}[st.name]]
@@ -6771,7 +6801,8 @@ class Advisor:
                 hit, k, src = (lib, [p for p in st.order if p in st.players_start], lib.exploitability()), 0, \
                     "the precomputed 3-way solve"
         if hit is None:
-            if current or not self.mw_prior_solve or st.name not in self.mw_solve_streets:
+            if current or not self.mw_prior_solve or st.name not in self.mw_solve_streets \
+                    or len(st.players_start) != 3:
                 return False
             hit, k = self._mw_street_solve(bk, before, st, stk), 0
             src = "a solve from the street's start"
@@ -6783,6 +6814,9 @@ class Advisor:
             return False
         R = sol.reach0[:, 0, :].copy()
         node = sol.root
+        four = len(st.players_start) == 4
+        if four and not MW4_WALK_CHECKS and all(a["action"] == "check" for a in acts):
+            return False
         for a in acts[k:]:
             if getattr(node, "unstored", False):
                 return False   # (a library line it doesn't hold)
@@ -6794,13 +6828,17 @@ class Advisor:
             i = _mw_pick(node, a)
             if i is None:
                 return False
+            if four and _mw_off_size(node, i, a):
+                notes.append(f"{st.name}: {a['pos']}'s {a['action']} is too far from the 4-way solve's {node.names[i]} "
+                             f"to read by it")
+                return False
             sg = node.avg_strategy()[0][i].astype(np.float64)
             R[p] = R[p] * ((1.0 - self.prior_smoothing) * sg + self.prior_smoothing / len(node.names))
             node = node.children[i]
         for p, pos in enumerate(players):
             if pos in ranges:
                 ranges[pos] = trust * sol.expand(R[p]) + (1.0 - trust) * ranges[pos]
-        notes.append(f"{st.name}: 3-way, ranges narrowed through {src} ({sol.iters} iterations, {expl:.1f}% of the pot "
+        notes.append(f"{st.name}: {len(st.players_start)}-way, ranges narrowed through {src} ({sol.iters} iterations, {expl:.1f}% of the pot "
                      f"from equilibrium: followed {trust * 100:.0f}%, the rest by the betting rules)")
         return True
 

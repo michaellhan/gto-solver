@@ -336,7 +336,7 @@ class TestStudy(unittest.TestCase):
 
     def test_four_way_later_at_once(self):
         """Later 4-way nodes: Study's answer at once off the street's own earlier solve (Advisor._study_mw_prev), the
-        ranges the node's own solve starts from (4-way streets narrowed by the betting rules). None at the first
+        ranges the node's own solve starts from (through the street's solve, as Advisor._mw_walk reads it). None at the first
         decision (no 4-way library), once the node's own solve is in hand, facing a bet (the 4-way tree gives only its
         first decision's player a raise) or on the turn's first decision (a 4-way flop's view of the turn was too far
         from the turn's own answer)."""
