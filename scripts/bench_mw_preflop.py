@@ -26,8 +26,8 @@ which the compiled core doesn't run: in numpy 1956 nodes reached 2.4 GB and the 
 the data is the heads-up measurement instead (advisor.RIVER_FIX, _river_fix: suited hands +0.10 of their equity, 22-66
 and connectors more, offsuit hands -0.05), and every figure is given without it and with it (--river).
 
-    python scripts/bench_mw_preflop.py --minutes 9            # solve what's left (resumable, one process)
-    python scripts/bench_mw_preflop.py --wide --minutes 9     # the same with every other seat's range a bit wider
+    python scripts/bench_mw_preflop.py --minutes 9 [--procs 2]   # solve what's left (resumable)
+    python scripts/bench_mw_preflop.py --wide --spots a,b     # the same with every other seat's range a bit wider
     python scripts/bench_mw_preflop.py --freeze               # data file from the cache, the advice as it is as "before"
     python scripts/bench_mw_preflop.py --report [--river]     # the table, the advice as it is now beside it
 """
@@ -77,7 +77,6 @@ SPOTS = {
     "cc_btn_sb": (6, "BB", "BTN raise 2.5, SB call", RK,
                   "Poker Academy NL200: calls 16.1%, raises 12.7% at a 20% price"),
     "cc_co_btn": (6, "BB", "CO raise 2.5, BTN call", None, "GTO Wizard NL500 40bb: raises 9.8%"),
-    "cc_utg_co": (6, "BB", "UTG raise 2.5, CO call", None, ""),
     "cc_4way": (6, "BB", "UTG raise 2.5, HJ call, BTN call", None, ""),
     # an opener behind a 3bet
     "cold3": (6, "BB", "CO raise 2.5, BTN raise 7.5", None, ""),
@@ -538,21 +537,49 @@ _EQ: dict = {}
 
 
 def complete(spot, wide):
-    return bool(round_inputs(spot, wide, 2)) and not jobs(spot, wide, 2)
+    """Every branch has at least half its flops."""
+    got = round_inputs(spot, wide, 2)
+    if not got:
+        return False
+    meta, rng, hero_w, pend_w, rates = got
+    for seats, weight in branches(meta, rates)[0]:
+        players = branch_game(meta, rng, seats, hero_w, pend_w)[0]
+        fl = branch_flops(2, weight, len(players))
+        if 2 * sum(os.path.exists(job_path(spot, wide, 2, seats, f)) for f in fl) < len(fl):
+            return False
+    return True
+
+
+def timed_job(job):
+    deadline, j = job
+    if time.time() > deadline:
+        return None
+    t0 = time.time()
+    return os.path.basename(j[0]), solve_job(*j), time.time() - t0
 
 
 def run(args):
+    """Round 1 everywhere, then round 2 in passes: every second flop of every spot, then the rest, so that a stopped run
+    has every spot at half its flops rather than half the spots at all of theirs."""
+    from multiprocessing import Pool
     t0 = time.time()
-    limit = args.minutes * 60
+    deadline = t0 + args.minutes * 60
     names = args.spots.split(",") if args.spots else list(SPOTS)
-    for rnd in (1, 2):
-        for spot in names:
-            for j in jobs(spot, args.wide, rnd):
-                if time.time() - t0 > limit:
+    with Pool(args.procs) as pool:
+        for rnd, passes in ((1, (None,)), (2, (0, 1))):
+            for pas in passes:
+                todo = []
+                for spot in names:
+                    fl = flops(ROUNDS[2]["flops"], ROUNDS[2]["offset"])
+                    todo += [j for j in jobs(spot, args.wide, rnd)
+                             if pas is None or j[1] not in fl or fl.index(j[1]) % 2 == pas]
+                for got in pool.imap_unordered(timed_job, [(deadline, j) for j in todo]):
+                    if got is None:
+                        continue
+                    print(f"{time.time() - t0:6.0f}s r{rnd} {got[0]} gap {got[1]:.2f}% {got[2]:.0f}s", flush=True)
+                if time.time() > deadline:
                     print("out of time", flush=True)
                     return
-                gap = solve_job(*j)
-                print(f"{time.time() - t0:6.0f}s r{rnd} {os.path.basename(j[0])} gap {gap:.2f}%", flush=True)
     print("all solved", flush=True)
 
 
@@ -671,6 +698,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--minutes", type=float, default=9.0)
     ap.add_argument("--spots")
+    ap.add_argument("--procs", type=int, default=1)
     ap.add_argument("--wide", action="store_true")
     ap.add_argument("--freeze", action="store_true")
     ap.add_argument("--report", action="store_true")
