@@ -79,8 +79,19 @@ const base = (o) => ({ players: 6, stack: 100, preflop: SRP, flop: [], turn: [],
 const SRP_FLOP = [X("BB"), B("BTN", 1.8), C("BB")];                 // a third-pot c-bet called
 const SRP_TURN = [X("BB"), B("BTN", 6), C("BB")];                   // two thirds called
 const MORE = { flop: [25, 33, 50, 75, 125] };                       // Study's "More sizes" (study.js SIZE_PRESETS)
+// a hand off its range (index.html's checkRanges), the answer then its follow-ups, one worker with --session:
+// --session --spots off-range,off-range-chart,off-range-wider,off-range-hu,off-range-hu-chart,off-range-hu-wider
+const LIMPED = [C("UTG"), R("LJ", 4), C("HJ"), F("CO"), F("BTN"), F("SB"), C("BB"), C("UTG")];
+const OFF = { players: 7, hero: "BB", hole: "As4s", board: "2s4d6c6h", preflop: LIMPED, flop: [B("BB", 6.5), F("UTG"), C("LJ"), F("HJ")] };
+const OFF_HU = { hero: "BB", hole: "Td3s", board: "Ks7d2c5h", preflop: SRP, flop: SRP_FLOP };
 // name: request state (the page's payload without budget / prior_budget / speed)
 const SPOTS = {
+  "off-range": base({ ...OFF, opponents: "pool" }),
+  "off-range-chart": base({ ...OFF, background: true }),
+  "off-range-wider": base({ ...OFF, wider: true, background: true }),
+  "off-range-hu": base({ ...OFF_HU, opponents: "pool" }),
+  "off-range-hu-chart": base({ ...OFF_HU, background: true }),
+  "off-range-hu-wider": base({ ...OFF_HU, wider: true, background: true }),
   "preflop": base({ hero: "CO", hole: "AhJd", board: "", preflop: [F("UTG"), F("HJ")] }),
   "preflop-mw": base({ hero: "BB", hole: "Th9h", board: "", preflop: [F("UTG"), F("HJ"), R("CO", 2.5), C("BTN"), F("SB")] }),  // priced 3-way
   "flop-lib": base({ hero: "BTN", hole: "AsQs", board: "Kc7d4h", flop: [X("BB")] }),          // in the flop library

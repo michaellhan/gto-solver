@@ -834,6 +834,7 @@ function watchStop() {
 }
 // Stop the solve in flight; its analyze() call then returns without showing anything.
 async function cancelSolve() {
+  stopChecks();
   if (!solving) return;
   solveGen++; solving = false;
   if (MODE === "server") { try { await fetch("cancel", { method: "POST" }); } catch (e) {} return; }
@@ -1571,6 +1572,7 @@ async function analyze(sim) {
   const key = JSON.stringify(payload());
   if (key === lastKey) return;
   lastKey = key;
+  stopChecks();
   // It's your turn at another spot (a new hand, an undo, an edit): the solve of the one you left mustn't hold this
   // one up.
   if (solving) { await cancelSolve(); if (lastKey !== key) return; }
@@ -1744,13 +1746,90 @@ function renderResult(res, key) {
   if (d) answered.set(d.a, res);
   // (a tie that leaves the advice's action just under another's EV is said under the table, where the numbers are)
   const tied = (n) => n.endsWith("so the two count as tied");
-  let h = (d ? verdictHtml(d, res) : closeHtml(res)) + actionTable(res, d && d.g ? d.g.m : null) + (res.notes || []).filter(tied).map(n => `<p class="meta">${cap(n)}.</p>`).join("") + sourceHtml(res);
+  let h = (d ? verdictHtml(d, res) : closeHtml(res)) + actionTable(res, d && d.g ? d.g.m : null) + rangesCheckHtml(res, key) + (res.notes || []).filter(tied).map(n => `<p class="meta">${cap(n)}.</p>`).join("") + sourceHtml(res);
   h += res.grid ? rangeHtml(res) : `<p class="meta">No range grid here: this answer is for your hand alone.</p>`;
   const more = [...(res.size_usage ? [`Size optimization, your mix over the wide menu: ${SIZE_USAGE(res)}`] : []), ...(res.notes || []).filter(n => !n.startsWith("preflop: chart approximation") && !tied(n))];
   if (more.length) h += `<details><summary>Details</summary>${more.map(n => `<p class="meta">${n}</p>`).join("")}</details>`;
   el.innerHTML = h;
   if (res.grid) wireGrid(el, res.grid, res.hand, res.street === "preflop");
   updateAdviceState();
+  checkRanges(res, key);
+}
+// ---- a hand off its range: the answer is solved for a range the hand isn't in, so which range is assumed can change it.
+// Once it's shown, and only for such a hand, the same spot is asked again under the others, one at a time: the charts'
+// ranges, at equilibrium, and your range wider (Advisor's "wider"; a cash hand's own answer is the typical player's, a
+// tournament's the charts'). They run behind the answer, never before it: the next spot stops them (a stop flag where
+// the page shares one with the worker, /cancel on the local server), a browser with no stop flag doesn't start them, as
+// stopping one there restarts the worker, and a review doesn't, its decisions being asked one at a time as you open them.
+// Your own ranges or locks are the assumption, so nothing is checked. Kept in `cache`, so a spot seen again asks nothing.
+// Each says what your answer's play gives up there, so a flip by a hair isn't read as one that matters: "depends" takes
+// CHECK_MATTERS of the pot, the most a grade calls good.
+const CHECK_MATTERS = 0.03;
+const ASSUMED = { pool: "against a typical player", chart: "at the charts' ranges", wider: "if your range is wider" };
+let checks = null;     // { key, pot, got: [{ name, action, lost: bb the answer's play gives up there, null: not played there }], of: how many in all, done }
+let checkReq = null;   // the follow-up in flight: its request id (true on the local server)
+function stopChecks() {
+  const on = checkReq;
+  if (checks && !checks.done) checks = null;
+  checkReq = null;
+  if (on === true) return fetch("cancel", { method: "POST" }).catch(() => {});
+  if (on != null) stopRequests(on);
+}
+function rangeAssumptions(res, key) {
+  if (!res.off_range || res.street === "preflop" || res.fallback || heuristic(res) || OPP_RANGES() || OPP_LOCKS()) return [];
+  if (MODE !== "server" && !STOP) return [];
+  const { opponents, ...base } = JSON.parse(key), asks = [];
+  if (opponents) asks.push({ name: "chart", state: { ...base, background: true } });
+  if (res.off_range.wider !== false) asks.push({ name: "wider", state: { ...base, wider: true, background: true } });
+  return asks;
+}
+const rangeLost = (r, action) => {
+  const evs = r.actions.filter(a => Number.isFinite(a.ev_bb)), row = evs.find(a => a.action === action);
+  return row ? Math.max(...evs.map(a => a.ev_bb)) - row.ev_bb : null;
+};
+const rangesText = (c) => {
+  if (!c.done) return `Your hand is off its range here, so the answer is being checked under other ranges (${c.got.length} of ${c.of}).`;
+  if (c.got.length < 2) return "";
+  const by = new Map();
+  for (const g of c.got) by.set(g.action, [...(by.get(g.action) || []), ASSUMED[g.name]]);
+  if (by.size === 1) return `Your hand is off its range here, but ${c.got.length === 2 ? "both" : `all ${c.got.length}`} ranges tried say the same: <b>${c.got[0].action}</b> (${andList(c.got.map(g => ASSUMED[g.name]))}).`;
+  const said = [...by].map(([a, who]) => `${a} ${andList(who)}`).join(", ");
+  const known = c.got.map(g => g.lost).filter(x => x != null), most = Math.max(...known);
+  const cost = c.got.some(g => g.lost == null) ? "" : ` The answer's play gives up at most ${fmt(+most.toFixed(2))} bb across them.`;
+  return most >= CHECK_MATTERS * c.pot || cost === "" ? `Your hand is off its range here, and <b>the answer depends on the ranges</b>: ${said}.${cost}`
+    : `Your hand is off its range here. The ranges tried pick different plays, but it matters little: ${said}.${cost}`;
+};
+const rangesCheckHtml = (res, key) => !rangeAssumptions(res, key).length && !(checks && checks.key === key) ? ""
+  : `<p class="meta" id="rangesCheck">${checks && checks.key === key ? rangesText(checks) : ""}</p>`;
+function showChecks() {
+  const el = document.getElementById("rangesCheck");
+  if (el) el.innerHTML = rangesText(checks);
+}
+async function checkRanges(res, key) {
+  if (checks && checks.key === key) return;
+  const asks = rangeAssumptions(res, key);
+  if (!asks.length) return;
+  const c = checks = { key, pot: res.pot_bb, got: [{ name: JSON.parse(key).opponents ? "pool" : "chart", action: res.recommended, lost: 0 }], of: asks.length + 1, done: false };
+  showChecks();
+  for (const a of asks) {
+    const k = JSON.stringify(a.state);
+    let r = cache.get(k);
+    if (!r) {
+      try {
+        const q = callAdvise(a.state);
+        checkReq = MODE === "server" ? true : q.reqId;
+        r = await q;
+      } catch (e) { r = { error: String(e) }; }
+      if (checks !== c) return;                  // (the spot moved on)
+      checkReq = null;
+      if (r.cancelled) { checks = null; return; }
+      if (r.actions && !r.fallback) cache.set(k, r);
+    }
+    if (r.actions && !r.fallback) c.got.push({ name: a.name, action: r.recommended, lost: rangeLost(r, res.recommended) });
+    if (a !== asks[asks.length - 1]) showChecks();
+  }
+  c.done = true;
+  showChecks();
 }
 function gridClass(i, j) { return i === j ? RANKS[i] + RANKS[i] : i < j ? RANKS[i] + RANKS[j] + "s" : RANKS[j] + RANKS[i] + "o"; }
 // Your whole range: how it plays the spot, and by hand. Each cell's w is its average combo weight, so combos = w x (6
@@ -1994,6 +2073,7 @@ async function reviewHand() {
 }
 const EMPTY_ADVICE = "Your turns are solved as you reach them. Finish the hand to see how each decision compares with the solver.";
 function resetAdvice() {
+  stopChecks();
   const el = document.getElementById("result"); lastKey = null; lastResult = null; resultKey = null; reviewFailed = false;
   if (el.className !== "empty") { el.className = "empty"; el.innerHTML = EMPTY_ADVICE; }
 }

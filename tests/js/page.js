@@ -22,7 +22,7 @@ const HTML_PATH = process.env.GTO_PAGE || path.join(__dirname, "..", "..", "gto"
 // there answers null, as a browser does. tests/js/harness.test.js checks this list against gto/static both ways, so an
 // entry goes with its code.
 const RUNTIME_IDS = {
-  "index.html": ["customAmt", "customBox", "equityRetry", "solveBar", "solveMsg", "solveTime", "solverRetry"],
+  "index.html": ["customAmt", "customBox", "equityRetry", "rangesCheck", "solveBar", "solveMsg", "solveTime", "solverRetry"],
   "hands.js": ["mhStyle"], "help.js": ["hpStyle"],
 };
 const RUNTIME = new Set(Object.values(RUNTIME_IDS).flat());

@@ -147,6 +147,60 @@ against several ranges (`"equity": true`, below). It waits for the review, not j
 `fixedHand`): a reviewed hand can't be reopened, so it never reaches a hand in progress. A decision stepped
 to doesn't show it.
 
+**A hand off its range.** Where your hand has next to no weight in your range at the decision (under 0.005, the answer's
+`off_range`), the solve still gives it a mix, but for a range that isn't what you're playing. On a hand that found this
+(7-handed, UTG limps, LJ raises to 4, HJ, BB and UTG call, BB's As4s bets 2s4d6c and LJ calls; the 6h turn) the pool says
+bet 33% (9.73 bb, bet 75% 9.37, check 8.38), the charts' ranges bet 75% (6.89, 6.53, 6.26) and a wider range for you check
+(6.23, 6.19, 5.97). So once the answer is up, and only then, the page asks the same spot under the other ranges, one at a
+time (`checkRanges`), and adds a line under the table: `all 3 ranges tried say the same`, or `the answer depends on the
+ranges` with which range gave which play and the most your answer's play gives up across them, or, where that is under
+3% of the pot (the most a grade calls good), `pick different plays, but it matters little`. The comparison is what the
+answer's play gives up under each range, not the plays' names, because a flip by 0.04 bb, like the one to check here,
+isn't a different answer. The three ranges:
+
+- **Against a typical player**: the main answer on a cash hand (`opponents: "pool"`).
+- **At the charts' ranges**: the same request without `opponents`. A tournament's main answer is this one, so it asks only
+  for the wider range (the pool's numbers are cash).
+- **If your range is wider** (`"wider": true`, `Advisor._wider_preflop`, `_wider_line`), made per spot, nothing written by
+  hand: entering the flop your range is the chart's plus the hands with at least your hand's preflop equity against the
+  last raiser's range (against any two with no raise), up to 2.5 times the range, best first, less what the chart raises
+  with where you called. A later street whose solve left your hand out keeps a quarter of what you started it with. A
+  hand that left the range on this very street (`off_range.wider: false`) skips it: a wider range entering the street
+  doesn't undo the betting on it.
+
+In range nothing is asked, so such a hand costs nothing: no solve, no line. Nor does a preflop answer, a betting-rules
+answer (4+ ways), a fallback or a spot with your own ranges or locks, which are the assumption. The follow-ups are sent
+with `"background": true`: their solves are the first to leave the solve cache (`_keep`), and what they read of the
+hand's own solves stays where the hand left it. They come after the answer, one at a time, and the next spot
+stops them (the shared stop flag; `/cancel` on the local server) before its own solve starts.
+A browser with no stop flag doesn't start them, as stopping a solve there restarts the worker. Their answers
+are kept in the page's cache, so a spot seen again asks nothing. Grades don't read them. A review asks none (a whole
+hand's decisions would queue up), and opening one of its decisions checks that one. There is no Practice on this site;
+the frozen copy is unchanged.
+
+Measured with `scripts/bench_range_robustness.py` on 60 spots across seven preflop lines, seed 7: random playable hands
+(the stronger half) the advice flagged off range, the background hand among them, 35 heads-up and 25 multiway, Fast,
+one thread.
+
+| | spots | of 60 |
+|---|---|---|
+| Plays named differ, any of the three | 26 | 43% |
+| ... bet against check or fold | 23 | 38% |
+| Wider v the charts' ranges alone | 12 | 20% |
+| The pool v the charts' ranges alone | 23 | 38% |
+| Answer's play gives up 1%+ of the pot under another range | 18 | 30% |
+| ... 3%+, the line says it depends | 12 | 20% |
+| ... 5%+ | 7 | 12% |
+
+Heads-up is where it moves (21 of 35 differ, 10 at 3%+); multiway 5 of 25, 2 at 3%+. Much of it isn't about being off
+range. On 40 hands in their range (`--in-range`, the same lines and seed) the pool and the charts' ranges differ on 20,
+10 at 1%+ of the pot and 4 at 3%+, against 23, 15 and 8 of the 60 here: that gap is the typical player against perfect
+play, which every cash answer already takes a side on. What is the off-range hand's own is the range: keeping the pool
+and widening your range alone changes 12 of 60 by name, 8 at 1%+ and 3 at 3%+. Time, natively, one thread: a follow-up 5.0 s at the median with
+the street before it to narrow again (the main answer has that in hand), so two take 9.9 s, 12.6 s at the 90th percentile.
+In the browser (Pyodide under Node, one thread, Fast, one worker): 1.3 and 1.2 s on the background hand's turn, 4.9 and
+7.5 s on a heads-up turn, 450 MB of heap at the end, and the page's budget allows ~11 s for each.
+
 #### What a review shows
 
 Each decision opened solves the spot at Fast: in the browser 8 s plus 3 s for each earlier postflop street (a flop 8 s,

@@ -1900,6 +1900,70 @@ class PreflopRanges(dict):
     rebuilt: List[str] = []
 
 
+# A hand off its range: at this weight or under in your range at the decision, the answer says "off_range". The solve
+# gives the hand a mix, but for a range that isn't yours (you are here with it), so the page checks the answer under
+# other ranges. "wider" is the one of them made up per spot: entering the flop your range also holds the hands that do as
+# well as yours, up to WIDER_MAX times the range; a street whose solve left your hand out keeps WIDER_KEEP of the hands
+# you started it with. scripts/bench_range_robustness.py measures them.
+OFF_RANGE_WEIGHT = 0.005
+WIDER_MAX = 2.5
+WIDER_KEEP = 0.25
+
+
+def _off_range(hero_r, hole, start) -> dict:
+    """An answer's "off_range", where your hand has (next to) no weight in your range at this decision: its weight, the
+    weight it started this street with, and "wider": false where that was your range's: the street's own solve left it
+    out, under the betting on this street, which a wider range entering it doesn't undo (the page doesn't ask)."""
+    if not hole:
+        return {}
+    i = COMBO_INDEX[(min(hole), max(hole))]
+    if hero_r[i] >= OFF_RANGE_WEIGHT:
+        return {}
+    w0 = float(start[i]) if start is not None else 0.0
+    return {"off_range": {"weight": round(float(hero_r[i]), 4), "at_street_start": round(w0, 4),
+                          **({"wider": False} if w0 >= OFF_RANGE_WEIGHT else {})}}
+
+
+def _wider_preflop(actions, positions, stack, hero, hole, locks=None) -> Optional[np.ndarray]:
+    """Your range entering the flop if a hand like yours is in it: where the charts' range doesn't hold your hand,
+    it also holds the hands that do at least as well as yours against the last raiser's range (against any two
+    cards without one) and that the chart doesn't play more aggressively than your line did. None where it holds it."""
+    pf_r = preflop_ranges(actions, positions, stack, None, locks)
+    r = pf_r.get(hero)
+    i = COMBO_INDEX[(min(hole), max(hole))]
+    if r is None or r[i] > OFF_RANGE_WEIGHT:
+        return None
+    last = max((k for k, a in enumerate(actions) if a["pos"] == hero and a["action"] != "fold"), default=None)
+    raisers = [a["pos"] for a in actions if a["action"] in ("raise", "all-in") and a["pos"] != hero]
+    faced = pf_r.get(raisers[-1]) if raisers else None
+    eq = pf._strength() if faced is None else _preflop_equity(faced)
+    eq = np.nan_to_num(eq, nan=0.0)
+    w = np.ones(N_COMBOS)
+    if last is not None and actions[last]["action"] in ("call", "check"):
+        strat = preflop_strategy(hero, actions[:last], positions, stack)
+        w = 1.0 - np.minimum(strat.get("raise", 0.0) + strat.get("all-in", 0.0), 1.0)
+    add = np.where(eq >= eq[i] - 1e-9, w, 0.0)
+    room = np.clip(add - r, 0.0, None)
+    limit = max(WIDER_MAX - 1.0, 0.0) * float(r.sum())
+    if room.sum() > limit:     # (the best of them, up to the limit)
+        order = np.argsort(-eq, kind="stable")
+        cum = np.cumsum(room[order])
+        keep = order[:int(np.searchsorted(cum, limit)) + 1]
+        cut = np.zeros(N_COMBOS); cut[keep] = room[keep]
+        room = cut
+    out = np.minimum(r + room, 1.0)
+    out[i] = 1.0
+    return out
+
+
+def _wider_line(before: np.ndarray, after: np.ndarray, hole) -> np.ndarray:
+    """Your range after a street your hand's line left: a share of the hands you started it with stay in."""
+    i = COMBO_INDEX[(min(hole), max(hole))]
+    if after[i] >= OFF_RANGE_WEIGHT or before[i] < OFF_RANGE_WEIGHT:
+        return after
+    return np.maximum(after, WIDER_KEEP * before)
+
+
 def _post_floor(before: np.ndarray, after: np.ndarray, board, pos: str, street: str, notes: List[str],
                 off: Optional[List[dict]] = None) -> np.ndarray:
     """A player's range after an earlier street's actions, filled out when the line leaves fewer than
@@ -3000,6 +3064,8 @@ class Advisor:
         self._mw_borrow = None    # the table's size, where a 3-way pot of another one may read a library spot (no
         # ranges of your own: MWLibrary.borrow), else None
         self._showdown = False    # state "equity": hero's equity against the ranges once betting is closed (_equity_answer)
+        self._wider = False       # state "wider": your range wider than the solves' (_wider_preflop, _wider_line)
+        self._background = False  # state "background": a follow-up to an answer, its solves the first to leave the cache
         self._req_sizes: Dict[str, List[float]] = {}   # the request's custom sizes (state "sizes"), as fractions
         self._one_size = None     # state "one_size": the one-size view's request (Advisor._one_size_view), else None
         # ...its solves stop this close to equilibrium (% of the pot, by street; the lower expl_target where set)
@@ -4032,6 +4098,14 @@ class Advisor:
         if self._lib_only and len(board) != 3:
             return {"skipped": "only flop spots are answered from the library"}
         self._study = bool(state.get("study")) and actor is None
+        # "wider": the same spot with your range wider than the charts' and the solves', your hand's line taken by more
+        # hands than yours (_wider_preflop, _wider_line): one of the assumptions the page checks a hand off its range under
+        self._wider = bool(state.get("wider")) and actor is None and not self._study
+        self._background = bool(state.get("background")) and actor is None
+        if self._wider and hero not in custom:
+            wide = _wider_preflop(streets["preflop"], positions, stack, hero, hole, locks)
+            if wide is not None:
+                custom = {**custom, hero: wide}
         self._mw_borrow = None if custom else len(positions)
         # "equity": once a street's betting is closed (checked through, called, or everyone all-in), the ranges narrowed
         # through it as the next street's advice would narrow them, and your equity against them (_equity_answer)
@@ -4045,7 +4119,7 @@ class Advisor:
             return res
         finally:
             self.time_budget, self.prior_budget, self.cfg, self.root_sizes, self.spr_sizes = saved
-            self._breakdown = self._lib_only = self._jam = self._study = self._showdown = False
+            self._breakdown = self._lib_only = self._jam = self._study = self._showdown = self._wider = self._background = False
             self._one_size = self._mw_borrow = None
 
     # ------------------------------------------------------------ preflop
@@ -4880,6 +4954,8 @@ class Advisor:
             for p in st.players_start:
                 if p in ranges and p in before and p != hero:
                     ranges[p] = _post_floor(before[p], ranges[p], board, p, st.name, notes)
+            if self._wider and hero in before:
+                ranges[hero] = _wider_line(before[hero], ranges[hero], hole)
         if by_rules:
             notes.append(f"{', '.join(by_rules)}: multiway, ranges narrowed by "
                          "simple betting rules rather than a solve")
@@ -5053,8 +5129,14 @@ class Advisor:
                     if s0 is not r0 or s1 is not r1:   # (and out again for the next street: _with_hero puts it back)
                         (c0 if adv_p == 0 else c1)[sol.ctx.active == COMBO_INDEX[(min(adv_hole), max(adv_hole))]] = 0.0
                 walked[st.name] = (sol, node, taken)
+                b0, b1 = r0, r1
                 r0 = _post_floor(r0, expand(sol.ctx, c0), nxt_board, oop, st.name, notes, off_solution)
                 r1 = _post_floor(r1, expand(sol.ctx, c1), nxt_board, ip, st.name, notes, off_solution)
+                if self._wider:
+                    if hero_p == 0:
+                        r0 = _wider_line(b0, r0, hole)
+                    else:
+                        r1 = _wider_line(b1, r1, hole)
             if self._showdown:
                 return self._equity_answer(hero, hole, board, {villain: r1 if hero_p == 0 else r0}, cur, n_streets,
                                            notes, t0)
@@ -5278,6 +5360,7 @@ class Advisor:
             "grid": strategy_grid([sf[a] for a in range(len(node.names))], list(node.names), hero_r),
             "range_action_freq": range_freq,
             "hero_range_combos": round(float(hero_r.sum()), 1),
+            **_off_range(hero_r, hole, (r0 if hero_p == 0 else r1)),
             "villain_range_combos": round(float(vill_r.sum()), 1),
             "villain_range": range_to_text(vill_r, 0.05)[:400],
             # the same range by hand class for the page's grid (the text above is cut short)
@@ -5655,6 +5738,7 @@ class Advisor:
                "grid": strategy_grid([sf[a] for a in range(len(root.names))], shown, hero_r),
                "range_action_freq": {name: round(float((sf[a] * w).sum()), 3) for a, name in enumerate(shown)},
                "hero_range_combos": round(float(hero_r.sum()), 1),
+               **_off_range(hero_r, hole, ranges.get(hero)),
                "opponent_range_combos": {p: round(float((sol.expand(sol.reach0[i][0]) * unblocked).sum()), 1)
                                          for i, p in enumerate(players) if p != hero},
                "solver": {"iterations": sol.iters, "solve_seconds": round(sol.seconds, 2), "nodes": sol.builder.n_nodes,
@@ -7824,8 +7908,14 @@ class Advisor:
         """A solve in self.<store> (_cache or _mw_cache) just used: the most recent now, its arrays counted when `sol`
         is given (a new or grown one); then the least recently used go while they hold more than cache_mb."""
         k = (self, store, key)
+        if self._background and sol is None and k in self._held:
+            return   # (a follow-up reading one of the hand's solves: it stays where the hand left it)
         held = self._held.pop(k, None)
         self._held[k] = _held_bytes(sol) if sol is not None else (held or 0)
+        if self._background:   # (its own go first, so a follow-up costs the hand's solves nothing; in place: Fast's and
+            rest = list(self._held.items())   # Accurate's share this dict)
+            self._held.clear()
+            self._held.update(rest[-1:] + rest[:-1])
         while len(self._held) > CACHE_KEEP and sum(self._held.values()) > self.cache_mb * 2 ** 20:
             adv, st, old = next(iter(self._held))
             del self._held[(adv, st, old)]
