@@ -3630,6 +3630,13 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   never make, say), it is added to the solve as a near-zero-weight combo so it
   still gets a strategy and EVs without changing anyone else's play; the next street
   narrows the ranges through that same solve (Accuracy vs speed, "Your hand out of your range").
+  That's the best play against players who don't expect the hand. Its action is sound, its EVs
+  usually high and the gaps between its actions about 1% of the pot wide, and the note says so
+  (`scripts/bench_off_range.py`, `docs/off_range_research.md`). The hand isn't put back in its
+  range: done because you hold it, that would hand your cards to the opponents. The exception
+  is a live flop at Fast with a hand far above a narrow range: the later streets' buckets play it
+  as the hands around it (trips in a 4bet pot: check 65.7 where it is 83.0 per combo, and a shove
+  that isn't best), which is the buckets and not the weight.
   Multiway too, and no hand is priced as random play there any more: a hand with no
   strategy sums at a decision now plays its current strategy (`Decision.avg_strategy`,
   `core/mwcore.c`), where it played uniformly, calling and folding a bet alike (A4s in a

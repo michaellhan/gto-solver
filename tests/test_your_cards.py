@@ -87,6 +87,50 @@ class TestLinesDontDependOnYourCards(unittest.TestCase):
         self.assertNotEqual(a["ev"], b["ev"])
 
 
+class TestAHandOffItsRangeMovesNoRange(unittest.TestCase):
+    """A hand the line's range doesn't hold is the case the tests above leave out, and the one a repair would want to
+    touch: "you played A4s, so your range holds it" is the rule that hands your cards to the opponents. Your hand goes
+    into its own row at a near-zero weight and nothing else moves. scripts/bench_off_range.py, docs/off_range_research.md."""
+    BTN_BB = dict(players=6, hero="BB", board="Ks8d3c2h", stack=100,
+                  preflop=FOLDS("UTG", "HJ", "CO") + [{"pos": "BTN", "action": "raise", "to": 2.5}] + FOLDS("SB")
+                  + [{"pos": "BB", "action": "call"}],
+                  flop=[{"pos": "BB", "action": "check"}, {"pos": "BTN", "action": "bet", "amount": 2.0},
+                        {"pos": "BB", "action": "call"}])
+
+    def test_multiway_ranges_are_the_same_in_range_or_out(self):
+        off, res = spy_multiway(dict(SEVEN, hole="7h2d"))       # (BTN 3bet: not this)
+        self.assertTrue(any("near-zero-weight" in n for n in res["notes"]), res["notes"])
+        ak, _ = spy_multiway(dict(SEVEN, hole="AhKd"))
+        for i in (0, 1):    # BB and CO
+            np.testing.assert_array_equal(off[i], ak[i])
+        d = np.nonzero(off[2] != ak[2])[0]
+        self.assertEqual(d.tolist(), [COMBO_INDEX[tuple(sorted(cards("7h2d")))]])   # (BTN's: that one row)
+
+    def test_heads_up_it_is_a_row_in_the_solve_not_a_range(self):
+        # The street before was solved with the hand's row in (Advisor._as_advised), and any added row runs that solve a
+        # little differently: 4-5 combos of the BTN's 242 at a weight of 1e-3, 1e-6 or 2e-9 alike, for AA and 72o alike. So
+        # it isn't the hand's weight or strength reaching the range. It isn't nothing, so it is held here: under 3%
+        adv = advisor("fast", budget=20, prior_budget=20, library=False)
+        adv.hu_settled = 1.0     # (the same iterations each: a solve's budget would measure the load)
+        seen = {}
+        real = adv._solve_cached
+
+        def solve(board, r0, r1, *a, **k):
+            seen.setdefault(len(board), []).append((np.array(r0, dtype=float), np.array(r1, dtype=float)))
+            return real(board, r0, r1, *a, **k)
+        adv._solve_cached = solve
+        res = adv.advise(dict(self.BTN_BB, hole="AhAd"))         # (BB 3bets aces: not a call)
+        self.assertTrue(any("near-zero-weight" in n for n in res["notes"]), res["notes"])
+        adv.advise(dict(self.BTN_BB, hole="QhJh"))
+        (o0, o1), (i0, i1) = seen[4][0], seen[4][-1]
+        hand = COMBO_INDEX[tuple(sorted(cards("AhAd")))]
+        self.assertAlmostEqual(float(o0[hand]), 1e-3)            # (BB's own row, as it stands)
+        self.assertEqual(float(i0[hand]), 0.0)
+        o0 = o0.copy(); o0[hand] = 0.0
+        self.assertLess(float(np.abs(o0 - i0).sum()), 0.03 * float(i0.sum()))
+        self.assertLess(float(np.abs(o1 - i1).sum()), 0.03 * float(i1.sum()))
+
+
 class TestYourCardsStillBlock(unittest.TestCase):
     def test_multiway_report_leaves_out_what_you_block(self):
         rs, res = spy_multiway(dict(SEVEN, hole="ThTs"))

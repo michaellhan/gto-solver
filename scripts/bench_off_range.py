@@ -19,6 +19,8 @@ the Advisor gives such a hand with the answer at a real weight, on the same tree
   python scripts/bench_off_range.py run --group hu --out hu.jsonl        # resumes: finished reads are skipped
   python scripts/bench_off_range.py run --group 3way --out mw.jsonl
   python scripts/bench_off_range.py report --out hu.jsonl,mw.jsonl
+  python scripts/bench_off_range.py buckets     # the flop's worst reads with its later streets played per combo
+  python scripts/bench_off_range.py hand        # the hand that asked (As4s, 7-handed), by arm
 
 Scores: the top action (the mix's most frequent) changing; the regret of the near-zero answer's mix read at the real
 weight's EVs, as a % of the pot (the number that matters: a flip between two actions with equal EVs costs nothing); each
@@ -26,6 +28,7 @@ action's EV difference; and how far everyone else's strategies move, as a reach-
 docs/off_range_research.md.
 """
 import argparse
+import dataclasses
 import gzip
 import json
 import os
@@ -676,9 +679,78 @@ def report(args):
               f"near {n['acts']} -> {r['acts']}")
 
 
+def pot_of(name):
+    return next(x for x in HU if x[0] == name)
+
+
+def combo_of(hole):
+    c = cards(hole)
+    return COMBO_INDEX[(min(c), max(c))]
+
+
+def print_read(tag, res, view):
+    print(f"{tag:<28}", [(a["action"], round(a["freq"], 3), a["ev_bb"]) for a in res["actions"]],
+          "hero", round(float(view[1].sum()), 1) if view else None, res["solver"].get("iterations"), flush=True)
+
+
+def per_combo(h):
+    """h's solves with the flop's later streets played per combo instead of by Fast's hand buckets."""
+    def solve(*x, **k):
+        x = list(x)
+        if len(x) > 9 and x[9] is not None:
+            x[9] = dataclasses.replace(x[9], river_buckets=None, turn_buckets=False)
+        else:
+            k["cfg"] = dataclasses.replace(k.get("cfg") or h.adv.cfg, river_buckets=None, turn_buckets=False)
+        h.seen = h._cached(*x, **k)
+        return h.seen
+    h.adv._solve_cached = solve
+
+
+def buckets(_args):
+    """Is a flop's near-zero error the weight or the buckets? Each hand at near-zero and at 1 combo, by buckets and per combo."""
+    bet = lambda seat, amount: [p_("BB", "check"), p_(seat, "bet", amount=amount)]
+    for name, board, hero, hole, acts in (("4bet-bb", "8s8d3c", "BB", "Ad8h", []), ("4bet-bb", "8s8d3c", "BB", "8h3h", []),
+                                          ("4bet-bb", "Ks7s2h", "BB", "7c2c", bet("BTN", 15.5)),
+                                          ("3bet-btn", "Jh9h4c", "BTN", "Jd4d", [p_("BB", "bet", amount=9.0)]),
+                                          ("srp-btn-bb", "Ks7s2h", "BB", "7c2c", []), ("srp-btn-bb", "8s8d3c", "BB", "Ah8h", [])):
+        _, n, stack, pre, _ = pot_of(name)
+        hi = combo_of(hole)
+        print(name, board, hole)
+        for tag, w, combos in (("near-zero, buckets", NEAR_HU, False), ("1 combo, buckets", 1.0, False),
+                               ("near-zero, per combo", NEAR_HU, True), ("1 combo, per combo", 1.0, True)):
+            h = Harness(n, stack, hero, {"preflop": pre}, board)
+            h.w = {hi: w}
+            if combos:
+                per_combo(h)
+            res, view, _ = h.ask(hi, acts, "flop")
+            print_read("  " + tag, res, view)
+
+
+def the_hand(_args):
+    """The hand that asked: 7-handed, UTG limps, LJ raises to 4, HJ, BB and UTG call, BB bets 6.5 on 2s4d6c, LJ calls, the 6h."""
+    global CLASS_W
+    pre = [p_("UTG", "call"), p_("LJ", "raise", to=4), p_("HJ", "call")] + fold("CO", "BTN", "SB") + [p_("BB", "call"), p_("UTG", "call")]
+    streets = {"preflop": pre, "flop": [p_("BB", "bet", amount=6.5), p_("LJ", "call"), p_("HJ", "fold"), p_("UTG", "fold")]}
+    board, hi, idx, real = "2s4d6c6h", combo_of("As4s"), A._class_index(), A.preflop_ranges
+    h = Harness(7, 100, "BB", streets, board)
+    for tag, w in (("near-zero", {hi: NEAR_HU}), ("A4s at 1 combo", {hi: 1.0}), ("class", {int(i): CLASS_W for i in idx["A4s"]})):
+        h.w = w
+        res, view, _ = h.ask(hi, [], "turn")
+        print_read(tag, res, view)
+    in_range = real(pre, table(7), 100)["BB"]
+    add = [int(i) for k in family("A4s") for i in idx[k] if in_range[i] <= 1e-9]
+    for CLASS_W in (0.25, 0.5, 1.0):
+        A.preflop_ranges = with_family(real, "BB", add)
+        h = Harness(7, 100, "BB", streets, board)
+        h.w = {hi: NEAR_HU}
+        res, view, _ = h.ask(hi, [], "turn")
+        print_read(f"A2s-A6s at {CLASS_W} from preflop", res, view)
+    A.preflop_ranges = real
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=("run", "report"))
+    ap.add_argument("cmd", choices=("run", "report", "buckets", "hand"))
     ap.add_argument("--out", default="off_range.jsonl", help="report: several, comma-separated")
     ap.add_argument("--group", default="hu", choices=("hu", "3way"))
     ap.add_argument("--flops", type=int, default=2)
@@ -691,4 +763,4 @@ if __name__ == "__main__":
     ap.add_argument("--streets", default="river,turn,flop")
     ap.add_argument("--max-spots", type=int, default=0)
     a = ap.parse_args()
-    (run if a.cmd == "run" else report)(a)
+    {"run": run, "report": report, "buckets": buckets, "hand": the_hand}[a.cmd](a)

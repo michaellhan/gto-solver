@@ -1,0 +1,30 @@
+4bet-bb 8s8d3c Ad8h
+  near-zero, buckets         [('check', 0.0, 65.68), ('bet 33%', 0.0, 56.73), ('bet 75%', 0.0, 71.81), ('all-in', 1.0, 75.18)] hero 22.8 300
+  1 combo, buckets           [('check', 0.288, 80.87), ('bet 33%', 0.712, 80.87), ('bet 75%', 0.0, 80.81), ('all-in', 0.0, 75.76)] hero 23.8 300
+  near-zero, per combo       [('check', 0.0, 83.01), ('bet 33%', 1.0, 84.42), ('bet 75%', 0.0, 82.01), ('all-in', 0.0, 80.44)] hero 22.8 300
+  1 combo, per combo         [('check', 0.225, 79.83), ('bet 33%', 0.775, 79.83), ('bet 75%', 0.0, 79.51), ('all-in', 0.0, 78.11)] hero 23.8 300
+4bet-bb 8s8d3c 8h3h
+  near-zero, buckets         [('check', 0.0, 62.22), ('bet 33%', 0.0, 51.67), ('bet 75%', 0.0, 69.92), ('all-in', 1.0, 74.65)] hero 22.8 300
+  1 combo, buckets           [('check', 0.491, 82.93), ('bet 33%', 0.509, 82.92), ('bet 75%', 0.0, 80.65), ('all-in', 0.0, 76.61)] hero 23.8 300
+  near-zero, per combo       [('check', 0.0, 84.5), ('bet 33%', 1.0, 85.27), ('bet 75%', 0.0, 82.66), ('all-in', 0.0, 81.14)] hero 22.8 300
+  1 combo, per combo         [('check', 0.338, 82.8), ('bet 33%', 0.662, 82.8), ('bet 75%', 0.0, 81.91), ('all-in', 0.0, 79.82)] hero 23.8 300
+4bet-bb Ks7s2h 7c2c
+  near-zero, buckets         [('fold', 0.0, -0.0), ('call', 0.0, 47.16), ('raise to 54.5', 0.0, 47.5), ('all-in', 1.0, 47.96)] hero 21.8 300
+  1 combo, buckets           [('fold', 0.0, -0.0), ('call', 1.0, 58.04), ('raise to 54.5', 0.0, 48.94), ('all-in', 0.0, 47.8)] hero 22.8 300
+  near-zero, per combo       [('fold', 0.0, 0.0), ('call', 1.0, 60.96), ('raise to 54.5', 0.0, 51.03), ('all-in', 0.0, 50.61)] hero 21.8 300
+  1 combo, per combo         [('fold', 0.0, 0.0), ('call', 1.0, 59.7), ('raise to 54.5', 0.0, 50.7), ('all-in', 0.0, 50.21)] hero 22.8 300
+3bet-btn Jh9h4c Jd4d
+  near-zero, buckets         [('fold', 0.0, -0.0), ('call', 1.0, 36.5), ('raise to 28', 0.0, 35.31)] hero 179.4 300
+  1 combo, buckets           [('fold', 0.0, -0.0), ('call', 1.0, 35.76), ('raise to 28', 0.0, 35.0)] hero 180.4 300
+  near-zero, per combo       [('fold', 0.0, 0.0), ('call', 1.0, 40.08), ('raise to 28', 0.0, 34.15)] hero 179.4 300
+  1 combo, per combo         [('fold', 0.0, -0.0), ('call', 1.0, 39.56), ('raise to 28', 0.0, 34.1)] hero 180.4 300
+srp-btn-bb Ks7s2h 7c2c
+  near-zero, buckets         [('check', 1.0, 7.75), ('bet 33%', 0.0, 7.66), ('bet 75%', 0.0, 7.7)] hero 512.7 300
+  1 combo, buckets           [('check', 1.0, 7.56), ('bet 33%', 0.0, 7.49), ('bet 75%', 0.0, 7.52)] hero 513.7 300
+  near-zero, per combo       [('check', 0.992, 6.98), ('bet 33%', 0.0, 6.94), ('bet 75%', 0.008, 6.91)] hero 512.7 300
+  1 combo, per combo         [('check', 1.0, 6.95), ('bet 33%', 0.0, 6.92), ('bet 75%', 0.0, 6.88)] hero 513.7 300
+srp-btn-bb 8s8d3c Ah8h
+  near-zero, buckets         [('check', 0.74, 13.31), ('bet 33%', 0.14, 13.29), ('bet 75%', 0.121, 13.31)] hero 498.1 300
+  1 combo, buckets           [('check', 0.733, 13.32), ('bet 33%', 0.122, 13.3), ('bet 75%', 0.144, 13.31)] hero 498.3 300
+  near-zero, per combo       [('check', 0.82, 12.31), ('bet 33%', 0.108, 12.31), ('bet 75%', 0.072, 12.33)] hero 498.1 300
+  1 combo, per combo         [('check', 0.751, 12.31), ('bet 33%', 0.126, 12.32), ('bet 75%', 0.123, 12.34)] hero 498.3 300

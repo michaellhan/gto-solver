@@ -207,6 +207,13 @@ OFF_RANGE = "your hand isn't in your range for this line"   # (how an answer's n
 # 3 is also where the page's EV grades stop saying Good (HEUR_OK), so one bar does both. README, "Close decisions".
 CLOSE_PCT = 3.0
 CLOSE_MAX = 5.0     # ...an answer further than that from equilibrium widens it to its distance, up to this (BR_TIE_MAX's 5%)
+# (Such a hand is a best response to players who don't expect it, which is what a real weight takes away: on 630 hands at
+# 78 spots of scripts/bench_off_range.py its mix gives up 0.12-0.23% of the pot at a real weight's EVs, the noise floor
+# 0.11, but its EVs read 2.4-2.9% of the pot off, mostly high, and the gaps between actions 0.6-1.4 wider. A flop's worst
+# misses are the hand buckets, not the weight: docs/off_range_research.md)
+OFF_RANGE_NOTE = (OFF_RANGE + ", so it was solved as a near-zero-weight combo: the best play "
+                  "against players who don't expect it, so its EVs usually read high and its actions about 1% of the pot further "
+                  "apart than if your range held it")
 UNSETTLED = 3.0     # heads-up: a solve this far from equilibrium (% pot) hasn't settled (the page's "converged" cutoff)
 # Heads-up, earlier streets: narrowing follows a solve fully this close (% pot) to equilibrium, not at all this far,
 # linearly between; the rest of each action's weights are the betting rules' range for it (softened, as multiway),
@@ -5535,7 +5542,7 @@ class Advisor:
             # (near-zero, not out: a hand with no weight has no average strategy at any later decision, so its EVs read
             # uniform play there: calling and folding to a bet alike. It changes nobody's play)
             rs[hp] = rs[hp].copy(); rs[hp][off] = MW_OFF_RANGE
-            notes.append(f"{OFF_RANGE}, so it was solved as a near-zero-weight combo")
+            notes.append(OFF_RANGE_NOTE)
         pending = {i for i, p in enumerate(players) if p not in cur.acted}
         pending.add(hp)
         n_act = len(players) - len(shoved)
@@ -7535,7 +7542,7 @@ class Advisor:
         if r[i] > 1e-9:
             return r0, r1
         r = r.copy(); r[i] = 1e-3
-        notes.append(f"{OFF_RANGE}, so it was solved as a near-zero-weight combo")
+        notes.append(OFF_RANGE_NOTE)
         return (r, r1) if hero_p == 0 else (r0, r)
 
     def _as_advised(self, r0, r1, hero_p, hole):
