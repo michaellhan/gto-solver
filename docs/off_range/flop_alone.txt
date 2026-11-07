@@ -1,0 +1,60 @@
+180 reads, 6 spots, 60 hand-nodes, 1 min of asking
+flip: top action changes; cost: it changes and that costs > 0.5% of the pot; regret: the near-zero mix at the real weight's EVs, % of the pot; back: the real weight's mix at near-zero's EVs; |dEV|: per action; hero / vill: how far the rest of the range moves, % of it
+
+--- control
+                                  n   flip   cost    regret mean [90%]   med   p90    max  back |dEV|   p90  hero  vill
+--- tiny
+                                  n   flip   cost    regret mean [90%]   med   p90    max  back |dEV|   p90  hero  vill
+--- combo
+                                  n   flip   cost    regret mean [90%]   med   p90    max  back |dEV|   p90  hero  vill
+hu flop                          60    12%     5%   0.05 [0.00,0.10]  0.00  0.02   0.94  0.39  5.61 17.10  4.39  6.19
+all                              60    12%     5%   0.05 [0.00,0.10]  0.00  0.02   0.94  0.39  5.61 17.10  4.39  6.19
+hero range 0-20 combos            5     0%     0%   0.00 [0.00,0.00]  0.00  0.00   0.00  0.09 16.24 115.65  4.38  1.19
+hero range 20-60 combos          25     8%     4%   0.04 [0.00,0.08]  0.00  0.02   0.86  0.24  3.68 11.57  5.50  9.20
+hero range 60-2000 combos        30    17%     7%   0.07 [0.00,0.14]  0.00  0.06   0.94  0.57  5.44 15.97  3.48  4.52
+strong                           14    14%     0%   0.01 [0.01,0.02]  0.00  0.04   0.05  0.77 14.52 93.28  8.26  8.26
+top pair                         10     0%     0%   0.00 [0.00,0.00]  0.00  0.00   0.00  0.06  2.55  5.98  2.29  5.23
+lower pair                       14     7%     0%   0.00 [0.00,0.00]  0.00  0.00   0.02  0.12  2.22  7.23  4.12  5.41
+draw                              8    12%     0%   0.02 [0.00,0.04]  0.00  0.04   0.15  0.12  5.69 16.88  2.50  7.35
+gutshot                           6    50%    50%   0.45 [0.14,0.75]  0.43  0.91   0.94  1.56  3.78  8.10  3.48  3.43
+air                               8     0%     0%   0.00 [0.00,0.00]  0.00  0.00   0.00  0.00  1.05  4.00  3.32  6.04
+first                            30    13%     3%   0.04 [0.00,0.11]  0.00  0.02   0.88  0.15  5.40 13.60  4.53  8.39
+facing                           30    10%     7%   0.06 [0.00,0.12]  0.00  0.00   0.94  0.63  5.81 19.70  4.26  3.99
+
+--- class
+                                  n   flip   cost    regret mean [90%]   med   p90    max  back |dEV|   p90  hero  vill
+hu flop                          60    17%     8%   0.43 [0.06,0.81]  0.00  0.11  18.69  0.56  4.36 12.08  4.63  6.34
+all                              60    17%     8%   0.43 [0.06,0.81]  0.00  0.11  18.69  0.56  4.36 12.08  4.63  6.34
+hero range 0-20 combos            5     0%     0%   0.00 [0.00,0.00]  0.00  0.00   0.00  0.00  8.76 72.99  4.53  1.04
+hero range 20-60 combos          25    20%     8%   0.90 [0.12,2.07]  0.00  0.08  18.69  0.65  3.92  8.80  5.67  9.53
+hero range 60-2000 combos        30    17%    10%   0.12 [0.04,0.20]  0.00  0.31   1.27  0.58  4.00 13.10  3.79  4.56
+strong                           14    29%    14%   1.42 [0.02,2.49]  0.00  0.78  18.69  1.67  8.41 37.41  8.52  8.22
+top pair                         10     0%     0%   0.00 [0.00,0.00]  0.00  0.00   0.00  0.00  2.84  7.12  2.65  6.95
+lower pair                       14     7%     0%   0.00 [0.00,0.00]  0.00  0.00   0.02  0.00  2.59  8.38  4.83  6.11
+draw                              8    12%     0%   0.03 [0.00,0.06]  0.00  0.07   0.24  0.12  5.59 15.60  2.28  5.04
+gutshot                           6    50%    50%   0.97 [0.35,1.58]  0.43  2.48   3.68  1.56  4.06  8.49  3.07  2.94
+air                               8    12%     0%   0.01 [0.00,0.02]  0.00  0.03   0.10  0.01  1.27  4.34  3.50  6.53
+first                            30    23%     7%   0.68 [0.00,1.37]  0.00  0.11  18.69  0.55  4.79 10.68  4.88  8.74
+facing                           30    10%    10%   0.19 [0.03,0.40]  0.00  0.09   3.68  0.58  3.94 12.22  4.39  3.93
+
+--- history
+                                  n   flip   cost    regret mean [90%]   med   p90    max  back |dEV|   p90  hero  vill
+--- wide
+                                  n   flip   cost    regret mean [90%]   med   p90    max  back |dEV|   p90  hero  vill
+combo: grades of 200 actions: same 78.0%, near-zero harsher 20.0%, kinder 2.0%; its EV gap less the real one's: mean +3.55, p10 -0.06, p90 +7.00
+   near-zero's top EV by over 3% of the pot: 40 reads, the real top differs on 1, top's cost mean 0.02 max 0.94; within 3%: 20 reads, cost mean 0.10 max 0.88
+class: grades of 200 actions: same 81.5%, near-zero harsher 13.5%, kinder 5.0%; its EV gap less the real one's: mean +2.09, p10 -1.27, p90 +5.79
+   near-zero's top EV by over 3% of the pot: 40 reads, the real top differs on 2, top's cost mean 0.05 max 1.07; within 3%: 20 reads, cost mean 1.21 max 18.69
+worst reads (regret % pot, mix and top)
+  18.69 18.69 class   4bet-bb/8s8d3c/flop first:0 83s/strong 23.03c pot 46.5: near [['check', 0.0, 84.31], ['bet 33%', 1.0, 84.6], ['bet 75%', 0.0, 81.91], ['all-in', 0.0, 78.84]] -> [['check', 0.0, 69.56], ['bet 33%', 0.0, 65.06], ['bet 75%', 0.0, 73.56], ['all-in', 1.0, 73.75]]
+  3.68 3.68 class   3bet-co/AhKdQc/flop facing:2 J9s/gutshot 56.9c pot 22.0: near [['fold', 0.0, -0.0], ['call', 0.001, 0.39], ['raise to 19.5', 0.999, 0.46]] -> [['fold', 1.0, 0.0], ['call', 0.0, -0.82], ['raise to 19.5', 0.0, -0.81]]
+  1.27 1.27 class   3bet-btn/Td8s6s/flop first:1 J7s/gutshot 181.48c pot 20.5: near [['check', 1.0, 10.24], ['bet 33%', 0.0, 9.96], ['bet 75%', 0.0, 9.04]] -> [['check', 0.0, 8.27], ['bet 33%', 1.0, 8.53], ['bet 75%', 0.0, 8.25]]
+  1.07 1.07 class   3bet-co/Ks7s2h/flop facing:2 K2o/strong 62.75c pot 29.0: near [['fold', 0.0, 0.0], ['call', 1.0, 39.44], ['raise to 33.5', 0.0, 36.88]] -> [['fold', 0.0, -0.0], ['call', 0.0, 31.71], ['raise to 33.5', 1.0, 32.02]]
+  0.94 0.94 combo   3bet-btn/Td8s6s/flop facing:1 J7s/gutshot 181.48c pot 36.0: near [['fold', 0.0, 0.0], ['call', 1.0, 2.12], ['raise to 41.5', 0.0, -2.15], ['all-in', 0.0, -5.14]] -> [['fold', 1.0, 0.0], ['call', 0.0, -0.34], ['raise to 41.5', 0.0, -2.73], ['all-in', 0.0, -5.43]]
+  0.88 0.88 combo   3bet-btn/Td8s6s/flop first:1 J7s/gutshot 181.48c pot 20.5: near [['check', 1.0, 10.24], ['bet 33%', 0.0, 9.96], ['bet 75%', 0.0, 9.04]] -> [['check', 0.0, 8.36], ['bet 33%', 1.0, 8.54], ['bet 75%', 0.0, 8.23]]
+  0.86 0.86 combo   3bet-co/AhKdQc/flop facing:2 J9s/gutshot 56.9c pot 22.0: near [['fold', 0.0, -0.0], ['call', 0.001, 0.39], ['raise to 19.5', 0.999, 0.46]] -> [['fold', 1.0, -0.0], ['call', 0.0, -0.43], ['raise to 19.5', 0.0, -0.19]]
+  0.86 0.86 class   3bet-btn/Td8s6s/flop facing:1 J7s/gutshot 181.48c pot 36.0: near [['fold', 0.0, 0.0], ['call', 1.0, 2.12], ['raise to 41.5', 0.0, -2.15], ['all-in', 0.0, -5.14]] -> [['fold', 1.0, 0.0], ['call', 0.0, -0.31], ['raise to 41.5', 0.0, -2.56], ['all-in', 0.0, -5.24]]
+  0.24 0.24 class   3bet-btn/Td8s6s/flop first:1 74s/draw 181.48c pot 20.5: near [['check', 1.0, 11.63], ['bet 33%', 0.0, 11.44], ['bet 75%', 0.0, 9.64]] -> [['check', 0.0, 11.11], ['bet 33%', 1.0, 11.16], ['bet 75%', 0.0, 9.6]]
+  0.15 0.15 combo   3bet-btn/Td8s6s/flop first:1 74s/draw 181.48c pot 20.5: near [['check', 1.0, 11.63], ['bet 33%', 0.0, 11.44], ['bet 75%', 0.0, 9.64]] -> [['check', 0.0, 11.03], ['bet 33%', 1.0, 11.06], ['bet 75%', 0.0, 9.59]]
+  0.10 0.10 class   3bet-btn/Td8s6s/flop first:1 97o/strong 183.48c pot 20.5: near [['check', 1.0, 41.19], ['bet 33%', 0.0, 41.09], ['bet 75%', 0.0, 39.72]] -> [['check', 0.029, 40.23], ['bet 33%', 0.971, 40.25], ['bet 75%', 0.0, 39.26]]
+  0.10 0.11 class   4bet-bb/8s8d3c/flop first:0 65s/air 23.78c pot 46.5: near [['check', 0.112, 6.98], ['bet 33%', 0.888, 7.02], ['bet 75%', 0.0, 3.55], ['all-in', 0.0, -2.17]] -> [['check', 0.557, 5.08], ['bet 33%', 0.443, 5.03], ['bet 75%', 0.0, 2.79], ['all-in', 0.0, -3.61]]

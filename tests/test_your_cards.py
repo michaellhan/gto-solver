@@ -131,6 +131,91 @@ class TestAHandOffItsRangeMovesNoRange(unittest.TestCase):
         self.assertLess(float(np.abs(o1 - i1).sum()), 0.03 * float(i1.sum()))
 
 
+class TestANarrowFlopKeepsABucket(unittest.TestCase):
+    """Fast's flop plays the turn and river by hand buckets, equal shares of a range's weight, so a hand with no weight has
+    no value of its own: above a 3bet or 4bet pot's range it played as the hands around it. There it has a bucket kept for
+    it (Config.near_bucket), which a flop takes by the ranges' sizes alone (Advisor._flop_model), so your cards can't choose
+    the model, and the range's own buckets are the same with the hand or without."""
+    PRE = FOLDS("UTG", "HJ", "CO") + [{"pos": "BTN", "action": "raise", "to": 2.5}, {"pos": "SB", "action": "fold"},
+                                      {"pos": "BB", "action": "raise", "to": 10.0}, {"pos": "BTN", "action": "raise", "to": 23.0},
+                                      {"pos": "BB", "action": "call"}]
+
+    def test_by_the_ranges_sizes(self):
+        cfg = advisor("fast", library=False).cfg
+        self.assertTrue(cfg.turn_buckets)
+        self.assertFalse(cfg.near_bucket)
+        flop = cards("8s8d3c")
+        wide, narrow = np.ones(1326) * 0.5, np.zeros(1326)
+        narrow[:int(A.NARROW_FLOP) - 1] = 1.0
+        for pair in ((wide, narrow), (narrow, wide), (narrow, narrow)):
+            self.assertTrue(A.Advisor._flop_model(flop, *pair, cfg).near_bucket)
+        self.assertIs(A.Advisor._flop_model(flop, wide, wide, cfg), cfg)
+        self.assertIs(A.Advisor._flop_model(cards("8s8d3c2h"), narrow, narrow, cfg), cfg)    # (the flop's model only)
+        acc = advisor("accurate", library=False).cfg
+        self.assertIs(A.Advisor._flop_model(flop, narrow, narrow, acc), acc)                 # (no buckets)
+
+    def test_a_near_zero_row_counts_for_nothing(self):
+        cfg = advisor("fast", library=False).cfg
+        flop, wide, r = cards("8s8d3c"), np.ones(1326), np.zeros(1326)
+        r[:int(A.NARROW_FLOP)] = 1.0                 # (just not narrow)
+        self.assertIs(A.Advisor._flop_model(flop, r, wide, cfg), cfg)
+        r[0] = 0.0                                   # (narrow by one combo; a hand off the range at 1e-3 doesn't lift it)
+        r[1000] = 1e-3
+        self.assertTrue(A.Advisor._flop_model(flop, r, wide, cfg).near_bucket)
+
+    def tables(self, hole=None):
+        """A 4bet pot's flop, as the Advisor would solve it, and its bucket table on a turn."""
+        adv = advisor("fast", budget=2, prior_budget=2, library=False)
+        seen = {}
+        real = A.solve
+
+        def spy(board, r0, r1, *a, **k):
+            seen["sol"] = real(board, r0, r1, *a, **k)
+            return seen["sol"]
+        with mock.patch.object(A, "solve", spy):
+            adv.advise(dict(players=6, hero="BB", board="8s8d3c", stack=100, preflop=self.PRE, flop=[], hole=hole))
+        return seen["sol"]
+
+    def test_the_ranges_own_buckets_dont_move(self):
+        out, on = self.tables("Ad8h"), self.tables("QhQd")           # (trips: off the range; queens: in it)
+        self.assertTrue(out.ctx.cfg.near_bucket and on.ctx.cfg.near_bucket)
+        i = COMBO_INDEX[tuple(sorted(cards("Ad8h")))]
+        ca, cb = list(out.ctx.active), list(on.ctx.active)
+        turn = cards("8s8d3c2h")
+        K = out.ctx.cfg.river_buckets
+        ia, Ea, ka = out.ctx.bucket_table(tuple(turn), set(), K)
+        ib, Eb, kb = on.ctx.bucket_table(tuple(turn), set(), K)
+        self.assertEqual(ia[0, ca.index(i)], K - 1)
+        self.assertLess(int(ib[0, ib[0] < K].max()), K - 1)          # (empty without such a hand)
+        kept = ia[:, np.array([ca.index(c) for c in cb])].copy()
+        kept[0][np.array(cb) == i] = K                           # (BB's own row: the one difference)
+        ib = ib.copy()
+        ib[0][np.array(cb) == i] = K
+        self.assertTrue(np.array_equal(kept, ib))
+        np.testing.assert_array_equal(Ea[:, :K - 1, :K - 1], Eb[:, :K - 1, :K - 1])
+        self.assertGreater(float(Ea[0, K - 1, :K - 1].max()), 0.5)   # (trips against the BTN's range: its own value)
+
+    def test_the_kept_bucket_is_the_same_without_the_core(self):
+        sol = self.tables("Ad8h")
+        ctx, turn, K = sol.ctx, tuple(cards("8s8d3c2h")), sol.ctx.cfg.river_buckets
+        ids, E, kap = ctx.bucket_table(turn, set(), K)
+        held = dict(ctx._stacks)
+        with mock.patch.object(ctx, "tables", None), mock.patch.object(ctx, "_stacks", {}):
+            i2, E2, k2 = ctx.bucket_table(turn, set(), K)
+        self.assertEqual(held.keys(), ctx._stacks.keys())
+        self.assertTrue(np.array_equal(ids, i2))
+        np.testing.assert_allclose(E, E2, atol=1e-5)
+        np.testing.assert_allclose(kap, k2, atol=1e-5)
+
+    def test_trips_off_a_4bet_pots_range_dont_shove(self):
+        adv = advisor("fast", budget=5, prior_budget=2, library=False)
+        res = adv.advise(dict(players=6, hero="BB", board="8s8d3c", stack=100, preflop=self.PRE, flop=[], hole="Ad8h"))
+        self.assertTrue(any("near-zero-weight" in n for n in res["notes"]), res["notes"])
+        ev = {a["action"]: a["ev_bb"] for a in res["actions"]}
+        self.assertNotEqual(max(ev, key=ev.get), "all-in", res["actions"])
+        self.assertGreater(ev["check"], 75.0)        # (65.7 by the range's buckets; 83.0 per combo)
+
+
 class TestYourCardsStillBlock(unittest.TestCase):
     def test_multiway_report_leaves_out_what_you_block(self):
         rs, res = spy_multiway(dict(SEVEN, hole="ThTs"))

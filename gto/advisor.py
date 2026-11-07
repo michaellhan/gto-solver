@@ -35,7 +35,7 @@ from . import preflop as pf
 from .pf_classes import push_fold
 # imported where used (exploit, breakdown, like multiway_solver and pf_game): the browser's worker imports this module
 # before its first answer, and a preflop answer or a library flop needs none of them (tests/test_bundle.py)
-from .solver import solve, Config, Solution, Decision, Terminal, Chance, BucketEntry, RiverEntry, match_action, expand, \
+from .solver import NEAR_ROW, solve, Config, Solution, Decision, Terminal, Chance, BucketEntry, RiverEntry, match_action, expand, \
     MEMBER_FULL, _inv_of, Cancelled, TreeTooBig, TooSlow, tree_cells
 
 DEFAULT_OPEN = {"SB": 3.0}
@@ -209,11 +209,15 @@ CLOSE_PCT = 3.0
 CLOSE_MAX = 5.0     # ...an answer further than that from equilibrium widens it to its distance, up to this (BR_TIE_MAX's 5%)
 # (Such a hand is a best response to players who don't expect it, which is what a real weight takes away: on 630 hands at
 # 78 spots of scripts/bench_off_range.py its mix gives up 0.12-0.23% of the pot at a real weight's EVs, the noise floor
-# 0.11, but its EVs read 2.4-2.9% of the pot off, mostly high, and the gaps between actions 0.6-1.4 wider. A flop's worst
-# misses are the hand buckets, not the weight: docs/off_range_research.md)
+# 0.11, but its EVs read 2.4-2.9% of the pot off, mostly high, and the gaps between actions 0.6-1.4 wider. Those are from
+# before NARROW_FLOP, whose bucket takes a flop's worst misses out and combo's 0.12 to 0.05: docs/off_range_research.md)
 OFF_RANGE_NOTE = (OFF_RANGE + ", so it was solved as a near-zero-weight combo: the best play "
                   "against players who don't expect it, so its EVs usually read high and its actions about 1% of the pot further "
                   "apart than if your range held it")
+# A heads-up flop with a range under this many combos (a 3bet pot or tighter, a cold caller's) keeps a hand bucket for a hand outside its
+# range (Config.near_bucket, Advisor._flop_model). By the ranges' sizes, never the hand. 128 strong such hands of 3bet and 4bet
+# pots: regret against per combo 2.10 to 0.08% of the pot, hands in range 0.07 to 0.09, no slower. docs/off_range_research.md
+NARROW_FLOP = 200.0
 UNSETTLED = 3.0     # heads-up: a solve this far from equilibrium (% pot) hasn't settled (the page's "converged" cutoff)
 # Heads-up, earlier streets: narrowing follows a solve fully this close (% pot) to equilibrium, not at all this far,
 # linearly between; the rest of each action's weights are the betting rules' range for it (softened, as multiway),
@@ -7687,12 +7691,20 @@ class Advisor:
                          f"this {off_tree.size_of(C, T) * 100:.0f}% {what} by its price (defending as often, relative to "
                          f"the minimum defence, the hands that do worst folding first)"}
 
+    @staticmethod
+    def _flop_model(board, r0, r1, cfg: Config) -> Config:
+        """cfg, on a bucketed flop with a range under NARROW_FLOP combos with a bucket kept for a hand outside its range. A
+        near-zero row isn't counted, so that holding such a hand can't change the model."""
+        if len(board) == 3 and cfg.turn_buckets and min(float(r[r >= NEAR_ROW].sum()) for r in (r0, r1)) < NARROW_FLOP:
+            return dataclasses.replace(cfg, near_bucket=True)
+        return cfg
+
     def _solve_key(self, board, r0, r1, pot, stack, bets=(0.0, 0.0), to_act=0, n_raises=0, cfg=None):
         """(cache key, spot) of a heads-up solve: its ranges and the spot (_by_spot's key)."""
-        cfg = cfg or self.cfg
+        cfg = self._flop_model(board, r0, r1, cfg or self.cfg)
         spot = (tuple(board), round(pot, 2), round(stack, 2), tuple(round(b, 2) for b in bets), to_act, n_raises,
-                cfg.sizes_key()) + (((cfg.river_play, cfg.turn_classes, cfg.river_buckets, cfg.turn_buckets, cfg.river_strength),)
-                                    if len(board) == 3 else ())
+                cfg.sizes_key()) + (((cfg.river_play, cfg.turn_classes, cfg.river_buckets, cfg.turn_buckets, cfg.river_strength,
+                                       cfg.near_bucket),) if len(board) == 3 else ())
         # (a flop solve's river_play and turn_classes are part of the spot: a Fast flop solve, river checked down,
         # seeded an Accurate one at its lower c-bet frequencies and did worse in the same time than a cold start)
         return (_range_key(r0), _range_key(r1)) + spot
@@ -7756,7 +7768,7 @@ class Advisor:
         hu_settled set it stops at the first of HU_CHECKS where it is that close to equilibrium; one settled already
         isn't run on. A solve stopped part way (should_stop: Cancelled) stays cached, and the spot asked again goes
         on from where it stopped. `settled`: hu_settled's target for this solve instead."""
-        cfg = cfg or self.cfg
+        cfg = self._flop_model(board, r0, r1, cfg or self.cfg)
         key = self._solve_key(board, r0, r1, pot, stack, bets, to_act, n_raises, cfg)
         spot = key[2:]
         sol = self._cache.get(key)
@@ -8108,7 +8120,7 @@ class Advisor:
             setattr(cfg, "root_raises" if facing else "root_bets", list(full_menu))
             try:
                 tree_cells(board, R0, R1, cur.pot_start, eff, bets=bets, to_act=to_act, n_raises=cur.n_raises,
-                           cfg=cfg, max_cells=cap if level < len(TRIMS) else self.max_cells)
+                           cfg=self._flop_model(board, R0, R1, cfg), max_cells=cap if level < len(TRIMS) else self.max_cells)
                 return level
             except TreeTooBig:
                 continue
@@ -8122,8 +8134,8 @@ class Advisor:
         menu's from the advice's, saved nothing: a turn's 150% solve 0.092% of the pot from equilibrium at 300
         iterations cold, 0.102% seeded; its full menu 0.19 cold, 0.17 seeded.)"""
         t0 = time.time()
-        sol = solve(board, R0, R1, cur.pot_start, eff, bets=bets, to_act=to_act, n_raises=cur.n_raises, cfg=cfg,
-                    time_budget=self.time_budget, max_iters=checks[0], horizon=1000,
+        sol = solve(board, R0, R1, cur.pot_start, eff, bets=bets, to_act=to_act, n_raises=cur.n_raises,
+                    cfg=self._flop_model(board, R0, R1, cfg), time_budget=self.time_budget, max_iters=checks[0], horizon=1000,
                     should_stop=self.should_stop, reserve=HU_RESERVE)
         self._one_size_run(sol, self.time_budget - (time.time() - t0), target, to_act, cut, checks)
         return sol

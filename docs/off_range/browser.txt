@@ -1,0 +1,47 @@
+Pyodide, Fast, scripts/bench_browser.mjs --pyodide ~/pyo --speeds fast. Page budget ~8 s on a flop, ~11 with its turn.
+
+Per combo below 200 combos, tried and dropped (no hole: the spot's own hand)
+--- br_base
+flop-3bp    fast       0.03 s of ~8 (-100%)  it 200  expl 0.15%  solve 0 s  outside 0.03 s  heap 72 MB  library  sync-fe
+flop-3bp-ip fast       0.65 s of ~8 (-92%)  it 300  expl 0.06%  solve 0.18 s  outside 0.47 s  heap 72 MB  cells 0.1M  sy
+flop-near-3bp fast       0.03 s of ~8 (-100%)  it 300  expl 0.08%  solve 0 s  outside 0.03 s  heap 72 MB  library  sync-
+flop-50bb-3bp fast        0.3 s of ~8 (-96%)  it 300  expl 0.03%  solve 0.25 s  outside 0.05 s  heap 72 MB  cells 0.1M
+flop-200bb-3bp fast       0.71 s of ~8 (-91%)  it 300  expl 0.12%  solve 0.6 s  outside 0.11 s  heap 72 MB  cells 0.3M
+turn-3bp    fast       1.07 s of ~11 (-90%)  it 300  expl 0.06%  solve 0.74 s  outside 0.33 s  heap 72 MB  cells 0.6M  s
+turn-3bp-ip fast       1.09 s of ~11 (-90%)  it 300  expl 0.06%  solve 0.75 s  outside 0.34 s  heap 72 MB  cells 0.6M  s
+--- br_new
+flop-3bp    fast       0.03 s of ~8 (-100%)  it 200  expl 0.15%  solve 0 s  outside 0.03 s  heap 72 MB  library  sync-fe
+flop-3bp-ip fast      10.29 s of ~8 (+29%)  it 300  expl 0.06%  solve 3.99 s  outside 6.3 s  heap 125 MB  cells 1.3M  sy
+flop-near-3bp fast       0.03 s of ~8 (-100%)  it 300  expl 0.08%  solve 0 s  outside 0.03 s  heap 72 MB  library  sync-
+flop-50bb-3bp fast       4.33 s of ~8 (-46%)  it 300  expl 0.04%  solve 4.25 s  outside 0.08 s  heap 87 MB  cells 1.2M
+flop-200bb-3bp fast       2.81 s of ~8 (-65%)  it 300  expl 0.11%  solve 2.7 s  outside 0.11 s  heap 104 MB  cells 1.2M
+turn-3bp    fast       3.82 s of ~11 (-65%)  it 300  expl 0.05%  solve 0.71 s  outside 3.11 s  heap 87 MB  cells 0.6M  s
+turn-3bp-ip fast       3.84 s of ~11 (-65%)  it 300  expl 0.05%  solve 0.72 s  outside 3.12 s  heap 87 MB  cells 0.6M  s
+
+The kept bucket: an off-range hand (--hole 7h2d), before and after
+--- br2_off_base
+flop-3bp    fast       0.51 s of ~8 (-94%)  it 300  expl 0.04%  solve 0.43 s  outside 0.08 s  heap 72 MB  cells 0.2M  sy
+flop-3bp-ip fast       0.76 s of ~8 (-90%)  it 300  expl 0.06%  solve 0.23 s  outside 0.53 s  heap 72 MB  cells 0.1M  sy
+flop-near-3bp fast       0.53 s of ~8 (-93%)  it 300  expl 0.08%  solve 0.45 s  outside 0.08 s  heap 72 MB  cells 0.2M  
+flop-50bb-3bp fast        0.4 s of ~8 (-95%)  it 300  expl 0.03%  solve 0.33 s  outside 0.07 s  heap 72 MB  cells 0.1M
+flop-200bb-3bp fast       0.85 s of ~8 (-89%)  it 300  expl 0.12%  solve 0.72 s  outside 0.13 s  heap 72 MB  cells 0.3M
+turn-3bp    fast       1.22 s of ~11 (-89%)  it 300  expl 0.05%  solve 0.85 s  outside 0.37 s  heap 72 MB  cells 0.7M  s
+turn-3bp-ip fast       1.23 s of ~11 (-89%)  it 300  expl 0.05%  solve 0.85 s  outside 0.38 s  heap 72 MB  cells 0.7M  s
+--- br2_off_new
+flop-3bp    fast       0.51 s of ~8 (-94%)  it 300  expl 0.04%  solve 0.44 s  outside 0.07 s  heap 72 MB  cells 0.2M  sy
+flop-3bp-ip fast       0.77 s of ~8 (-90%)  it 300  expl 0.07%  solve 0.23 s  outside 0.54 s  heap 72 MB  cells 0.1M  sy
+flop-near-3bp fast       0.54 s of ~8 (-93%)  it 300  expl 0.08%  solve 0.46 s  outside 0.08 s  heap 72 MB  cells 0.2M  
+flop-50bb-3bp fast       0.41 s of ~8 (-95%)  it 300  expl 0.03%  solve 0.34 s  outside 0.07 s  heap 72 MB  cells 0.1M
+flop-200bb-3bp fast       0.87 s of ~8 (-89%)  it 300  expl 0.12%  solve 0.74 s  outside 0.13 s  heap 72 MB  cells 0.3M
+turn-3bp    fast       1.28 s of ~11 (-88%)  it 300  expl 0.04%  solve 0.89 s  outside 0.39 s  heap 72 MB  cells 0.7M  s
+turn-3bp-ip fast       1.27 s of ~11 (-88%)  it 300  expl 0.05%  solve 0.88 s  outside 0.39 s  heap 72 MB  cells 0.7M  s
+
+The kept bucket: in range
+--- br2_in_new
+flop-3bp    fast       0.03 s of ~8 (-100%)  it 200  expl 0.15%  solve 0 s  outside 0.03 s  heap 72 MB  library  sync-fe
+flop-3bp-ip fast       0.81 s of ~8 (-90%)  it 300  expl 0.06%  solve 0.24 s  outside 0.57 s  heap 72 MB  cells 0.1M  sy
+flop-near-3bp fast       0.03 s of ~8 (-100%)  it 300  expl 0.08%  solve 0 s  outside 0.03 s  heap 72 MB  library  sync-
+flop-50bb-3bp fast       0.42 s of ~8 (-95%)  it 300  expl 0.03%  solve 0.35 s  outside 0.07 s  heap 72 MB  cells 0.1M
+flop-200bb-3bp fast       0.88 s of ~8 (-89%)  it 300  expl 0.12%  solve 0.75 s  outside 0.13 s  heap 72 MB  cells 0.3M
+turn-3bp    fast       1.34 s of ~11 (-88%)  it 300  expl 0.04%  solve 0.92 s  outside 0.42 s  heap 72 MB  cells 0.6M  s
+turn-3bp-ip fast       1.38 s of ~11 (-87%)  it 300  expl 0.04%  solve 0.95 s  outside 0.43 s  heap 72 MB  cells 0.6M  s

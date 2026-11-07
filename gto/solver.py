@@ -53,6 +53,7 @@ WINDOW_MAX = 0.9
 TINY = np.float32(2.0 ** -126)   # float32's smallest normal: regret matching takes a sum under it for none (its
                                  # reciprocal can overflow, and a zero regret times inf is NaN), as the core does
 N_FULL = 1326
+NEAR_ROW = 0.01    # a row under this weight is a hand outside its range, not part of it (Config.near_bucket)
 FLOP_LEAF_RIVERS = 4  # a flop all-in's equity: at least this many rivers under every turn card (Ctx._flop_leaf)
 MEMBER_FULL = np.zeros((52, N_FULL))
 for _i, (_a, _b) in enumerate(ALL_COMBOS):
@@ -111,6 +112,12 @@ class Config:
     river_buckets: Optional[int] = None
     turn_buckets: bool = False
     bucket_river_step: int = 1
+    # near_bucket: with turn_buckets, the last bucket is kept for the rows under NEAR_ROW (a hand outside its range) and the
+    # range shares the others. A bucket's value is its range's mean, so a row with no weight of its own otherwise plays as
+    # the hands around it: trips above a 3bet pot's range, as its overpairs (Ctx.bucket_table). Empty for a range without
+    # such a row, and the others' buckets are the same with one or without. Each player has one such row, their own hand:
+    # preflop's ranges have none under NEAR_ROW. Several would share the bucket and play as their mean.
+    near_bucket: bool = False
     # river_strength: with river_play, the river beyond `depth` is played by this many buckets of river strength
     # (RiverEntry, Ctx.river_table): on each river card each player's range splits into equal shares by equity there
     # against the other's root range, and a hand coming from the turn (a combo, or a turn bucket) enters the river
@@ -392,12 +399,14 @@ class Ctx:
         n = self.n
         step = self.cfg.bucket_river_step
         w, rivers = self._bucket_in(board, dead)
+        near = self.cfg.near_bucket and rivers is not None
+        K -= near
         if self.tables is not None and rivers is not None:
             T = self.tables.take(key)
             if T is None:
                 T = self.tables.bucket_table(self, self._strengths([tuple(board) + (r,) for r in rivers]), w, K)
-            self._stacks[key] = T
-            return T
+            self._stacks[key] = self._near_row_bucket(T, board, rivers, w, K) if near else T
+            return self._stacks[key]
         if step > 1:
             L = self._avg_showdown([tuple(board) + (r,) for r in rivers])
         else:
@@ -435,8 +444,37 @@ class Ctx:
         num = group_sums(group_sums(L.astype(np.float64), 1, 1), 0, 0) / den
         pm = group_sums(group_sums(self.compat, 1, 1), 0, 0) / den
         T = (ids, np.stack([num, -num.T]).astype(np.float32), np.stack([pm, pm.T]).astype(np.float32))
-        self._stacks[key] = T
-        return T
+        self._stacks[key] = self._near_row_bucket(T, board, rivers, w, K) if near else T
+        return self._stacks[key]
+
+    def _near_row_bucket(self, T: tuple, board: tuple, rivers, w, K: int) -> tuple:
+        """Table T of K buckets with bucket K added (Config.near_bucket): each player's rows under NEAR_ROW (out of w, their
+        range's weights without them), against the other's buckets, the rows' own showdowns over `rivers` by their weight."""
+        ids, E, kap = T
+        out = np.where(ids == K, K + 1, ids)
+        E2, kap2 = np.zeros((2, K + 1, K + 1), dtype=np.float32), np.zeros((2, K + 1, K + 1), dtype=np.float32)
+        E2[:, :K, :K], kap2[:, :K, :K] = E, kap
+        live = self.member[list(board)].sum(axis=0) == 0
+        S = self._strengths([tuple(board) + (r,) for r in rivers]).astype(np.float32)
+        bl = S < 0
+        for q in (0, 1):
+            rows = np.flatnonzero(live & (self.root_reach[q] > 0) & (self.root_reach[q] < NEAR_ROW))
+            if not len(rows):
+                continue
+            out[q, rows] = K
+            weight = self.root_reach[q][rows]
+            s, ok = S[:, rows, None], ~bl[:, rows, None] & ~bl[:, None, :]
+            won = (ok & (s > S[:, None, :])).sum(axis=0, dtype=np.float32) - (ok & (s < S[:, None, :])).sum(axis=0, dtype=np.float32)
+            L = won / np.maximum(ok.sum(axis=0), 1) * self.compat[rows]
+            other = ids[1 - q] < K
+            by = np.zeros((self.n, K))        # (combos, the other's buckets): their weights
+            by[np.flatnonzero(other), ids[1 - q][other]] = w[1 - q][other]
+            mass = by.sum(axis=0)
+            mean = lambda M: (weight @ M / weight.sum()) @ by / np.where(mass > 0, mass, np.inf)
+            ev, share = mean(L), mean(self.compat[rows])
+            E2[q, K, :K], E2[1 - q, :K, K] = ev, -ev
+            kap2[q, K, :K], kap2[1 - q, :K, K] = share, share
+        return out, E2, kap2
 
     def _bucket_in(self, board: tuple, dead: set) -> tuple:
         """bucket_table's (w, rivers): each player's root reach on the combos holding no board card, and the river
@@ -445,6 +483,8 @@ class Ctx:
         avail = [c for c in range(52) if c not in dead and c not in board]
         live = self.member[list(board)].sum(axis=0) == 0
         w = [np.where(live, self.root_reach[q], 0.0) for q in (0, 1)]
+        if self.cfg.near_bucket:
+            w = [np.where(x < NEAR_ROW, 0.0, x) for x in w]
         # every step-th river card (step coprime to 4 keeps the suits and ranks even); every one is leaf_matrix's
         # inside a flop solve
         return w, avail[board[-1] % step::step] if step > 1 else avail if self.root_len == 3 else None
@@ -464,7 +504,8 @@ class Ctx:
             if key in self._stacks:
                 return None
             w, rivers = self._bucket_in(board, dead)
-            return None if rivers is None else (key, 2, self._strengths([board + (r,) for r in rivers]), w, K)
+            return None if rivers is None else (key, 2, self._strengths([board + (r,) for r in rivers]), w,
+                                                K - self.cfg.near_bucket)
         key = ("river", tuple(sorted(board)), K, outer)
         if key in self._stacks:
             return None

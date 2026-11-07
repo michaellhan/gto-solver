@@ -1153,7 +1153,14 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
     a flop solve are played per bucket against a 32 x 32 bucket-pair equity matrix (the turn's every-river
     equity averaged over the pairs with the flop ranges' weights, card removal as each pair's compatible
     share; `bucket_river_step=3` averages every third river, no worse). The flop stays per combo. The two
-    players' tables are each other's negated transpose, so the game stays zero-sum. Per combo the river
+    players' tables are each other's negated transpose, so the game stays zero-sum. A heads-up flop with a
+    range under 200 combos (`NARROW_FLOP`: a 3bet pot or tighter, or a cold caller's) keeps the last bucket for a row under 0.01
+    of a combo, a hand outside its range, against the other's buckets by its own showdowns, and the range
+    shares the other 31 (`near_bucket`): a hand with no weight would otherwise play the bucket's mean, trips
+    above a 4bet pot's range as its overpairs. The rule reads range sizes and leaves such a row out of them,
+    so your hand can't move the model or the range's buckets. 128 strong off-range hands of 3bet and 4bet
+    pots went from a regret of 2.10% of the pot against per combo to 0.08 (49 misses over 1% to 2), hands in
+    range 0.07 to 0.09, in the same time natively and in the browser (`docs/off_range_research.md`). Per combo the river
     beyond depth was ~95% of the arithmetic (N x N leaf products); by buckets an iteration costs what the
     old Fast tree's did natively (12-18 ms on a single-raised pot) and 2.4x less in Pyodide (30-42 ms
     against 74), so Fast got 140-210 iterations natively and 130-420 in the browser (measured: 217-421 on
@@ -3633,10 +3640,10 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   That's the best play against players who don't expect the hand. Its action is sound, its EVs
   usually high and the gaps between its actions about 1% of the pot wide, and the note says so
   (`scripts/bench_off_range.py`, `docs/off_range_research.md`). The hand isn't put back in its
-  range: done because you hold it, that would hand your cards to the opponents. The exception
-  is a live flop at Fast with a hand far above a narrow range: the later streets' buckets play it
-  as the hands around it (trips in a 4bet pot: check 65.7 where it is 83.0 per combo, and a shove
-  that isn't best), which is the buckets and not the weight.
+  range: done because you hold it, that would hand your cards to the opponents. A live flop at
+  Fast with a range under 200 combos keeps a hand bucket for it, as the later streets' buckets
+  would otherwise play a hand far above that range as the hands around it (trips in a 4bet pot:
+  check 65.7 where it is 83.0 per combo, and a shove that isn't best). Fast's flop model, below.
   Multiway too, and no hand is priced as random play there any more: a hand with no
   strategy sums at a decision now plays its current strategy (`Decision.avg_strategy`,
   `core/mwcore.c`), where it played uniformly, calling and folding a bet alike (A4s in a

@@ -18,9 +18,12 @@ the Advisor gives such a hand with the answer at a real weight, on the same tree
 
   python scripts/bench_off_range.py run --group hu --out hu.jsonl        # resumes: finished reads are skipped
   python scripts/bench_off_range.py run --group 3way --out mw.jsonl
+  python scripts/bench_off_range.py run --alone --only 4bet --streets flop --arms combo,class --out flop.jsonl
+                                                # (--alone: a solve for each hand, for flops in Advisor._flop_model's reach)
   python scripts/bench_off_range.py report --out hu.jsonl,mw.jsonl
-  python scripts/bench_off_range.py buckets     # the flop's worst reads with its later streets played per combo
+  python scripts/bench_off_range.py buckets     # the flop's worst reads: the range's buckets, one of its own, per combo
   python scripts/bench_off_range.py hand        # the hand that asked (As4s, 7-handed), by arm
+  python scripts/bench_off_range.py narrow --out narrow.jsonl    # flops by range size: buckets against per combo
 
 Scores: the top action (the mix's most frequent) changing; the regret of the near-zero answer's mix read at the real
 weight's EVs, as a % of the pot (the number that matters: a flip between two actions with equal EVs costs nothing); each
@@ -381,13 +384,15 @@ def run(args):
         if not ps or not reads:
             continue
         near_w = NEAR_MW if group != "hu" else NEAR_HU
-        base_w = {p[2]: near_w for p in ps}
+        base_w = {} if args.alone else {p[2]: near_w for p in ps}
         h = Harness(n, stack, hero, streets, board)    # (heads-up: one solve of the street serves every read of it)
         for kind, acts in reads:
             node = f"{kind}:{len(acts)}"
             h.w = dict(base_w)
             base = {}
             for b, cls, hi in ps:
+                if args.alone:
+                    h.w = {hi: near_w}
                 try:
                     res, view, secs = h.ask(hi, acts, street)
                 except Exception as e:  # noqa: BLE001  (one bad read isn't the run)
@@ -428,7 +433,7 @@ def run(args):
                 if "combo" in arms and (sid, node, key, "combo") not in done:
                     next_hi = ps[(pi + 1) % len(ps)][2]
                     arm("combo", {hi: 1.0}, only={hi})
-                    if next_hi != hi:     # (the same solve, the next probe still near-zero in it)
+                    if next_hi != hi and not args.alone:     # (the same solve, the next probe still near-zero in it)
                         arm_control(h, out, sid, group, street, node, acts, ps, pi, base, base_w, hi, done)
                 if "class" in arms and (sid, node, key, "class") not in done:
                     idx = A._class_index()[cls]
@@ -689,7 +694,7 @@ def combo_of(hole):
 
 
 def print_read(tag, res, view):
-    print(f"{tag:<28}", [(a["action"], round(a["freq"], 3), a["ev_bb"]) for a in res["actions"]],
+    print(f"{tag:<30}", [(a["action"], round(a["freq"], 3), a["ev_bb"]) for a in res["actions"]],
           "hero", round(float(view[1].sum()), 1) if view else None, res["solver"].get("iterations"), flush=True)
 
 
@@ -716,14 +721,90 @@ def buckets(_args):
         _, n, stack, pre, _ = pot_of(name)
         hi = combo_of(hole)
         print(name, board, hole)
-        for tag, w, combos in (("near-zero, buckets", NEAR_HU, False), ("1 combo, buckets", 1.0, False),
-                               ("near-zero, per combo", NEAR_HU, True), ("1 combo, per combo", 1.0, True)):
+        for tag, w, cut, combos in (("near-zero, range's buckets", NEAR_HU, 0.0, False), ("near-zero, its own bucket", NEAR_HU, 1e9, False),
+                                    ("1 combo, buckets", 1.0, 0.0, False), ("near-zero, per combo", NEAR_HU, 0.0, True),
+                                    ("1 combo, per combo", 1.0, 0.0, True)):
+            A.NARROW_FLOP = cut
             h = Harness(n, stack, hero, {"preflop": pre}, board)
             h.w = {hi: w}
             if combos:
                 per_combo(h)
             res, view, _ = h.ask(hi, acts, "flop")
             print_read("  " + tag, res, view)
+
+
+NARROW_POTS = [(n, 6, 100, pre, h) for n, pre, h in [
+    ("4bet-btn-bb, BB", to_btn(p_("BTN", "raise", to=2.5), p_("SB", "fold"), p_("BB", "raise", to=10.0), p_("BTN", "raise", to=23.0), p_("BB", "call")), "BB"),
+    ("4bet-btn-bb, BTN", to_btn(p_("BTN", "raise", to=2.5), p_("SB", "fold"), p_("BB", "raise", to=10.0), p_("BTN", "raise", to=23.0), p_("BB", "call")), "BTN"),
+    ("4bet-co-btn, CO", fold("UTG", "HJ") + [p_("CO", "raise", to=2.5), p_("BTN", "raise", to=7.5)] + fold("SB", "BB")
+     + [p_("CO", "raise", to=18.0), p_("BTN", "call")], "CO"),
+    ("4bet-utg-hj, UTG", [p_("UTG", "raise", to=2.5), p_("HJ", "raise", to=7.5)] + fold("CO", "BTN", "SB", "BB")
+     + [p_("UTG", "raise", to=18.0), p_("HJ", "call")], "UTG"),
+    ("3bet-utg-hj, UTG", [p_("UTG", "raise", to=2.5), p_("HJ", "raise", to=7.5)] + fold("CO", "BTN", "SB", "BB") + [p_("UTG", "call")], "UTG"),
+    ("3bet-utg-hj, HJ", [p_("UTG", "raise", to=2.5), p_("HJ", "raise", to=7.5)] + fold("CO", "BTN", "SB", "BB") + [p_("UTG", "call")], "HJ"),
+    ("3bet-utg-btn, UTG", [p_("UTG", "raise", to=2.5)] + fold("HJ", "CO") + [p_("BTN", "raise", to=7.5)] + fold("SB", "BB") + [p_("UTG", "call")], "UTG"),
+    ("3bet-hj-co, CO", fold("UTG") + [p_("HJ", "raise", to=2.5), p_("CO", "raise", to=7.5)] + fold("BTN", "SB", "BB") + [p_("HJ", "call")], "CO"),
+    ("3bet-sb-bb, BB", fold("UTG", "HJ", "CO", "BTN") + [p_("SB", "raise", to=3.0), p_("BB", "raise", to=9.0), p_("SB", "call")], "BB"),
+    ("3bet-co-btn, CO", fold("UTG", "HJ") + [p_("CO", "raise", to=2.5), p_("BTN", "raise", to=7.5)] + fold("SB", "BB") + [p_("CO", "call")], "CO"),
+    ("3bet-btn-bb, BB", to_btn(p_("BTN", "raise", to=2.5), p_("SB", "fold"), p_("BB", "raise", to=10.0), p_("BTN", "call")), "BB"),
+]]
+
+
+COLD_POTS = [(n, 6, 100, pre, h) for n, pre, h in [    # (single-raised, and narrow by the cold caller: 32-59 combos)
+    ("srp-utg-hj, HJ", [p_("UTG", "raise", to=2.5), p_("HJ", "call")] + fold("CO", "BTN", "SB", "BB"), "HJ"),
+    ("srp-utg-hj, UTG", [p_("UTG", "raise", to=2.5), p_("HJ", "call")] + fold("CO", "BTN", "SB", "BB"), "UTG"),
+    ("srp-co-btn, BTN", fold("UTG", "HJ") + [p_("CO", "raise", to=2.5), p_("BTN", "call")] + fold("SB", "BB"), "BTN"),
+    ("srp-co-btn, CO", fold("UTG", "HJ") + [p_("CO", "raise", to=2.5), p_("BTN", "call")] + fold("SB", "BB"), "CO"),
+]]
+
+
+def narrow(args):
+    """What Advisor._flop_model does. Flops by the size of the smaller range: hands off the range (strong ones) and in it, by
+    buckets, with a bucket kept for such a hand (near_bucket) and per combo, the reference: each mix's regret at per combo's
+    EVs and each EV's distance from it, % of the pot. One line a hand: --out's jsonl."""
+    out = open(args.out, "a")
+    rows = []
+    for name, n, stack, pre, hero in NARROW_POTS + COLD_POTS:
+        if args.only and args.only not in name:
+            continue
+        for board in ("8s8d3c", "Ks7s2h", "Td8s6s", "AhKdQc", "7c5c2d", "Jh9h4c"):
+            st = {"preflop": pre, "flop": [], "turn": [], "river": []}
+            nodes = read_nodes(n, stack, st, "flop", hero, 0.33)
+            if not nodes:
+                continue
+            kind, acts = nodes[0]
+            rng = A.preflop_ranges(pre, table(n), stack)[hero]
+            off = [(b, c, i) for b, c, i in probes(rng, board, 8, 11) if b == "strong"][:2]
+            on = sorted((i for i, cb in enumerate(ALL_COMBOS) if rng[i] > 0.2 and not set(cb) & set(cards(board))),
+                        key=lambda i: (i * 2654435761) % 1326)[:2]
+            for where, hands in (("off", [i for _, _, i in off]), ("in", on)):
+                for hi in hands:
+                    row = dict(pot_name=name, board=board, where=where, node=kind)
+                    for tag, cut in (("buckets", 0.0), ("near", 1e9), ("combo", 0.0)):
+                        A.NARROW_FLOP = cut
+                        h = Harness(n, stack, hero, {"preflop": pre}, board)
+                        if where == "off":
+                            h.w = {hi: NEAR_HU}
+                        if tag == "combo":
+                            per_combo(h)
+                        t = time.time()
+                        res, view, _ = h.ask(hi, acts, "flop")
+                        row[tag] = dict(acts=[[a["action"], a["freq"], a["ev_bb"]] for a in res["actions"]], secs=round(time.time() - t, 2),
+                                        iters=res["solver"].get("iterations"), expl=res["solver"].get("exploitability_pct"))
+                        row["hero"], row["pot"] = round(float(view[1].sum()), 1) if view else None, res["pot_bb"]
+                        row["villain"] = res.get("villain_range_combos")
+                    c = {a[0]: a for a in row["combo"]["acts"]}
+                    best = max(a[2] for a in c.values())
+                    for tag in ("buckets", "near"):
+                        b = {a[0]: a for a in row[tag]["acts"]}
+                        row[tag]["regret"] = round(sum(a[1] * (best - c[k][2]) for k, a in b.items() if k in c) / row["pot"] * 100, 2)
+                        row[tag]["ev"] = round(float(np.mean([abs(a[2] - c[k][2]) for k, a in b.items() if k in c])) / row["pot"] * 100, 2)
+                    row["hand"] = A.hand_class(ALL_COMBOS[hi])
+                    print(name, board, row["hand"], where, "hero", row["hero"], "villain", row["villain"],
+                          *[f"{t} {row[t]['regret']} {row[t]['ev']} {row[t]['secs']} s" for t in ("buckets", "near")], "combo", row["combo"]["secs"], "s", flush=True)
+                    out.write(json.dumps(row) + "\n")
+                    out.flush()
+                    rows.append(row)
 
 
 def the_hand(_args):
@@ -750,7 +831,7 @@ def the_hand(_args):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=("run", "report", "buckets", "hand"))
+    ap.add_argument("cmd", choices=("run", "report", "buckets", "hand", "narrow"))
     ap.add_argument("--out", default="off_range.jsonl", help="report: several, comma-separated")
     ap.add_argument("--group", default="hu", choices=("hu", "3way"))
     ap.add_argument("--flops", type=int, default=2)
@@ -759,8 +840,10 @@ if __name__ == "__main__":
     ap.add_argument("--history-every", type=int, default=1, help="the history arm on every nth hand of a spot")
     ap.add_argument("--arms", default="combo,class,history", help="and tiny, wide")
     ap.add_argument("--pool", action="store_true", help="against the typical player (the page's cash hands), not equilibrium")
+    ap.add_argument("--alone", action="store_true", help="one hand near-zero in each solve, as the advisor has it, not all of a "
+                    "spot's: on a narrow flop they'd share the bucket kept for it (Config.near_bucket). No control arm")
     ap.add_argument("--only", default=None, help="spots with this in their id")
     ap.add_argument("--streets", default="river,turn,flop")
     ap.add_argument("--max-spots", type=int, default=0)
     a = ap.parse_args()
-    {"run": run, "report": report, "buckets": buckets, "hand": the_hand}[a.cmd](a)
+    {"run": run, "report": report, "buckets": buckets, "hand": the_hand, "narrow": narrow}[a.cmd](a)
