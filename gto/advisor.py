@@ -199,6 +199,14 @@ RARE_RESOLVE = True
 RARE_RESOLVE_SETTLED = 0.1   # ...stopped at the first of HU_CHECKS (HU_SETTLED_FROM on) where it is this close (% pot):
                              # 300 iterations natively, as close to the exact answers as 1000 (0.114 / 0.116)
 MW_OFF_RANGE = 1e-10   # multiway: the weight of your hand where your range holds none of it (under the 1e-9 that says so)
+OFF_RANGE = "your hand isn't in your range for this line"   # (how an answer's notes say so: _read_off_range)
+# A hand outside your range has no equilibrium mix: it is a best response, so it plays one action at 100% however
+# little that action is ahead, and only its EVs say anything. Actions within this share of the pot of the top EV (% of
+# the pot) are "close" (Advisor.advise, _read_off_range). On 469 such hands on 4 turns Fast's top EV was not Accurate's
+# 42% of the time with the top two under 0.5% of the pot apart, 10% to 1, 3% to 2, 1% to 3 and never (0 of 106) beyond;
+# 3 is also where the page's EV grades stop saying Good (HEUR_OK), so one bar does both. README, "Close decisions".
+CLOSE_PCT = 3.0
+CLOSE_MAX = 5.0     # ...an answer further than that from equilibrium widens it to its distance, up to this (BR_TIE_MAX's 5%)
 UNSETTLED = 3.0     # heads-up: a solve this far from equilibrium (% pot) hasn't settled (the page's "converged" cutoff)
 # Heads-up, earlier streets: narrowing follows a solve fully this close (% pot) to equilibrium, not at all this far,
 # linearly between; the rest of each action's weights are the betting rules' range for it (softened, as multiway),
@@ -2130,6 +2138,32 @@ def _unusable(res) -> Optional[str]:
     return None
 
 
+def _read_off_range(res: dict):
+    """An answer for a hand outside your range (its notes say so: OFF_RANGE) goes by its EVs: "off_range", and
+    "recommended" and "sampled" are the top EV, since the hand's mix is a best response that can lag them. Actions within
+    CLOSE_PCT of the pot of the top EV are "close": {"actions": best first, "gap_pct": the widest gap among them, "within_pct":
+    the bar}. The actions keep the solver's numbers as they are. One place, at Advisor.advise's exit, so that every
+    surface reads the same call; an answer without EVs (a quick 3-way library flop's) is only marked."""
+    if not isinstance(res.get("actions"), list) or res.get("study") or not any(
+            str(n).startswith(OFF_RANGE) for n in res.get("notes") or []):
+        return
+    res["off_range"] = True
+    pot = res.get("pot_bb") or 0.0
+    acts = sorted((a for a in res["actions"] if a.get("ev_bb") is not None), key=lambda a: -a["ev_bb"])
+    if pot <= 0 or len(acts) < 2:
+        return
+    top = acts[0]
+    if top["ev_bb"] > next(a["ev_bb"] for a in res["actions"] if a["action"] == res["recommended"]):
+        res["recommended"] = top["action"]
+    res["sampled"] = res["recommended"]
+    x = (res.get("solver") or {}).get("exploitability_pct") or 0.0
+    bar = min(max(CLOSE_PCT, x), CLOSE_MAX)
+    near = [a for a in acts if (top["ev_bb"] - a["ev_bb"]) / pot * 100 <= bar]
+    if len(near) > 1:
+        res["close"] = {"actions": [a["action"] for a in near], "within_pct": round(bar, 1),
+                        "gap_pct": round((top["ev_bb"] - near[-1]["ev_bb"]) / pot * 100, 1)}
+
+
 # errors an answer can carry that are the solve's, not the request's: Advisor.advise answers by the rules instead
 _SOLVE_ERRORS = ("no decision pending",)
 
@@ -3011,6 +3045,7 @@ class Advisor:
         if why:
             return self._fallback(state, why)
         self._flag_short(state, res)
+        _read_off_range(res)
         return res
 
     def _flag_short(self, state: dict, res: dict):
@@ -5417,7 +5452,7 @@ class Advisor:
             # (near-zero, not out: a hand with no weight has no average strategy at any later decision, so its EVs read
             # uniform play there: calling and folding to a bet alike. It changes nobody's play)
             rs[hp] = rs[hp].copy(); rs[hp][off] = MW_OFF_RANGE
-            notes.append("your hand isn't in your range for this line, so it was solved as a near-zero-weight combo")
+            notes.append(f"{OFF_RANGE}, so it was solved as a near-zero-weight combo")
         pending = {i for i, p in enumerate(players) if p not in cur.acted}
         pending.add(hp)
         n_act = len(players) - len(shoved)
@@ -6949,8 +6984,8 @@ class Advisor:
         if off:
             if not getattr(self, "_quick", False):
                 return None
-            notes.append("your hand isn't in your range for this line: its mix is the solve's current (regret-matching) "
-                         "strategy for it, against the ranges as they are, with no EVs")
+            notes.append(f"{OFF_RANGE}: its mix is the solve's current (regret-matching) strategy for it, against the "
+                         "ranges as they are, with no EVs")
         R = sol.reach_at(path)
         expl = sol.exploitability()
         gains = sol.br_gains() / sol.root_pot() * 100
@@ -7416,7 +7451,7 @@ class Advisor:
         if r[i] > 1e-9:
             return r0, r1
         r = r.copy(); r[i] = 1e-3
-        notes.append("your hand isn't in your range for this line, so it was solved as a near-zero-weight combo")
+        notes.append(f"{OFF_RANGE}, so it was solved as a near-zero-weight combo")
         return (r, r1) if hero_p == 0 else (r0, r)
 
     def _as_advised(self, r0, r1, hero_p, hole):

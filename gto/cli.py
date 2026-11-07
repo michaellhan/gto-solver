@@ -119,6 +119,8 @@ def print_result(res: dict):
         bar = "#" * int(round(a["freq"] * 30))
         print(f"  {a['action']:<14}{amt:<10} {a['freq']*100:5.1f}% {bar:<30}{ev}")
     print(f"  => recommended: {res['recommended']}   (sampled from mix: {res['sampled']})")
+    if res.get("close"):
+        print(f"  => close: {' or '.join(res['close']['actions'])} (EVs within {res['close']['gap_pct']}% of the pot)")
     if "range_action_freq" in res:
         print("  range-wide:", res["range_action_freq"])
         print("  villain range:", res["villain_range"][:160])

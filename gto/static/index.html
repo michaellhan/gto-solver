@@ -1095,6 +1095,14 @@ function gradeFor(rec) {
   if (!r || r.error || resultKey !== JSON.stringify(payload())) return null;
   return gradeWith(r, rec);
 }
+// What a hand outside your range adds to a grade (Advisor's off_range, close): c, the close actions; g, how far apart
+// (% of the pot); k: your move isn't a mistake, the top EV or close to it. Its EV behind the top stays in e and o, and
+// in l and in the hand's total it counts for nothing: within the bar the order of the EVs doesn't hold.
+function closeGrade(r, m, hasEv, loss, r2) {
+  if (!r.off_range || !hasEv) return {};
+  const near = !!r.close && r.close.actions.includes(m.action);
+  return { ...(r.close ? { c: r.close.actions, cg: r.close.gap_pct } : {}), ...(near || loss <= 0.005 ? { k: 1 } : {}), ...(near && loss > 0.005 ? { l: 0, cl: r2(loss) } : {}) };
+}
 function gradeWith(r, rec) {
   let m, v = null;
   const pre = r.street === "preflop", raise = (a) => /^(bet|raise)/.test(a.action) && a.amount_bb != null;
@@ -1116,13 +1124,15 @@ function gradeWith(r, rec) {
     else if (pre) { m = r.actions.find(a => a.action === "all-in"); if (m) v = `${rec.action} to ${fmt(rec.to)}`; else m = { action: `${rec.action} to ${fmt(rec.to)}`, freq: 0 }; }
   }
   if (!m) return null;
-  const best = r.actions.reduce((b, a) => a.freq > b.freq ? a : b);
+  // (a hand outside your range goes by its EVs: Advisor's off_range, recommended is the top EV)
+  const best = r.off_range ? r.actions.find(a => a.action === r.recommended) : r.actions.reduce((b, a) => a.freq > b.freq ? a : b);
   const evs = r.actions.filter(a => a.ev_bb !== undefined).map(a => a.ev_bb);
   const hasEv = evs.length && m.ev_bb !== undefined, top = hasEv ? Math.max(...evs) : null;
   const loss = hasEv ? Math.max(0, top - m.ev_bb) : null;
   const conv = convergence(r), r2 = (x) => Math.round(x * 100) / 100;
+  const off = closeGrade(r, m, hasEv, loss, r2);
   if (heuristic(r) && hasEv && r.pot_bb > 0)   // (the rules' best by EV, not by its 0/1 frequency)
-    return { m: m.action, f: m.freq, b: best.action, bf: best.freq, l: r2(loss), e: r2(m.ev_bb), o: r2(top), h: Math.round(loss / r.pot_bb * 1000) / 10 };
+    return { m: m.action, f: m.freq, b: best.action, bf: best.freq, l: r2(loss), e: r2(m.ev_bb), o: r2(top), h: Math.round(loss / r.pot_bb * 1000) / 10, ...off };
   if (heuristic(r)) return null;
   // (against the typical player the answer is the best response: one action at 100%, so what's graded is the EV you
   // gave up, as a share of the pot, not a mix. p: this kind of grade. A preflop chart has no EV, and is graded by its mix)
@@ -1132,10 +1142,10 @@ function gradeWith(r, rec) {
     const rec = r.ev_tie != null ? r.actions.find(a => a.action === r.recommended && a.ev_bb !== undefined) : null;
     const tied = !!rec && top - rec.ev_bb <= r.ev_tie, o = tied ? rec.ev_bb : top, lost = Math.max(0, o - m.ev_bb);
     const b = m.ev_bb >= o ? m : tied ? rec : r.actions.find(a => a.ev_bb === top);
-    return { m: m.action, f: m.freq, b: b.action, bf: b.freq, ...(b.action === "raise" && b.amount_bb != null ? { ba: b.amount_bb } : {}), l: r2(lost), e: r2(m.ev_bb), o: r2(o), h: Math.round(lost / r.pot_bb * 1000) / 10, p: 1, ...(m.rough_ev ? { rv: 1 } : {}), ...(conv && conv.cls === "bad" ? { r: 1 } : {}), ...(v ? { v, vs: 1 } : {}) };
+    return { m: m.action, f: m.freq, b: b.action, bf: b.freq, ...(b.action === "raise" && b.amount_bb != null ? { ba: b.amount_bb } : {}), l: r2(lost), e: r2(m.ev_bb), o: r2(o), h: Math.round(lost / r.pot_bb * 1000) / 10, p: 1, ...off, ...(m.rough_ev ? { rv: 1 } : {}), ...(conv && conv.cls === "bad" ? { r: 1 } : {}), ...(v ? { v, vs: 1 } : {}) };
   }
   // (rv: your move is one your range almost never takes, so its EV and the EV lost are rough: shown with a "≈", graded the same)
-  return { m: m.action, f: m.freq, b: best.action, bf: best.freq, ...(best.action === "raise" && best.amount_bb != null ? { ba: best.amount_bb } : {}), l: loss == null ? null : r2(loss), ...(hasEv ? { e: r2(m.ev_bb), o: r2(top) } : {}), ...(hasEv && m.rough_ev ? { rv: 1 } : {}), ...(conv && conv.cls === "bad" ? { r: 1 } : {}), ...(offSolution(r) ? { x: 1 } : {}), ...(v ? { v, ...(pre ? {} : { vs: 1 }) } : {}) };
+  return { m: m.action, f: m.freq, b: best.action, bf: best.freq, ...(best.action === "raise" && best.amount_bb != null ? { ba: best.amount_bb } : {}), l: loss == null ? null : r2(loss), ...(hasEv ? { e: r2(m.ev_bb), o: r2(top) } : {}), ...off, ...(hasEv && m.rough_ev ? { rv: 1 } : {}), ...(conv && conv.cls === "bad" ? { r: 1 } : {}), ...(offSolution(r) ? { x: 1 } : {}), ...(v ? { v, ...(pre ? {} : { vs: 1 }) } : {}) };
 }
 // The move a recorded action is graded as: an all-in that puts in no more than anyone left can match (a stack that
 // doesn't cover the call, or nobody else with chips behind the bet) is a call, or a check: the answers list it so.
@@ -1161,11 +1171,11 @@ async function jamGrade(key, rec) {
 // a grade's note when your action was graded as the chart's nearest one (g.v: what you played)
 const gradeAs = (g) => g.v ? ` (graded as the ${g.vs ? "solver" : "chart"}'s ${g.m}: it has no ${g.v === "all-in" ? "all-in" : "smaller raise"} here)` : "";
 // A rough (unconverged) solve can't condemn a line, nor can a line that gave up no EV: their worst grade is "~".
-const gradeClass = (g) => g.h != null ? (g.h <= HEUR_OK ? "ok" : g.h <= HEUR_MEH || g.r ? "meh" : "bad")
+const gradeClass = (g) => g.k ? "ok" : g.h != null ? (g.h <= HEUR_OK ? "ok" : g.h <= HEUR_MEH || g.r ? "meh" : "bad")
   : g.f >= 0.15 ? "ok" : g.f >= 0.03 || g.r || g.l === 0 ? "meh" : "bad";
 const gradeMark = (g) => ({ ok: "✓", meh: "~", bad: "✗" })[gradeClass(g)];
 // In the solver's mix, as the verdict says: "Rare in the solver's mix" counts (a ~ that's a rough solve's 0% doesn't)
-const inMix = (g) => g.h != null ? gradeClass(g) === "ok" : g.f >= 0.03;
+const inMix = (g) => g.k ? true : g.h != null ? gradeClass(g) === "ok" : g.f >= 0.03;
 const sgn = (x) => (x > 0 ? "+" : x < 0 ? "−" : "") + Math.abs(x).toFixed(2);
 // An action your range almost never takes (the answer's rough_ev, advisor.RARE_BRANCH; a grade's rv): its EV with a "≈"
 // and this tip. Against exact EVs of the same strategy they are 1-10% of the pot off.
@@ -1175,7 +1185,16 @@ const lossHtml = (g) => g.l == null ? `<span class="l dim">no EV</span>` : g.l >
 const pct0 = (f) => f > 0 && f < 0.005 ? "<1%" : (f * 100).toFixed(0) + "%";
 // "bet 125%" -> "bets 125%", "raise to 7" -> "raises to 7"
 const verbOf = (m) => m === "all-in" ? "goes all-in" : String(m).replace(/^(bet|raise|check|call|fold)\b/, "$1s");
+// "bet 75%, bet 33% or check"
+const orList = (xs) => xs.length > 1 ? `${xs.slice(0, -1).join(", ")} or ${xs.at(-1)}` : xs[0];
+const closeText = (acts) => `Close: ${orList(acts)}`;
+const OFF_RANGE_TEXT = "Your hand isn't in your range here, so the solver has no real mix for it: only its EVs count.";
+const behind = (g) => g.cl ? ` ${g.cl.toFixed(2)} bb behind the top EV.` : "";
 function verdictText(g) {
+  if (g.k) return (g.c ? `${closeText(g.c)}, within ${g.cg}% of the pot.${behind(g)}` : "The highest EV.") + " " + OFF_RANGE_TEXT + (g.v ? gradeAs(g) : "") + (g.r ? " Rough solve: treat this as a hint, not a verdict." : "");
+  return verdictOf(g) + (g.c ? ` ${closeText(g.c)}.` : "");
+}
+function verdictOf(g) {
   if (g.p) return (g.m === g.b ? "The best play against a typical player." : `Against a typical player the best play is ${g.b}. ${g.rv ? "≈ " : ""}${g.l.toFixed(2)} bb lost, ${g.h}% of the pot.`) + (g.v ? gradeAs(g) : "") + (g.r ? " Rough solve: treat this as a hint, not a verdict." : "");
   if (g.h != null) return `The betting rules pick ${g.b}. ${g.l.toFixed(2)} bb lost, ${g.h}% of the pot.`;
   const lost = g.l == null ? "" : ` ${g.rv ? "≈ " : ""}${g.l.toFixed(2)} bb lost.`;
@@ -1185,7 +1204,7 @@ function verdictText(g) {
     : ok ? `In the solver's mix at ${pct0(g.f)}.` : g.f >= 0.03 ? `Rare in the solver's mix, at ${pct0(g.f)}.` : `The solver ${verbOf(g.b)} ${often}.`;
   return line + lost + (g.v ? gradeAs(g) : "") + (g.r ? " Rough solve: treat this as a hint, not a verdict." : "");
 }
-const gradeTip = (g) => g.p ? `Against a typical player: best ${g.b}. Your line (${g.m}) EV ${g.rv ? "≈ " : ""}${sgn(g.e)} bb vs ${sgn(g.o)} bb (${g.l > 0.005 ? "−" + g.l.toFixed(2) : "0.00"} bb, ${g.h}% of the pot).${g.rv ? " " + ROUGH_EV_TIP : ""}` : g.h != null ? `Betting rules (no solve in this multiway spot): best ${g.b}. Your line (${g.m}) EV ${sgn(g.e)} bb vs ${sgn(g.o)} bb (${g.l > 0.005 ? "−" + g.l.toFixed(2) : "0.00"} bb, ${g.h}% of the pot).` : `Solver: ${g.b} ${(g.bf * 100).toFixed(0)}%. Your line (${g.v || g.m}) ${(g.f * 100).toFixed(0)}%${gradeAs(g)}${g.e != null ? `, EV ${g.rv ? "≈ " : ""}${sgn(g.e)} bb vs GTO ${sgn(g.o)} bb (${g.l > 0.005 ? "−" + g.l.toFixed(2) : "0.00"} bb)` : g.l ? `, ${g.l.toFixed(2)} bb below the best EV` : ""}.${g.rv ? " " + ROUGH_EV_TIP : ""}${g.r ? " Rough solve: treat this as a hint, not a verdict." : ""}`;
+const gradeTip = (g) => g.k ? `${g.c ? `${closeText(g.c)}, within ${g.cg}% of the pot` : "The highest EV"}, your hand isn't in your range here. Your line (${g.m}) EV ${g.rv ? "≈ " : ""}${sgn(g.e)} bb vs ${sgn(g.o)} bb.` : g.p ? `Against a typical player: best ${g.b}. Your line (${g.m}) EV ${g.rv ? "≈ " : ""}${sgn(g.e)} bb vs ${sgn(g.o)} bb (${g.l > 0.005 ? "−" + g.l.toFixed(2) : "0.00"} bb, ${g.h}% of the pot).${g.rv ? " " + ROUGH_EV_TIP : ""}` : g.h != null ? `Betting rules (no solve in this multiway spot): best ${g.b}. Your line (${g.m}) EV ${sgn(g.e)} bb vs ${sgn(g.o)} bb (${g.l > 0.005 ? "−" + g.l.toFixed(2) : "0.00"} bb, ${g.h}% of the pot).` : `Solver: ${g.b} ${(g.bf * 100).toFixed(0)}%. Your line (${g.v || g.m}) ${(g.f * 100).toFixed(0)}%${gradeAs(g)}${g.e != null ? `, EV ${g.rv ? "≈ " : ""}${sgn(g.e)} bb vs GTO ${sgn(g.o)} bb (${g.l > 0.005 ? "−" + g.l.toFixed(2) : "0.00"} bb)` : g.l ? `, ${g.l.toFixed(2)} bb below the best EV` : ""}.${g.rv ? " " + ROUGH_EV_TIP : ""}${g.r ? " Rough solve: treat this as a hint, not a verdict." : ""}`;
 
 // Everyone before pos folds (checks when there's nothing to call), but never you: it stops at your turn.
 function advanceTo(pos) {
@@ -1645,7 +1664,7 @@ function actionTable(res, you, ev = "ev_bb") {
   let h = `<table class="acttbl"><thead><tr><th>${S.cards[0] && S.cards[1] ? `With ${cardsInl(S.cards.slice(0, 2))}` : "Action"}</th><th>${heuristic(res) ? "Rules" : "Solver"}</th>${hasEv ? `<th title="${own ? "Expected value of taking this action, in big blinds relative to folding now, so fold is 0: chips already in the pot are gone either way" : RANGE_EV_TIP}">${own ? "EV, bb" : "Range EV, bb"}</th>` : ""}</tr></thead><tbody>`;
   for (const a of rows) {
     const gto = a.gto_freq !== undefined ? ` title="GTO plays this ${(a.gto_freq * 100).toFixed(1)}% of the time (${res.street === "preflop" ? "the chart" : "this solve's equilibrium"})"` : "";
-    h += `<tr${a.action === res.recommended ? ' class="best"' : ""}><td><div class="an"><i class="sw" style="--k:${COLORS(a.action)}"></i>${actName(a)}${a.action === you ? ' <span class="you">you</span>' : ""}</div></td>`
+    h += `<tr${a.action === res.recommended || res.close && res.close.actions.includes(a.action) ? ' class="best"' : ""}><td><div class="an"><i class="sw" style="--k:${COLORS(a.action)}"></i>${actName(a)}${a.action === you ? ' <span class="you">you</span>' : ""}</div></td>`
       + `<td class="n"${gto}>${pct0(a.freq)}${a.gto_freq !== undefined ? `<small>GTO ${(a.gto_freq * 100).toFixed(0)}%</small>` : ""}</td>`
       + (hasEv ? `<td class="n"${a.rough_ev ? ` title="${ROUGH_EV_TIP}"` : ""}>${a[ev] == null ? "–" : (a.rough_ev ? "≈ " : "") + evText(a[ev])}</td>` : "") + `</tr>`;
   }
@@ -1681,6 +1700,9 @@ function decisionOpen(res) {
   if (!("g" in a) && resultKey === JSON.stringify(payload())) { a.g = g; save(); keepHand("review", stepView.full); }
   return { a, g };
 }
+// A hand outside your range with its top EVs together: what the answer is before the solver's 100%, which is only a best
+// response. The numbers stay in the table under it.
+const closeHtml = (res) => res.close ? `<div class="verdict"><div class="hd">${closeText(res.close.actions)}</div><p>Within ${res.close.gap_pct}% of the pot. ${OFF_RANGE_TEXT}</p></div>` : "";
 function verdictHtml({ a, g }, res) {
   const bet = betPct(a, g, simulate().pot);
   return `<div class="verdict"><div class="hd">${g ? `<span class="g ${gradeClass(g)}">${gradeMark(g)}</span> ` : ""}You ${bet ? `bet ${bet}%` : didText(a)}</div><p>${g ? verdictText(g) : `No grade for this decision. ${heuristic(res) ? "The betting rules'" : "The solver's"} pick is ${res.recommended}.`}</p></div>`;
@@ -1722,7 +1744,7 @@ function renderResult(res, key) {
   if (d) answered.set(d.a, res);
   // (a tie that leaves the advice's action just under another's EV is said under the table, where the numbers are)
   const tied = (n) => n.endsWith("so the two count as tied");
-  let h = (d ? verdictHtml(d, res) : "") + actionTable(res, d && d.g ? d.g.m : null) + (res.notes || []).filter(tied).map(n => `<p class="meta">${cap(n)}.</p>`).join("") + sourceHtml(res);
+  let h = (d ? verdictHtml(d, res) : closeHtml(res)) + actionTable(res, d && d.g ? d.g.m : null) + (res.notes || []).filter(tied).map(n => `<p class="meta">${cap(n)}.</p>`).join("") + sourceHtml(res);
   h += res.grid ? rangeHtml(res) : `<p class="meta">No range grid here: this answer is for your hand alone.</p>`;
   const more = [...(res.size_usage ? [`Size optimization, your mix over the wide menu: ${SIZE_USAGE(res)}`] : []), ...(res.notes || []).filter(n => !n.startsWith("preflop: chart approximation") && !tied(n))];
   if (more.length) h += `<details><summary>Details</summary>${more.map(n => `<p class="meta">${n}</p>`).join("")}</details>`;
@@ -1792,6 +1814,7 @@ function rowHtml(hand, s, a, done, open) {
   const what = bet ? `bet ${bet}%` : moveText(a);
   const bad = g && gradeClass(g) === "bad";
   const sub = !g ? (done && "g" in a ? "Reviewed, no grade" : "Not reviewed yet")
+    : g.k && g.c ? closeText(g.c)
     : g.p ? (g.m === g.b ? "Best against a typical player" : `Against a typical player, ${g.b} is best`) + (g.r ? " (rough solve)" : "")
     : g.h != null ? `Betting rules, ${g.b} is best`
     : `Solver ${pct0(g.f)}${g.v ? ` as its ${g.m}` : ""}${bad ? `, it ${verbOf(g.b)}${src ? ". " + cap(src) : ""}` : src ? ", " + src : ""}${g.r ? " (rough solve)" : ""}`;
@@ -2009,16 +2032,17 @@ function decisionLine(a, pot) {
   const g = a.g || a.adv, bet = betPct(a, g, pot), mine = bet ? `bet ${bet}%` : moveText(a);
   if (!g) return `  Me: ${mine}. Solver: ${"g" in a ? "no grade" : "no answer yet"}`;
   const who = g.p ? "Against a typical player" : g.h != null ? "Betting rules" : "Solver", same = g.m === g.b, freq = g.h != null ? "" : ` (${pct0(g.bf)})`;
-  const asked = same || g.h != null ? "" : ` (solver ${pct0(g.f)}${g.m === mine || g.m === a.action ? "" : ` as its ${g.m}`})`;
+  const asked = same || g.h != null || g.k ? "" : ` (solver ${pct0(g.f)}${g.m === mine || g.m === a.action ? "" : ` as its ${g.m}`})`;
   const lost = g.l > 0.005 ? ` Lost ${g.rv ? "≈ " : ""}${g.l.toFixed(2)}bb.` : "";
-  return `  Me: ${mine}${asked}. ${who}: ${sizedMove(g.b, g.ba)}${freq}.${lost}${g.r ? " Rough solve." : ""}`;
+  const says = g.c ? `close, ${orList(g.c)} (within ${g.cg}% of the pot)` : `${sizedMove(g.b, g.ba)}${freq}`;
+  return `  Me: ${mine}${asked}. ${who}: ${says}.${lost}${g.r ? " Rough solve." : ""}`;
 }
 // The answer showing for the spot on the table, as its mix
 function shownAdvice() {
   const r = lastResult;
   if (!r || r.error || !r.actions || resultKey !== JSON.stringify(payload())) return null;
   const mix = r.actions.filter(a => a.freq >= 0.005).sort((a, b) => b.freq - a.freq).map(a => `${sizedMove(a.action, a.amount_bb)} (${pct0(a.freq)})`).join(", ");
-  return mix ? `  ${heuristic(r) ? "Betting rules" : "Solver"}: ${mix}` : null;
+  return mix ? `  ${heuristic(r) ? "Betting rules" : "Solver"}: ${r.close ? `close, ${orList(r.close.actions)} (within ${r.close.gap_pct}% of the pot). Mix ` : ""}${mix}` : null;
 }
 // The hand so far in a few lines of text, your decisions and the solver's answers under each street's. In a decision of
 // a review, the hand up to that decision and that decision.

@@ -21,9 +21,10 @@
   const cardH = (c) => `<span class="mh-c ${c[1]}">${c[0]}${SUIT[c[1]]}</span>`;
   const cardsH = (cs) => cs.map(cardH).join("");
   // a grade's class as the page's gradeClass (✓ in the solver's mix 15%+, ~ 3%+, a rough solve or no EV given up, ✗
-  // less; a typical-player grade and the betting rules' by the share of the pot given up: 3, then 10)
+  // less; a typical-player grade and the betting rules' by the share of the pot given up: 3, then 10; ✓ a hand outside
+  // your range at the top EV or close to it, k)
   /* global gradeClass */
-  const gcls = (g) => typeof gradeClass === "function" ? gradeClass(g)
+  const gcls = (g) => typeof gradeClass === "function" ? gradeClass(g) : g.k ? "ok"
     : g.h != null ? (g.h <= 3 ? "ok" : g.h <= 10 || g.r ? "meh" : "bad") : g.f >= 0.15 ? "ok" : g.f >= 0.03 || g.r || g.l === 0 ? "meh" : "bad";
   const MARK = { ok: "✓", meh: "~", bad: "✗" };
 
@@ -72,7 +73,7 @@
         const t = `${esc(lab(a.pos))} ${word(a)}`;
         if (a.pos !== st.hero) return t;
         const g = a.g && typeof a.g === "object" ? a.g : null, c = g && gcls(g);
-        return `<b>${t}</b>${g ? ` <span class="mh-g ${c}" title="${g.p ? (+g.l > 0.005 ? `against a typical player, ${fmt(+g.l)} bb given up` : "the best play against a typical player") : `the solver plays it ${Math.round((+g.f || 0) * 100)}%${+g.l > 0 ? `, ${fmt(+g.l)} bb given up` : ""}`}">${MARK[c]}${+g.l > 0.005 ? ` −${fmt(+g.l)}` : ""}</span>` : ""}`;
+        return `<b>${t}</b>${g ? ` <span class="mh-g ${c}" title="${g.k ? (g.c ? `close: ${esc(g.c.join(" or "))}` : "the highest EV") : g.p ? (+g.l > 0.005 ? `against a typical player, ${fmt(+g.l)} bb given up` : "the best play against a typical player") : `the solver plays it ${Math.round((+g.f || 0) * 100)}%${+g.l > 0 ? `, ${fmt(+g.l)} bb given up` : ""}`}">${MARK[c]}${+g.l > 0.005 ? ` −${fmt(+g.l)}` : ""}</span>` : ""}`;
       });
       out.push(`<div class="mh-st"><span class="mh-sn">${k[0].toUpperCase() + k.slice(1)}${bd.filter(okCard).length ? " " + cardsH(bd.filter(okCard)) : ""}</span> ${items.join(", ") || "<small>—</small>"}</div>`);
     }

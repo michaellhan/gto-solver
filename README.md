@@ -186,6 +186,12 @@ preflop chart, not a solve (no EV), betting rules, precomputed, borrowed from an
 how far from equilibrium, and whether it ran short or left the solved line (`sourceOf`, `sourceHtml`). A review row says
 the same in a word or two, once the answer has been seen in that page: the source isn't saved with the grades.
 
+A hand outside your range (`off_range`) has no mix of its own, so its answer goes by its EVs, and when its top EVs are
+within 3% of the pot it reads as close: "Close: bet 75% or check" over the action table, whose numbers stay as they
+are (`close`, `closeHtml`, the "Close decisions" paragraph under How it works). A move among them is ✓, costs no bb in
+the row or the hand's total, counts as good, and Copy hand and Hands say the same (`closeGrade`, grade keys `c`, `cg`,
+`k`, `cl`).
+
 **Review whole hand** (offered on any finished hand) solves each of your decisions in order,
 grades it and ends on the hand review; it shows "decision 2 of 5" while it
 runs and can be cancelled, keeping the grades so far.
@@ -361,7 +367,8 @@ the time (`advisor.RARE_BRANCH`: the opponent's answer to it is barely solved, s
 than exact; the page shows it with a "≈"; docs/cfr_research.md, EV gaps
 on live turns), a `recommended` action (highest
 frequency, or highest EV when the solve is 3%+ of the pot from equilibrium and that
-EV beats the top of the mix by over 1% of the pot), a `sampled` action (drawn from the mix, use this if you want to
+EV beats the top of the mix by over 1% of the pot; a hand outside its range, `"off_range": true`, the highest EV, with
+`"close"` where others are within 3% of the pot: see Close decisions), a `sampled` action (drawn from the mix, use this if you want to
 actually play unexploitably), the range-wide frequencies, the villain's inferred
 range, and solver stats. With `"breakdown": true` a postflop answer also carries `breakdown` (`gto/breakdown.py`):
 `actions`, `pot`, `hero` and `villains`, each with `made` and `draws` categories (`c` combos, `eq` equity, the
@@ -3575,6 +3582,43 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   4-way flop read check 1.82 where it is 3.83, the bet graded "0% in the mix, 0.00 bb
   lost"). A stored 3-way flop was built before this: its EVs for such a hand aren't read,
   so a quick answer gives the mix alone and any other solves the hand live.
+* **Close decisions.** Such a hand has no equilibrium mix: it is a best response, so it plays one action at 100%
+  however little that action is ahead, and against the pool every action is pure. The found hand: 7-handed, A4s in the
+  big blind, 2s4d6c 6h after a bet and a call, bet 75% at 100% with EVs 6.89, 6.51 and 6.24 in a 29.5 bb pot; realistic
+  hand-written ranges checked it 100%. `advisor._read_off_range`, at `Advisor.advise`'s exit so that every surface reads
+  one call, marks an answer whose notes say the hand is out of its range: `"off_range": true`, `recommended` and
+  `sampled` the top EV (the mix stays in `freq`, and can lag the EVs), and where other actions are within `CLOSE_PCT`
+  (3%) of the pot of the top EV, `"close": {"actions": [...best first], "within_pct": 3.0, "gap_pct": 2.2}`. An answer
+  further from equilibrium than that widens the bar to its distance, up to `CLOSE_MAX` (5%). No EVs (a quick 3-way
+  library flop), no call. The page and the command line say "Close: bet 75%, bet 33% or check", and the solver's numbers
+  stay in the table.
+
+  Why 3: every off-range hand in at the same weight, Fast's top EV against Accurate's, by how far apart Fast had the top
+  two (% of the pot; "flips": Accurate's top EV is another action):
+
+  | top two apart | under 0.5 | 0.5-1 | 1-2 | 2-3 | over 3 |
+  |---|---|---|---|---|---|
+  | 4 turns, BB against the BTN, 469 hands | 42% | 10% | 2.8% | 1.0% | 0 of 106 |
+  | 3-way flops (2), 1500 hands | 53% | 21% | 4.3% | 1.7% | 0 of 1245 |
+  | those turns, the opponent's range off by ~30% a hand class | 29% | 3% | 2.8% | 0 | 0 |
+
+  So under 2% the order is often not real, and 2 to 3 is the margin; 3 is also where the page's EV grades stop saying
+  Good (`HEUR_OK`), so one bar does both. A close move isn't a mistake: ✓, no bb in the row or the hand's total
+  (`closeGrade`). The call is common on such hands, 77% of those turn hands and 17% of the 3-way ones: most of them are
+  air with little between checking and a small bet. A Fast river is another matter: on the one bucketed river measured,
+  the pick differed from Accurate's 26-35% of the time at every gap over 3%, and by over 1% of the pot in about one
+  hand in ten, so no bar cures it.
+
+  The bar is off-range only. A hand in its range that plays one way already has a mix that means something, and marking
+  it would put "Close" on about half of the answers against the typical player (49% of the range on those 4 turns, 11 to 82%) and change bb lost against the typical player (those moves count as lost now,
+  though ✓ within 3%); at equilibrium 37% of in-range hands are pure with their top two within 3%.
+
+  The mix can disagree with its EVs. "Check 100% at 1.92, bet 33% at 3.83" on a multiway flop was the bug `dc547d00`
+  fixed (a hand with no strategy sums read uniform play at its later decisions, so checking was underpriced; the code
+  before it gives check 1.53, bet 4.01 at 25 iterations on the hand in `test_your_cards`). What is left is lag: the mix's
+  most-played action isn't the top EV for 6.9% of those heads-up off-range hands and 1.7% of the 3-way ones, by a median
+  0.27 and 0.52% of the pot and at most 3.6, and for none that plays one way at 95% or more by over 3. Close and
+  `recommended` read the EVs, so neither follows it.
 * If a preflop line leaves a player with fewer than 8 combos (a flat the charts never
   4bet from, then a 4bet; a cold call of a 3bet, then a call of the 4bet), the hands
   that take the last such action from scratch are mixed in, weighing 1 - combos / 8
