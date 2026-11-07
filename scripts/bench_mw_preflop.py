@@ -26,6 +26,12 @@ which the compiled core doesn't run: in numpy 1956 nodes reached 2.4 GB and the 
 the data is the heads-up measurement instead (advisor.RIVER_FIX, _river_fix: suited hands +0.10 of their equity, 22-66
 and connectors more, offsuit hands -0.05), and every figure is given without it and with it (--river).
 
+The spots to the blinds fit advisor.MW_LEVEL, MW_SLOPE and MW_SMALL_PAIR, minimising the EV the advice gives up at each,
+level and slope at the steps of the numbers there. ip_btn and sb_cc were held out of that fit, and the *_now spots are the
+same hands with the ranges frozen after it. --wide adds the strongest hands a range doesn't have, so a capped cold call
+gets stronger (the share of +EV calls falls: bg7, lrc6, cc_co_btn) and only an opener or iso raiser gets weaker (it rises:
+iso1). All of it is at 100bb. No seat past the blinds is in the fit.
+
     python scripts/bench_mw_preflop.py --minutes 9 [--procs 2]   # solve what's left (resumable)
     python scripts/bench_mw_preflop.py --wide --spots a,b     # the same with every other seat's range a bit wider
     python scripts/bench_mw_preflop.py --freeze               # data file from the cache, the advice as it is as "before"
@@ -82,6 +88,13 @@ SPOTS = {
     "cold3": (6, "BB", "CO raise 2.5, BTN raise 7.5", None, ""),
     # the small blind, the big blind behind it
     "sb_iso": (6, "SB", "CO call, BTN raise 4", None, ""),
+    # held out: not used to fit advisor.MW_REALIZE. In position, and with the big blind behind
+    "ip_btn": (6, "BTN", "HJ raise 2.5, CO call", None, ""),
+    "sb_cc": (6, "SB", "CO raise 2.5, BTN call", None, ""),
+    # the same hands again, the ranges frozen after advisor.MW_REALIZE went in: it widens the other seats' cold calls too
+    "bg7_now": (7, "BB", "UTG call, LJ raise 4, HJ call", None, ""),
+    "lrc6_now": (6, "BB", "UTG call, HJ raise 4, CO call", None, ""),
+    "cc_4way_now": (6, "BB", "UTG raise 2.5, HJ call, BTN call", None, ""),
 }
 
 

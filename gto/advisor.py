@@ -1057,6 +1057,13 @@ def _implied_w(h: str) -> float:
 
 
 _IMPLIED_W = np.array([_implied_w(hand_class(c)) for c in ALL_COMBOS])
+# A call re-drawn with more players in than the chart's (Advisor._priced) realizes more than the chart's level the dearer
+# the price, since the hands at the bar then have more equity, and a small pair more than other hands at the same
+# equity: the level at a 20% price, what a point of price moves it, a small pair's extra, and the stacks behind (bb) over
+# which this comes in from the chart's level. Fit to scripts/bench_mw_preflop.py's flop solves, at 100bb.
+MW_LEVEL, MW_SLOPE, MW_SMALL_PAIR, MW_DEEP = 0.99, 1.25, 0.14, (40.0, 80.0)
+MW_AT = 0.20
+_SMALL_PAIR = np.array([len(hand_class(c)) == 2 and hand_class(c)[0] in "23456" for c in ALL_COMBOS])
 _CARD_MASK = np.array([(1 << a) | (1 << b) for a, b in ALL_COMBOS], dtype=np.int64)
 
 
@@ -1641,6 +1648,12 @@ def _owed(st: "StreetState", opp: List[str], level: float, positions, stack: flo
     what it has, and only up to what hero's call matches (a side pot isn't hero's to win)."""
     stacks = _table_stacks(positions, stack)
     return sum(max(min(level, stacks[p] - st.inv_start[p]) - st.bets[p], 0.0) for p in opp if p not in st.allin)
+
+
+def _mw_realize(price: float, behind: float) -> np.ndarray:
+    """Per combo, what a multiway re-draw's realization is times the chart's (MW_LEVEL)."""
+    m = MW_LEVEL + MW_SLOPE * (price - MW_AT) + MW_SMALL_PAIR * _SMALL_PAIR
+    return 1.0 + (m - 1.0) * float(np.clip((behind - MW_DEEP[0]) / (MW_DEEP[1] - MW_DEEP[0]), 0.0, 1.0))
 
 
 def preflop_strategy(p: str, before: List[dict], positions, stack: float) -> Dict[str, np.ndarray]:
@@ -4605,8 +4618,13 @@ class Advisor:
                     # bunched, and the chart's calls (built on heads-up equity) aren't a floor: Poker Academy's
                     # NL200 solve has the big blind calling 16.1% over a button open and a small-blind call at a
                     # 20% price, against 29.0% heads-up at 27.3%; adding to the chart's calls had it at 44.5%
-                    # (5% capped at 4bb), the re-draw 15.0%.
-                    redraw = np.clip(0.5 + (eq * realize - need_v) / PRICE_BLEND, 0.0, 1.0)
+                    # (5% capped at 4bb), the re-draw 17.3%. What it realizes moves with the price (_mw_realize).
+                    # (measured with two to four players against. An open at the chart's size, a cold call and the big
+                    # blind's call stay at the chart's level: the 3-way flop library is built on that range)
+                    stored = (hero == "BB" and len(opp) == 2 and st.n_raises == 1 and not rk_on
+                              and abs(st.cur_bet - std.cur_bet) < 1e-9 and all(st.bets[p] >= st.cur_bet for p in opp))
+                    level = _mw_realize(need - prem, behind) if len(opp) <= 4 and not stored else 1.0
+                    redraw = np.clip(0.5 + (eq * realize * level - need_v) / PRICE_BLEND, 0.0, 1.0)
                     redraw[np.isnan(redraw)] = 0.0
                     new = np.maximum(redraw, raise_n)
                 if eq_r is not None:

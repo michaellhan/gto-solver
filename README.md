@@ -542,6 +542,27 @@ tournament (`S.tournament`, its header), and the advisor drops a request's rake 
   16.5), and it continues 12.9% of its hands where it continued 3.7%, a flop range of 119 combos where it was filled to
   the 8-combo floor. Spots where nobody owes keep their price. The call is priced as if all of them come along; if a
   limper folds, the pot is smaller and the equity is better (A4s here: 25.6% for 22%, against 21.8% for 18%).
+* What a preflop call realizes with more players in than the chart's (advisor._mw_realize, in Advisor._priced) is held to
+  flop solves: `scripts/bench_mw_preflop.py`, with 14 limped and cold-called spots from the big blind and the small
+  blind in `docs/mw_preflop_reference.json` (10 flops a branch, 150 to 200 iterations, 3 and 4 players, each class's EV of
+  calling from its share of the pot; ±2 to 4 points on the share of hands that call at a profit). One realization for
+  every price read the 13 spots this re-draw reaches at 1.0 times the chart's level on average, but they need 0.82 to 1.20,
+  and in order of price: at a dear price the hands at the bar have more equity and realize more of it. So it is 0.99 at
+  a 20% price, 1.25 more per unit of price, and 22-66 0.14 more than other hands at the same equity (suited aces aren't
+  above other hands once their implied odds are counted: A4s calling in the hand behind `_owed` loses 0.5bb, 0.2bb with
+  the river's correction). Below 80bb behind it fades to the chart's level by 40bb, since it was measured at 100bb, and
+  five or more players against stay at the chart's level. So does an open at the chart's size, one cold call and the big
+  blind unraked, the lines of the 3-way flop library: its 740 flops are solved on that big-blind range and are found by
+  it. At this level CO open + BTN call reads 35.1% where the reference has 28.1% and the new level 32.4%;
+  taking it off needs `scripts/build_mw_library.py` run again.
+  EV lost per hand over those spots 0.388 to 0.30 bb in all, ±0.014, 0.373 to 0.336 fitting each spot on the others.
+  Published: the big blind over a button open and small-blind call folds 73.6% (Poker Academy 71.2%, was 75.9%), calls
+  17.3% (16.1%). It widens other seats' cold calls too (HJ in that hand 29 combos to 95), and solving again on those
+  ranges barely moves the reference (15.2% to 14.6%). Held out of the fit: the small blind with the big blind behind is
+  closer (12.1% against 13.1%, was 9.4%); the button in position overshoots (15.3% against 11.0%, was 8.3%). Tried and
+  dropped: splitting a limper into folding and coming along (with its measured rates it ranks hands worse, even
+  at each spot's best level), letting a cut bluff call (they average -0.43bb as calls), a wider ramp (0.04 loses
+  0.07bb over the spots) and a realization by opponents or a table by hand family (no better, fit on the others).
 * Preflop, the charts are fixed and calls that see a flop are re-priced through the off-chart
   re-pricing (see Preflop): the pot a call would win is short the rake it goes on to pay, taken on
   2.5x the pot the call takes to the flop (later streets grow it; no more than the stacks allow), to

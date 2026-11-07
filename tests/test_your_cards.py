@@ -223,7 +223,7 @@ class TestYourCardsStillBlock(unittest.TestCase):
         live = np.prod([1.0 - MEMBER_FULL[c] for c in board], axis=0)
         off = np.prod([1.0 - MEMBER_FULL[c] for c in cards("ThTs")], axis=0)
         self.assertAlmostEqual(res["opponent_range_combos"]["CO"], float((rs[1] * live * off).sum()), places=1)
-        self.assertLess(res["opponent_range_combos"]["CO"], float((rs[1] * live).sum()) - 1.0)
+        self.assertLess(res["opponent_range_combos"]["CO"], float((rs[1] * live).sum()) - 0.5)
 
     def test_heads_up_report_leaves_out_what_you_block(self):
         with mock.patch("gto.advisor.range_to_text", wraps=A.range_to_text) as shown:

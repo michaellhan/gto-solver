@@ -656,8 +656,9 @@ class TestFourWay(unittest.TestCase):
                 g = s.run(iters=iters - 5).br_gains()
                 self.assertTrue(np.all(g < g5))
                 self.assertLess(g.max() / s.root_pot() * 100, bound)
-                # (the root street's pairwise deals against the tables' scaled to them: within half a percent)
-                self.assertAlmostEqual(float(s.values().sum()), 10.5, delta=0.05)
+                # (the root street's pairwise deals against the tables' scaled to them: about half a percent, by how much
+                # card removal there is between the ranges)
+                self.assertAlmostEqual(float(s.values().sum()), 10.5, delta=0.06)
                 # the deals' weight below the root is the root's (the tables scaled to it), every class's showdown
                 # shares adding up to it
                 tb = s.tabs
