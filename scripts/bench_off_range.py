@@ -26,6 +26,7 @@ action's EV difference; and how far everyone else's strategies move, as a reach-
 docs/off_range_research.md.
 """
 import argparse
+import gzip
 import json
 import os
 import random
@@ -50,6 +51,9 @@ HU_TARGET = 0.5    # % of the pot: where a heads-up solve stops (the arms are co
 TINY_W = 0.05      # a combo's weight in the tiny arm
 WIDE_MASS = 0.2    # the wide arm's band, as a share of the range's combos (each band combo at CLASS_W)
 RANKS = "23456789TJQKA"
+
+
+POOL = False       # --pool: answered against the typical player, as the page's cash hands are
 
 
 def p_(pos, action, **kw):
@@ -270,7 +274,7 @@ class Harness:
 
     def state(self, hole, acts, street):
         return {"players": self.n, "stack": self.stack, "hero": self.hero, "hole": hole, "board": self.board,
-                **self.streets, street: list(acts)}
+                **self.streets, street: list(acts), **({"opponents": "pool"} if POOL else {})}
 
     def view(self, res, hero_p=None):
         """Who holds what at the node just answered: (hero's strategy, its reach, [(the next player's strategy, reach,
@@ -352,6 +356,8 @@ def mass(res, view):
 
 
 def run(args):
+    global POOL
+    POOL = args.pool
     arms = set(args.arms.split(","))
     done = set()
     if os.path.exists(args.out):
@@ -633,7 +639,7 @@ def costs(reads):
 
 
 def report(args):
-    reads = [json.loads(ln) for f in args.out.split(",") for ln in open(f)]
+    reads = [json.loads(ln) for f in args.out.split(",") for ln in (gzip.open(f, "rt") if f.endswith(".gz") else open(f))]
     print(f"{len(reads)} reads, {len({r['spot'] for r in reads})} spots, "
           f"{len({(r['spot'], r['node'], r['hand']) for r in reads if r['arm'] == 'near'})} hand-nodes, "
           f"{sum(r['secs'] for r in reads) / 60:.0f} min of asking")
@@ -680,6 +686,7 @@ if __name__ == "__main__":
     ap.add_argument("--history", action="store_true", help="the history arm on the turn and river too (a solve of the flop each)")
     ap.add_argument("--history-every", type=int, default=1, help="the history arm on every nth hand of a spot")
     ap.add_argument("--arms", default="combo,class,history", help="and tiny, wide")
+    ap.add_argument("--pool", action="store_true", help="against the typical player (the page's cash hands), not equilibrium")
     ap.add_argument("--only", default=None, help="spots with this in their id")
     ap.add_argument("--streets", default="river,turn,flop")
     ap.add_argument("--max-spots", type=int, default=0)
