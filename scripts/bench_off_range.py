@@ -421,7 +421,8 @@ def run(args):
                 if (sid, node, key, "class") not in done:
                     idx = A._class_index()[cls]
                     arm("class", {int(i): CLASS_W for i in idx if pf_in[i] <= 1e-9}, only={hi})
-                if (sid, node, key, "history") not in done and (args.history or street == "flop"):
+                if (sid, node, key, "history") not in done and (args.history or street == "flop") \
+                        and pi % args.history_every == 0:
                     add = [int(i) for c in family(cls) for i in A._class_index()[c] if pf_in[i] <= 1e-9]
                     arm("history", {}, wrap=with_family(real_ranges, hero, add), only={hi})
         print(f"{s_i + 1}/{len(all_spots)} {sid} {time.time() - t_spot:.0f}s", flush=True)
@@ -574,6 +575,7 @@ if __name__ == "__main__":
     ap.add_argument("--flops", type=int, default=2)
     ap.add_argument("--hands", type=int, default=5)
     ap.add_argument("--history", action="store_true", help="the history arm on the turn and river too (a solve of the flop each)")
+    ap.add_argument("--history-every", type=int, default=1, help="the history arm on every nth hand of a spot")
     ap.add_argument("--only", default=None, help="spots with this in their id")
     ap.add_argument("--streets", default="river,turn,flop")
     ap.add_argument("--max-spots", type=int, default=0)
