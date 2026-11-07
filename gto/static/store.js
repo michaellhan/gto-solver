@@ -45,7 +45,7 @@
   // key that isn't here, and pins the list: the keys of a module gone from gto/static stay, as the frozen copy writes them.
   const SITE_KEYS = [...KNOWN, ...LOCAL_ONLY, ...Object.keys(MOVED), SENTINEL,
     ...[...STORES, "meta"].map(s => "gto-store:" + s),   // (the records, without IndexedDB)
-    "gto-welcome", "gto-stakes", "gto-writeup", "gto-pool-refused", "gto-carry-notice",   // (taken in as any "gto-" key is)
+    "gto-welcome", "gto-stakes", "gto-writeup", "gto-pool-refused", "gto-carry-notice", "gto-answers",   // (taken in as any "gto-" key is)
     "gto-isolate", "gto-isolate-classic"];               // (sessionStorage: the service worker's once-a-tab mark)
   const SITE_DATABASES = { [DB_NAME]: [...STORES, "meta"], "gto-session": ["kv"], "gto-pf": ["solves"] };
   const SITE_CACHES = ["gto-solver", "gto-solver-classic"];

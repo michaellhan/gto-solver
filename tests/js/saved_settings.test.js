@@ -442,6 +442,39 @@ test("the frozen copy's saved opponents setting changes nothing: cash at the typ
   assert.equal(q.payload().opponents, undefined);
 });
 
+test("Against: cash hands at the typical player until it's set, then at equilibrium, kept in this browser and out of the hand", async () => {
+  const p = loadPage();
+  await p.ready();
+  p.spot(played());
+  await flush();
+  assert.equal(p.payload().opponents, "pool");
+  const row = () => [...p.byId("answers").walk()].filter(e => e.tagName === "BUTTON");
+  assert.deepEqual(row().map(b => b.textContent), ["Typical player", "GTO"]);
+  assert.equal(p.byId("answersRow").hidden, false);
+  row()[1].click();
+  await flush();
+  assert.equal(p.payload().opponents, undefined);
+  assert.equal(p.posted.filter(m => m.state).at(-1).state.opponents, undefined);
+  assert.equal(p.storage.get("gto-answers"), "gto");
+  assert.equal(p.S.gtoAnswers, undefined);
+  assert.match(p.byId("setupSum").innerHTML, /against <b>GTO<\/b>/);
+  row()[0].click();
+  await flush();
+  assert.equal(p.payload().opponents, "pool");
+  assert.equal(p.storage.get("gto-answers"), "typical");
+  assert.doesNotMatch(p.byId("setupSum").innerHTML, /GTO/);
+
+  const q = loadPage({ storage: { "gto-answers": "gto" } });
+  await q.ready();
+  q.spot(played());
+  assert.equal(q.payload().opponents, undefined);
+  assert.equal(q.byId("answersRow").hidden, false);
+  q.spot({ ...played(), payouts: [50, 30, 20] });
+  await flush();
+  assert.equal(q.byId("answersRow").hidden, true);
+  assert.doesNotMatch(q.byId("setupSum").innerHTML, /against/);
+});
+
 test("the setup line says tournament for one, and nothing for a cash game; My hands marks these hands", async () => {
   const p = loadPage();
   await p.ready();

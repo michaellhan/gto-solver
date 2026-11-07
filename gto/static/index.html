@@ -403,6 +403,10 @@
             <input type="number" id="rakeCap" min="0" step="0.5" title="Most rake per pot, in big blinds (0 = no cap)"><span class="muted" id="rakeCapUnit">bb</span>
           </span>
         </div>
+        <div class="row setuprow" id="answersRow">
+          <span class="muted">Against</span>
+          <div class="segment" id="answers" title="What cash hands are answered and graded against: a typical online player, or perfect play (GTO), for opponents using solvers. Tournaments are always GTO."></div>
+        </div>
         <div class="row">
           <span class="muted" style="width:58px;font-size:12px">You are</span>
           <div class="row seats" id="seats"></div>
@@ -520,8 +524,11 @@ const MYSTERY_ENV = () => { const b = S.bounty || {}; return posNum(b.env) || (p
 const BOUNTY = () => { const f = BOUNTY_FMT(); return !f ? null : f === "mystery" ? (MYSTERY_ENV() > 0 ? f : null) : POS.some(p => BOUNTY_OF(p) > 0) ? f : null; };
 const TOURNEY = () => ICM() || !!BOUNTY();
 // Cash hands are answered and graded against a typical online player (gto/exploit.py: "opponents": "pool"), as nobody
-// plays perfectly; its numbers are cash pools', so a tournament stays at equilibrium.
-const TYPICAL = () => !TOURNEY() && !S.tournament;
+// plays perfectly; its numbers are cash pools', so a tournament stays at equilibrium. Against (Edit) puts cash hands at
+// equilibrium too, for a table of players using solvers: this browser's setting (gto-answers), not the hand's, so a
+// saved hand's record doesn't change, and typical until it's set. It isn't the frozen copy's gto-opponents, which is left alone.
+const TYPICAL = () => !TOURNEY() && !S.tournament && !gtoAnswers;
+const AT_GTO = () => gtoAnswers && !TOURNEY() && !S.tournament;
 function BOUNTY_SPEC() {
   const b = S.bounty, f = BOUNTY();
   if (f === "mystery") return { format: f, ...(posNum(b.env) ? { envelope: posNum(b.env) } : {}), ...(posNum(b.pool) ? { pool: posNum(b.pool) } : {}), ...(posNum(b.left) ? { left: posNum(b.left) } : {}) };
@@ -625,6 +632,7 @@ const BUDGETS = { server: [2.5, 2.5], wasm: [8, 3] };
 // the reads while the page starts); without it (the tests' page) localStorage itself
 const pageStore = window.GTOStore || { getRaw: (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } },
                                        setRaw: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} } };
+let gtoAnswers = pageStore.getRaw("gto-answers") === "gto";
 // everything deleted from another tab (Hands' Delete everything this site keeps): what this tab holds goes with it
 if (window.GTOStore) window.GTOStore.onChange((c) => { if (c.wiped && c.remote) location.reload(); });
 const WORKER_VERSION = "14";   // scripts/deploy.sh replaces this with a hash of worker.js
@@ -1282,12 +1290,19 @@ function renderSetup() {
   document.getElementById("setupEdit").hidden = editSetup || !!review;
   const sum = document.getElementById("setupSum");
   const dot = ' <span class="muted">·</span> ';
-  sum.innerHTML = `<b>${S.players}-handed</b>${TOURNEY() || S.tournament ? `${dot}tournament` : ""}${STAKES() ? `${dot}<b>${STAKES_TEXT()}</b>` : ""}${dot}you are <b>${SEAT_LABEL(S.hero, S.players)}</b>${dot}<b>${fmt(S.stack)}bb</b>${withUsd(S.stack)}${UNEQUAL() ? ` stacks (${STACKS_TEXT()})` : ""}${ANTE() ? `${dot}${fmt(ANTE())}bb${withUsd(ANTE())} ante` : ""}${STRADDLER() ? `${dot}${SEAT_LABEL(STRADDLER(), S.players)} straddles` : ""}${RAKE() ? `${dot}${RAKE_TEXT()}` : ""}`;
+  sum.innerHTML = `<b>${S.players}-handed</b>${TOURNEY() || S.tournament ? `${dot}tournament` : ""}${STAKES() ? `${dot}<b>${STAKES_TEXT()}</b>` : ""}${dot}you are <b>${SEAT_LABEL(S.hero, S.players)}</b>${dot}<b>${fmt(S.stack)}bb</b>${withUsd(S.stack)}${UNEQUAL() ? ` stacks (${STACKS_TEXT()})` : ""}${ANTE() ? `${dot}${fmt(ANTE())}bb${withUsd(ANTE())} ante` : ""}${STRADDLER() ? `${dot}${SEAT_LABEL(STRADDLER(), S.players)} straddles` : ""}${RAKE() ? `${dot}${RAKE_TEXT()}` : ""}${AT_GTO() ? `${dot}against <b>GTO</b>` : ""}`;
 
   const saved = document.getElementById("savedSettings"), line = savedHtml();
   saved.hidden = !line; saved.innerHTML = line;
   document.getElementById("straddleBox").hidden = S.players < 3;
   syncStakes(); renderSeatStacks();
+  document.getElementById("answersRow").hidden = TOURNEY() || !!S.tournament;
+  const an = document.getElementById("answers"); an.innerHTML = "";
+  for (const [gto, label] of [[false, "Typical player"], [true, "GTO"]]) {
+    const b = document.createElement("button"); b.className = "small"; b.textContent = label; if (gto === gtoAnswers) b.classList.add("active");
+    b.onclick = () => { if (gto === gtoAnswers) return; gtoAnswers = gto; pageStore.setRaw("gto-answers", gto ? "gto" : "typical"); resetAdvice(); renderAll(); };
+    an.appendChild(b);
+  }
   const el = document.getElementById("seats"); el.innerHTML = "";
   for (const p of POS) { const b = document.createElement("button"); b.textContent = SEAT_LABEL(p, POS.length); if (p === S.hero) b.classList.add("active");
     b.onclick = () => { S.hero = p; save(); renderAll(); }; el.appendChild(b); }

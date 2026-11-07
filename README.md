@@ -454,7 +454,7 @@ ranges and responses; after the flop the advice is the best response (each hand'
 follow the equilibrium among them, which can leave the action shown just under another's EV: a note says so, and the page grades neither
 against the other). See Exploit mode below. `gto_freq` is the chart's mix preflop and
 after it the equilibrium of the same solve, which starts from the pool's ranges into the flop (and is never the
-precomputed library's), so it can differ from the equilibrium answer for the same hand. The page sends it for every cash hand, and grades by the EV given up against that opponent, as a share of the pot; a tournament hand stays at equilibrium (the pool data is cash).
+precomputed library's), so it can differ from the equilibrium answer for the same hand. The page sends it for every cash hand unless Against (Edit) is set to GTO, which is kept in the browser (`gto-answers`), not the hand, and grades by the EV given up against that opponent, as a share of the pot; a tournament hand stays at equilibrium (the pool data is cash).
 
 ### Rake
 

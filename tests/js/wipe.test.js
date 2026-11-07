@@ -60,7 +60,7 @@ const SITE_KEYS_SNAPSHOT = ["handreview", "fourcolor", "gto-speed", "gto-opponen
   "gto-practice-drill", "gto-practice-hint", "gto-practice-table", "gto-practice-tables", "gto-practice-more", "gto-practice-detail",
   "gto-mt", "gto-mt-score", "gto-mt-drill", "gto-mt-seat", "gto-hands-table", "gto-hands-ui", "gto-anthropic-key", "gto-explain-own", "gto-session-run",
   "gto-session", "gto-session-history", "gto-store-mirror", "gto-store:kv", "gto-store:hands", "gto-store:sessions", "gto-store:blobs", "gto-store:meta",
-  "gto-welcome", "gto-stakes", "gto-writeup", "gto-pool-refused", "gto-carry-notice", "gto-isolate", "gto-isolate-classic"];
+  "gto-welcome", "gto-stakes", "gto-writeup", "gto-pool-refused", "gto-carry-notice", "gto-answers", "gto-isolate", "gto-isolate-classic"];
 
 test("SITE_KEYS is pinned: what leaves gto/static stays in the list, for the frozen copy", () => {
   assert.deepEqual([...SITE_KEYS].sort(), [...SITE_KEYS_SNAPSHOT].sort());
