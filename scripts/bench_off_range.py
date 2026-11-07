@@ -11,7 +11,10 @@ the Advisor gives such a hand with the answer at a real weight, on the same tree
            the hand has played: the same earlier solves and rules, with those hands in the range they narrow
   control  the combo solve of ANOTHER probe, this hand still near-zero there: what a small change of range does to an
            answer that isn't the hand's own, so the noise floor of everything above
-  wide     (--wide) every near-bar hand in, not just this hand's: what changing the assumed range does to the same answers
+  tiny     (--arms) the hand at TINY_W of a combo: whether a weight a little over near-zero settles what a real one does
+  wide     (--arms) a band of near-bar hands in from before the flop whatever you hold (WIDE_MASS of the range's combos,
+           near_bar), the one repair that can't depend on your cards: what it does to these hands and to hands in range,
+           and what it costs the solve
 
   python scripts/bench_off_range.py run --group hu --out hu.jsonl        # resumes: finished reads are skipped
   python scripts/bench_off_range.py run --group 3way --out mw.jsonl
@@ -44,6 +47,8 @@ NEAR_HU = 1e-3     # as Advisor._with_hero
 NEAR_MW = 2e-9     # just over MW_OFF_RANGE's 1e-9 test, so one solve serves every probe of a spot (the same near-zero)
 CLASS_W = 0.25     # a combo's weight in the class and history arms
 HU_TARGET = 0.5    # % of the pot: where a heads-up solve stops (the arms are compared solve for solve)
+TINY_W = 0.05      # a combo's weight in the tiny arm
+WIDE_MASS = 0.2    # the wide arm's band, as a share of the range's combos (each band combo at CLASS_W)
 RANKS = "23456789TJQKA"
 
 
@@ -347,6 +352,7 @@ def mass(res, view):
 
 
 def run(args):
+    arms = set(args.arms.split(","))
     done = set()
     if os.path.exists(args.out):
         for ln in open(args.out):
@@ -370,9 +376,6 @@ def run(args):
         h = Harness(n, stack, hero, streets, board)    # (heads-up: one solve of the street serves every read of it)
         for kind, acts in reads:
             node = f"{kind}:{len(acts)}"
-            if all((sid, node, A.hand_class(ALL_COMBOS[p[2]]) + "/" + p[0], "history") in done for p in ps) and \
-                    all((sid, node, A.hand_class(ALL_COMBOS[p[2]]) + "/" + p[0], "class") in done for p in ps):
-                continue
             h.w = dict(base_w)
             base = {}
             for b, cls, hi in ps:
@@ -413,19 +416,59 @@ def run(args):
                 if hi not in base:
                     continue
                 key = cls + "/" + b
-                if (sid, node, key, "combo") not in done:
+                if "combo" in arms and (sid, node, key, "combo") not in done:
                     next_hi = ps[(pi + 1) % len(ps)][2]
                     arm("combo", {hi: 1.0}, only={hi})
                     if next_hi != hi:     # (the same solve, the next probe still near-zero in it)
                         arm_control(h, out, sid, group, street, node, acts, ps, pi, base, base_w, hi, done)
-                if (sid, node, key, "class") not in done:
+                if "class" in arms and (sid, node, key, "class") not in done:
                     idx = A._class_index()[cls]
                     arm("class", {int(i): CLASS_W for i in idx if pf_in[i] <= 1e-9}, only={hi})
-                if (sid, node, key, "history") not in done and (args.history or street == "flop") \
+                if "history" in arms and (sid, node, key, "history") not in done and (args.history or street == "flop") \
                         and pi % args.history_every == 0:
                     add = [int(i) for c in family(cls) for i in A._class_index()[c] if pf_in[i] <= 1e-9]
                     arm("history", {}, wrap=with_family(real_ranges, hero, add), only={hi})
+                if "tiny" in arms and (sid, node, key, "tiny") not in done:
+                    arm("tiny", {hi: TINY_W}, only={hi})
+            if "wide" in arms:
+                wrap = with_family(real_ranges, hero, near_bar(pf_in))
+                dead = set(cards(board))
+                rnd = random.Random(sid)
+                held = [i for i, cb in enumerate(ALL_COMBOS) if pf_in[i] > 0.2 and not dead & set(cb)]
+                inside = [("in " + bin_of(ALL_COMBOS[i], cards(board))[0], A.hand_class(ALL_COMBOS[i]), i)
+                          for i in rnd.sample(held, min(4, len(held)))]
+                for b, cls, hi in inside:      # (hands in range, as they stand)
+                    res, view, secs = h.ask(hi, acts, street)
+                    if "error" not in res and res.get("actions"):
+                        base[hi] = (res, view)
+                        if (sid, node, cls + "/" + b, "near") not in done:
+                            emit(out, sid, group, street, node, res, cls + "/" + b, "near", secs, None, view, ps)
+                A.preflop_ranges = wrap
+                try:
+                    h2 = Harness(n, stack, hero, streets, board)
+                    h2.w = dict(base_w)
+                    for b, cls, hi in list(ps) + inside:
+                        key = cls + "/" + b
+                        if hi in base and (sid, node, key, "wide") not in done:
+                            res, view, secs = h2.ask(hi, acts, street)
+                            if "error" not in res:
+                                emit(out, sid, group, street, node, res, key, "wide", secs, base[hi], view, ps, wrap.added)
+                finally:
+                    A.preflop_ranges = real_ranges
         print(f"{s_i + 1}/{len(all_spots)} {sid} {time.time() - t_spot:.0f}s", flush=True)
+
+
+def near_bar(pf_in):
+    """The off-range combos closest to the range's weak end by strength (the weakest tenth of it by weight), enough of
+    them for WIDE_MASS of its combos at CLASS_W. No cards of anyone's in it."""
+    st = pf._strength()
+    w = np.asarray(pf_in, dtype=float)
+    order = np.argsort(st, kind="stable")
+    cum = np.cumsum(w[order])
+    bar = float(st[order[min(int(np.searchsorted(cum, 0.1 * cum[-1])), N - 1)]])
+    off = np.nonzero(w <= 1e-9)[0]
+    off = off[np.argsort(np.abs(st[off] - bar), kind="stable")]
+    return [int(i) for i in off[:int(round(WIDE_MASS * w.sum() / CLASS_W))]]
 
 
 def arm_control(h, out, sid, group, street, node, acts, ps, pi, base, base_w, hi, done):
@@ -459,6 +502,7 @@ def emit(out, sid, group, street, node, res, key, arm, secs, base, view, ps, ski
                           "villain_combos": res.get("villain_range_combos") or sum((res.get("opponent_range_combos") or {}).values()),
                           "acts": line_of(res), "rest": rest, "secs": round(secs, 2),
                           "iters": (res.get("solver") or {}).get("iterations"),
+                          "active": (res.get("solver") or {}).get("active_combos"),
                           "expl": (res.get("solver") or {}).get("exploitability_pct")}) + "\n")
     out.flush()
 
@@ -535,6 +579,59 @@ HEAD = (f"{'':<30} {'n':>4} {'flip':>6} {'cost':>6} {'regret mean [90%]':>20} {'
         f"{'|dEV|':>5} {'p90':>5} {'hero':>5} {'vill':>5}")
 
 
+def grade(cost):
+    return 0 if cost <= 3.0 else 1 if cost <= 10.0 else 2     # (the page's EV grades: good, a little off, a mistake)
+
+
+def verdicts(rows, arm):
+    """What the answer's reader sees. Grades: each action's EV gap to the top, % of the pot, near-zero against the real
+    weight's. Close (the page's 3%): when near-zero's top EV leads the next by more, does the real weight agree?"""
+    if not rows:
+        return
+    same = tot = over = under = 0
+    lead, flips, loss = 0, 0, []
+    within, w_loss = 0, []
+    gaps = []
+    for s, r, n in rows:
+        a, b = n["acts"], r["acts"]
+        pot = max(r["pot"], 1e-9)
+        ta, tb = max(q[2] for q in a), max(q[2] for q in b)
+        for p, q in zip(a, b):
+            ga, gb = grade((ta - p[2]) / pot * 100), grade((tb - q[2]) / pot * 100)
+            tot += 1
+            same += ga == gb
+            over += ga > gb
+            under += ga < gb
+            gaps.append(((ta - p[2]) - (tb - q[2])) / pot * 100)
+        best = sorted(p[2] for p in a)
+        top = max(range(len(a)), key=lambda i: a[i][2])
+        cost = (tb - b[top][2]) / pot * 100
+        if len(best) > 1 and (best[-1] - best[-2]) / pot * 100 > 3.0:
+            lead += 1
+            flips += max(range(len(b)), key=lambda i: b[i][2]) != top
+            loss.append(cost)
+        else:
+            within += 1
+            w_loss.append(cost)
+    print(f"{arm}: grades of {tot} actions: same {100 * same / tot:.1f}%, near-zero harsher {100 * over / tot:.1f}%, kinder "
+          f"{100 * under / tot:.1f}%; its EV gap less the real one's: mean {np.mean(gaps):+.2f}, p10 {np.percentile(gaps, 10):+.2f}, "
+          f"p90 {np.percentile(gaps, 90):+.2f}")
+    print(f"   near-zero's top EV by over 3% of the pot: {lead} reads, the real top differs on {flips}, top's cost mean "
+          f"{np.mean(loss) if loss else 0:.2f} max {max(loss) if loss else 0:.2f}; within 3%: {within} reads, cost mean "
+          f"{np.mean(w_loss) if w_loss else 0:.2f} max {max(w_loss) if w_loss else 0:.2f}")
+
+
+def costs(reads):
+    near = {(r["spot"], r["node"], r["hand"]): r for r in reads if r["arm"] == "near"}
+    ra = []
+    for r in reads:
+        n = near.get((r["spot"], r["node"], r["hand"]))
+        if r["arm"] == "wide" and n and n.get("active") and r.get("active") and n.get("iters") and r.get("iters"):
+            ra.append(r["active"] / n["active"])
+    if ra:
+        print(f"wide: the solve's combos x{np.median(ra):.2f} (median), x{np.percentile(ra, 90):.2f} (p90)")
+
+
 def report(args):
     reads = [json.loads(ln) for f in args.out.split(",") for ln in open(f)]
     print(f"{len(reads)} reads, {len({r['spot'] for r in reads})} spots, "
@@ -542,7 +639,7 @@ def report(args):
           f"{sum(r['secs'] for r in reads) / 60:.0f} min of asking")
     print("flip: top action changes; cost: it changes and that costs > 0.5% of the pot; regret: the near-zero mix at the "
           "real weight's EVs, % of the pot; back: the real weight's mix at near-zero's EVs; |dEV|: per action; hero / vill: how far the rest of the range moves, % of it\n")
-    for arm in ("control", "combo", "class", "history", "wide"):
+    for arm in ("control", "tiny", "combo", "class", "history", "wide"):
         print(f"--- {arm}\n{HEAD}")
         for g in ("hu", "3way", "4way"):
             for st in ("flop", "turn", "river"):
@@ -559,7 +656,13 @@ def report(args):
             print(line(b, [x for x in rows if x[1]["hand"].endswith("/" + b)]))
         for k in ("first", "facing"):
             print(line(k, [x for x in rows if x[1]["node"].startswith(k)]))
+        for b in ("in strong", "in top pair", "in lower pair", "in draw", "in gutshot", "in air"):
+            if any(x[1]["hand"].endswith("/" + b) for x in rows):
+                print(line(b, [x for x in rows if x[1]["hand"].endswith("/" + b)]))
         print()
+    for arm in ("combo", "class", "history"):
+        verdicts(rows_for(reads, arm), arm)
+    costs(reads)
     rows = sorted(rows_for(reads, "class") + rows_for(reads, "combo"), key=lambda x: -x[0][2])
     print("worst reads (regret % pot, mix and top)")
     for s, r, n in rows[:12]:
@@ -576,6 +679,7 @@ if __name__ == "__main__":
     ap.add_argument("--hands", type=int, default=5)
     ap.add_argument("--history", action="store_true", help="the history arm on the turn and river too (a solve of the flop each)")
     ap.add_argument("--history-every", type=int, default=1, help="the history arm on every nth hand of a spot")
+    ap.add_argument("--arms", default="combo,class,history", help="and tiny, wide")
     ap.add_argument("--only", default=None, help="spots with this in their id")
     ap.add_argument("--streets", default="river,turn,flop")
     ap.add_argument("--max-spots", type=int, default=0)
