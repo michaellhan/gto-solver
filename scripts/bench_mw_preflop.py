@@ -30,12 +30,15 @@ The spots to the blinds fit advisor.MW_LEVEL, MW_SLOPE and MW_SMALL_PAIR, minimi
 level and slope at the steps of the numbers there. ip_btn and sb_cc were held out of that fit, and the *_now spots are the
 same hands with the ranges frozen after it. --wide adds the strongest hands a range doesn't have, so a capped cold call
 gets stronger (the share of +EV calls falls: bg7, lrc6, cc_co_btn) and only an opener or iso raiser gets weaker (it rises:
-iso1). All of it is at 100bb. No seat past the blinds is in the fit.
+iso1). All of it is at 100bb. IN_POSITION is six cold calls from HJ, CO and BTN, which fit advisor.MW_SEAT with the same
+objective, HELD_OUT left out. --noise reads each option against the others on the same resamples of the flops, so what
+the flops do to both doesn't count against the difference (it needs the solved flops in the cache; --freeze ran without it).
 
     python scripts/bench_mw_preflop.py --minutes 9 [--procs 2]   # solve what's left (resumable)
     python scripts/bench_mw_preflop.py --wide --spots a,b     # the same with every other seat's range a bit wider
     python scripts/bench_mw_preflop.py --freeze               # data file from the cache, the advice as it is as "before"
     python scripts/bench_mw_preflop.py --report [--river]     # the table, the advice as it is now beside it
+    python scripts/bench_mw_preflop.py --noise [--river]      # in position: with and without MW_SEAT, paired on the flops
 """
 from __future__ import annotations
 import argparse
@@ -64,7 +67,10 @@ MIN_CONT = 0.08    # round 1 takes at least this share of a seat-to-act's range 
 WIDEN = 0.5        # --wide: each other seat's range grows by this share of its combos, the next best by equity
 ROUNDS = {1: dict(flops=4, offset=0.25, iters3=100, iters4=100), 2: dict(flops=10, offset=0.75, iters3=200, iters4=150)}
 THIN = 0.25        # a branch weighing less than this gets half the flops (its noise counts by its weight)
+MAX_PLAYERS = 4    # a branch with more players than this isn't solved (the others share its weight)
 
+IN_POSITION = ("ip_btn", "ip_co", "ip_hj", "ip_btn_limp", "ip_co_limp", "ip_hj_limp")
+HELD_OUT = "ip_hj_limp"   # not used to choose advisor.MW_SEAT
 # name: (seats, hero, the line to hero (folds filled in), rake, what a published solve says)
 SPOTS = {
     # the hand that found it, and the same with nobody owing
@@ -95,6 +101,13 @@ SPOTS = {
     "bg7_now": (7, "BB", "UTG call, LJ raise 4, HJ call", None, ""),
     "lrc6_now": (6, "BB", "UTG call, HJ raise 4, CO call", None, ""),
     "cc_4way_now": (6, "BB", "UTG raise 2.5, HJ call, BTN call", None, ""),
+    # cold calls in position, the seats _mw_realize wasn't fit on: CO and HJ behind an open and a call, then each of the
+    # three seats with a limper in front of the raise
+    "ip_co": (6, "CO", "UTG raise 2.5, HJ call", None, ""),
+    "ip_hj": (7, "HJ", "UTG raise 2.5, LJ call", None, ""),
+    "ip_btn_limp": (6, "BTN", "UTG call, CO raise 4", None, ""),
+    "ip_co_limp": (6, "CO", "UTG call, HJ raise 4", None, ""),
+    "ip_hj_limp": (7, "HJ", "UTG call, LJ raise 4", None, ""),
 }
 
 
@@ -215,7 +228,8 @@ def branches(meta, rates=None, keep_all=False):
         out = [(k + (d["pos"],), w * c) for k, w in out] + [(k, w * f) for k, w in out]
     if keep_all:
         return out, 1.0 - no_raise
-    keep = [(k, w) for k, w in out if w >= MIN_BRANCH * no_raise]
+    fits = lambda k: 1 + len(meta["live"]) + len(k) <= MAX_PLAYERS   # (hero, the seats in, those behind that come along)
+    keep = [(k, w) for k, w in out if w >= MIN_BRANCH * no_raise and fits(k)]
     tot = sum(w for _, w in keep)
     return [(k, w * no_raise / tot) for k, w in keep], 1.0 - no_raise
 
@@ -389,6 +403,7 @@ def excess_cv(ys, ms, xs, xm, many_x, many_m):
 
 RIVER_SCALE = {0: 1.0, 1: 1.0, 2: 0.5}   # as advisor.RIVER_FIX: the river's correction by the raises called
 _ROUND: dict = {}
+CHART_LEVEL = dict(MW_LEVEL=1.0, MW_SLOPE=0.0, MW_SMALL_PAIR=0.0, MW_SEAT=0.0)
 
 
 def round_inputs(spot, wide, rnd):
@@ -642,8 +657,53 @@ def bootstrap(spot, wide, rnd=2, n=60, seed=5):
     return float(np.std(shares)), np.std(evs, axis=0)
 
 
+def boot_evs(spot, n=60, seed=5):
+    """Hero's EV per class over n resamples of the spot's flops, (n, K): the flops' own noise, spot by spot. Kept."""
+    path = os.path.join(CACHE, f"boot_{spot}_{n}_{seed}.npy")
+    if os.path.exists(path):
+        return np.load(path)
+    r = np.random.default_rng(seed)
+    out = np.array([estimate(spot, False, 2, r)["ev"] for _ in range(n)])
+    np.save(path, out)
+    return out
+
+
+def compare(spots, options, river=False):
+    """{option: (mean EV lost per hand over `spots`, sd of its difference from the first option's, per spot its EV lost)}.
+    Each option is a dict of advisor constants to patch. The sd is over resamples of the flops with both options read on
+    the same resample, so what the flops do to the two alike doesn't count against the difference."""
+    from unittest import mock
+    from gto import advisor as A
+    with open(DATA) as fh:
+        D = json.load(fh)["spots"]
+    boots = {s: boot_evs(s) for s in spots}
+    A._PF_CACHE.clear()
+    rows = {}
+    for name, patch in options.items():
+        with mock.patch.multiple(A, **(patch or {"MW_SEAT": A.MW_SEAT})):
+            A._PF_CACHE.clear()
+            adv = {s: advice(s) for s in spots}
+        A._PF_CACHE.clear()
+        per, loss = {}, 0.0
+        for s in spots:
+            n, rv = np.array(D[s]["combos"]), np.array(D[s]["river"]) if river else 0.0
+            per[s] = sum(score(np.array(D[s]["ev"]) + rv, *adv[s], n)[1:])
+            loss = loss + np.array([sum(score(e + rv, *adv[s], n)[1:]) for e in boots[s]])
+        rows[name] = (sum(per.values()) / len(spots), loss / len(spots), per)
+    first = rows[next(iter(rows))][1]
+    return {k: (v[0], float(np.std(v[1] - first)), v[2]) for k, v in rows.items()}
+
+
+def chart_level():
+    """The advice with every call re-drawn at the chart's level: what each spot's advisor_before is."""
+    from unittest import mock
+    from gto import advisor as A
+    return mock.patch.multiple(A, **CHART_LEVEL)
+
+
 def freeze(args):
     from gto.pf_classes import CLASSES
+    from gto import advisor as A
     path = args.data
     out = {}
     if os.path.exists(path):
@@ -651,7 +711,7 @@ def freeze(args):
             out = json.load(fh)
     out.setdefault("settings", {}).update(
         eps=EPS, rounds={str(k): v for k, v in ROUNDS.items()}, widen=WIDEN, min_branch=MIN_BRANCH, classes=list(CLASSES))
-    for spot in SPOTS:
+    for spot in args.spots.split(",") if args.spots else SPOTS:
         for wide in (False, True):
             res = estimate(spot, wide, 2)
             if res is None or not complete(spot, wide):
@@ -659,8 +719,11 @@ def freeze(args):
             key = spot + ("_wide" if wide else "")
             n = hero_weights(res["rng"])
             sd, se = bootstrap(spot, wide)
-            call, raise_ = advice(spot)
             prev = out.get("spots", {}).get(key, {})
+            with chart_level():
+                A._PF_CACHE.clear()
+                call, raise_ = advice(spot)
+            A._PF_CACHE.clear()
             out.setdefault("spots", {})[key] = {
                 "seats": SPOTS[spot][0], "hero": SPOTS[spot][1], "line": SPOTS[spot][2], "rake": SPOTS[spot][3],
                 "published": SPOTS[spot][4], "call": res["meta"]["call"], "wide": wide,
@@ -707,6 +770,18 @@ def report(args, stream=sys.stdout):
     return tot[0] / tot[2], tot[1] / tot[2]
 
 
+def noise(args, stream=sys.stdout):
+    """The in-position spots: EV lost with the advice as it is, without MW_SEAT and at the chart's level, each against the
+    first on the same resamples of the flops, over all of them and on HELD_OUT alone. Reads the flops in the cache."""
+    options = {"now": {}, "no seat term": dict(MW_SEAT=0.0), "chart level": CHART_LEVEL}
+    for name, spots in (("all", list(IN_POSITION)), (HELD_OUT, [HELD_OUT])):
+        rows = compare(spots, options, args.river)
+        for k, (mean, sd, per) in rows.items():
+            print(f"{name:12s} {k:14s} {mean:.4f} ({mean - rows['now'][0]:+.4f} ±{sd:.4f})   "
+                  + " ".join(f"{s}:{per[s]:.3f}" for s in spots), file=stream)
+    return rows
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--minutes", type=float, default=9.0)
@@ -716,10 +791,13 @@ def main():
     ap.add_argument("--freeze", action="store_true")
     ap.add_argument("--report", action="store_true")
     ap.add_argument("--river", action="store_true")
+    ap.add_argument("--noise", action="store_true")
     ap.add_argument("--data", default=DATA)
     args = ap.parse_args()
     if args.freeze:
         freeze(args)
+    elif args.noise:
+        noise(args)
     elif args.report:
         report(args)
     else:

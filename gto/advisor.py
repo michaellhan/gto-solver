@@ -1060,8 +1060,11 @@ _IMPLIED_W = np.array([_implied_w(hand_class(c)) for c in ALL_COMBOS])
 # A call re-drawn with more players in than the chart's (Advisor._priced) realizes more than the chart's level the dearer
 # the price, since the hands at the bar then have more equity, and a small pair more than other hands at the same
 # equity: the level at a 20% price, what a point of price moves it, a small pair's extra, and the stacks behind (bb) over
-# which this comes in from the chart's level. Fit to scripts/bench_mw_preflop.py's flop solves, at 100bb.
+# which this comes in from the chart's level. A seat still to act before the big blind takes MW_SEAT off, up to the MW_SEATS
+# measured: at the same price the button needs 1.04-1.08, the cutoff 1.02-1.04 and the hijack 0.92-0.98. Fit to
+# scripts/bench_mw_preflop.py's flop solves, at 100bb.
 MW_LEVEL, MW_SLOPE, MW_SMALL_PAIR, MW_DEEP = 0.99, 1.25, 0.14, (40.0, 80.0)
+MW_SEAT, MW_SEATS = 0.035, 3
 MW_AT = 0.20
 _SMALL_PAIR = np.array([len(hand_class(c)) == 2 and hand_class(c)[0] in "23456" for c in ALL_COMBOS])
 _CARD_MASK = np.array([(1 << a) | (1 << b) for a, b in ALL_COMBOS], dtype=np.int64)
@@ -1650,9 +1653,10 @@ def _owed(st: "StreetState", opp: List[str], level: float, positions, stack: flo
     return sum(max(min(level, stacks[p] - st.inv_start[p]) - st.bets[p], 0.0) for p in opp if p not in st.allin)
 
 
-def _mw_realize(price: float, behind: float) -> np.ndarray:
-    """Per combo, what a multiway re-draw's realization is times the chart's (MW_LEVEL)."""
-    m = MW_LEVEL + MW_SLOPE * (price - MW_AT) + MW_SMALL_PAIR * _SMALL_PAIR
+def _mw_realize(price: float, behind: float, seats: int = 0) -> np.ndarray:
+    """Per combo, what a multiway re-draw's realization is times the chart's (MW_LEVEL), with `seats` players still to act
+    before the big blind."""
+    m = MW_LEVEL + MW_SLOPE * (price - MW_AT) + MW_SMALL_PAIR * _SMALL_PAIR - MW_SEAT * min(seats, MW_SEATS)
     return 1.0 + (m - 1.0) * float(np.clip((behind - MW_DEEP[0]) / (MW_DEEP[1] - MW_DEEP[0]), 0.0, 1.0))
 
 
@@ -4623,7 +4627,8 @@ class Advisor:
                     # blind's call stay at the chart's level: the 3-way flop library is built on that range)
                     stored = (hero == "BB" and len(opp) == 2 and st.n_raises == 1 and not rk_on
                               and abs(st.cur_bet - std.cur_bet) < 1e-9 and all(st.bets[p] >= st.cur_bet for p in opp))
-                    level = _mw_realize(need - prem, behind) if len(opp) <= 4 and not stored else 1.0
+                    left = sum(p not in (hero, "BB") and p not in opp for p in st.active)
+                    level = _mw_realize(need - prem, behind, left) if len(opp) <= 4 and not stored else 1.0
                     redraw = np.clip(0.5 + (eq * realize * level - need_v) / PRICE_BLEND, 0.0, 1.0)
                     redraw[np.isnan(redraw)] = 0.0
                     new = np.maximum(redraw, raise_n)

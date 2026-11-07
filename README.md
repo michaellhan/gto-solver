@@ -544,7 +544,8 @@ tournament (`S.tournament`, its header), and the advisor drops a request's rake 
   limper folds, the pot is smaller and the equity is better (A4s here: 25.6% for 22%, against 21.8% for 18%).
 * What a preflop call realizes with more players in than the chart's (advisor._mw_realize, in Advisor._priced) is held to
   flop solves: `scripts/bench_mw_preflop.py`, with 14 limped and cold-called spots from the big blind and the small
-  blind in `docs/mw_preflop_reference.json` (10 flops a branch, 150 to 200 iterations, 3 and 4 players, each class's EV of
+  blind and six in position in `docs/mw_preflop_reference.json` (10 flops a branch, 150 to 200 iterations, 3 and 4
+  players, each class's EV of
   calling from its share of the pot; ±2 to 4 points on the share of hands that call at a profit). One realization for
   every price read the 13 spots this re-draw reaches at 1.0 times the chart's level on average, but they need 0.82 to 1.20,
   and in order of price: at a dear price the hands at the bar have more equity and realize more of it. So it is 0.99 at
@@ -559,7 +560,19 @@ tournament (`S.tournament`, its header), and the advisor drops a request's rake 
   Published: the big blind over a button open and small-blind call folds 73.6% (Poker Academy 71.2%, was 75.9%), calls
   17.3% (16.1%). It widens other seats' cold calls too (HJ in that hand 29 combos to 95), and solving again on those
   ranges barely moves the reference (15.2% to 14.6%). Held out of the fit: the small blind with the big blind behind is
-  closer (12.1% against 13.1%, was 9.4%); the button in position overshoots (15.3% against 11.0%, was 8.3%). Tried and
+  closer (12.1% against 13.1%, was 9.4%). In position six more spots hold it, cold calls from the button, cutoff and
+  hijack with and without a limper: at the same two prices the button needs 1.04-1.08, the cutoff 1.02-1.04 and the
+  hijack 0.92-0.98, where the price alone gave 1.09-1.11. So each seat still to act before the big blind takes 0.035 off
+  (MW_SEAT, up to the three measured; the small blind has none and fits without one). EV lost per hand over the six
+  0.0173 to 0.0070 bb, ±0.0019 on the same resamples of the flops, 0.0209 to 0.0130 with the river's correction; on
+  HJ's call over a limp and a raise, held out while it was chosen, 0.0219 to 0.0030, ±0.0049. The button there continues
+  12.3% against 11.0% (was 15.3%), and HJ in the hand above calls 49 combos, not 95. A flat level for these seats is no
+  better than the chart's, and going back to the chart's level beats the price alone only without the river (0.0096,
+  ±0.0028; with it 0.0189 against 0.0209, ±0.0028). The blinds lose a little by the narrower calls in front of them,
+  0.3005 to 0.3053 bb in all, ±0.007, on ranges not solved again, and over the 20 spots the term still gains (±0.0008 a
+  spot, 0.0029 bb, 0.0018 with the river). The big blind's 33 and 44 there now sit at the bar, 38% calls of +0.6bb: more
+  for small pairs (MW_SMALL_PAIR 0.20) gains nothing past the noise without the river, so it stays. `--noise` in the
+  script needs the solved flops in `.pf_cache`. Tried and
   dropped: splitting a limper into folding and coming along (with its measured rates it ranks hands worse, even
   at each spot's best level), letting a cut bluff call (they average -0.43bb as calls), a wider ramp (0.04 loses
   0.07bb over the spots) and a realization by opponents or a table by hand family (no better, fit on the others).
