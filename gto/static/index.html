@@ -423,6 +423,7 @@
 
     <section class="panel" id="pCards">
       <h2>Cards <span class="right" id="cardsHint"></span></h2>
+      <div class="row" id="seatsQuick" hidden><span class="muted" style="font-size:12px">You are</span><span class="row seats" id="seatsQuickBtns"></span></div>
       <div class="slots">
         <div class="slotgroup"><label>Your hand</label><div class="slotrow" id="holeSlots"></div></div>
         <div class="slotgroup"><label>Flop</label><div class="slotrow" id="flopSlots"></div></div>
@@ -618,6 +619,8 @@ function savedHtml() {
   const go = [tour && `<a href="${LIZARD_TOURNAMENTS}">Lizard's tournaments</a>`, adv.length && `<a href="${LIZARD_SOLVE}">Lizard's solver</a>`].filter(Boolean);
   return `Saved with this hand: ${what.join(", ")}. New hand clears ${what.length > 1 ? "them" : "it"}.${go.length ? ` For a new spot, use ${go.join(" or ")}.` : ""}`;
 }
+// the seat you'd have next hand: the button moves one seat on, so everyone acts one place earlier (BTN -> CO, UTG -> BB)
+const NEXT_SEAT = (p) => { const i = POS.indexOf(p); return i < 0 ? p : POS[(i - 1 + POS.length) % POS.length]; };
 function setPositions(n) {
   POS = SEATS[n]; ORDER_PRE = POS;
   ORDER_POST = n === 2 ? ["BB", "SB"] : ["SB", "BB", ...POS.filter(p => p !== "SB" && p !== "BB")];
@@ -1303,9 +1306,14 @@ function renderSetup() {
     b.onclick = () => { if (gto === gtoAnswers) return; gtoAnswers = gto; pageStore.setRaw("gto-answers", gto ? "gto" : "typical"); resetAdvice(); renderAll(); };
     an.appendChild(b);
   }
-  const el = document.getElementById("seats"); el.innerHTML = "";
-  for (const p of POS) { const b = document.createElement("button"); b.textContent = SEAT_LABEL(p, POS.length); if (p === S.hero) b.classList.add("active");
-    b.onclick = () => { S.hero = p; save(); renderAll(); }; el.appendChild(b); }
+  // the seats, in Edit and (until the hand's first action) above the cards, so a seat that moved needs no Edit
+  const quick = document.getElementById("seatsQuick");
+  quick.hidden = !!review || S.actions.preflop.length > 0;
+  for (const el of [document.getElementById("seats"), document.getElementById("seatsQuickBtns")]) {
+    el.innerHTML = "";
+    for (const p of POS) { const b = document.createElement("button"); b.textContent = SEAT_LABEL(p, POS.length); if (p === S.hero) b.classList.add("active");
+      b.onclick = () => { S.hero = p; save(); renderAll(); }; el.appendChild(b); }
+  }
   const pl = document.getElementById("players"); pl.innerHTML = "";
   for (let n = 2; n <= 9; n++) { const b = document.createElement("button"); b.className = "small"; b.textContent = n; if (n === S.players) b.classList.add("active");
     b.onclick = () => { if (n === S.players) return; leaveHand(); S = { ...fresh(n), stakes: S.stakes, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanStacks(S, SEATS[n]), cards: S.cards }; setPositions(n); selSlot = null; save(); handOnTable(); resetAdvice(); renderAll(); }; pl.appendChild(b); }
@@ -2197,7 +2205,8 @@ document.addEventListener("keydown", (e) => {
 });
 document.getElementById("newhand").onclick = () => {
   leaveHand();
-  S = { ...fresh(S.players), ...(S.stakes ? { stakes: S.stakes } : {}), hero: S.hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanStacks(S, POS) }; selSlot = null; showDeck = false; editSetup = false; pendingRank = null; save(); handOnTable(); resetAdvice(); renderAll();
+  // after a hand that was played, your seat moves with the button; an empty one keeps it
+  S = { ...fresh(S.players), ...(S.stakes ? { stakes: S.stakes } : {}), hero: S.actions.preflop.length ? NEXT_SEAT(S.hero) : S.hero, stack: S.stack, ante: S.ante, straddle: S.straddle, rake: S.rake, rakeCap: S.rakeCap, ...cleanStacks(S, POS) }; selSlot = null; showDeck = false; editSetup = false; pendingRank = null; save(); handOnTable(); resetAdvice(); renderAll();
 };
 document.getElementById("doneNew").onclick = () => document.getElementById("newhand").click();
 document.getElementById("reviewAgain").onclick = reviewHand;

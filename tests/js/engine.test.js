@@ -349,8 +349,24 @@ test("setup: players, stack, ante and straddle inputs; new hand", () => {
   p.act({ action: "fold" });
   p.byId("newhand").onclick();
   S = p.S;
-  assert.equal(S.hero, "SB"); assert.equal(S.stack, 35.5); assert.deepEqual(S.cards, [null, null, null, null, null, null, null]);
+  assert.equal(S.hero, "BB"); assert.equal(S.stack, 35.5); assert.deepEqual(S.cards, [null, null, null, null, null, null, null]);   // (heads-up, the button moved)
   assert.deepEqual(S.actions.preflop, []);
+});
+
+test("new hand: after a played hand your seat moves with the button; an empty hand keeps it; the seats show above the cards until the first action", () => {
+  const p = page(state({ hero: "BTN", cards: ["Ah", "Kh"], preflop: acts("UTG f") }));
+  const quick = () => [...p.byId("seatsQuickBtns").walk()].filter(e => e.tagName === "BUTTON");
+  assert.equal(p.byId("seatsQuick").hidden, true);
+  const seen = [];
+  for (let i = 0; i < 6; i++) { p.act({ action: "fold" }); p.byId("newhand").onclick(); seen.push(p.S.hero); }
+  assert.deepEqual(seen, ["CO", "HJ", "UTG", "BB", "SB", "BTN"]);
+  p.byId("newhand").onclick();                                   // nothing played: the seat stays
+  assert.equal(p.S.hero, "BTN");
+  assert.equal(p.byId("seatsQuick").hidden, false);
+  assert.deepEqual(quick().map(b => b.textContent), ["UTG", "HJ", "CO", "BTN", "SB", "BB"]);
+  quick()[4].onclick();
+  assert.equal(p.S.hero, "SB");
+  assert.equal(p.byId("setupSum").innerHTML.includes("you are <b>SB</b>"), true);
 });
 
 // Bug: a negative stack typed into the stack box was taken as is (every seat "all-in" before acting).
