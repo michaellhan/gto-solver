@@ -261,8 +261,14 @@ const ready = (async () => {
              //   450, 0.21 at 200; README, Accuracy vs speed). On one thread Fast's own tree, whose menu leaves it 0.34
              //   off however long it runs (0.35 at 200), at 0.3, from the 200th: ~200 iterations. A river or a 3bet
              //   pot's turn settles at 300 of its ~1000, within 0.1 of the 1000th's per-combo EVs.
+             //   With threads a turn runs on to its 600th first: its exploitability is under 0.2 by the 300th (2-3 s of
+             //   its ~11), but its per-combo EVs are still moving there. Against the same tree at 2000 iterations (nine
+             //   of scripts/turn_river_reference.py's turns, scripts/turn_convergence.py) the five single-raised turns
+             //   are 0.19% of the pot off per combo at 300, 0.08 at 600, 0.04 at 1000 (frequencies 0.71, 0.24, 0.11
+             //   points); the four 3bet turns 0.24 (one 0.58), 0.05 and 0.02 (0.40, 0.06, 0.03).
              + `advs['fast'].hu_settled = ${THREADED ? 0.2 : 0.3}; `
-             + (THREADED ? "" : "advs['fast'].hu_settled_from['turn'] = 200; ")
+             + (THREADED ? "advs['fast'].hu_settled_from.update(turn=600, shallow=600); "
+                         : "advs['fast'].hu_settled_from['turn'] = 200; ")
              // a heads-up answer after the flop 10 times further from equilibrium than a speed's are (advisor.OVER_TARGET:
              // Fast's settled stop, Accurate's 0.1% of the pot) says it's approximate: its solve ran short (the device
              // busy or slow, a big tree, or the compiled core failed twice and numpy answered: 5-7% on a Fast turn)

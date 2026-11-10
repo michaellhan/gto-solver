@@ -1496,6 +1496,17 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   on an idle machine): the Fast turn after a library flop 172-177 -> 186-194 iterations, 0.14-0.16 -> 0.12-0.15% of the
   pot from equilibrium, in the same 11.1 s; the river unchanged (1000 iterations in 6.2 s).
 
+  Later (the live site is cross-origin isolated, so its Fast turn runs threaded on Accurate's tree): such a turn was
+  under hu_settled's 0.2% of the pot by its 300th iteration, 2-3 s of its ~11, and stopped there with its per-combo
+  EVs still moving. `scripts/turn_convergence.py` (nine of turn_river_reference.py's turns, each against the same tree at
+  2000 iterations; the stored references, 400-500 iterations, carry the same unconverged error as a solve near their
+  iterations, so they can't measure past ~400): per combo, % of the pot, at 300 / 600 / 1000 iterations, the five
+  single-raised turns 0.19 / 0.08 / 0.04 (frequencies 0.71 / 0.24 / 0.11 points), the four 3bet turns 0.24 / 0.05 /
+  0.02 (0.40 / 0.06 / 0.03; Th9h4c-2s 0.58 at 300). With threads a turn now runs to its 600th before it may stop
+  (worker.js, `hu_settled_from` turn and shallow; one thread keeps 200): `BENCH_THREADS=8`, the turn after a library
+  flop 300 iterations, 0.12%, 2.2 s -> 600, 0.04%, 4.1 s; a 3bet pot's turn 0.07%, 0.8 s -> 0.03%, 1.2 s; a river
+  whose narrowing turn is solved fresh 2.6 -> 4.0 s.
+
   Later (3- and 4-way flop and turn solves' iterations in the compiled multiway core, `gto/mwcore.wasm`; CO opens, BTN
   and BB call, Kh8d3c; an idle machine): a 3-way flop first to act at Accurate 16.8 s, 400 iterations, 0.05% (was its
   60 s, 63-77, 3.3-5.0), at Fast 8.1 s, 203, 0.25% (was the rules'), at Quick 1.8 s, 114, 0.43% (the rules'); checked to
