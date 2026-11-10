@@ -541,6 +541,7 @@ def approx_solution(lib, full0: np.ndarray, full1: np.ndarray, board: Sequence[i
     else:
         kept.move_to_end(key)
     tcfg = cfg.copy()
+    tcfg.force_allin = 0.0   # (the entries were solved without it: Config.force_allin)
     tcfg.depth = 1
     ctx = SimpleNamespace(active=active, n=len(active), cfg=tcfg, root_len=3)
     root = TreeBuilder(ctx, dead=list(board)).build(tuple(board), pot, stack)

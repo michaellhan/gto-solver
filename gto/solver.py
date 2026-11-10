@@ -175,6 +175,15 @@ class Config:
     # raise sizes and the all-in the tree adds, however many raises came before; every other decision keeps the
     # street's. The one-size view's raise sizes. None = the street's sizes.
     root_raises: Optional[List[float]] = None
+    # force_allin: a bet or raise of the street's sizes that would leave less than this share of the pot behind once
+    # called (the stack-to-pot ratio after the call) is the all-in instead, as postflop-solver's force_allin_threshold
+    # (its default, 0.15). A 125% turn bet into 20.5 with 27 behind left 1.5: a second all-in under another name, which
+    # split the jam's frequency and was graded as a size of its own. root_bets / root_raises stay as they are, and so do
+    # the root street's sizes in `unforced` ({"bet": [...], "raise": [...]}: the ones the hand took that leave that
+    # little, Advisor._cfg_with_real_sizes; a 95% turn bet leaving 7.5 of 27 that was jammed on). 0 = off (the flop
+    # libraries' entries are solved so).
+    force_allin: float = 0.0
+    unforced: Optional[dict] = None
 
     def rake(self, pot: float) -> float:
         """Rake in bb taken from a final pot of `pot` bb."""
@@ -200,6 +209,8 @@ class Config:
                       root_allin=self.root_allin, icm=self.icm,
                       root_bets=None if self.root_bets is None else list(self.root_bets),
                       root_raises=None if self.root_raises is None else list(self.root_raises),
+                      force_allin=self.force_allin,
+                      unforced=None if self.unforced is None else {k: list(v) for k, v in self.unforced.items()},
                       keep_sizes=None if self.keep_sizes is None else {k: (list(v) if isinstance(v, list) else v)
                                                                        for k, v in self.keep_sizes.items()})
 
@@ -211,7 +222,9 @@ class Config:
             ((("rake", self.rake_rate, self.rake_cap),) if self.rake_rate > 0 else ()) + \
             (("root_allin",) if self.root_allin else ()) + ((("icm", self.icm.key),) if self.icm is not None else ()) + \
             ((("root_bets", tuple(self.root_bets)),) if self.root_bets is not None else ()) + \
-            ((("root_raises", tuple(self.root_raises)),) if self.root_raises is not None else ())
+            ((("root_raises", tuple(self.root_raises)),) if self.root_raises is not None else ()) + \
+            ((("force_allin", self.force_allin) + tuple(tuple(sorted((self.unforced or {}).get(k) or ()))
+                                                        for k in ("bet", "raise")),) if self.force_allin > 0 else ())
 
 
 def street_of(board_len: int) -> str:
@@ -1268,6 +1281,12 @@ class TreeBuilder:
         names, kids = [], []
         # (root_allin: all-in offered at any depth on the root street)
         jam_ok = cfg.root_allin and not self._blind and not self._width and len(boards[0]) == self.root_street_len
+        kept = (cfg.unforced or {}) if len(boards[0]) == self.root_street_len else {}
+
+        def forced(new_me, kind, frac, explicit):
+            # (force_allin: what's left behind once called, under that share of the pot then)
+            return cfg.force_allin > 0 and not explicit and frac not in (kept.get(kind) or ()) and \
+                stack - new_me <= cfg.force_allin * (pot + 2 * new_me) + 1e-9
 
         def with_bet(new_me):
             nb = list(bets); nb[p] = new_me
@@ -1283,7 +1302,7 @@ class TreeBuilder:
             offered_allin = False
             for frac in self._sizes("bet", street) if root_bets is None else root_bets:
                 amt = max(round(frac * pot_total * 2) / 2, 1.0)
-                if amt >= remaining - 1e-9:
+                if amt >= remaining - 1e-9 or forced(b_me + amt, "bet", frac, root_bets is not None):
                     if not offered_allin and remaining > 0:
                         offered_allin = True
                         nb, ninv = with_bet(b_me + remaining)
@@ -1318,7 +1337,7 @@ class TreeBuilder:
                     for frac in self._sizes("raise", street) if root_raises is None else root_raises:
                         raise_to = b_op + round(frac * pot_after_call * 2) / 2
                         raise_to = max(raise_to, 2 * b_op - b_me)
-                        if raise_to >= stack - 1e-9:
+                        if raise_to >= stack - 1e-9 or forced(raise_to, "raise", frac, root_raises is not None):
                             capped = True
                             continue
                         if raise_to in offered:

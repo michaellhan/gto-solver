@@ -228,6 +228,9 @@ asked again with `"jam": true`, which offers all-in at every decision of the str
 not the earlier streets' narrowing solves, nor the flop libraries), and the grade and its EV fill in
 when that answer is in (A2s on 776r behind a HJ check, 100bb: the jam 0% at -2.28 bb, the 75% bet +2.53). Always in
 the tree it cost too much: a K72T turn 60 iterations in was 4.0% of the pot from equilibrium against 1.6%.
+Likewise a bet or raise after the flop more than 15% off the tree's nearest size is asked again with `"size"` (your
+bet, in bb): the size goes in the street's tree, swapped for its nearest as an earlier action's would be, and the
+grade is that row's (`"size": true`), not the nearest size's: a 95% turn bet was graded as the tree's 75%.
 When you're facing a bet the prompt shows the pot odds a call needs.
 
 A "Details" toggle holds the answer's notes and, with size optimization, the sizes it kept; it's there only when there are any.
@@ -415,6 +418,8 @@ see Tournaments below); `"bounties"` makes it a bounty tournament (KO, PKO or my
 below; with no payouts, chip EV). Positions are the 6-max names `UTG HJ CO BTN SB BB`.
 Optional `"sizes"`, `"ranges"` and `"optimize_sizes"` change the postflop game, `"locks"` the preflop one too (see Custom sizes and ranges below).
 Optional `"one_size"` (`"all"`, `"full"`, a size or `"list"`) answers with the one-size view instead of the advice (see One bet size below).
+Optional `"size"` (a bet or raise to that many, in the request's units, short of all-in) puts your size in the street's
+tree and marks its row `"size": true` (a flop library's tree keeps its own sizes: marked only within 15% of one).
 
 Response: per-action `freq` (the mixed strategy for hero's exact hand), `ev_bb`
 (relative to folding now), `amount_bb`, `"rough_ev": true` heads-up where hero's range takes the action under 1% of
@@ -1325,6 +1330,22 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   (each entry is within 0.15% of the pot of its own game's equilibrium); solved five times tighter the 3bet pots
   give the same numbers, so it isn't their solve's noise. The single-raised roots check as theirs do; the 3bettor's
   c-bet splits between its two sizes differently (theirs bets 75% pot 40-56% of the time, ours 1-11%).
+* **A size the tree doesn't have, and sizes near the stack** (`tests/test_size_grade.py`; 2026-11-10). One hand (6-max,
+  HJ opens, CO 35bb and BTN AhJc call; CO stabs 5bb on QcTdTc, BTN calls; turn 3h, CO checks, BTN bets 19.5 into 20.5,
+  CO jams) priced the 95% bet as the tree's 75% and offered a 125% bet leaving 1.5bb of 27. With `"size"` the bet has
+  its own row, and its EV is the solve's: against postflop-solver solving the same tree and ranges to 0.05% of the
+  pot (the harness's node dumps now carry each action's EVs), check / 33% / 95% / all-in for AhJc are 8.00 / 8.35 /
+  6.84 / 5.71 bb here and 7.99 / 8.29 / 6.71 / 5.79 there: the 95% bluff gives up ~1.5 bb to the third-pot bet. A 2x
+  river overbet (BTN vs BB, Ks7d2cTh4s checked to it) the same: QhJh 0.20 here, 0.28 there; Kh9h 10.17 and 10.12,
+  every other size within 0.08 bb. Pricing such a size by the betting rules' range for it, solved again from the node
+  as an opponent's rare line is, was tried and dropped: by how many bluffs the rules give a big bet the QJ overbet came
+  out +4.7 bb or -7.1, Kh9h's 6.65 or 14.6. `Config.force_allin` (0.15, postflop-solver's default threshold): a bet or
+  raise that leaves under 15% of the pot after it behind is the all-in (not a size the hand took, the AhJc 95% bet that
+  left 7.5 of 27 and was jammed on: `Config.unforced`; nor the root's exact sizes, nor the flop libraries' trees,
+  solved without it). On that turn (33/75/125%) both players' exact EVs are the same to
+  0.001 bb with it (-0.223 / -0.224), in 28 lines of tree instead of 48. A solve again after an opponent's rare line,
+  and a pot that became heads-up this street, use the street's tree (its shallow sizes, the river root's, the sizes the
+  hand took), where they took the base tree's.
 * **Solver speed** (`scripts/bench_solver.py --curve`, BTN vs BB single-raised pots, one thread):
   in Pyodide a flop solve runs ~1.5x the iterations per second it did (Fast 15 -> 23, Accurate
   11.5 -> 17.5) and needs ~30% fewer of them, so after 4 s it is 0.3-1.1% of the pot from
@@ -4195,6 +4216,14 @@ their products batched: `core.LEAF_ROWS_BLAS`).
 
 ### Known limits
 
+* After a line of your own that your range takes at 0% (an off-chart hand, a size nobody uses), the opponent's answer
+  to it has no equilibrium meaning: postflop-solver's exact solve of that spot has no reach there either. The advice
+  reads the solve's average strategy at the node, fitted to whatever sliver of your range reached it. In the hand under
+  Accuracy (AhJc's 95% turn bet, CO's jam for 7.5 more into 67.5) calling needs 10.1% and AJ has 8-10% against the
+  check-jam ranges such solves give, so the answer is close and turns on that sliver: fold at -1.5 bb when the flop's
+  3-way solve from your earlier advice is cached (the page's order), call at +6.4 to +7.0 from a fresh request. The
+  betting rules' range for the line, as for an opponent's rare one, didn't settle it: it moved river overbets' EVs by
+  5-7 bb either way (Accuracy).
 * Preflop charts are written by hand, not solver output, and the off-chart adjustments are rules on
   top of them. They are matched to published solves where any exist: `scripts/preflop_reference.py`
   measures 26 spots (opens, BB and SB defence, cold calls, openers facing a 3bet; the raked ones played

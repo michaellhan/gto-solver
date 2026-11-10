@@ -1118,7 +1118,8 @@ function gradeWith(r, rec) {
     // (after the flop the nearest of the bets and raises, or the all-in: facing a 4bet the tree's only raise is all-in)
     const agg = r.actions.filter(a => raise(a) || (!pre && a.action === "all-in" && a.amount_bb != null));
     if (agg.length) {
-      m = agg.reduce((b, a) => Math.abs(a.amount_bb - rec.to) < Math.abs(b.amount_bb - rec.to) ? a : b);
+      // (an answer asked with your size, "size": its row, priced in a tree that has it)
+      m = agg.find(a => a.size) || agg.reduce((b, a) => Math.abs(a.amount_bb - rec.to) < Math.abs(b.amount_bb - rec.to) ? a : b);
       if (m.action === "all-in") v = `${rec.action} to ${fmt(rec.to)}`;
     }
     // (preflop: a chart that only jams grades a raise as its jam; one that never raises, 0%)
@@ -1167,6 +1168,21 @@ async function jamGrade(key, rec) {
   if (!key) return null;
   const res = await callAdvise({ ...JSON.parse(key), jam: true });
   if (!res || res.error || res.cancelled || !res.actions) return null;
+  return gradeWith(res, rec);
+}
+// A bet or raise after the flop more than 15% off the answer's nearest size: the spot is asked again with "size" (your
+// size put in the street's tree) and graded as that row, not the nearest size's (a 95% turn bet graded as its 75%).
+const nearestAgg = (r, to) => r.actions.filter(a => /^(bet|raise|all-in)/.test(a.action) && a.amount_bb != null)
+  .reduce((b, a) => !b || Math.abs(a.amount_bb - to) < Math.abs(b.amount_bb - to) ? a : b, null);
+const sizeOffTree = (r, rec) => {
+  if (!/^(bet|raise)$/.test(rec.action) || !(rec.to > 0) || !r || r.error || r.multiway || r.street === "preflop" || !Array.isArray(r.actions) || r.actions.some(a => a.size)) return false;
+  const m = nearestAgg(r, rec.to);
+  return !!m && Math.abs(m.amount_bb - rec.to) > Math.max(0.5, 0.15 * rec.to);
+};
+async function sizeGrade(key, rec) {
+  if (!key) return null;
+  const res = await callAdvise({ ...JSON.parse(key), size: rec.to });
+  if (!res || res.error || res.cancelled || !res.actions || !res.actions.some(a => a.size)) return null;   // (no row at it: the first grade stands)
   return gradeWith(res, rec);
 }
 // a grade's note when your action was graded as the chart's nearest one (g.v: what you played)
@@ -2055,6 +2071,7 @@ async function reviewHand() {
     const mv = gradedMove(sim, a);
     a.g = gradeFor(mv);   // null (multiway, failed solve): reviewed, no grade
     if (!a.g && jamOffTree(lastResult, mv)) a.g = await jamGrade(resultKey, mv);
+    else if (sim.current !== "preflop" && sizeOffTree(lastResult, mv)) a.g = await sizeGrade(resultKey, mv) || a.g;
     if (lastResult && lastResult.actions) answered.set(a, lastResult);   // (an error says nothing about where a number came from)
   }
   review = null;

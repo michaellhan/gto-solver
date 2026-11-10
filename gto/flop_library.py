@@ -1196,6 +1196,7 @@ class FlopLibrary:
             pos[np.nonzero(m)[0]] = np.arange(int(m.sum()))
             cols.append(pos[canon_active])
         tcfg = cfg.copy()
+        tcfg.force_allin = 0.0   # (the entries were solved without it: Config.force_allin)
         tcfg.depth = 1
         ctx = SimpleNamespace(active=active, n=len(active), cfg=tcfg, root_len=3)
         tb = TreeBuilder(ctx, dead=list(board))

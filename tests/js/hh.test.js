@@ -217,13 +217,17 @@ test("review whole hand: each decision is solved in order with progress, graded,
   const p = await imported(HH("stars_6max_srp"));
   const full = j(p.S);
   const done = p.run("reviewHand()");
-  const sent = [];
+  const sent = [], sizes = [];
   for (let k = 1; k <= 4; k++) {
     await flushAll();
     assert.match(p.byId("adviceNote").innerHTML, new RegExp(`Reviewing decision ${k} of 4`));
     sent.push(await respond(p));
+    await flushAll();
+    const more = p.posted.at(-1);   // a bet far off the answer's sizes (6.1 and 14.5 against its 1.8): asked again with "size"
+    if (more.state.size != null && !more.answered) { more.answered = true; sizes.push(await respond(p)); }
   }
   await done;
+  assert.deepEqual(sizes.map(s => [s.board, s.size]), [["Qs8d3c7h", 6.1], ["Qs8d3c7h2s", 14.5]]);   // (no row at it: graded as before)
   // the spots: each one just before your decision, with the board up to its street, at the Fast budget
   assert.deepEqual(sent.map(s => [s.board, s.preflop.length, s.flop.length, s.turn.length, s.river.length, s.speed]),
     [["", 3, 0, 0, 0, "fast"], ["Qs8d3c", 6, 1, 0, 0, "fast"], ["Qs8d3c7h", 6, 3, 1, 0, "fast"], ["Qs8d3c7h2s", 6, 3, 3, 1, "fast"]]);

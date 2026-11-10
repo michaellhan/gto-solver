@@ -327,6 +327,37 @@ test("a jam the answer's tree has no all-in for is asked again with jam: true an
   assert.equal(p.run(`gradeClass(${JSON.stringify(g)})`), "bad");
 });
 
+test("a bet well off the answer's sizes is asked again with size: and graded as its own row, not the nearest size's", async () => {
+  const p = loadPage();
+  await p.ready();
+  p.S = state(FLOP);
+  // the turn tree's sizes are 33% and 75% of a 20.5bb pot; you bet 19.5 (95%)
+  const r = { street: "flop", hero: "BTN", hand: "AJo", recommended: "bet 33%", pot_bb: 20.5,
+    actions: [{ action: "check", freq: 0.4, ev_bb: 7.9 }, { action: "bet 33%", amount_bb: 6.8, freq: 0.6, ev_bb: 8.3 },
+      { action: "bet 75%", amount_bb: 15.4, freq: 0, ev_bb: 7.6, rough_ev: true }, { action: "all-in", amount_bb: 27, freq: 0, ev_bb: 1.2 }] };
+  const sized = { ...r, actions: [r.actions[0], r.actions[1], { action: "bet 95%", amount_bb: 19.5, freq: 0, ev_bb: 7.1, size: true, rough_ev: true }, r.actions[3]] };
+  assert.equal(p.val(`sizeOffTree(${JSON.stringify(r)}, { action: "bet", to: 19.5 })`), true);
+  assert.equal(p.val(`sizeOffTree(${JSON.stringify(sized)}, { action: "bet", to: 19.5 })`), false);   // (asked with it already)
+  // within 15% of a size the tree has: graded as it at once
+  assert.equal(p.val(`sizeOffTree(${JSON.stringify(r)}, { action: "bet", to: 7.2 })`), false);
+  assert.equal(p.val(`sizeOffTree(${JSON.stringify(r)}, { action: "bet", to: 15 })`), false);
+  assert.equal(p.val(`sizeOffTree(${JSON.stringify(r)}, { action: "check" })`), false);
+  assert.equal(p.val(`sizeOffTree({ ...${JSON.stringify(r)}, street: "preflop" }, { action: "bet", to: 19.5 })`), false);
+  assert.equal(p.val(`sizeOffTree({ ...${JSON.stringify(r)}, multiway: true }, { action: "bet", to: 19.5 })`), false);
+  // without it the 95% bet is graded as the 75% row's 7.6
+  assert.equal(p.val(`gradeWith(${JSON.stringify(r)}, { action: "bet", to: 19.5 })`).m, "bet 75%");
+  const key = JSON.stringify(p.payload());
+  const graded = p.run(`sizeGrade(${JSON.stringify(key)}, { action: "bet", to: 19.5 })`);
+  await flush();
+  const again = p.posted.find(x => x.state && x.state.size != null);
+  assert.ok(again, "the spot asked again with size");
+  assert.equal(again.state.size, 19.5);
+  assert.deepEqual({ ...again.state, size: undefined }, { ...JSON.parse(key), size: undefined });
+  p.workers[0].onmessage({ data: { id: again.id, result: sized } });
+  const g = await graded;
+  assert.deepEqual([g.m, g.e, g.l, g.rv], ["bet 95%", 7.1, 1.2, 1]);   // (its own row: its EV, rough as the answer has it)
+});
+
 test("after the flop a raise the tree has only an all-in for is graded as its all-in; a 4+-way jam is asked again too", async () => {
   const p = await (async () => { const q = loadPage(); await q.ready(); return q; })();
   p.run("S.tournament = true");   // (at equilibrium: graded by its mix)

@@ -3047,7 +3047,7 @@ def _store_evs(t: dict, path, at, card: int, nd: dict, pot: float, p: int):
 
 
 # what Study asks without (Advisor.study): no cards of anyone's own, at equilibrium, every hand of the range
-STUDY_DROPS = ("hero", "hole", "opponents", "locks", "jam", "library_only", "optimize_sizes")
+STUDY_DROPS = ("hero", "hole", "opponents", "locks", "jam", "library_only", "optimize_sizes", "size")
 
 
 # ----------------------------------------------------------------------------- advisor
@@ -3262,7 +3262,7 @@ class Advisor:
         if state.get("study"):
             state = dict({k: v for k, v in state.items() if k not in STUDY_DROPS}, study=True)
         if len(str(state.get("board") or "")) < 6 or state.get("opponents") == "pool" or any(
-                state.get(k) for k in ("runouts", "jam", "breakdown", "optimize_sizes", "locks", "library_only",
+                state.get(k) for k in ("runouts", "jam", "size", "breakdown", "optimize_sizes", "locks", "library_only",
                                        "payouts", "bounties", "ranges")) or state.get("one_size") is not None \
                 or state.get("sizes") and not state.get("study"):
             return None
@@ -3292,7 +3292,7 @@ class Advisor:
         street = {6: "flop", 8: "turn"}.get(len(board))
         if street is None or not self.first_look.get(street) \
                 or state.get("opponents") == "pool" or any(
-                state.get(k) for k in ("runouts", "jam", "breakdown", "optimize_sizes", "locks", "library_only",
+                state.get(k) for k in ("runouts", "jam", "size", "breakdown", "optimize_sizes", "locks", "library_only",
                                        "payouts", "bounties", "ranges", "sizes")) or state.get("one_size") is not None:
             return None
         self._look = len(board) // 2
@@ -3453,7 +3453,7 @@ class Advisor:
         mode, locks, custom ranges or sizes, a tournament, Study, a jam, the breakdown) and the street is solved live
         (not a flop the library holds). {"presolved": street, "iterations"}, else None."""
         if len(str(state.get("board") or "")) < 6 or state.get("opponents") == "pool" or any(
-                state.get(k) for k in ("study", "runouts", "jam", "breakdown", "optimize_sizes", "locks", "library_only",
+                state.get(k) for k in ("study", "runouts", "jam", "size", "breakdown", "optimize_sizes", "locks", "library_only",
                                        "payouts", "bounties", "ranges", "sizes")) or state.get("one_size") is not None:
             return None
         seat = str(seat or "").upper()
@@ -3484,7 +3484,7 @@ class Advisor:
         libs = [x for x in (self.library, self.mw_library) if x is not None and hasattr(x, "_entries")]
         if len(board) < 6 or not libs:
             return
-        st = {k: v for k, v in state.items() if k not in ("study", "runouts", "jam", "breakdown", "optimize_sizes",
+        st = {k: v for k, v in state.items() if k not in ("study", "runouts", "jam", "size", "breakdown", "optimize_sizes",
                                                            "one_size")}
         st.update(board=board, flop=[], turn=[], river=[], library_only=True)
         if not st.get("hero"):   # (Study's: no seat or cards of its own; a seat still in the pot, then the one to act,
@@ -4170,6 +4170,14 @@ class Advisor:
         # usual tree leaves out (15x the pot on a flop) is solved and can be graded; the page asks it again with this
         # once you jam there. Not the earlier streets' narrowing solves, nor the flop library (no all-in stored)
         self._jam = bool(state.get("jam"))
+        # "size": your bet or raise at this decision, to that many (the request's units: chips with "bb"): its size goes
+        # in the street's tree as an earlier action's would (_cfg_with_real_sizes) and its row is marked "size": true,
+        # so a review grades the size you played, not the tree's nearest (a 95% turn bet graded as its 75%)
+        try:
+            self._size = float(state["size"]) / float(state.get("bb", 1.0)) \
+                if state.get("size") is not None and actor is None and not state.get("study") else None
+        except (TypeError, ValueError):
+            self._size = None
         if self._jam:
             self.cfg = self.cfg.copy()
             self.cfg.root_allin = True
@@ -4206,7 +4214,7 @@ class Advisor:
         finally:
             self.time_budget, self.prior_budget, self.cfg, self.root_sizes, self.spr_sizes = saved
             self._breakdown = self._lib_only = self._jam = self._study = self._showdown = self._wider = self._background = False
-            self._one_size = self._mw_borrow = None
+            self._one_size = self._mw_borrow = self._size = None
 
     # ------------------------------------------------------------ preflop
     def _preflop(self, hero, hole, preflop, positions, stack, t0, pool=False, locks=None):
@@ -5232,7 +5240,9 @@ class Advisor:
                 return self._equity_answer(hero, hole, board, {villain: r1 if hero_p == 0 else r0}, cur, n_streets,
                                            notes, t0)
             eff = min(stk[oop] - cur.inv_start[oop], stk[ip] - cur.inv_start[ip])
-            cfg = self._cfg_with_real_sizes(cur, oop, ip, eff)
+            own_act = self._own_act(cur, hero, to_call, hero_remaining)
+            cfg = self._cfg_with_real_sizes(cur if own_act is None else dataclasses.replace(
+                cur, actions=list(cur.actions) + [own_act]), oop, ip, eff)
             if seen is not None:
                 r0, r1 = self._with_hero(r0, r1, adv_p, adv_hole, [])
             r0, r1 = self._with_hero(r0, r1, hero_p, hole, notes)
@@ -5313,11 +5323,12 @@ class Advisor:
             if rare_lines and isinstance(node, Decision) and node.player == hero_p:
                 # Their line was rare in the solve, so everything below it barely converged: answered from
                 # there, a min-reraise on KQT9 read by the rules had AQ jamming for +31.8 bb. Solve again
-                # from here, against the range they showed.
+                # from here, against the range they showed. (In the street's tree: its shallow sizes, the river
+                # root's, the sizes the hand took; the base tree offered a 125% turn bet leaving 1.5bb behind.)
                 bets_now = (min(cur.bets[oop], eff), min(cur.bets[ip], eff))
                 sol = self._solve_cached(board, expand(sol.ctx, n_r0), expand(sol.ctx, n_r1), cur.pot_start, eff,
                                          self.time_budget, bets=bets_now, to_act=hero_p,
-                                         n_raises=cur.n_raises, settle=True, cfg=self._icm_cfg(self.cfg, cur, oop, ip, bets_now))
+                                         n_raises=cur.n_raises, settle=True, cfg=self._icm_cfg(cfg, cur, oop, ip, bets_now))
                 self._trim_note(sol, cur.name, notes)
                 node, n_r0, n_r1 = sol.root, sol.r0.copy(), sol.r1.copy()
                 notes.append(f"{cur.name}: {', '.join(rare_lines)}'s line is rare in the solve, so solved again from here"
@@ -5330,8 +5341,9 @@ class Advisor:
             r0, r1 = self._with_hero(r0, r1, hero_p, hole, notes)
             bets_now = (min(cur.bets[oop], eff), min(cur.bets[ip], eff))
             sol = self._solve_cached(board, r0, r1, cur.pot_start, eff, self.time_budget,
-                                     bets=bets_now, to_act=hero_p, n_raises=cur.n_raises,
-                                     settle=True, cfg=self._icm_cfg(self.cfg, cur, oop, ip, bets_now))
+                                     bets=bets_now, to_act=hero_p, n_raises=cur.n_raises, settle=True,
+                                     cfg=self._icm_cfg(self._cfg_with_real_sizes(cur, oop, ip, eff), cur, oop, ip,
+                                                       bets_now))
             self._trim_note(sol, cur.name, notes)
             node, n_r0, n_r1 = sol.root, sol.r0.copy(), sol.r1.copy()
             notes.append(f"{cur.name}: pot became heads-up this street; solved from here")
@@ -5398,6 +5410,8 @@ class Advisor:
                 acts_out[-1]["rough_ev"] = True
         if ci is None:
             notes.append("hero's hand was not solved; frequencies are uniform")
+        elif self._size is not None and not self._study:
+            self._mark_size(acts_out, self._own_act(cur, hero, to_call, hero_remaining))
         best = max(acts_out, key=lambda a: a["freq"])["action"]
         sampled = self._sample(acts_out)
         if exploit and ci is not None:
@@ -8389,6 +8403,7 @@ class Advisor:
         bets = [0.0, 0.0]
         pot = st.pot_start
         fixed = {"bet": set(), "raise": set()}
+        unforced = {"bet": [], "raise": []}   # (Config.force_allin: taken sizes it would make the all-in)
         n_aggr = 0
         for a in st.actions:
             if a["pos"] not in (oop, ip):
@@ -8399,6 +8414,12 @@ class Advisor:
             amt = a.get("amount") or a.get("to") if act == "bet" else a.get("to") or a.get("amount")
             if act in ("bet", "raise") and amt and (bets[p] + amt if act == "bet" else amt) >= stack - 1e-9:
                 act = "all-in"   # a bet or raise of the whole stack
+            if act in ("bet", "raise") and amt and cfg.force_allin > 0 and \
+                    stack - amt <= cfg.force_allin * (pot + 2 * amt) + 1e-9:
+                kind = "bet" if act == "bet" else "raise"
+                frac = amt / max(pot_total, 1e-9) if act == "bet" else \
+                    (amt - bets[1 - p]) / max(pot_total + bets[1 - p] - bets[p], 1e-9)
+                unforced[kind].append(frac)   # (its tree size, after the swap below: re-read then)
             if act == "bet" and amt:
                 _swap_nearest(cfg.bet_sizes[st.name], amt / max(pot_total, 1e-9), fixed=fixed["bet"])
                 bets[p] = amt
@@ -8426,6 +8447,12 @@ class Advisor:
         cfg.max_raises = max(cfg.max_raises, n_aggr)
         cfg.keep_sizes = {"bet": [cfg.bet_sizes[st.name][i] for i in sorted(fixed["bet"])],
                           "raise": [cfg.raise_sizes[st.name][i] for i in sorted(fixed["raise"])], "aggr": n_aggr}
+        # a taken bet or raise leaving under force_allin of the pot behind stays a size of its own (its tree size: the
+        # street's nearest), not the all-in: the jam that followed it is a decision of its own
+        near = lambda xs, f: min(xs, key=lambda x: abs(x - f))
+        un = {k: sorted({near(cfg.bet_sizes[st.name] if k == "bet" else cfg.raise_sizes[st.name], f) for f in v})
+              for k, v in unforced.items() if v}
+        cfg.unforced = un or None
         return self._icm_cfg(cfg, st, oop, ip)
 
     @staticmethod
@@ -8697,6 +8724,30 @@ class Advisor:
             return max(0.0, float(self._expl(sol))) <= RARE_KEEP_EXPL
         except Exception:   # (a solution that can't say how settled it is isn't)
             return False
+
+    def _own_act(self, cur: StreetState, hero: str, to_call: float, remaining: float) -> Optional[dict]:
+        """The request's "size" (self._size) as your action at this decision ({"pos", "action": "bet" | "raise", "to"}),
+        or None: no size, or one that isn't a bet or raise short of all-in (a jam is asked with "jam")."""
+        to = self._size
+        if to is None or to >= cur.bets[hero] + remaining - 1e-9 or to <= cur.cur_bet + 1e-9:
+            return None
+        return {"pos": hero, "action": "raise" if to_call > 1e-9 or cur.cur_bet > 1e-9 else "bet", "to": float(to)}
+
+    @staticmethod
+    def _mark_size(acts_out: List[dict], own: Optional[dict]) -> None:
+        """The answer's row for the request's "size" (`own`, _own_act) marked "size": true: its bet or raise nearest it,
+        where that is within _swap_nearest's 15% (the size itself where _cfg_with_real_sizes swapped it in; not a flop
+        library's tree, which keeps its own). Its EV is the solve's, rough_ev where your range almost never takes it,
+        as any row's: that line's range is the solve's (the betting rules' for it priced a QJ 2x river bluff at +4.7 bb
+        or -7.1 by how many bluffs they gave it, where every size the tree has made it about +0.4)."""
+        if own is None:
+            return
+        agg = [a for a in acts_out if a.get("amount_bb") is not None and
+               (a["action"].startswith(("bet", "raise")) or a["action"] == "all-in")]
+        if agg:
+            m = min(agg, key=lambda a: abs(a["amount_bb"] - own["to"]))
+            if abs(m["amount_bb"] - own["to"]) <= max(0.05, 0.15 * own["to"]):
+                m["size"] = True
 
     def _rare_resolver(self, board, st, eff, cfg) -> Optional[Callable]:
         """_walk's `resolve` on an earlier street (RARE_RESOLVE): (R0, R1, bets, to_act, n_raises) -> (the street

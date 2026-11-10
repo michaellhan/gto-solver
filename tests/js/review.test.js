@@ -28,13 +28,19 @@ async function page(opts = { isolated: true }) {
   if (p.workers[0]) p.workers[0].onmessage({ data: { status: "Solving…" } });   // (the runtime is up: everything a pre-solve waited for)
   return p;
 }
+// A bet far off the answer's sizes (WHOLE's flop bet of 3 against the fixture's 1.8) is asked again with "size"; the
+// fixture's answer has no row at it, so the first grade stands.
+function answerSizes(p) {
+  for (const m of p.posted.filter(x => x.state && x.state.size != null && !x.answered)) { m.answered = true; p.workers.at(-1).onmessage(answer(m)); }
+}
 async function reviewed(st, opts) {   // the whole hand reviewed: each decision answered as it's asked
   const p = await page(opts);
   p.S = st;
   const done = p.run("reviewHand()");
-  const solves = () => p.posted.filter(x => x.state && !x.state.equity);   // (the hand's equity follows the review)
+  const solves = () => p.posted.filter(x => x.state && !x.state.equity && x.state.size == null);   // (the hand's equity follows the review)
   for (let n = 0; n < 60 && solves().length < 4 + 1; n++) {
     await flush();
+    answerSizes(p);
     const m = solves().at(-1);
     if (m && !m.answered) { m.answered = true; p.workers.at(-1).onmessage(answer(m)); }
     if (p.val("review") === null) break;
@@ -310,7 +316,8 @@ test("once its advice has been seen a hand stays as entered: no Undo, no cards, 
   await flush();
   assert.equal(p.val("stepView.s"), "flop");
   assert.deepEqual(j(p.val("stepView.full.actions")), whole);
-  assert.equal(p.posted.filter(m => m.state && !m.state.equity).length, 4);   // (the review's answer, not a new solve)
+  assert.equal(p.posted.filter(m => m.state && !m.state.equity && m.state.size == null).length, 4);   // (the review's answer, not a new solve)
+  assert.deepEqual(p.posted.filter(m => m.state && m.state.size != null).map(m => m.state.size), [3]);   // (the flop's bet of 3: asked again once)
   p.run("stepStop()");
   // the mark survives a reload and a link
   const q = await page({ isolated: true, storage: Object.fromEntries(p.storage) });
@@ -361,9 +368,10 @@ test("a review cancelled before any advice leaves the hand open; one cancelled a
 // The review's run against answers: ans(message, nth solve)
 async function runReview(p, ans) {
   const done = p.run("reviewHand()");
-  const solves = () => p.posted.filter(x => x.state && !x.state.equity);
+  const solves = () => p.posted.filter(x => x.state && !x.state.equity && x.state.size == null);
   for (let n = 0; n < 60; n++) {
     await flush();
+    answerSizes(p);
     const m = solves().at(-1);
     if (m && !m.answered) { m.answered = true; p.workers.at(-1).onmessage(ans(m, solves().length)); }
     if (p.val("review") === null) break;

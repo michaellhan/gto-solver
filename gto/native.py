@@ -93,12 +93,17 @@ SPEEDS = {
 }
 
 
+# A bet or raise leaving under 15% of the pot behind once called is the all-in (Config.force_allin; the browser's too).
+FORCE_ALLIN = 0.15
+
+
 def config(speed: str = "fast", depth: int = 2) -> Config:
     """The speed's tree (its model's flags included)."""
     sizes = SPEEDS[speed][0]
     kw = dict(sizes.get("model", {}))
     return Config(bet_sizes={k: list(v) for k, v in sizes["bet_sizes"].items()},
-                  raise_sizes={k: list(v) for k, v in sizes["raise_sizes"].items()}, depth=depth, **kw)
+                  raise_sizes={k: list(v) for k, v in sizes["raise_sizes"].items()}, depth=depth,
+                  force_allin=FORCE_ALLIN, **kw)
 
 
 # 3-way pots solved by the 3-player solver (Advisor.mw_solve_streets; the rest use the betting rules), and 4-way flops

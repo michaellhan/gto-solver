@@ -232,7 +232,9 @@ fn main() {
             let n = game.private_cards(p).len();
             let strat = game.strategy();
             let rows: Vec<Vec<f32>> = (0..acts.len()).map(|k| strat[k * n..(k + 1) * n].to_vec()).collect();
-            nodes.push(json!({"path": path, "player": p, "acts": acts, "strat": rows,
+            let det = game.expected_values_detail(p);
+            let evs: Vec<Vec<f32>> = (0..acts.len()).map(|k| det[k * n..(k + 1) * n].to_vec()).collect();
+            nodes.push(json!({"path": path, "player": p, "acts": acts, "strat": rows, "action_evs": evs,
                               "hands": holes_to_strings(game.private_cards(p)).unwrap(),
                               "reach": game.normalized_weights(p)}));
         }

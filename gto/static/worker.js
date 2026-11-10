@@ -238,7 +238,8 @@ const ready = (async () => {
   const THREADED = setup.threads >= 4;
   const FAST_RIVER = THREADED ? "[0.33, 0.75, 1.25]" : "[0.33, 1.25]";
   const RS = "[setattr(a, 'root_sizes', {'river': {'bet': [0.33, 0.75, 1.25, 2.5]}}) for a in advs.values()]; ";
-  const RAISES = "raise_sizes={'flop': [0.5], 'turn': [0.75], 'river': [0.75]}";
+  // a bet or raise leaving under 15% of the pot behind once called is the all-in (Config.force_allin; gto/native.py)
+  const RAISES = "raise_sizes={'flop': [0.5], 'turn': [0.75], 'river': [0.75]}, force_allin=0.15";
   py.runPython("import sys, json; sys.path.insert(0, '/app'); from gto.advisor import Advisor; from gto.solver import Config; "
              + `advs = {'fast': Advisor(Config(n_turns=3, leaf_turns=4, leaf_rivers_flop=4, n_rivers_from_flop=4, `
              + `river_buckets=32, turn_buckets=True, bucket_river_step=3, river_classes=True, river_strength=32, `

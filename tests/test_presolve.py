@@ -93,8 +93,10 @@ class TestPresolve(unittest.TestCase):
         """The small blind leads a size the presolve's tree doesn't hold: the instant answer doesn't read the
         presolve's turn at its nearest size (as it does your own earlier advice's on the street; the flop solve's view
         of the turn answers instead, at its one bet size: QJs, which the big blind raises preflop, is in that solve
-        as a near-zero-weight combo), and the advice solves the turn with the size in."""
-        adv = advisor()
+        as a near-zero-weight combo), and the advice solves the turn with the size in. (A budget to read it at: the
+        turn's tree, cut to Advisor.cell_s's CAP_ITERS, runs 35 iterations in 1 s on a loaded machine, under the 50
+        an earlier solve is read from.)"""
+        adv = advisor(budget=2.5)
         adv.presolve(PRE, "SB")
         pre = set(turn_solves(adv))
         self.assertEqual(adv.instant(OFF)["approximate"]["source"], "prev")
