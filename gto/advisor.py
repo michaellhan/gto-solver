@@ -203,6 +203,25 @@ RARE_LINE = 0.10    # heads-up: widen the villain's range when the solve takes t
 # 0.114% of the pot on average over 17 lines whose answer is common at equilibrium, where the solve's node gave up 0.159
 # and the rules' range for the answers too 0.333 (README, Earlier streets). A library flop that stores the node is read.
 RARE_RESOLVE = True
+# A line rare in a solve that has settled is that solve's equilibrium, not a sliver it barely reached: kept as solved
+# (Advisor._settled_line), with no rules and no solve from the node. A polar river overbet is commonly 1-10% of a range at
+# equilibrium, and the rules read it as value only: CO's A8cc on Ad5d4c 4s 9d, checked through to BB's 136% overbet, folded
+# 100% (call -1.1 bb) where the river's exact solve calls 100% (+1.5), and CO's whole response there let BB win 36% of
+# the pot more by overbetting any hand (scripts/bench_rare_lines.py, README "A rare river line"). Settled: the solve within
+# RARE_KEEP_EXPL (% of the pot) of equilibrium, which bounds what the bettor gains by taking the line with other hands;
+# the line keeping RARE_KEEP_COMBOS combos or more. The river only (RARE_KEEP_STREETS): its solve is the street's whole
+# game, every combo and card, so settled there means settled; a flop's (the library's too) is settled in its flop model,
+# which is as far as 0.2-0.5% of the pot from the full game, and there the rules' range and the solve from the node did
+# better (README, Earlier streets). Elsewhere, and for unsettled solves, the rules as before.
+RARE_KEEP = True
+RARE_KEEP_STREETS = ("river",)
+RARE_KEEP_EXPL = 1.0
+RARE_KEEP_COMBOS = 1.0   # ...a line with fewer: the solve's mix still (it is what keeps the bettor's other hands from
+                         # taking the line: 15 such river leads and jams gave up 0.09% of the pot on average, the rules'
+                         # range 25%; floored at 0.001 combos, 10 of 23 went back to 10-45%), but the bettor's range is the
+                         # rules' as before (the solve's can be 2e-14 combos: an SB limp's 100bb river jam), and the EVs,
+                         # against either, are dropped (_read_sliver: 4c4h facing a 2x pot lead read fold 92% and call
+                         # +26.6 bb against the solve's few hands); with the pool or locks the rules' range as before
 RARE_RESOLVE_SETTLED = 0.1   # ...stopped at the first of HU_CHECKS (HU_SETTLED_FROM on) where it is this close (% pot):
                              # 300 iterations natively, as close to the exact answers as 1000 (0.114 / 0.116)
 MW_OFF_RANGE = 1e-10   # multiway: the weight of your hand where your range holds none of it (under the 1e-9 that says so)
@@ -2256,6 +2275,18 @@ def _unusable(res) -> Optional[str]:
     return None
 
 
+def _read_sliver(res: dict):
+    """An answer facing a line its settled solve keeps next to none of the bettor's range on (RARE_KEEP_COMBOS: the
+    walk's off_solution entry with "sliver") plays the solve's mix, which is what keeps the line from paying, but its EVs
+    are against those few hands: dropped, so the page grades by the mix (as an answer that has none)."""
+    if not isinstance(res.get("actions"), list) or res.get("study") or not any(
+            o.get("sliver") and o.get("street") == res.get("street") for o in res.get("off_solution") or []):
+        return
+    for a in res["actions"]:
+        a.pop("ev_bb", None)
+        a.pop("rough_ev", None)
+
+
 def _read_off_range(res: dict):
     """An answer for a hand outside your range (its notes say so: OFF_RANGE) goes by its EVs: "off_range", and
     "recommended" and "sampled" are the top EV, since the hand's mix is a best response that can lag them. Actions within
@@ -3165,6 +3196,7 @@ class Advisor:
         if why:
             return self._fallback(state, why)
         self._flag_short(state, res)
+        _read_sliver(res)
         _read_off_range(res)
         return res
 
@@ -8516,6 +8548,22 @@ class Advisor:
             else:
                 s = node.avg_strategy0()[k]
             rare = (rp * s).sum() < RARE_LINE * max(rp.sum(), 1e-12)
+            combos = float((rp * s).sum())
+            sliver = False
+            if rare and a["action"] != "fold" and self._settled_line(sol, combos, street,
+                                                                     lock is not None and p == lock.player):
+                # (a settled solve's rare line is its equilibrium: kept as solved, see RARE_KEEP)
+                share = combos / max(float(rp.sum()), 1e-12) * 100
+                sliver = combos < RARE_KEEP_COMBOS
+                notes.append(f"{street}: the solve rarely has {a['pos']} {a['action']} here ({share:.0f}% of their "
+                             f"range), but it has settled, so "
+                             + (f"its play facing it holds (it takes the line with {combos:.1f} combos, and its mix is "
+                                "what keeps the line from paying); their range shown is the betting rules', with no EVs"
+                                if sliver else "their range is the solve's"))
+                if off is not None:
+                    off.append({"street": street, "pos": a["pos"], "why": "rare, settled", "action": node.names[k],
+                                "share": round(share, 1), **({"sliver": True} if sliver else {})})
+                rare = False
             # A raise over a bet that the solve rarely makes is its strongest hands: the rules' raising range
             # (bluffs, and off-rule hands up to OFF_RULE_MAX) read a turn min-reraise on KQT9 as 99, 66 and
             # air where the solve had straights, sets and two pair, and AQ called it. Kept as solved.
@@ -8567,6 +8615,11 @@ class Advisor:
                 strat = np.where(rest > 1e-12, base / np.maximum(rest, 1e-12) * (1.0 - t), (1.0 - t) / max(n_act - 1, 1))
                 strat[k] = t
                 return lock(node, strat[None].astype(np.float32), rp[None, :])[0][k]
+            if sliver and board is not None:
+                # (the walk's node, and so the mix facing the line, is the solve's; the range is the rules', as below)
+                full, rank, m = rule_mask()
+                s = (np.maximum(s, _top(full, _share(full, m), rank)[sol.ctx.active]) if reraise
+                     else rule_weights(full, rank, m)[sol.ctx.active])
             if p in rules and rare and board is not None and a["action"] != "fold":
                 if widened is not None and p == only:
                     widened.append(a["pos"])
@@ -8633,6 +8686,17 @@ class Advisor:
                 n_bets += 1
             node = node.children[k]
         return node, r0, r1
+
+    def _settled_line(self, sol, combos: float, street: str, locked: bool = False) -> bool:
+        """A line the solve rarely takes is still its equilibrium (RARE_KEEP): on a street of RARE_KEEP_STREETS, the
+        solve within RARE_KEEP_EXPL of the pot from equilibrium. Under RARE_KEEP_COMBOS combos on the line only at
+        equilibrium (not `locked`: a best response to the pool or your locks would answer those few hands)."""
+        if not RARE_KEEP or street not in RARE_KEEP_STREETS or (locked and combos < RARE_KEEP_COMBOS):
+            return False
+        try:
+            return max(0.0, float(self._expl(sol))) <= RARE_KEEP_EXPL
+        except Exception:   # (a solution that can't say how settled it is isn't)
+            return False
 
     def _rare_resolver(self, board, st, eff, cfg) -> Optional[Callable]:
         """_walk's `resolve` on an earlier street (RARE_RESOLVE): (R0, R1, bets, to_act, n_raises) -> (the street
