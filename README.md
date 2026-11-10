@@ -150,8 +150,9 @@ to doesn't show it.
 **A hand off its range.** Where your hand has next to no weight in your range at the decision (under 0.005, the answer's
 `off_range`), the solve still gives it a mix, but for a range that isn't what you're playing. On a hand that found this
 (7-handed, UTG limps, LJ raises to 4, HJ, BB and UTG call, BB's As4s bets 2s4d6c and LJ calls; the 6h turn) the pool says
-bet 33% (9.73 bb, bet 75% 9.37, check 8.38), the charts' ranges bet 75% (6.89, 6.53, 6.26) and a wider range for you check
-(6.23, 6.19, 5.97). So once the answer is up, and only then, the page asks the same spot under the other ranges, one at a
+bet 33% (9.12 bb, bet 75% 8.42, check 8.33), the charts' ranges check, all three within 0.4% of the pot (5.79, 5.78,
+5.68; before the multiway preflop model widened LJ's call they bet 75%, 6.89, 6.53, 6.26), and a wider range for you
+check (5.81, 5.79, 5.73). So once the answer is up, and only then, the page asks the same spot under the other ranges, one at a
 time (`checkRanges`), and adds a line under the table: `all 3 ranges tried say the same`, or `the answer depends on the
 ranges` with which range gave which play and the most your answer's play gives up across them, or, where that is under
 3% of the pot (the most a grade calls good), `pick different plays, but it matters little`. The comparison is what the

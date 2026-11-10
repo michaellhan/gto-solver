@@ -99,7 +99,10 @@ class TestTheHand(unittest.TestCase):
         self.assertGreater(self.wider["hero_range_combos"], self.chart["hero_range_combos"])
 
     def test_the_answer_turns_on_the_range(self):
-        self.assertEqual(self.chart["recommended"], "bet 75%")
+        # (the charts' ranges bet 75% at 100% until the multiway preflop model widened LJ's cold call: now their top EVs
+        # are all within 0.4% of the pot, check first, which the answer says is close)
+        self.assertEqual(self.chart["recommended"], "check")
+        self.assertIn("bet 75%", self.chart["close"]["actions"])
         self.assertEqual(self.pool["recommended"], "bet 33%")
         self.assertEqual(self.wider["recommended"], "check")
 

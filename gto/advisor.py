@@ -2265,7 +2265,7 @@ def _read_off_range(res: dict):
     if not isinstance(res.get("actions"), list) or res.get("study") or not any(
             str(n).startswith(OFF_RANGE) for n in res.get("notes") or []):
         return
-    res["off_range"] = True
+    res["off_range"] = res.get("off_range") or True   # (the weights _off_range put there stay: the page reads off_range.wider)
     pot = res.get("pot_bb") or 0.0
     acts = sorted((a for a in res["actions"] if a.get("ev_bb") is not None), key=lambda a: -a["ev_bb"])
     if pot <= 0 or len(acts) < 2:
