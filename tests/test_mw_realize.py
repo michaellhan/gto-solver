@@ -98,13 +98,15 @@ class TestRealize(unittest.TestCase):
             for k in b:
                 np.testing.assert_array_equal(s[k], b[k], line)
 
-    def test_the_three_way_library_keeps_its_ranges(self):
-        for spot in ("cc_co_btn",):
-            c, r = advice(spot)
-            with neutral():
-                c0, r0 = advice(spot)
-            np.testing.assert_array_equal(c, c0)
-            np.testing.assert_array_equal(r, r0)
+    def test_the_three_way_library_follows_the_price_too(self):
+        """CO open + BTN call, the 3-way flop library's line: the big blind's calls follow the multiway realization like
+        any other spot's (60.2 combos at the chart's level, 55.2 here), its raises the chart's; the library was solved
+        again on this range."""
+        c, r = advice("cc_co_btn")
+        with neutral():
+            c0, r0 = advice("cc_co_btn")
+        self.assertLess(float(c.sum()), float(c0.sum()) - 2.0)
+        np.testing.assert_array_equal(r, r0)
 
     def test_the_published_three_way_spot(self):
         """Poker Academy NL200, BTN open + SB call: the big blind continues 28.8%; it was 24.1% at the chart's level."""

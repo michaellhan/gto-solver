@@ -4623,12 +4623,10 @@ class Advisor:
                     # NL200 solve has the big blind calling 16.1% over a button open and a small-blind call at a
                     # 20% price, against 29.0% heads-up at 27.3%; adding to the chart's calls had it at 44.5%
                     # (5% capped at 4bb), the re-draw 17.3%. What it realizes moves with the price (_mw_realize).
-                    # (measured with two to four players against. An open at the chart's size, a cold call and the big
-                    # blind's call stay at the chart's level: the 3-way flop library is built on that range)
-                    stored = (hero == "BB" and len(opp) == 2 and st.n_raises == 1 and not rk_on
-                              and abs(st.cur_bet - std.cur_bet) < 1e-9 and all(st.bets[p] >= st.cur_bet for p in opp))
+                    # (measured with two to four players against; the big blind's call in the 3-way flop library's
+                    # spots too, which are built on that range)
                     left = sum(p not in (hero, "BB") and p not in opp for p in st.active)
-                    level = _mw_realize(need - prem, behind, left) if len(opp) <= 4 and not stored else 1.0
+                    level = _mw_realize(need - prem, behind, left) if len(opp) <= 4 else 1.0
                     redraw = np.clip(0.5 + (eq * realize * level - need_v) / PRICE_BLEND, 0.0, 1.0)
                     redraw[np.isnan(redraw)] = 0.0
                     new = np.maximum(redraw, raise_n)

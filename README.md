@@ -553,10 +553,10 @@ tournament (`S.tournament`, its header), and the advisor drops a request's rake 
   a 20% price, 1.25 more per unit of price, and 22-66 0.14 more than other hands at the same equity (suited aces aren't
   above other hands once their implied odds are counted: A4s calling in the hand behind `_owed` loses 0.5bb, 0.2bb with
   the river's correction). Below 80bb behind it fades to the chart's level by 40bb, since it was measured at 100bb, and
-  five or more players against stay at the chart's level. So does an open at the chart's size, one cold call and the big
-  blind unraked, the lines of the 3-way flop library: its 740 flops are solved on that big-blind range and are found by
-  it. At this level CO open + BTN call reads 35.1% where the reference has 28.1% and the new level 32.4%;
-  taking it off needs `scripts/build_mw_library.py` run again.
+  five or more players against stay at the chart's level. The big blind's call in the 3-way flop library's lines (an
+  open at the chart's size, one cold call, unraked) follows it too, and the library's 740 flops are solved on that range
+  (they are found by it): the big blind's range there is 339 combos over a CO open and BTN call (374 at the chart's
+  level), 377 over a BTN open and SB call (389), 367 over HJ and BTN (416), 345 over UTG and BTN (391).
   EV lost per hand over those spots 0.388 to 0.30 bb in all, ±0.014, 0.373 to 0.336 fitting each spot on the others.
   Published: the big blind over a button open and small-blind call folds 73.6% (Poker Academy 71.2%, was 75.9%), calls
   17.3% (16.1%). It widens other seats' cold calls too (HJ in that hand 29 combos to 95), and solving again on those

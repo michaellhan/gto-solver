@@ -260,7 +260,7 @@ class TestMWLibrary(unittest.TestCase):
     def test_library_only(self):
         """The session analyzer's library scope answers a 3-way flop the library holds, and skips the rest."""
         s = self.setup
-        base = {"hero": "BB", "hole": _hole_in(s["ranges"][0], BOARD), "board": BOARD, "preflop": self.pre, "stack": 100,
+        base = {"hero": "BB", "hole": _hole_in(s["ranges"][0], BOARD + "Qh8s3d"), "board": BOARD, "preflop": self.pre, "stack": 100,
                 "library_only": True}
         self.assertIn("precomputed", self._advisor().advise(base))
         self.assertIn("skipped", self._advisor().advise(dict(base, board="Qh8s3d")))
