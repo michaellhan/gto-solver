@@ -542,7 +542,9 @@ class TestSameAsNumpy(unittest.TestCase):
     # turn and river utilities come through the bucket tables summed in another order than numpy's BLAS: ~1e-4 off
     # at every node, the root's regrets of 249 among them, which is 5e-5 of a turn node whose actions are worth
     # about the same (regrets of 2)
-    REGRET_TOL = {"flop by buckets": 1e-4}
+    # (the 3bet pot's the same: 1.27e-4 off on regrets of 9 at its worst node since Config.force_allin merged the sizes
+    # near the stack, 120 -> 88 decisions; 5.9e-6 before, the median 1.8e-7 either way)
+    REGRET_TOL = {"flop by buckets": 1e-4, "flop by buckets, 3bet pot raked": 5e-5}
     # the library's products summed in another order than numpy's sgemm, on the core's own loops (no BLAS), or by BLAS
     # with the combos laid out by window (Solver._perm: 1.5e-5 on the 3bet pot's): 2.2e-5
     REGRET_TOL_LOOPS = 5e-5
