@@ -3533,7 +3533,8 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   matches 100%. Across all 40 spots: 15.3% to 0.15%.
   `tests/test_rare_keep.py` covers the overbet hand and spots across positions, stack depths, pot types, lines and
   hands, each answered as the exact solve answers it: calls, folds, a value raise, and a sliver with and without the
-  pool.
+  pool. Its kept-range spots hold from a quarter of Fast's budget (a loaded machine) to 2.4x; the overbet hand's
+  flop and turn solves move how rare its line is with their time, so only its call is asserted.
 * **3-way pots are solved** (`gto/multiway_solver.py`, `docs/multiway_research.md`) where three players are live
   (one of them may be all-in for less: side pots), on every street at every speed (Fast's flops in a smaller game,
   `advisor.MW_FAST_STREETS`; Quick's flops and turns in smaller ones, `MW_QUICK_FLOP`, `MW_QUICK_TURN`), and four on
