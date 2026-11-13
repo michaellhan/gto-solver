@@ -24,7 +24,10 @@
  *   RFOLD [2, w, net, c_0 .. c_np-1]                             a fold leaving w alone: u_p = ([p == w] net - c_p) m_p
  *   REXIT [3, live, child, c_0 ..]                               the root street's end (Exit), the bucket subtree below
  *   BDEC  [4, q, A, regret, ssum, fold, leafc, sig, flag, child_0 ..]  regret, ssum, sig (C, A, K); fold: its index or -1
- *   BTERM [5, live, side, net, fm, c_0 ..]                       fm: the main pot's share (an all-in player), or -1
+ *   BTERM [5, live, side, net, fm, c_0 .., nx, (mask_k, f_k) x nx]  fm: the main pot's share (an all-in player), or
+ *                                                                -1; then further side pots (two all-in for
+ *                                                                different stakes): their players and shares, the
+ *                                                                first side pot's share what the others leave
  *   BEXIT [6, child]                                             the next street's subtree
  *   BTERMW [7, live, side, wJ_0, wA_0, wS_0, wJ_1 ..]             a tournament's terminal: p's value is wJ_p times the
  *                                                                deals' weight plus wA_p (wS_p) times its share of
@@ -408,6 +411,48 @@ INL void con4_row(const f32 *restrict T0, const f32 *restrict T1, const f32 *res
     for (int j = 0; j < k; j++) v[j] = w0 * A0[j] + w1 * B0[j] + w2 * D0[j];
 }
 
+/* Five players: the four others' buckets (x0 .. x3), T (k, k, k, k, k) with p's innermost; one tensor (w0 T0) or two
+   (a pot's too, w1 T1), each a row of k summed per nonzero cell of the others' reaches. */
+INL void con5_row(const f32 *restrict T0, const f32 *restrict T1, f32 w0, f32 w1, const f32 *restrict x0,
+                  const f32 *restrict x1, const f32 *restrict x2, const f32 *restrict x3, f32 *restrict v, const int k) {
+  int i0[32], i1[32], i2[32], i3[32];
+  int m0 = nzlist(x0, i0, k), m1 = nzlist(x1, i1, k), m2 = nzlist(x2, i2, k), m3 = nzlist(x3, i3, k);
+  f32 c3[32];
+  for (int e = 0; e < m3; e++) c3[e] = x3[i3[e]];
+  f32 A0[32], B0[32];
+  for (int j = 0; j < k; j++) A0[j] = B0[j] = 0;
+  for (int d = 0; d < m0; d++) {
+    f32 c0 = x0[i0[d]];
+    for (int e1 = 0; e1 < m1; e1++) {
+      f32 c01 = c0 * x1[i1[e1]];
+      for (int e2 = 0; e2 < m2; e2++) {
+        f32 c012 = c01 * x2[i2[e2]];
+        size_t oabc = (((size_t)i0[d] * k + i1[e1]) * k + i2[e2]) * k * k;
+        if (T1 == 0) {
+          for (int e = 0; e < m3; e++) {
+            f32 c = c012 * c3[e];
+            const f32 *r = T0 + oabc + (size_t)i3[e] * k;
+            for (int j = 0; j < k; j++) A0[j] += c * r[j];
+          }
+        } else {
+          for (int e = 0; e < m3; e++) {
+            f32 c = c012 * c3[e];
+            size_t o = oabc + (size_t)i3[e] * k;
+            for (int j = 0; j < k; j++) {
+              A0[j] += c * T0[o + j];
+              B0[j] += c * T1[o + j];
+            }
+          }
+        }
+      }
+    }
+  }
+  if (T1 == 0)
+    for (int j = 0; j < k; j++) v[j] = w0 * A0[j];
+  else
+    for (int j = 0; j < k; j++) v[j] = w0 * A0[j] + w1 * B0[j];
+}
+
 /* The tensors summed over a folded player's reach: M (k, k) [the other][p] = sum over f's buckets of xf * T, f the
    first (fo = 0) or the second (fo = 1) of p's two others; J's and a pot's tensor (T1, M1: or none) at once. */
 INL void red_row(const f32 *restrict T0, const f32 *restrict T1, const f32 *restrict xf, int fo, f32 *restrict M0,
@@ -464,7 +509,24 @@ INL void red_row(const f32 *restrict T0, const f32 *restrict T1, const f32 *rest
   }
 
 /* p's values v (C, K) = sum over the others' buckets of w_j T_j times their reaches X (np, C, K) */
+static void contract_add(const f32 *T0, f32 w0, int p, const f32 *X, f32 *v);
 static void contract(const f32 *T0, const f32 *T1, const f32 *T2, f32 w0, f32 w1, f32 w2, int p, const f32 *X, f32 *v) {
+  if (NP == 5) {
+    size_t blk5 = (size_t)K * K * K * K * K;
+    int o[4], m = 0;
+    for (int j = 0; j < 5; j++)
+      if (j != p) o[m++] = j;
+    for (int t = 0; t < C; t++) {
+      size_t off = t * blk5;
+      const f32 *x0 = X + ((size_t)o[0] * C + t) * K, *x1 = X + ((size_t)o[1] * C + t) * K,
+                *x2 = X + ((size_t)o[2] * C + t) * K, *x3 = X + ((size_t)o[3] * C + t) * K;
+#define C5(k) con5_row(T0 + off, T1 ? T1 + off : 0, w0, w1, x0, x1, x2, x3, v + (size_t)t * K, k)
+      BY_K(C5)
+#undef C5
+    }
+    if (T2) contract_add(T2, w2, p, X, v); /* (a player all-in for less: the side pot's tensor too) */
+    return;
+  }
   if (NP == 4) {
     size_t blk4 = (size_t)K * K * K * K;
     int o[3], m = 0;
@@ -498,6 +560,45 @@ static void contract(const f32 *T0, const f32 *T1, const f32 *T2, f32 w0, f32 w1
       BY_K(C2)
 #undef C2
     }
+  }
+}
+
+/* v (C, K) += w0 times p's contraction of T0 alone (a further side pot's: one class's row of K at a time) */
+static void contract_add(const f32 *T0, f32 w0, int p, const f32 *X, f32 *v) {
+  f32 row[32];
+  if (NP == 5) {
+    size_t blk5 = (size_t)K * K * K * K * K;
+    int o[4], m = 0;
+    for (int j = 0; j < 5; j++)
+      if (j != p) o[m++] = j;
+    for (int t = 0; t < C; t++) {
+      const f32 *x0 = X + ((size_t)o[0] * C + t) * K, *x1 = X + ((size_t)o[1] * C + t) * K,
+                *x2 = X + ((size_t)o[2] * C + t) * K, *x3 = X + ((size_t)o[3] * C + t) * K;
+      con5_row(T0 + t * blk5, 0, w0, 0, x0, x1, x2, x3, row, K);
+      for (int j = 0; j < K; j++) v[(size_t)t * K + j] += row[j];
+    }
+    return;
+  }
+  if (NP == 4) {
+    size_t blk4 = (size_t)K * K * K * K;
+    int o[3], m = 0;
+    for (int j = 0; j < 4; j++)
+      if (j != p) o[m++] = j;
+    for (int t = 0; t < C; t++) {
+      const f32 *x0 = X + ((size_t)o[0] * C + t) * K, *x1 = X + ((size_t)o[1] * C + t) * K,
+                *x2 = X + ((size_t)o[2] * C + t) * K;
+      con4_row(T0 + t * blk4, 0, 0, w0, 0, 0, x0, x1, x2, row, K);
+      for (int j = 0; j < K; j++) v[(size_t)t * K + j] += row[j];
+    }
+    return;
+  }
+  size_t blk = (size_t)K * K * (NP == 3 ? K : 1);
+  int o0 = p == 0 ? 1 : 0, o1 = p == 2 ? 1 : 2;
+  for (int t = 0; t < C; t++) {
+    const f32 *x0 = X + ((size_t)o0 * C + t) * K;
+    if (NP == 3) con3_row(T0 + t * blk, 0, 0, w0, 0, 0, x0, X + ((size_t)o1 * C + t) * K, row, K);
+    else con2_row(T0 + t * blk, 0, w0, 0, x0, row, K);
+    for (int j = 0; j < K; j++) v[(size_t)t * K + j] += row[j];
   }
 }
 
@@ -630,7 +731,8 @@ static void combine(int mode, int mine, int A, int rows, int w, const f32 *restr
 
 /* ------------------------------------------------------------------ the bucket world */
 static void term(const i32 *w, const f32 *X, f32 *v, int p, const Fold *fd) {
-  int live = w[1], side = w[2];
+  int live = w[1], side = w[2], nx = 0;
+  const i32 *xs = 0;
   f32 wJ, wA = 0, wS = 0;
   int kA = -2, kS = -2;
   if (w[0] == BTERMW) {
@@ -655,9 +757,14 @@ static void term(const i32 *w, const f32 *X, f32 *v, int p, const Fold *fd) {
     }
   } else {
     wJ = -fbits(w[5 + p]);
+    nx = w[5 + NP];
+    xs = w + 6 + NP;
     if (live >> p & 1) {
       f32 net = fbits(w[3]), fm = fbits(w[4]);
       f32 fa = fm >= 0 ? fm : 1, fs = fm >= 0 ? 1 - fm : 0;
+      for (int k = 0; k < nx; k++) fs -= fbits(xs[2 * k + 1]);
+      for (int k = 0; k < nx; k++) /* a further side pot that is p's alone: its chips back, as the deals' weight */
+        if ((xs[2 * k] >> p & 1) && pop(xs[2 * k]) == 1) wJ += net * fbits(xs[2 * k + 1]);
       if (pop(live) > 1) {
         kA = live;
         wA = net * fa;
@@ -685,6 +792,11 @@ static void term(const i32 *w, const f32 *X, f32 *v, int p, const Fold *fd) {
     T2 = 0;
   }
   contract(T0, T1, T2, wJ, wA, wS, p, X, v);
+  if (!(live >> p & 1)) return;
+  f32 net = fbits(w[3]);
+  for (int k = 0; k < nx; k++) /* further side pots that p contests with others: their tensors, added */
+    if ((xs[2 * k] >> p & 1) && pop(xs[2 * k]) > 1)
+      contract_add(tensor(xs[2 * k], p), net * fbits(xs[2 * k + 1]), p, X, v);
 }
 
 static void bwalk(Lane *L, int node, const f32 *X, f32 *v, int mode, int p, const Fold *fd);
@@ -797,21 +909,21 @@ static void kmass(Lane *L, const f32 *x, f32 *m) {
   L->top = mark;
 }
 
-/* p's deals' weight per combo: the others' compatible reach (four players: pairwise, MultiwaySolver._pw_masses: the
+/* p's deals' weight per combo: the others' compatible reach (four or more players: pairwise, MultiwaySolver._pw_masses: the
    product of the others' one-sided masses times p's overlap correction, scaled so its total is player 0's, the factor
    held to [0.5, 2]) */
 static void deal_mass(Lane *L, const f32 *R, int p, f32 *m) {
-  if (NP == 4) {
+  if (NP >= 4) {
     size_t mark = L->top;
-    f32 *ku = salloc(L, sizeof(f32) * 4 * N), *m0 = salloc(L, sizeof(f32) * N);
-    for (int j = 0; j < 4; j++) kmass(L, R + (size_t)j * N, ku + (size_t)j * N);
+    f32 *ku = salloc(L, sizeof(f32) * NP * N), *m0 = salloc(L, sizeof(f32) * N);
+    for (int j = 0; j < NP; j++) kmass(L, R + (size_t)j * N, ku + (size_t)j * N);
     f64 tot[2] = {0, 0};
     for (int r = 0; r < 2; r++) {
       int q = r == 0 ? 0 : p;
       f32 *mq = r == 0 ? m0 : m;
       for (int h = 0; h < N; h++) {
         f32 x = PWC[(size_t)q * N + h];
-        for (int j = 0; j < 4; j++)
+        for (int j = 0; j < NP; j++)
           if (j != q) x *= ku[(size_t)j * N + h];
         mq[h] = x;
         tot[r] += (f64)R[(size_t)q * N + h] * x;
@@ -1021,12 +1133,14 @@ static void runout(Lane *L, const i32 *w, const f32 *R, f32 *v, int p) {
   f64 *val = salloc(L, sizeof(f64) * N), *cc = salloc(L, sizeof(f64) * 156);
   f64 *num = salloc(L, sizeof(f64) * nn), *den = salloc(L, sizeof(f64) * nn);
   f64 *T = salloc(L, sizeof(f64) * 3 * (size_t)NP * N);
-  int tabs = 0, masses = 1 << p;            /* whose rows' kernels; whose deals' weights (three: to scale the shares) */
+  /* whose rows' kernels; whose deals' weights (to scale the shares: three players' every pot, more players' pots of
+     three or more, where every live player's share is taken to scale them) */
+  int tabs = 0, masses = 1 << p;
   for (int k = 0; k < npot; k++) {
     int mask = pots[(size_t)k * stride];
     if (!(mask >> p & 1) || pop(mask) < 2) continue;
-    if (pop(mask) > 2) tabs |= NP == 3 ? mask : mask & ~(1 << p);
-    if (NP == 3) masses |= mask;
+    if (pop(mask) > 2) tabs |= mask;
+    if (NP == 3 || pop(mask) > 2) masses |= mask;
   }
   for (int j = 0; j < NP; j++)
     if (masses >> j & 1) deal_mass(L, R, j, M + (size_t)j * N);
@@ -1068,9 +1182,9 @@ static void runout(Lane *L, const i32 *w, const f32 *R, f32 *v, int p) {
       int mask = pots[(size_t)k * stride];
       if (!(mask >> p & 1) || pop(mask) < 3) continue;
       for (int l = 0; l < NP; l++) {
-        if (!(mask >> l & 1) || (NP != 3 && l != p)) continue;
+        if (!(mask >> l & 1)) continue;
         f64 *nk = num + ((size_t)k * NP + l) * N, *dk = den + ((size_t)k * NP + l) * N;
-        int o[3], no = 0;
+        int o[4], no = 0;
         for (int j = 0; j < NP; j++)
           if (j != l && (mask >> j & 1)) o[no++] = j;
         const f64 *t0 = T + 3 * (size_t)o[0] * N, *t1 = T + 3 * (size_t)o[1] * N;
@@ -1080,11 +1194,17 @@ static void runout(Lane *L, const i32 *w, const f32 *R, f32 *v, int p) {
             nk[h] += (t0[N + h] * t1[N + h] + e0[h] * e1[h] / 12.0) * mk[h];
             dk[h] += t0[h] * t1[h] * mk[h];
           }
-        } else {
+        } else if (no == 3) {
           const f64 *t2 = T + 3 * (size_t)o[2] * N;
           for (int h = 0; h < N; h++) {
             nk[h] += t0[N + h] * t1[N + h] * t2[N + h] * mk[h];
             dk[h] += t0[h] * t1[h] * t2[h] * mk[h];
+          }
+        } else {
+          const f64 *t2 = T + 3 * (size_t)o[2] * N, *t3 = T + 3 * (size_t)o[3] * N;
+          for (int h = 0; h < N; h++) {
+            nk[h] += t0[N + h] * t1[N + h] * t2[N + h] * t3[N + h] * mk[h];
+            dk[h] += t0[h] * t1[h] * t2[h] * t3[h] * mk[h];
           }
         }
       }
@@ -1102,8 +1222,9 @@ static void runout(Lane *L, const i32 *w, const f32 *R, f32 *v, int p) {
       continue;
     }
     f64 tot = 0, whole = 0;
+    int all = NP == 3 || pop(mask) > 2;    /* (every live player's share, to scale them) */
     for (int l = 0; l < NP; l++) {
-      if (!(mask >> l & 1) || (NP != 3 && l != p)) continue;
+      if (!(mask >> l & 1) || (!all && l != p)) continue;
       f64 *nk = num + ((size_t)k * NP + l) * N, *dk = den + ((size_t)k * NP + l) * N; /* num becomes the share */
       const f32 *rl = R + (size_t)l * N, *ml = M + (size_t)l * N;
       f64 tl = 0, wl = 0;
@@ -1117,7 +1238,7 @@ static void runout(Lane *L, const i32 *w, const f32 *R, f32 *v, int p) {
       tot += tl;
       if (!whole) whole = wl;
     }
-    if (NP == 3 && tot > 1e-300) a *= whole / tot;
+    if (all && tot > 1e-300) a *= whole / tot;
     const f64 *sp = num + ((size_t)k * NP + p) * N;
     for (int h = 0; h < N; h++) val[h] += a * sp[h];
   }

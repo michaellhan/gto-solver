@@ -32,6 +32,14 @@ def _ranges4():
     return [R["BB"], R["HJ"], R["CO"], R["BTN"]]
 
 
+PRE5 = PRE4[:4] + [{"pos": "SB", "action": "call"}, PRE4[5]]
+
+
+def _ranges5():
+    R = A.preflop_ranges(PRE5, pf.Table(pf.SEATS[6]), 100.0)
+    return [R[p] for p in ("SB", "BB", "HJ", "CO", "BTN")]
+
+
 def _cfg4(**kw):
     """The advisor's 4-way game (advisor.MW4_BETS: one bet a street, no raise but the root player's)."""
     return MWConfig(later="buckets", max_raises=1, root_raise=True, bet=dict(A.MW4_BETS), **kw)
@@ -516,6 +524,34 @@ class TestCore(unittest.TestCase):
                 self._same(*self._pair(board, 3, rs=_ranges4(), pot=10.5, cfg=_cfg4(**kw)))
         # a player all-in: the three others bet for a side pot (the kernel's third tensor)
         self._same(*self._pair("Kh7d2c9s", 3, rs=_ranges4(), pot=30.0, stack=85.0, cfg=_cfg4(buckets=8, allin=(3,))))
+        # two all-in for different stakes, the other two betting past both (terminals of three pots: a further
+        # side pot's tensor added); and stacks that differ, each player its own (a pot per stake below the root)
+        for kw in (dict(pot=30.0, stack=85.0, bets=[0.0, 0.0, 10.0, 25.0], to_act=0, pending={0, 1},
+                        cfg=_cfg4(buckets=8, allin=(2, 3), inv0=(10.0,) * 4)),
+                   dict(pot=20.0, stack=(8.0, 60.0, 40.0, 60.0), cfg=_cfg4(buckets=8, inv0=(5.0,) * 4))):
+            with self.subTest(allin=kw["cfg"].allin):
+                a, b = self._pair("Kh7d2c9s", 3, rs=_ranges4(), **kw)
+                self.assertTrue(any(t.more for lvl in a.levels for g in lvl for t in MW._bterminals(g.tree)))
+                self._same(a, b)
+        # (a flop of those stacks agrees an iteration in, values and best responses to 1e-5 of the pot: over three,
+        # regret matching's kinks carry the rounding 0.4% into the regrets of the player with 60 behind)
+        self._same(*self._pair("Kh7d2c", 1, rs=_ranges4(), pot=20.0, stack=(8.0, 60.0, 40.0, 60.0),
+                               cfg=_cfg4(buckets=6, bucket_river_step=4, inv0=(5.0,) * 4)))
+
+    def test_five_players_agree(self):
+        # 5-way turns and a flop (advisor.MW5_STREETS' game): the kernel over four others' buckets; a player all-in (the
+        # four others for a side pot); stacks short enough that the river's bets go all-in (runouts of 5 hands)
+        rs = _ranges5()
+        for name, board, kw, iters in (("turn", "Kh7d2c9s", dict(pot=12.5, cfg=_cfg4(buckets=4)), 3),
+                                       ("all-in", "Kh7d2c9s", dict(pot=30.0, stack=40.0, bets=[0.0] * 4 + [20.0], to_act=0,
+                                                                   pending={0, 1, 2, 3},
+                                                                   cfg=_cfg4(buckets=4, allin=(4,), inv0=(5.0,) * 5)), 3),
+                                       ("short", "Kh7d2c9s", dict(pot=40.0, stack=25.0, cfg=_cfg4(buckets=4)), 3),
+                                       ("flop", "Kh7d2c", dict(pot=12.5, cfg=_cfg4(buckets=3, bucket_river_step=6)), 1)):
+            with self.subTest(name):
+                a, b = self._pair(board, iters, rs=rs, **kw)
+                self.assertEqual(a.np, 5)
+                self._same(a, b)
 
     def test_river_agrees_with_numpy(self):
         # a 3-way river root (no later streets): its showdowns per combo in the core (RSHOW, exact card removal by
@@ -670,6 +706,42 @@ class TestFourWay(unittest.TestCase):
                     np.testing.assert_allclose(tot, _canon4(J, 0), rtol=1e-4, atol=1e-9 * J.max())
 
 
+    def test_five_way_turn_settles(self):
+        # five players (advisor.MW5_STREETS' turn: 6 buckets): the compiled core's kernel over four others' buckets
+        s = MultiwaySolver(cards("Kh7d2c9s"), _ranges5(), 12.5, 97.5, cfg=_cfg4(buckets=6))
+        self.assertEqual(s.tabs.np, 5)
+        g5 = s.run(iters=5).br_gains()
+        g = s.run(iters=95).br_gains()
+        self.assertTrue(np.all(g < g5))
+        self.assertLess(g.max() / s.root_pot() * 100, 0.2)
+        # (the pairwise deals against the tables: 1% over the pot with five hands, 4-way's half a percent)
+        self.assertAlmostEqual(float(s.values().sum()), 12.5, delta=0.15)
+
+    def test_advisor_five_way(self):
+        # 5-way turns and flops by the 5-player solve (MW5_STREETS), not the betting rules; a quick answer's 5-way flop,
+        # and one where the flop isn't in mw5_street_config (native Fast on fewer than 4 threads), the rules'
+        adv = A.Advisor(time_budget=1e9)
+        adv.mw_solve_streets = ("flop", "turn", "river")
+        adv.mw_max_iters = 25
+        adv.mw5_street_config = {k: dict(v) for k, v in A.MW5_FAST_STREETS.items()}
+        X5 = [{"pos": p, "action": "check"} for p in ("SB", "BB", "HJ", "CO", "BTN")]
+        turn = {"players": 6, "hero": "HJ", "hole": "AhKd", "board": "Kh7d2c9s", "stack": 100.0, "preflop": PRE5,
+                "flop": X5, "turn": X5[:2]}
+        r = adv.advise(turn)
+        self.assertTrue(r.get("solved"), r["notes"])
+        self.assertEqual(r["players"], 5)
+        self.assertTrue(any(n.startswith("5-way pot solved by 5-player CFR") for n in r["notes"]), r["notes"])
+        flop = dict(turn, board="Kh7d2c", turn=None, flop=X5[:2])
+        del flop["turn"]
+        r = adv.advise(flop)
+        self.assertTrue(r.get("solved"), r["notes"])
+        self.assertTrue(any("by 3 hand buckets" in n for n in r["notes"]), r["notes"])
+        r = adv.advise(dict(flop, quick=True))
+        self.assertFalse(r.get("solved"))
+        self.assertTrue(any("a quick answer leaves a 5-way flop to the betting rules" in n for n in r["notes"]), r["notes"])
+        adv.mw5_street_config.pop("flop")
+        self.assertFalse(adv.advise(dict(flop, hole="AsKs")).get("solved"))
+
     def test_a_player_all_in(self):
         # the BTN all-in preflop and called: the other three bet the turn and river for a side pot, the main pot (the
         # pot at the root) to the best of the four
@@ -681,6 +753,53 @@ class TestFourWay(unittest.TestCase):
         g = s.br_gains() / s.root_pot() * 100
         self.assertEqual(float(g[3]), 0.0)
         self.assertLess(float(g.mean()), 0.5)
+
+
+    def test_two_players_all_in(self):
+        # two all-in, for 10 and 25: the other two bet the river for the pots above them (the main pot to the best of
+        # the four, a side pot of three, one of the two), and the 4-way runouts of three hands are scaled to add up
+        # as 3-way's (unscaled the values added up to 2.1 over the pot)
+        s = MultiwaySolver(cards("Kh7d2c9s"), _ranges4(), 30.0, 85.0, bets=[0.0, 0.0, 10.0, 25.0], to_act=0,
+                           pending={0, 1}, cfg=_cfg4(buckets=8, allin=(2, 3), inv0=(10.0,) * 4)).run(iters=100)
+        self.assertEqual(sorted({d.player for d in s.decisions}), [0, 1])
+        pots = {lv for lvl in s.levels for g in lvl for t in MW._bterminals(g.tree) for _, lv in MultiwaySolver._pots(t)}
+        self.assertTrue({(0, 1, 2, 3), (0, 1, 3), (0, 1)} <= pots, pots)
+        self.assertAlmostEqual(float(s.values().sum()), 30.0, delta=0.5)
+        g = s.br_gains() / s.root_pot() * 100
+        self.assertEqual(float(g[2]) + float(g[3]), 0.0)
+        self.assertLess(float(g[:2].mean()), 0.5)
+
+    def test_advisor_two_all_in_and_own_stacks(self):
+        # the 4-way solve, not the betting rules: a shove and a call all-in for the same stack with two to act; and a
+        # shove bigger than the shortest stack still to act (UTG1 has 4.5 behind), where each plays its own stack
+        adv = A.Advisor(time_budget=1e9)
+        adv.mw_solve_streets = ("flop", "turn", "river")
+        adv.mw_max_iters = 25
+        two = {"players": 4, "hero": "CO", "hole": "AdKh", "board": "Ah3hJs", "stack": 20.0,
+               "preflop": [{"pos": "BTN", "action": "raise", "to": 4.0}, {"pos": "SB", "action": "raise", "to": 12.5},
+                           {"pos": "BB", "action": "call"}, {"pos": "CO", "action": "call"}, {"pos": "BTN", "action": "call"}],
+               "flop": [{"pos": "SB", "action": "all-in"}, {"pos": "BB", "action": "call"}]}
+        r = adv.advise(two)
+        self.assertTrue(r.get("solved"), r["notes"])
+        self.assertEqual(r["players"], 4)
+        self.assertTrue(any(n.startswith("SB, BB all-in: the pot (80.0 bb)") for n in r["notes"]), r["notes"])
+        self.assertEqual(r["recommended"], "call")
+        own = {"players": 9, "hero": "BTN", "hole": "KhAh", "board": "AsAc6h", "stack": 137.0,
+               "stacks": {"UTG": 3.0, "UTG1": 7.5, "UTG2": 143.0, "LJ": 137.0, "HJ": 137.0, "CO": 152.0, "BTN": 137.0,
+                          "SB": 137.0, "BB": 2.0},
+               "preflop": [{"pos": p, "action": a, **({"to": 3.0} if a == "raise" else {})} for p, a in
+                           (("UTG", "fold"), ("UTG1", "call"), ("UTG2", "fold"), ("LJ", "fold"), ("HJ", "call"),
+                            ("CO", "raise"), ("BTN", "call"), ("SB", "fold"), ("BB", "fold"), ("UTG1", "call"),
+                            ("HJ", "call"))],
+               "flop": [{"pos": "UTG1", "action": "check"}, {"pos": "HJ", "action": "check"}, {"pos": "CO", "action": "all-in"}]}
+        r = adv.advise(own)
+        self.assertTrue(r.get("solved"), r["notes"])
+        self.assertTrue(any(n.startswith("stacks differ: each player bets their own stack (UTG1 4.5") for n in r["notes"]),
+                        r["notes"])
+        self.assertTrue(any(n.startswith("CO all-in: the main pot (31.5 bb) to the best of UTG1, HJ, CO, BTN; a side pot")
+                            for n in r["notes"]), r["notes"])
+        self.assertEqual(r["recommended"], "call")
+        self.assertEqual(r["to_call_bb"], 134.0)
 
 
 def _canon4(T, p):

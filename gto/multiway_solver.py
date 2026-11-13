@@ -766,12 +766,13 @@ class BDecision(Decision):
 
 
 class BTerminal:
-    __slots__ = ("live", "pot", "c", "net", "kind", "X", "V", "fctx", "fm", "side", "W")
+    __slots__ = ("live", "pot", "c", "net", "kind", "X", "V", "fctx", "fm", "side", "more", "W")
 
     def __init__(self, live, pot, c, net, kind):
         self.live, self.pot, self.c, self.net, self.kind = live, pot, c, net, kind
         self.X = self.V = self.fctx = None
         self.fm, self.side = None, live      # the main pot's share per row and the side pot's players (_split)
+        self.more = ()      # further side pots: (players, share of each row's pot), the first side pot's being the rest
         self.W = None       # a tournament's weights (np, 3, rows): the deals' weight's, the main pot's, the side pot's
 
 
@@ -1235,9 +1236,8 @@ class MultiwaySolver:
         # pairwise terminals (_term_pw): four or more players, or three with two all-in (layered pots); else exact
         self._pw = self.np > 3 or len(self.cfg.allin) > 1
         assert not self.cfg.allin or self.np >= 3, "allin: three players or more"
-        # (4+ players by buckets: at most one all-in, a main pot and a side pot, as the bucket terminals play them)
-        assert not self._pw or self.cfg.later == "deal" or (self.np > 3 and len(self.cfg.allin) <= 1), \
-            "pairwise terminals by buckets: four or more players, at most one all-in"
+        # (pairwise by buckets: four or more players, the bucket terminals' pots layered by any players all-in)
+        assert not self._pw or self.cfg.later == "deal" or self.np > 3, "pairwise terminals by buckets: four or more players"
         self.pot_start, self.stack = pot, stack
         b = Builder(self.hands, self.cfg, self.np, dead_all - set(board))
         b.root_len = len(self.board)
@@ -1640,42 +1640,37 @@ class MultiwaySolver:
         Xall = np.concatenate([t.X for t in terms], axis=1)
         mJ = tb.contract(("J",), p, Xall)
         # each terminal's pots by who contests them: the whole pot by its live players, or with a player all-in for
-        # less the main pot by everyone live and the side pot by the players with more in (_split)
-        side = lambda t: t.side
+        # less the main pot by everyone live and each side pot by the players with more in (_split)
+        pots = [self._pots(t) for t in terms]
         wins = {}
-        for key, sel in (("all", lambda t: t.live), ("side", side)):
-            if key == "side" and all(t.fm is None for t in terms):
-                break
-            for lv in {sel(t) for t in terms if len(sel(t)) > 1 and p in sel(t)}:
-                ix = [i for i, t in enumerate(terms) if sel(t) == lv]
-                sub = np.concatenate([Xall[:, cut[i]:cut[i + 1]] for i in ix], axis=1)
-                w = tb.contract(("S", lv), p, sub)
-                o = np.cumsum([0] + [rows[i] for i in ix])
-                for k, i in enumerate(ix):
-                    wins[(key, i)] = w[o[k]:o[k + 1]]
+        for lv in {lv for ps in pots for _, lv in ps if len(lv) > 1 and p in lv}:
+            ix = [i for i, ps in enumerate(pots) if any(l == lv for _, l in ps)]
+            sub = np.concatenate([Xall[:, cut[i]:cut[i + 1]] for i in ix], axis=1)
+            w = tb.contract(("S", lv), p, sub)
+            o = np.cumsum([0] + [rows[i] for i in ix])
+            for k, i in enumerate(ix):
+                wins[(lv, i)] = w[o[k]:o[k + 1]]
         res = []
         for i, t in enumerate(terms):
             m = mJ[cut[i]:cut[i + 1]]
             W = t.W
-            if W is not None:     # (a tournament's weights)
+            win = lambda lv: (wins[(lv, i)] if len(lv) > 1 else m) if p in lv else 0.0
+            if W is not None:     # (a tournament's weights: the main pot's and the side pot's)
                 v = W[p, 0][:, None] * m
                 if p in t.live:
-                    v = v + W[p, 1][:, None] * (wins[("all", i)] if len(t.live) > 1 else m)
-                    sv = side(t)
-                    if t.fm is not None and p in sv:
-                        v = v + W[p, 2][:, None] * (wins[("side", i)] if len(sv) > 1 else m)
+                    v = v + W[p, 1][:, None] * win(t.live)
+                    if t.fm is not None and p in t.side:
+                        v = v + W[p, 2][:, None] * win(t.side)
                 if keep:
                     t.V = v
                 res.append(v)
                 continue
             if p in t.live:
-                win = wins[("all", i)] if len(t.live) > 1 else m
-                fm = t.fm
-                if fm is not None:
-                    sv = side(t)
-                    ws = (wins[("side", i)] if len(sv) > 1 else m) if p in sv else 0.0
-                    win = fm[:, None] * win + (1.0 - fm[:, None]) * ws
-                v = t.net[:, None] * win - t.c[p][:, None] * m
+                tot = 0.0
+                for f, lv in pots[i]:
+                    if p in lv:
+                        tot = tot + (win(lv) if f is None else f[:, None] * win(lv))
+                v = t.net[:, None] * tot - t.c[p][:, None] * m
             else:
                 v = -t.c[p][:, None] * m
             if keep:
@@ -1684,11 +1679,13 @@ class MultiwaySolver:
         return res
 
     def _split(self, t):
-        """A bucketed terminal's pots (t.fm, t.side): with a player all-in for less on some row, the main pot's share
-        of each row's pot (1 where nobody is) and the players who contest the side pot; else (None, its live)."""
+        """A bucketed terminal's pots (t.fm, t.side, t.more): with a player all-in for less on some row, the main pot's
+        share of each row's pot (1 where nobody is), the players who contest the side pot, and any further side pots
+        (two players all-in for different stakes, or stacks that differ: a pot for each stake), each with its players
+        and its share of each row's pot (the first side pot's share is what the others leave); else (None, its live)."""
         if len(t.live) < 2 or t.pot is None or not self.cfg.allin and len(set(self.stacks)) <= 1:
             return
-        fm, side, memo = np.ones(len(t.pot)), None, {}
+        fm, sides, memo = np.ones(len(t.pot)), {}, {}
         for r in range(len(t.pot)):
             key = (tuple(t.c[:, r]), float(t.pot[r]))
             lay = memo.get(key)
@@ -1696,12 +1693,23 @@ class MultiwaySolver:
                 lay = memo[key] = self._layers(t.live, t.c[:, r], float(t.pot[r]))
             if len(lay) == 1:
                 continue
-            if len(lay) > 2 or (side is not None and lay[1][1] != side):
-                raise ValueError(f"a bucketed terminal with three pots or two side pots: {lay}")
-            side = lay[1][1]
             fm[r] = lay[0][0] / float(t.pot[r])
-        if side is not None:
-            t.fm, t.side = fm, side
+            for amt, lv in lay[1:]:
+                sides.setdefault(lv, np.zeros(len(t.pot)))[r] += amt / float(t.pot[r])
+        if not sides:
+            return
+        order = sorted(sides, key=lambda lv: (-len(lv), lv))
+        if len(order) > 1 and self.cfg.icm is not None:
+            raise ValueError(f"a tournament's bucketed terminal with two side pots: {order}")
+        t.fm, t.side, t.more = fm, order[0], tuple((lv, sides[lv]) for lv in order[1:])
+
+    @staticmethod
+    def _pots(t):
+        """A bucketed terminal's pots: [(share of each row's pot or None (all of it), players)]."""
+        if t.fm is None:
+            return [(None, t.live)]
+        fs = 1.0 - t.fm - sum(f for _, f in t.more)
+        return [(t.fm, t.live), (fs, t.side)] + [(f, lv) for lv, f in t.more]
 
     def _pass(self, R, mode, p=None, node=None):
         """A walk from `node` (the root), the later streets (if any) evaluated first."""
@@ -1846,7 +1854,8 @@ class MultiwaySolver:
         as _term, each combo's share of a pot being its own over the runouts. Heads-up the table (_allin_table), the other
         player's reach weighted by what the hands of the players out of that pot leave it. Against two others, on each row the weaker + tied / 2 of their reach over their compatible reach, the rows added up before
         dividing: q and r independent given the combo and the row (W_q W_r + E_q E_r / 12). With three players a pot's
-        shares are scaled to add up to every deal's, as _term's pairwise rows: the game stays constant-sum.
+        shares are scaled to add up to every deal's, as _term's pairwise rows: the game stays constant-sum; with more,
+        a pot of three or more the same way (unscaled, two all-in players' 4-way pots paid 2-3% of the pot too much).
         core/mwcore.c runout()."""
         npl, n, masks = self.np, self.hands.n, node.masks
         kern, mass = {}, {}
@@ -1893,7 +1902,7 @@ class MultiwaySolver:
                 continue
             if len(live) == 1:
                 sh, sc = {live[0]: 1.0}, 1.0
-            elif npl == 3:
+            elif npl == 3 or len(live) > 2:     # (more players: a pot of three or more scaled as three's)
                 sh = {p: share(p, live) for p in live}
                 tot = sum((R[p, 0] * weight(p) * sh[p]).sum() for p in live)
                 sc = (R[live[0], 0] * weight(live[0])).sum() / tot if tot > 1e-300 else 1.0

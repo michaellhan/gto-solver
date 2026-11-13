@@ -247,10 +247,10 @@ class Program:
         if self.river:
             if s.np != 3 or s._pw or not cfg.exact or not cfg.alternate or cfg.allin and len(cfg.allin) > 1:
                 raise Unsupported("not a 3-way river")
-        elif (s.tabs is None and not s.builder.runouts) or not cfg.alternate or s.np not in (2, 3, 4) or \
-                (s._pw and s.np != 4):
-            raise Unsupported("not a bucketed 2-, 3- or 4-player solve")
-        elif (s.tabs is not None and s.tabs.K > MAX_K) or len(cfg.allin) > 1:
+        elif (s.tabs is None and not s.builder.runouts) or not cfg.alternate or s.np not in (2, 3, 4, 5) or \
+                (s._pw and s.np < 4):
+            raise Unsupported("not a bucketed 2- to 5-player solve")
+        elif (s.tabs is not None and s.tabs.K > MAX_K) or len(cfg.allin) > 1 and s.np < 4:
             raise Unsupported("buckets or all-ins")
         self.L, self.s = L, weakref.ref(s)
         L.reset()
@@ -276,8 +276,8 @@ class Program:
         self.w = [MAGIC, s.np, self.n, self.K, self.C, 0,
                   self._up(s.hands.ca, np.int32), self._up(s.hands.cb, np.int32), 0, 0, 0, 0, 0, 0,
                   _mask(cfg.allin), self._up(s.reach0[:, 0, :], np.float32)] + [0] * 19
-        if s.np == 4:      # (the root street's deals' weight: pairwise, each player's overlap correction)
-            self.w[21] = self._up(np.concatenate([s._pw_corr(p) for p in range(4)]), np.float32)
+        if s.np >= 4:      # (the root street's deals' weight: pairwise, each player's overlap correction)
+            self.w[21] = self._up(np.concatenate([s._pw_corr(p) for p in range(s.np)]), np.float32)
         if self.river:
             self._river(s)
         else:
@@ -483,10 +483,13 @@ class Program:
             if node.W is not None:    # (a tournament's weights per player: the deals' weight's, the main pot's, the side's)
                 w += [BTERMW, _mask(node.live), _mask(node.side)] + self._bits(node, "W")[:, :, r].reshape(-1).tolist()
                 return at
-            # (a player all-in for less: the main pot's share of the row's pot, and the side pot's players)
+            # (a player all-in for less: the main pot's share of the row's pot, and the side pot's players; then any
+            # further side pots, each its players and its share of the row's pot)
             fm = float(node.fm[r]) if node.fm is not None else -1.0
             w += [BTERM, _mask(node.live), _mask(node.side), self._bits(node, "net")[r], _f(fm)] + \
-                self._bits(node, "c")[:, r].tolist()
+                self._bits(node, "c")[:, r].tolist() + [len(node.more)]
+            for lv, f in node.more:
+                w += [_mask(lv), _f(float(f[r]))]
             return at
         if isinstance(node, MW.BExit):
             g, j = self._bx[(id(node), i)]
