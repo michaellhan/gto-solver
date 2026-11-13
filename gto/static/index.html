@@ -2145,10 +2145,12 @@ function shownAdvice() {
   const r = lastResult;
   if (!r || r.error || !r.actions || resultKey !== JSON.stringify(payload())) return null;
   const mix = r.actions.filter(a => a.freq >= 0.005).sort((a, b) => b.freq - a.freq).map(a => `${sizedMove(a.action, a.amount_bb)} (${pct0(a.freq)})`).join(", ");
-  return mix ? `  ${heuristic(r) ? "Betting rules" : "Solver"}: ${r.close ? `close, ${orList(r.close.actions)} (within ${r.close.gap_pct}% of the pot). Mix ` : ""}${mix}` : null;
+  return mix ? `  Me: to decide. ${heuristic(r) ? "Betting rules" : "Solver"}: ${r.close ? `close, ${orList(r.close.actions)} (within ${r.close.gap_pct}% of the pot). Mix ` : ""}${mix}` : null;
 }
-// The hand so far in a few lines of text, your decisions and the solver's answers under each street's. In a decision of
-// a review, the hand up to that decision and that decision.
+// The hand so far in a few lines of text, for a person or a model to read. A street's actions are cut at each of your
+// decisions: the actions up to it, the pot and what you had to call there, then your action and the solver's answer
+// under it, so an answer is never read as the answer to a later bet. In a decision of a review, the hand up to that
+// decision and that decision.
 function handText() {
   const n = S.players, sim = simulate(), held = S.cards[0] && S.cards[1] ? S.cards[0] + S.cards[1] : "??";
   const lines = [[`${n}-handed`, ...(STAKES() ? [STAKES_TEXT()] : []), `${fmt(S.stack)}bb${withUsd(S.stack)} stacks${UNEQUAL() ? ` (${STACKS_TEXT()})` : ""}`,
@@ -2156,13 +2158,27 @@ function handText() {
     `I am ${SEAT_LABEL(S.hero, n)} with ${held}`].join(", ")];
   const act = (a) => `${SEAT_LABEL(a.pos, n)} ${a.action === "bet" ? "bets " + fmt(a.to) + withUsd(a.to) : a.action === "raise" ? "raises to " + fmt(a.to) + withUsd(a.to) : a.action === "all-in" ? "all-in" : a.action + "s"}`;
   const board = (s) => s === "preflop" ? "" : ` (${boardCards().slice(NEED[s] - (s === "flop" ? 3 : 1), NEED[s]).join(" ")})`;
+  const turn = (at, p) => {   // whose turn, the pot and what there is to call
+    const info = at.cur, owe = Math.min(info.curBet - info.bets[p], STACK(p) - at.invested[p] - info.bets[p]);
+    return `${SEAT_LABEL(p, n)}${p === S.hero ? " (me)" : ""} to act, pot ${fmt(info.pot)}bb${withUsd(info.pot)}${owe > 1e-9 ? `, ${fmt(owe)}bb${withUsd(owe)} to call` : ""}`;
+  };
   for (const s of STREETS) {
     const toAct = sim.current === s && sim.cur && !handDone(sim) && !dealing(sim);
     const viewed = stepView && stepView.s === s ? stepView.full.actions[s][stepView.i] : null;
-    if (!S.actions[s].length && !toAct && !viewed) continue;
-    const said = S.actions[s].map(act).join(", ");
-    lines.push(`${s[0].toUpperCase() + s.slice(1)}${board(s)}: ${said}${toAct ? `${said ? ". " : ""}${SEAT_LABEL(sim.toAct, n)} to act, pot ${fmt(sim.cur.pot)}bb${withUsd(sim.cur.pot)}` : ""}`.trimEnd());
-    S.actions[s].forEach((a, i) => { if (a.pos === S.hero) lines.push(decisionLine(a, simAt(S, s, i).pot)); });
+    const acts = S.actions[s];
+    if (!acts.length && !toAct && !viewed) continue;
+    let head = `${s[0].toUpperCase() + s.slice(1)}${board(s)}: `, from = 0;
+    const part = (to, tail) => {   // the actions from `from` up to `to`, then whose turn it is
+      const said = acts.slice(from, to).map(act).join(", ");
+      lines.push(`${head}${said}${tail ? `${said ? ". " : ""}${tail}` : ""}`.trimEnd());
+      head = "Then: ";
+    };
+    acts.forEach((a, i) => {
+      if (a.pos !== S.hero) return;
+      const at = simAt(S, s, i);
+      part(i, at.cur ? turn(at, S.hero) : ""); lines.push(decisionLine(a, at.pot)); from = i + 1;
+    });
+    if (from < acts.length || toAct) part(acts.length, toAct ? turn(sim, sim.toAct) : "");
     if (viewed) lines.push(decisionLine(viewed, sim.pot));
     else if (toAct && sim.toAct === S.hero) { const shown = shownAdvice(); if (shown) lines.push(shown); }
   }

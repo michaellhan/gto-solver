@@ -86,7 +86,7 @@ test("Copy hand says close, at your turn and in a decision", () => {
   const p = loadPage();
   p.S = SPOT;
   p.run(`lastResult = ${JSON.stringify(TURN)}; resultKey = JSON.stringify(payload())`);
-  assert.equal(p.run("shownAdvice()"), "  Solver: close, bet 75%, bet 33% or check (within 2.2% of the pot). Mix bet 75% (100%)");
+  assert.equal(p.run("shownAdvice()"), "  Me: to decide. Solver: close, bet 75%, bet 33% or check (within 2.2% of the pot). Mix bet 75% (100%)");
   const line = (a) => p.run(`decisionLine(${JSON.stringify(a)}, 29.5)`);
   const g = grade(p, TURN, { action: "check" }, true);
   assert.equal(line({ pos: "BB", action: "check", g }), "  Me: check. Solver: close, bet 75%, bet 33% or check (within 2.2% of the pot).");

@@ -192,11 +192,24 @@ test("Copy hand: the table, your cards and the actions so far, in a few lines", 
     flop: [{ pos: "HJ", action: "bet", to: 2 }], turn: [], river: [] } };
   assert.equal(p.run("handText()"), [
     "6-handed, 100bb stacks, I am BTN with AhKh",
-    "Preflop: UTG folds, HJ raises to 2.5, CO folds, BTN calls, SB folds, BB folds",
+    "Preflop: UTG folds, HJ raises to 2.5, CO folds. BTN (me) to act, pot 4bb, 2.5bb to call",
     "  Me: call. Solver: no answer yet",
-    "Flop (Kd 7s 2c): HJ bets 2. BTN to act, pot 8.5bb"].join("\n"));
+    "Then: SB folds, BB folds",
+    "Flop (Kd 7s 2c): HJ bets 2. BTN (me) to act, pot 8.5bb, 2bb to call"].join("\n"));
   p.run("S.actions.flop = []; S.cards = ['Ah', 'Kh', null, null, null, null, null]; S.actions.preflop = []; S.finished = false");
-  assert.equal(p.run("handText()"), "6-handed, 100bb stacks, I am BTN with AhKh\nPreflop: UTG to act, pot 1.5bb");
+  assert.equal(p.run("handText()"), "6-handed, 100bb stacks, I am BTN with AhKh\nPreflop: UTG to act, pot 1.5bb, 1bb to call");
+  // an answer stays with the decision it answers: a later 3bet starts a line of its own, with the spot facing it
+  p.S = { players: 8, hero: "BTN", stack: 100, cards: ["Ad", "Kc", null, null, null, null, null], actions: {
+    preflop: [{ pos: "UTG", action: "raise", to: 3 }, { pos: "UTG1", action: "call" }, { pos: "LJ", action: "fold" }, { pos: "HJ", action: "fold" }, { pos: "CO", action: "fold" },
+      { pos: "BTN", action: "call", adv: { m: "call", f: 0.43, b: "raise", ba: 12, bf: 0.57, l: 0 } }, { pos: "SB", action: "raise", to: 18 }, { pos: "BB", action: "fold" }, { pos: "UTG", action: "fold" }, { pos: "UTG1", action: "fold" }],
+    flop: [], turn: [], river: [] } };
+  p.run(`lastResult = ${JSON.stringify({ street: "preflop", pot_bb: 28, actions: [{ action: "call", freq: 1 }, { action: "fold", freq: 0 }] })}; resultKey = JSON.stringify(payload())`);
+  assert.equal(p.run("handText()"), [
+    "8-handed, 100bb stacks, I am BTN with AdKc",
+    "Preflop: UTG raises to 3, UTG1 calls, LJ folds, HJ folds, CO folds. BTN (me) to act, pot 7.5bb, 3bb to call",
+    "  Me: call (solver 43%). Solver: raise to 12 (57%).",
+    "Then: SB raises to 18, BB folds, UTG folds, UTG1 folds. BTN (me) to act, pot 28bb, 15bb to call",
+    "  Me: to decide. Solver: call (100%)"].join("\n"));
 });
 
 test("Copy hand: each of your decisions beside the solver's answer, which may differ", () => {
@@ -223,12 +236,12 @@ test("Copy hand: at your turn, the answer on screen; and your action keeps it", 
   p.S = { players: 6, hero: "UTG", stack: 100, cards: ["Ah", "Kh", null, null, null, null, null], actions: { preflop: [], flop: [], turn: [], river: [] } };
   const res = { street: "preflop", pot_bb: 1.5, actions: [{ action: "fold", freq: 0.25 }, { action: "raise to 2.5", amount_bb: 2.5, freq: 0.75 }, { action: "all-in", freq: 0 }] };
   p.run(`lastResult = ${JSON.stringify(res)}; resultKey = JSON.stringify(payload())`);
-  assert.equal(p.run("handText()").split("\n").at(-1), "  Solver: raise to 2.5 (75%), fold (25%)");
+  assert.equal(p.run("handText()").split("\n").at(-1), "  Me: to decide. Solver: raise to 2.5 (75%), fold (25%)");
   p.run("act({ action: 'fold' })");
   const a = p.run("S.actions.preflop[0]");
   assert.equal(a.adv.b, "raise to 2.5");
   p.run(`S.actions.preflop = []; lastResult = ${JSON.stringify({ ...res, actions: [{ action: "fold", freq: 0.25 }, { action: "raise", amount_bb: 2.5, freq: 0.75 }] })}; resultKey = JSON.stringify(payload())`);
-  assert.equal(p.run("handText()").split("\n").at(-1), "  Solver: raise to 2.5 (75%), fold (25%)");
+  assert.equal(p.run("handText()").split("\n").at(-1), "  Me: to decide. Solver: raise to 2.5 (75%), fold (25%)");
   p.run("act({ action: 'fold' })");
   assert.equal("g" in a, false);   // (not a grade: the hand isn't reviewed)
   assert.equal(p.run("handText()").split("\n")[2], "  Me: fold (solver 25%). Solver: raise to 2.5 (75%).");
