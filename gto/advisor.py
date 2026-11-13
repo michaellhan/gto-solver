@@ -2302,6 +2302,22 @@ def _read_sliver(res: dict):
         a.pop("rough_ev", None)
 
 
+def _hero_cell(res: dict):
+    """Your hand's mix on the grid where your range holds none of it (its cell's weight 0, so the grid alone leaves it
+    blank, as a hand the chart folds): grid["hero"], the answer's frequencies in the grid's action order. A preflop
+    chart answers every hand at a spot, also one the earlier streets of the chart never get there with (J8s raised over
+    two limpers, then 3bet: the chart calls it 50%), so the page draws it in its cell and says it is outside the range."""
+    g, acts = res.get("grid"), res.get("actions")
+    if not isinstance(g, dict) or not isinstance(acts, list) or res.get("study"):
+        return
+    cell = (g.get("cells") or {}).get(res.get("hand"))
+    if cell is None or cell.get("w", 0.0) > 0.0:
+        return
+    freq = {a.get("action"): a.get("freq") for a in acts}
+    if list(freq) and set(g.get("actions") or []) == set(freq) and all(freq[n] is not None for n in g["actions"]):
+        g["hero"] = [round(float(freq[n]), 3) for n in g["actions"]]
+
+
 def _read_off_range(res: dict):
     """An answer for a hand outside your range (its notes say so: OFF_RANGE) goes by its EVs: "off_range", and
     "recommended" and "sampled" are the top EV, since the hand's mix is a best response that can lag them. Actions within
@@ -3218,6 +3234,7 @@ class Advisor:
         self._flag_short(state, res)
         _read_sliver(res)
         _read_off_range(res)
+        _hero_cell(res)
         return res
 
     def _flag_short(self, state: dict, res: dict):
@@ -4395,6 +4412,9 @@ class Advisor:
         best = max(acts, key=lambda a: a["freq"])["action"]
         names = [a["action"] for a in acts]   # (the grid's too: a jam is "all-in" there as in the actions)
         arriving = preflop_ranges(preflop, positions, stack).get(hero, np.ones(N_COMBOS))
+        if arriving[idx] < OFF_RANGE_WEIGHT:
+            notes.append(f"{hand_class(hole)} isn't in your range for this line (the chart doesn't play it this way to "
+                         f"here), so the grid draws it apart, dashed")
         return {
             "street": "preflop", "hero": hero, "hand": hand_class(hole), "players": len(positions),
             "actions": acts, "recommended": best, "sampled": self._sample(acts),

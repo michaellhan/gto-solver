@@ -250,6 +250,8 @@
   .cell.in .lbl { color: #fff; text-shadow: 0 0 2px #000, 0 0 2px #000, 0 0 2px #000; }
   .grid .cell.me, .grid .cell.sel { overflow: visible; z-index: 2; }
   .cell.me { outline: 2px solid var(--text); outline-offset: 0; }
+  .cell.me.out { outline-style: dashed; }
+  .cell.out .lbl { color: #fff; text-shadow: 0 0 2px #000, 0 0 2px #000, 0 0 2px #000; }
   .cell.sel { outline: 1px solid var(--text); }
   .grid .cell:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; z-index: 3; }
   .read { min-height: 40px; margin: 8px 0 0; font-size: 13px; color: var(--muted); }
@@ -1866,20 +1868,23 @@ function rangeHtml(res) {
   h += `<div class="key">${names.map((n, a) => `<span><i class="sw" style="--k:${COLORS(n)}"></i>${cap(n)}${pre ? "" : ` <b>${share(a).toFixed(1)}%</b>`}</span>`).join("")}</div>`;
   return h + `<div class="grid">${gridCells(grid, res.hand)}</div><p class="read"></p></div>`;
 }
+// (your hand outside your range: its cell is blank by weight, so it's drawn from its answer, grid.hero, dashed: "out")
 function gridCells(grid, heroHand) {
   let h = "";
   for (let i = 0; i < 13; i++) for (let j = 0; j < 13; j++) {
     const cls = gridClass(i, j), c = grid.cells[cls] || { w: 0, f: [] };
-    const stack = c.w > 0 ? grid.actions.map((n, a) => c.f[a] > 0 ? `<i style="--k:${COLORS(n)};width:${(c.f[a] * 100).toFixed(1)}%"></i>` : "").join("") : "";
-    h += `<button class="cell${c.w > 0 ? " in" : ""}${cls === heroHand ? " me" : ""}" data-h="${cls}" aria-label="${cls}"><span class="st" style="opacity:${(0.3 + 0.7 * Math.min(1, Math.max(0, c.w))).toFixed(3)}">${stack}</span><span class="lbl">${cls}</span></button>`;
+    const out = cls === heroHand && !(c.w > 0) && grid.hero, f = out ? grid.hero : c.f;
+    const stack = c.w > 0 || out ? grid.actions.map((n, a) => f[a] > 0 ? `<i style="--k:${COLORS(n)};width:${(f[a] * 100).toFixed(1)}%"></i>` : "").join("") : "";
+    h += `<button class="cell${c.w > 0 ? " in" : out ? " out" : ""}${cls === heroHand ? " me" : ""}" data-h="${cls}" aria-label="${cls}"><span class="st" style="opacity:${out ? "0.650" : (0.3 + 0.7 * Math.min(1, Math.max(0, c.w))).toFixed(3)}">${stack}</span><span class="lbl">${cls}</span></button>`;
   }
   return h;
 }
 // The line under the grid: the class pointed at, your hand's to start with
 function readLine(grid, cls, heroHand, pre) {
   const c = grid.cells[cls];
-  if (!c || !(c.w > 0)) return `<b>${cls}</b> isn't in your range.`;
-  const mix = grid.actions.map((n, a) => c.f[a] >= 0.005 ? `${cap(n)} ${(c.f[a] * 100).toFixed(0)}%` : "").filter(Boolean).join(" · ");
+  const mixOf = (f) => grid.actions.map((n, a) => f[a] >= 0.005 ? `${cap(n)} ${(f[a] * 100).toFixed(0)}%` : "").filter(Boolean).join(" · ");
+  if (!c || !(c.w > 0)) return cls === heroHand && grid.hero ? `<b>${cls}</b> isn't in your range for this line, so it's drawn apart (dashed) · ${mixOf(grid.hero)}` : `<b>${cls}</b> isn't in your range.`;
+  const mix = mixOf(c.f);
   return `<b>${cls}</b>${cls === heroHand ? " (all combos)" : ""}${pre ? "" : ` · ${Math.round(c.w * 100)}% in range`} · ${mix}`;
 }
 function wireGrid(root, grid, heroHand, pre) {

@@ -137,6 +137,12 @@ test("a decision: where you are, the verdict, the table with your action, where 
   assert.equal(p.val(`readLine(JSON.parse(__g), "AKo", "AKo", false)`), "<b>AKo</b> (all combos) · 50% in range · Check 50% · Bet 125% 50%");
   assert.equal(p.val(`readLine(JSON.parse(__g), "KK", "AKo", false)`), "<b>KK</b> · 100% in range · Check 100%");
   assert.equal(p.val(`readLine(JSON.parse(__g), "72o", "AKo", false)`), "<b>72o</b> isn't in your range.");
+  // your hand outside your range (a preflop chart answers it anyway): drawn from grid.hero, dashed, and said so
+  p.ctx.__g = JSON.stringify({ ...TURN.grid, hero: [0.5, 0, 0, 0.5] });
+  assert.equal(p.val(`readLine(JSON.parse(__g), "72o", "72o", true)`), "<b>72o</b> isn't in your range for this line, so it's drawn apart (dashed) · Check 50% · Bet 125% 50%");
+  assert.equal(p.val(`readLine(JSON.parse(__g), "J8s", "72o", true)`), "<b>J8s</b> isn't in your range.");
+  assert.match(p.val(`gridCells(JSON.parse(__g), "72o")`), /<button class="cell out me" data-h="72o" aria-label="72o"><span class="st" style="opacity:0\.650"><i style="--k:var\(--passive\);width:50\.0%"><\/i><i style="--k:var\(--agg2\);width:50\.0%"><\/i><\/span>/);
+  assert.match(p.val(`gridCells(JSON.parse(__g), "AKo")`), /<button class="cell" data-h="72o"[^>]*><span class="st" style="opacity:0\.300"><\/span>/);
   // Back to review
   p.byId("stepBack").onclick();
   await flush();
