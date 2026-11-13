@@ -1680,7 +1680,7 @@ const SIZE_USAGE = (r) => Object.entries(r.size_usage).map(([k, v]) => `${k} ${(
   + (r.sizes_custom ? ` (your sizes ${r.sizes_custom.join(", ")} were in the menu${r.sizes_custom.every(s => !r.sizes_kept || !r.sizes_kept.includes(s)) ? ", not kept" : ""})` : "");
 // Where the GTO % under a lock's mix comes from: preflop the chart; after it the equilibrium of the same solve the
 // exploit is built on, which starts from the ranges the lock leaves (the seat's preflop follows it).
-const gtoSource = (res) => res.street === "preflop" ? "the preflop chart's mix" : "the equilibrium of this same solve, which starts from the ranges your lock leaves into the flop";
+const gtoSource = (res) => res.street === "preflop" ? "the preflop chart's mix" : "the answer with Against set to GTO and no locks";
 // ---- a decision's answer, and the sentences that say where its numbers came from
 const cap = (s) => s[0].toUpperCase() + s.slice(1);
 const cardsInl = (cs) => `<span class="inl">${cs.map(c => `${c[0]}<i${"hd".includes(c[1]) ? ' class="r"' : ""}>${SUIT_SYM[c[1]]}\uFE0E</i>`).join(" ")}</span>`;
@@ -1700,7 +1700,7 @@ function actionTable(res, you, ev = "ev_bb") {
   const hasEv = rows.some(a => a[ev] != null), own = ev === "ev_bb";
   let h = `<table class="acttbl"><thead><tr><th>${S.cards[0] && S.cards[1] ? `With ${cardsInl(S.cards.slice(0, 2))}` : "Action"}</th><th>${heuristic(res) ? "Rules" : "Solver"}</th>${hasEv ? `<th title="${own ? "Expected value of taking this action, in big blinds relative to folding now, so fold is 0: chips already in the pot are gone either way" : RANGE_EV_TIP}">${own ? "EV, bb" : "Range EV, bb"}</th>` : ""}</tr></thead><tbody>`;
   for (const a of rows) {
-    const gto = a.gto_freq !== undefined ? ` title="GTO plays this ${(a.gto_freq * 100).toFixed(1)}% of the time (${res.street === "preflop" ? "the chart" : "this solve's equilibrium"})"` : "";
+    const gto = a.gto_freq !== undefined ? ` title="GTO plays this ${(a.gto_freq * 100).toFixed(1)}% of the time (${res.street === "preflop" ? "the chart" : "the answer against GTO"})"` : "";
     h += `<tr${a.action === res.recommended || res.close && res.close.actions.includes(a.action) ? ' class="best"' : ""}><td><div class="an"><i class="sw" style="--k:${COLORS(a.action)}"></i>${actName(a)}${a.action === you ? ' <span class="you">you</span>' : ""}</div></td>`
       + `<td class="n"${gto}>${pct0(a.freq)}${a.gto_freq !== undefined ? `<small>GTO ${(a.gto_freq * 100).toFixed(0)}%</small>` : ""}</td>`
       + (hasEv ? `<td class="n"${a.rough_ev ? ` title="${ROUGH_EV_TIP}"` : ""}>${a[ev] == null ? "–" : (a.rough_ev ? "≈ " : "") + evText(a[ev])}</td>` : "") + `</tr>`;
@@ -1722,7 +1722,7 @@ function sourceOf(res) {
   return [`Solved live${ways ? ", " + ways : ""}${far(res.solver.exploitability_pct)}.${short}`, "solved live"];
 }
 function sourceHtml(res) {
-  const out = [...(TYPICAL() ? [`${LIVE_POOL() ? "Against a typical live player, who plays many hands, limps and calls a lot, and raises and bluffs little" : "Against a typical online player, who folds too much to bets and raises and bluffs too little"}: the best answer to that, not perfect play.${res.actions.some(a => a.gto_freq !== undefined) ? " GTO under each action is the equilibrium's." : ""}`] : []),
+  const out = [...(TYPICAL() ? [`${LIVE_POOL() ? "Against a typical live player, who plays many hands, limps and calls a lot, and raises and bluffs little" : "Against a typical online player, who folds too much to bets and raises and bluffs too little"}: the best answer to that, not perfect play.${res.actions.some(a => a.gto_freq !== undefined) ? " GTO under each action is the answer with Against set to GTO." : ""}`] : []),
     sourceOf(res)[0] + (res.actions.some(a => a.rough_ev) ? " ≈ is a rough EV." : "")];
   if (res.locked) { const src = res.actions.some(a => a.gto_freq !== undefined) ? gtoSource(res) : ""; out.push(`${Object.entries(res.locked).map(([p, l]) => `Against your lock on ${p} (${LOCK_TEXT(l)})`).join("; ")}: ${res.street === "preflop" ? "your line re-priced against it" : "the best response"}, with GTO's frequency under each (${src}).`); }
   if (offSolution(res)) out.push(`Off the solved line: ${offText(res)}. This street's solve is the best answer to those ranges, not the whole hand's equilibrium.`);

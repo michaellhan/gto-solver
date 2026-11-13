@@ -4271,11 +4271,33 @@ class Advisor:
                                  optimize=bool(state.get("optimize_sizes")), locks=locks)
             if self._breakdown and "error" not in res and "breakdown" not in res:
                 res["breakdown"] = None   # the betting rules answered (4+ players): no solve to break down
+            if any("gto_freq" in a for a in res.get("actions", ())):
+                self._gto_alongside(res, hero, hole, board, stack, streets, positions, t0, actor, custom,
+                                    bool(state.get("optimize_sizes")))
             return res
         finally:
             self.time_budget, self.prior_budget, self.cfg, self.root_sizes, self.spr_sizes = saved
             self._breakdown = self._lib_only = self._jam = self._study = self._showdown = self._wider = self._background = False
             self._one_size = self._mw_borrow = self._size = None
+
+    def _gto_alongside(self, res, hero, hole, board, stack, streets, positions, t0, actor, custom, optimize):
+        """Exploit mode (the pool, your locks) after the flop: each action's GTO % is the GTO answer's, the spot asked
+        again without the pool or locks, as preflop shows the chart's mix. The exploit solve's own equilibrium starts
+        from the pool's (or the locks') ranges, so it is a third answer neither mode shows (a station lock's river: 7c6c
+        checked 100% there, where GTO bets it half pot). An action the GTO tree doesn't have gets none."""
+        breakdown, self._breakdown = self._breakdown, False   # (the exploit answer's breakdown is the one shown)
+        try:
+            gto = self._postflop(hero, hole, board, stack, streets, positions, t0, actor=actor, custom=custom,
+                                 optimize=optimize)
+        finally:
+            self._breakdown = breakdown
+        g = {a["action"]: a["freq"] for a in gto.get("actions", ())}
+        for a in res["actions"]:
+            if a["action"] in g:
+                a["gto_freq"] = g[a["action"]]
+            else:
+                a.pop("gto_freq", None)
+        res["seconds"] = round(time.time() - t0, 2)
 
     # ------------------------------------------------------------ preflop
     def _preflop(self, hero, hole, preflop, positions, stack, t0, pool=False, locks=None):

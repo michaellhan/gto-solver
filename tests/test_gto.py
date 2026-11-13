@@ -2184,7 +2184,7 @@ class TestExploit(unittest.TestCase):
 
     def test_pool_preflop_shows_chart_share(self):
         """Exploit mode preflop plays a chart mix one way (55 flats a CO open 100%, the chart 40%): each
-        action carries the chart's share as gto_freq, as postflop shows the equilibrium's."""
+        action carries the chart's share as gto_freq, as postflop shows GTO mode's answer."""
         R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
         st = {"players": 6, "hero": "BTN", "hole": "5h5d", "board": "", "stack": 100, "opponents": "pool",
               "preflop": [R("UTG", "fold"), R("HJ", "fold"), R("CO", "raise", 2.5)]}
@@ -2367,8 +2367,8 @@ class TestExploit(unittest.TestCase):
         tol = min(max(0.005, rough["solver"]["exploitability_pct"] / 100), BR_TIE_MAX) * rough["pot_bb"]
         best = max(a["ev_bb"] for a in rough["actions"])
         for a in rough["actions"]:
-            if a["ev_bb"] >= best - tol and a["gto_freq"] > 0.05:
-                self.assertGreater(a["freq"], 0.0, rough["actions"])       # a tied action keeps its GTO share
+            if a["freq"] > 0:
+                self.assertGreaterEqual(a["ev_bb"], best - tol - 0.011, rough["actions"])   # only tied actions are played
         # the tie goes out with the answer, and the advice's action sitting under another's EV is said
         self.assertAlmostEqual(rough["ev_tie"], tol, delta=0.006)
         gap = best - next(a["ev_bb"] for a in rough["actions"] if a["action"] == rough["recommended"])
@@ -2509,6 +2509,10 @@ class TestExploit(unittest.TestCase):
         self.assertAlmostEqual(sum(a["freq"] for a in pool["actions"]), 1.0, places=2)
         # the pool under-bluffs river bets: the best response folds more of the range than GTO
         self.assertGreater(pool["range_action_freq"]["fold"], gto["range_action_freq"]["fold"] + 0.1)
+        # the GTO % under each action is GTO mode's answer for the hand, not the exploit solve's own equilibrium,
+        # which starts from the pool's ranges
+        g = {a["action"]: a["freq"] for a in gto["actions"]}
+        self.assertEqual({a["action"]: a["gto_freq"] for a in pool["actions"]}, g)
 
     def test_pool_preflop_advice(self):
         """Facing a pool 4bet (as wide as the chart's: the population 4bets as often) KK still continues;
@@ -3760,13 +3764,16 @@ class TestLocks(unittest.TestCase):
         self.assertEqual(over["locked"], {"BB": {"fold": 30.0}})
         self.assertTrue(all("gto_freq" in a for a in over["actions"]))
         self.assertTrue(any(n.startswith("locked: BB folds +30 pts to bets (on GTO)") for n in over["notes"]))
-        # a calling station: the air GTO bets now checks, and third pair GTO checks now bets for value
+        # a calling station: the air GTO bets now checks, and third pair bets for value
         st = self.adv.advise(self.river("5h4h", locks={"BB": {"fold": -60}}))
         self.assertGreater(sum(a["gto_freq"] for a in st["actions"] if a["action"] != "check"), 0.5)
         self.assertEqual(st["recommended"], "check")
         st = self.adv.advise(self.river("7c6c", locks={"BB": {"fold": -60, "bluff": -50}}))
-        self.assertGreater(next(a["gto_freq"] for a in st["actions"] if a["action"] == "check"), 0.5)
         self.assertNotEqual(st["recommended"], "check")
+        # the GTO % under each action is the GTO answer's, not the locked solve's own equilibrium: the lock reaches
+        # BB's preflop and earlier streets, and from its ranges 7c6c checked 100% here where GTO bets half pot
+        gto = {a["action"]: a["freq"] for a in self.adv.advise(self.river("7c6c"))["actions"]}
+        self.assertEqual({a["action"]: a["gto_freq"] for a in st["actions"]}, gto)
         # the classic nodelock: they fold everything to a bet / call everything; noted with GTO's share
         r = self.adv.advise(self.river("5h4h", locks={"BB": {"next_fold": 100}}))
         self.assertAlmostEqual(max(a["ev_bb"] for a in r["actions"]), r["pot_bb"], delta=0.05)

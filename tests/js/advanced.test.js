@@ -179,8 +179,8 @@ test("locks: share link round trip, and the line under the setup and the advice 
   b.ctx.__res = JSON.stringify({ street: "flop", hero: "BTN", villain: "BB", hand: "AKs", recommended: "bet 75%", locked: { BB: { fold: 15 } },
     actions: [{ action: "check", freq: 0, gto_freq: 0.4, ev_bb: 1 }, { action: "bet 75%", freq: 1, gto_freq: 0.6, ev_bb: 2 }], notes: [] });
   b.run("renderResult(JSON.parse(__res), JSON.stringify(payload()))");
-  assert.match(b.byId("result").innerHTML, /Against your lock on BB \(overfolds to bets\): the best response, with GTO's frequency under each \(the equilibrium of this same solve, which starts from the ranges your lock leaves into the flop\)/);
-  assert.match(b.byId("result").innerHTML, /title="GTO plays this 40.0% of the time \(this solve's equilibrium\)"/);
+  assert.match(b.byId("result").innerHTML, /Against your lock on BB \(overfolds to bets\): the best response, with GTO's frequency under each \(the answer with Against set to GTO and no locks\)/);
+  assert.match(b.byId("result").innerHTML, /title="GTO plays this 40.0% of the time \(the answer against GTO\)"/);
   assert.match(b.byId("result").innerHTML, /GTO 40%/);
 
   // preflop: re-priced against the lock, the chart's mix as GTO %
