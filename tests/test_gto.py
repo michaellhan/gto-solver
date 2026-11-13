@@ -2393,8 +2393,12 @@ class TestExploit(unittest.TestCase):
         self.assertGreater(pool_call.sum(), 2 * gto_call.sum())
         # the extra 3bets are the strongest calls: the pool's 3bet range is the chart's plus better hands
         self.assertTrue(np.all(pool_3b >= gto_3b - 1e-9))
-        # hero's own range is the chart's
-        self.assertAlmostEqual(preflop_ranges(line("call"), T, 100, "BTN")["BTN"].sum(), gto_call.sum())
+        # hero's own range is what its exploit-mode advice plays there (its calls priced against the pool's
+        # ranges: 66 and A9o flat 100%, the chart's 50% and 0), not the chart's (tests/test_pool_hero_range.py)
+        from gto.advisor import preflop_strategy
+        hero = preflop_ranges(line("call"), T, 100, "BTN")["BTN"]
+        np.testing.assert_allclose(hero, preflop_strategy("BTN", line("call")[:-1], T, 100, pool=True)["call"])
+        self.assertGreater(hero.sum(), gto_call.sum())
 
     def test_pool_preflop_extra_vpip_is_spread_over_limps_and_flats(self):
         """The pool's extra VPIP (28.75 against the charts' 24.7) isn't split by line in any data found, so

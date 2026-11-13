@@ -1694,8 +1694,10 @@ def _mw_realize(price: float, behind: float, seats: int = 0) -> np.ndarray:
     return 1.0 + (m - 1.0) * float(np.clip((behind - MW_DEEP[0]) / (MW_DEEP[1] - MW_DEEP[0]), 0.0, 1.0))
 
 
-def preflop_strategy(p: str, before: List[dict], positions, stack: float) -> Dict[str, np.ndarray]:
-    """p's preflop strategy per combo after the actions `before`: the chart, adjusted like hero's."""
+def preflop_strategy(p: str, before: List[dict], positions, stack: float, pool: bool = False) -> Dict[str, np.ndarray]:
+    """p's preflop strategy per combo after the actions `before`: the chart, adjusted like hero's. With `pool`, p is
+    the hero of an exploit-mode answer: calls and raises priced against the player pool's ranges, as the preflop
+    advice gives them (Advisor._priced's pool)."""
     positions = pf.at_depth(positions, stack)
 
     def work():
@@ -1703,10 +1705,10 @@ def preflop_strategy(p: str, before: List[dict], positions, stack: float) -> Dic
         if "call" in full or getattr(positions, "icm", None) is not None:
             st = replay_hand(positions, stack, {"preflop": before}, 1)[0]
             if not st.closed and st.to_act == p:
-                full = Advisor._priced(p, before, positions, stack, st, full, []) if "call" in full else \
+                full = Advisor._priced(p, before, positions, stack, st, full, [], pool) if "call" in full else \
                     Advisor._icm_open(p, before, positions, stack, st, full, [])
         return full
-    return _pf_cached(_pf_key("s", p, before, positions, stack), work)
+    return _pf_cached(_pf_key("sp" if pool else "s", p, before, positions, stack), work)
 
 
 def preflop_ranges(actions: List[dict], positions, stack: float, pool_except: Optional[str] = None,
@@ -1732,7 +1734,12 @@ def preflop_ranges(actions: List[dict], positions, stack: float, pool_except: Op
                 continue
             # (each player's decisions at their own effective stack: per-seat stacks differ)
             depth = _eff_stack(positions, pos, actions[:i], stack)
-            strat = preflop_strategy(pos, actions[:i], positions, depth)
+            # (hero's own decisions in exploit mode as its preflop advice plays them, against the pool: the chart's
+            # range left out the calls that advice adds, so 8-handed, UTG opening to 6 and HJ calling, the CO call
+            # it gives 66 (85%) entered the flop off a 9-combo range of 77-KK and AK; the 3-way flop solve then
+            # answered 66 as a hand nobody expects, betting every time (75% or 33%) into two players folding as if
+            # against overpairs and sets, and raising a small turn bet and call, where in its range it checks 98%)
+            strat = preflop_strategy(pos, actions[:i], positions, depth, pool=pos == pool_except)
             limp = act == "call" and "call" not in strat and not any(h["action"] in ("raise", "all-in") for h in actions[:i])
             if pool_except is not None and pos != pool_except:
                 strat = pool_strategy(strat, pos, actions[:i], ranges)

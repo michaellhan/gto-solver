@@ -520,8 +520,8 @@ ranges and responses; after the flop the advice is the best response (each hand'
 `freq` 0 or 1, with `gto_freq` alongside; EVs within `ev_tie` bb of the best are the solve's noise, so they count as tied and
 follow the equilibrium among them, which can leave the action shown just under another's EV: a note says so, and the page grades neither
 against the other). See Exploit mode below. `gto_freq` is the chart's mix preflop and
-after it the equilibrium of the same solve, which starts from the pool's ranges into the flop (and is never the
-precomputed library's), so it can differ from the equilibrium answer for the same hand. The page sends it for every cash hand unless Against (Edit) is set to GTO, which is kept in the browser (`gto-answers`), not the hand, and grades by the EV given up against that opponent, as a share of the pot; a tournament hand stays at equilibrium (the pool data is cash).
+after it the equilibrium of the same solve, which starts from the pool's ranges into the flop and from yours as this mode's
+preflop advice plays it, its pool-priced calls included (and is never the precomputed library's), so it can differ from the equilibrium answer for the same hand. The page sends it for every cash hand unless Against (Edit) is set to GTO, which is kept in the browser (`gto-answers`), not the hand, and grades by the EV given up against that opponent, as a share of the pot; a tournament hand stays at equilibrium (the pool data is cash).
 
 ### Rake
 
