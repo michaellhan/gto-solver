@@ -442,16 +442,21 @@ test("the frozen copy's saved opponents setting changes nothing: cash at the typ
   assert.equal(q.payload().opponents, undefined);
 });
 
-test("Against: cash hands at the typical player until it's set, then at equilibrium, kept in this browser and out of the hand", async () => {
+test("Against: cash hands at the typical online player until it's set, then the live player or equilibrium, kept in this browser and out of the hand", async () => {
   const p = loadPage();
   await p.ready();
   p.spot(played());
   await flush();
   assert.equal(p.payload().opponents, "pool");
   const row = () => [...p.byId("answers").walk()].filter(e => e.tagName === "BUTTON");
-  assert.deepEqual(row().map(b => b.textContent), ["Typical player", "GTO"]);
+  assert.deepEqual(row().map(b => b.textContent), ["Online player", "Live player", "GTO"]);
   assert.equal(p.byId("answersRow").hidden, false);
   row()[1].click();
+  await flush();
+  assert.equal(p.payload().opponents, "live");
+  assert.equal(p.storage.get("gto-answers"), "live");
+  assert.match(p.byId("setupSum").innerHTML, /against <b>live players<\/b>/);
+  row()[2].click();
   await flush();
   assert.equal(p.payload().opponents, undefined);
   assert.equal(p.posted.filter(m => m.state).at(-1).state.opponents, undefined);

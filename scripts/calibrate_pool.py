@@ -23,6 +23,7 @@ first-in hands that open-raise rather than limp) the PFR; the 4bet is left at th
   python scripts/calibrate_pool.py 1.1,0.1,0.03 1.1,0.15,0.03  # pool at scale,enter,defend (parallel)
   python scripts/calibrate_pool.py 1.1,0.1,0.03,0.4         # ... and open
   python scripts/calibrate_pool.py --no-charts 1.1,0.1,0.03
+  python scripts/calibrate_pool.py --live 0.75,0.48,0.22,0.15,0.15   # the live player (9-handed): ...,open,openlimp
 
 Each tree takes a few minutes (the pool's longer: it computes equities against the raiser).
 """
@@ -40,7 +41,10 @@ import numpy as np
 N = 1326
 
 
-def hud(pool, params=None, prune=1e-5):
+NAMES = ("POOL_3BET_SCALE", "POOL_EXTRA_ENTER", "POOL_3BET_DEFEND", "POOL_EXTRA_OPEN", "POOL_OPEN_LIMP")
+
+
+def hud(pool, params=None, prune=1e-5, live=False, seats=6):
     """The tree's HUD stats (percent), the charts' or (pool) the player pool's with params
     (POOL_3BET_SCALE, POOL_EXTRA_ENTER, POOL_3BET_DEFEND[, POOL_EXTRA_OPEN]; None:
     exploit.py's; parameters left out keep exploit.py's values)."""
@@ -48,12 +52,16 @@ def hud(pool, params=None, prune=1e-5):
     from gto import advisor as adv
     from gto.advisor import replay_hand, preflop_strategy, pool_strategy
     from sanity_sweep import _size
+    if live:
+        ex.set_profile("live")
     if params is not None:
-        names = ("POOL_3BET_SCALE", "POOL_EXTRA_ENTER", "POOL_3BET_DEFEND", "POOL_EXTRA_OPEN")
-        for name, v in zip(names, params):
-            setattr(ex, name, v)
+        for name, v in zip(NAMES, params):
+            if live:
+                ex.LIVE[name] = v
+            else:
+                setattr(ex, name, v)
     adv._PF_CACHE.clear()
-    T = pf.Table(pf.SEATS[6], 0.0, False)
+    T = pf.Table(pf.SEATS[seats], 0.0, False)
     stack = 100.0
     vpip = {p: 0.0 for p in T}
     pfr = {p: 0.0 for p in T}
@@ -113,27 +121,35 @@ def hud(pool, params=None, prune=1e-5):
 
 
 def _job(job):
-    pool, params = job
+    pool, params, live, seats = job
     t = time.time()
-    out = hud(pool, params)
+    out = hud(pool, params, live=live, seats=seats)
     if not pool:
         label = "charts"
     else:
         from gto import exploit as ex
-        label = (f"pool scale={ex.POOL_3BET_SCALE:g} enter={ex.POOL_EXTRA_ENTER:g} defend={ex.POOL_3BET_DEFEND:g} "
-                 f"open={ex.POOL_EXTRA_OPEN:g}")
+        v = dict(zip(NAMES, ex._params(*NAMES)))
+        label = (f"{'live' if live else 'pool'} scale={v['POOL_3BET_SCALE']:g} enter={v['POOL_EXTRA_ENTER']:g} "
+                 f"defend={v['POOL_3BET_DEFEND']:g} open={v['POOL_EXTRA_OPEN']:g} openlimp={v['POOL_OPEN_LIMP']:g}")
     return f"{label}: " + " ".join(f"{k} {v:.1f}" for k, v in out.items()) + f"  ({time.time() - t:.0f}s)"
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("params", nargs="*", help="pool parameters to try, as scale,enter,defend[,open]")
+    ap.add_argument("params", nargs="*", help="pool parameters to try, as scale,enter,defend[,open[,openlimp]]")
     ap.add_argument("--no-charts", action="store_true", help="skip the charts' own stats")
+    ap.add_argument("--live", action="store_true", help="the typical live player (exploit.LIVE), 9-handed by default")
+    ap.add_argument("--seats", type=int, default=None, help="players at the table (default 6, --live 9)")
+    ap.add_argument("--jobs", type=int, default=2, help="processes at once (default 2)")
     args = ap.parse_args()
-    jobs = [] if args.no_charts else [(False, None)]
-    jobs += [(True, tuple(map(float, s.split(",")))) for s in args.params] or [(True, None)]
-    print("targets (GGPoker 6-max NL50-NL500, all players): VPIP 28.75 PFR 18.7 3bet 8.9 4bet 12.75 fold to 3bet 48.25")
-    with Pool(min(len(jobs), os.cpu_count() or 1)) as p:
+    seats = args.seats or (9 if args.live else 6)
+    jobs = [] if args.no_charts else [(False, None, False, seats)]
+    jobs += [(True, tuple(map(float, s.split(","))), args.live, seats) for s in args.params] or [(True, None, args.live, seats)]
+    if args.live:
+        print("targets (live $1/$2-$5/$10, exploit.LIVE): VPIP 38 PFR 10-12 3bet 3 fold to 3bet 35")
+    else:
+        print("targets (GGPoker 6-max NL50-NL500, all players): VPIP 28.75 PFR 18.7 3bet 8.9 4bet 12.75 fold to 3bet 48.25")
+    with Pool(max(1, min(len(jobs), args.jobs))) as p:
         for line in p.imap(_job, jobs):
             print(line, flush=True)
 

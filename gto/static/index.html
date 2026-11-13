@@ -408,7 +408,7 @@
         </div>
         <div class="row setuprow" id="answersRow">
           <span class="muted">Against</span>
-          <div class="segment" id="answers" title="What cash hands are answered and graded against: a typical online player, or perfect play (GTO), for opponents using solvers. Tournaments are always GTO."></div>
+          <div class="segment" id="answers" title="What cash hands are answered and graded against: a typical online player, a typical live (casino) player, or perfect play (GTO), for opponents using solvers. Tournaments are always GTO."></div>
         </div>
         <div class="row">
           <span class="muted" style="width:58px;font-size:12px">You are</span>
@@ -531,8 +531,10 @@ const TOURNEY = () => ICM() || !!BOUNTY();
 // plays perfectly; its numbers are cash pools', so a tournament stays at equilibrium. Against (Edit) puts cash hands at
 // equilibrium too, for a table of players using solvers: this browser's setting (gto-answers), not the hand's, so a
 // saved hand's record doesn't change, and typical until it's set. It isn't the frozen copy's gto-opponents, which is left alone.
+// "Live" is the typical live casino player ("opponents": "live", exploit.LIVE): many limps and calls, few raises and bluffs.
 const TYPICAL = () => !TOURNEY() && !S.tournament && !gtoAnswers;
 const AT_GTO = () => gtoAnswers && !TOURNEY() && !S.tournament;
+const LIVE_POOL = () => TYPICAL() && liveAnswers;
 function BOUNTY_SPEC() {
   const b = S.bounty, f = BOUNTY();
   if (f === "mystery") return { format: f, ...(posNum(b.env) ? { envelope: posNum(b.env) } : {}), ...(posNum(b.pool) ? { pool: posNum(b.pool) } : {}), ...(posNum(b.left) ? { left: posNum(b.left) } : {}) };
@@ -638,7 +640,7 @@ const BUDGETS = { server: [2.5, 2.5], wasm: [8, 3] };
 // the reads while the page starts); without it (the tests' page) localStorage itself
 const pageStore = window.GTOStore || { getRaw: (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } },
                                        setRaw: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} } };
-let gtoAnswers = pageStore.getRaw("gto-answers") === "gto";
+let gtoAnswers = pageStore.getRaw("gto-answers") === "gto", liveAnswers = pageStore.getRaw("gto-answers") === "live";
 // everything deleted from another tab (Hands' Delete everything this site keeps): what this tab holds goes with it
 if (window.GTOStore) window.GTOStore.onChange((c) => { if (c.wiped && c.remote) location.reload(); });
 const WORKER_VERSION = "14";   // scripts/deploy.sh replaces this with a hash of worker.js
@@ -1332,7 +1334,7 @@ function renderSetup() {
   document.getElementById("setupEdit").hidden = editSetup || !!review;
   const sum = document.getElementById("setupSum");
   const dot = ' <span class="muted">·</span> ';
-  sum.innerHTML = `<b>${S.players}-handed</b>${TOURNEY() || S.tournament ? `${dot}tournament` : ""}${STAKES() ? `${dot}<b>${STAKES_TEXT()}</b>` : ""}${dot}you are <b>${SEAT_LABEL(S.hero, S.players)}</b>${dot}<b>${fmt(S.stack)}bb</b>${withUsd(S.stack)}${UNEQUAL() ? ` stacks (${STACKS_TEXT()})` : ""}${ANTE() ? `${dot}${fmt(ANTE())}bb${withUsd(ANTE())} ante` : ""}${STRADDLER() ? `${dot}${SEAT_LABEL(STRADDLER(), S.players)} straddles` : ""}${RAKE() ? `${dot}${RAKE_TEXT()}` : ""}${AT_GTO() ? `${dot}against <b>GTO</b>` : ""}`;
+  sum.innerHTML = `<b>${S.players}-handed</b>${TOURNEY() || S.tournament ? `${dot}tournament` : ""}${STAKES() ? `${dot}<b>${STAKES_TEXT()}</b>` : ""}${dot}you are <b>${SEAT_LABEL(S.hero, S.players)}</b>${dot}<b>${fmt(S.stack)}bb</b>${withUsd(S.stack)}${UNEQUAL() ? ` stacks (${STACKS_TEXT()})` : ""}${ANTE() ? `${dot}${fmt(ANTE())}bb${withUsd(ANTE())} ante` : ""}${STRADDLER() ? `${dot}${SEAT_LABEL(STRADDLER(), S.players)} straddles` : ""}${RAKE() ? `${dot}${RAKE_TEXT()}` : ""}${AT_GTO() ? `${dot}against <b>GTO</b>` : LIVE_POOL() ? `${dot}against <b>live players</b>` : ""}`;
 
   const saved = document.getElementById("savedSettings"), line = savedHtml();
   saved.hidden = !line; saved.innerHTML = line;
@@ -1340,9 +1342,10 @@ function renderSetup() {
   syncStakes(); renderSeatStacks();
   document.getElementById("answersRow").hidden = TOURNEY() || !!S.tournament;
   const an = document.getElementById("answers"); an.innerHTML = "";
-  for (const [gto, label] of [[false, "Typical player"], [true, "GTO"]]) {
-    const b = document.createElement("button"); b.className = "small"; b.textContent = label; if (gto === gtoAnswers) b.classList.add("active");
-    b.onclick = () => { if (gto === gtoAnswers) return; gtoAnswers = gto; pageStore.setRaw("gto-answers", gto ? "gto" : "typical"); resetAdvice(); renderAll(); };
+  const mode = gtoAnswers ? "gto" : liveAnswers ? "live" : "typical";
+  for (const [m, label] of [["typical", "Online player"], ["live", "Live player"], ["gto", "GTO"]]) {
+    const b = document.createElement("button"); b.className = "small"; b.textContent = label; if (m === mode) b.classList.add("active");
+    b.onclick = () => { if (m === mode) return; gtoAnswers = m === "gto"; liveAnswers = m === "live"; pageStore.setRaw("gto-answers", m); resetAdvice(); renderAll(); };
     an.appendChild(b);
   }
   // the seats, in Edit and (until the hand's first action) above the cards, so a seat that moved needs no Edit
@@ -1593,7 +1596,7 @@ function payload() {
            // S.tournament from hh.js; the advisor drops it too)
            ...(RAKE() && !TOURNEY() && !S.tournament ? { rake: RAKE() / 100, ...(RAKE_CAP() ? { rake_cap: RAKE_CAP() } : {}) } : {}),
            ...(TOURNEY() ? { ...(PAYOUTS().length ? { payouts: PAYOUTS() } : {}), ...(FIELD_AVG() ? { field: { players: FIELD_N(), chips: FIELD_N() * FIELD_AVG() } } : {}) } : {}),
-           ...(BOUNTY() ? { bounties: BOUNTY_SPEC() } : {}), ...(TYPICAL() ? { opponents: "pool" } : {}),
+           ...(BOUNTY() ? { bounties: BOUNTY_SPEC() } : {}), ...(TYPICAL() ? { opponents: LIVE_POOL() ? "live" : "pool" } : {}),
            preflop: conv(S.actions.preflop), flop: conv(S.actions.flop), turn: conv(S.actions.turn), river: conv(S.actions.river), budget, prior_budget, speed: "fast", ...adv };
 }
 async function analyze(sim) {
@@ -1719,7 +1722,7 @@ function sourceOf(res) {
   return [`Solved live${ways ? ", " + ways : ""}${far(res.solver.exploitability_pct)}.${short}`, "solved live"];
 }
 function sourceHtml(res) {
-  const out = [...(TYPICAL() ? [`Against a typical online player, who folds too much to bets and raises and bluffs too little: the best answer to that, not perfect play.${res.actions.some(a => a.gto_freq !== undefined) ? " GTO under each action is the equilibrium's." : ""}`] : []),
+  const out = [...(TYPICAL() ? [`${LIVE_POOL() ? "Against a typical live player, who plays many hands, limps and calls a lot, and raises and bluffs little" : "Against a typical online player, who folds too much to bets and raises and bluffs too little"}: the best answer to that, not perfect play.${res.actions.some(a => a.gto_freq !== undefined) ? " GTO under each action is the equilibrium's." : ""}`] : []),
     sourceOf(res)[0] + (res.actions.some(a => a.rough_ev) ? " ≈ is a rough EV." : "")];
   if (res.locked) { const src = res.actions.some(a => a.gto_freq !== undefined) ? gtoSource(res) : ""; out.push(`${Object.entries(res.locked).map(([p, l]) => `Against your lock on ${p} (${LOCK_TEXT(l)})`).join("; ")}: ${res.street === "preflop" ? "your line re-priced against it" : "the best response"}, with GTO's frequency under each (${src}).`); }
   if (offSolution(res)) out.push(`Off the solved line: ${offText(res)}. This street's solve is the best answer to those ranges, not the whole hand's equilibrium.`);

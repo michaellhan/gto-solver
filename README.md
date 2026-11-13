@@ -523,6 +523,15 @@ against the other). See Exploit mode below. `gto_freq` is the chart's mix preflo
 after it the equilibrium of the same solve, which starts from the pool's ranges into the flop and from yours as this mode's
 preflop advice plays it, its pool-priced calls included (and is never the precomputed library's), so it can differ from the equilibrium answer for the same hand. The page sends it for every cash hand unless Against (Edit) is set to GTO, which is kept in the browser (`gto-answers`), not the hand, and grades by the EV given up against that opponent, as a share of the pot; a tournament hand stays at equilibrium (the pool data is cash).
 
+`"opponents": "live"` is the same with the typical live (casino) player instead of the online one (`exploit.LIVE`;
+the page's Against: Online player, Live player, GTO). It plays many hands and limps or calls most of them, 3bets
+and folds to 3bets little, calls the flop more, folds to big turn and river bets more, raises with value and bluffs
+the river far less. Its preflop is fitted (`scripts/calibrate_pool.py --live`, 9-handed) to the one large live
+sample found, Highroll Poker's livestream tracker at $1/$2-$5/$10 (895 players, 10,622 hours: VPIP 39, PFR 18),
+and Las Vegas $1/$2 notes (VPIP 37, PFR 6, 3bets a third of online's): its tree gives VPIP 37.9, PFR 10.5, 3bet
+3.2%, fold to 3bet 36.3%, open-limping 37.5% of its chances; after the flop nothing live is measured, so
+those values are judgment calls from what live sources agree on. See the LIVE block in `gto/exploit.py`.
+
 ### Rake
 
 Off by default (the page's Rake select: off, 5% capped at 3bb, with stakes 10% capped at $5, or a custom

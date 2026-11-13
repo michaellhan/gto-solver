@@ -1458,11 +1458,19 @@ def preflop_investments(actions: List[dict], stacks: Dict[str, float]) -> Tuple[
 _PF_CACHE: Dict[tuple, object] = {}
 
 
+POOLS = ("pool", "live")   # "opponents" values answered against a typical player: online, live (exploit.LIVE)
+
+
+def _pool_profile() -> str:
+    from .exploit import profile
+    return profile()
+
+
 def _pf_key(kind, p, actions, positions, stack) -> tuple:
     acts = tuple((a["pos"], a["action"], a.get("to"), a.get("amount")) for a in actions)
     icm = getattr(positions, "icm", None)
     return (kind, p, acts, tuple(positions), getattr(positions, "ante", 0.0), getattr(positions, "straddle", False), stack,
-            getattr(positions, "rake", None), pf.stacks_key(positions), icm.key if icm is not None else None)
+            getattr(positions, "rake", None), pf.stacks_key(positions), icm.key if icm is not None else None, _pool_profile())
 
 
 def _rake(positions, pot: float) -> float:
@@ -1753,7 +1761,10 @@ def preflop_ranges(actions: List[dict], positions, stack: float, pool_except: Op
                 # 6-max no aces or broadways, heads-up T3o and T4o), which sets the pool's limp rate but as a
                 # range is face-up (a CO limp that overbet 8x a Q43 flop was Q8/Q9 or K-high, so bottom pair
                 # overcalled it). Real limpers are mostly recreational players limping a wide range.
-                ranges[pos] = ranges[pos] * pf.LIMP
+                # The live pool (exploit.LIVE) open-limps 37% of its chances, some of the chart's opens among them:
+                # its limp range is its own limps and the limp range, not face-up.
+                live = pool_except is not None and pos != pool_except and _pool_profile() == "live"
+                ranges[pos] = ranges[pos] * (np.maximum(pf.LIMP, strat.get("call", 0.0)) if live else pf.LIMP)
             elif act == "call" and jam is None and "call" in strat and pos != "BB":
                 # An over-limp (or the small blind completing): at least the limp range less what would
                 # raise. The chart's over-limps are what its iso-raises leave (BTN behind one limper 64s and
@@ -3226,18 +3237,24 @@ class Advisor:
             return self.triage(state)
         # the catch-all: a spot whose solve fails (an exception other than a cancel, or an answer with nothing usable
         # in it) is answered by the betting rules instead (Advisor._rules), not left with an error
+        # "opponents": "pool" is the typical online player, "live" the typical live one (exploit.LIVE)
+        from .exploit import set_profile, reset_profile
+        token = set_profile("live" if state.get("opponents") == "live" else "online")
         try:
-            with np.errstate(all="ignore"):
-                res = self._advise(state)
-            why = _unusable(res)
-        except Cancelled:
-            raise
-        except Exception as e:   # noqa: BLE001
-            why = e
-        if why and state.get("one_size") is not None:
-            return _one_size_failed(why)   # (the view or nothing: not the betting rules' advice)
-        if why:
-            return self._fallback(state, why)
+            try:
+                with np.errstate(all="ignore"):
+                    res = self._advise(state)
+                why = _unusable(res)
+            except Cancelled:
+                raise
+            except Exception as e:   # noqa: BLE001
+                why = e
+            if why and state.get("one_size") is not None:
+                return _one_size_failed(why)   # (the view or nothing: not the betting rules' advice)
+            if why:
+                return self._fallback(state, why)
+        finally:
+            reset_profile(token)
         self._flag_short(state, res)
         _read_sliver(res)
         _read_off_range(res)
@@ -3305,7 +3322,7 @@ class Advisor:
         or a turn's from the flop's (Advisor._study_mw_prev), and nowhere else."""
         if state.get("study"):
             state = dict({k: v for k, v in state.items() if k not in STUDY_DROPS}, study=True)
-        if len(str(state.get("board") or "")) < 6 or state.get("opponents") == "pool" or any(
+        if len(str(state.get("board") or "")) < 6 or state.get("opponents") in POOLS or any(
                 state.get(k) for k in ("runouts", "jam", "size", "breakdown", "optimize_sizes", "locks", "library_only",
                                        "payouts", "bounties", "ranges")) or state.get("one_size") is not None \
                 or state.get("sizes") and not state.get("study"):
@@ -3335,7 +3352,7 @@ class Advisor:
         board = str(state.get("board") or "")
         street = {6: "flop", 8: "turn"}.get(len(board))
         if street is None or not self.first_look.get(street) \
-                or state.get("opponents") == "pool" or any(
+                or state.get("opponents") in POOLS or any(
                 state.get(k) for k in ("runouts", "jam", "size", "breakdown", "optimize_sizes", "locks", "library_only",
                                        "payouts", "bounties", "ranges", "sizes")) or state.get("one_size") is not None:
             return None
@@ -3496,7 +3513,7 @@ class Advisor:
         that budget. Only where an instant answer is offered (heads-up from the flop, at equilibrium: not exploit
         mode, locks, custom ranges or sizes, a tournament, Study, a jam, the breakdown) and the street is solved live
         (not a flop the library holds). {"presolved": street, "iterations"}, else None."""
-        if len(str(state.get("board") or "")) < 6 or state.get("opponents") == "pool" or any(
+        if len(str(state.get("board") or "")) < 6 or state.get("opponents") in POOLS or any(
                 state.get(k) for k in ("study", "runouts", "jam", "size", "breakdown", "optimize_sizes", "locks", "library_only",
                                        "payouts", "bounties", "ranges", "sizes")) or state.get("one_size") is not None:
             return None
@@ -4183,10 +4200,10 @@ class Advisor:
             return self._study_preflop(hero, streets["preflop"], positions, stack, t0)
         if not board and state.get("equity") and actor is None:
             return self._showdown_preflop(hero, hole, streets["preflop"], positions, stack, t0,
-                                          pool=state.get("opponents") == "pool", locks=locks)
+                                          pool=state.get("opponents") in POOLS, locks=locks)
         if not board:
             return self._preflop(hero, hole, streets["preflop"], positions, stack, t0,
-                                 pool=state.get("opponents") == "pool", locks=locks)
+                                 pool=state.get("opponents") in POOLS, locks=locks)
         saved = self.time_budget, self.prior_budget, self.cfg, self.root_sizes, self.spr_sizes
         if sizes:
             self.root_sizes = {st: {k: v for k, v in d.items() if k != "raise" or "raise" not in sizes}
@@ -4250,7 +4267,7 @@ class Advisor:
         self._showdown = bool(state.get("equity")) and actor is None and not self._study
         try:
             res = self._postflop(hero, hole, board, stack, streets, positions, t0,
-                                 pool=state.get("opponents") == "pool", actor=actor, custom=custom,
+                                 pool=state.get("opponents") in POOLS, actor=actor, custom=custom,
                                  optimize=bool(state.get("optimize_sizes")), locks=locks)
             if self._breakdown and "error" not in res and "breakdown" not in res:
                 res["breakdown"] = None   # the betting rules answered (4+ players): no solve to break down
