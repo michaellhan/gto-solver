@@ -2049,6 +2049,29 @@ class TestExploit(unittest.TestCase):
         raised = Node(10.0, 10.0); raised.bets = (20.0, 10.0)    # facing a raise of its own bet: no shift
         self.assertAlmostEqual(float(lock(raised, strat, reach)[0, 0].mean()), 0.5, places=5)
 
+    def test_pool_lock_reraises_as_at_equilibrium(self):
+        """It raises less facing a first bet (weak hands keep 30% of their raises, the rest call), but facing a
+        raise of its own bet its re-raises stay: moved to calls, the jams of a donk-overbet range facing a raise
+        became a free look for the raiser (3-handed 9hJc4cTs, AcQd raised BB's 16 bb lead to 48 at +2.5 bb, where
+        it loses 0.6 against equilibrium's re-raises)."""
+        from gto.exploit import PoolLock
+        from gto.solver import Ctx
+        board = tuple(cards("9hJc4cTs"))
+        live = np.array([i for i, (a, b) in enumerate(ALL_COMBOS) if a not in board and b not in board])
+        lock = PoolLock(Ctx(live, Config()), 0, committed=True)
+        n = len(live)
+        class Node:   # player 0 (BB) facing a bet or a raise, with fold / call / all-in
+            def __init__(self, bets, pot):
+                self.boards, self.names, self.player = [board], ["fold", "call", "all-in"], 0
+                self.bets, self.pot_now = bets, pot
+        strat = np.full((1, 3, n), 1 / 3, dtype=np.float32)
+        reach = np.ones((1, n))
+        first = lock(Node((0.0, 16.0), 26.5), strat, reach)
+        self.assertLess(float(first[0, 2].mean()), 0.25)              # facing a first bet: fewer raises, more calls
+        self.assertGreater(float(first[0, 1].mean()), 0.4)
+        raised = lock(Node((16.0, 48.0), 74.5), strat, reach)         # facing a raise of its own bet: unchanged
+        np.testing.assert_allclose(raised, strat, atol=1e-6)
+
     def test_multiway_postflop_says_it_plays_equilibrium(self):
         # exploit mode best-responds heads-up only: a 3-way pot (solved or by the rules) says so, as locks do
         adv = Advisor(Config(depth=1), time_budget=1e9)
