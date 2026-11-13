@@ -1561,9 +1561,22 @@ function renderTimeline(sim) {
     line.appendChild(ln); el.appendChild(line); last = ln;
   }
   document.getElementById("pHistory").hidden = !any;
-  if (!last || fixedHand(sim)) return;
-  const u = document.createElement("button"); u.className = "link undo"; u.textContent = "Undo"; u.dataset.cap = "U"; u.onclick = undo;
-  last.appendChild(u);
+  const n = el.querySelectorAll(".chip").length, grew = n > histChips; histChips = n;
+  if (last && !fixedHand(sim)) {
+    const u = document.createElement("button"); u.className = "link undo"; u.textContent = "Undo"; u.dataset.cap = "U"; u.onclick = undo;
+    last.appendChild(u);
+  }
+  if (grew) historyInView();
+}
+// The action dock sticks to the bottom of the window, over whatever is above it: by the turn or river of a long hand
+// its top covered the history's last line. When an action is added, the page scrolls just far enough that the
+// history ends above the dock (at most to where the dock sits in the page, right under the history).
+let histChips = 0;
+function historyInView() {
+  const h = document.getElementById("pHistory"), d = document.getElementById("pAction");
+  if (h.hidden || typeof h.getBoundingClientRect !== "function" || typeof window.scrollBy !== "function") return;
+  const over = h.getBoundingClientRect().bottom + 12 - d.getBoundingClientRect().top;
+  if (over > 1) window.scrollBy(0, Math.ceil(over));
 }
 
 // ------------------------------------------------------------------ advice
