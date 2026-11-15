@@ -122,7 +122,6 @@ def worker_advisors():
     fast.spr_sizes = {"turn": (4.5, {"bet": [0.33, 0.75], "river": [0.75]})}
     fast.mw_street_config = {s: dict(c) for s, c in MW_FAST_STREETS.items()}
     fast.mw4_street_config = {s: dict(c) for s, c in MW4_FAST_STREETS.items()}
-    fast.mw4_quick_flop = None
     fast.mw_nway_max, acc.mw_nway_max = 5, 6
     acc._held = fast._held
     return {"fast": fast, "accurate": acc}

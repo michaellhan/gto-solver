@@ -305,7 +305,8 @@ const ready = (async () => {
              // turns are left to the rules. Rivers and turns stop once settled (advisor.MW_SETTLED). 4-way flops and
              // turns: the 4-player solve (advisor.MW4_STREETS; Fast MW4_FAST_STREETS), in the core too: a flop (Kh7d2c,
              // HJ opens, CO, BTN and BB call) Fast 200 iterations in 3.8 s, 0.03% of the pot; a turn 100 in 0.4 s, 0.04%.
-             // Quick's 4-way flop is the rules' (mw4_quick_flop: its tables took 1.6 s, then 15 iterations, 9.4%).
+             // Quick's 4-way flop (advisor.MW4_QUICK_FLOP: 6 buckets, every twelfth river) 67-73 iterations in its 1.8
+             // s, 0.5% (was the rules': its tables over every sixth river took 1.6 s, then 15 iterations, 9.4%).
              + "from gto.advisor import MW_FAST_STREETS, MW4_FAST_STREETS; from gto import mwcore as _mwc; "
              + "advs['fast'].mw_solve_streets = advs['accurate'].mw_solve_streets = ('flop', 'turn', 'river'); "
              + "advs['fast'].mw_street_config = {s: dict(c) for s, c in MW_FAST_STREETS.items()}; "
@@ -315,7 +316,7 @@ const ready = (async () => {
              + "advs['fast'].mw_street_config = {s: dict(c, buckets=6, bucket_river_step=6) for s, c in advs['fast'].mw_street_config.items()} if _slow else advs['fast'].mw_street_config; "
              + "advs['fast'].mw4_street_config = None if _slow else advs['fast'].mw4_street_config; "
              + "advs['accurate'].mw4_street_config = None if _slow else advs['accurate'].mw4_street_config; "
-             + "advs['fast'].mw4_quick_flop = None; "
+             + "advs['fast'].mw4_quick_flop = None if _slow else advs['fast'].mw4_quick_flop; "
              // 4+ way rivers (and two all-in) by the N-player solve (scripts/bench_browser.mjs): 4-way 2.5 s at Fast, 50
              // iterations, 0.08% of the pot from equilibrium (Quick 1.8 s, 0.27%); 5-way 7.6 s, 0.1% (Quick 5 iterations,
              // 5.4%); 6-way ~3 s an iteration, so Fast leaves it to the rules and Accurate's 60 s solve it

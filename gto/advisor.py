@@ -60,6 +60,15 @@ OFF_RULE_MAX = 0.4   # ...but those hands are at most this share of the narrowed
 # checked 67% and bet 66% 26%, 33% 7% (heads-up 47/8/45). Hero's own size is picked by EV.
 SMALL_BET = 0.33
 MW_LATER = {"later": "buckets", "buckets": 16}   # 3-way flop and turn solves: the later streets by hand buckets
+# flop games' buckets below the flop: equal shares of a range's weight times its equity (MWConfig.bucket_power), not of
+# its weight, which spent the buckets on hands that fold before the turn and left a set's value its bucket's. 3-way, BTN
+# 5d5c facing a lead on 4c5h2h (a live limped pot): call -0.16 bb in Quick's 6 buckets, +6.8 now, +12-13 in 24 buckets
+# either way. Against the 24-bucket game on 19 live flop spots, 12 3-way and 7 4-way (scripts/bench_mw_buckets.py, 200
+# iterations each), the root player's top tenth of hands by value: 6 buckets 33% of the pot apart -> 12%, 12 buckets 17%
+# -> 12% (the two 24-bucket games 11% apart); against the 24-bucket game in shares of value 37% -> 13% and 24% -> 7%, the
+# range's EV error 6.4% -> 2.2% and the 12 buckets' 3.3 -> 1.3. An iteration costs 20-35% more (fewer buckets nobody
+# reaches). Not Accurate's 3-way flop, the game the 3-way flop library was built in (gto/mw_library.py)
+MW_BUCKET_POWER = 1.0
 # 3-way flop solves bet a third or three quarters of the pot (the heads-up flop menu; the turn and river inside one size)
 MW_FLOP_BETS = {"flop": [0.33, 0.75], "turn": 0.5, "river": 0.5}
 # 3-way turn solves bet the heads-up turn menu, a third, three quarters or 125% of the pot (the river inside half): with
@@ -76,9 +85,18 @@ MW_QUICK_TURN = {"later": "buckets", "buckets": 8, "bet": MW_TURN_BETS}
 # game, 6 hand buckets, the turn's tables over every sixth river, the flop betting half the pot (a pot with a player
 # all-in keeps the street's own game: two bettors, small enough). In the browser's 1.8 s a flop first to act (Kh8d3c, CO
 # opens, BTN and BB call) ran 114 iterations, 0.43% of the pot from equilibrium; checked to twice 200, 0.07%. Natively
-# 88-128, 0.31-0.79%; a 4-way flop (Kh7d2c) 41, 1.07% (in the browser its tables took 1.6 s: 15 iterations, 9.4%)
-MW_QUICK_FLOP = {"later": "buckets", "buckets": 6, "bucket_river_step": 6, "bet": {"flop": [0.5], "turn": 0.5, "river": 0.5}}
-MW4_QUICK_FLOP = {"later": "buckets", "buckets": 6, "bucket_river_step": 6}
+# 88-128, 0.31-0.79%. With the buckets by value (MW_BUCKET_POWER) a live limped pot's flop facing a lead (4c5h2h, BTN
+# isolated, two called) 33 iterations in the browser's 1.8 s, 0.46%
+MW_QUICK_FLOP = {"later": "buckets", "buckets": 6, "bucket_river_step": 6, "bucket_power": MW_BUCKET_POWER,
+                 "bet": {"flop": [0.5], "turn": 0.5, "river": 0.5}}
+# a quick answer's 4-way flop: 6 buckets, the turn's tables over every twelfth river (every sixth, a two-tone flop's
+# tables ran past the build's share of the 1.8 s in the browser and the rules answered: Kc4d7d in a limped pot; now 48
+# iterations, 0.23% of the pot from equilibrium; 200bb deep, CO opens, three call, 7h5cAh: 25, 2.2%, was 17, 5.3%; HJ
+# opens, CO, BTN and BB call, Kh7d2c: 67-73, 0.5%). Against per-combo flop references over 8 flops (scripts/
+# score_multiway4.py, 12 buckets on every river; 25 iterations, 1,280 decisions a preflop line) its mix gives up 0.28% of
+# the pot in a raised pot and 0.30% in a limped one (every sixth river 0.23 and 0.24), the betting rules 0.76 and 0.90
+MW4_QUICK_FLOP = {"later": "buckets", "buckets": 6, "bucket_river_step": 12, "bucket_power": MW_BUCKET_POWER,
+                  "jam_is_raise": True}
 MW_RULES_MIN_S = 0.4    # the betting rules' trials take at least this long (400 trials: ~0.3 s natively)
 MW_QUICK_BUILD = 0.75   # a quick answer's multiway tree and tables done by this share of its budget, or the rules answer
 # Study's 3-way flop (one the 3-way library doesn't hold) gets longer than the advice's: browsing waits for an answer,
@@ -91,15 +109,16 @@ MW_STUDY_FLOP_BUDGET = 15.0
 # 5.3-10.9; scripts/bench_mw_abstraction.py), the turn Accurate's. Measured (scripts/bench_browser.mjs; native 5 s,
 # gto/native.py): a flop first to act (Kh8d3c, CO opens, BTN and BB call) in the browser's 8 s 203 iterations, 0.25% of
 # the pot from equilibrium, natively 111-125, 0.7-1.05%; checked to twice 400, 0.03%; a turn 248-400, 0.04-0.1%
-MW_FAST_STREETS = {"flop": {"later": "buckets", "buckets": 12, "bucket_river_step": 3, "bet": MW_FLOP_BETS},
+MW_FAST_STREETS = {"flop": {"later": "buckets", "buckets": 12, "bucket_river_step": 3, "bucket_power": MW_BUCKET_POWER,
+                            "bet": MW_FLOP_BETS},
                    "turn": dict(MW_LATER, bet=MW_TURN_BETS)}
 # 4-way flops and turns (nobody all-in): the 4-player solve, the later streets by hand buckets (the root street per combo,
 # card removal pair by pair: MultiwaySolver._term_pw), one bet a street and no raise but the player advised's
 # (root_raise), as the N-player river solve
 MW4_BETS = {"flop": 0.33, "turn": 0.5, "river": 0.5}
-MW4_STREETS = {"flop": {"later": "buckets", "buckets": 8, "bucket_river_step": 3},
+MW4_STREETS = {"flop": {"later": "buckets", "buckets": 8, "bucket_river_step": 3, "bucket_power": MW_BUCKET_POWER},
                "turn": {"later": "buckets", "buckets": 16}}
-MW4_FAST_STREETS = {"flop": {"later": "buckets", "buckets": 6, "bucket_river_step": 4},
+MW4_FAST_STREETS = {"flop": {"later": "buckets", "buckets": 6, "bucket_river_step": 4, "bucket_power": MW_BUCKET_POWER},
                     "turn": {"later": "buckets", "buckets": 8}}
 # 5-way flops and turns: the same game for five, in fewer buckets (the tensors are over bucket quintuples: K^5 a class;
 # natively in the compiled core a turn takes 15 ms an iteration in 4 buckets, 38 in 6, a flop 240 ms in 4 on one thread)
@@ -5741,8 +5760,15 @@ class Advisor:
         # play each seat's own stack, answer
         cap = min(behind[hero], max(behind[q] for q in players if q != hero)) if isinstance(stacks, tuple) else S
         smallest = cur.cur_bet + cur.min_raise
-        if hero not in shoved and behind[hero] > cap + 1e-9 and cur.cur_bet + 1e-9 < cap \
-                and np.floor(cap * 2 + 0.5) / 2 < smallest - 1e-9 and can_raise(cur, hero):
+        under = lambda cap: hero not in shoved and behind[hero] > cap + 1e-9 and cur.cur_bet + 1e-9 < cap \
+            and np.floor(cap * 2 + 0.5) / 2 < smallest - 1e-9 and can_raise(cur, hero)
+        if four and not five and not isinstance(stacks, tuple) and uneven and under(cap):
+            # (4-way: each their own stack then, where your all-in fits: 46bb behind facing a 24bb bet, the smallest
+            # raise to 48, a 31bb stack in: the shortest stack's game had no all-in of yours)
+            own4 = True
+            stacks = tuple(float(behind[p]) for p in players)
+            cap = min(behind[hero], max(behind[q] for q in players if q != hero))
+        if under(cap):
             fallback_notes.append(f"the smallest raise you can make (to {smallest:g}) is more than the {len(players)}-way "
                                   f"solve lets you put in ({cap:g}: " + ("what another player can match" if isinstance(stacks, tuple) or exact3 else
                                                                         "everyone plays the shortest stack behind")

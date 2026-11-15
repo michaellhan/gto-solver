@@ -9,6 +9,8 @@ everyone made the tree too big to settle), so they overvalue hero's raises.
   python scripts/score_multiway4.py --score --set ROOT_RAISE_EQ=0.6 --set CHECKED_RAISE_SHARE=0.1   # a constant changed
   python scripts/score_multiway4.py --build Kh7d2c9s --pres limp5 --rivers 8   # 5-way (limped) -> ref5_<board>.json
   python scripts/score_multiway4.py --score --glob 'ref5_*' --solver fast      # the advisor's bucket solve, not the rules
+  python scripts/score_multiway4.py --build Kh7d2c --pres srp4,limp4  # 4-way flops: a 12-bucket reference (limp4: UTG, HJ, BTN limp)
+  python scripts/score_multiway4.py --score --glob 'ref4*_??????.json' --solver quick --iters 25   # Quick's flop game, 25 iterations
 
 Scoring draws 40 hands from hero's range by weight per spot (a fixed draw) and plays the rules on each at 400 trials:
 "mix loss" is the reference's EV of its own mix less that of the rules' pick, in % of the pot. The boards used for
@@ -27,14 +29,16 @@ HERE = os.path.join(ROOT, "reports", "multiway4")
 PRES = {
     "srp4": [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "raise", "to": 2.5}, {"pos": "CO", "action": "call"},
              {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}],
+    "limp4": [{"pos": "UTG", "action": "call"}, {"pos": "HJ", "action": "call"}, {"pos": "CO", "action": "fold"},
+              {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "check"}],
     "limp5": [{"pos": "UTG", "action": "call"}, {"pos": "HJ", "action": "call"}, {"pos": "CO", "action": "fold"},
               {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "call"}, {"pos": "BB", "action": "check"}],
 }
-ORDER = {"srp4": ["BB", "HJ", "CO", "BTN"], "limp5": ["SB", "BB", "UTG", "HJ", "BTN"]}
+ORDER = {"srp4": ["BB", "HJ", "CO", "BTN"], "limp4": ["BB", "UTG", "HJ", "BTN"], "limp5": ["SB", "BB", "UTG", "HJ", "BTN"]}
 X = lambda ps: [{"pos": p, "action": "check"} for p in ps]
 def lines_for(pre):
     o = ORDER[pre]
-    bet = 3.5 if pre == "srp4" else 2.5
+    bet = {"srp4": 3.5, "limp4": 1.5}.get(pre, 2.5)
     return {"first": (o[0], []),
             "last checked to": (o[-1], X(o[:-1])),
             "vs bet": (o[2], X(o[:1]) + [{"pos": o[1], "action": "bet", "amount": bet}]),
@@ -52,13 +56,19 @@ BET = {"flop": 0.33, "turn": 0.5, "river": 0.5}
 def cfg(**kw):
     return MWConfig(bet=BET, max_raises=1, root_raise=True, **kw)
 
-def solve_adv(speed):
-    """The 4-way (srp4) or 5-way (limp5) bucket solve the advisor runs on a turn, at a speed's game, capped by iterations
-    (not time, so the score doesn't move with the machine's load)."""
-    r = A.Advisor(time_budget=1e9); r.mw_solve_streets = ("flop", "turn"); r.mw_max_iters = 200
+def solve_adv(speed, iters=200, game=None):
+    """The 4-way (srp4, limp4) or 5-way (limp5) bucket solve the advisor runs, at a speed's game ("quick": a quick
+    answer's, advisor.MW4_QUICK_FLOP on a flop), capped by iterations (not time, so the score doesn't move with the
+    machine's load)."""
+    r = A.Advisor(time_budget=1e9); r.mw_solve_streets = ("flop", "turn"); r.mw_max_iters = iters
     fast = speed == "fast"
     r.mw4_street_config = {k: dict(v) for k, v in (A.MW4_FAST_STREETS if fast else A.MW4_STREETS).items()}
     r.mw5_street_config = {k: dict(v) for k, v in (A.MW5_FAST_STREETS if fast else A.MW5_STREETS).items()}
+    if game:     # (--game: the flop's game changed)
+        if speed == "quick":
+            r.mw4_quick_flop = {**r.mw4_quick_flop, **game}
+        else:
+            r.mw4_street_config["flop"].update(game)
     return r
 
 def rules_adv(trials):
@@ -68,7 +78,7 @@ def rules_adv(trials):
 def build(a):
     os.makedirs(HERE, exist_ok=True)
     for pre in a.pres.split(","):
-        fn = os.path.join(HERE, f"ref{5 if pre == 'limp5' else 4}_{a.build}.json")
+        fn = os.path.join(HERE, f"ref{5 if pre == 'limp5' else 4}{'' if pre in ('srp4', 'limp5') else '_' + pre}_{a.build}.json")
         out = json.load(open(fn)) if os.path.exists(fn) else []
         mk = mk_state(pre); L = lines_for(pre)
         for ln in a.lines.split(","):
@@ -82,8 +92,17 @@ def build(a):
             pending = {i for i, p in enumerate(players) if p not in cur.acted} | {hp}
             depth = 2 if len(a.build) == 8 else 1
             kw = dict(bets=[cur.bets[p] for p in players], to_act=hp, n_raises=cur.n_raises, pending=pending)
-            ref = MultiwaySolver(b, rs, cur.pot_start, S, cfg=cfg(depth=depth, rivers=a.rivers or None), **kw).run(iters=a.ref_iters)
-            dealt = MultiwaySolver(b, rs, cur.pot_start, S, cfg=cfg(), **kw).run(iters=a.ref_iters)
+            if len(a.build) == 6:
+                # a flop: the turn and river bet on by hand buckets, finer than any speed's (--ref-buckets, every
+                # second river, shares by equity: --ref-power); "dealt" is Accurate's game (advisor.MW4_STREETS) at as
+                # many iterations
+                ref = MultiwaySolver(b, rs, cur.pot_start, S, cfg=cfg(later="buckets", buckets=a.ref_buckets,
+                                                                      bucket_river_step=2, bucket_power=a.ref_power),
+                                     **kw).run(iters=a.ref_iters)
+                dealt = MultiwaySolver(b, rs, cur.pot_start, S, cfg=cfg(**A.MW4_STREETS["flop"]), **kw).run(iters=a.ref_iters)
+            else:
+                ref = MultiwaySolver(b, rs, cur.pot_start, S, cfg=cfg(depth=depth, rivers=a.rivers or None), **kw).run(iters=a.ref_iters)
+                dealt = MultiwaySolver(b, rs, cur.pot_start, S, cfg=cfg(), **kw).run(iters=a.ref_iters)
             ev, evd = ref.action_evs(), dealt.action_evs()
             names = list(ref.root.names)
             hands = {}
@@ -118,10 +137,10 @@ def build(a):
 def kind(n): return CM.kind(n)
 
 def score_spot(args):
-    rec, sets, trials, sample, solver = args
+    rec, sets, trials, sample, solver, iters, game = args
     for k, v in sets.items():
         setattr(A, k, v)
-    rules = solve_adv(solver) if solver else rules_adv(trials)
+    rules = solve_adv(solver, iters, game) if solver else rules_adv(trials)
     mk = mk_state(rec["pre"])
     names = rec["names"]
     res = []
@@ -134,7 +153,7 @@ def score_spot(args):
         pick_ = rs.choice(len(ks), size=min(sample, len(ks)), replace=False, p=w / w.sum())
         hands = {ks[i]: rec["all"][ks[i]] for i in sorted(pick_)}
     for h, d in hands.items():
-        r = rules.advise(mk(rec["board"], rec["hero"], h, rec["acts"]))
+        r = rules.advise(dict(mk(rec["board"], rec["hero"], h, rec["acts"]), **({"quick": True} if solver == "quick" else {})))
         if solver and not r.get("solved"):
             raise RuntimeError(f"{rec['board']} {rec['line']} {h}: not solved: {r['notes']}")
         er = dict(zip(names, d["ref"]))
@@ -164,7 +183,7 @@ def score(a):
     for s in a.set or []:
         k, v = s.split("="); sets[k] = float(v)
     with Pool(a.procs) as pool:
-        outs = pool.map(score_spot, [(r, sets, a.trials, a.sample, a.solver) for r in recs])
+        outs = pool.map(score_spot, [(r, sets, a.trials, a.sample, a.solver, a.iters, json.loads(a.game or "{}")) for r in recs])
     allr = []
     by = {}
     for pre, b, ln, res in outs:
@@ -189,7 +208,11 @@ if __name__ == "__main__":
     ap.add_argument("--ref-iters", type=int, default=120); ap.add_argument("--rivers", type=int, default=0)
     ap.add_argument("--score", action="store_true"); ap.add_argument("--set", action="append")
     ap.add_argument("--glob", default="ref4_*.json"); ap.add_argument("--trials", type=int, default=400)
-    ap.add_argument("--solver", choices=["fast", "accurate"], help="score the bucket solve at this speed's game, not the rules")
+    ap.add_argument("--solver", choices=["quick", "fast", "accurate"], help="score the bucket solve at this speed's game, not the rules")
+    ap.add_argument("--iters", type=int, default=200, help="--solver: its iterations")
+    ap.add_argument("--game", help='--solver: its flop game changed, JSON (e.g. {"bucket_river_step": 12})')
+    ap.add_argument("--ref-buckets", type=int, default=12, help="a flop reference's hand buckets on the turn and river")
+    ap.add_argument("--ref-power", type=float, default=1.0, help="a flop reference's MWConfig.bucket_power")
     ap.add_argument("--procs", type=int, default=4); ap.add_argument("--sample", type=int, default=40); ap.add_argument("-v", "--verbose", action="store_true")
     a = ap.parse_args()
     build(a) if a.build else score(a)

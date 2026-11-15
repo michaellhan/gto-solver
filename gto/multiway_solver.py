@@ -88,6 +88,11 @@ class MWConfig:
     buckets: int = 16            # hand buckets per player and card below the root street
     classes: bool = True         # the next card as one per class (a rank; a suit with two or more board cards apart)
     bucket_river_step: int = 1   # from a flop: the turn's showdown tensors average every step-th river card
+    # bucket_power: the buckets are equal shares of a range's weight times its equity to this power (0: of its weight).
+    # Equal shares of the weight put most buckets on hands that fold before the later streets (facing a bet, a wide
+    # range's top sixth held sets with the one-pair hands that fold to the turn's bet, and a combo's value is its
+    # bucket's): 3-way, BTN 5d5c facing a lead on 4c5h2h, call -0.16 bb in 6 buckets where 24 give +13.2
+    bucket_power: float = 0.0
     allin_step: int = 11         # from a flop: a three-way root-street all-in's runouts (Runout), every step-th of the
                                  # turn and river cards' spacings (11: ~147 of 1176, even over the cards; 1: every one)
     # allin: the players all-in at the root (their indices; three players: at most one, more is pairwise): they never
@@ -114,6 +119,11 @@ class MWConfig:
     # root_jam: the root's player may go all-in however deep (a jam request: the page grading your all-in), the rest
     # of the tree as it is (all-in everywhere made the 4-way tree 401 nodes, 4% of the pot from settled)
     root_jam: bool = False
+    # jam_is_raise: an all-in over a bet counts as a raise, so none once max_raises bets and raises are in (else it's
+    # offered whenever the stack behind is at most allin_spr pots). A quick answer's 4-way flop (advisor.MW4_QUICK_FLOP):
+    # with 54bb behind a 25bb pot every player could jam over the flop bet, 80 all-in runouts that made an iteration
+    # 0.41 s natively (1 iteration in Quick's budget); without them ~0.05 s
+    jam_is_raise: bool = False
     alpha: float = 1.5           # DCFR: positive regrets x t^a / (t^a + 1), negative x 1/2 until the beta_from'th
     beta: float = 0.5            # iteration, then x t^b / (t^b + 1) (discount_factors),
     beta_from: int = 100
@@ -442,7 +452,7 @@ def _actions(cfg, npl, street, pot_start, stack, bets, c, p, n_raises, pending, 
                     act(f"raise to {to:g}", to, to, True)
                 else:
                     allin = True
-            if allin:
+            if allin and (n_raises < cfg.max_raises or not cfg.jam_is_raise):
                 act("all-in", cap, cap, True)
     return out
 
@@ -944,15 +954,16 @@ class BucketTables:
                                                                         dtype=np.float32)
 
     @staticmethod
-    def _buckets(eq, wt, K):
-        """Bucket ids: K equal shares of the weight wt ordered by eq; combos with no weight by their equity."""
+    def _buckets(eq, wt, K, power=0.0):
+        """Bucket ids: K equal shares of the weight wt (times eq ** power) ordered by eq; combos with no weight by
+        their equity."""
         n = len(eq)
         ids = np.zeros(n, dtype=np.intp)
         idx = np.flatnonzero(wt > 0)
         if not len(idx):
             return ids
         order = idx[np.argsort(eq[idx], kind="stable")]
-        ws = wt[order]
+        ws = wt[order] * np.maximum(eq[order], 1e-6) ** power if power else wt[order]
         cum = np.cumsum(ws)
         b = np.minimum(((cum - ws / 2) / cum[-1] * K).astype(np.intp), K - 1)
         ids[order] = b
@@ -982,7 +993,7 @@ class BucketTables:
                 lq, eq_ = kle[o[0]]
                 num = ((lq + 0.5 * eq_) * rm).sum(axis=0)
                 den = (ku[o[0]] * rm).sum(axis=0)
-            ids[i] = self._buckets(np.where(den > 0, num / np.where(den > 0, den, 1.0), 0.0), wt[i], K)
+            ids[i] = self._buckets(np.where(den > 0, num / np.where(den > 0, den, 1.0), 0.0), wt[i], K, s.cfg.bucket_power)
         OH = [np.eye(K)[ids[i]] for i in range(npl)]                           # (n, K)
         Wk, Ek, Uk, Ub = [], [], [], []
         for i in range(npl):
@@ -1078,14 +1089,16 @@ class BucketTables:
                     num = num * (kle[o][0] + 0.5 * kle[o][1])
                     den = den * ku[o]
             num, den = num.sum(axis=0), den.sum(axis=0)
-            ids[i] = self._buckets(np.where(den > 0, num / np.where(den > 0, den, 1.0), 0.0), wt[i], K)
+            ids[i] = self._buckets(np.where(den > 0, num / np.where(den > 0, den, 1.0), 0.0), wt[i], K, s.cfg.bucket_power)
         OH = [np.eye(K)[ids[i]] for i in range(npl)]                           # (n, K)
-        Wk, Uk, Ub = [], [], []
-        for i in range(npl):
-            xb = x[i][:, :, None] * OH[i][None]                                  # (R, n, K)
-            kl, ke = bd.k_le_multi(xb)
-            Wk.append(kl + 0.5 * ke); Uk.append(bd.k_u_multi(xb))
-            Ub.append(bb.k_u_multi((wt[i][:, None] * OH[i])[None])[0])          # (n, K) on the base board
+        # (every player's buckets in one pass of the kernels: (R, n, npl K))
+        xb = np.concatenate([x[i][:, :, None] * OH[i][None] for i in range(npl)], axis=2)
+        kl, ke = bd.k_le_multi(xb)
+        W_, U_ = kl + 0.5 * ke, bd.k_u_multi(xb)
+        Ub_ = bb.k_u_multi(np.concatenate([wt[i][:, None] * OH[i] for i in range(npl)], axis=1)[None])[0]
+        Wk = [W_[..., i * K:(i + 1) * K] for i in range(npl)]
+        Uk = [U_[..., i * K:(i + 1) * K] for i in range(npl)]
+        Ub = [Ub_[:, i * K:(i + 1) * K] for i in range(npl)]                   # (n, K) on the base board
         sets = _live_sets(npl)
         persp = {}
         for p in range(npl):
@@ -1093,18 +1106,44 @@ class BucketTables:
             hwB = wt[p] * corr[p]
             hwR = hwB[None, :] * rm
             mine = [lv for lv in sets if p in lv]
+            # p's combos (with weight) sorted by its bucket, combo-major, so a bucket's rows are one contiguous slice
+            # of each array (no gather per bucket and live set), and the live sets that agree on the first others share
+            # those products: the loop's gathers and small products took 0.6 s of a two-tone 4-way flop's 0.75 s
+            # build natively (24 card classes, 6 buckets)
             J = np.zeros((K,) * npl)
             S = {lv: np.zeros((K,) * npl) for lv in mine}
+            m = np.flatnonzero(wt[p] > 0)
+            bm = ids[p][m]
+            order = np.argsort(bm, kind="stable")
+            ms = m[order]
+            ends = np.cumsum(np.bincount(bm, minlength=K))
+            G = [Ub[o[0]][ms] * hwB[ms, None]] + [Ub[j][ms] for j in o[1:]]
+            Rr = rm.shape[0]
+            cm = lambda A: np.ascontiguousarray(A[:, ms].transpose(1, 0, 2))      # (Rr, n, X) -> (|m|, Rr, X)
+            hR = cm(hwR[:, :, None])
+            FW = {j: cm(Wk[j]) for j in o}
+            FU = {j: cm(Uk[j]) for j in o}
             for a in range(K):
-                idx = np.flatnonzero((ids[p] == a) & (wt[p] > 0))
-                if not len(idx):
+                s0, s1 = (ends[a - 1] if a else 0), ends[a]
+                if s1 <= s0:
                     continue
-                J[a] = _outer_sum([Ub[o[0]][idx] * hwB[idx, None]] + [Ub[j][idx] for j in o[1:]])
-                hR = hwR[:, idx].reshape(-1, 1)
+                J[a] = _outer_sum([g[s0:s1] for g in G])
+                rows = (s1 - s0) * Rr
+                pre = {}
+
+                def prefix(ch):
+                    if ch not in pre:
+                        f = (FW if ch[-1] else FU)[o[len(ch) - 1]][s0:s1].reshape(rows, K)
+                        if len(ch) == 1:
+                            pre[ch] = f * hR[s0:s1].reshape(rows, 1)
+                        else:
+                            P = prefix(ch[:-1])
+                            pre[ch] = (P[:, :, None] * f[:, None, :]).reshape(rows, -1)
+                    return pre[ch]
                 for lv in mine:
-                    fs = [(Wk[j] if j in lv else Uk[j])[:, idx, :].reshape(-1, K) for j in o]
-                    fs[0] = fs[0] * hR
-                    S[lv][a] = _outer_sum(fs)
+                    ch = tuple(j in lv for j in o)
+                    S[lv][a] = (prefix(ch[:-1]).T @ (FW if ch[-1] else FU)[o[-1]][s0:s1].reshape(rows, K)) \
+                        .reshape((K,) * (npl - 1))
             axes = [p] + o
             perm = [axes.index(k) for k in range(npl)]
             persp[p] = {"J": np.transpose(J, perm), **{lv: np.transpose(S[lv], perm) for lv in mine}}
@@ -1199,6 +1238,7 @@ def _outer_sum(fs):
     return (P.T @ fs[-1]).reshape((K,) * len(fs))
 
 
+
 # ------------------------------------------------------------------ solver
 class MultiwaySolver:
     _lock = None   # action_br_evs's: turns the others' average strategies into the ones best-responded to (best responses only)
@@ -1288,7 +1328,19 @@ class MultiwaySolver:
         self.tabs = tb = BucketTables(self, K, cfg.classes, cfg.bucket_river_step)
         C = tb.C
         street = NEXT_STREET[STREET[len(self.board)]]
-        members = [(e, 0, _template(cfg, self.np, street, e.pot, e.c, e.behind, e.folded)) for e in self.builder.exits]
+        # a line's later street is a function of its numbers going in, and lines repeat them: a 4-way flop's 330
+        # templates (Kh7d2c, one bet a street) are 68 distinct ones (each built once, ~0.5 s of a 0.9 s build;
+        # templates are read, never changed, so lines share them)
+        memo: Dict[tuple, object] = {}
+
+        def template(street, pot, c, behind, folded):
+            r9 = lambda x: round(float(x), 9)
+            key = (street, r9(pot), tuple(map(r9, c)), tuple(map(r9, _per(behind, self.np))), frozenset(folded))
+            t = memo.get(key)
+            if t is None:
+                t = memo[key] = _template(cfg, self.np, street, pot, c, behind, folded)
+            return t
+        members = [(e, 0, template(street, e.pot, e.c, e.behind, e.folded)) for e in self.builder.exits]
         while members:
             self.check_deadline()
             groups: Dict[tuple, list] = {}
@@ -1309,7 +1361,7 @@ class MultiwaySolver:
             members = []
             for g in lvl:
                 for bx in _bexits(g.tree):
-                    members += [(bx, j, _template(cfg, self.np, street, tx.pot, tx.c, tx.behind, tx.folded))
+                    members += [(bx, j, template(street, tx.pot, tx.c, tx.behind, tx.folded))
                                 for j, tx in enumerate(bx.members)]
 
     # -- a tournament's payoffs

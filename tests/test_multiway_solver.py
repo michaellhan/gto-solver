@@ -706,6 +706,42 @@ class TestFourWay(unittest.TestCase):
                     np.testing.assert_allclose(tot, _canon4(J, 0), rtol=1e-4, atol=1e-9 * J.max())
 
 
+    def test_later_streets_share_a_line_template(self):
+        # a later street's template is a function of the line's numbers going in, and the flop's 330 lines into the turn
+        # and river repeat them: each distinct one is built once (MultiwaySolver._build_later's memo)
+        calls = []
+        real = MW._template
+
+        def counted(*a):
+            calls.append(a[2:])
+            return real(*a)
+        MW._template = counted
+        try:
+            s = MultiwaySolver(cards("Kh7d2c"), _ranges4(), 10.5, 97.5, cfg=_cfg4(**{k: v for k, v in A.MW4_QUICK_FLOP.items() if k != "later"}))
+        finally:
+            MW._template = real
+        members = sum(len(g.blocks) for lvl in s.levels for g in lvl)
+        self.assertGreater(members, 3 * len(calls))
+        self.assertEqual(len(calls), len({(st, round(p, 9), tuple(c), MW._per(b, 4), frozenset(f))
+                                          for st, p, c, b, f in calls}))
+
+    def test_quick_flop_counts_a_jam_over_a_bet_as_a_raise(self):
+        # MWConfig.jam_is_raise (advisor.MW4_QUICK_FLOP): 30bb behind a 10.5bb pot, everyone could jam over the flop bet
+        # (all-in at allin_spr pots or less, however many raises are in): root-street all-in runouts by the dozen, an
+        # iteration ~10x the cost. Counted as a raise, nobody past the bet jams but the player advised (root_raise)
+        rs = _ranges4()
+        kw = dict(buckets=4, bucket_river_step=12)
+        full = MultiwaySolver(cards("Kh7d2c"), rs, 10.5, 30.0, cfg=_cfg4(**kw))
+        quick = MultiwaySolver(cards("Kh7d2c"), rs, 10.5, 30.0, cfg=_cfg4(jam_is_raise=True, **kw))
+        self.assertGreater(len(full.builder.runouts), 10)
+        self.assertEqual(len(quick.builder.runouts), 0)
+        jams = lambda s: [d for d in s.decisions if isinstance(d, MW.Decision) and not isinstance(d, MW.BDecision)
+                          and "all-in" in d.names and "call" in d.names]
+        self.assertTrue(jams(full))
+        self.assertEqual(jams(quick), [])
+        g = quick.run(iters=40).br_gains()
+        self.assertLess(g.max() / quick.root_pot() * 100, 2.0)
+
     def test_five_way_turn_settles(self):
         # five players (advisor.MW5_STREETS' turn: 6 buckets): the compiled core's kernel over four others' buckets
         s = MultiwaySolver(cards("Kh7d2c9s"), _ranges5(), 12.5, 97.5, cfg=_cfg4(buckets=6))
@@ -1057,6 +1093,54 @@ class TestAdvisor(unittest.TestCase):
         self.assertLess(r["solver"]["nodes"], 120)
         self.assertLess(r["solver"]["exploitability_pct"], 1.0)
         self.assertLess(acts["all-in"]["ev_bb"], max(a["ev_bb"] for a in r["actions"]) - 1.0)
+
+    def test_four_way_all_in_under_the_smallest_raise_plays_own_stacks(self):
+        # UTG1 (46bb behind) faces a 24bb flop bet and a call from the 31bb HJ: the smallest raise is to 48, so its raise
+        # is the all-in for 46. Everyone at the shortest stack (31) had no such move and the betting rules answered; the
+        # 4-way solve plays each their own stack there (a live simulation's 9-handed straddled pot)
+        adv = A.Advisor(time_budget=3.0)
+        adv.mw_solve_streets = ("flop", "turn", "river")
+        adv.mw4_street_config = {k: dict(v) for k, v in A.MW4_FAST_STREETS.items()}
+        F = lambda p: {"pos": p, "action": "fold"}
+        C = lambda p: {"pos": p, "action": "call"}
+        st = {"players": 9, "hero": "UTG1", "hole": "Qd2d", "board": "7h5dJd", "stack": 150.0, "straddle": True,
+              "stacks": {"UTG": 120.0, "UTG1": 60.0, "UTG2": 150.0, "LJ": 300.0, "HJ": 45.0, "CO": 150.0, "BTN": 80.0,
+                         "SB": 40.0, "BB": 60.0},
+              "preflop": [C("UTG1"), C("UTG2"), {"pos": "LJ", "action": "raise", "to": 14.0}, C("HJ"), F("CO"),
+                          F("BTN"), F("SB"), C("BB"), F("UTG"), C("UTG1"), C("UTG2")],
+              "flop": [{"pos": "BB", "action": "check"}, {"pos": "UTG1", "action": "check"},
+                       {"pos": "UTG2", "action": "check"}, {"pos": "LJ", "action": "bet", "amount": 24.0}, C("HJ"),
+                       F("BB")]}
+        r = adv.advise(st)
+        self.assertTrue(r.get("solved"), r["notes"])
+        self.assertFalse(any("smallest raise you can make" in n for n in r["notes"]), r["notes"])
+        acts = {a["action"]: a for a in r["actions"]}
+        self.assertEqual(sorted(acts), ["all-in", "call", "fold"])
+        self.assertEqual(acts["all-in"]["amount_bb"], 46.0)
+        self.assertEqual(acts["call"]["amount_bb"], 24.0)
+
+    def test_quick_flop_buckets_keep_a_set_worth_calling(self):
+        # a live 9-handed game: UTG2 and LJ limp, BTN isos to 4 and both call; on 4c5h2h UTG2 checks and LJ bets 10 into
+        # 13.5. BTN's 5d5c (top set, ~59% of the 3-way pot against the solve's own ranges) folded 75% in Quick's game:
+        # 6 buckets as equal shares of BTN's whole range put its sets with one-pair hands that fold to the turn's bet,
+        # and every hand's call read about 0 (55 -0.16 bb, 24 buckets +13.2). Shares by equity (bucket_power) keep it
+        adv = A.Advisor(time_budget=4.0)
+        adv.mw_solve_streets = ("flop", "turn", "river")
+        F = lambda p: {"pos": p, "action": "fold"}
+        C = lambda p: {"pos": p, "action": "call"}
+        st = {"players": 9, "hero": "BTN", "hole": "5d5c", "board": "4c5h2h", "stack": 100.0, "rake": 0.1, "rake_cap": 3,
+              "stacks": {"UTG": 300.0, "UTG1": 100.0, "UTG2": 400.0, "LJ": 100.0, "HJ": 60.0, "CO": 100.0, "BTN": 100.0,
+                         "SB": 100.0, "BB": 300.0},
+              "preflop": [F("UTG"), F("UTG1"), C("UTG2"), C("LJ"), F("HJ"), F("CO"),
+                          {"pos": "BTN", "action": "raise", "to": 4.0}, F("SB"), F("BB"), C("UTG2"), C("LJ")],
+              "flop": [{"pos": "UTG2", "action": "check"}, {"pos": "LJ", "action": "bet", "amount": 10.0}],
+              "quick": True, "budget": 4.0, "opponents": "live"}
+        r = adv.advise(st)
+        self.assertTrue(r.get("solved"), r["notes"])
+        self.assertTrue(any("by 6 hand buckets" in n for n in r["notes"]), r["notes"])
+        acts = {a["action"]: a for a in r["actions"]}
+        self.assertGreater(acts["call"]["ev_bb"], 3.0, r["actions"])
+        self.assertLess(acts["fold"]["freq"], 0.1, r["actions"])
 
     def test_a_bet_over_the_short_stack_is_solved_with_side_pots(self):
         # the 25bb BB checks the turn and the CO bets 30, more than the BB has behind: each player bets its own stack
