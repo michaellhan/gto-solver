@@ -298,8 +298,6 @@ EV_GAP = 1.0        # heads-up, unsettled solve: recommend the highest EV when i
 # unchanged.
 RARE_BRANCH = 0.01
 BR_TIE_MIN = 0.005  # exploit mode: best-response EVs this close (share of pot; more when the solve is unsettled) count as tied
-COMMIT_BET = 0.75   # exploit mode: a postflop bet this big (share of the pot) marks its maker committed: no extra folds
-                    # (a 96%-pot donk on AKQ left 4-high calling for its river bluffs, +1.4 bb)
 BR_TIE_MAX = 0.05   # ...and at most this: a 10-iteration solve 41% of the pot from settled tied every action, so
                     # its unsettled mix folded 55 to a turn check-raise where calling was +6.7 bb
 MAX_SIZES = 3       # custom/optimized sizes: at most this many per street (each multiplies the tree; the browser's is small)
@@ -1960,7 +1958,10 @@ def _next_lock_notes(node, nxt, lock, vr, villain: str, adj: dict) -> List[str]:
 
 
 def _committed(p: str, streets) -> bool:
-    """Whether p raised a bet, or bet COMMIT_BET of the pot or more, on these postflop streets (StreetStates)."""
+    """Whether p raised a bet, or bet COMMIT_BET of the pot or more, on these postflop streets (StreetStates).
+    COMMIT_BET is exploit.py's (a 96%-pot donk on AKQ left 4-high calling for its river bluffs, +1.4 bb); imported
+    here so the worker's startup doesn't load exploit.py."""
+    from .exploit import COMMIT_BET
     for st in streets:
         bets = dict.fromkeys(st.inv_start, 0.0)
         cur = 0.0
@@ -5224,7 +5225,7 @@ class Advisor:
         def mk_lock(sol, next_nodes=()):
             # the opponent as hero plays against them: the pool (exploit mode) and/or your locks, else None (GTO)
             from .exploit import PoolLock, TendencyLock
-            base = PoolLock(sol.ctx, 1 - hero_p, committed) if pool else None
+            base = PoolLock(sol.ctx, 1 - hero_p, committed, sol.root) if pool else None
             return TendencyLock(sol.ctx, 1 - hero_p, adj, base, next_nodes) if adj else base
         widened: List[str] = []
         rare_lines: List[str] = []

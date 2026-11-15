@@ -2072,6 +2072,64 @@ class TestExploit(unittest.TestCase):
         raised = lock(Node((16.0, 48.0), 74.5), strat, reach)         # facing a raise of its own bet: unchanged
         np.testing.assert_allclose(raised, strat, atol=1e-6)
 
+    def test_pool_lock_committed_by_its_own_raise_in_the_tree(self):
+        """The pool's extra folds stop once it has raised or bet COMMIT_BET of the pot: in the hand so far (the advice's
+        `committed`), and now also on the solve's own line below such an action. Without the tree, a turn check-raise
+        inside the solve was followed by the pool's extra river folds, which paid hero's bet-then-bluff line."""
+        from types import SimpleNamespace as N
+        from gto.exploit import PoolLock
+        from gto.solver import Ctx
+        turn, river = tuple(cards("Qs7c3d8h")), tuple(cards("Qs7c3d8h2s"))
+        live = np.array([i for i, (a, b) in enumerate(ALL_COMBOS) if a not in river and b not in river])
+        n = len(live)
+        def facing(pot):   # the pool (player 1) facing hero's half-pot river bet, with fold / call
+            return N(boards=[river], player=1, names=["fold", "call"], bets=(pot / 2, 0.0), pot_now=pot * 1.5, children=[])
+        after_raise, after_call, after_big, after_small = facing(40.0), facing(20.0), facing(30.0), facing(13.0)
+        river_entry = lambda x: N(child=N(boards=[river], player=0, names=["bet 50%"], bets=(0.0, 0.0), pot_now=x.pot_now / 1.5,
+                                          children=[x]))
+        # turn: hero bets 5 into 10; the pool calls (no commitment) or raises to 15 (committed), hero calls either
+        faced = N(boards=[turn], player=1, names=["fold", "call", "raise to 15"], bets=(5.0, 0.0), pot_now=15.0,
+                  children=[None, river_entry(after_call), river_entry(after_raise)])
+        # or hero checks, and the pool bets the pot (committed) or a third (not), hero calls
+        pool_bets = N(boards=[turn], player=1, names=["check", "bet 33%", "bet 100%"], bets=(0.0, 0.0), pot_now=10.0, children=[
+            None, N(boards=[turn], player=0, names=["call"], bets=(0.0, 3.3), pot_now=13.3, children=[river_entry(after_small)]),
+            N(boards=[turn], player=0, names=["call"], bets=(0.0, 10.0), pot_now=20.0, children=[river_entry(after_big)])])
+        root = N(boards=[turn], player=0, names=["check", "bet 50%"], bets=(0.0, 0.0), pot_now=10.0,
+                 children=[pool_bets, faced])
+        lock = PoolLock(Ctx(live, Config()), 1, root=root)
+        strat = np.full((1, 2, n), 0.5, dtype=np.float32)
+        reach = np.ones((1, n))
+        folds = {k: float(lock(x, strat, reach)[0, 0].mean()) for k, x in
+                 (("call", after_call), ("raise", after_raise), ("small", after_small), ("big", after_big))}
+        self.assertGreater(folds["call"], 0.6, folds)      # called the turn: the pool's extra river folds
+        self.assertGreater(folds["small"], 0.6, folds)     # bet a third: still over-folds
+        self.assertAlmostEqual(folds["raise"], 0.5, places=5)   # raised the turn in the tree: as at equilibrium
+        self.assertAlmostEqual(folds["big"], 0.5, places=5)     # bet the pot in the tree: as at equilibrium
+        lock.tree_commit = False
+        self.assertGreater(float(lock(after_raise, strat, reach)[0, 0].mean()), 0.6)   # the old rule
+
+    def test_pool_lock_river_raises_it_skips_fold_as_bluffs(self):
+        """On the river the pool's skipped raises go to the hand's own fold / call mix (a pure raise: calls in the
+        stronger half, folds below): its bluff-raises with air used to become calls of hero's river bet."""
+        from gto.exploit import PoolLock
+        from gto.solver import Ctx
+        board = tuple(cards("Qs7c3d8h2s"))
+        live = np.array([i for i, (a, b) in enumerate(ALL_COMBOS) if a not in board and b not in board])
+        lock = PoolLock(Ctx(live, Config()), 1, committed=True)   # (no extra folds: the raise cut alone)
+        n = len(live)
+        pct = lock.pct(board)
+        class Node:
+            boards, names, player, bets, pot_now = [board], ["fold", "call", "raise"], 1, (10.0, 0.0), 30.0
+        bluff = pct < 0.3                                       # weak hands raise or fold, strong ones raise or call
+        strat = np.stack([np.where(bluff, 0.5, 0.0), np.where(bluff, 0.0, 0.5), np.full(n, 0.5)])[None].astype(np.float32)
+        reach = np.ones((1, n))
+        out = lock(Node(), strat, reach)[0]
+        self.assertLess(float(out[1][bluff].max()), 1e-6)        # the bluffs' skipped raises fold: no calls with air
+        self.assertGreater(float(out[0][bluff].mean()), 0.6)
+        self.assertLess(float(out[2][bluff].mean()), 0.25)       # (and they raise less)
+        lock.river_cut_folds = False
+        self.assertGreater(float(lock(Node(), strat, reach)[0][1][bluff].mean()), 0.25)   # the old rule: air calls
+
     def test_multiway_postflop_says_it_plays_equilibrium(self):
         # exploit mode best-responds heads-up only: a 3-way pot (solved or by the rules) says so, as locks do
         adv = Advisor(Config(depth=1), time_budget=1e9)
