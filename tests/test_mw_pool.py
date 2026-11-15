@@ -1,11 +1,14 @@
 """Exploit mode in multiway pots: the pool's strategy at every opponent decision of the 3- and 4-way solves
 (gto/exploit.py MWPoolLock) with hero best-responding, and the betting rules following the pool (Advisor._multiway)."""
+import time
 import unittest
 from types import SimpleNamespace as N
+from unittest import mock
 
 import numpy as np
 
 from gto import exploit as ex
+from gto import advisor as A
 from gto.advisor import Advisor, _keep, _MW_SHADE, FOLD_SHADE
 from gto.cards import ALL_COMBOS, cards
 from gto.multiway_solver import MultiwaySolver, MWConfig
@@ -166,6 +169,142 @@ class TestMWPoolAdvice(unittest.TestCase):
         finally:
             _MW_SHADE.reset(t)
         self.assertEqual(ex.MW_RULES_SHADE, FOLD_SHADE)   # the online pool: the rules' own
+
+
+class TestSharedBudget(unittest.TestCase):
+    """Exploit mode's two answers after the flop (the GTO one for the GTO % under each action, then the exploit one)
+    share one answer's budget (advisor.GTO_SHARE). Each had the whole budget, so since the GTO % became GTO mode's own
+    answer (3f695a58, and multiway in 97e6ecf4) an exploit answer took twice a GTO one: Quick 3-way 3.1-4.0 s against
+    1.4-1.9, Fast 3-way flop 11.3 s against 5.0, a heads-up turn 10.1 against 5.0."""
+
+    STATE = {"players": 6, "hero": "BB", "hole": "KdQd", "board": "Kh7d2c9s4h", "stack": 100, "preflop": PRE,
+             "flop": CHK, "turn": CHK, "river": []}
+
+    def _calls(self, state, gto_secs=0.0, budget=0.6):
+        """The budgets each answer was asked with (_postflop stubbed): [(pool, time_budget, prior_budget, mw_budget)]."""
+        adv = Advisor(Config(depth=1), time_budget=budget, prior_budget=budget / 2)
+        adv.mw_budget = 2 * budget
+        calls = []
+
+        def post(self_, *a, pool=False, locks=None, **k):
+            calls.append((pool, self_.time_budget, self_.prior_budget, self_.mw_budget))
+            if not pool:
+                time.sleep(gto_secs)
+            return {"actions": [{"action": "check", "freq": 1.0, **({"gto_freq": 0.4} if pool else {})},
+                                {"action": "bet 50%", "freq": 0.0, **({"gto_freq": 0.6} if pool else {})}],
+                    "notes": [], "solved": True, "recommended": "check"}
+        with mock.patch.object(Advisor, "_postflop", post):
+            r = adv.advise(state)
+        self.assertEqual((adv.time_budget, adv.prior_budget, adv.mw_budget), (budget, budget / 2, 2 * budget))
+        return calls, r
+
+    def test_the_gto_answer_gets_its_share_and_the_exploit_one_the_rest(self):
+        calls, r = self._calls(dict(self.STATE, opponents="live"), gto_secs=0.3)
+        (gp, gt, gpb, gm), (ep, et, epb, em) = calls
+        self.assertFalse(gp)
+        self.assertTrue(ep)
+        self.assertAlmostEqual(gt, 0.6 * A.GTO_SHARE)
+        self.assertAlmostEqual(gpb, 0.3 * A.GTO_SHARE)
+        self.assertAlmostEqual(gm, 1.2 * A.GTO_SHARE)
+        # the GTO answer took half the nominal budget (max of time_budget and mw_budget: 1.2 s): the rest
+        self.assertAlmostEqual(et / 0.6, em / 1.2, places=6)
+        self.assertGreater(et, 0.6 * (1 - A.GTO_SHARE) - 1e-9)
+        self.assertLess(et, 0.6 * (1 - 0.3 / 1.2) + 1e-9)
+        self.assertEqual([a["gto_freq"] for a in r["actions"]], [1.0, 0.0])   # (the GTO answer's mix)
+        # a GTO answer read off a library at once: the exploit one keeps (nearly) the whole budget
+        calls, _ = self._calls(dict(self.STATE, opponents="pool"))
+        self.assertGreater(calls[1][1], 0.6 * 0.95)
+        # GTO mode: one answer with the whole budget
+        calls, _ = self._calls(dict(self.STATE))
+        self.assertEqual(calls, [(False, 0.6, 0.3, 1.2)])
+
+    def test_quick_shows_no_gto_percent(self):
+        """Quick: no second answer (it is a solve too, and a quick answer has ~2 s): no GTO %, a note says so."""
+        calls, r = self._calls(dict(self.STATE, opponents="live", quick=True))
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(calls[0][0])
+        self.assertTrue(all("gto_freq" not in a for a in r["actions"]))
+        self.assertTrue(any(n.startswith("GTO % isn't shown at Quick") for n in r["notes"]), r["notes"])
+
+    def test_exploit_answer_takes_about_a_gto_answers_time(self):
+        """The same spot against GTO and against live players, each solved to its budget (3-way river, Fast's sizes):
+        the exploit answer takes about the GTO one's time, not twice it (it took 3.1 s against 1.3)."""
+        def secs(opp):
+            adv = Advisor(Config(depth=1), time_budget=0.8)
+            adv.mw_max_iters = 10 ** 6
+            adv.mw_max_expl = 1e9          # (a loaded machine's short solve still answers: the time is what's checked)
+            t = time.time()
+            r = adv.advise(dict(self.STATE, **({"opponents": opp} if opp else {})))
+            self.assertTrue(r.get("solved"), r.get("notes"))
+            return time.time() - t, r
+        g, _ = secs(None)
+        e, r = secs("live")
+        self.assertLess(e, 1.35 * g + 0.25, (e, g))
+        self.assertTrue(all("gto_freq" in a for a in r["actions"]), r["notes"])
+
+    def test_a_shortened_multiway_solve_runs_on_with_more_time(self):
+        """A 3-way solve that ran out of a share of the budget (exploit mode's GTO answer) runs on when GTO mode asks the
+        spot with the whole budget, instead of answering from the shortened solve as a cached solve that ran out does."""
+        adv = Advisor(Config(depth=1), time_budget=0.05)
+        adv.mw_max_iters = 10 ** 6
+        adv.mw_max_expl = 1e9
+        adv.advise(dict(self.STATE))
+        (sol,) = adv._mw_cache.values()
+        self.assertTrue(sol.out_of_time)
+        before = sol.iters
+        adv.advise(dict(self.STATE))                 # (the same budget: the same solve, as before)
+        self.assertEqual(sol.iters, before)
+        adv.time_budget = 0.6
+        adv.advise(dict(self.STATE))
+        self.assertGreater(sol.iters, before)
+
+    def test_a_kind_of_gto_solve_too_slow_for_its_share_is_not_tried_again(self):
+        """A multiway GTO answer that didn't settle in its share: no GTO %, no betting rules run for it (their time is
+        the answer's), and the advisor doesn't solve that kind (street, players, budget) for the GTO % again."""
+        adv = Advisor(Config(depth=1), time_budget=1e9)
+        adv.mw_max_iters, adv.mw_trials = 3, 200
+        adv.mw_max_expl = 1e-9                       # (every solve "unsettled")
+        seen = []
+        rules, run = Advisor._multiway, Advisor._mw_run
+
+        def rules_(self_, *a, **k):
+            seen.append(("rules", self_._gto_pass))
+            return rules(self_, *a, **k)
+
+        def run_(self_, *a, **k):
+            seen.append(("solve", self_._gto_pass))
+            return run(self_, *a, **k)
+        with mock.patch.object(Advisor, "_multiway", rules_), mock.patch.object(Advisor, "_mw_run", run_):
+            adv.advise(dict(self.STATE, opponents="live"))
+            self.assertEqual(seen, [("solve", True), ("solve", False), ("rules", False)])
+            self.assertEqual([k[:2] for k in adv._gto_unsettled], [("river", 3)])
+            seen.clear()
+            r = adv.advise(dict(self.STATE, board="Kh7d2c9s5h", opponents="live"))   # (another river: not tried)
+            self.assertEqual(seen, [("solve", False), ("rules", False)])
+        self.assertFalse(Advisor._gto_unsettled)   # (the class's stays empty)
+        self.assertIn("actions", r)
+
+
+class TestCoreAllinTable(unittest.TestCase):
+    def test_the_cores_table_is_numpys(self):
+        """The best-response pass (numpy) reads the heads-up all-in table the compiled core built for the solve instead of
+        building it again (0.8 s of a Fast 3-way flop's 1.1 s pass)."""
+        from gto import mwcore
+        if mwcore.lib() is None:
+            self.skipTest("no compiled core")
+        s = MultiwaySolver(cards("Kh7d2c"), _ranges(), 8.0, 20.0, cfg=MWConfig(later="buckets", buckets=6,
+                                                                              bucket_river_step=12))
+        s.run(iters=2)
+        prog = getattr(s, "_mwc", None)
+        if prog is None or not prog.rt:
+            self.skipTest("the solve isn't in the core, or has no all-ins")
+        core = s._allin_table()
+        self.assertIs(core, s._table)
+        del s._table
+        s._mwc = None
+        mine = s._allin_table()
+        self.assertEqual(core.shape, mine.shape)
+        self.assertLess(float(np.abs(core - mine).max()), 1e-6)
 
 
 if __name__ == "__main__":

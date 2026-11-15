@@ -299,6 +299,7 @@ class Program:
         self.R = L.alloc(4 * s.np * self.n)
         self.out = L.alloc(4 * self.n)
         self.kids = L.alloc(4 * self.n * 16)
+        self.rt = self.w[30]      # (the heads-up all-in table's space, 0 without root-street all-ins: allin_table)
         self.w = self._bitc = None
 
     def _river(self, s):
@@ -501,6 +502,19 @@ class Program:
     # -- use
     def valid(self, L, s) -> bool:
         return self.gen == _gen and self.L is L and self.s() is s
+
+    def allin_table(self):
+        """The heads-up all-in table the core built on loading the program (equity_table: MultiwaySolver._allin_table's
+        T, the same float32 values), or None if it has none or hasn't built it."""
+        if not self.rt:
+            return None
+        built = np.zeros(1, dtype=np.int32)
+        self.L.read(self.prog + 4 * 34, built)
+        if not built[0]:
+            return None
+        T = np.empty((self.n, self.n), dtype=np.float32)
+        self.L.read(self.rt, T)
+        return T
 
     def push(self, flags=True):
         """The solver's regrets and sums into the arena (after numpy changed them)."""

@@ -1915,6 +1915,16 @@ class MultiwaySolver:
         range, and heads-up that's linear in the range, so one table serves every all-in. core/mwcore.c equity_table()."""
         T = self.__dict__.get("_table")
         if T is None:
+            # (the compiled core's copy when it holds this solve: numpy's build took 0.8 s of a Fast 3-way flop's
+            # best-response pass in exploit mode, the only numpy pass after a solve run in the core)
+            prog = self.__dict__.get("_mwc")
+            if prog is not None:
+                from . import mwcore
+                L = mwcore.lib()
+                T = prog.allin_table() if L is not None and prog.valid(L, self) else None
+                if T is not None:
+                    self._table = T
+                    return T
             n, (rows, pairs) = self.hands.n, self.builder.every
             T = np.zeros((n, n), dtype=np.float32)
             for st in eval_boards(rows, self.hands.active).astype(np.int64):

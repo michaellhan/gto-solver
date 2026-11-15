@@ -339,6 +339,10 @@ RARE_BRANCH = 0.01
 BR_TIE_MIN = 0.005  # exploit mode: best-response EVs this close (share of pot; more when the solve is unsettled) count as tied
 BR_TIE_MAX = 0.05   # ...and at most this: a 10-iteration solve 41% of the pot from settled tied every action, so
                     # its unsettled mix folded 55 to a turn check-raise where calling was +6.7 bb
+GTO_SHARE = 1 / 3   # exploit mode after the flop: the most of the answer's budgets (time_budget, prior_budget, mw_budget) the
+                    # GTO answer under each action (GTO %) gets, asked first; the exploit answer gets what it leaves. Each
+                    # had the whole budget, so an exploit answer took twice a GTO one (Fast: a 3-way flop 11.3 s against
+                    # 5.0, a heads-up turn 10.1 against 5.0; Quick: 3.1-4.0 s against 1.4-1.9). Quick shows no GTO % there
 MAX_SIZES = 3       # custom/optimized sizes: at most this many per street (each multiplies the tree; the browser's is small)
 STUDY_MAX_SIZES = 5  # ...and in Study (its size menus: "More sizes" bets 25/33/50/75/125% on the flop, study.js SIZE_PRESETS)
 SIZE_PCT = (5.0, 500.0)  # custom sizes are held to this range, % of the pot
@@ -4329,41 +4333,84 @@ class Advisor:
         # "equity": once a street's betting is closed (checked through, called, or everyone all-in), the ranges narrowed
         # through it as the next street's advice would narrow them, and your equity against them (_equity_answer)
         self._showdown = bool(state.get("equity")) and actor is None and not self._study
+        mw_budget = self.mw_budget
+        optimize = bool(state.get("optimize_sizes"))
         try:
-            res = self._postflop(hero, hole, board, stack, streets, positions, t0,
+            # exploit mode (the pool, your locks): the GTO answer for each action's GTO % first, in at most GTO_SHARE of the
+            # budgets, then the exploit answer in what it left (all of it when the GTO answer was a library read), so the
+            # two fit one answer's time. Quick has no time for a second solve: no GTO % (_gto_alongside)
+            gto, scale = None, 1.0
+            exploit = (state.get("opponents") in POOLS or locks) and not (
+                self._quick or self._study or self._showdown or self._one_size or self._lib_only)
+            if exploit:
+                budgets = self.time_budget, self.prior_budget
+                nominal = max(self.time_budget, self.mw_budget or 0.0)
+                self._scale_budgets(GTO_SHARE, mw_budget)
+                gto = self._gto_answer(hero, hole, board, stack, streets, positions, actor, custom, optimize)
+                scale = 1.0 - min(GTO_SHARE, (time.time() - t0) / nominal)
+                self.time_budget, self.prior_budget = budgets
+                self._scale_budgets(scale, mw_budget)
+            res = self._postflop(hero, hole, board, stack, streets, positions, time.time() if exploit else t0,
                                  pool=state.get("opponents") in POOLS, actor=actor, custom=custom,
-                                 optimize=bool(state.get("optimize_sizes")), locks=locks)
+                                 optimize=optimize, locks=locks)
             if self._breakdown and "error" not in res and "breakdown" not in res:
                 res["breakdown"] = None   # the betting rules answered (4+ players): no solve to break down
             if any("gto_freq" in a for a in res.get("actions", ())):
-                self._gto_alongside(res, hero, hole, board, stack, streets, positions, t0, actor, custom,
-                                    bool(state.get("optimize_sizes")))
+                if gto is None and not self._quick:   # (a view the shared budget leaves out: asked after, as before)
+                    gto = self._gto_answer(hero, hole, board, stack, streets, positions, actor, custom, optimize)
+                self._gto_alongside(res, gto)
+            if "actions" in res:
+                res["seconds"] = round(time.time() - t0, 2)
             return res
         finally:
+            self.mw_budget = mw_budget
             self.time_budget, self.prior_budget, self.cfg, self.root_sizes, self.spr_sizes = saved
             self._breakdown = self._lib_only = self._jam = self._study = self._showdown = self._wider = self._background = False
             self._one_size = self._mw_borrow = self._size = None
 
-    def _gto_alongside(self, res, hero, hole, board, stack, streets, positions, t0, actor, custom, optimize):
-        """Exploit mode (the pool, your locks) after the flop: each action's GTO % is the GTO answer's, the spot asked
-        again without the pool or locks, as preflop shows the chart's mix. The exploit solve's own equilibrium starts
-        from the pool's (or the locks') ranges, so it is a third answer neither mode shows (a station lock's river: 7c6c
-        checked 100% there, where GTO bets it half pot). An action the GTO tree doesn't have gets none."""
+    _gto_pass = False   # (_gto_answer running: a multiway solve that fails returns no answer, not the betting rules')
+    _gto_unsettled = frozenset()   # (_multiway_solve's kinds of solve too slow for it: (street, players, budget))
+
+    def _scale_budgets(self, k: float, mw_budget) -> None:
+        """The solves' budgets at k of what they are (exploit mode's two answers share one: GTO_SHARE)."""
+        self.time_budget *= k
+        self.prior_budget *= k
+        self.mw_budget = None if mw_budget is None else mw_budget * k
+
+    def _gto_answer(self, hero, hole, board, stack, streets, positions, actor, custom, optimize):
+        """The spot asked without the pool or locks (its own clock and the budgets as set: _advise gives it GTO_SHARE),
+        for exploit mode's GTO %."""
         breakdown, self._breakdown = self._breakdown, False   # (the exploit answer's breakdown is the one shown)
+        self._gto_pass = True
         try:
-            # (its own clock: a multiway solve's budget runs from the answer's start, so from t0 the GTO solve got what
-            # the exploit one left, ran a few iterations or fell to the betting rules, and its GTO % was neither mode's)
-            gto = self._postflop(hero, hole, board, stack, streets, positions, time.time(), actor=actor, custom=custom,
-                                 optimize=optimize)
+            return self._postflop(hero, hole, board, stack, streets, positions, time.time(), actor=actor, custom=custom,
+                                  optimize=optimize)
         finally:
-            self._breakdown = breakdown
+            self._breakdown, self._gto_pass = breakdown, False
+
+    def _gto_alongside(self, res, gto):
+        """Exploit mode (the pool, your locks) after the flop: each action's GTO % is the GTO answer's (`gto`, the spot
+        asked again without the pool or locks: _gto_answer), as preflop shows the chart's mix. The exploit solve's own
+        equilibrium starts from the pool's (or the locks') ranges, so it is a third answer neither mode shows (a station
+        lock's river: 7c6c checked 100% there, where GTO bets it half pot). An action the GTO tree doesn't have gets
+        none; none at all without a GTO answer (Quick), or where the multiway GTO solve didn't settle in its share of the
+        time and the betting rules gave it (the exploit answer a solve's)."""
+        why = None
+        if gto is None:
+            why = "GTO % isn't shown at Quick: the answer against GTO is a second solve (Fast and Accurate show it)"
+        elif res.get("solved") and not gto.get("solved"):
+            why = "GTO % isn't shown: the solve against GTO didn't settle in its share of the time (Accurate gives it longer)"
+        if why:
+            for a in res["actions"]:
+                a.pop("gto_freq", None)
+            res.setdefault("notes", []).append(why)
+            return
         g = {a["action"]: a["freq"] for a in gto.get("actions", ())}
         for a in res["actions"]:
             if a["action"] in g:
                 a["gto_freq"] = g[a["action"]]
             else:
                 a.pop("gto_freq", None)
-        res["seconds"] = round(time.time() - t0, 2)
 
     # ------------------------------------------------------------ preflop
     def _preflop(self, hero, hole, preflop, positions, stack, t0, pool=False, locks=None):
@@ -5256,6 +5303,8 @@ class Advisor:
                     f"the {len(remaining)}-way solver plays {len(remaining)} players with chips and no bet bigger than the "
                     f"shortest stack can call" if len(remaining) <= 4 else "it solves at most 4-way pots before the river")
                 return {"error": f"Study can't solve this {len(remaining)}-way spot: {why}"}
+            if self._gto_pass:   # (exploit mode's GTO %: the rules' mix isn't GTO mode's answer, and their time is the answer's)
+                return {"actions": [], "notes": notes, "solved": False}
             return self._multiway(hero, hole, board, ranges, remaining, cur, stk, t0, notes, **({"pool": True} if pool else {}))
         villain = live_opps[0]
         post = cur.order
@@ -5891,6 +5940,12 @@ class Advisor:
         if self._study and cur.name == "flop":
             budget = max(budget, MW_STUDY_FLOP_BUDGET)
         sol = self._mw_cache.get(key)
+        # (exploit mode's GTO %: a kind of solve that didn't settle in its share of the budget before isn't tried again,
+        # so the exploit answer keeps the whole budget: a Fast 3-way flop off the library got 20-26 iterations in 1.7 s,
+        # 11% of the pot from equilibrium, and the exploit solve's 35-45 in the rest fell to the rules now and then)
+        kind = (cur.name, len(players), round(budget, 1))
+        if sol is None and self._gto_pass and kind in self._gto_unsettled:
+            return None
         if sol is None:
             # a quick answer's tables still building at MW_QUICK_BUILD of its budget (or on course to) leave too little
             # time to iterate: the betting rules answer then (a 3-way flop with a player all-in and a random range took
@@ -5911,6 +5966,11 @@ class Advisor:
                                       f"{budget:.1f} s here, so the betting rules answer (Fast and Accurate solve it)")
                 return None
             self._mw_cache[key] = sol
+        # (a solve that ran out of a smaller budget runs on when asked with more: exploit mode's two answers share one,
+        # GTO_SHARE, and GTO mode asked the spot after must not get the shortened solve)
+        if sol.out_of_time and budget > 1.2 * getattr(sol, "budget_had", budget):
+            sol.out_of_time = False
+        sol.budget_had = max(budget, getattr(sol, "budget_had", 0.0))
         spent = sol.build_seconds + sol.seconds
         left = min(budget - spent, budget - (time.time() - t0))
         self._mw_run(sol, left)
@@ -5930,6 +5990,8 @@ class Advisor:
         # (the mean over the players who bet: an all-in player has no decisions, nothing to gain)
         expl = float(max(np.mean([g for i, g in enumerate(gains) if i not in mcfg.allin]), 0.0))
         if expl > self.mw_max_expl:
+            if self._gto_pass:
+                self._gto_unsettled = self._gto_unsettled | {kind}   # (the advisor's own set, not the class's)
             fallback_notes.append(f"the {len(players)}-way solve was still {expl:.0f}% of the pot from equilibrium after "
                                   f"{sol.iters} iterations" + ("" if self._study else ", so the betting rules answer instead")
                                   # (Fast's 3-way budget: mw_budget; Accurate solves for its whole time_budget)
