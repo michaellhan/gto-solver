@@ -108,6 +108,9 @@ class MWConfig:
     # no raises, which keeps the tree small enough to settle: 4-way 65 nodes where one raise made it 1053; the player
     # advised still gets to raise)
     root_raise: bool = False
+    # root_locked: the root's player may only fold, call or check: an all-in raise for less than a full raise didn't
+    # reopen the betting for them (advisor.can_raise). The nodes below are unaffected (the street ends at their call)
+    root_locked: bool = False
     # root_jam: the root's player may go all-in however deep (a jam request: the page grading your all-in), the rest
     # of the tree as it is (all-in everywhere made the 4-way tree 401 nodes, 4% of the pot from settled)
     root_jam: bool = False
@@ -625,6 +628,8 @@ class Builder:
             cfg = dataclasses.replace(cfg, allin_spr=1e9)
         for name, amt, nb, nc, nf, npend, raised in _actions(cfg, self.np, street, pot_start, stack, bets, c, p,
                                                               n_raises - extra, pending, folded):
+            if raised and at_root and cfg.root_locked:
+                continue
             raised = raised + extra if raised else 0
             live = [i for i in range(self.np) if i not in nf]
             if len(live) == 1 or not npend:

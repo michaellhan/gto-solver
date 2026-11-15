@@ -1676,3 +1676,37 @@ class TestTournamentAdvice(unittest.TestCase):
         r = adv.advise(dict(lib, payouts=[50, 30, 20], budget=10))   # (Fast's 5 s left 17 iterations on a loaded machine)
         self.assertTrue(r.get("solved"), r.get("notes")); self.assertFalse(r.get("precomputed"))
         self.assertTrue(any("prize equity" in n for n in r["notes"]), r["notes"])
+
+
+class TestRootLocked(unittest.TestCase):
+    """MWConfig.root_locked: an all-in raise for less than a full raise doesn't reopen the betting, so the root's player
+    folds or calls (advisor.can_raise)."""
+
+    def test_solver_offers_no_raise_at_a_locked_root(self):
+        board = cards("6c5h7h")
+        R = _ranges()
+        bets = [26.0, 35.0, 35.0]   # (the bettor faces an all-in for less, called)
+        free = MultiwaySolver(board, R, 20.0, 145.0, bets=bets, to_act=0, n_raises=1, pending={0})
+        locked = MultiwaySolver(board, R, 20.0, 145.0, bets=bets, to_act=0, n_raises=1, pending={0},
+                                cfg=MWConfig(root_locked=True))
+        self.assertTrue(any(n.startswith(("raise", "all-in")) for n in free.root.names), free.root.names)
+        self.assertEqual(list(locked.root.names), ["fold", "call"])
+
+    def test_advice_after_an_all_in_for_less(self):
+        # 9-handed live game (scripts/coverage_fuzz.py --live, seed 11, hand 172): UTG2 isos QcQd over two limpers, three
+        # call; on 6c5h7h UTG2 bets 26, BTN is all-in for 35 (under the smallest raise, to 52), UTG1 calls. UTG2 can only
+        # fold or call, where the 3-way solve recommended a raise to 68
+        from gto import native
+        p = lambda pos, action, **kw: {"pos": pos, "action": action, **kw}
+        st = {"players": 9, "hero": "UTG2", "hole": "QcQd", "board": "6c5h7h", "stack": 150.0,
+              "stacks": {"UTG": 300.0, "UTG1": 73.0, "UTG2": 150.0, "LJ": 200.0, "HJ": 150.0, "CO": 150.0, "BTN": 40.0,
+                         "SB": 150.0, "BB": 150.0},
+              "preflop": [p("UTG", "call"), p("UTG1", "call"), p("UTG2", "raise", to=5.0), p("LJ", "fold"), p("HJ", "fold"),
+                          p("CO", "fold"), p("BTN", "call"), p("SB", "call"), p("BB", "fold"), p("UTG", "call"),
+                          p("UTG1", "call")],
+              "flop": [p("SB", "check"), p("UTG", "check"), p("UTG1", "check"), p("UTG2", "bet", amount=26.0),
+                       p("BTN", "all-in"), p("SB", "fold"), p("UTG", "fold"), p("UTG1", "call")]}
+        r = native.advisor("fast").advise(st)
+        self.assertTrue(r.get("solved"), r.get("notes"))
+        self.assertEqual([x["action"] for x in r["actions"]], ["fold", "call"])
+        self.assertEqual(r["recommended"], "call")

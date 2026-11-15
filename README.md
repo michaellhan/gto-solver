@@ -4419,6 +4419,18 @@ their products batched: `core.LEAF_ROWS_BLAS`).
   they answer within twice their estimate now (Quick keeps to its time and memory). The same cap on a heads-up
   solve's tree holds the browser's Fast with three custom raise sizes, which could need ~3 GB on a turn, under
   `MAX_CELLS` (not fuzzed: the fuzz keeps each process under 1 GB). Left: the catch-all is a heuristic.
+  `--live` plays live low-stakes cash instead: 6-9 handed (mostly 9), 100-300bb with mixed stacks, a straddle now and
+  then, 10% rake to a 2.5-4bb cap, Against set to the typical live player most of the time, and most seats limping,
+  calling wide (opens of 3-6bb, few 3bets) and calling down with pairs and draws, so flops go multiway; two soft flags
+  for reading the advice (`mw_bluff`: a bet or raise with no pair and no draw into 4+ players; `rec_ev_gap`). 240
+  hands (seed 11), 4,023 decisions: of 204 flops 65 were heads-up, 50 3-way, 34 4-way, 55 5-6 way. Postflop, heads-up
+  was solved 100%, 3-way 96%, 4-way 63% (Quick's 4-way flops in the browser go to the rules), 5-way 5% and 6-way 0%
+  (the rules: the 5-way solve is off and none plays six before the river); no error, no catch-all answer. One hole,
+  fixed (tests/test_multiway_solver.py TestRootLocked): the multiway solves offered a raise after an all-in for less
+  had closed the betting (QcQd bet 26 on 6c5h7h, an all-in for 35 and a call: raise to 68 recommended). Also found:
+  Quick's 3-way flop game (`MW_QUICK_FLOP`, 6 hand buckets on the later streets) puts strong hands' EVs near zero
+  (top set facing a lead 3-way, call -0.16 bb where 12 buckets give +4.1 and Fast +5.9) while reading itself settled;
+  and in multiway pots exploit mode plays at equilibrium after the flop.
 * `Advisor.play`'s opponents (the frozen copy's and Lizard's Practice) heads-up after the flop read their move off your own solve, whose ranges leave out
   your cards (as your advice does): an edge the size of a blocker. A line of yours the solve rarely
   takes, a hand of theirs it gives no weight, or a pot that became heads-up mid-street, gets a solve from their

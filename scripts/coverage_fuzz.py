@@ -48,6 +48,17 @@ Flags (per decision):
   library_slow     (count) a library answer that took over LIB_SLOW seconds (not counting the Breakdown view's
                    requests: its range equities take ~1 s on top)
 
+--live plays live low-stakes cash instead (gen_live_setup): 6-9 handed, mostly 9, 100-300bb with mixed stacks,
+a straddle now and then, 10% rake to a 2.5-4bb cap, Against set to the typical live player most of the time, and
+most seats in the "live" style (choose_live: limps and wide calls preflop, opens of 3-6bb, calling down with pairs
+and draws, few bluffs), so flops go 3-6 way. It adds two soft flags for reading the advice:
+  mw_bluff         (soft) 4+ players in the pot postflop and the advice bets or raises a hand without a pair or a
+                   flush or straight draw (against several live callers, the bluff needs everyone to fold)
+  rec_ev_gap       (soft) the recommended action's EV trails the best one by more than max(1bb, 10% of the pot)
+and records each postflop decision's hand ("hc": made-hand class, pair kind, draws) for the report's live section.
+
+  python scripts/coverage_fuzz.py --live --seed 11 --hands 200 --minutes 90
+
 Resumable and seeded: hand i plays from Random(f"{seed}:{i}"), its records are written when it ends (one line per
 decision, then a "done" line), and a run skips hands already done in --out. Run it in chunks:
 
@@ -147,8 +158,37 @@ _LINE_RANGES = {}   # (--standard: a library line's two ranges entering the flop
 STANDARD = 0.0  # (--standard: the share of hands on a flop library line)
 
 
+LIVE = False   # (--live)
+LIVE_STYLES = [("live", 0.7), ("advice", 0.2), ("nit", 0.05), ("aggro", 0.05)]
+
+
+def gen_live_setup(rng):
+    """A live low-stakes cash table (--live)."""
+    from gto import preflop as pf
+    n = rng.choice([9, 9, 9, 9, 8, 8, 7, 6])
+    seats = list(pf.SEATS[n])
+    stack = float(rng.choice([100, 100, 100, 150, 200, 200, 250, 300]))
+    s = {"players": n, "stack": stack}
+    if rng.random() < 0.5:
+        st = {p: float(pick(rng, [(stack, 4), (rng.choice([40, 60, 80, 120, 150, 200, 300, 400]), 4),
+                                  (round(rng.uniform(25, 400)), 2)])) for p in seats}
+        if any(abs(v - stack) > 1e-9 for v in st.values()):
+            s["stacks"] = st
+    if n >= 6 and rng.random() < 0.2:
+        s["straddle"] = True
+    if rng.random() < 0.8:
+        s["rake"] = 0.10
+        s["rake_cap"] = rng.choice([2.5, 3, 3.5, 4])
+    adv = {"opponents": "live"} if rng.random() < 0.85 else {}
+    mode, speed = pick(rng, PROFILES)
+    return {"seats": seats, "table": s, "adv": adv, "mode": mode, "speed": speed, "jam": False,
+            "breakdown": rng.random() < 0.03}
+
+
 def gen_setup(rng):
     from gto import preflop as pf
+    if LIVE:
+        return gen_live_setup(rng)
     if STANDARD and rng.random() < STANDARD:
         # the flop library's game on one of its stored lines (the opens the big blind calls, stored on every flop,
         # most often), played mostly by the advice
@@ -382,6 +422,98 @@ def choose(rng, style, cur, p, stk, res, n_raises_cap=6):
     return {"action": "raise", "to": max(to, 0.5)}
 
 
+RANKS = "23456789TJQKA"
+
+
+def pre_score(hole):
+    """A rough preflop strength, 0..1 (the Chen formula's points over 20)."""
+    r1, r2 = sorted((RANKS.index(hole[0]), RANKS.index(hole[2])), reverse=True)
+    pts = {12: 10, 11: 8, 10: 7, 9: 6}.get(r1, (r1 + 2) / 2)
+    if r1 == r2:
+        return min(1.0, max(5, pts * 2) / 20)
+    if hole[1] == hole[3]:
+        pts += 2
+    gap = r1 - r2 - 1
+    pts -= [0, 1, 2, 4, 5][min(gap, 4)]
+    if gap <= 1 and r1 < 10:
+        pts += 1
+    return max(0.0, pts / 20)
+
+
+def hand_info(hole, board):
+    """Postflop: (treys class 1-9, pair kind for one pair: top/over/mid/low/board, flush draw, straight draw)."""
+    cls, paired = hand_rank(hole, board)
+    br = [RANKS.index(board[i]) for i in range(0, len(board), 2)]
+    hr = [RANKS.index(hole[0]), RANKS.index(hole[2])]
+    kind = None
+    if cls == 8:
+        if hr[0] == hr[1]:
+            kind = "over" if hr[0] > max(br) else "mid" if hr[0] > min(br) else "low"
+        else:
+            hit = [r for r in hr if r in br]
+            kind = "board" if not hit else "top" if max(hit) == max(br) else "mid" if max(hit) > min(br) else "low"
+    fd = sd = False
+    if len(board) < 10:
+        suits = [board[i + 1] for i in range(0, len(board), 2)]
+        fd = cls > 4 and any(suits.count(x) + [hole[1], hole[3]].count(x) == 4 and x in (hole[1], hole[3]) for x in "shdc")
+        allr = set(br + hr)
+        allr |= {-1} if 12 in allr else set()
+        sd = cls > 5 and any(len({r for r in range(lo, lo + 5)} & allr) == 4 and
+                             any(r in range(lo, lo + 5) for r in hr + ([-1] if 12 in hr else [])) for lo in range(-1, 9))
+    return cls, kind, fd, sd
+
+
+def choose_live(rng, cur, p, stk, hole, board):
+    """A typical live low-stakes player's move (--live): limps and calls wide preflop, raises to 3-6bb first in,
+    rarely 3bets; postflop bets its made hands, calls down with pairs and draws, bluffs little."""
+    i = info_of(cur, p, stk)
+    pot = cur.pot_start + sum(cur.bets.values())
+    can_r = i["raise_ok"] and i["remaining"] > i["to_call"] + 1e-9
+    if i["pre"]:
+        sc = pre_score(hole)
+        n_call = sum(1 for q, b in cur.bets.items() if q != p and b >= cur.cur_bet - 1e-9) - 1
+        if cur.n_raises == 0:   # unopened (blinds, a straddle, limps)
+            if sc >= 0.5 and can_r and rng.random() < 0.8:
+                return {"action": "raise", "to": cur.cur_bet * rng.choice([3, 4, 5, 5, 6]) + max(0, n_call) * cur.cur_bet}
+            if sc >= 0.25 or (sc >= 0.15 and rng.random() < 0.4):
+                return {"action": "call" if i["facing"] else "check"}
+            return {"action": "fold" if i["facing"] else "check"}
+        if cur.n_raises == 1:   # facing an open: calls wide, more with callers in already and a good price
+            if sc >= 0.7 and can_r and rng.random() < 0.6:
+                return {"action": "raise", "to": cur.cur_bet * rng.choice([2.5, 3, 3, 4])}
+            price = i["to_call"] / max(pot + i["to_call"], 1e-9)
+            if sc >= 0.28 or (sc >= 0.18 and price < 0.3 + 0.03 * max(0, n_call)):
+                return {"action": "call"}
+            return {"action": "fold"}
+        if sc >= 0.75:   # facing a 3bet or more
+            return {"action": "all-in"} if can_r and rng.random() < 0.5 else {"action": "call"}
+        return {"action": "call"} if sc >= 0.6 and cur.n_raises == 2 else {"action": "fold"}
+    cls, kind, fd, sd = hand_info(hole, board)
+    river = len(board) == 10
+    strong = cls <= 6 or (cls == 7 and rng.random() < 0.8)
+    good = cls == 7 or kind in ("top", "over")
+    draw = fd or sd
+    if not i["facing"]:
+        r = rng.random()
+        if (strong and r < 0.75) or (good and r < 0.55) or (draw and not river and r < 0.25) or \
+                (len(cur.active) == 2 and r < 0.08) or r < 0.03:
+            return {"action": "raise", "to": rng.choice([0.33, 0.5, 0.5, 0.66, 0.75, 1.0]) * pot}
+        return {"action": "check"}
+    frac = i["to_call"] / max(pot - i["to_call"], 1e-9)
+    r = rng.random()
+    if strong:
+        if can_r and r < 0.35:
+            return {"action": "raise", "to": cur.cur_bet * rng.choice([2.5, 3, 3.5]) + (pot - cur.cur_bet) * 0.3}
+        return {"action": "call"}
+    if good:
+        return {"action": "call"} if frac <= (1.5 if not river else 1.0) or r < 0.5 else {"action": "fold"}
+    if kind in ("mid", "low", "board") and cls == 8:
+        return {"action": "call"} if frac <= (0.75 if not river else 0.4) and r < 0.75 else {"action": "fold"}
+    if draw and not river:
+        return {"action": "call"} if frac <= 1.0 or r < 0.3 else {"action": "fold"}
+    return {"action": "call"} if r < 0.08 else {"action": "fold"}
+
+
 def tags_of(setup, cur, p, rep, n_board, streets):
     t, adv = setup["table"], setup["adv"]
     pre = rep[0]
@@ -452,6 +584,15 @@ def flags_of(res, cur, p, stk, state, est, secs):
         fl.append("fallback")
     if secs > SLOW_X * est + SLOW_S:
         fl.append("slow")
+    if rec is not None and acts:
+        evs = [a.get("ev_bb") for a in acts if isinstance(a.get("ev_bb"), (int, float))]
+        rev = rec.get("ev_bb")
+        if evs and isinstance(rev, (int, float)) and max(evs) - rev > max(1.0, 0.1 * (res.get("pot_bb") or 0)):
+            fl.append("rec_ev_gap")
+    if rec is not None and state["board"] and len(cur.active) >= 4 and str(rec["action"]).startswith(("bet", "raise", "all-in")):
+        cls, kind, fd, sd = hand_info(state["hole"], state["board"])
+        if cls == 9 and not fd and not sd:
+            fl.append("mw_bluff")
     if rec is not None and rec["action"] == "fold":
         hole = state["hole"]
         if not state["board"]:
@@ -628,7 +769,8 @@ def play_hand(seed, h):
     else:
         holes = {p: card_str(deck[2 * k]) + card_str(deck[2 * k + 1]) for k, p in enumerate(seats)}
     board_all = "".join(card_str(c) for c in deck[2 * len(seats):2 * len(seats) + 5])
-    styles = {p: "advice" if setup.get("line") and rng.random() < 0.8 else pick(rng, STYLES) for p in seats}
+    styles = {p: "advice" if setup.get("line") and rng.random() < 0.8 else pick(rng, LIVE_STYLES if LIVE else STYLES)
+              for p in seats}
     script = []   # (a library line's preflop moves, played as they come)
     if setup.get("line"):
         for x in setup["line"].split(","):
@@ -663,6 +805,8 @@ def play_hand(seed, h):
         else:
             rec["flags"] = flags_of(res, cur, p, stk, state, est, secs)
             rec["rec"] = res.get("recommended")
+            if board:
+                rec["hc"] = list(hand_info(holes[p], board))
             rec["actions"] = [(a.get("action"), a.get("freq"), a.get("ev_bb"), a.get("amount_bb")) for a in res.get("actions") or []]
             for key in ("error", "fallback", "fallback_reason", "fallback_where", "skipped"):
                 if key in res:
@@ -729,6 +873,8 @@ def play_hand(seed, h):
                 k += 1
         if script and cur.name == "preflop" and script[0]["pos"] == p:
             move = {k_: v_ for k_, v_ in script.pop(0).items() if k_ != "pos"}
+        if move is None and styles[p] == "live":
+            move = choose_live(rng, cur, p, stk, holes[p], board)
         if move is None:
             move = choose(rng, styles[p], cur, p, stk, res)
         a, why = page_act(move, cur, p, stk, clamp=True)
@@ -782,7 +928,7 @@ def run(args):
     print(f"{n_new} hands in {time.time() - t0:.0f}s", flush=True)
 
 
-SOFT = {"fallback", "slow", "study_refused", "free_fold", "strong_fold", "library_slow"}
+SOFT = {"fallback", "slow", "study_refused", "free_fold", "strong_fold", "library_slow", "mw_bluff", "rec_ev_gap"}
 
 
 def report(path, out=None, examples=3):
@@ -874,12 +1020,13 @@ def main():
     ap.add_argument("--out", default=None, help="jsonl (default .work/coverage/fuzz_<seed>.jsonl)")
     ap.add_argument("--report", nargs="?", const="-", default=None, help="summarize --out (to this file, or stdout)")
     ap.add_argument("--harsh", action="store_true", help="the odd setups far more often")
+    ap.add_argument("--live", action="store_true", help="live low-stakes cash tables (gen_live_setup, choose_live)")
     ap.add_argument("--standard", type=float, default=0.0, help="this share of hands on the flop library's lines")
     ap.add_argument("--repro", default=None, help="HAND:K: ask hand HAND's record K again (its stored state), verbose")
     args = ap.parse_args()
     args.out = args.out or OUT_DEFAULT.format(seed=args.seed)
-    global HARSH, STANDARD
-    HARSH, STANDARD = args.harsh, args.standard
+    global HARSH, STANDARD, LIVE
+    HARSH, STANDARD, LIVE = args.harsh, args.standard, args.live
     if args.report:
         text, _, _ = report(args.out, None if args.report == "-" else args.report)
         print(text if args.report == "-" else text.split("\n## Coverage")[0])

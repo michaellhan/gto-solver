@@ -5761,6 +5761,10 @@ class Advisor:
                 and not shoved else self.mw_street_config.get(cur.name, {})
             mcfg = MW.MWConfig(rake_rate=self.cfg.rake_rate, rake_cap=self.cfg.rake_cap,
                                **{**street_cfg, **(self.mw_config or {})})
+        if not can_raise(cur, hero):
+            # (an all-in for less than a full raise didn't reopen the betting for you: fold or call. 3-handed QcQd bet 26 on
+            # 6c5h7h, BTN all-in for 35 and UTG1 called: the solve offered, and recommended, a raise to 68)
+            mcfg.root_locked = True
         if getattr(self, "_jam", False):
             mcfg.root_jam = True   # (a jam request: all-in offered however deep, at your decision: the solve's root)
         model = getattr(self, "_icm", None)
