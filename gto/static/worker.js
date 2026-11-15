@@ -317,6 +317,18 @@ const ready = (async () => {
              + "advs['fast'].mw4_street_config = None if _slow else advs['fast'].mw4_street_config; "
              + "advs['accurate'].mw4_street_config = None if _slow else advs['accurate'].mw4_street_config; "
              + "advs['fast'].mw4_quick_flop = None if _slow else advs['fast'].mw4_quick_flop; "
+             // 5-way flops and turns: the 5-player solve (advisor.MW5_STREETS; Fast MW5_FAST_STREETS), in the core, but
+             // not Fast's flop and neither without the core (and a turn's first decision is the rules':
+             // advisor.MW5_FIRST_TURN_NOTE). Timed on the SB first to act, the solve answering it there
+             // (scripts/bench_browser.mjs mw5-turn, mw5-flop): a turn Fast 192 iterations in 5.7 s of solve, 0.03% of
+             // the pot from equilibrium (8 threads 400 in 3.5 s, 0.01%), Accurate 400 in 26 s, 0.01% (8 threads 7.2 s);
+             // a flop Accurate 147 iterations in its 60 s, 0.16% (8 threads 754, 0.02%).
+             // Fast's flop built its tables and stopped after 1 iteration (202% of the pot from equilibrium) at 1
+             // and 8 threads alike, 9.5 s before the rules answered, so the rules answer it at once
+             + "from gto.advisor import MW5_FAST_STREETS; "
+             + "advs['fast'].mw5_street_config = {s: dict(c) for s, c in MW5_FAST_STREETS.items() if s != 'flop'}; "
+             + "advs['fast'].mw5_street_config = None if _slow else advs['fast'].mw5_street_config; "
+             + "advs['accurate'].mw5_street_config = None if _slow else advs['accurate'].mw5_street_config; "
              // 4+ way rivers (and two all-in) by the N-player solve (scripts/bench_browser.mjs): 4-way 2.5 s at Fast, 50
              // iterations, 0.08% of the pot from equilibrium (Quick 1.8 s, 0.27%); 5-way 7.6 s, 0.1% (Quick 5 iterations,
              // 5.4%); 6-way ~3 s an iteration, so Fast leaves it to the rules and Accurate's 60 s solve it

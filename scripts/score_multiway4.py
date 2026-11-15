@@ -69,6 +69,7 @@ def solve_adv(speed, iters=200, game=None):
             r.mw4_quick_flop = {**r.mw4_quick_flop, **game}
         else:
             r.mw4_street_config["flop"].update(game)
+    r.mw5_first_turn = True     # (the solve's first decision too, which the advice leaves to the rules)
     return r
 
 def rules_adv(trials):
@@ -78,7 +79,8 @@ def rules_adv(trials):
 def build(a):
     os.makedirs(HERE, exist_ok=True)
     for pre in a.pres.split(","):
-        fn = os.path.join(HERE, f"ref{5 if pre == 'limp5' else 4}{'' if pre in ('srp4', 'limp5') else '_' + pre}_{a.build}.json")
+        fn = os.path.join(HERE, f"ref{5 if pre == 'limp5' else 4}{'' if pre in ('srp4', 'limp5') else '_' + pre}_{a.build}"
+                          + (f"_r{a.rivers}" if a.rivers and a.rivers != 8 else "") + ".json")
         out = json.load(open(fn)) if os.path.exists(fn) else []
         mk = mk_state(pre); L = lines_for(pre)
         for ln in a.lines.split(","):

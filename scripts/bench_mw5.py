@@ -1,0 +1,109 @@
+"""5-way flop and turn bucket games against a richer one (no per-combo reference fits a 5-way flop: the README's N-player
+pots): the limped 5-way pot of scripts/score_multiway4.py (UTG, HJ, BTN and SB limp, the BB checks; 6-max 100bb), a
+line's ranges as the betting rules narrow them, solved in each game for a number of iterations and compared with the
+first game: the advised player's range frequencies, its mix played against the first game's EVs (% of the pot given up,
+weighted by its range), each game's own exploitability (mean best-response gain, % of the pot), and its CPU (the tables,
+then ms an iteration, one thread unless GTO_THREADS says otherwise).
+
+  python scripts/bench_mw5.py Kh7d2c first 8:3:0.5:300,4:6:0.5:200,3:6:0.5:200,4:6:0:200
+  python scripts/bench_mw5.py Kh7d2c9s "vs bet" 10:1:0.5:200,6:1:0.5:200,4:1:0.5:200
+  python scripts/bench_mw5.py Kh7d2c first 6:3:0.5:300,4:6:0.5:200 --rules 80   # the betting rules too, on 80 hands
+
+--rules N plays the betting rules (Advisor._multiway, 400 trials) on N hands drawn from the advised player's range by
+weight and scores their mix against the first game's EVs the same way (the hands' mean, the games' on the same hands).
+
+A game is K:step:eq:iterations (buckets a player below the root street, the turn's tables over every step-th river
+from a flop, MWConfig.bucket_eq, iterations). Lines: first, last checked to, vs bet, vs bet+call (score_multiway4.py's).
+"""
+import sys, os, time, resource
+ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+sys.path.insert(0, ROOT); sys.path.insert(0, os.path.join(ROOT, "scripts"))
+import numpy as np
+import score_multiway4 as S
+import compare_multiway as CM
+import gto.advisor as A
+from gto.multiway_solver import MWConfig, MultiwaySolver
+
+
+def spot(board, line):
+    hero, acts = S.lines_for("limp5")[line]
+    if len(board) == 6:      # (a flop: the line's bet is a third of the pot, as the solve's)
+        acts = [dict(a, amount=round(5 * 0.33, 1)) if a["action"] == "bet" else a for a in acts]
+    _, _, b, ranges, remaining, cur, stk = CM._spot_args(S.rules_adv(10), S.mk_state("limp5")(board, hero, "2s2h", acts))
+    players = [p for p in cur.order if p in remaining]
+    hp = players.index(hero)
+    pending = {i for i, p in enumerate(players) if p not in cur.acted} | {hp}
+    St = min(stk[p] - cur.inv_start[p] for p in players)
+    return b, [ranges[p] for p in players], cur.pot_start, St, dict(bets=[cur.bets[p] for p in players], to_act=hp,
+                                                                     n_raises=cur.n_raises, pending=pending), hp
+
+
+def main():
+    args = sys.argv[1:]
+    n_rules = 0
+    if "--rules" in args:
+        i = args.index("--rules"); n_rules = int(args[i + 1]); del args[i:i + 2]
+    board, line, games = args[0], args[1], [g.split(":") for g in args[2].split(",")]
+    b, rs, pot, St, kw, hp = spot(board, line)
+    ref = None
+    drawn = None
+    for K, step, eq, it in games:
+        cfg = MWConfig(bet=A.MW4_BETS, max_raises=1, root_raise=True, later="buckets", buckets=int(K),
+                       bucket_river_step=int(step), bucket_eq=float(eq))
+        t0 = time.process_time()
+        s = MultiwaySolver(b, rs, pot, St, cfg=cfg, **kw)
+        tb = time.process_time() - t0
+        t0 = time.process_time()
+        s.run(iters=int(it))
+        ti = (time.process_time() - t0) / int(it) * 1000
+        g = s.br_gains() / s.root_pot() * 100
+        sig = s.root.avg_strategy()[0]
+        ev = s.action_evs()
+        w = s.reach0[hp, 0] / s.reach0[hp, 0].sum()
+        freqs = {n: float((w * sig[i]).sum()) for i, n in enumerate(s.root.names)}
+        row = f"{K}:{step}:{eq}:{it}  tables {tb:5.1f}s  {ti:6.1f} ms/it  expl {g.mean():.3f}%  " + \
+              " ".join(f"{n} {f * 100:4.1f}" for n, f in freqs.items())
+        if ref is None:
+            ref = (sig, ev, s.root_pot())
+            if n_rules:
+                rng = np.random.default_rng(7)
+                live = np.flatnonzero(w > 0)
+                drawn = rng.choice(live, size=min(n_rules, len(live)), replace=False, p=w[live] / w[live].sum())
+                print(rules_row(s, drawn, ref, board, line, hp), flush=True)
+        else:
+            rsig, rev, rp = ref
+            loss = ((rsig * rev).sum(axis=0) - (sig * rev).sum(axis=0)) / rp * 100
+            tv = 0.5 * np.abs(sig - rsig).sum(axis=0)
+            row += f"  | vs first: mix loss {float((w * loss).sum()):.3f}% pot, TV {float((w * tv).sum()):.3f}"
+            if drawn is not None:
+                row += f", on the rules' hands {float(loss[drawn].mean()):.3f}%"
+        print(row + f"  maxrss {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6:.0f} MB", flush=True)
+
+
+def rules_row(s, drawn, ref, board, line, hp):
+    """The betting rules' mix on the drawn combos against the first game's EVs (% of the pot given up, their mean)."""
+    from gto.cards import ALL_COMBOS, cards_str
+    rsig, rev, rp = ref
+    hero, acts = S.lines_for("limp5")[line]
+    if len(board) == 6:
+        acts = [dict(a, amount=round(5 * 0.33, 1)) if a["action"] == "bet" else a for a in acts]
+    adv = S.rules_adv(400)
+    names = list(s.root.names)
+    amts = [x or 0 for x in s.root.amounts]
+    out, bet = [], 0.0
+    for ci in drawn:
+        h = cards_str(ALL_COMBOS[int(s.hands.active[ci])])
+        r = adv.advise(S.mk_state("limp5")(board, hero, h, acts))
+        v = 0.0
+        for x in r["actions"]:
+            same = [i for i, n in enumerate(names) if S.kind(n) == S.kind(x["action"])]
+            if same:
+                i = min(same, key=lambda i: abs(amts[i] - (x.get("amount_bb") or 0)))
+                v += x["freq"] * rev[i, ci]
+                bet += x["freq"] * (S.kind(x["action"]) in ("bet", "raise")) / len(drawn)
+        out.append(((rsig[:, ci] * rev[:, ci]).sum() - v) / rp * 100)
+    return f"rules on {len(drawn)} hands: mix loss {np.mean(out):.3f}% pot (bets/raises {bet * 100:.0f}%)"
+
+
+if __name__ == "__main__":
+    main()

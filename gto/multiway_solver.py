@@ -93,6 +93,9 @@ class MWConfig:
     # range's top sixth held sets with the one-pair hands that fold to the turn's bet, and a combo's value is its
     # bucket's): 3-way, BTN 5d5c facing a lead on 4c5h2h, call -0.16 bb in 6 buckets where 24 give +13.2
     bucket_power: float = 0.0
+    # bucket_eq: a blend of that share (0) and its share times equity (1, as bucket_power 1 from 0: finer at the top,
+    # where a 5-way pot's value is): at 0.75 (advisor.MW5_EQ) a set no longer shares its river bucket with top pair
+    bucket_eq: float = 0.0
     allin_step: int = 11         # from a flop: a three-way root-street all-in's runouts (Runout), every step-th of the
                                  # turn and river cards' spacings (11: ~147 of 1176, even over the cards; 1: every one)
     # allin: the players all-in at the root (their indices; three players: at most one, more is pairwise): they never
@@ -500,6 +503,7 @@ class Builder:
     def __init__(self, hands: Hands, cfg: MWConfig, n_players: int, dead: set):
         self.h, self.cfg, self.np, self.dead = hands, cfg, n_players, set(dead)
         self.rng = random.Random(cfg.seed)
+        self._samples: Dict[tuple, list] = {}   # (board, k) -> its sampled next cards (_children)
         self.decisions: List[Decision] = []
         self.exits: List[Exit] = []
         self.runouts: List[Runout] = []
@@ -588,12 +592,17 @@ class Builder:
         return [x for x in range(52) if x not in self.dead and x not in b]
 
     def _children(self, boards, k):
-        """The next card for every board: all of them, or k sampled per board."""
+        """The next card for every board: all of them, or k sampled per board, the same k wherever the board comes up
+        (drawn anew at each chance node, a turn root's call and raise lines met different rivers: a reference's EVs
+        of the two came apart by the draw)."""
         out = []
         for b in boards:
             cs = self._cards_after(b)
             if k is not None and k < len(cs):
-                cs = sorted(self.rng.sample(cs, k))
+                key = (tuple(b), k)
+                if key not in self._samples:
+                    self._samples[key] = sorted(self.rng.sample(cs, k))
+                cs = self._samples[key]
             out.append(cs)
         K = min(len(cs) for cs in out)
         return [cs[:K] for cs in out], K
@@ -954,9 +963,9 @@ class BucketTables:
                                                                         dtype=np.float32)
 
     @staticmethod
-    def _buckets(eq, wt, K, power=0.0):
-        """Bucket ids: K equal shares of the weight wt (times eq ** power) ordered by eq; combos with no weight by
-        their equity."""
+    def _buckets(eq, wt, K, power=0.0, eq_split=0.0):
+        """Bucket ids: K equal shares of the weight wt (times eq ** power) ordered by eq (eq_split 1: of that times eq;
+        between: a blend of the two shares, each normalised); combos with no weight by their equity."""
         n = len(eq)
         ids = np.zeros(n, dtype=np.intp)
         idx = np.flatnonzero(wt > 0)
@@ -964,6 +973,10 @@ class BucketTables:
             return ids
         order = idx[np.argsort(eq[idx], kind="stable")]
         ws = wt[order] * np.maximum(eq[order], 1e-6) ** power if power else wt[order]
+        if eq_split > 0:
+            we = ws * np.maximum(eq[order], 0.0)
+            if we.sum() > 0:
+                ws = (1 - eq_split) * ws / ws.sum() + eq_split * we / we.sum()
         cum = np.cumsum(ws)
         b = np.minimum(((cum - ws / 2) / cum[-1] * K).astype(np.intp), K - 1)
         ids[order] = b
@@ -993,7 +1006,7 @@ class BucketTables:
                 lq, eq_ = kle[o[0]]
                 num = ((lq + 0.5 * eq_) * rm).sum(axis=0)
                 den = (ku[o[0]] * rm).sum(axis=0)
-            ids[i] = self._buckets(np.where(den > 0, num / np.where(den > 0, den, 1.0), 0.0), wt[i], K, s.cfg.bucket_power)
+            ids[i] = self._buckets(np.where(den > 0, num / np.where(den > 0, den, 1.0), 0.0), wt[i], K, s.cfg.bucket_power, s.cfg.bucket_eq)
         OH = [np.eye(K)[ids[i]] for i in range(npl)]                           # (n, K)
         Wk, Ek, Uk, Ub = [], [], [], []
         for i in range(npl):
@@ -1089,7 +1102,7 @@ class BucketTables:
                     num = num * (kle[o][0] + 0.5 * kle[o][1])
                     den = den * ku[o]
             num, den = num.sum(axis=0), den.sum(axis=0)
-            ids[i] = self._buckets(np.where(den > 0, num / np.where(den > 0, den, 1.0), 0.0), wt[i], K, s.cfg.bucket_power)
+            ids[i] = self._buckets(np.where(den > 0, num / np.where(den > 0, den, 1.0), 0.0), wt[i], K, s.cfg.bucket_power, s.cfg.bucket_eq)
         OH = [np.eye(K)[ids[i]] for i in range(npl)]                           # (n, K)
         # (every player's buckets in one pass of the kernels: (R, n, npl K))
         xb = np.concatenate([x[i][:, :, None] * OH[i][None] for i in range(npl)], axis=2)

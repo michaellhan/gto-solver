@@ -437,3 +437,66 @@ as 33), UTG folds, LJ calls, HJ folds; the turn 6h. In the reference (39 and 75%
 Through the advisor itself at Fast: before, bet 75% at 100%, 6.86, LJ 100 combos; after, check at 100%, 8.70, bet 33% 6.79, bet
 75% 4.99, LJ 108 combos, 1.6 s, the flop's 199 iterations read at 0.1%. The answer is the reference's, but on one hand. EVs
 stay high, and LJ's range is still more than twice the reference's: the walk is closer, not close.
+
+## 5-way flops and turns
+
+The 5-player solve was built and left off: against 5-way turn references it gave up more of the pot than the betting
+rules, 5.9% facing a bet where they gave up 2.0. Two things were wrong, one in the solve and one in the reference.
+
+**The buckets.** Below the root street each player's range is K buckets ordered by equity against the others. They were K
+equal shares of the range's weight. With five players most of a range is near nothing and the value sits in a thin top:
+a set shared its river bucket with top pair, so after a raise its value was the bucket's average against the callers'
+top buckets. The solve never raised. UTG's 9c9d facing the BB's half-pot turn bet on Kh7d2c9s (limped 5 ways, the flop
+checked through): raise 7.4 bb, call better; the per-combo reference raises for 15.4. `MWConfig.bucket_eq` splits the
+buckets by a blend of weight and weight times equity, (1 - λ)·w/Σw + λ·w·eq/Σ(w·eq) in equity order, so they are finer at
+the top. At λ = 0.75 (`advisor.MW5_EQ`) the same hand raises. 3- and 4-way keep 0.
+
+**The reference.** `score_multiway4.py --rivers k` deals k sampled rivers. They were drawn at each chance node, so the
+turn's call line and raise line met different rivers. `Builder._children` now draws them once per board. 16 rivers
+reach mem-guard's 1 GB pause line on the facing-a-bet line; 12 stay under 0.9 GB and take 4-26 minutes of CPU a line.
+
+**Turns.** Whole-range mix loss against the 12-river references, % of the pot, two boards (UTG, HJ, BTN and SB limp, the
+BB checks, the flop checked through), four lines each. Fast's game is 4 river buckets, Accurate's 6.
+
+| line | board | Fast λ 0 | Fast 0.5 | Fast 0.75 | Accurate 0 | Accurate 0.5 | Accurate 0.75 | rules |
+|---|---|---|---|---|---|---|---|---|
+| first to act | Kh7d2c9s | 0.89 | 0.92 | 0.82 | 0.77 | 0.61 | 0.69 | 0.37 |
+| | Jh9h5c3s | 1.00 | 1.17 | 0.62 | 0.63 | 0.65 | 0.76 | 0.57 |
+| checked to | Kh7d2c9s | 0.25 | 0.50 | 0.26 | 0.19 | 0.30 | 0.25 | 0.42 |
+| | Jh9h5c3s | 0.36 | 0.70 | 0.50 | 0.26 | 0.51 | 0.60 | 1.88 |
+| facing a bet | Kh7d2c9s | 3.92 | 1.63 | 0.76 | 3.37 | 0.92 | 1.19 | 1.37 |
+| | Jh9h5c3s | 2.98 | 1.91 | 1.31 | 1.48 | 1.52 | 1.38 | 1.46 |
+| facing a bet and a call | Kh7d2c9s | 4.82 | 0.67 | 0.78 | 2.51 | 0.95 | 0.77 | 0.90 |
+| | Jh9h5c3s | 4.68 | 1.65 | 1.15 | 1.40 | 1.62 | 1.06 | 1.02 |
+
+The split matters where a bet is faced and costs a little where none is. 0.75 is the best single value over the eight
+line-boards for Fast's game (0.78% of the pot on average; 0.5 1.14, 0 2.36) and close to it for Accurate's (0.84; 0.5
+0.89, 0 1.33). Accurate's 6 buckets do no better than Fast's 4 here; the references' own sampling is about that size, and
+Accurate keeps 6. Without the first decision the solve gives up 0.79 (Fast) and 0.88 (Accurate) on average, the rules
+1.18: it wins checked to and facing a bet on both boards, and facing a bet and a call is level (Jh9h5c3s 1.15 and 1.06
+against the rules' 1.02). First to act the rules win on both boards in both games: they
+check 93% and 77% of the range against the reference's 80 and 68, and the solve's misses are second pair bet where the
+reference checks and a few thin bets checked. So the advice leaves a turn's first decision to the rules
+(`advisor.MW5_FIRST_TURN_NOTE`; `Advisor.mw5_first_turn` turns the solve back on there, as `score_multiway4.py --solver`
+does). Splitting only when a bet is faced would win the unbet lines back too, but on two boards that is fitting noise.
+
+**Flops.** No per-combo 5-way flop reference fits in memory, so flops are scored as 4-way flops were, against a richer
+bucket game: 6 buckets on every third river, 300 iterations, split 0.5 (`scripts/bench_mw5.py`, Kh7d2c, the rules on 60
+hands drawn by weight).
+
+| game | first to act | facing a bet |
+|---|---|---|
+| 3 buckets, every sixth river, λ 0.75, 22 iterations (native Fast, 4 threads) | 0.24 | 0.38 |
+| the same, 50 iterations (8 threads) | 0.12 | 0.23 |
+| 3 buckets, λ 0.5, 22 iterations | 0.30 | 1.12 |
+| 3 buckets, λ 0, 200 iterations | 0.46 | 1.47 |
+| 4 buckets, λ 0.5, 200 iterations | 0.03 | 0.18 |
+| 4 buckets, λ 0, 200 iterations | 0.31 | 0.93 |
+| the rules | 0.46 | 0.89 |
+
+**Where it runs.** On one thread native Fast's flop builds its tables (2 s) and its first iteration (0.8 s), and the 10
+iterations' time `MW5_RESERVE` keeps back for the best responses leave no room for a second: it stopped at 1 iteration,
+167% of the pot from equilibrium, and the rules answered after 5 s. So Fast plays 5-way flops only with `THREADED_FAST`
+threads or more (22-51 iterations on 4, 51-88 on 8). The browser's Fast flop stopped the same way at 1 and 8 threads
+(9.5 s), so it is off there; the browser's turns and Accurate's flops fit (`worker.js`). Quick leaves 5-way spots to the
+rules: a turn in 1.8 s ran 22-33 iterations first to act, 0.4-0.8% from equilibrium, no better than the rules' 0.37-0.57.

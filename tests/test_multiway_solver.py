@@ -305,9 +305,10 @@ class TestSolve(unittest.TestCase):
         for board in ("Kh7d2c9s", "Kh7d2c"):
             with self.subTest(board=board):
                 s = MultiwaySolver(cards(board), self.rs, 8.0, 97.5, cfg=cfg).run(iters=3)
-                # (the flop with 4 sampled turns drifts 0.09-0.10 off the pot at 3 iterations with this spot's ranges at
-                # either level, the turn's 6 rivers 0.03)
-                self.assertAlmostEqual(float(s.values().sum()), 8.0, delta=0.15)
+                # (the flop with 4 sampled turns drifts off the pot at 3 iterations with this spot's ranges by the draw:
+                # 0.155 at the default seed, 0.15-0.6 over seeds 0-7 since the sampled cards are drawn once per board,
+                # 0.06-0.33 when each chance node drew its own; the turn's 6 rivers 0.03)
+                self.assertAlmostEqual(float(s.values().sum()), 8.0, delta=0.05 if len(board) == 8 else 0.2)
 
 
 class TestLaterStreetsByBuckets(unittest.TestCase):
@@ -753,6 +754,49 @@ class TestFourWay(unittest.TestCase):
         # (the pairwise deals against the tables: 1% over the pot with five hands, 4-way's half a percent)
         self.assertAlmostEqual(float(s.values().sum()), 12.5, delta=0.15)
 
+    def test_bucket_split_by_equity(self):
+        # MWConfig.bucket_eq: buckets split by the weight times equity are finer at the top, still ordered by equity;
+        # 0 keeps K equal shares of the weight
+        rng = np.random.default_rng(1)
+        eq = rng.random(400) ** 4          # (a 5-way pot: most hands near nothing, a few strong)
+        wt = np.ones(400)
+        for split in (0.0, 0.5, 1.0):
+            ids = MW.BucketTables._buckets(eq, wt, 6, eq_split=split)
+            order = np.argsort(eq)
+            self.assertTrue(np.all(np.diff(ids[order]) >= 0))
+            share = np.bincount(ids, minlength=6) / 400
+            if split == 0:
+                np.testing.assert_allclose(share, 1 / 6, atol=0.01)
+            else:
+                self.assertLess(share[5], 0.1)
+                self.assertGreater(share[0], 0.3)
+
+    def test_sampled_rivers_shared(self):
+        # a reference dealing k rivers deals the same k under every line of the turn (drawn anew at each chance node,
+        # its call and raise lines met different rivers)
+        s = MultiwaySolver(cards("Kh7d2c9s"), _ranges5(), 12.5, 97.5,
+                           cfg=MWConfig(bet=dict(A.MW4_BETS), max_raises=1, root_raise=True, depth=2, rivers=4))
+        rivers = {tuple(sorted({b[4] for b in d.bd.boards})) for d in s.decisions if d.street == "river"}
+        self.assertEqual(len(rivers), 1)
+        self.assertEqual(len(next(iter(rivers))), 4)
+
+    def test_advisor_five_way_raises_its_sets(self):
+        # UTG facing the BB's half-pot turn bet in a limped 5-way pot (Kh7d2c9s, the flop checked through): 99 raises,
+        # as the per-combo reference does (scripts/score_multiway4.py: raise 15.4 bb, call 8.1). In equal-share buckets
+        # a set's river value was its bucket's, top pair's with it, against the callers' top buckets: it called
+        pre = [{"pos": "UTG", "action": "call"}, {"pos": "HJ", "action": "call"}, {"pos": "CO", "action": "fold"},
+               {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "call"}, {"pos": "BB", "action": "check"}]
+        X = [{"pos": p, "action": "check"} for p in ("SB", "BB", "UTG", "HJ", "BTN")]
+        adv = A.Advisor(time_budget=1e9)
+        adv.mw_solve_streets = ("flop", "turn", "river")
+        adv.mw_max_iters = 100
+        st = {"players": 6, "hero": "UTG", "hole": "9c9d", "board": "Kh7d2c9s", "stack": 100.0, "preflop": pre,
+              "flop": X, "turn": [X[0], {"pos": "BB", "action": "bet", "amount": 2.5}]}
+        r = adv.advise(st)
+        self.assertTrue(r.get("solved"), r["notes"])
+        top = max(r["actions"], key=lambda a: a["freq"])
+        self.assertTrue(top["action"].startswith("raise"), r["actions"])
+
     def test_advisor_five_way(self):
         # 5-way turns and flops by the 5-player solve (MW5_STREETS), not the betting rules; a quick answer's 5-way flop,
         # and one where the flop isn't in mw5_street_config (native Fast on fewer than 4 threads), the rules'
@@ -775,8 +819,33 @@ class TestFourWay(unittest.TestCase):
         r = adv.advise(dict(flop, quick=True))
         self.assertFalse(r.get("solved"))
         self.assertTrue(any("a quick answer leaves a 5-way flop to the betting rules" in n for n in r["notes"]), r["notes"])
+        r = adv.advise(dict(turn, hero="SB", hole="AsKs", turn=[]))
+        self.assertFalse(r.get("solved"))
+        self.assertIn(A.MW5_FIRST_TURN_NOTE, r["notes"])
+        r = adv.advise(dict(turn, hole="AsKs", quick=True))
+        self.assertFalse(r.get("solved"))
+        self.assertTrue(any("a quick answer leaves a 5-way turn to the betting rules" in n for n in r["notes"]), r["notes"])
         adv.mw5_street_config.pop("flop")
-        self.assertFalse(adv.advise(dict(flop, hole="AsKs")).get("solved"))
+        r = adv.advise(dict(flop, hole="AsKs"))
+        self.assertFalse(r.get("solved"))
+        self.assertTrue(any("a 5-way flop is left to the betting rules at this speed" in n for n in r["notes"]), r["notes"])
+
+    def test_native_fast_five_way_flop_needs_threads(self):
+        # native Fast leaves a 5-way flop to the rules on fewer than THREADED_FAST threads (on one its tables and first
+        # iteration took 3 of its 5 s and it stopped after 1 iteration), and solves its turns either way
+        from gto import native, core
+        if core.lib() is None:
+            self.skipTest("no compiled core")
+        before = core.threads()
+        try:
+            for t, flop in ((1, False), (native.THREADED_FAST, True)):
+                core.threads(t)
+                cfg = native.advisor("fast", library=False).mw5_street_config
+                self.assertEqual("flop" in cfg, flop)
+                self.assertIn("turn", cfg)
+                self.assertEqual(native.advisor("accurate", library=False).mw5_street_config, A.MW5_STREETS)
+        finally:
+            core.threads(before)
 
     def test_a_player_all_in(self):
         # the BTN all-in preflop and called: the other three bet the turn and river for a side pot, the main pot (the

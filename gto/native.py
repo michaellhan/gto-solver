@@ -11,7 +11,7 @@ for _v in ("VECLIB_MAXIMUM_THREADS", "OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", 
     os.environ.setdefault(_v, "1")
 
 from typing import Dict, Optional  # noqa: E402
-from .advisor import Advisor, MW_FAST_STREETS, MW4_FAST_STREETS  # noqa: E402
+from .advisor import Advisor, MW_FAST_STREETS, MW4_FAST_STREETS, MW5_FAST_STREETS  # noqa: E402
 from .solver import Config          # noqa: E402
 from .flop_library import default_library  # noqa: E402
 from . import mw_library  # noqa: E402
@@ -131,6 +131,10 @@ def advisor(speed: str = "fast", depth: int = 2, budget: Optional[float] = None,
     if speed == "fast":
         adv.mw_street_config = {st: dict(c) for st, c in MW_FAST_STREETS.items()}
         adv.mw4_street_config = {st: dict(c) for st, c in MW4_FAST_STREETS.items()}
+        # (5-way: the flop with THREADED_FAST threads or more only; on one its tables and first iteration take 3 of
+        # the 5 s and a best response's time is kept back, so it stopped after 1 iteration: the rules answer)
+        adv.mw5_street_config = {st: dict(c) for st, c in MW5_FAST_STREETS.items()
+                                 if st != "flop" or core.threads() >= THREADED_FAST}
         adv.mw_budget = MW_FAST_BUDGET
     adv.library = default_library() if library else None
     adv.mw_library = mw_library.default_library() if library else None

@@ -121,11 +121,28 @@ MW4_STREETS = {"flop": {"later": "buckets", "buckets": 8, "bucket_river_step": 3
 MW4_FAST_STREETS = {"flop": {"later": "buckets", "buckets": 6, "bucket_river_step": 4, "bucket_power": MW_BUCKET_POWER},
                     "turn": {"later": "buckets", "buckets": 8}}
 # 5-way flops and turns: the same game for five, in fewer buckets (the tensors are over bucket quintuples: K^5 a class;
-# natively in the compiled core a turn takes 15 ms an iteration in 4 buckets, 38 in 6, a flop 240 ms in 4 on one thread)
-MW5_STREETS = {"flop": {"later": "buckets", "buckets": 4, "bucket_river_step": 6},
-               "turn": {"later": "buckets", "buckets": 6}}
-MW5_FAST_STREETS = {"flop": {"later": "buckets", "buckets": 3, "bucket_river_step": 6},
-                    "turn": {"later": "buckets", "buckets": 4}}
+# natively in the compiled core a turn takes 15 ms an iteration in 4 buckets, 38 in 6, a flop 160-230 ms in 3 or 4 on
+# one thread after 2 s of tables), the buckets split by weight times equity (MWConfig.bucket_eq, MW5_EQ): in K equal
+# shares of the range a set shared its river bucket with top pair, so a raise was worth that bucket's average against
+# the callers' top ones and the solve never raised (UTG's 9c9d facing the BB's turn bet on Kh7d2c9s: raise 7.4 bb, the
+# per-combo reference 15.4). Against 5-way turn references dealing 12 rivers (scripts/score_multiway4.py --pres limp5
+# --rivers 12; Kh7d2c9s and Jh9h5c3s, four lines each), the whole range's mix loss (% of the pot) in Fast's / Accurate's
+# game at split 0 -> 0.75: facing a bet 3.92 / 3.37 -> 0.76 / 1.19 and 2.98 / 1.48 -> 1.31 / 1.38 (the rules 1.37,
+# 1.46), facing a bet and a call 4.82 / 2.51 -> 0.78 / 0.77 and 4.68 / 1.40 -> 1.15 / 1.06 (the rules 0.90, 1.02),
+# checked to 0.25 / 0.19 -> 0.26 / 0.25 and 0.36 / 0.26 -> 0.50 / 0.60 (the rules 0.42, 1.88); first to act 0.89 /
+# 0.77 -> 0.82 / 0.69 and 1.00 / 0.63 -> 0.62 / 0.76, where the rules gave up 0.37 and 0.57, so a turn's first decision
+# is theirs (MW5_FIRST_TURN_NOTE). Accurate's 6 buckets did no better than Fast's 4 (0.84 over the eight, 0.78).
+# On flops (Kh7d2c, no per-combo reference fits: against Accurate's flop game in 6 buckets on every third river, 300
+# iterations, scripts/bench_mw5.py) Fast's game at 22 iterations gave up 0.24 first to act and 0.38 facing a bet, at 50
+# 0.12 and 0.23, the rules 0.46 and 0.89; at split 0.5, 0.30 and 1.12 at 22
+MW5_EQ = 0.75
+MW5_FIRST_TURN_NOTE = ("the betting rules answer a 5-way turn's first decision: there they gave up less than the "
+                       "5-player solve against per-combo references (0.37 and 0.57% of the pot on two boards, the "
+                       "solve 0.62-0.82)")
+MW5_STREETS = {"flop": {"later": "buckets", "buckets": 4, "bucket_river_step": 6, "bucket_eq": MW5_EQ},
+               "turn": {"later": "buckets", "buckets": 6, "bucket_eq": MW5_EQ}}
+MW5_FAST_STREETS = {"flop": {"later": "buckets", "buckets": 3, "bucket_river_step": 6, "bucket_eq": MW5_EQ},
+                    "turn": {"later": "buckets", "buckets": 4, "bucket_eq": MW5_EQ}}
 HU_RESERVE = 1.0   # heads-up solves likewise keep one iteration's time back (the exploitability read after: ~1 iteration)
 OVER_TARGET = 10   # an answer more than this many times its advisor's expl_target from equilibrium is approximate
 # The session analyzer's Quick triage (Advisor.triage, "triage": true): a decision nothing in hand answers at once is
@@ -3198,10 +3215,13 @@ class Advisor:
         # budget: gto/static/worker.js)
         self.mw4_quick_flop: Optional[dict] = dict(MW4_QUICK_FLOP)
         # 5-way flops and turns (_mw4_applies with n 5): the 5-player solve's game per street (MW5_STREETS; Fast
-        # MW5_FAST_STREETS), on the streets in mw_solve_streets. Off (None: the betting rules) until it scores better
-        # than them: against a 5-way turn reference (score_multiway4.py, limp5, first to act) it gave up 1.5% of the
-        # pot where the rules gave up 1.1%
-        self.mw5_street_config: Optional[Dict[str, dict]] = None
+        # MW5_FAST_STREETS), on the streets in mw_solve_streets; a street left out (native Fast's flop on fewer than
+        # THREADED_FAST threads, the browser's Fast flop) and a quick answer go to the betting rules, None all of them
+        # (the browser without its compiled core)
+        self.mw5_street_config: Optional[Dict[str, dict]] = {s: dict(c) for s, c in MW5_STREETS.items()}
+        # ...but a 5-way turn's first decision (nobody has acted on it yet) goes to the rules unless this is set
+        # (MW5_FIRST_TURN_NOTE: there they gave up less than the solve)
+        self.mw5_first_turn = False
         # an earlier 3-way street with no solve from your advice on it: solve it from its start (prior_budget) to narrow
         # the ranges through (_mw_walk); off: the rules narrow it (native Accurate on: its 12 s settle a flop enough)
         self.mw_prior_solve = False
@@ -5733,6 +5753,12 @@ class Advisor:
         four = four or five
         own4 = four and _mw4_own(remaining, cur, stk, hero)
         nway = not exact3 and not four and _nway_applies(remaining, cur, stk, hero, self.mw_nway_max)
+        if not exact3 and not four and self.mw5_street_config is not None and cur.name in ("flop", "turn") \
+                and cur.name in self.mw_solve_streets and _mw4_applies(remaining, cur, stk, hero, 5):
+            # (a 5-way street this speed's game leaves out: Fast's flop in the browser, and natively on fewer than
+            # THREADED_FAST threads, gto/native.py)
+            fallback_notes.append(f"a 5-way {cur.name} is left to the betting rules at this speed (Accurate solves it)")
+            return None
         # (the N-player solve off the river is the hand of the only player with chips: nothing to solve but its call)
         if not self.mw_solve_streets or not ((exact3 or four) and cur.name in self.mw_solve_streets
                                              or nway and (cur.name != "river" or "river" in self.mw_solve_streets)):
@@ -5740,8 +5766,13 @@ class Advisor:
         # (quick: rivers and turns (MW_QUICK_TURN), and a pot with a player all-in on any street: two bettors, solved in
         # the browser in 1.4-1.6 s on a flop or turn, 100 iterations, 0.05% of the pot from equilibrium)
         quick = getattr(self, "_quick", False)
-        if four and quick and cur.name == "flop" and (self.mw4_quick_flop is None or five):
-            fallback_notes.append(f"a quick answer leaves a {len(remaining)}-way flop to the betting rules (Fast and Accurate solve it)")
+        # (and a 5-way turn: natively in 1.8 s 22-33 iterations first to act, 0.4-0.8% of the pot from equilibrium)
+        if four and quick and (five or cur.name == "flop" and self.mw4_quick_flop is None):
+            fallback_notes.append(f"a quick answer leaves a {len(remaining)}-way {cur.name} to the betting rules ("
+                                  + ("Accurate solves it)" if five and cur.name == "flop" else "Fast and Accurate solve it)"))
+            return None
+        if five and cur.name == "turn" and not cur.acted and not self.mw5_first_turn:
+            fallback_notes.append(MW5_FIRST_TURN_NOTE)
             return None
         players = [p for p in cur.order if p in remaining]          # postflop acting order
         behind = {p: stk[p] - cur.inv_start[p] for p in players}
