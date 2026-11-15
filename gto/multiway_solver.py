@@ -1201,6 +1201,8 @@ def _outer_sum(fs):
 
 # ------------------------------------------------------------------ solver
 class MultiwaySolver:
+    _lock = None   # action_br_evs's: turns the others' average strategies into the ones best-responded to (best responses only)
+
     def __init__(self, board, ranges: Sequence[np.ndarray], pot: float, stack: float, bets=None, to_act=0,
                  n_raises=0, pending=None, cfg: Optional[MWConfig] = None, dead: Sequence[int] = (),
                  include: Sequence[int] = (), deadline: Optional[float] = None):
@@ -1474,7 +1476,7 @@ class MultiwaySolver:
                 g.F = F
                 bwalk(g.tree, F)
 
-    def _fwd(self, node, R, mode):
+    def _fwd(self, node, R, mode, p=None):
         """Reaches down the root street to its Exits (the strategies the walk that follows uses)."""
         if isinstance(node, Exit):
             node.X = R
@@ -1483,9 +1485,11 @@ class MultiwaySolver:
             return
         sig = node.strategy() if mode in ("alt", "cfr") else node.avg_strategy()
         q = node.player
+        if mode == "br" and q != p and self._lock is not None:
+            sig = self._lock(node, sig, R[q])
         for a, ch in enumerate(node.children):
             Ra = R.copy(); Ra[q] = R[q] * sig[:, a, :]
-            self._fwd(ch, Ra, mode)
+            self._fwd(ch, Ra, mode, p)
 
     def _bfwd(self, node, X, mode, p, terms, fctx=None):
         """Reaches down a later-street subtree: kept at its nodes (with the strategy used), terminals into `terms`. In
@@ -1500,8 +1504,10 @@ class MultiwaySolver:
             node.V = np.zeros(X.shape[1:] if p is not None else X.shape)
             return
         sig = node.strategy() if mode in ("alt", "cfr") else node.avg_strategy()
-        node.X, node.sig = X, sig
         q = node.player
+        if mode == "br" and q != p and self._lock is not None:
+            sig = self._lock(node, sig, X[q])
+        node.X, node.sig = X, sig
         for a, ch in enumerate(node.children):
             Xa = X.copy(); Xa[q] = X[q] * sig[:, a, :]
             if a == node.fold and p is not None:
@@ -1517,7 +1523,7 @@ class MultiwaySolver:
 
     def _later(self, node, R, mode, p):
         """Fill the root street's Exits with the later streets' values (by buckets) for a walk from `node`."""
-        self._fwd(node, R, mode)
+        self._fwd(node, R, mode, p)
         tb, C = self.tabs, self.tabs.C
         one = mode in ("alt", "br")
         pp = p if one else None
@@ -2109,6 +2115,8 @@ class MultiwaySolver:
             sig = node.strategy()
         else:
             sig = node.avg_strategy()
+            if mode == "br" and q != p and self._lock is not None:
+                sig = self._lock(node, sig, R[q])
         vals = []
         for a, ch in enumerate(node.children):
             # (best-responding, p's own reach still follows its average strategy: p's values don't depend on it,
@@ -2368,6 +2376,36 @@ class MultiwaySolver:
             Ra = R.copy(); Ra[p] = R[p] * sig[:, a, :]      # (an all-in's shares are scaled by everyone's reach there)
             v = self._walk(ch, Ra, "avg")[p]
             evs.append(np.where(mass > 1e-12, v / np.where(mass > 1e-12, mass, 1.0), 0.0) + self._fold_base(node))
+        return np.stack(evs)[:, 0, :]
+
+    def action_br_evs(self, lock, node: Optional[Decision] = None, R=None):
+        """(actions, n) EV per action for the node's player p (the root by default), chips relative to folding now, p
+        best-responding below to the others' strategies as `lock(node, average strategy, reach)` makes them
+        (exploit.MWPoolLock; the others' own reaches follow the strategies it makes). numpy's pass: the compiled core
+        has no lock."""
+        node = node or self.root
+        R = self.reach0 if R is None else R
+        p = node.player
+        others = [j for j in range(self.np) if j != p]
+        bd = node.bd
+        if self.np == 2:
+            mass = bd.k_u(R[others[0]])[0]
+        elif self._pw:
+            mass = self._pw_masses(bd, R)[0][p]
+        else:
+            mass = self._mass_exact(bd, R, *others)
+        self._lock = lock
+        try:
+            if self.levels:
+                self._later(node, R, "br", p)
+            sig = node.avg_strategy()
+            evs = []
+            for a, ch in enumerate(node.children):
+                Ra = R.copy(); Ra[p] = R[p] * sig[:, a, :]
+                v = self._walk(ch, Ra, "br", p)
+                evs.append(np.where(mass > 1e-12, v / np.where(mass > 1e-12, mass, 1.0), 0.0) + self._fold_base(node))
+        finally:
+            self._lock = None
         return np.stack(evs)[:, 0, :]
 
     def _fold_base(self, node: Decision) -> float:

@@ -2130,8 +2130,9 @@ class TestExploit(unittest.TestCase):
         lock.river_cut_folds = False
         self.assertGreater(float(lock(Node(), strat, reach)[0][1][bluff].mean()), 0.25)   # the old rule: air calls
 
-    def test_multiway_postflop_says_it_plays_equilibrium(self):
-        # exploit mode best-responds heads-up only: a 3-way pot (solved or by the rules) says so, as locks do
+    def test_multiway_postflop_says_who_it_exploits(self):
+        # exploit mode best-responds multiway too: a 3-way pot (solved or by the rules) names the pool it plays against,
+        # and no longer says it is played at equilibrium
         adv = Advisor(Config(depth=1), time_budget=1e9)
         adv.mw_max_iters = 10
         pre = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "raise", "to": 2.5},
@@ -2143,7 +2144,9 @@ class TestExploit(unittest.TestCase):
             adv.mw_solve_streets = streets
             r = adv.advise(st)
             self.assertTrue(r.get("multiway"), r.get("error"))
-            self.assertTrue(any("exploit mode applies heads-up" in n for n in r["notes"]), r["notes"])
+            self.assertTrue(any(n.startswith("exploit mode: CO and BTN play like typical online players") for n in r["notes"]),
+                            r["notes"])
+            self.assertFalse(any("applies heads-up" in n for n in r["notes"]), r["notes"])
 
     def test_preflop_lines_read_as_real_ranges(self):
         """Lines whose chart or pool range was face-up: every open-limp (the small blind too, in both modes;

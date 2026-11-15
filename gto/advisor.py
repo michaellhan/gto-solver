@@ -17,6 +17,7 @@ Game state (all money in big blinds unless `bb` is given, then chips / bb):
 Actions: fold, check, call, bet (amount), raise (to), all-in.
 """
 from __future__ import annotations
+import contextvars
 import dataclasses
 import functools
 import hashlib
@@ -41,6 +42,8 @@ from .solver import NEAR_ROW, solve, Config, Solution, Decision, Terminal, Chanc
 DEFAULT_OPEN = {"SB": 3.0}
 BVB_3BET = 10.0 / 3.0   # the big blind's default 3bet over a small-blind open, x the open (_default_size)
 FOLD_SHADE = 0.75   # multiway: opponents fold this share of what a balanced defence would
+# ...in place of FOLD_SHADE while the betting rules play a pool (exploit mode: exploit.MW_RULES_SHADE, Advisor._multiway)
+_MW_SHADE = contextvars.ContextVar("mw_rules_shade", default=None)
 # The next four are fitted to the heads-up solver by scripts/calibrate_multiway.py (RAISE_EQ barely
 # mattered there, so it stays a judgment call).
 NARROW_SOFT = 0.3   # multiway narrowing: weight kept by hands the rules say would have played differently
@@ -814,14 +817,15 @@ def _top(r: np.ndarray, frac: float, rank: np.ndarray) -> np.ndarray:
     return m
 
 
-def _aggro(r, v, b, p, rank, bluff=None, n=1) -> np.ndarray:
+def _aggro(r, v, b, p, rank, bluff=None, n=1, bk=1.0) -> np.ndarray:
     """A bet or raise of b into p: value with the top v of r plus balanced bluffs,
     bluffs = value * b / (p + b), taken in `bluff` order (see _bluff_order: draws first) from the
     hands outside the value range; without one, from the bottom. Into n players, a bluff has to get past
     all of them: 1/n of those bluffs (a check-raise jam into two players was half bluffs, AQs and KQs on
-    J72 beside JJ, and QQ called it with AA and KK still behind)."""
+    J72 beside JJ, and QQ called it with AA and KK still behind). bk: the share of those bluffs kept (exploit
+    mode's pool, BLUFF_KEEP)."""
     val = _top(r, v, rank)
-    bf = min(v * b / (p + b) / max(n, 1), 1.0 - v)
+    bf = min(v * b / (p + b) / max(n, 1) * bk, 1.0 - v)
     if bluff is None:
         return val | _top(r, bf, rank[::-1])
     rest = r * ~val
@@ -898,7 +902,7 @@ def _with_ties(m, r, sc) -> np.ndarray:
     return m | ((sc >= sc[live].min() - 1e-12) & (r > 0))
 
 
-def _bet_ranges(r, n, p, big, small, rank, bluff=None, others=None, drop=False, sc=None):
+def _bet_ranges(r, n, p, big, small, rank, bluff=None, others=None, drop=False, sc=None, bk=1.0):
     """(big, small) masks: what range r bets at each size into p with n players facing it (others:
     their ranges, see _value_share; without them, as if each held r). The small bet is the default:
     value from the top SMALL_SHARE of what would call it (a merged range: medium hands bet for
@@ -913,21 +917,22 @@ def _bet_ranges(r, n, p, big, small, rank, bluff=None, others=None, drop=False, 
     as in the solves, whose checking ranges keep medium hands and some traps (ruling out every hand that
     would bet small left the checkers so weak that top pair raised a river lead for +47 bb). sc (strength,
     rank's order): the value a check rules out takes every hand as strong as its weakest (_with_ties), so
-    a range of mostly one nut hand doesn't check the part of it the cut happened to leave out."""
+    a range of mostly one nut hand doesn't check the part of it the cut happened to leave out. bk: the share of the
+    bluffs kept at both sizes (exploit mode's pool bluffs less, BLUFF_KEEP)."""
     others = [o for o in others if o.sum() > 0] if others else []
     joint = _Joint(others, rank) if others else None
     empty = np.zeros(N_COMBOS, dtype=bool)
     v_big = _value_share(r, n, big, p, rank, others, joint)
     if small is None:
-        bg = _aggro(r, v_big, big, p, rank, bluff)
+        bg = _aggro(r, v_big, big, p, rank, bluff, bk=bk)
         return (bg, empty, bg) if drop else (bg, empty)
     f = _nut_weight(r, others if others else [r] * max(n, 1), rank)
-    bg = _aggro(r, v_big * f, big, p, rank, bluff) if f > 0 else empty
+    bg = _aggro(r, v_big * f, big, p, rank, bluff, bk=bk) if f > 0 else empty
     s_share = 1.0 - (1.0 - SMALL_SHARE) ** (len(others) if others else max(n, 1))
     val = _top(r, min(_value_share(r, n, small, p, rank, others, joint, s_share), SMALL_VALUE_MAX), rank) & ~bg
     rest = r * ~(bg | val)
     left, tot = float(rest.sum()), float(r.sum())
-    bf = _share(r, val) * small / (p + small)
+    bf = _share(r, val) * small / (p + small) * bk
     order = rank[::-1] if bluff is None else bluff
     sm = val | (_top(rest, min(bf * tot / left, 1.0), order) if left > 1e-12 and bf > 0 else val)
     if not drop:
@@ -967,7 +972,9 @@ def _raise_to(bet, calls) -> float:
 def _keep(b, p, n, shade=None) -> float:
     """Share of their range each of n players continues with against a bet of b into p: together
     they fold shade * b / (p + b) of the time (shade 1 = a balanced defence)."""
-    shade = FOLD_SHADE if shade is None else shade
+    if shade is None:
+        shade = _MW_SHADE.get()
+        shade = FOLD_SHADE if shade is None else shade
     return 1.0 - (shade * b / (p + b)) ** (1.0 / max(n, 1))
 
 
@@ -2270,6 +2277,23 @@ def _td_amounts(td, c0) -> list:
         k = nm.split()[0]
         out.append(None if k in ("check", "fold") else kid.c[p] - td.c[p] if k == "call" else kid.c[p] - c0[p])
     return out
+
+
+def _mw_pool_note(opps, solved: bool) -> str:
+    """Exploit mode's note on a multiway answer: how the opponents play (the active pool, exploit.profile())."""
+    from .exploit import profile
+    live = profile() == "live"
+    who = " and ".join(opps) if len(opps) < 3 else ", ".join(opps[:-1]) + " and " + opps[-1]
+    how = ("in a multiway pot they call more than equilibrium, most of all against small bets, raise mostly with value "
+           "and bluff less" if live else "in a multiway pot they defend as at equilibrium, since the data on their "
+           "over-folding is heads-up, but raise and bluff less")
+    if solved:
+        return (f"exploit mode: {who} play like typical {'live' if live else 'online'} players: {how}, and on a later "
+                f"street that two of you begin they play as heads-up; the advice is your best response to that, on the "
+                f"later streets too")
+    return (f"exploit mode: {who} play like typical {'live' if live else 'online'} players in the betting rules ("
+            + ("folding together less often than the rules' default" if live else "folding as the rules do")
+            + " and bluffing their bets less)")
 
 
 def _mw_line(board, hero, hole, stk, streets, street, n) -> tuple:
@@ -4288,7 +4312,9 @@ class Advisor:
         checked 100% there, where GTO bets it half pot). An action the GTO tree doesn't have gets none."""
         breakdown, self._breakdown = self._breakdown, False   # (the exploit answer's breakdown is the one shown)
         try:
-            gto = self._postflop(hero, hole, board, stack, streets, positions, t0, actor=actor, custom=custom,
+            # (its own clock: a multiway solve's budget runs from the answer's start, so from t0 the GTO solve got what
+            # the exploit one left, ran a few iterations or fell to the betting rules, and its GTO % was neither mode's)
+            gto = self._postflop(hero, hole, board, stack, streets, positions, time.time(), actor=actor, custom=custom,
                                  optimize=optimize)
         finally:
             self._breakdown = breakdown
@@ -5130,8 +5156,11 @@ class Advisor:
             # 3-way, and a 4-way flop: through the street's solve where there is one (the one your advice on it came
             # from, or at 3-way one from the street's start), as far as it has settled; the rest by the rules
             # (a street nobody has acted on yet, the current one at its first decision, has nothing to narrow)
+            # (exploit mode's arguments only when it is on: tests stand in for _mw_walk with its GTO signature)
+            mw_pool = {"pool": True, "committed": [q for q in st.players_start if q != hero
+                                                   and _committed(q, rep[1:rep.index(st)])]} if pool else {}
             if not (_mw_walks(st) and self._mw_walk(ranges, before, board, st, stk, hero, hole, streets, notes,
-                                                    current=st is cur)) and st.actions:
+                                                    current=st is cur, **mw_pool)) and st.actions:
                 by_rules.append(st.name)
             # (a line the rules leave nearly face-up is filled out as heads-up streets are: a 3bet pot's turn
             # pot-sized bet into two kept 1.9 combos, and heads-up on the river the check left 0.5, where
@@ -5173,13 +5202,11 @@ class Advisor:
                 notes.append(f"locks ({', '.join(p for p in live_opps if p in locks)}) apply heads-up only after the flop: "
                              f"this multiway pot is {'solved' if len(remaining) == 3 else 'played by the betting rules'} without them "
                              f"(they shape the ranges preflop)")
-            if pool:
-                notes.append("exploit mode applies heads-up after the flop: this multiway pot is played at equilibrium "
-                             "(the pool's leaks only shape the ranges preflop)")
             n_notes = len(notes)
             res = self._multiway_solve(hero, hole, board, ranges, remaining, cur, stk, t0, notes,
                                        line=_mw_line(board, hero, hole, stk, streets, cur.name, len(streets.get(cur.name) or [])),
-                                       positions=positions)
+                                       positions=positions, pool=pool,
+                                       committed=[p for p in live_opps if _committed(p, rep[1:])] if pool else ())
             if res is not None:
                 return res
             if getattr(self, "_icm", None) is not None:
@@ -5190,7 +5217,7 @@ class Advisor:
                     f"the {len(remaining)}-way solver plays {len(remaining)} players with chips and no bet bigger than the "
                     f"shortest stack can call" if len(remaining) <= 4 else "it solves at most 4-way pots before the river")
                 return {"error": f"Study can't solve this {len(remaining)}-way spot: {why}"}
-            return self._multiway(hero, hole, board, ranges, remaining, cur, stk, t0, notes)
+            return self._multiway(hero, hole, board, ranges, remaining, cur, stk, t0, notes, **({"pool": True} if pool else {}))
         villain = live_opps[0]
         post = cur.order
         oop, ip = sorted([hero, villain], key=post.index)
@@ -5670,12 +5697,14 @@ class Advisor:
 
     # ------------------------------------------------------------ multiway
     def _multiway_solve(self, hero, hole, board, ranges, remaining, cur: StreetState, stk, t0, notes, line=None,
-                        positions=None):
+                        positions=None, pool=False, committed=()):
         """Three players in: a 3-player CFR solve of this street from the current node (gto/multiway_solver.py),
         the later streets bet on by hand buckets (mw_street_config). None when it doesn't
         apply (4+ players, someone all-in, the street not in mw_solve_streets, or a bet bigger than the shortest
         stack can call) or the solve is still over mw_max_expl from equilibrium after its budget (a note says so):
-        the betting rules (_multiway) answer instead."""
+        the betting rules (_multiway) answer instead. `pool` (exploit mode): every opponent plays the pool's strategy
+        (exploit.MWPoolLock) and you best-respond to it, as heads-up; `committed`: the opponents who raised or bet big
+        earlier in the hand (no extra folds or calls from them)."""
         from . import multiway_solver as MW
         fallback_notes, notes = notes, list(notes)
         exact3 = _mw_applies(remaining, cur, stk)
@@ -5852,20 +5881,43 @@ class Advisor:
         if line is not None:
             self._mw_lines[line] = (sol, players, expl)   # practice opponents and later streets read it (_mw_walk)
         strat = root.avg_strategy()[0]
-        evs = sol.action_evs()
+        eq_strat, tol = strat, None
+        if pool and not self._study:
+            # exploit mode: the opponents play the pool's strategy at every decision of theirs in the solve (its
+            # equilibrium with the pool's leaks, frozen: exploit.MWPoolLock), you best-respond on every street it bets
+            # on; actions within the solve's noise of the best are tied and play the equilibrium mix among them (as
+            # heads-up, BR_TIE_MIN / BR_TIE_MAX)
+            from .exploit import MWPoolLock
+            lock = MWPoolLock(sol, [i for i in range(len(players)) if i != hp and i not in mcfg.allin],
+                              [players.index(p) for p in committed if p in players])
+            evs = sol.action_br_evs(lock)
+            tol = min(max(BR_TIE_MIN, expl / 100.0), BR_TIE_MAX) * root.pot_now
+            tied = evs >= evs.max(axis=0, keepdims=True) - tol
+            g = strat * tied
+            strat = np.where(g.sum(axis=0) > 1e-9, g / np.maximum(g.sum(axis=0), 1e-12), tied / tied.sum(axis=0))
+        else:
+            evs = sol.action_evs()
         shown = _mw_names(root.names, root.amounts, behind[hero], S_h, root.pot_now)
         if not self._study:   # (Study: no cards of the actor's own; the whole range's answer, _study_mw_node)
             ci = sol.combo_index(hole)
-            mine = sol.hand_strategy(ci, hp)
+            mine = strat[:, ci]   # (sol.hand_strategy, or the best response's)
             acts = []
             for a, name in enumerate(shown):
                 amt = root.amounts[a]
                 acts.append({"action": name, "freq": round(float(mine[a]), 3),
                              "ev_bb": round(float(evs[a, ci]), 2),
                              "amount_bb": None if amt is None else round(float(amt), 2)})
+                if tol is not None:   # (the equilibrium's mix; _gto_alongside puts GTO mode's answer in its place)
+                    acts[-1]["gto_freq"] = round(float(eq_strat[a, ci]), 3)
             best = max(acts, key=lambda x: x["freq"])["action"]
             sampled = self._sample(acts)
-            if expl >= UNSETTLED:
+            if tol is not None:
+                top = max(acts, key=lambda x: x["ev_bb"])
+                gap = top["ev_bb"] - next(x["ev_bb"] for x in acts if x["action"] == best)
+                if gap >= 0.01:
+                    notes.append(f"{top['action']} shows {gap:.2f} bb more, within this solve's margin of {tol:.2f} bb, "
+                                 "so the two count as tied")
+            elif expl >= UNSETTLED:
                 top = max(acts, key=lambda x: x["ev_bb"])
                 mix_ev = next(x["ev_bb"] for x in acts if x["action"] == best)
                 if top["action"] != best and top["ev_bb"] - mix_ev > EV_GAP / 100 * root.pot_now:
@@ -5931,6 +5983,8 @@ class Advisor:
                 "a player all-in for less plays for the main pot, the others for the side pot too")
         elif max(behind.values()) - S > 0.05 * S:
             notes.append(f"stacks differ: everyone plays the shortest stack behind ({S:.1f} bb)")
+        if tol is not None:
+            notes.append(_mw_pool_note(opps, True))
         notes.append(f"best-response gains (% pot): " + ", ".join(f"{p} {g:.2f}" for p, g in zip(players, gains)))
         if mcfg.icm is not None:
             notes.append(f"tournament: the {len(players)}-way solve pays every outcome in prize equity (ICM)"
@@ -5962,13 +6016,32 @@ class Advisor:
                           "exploitability_pct": round(expl, 2),
                           "best_response_gains_pct": {p: round(float(g), 2) for p, g in zip(players, gains)}},
                "notes": notes, "seconds": round(time.time() - t0, 2)}
+        if tol is not None:
+            out["ev_tie"] = round(tol, 2)
         if len(board) == 5:
             out["equity_vs_field"] = round(sol.showdown_share(ci), 3)
         if self._breakdown:
             out["breakdown"] = bd
         return out
 
-    def _multiway(self, hero, hole, board, ranges, remaining, cur: StreetState, stack, t0, notes):
+    def _multiway(self, hero, hole, board, ranges, remaining, cur: StreetState, stack, t0, notes, pool=False):
+        """The betting rules (_multiway_rules). `pool` (exploit mode): the opponents fold together the pool's share of a
+        balanced defence's (exploit.MW_RULES_SHADE: the online pool the rules' own FOLD_SHADE, the live one less) and
+        keep BLUFF_KEEP of their bets' bluffs; your play is by EV against that, as always in the rules."""
+        if not pool:
+            return self._multiway_rules(hero, hole, board, ranges, remaining, cur, stack, t0, notes)
+        from .exploit import _params
+        shade, bk = _params("MW_RULES_SHADE", "BLUFF_KEEP")
+        token = _MW_SHADE.set(shade)
+        try:
+            res = self._multiway_rules(hero, hole, board, ranges, remaining, cur, stack, t0, notes, bk)
+        finally:
+            _MW_SHADE.reset(token)
+        if "notes" in res:
+            res["notes"].append(_mw_pool_note([p for p in remaining if p != hero], False))
+        return res
+
+    def _multiway_rules(self, hero, hole, board, ranges, remaining, cur: StreetState, stack, t0, notes, bluff_keep=None):
         """3+ players still in: Monte Carlo vs every live range, not a solve. Frequencies are 0/1 (the
         highest EV action); EVs are relative to folding now.
 
@@ -6267,7 +6340,8 @@ class Advisor:
                 else:
                     def bet_fn(r=rs[a]):
                         into = [rs[o] for o in alive if o != a] + [hero_range * liv]
-                        bg, sm, dr = _bet_ranges(r, len(alive), p, big, small, rank, bluff, into, drop=True, sc=sc)
+                        bg, sm, dr = _bet_ranges(r, len(alive), p, big, small, rank, bluff, into, drop=True, sc=sc,
+                                                 bk=bluff_keep[STREET_OF[n]] if bluff_keep else 1.0)
                         # a check keeps the hands that would have bet at NARROW_SOFT, as narrowing does (see
                         # _soften): cut to nothing, the checker was a capped range paying our value bets off
                         return bg, sm, r * bg, r * sm, r * _soften(r, ~dr)
@@ -6554,7 +6628,7 @@ class Advisor:
                 b_small = b_small if 1e-9 < b_small < b_big - 1e-9 else None
                 into = [opp_ranges[i] for i in range(n_opp) if i != j] + [hero_range]
                 bg_j, sm_j, drop_j = _bet_ranges(opp_ranges[j], n_opp, pot, b_big, b_small, rank0, bluff0, into, drop=True,
-                                                 sc=sc0)
+                                                 sc=sc0, bk=bluff_keep[cur.name] if bluff_keep else 1.0)
                 bet_masks[j] = (b_big, b_small, bg_j, sm_j)
                 chk_r[j] = opp_ranges[j] * _soften(opp_ranges[j], ~drop_j)
                 others = [i for i in range(n_opp) if i != j and opps[i] not in cur.allin
@@ -6947,7 +7021,8 @@ class Advisor:
             out["to"] = round(float(pick["amount_bb"]) * float(state.get("bb", 1.0)), 2)
         return out
 
-    def _mw_walk(self, ranges, before, board, st: StreetState, stk, hero, hole, streets, notes, current=False) -> bool:
+    def _mw_walk(self, ranges, before, board, st: StreetState, stk, hero, hole, streets, notes, current=False,
+                 pool=False, committed=()) -> bool:
         """Narrow the ranges (in place, already narrowed by the rules) through a 3-way street's or a 4-way flop's solve
         (_mw_walks): the latest one your advice on the street came from (its root's ranges are the rules' up to there),
         else, for an earlier 3-way street the speed solves (mw_solve_streets) when mw_prior_solve is on, one from the
@@ -6957,7 +7032,9 @@ class Advisor:
         sliver (the heads-up walk's RARE_LINE fallback to the rules made the turn's ranges worse here: scripts/
         compare_multiway.py --narrowing). False when no solve was followed, its tree lacks a line's action (a 4-way
         tree has no raise but the root's), or on a 4-way flop a bet is too far over its size (_mw_off_size) or the
-        street so far is all checks (MW4_WALK_CHECKS)."""
+        street so far is all checks (MW4_WALK_CHECKS). `pool` (exploit mode): the other players' actions are read off the
+        pool's strategy (exploit.MWPoolLock; `committed` as there), not the equilibrium's, as heads-up streets are, in a
+        solve this answer ran (not the 3-way library's stored lines)."""
         from . import multiway_solver as MW
         acts = list(streets.get(st.name) or [])
         bk = board[:{"flop": 3, "turn": 4, "river": 5}[st.name]]
@@ -6991,6 +7068,11 @@ class Advisor:
         R = sol.reach0[:, 0, :].copy()
         node = sol.root
         four = len(st.players_start) == 4
+        lock = None
+        if pool and isinstance(sol, MW.MultiwaySolver):
+            from .exploit import MWPoolLock
+            lock = MWPoolLock(sol, [i for i, q in enumerate(players) if q != hero],
+                              [players.index(q) for q in committed if q in players])
         if four and not MW4_WALK_CHECKS and all(a["action"] == "check" for a in acts):
             return False
         for a in acts[k:]:
@@ -7008,7 +7090,8 @@ class Advisor:
                 notes.append(f"{st.name}: {a['pos']}'s {a['action']} is too far from the 4-way solve's {node.names[i]} "
                              f"to read by it")
                 return False
-            sg = node.avg_strategy()[0][i].astype(np.float64)
+            sg = node.avg_strategy()
+            sg = (sg if lock is None else lock(node, sg, R[p][None]))[0][i].astype(np.float64)
             R[p] = R[p] * ((1.0 - self.prior_smoothing) * sg + self.prior_smoothing / len(node.names))
             node = node.children[i]
         for p, pos in enumerate(players):
