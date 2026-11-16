@@ -479,21 +479,17 @@ class TestPreflop(unittest.TestCase):
         self.assertGreater(n_strings, 50)
 
     def test_heads_up_mixed_raises_played_as_written(self):
-        """Heads-up the big blind 3bets QTs and JTs always and 66 / A5s half the time (as the chart
-        writes them), and the button 4bets A5s 40% against the 3bet."""
-        from gto import pf_formats as PF
-        saved, PF._DATA = PF._DATA, {}       # the chart itself (heads-up it is moved by the limp game's solve)
-        pf._STRAT_CACHE.clear()              # (strategies cached by earlier tests have the moves in)
-        self.addCleanup(pf._STRAT_CACHE.clear)
-        self.addCleanup(setattr, PF, "_DATA", saved)
+        """Heads-up the big blind 3bets KTs 80%, QTs 85% and 66 / A5s / A9o half the time (as the chart
+        writes them), and the button 4bets QQ 70% against the 3bet. These charts are a limp game's already
+        (pf_formats.LIMP_BASE), so at 100bb the limp game's moves leave them as written."""
         T = pf.Table(pf.SEATS[2])
         s = pf.strategy_for("BB", [{"pos": "SB", "action": "raise", "to": 2.5}], T)
-        for h, r in (("QTs", 1.0), ("JTs", 1.0), ("66", 0.5), ("A5s", 0.5), ("A9o", 0.5)):
+        for h, r in (("KTs", 0.8), ("QTs", 0.85), ("66", 0.5), ("A5s", 0.5), ("A9o", 0.5)):
             m = parse_range(h) > 0
             self.assertAlmostEqual(float(s["raise"][m].mean()), r, places=6, msg=h)
         s = pf.strategy_for("SB", [{"pos": "SB", "action": "raise", "to": 2.5},
                                    {"pos": "BB", "action": "raise", "to": 9}], T)
-        self.assertAlmostEqual(float(s["raise"][parse_range("A5s") > 0].mean()), 0.4, places=6)
+        self.assertAlmostEqual(float(s["raise"][parse_range("QQ") > 0].mean()), 0.7, places=6)
 
     def test_bets_all_in_sizes(self):
         """An all-in goes to its `to` when given, else to the effective stack (the table depth)."""
@@ -3220,6 +3216,29 @@ class TestPublishedPreflopReferences(unittest.TestCase):
         from tests.preflop_refs import HANDS, measure_hand
         bad = [(h[0], round(v, 3)) for h in HANDS if not h[5] - 1e-9 <= (v := measure_hand(h)) <= h[6] + 1e-9]
         self.assertEqual(bad, [])
+
+    def test_heads_up_100bb(self):
+        # MonkerSolver's heads-up 100bb cash solve with limps (tests/preflop_refs.py): the big blind's lines (the
+        # Preflop Trainer's solve) within tolerance; its hand facts on the charts
+        from tests.preflop_refs import FORMAT_REFS, HU_HANDS, measure_format, measure_hu_hand, misses
+        refs = [r for r in FORMAT_REFS if r["name"].startswith("HU 100bb")]
+        self.assertEqual(len(refs), 6)
+        bad = [(r["name"], m) for r in refs if not r["uncertain"] and (m := misses(r, measure_format(r)))]
+        self.assertEqual(bad, [])
+        bad = [(h[0], round(v, 3)) for h in HU_HANDS if not h[5] - 1e-9 <= (v := measure_hu_hand(h)) <= h[6] + 1e-9]
+        self.assertEqual(bad, [])
+        # the charts from the limp game are as written at 100bb; at 40bb the limp game's moves less 100bb's apply
+        from gto import pf_formats as PF
+        o = [{"pos": "SB", "action": "raise", "to": 2.5}]
+        self.assertEqual(PF.moves("BB", o, pf.Table(pf.SEATS[2]))[0], None)
+        mv, cover = PF.moves("BB", o, pf.Table(pf.SEATS[2], depth=40.0))
+        self.assertEqual(cover["depth"], 40.0)
+        d = PF._data()
+        want = d["hu_depth"][40.0]["BB|SB:r"]["raise"] + d["limp"][40.0]["BB|SB:r"]["raise"] - d["limp"][100.0]["BB|SB:r"]["raise"]
+        np.testing.assert_allclose(mv["raise"], want)
+        # the button's limp is answered by the heads-up chart, not the 6-max small blind's
+        s = pf.strategy_for("BB", [{"pos": "SB", "action": "call"}], pf.Table(pf.SEATS[2]))
+        np.testing.assert_allclose(s["raise"], pf.HU_BB_VS_LIMP)
 
     def test_raked_hand_facts(self):
         # through the advice at the solve's rake (the re-priced calls, ranked by realized equity with the

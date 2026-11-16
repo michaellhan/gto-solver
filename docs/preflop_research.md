@@ -336,8 +336,14 @@ Rake: NL500 is 5% with a 0.6bb cap, per Section 1.1.
 - GTO Wizard "Heads up! Exploiting SB's Preflop Mistakes" (https://blog.gtowizard.com/heads-up-exploiting-sbs-preflop-mistakes/), HU **50bb**, chipEV, 0.12bb ante:
   - The SB "only folds 4% of hands", "open-raising at a high frequency with some limping". An open-raise share of 64% is cited, so limps are about 32%, derived.
   - BB vs limp raises 34%. Vs a 2.1bb open the BB 3bets to 8.4bb. The exact frequency is not given.
-- **HU 100bb cash**: I found no solver-sourced frequencies.
+- **HU 100bb cash**, MonkerSolver (solvepoker.app/solver/nlhe/hu-100bb/, "nlhe_hu_100bb_v2": 5% capped at 2bb, 2.5bb opens, 10bb 3bets, 3.5bb raises of a limp; accessed 2026-11-16) [solver-report]:
+  - SB first in: raise 69.2 / limp 17.1 / fold 13.8. AA, KK, QQ, AK raise 100%; 22 59.5 / 40.5 / 0, K2o 65 / 35 / 0, J2o 1.5 / 21.5 / 77, 72o and 32o fold.
+  - BB vs open: 3bet 24.6 / call 33.8 / fold 41.6 (A2o 26.5 / 73.5 / 0, 22 calls 100%, K2o and Q2o fold).
+  - SB vs 3bet: 4bet 12.2 / call 29.2 / fold 58.7 of the range arriving; BB vs the 4bet: all-in 25.1 / call 31.1 / fold 43.8.
+  - BB vs limp: raise 41.6 / check 58.4; the limper vs the raise: 3bet 0.2 / call 59.2 / fold 40.7.
   - Training blogs (preflopwizard.app, snippets) give SB limps "25-40%", BB defense "62-70%" and BB 3bet "15-20%" [heuristic, unreliable].
+- **The Preflop Trainer's heads-up solve** (the preflop project's js/ranges.js RANGES.HU, solver/: real postflop solves on 50 sampled flops a round, one size a street, 18 rounds, the last six averaged; 5% capped at 0.5bb, 2.5bb opens, 10bb 3bets, 22bb 4bets, 4bb raises of a limp): SB raise 48.8 / limp 43.5 / fold 7.7 (AA and KK limp 10%), BB 3bet 23.9 / call 38.2 / fold 37.9, SB vs 3bet 16.0 / 38.7 / 45.2 of its raises, BB vs 4bet (its strategy files, not in ranges.js) 23.7 / 52.9 / 23.3, BB raises 39.5% of limps, the limper 3bets 21.6% of them. Its rounds still moved classes up to 60 points (the 0.5s are classes flipping between rounds).
+- Adopted 2026-11-16 (gto/preflop.py): the Trainer's big-blind lines and 3bet pots (HU_BB_VS_SB, HU_BB_VS_LIMP, HU_SB_VS_3BET, HU_BB_VS_4BET), which match Monker's big blind (3bet 23.9 against 24.6, limp raises 39.6 against 41.6; the PokerCoaching-style charts 14.4 and the 6-max rule's 22.0). Its 3bet pots continue more than Monker's (fold 48 and 23 through the advice against 59 and 44), as its 0.5bb rake cap would make them. Not its first-in chart, which limps 2.5x Monker's share with premiums in it: the chart with pf_formats' limp moves (59.4 / 28.9 / 11.7) is nearer; nor its limp-reraise (21.6% against 0.2%).
 
 ### 3.6 Population reference
 
@@ -433,8 +439,8 @@ they stay. The solve's other spots were checked for a clear improvement:
   response to those ranges (published 4bet ranges with A9s/KTs bluffs, 3bet ranges matched only in total),
   swings with them, and no published solve covers the spot: not adopted.
 - Squeezes, cold calls, callers facing a squeeze: depend on the three-way model, which is a guess.
-- Heads-up: the tree has no limp, and published 100bb heads-up play limps about a third of hands (3.5), so
-  the solve (SB opens 63%, BB 3bets 31%) isn't comparable.
+- Heads-up: the tree has no limp, and published 100bb heads-up play limps (Monker 17%, 3.5), so the solve
+  (SB opens 63%, BB 3bets 31%) isn't comparable.
 - Facing a 5bet jam: an all-in decision (equity against the jam range), which the advice already re-draws
   by equity at run time (preflop._vs_5bet_jam).
 

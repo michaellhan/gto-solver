@@ -25,7 +25,8 @@ Each dimension is its own set of moves, added together:
     9-handed plays the 8-handed moves of the seat with as many players behind it (at most 7);
   * straddle: the straddled 6-max 100bb game against the seats whose charts it plays;
   * limp: heads-up, the game where the small blind may also limp against the one where it raises or folds, at
-    HU_DEPTHS (100bb included: the heads-up charts have no limps), on top of the heads-up depth's.
+    HU_DEPTHS (100bb included: the heads-up first-in chart has no limps), on top of the heads-up depth's; for the
+    lines whose 100bb chart is already a limp game's (LIMP_BASE), the moves less 100bb's.
 The players and straddle moves are added to the 6-max chart of those seats (the 100bb game's chart at the decision
 the table's seats play), not to the table's own chart, whose rules for those games (the 7+ handed EP chart) the
 moves replace; depth and ante moves to the table's own 100bb chart.
@@ -45,6 +46,9 @@ HU_DEPTHS = (20.0, 40.0, 100.0)
 ANTE = 0.125                                        # the ante solved (bb a player: 12.5% of a big blind)
 ANTE_DEPTHS = (20.0, 40.0, 100.0)
 MIN_DEPTH = 20.0                                    # shallower is push/fold (Advisor._push)
+# heads-up lines whose 100bb chart is already a game with the small blind's limp (gto/preflop.py: the Preflop
+# Trainer's solve): the limp moves add only their difference from 100bb's, so at 100bb the chart is as written
+LIMP_BASE = frozenset({"BB|SB:r", "SB|SB:r,BB:r", "BB|SB:r,BB:r,SB:r"})
 
 _DATA = None
 
@@ -209,6 +213,11 @@ def moves(hero: str, actions: List[dict], positions) -> Tuple[Optional[Dict[str,
             cover["depth"] = min(max(depth, grid[0]), grid[-1])
     if an is not None and n == 2:
         m = _interp(data.get("limp", {}), HU_DEPTHS, depth, an)
+        if m is not None and an in LIMP_BASE:
+            # the 100bb chart is already a limp game's: only how far the limp moves differ from 100bb's
+            m100 = data.get("limp", {}).get(100.0, {}).get(an, {})
+            m = {a: np.asarray(m.get(a, 0.0)) - np.asarray(m100.get(a, 0.0)) for a in dict.fromkeys([*m, *m100])}
+            m = {a: v for a, v in m.items() if np.any(v)} or None
         if m is not None:
             add(m)
             cover["depth"] = min(max(depth, HU_DEPTHS[0]), HU_DEPTHS[-1])

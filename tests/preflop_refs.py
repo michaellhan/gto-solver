@@ -249,3 +249,55 @@ fref("HU 50bb SB first in", "SB", "", {"fold": 0.04, "call": 0.32, "raise": 0.64
      stack=50.0, ante=0.12, uncertain=True, note="call = limp (32% derived)")
 fref("HU 50bb BB vs SB limp", "BB", "SB call", {"raise": 0.34}, 0.04, _GWHU, players=2, stack=50.0, ante=0.12,
      uncertain=True)
+# MonkerSolver's heads-up 100bb cash solve with limps (5% capped at 2bb, 2.5bb opens, 10bb 3bets, 3.5bb raises of a
+# limp; https://solvepoker.app/solver/nlhe/hu-100bb/, pages ip-open, oop-vs-ip-open, ip-vs-oop-3bet, oop-vs-ip-4bet,
+# oop-vs-ip-limp, ip-vs-oop-limp-raise; accessed 2026-11-16). The big blind's lines are the Preflop Trainer's solve
+# (gto/preflop.py HU_BB_VS_SB) and match it; the 3bet pots are its too, and continue more than Monker's (its rake
+# capped at 0.5bb, Monker's at 2bb, taxes those pots less); the button first in is the chart with pf_formats' limp
+# moves, the limp-reraise the 6-max rule.
+_MKHU = "MonkerSolver HU 100bb cash (solvepoker.app, 5% capped at 2bb)"
+RK2 = (0.05, 2.0)
+fref("HU 100bb SB first in", "SB", "", {"fold": 0.138, "call": 0.171, "raise": 0.692}, 0.05, _MKHU, players=2,
+     rake=RK2, uncertain=True, note="call = limp; the limp moves limp 28.9% (the Trainer 43.5, the chart before 0)")
+fref("HU 100bb BB vs SB open", "BB", "SB raise 2.5", {"fold": 0.416, "call": 0.338, "raise": 0.246}, 0.04, _MKHU,
+     players=2, rake=RK2)
+fref("HU 100bb SB open vs BB 3bet", "SB", "SB raise 2.5, BB raise 10", {"fold": 0.587, "call": 0.292, "raise": 0.122},
+     0.05, _MKHU, players=2, rake=RK2, of="range", uncertain=True, note="the Trainer's chart folds about 48%")
+fref("HU 100bb BB 3bet vs SB 4bet", "BB", "SB raise 2.5, BB raise 10, SB raise 22",
+     {"fold": 0.438, "call": 0.311, "raise": 0.251}, 0.05, _MKHU, players=2, rake=RK2, of="range", uncertain=True,
+     note="raise = all-in; the Trainer's chart folds about 23%")
+fref("HU 100bb BB vs SB limp", "BB", "SB call", {"raise": 0.416}, 0.04, _MKHU, players=2, rake=RK2, of="range")
+fref("HU 100bb SB limp vs BB raise", "SB", "SB call, BB raise 3.5", {"fold": 0.407, "call": 0.592, "raise": 0.002},
+     0.05, _MKHU, players=2, rake=RK2, of="range", uncertain=True, note="the 6-max limper's rule folds about 56%")
+
+# heads-up 100bb hand facts (the chart itself, unraked), from the same Monker solve where the ported charts agree:
+# (name, hero, line, hands, action, low, high, source); "continue" is call + raise
+HU_HANDS = [
+    ("HU BB 3bets AA, KK, AKo vs open", "BB", "SB raise 2.5", "AA, KK, AKo", "raise", 0.99, 1.0, _MKHU + ": 100%"),
+    ("HU BB folds Q2o, 72o, 32o vs open", "BB", "SB raise 2.5", "Q2o, 72o, 32o", "continue", 0.0, 0.01,
+     _MKHU + ": 100% fold"),
+    ("HU BB mostly folds K2o vs open", "BB", "SB raise 2.5", "K2o", "continue", 0.0, 0.35, _MKHU + ": 100% fold"),
+    ("HU BB defends 22 vs open", "BB", "SB raise 2.5", "22", "continue", 0.95, 1.0, _MKHU + ": calls 100%"),
+    ("HU BB raises AA-QQ, AK, 77, 55 over a limp", "BB", "SB call", "QQ+, AKs, AKo, 77, 55", "raise", 0.95, 1.0,
+     _MKHU + ": 98-100%"),
+    ("HU BB checks weak offsuit hands behind a limp", "BB", "SB call", "Q2o, J2o, T2o, 72o, 93o, 94o, J5o", "raise",
+     0.0, 0.01, _MKHU + ": 0%"),
+    ("HU SB 4bets AA, KK vs 3bet", "SB", "SB raise 2.5, BB raise 10", "AA, KK", "raise", 0.99, 1.0, _MKHU + ": 100%"),
+    ("HU SB continues 77, 66 vs 3bet", "SB", "SB raise 2.5, BB raise 10", "77, 66", "continue", 0.95, 1.0,
+     _MKHU + ": 77 calls 100%"),
+    ("HU BB continues QQ+, AK vs 4bet", "BB", "SB raise 2.5, BB raise 10, SB raise 22", "QQ+, AKs, AKo", "continue",
+     0.99, 1.0, _MKHU + ": jams or calls 100%"),
+    ("HU SB raises AA, KK first in (never limps them)", "SB", "", "AA, KK", "raise", 0.99, 1.0, _MKHU + ": 100%"),
+]
+
+
+def measure_hu_hand(h) -> float:
+    """The heads-up 100bb chart's frequency of `action` for the hand classes h[3] on the line h[2]."""
+    from gto import preflop as pf
+    from gto.ranges import parse_range
+    _, hero, line, hand, action = h[:5]
+    T = pf.Table(pf.SEATS[2])
+    s = pf.strategy_for(hero, _line(line, T), T)
+    m = parse_range(hand) > 0
+    v = sum(x for k, x in s.items() if k in ("call", "raise")) if action == "continue" else s.get(action, 0.0)
+    return float(np.asarray(v)[m].mean()) if np.ndim(v) else float(v)

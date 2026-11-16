@@ -105,13 +105,45 @@ RFI: Dict[str, np.ndarray] = {
     # heads-up button/SB open (~85%)
     "HU_SB": R("22+, A2s+, A2o+, K2s+, K2o+, Q2s+, Q2o+, J2s+, J4o+, J3o:0.5, J2o:0.5, T2s+, T5o+, T4o:0.5, 92s+, 96o+, 95o:0.5, 82s+, 86o+, 85o:0.5, 72s+, 76o, 75o:0.5, 62s+, 65o:0.5, 52s+, 42s+, 32s:0.5"),
 }
-# heads-up big blind facing the button open (calls capped at 1 - 3bet below, so the mixed 3bets are
-# played as written)
+# The heads-up 100bb charts below the button's open are the Preflop Trainer's own heads-up solve (the preflop
+# project's js/ranges.js RANGES.HU, solver/: real postflop solves on 50 sampled flops a round, 18 rounds, the last
+# six averaged; 5% rake capped at 0.5bb, 2.5bb opens, 10bb 3bets, 22bb 4bets, the small blind free to limp), in a
+# game where the small blind may limp, so pf_formats' limp moves leave them as written at 100bb (LIMP_BASE).
+# Against the one published 100bb heads-up cash solve with limps found (MonkerSolver, 5% capped at 2bb, 2.5bb
+# opens, 10bb 3bets; solvepoker.app/solver/nlhe/hu-100bb): the big blind 3bets / calls / folds 23.9 / 38.2 / 37.9
+# against its 24.6 / 33.8 / 41.6 (PokerCoaching-style chart before: 14.4 / 44.1 / 41.5), raises 39.6% of the
+# small blind's limps against its 41.6 (the 6-max rule before: 22.0), and the button facing the 3bet 4bets more
+# like it (per hand 34 points off on its 31 published classes, against 42 before). Its many 0.5s are classes that
+# flipped between the averaged rounds (close to indifferent). The Trainer's first-in chart was not taken: it
+# limps 43.5% of hands (AA and KK 10%) where Monker limps 17.1% and never a premium, and the chart below with
+# pf_formats' limp moves is nearer (59.4 / 28.9 / 11.7 raise / limp / fold against 69.2 / 17.1 / 13.8); nor its
+# limp-reraise chart (it 3bets 21% of its limps, Monker 0.2%: its limping range holds the premiums).
+# heads-up big blind facing the button's open: 3bet to 10bb / call / fold
 HU_BB_VS_SB = {
-    "3bet": R("77+, 66:0.5, A8s+, A5s-A2s:0.5, ATo+, A9o:0.5, K9s+, KJo+, QTs+, JTs, T9s:0.5"),
-    "call": R("22-66, A7s-A2s, A9o-A2o, K8s-K2s, KTo-K3o, Q5s+, Q4s:0.5, QTo-Q6o, J6s+, J5s:0.5, JTo-J7o, T6s+, T9o-T7o, 96s+, 98o, 97o, 85s+, 87o, 86o:0.5, 74s+, 76o, 75o:0.5, 64s+, 65o, 53s+, 43s, 42s:0.5"),
+    "3bet": R(
+        "AA, AKs, AQs, AJs, ATs, A9s:0.9, A8s:0.7, A7s:0.5, A6s:0.5, A5s:0.5, A4s:0.5, A3s:0.5, A2s:0.5, AKo, KK, "
+        "KQs, KJs, KTs:0.8, K9s:0.5, K8s:0.5, K7s:0.5, K6s:0.5, K5s:0.5, K4s:0.45, K3s:0.35, K2s:0.35, AQo, "
+        "KQo:0.7, QQ, QJs:0.9, QTs:0.85, Q9s:0.8, Q8s:0.6, Q7s:0.3, Q6s:0.15, Q5s:0.15, Q4s:0.15, Q2s:0.05, "
+        "AJo:0.8, KJo:0.5, QJo:0.5, JJ, JTs:0.65, J9s:0.65, J8s:0.5, J7s:0.45, J6s:0.15, J5s:0.05, J3s:0.1, "
+        "ATo:0.55, KTo:0.5, QTo:0.4, JTo:0.45, TT, T9s:0.65, T8s:0.5, T7s:0.5, T6s:0.2, A9o:0.5, K9o:0.5, "
+        "Q9o:0.05, J9o:0.2, T9o:0.2, 99, 98s:0.5, 97s:0.5, 96s:0.25, 95s:0.05, A8o:0.4, K8o:0.15, J8o:0.15, "
+        "T8o:0.4, 98o:0.35, 88:0.85, 87s:0.85, 86s:0.5, 85s:0.25, A7o:0.2, K7o:0.15, 87o:0.1, 77:0.7, 76s, "
+        "75s:0.6, 74s:0.1, A6o:0.2, K6o:0.05, 86o:0.05, 66:0.5, 65s:0.6, 64s:0.55, 63s:0.15, A5o:0.45, K5o:0.05, "
+        "55:0.55, 54s:0.65, 53s:0.5, A4o:0.25, 44:0.5, 43s:0.3, A3o:0.15, 33:0.35, A2o:0.35, 22:0.35"),
+    "call": R(
+        "A9s:0.1, A8s:0.3, A7s:0.5, A6s:0.5, A5s:0.5, A4s:0.5, A3s:0.5, A2s:0.5, KTs:0.2, K9s:0.5, K8s:0.5, "
+        "K7s:0.5, K6s:0.5, K5s:0.5, K4s:0.55, K3s:0.65, K2s:0.65, KQo:0.3, QJs:0.1, QTs:0.15, Q9s:0.2, Q8s:0.4, "
+        "Q7s:0.7, Q6s:0.85, Q5s:0.85, Q4s:0.85, Q3s, Q2s:0.95, AJo:0.2, KJo:0.5, QJo:0.5, JTs:0.35, J9s:0.35, "
+        "J8s:0.5, J7s:0.55, J6s:0.85, J5s:0.95, J4s, J3s:0.9, J2s, ATo:0.45, KTo:0.5, QTo:0.6, JTo:0.55, "
+        "T9s:0.35, T8s:0.5, T7s:0.5, T6s:0.8, T5s:0.65, T4s:0.65, T3s:0.55, T2s:0.5, A9o:0.5, K9o:0.5, Q9o:0.95, "
+        "J9o:0.8, T9o:0.8, 98s:0.5, 97s:0.5, 96s:0.75, 95s:0.45, 94s:0.5, 93s:0.5, 92s:0.5, A8o:0.6, K8o:0.85, "
+        "Q8o, J8o:0.85, T8o:0.6, 98o:0.65, 88:0.15, 87s:0.15, 86s:0.5, 85s:0.7, 84s:0.65, 83s:0.5, 82s:0.45, "
+        "A7o:0.8, K7o:0.85, Q7o:0.85, J7o:0.55, T7o:0.6, 97o:0.5, 87o:0.55, 77:0.3, 75s:0.4, 74s:0.75, 73s:0.5, "
+        "A6o:0.8, K6o:0.95, Q6o:0.45, T6o:0.45, 96o:0.45, 86o:0.5, 76o:0.65, 66:0.5, 65s:0.4, 64s:0.45, 63s:0.65, "
+        "62s:0.35, A5o:0.55, K5o:0.75, Q5o:0.2, J5o:0.05, T5o:0.1, 95o:0.25, 85o:0.2, 75o:0.45, 65o:0.4, 55:0.45, "
+        "54s:0.35, 53s:0.5, 52s:0.5, A4o:0.75, K4o:0.65, Q4o:0.15, T4o:0.05, 64o:0.15, 54o:0.4, 44:0.5, 43s:0.65, "
+        "42s:0.5, A3o:0.85, K3o:0.25, T3o:0.05, 53o:0.15, 33:0.65, 32s:0.4, A2o:0.6, K2o:0.3, 22:0.65"),
 }
-
 HU_BB_VS_SB["call"] = np.minimum(HU_BB_VS_SB["call"], 1.0 - HU_BB_VS_SB["3bet"])
 
 # ---------- facing a single raise ----------
@@ -522,17 +554,74 @@ COLD_VS_4BET = {"raise": R("AA, KK, AKs:0.6, QQ:0.4"), "call": R("QQ:0.5, AKs:0.
 VS_5BET = {"call": R("KK+, QQ:0.7, AKs, AKo:0.7, JJ:0.3")}
 VS_5BET_DEEP = {"raise": R("AA, KK:0.6, AKs:0.4"), "call": R("KK:0.4, QQ:0.8, AKs:0.6, AKo:0.6, JJ:0.3")}
 
-# heads-up button (SB, in position postflop) facing the big blind's 3bet
+# heads-up button (SB, in position postflop) facing the big blind's 3bet: 4bet / call / fold (the Trainer's solve,
+# above HU_BB_VS_SB)
 HU_SB_VS_3BET = {
-    "4bet": R("QQ+, JJ:0.5, AKs, AKo, AQs:0.5, A5s-A2s:0.4, K9s:0.2, Q9s:0.2, J9s:0.2"),
-    "call": R("22-TT, JJ:0.5, A2s-AJs, AQs:0.5, A8o-AQo, A7o-A5o, A4o-A2o:0.5, K2s+, K9o+, K8o:0.5, Q5s+, QTo+, Q9o:0.6, J6s+, JTo, J9o:0.6, T6s+, T9o, T8o:0.4, 96s+, 98o:0.4, 85s+, 87o:0.3, 74s+, 64s+, 63s:0.3, 53s+, 43s:0.5"),
+    "4bet": R(
+        "AA, AKs:0.85, AQs:0.5, AJs:0.4, ATs:0.5, A9s:0.1, A8s:0.05, A7s:0.05, A6s:0.05, A5s:0.05, A4s:0.05, "
+        "A3s:0.05, A2s:0.05, AKo:0.65, KK, KQs:0.25, KJs:0.2, KTs:0.05, K9s:0.15, K8s:0.1, K7s:0.35, K6s:0.2, "
+        "K5s:0.25, K4s:0.1, K3s:0.1, K2s:0.05, AQo:0.4, KQo:0.3, QQ:0.7, QJs:0.25, QTs:0.1, Q8s:0.05, Q7s:0.1, "
+        "Q6s:0.05, Q5s:0.05, Q4s:0.05, Q3s:0.05, Q2s:0.05, AJo:0.35, KJo:0.05, QJo:0.55, JJ:0.85, JTs:0.05, "
+        "J9s:0.3, J8s:0.35, J7s:0.15, J6s:0.05, J5s:0.05, J4s:0.05, J3s:0.05, ATo:0.4, KTo:0.05, QTo:0.15, "
+        "JTo:0.1, TT:0.5, T9s:0.05, T8s:0.05, T7s:0.15, T6s:0.5, T5s:0.4, T4s:0.4, T3s:0.25, T2s:0.3, A9o:0.2, "
+        "K9o:0.1, Q9o:0.45, J9o:0.1, T9o:0.15, 99:0.45, 98s:0.15, 97s:0.05, 96s:0.05, 95s:0.25, A8o:0.15, "
+        "K8o:0.15, Q8o:0.05, J8o:0.05, T8o:0.15, 98o:0.2, 88:0.45, 86s:0.2, 85s:0.05, 84s:0.05, 83s:0.05, "
+        "A7o:0.1, K7o:0.2, Q7o:0.05, T7o:0.05, 87o:0.05, 77:0.15, 76s:0.2, 75s:0.15, 73s:0.05, A6o:0.1, K6o:0.15, "
+        "Q6o:0.05, J6o:0.1, 76o:0.1, 66:0.35, 63s:0.1, A5o:0.05, K5o:0.2, Q5o:0.05, J5o:0.15, 55:0.1, 53s:0.05, "
+        "A4o:0.05, K4o:0.25, Q4o:0.05, J4o:0.05, 44:0.05, A3o:0.05, K3o:0.25, Q3o:0.05, 33:0.15, 32s:0.2, "
+        "A2o:0.05, K2o:0.3, Q2o:0.05, 22:0.15"),
+    "call": R(
+        "AKs:0.15, AQs:0.5, AJs:0.6, ATs:0.5, A9s:0.8, A8s:0.8, A7s:0.75, A6s:0.75, A5s:0.75, A4s:0.75, A3s:0.75, "
+        "A2s:0.75, AKo:0.35, KQs:0.75, KJs:0.75, KTs:0.8, K9s:0.75, K8s:0.8, K7s:0.65, K6s:0.75, K5s:0.7, "
+        "K4s:0.8, K3s:0.8, K2s:0.8, AQo:0.6, KQo:0.65, QQ:0.3, QJs:0.75, QTs:0.9, Q9s, Q8s:0.85, Q7s:0.7, "
+        "Q6s:0.75, Q5s:0.75, Q4s:0.75, Q3s:0.75, Q2s:0.7, AJo:0.6, KJo:0.75, QJo:0.45, JJ:0.15, JTs:0.85, "
+        "J9s:0.7, J8s:0.65, J7s:0.65, J6s:0.7, J5s:0.6, J4s:0.55, J3s:0.7, J2s:0.35, ATo:0.6, KTo:0.75, QTo:0.8, "
+        "JTo:0.75, TT:0.5, T9s:0.8, T8s:0.8, T7s:0.75, T6s:0.25, T5s:0.1, T4s:0.15, T3s:0.35, T2s:0.2, A9o:0.65, "
+        "K9o:0.75, Q9o:0.35, J9o:0.7, T9o:0.7, 99:0.55, 98s:0.75, 97s:0.95, 96s:0.85, 95s:0.2, A8o:0.65, "
+        "K8o:0.45, Q8o:0.15, J8o:0.3, T8o:0.7, 98o:0.4, 88:0.55, 87s:0.95, 86s:0.8, 85s:0.8, 84s:0.1, 83s:0.05, "
+        "A7o:0.65, K7o:0.1, Q7o:0.25, J7o:0.05, T7o:0.05, 97o:0.05, 87o:0.2, 77:0.85, 76s:0.8, 75s:0.75, 74s:0.8, "
+        "73s:0.2, A6o:0.65, K6o:0.1, Q6o:0.2, J6o:0.05, 86o:0.1, 76o:0.3, 66:0.65, 65s:0.95, 64s:0.8, 63s:0.6, "
+        "62s:0.35, A5o:0.7, K5o:0.1, Q5o:0.05, J5o:0.15, 65o:0.05, 55:0.85, 54s:0.75, 53s:0.8, 52s:0.6, A4o:0.7, "
+        "K4o:0.05, Q4o:0.1, J4o:0.2, 54o:0.45, 44:0.9, 43s:0.65, 42s:0.6, A3o:0.7, K3o:0.1, Q3o:0.1, J3o:0.05, "
+        "53o:0.05, 43o:0.2, 33:0.8, 32s:0.4, A2o:0.65, K2o:0.05, Q2o:0.1, 52o:0.05, 22:0.75"),
 }
 HU_SB_VS_3BET["call"] = np.minimum(HU_SB_VS_3BET["call"], 1.0 - HU_SB_VS_3BET["4bet"])   # 4bets as written
 
-# heads-up big blind facing the button's 4bet (its 3bets are wide, so it continues wider than 6-max)
+# heads-up big blind facing the button's 4bet: jam / call / fold. The Trainer's solve (above HU_BB_VS_SB) has this
+# node but ranges.js doesn't: averaged here as ranges.js's charts are (its runs/hu/strategy_13-18, weighted by
+# each round's 3bets, 5% steps; the same average gives its BB_vs_SB to the step). Against the wider 3bet range
+# the earlier chart folded 70% of it; this one 23% (Monker: jam / call / fold 25.1 / 31.1 / 43.8, this 23.7 /
+# 52.9 / 23.3; per hand 38 points off on its 39 published classes, the earlier chart 66).
 HU_BB_VS_4BET = {
-    "jam": R("QQ+, JJ:0.5, AKs, AKo, AQs:0.3, A5s:0.3, A4s:0.2"),
-    "call": R("JJ:0.5, TT, 99:0.5, AQs:0.7, AQo:0.6, AJs, AJo:0.3, KQs, KJs:0.6, KQo:0.3, QJs:0.5, JTs:0.5"),
+    "jam": R(
+        "AA:0.5, AKs:0.9, AJs:0.3, ATs:0.5, A9s:0.1, A8s:0.25, A7s:0.35, A6s:0.35, A5s:0.35, A4s:0.3, A3s:0.2, "
+        "A2s:0.15, AKo, KK:0.7, KQs:0.05, KTs:0.2, K9s:0.35, K8s:0.25, K7s:0.15, K6s:0.1, K5s:0.1, K4s:0.05, "
+        "K3s:0.1, K2s:0.1, AQo:0.2, KQo:0.1, QQ:0.45, QJs:0.3, Q9s:0.05, AJo:0.25, KJo:0.35, QJo:0.15, JJ:0.55, "
+        "ATo:0.4, KTo:0.35, QTo:0.15, JTo:0.05, TT:0.5, T2s:0.05, A9o:0.35, K9o:0.15, Q9o:0.15, 99:0.45, "
+        "92s:0.05, A8o:0.35, K8o:0.1, T8o:0.05, 98o:0.05, 88:0.15, 83s:0.05, 82s:0.05, A7o:0.15, K7o:0.15, "
+        "T7o:0.05, 77:0.25, 72s:0.1, A6o:0.2, K6o:0.1, J6o:0.05, T6o:0.1, 96o:0.05, 86o:0.05, 66:0.2, 62s:0.1, "
+        "A5o:0.15, K5o:0.1, J5o:0.05, T5o:0.1, 95o:0.1, 85o:0.05, 75o:0.05, 65o:0.05, 55:0.35, 52s:0.1, A4o:0.15, "
+        "K4o:0.1, Q4o:0.05, J4o:0.1, T4o:0.15, 94o:0.2, 84o:0.15, 74o:0.1, 64o:0.1, 54o:0.05, 44:0.15, 43s:0.05, "
+        "42s:0.1, A3o:0.15, K3o:0.15, Q3o:0.1, J3o:0.15, T3o:0.15, 93o:0.2, 83o:0.25, 73o:0.2, 63o:0.15, "
+        "53o:0.15, 43o:0.2, 33:0.25, 32s:0.1, A2o:0.15, K2o:0.15, Q2o:0.15, J2o:0.2, T2o:0.2, 92o:0.25, 82o:0.25, "
+        "72o:0.25, 62o:0.25, 52o:0.2, 42o:0.25, 32o:0.25, 22:0.5"),
+    "call": R(
+        "AA:0.5, AKs:0.1, AQs, AJs:0.7, ATs:0.5, A9s:0.9, A8s:0.7, A7s:0.65, A6s:0.6, A5s:0.6, A4s:0.65, A3s:0.7, "
+        "A2s:0.7, KK:0.3, KQs:0.95, KJs, KTs:0.8, K9s:0.65, K8s:0.7, K7s:0.75, K6s:0.75, K5s:0.75, K4s:0.75, "
+        "K3s:0.7, K2s:0.75, AQo:0.8, KQo:0.9, QQ:0.55, QJs:0.7, QTs, Q9s:0.9, Q8s:0.55, Q7s:0.45, Q6s:0.3, "
+        "Q5s:0.8, Q4s:0.3, Q3s:0.65, Q2s:0.75, AJo:0.75, KJo:0.45, QJo:0.7, JJ:0.45, JTs, J9s:0.65, J8s:0.65, "
+        "J7s:0.25, J6s:0.3, J5s:0.6, J4s:0.25, J3s:0.2, J2s:0.45, ATo:0.25, KTo:0.25, QTo:0.4, JTo:0.25, TT:0.5, "
+        "T9s:0.95, T8s:0.95, T7s:0.35, T6s:0.25, T5s:0.4, T4s:0.45, T3s:0.45, T2s:0.45, A9o:0.05, K9o:0.15, "
+        "Q9o:0.3, J9o:0.25, T9o:0.25, 99:0.55, 98s:0.7, 97s:0.75, 96s:0.65, 95s:0.4, 94s:0.4, 93s:0.45, 92s:0.45, "
+        "A8o:0.05, K8o:0.15, Q8o:0.2, J8o:0.2, T8o:0.2, 98o:0.2, 88:0.85, 87s:0.8, 86s:0.6, 85s:0.3, 84s:0.3, "
+        "83s:0.45, 82s:0.45, A7o:0.1, K7o:0.15, Q7o:0.15, J7o:0.25, T7o:0.35, 97o:0.3, 87o:0.15, 77:0.75, "
+        "76s:0.8, 75s:0.65, 74s:0.25, 73s:0.35, 72s:0.4, A6o:0.15, K6o:0.15, Q6o:0.2, J6o:0.3, T6o:0.3, 96o:0.35, "
+        "86o:0.25, 76o:0.4, 66:0.75, 65s:0.95, 64s:0.7, 63s:0.7, 62s:0.45, A5o:0.15, K5o:0.2, Q5o:0.3, J5o:0.35, "
+        "T5o:0.35, 95o:0.35, 85o:0.4, 75o:0.4, 65o:0.45, 55:0.6, 54s:0.95, 53s:0.85, 52s:0.5, A4o:0.15, K4o:0.3, "
+        "Q4o:0.3, J4o:0.35, T4o:0.35, 94o:0.35, 84o:0.35, 74o:0.4, 64o:0.4, 54o:0.5, 44:0.75, 43s:0.75, 42s:0.5, "
+        "A3o:0.15, K3o:0.25, Q3o:0.3, J3o:0.35, T3o:0.35, 93o:0.35, 83o:0.35, 73o:0.35, 63o:0.35, 53o:0.4, "
+        "43o:0.4, 33:0.6, 32s:0.5, A2o:0.15, K2o:0.3, Q2o:0.35, J2o:0.35, T2o:0.35, 92o:0.35, 82o:0.35, 72o:0.35, "
+        "62o:0.35, 52o:0.35, 42o:0.35, 32o:0.35, 22:0.35"),
 }
 # an iso-raiser facing the limper's re-raise (a trapped range: mostly QQ+ and AK)
 VS_LIMP_RERAISE = {"4bet": R("KK+, AKs:0.5"), "call": R("QQ, JJ:0.6, TT:0.3, AKs:0.5, AKo:0.6, AQs:0.3")}
@@ -612,6 +701,21 @@ OVERLIMP = {k: np.minimum(OVERLIMP[k], 1.0 - ISO[k]) for k in ISO}
 BB_VS_SB_LIMP = R("55+, A2s+, A7o+, K7s+, KTo+, Q9s+, QJo, J9s+, T9s, 98s:0.5, 87s:0.5, 65s:0.5, 54s:0.5, K6o-K2o:0.3, Q5s-Q2s:0.3")
 BB_VS_LIMP = R("66+, 55:0.5, A8s+, A5s-A2s:0.6, KTs+, K9s:0.5, QTs+, JTs, T9s:0.5, ATo+, KJo+, QJo:0.5")
 BB_VS_LIMPS = R("88+, 77:0.5, ATs+, A5s:0.5, KJs+, QJs:0.5, AJo+, KQo")
+# heads-up big blind facing the button's limp: raise (the Trainer's solve raises to 4bb, the tree 3.5bb) or check
+# (above HU_BB_VS_SB)
+HU_BB_VS_LIMP = R(
+        "AA, AKs, AQs, AJs, ATs, A9s, A8s, A7s, A6s:0.8, A5s:0.95, A4s:0.65, A3s:0.65, A2s:0.5, AKo, KK, KQs, "
+        "KJs, KTs, K9s:0.95, K8s:0.8, K7s:0.65, K6s:0.7, K5s:0.6, K4s:0.5, K3s:0.5, K2s:0.5, AQo, KQo, QQ, QJs, "
+        "QTs, Q9s:0.85, Q8s:0.8, Q7s:0.65, Q6s:0.75, Q5s:0.5, Q4s:0.5, Q3s:0.75, Q2s:0.35, AJo, KJo:0.65, "
+        "QJo:0.8, JJ, JTs, J9s, J8s:0.65, J7s:0.65, J6s:0.5, J5s:0.55, J4s:0.35, J3s:0.4, J2s:0.15, ATo:0.95, "
+        "KTo:0.5, QTo:0.65, JTo:0.85, TT, T9s, T8s:0.7, T7s:0.5, T6s:0.5, T5s:0.5, T4s:0.35, T3s:0.25, T2s:0.15, "
+        "A9o:0.5, K9o:0.5, Q9o:0.5, J9o:0.5, T9o:0.5, 99, 98s:0.7, 97s:0.5, 96s:0.6, 95s:0.5, 94s:0.15, A8o:0.5, "
+        "K8o:0.5, Q8o:0.5, J8o:0.5, T8o:0.5, 98o:0.5, 88, 87s:0.5, 86s:0.5, 85s:0.6, 84s:0.35, A7o:0.5, K7o:0.5, "
+        "Q7o:0.2, J7o:0.15, T7o:0.5, 97o:0.5, 87o:0.5, 77, 76s:0.6, 75s:0.6, 74s:0.6, 73s:0.15, A6o:0.5, K6o:0.4, "
+        "Q6o:0.05, T6o:0.05, 96o:0.25, 86o:0.45, 76o:0.5, 66:0.95, 65s:0.8, 64s:0.75, 63s:0.45, A5o:0.5, "
+        "K5o:0.05, 75o:0.2, 65o:0.3, 55, 54s:0.65, 53s:0.65, 52s:0.5, A4o:0.5, K4o:0.1, 64o:0.25, 54o:0.25, "
+        "44:0.9, 43s:0.5, 42s:0.5, A3o:0.5, K3o:0.35, 63o:0.15, 53o:0.2, 43o:0.2, 33:0.85, 32s:0.4, A2o:0.5, "
+        "K2o:0.3, 52o:0.1, 42o:0.15, 32o:0.15, 22:0.65")
 
 # antes: the dead money makes opens wider, played as the chart this many seats later (UTG -> HJ ...)
 RFI_LADDER = ["EP", "UTG", "HJ", "CO", "BTN"]
@@ -637,7 +741,9 @@ def _actions_at(hero: str, actions: List[dict], positions: Optional[List[str]] =
         limpers = [a["pos"] for a in actions if a["action"] == "call"]
         role = _norm(key(hero))
         if role == "BB":   # the big blind (or straddler) checks or raises the limpers
-            if limpers == ["SB"] or (len(positions) == 2 and limpers):
+            if len(positions) == 2 and limpers:
+                r = HU_BB_VS_LIMP
+            elif limpers == ["SB"]:
                 r = BB_VS_SB_LIMP
             else:
                 r = BB_VS_LIMP if len(limpers) == 1 else BB_VS_LIMPS
