@@ -374,6 +374,8 @@ class TestStudy(unittest.TestCase):
         del adv
         gc.collect()
 
+    ITERS = 100
+
     def test_three_way_later_at_once(self):
         """Later 3-way nodes on a flop the library doesn't store, and the turn: Study's answer at once (Advisor.instant
         with "study") read off the hand's earlier solve (Advisor._study_mw_prev): checked to, the first decision's
@@ -382,7 +384,10 @@ class TestStudy(unittest.TestCase):
         node's own solve starts from them. None once the node's own solve is in hand, at the turn's later decisions
         before a turn solve, on a river, or on a library flop's turn (its entries hold the flop)."""
         adv = advisor("fast")   # (its own: no solves of the class's other tests in hand)
-        adv.mw_budget = 2.5     # (the turn's solves: Fast's 5 s natively)
+        # every solve runs ITERS iterations, however long they take: on a time budget (3 s a flop, 2.5 a turn) a loaded
+        # machine or one thread ran the flop's 15-26, 48% of the pot from equilibrium, and Study answered with an
+        # error, or the two solves alike() compares stopped at different points (check 0.887 against 0.706)
+        adv.mw_budget, adv.mw_max_iters = 600.0, self.ITERS
         pre = PRE[:3] + [{"pos": "BTN", "action": "raise", "to": 2.5}, {"pos": "SB", "action": "call"},
                          {"pos": "BB", "action": "call"}]
         st = {"players": 6, "stack": 100, "preflop": pre, "board": "Kd8c3h", "study": True}
@@ -406,7 +411,7 @@ class TestStudy(unittest.TestCase):
             for k in set(fi) | set(fl):
                 self.assertAlmostEqual(fi.get(k, 0.0), fl.get(k, 0.0), delta=tol, msg=(k, fi, fl))
 
-        with mock.patch.object(advisor_mod, "MW_STUDY_FLOP_BUDGET", 3.0):
+        with mock.patch.object(advisor_mod, "MW_STUDY_FLOP_BUDGET", 600.0):
             root = adv.advise(st)
             self.assertTrue(root["multiway"] and not root["precomputed"])
             self.assertIsNone(adv.instant(st))   # (its own solve in hand: quick anyway)
