@@ -911,9 +911,39 @@ class TestFourWay(unittest.TestCase):
         self.assertEqual({a["action"].split()[0] for a in r["actions"]}, {"fold", "call", "raise"})
         self.assertAlmostEqual(sum(a["freq"] for a in r["actions"]), 1.0, places=2)
         pre7 = [dict(a, action="call") if a["pos"] == "UTG2" else a for a in PRE6]
+        adv.mw7_street_config = None    # (Fast: 7-way pots are the rules')
         r = adv.advise({"players": 9, "board": "Kh7d2c", "stack": 200.0, "preflop": pre7, "flop": [], "study": True})
         self.assertTrue(r["error"].startswith("Study mode browses pots of up to 6 players after the flop: 7 players"),
                         r)
+        # Accurate: 7 (MW7_STREETS); eight are refused
+        adv.mw7_street_config = {k: dict(v) for k, v in A.MW7_STREETS.items()}
+        pre8 = [dict(a, action="call") if a["pos"] == "HJ" else a for a in pre7]
+        r = adv.advise({"players": 9, "board": "Kh7d2c", "stack": 200.0, "preflop": pre8, "flop": [], "study": True})
+        self.assertTrue(r["error"].startswith("Study mode browses pots of up to 7 players after the flop: 8 players"),
+                        r)
+
+    def test_advisor_seven_way(self):
+        # 7-way flops and turns at Accurate by the 7-player solve (MW7_STREETS, 3 buckets); Fast's (None) and a quick
+        # answer's, the rules, saying Accurate solves it
+        adv = A.Advisor(time_budget=1e9)
+        adv.mw_solve_streets = ("flop", "turn", "river")
+        adv.mw_max_iters = 3
+        pre7 = [dict(a, action="call") if a["pos"] == "UTG2" else a for a in PRE6]
+        X7 = [{"pos": p, "action": "check"} for p in ("SB", "BB", "UTG1", "UTG2", "LJ", "CO", "BTN")]
+        turn = {"players": 9, "hero": "UTG1", "hole": "AhKd", "board": "Kh7d2c9s", "stack": 200.0, "preflop": pre7,
+                "flop": X7, "turn": X7[:1] + [{"pos": "BB", "action": "bet", "amount": 3.5}]}
+        r = adv.advise(turn)
+        self.assertTrue(r.get("solved"), r["notes"])
+        self.assertEqual(r["players"], 7)
+        self.assertTrue(any(n.startswith("7-way pot solved by 7-player CFR") for n in r["notes"]), r["notes"])
+        self.assertEqual({a["action"].split()[0] for a in r["actions"]}, {"fold", "call", "raise"})
+        r = adv.advise(dict(turn, quick=True))
+        self.assertFalse(r.get("solved"))
+        self.assertTrue(any("a 7-way turn is left to the betting rules at this speed (Accurate solves it)" in n
+                            for n in r["notes"]), r["notes"])
+        adv.mw7_street_config = None
+        r = adv.advise(turn)
+        self.assertFalse(r.get("solved"))
 
     def test_six_way_no_jam_over_a_raise(self):
         # MW6_STREETS' jam_is_raise: 6.6 pots behind facing a flop bet, your raise leaves the others 1.5 pots or less,

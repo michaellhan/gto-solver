@@ -334,6 +334,9 @@ const ready = (async () => {
              + "from gto.advisor import MW6_FAST_STREETS; "
              + "advs['fast'].mw6_street_config = None if _slow else {s: dict(c) for s, c in MW6_FAST_STREETS.items()}; "
              + "advs['accurate'].mw6_street_config = None if _slow else advs['accurate'].mw6_street_config; "
+             // 7-way: Accurate only (advisor.MW7_STREETS)
+             + "advs['fast'].mw7_street_config = None; "
+             + "advs['accurate'].mw7_street_config = None if _slow else advs['accurate'].mw7_street_config; "
              // 4+ way rivers (and two all-in) by the N-player solve (scripts/bench_browser.mjs): 4-way 2.5 s at Fast, 50
              // iterations, 0.08% of the pot from equilibrium (Quick 1.8 s, 0.27%); 5-way 7.6 s, 0.1% (Quick 5 iterations,
              // 5.4%); 6-way ~3 s an iteration, so Fast leaves it to the rules and Accurate's 60 s solve it

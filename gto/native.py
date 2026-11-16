@@ -135,9 +135,11 @@ def advisor(speed: str = "fast", depth: int = 2, budget: Optional[float] = None,
         # the 5 s and a best response's time is kept back, so it stopped after 1 iteration: the rules answer)
         adv.mw5_street_config = {st: dict(c) for st, c in MW5_FAST_STREETS.items()
                                  if st != "flop" or core.threads() >= THREADED_FAST}
-        # (6-way: a quick answer stays with the betting rules, as a 5-way one: on one thread a turn facing a bet spent
-        # its 1.8 s on its tables and an iteration, 161% of the pot from equilibrium; on four, a turn 2.6%, a flop 1.3%)
+        # (6-way: a quick answer stays with the betting rules, as a 5-way one. In 2 buckets its 1.8 s reach 13-26
+        # iterations, but against a richer game that lost to the rules on 5 of 11 flops and both turns facing a bet
+        # (they call 4-6% where the richer game calls 20-28%); 3 buckets at 10 iterations won one turn, lost another)
         adv.mw6_street_config = {st: dict(c) for st, c in MW6_FAST_STREETS.items()}
+        adv.mw7_street_config = None   # (7-way: Accurate only; Fast's 5 s reach a few iterations of its tables)
         adv.mw_budget = MW_FAST_BUDGET
     adv.library = default_library() if library else None
     adv.mw_library = mw_library.default_library() if library else None
