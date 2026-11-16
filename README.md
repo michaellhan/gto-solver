@@ -534,7 +534,9 @@ budgets; its GTO answer settled in 31). Quick has no time for the second solve: 
 so. A multiway GTO answer that doesn't settle in its share (a Fast 3-way flop off the library: 20-26 iterations, 11% of the
 pot from equilibrium) shows none either, runs no betting rules for it, and isn't tried again for that kind of solve (street,
 players, budget) by the advisor, so the exploit answer keeps the whole budget: at two thirds it got 35-45 iterations and fell
-to the rules now and then, at the whole budget 68. A multiway solve that ran out of a share of the budget runs on when the
+to the rules now and then, at the whole budget 68. The answer whose GTO pass first finds the kind unsettled gets the
+whole budget too, from then (it had two thirds: Fast's first 3-way flop of a live game ran 26 iterations, 14% of the pot
+from equilibrium, and the rules answered; now 51, 3.3%, in 7.3 s against 5.4, the GTO pass's 1.8 s once). A multiway solve that ran out of a share of the budget runs on when the
 spot is asked with more (GTO mode after an exploit answer), as a heads-up one does. It was the equilibrium of the exploit solve itself, which starts
 from the pool's ranges into the flop and from yours as this mode's preflop advice plays it, so it disagreed with GTO mode for the
 same hand (BTN's 7c6c on Ks8d3c7s2d checked to, BB locked as a station: checking 100% there, where GTO bets half pot); an action

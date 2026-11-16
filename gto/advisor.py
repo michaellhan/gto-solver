@@ -4397,8 +4397,16 @@ class Advisor:
                 budgets = self.time_budget, self.prior_budget
                 nominal = max(self.time_budget, self.mw_budget or 0.0)
                 self._scale_budgets(GTO_SHARE, mw_budget)
+                unsettled = self._gto_unsettled
                 gto = self._gto_answer(hero, hole, board, stack, streets, positions, actor, custom, optimize)
                 scale = 1.0 - min(GTO_SHARE, (time.time() - t0) / nominal)
+                if self._gto_unsettled != unsettled:
+                    # (its multiway solve didn't settle in its share, so no GTO % is shown and later answers of the kind
+                    # skip it: this one gets the whole budget as they do. With two thirds, Fast's first 3-way flop of a
+                    # live game (BB's 9c9d on 8sTcKc, CO and BTN limped, at the server's 2.5 s) ran 26 iterations, 14%
+                    # of the pot from equilibrium, and the betting rules answered, where the next such answer solved
+                    # 51 iterations to 3.3%; now it does too, in 7.3 s against 5.4: the GTO pass's 1.8 s, once)
+                    scale = 1.0
                 self.time_budget, self.prior_budget = budgets
                 self._scale_budgets(scale, mw_budget)
             res = self._postflop(hero, hole, board, stack, streets, positions, time.time() if exploit else t0,

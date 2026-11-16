@@ -218,6 +218,34 @@ class TestSharedBudget(unittest.TestCase):
         calls, _ = self._calls(dict(self.STATE))
         self.assertEqual(calls, [(False, 0.6, 0.3, 1.2)])
 
+    def test_an_unsettled_gto_pass_leaves_the_exploit_answer_the_whole_budget(self):
+        """A GTO answer whose multiway solve didn't settle in its share gives no GTO %, and later answers of that kind
+        skip it: the exploit answer gets the whole budget then too, as theirs do. With two thirds, Fast's first 3-way flop
+        of a live game ran 26 iterations, 14% of the pot from equilibrium, and the betting rules answered."""
+        adv = Advisor(Config(depth=1), time_budget=0.6, prior_budget=0.3)
+        adv.mw_budget = 1.2
+        calls = []
+
+        def post(self_, *a, pool=False, locks=None, **k):
+            calls.append((pool, self_.time_budget, self_.mw_budget))
+            if not pool:
+                time.sleep(0.2)
+                self_._gto_unsettled = self_._gto_unsettled | {("river", 3, 0.4)}
+                return {"actions": [], "notes": [], "solved": False}
+            return {"actions": [{"action": "check", "freq": 1.0, "gto_freq": 1.0}], "notes": [], "solved": True,
+                    "recommended": "check"}
+        with mock.patch.object(Advisor, "_postflop", post):
+            r = adv.advise(dict(self.STATE, opponents="live"))
+            (_, gt, _), (ep, et, em) = calls
+            self.assertTrue(ep)
+            self.assertAlmostEqual(gt, 0.6 * A.GTO_SHARE)
+            self.assertEqual((et, em), (0.6, 1.2))
+            self.assertTrue(any(n.startswith("GTO % isn't shown") for n in r["notes"]), r["notes"])
+            # a GTO answer that settled, or gave no answer without a new unsettled kind: the share as before
+            calls.clear()
+            adv.advise(dict(self.STATE, board="Kh7d2c9s5h", opponents="live"))   # (the kind already known)
+            self.assertLess(calls[1][1], 0.6 * (1 - 0.2 / 1.2) + 1e-6)
+
     def test_quick_shows_no_gto_percent(self):
         """Quick: no second answer (it is a solve too, and a quick answer has ~2 s): no GTO %, a note says so."""
         calls, r = self._calls(dict(self.STATE, opponents="live", quick=True))
