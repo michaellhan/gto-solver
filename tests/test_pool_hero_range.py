@@ -37,8 +37,12 @@ class TestPoolHeroRange(unittest.TestCase):
                              "flop": FLOP, "opponents": "pool"})
         self.assertFalse(r.get("off_range"))
         self.assertGreater(r["hero_range_combos"], 30)
-        freq = {a["action"]: a["freq"] for a in r["actions"]}
-        self.assertLess(freq["bet 75%"], 0.5)   # (off its range it bet 75% half the time, into two players)
+        # (Since multiway exploit answers became the best response to the pool (97e6ecf4), 66 bets here: the pool
+        # raises and bluffs less than equilibrium, so betting outearns checking at every solve length, check about
+        # 6.8 bb against 7.3-8.4 for the best bet. Which size is best is a near tie that flips with the iterations
+        # (bet 33% 8.13-8.21 against 75% 7.79-8.34 from 57 to 529 iterations), so the test checks the EVs, not the mix.)
+        ev = {a["action"]: a["ev_bb"] for a in r["actions"]}
+        self.assertGreater(max(ev["bet 33%"], ev["bet 75%"]), ev["check"] + 0.3)
 
 
 if __name__ == "__main__":
