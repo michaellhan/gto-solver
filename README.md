@@ -517,9 +517,12 @@ about ±1%).
 `"opponents": "pool"` is exploit mode: opponents play like a
 typical player pool instead of GTO. Preflop, hero's calls and raises are re-drawn against the pool's
 ranges and responses; after the flop the advice is the best response (each hand's highest-EV action,
-`freq` 0 or 1, with `gto_freq` alongside; EVs within `ev_tie` bb of the best are the solve's noise, so they count as tied and
-follow the equilibrium among them, which can leave the action shown just under another's EV: a note says so, and the page grades neither
-against the other). See Exploit mode below. `gto_freq` is the GTO answer's frequency for the same hand: the chart's mix
+`freq` 0 or 1, with `gto_freq` alongside; EVs within `ev_tie` bb of the best are the solve's noise, so they count as tied: each
+keeps the part of its equilibrium weight the noise explains, 1 - its gap to the best / `ev_tie`, and the rest goes to the best
+(`advisor.br_tie_mix`), so an action more than half of `ev_tie` behind the best is never the one shown most often. A closer one can be
+shown just under another's EV: a note says so, and the page grades neither against the other. Before, a tied action kept its
+whole equilibrium weight, so a short solve with a wide margin showed the equilibrium's mix whatever its EVs said: Fast's
+26-iteration answer for 66 on KcTc8c checked to it in a 3-way pot showed check 98% at 6.72 bb against bet 33% at 7.30). See Exploit mode below. `gto_freq` is the GTO answer's frequency for the same hand: the chart's mix
 preflop, and after it the spot asked again without the pool or locks (`Advisor._gto_answer`, `_gto_alongside`; the library's where
 GTO mode takes it from there). The two answers share one answer's time: the GTO one first, with at most a third of the solves'
 budgets (`GTO_SHARE`: `time_budget`, `prior_budget`, `mw_budget`), then the exploit one with what it left, the whole budget

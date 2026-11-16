@@ -364,6 +364,28 @@ RARE_BRANCH = 0.01
 BR_TIE_MIN = 0.005  # exploit mode: best-response EVs this close (share of pot; more when the solve is unsettled) count as tied
 BR_TIE_MAX = 0.05   # ...and at most this: a 10-iteration solve 41% of the pot from settled tied every action, so
                     # its unsettled mix folded 55 to a turn check-raise where calling was +6.7 bb
+
+
+def br_tie_mix(evs, eq, tol):
+    """Exploit mode's mix from best-response EVs (actions x hands) and the equilibrium's mix (`eq`, same shape): each
+    hand plays the action with the highest EV, except that an action within `tol` (the solve's noise, bb) of it keeps
+    part of its equilibrium weight, the part the noise can explain (1 - its EV gap / tol), and the rest goes to the best
+    action. So a gap the noise covers outright plays the equilibrium mix, and an action more than half of `tol` behind
+    the best is never the one played most often. Before, every tied action kept its whole equilibrium weight: Fast's
+    26-iteration exploit answer for CO's 66 on KcTc8c checked to it (8-handed, a UTG open and HJ calling) was 5.6% of
+    the pot from settled, its margin 0.98 bb, so check at 6.72 bb, bet 33% at 7.30 and 75% at 6.94 all tied and it
+    showed the equilibrium's check 98%; now bet 33% 60%, check 40% (tests/test_pool_hero_range.py)."""
+    evs = np.asarray(evs, dtype=np.float64)
+    eq = np.asarray(eq, dtype=np.float64)
+    gap = evs.max(axis=0, keepdims=True) - evs
+    keep = np.clip(1.0 - gap / max(float(tol), 1e-12), 0.0, 1.0)
+    best = (evs >= evs.max(axis=0, keepdims=True)) & (np.cumsum(evs >= evs.max(axis=0, keepdims=True), axis=0) == 1)
+    tot = eq.sum(axis=0, keepdims=True)
+    eqn = np.where(tot > 1e-9, eq / np.maximum(tot, 1e-12), 0.0)
+    g = eqn * keep
+    g = g + best * (eqn.sum(axis=0, keepdims=True) - g.sum(axis=0, keepdims=True))
+    # (a hand the equilibrium never reached, all weights zero: the best action)
+    return np.where(tot > 1e-9, g, best.astype(np.float64))
 GTO_SHARE = 1 / 3   # exploit mode after the flop: the most of the answer's budgets (time_budget, prior_budget, mw_budget) the
                     # GTO answer under each action (GTO %) gets, asked first; the exploit answer gets what it leaves. Each
                     # had the whole budget, so an exploit answer took twice a GTO one (Fast: a 3-way flop 11.3 s against
@@ -5601,13 +5623,11 @@ class Advisor:
             lock = mk_lock(sol, nxt)
             evs = sol.solver.node_action_br_evs(node, n_r0, n_r1, lock)
             # each hand takes its highest-EV action, but actions within the solve's noise of it (its
-            # distance from equilibrium, at least BR_TIE_MIN of the pot) are tied, and a tied hand plays the
-            # equilibrium mix among them: a short solve otherwise picks one at 100% on noise (AQo checked
-            # at 6.45 over bets at 6.40 in a solve 3.1% of the pot from settled)
+            # distance from equilibrium, at least BR_TIE_MIN of the pot) are tied, and keep the part of their
+            # equilibrium weight the noise explains (br_tie_mix): a short solve otherwise picks one at 100% on noise
+            # (AQo checked at 6.45 over bets at 6.40 in a solve 3.1% of the pot from settled)
             tol = min(max(BR_TIE_MIN, expl / 100.0), BR_TIE_MAX) * node.pot_now
-            tied = evs >= evs.max(axis=0, keepdims=True) - tol
-            g = node.avg_strategy0() * tied
-            strat = np.where(g.sum(axis=0) > 1e-9, g / np.maximum(g.sum(axis=0), 1e-12), tied / tied.sum(axis=0))
+            strat = br_tie_mix(evs, node.avg_strategy0(), tol)
             if pool:
                 notes.append(f"exploit mode: {villain} plays like a typical player pool (folds too often to bets of every size, "
                              "most of all small ones, and raises and bluffs less); EVs assume you keep best-responding on later streets")
@@ -6047,16 +6067,14 @@ class Advisor:
         if pool and not self._study:
             # exploit mode: the opponents play the pool's strategy at every decision of theirs in the solve (its
             # equilibrium with the pool's leaks, frozen: exploit.MWPoolLock), you best-respond on every street it bets
-            # on; actions within the solve's noise of the best are tied and play the equilibrium mix among them (as
-            # heads-up, BR_TIE_MIN / BR_TIE_MAX)
+            # on; actions within the solve's noise of the best are tied and keep the part of their equilibrium weight
+            # the noise explains (as heads-up: br_tie_mix, BR_TIE_MIN / BR_TIE_MAX)
             from .exploit import MWPoolLock
             lock = MWPoolLock(sol, [i for i in range(len(players)) if i != hp and i not in mcfg.allin],
                               [players.index(p) for p in committed if p in players])
             evs = sol.action_br_evs(lock)
             tol = min(max(BR_TIE_MIN, expl / 100.0), BR_TIE_MAX) * root.pot_now
-            tied = evs >= evs.max(axis=0, keepdims=True) - tol
-            g = strat * tied
-            strat = np.where(g.sum(axis=0) > 1e-9, g / np.maximum(g.sum(axis=0), 1e-12), tied / tied.sum(axis=0))
+            strat = br_tie_mix(evs, strat, tol)
         else:
             evs = sol.action_evs()
         shown = _mw_names(root.names, root.amounts, behind[hero], S_h, root.pot_now)
