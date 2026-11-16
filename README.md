@@ -469,7 +469,7 @@ more from where it was and answers `{"study": "pf_progress", "pf_solve"}`. `"pf_
 `"preflop_solve": {"export": true}` packs a finished solve run here (`{"study": "pf_export", "key", "iterations",
 "mbb", "blob"}`, base64; `"blob"` null for none, a stored game or one not finished), and `{"load": blob,
 "iterations": n}` takes it back before answering the node (where none is held; `"pf_solve"` then has `"cached":
-true`, and a blob of another tree is ignored). Postflop it browses heads-up, 3-way and 4-way pots. A multiway node has
+true`, and a blob of another tree is ignored). Postflop it browses pots of up to six players, as far as the solves take them (a node this speed leaves to the betting rules, such as a 5-way turn's first decision, is refused with the reason). A multiway node has
 `"multiway": true`, `"opponent"` naming the others ("BB and BTN"), `"opponents": [{"seat", "combos", "eq", "grid"}]` in acting order in
 place of `opponent_grid`, and `eq` (`range_eq`) a share of the pot at showdown (3-way on every street, the rest of
 the board dealt; 4-way on the river, else null); `"rough_ev": true` on an action the range takes under 1% of the time. With `"runouts": true` on a heads-up or 3-way hand whose flop

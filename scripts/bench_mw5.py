@@ -9,6 +9,9 @@ then ms an iteration, one thread unless GTO_THREADS says otherwise).
   python scripts/bench_mw5.py Kh7d2c9s "vs bet" 10:1:0.5:200,6:1:0.5:200,4:1:0.5:200
   python scripts/bench_mw5.py Kh7d2c first 6:3:0.5:300,4:6:0.5:200 --rules 80   # the betting rules too, on 80 hands
 
+--cache DIR keeps the first game's strategy and EVs, and the rules' row, in DIR (per preflop line, board, line, game and
+--rules), so later games on the same spot skip it.
+
 --rules N plays the betting rules (Advisor._multiway, 400 trials) on N hands drawn from the advised player's range by
 weight and scores their mix against the first game's EVs the same way (the hands' mean, the games' on the same hands).
 
@@ -56,6 +59,9 @@ def main():
     n_rules = 0
     if "--rules" in args:
         i = args.index("--rules"); n_rules = int(args[i + 1]); del args[i:i + 2]
+    cache = None
+    if "--cache" in args:
+        i = args.index("--cache"); cache = args[i + 1]; del args[i:i + 2]
     if "--pres" in args:
         global PRE
         i = args.index("--pres"); PRE = args[i + 1]; del args[i:i + 2]
@@ -63,6 +69,17 @@ def main():
     b, rs, pot, St, kw, hp = spot(board, line)
     ref = None
     drawn = None
+    fn = None
+    if cache:
+        os.makedirs(cache, exist_ok=True)
+        fn = os.path.join(cache, f"{PRE}_{board}_{line.replace(' ', '_')}_{'-'.join(games[0])}_{n_rules}.npz")
+        if os.path.exists(fn):
+            z = np.load(fn, allow_pickle=True)
+            ref, drawn = (z["rsig"], z["rev"], float(z["rp"])), (z["drawn"] if n_rules else None)
+            print(str(z["row"]) + "  (cached)", flush=True)
+            if n_rules:
+                print(str(z["rules"]), flush=True)
+            games = games[1:]
     for g in games:
         K, step, eq, it = g[:4]
         cfg = MWConfig(bet=A.MW4_BETS, max_raises=1, root_raise=True, later="buckets", buckets=int(K),
@@ -83,11 +100,16 @@ def main():
               " ".join(f"{n} {f * 100:4.1f}" for n, f in freqs.items())
         if ref is None:
             ref = (sig, ev, s.root_pot())
+            rules = ""
             if n_rules:
                 rng = np.random.default_rng(7)
                 live = np.flatnonzero(w > 0)
                 drawn = rng.choice(live, size=min(n_rules, len(live)), replace=False, p=w[live] / w[live].sum())
-                print(rules_row(s, drawn, ref, board, line, hp), flush=True)
+                rules = rules_row(s, drawn, ref, board, line, hp)
+                print(rules, flush=True)
+            if fn:
+                np.savez(fn, rsig=sig, rev=ev, rp=s.root_pot(), drawn=drawn if drawn is not None else np.zeros(0, int),
+                         row=row, rules=rules)
         else:
             rsig, rev, rp = ref
             loss = ((rsig * rev).sum(axis=0) - (sig * rev).sum(axis=0)) / rp * 100

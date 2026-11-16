@@ -543,7 +543,14 @@ class TestStudy(unittest.TestCase):
         self.assertTrue(all(o["eq"] is None for o in r["opponents"]))
         pre5 = PRE[:1] + [{"pos": "HJ", "action": "raise", "to": 2.5}, {"pos": "CO", "action": "call"},
                           {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "call"}, {"pos": "BB", "action": "call"}]
-        self.assertIn("5 players", self.study(preflop=pre5, board="Kd7c2h")["error"])
+        # (5-way: the 5-player solve's answer where this speed solves the spot; native Fast on fewer than THREADED_FAST
+        # threads leaves a 5-way flop to the rules, and Study says so)
+        r = self.study(preflop=pre5, board="Kd7c2h")
+        if "error" in r:
+            self.assertIn("a 5-way flop is left to the betting rules at this speed", r["error"])
+        else:
+            self.assertEqual(len(r["opponents"]), 4)
+            self.check_totals(r)
 
 
 if __name__ == "__main__":

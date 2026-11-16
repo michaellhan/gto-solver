@@ -28,7 +28,8 @@ has cases to check.
 Flags (per decision):
   exception        advise, study or play raised
   error            an error answer: the fuzz sends only states the page can, so none is expected (Study's
-                   refusals of 5+ way pots aside, which are counted as study_refused)
+                   refusals of 7+ way pots and of nodes left to the rules aside, counted
+                   as study_refused)
   no_rec           no actions, or a recommendation that isn't one of them
   nan              a number that isn't finite
   illegal          the recommended action can't be played as given (index.html act): a check facing a bet, a call
@@ -58,6 +59,12 @@ and draws, few bluffs), so flops go 3-6 way. It adds two soft flags for reading 
 and records each postflop decision's hand ("hc": made-hand class, pair kind, draws) for the report's live section.
 
   python scripts/coverage_fuzz.py --live --seed 11 --hands 200 --minutes 90
+
+--min-way N asks only the postflop decisions with N or more players in (preflop every seat limps or calls three times
+in four and now and then isolates: choose_crowd; smaller pots play on by the live style, unasked), to check the
+multiway solves' share and legality where pots are biggest:
+
+  python scripts/coverage_fuzz.py --live --min-way 6 --seed 21 --hands 60 --out .work/coverage/mw6_21.jsonl
 
 Resumable and seeded: hand i plays from Random(f"{seed}:{i}"), its records are written when it ends (one line per
 decision, then a "done" line), and a run skips hands already done in --out. Run it in chunks:
@@ -158,6 +165,7 @@ STANDARD = 0.0  # (--standard: the share of hands on a flop library line)
 
 
 LIVE = False   # (--live)
+MIN_WAY = 0    # (--min-way N: ask only postflop decisions with N or more players in; preflop and smaller pots by style)
 LIVE_STYLES = [("live", 0.7), ("advice", 0.2), ("nit", 0.05), ("aggro", 0.05)]
 
 
@@ -460,6 +468,17 @@ def hand_info(hole, board):
         sd = cls > 5 and any(len({r for r in range(lo, lo + 5)} & allr) == 4 and
                              any(r in range(lo, lo + 5) for r in hr + ([-1] if 12 in hr else [])) for lo in range(-1, 9))
     return cls, kind, fd, sd
+
+
+def choose_crowd(rng, cur, p, stk):
+    """--min-way's preflop move: a seat limps or calls three times in four, now and then isolates to 4-5bb once,
+    so 5-9 see most flops."""
+    i = info_of(cur, p, stk)
+    if cur.n_raises == 0 and i["raise_ok"] and rng.random() < 0.08:
+        return {"action": "raise", "to": cur.cur_bet * rng.choice([4, 5])}
+    if not i["facing"]:
+        return {"action": "check"}
+    return {"action": "call"} if rng.random() < (0.75 if cur.n_raises <= 1 else 0.3) else {"action": "fold"}
 
 
 def choose_live(rng, cur, p, stk, hole, board):
@@ -792,6 +811,12 @@ def play_hand(seed, h):
             continue
         p = cur.to_act
         board = board_all[:2 * n_board]
+        if MIN_WAY and (cur.name == "preflop" or len(cur.active) < MIN_WAY):
+            # (--min-way: not asked; preflop crowds in, a smaller pot plays on by the seat's live style)
+            move = choose_crowd(rng, cur, p, stk) if cur.name == "preflop" else choose_live(rng, cur, p, stk, holes[p], board)
+            a, _ = page_act(move, cur, p, stk, clamp=True)
+            streets[cur.name].append({"pos": p, **(a or {"action": "call" if cur.cur_bet > cur.bets[p] + 1e-9 else "check"})})
+            continue
         state = page_state(setup, p, holes[p], board, streets)
         rec = {"hand": h, "k": k, "kind": "advise", "tags": tags_of(setup, cur, p, rep, n_board, streets),
                "style": styles[p]}
@@ -1020,12 +1045,14 @@ def main():
     ap.add_argument("--report", nargs="?", const="-", default=None, help="summarize --out (to this file, or stdout)")
     ap.add_argument("--harsh", action="store_true", help="the odd setups far more often")
     ap.add_argument("--live", action="store_true", help="live low-stakes cash tables (gen_live_setup, choose_live)")
+    ap.add_argument("--min-way", type=int, default=0, help="ask only postflop decisions with this many players in or "
+                    "more; preflop everyone crowds in (choose_crowd)")
     ap.add_argument("--standard", type=float, default=0.0, help="this share of hands on the flop library's lines")
     ap.add_argument("--repro", default=None, help="HAND:K: ask hand HAND's record K again (its stored state), verbose")
     args = ap.parse_args()
     args.out = args.out or OUT_DEFAULT.format(seed=args.seed)
-    global HARSH, STANDARD, LIVE
-    HARSH, STANDARD, LIVE = args.harsh, args.standard, args.live
+    global HARSH, STANDARD, LIVE, MIN_WAY
+    HARSH, STANDARD, LIVE, MIN_WAY = args.harsh, args.standard, args.live, args.min_way
     if args.report:
         text, _, _ = report(args.out, None if args.report == "-" else args.report)
         print(text if args.report == "-" else text.split("\n## Coverage")[0])

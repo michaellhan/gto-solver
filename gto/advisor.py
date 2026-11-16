@@ -5257,10 +5257,13 @@ class Advisor:
         if self._lib_only and len(cur.players_start) > 2:
             return {"skipped": "multiway: not a flop-library spot"}
         mw_streets = [st for st in rep[1:] if len(st.players_start) > 2]
-        big = [st for st in mw_streets if len(st.players_start) > 4]
+        # (Study: pots of as many as the solves take, 6 on the flop and turn and the river's N-player solve; a node
+        # this speed's game leaves to the rules is refused below, as the solve's)
+        most = 6 if self.mw6_street_config is not None else 5 if self.mw5_street_config is not None else 4
+        big = [st for st in mw_streets if len(st.players_start) > max(most, min(self.mw_nway_max, 6))]
         if self._study and big:
-            return {"error": f"Study mode browses heads-up, 3-way and 4-way pots after the flop: "
-                             f"{len(big[0].players_start)} players saw the {big[0].name}"}
+            return {"error": f"Study mode browses pots of up to {max(most, min(self.mw_nway_max, 6))} players after "
+                             f"the flop: {len(big[0].players_start)} players saw the {big[0].name}"}
         slow: Dict[str, np.ndarray] = {}
         by_rules = []
         for st in mw_streets:
@@ -5330,7 +5333,7 @@ class Advisor:
             if self._study:   # (Study shows a solve or nothing: not the betting rules)
                 why = notes[n_notes] if len(notes) > n_notes else (
                     f"the {len(remaining)}-way solver plays {len(remaining)} players with chips and no bet bigger than the "
-                    f"shortest stack can call" if len(remaining) <= 4 else "it solves at most 4-way pots before the river")
+                    f"shortest stack can call" if len(remaining) <= 6 else "it solves at most 6-way pots")
                 return {"error": f"Study can't solve this {len(remaining)}-way spot: {why}"}
             if self._gto_pass:   # (exploit mode's GTO %: the rules' mix isn't GTO mode's answer, and their time is the answer's)
                 return {"actions": [], "notes": notes, "solved": False}

@@ -894,6 +894,26 @@ class TestFourWay(unittest.TestCase):
         r = adv.advise(flop)
         self.assertFalse(r.get("solved"))
 
+    def test_study_six_way(self):
+        # Study browses pots as big as the solves take: a 6-way turn facing a bet answers for the actor's whole range
+        # (the 6-player solve); seven players saw the flop: refused, naming the most it browses
+        adv = A.Advisor(time_budget=1e9)
+        adv.mw_solve_streets = ("flop", "turn", "river")
+        adv.mw_max_iters = 25
+        adv.mw6_street_config = {k: dict(v) for k, v in A.MW6_FAST_STREETS.items()}
+        X6 = [{"pos": p, "action": "check"} for p in SEATS6]
+        r = adv.advise({"players": 9, "board": "Kh7d2c9s", "stack": 200.0, "preflop": PRE6, "flop": X6, "study": True,
+                        "turn": X6[:2] + [{"pos": "UTG1", "action": "bet", "amount": 3.0}]})
+        self.assertNotIn("error", r)
+        self.assertEqual((r["study"], r["actor"], r["multiway"]), ("node", "LJ", True))
+        self.assertEqual(len(r["opponents"]), 5)
+        self.assertEqual({a["action"].split()[0] for a in r["actions"]}, {"fold", "call", "raise"})
+        self.assertAlmostEqual(sum(a["freq"] for a in r["actions"]), 1.0, places=2)
+        pre7 = [dict(a, action="call") if a["pos"] == "UTG2" else a for a in PRE6]
+        r = adv.advise({"players": 9, "board": "Kh7d2c", "stack": 200.0, "preflop": pre7, "flop": [], "study": True})
+        self.assertTrue(r["error"].startswith("Study mode browses pots of up to 6 players after the flop: 7 players"),
+                        r)
+
     def test_six_way_no_jam_over_a_raise(self):
         # MW6_STREETS' jam_is_raise: 6.6 pots behind facing a flop bet, your raise leaves the others 1.5 pots or less,
         # and a jam over it from each of them made 334 flop all-ins of up to six hands (1.55 s an iteration natively);
