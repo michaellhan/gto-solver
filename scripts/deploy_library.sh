@@ -14,6 +14,10 @@ REPO=michaellhan/gto-solver-library
 OUT="${1:?usage: scripts/deploy_library.sh DIR}"
 SRC="$HERE/gto/static/flop_library"
 [ -f "$SRC/index.json" ] || { echo "No library to publish: $SRC/index.json is missing." >&2; exit 1; }
+# the 3-way library: on the code's game and whole (a rebuild is assembled elsewhere and moved in when done)
+PY="${PYTHON:-}"; [ -n "$PY" ] || { [ -x "$HERE/.venv/bin/python" ] && PY="$HERE/.venv/bin/python" || PY=python3; }
+(cd "$HERE" && "$PY" scripts/build_mw_library.py --verify --out "$SRC") || {
+  echo "Not publishing: the 3-way library above is stale or incomplete." >&2; exit 1; }
 rm -rf "$OUT"
 mkdir -p "$OUT"
 cp -R "$SRC/." "$OUT/"

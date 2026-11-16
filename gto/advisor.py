@@ -67,20 +67,30 @@ MW_LATER = {"later": "buckets", "buckets": 16}   # 3-way flop and turn solves: t
 # iterations each), the root player's top tenth of hands by value: 6 buckets 33% of the pot apart -> 12%, 12 buckets 17%
 # -> 12% (the two 24-bucket games 11% apart); against the 24-bucket game in shares of value 37% -> 13% and 24% -> 7%, the
 # range's EV error 6.4% -> 2.2% and the 12 buckets' 3.3 -> 1.3. An iteration costs 20-35% more (fewer buckets nobody
-# reaches). Not Accurate's 3-way flop, the game the 3-way flop library was built in (gto/mw_library.py)
+# reaches). Accurate's 3-way flop too (MW_ACC_FLOP, and the 3-way flop library built in it): on 14 of those live 3-way
+# spots its 16 buckets on every river put the top tenth 16.3% of the pot off the 24-bucket game -> 11.1% (the two
+# 24-bucket splits 10.3% apart); against the 24-bucket game by value 18.5% -> 7.1%, the range's EV error 2.3% -> 1.0%
 MW_BUCKET_POWER = 1.0
 # 3-way flop solves bet a third or three quarters of the pot (the heads-up flop menu; the turn and river inside one size)
 MW_FLOP_BETS = {"flop": [0.33, 0.75], "turn": 0.5, "river": 0.5}
+# Accurate's 3-way flop game (native and the browser's, and the 3-way flop library's: mw_library.library_config)
+MW_ACC_FLOP = dict(MW_LATER, bucket_power=MW_BUCKET_POWER, bet=MW_FLOP_BETS)
 # 3-way turn solves bet the heads-up turn menu, a third, three quarters or 125% of the pot (the river inside half): with
 # the compiled core (gto/mwcore.py) a turn iteration costs 8 ms one size, 25-48 ms three, in the browser. Checked to
 # on Kh8d3c9s (CO opens, BTN and BB call) the button bets 125% 30% of its range where it can (its bet 50%: 37%; with
 # 33/75 75% 36%), and its value is 1.3% of the pot more (natively 300 iterations: 0.03-0.2% from equilibrium)
 MW_TURN_BETS = {"flop": 0.33, "turn": [0.33, 0.75, 1.25], "river": 0.5}
+# 3-way turn solves' river buckets split by weight times equity too (MW_BUCKET_POWER): scored per combo against the
+# 48-bucket game on 14 live 3-way turn spots (scripts/bench_mw_buckets.py --street turn, 200 iterations), the root
+# player's top tenth of hands by value in 16 buckets 10.1% of the pot off -> 4.2% (the two 48-bucket splits 5.7% apart),
+# against the 48-bucket game by value 13.2% -> 6.0%, mix loss 0.07-0.12% -> 0.03-0.06%; Quick's 8 buckets 18.2% -> 6.6%
+# and 19.8% -> 10.1%. The same time an iteration (+4% in 16 buckets, -3% in 8)
+MW_ACC_TURN = dict(MW_LATER, bucket_power=MW_BUCKET_POWER, bet=MW_TURN_BETS)
 MW_QUICK_BUDGET = 1.8   # Practice's quick answers: a 3-way pot's least budget (a river's tables take ~0.7 s in the
                         # browser: at 1.2 s it ran 4 iterations, 19% of the pot from equilibrium; at 1.5, 7-19, 2-8.5%)
 # a quick answer's 3-way turn: 8 buckets (in the browser's 1.8 s, the compiled core: 87 iterations, 0.58% of the pot
 # from equilibrium; 16 buckets in numpy ran 25, 7.1%)
-MW_QUICK_TURN = {"later": "buckets", "buckets": 8, "bet": MW_TURN_BETS}
+MW_QUICK_TURN = {"later": "buckets", "buckets": 8, "bucket_power": MW_BUCKET_POWER, "bet": MW_TURN_BETS}
 # a quick answer's 3-way flop the library doesn't hold (and natively a 4-way flop, Advisor.mw4_quick_flop): the smallest
 # game, 6 hand buckets, the turn's tables over every sixth river, the flop betting half the pot (a pot with a player
 # all-in keeps the street's own game: two bettors, small enough). In the browser's 1.8 s a flop first to act (Kh8d3c, CO
@@ -111,7 +121,7 @@ MW_STUDY_FLOP_BUDGET = 15.0
 # the pot from equilibrium, natively 111-125, 0.7-1.05%; checked to twice 400, 0.03%; a turn 248-400, 0.04-0.1%
 MW_FAST_STREETS = {"flop": {"later": "buckets", "buckets": 12, "bucket_river_step": 3, "bucket_power": MW_BUCKET_POWER,
                             "bet": MW_FLOP_BETS},
-                   "turn": dict(MW_LATER, bet=MW_TURN_BETS)}
+                   "turn": dict(MW_ACC_TURN)}
 # 4-way flops and turns (nobody all-in): the 4-player solve, the later streets by hand buckets (the root street per combo,
 # card removal pair by pair: MultiwaySolver._term_pw), one bet a street and no raise but the player advised's
 # (root_raise), as the N-player river solve
@@ -3219,8 +3229,8 @@ class Advisor:
         self.mw_config: Optional[dict] = None
         # per street MWConfig overrides: from the flop and turn the later streets are bet on by hand buckets (dealt out
         # as equity leaves, a flop solve bet half as often as published solves: README, 3-way pots)
-        self.mw_street_config: Dict[str, dict] = {"flop": dict(MW_LATER, bet=MW_FLOP_BETS),
-                                                  "turn": dict(MW_LATER, bet=MW_TURN_BETS)}
+        self.mw_street_config: Dict[str, dict] = {"flop": dict(MW_ACC_FLOP),
+                                                  "turn": dict(MW_ACC_TURN)}
         self.mw_max_iters: int = 1000
         self.mw_budget: Optional[float] = None   # a 3-way solve's budget when longer than time_budget (native Fast's 2.5 s)
         self.mw_max_expl: float = 10.0   # a solve further than this from equilibrium (% pot) hands over to the rules

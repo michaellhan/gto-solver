@@ -1,5 +1,5 @@
 """Precomputed 3-way flop solutions: the commonest 3-way pots (100bb, 6-max charts) solved offline by the 3-player
-solver (gto/multiway_solver.py) on native Accurate's flop game (advisor.MW_LATER, MW_FLOP_BETS) until settled
+solver (gto/multiway_solver.py) on native Accurate's flop game (advisor.MW_ACC_FLOP) until settled
 (scripts/build_mw_library.py), so a 3-way flop's first decision is a real solve at once, at every speed: a live
 3-way flop solve needs ~8 s even in Fast's smaller game, and Practice's quick answers leave it to the betting rules.
 
@@ -104,19 +104,24 @@ def _spot_ranges(sp: dict) -> Optional[dict]:
 
 
 def library_config():
-    """The game entries are solved on: native Accurate's 3-way flop (MWConfig: 16 hand buckets on the later streets,
-    the flop betting a third or three quarters of the pot)."""
-    from .advisor import MW_LATER, MW_FLOP_BETS
+    """The game entries are solved on: native Accurate's 3-way flop (advisor.MW_ACC_FLOP, MWConfig: 16 hand buckets on
+    the later streets split by weight times equity, the flop betting a third or three quarters of the pot)."""
+    from .advisor import MW_ACC_FLOP
     from .multiway_solver import MWConfig
-    return MWConfig(**dict(MW_LATER, bet={k: (list(v) if isinstance(v, list) else v) for k, v in MW_FLOP_BETS.items()}))
+    return MWConfig(**{**MW_ACC_FLOP, "bet": {k: (list(v) if isinstance(v, list) else v) for k, v in MW_ACC_FLOP["bet"].items()}})
 
 
 def tree_key(mcfg) -> dict:
-    """What a 3-way flop solve's game depends on beyond ranges, pot and stack."""
+    """What a 3-way flop solve's game depends on beyond ranges, pot and stack (the bucket split only where it isn't
+    the plain weight split, so entries built before it existed keep their key). MWLibrary.index ignores an index whose
+    tree isn't this game's (tree_key(library_config())): a changed game reads no old entries rather than mixing them
+    with live solves of the new one, and scripts/build_mw_library.py rebuilds them."""
     return {"bet": mcfg.bet, "raise_frac": mcfg.raise_frac, "max_raises": mcfg.max_raises, "allin_spr": mcfg.allin_spr,
             "later": mcfg.later, "buckets": mcfg.buckets, "classes": mcfg.classes,
             "bucket_river_step": mcfg.bucket_river_step, "exact": mcfg.exact,
-            "rake": [mcfg.rake_rate, mcfg.rake_cap] if mcfg.rake_rate > 0 else None, "version": MODEL_VERSION}
+            "rake": [mcfg.rake_rate, mcfg.rake_cap] if mcfg.rake_rate > 0 else None, "version": MODEL_VERSION,
+            **({"bucket_power": mcfg.bucket_power} if mcfg.bucket_power else {}),
+            **({"bucket_eq": mcfg.bucket_eq} if mcfg.bucket_eq else {})}
 
 
 def spot_setup(line: str, players: int = 6, stack: float = 100.0, ante: float = 0.0, straddle: bool = False) -> dict:
@@ -320,6 +325,8 @@ class MWLibrary:
                 idx = {}
             if not isinstance(idx, dict) or idx.get("format") != FORMAT:
                 idx = {"spots": []}
+            elif fl._key_str(idx.get("tree") or {}) != fl._key_str(tree_key(library_config())):
+                idx = {"spots": [], "stale_tree": idx.get("tree")}   # (built on another game: none of it is read)
             self._index = idx
             for s in idx.get("spots", []):
                 self._spots[(tuple(s["fp"]), round(float(s["pot"]), 2), round(float(s["stack"]), 2))] = s

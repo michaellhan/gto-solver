@@ -523,7 +523,7 @@ class TestStudy(unittest.TestCase):
         for a in r2["actions"]:
             if abs(a["freq"] - advisor_mod.RARE_BRANCH) > 0.001:
                 self.assertEqual(rare[a["action"]], a["freq"] < advisor_mod.RARE_BRANCH, a)
-        self.assertTrue(rare["bet 33%"])
+        self.assertTrue(rare["bet 75%"])    # (0% in the library; its 33% bet is ~1%, at RARE_BRANCH)
         self.assertNotIn("rough_ev", next(a for a in r["actions"] if a["action"] == "check"))
         cc = [{"pos": p, "action": "check"} for p in ("SB", "BB", "BTN")]
         r = self.study(preflop=pre, board="Kd7c2h5s9c", flop=cc, turn=cc)

@@ -13,6 +13,8 @@ game's mix against its own ("mix loss").
       'q6={"buckets":6,"bucket_river_step":6}' 'q6p1={"buckets":6,"bucket_river_step":6,"bucket_power":1}'
   python scripts/bench_mw_buckets.py sum out.json ref q6 q6p1
 
+--street turn captures turn decisions instead (a turn solve's buckets are the river's).
+
 A game is MWConfig fields as JSON over the spot's own (the advisor's Fast flop game), "four" a 4-way pot's own
 overrides, "iters" its iterations (200). Results are kept in out.json per spot and game, so a run resumes.
 """
@@ -29,12 +31,17 @@ class _Got(Exception):
 
 def capture(a):
     import coverage_fuzz as CF
-    recs = [r for r in map(json.loads, open(a.records)) if r.get("tags", {}).get("street") == "flop" and "state" in r
+    recs = [r for r in map(json.loads, open(a.records)) if r.get("tags", {}).get("street") == a.street and "state" in r
             and r["tags"].get("in_pot") in (3, 4) and not r["tags"].get("allin_in")]
+    nb = {"flop": 3, "turn": 4}[a.street]
     np.random.default_rng(a.seed).shuffle(recs)
     cap = {}
 
+    orig = M.MultiwaySolver.__init__
+
     def init(self, *args, **kw):
+        if len(args[0]) != nb:     # (an earlier street's solve, narrowing the ranges: _mw_walk)
+            return orig(self, *args, **kw)
         cap["a"], cap["k"] = args, dict(kw)
         raise _Got()
     M.MultiwaySolver.__init__ = init
@@ -120,6 +127,7 @@ if __name__ == "__main__":
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("capture"); c.add_argument("records"); c.add_argument("spots")
     c.add_argument("--n3", type=int, default=14); c.add_argument("--n4", type=int, default=10); c.add_argument("--seed", type=int, default=5)
+    c.add_argument("--street", default="flop", choices=("flop", "turn"))
     r = sub.add_parser("run"); r.add_argument("spots"); r.add_argument("out"); r.add_argument("games", nargs="+")
     s = sub.add_parser("sum"); s.add_argument("out"); s.add_argument("games", nargs="+")
     a = ap.parse_args()

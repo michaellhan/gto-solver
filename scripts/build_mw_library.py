@@ -6,6 +6,11 @@ at most --max-iters).
     python scripts/build_mw_library.py --jobs 8                            # every spot: REP_FLOPS (184) + EXTRA_FLOPS
     python scripts/build_mw_library.py --boards Kh7d2c,9s8s5d              # given flops
     python scripts/build_mw_library.py --index-only                        # rewrite mw_index.json from the entries
+    python scripts/build_mw_library.py --verify [--out DIR]                # exit 1 unless the index is whole
+
+A game change (library_config: buckets, bet sizes, the bucket split...) makes every entry stale: the library then
+reads none of them (MWLibrary.index), so rebuild into another --out and move it into gto/static/flop_library only
+once --verify passes there; scripts/deploy_library.sh runs --verify and won't publish a stale or half-built library.
 
 Resumable as scripts/build_flop_library.py: an entry already on disk for the current charts and tree is kept. The
 index is rewritten every --index-every entries and at the end. One progress line per entry (spot, flop, iterations,
@@ -106,6 +111,42 @@ def write_index(out: str, spots) -> dict:
     return idx
 
 
+def wanted(sid: str) -> list:
+    """The flops a spot's full build holds (its representative flops and EXTRA_FLOPS)."""
+    n = ml.SPOT_FLOPS.get(sid, ml.REP_FLOPS)
+    return list(dict.fromkeys([cards_str(f) for f in fl.representative_flops(n)] + ml.EXTRA_FLOPS))
+
+
+def check(out: str) -> list:
+    """What keeps the library at `out` from being published as it is (empty: nothing): an index on another game than
+    the code's (it would be ignored), or a listed spot missing flops of its full build or holding entries that don't
+    match the index (a build stopped part way, or not re-indexed)."""
+    path = os.path.join(out, ml.INDEX)
+    if not os.path.exists(path):
+        return []                      # (no 3-way library: nothing to publish)
+    with open(path) as f:
+        idx = json.load(f)
+    tk = ml.tree_key(ml.library_config())
+    if fl._key_str(idx.get("tree") or {}) != fl._key_str(tk):
+        return [f"{path}: built on another game ({idx.get('tree')}), the code's is {tk}: rebuild "
+                f"(scripts/build_mw_library.py --out DIR) and move it in when --verify passes there"]
+    bad = []
+    for sp in idx.get("spots", []):
+        miss = [nm for nm in wanted(sp["id"]) if nm not in sp["flops"]]
+        if miss:
+            bad.append(f"{sp['id']}: {len(miss)} of {len(wanted(sp['id']))} flops missing (e.g. {miss[:3]})")
+        for nm, h in sp["flops"].items():
+            try:
+                with open(os.path.join(out, sp["id"], nm + ".bin"), "rb") as f:
+                    ok = hashlib.sha1(f.read()).hexdigest()[:10] == h
+            except OSError:
+                ok = False
+            if not ok:
+                bad.append(f"{sp['id']}/{nm}.bin: missing or not the indexed entry")
+                break
+    return bad
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--spots", default="", help="comma separated spot ids (default: all)")
@@ -121,6 +162,8 @@ def main(argv=None):
     ap.add_argument("--limit", type=int, default=0, help="solve at most this many entries this run")
     ap.add_argument("--index-every", type=int, default=10)
     ap.add_argument("--index-only", action="store_true")
+    ap.add_argument("--verify", action="store_true", help="exit 1 unless the index at --out is on the current game, "
+                    "every listed spot holds its full build's flops and each entry is the indexed one")
     a = ap.parse_args(argv)
     want = [x for x in a.spots.split(",") if x]
     spots = [s for s in ml.SPOTS if not want or s[0] in want]
@@ -129,15 +172,24 @@ def main(argv=None):
     if a.index_only:
         write_index(a.out, ml.SPOTS)
         return
+    if a.verify:
+        bad = check(a.out)
+        for b in bad:
+            print(b, file=sys.stderr)
+        if bad:
+            sys.exit(1)
+        print(f"3-way library at {a.out}: whole, on the current game")
+        return
     jobs = []
     opts = {"min_iters": a.min_iters, "max_iters": a.max_iters, "check": a.check, "target": a.target}
     for sid, label, line in spots:
         meta = _meta(sid, _setup(line))
         if a.boards:
             names = list(dict.fromkeys(fl.flop_name(parse_cards(b)) for b in a.boards.split(",") if b))
+        elif a.flops:
+            names = list(dict.fromkeys([cards_str(f) for f in fl.representative_flops(int(a.flops))] + ml.EXTRA_FLOPS))
         else:
-            n = int(a.flops) if a.flops else ml.SPOT_FLOPS.get(sid, ml.REP_FLOPS)
-            names = list(dict.fromkeys([cards_str(f) for f in fl.representative_flops(n)] + ml.EXTRA_FLOPS))
+            names = wanted(sid)
         jobs += [(sid, line, nm, a.out, opts) for nm in names
                  if not current(os.path.join(a.out, sid, nm + ".bin"), meta)]
     if a.limit:

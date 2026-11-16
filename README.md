@@ -4090,23 +4090,31 @@ betting rules. The commonest 3-way pots' flops are solved offline (`gto/mw_libra
 * **Flops**: the heads-up library's 184 representative canonical flops (`flop_library.representative_flops`), plus
   K72 rainbow (`EXTRA_FLOPS`), matched up to suits; other flops are solved live.
 * **What is stored**: one 3-player CFR solve from the flop's start on native Accurate's 3-way game
-  (`advisor.MW_LATER`, `MW_FLOP_BETS`: bets of 33 and 75% pot, one raise and all-in, the turn and river bet on by
-  16 hand buckets a player), run to under 0.1% of the pot mean best-response gain (300-500 iterations, ~3-4 min a
-  flop on a loaded core), stores the flop's first decisions: first to act, checked to once, checked to twice. The
+  (`advisor.MW_ACC_FLOP`: bets of 33 and 75% pot, one raise and all-in, the turn and river bet on by 16 hand buckets a
+  player, split by weight times equity: `MWConfig.bucket_power`, Known limits), run to under 0.1% of the pot mean best-response gain (300-700 iterations, 0.077% on average, 24-233 s a
+  flop on a loaded core, 73 s on average), stores the flop's first decisions: first to act, checked to once, checked to twice. The
   solve takes every hand the flop doesn't block (`include`, ~7% more time), so a hand off its player's range (a
   cold call the charts 3bet or fold) gets its current strategy, as a live solve gives it. Per hand: the mix in 1%
   steps and each action's EV, in the heads-up library's entry format (`flop_library.pack`, one mask per player).
-  An entry is 3.8-7.6 KB; a spot's 185 flops ~1.1 MB, the four spots' 740 flops 4.53 MB
-  (built in numpy in ~2.5 h a spot on 8 loaded cores; with the compiled multiway core an entry takes 15-45 s of CPU).
+  An entry is 3.4-11.2 KB; a spot's ~187 flops ~1.0 MB, the four spots' 748 flops 4.14 MB (the value-split rebuild of
+  2026-11-16 took 15.0 CPU-hours: two processes at nice 10 for 7 h on a loaded machine).
+  The index records the game it was solved on (`mw_library.tree_key`: sizes, buckets, the bucket split...); the
+  library reads nothing from an index on another game than `library_config()`'s (`MWLibrary.index`), so a changed game
+  answers live until the library is rebuilt rather than mixing old entries with live solves of the new game, and
+  `scripts/deploy_library.sh` won't publish it (`build_mw_library.py --verify`: on the current game, every listed spot
+  whole, each entry the indexed one). A rebuild goes into another `--out` and moves into `gto/static/flop_library`
+  (its `mw_*` folders and `mw_index.json`) once `--verify` passes there.
 * **Lines**: a line through a bet isn't stored; facing a bet the flop is solved live as before. Practice opponents after a library answer read their move off it (`_mw_actor_move`), and a turn after the
   flop checks through narrows the flop's ranges through it (`_mw_walk`), where the rules did before.
-* **Accuracy** (`scripts/compare_mw_library.py`, CO / BTN / BB on K72r, KJ2 two-tone, K82 monotone, K55, against
-  the native Accurate advisor's live solve of each node in its 30 s, library off): the library's solves are 0.06-0.08%
-  of the pot from equilibrium (300-600 iterations); the live ones 0.85-1.9% at the root (80-130 iterations) and
-  0.1-0.8% checked to, from ranges the betting rules narrowed through the checks (the library's are the solve's own).
-  Their acting ranges' action frequencies are 8 points apart on average (2-18; the BB's root leads 2-18% live,
-  0-0.5% in the library), the same most frequent action for 85% of hands, per-hand mixes 18 points apart and EVs
-  3.9% of the pot (1-12.5).
+* **Accuracy** (`scripts/compare_mw_library.py`, the value-split rebuild of 2026-11-16 against the native Accurate
+  advisor's live solve of each node in its 30 s, library off; CO / BTN / BB on K72r, 985 two-tone, A66, BTN / SB / BB
+  on J52r and J62 two-tone, HJ / IP / BB on A43r, UTG / BTN / BB on A87 two-tone, 21 nodes): the library's solves are
+  0.066-0.10% of the pot from equilibrium (300-700 iterations), the live ones 0.01-0.28% (200-971 iterations, from
+  ranges the betting rules narrowed through the checks; the library's are the solve's own). Their acting ranges'
+  action frequencies are 4.4 points apart on average (0-28: the button checked to twice on K72r bets 52% live and
+  34% in the library), the same most frequent action for 90% of hands, per-hand mixes 11 points apart and EVs 2.0% of
+  the pot (0.6-3.8). The library built on equal-weight buckets, against live solves then 0.85-1.9% from equilibrium at
+  the root: 8 points, 85%, 18 points and 3.9% (1-12.5) on K72r, KJ2 two-tone, K82 monotone and K55.
 * **Browser** (`scripts/bench_browser.mjs`, `mw-flop` first to act, `mw-flop-x` checked to twice): answered from the
   library in 0.49-0.57 s at Quick (`BENCH_STATE='{"quick":true}'`), Fast and Accurate alike, most of it the first
   request importing the 3-way solver (Accurate's live solve took its 60 s then, Quick's answer was the rules');
@@ -4197,6 +4205,8 @@ betting rules. The commonest 3-way pots' flops are solved offline (`gto/mw_libra
 ```bash
 nohup nice python scripts/build_mw_library.py --jobs 8 > reports/mw_library_build.log &   # every spot (resumable)
 python scripts/build_mw_library.py --spots mw_co_btn_bb --boards Kh7d2c                  # given flops
+python scripts/build_mw_library.py --out /tmp/mwlib --spots mw_co_btn_bb,mw_btn_sb_bb,mw_hj_ip_bb,mw_utg_btn_bb  # a rebuild
+python scripts/build_mw_library.py --verify --out /tmp/mwlib                            # whole, on the current game
 python scripts/compare_mw_library.py --spot mw_co_btn_bb --boards Kh7d2c,9s8s5d          # against live Accurate
 ```
 
@@ -4374,12 +4384,19 @@ their products batched: `core.LEAF_ROWS_BLAS`).
   called, on 4c5h2h the first limper led and BTN's 5d5c was worth -0.16 bb calling in Quick's 6 buckets (folded 98%)
   where 24 buckets give +12-13, while the solve read 0.02% of the pot from equilibrium (its exploitability is measured
   inside its own buckets). The flop games now split each range by weight times equity (`MWConfig.bucket_power`,
-  `advisor.MW_BUCKET_POWER`; Quick, Fast and the 4-way games, not Accurate's 3-way flop, in which the 3-way library was
-  built): 5d5c calls, +6.8 bb. Scored per combo against the 24-bucket game over 19 live flop spots, 12 3-way and 7
+  `advisor.MW_BUCKET_POWER`; every speed's 3-way flop, Accurate's (`MW_ACC_FLOP`) and the 3-way flop library built in it
+  included, and the 4-way games): 5d5c calls, +6.8 bb. Scored per combo against the 24-bucket game over 19 live flop spots, 12 3-way and 7
   4-way (`scripts/bench_mw_buckets.py`), the root player's top tenth of hands by value is 12% of the pot off in 6
   buckets (was 33%) and in 12 (was 17%), where the two 24-bucket splits are 11% apart; the range's EV error 2.2% of the
-  pot in 6 (was 6.4). An iteration costs 20-35% more. 3- and 4-way turn solves' river buckets are unchanged and
-  unmeasured; the 5-way games, turns included, blend the two splits instead (`MWConfig.bucket_eq` 0.75, measured
+  pot in 6 (was 6.4). An iteration costs 20-35% more. Accurate's 3-way flop (16 buckets on every river), on 14 of
+  those 3-way spots: its top tenth 16.3% of the pot off the 24-bucket game -> 11.1% (the floor, the two 24-bucket splits
+  apart, 10.3%), against the 24-bucket game by value 18.5% -> 7.1%, the range's EV error 2.3% -> 1.0%, an iteration 10%
+  more. At Accurate the set's call there was priced as its bucket's, +27.9 bb and a raise +27.5, now +37.5 and +35.7. 3-way
+  turn solves' river buckets split the same way (`MW_ACC_TURN`, Fast's and Quick's `MW_QUICK_TURN`): against the 48-bucket
+  game on 14 live 3-way turn spots (`bench_mw_buckets.py --street turn`), 16 buckets' top tenth 10.1% -> 4.2% (floor
+  5.7%), by value 13.2% -> 6.0%, mix loss 0.07-0.12% -> 0.03-0.06%; Quick's 8 buckets 18.2% -> 6.6%; iterations cost the
+  same. 4-way turn solves' river buckets are unchanged and unmeasured; the 5-way games, turns included, blend the two
+  splits instead (`MWConfig.bucket_eq` 0.75, measured
   against 5-way turn references: N-player pots in How it works).
 * 4-way flops and turns are solved live in a smaller game than 3-way ones: one bet a street (a third of the pot on
   the flop, half after), no raise but yours, everyone at the shortest stack behind, this street's card removal pair

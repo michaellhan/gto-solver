@@ -1,6 +1,7 @@
 """The precomputed 3-way flop library (gto/mw_library.py, scripts/build_mw_library.py): entries that read back as
 solved, in any suits, and the advisor answering a 3-way flop's first decisions from it at every speed (and only where
 it holds the spot)."""
+import dataclasses
 import importlib
 import json
 import re
@@ -10,6 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -256,6 +258,32 @@ class TestMWLibrary(unittest.TestCase):
                    dict(base, locks={"BTN": {"fold": 15}}), dict(base, stack=60)):
             r = self._advisor().advise(st)
             self.assertNotIn("precomputed", r, st)
+
+    def test_changed_game_reads_no_old_entries(self):
+        """Entries solved on another game (here the bucket split, MWConfig.bucket_power) are neither read nor kept:
+        the index's tree isn't the library game's, so the library holds nothing (a live solve answers), the build
+        counts the entry stale (it re-solves it), a rewritten index leaves it out and the deploy's check refuses it."""
+        base = ml.library_config()
+        other = lambda: dataclasses.replace(base, bucket_power=0.0 if base.bucket_power else 1.0)
+        sid, _, line = SPOT
+        d = tempfile.mkdtemp()
+        try:
+            shutil.copytree(os.path.join(self.dir, sid), os.path.join(d, sid))
+            shutil.copy(os.path.join(self.dir, ml.INDEX), d)
+            with mock.patch.object(ml, "library_config", other):
+                lib = ml.MWLibrary.from_dir(d)
+                self.assertIsNone(self._libsol(lib=lib))
+                self.assertIsNone(lib.near(self.setup["ranges"], cards("Kh8d3c"), self.setup["pot"], self.setup["stack"]))
+                self.assertEqual(lib.index()["spots"], [])
+                self.assertFalse(build.current(os.path.join(d, sid, CANON + ".bin"), build._meta(sid, self.setup)))
+                self.assertIn("another game", build.check(d)[0])     # (scripts/deploy_library.sh won't publish it)
+                self.assertEqual(build.write_index(d, [SPOT])["spots"], [])
+            self.assertIsNotNone(self._libsol(lib=ml.MWLibrary.from_dir(self.dir)))   # (the library's own game reads it)
+            # ...nor a library on the game but part built (one flop of the spot's full build)
+            self.assertIn(f"{sid}: {len(build.wanted(sid)) - 1} of {len(build.wanted(sid))} flops missing",
+                          build.check(self.dir)[0])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
 
     def test_library_only(self):
         """The session analyzer's library scope answers a 3-way flop the library holds, and skips the rest."""

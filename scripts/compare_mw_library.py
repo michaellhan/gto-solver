@@ -5,7 +5,7 @@ and the acting player's range is compared with the library's: range frequency pe
 (half the L1 distance, averaged by reach), how often the two pick the same most frequent action, and per-hand EVs
 (mean absolute difference over the actions, % of the pot), plus the live solve's iterations and exploitability.
 
-    python scripts/compare_mw_library.py --spot mw_co_btn_bb --boards Kh7d2c,9s8s5d,Ad6c6h --budget 30
+    python scripts/compare_mw_library.py --spot mw_co_btn_bb --boards Kh7d2c,9s8s5d,Ad6c6h --budget 30 [--lib DIR]
 """
 from __future__ import annotations
 import argparse
@@ -21,10 +21,10 @@ from gto.cards import cards, cards_str, ALL_COMBOS  # noqa: E402
 from gto.cli import parse_actions  # noqa: E402
 
 
-def compare(spot, board: str, budget: float) -> list:
+def compare(spot, board: str, budget: float, lib_dir: str = "") -> list:
     sid, label, line = spot
     s = ml.spot_setup(line)
-    lib = ml.default_library().solution(s["ranges"], cards(board), s["pot"], s["stack"])
+    lib = (ml.MWLibrary.from_dir(lib_dir) if lib_dir else ml.default_library()).solution(s["ranges"], cards(board), s["pot"], s["stack"])
     if lib is None:
         raise SystemExit(f"{sid} {board}: not in the library")
     pre = parse_actions(line)
@@ -70,9 +70,11 @@ def main(argv=None):
     ap.add_argument("--spot", default=ml.SPOTS[0][0])
     ap.add_argument("--boards", default="Kh7d2c")
     ap.add_argument("--budget", type=float, default=30.0)
+    ap.add_argument("--lib", default="", help="the library folder (default gto/static/flop_library: a rebuild before "
+                    "it moves in)")
     a = ap.parse_args(argv)
     spot = next(s for s in ml.SPOTS if s[0] == a.spot)
-    rows = [x for b in a.boards.split(",") for x in compare(spot, b, a.budget)]
+    rows = [x for b in a.boards.split(",") for x in compare(spot, b, a.budget, a.lib)]
     for k in ("freq_pts", "mix_pts", "same_top", "ev_pct"):
         print(k, "mean", round(float(np.mean([x[k] for x in rows])), 2), "max", max(x[k] for x in rows))
 

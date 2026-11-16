@@ -24,6 +24,7 @@ fi
 if [ -z "${PYTHON:-}" ]; then
   if [ -x "$HERE/.venv/bin/python" ]; then PYTHON="$HERE/.venv/bin/python"; else PYTHON=python3; fi
 fi
+export PYTHON   # (scripts/deploy_library.sh's 3-way library check)
 if [ "${SKIP_CHECKS:-0}" = "1" ]; then
   echo "SKIP_CHECKS=1: skipping the unit tests and the quick sanity sweep."
 else
