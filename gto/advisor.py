@@ -173,10 +173,13 @@ MW5_FAST_STREETS = {"flop": {"later": "buckets", "buckets": 3, "bucket_river_ste
 # flop all-ins of up to six hands, 1.55 s an iteration; without, 0.09 s, and Fast's 5 s run 100 iterations, not 1).
 # Against a richer bucket game (scripts/bench_mw5.py --pres limp6 / iso6; % of the pot the advised player's mix gives
 # up on 60 of its hands, the betting rules' on the same): six turns, the rules 0.43 on average, this game 0.05, Fast's
-# at 40 iterations 0.12; ten flops, the rules 0.82, 0.14 and 0.24. A turn's first decision too (0.26 and 0.76 against
-# 0.05 each; 5-way's stays with the rules). A quick answer: the rules (Advisor.mw6_quick None; gto/native.py says why).
+# at 40 iterations 0.12; eleven flops, the rules 0.83, 0.14 and 0.36. A turn's first decision too (0.26 and 0.76 against
+# 0.05 each; 5-way's stays with the rules). Accurate bets a flop's river where you face a bet (bucket_river_facing:
+# checked through, a raise was too cheap: in the isolated pot facing a bet and a call 15% raises where the richer game
+# made 0.3%, 1.14% of the pot given up against the rules' 0.90; bet on, 0.31; six flops facing a bet 0.32 -> 0.16 on
+# average, natively 100-114 iterations in 30 s). Fast's 5 s reach ~15 iterations of that game: worse on four of six. A quick answer: the rules (Advisor.mw6_quick None; gto/native.py says why).
 MW6_STREETS = {"flop": {"later": "buckets", "buckets": 4, "bucket_river_step": 12, "bucket_eq": MW5_EQ,
-                        "bucket_river": False, "jam_is_raise": True},
+                        "bucket_river": False, "bucket_river_facing": True, "jam_is_raise": True},
                "turn": {"later": "buckets", "buckets": 4, "bucket_eq": MW5_EQ, "jam_is_raise": True}}
 MW6_FAST_STREETS = {"flop": {"later": "buckets", "buckets": 3, "bucket_river_step": 12, "bucket_eq": MW5_EQ,
                              "bucket_river": False, "jam_is_raise": True},
@@ -5979,11 +5982,15 @@ class Advisor:
         if four:
             # 4-way flops and turns: the later streets by hand buckets (MW4_STREETS), one bet a street, no raises but
             # yours; card removal pairwise on this street, as the N-player solve's
+            game = dict(six_cfg[cur.name] if six else
+                        self.mw5_street_config.get(cur.name, {}) if five else
+                        self.mw4_quick_flop if quick and cur.name == "flop" else
+                        self.mw4_street_config.get(cur.name, {}))
+            # (bucket_river_facing: the river bet on where you face a bet, MW6_STREETS)
+            if game.pop("bucket_river_facing", False) and cur.cur_bet > cur.bets[hero] + 1e-9:
+                game["bucket_river"] = True
             mcfg = MW.MWConfig(rake_rate=self.cfg.rake_rate, rake_cap=self.cfg.rake_cap, bet=MW4_BETS, max_raises=1,
-                               root_raise=True, **(six_cfg[cur.name] if six else
-                                                   self.mw5_street_config.get(cur.name, {}) if five else
-                                                   self.mw4_quick_flop if quick and cur.name == "flop" else
-                                                   self.mw4_street_config.get(cur.name, {})))
+                               root_raise=True, **game)
         elif nway:
             # Four or more in (or three, two of them all-in): pairwise card removal (the others' hands independent
             # given yours, their overlap corrected), the pots layered by the all-in players' stakes, a bet of half the

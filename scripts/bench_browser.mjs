@@ -72,6 +72,7 @@ const MW5 = [F("UTG"), R("HJ", 2.5), C("CO"), C("BTN"), C("SB"), C("BB")];
 // live 9-handed, 200bb: UTG1, LJ, CO and BTN limp, the SB completes, the BB checks (6-way)
 const MW6 = [F("UTG"), C("UTG1"), F("UTG2"), C("LJ"), F("HJ"), C("CO"), C("BTN"), C("SB"), X("BB")];
 const X6 = ["SB", "BB", "UTG1", "LJ", "CO", "BTN"].map((p) => X(p));
+const ISO6 = [C("UTG"), F("UTG1"), C("UTG2"), F("LJ"), R("HJ", 5), C("CO"), C("BTN"), F("SB"), C("BB"), C("UTG"), C("UTG2")];
 const MW7 = [F("UTG"), C("UTG1"), C("UTG2"), C("LJ"), F("HJ"), C("CO"), C("BTN"), C("SB"), X("BB")];
 const X7 = ["SB", "BB", "UTG1", "UTG2", "LJ", "CO", "BTN"].map((p) => X(p));
 const CO_BB = [F("UTG"), F("HJ"), R("CO", 2.5), F("BTN"), F("SB"), C("BB")];
@@ -220,6 +221,11 @@ const SPOTS = {
   "mw6-turn": base({ players: 9, stack: 200, hero: "SB", hole: "Qh9h", board: "Kh7d2c9s", preflop: MW6, flop: X6 }),
   "mw6-turn-bet": base({ players: 9, stack: 200, hero: "LJ", hole: "Qh9h", board: "Kh7d2c9s", preflop: MW6, flop: X6,
                          turn: [X("SB"), X("BB"), B("UTG1", 3)] }),                                   // 6-way, facing a bet
+  // 6-way flops facing a bet (Accurate bets the river there: advisor.MW6_STREETS bucket_river_facing)
+  "mw6-flop-bet": base({ players: 9, stack: 200, hero: "UTG1", hole: "Qh9h", board: "Kh7d2c", preflop: MW6,
+                         flop: [X("SB"), B("BB", 2)] }),
+  "mw6-iso-bet": base({ players: 9, stack: 200, hero: "UTG2", hole: "Qh9h", board: "Kh7d2c", preflop: ISO6,
+                        flop: [X("BB"), B("UTG", 10)] }),
   "mw7-flop": base({ players: 9, stack: 200, hero: "SB", hole: "Qh9h", board: "Kh7d2c", preflop: MW7 }),   // 7-way (Accurate)
   "mw7-turn": base({ players: 9, stack: 200, hero: "SB", hole: "Qh9h", board: "Kh7d2c9s", preflop: MW7, flop: X7 }),
   "mw7-turn-bet": base({ players: 9, stack: 200, hero: "UTG1", hole: "Qh9h", board: "Kh7d2c9s", preflop: MW7, flop: X7,

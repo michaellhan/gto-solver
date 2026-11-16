@@ -891,6 +891,13 @@ class TestFourWay(unittest.TestCase):
         self.assertFalse(r.get("solved"))
         self.assertTrue(any("a 6-way flop is left to the betting rules at this speed (Fast and Accurate" in n
                             for n in r["notes"]), r["notes"])
+        # Accurate's game bets the river where you face a flop bet (bucket_river_facing: with it checked through a
+        # raise was too cheap: 15% raises where the richer game made 0.3%), and checks it through first to act
+        adv.mw6_street_config = {k: dict(v) for k, v in A.MW6_STREETS.items()}
+        r = adv.advise(dict(flop, flop=X6[:1] + [{"pos": "BB", "action": "bet", "amount": 2.0}], hero="UTG1"))
+        self.assertTrue(r.get("solved"), r["notes"])
+        self.assertTrue(any("the turn and river bet on too" in n for n in r["notes"]), r["notes"])
+        self.assertEqual(A.MW6_STREETS["flop"]["bucket_river_facing"], True)     # (not consumed by the advice)
         adv.mw6_street_config = None
         r = adv.advise(flop)
         self.assertFalse(r.get("solved"))
