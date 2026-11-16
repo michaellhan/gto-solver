@@ -116,8 +116,8 @@ class TestBorrowMultiway(unittest.TestCase):
 
     def test_borrow(self):
         """8- and 9-max BTN open, SB and BB call: the 6-max spot's (distance ~0.14); not at 6-max, without a table
-        size (ranges of your own), where the ranges are too far apart (8-max CO open, SB and BB call), or in another
-        pot (antes)."""
+        size (ranges of your own), where the ranges are too far apart (8-max UTG open, HJ and BB call), or in another
+        pot (antes). 8-max CO open, SB and BB call, 1.56 from the BTN's spot, is the CO's (built 2026-11-16)."""
         from gto.cards import cards
         lib, ML = self.lib, self.ML
         for players, pre in ((8, "UTG:f,UTG1:f,LJ:f,"), (9, "UTG:f,UTG1:f,UTG2:f,LJ:f,")):
@@ -137,8 +137,12 @@ class TestBorrowMultiway(unittest.TestCase):
         self.assertIsNone(lib.borrow(own["ranges"], own["pot"], own["stack"], 8))   # (the library holds it)
         sol = lib.solution(own["ranges"], cards("Kc7d2h"), own["pot"], own["stack"], players=6)
         self.assertIsNone(sol.borrowed)
-        far = self.setup("UTG:f,UTG1:f,LJ:f,HJ:f,CO:r2.5,BTN:f,SB:c,BB:c", 8)
+        far = self.setup("UTG:r2.5,UTG1:f,LJ:f,HJ:c,CO:f,BTN:f,SB:f,BB:c", 8)
         self.assertIsNone(lib.borrow(far["ranges"], far["pot"], far["stack"], 8))
+        co = self.setup("UTG:f,UTG1:f,LJ:f,HJ:f,CO:r2.5,BTN:f,SB:c,BB:c", 8)
+        b = lib.borrow(co["ranges"], co["pot"], co["stack"], 8)
+        self.assertEqual(b["spot"]["id"], "mw_co_sb_bb")
+        self.assertLess(sum(b["dist"]), ML.MW_BORROW_DIST)
         six = self.setup("UTG:f,HJ:f,CO:r2.5,BTN:f,SB:c,BB:c", 6)
         self.assertIsNone(lib.borrow(six["ranges"], six["pot"], six["stack"], 6))   # (6-max: its own pot, solved)
         ante = ML.spot_setup("UTG:f,UTG1:f,LJ:f,HJ:f,CO:f,BTN:r2.5,SB:c,BB:c", players=8, ante=0.125)
@@ -203,16 +207,21 @@ class TestStandInMultiway(unittest.TestCase):
         cls.ML, cls.lib = ML, ML.default_library()
 
     def test_stand_in(self):
-        """6-max with antes, HJ open, BTN and BB call: HJ's spot at another pot; 6-max UTG open, HJ and BB call: UTG's
-        spot at the same pot. On a flop the spot stores its mixes, on another its stored flops most like it; never
-        the stored answer itself (solution), with ranges of your own, or where the ranges are too far apart."""
+        """6-max with antes, HJ open, BTN and BB call: HJ's spot at another pot; 8-max UTG open, HJ and BB call: the
+        6-max one's spot at the same pot (6-max's own pot, a spot since 2026-11-16, is the library's). On a flop the
+        spot stores its mixes, on another its stored flops most like it; never the stored answer itself (solution),
+        with ranges of your own, or where the ranges are too far apart."""
+        from gto import flop_library as fl
         from gto.cards import cards
         lib, ML = self.lib, self.ML
         ante = ML.spot_setup("UTG:f,HJ:r2.5,CO:f,BTN:c,SB:f,BB:c", ante=0.125)
         six = ML.spot_setup("UTG:r2.5,HJ:c,CO:f,BTN:f,SB:f,BB:c")
+        self.assertEqual(lib.spot([fl.range_fp(r) for r in six["ranges"]], six["pot"], six["stack"])["id"],
+                         "mw_utg_ip_bb")
+        eight = ML.spot_setup("UTG:r2.5,UTG1:f,LJ:f,HJ:c,CO:f,BTN:f,SB:f,BB:c", players=8)
         for s, sid, text in ((ante, "mw_hj_ip_bb", r"^its pot 8bb with 97.5 behind, this one 8.75bb with 97.4; the "
                                                    r"ranges differ by [\d.]+%"),
-                             (six, "mw_utg_btn_bb", r"^the same pot; the ranges differ by [\d.]+%")):
+                             (eight, "mw_utg_ip_bb", r"^the same pot; the ranges differ by [\d.]+%")):
             b = lib.stand_in(s["ranges"], s["pot"], s["stack"])
             self.assertEqual(b["spot"]["id"], sid)
             self.assertLessEqual(sum(b["dist"]), ML.MW_STAND_DIST)
@@ -229,7 +238,7 @@ class TestStandInMultiway(unittest.TestCase):
             self.assertEqual(len(near.approx["near"]), 3)
             self.assertEqual(near.borrowed["spot"], sid)
             self.assertIsNone(lib.near(s["ranges"], cards("Kd8c3h"), s["pot"], s["stack"]))   # (ranges of your own)
-        far = ML.spot_setup("UTG:f,HJ:r2.5,CO:f,BTN:f,SB:c,BB:c")    # (HJ open, SB and BB call: 3.3 from BTN's)
+        far = ML.spot_setup("UTG:f,HJ:r2.5,CO:f,BTN:f,SB:c,BB:c", ante=0.125)    # (no spot near enough, its own's)
         self.assertIsNone(lib.stand_in(far["ranges"], far["pot"], far["stack"]))
         self.assertIsNone(lib.near(far["ranges"], cards("Kd8c3h"), far["pot"], far["stack"], players=6))
 
@@ -251,9 +260,8 @@ class TestStandInMultiway(unittest.TestCase):
             self.assertAlmostEqual(a["freq"], f, delta=0.002)
         st6 = dict(ST, preflop=PRE_UH, board="Kd8c3h")
         s = adv.instant(dict(st6, study=True))
-        self.assertRegex(s["approximate"]["label"], r"most similar flops \(.*\), by card substitution in the "
-                                                    r"library's 6-max UTG open, BTN and BB call, that spot read for "
-                                                    r"this pot \(the same pot")
+        self.assertRegex(s["approximate"]["label"], r"most similar flops \(.*\), by card substitution")
+        self.assertNotIn("read for this pot", s["approximate"]["label"])    # (UTG open, HJ and BB call: a spot's own)
 
 
 if __name__ == "__main__":

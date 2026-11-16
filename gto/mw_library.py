@@ -46,9 +46,9 @@ SPOTS = [
     # (the CO's cold call over a HJ open is the BTN's: one game, matched by its ranges either way)
     ("mw_hj_ip_bb", "HJ open, CO or BTN and BB call", "UTG:f,HJ:r2.5,CO:f,BTN:c,SB:f,BB:c"),
     ("mw_utg_btn_bb", "UTG open, BTN and BB call", "UTG:r2.5,HJ:f,CO:f,BTN:c,SB:f,BB:c"),
-    # listed for the build, stored once built (a spot without entries is left out of the index): of the flops seen
-    # 3-way, UTG opens, HJ or CO and BB call 10.2% (one game: the HJ's and the CO's calls are the same range); CO opens,
-    # SB and BB call 8.3%; HJ opens, SB and BB call 4.3%; UTG opens, SB and BB call 3.9% (the four above: 63.8%)
+    # built 2026-11-16 (a spot without entries is left out of the index): of the flops seen 3-way, UTG opens, HJ or CO
+    # and BB call 10.2% (one game: the HJ's and the CO's calls are the same range); CO opens, SB and BB call 8.3%; HJ
+    # opens, SB and BB call 4.3%; UTG opens, SB and BB call 3.9% (the four above: 63.8%; all eight 90.5%)
     ("mw_utg_ip_bb", "UTG open, HJ or CO and BB call", "UTG:r2.5,HJ:c,CO:f,BTN:f,SB:f,BB:c"),
     ("mw_co_sb_bb", "CO open, SB and BB call", "UTG:f,HJ:f,CO:r2.5,BTN:f,SB:c,BB:c"),
     ("mw_hj_sb_bb", "HJ open, SB and BB call", "UTG:f,HJ:r2.5,CO:f,BTN:f,SB:c,BB:c"),

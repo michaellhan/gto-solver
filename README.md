@@ -4083,17 +4083,19 @@ betting rules. The commonest 3-way pots' flops are solved offline (`gto/mw_libra
 
 * **Spots** (`mw_library.SPOTS`; 6-max, 100bb, no ante or rake, 2.5bb opens), with how often the charts deal each
   line: BTN opens, SB and BB call (0.25% of hands); HJ opens, CO or BTN and BB call (0.22% each: the CO's cold call
-  is the BTN's, so one game serves both); UTG opens, BTN and BB call (0.18%); CO opens, BTN and BB call (0.14%).
-  `mw_index.json` lists the spots built (a spot in `SPOTS` not built yet just isn't answered from it). Of the flops
-  seen 3-way (6-max 100bb, the charts' lines) these four are 63.8%; listed to build next: UTG opens, HJ or CO and BB
-  call (10.2%: one game), CO opens, SB and BB call (8.3%), HJ opens, SB and BB call (4.3%), UTG opens, SB and BB call
-  (3.9%), 90.5% with them. With the stored flops 12.8% of flops by weight the library answers ~8.2% of 3-way flops'
-  first decisions; every flop (`--flops 1755`) of the four built spots would answer 63.8%.
+  is the BTN's, so one game serves both); UTG opens, BTN and BB call (0.18%); CO opens, BTN and BB call (0.14%);
+  and, built 2026-11-16, UTG opens, HJ or CO and BB call (one game, as the HJ's), CO opens, SB and BB call, HJ opens,
+  SB and BB call, UTG opens, SB and BB call. `mw_index.json` lists the spots built (a spot in `SPOTS` not built yet
+  just isn't answered from it). Of the flops seen 3-way (6-max 100bb, the charts' lines) the first four are 63.8%,
+  the next four 10.2, 8.3, 4.3 and 3.9%: the eight 90.5%. With the stored flops 12.8% of flops by weight the library
+  answers ~11.6% of 3-way flops' first decisions (8.2% with the first four); every flop (`--flops 1755`) of the eight
+  spots would answer 90.5%.
   A spot is matched by the three ranges entering the flop (as the charts replay them), the pot and the stack (at 8-
   and 9-max a pot a few combos from a spot's is read as it, and other 3-way pots at once off the nearest spot: 3-way
   pots no spot holds, below); not with rake, custom sizes or ranges, exploit mode, locks or Optimize sizes.
 * **Flops**: the heads-up library's 184 representative canonical flops (`flop_library.representative_flops`), plus
-  K72 rainbow (`EXTRA_FLOPS`), matched up to suits; other flops are solved live.
+  K72 rainbow (`EXTRA_FLOPS`), matched up to suits; other flops are solved live. The first four spots also hold 985
+  two-tone and A66, kept from earlier builds (`compare_mw_library.py`'s boards): 187 flops a spot, the new four 185.
 * **What is stored**: one 3-player CFR solve from the flop's start on native Accurate's 3-way game
   (`advisor.MW_ACC_FLOP`: bets of 33 and 75% pot, one raise and all-in, the turn and river bet on by 16 hand buckets a
   player, split by weight times equity: `MWConfig.bucket_power`, Known limits), run to under 0.1% of the pot mean best-response gain (300-700 iterations, 0.077% on average, 24-233 s a
@@ -4101,8 +4103,10 @@ betting rules. The commonest 3-way pots' flops are solved offline (`gto/mw_libra
   solve takes every hand the flop doesn't block (`include`, ~7% more time), so a hand off its player's range (a
   cold call the charts 3bet or fold) gets its current strategy, as a live solve gives it. Per hand: the mix in 1%
   steps and each action's EV, in the heads-up library's entry format (`flop_library.pack`, one mask per player).
-  An entry is 3.4-11.2 KB; a spot's ~187 flops ~1.0 MB, the four spots' 748 flops 4.14 MB (the value-split rebuild of
-  2026-11-16 took 15.0 CPU-hours: two processes at nice 10 for 7 h on a loaded machine).
+  An entry is 3.1-11.2 KB; a spot's 185-187 flops ~1.0 MB, the eight spots' 1,488 flops 8.24 MB (the value-split
+  rebuild of the first four, 2026-11-16, took 15.0 CPU-hours: two processes at nice 10 for 7 h on a loaded machine;
+  the new four's 740 entries 9.3 CPU-hours the same day, 200-600 iterations, 0.078% of the pot from equilibrium on
+  average, 17-120 s an entry).
   The index records the game it was solved on (`mw_library.tree_key`: sizes, buckets, the bucket split...); the
   library reads nothing from an index on another game than `library_config()`'s (`MWLibrary.index`), so a changed game
   answers live until the library is rebuilt rather than mixing old entries with live solves of the new game, and
@@ -4120,6 +4124,11 @@ betting rules. The commonest 3-way pots' flops are solved offline (`gto/mw_libra
   34% in the library), the same most frequent action for 90% of hands, per-hand mixes 11 points apart and EVs 2.0% of
   the pot (0.6-3.8). The library built on equal-weight buckets, against live solves then 0.85-1.9% from equilibrium at
   the root: 8 points, 85%, 18 points and 3.9% (1-12.5) on K72r, KJ2 two-tone, K82 monotone and K55.
+  The four spots built 2026-11-16 (UTG / IP / BB, CO / SB / BB, HJ / SB / BB, UTG / SB / BB on K72r, J63 two-tone, 755
+  and A93r, 48 nodes; library 0.065-0.099% of the pot from equilibrium, live 0.01-0.14%): 3.5 points apart (0-29: the
+  CO checked to twice on 755 in CO / SB / BB bets 30% live and 46% in the library), the same most frequent action for
+  92% of hands, mixes 9.3 points apart and EVs 3.0% of the pot (0.4-13.2, the most on 755 checked through twice, where
+  the live solve's ranges are the betting rules' narrowing).
 * **Browser** (`scripts/bench_browser.mjs`, `mw-flop` first to act, `mw-flop-x` checked to twice): answered from the
   library in 0.49-0.57 s at Quick (`BENCH_STATE='{"quick":true}'`), Fast and Accurate alike, most of it the first
   request importing the 3-way solver (Accurate's live solve took its 60 s then, Quick's answer was the rules');
@@ -4129,8 +4138,8 @@ betting rules. The commonest 3-way pots' flops are solved offline (`gto/mw_libra
 * **3-way pots no spot holds** (`MWLibrary.borrow`, `MW_BORROW_DIST`, `MW_BORROW_COVER`; `MWLibrary.stand_in`,
   `MW_STAND_DIST`, `MW_STAND_COVER`, `MW_STAND_SPR`; `solution` and `near`'s `players`; `Advisor._mw_borrow`). The
   spots are 6-max 100bb's, so a 3-way pot at 8- or 9-max, with antes, or on another 6-max line (UTG's open flatted by
-  the HJ or the CO, the CO's flatted by the SB) never matched one: its flop's first decisions waited on the live solve
-  (Fast's 8 s in the browser) with nothing shown. Now:
+  the HJ or the CO, the CO's flatted by the SB, until those were built on 2026-11-16) never matched one: its flop's
+  first decisions waited on the live solve (Fast's 8 s in the browser) with nothing shown. Now:
   * **Borrowed at another table size.** Some 8- and 9-max pots are a 6-max spot's under other seat names: the same
     pot and stack, an open flatted behind and called by the big blind, the three ranges a few combos apart (summed
     normalized L1, as the heads-up library's: 8-max BTN open, SB and BB call 0.14 from the 6-max spot; the HJ's open
@@ -4198,6 +4207,12 @@ betting rules. The commonest 3-way pots' flops are solved offline (`gto/mw_libra
   50bb (0.86), the HJ's flatted by the BTN 0.26 at 50bb and 0.23-0.24 at 150-200bb (0.73-1.12) and the CO's 0.28 and
   0.26 at 150 and 200bb (1.13, 1.66), as much as the pots left out above, with no gate on distance or cover between
   them.
+  The table and the figures below are against the first four spots. With the four built 2026-11-16 (each pot read
+  through `MWLibrary`'s own choice, `borrow` then `stand_in`): 6-max UTG open, HJ and BB call, CO open, SB and BB call
+  and HJ open, SB and BB call are spots' own pots (precomputed, final); 8-max CO open, SB and BB call is borrowed from
+  CO / SB / BB (precomputed, where it was read at once off the BTN's); 8-max UTG open, HJ and BB call is read at once
+  off UTG / IP / BB and 6-max antes, CO open, SB and BB call off CO / SB / BB. A spot only joins the candidates each
+  gate passes, so no pot that read a spot before reads none now (6-max antes, HJ open, SB and BB call stays out).
   What it answers (`scripts/instant_coverage.py`, Accuracy vs speed: The answer at once in 3-way pots, its table):
   of the 3-way flop decisions, borrowed and precomputed 1.9% at 8-max and 1.3% at 9-max (the stored flops are 12.8%
   of flops by weight), read at once off a borrowed spot's stored flops most like it 12.4 / 8.6 points more, and off
@@ -4210,7 +4225,7 @@ betting rules. The commonest 3-way pots' flops are solved offline (`gto/mw_libra
 ```bash
 nohup nice python scripts/build_mw_library.py --jobs 8 > reports/mw_library_build.log &   # every spot (resumable)
 python scripts/build_mw_library.py --spots mw_co_btn_bb --boards Kh7d2c                  # given flops
-python scripts/build_mw_library.py --out /tmp/mwlib --spots mw_co_btn_bb,mw_btn_sb_bb,mw_hj_ip_bb,mw_utg_btn_bb  # a rebuild
+python scripts/build_mw_library.py --out /tmp/mwlib                                     # a rebuild (every spot)
 python scripts/build_mw_library.py --verify --out /tmp/mwlib                            # whole, on the current game
 python scripts/compare_mw_library.py --spot mw_co_btn_bb --boards Kh7d2c,9s8s5d          # against live Accurate
 ```

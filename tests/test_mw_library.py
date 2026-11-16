@@ -312,7 +312,7 @@ class TestShippedMWLibrary(unittest.TestCase):
             self.assertEqual((sp["pot"], sp["stack"], sp["seats"]), (s["pot"], s["stack"], s["seats"]))
             for name in sp["flops"]:
                 total += os.path.getsize(os.path.join(ml.DIR, sp["id"], name + ".bin"))
-        self.assertLess(total, 6e6)
+        self.assertLess(total, 12e6)   # (eight spots' 1,488 flops: 8.24 MB)
 
 
 if __name__ == "__main__":
