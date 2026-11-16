@@ -4400,7 +4400,13 @@ their products batched: `core.LEAF_ROWS_BLAS`).
   turn solves' river buckets split the same way (`MW_ACC_TURN`, Fast's and Quick's `MW_QUICK_TURN`): against the 48-bucket
   game on 14 live 3-way turn spots (`bench_mw_buckets.py --street turn`), 16 buckets' top tenth 10.1% -> 4.2% (floor
   5.7%), by value 13.2% -> 6.0%, mix loss 0.07-0.12% -> 0.03-0.06%; Quick's 8 buckets 18.2% -> 6.6%; iterations cost the
-  same. 4-way turn solves' river buckets too (`MW4_STREETS`, `MW4_FAST_STREETS`): on 12 live 4-way turn spots against
+  same. Quick's 3-way turn is now 6 buckets and one turn bet, half the pot (`MW_QUICK_TURN`, as `MW_QUICK_FLOP`): in
+  Accurate's three sizes and 8 buckets the live fuzz's Quick turns ran 15-17 iterations, 11-18% of the pot from
+  equilibrium, and the rules answered. On 14 of them by CPU time (`scripts/bench_mw_quick_turn.py`, against a 24-bucket
+  game at the three sizes; what the mix gives up per hand of the advised range, % of the pot): at 1.0 CPU-s the old game
+  4-59 iterations, 4 of 13 within 10%, 2.66; the new 18-191, all, 1.9% from equilibrium, 0.40 (at 1.5 s 0.35, the old
+  1.69); the betting rules 0.78. Live 4:9, 94:14 and 94:15 are solved, 31-88 iterations natively on one thread and 32-36
+  in the browser worker's advisor. 4-way turn solves' river buckets too (`MW4_STREETS`, `MW4_FAST_STREETS`): on 12 live 4-way turn spots against
   the 24-bucket game split by value, Accurate's 16 buckets' top tenth 18.1% -> 3.3% of the pot and Fast's 8 32.7% ->
   7.7%, mix loss 0.33% -> 0.07% and 0.42% -> 0.13%; against the one split by weight 9.0% -> 7.7% and 17.7% -> 7.8%
   (floor 8.3%); an iteration 5-12% more. The SB's nut straight facing the BB's small turn bet and two calls (four limps,

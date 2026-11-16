@@ -300,7 +300,8 @@ const ready = (async () => {
              // 33/75/125%): a flop first to act (Kh8d3c, CO opens, BTN and BB call) 400 iterations in 13 s, 0.05% of the
              // pot. Fast a smaller flop game (advisor.MW_FAST_STREETS: 12 buckets, every third river) in its 8 s: 203
              // iterations, 0.25%; checked to twice 400, 0.03%; a turn 400, 0.04%. Quick's 1.8 s (advisor.MW_QUICK_FLOP,
-             // MW_QUICK_TURN): a flop 114 iterations, 0.43%; a turn 87, 0.58%. Without the core (it failed to load)
+             // MW_QUICK_TURN): a flop 114 iterations, 0.43%; a turn 87, 0.58% (8 buckets then; now 6 and one turn size, 32-36
+             // iterations on live turns that ran 15-17 in the old game). Without the core (it failed to load)
              // Accurate keeps the old smaller game (12 buckets, every third river), Fast 6 buckets, and 4-way flops and
              // turns are left to the rules. Rivers and turns stop once settled (advisor.MW_SETTLED). 4-way flops and
              // turns: the 4-player solve (advisor.MW4_STREETS; Fast MW4_FAST_STREETS), in the core too: a flop (Kh7d2c,

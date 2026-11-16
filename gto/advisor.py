@@ -88,9 +88,16 @@ MW_TURN_BETS = {"flop": 0.33, "turn": [0.33, 0.75, 1.25], "river": 0.5}
 MW_ACC_TURN = dict(MW_LATER, bucket_power=MW_BUCKET_POWER, bet=MW_TURN_BETS)
 MW_QUICK_BUDGET = 1.8   # Practice's quick answers: a 3-way pot's least budget (a river's tables take ~0.7 s in the
                         # browser: at 1.2 s it ran 4 iterations, 19% of the pot from equilibrium; at 1.5, 7-19, 2-8.5%)
-# a quick answer's 3-way turn: 8 buckets (in the browser's 1.8 s, the compiled core: 87 iterations, 0.58% of the pot
-# from equilibrium; 16 buckets in numpy ran 25, 7.1%)
-MW_QUICK_TURN = {"later": "buckets", "buckets": 8, "bucket_power": MW_BUCKET_POWER, "bet": MW_TURN_BETS}
+# a quick answer's 3-way turn: 6 buckets, one turn bet (half the pot), as Quick's flop. With Accurate's three turn sizes
+# (33/75/125%) in 8 buckets the live fuzz's Quick turns ran 15-17 iterations, 11-18% of the pot from equilibrium, and
+# the betting rules answered. On 14 of them (scripts/bench_mw_quick_turn.py: CPU time, not wall, against a 24-bucket
+# reference at the three sizes, 200 iterations; the mix's loss per hand of the advised player's range, % of the pot):
+#   at 1.0 CPU-s   8 buckets, 3 sizes: 4-59 iterations, 4 of 13 within 10%, 38% from equilibrium, mix gives up 2.66
+#                  6 buckets, 1 size: 18-191 iterations, 13 of 13, 1.9%, 0.40 (8 buckets 1 size 14-141, 2.3%, 0.41;
+#                  2 sizes 33/75 1.04; 2 sizes, no raise but the root's, 0.74)
+#   at 1.5         6 buckets, 1 size 0.8%, 0.35; 8 buckets, 3 sizes 19%, 1.69; the betting rules 0.78
+MW_QUICK_TURN_BETS = {"flop": 0.33, "turn": [0.5], "river": 0.5}
+MW_QUICK_TURN = {"later": "buckets", "buckets": 6, "bucket_power": MW_BUCKET_POWER, "bet": MW_QUICK_TURN_BETS}
 # a quick answer's 3-way flop the library doesn't hold (and natively a 4-way flop, Advisor.mw4_quick_flop): the smallest
 # game, 6 hand buckets, the turn's tables over every sixth river, the flop betting half the pot (a pot with a player
 # all-in keeps the street's own game: two bettors, small enough). In the browser's 1.8 s a flop first to act (Kh8d3c, CO

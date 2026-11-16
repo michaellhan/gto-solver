@@ -1,6 +1,7 @@
 """The 3-player solver (gto/multiway_solver.py): exact card removal for three ranges, constant-sum payoffs,
 convergence, agreement with the heads-up solver when played two-handed, and the advisor's use of it."""
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -1358,6 +1359,28 @@ class TestAdvisor(unittest.TestCase):
             self.assertLess(acts["fold"]["freq"], 0.05, r["actions"])
             self.assertGreater(acts["raise to 9.5"]["ev_bb"], acts["call"]["ev_bb"] + 1.0, r["actions"])
             self.assertGreater(acts["raise to 9.5"]["freq"], 0.8, r["actions"])
+
+    def test_quick_three_way_turn_settles_in_few_iterations(self):
+        # live fuzz 4:9 (6-handed, straddled, CO and SB limp, the flop checked through; SB first on 2c8sQh3s): a quick
+        # answer's 3-way turn in Accurate's three turn sizes and 8 buckets ran 15-17 iterations in its 1.8 s, 11-18% of
+        # the pot from equilibrium, and the betting rules answered. advisor.MW_QUICK_TURN (6 buckets, one turn bet of
+        # half the pot) ran 31-88 natively on one thread at load 10, 32-36 in the browser worker's advisor. Here 25
+        # iterations, however long they take (the budget out of the way), within 10% of the pot: the answer is the solve's
+        P = lambda p, a, **k: dict({"pos": p, "action": a}, **k)
+        st = {"players": 6, "hero": "SB", "hole": "7dAd", "board": "2c8sQh3s", "stack": 100.0, "straddle": True,
+              "rake": 0.1, "rake_cap": 4, "budget": 1.5, "prior_budget": 0.3, "speed": "quick", "quick": True,
+              "preflop": [P("HJ", "fold"), P("CO", "call"), P("BTN", "fold"), P("SB", "call"), P("BB", "fold"),
+                          P("UTG", "check")],
+              "flop": [P(p, "check") for p in ("SB", "UTG", "CO")]}
+        adv = A.Advisor(time_budget=1.5, prior_budget=0.3)
+        adv.mw_max_iters = 25
+        with mock.patch.object(A, "MW_QUICK_BUDGET", 600.0):
+            r = adv.advise(st)
+        self.assertTrue(r.get("solved"), r["notes"])
+        self.assertEqual([a["action"] for a in r["actions"]], ["check", "bet 50%"])
+        self.assertTrue(any(n.startswith("3-way pot solved by 3-player CFR (25 iterations): one bet size (50% pot)")
+                            for n in r["notes"]), r["notes"])
+        self.assertLess(r["solver"]["exploitability_pct"], 10.0)
 
     def test_a_bet_over_the_short_stack_is_solved_with_side_pots(self):
         # the 25bb BB checks the turn and the CO bets 30, more than the BB has behind: each player bets its own stack
