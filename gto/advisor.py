@@ -5791,7 +5791,7 @@ class Advisor:
         return res
 
     def _study_mw_node(self, sol, node, R, players, hp, shown, strat, evs, to_call, behind, board, cur, positions,
-                       solver, notes, t0, precomputed=None):
+                       solver, notes, t0, precomputed=None, amounts=None):
         """Study mode's answer at a 3-way node (Advisor.study), as _study_node's, from the 3-player solve of the street
         from this node (Advisor._multiway_solve): the actor's range per class and combo, its mix and each action's EV
         (bb relative to folding now), and each opponent's range. Equity: each combo's share of the pot at showdown
@@ -5814,7 +5814,7 @@ class Advisor:
             if len(board) == 5:
                 e[sol.hands.active] = sol.showdown_shares(i)
             return e
-        amounts = [None if x is None else round(float(x), 2) for x in node.amounts]
+        amounts = [None if x is None else round(float(x), 2) for x in (node.amounts if amounts is None else amounts)]
         opps = [i for i in range(len(players)) if i != hp]
         part, og = _study_range(board, names, amounts, rng[hp], sf, ev, eq_of(hp),
                                 [(players[i], rng[i], eq_of(i)) for i in opps])
@@ -5924,7 +5924,11 @@ class Advisor:
             own4 = True
             stacks = tuple(float(behind[p]) for p in players)
             cap = min(behind[hero], max(behind[q] for q in players if q != hero))
-        if under(cap):
+        # each their own stack: `cap` is the most another player can match, so a raise to the smallest one you can make
+        # puts in more than anyone matches and the rest comes back: the solve's all-in to `cap`, offered as the raise to
+        # `smallest` (3-way, UTG2 386bb behind facing a 43.5 bet, the two others 86 behind: raise to 87, played as 86)
+        lift = smallest if isinstance(stacks, tuple) and under(cap) else None
+        if lift is None and under(cap):
             fallback_notes.append(f"the smallest raise you can make (to {smallest:g}) is more than the {len(players)}-way "
                                   f"solve lets you put in ({cap:g}: " + ("what another player can match" if isinstance(stacks, tuple) or exact3 else
                                                                         "everyone plays the shortest stack behind")
@@ -6092,12 +6096,19 @@ class Advisor:
         else:
             evs = sol.action_evs()
         shown = _mw_names(root.names, root.amounts, behind[hero], S_h, root.pot_now)
+        amounts = list(root.amounts)
+        if lift is not None:
+            for a, nm in enumerate(root.names):
+                if nm == "all-in" and amounts[a] is not None and amounts[a] < lift - 1e-9:
+                    shown[a], amounts[a] = f"raise to {lift:g}", lift
+                    notes.append(f"the smallest raise you can make, to {lift:g}, is more than anyone can match "
+                                 f"({cap:g}): the rest comes back, so it plays as an all-in for {cap:g}")
         if not self._study:   # (Study: no cards of the actor's own; the whole range's answer, _study_mw_node)
             ci = sol.combo_index(hole)
             mine = strat[:, ci]   # (sol.hand_strategy, or the best response's)
             acts = []
             for a, name in enumerate(shown):
-                amt = root.amounts[a]
+                amt = amounts[a]
                 acts.append({"action": name, "freq": round(float(mine[a]), 3),
                              "ev_bb": round(float(evs[a, ci]), 2),
                              "amount_bb": None if amt is None else round(float(amt), 2)})
@@ -6195,7 +6206,7 @@ class Advisor:
                                            "nodes": sol.builder.n_nodes, "active_combos": sol.hands.n,
                                            "exploitability_pct": round(expl, 2),
                                            "best_response_gains_pct": {p: round(float(g), 2) for p, g in zip(players, gains)}},
-                                       notes, t0)
+                                       notes, t0, amounts=amounts)
         out = {"street": cur.name, "hero": hero, "hand": hand_class(hole), "board": cards_str(board),
                "players": len(players), "multiway": True, "solved": True, "opponents": opps,
                "position": f"{hp + 1} of {len(players)} to act",

@@ -4454,8 +4454,12 @@ their products batched: `core.LEAF_ROWS_BLAS`).
   rivers of up to six players (five in the browser at Quick and Fast), and any street where only you have chips
   behind, the N-player solve. The betting rules take the rest: seven or more on any street, those 5- and 6-way
   spots, six on a browser river at Quick and Fast, a river of four or more where you face a bet bigger than the shortest stack behind (the solve plays everyone at
-  that stack: your call would be priced at its size), and a 3+ way spot where the smallest raise you can make is more
-  than the solve lets you put in (three: what another player can match). Behind all of it a catch-all
+  that stack: your call would be priced at its size), and a 5+ way spot where the smallest raise you can make is more
+  than the solve lets you put in (everyone at the shortest stack behind). Three and four play each their own stack
+  there, so the smallest raise is more than anyone can match: the solve's all-in to that is offered as the raise to the
+  smallest, the rest coming back (3-way UTG2 386bb behind facing 43.5, the others 86 behind: raise to 87, played as
+  86; three spots of the live fuzz the rules had answered, two of them now solved and the third, a Quick flop whose
+  tables take too long, solved at Fast). Behind all of it a catch-all
   (`Advisor.advise`, `Advisor._rules`): an answer that fails anyway (an exception other than a cancel, no actions, a
   recommendation that isn't one of them, a number that isn't finite) is answered from the chart preflop, else the
   betting rules, else your equity against random hands priced against the pot, marked `fallback` with the reason and

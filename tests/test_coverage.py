@@ -218,8 +218,9 @@ class TestFuzzFound(unittest.TestCase):
 
     def test_three_way_raise_over_what_others_can_match(self):
         # a 3-way flop: the deep CO's raise as the 3-way solve plays it is all-in to 18 (the most another can match),
-        # where the smallest raise is to 29: the betting rules answer, their raise shown at 29 (the same move). (The
-        # browser worker's advisor, which solves a quick 3-way flop)
+        # where the smallest raise is to 29: the solve answers, its all-in shown as the raise to 29 (the same move: the
+        # 11 nobody matches comes back). Before, the betting rules answered (live fuzz 26:18, 75:16, 85:18). (The browser
+        # worker's advisor, which solves a quick 3-way flop)
         st = {"players": 4, "hero": "CO", "hole": "5sJc", "board": "Jh3s2d", "stack": 100.0,
               "stacks": {"CO": 211.5, "BTN": 24.0, "SB": 22.3, "BB": 100.0},
               "preflop": _acts("CO r6, BTN c, SB c, BB f"), "flop": _acts("SB b14.5"),
@@ -228,10 +229,14 @@ class TestFuzzFound(unittest.TestCase):
         res = w.advise(st)
         legal(self, res, st)
         self.assertNotIn("fallback", res)
+        self.assertTrue(res.get("solved"), res.get("notes"))
+        self.assertTrue(any("the smallest raise you can make, to 29, is more than anyone can match (18)" in n
+                            for n in res["notes"]), res["notes"])
+        self.assertEqual([(a["action"], a["amount_bb"]) for a in res["actions"] if a["action"] not in ("fold", "call")],
+                         [("raise to 29", 29.0)])
         res2 = w.advise(dict(st, stacks=dict(st["stacks"], BTN=40.0)))
-        self.assertTrue(res2.get("solved"), res2.get("notes"))   # (with chips for the raise: the solve)
-        self.assertTrue(any("smallest raise you can make (to 29)" in n for n in res["notes"]), res["notes"])
-        self.assertIn("raise to 29", [a["action"] for a in res["actions"]])
+        self.assertTrue(res2.get("solved"), res2.get("notes"))   # (with chips for the raise: the solve's own raise)
+        legal(self, res2, dict(st, stacks=dict(st["stacks"], BTN=40.0)))
 
     def test_rules_raise_held_to_the_deepest_opponent(self):
         # a 4-way river where the deep BB faces a bet: the betting rules play its raise to 56 (what the deepest
