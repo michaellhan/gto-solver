@@ -178,11 +178,18 @@ MW5_FAST_STREETS = {"flop": {"later": "buckets", "buckets": 3, "bucket_river_ste
 # checked through, a raise was too cheap: in the isolated pot facing a bet and a call 15% raises where the richer game
 # made 0.3%, 1.14% of the pot given up against the rules' 0.90; bet on, 0.31; six flops facing a bet 0.32 -> 0.16 on
 # average, natively 100-114 iterations in 30 s). Fast's 5 s reach ~15 iterations of that game: worse on four of six. A quick answer: the rules (Advisor.mw6_quick None; gto/native.py says why).
+# Short stacks (allin_spr_short, 6- and 7-way flops): with the shortest stack behind at most 1.5 pots (MWConfig.allin_spr)
+# the first in could jam, and those all-ins' turn and river runouts ran 1 iteration in Fast's 5 s and Accurate's 30 s
+# (the live fuzz, 40-60bb behind in a 30.5bb pot), so the rules answered. Offered only where a bet reaches the stack
+# (allin_spr 0), the recorded spot ran 6-7 iterations at Fast (3.5% of the pot from equilibrium) and 45-48 at Accurate
+# (0.03-0.06%); against the full game in 4 buckets (iso6 40bb deep, Kh7d2c) it gave up 0.05% of the pot first to act
+# (it jams 2.4%) and 0.00 facing a bet, the rules -0.16 and 1.15. 100bb deep the game is as measured above.
 MW6_STREETS = {"flop": {"later": "buckets", "buckets": 4, "bucket_river_step": 12, "bucket_eq": MW5_EQ,
-                        "bucket_river": False, "bucket_river_facing": True, "jam_is_raise": True},
+                        "bucket_river": False, "bucket_river_facing": True, "jam_is_raise": True,
+                        "allin_spr_short": 0.0},
                "turn": {"later": "buckets", "buckets": 4, "bucket_eq": MW5_EQ, "jam_is_raise": True}}
 MW6_FAST_STREETS = {"flop": {"later": "buckets", "buckets": 3, "bucket_river_step": 12, "bucket_eq": MW5_EQ,
-                             "bucket_river": False, "jam_is_raise": True},
+                             "bucket_river": False, "jam_is_raise": True, "allin_spr_short": 0.0},
                     "turn": {"later": "buckets", "buckets": 3, "bucket_eq": MW5_EQ, "jam_is_raise": True}}
 # 7-way flops and turns (Accurate only): the 6-way game in 3 buckets (4 facing a bet on a turn need ~15 GB). Against
 # richer bucket games (scripts/bench_mw5.py --pres limp7; a turn's river by 4 buckets first to act, 3 facing a bet, 300
@@ -191,7 +198,7 @@ MW6_FAST_STREETS = {"flop": {"later": "buckets", "buckets": 3, "bucket_river_ste
 # 0.005-0.19 (0.06); four flops, the rules 0.40-1.13 (0.64), at 25 iterations 0.20-0.45 (0.29). Two buckets lost to the
 # rules facing a bet (they call 4-6% where the richer game calls 14-20%), and Fast's 5 s reach too few iterations.
 MW7_STREETS = {"flop": {"later": "buckets", "buckets": 3, "bucket_river_step": 12, "bucket_eq": MW5_EQ,
-                        "bucket_river": False, "jam_is_raise": True},
+                        "bucket_river": False, "jam_is_raise": True, "allin_spr_short": 0.0},
                "turn": {"later": "buckets", "buckets": 3, "bucket_eq": MW5_EQ, "jam_is_raise": True}}
 HU_RESERVE = 1.0   # heads-up solves likewise keep one iteration's time back (the exploitability read after: ~1 iteration)
 OVER_TARGET = 10   # an answer more than this many times its advisor's expl_target from equilibrium is approximate
@@ -5989,6 +5996,11 @@ class Advisor:
             # (bucket_river_facing: the river bet on where you face a bet, MW6_STREETS)
             if game.pop("bucket_river_facing", False) and cur.cur_bet > cur.bets[hero] + 1e-9:
                 game["bucket_river"] = True
+            # (allin_spr_short: the shortest stack behind at most MWConfig.allin_spr pots, the all-in offered only
+            # where a bet or raise reaches it, MW6_STREETS)
+            short = game.pop("allin_spr_short", None)
+            if short is not None and S <= MW.MWConfig.allin_spr * (cur.pot_start + sum(cur.bets.values())) + 1e-9:
+                game["allin_spr"] = short
             mcfg = MW.MWConfig(rake_rate=self.cfg.rake_rate, rake_cap=self.cfg.rake_cap, bet=MW4_BETS, max_raises=1,
                                root_raise=True, **game)
         elif nway:

@@ -47,6 +47,11 @@ PRE6 = [{"pos": "UTG", "action": "fold"}, {"pos": "UTG1", "action": "call"}, {"p
 SEATS6 = ("SB", "BB", "UTG1", "LJ", "CO", "BTN")    # (9-handed live, 200bb: four limp, SB completes, BB checks)
 
 
+def _game(street_cfg):
+    """An advisor street game (MW6_STREETS' flop) as MWConfig takes it: without the advisor's own keys."""
+    return {k: v for k, v in street_cfg.items() if k not in ("bucket_river_facing", "allin_spr_short")}
+
+
 def _ranges6():
     R = A.preflop_ranges(PRE6, pf.Table(pf.SEATS[9]), 200.0)
     return [R[p] for p in SEATS6]
@@ -962,13 +967,43 @@ class TestFourWay(unittest.TestCase):
         counts = {}
         for jam in (False, True):
             cfg = MWConfig(max_raises=1, root_raise=True, bet=dict(A.MW4_BETS),
-                           **{**A.MW6_FAST_STREETS["flop"], "jam_is_raise": jam})
+                           **{**_game(A.MW6_FAST_STREETS["flop"]), "jam_is_raise": jam})
             s = MultiwaySolver(cards("Kh7d2c"), rs, 30.0, 195.0, cfg=cfg, **kw)
             counts[jam] = sum(isinstance(t, Runout) for t in s.builder.runouts)
             self.assertTrue(any(n.startswith("raise") for n in s.root.names), s.root.names)
         self.assertTrue(A.MW6_STREETS["flop"]["jam_is_raise"] and A.MW6_FAST_STREETS["turn"]["jam_is_raise"])
         self.assertGreater(counts[False], 100)
         self.assertEqual(counts[True], 0)
+
+    def test_six_way_short_stacks_no_first_in_jam(self):
+        # MW6_STREETS' allin_spr_short: the shortest stack behind at most 1.5 pots, the all-in offered only where a bet
+        # reaches it. Offered to the first in (MWConfig.allin_spr 1.5), a 6-way flop's all-in runouts ran 1 iteration in
+        # Fast's 5 s and Accurate's 30 s (the live fuzz: 40bb behind in a 30.5bb pot), and the rules answered; without
+        # it 6-7 and 45-48. Against the full game in 4 buckets (iso6 40bb deep, Kh7d2c first to act) it gives up 0.05%
+        # of the pot (scripts/bench_mw5.py --stack 40, game flag a0)
+        from gto.multiway_solver import Runout
+        rs = _ranges6()
+        counts = {}
+        for spr in (1.5, 0.0):
+            cfg = MWConfig(max_raises=1, root_raise=True, bet=dict(A.MW4_BETS),
+                           **{**_game(A.MW6_FAST_STREETS["flop"]), "allin_spr": spr})
+            s = MultiwaySolver(cards("Kh7d2c"), rs, 12.0, 14.0, cfg=cfg)
+            counts[spr] = sum(isinstance(t, Runout) for t in s.builder.runouts)
+            self.assertEqual("all-in" in s.root.names, spr > 0, s.root.names)
+        self.assertGreater(counts[1.5], counts[0.0])
+        # the advice: 16bb stacks, 14 behind in a 12bb limped pot (at most 1.5 pots): no all-in of yours; 100bb deep the
+        # game as measured (the key not consumed)
+        adv = A.Advisor(time_budget=1e9)
+        adv.mw_solve_streets = ("flop", "turn", "river")
+        adv.mw_max_iters = 10
+        adv.mw6_street_config = {k: dict(v) for k, v in A.MW6_FAST_STREETS.items()}
+        r = adv.advise({"players": 9, "hero": "SB", "hole": "AhKd", "board": "Kh7d2c", "stack": 16.0, "preflop": PRE6,
+                        "flop": []})
+        self.assertTrue(r.get("solved"), r["notes"])
+        self.assertEqual({a["action"].split()[0] for a in r["actions"]}, {"check", "bet"})
+        self.assertEqual(adv.mw6_street_config["flop"]["allin_spr_short"], 0.0)
+        self.assertTrue(all(A.MW6_STREETS["flop"]["allin_spr_short"] == c["flop"]["allin_spr_short"] == 0.0
+                            for c in (A.MW6_FAST_STREETS, A.MW7_STREETS)))
 
     def test_native_fast_five_way_flop_needs_threads(self):
         # native Fast leaves a 5-way flop to the rules on fewer than THREADED_FAST threads (on one its tables and first

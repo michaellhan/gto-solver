@@ -66,6 +66,11 @@ multiway solves' share and legality where pots are biggest:
 
   python scripts/coverage_fuzz.py --live --min-way 6 --seed 21 --hands 60 --out .work/coverage/mw6_21.jsonl
 
+Seeds 21-23 (40 hands each, 722 decisions; PROFILES asks Quick and Fast, never Accurate): every recommended action legal.
+A 6-way flop at Fast was solved 28 times in 42 (the rest: deep limped pots on a loaded machine's one thread, whose
+tables and exploit mode's GTO pass took the 5 s, and short stacks, whose flop all-ins ran 1 iteration until
+advisor.MW6_STREETS' allin_spr_short); 7-9 way pots at Quick and Fast, and 6-way at Quick, are the rules' by design.
+
 Resumable and seeded: hand i plays from Random(f"{seed}:{i}"), its records are written when it ends (one line per
 decision, then a "done" line), and a run skips hands already done in --out. Run it in chunks:
 

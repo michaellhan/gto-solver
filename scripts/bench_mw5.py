@@ -17,7 +17,8 @@ weight and scores their mix against the first game's EVs the same way (the hands
 
 A game is K:step:eq:iterations[:nr][:j] (buckets a player below the root street, the turn's tables over every step-th
 river from a flop, MWConfig.bucket_eq, iterations; nr: a flop's river not bet on, MWConfig.bucket_river False; j: no
-all-in over a raise, MWConfig.jam_is_raise). --pres
+all-in over a raise, MWConfig.jam_is_raise; aX: MWConfig.allin_spr X, 0 for an all-in only where a bet size reaches
+the stack). --stack N gives everyone N bb (a short-stacked pot). --pres
 limp6 (or iso6, limp7) plays score_multiway4.py's live 9-handed 6-way (7-way) pots instead:
 
   python scripts/bench_mw5.py Kh7d2c first 4:6:0.75:200,3:12:0.75:60:nr --pres limp6 --rules 60 Lines: first, last checked to, vs bet, vs bet+call (score_multiway4.py's).
@@ -65,6 +66,10 @@ def main():
     if "--pres" in args:
         global PRE
         i = args.index("--pres"); PRE = args[i + 1]; del args[i:i + 2]
+    tag = ""
+    if "--stack" in args:   # (everyone's stack, bb: a short-stacked pot)
+        i = args.index("--stack"); S.TABLE[PRE] = (S.TABLE.get(PRE, (6, 100))[0], float(args[i + 1]))
+        tag = f"_s{args[i + 1]}"; del args[i:i + 2]
     board, line, games = args[0], args[1], [g.split(":") for g in args[2].split(",")]
     b, rs, pot, St, kw, hp = spot(board, line)
     ref = None
@@ -72,10 +77,11 @@ def main():
     fn = None
     if cache:
         os.makedirs(cache, exist_ok=True)
-        fn = os.path.join(cache, f"{PRE}_{board}_{line.replace(' ', '_')}_{'-'.join(games[0])}_{n_rules}.npz")
+        fn = os.path.join(cache, f"{PRE}{tag}_{board}_{line.replace(' ', '_')}_{'-'.join(games[0])}_{n_rules}.npz")
         if os.path.exists(fn):
             z = np.load(fn, allow_pickle=True)
-            ref, drawn = (z["rsig"], z["rev"], float(z["rp"])), (z["drawn"] if n_rules else None)
+            ref, drawn = (z["rsig"], z["rev"], float(z["rp"]), list(z["rnames"]) if "rnames" in z else None), \
+                (z["drawn"] if n_rules else None)
             print(str(z["row"]) + "  (cached)", flush=True)
             if n_rules:
                 print(str(z["rules"]), flush=True)
@@ -84,7 +90,8 @@ def main():
         K, step, eq, it = g[:4]
         cfg = MWConfig(bet=A.MW4_BETS, max_raises=1, root_raise=True, later="buckets", buckets=int(K),
                        bucket_river_step=int(step), bucket_eq=float(eq), bucket_river="nr" not in g[4:],
-                       jam_is_raise="j" in g[4:])
+                       jam_is_raise="j" in g[4:],
+                       **{"allin_spr": float(x[1:]) for x in g[4:] if x.startswith("a")})
         t0 = time.process_time()
         s = MultiwaySolver(b, rs, pot, St, cfg=cfg, **kw)
         tb = time.process_time() - t0
@@ -99,7 +106,7 @@ def main():
         row = f"{':'.join(g)}  tables {tb:5.1f}s  {ti:6.1f} ms/it  expl {gn.mean():.3f}%  " + \
               " ".join(f"{n} {f * 100:4.1f}" for n, f in freqs.items())
         if ref is None:
-            ref = (sig, ev, s.root_pot())
+            ref = (sig, ev, s.root_pot(), list(s.root.names))
             rules = ""
             if n_rules:
                 rng = np.random.default_rng(7)
@@ -108,12 +115,15 @@ def main():
                 rules = rules_row(s, drawn, ref, board, line, hp)
                 print(rules, flush=True)
             if fn:
-                np.savez(fn, rsig=sig, rev=ev, rp=s.root_pot(), drawn=drawn if drawn is not None else np.zeros(0, int),
+                np.savez(fn, rsig=sig, rev=ev, rp=s.root_pot(), rnames=np.array(list(s.root.names)), drawn=drawn if drawn is not None else np.zeros(0, int),
                          row=row, rules=rules)
         else:
-            rsig, rev, rp = ref
-            loss = ((rsig * rev).sum(axis=0) - (sig * rev).sum(axis=0)) / rp * 100
-            tv = 0.5 * np.abs(sig - rsig).sum(axis=0)
+            rsig, rev, rp, rnames = ref
+            # (by action name: a game without the first game's all-in plays none of it)
+            idx = [rnames.index(n) for n in s.root.names] if rnames else list(range(len(s.root.names)))
+            sig_r = np.zeros_like(rsig); sig_r[idx] = sig
+            loss = ((rsig * rev).sum(axis=0) - (sig_r * rev).sum(axis=0)) / rp * 100
+            tv = 0.5 * np.abs(sig_r - rsig).sum(axis=0)
             row += f"  | vs first: mix loss {float((w * loss).sum()):.3f}% pot, TV {float((w * tv).sum()):.3f}"
             if drawn is not None:
                 row += f", on the rules' hands {float(loss[drawn].mean()):.3f}%"
@@ -123,7 +133,7 @@ def main():
 def rules_row(s, drawn, ref, board, line, hp):
     """The betting rules' mix on the drawn combos against the first game's EVs (% of the pot given up, their mean)."""
     from gto.cards import ALL_COMBOS, cards_str
-    rsig, rev, rp = ref
+    rsig, rev, rp = ref[:3]
     hero, acts = line_acts(board, line)
     adv = S.rules_adv(400)
     names = list(s.root.names)
