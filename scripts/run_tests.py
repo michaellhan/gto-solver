@@ -57,7 +57,9 @@ def main() -> int:
     for name in names:
         code, text, rss = run_one(name)
         if code != 0:   # (a few tests solve on a time budget, and a loaded machine can fail one: a real bug fails again)
-            print(f"{name} failed; retrying it once", flush=True)
+            # (the first try's failures are printed too: a test that only fails under load is still worth a look)
+            first = text[text.find("=" * 70):] if "=" * 70 in text else text
+            print(f"{name} failed; retrying it once. The first try:\n{first[-4000:]}", flush=True)
             code, text, again = run_one(name)
             rss = max(rss, again)
         ran = RAN.search(text)

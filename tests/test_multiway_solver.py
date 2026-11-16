@@ -1337,6 +1337,28 @@ class TestAdvisor(unittest.TestCase):
         self.assertGreater(acts["call"]["ev_bb"] - acts["raise to 35"]["ev_bb"], 1.0, r["actions"])
         self.assertGreater(acts["call"]["freq"], 0.9, r["actions"])
 
+    def test_four_way_turn_buckets_price_the_nuts(self):
+        # 8-handed, four limps, the flop checked through; on 5hAd2c3s the BB bets 1.5 into 8 and two call. The river by
+        # 16 (Accurate) or 8 (Fast) buckets split by weight lumped the SB's nut straight with the hands that fold to a
+        # river bet: Accurate called it (+2.1 bb, raising -5.8) and Fast folded it. Split by weight times equity
+        # (advisor.MW4_STREETS / MW4_FAST_STREETS, bucket_power): raise +14.4 against the call's +8.3, Fast +9.5 / +6.4
+        P = lambda p, a, **k: dict({"pos": p, "action": a}, **k)
+        st = {"players": 8, "hero": "SB", "hole": "6c4d", "board": "5hAd2c3s", "stack": 100.0, "rake": 0.1, "rake_cap": 3,
+              "preflop": [P("UTG", "call"), P("UTG1", "fold"), P("LJ", "call"), P("HJ", "fold"), P("CO", "call"),
+                          P("BTN", "fold"), P("SB", "call"), P("BB", "check")],
+              "flop": [P(p, "check") for p in ("SB", "BB", "UTG", "LJ", "CO")],
+              "turn": [P("SB", "check"), P("BB", "bet", amount=1.5), P("UTG", "fold"), P("LJ", "call"), P("CO", "call")]}
+        for cfg, budget in ((A.MW4_STREETS, 6.0), (A.MW4_FAST_STREETS, 3.0)):
+            adv = A.Advisor(time_budget=budget)
+            adv.mw4_street_config = {s: dict(c) for s, c in cfg.items()}
+            r = adv.advise(st)
+            self.assertTrue(r.get("solved"), r["notes"])
+            self.assertTrue(any(n.startswith("4-way pot solved") for n in r["notes"]), r["notes"])
+            acts = {a["action"]: a for a in r["actions"]}
+            self.assertLess(acts["fold"]["freq"], 0.05, r["actions"])
+            self.assertGreater(acts["raise to 9.5"]["ev_bb"], acts["call"]["ev_bb"] + 1.0, r["actions"])
+            self.assertGreater(acts["raise to 9.5"]["freq"], 0.8, r["actions"])
+
     def test_a_bet_over_the_short_stack_is_solved_with_side_pots(self):
         # the 25bb BB checks the turn and the CO bets 30, more than the BB has behind: each player bets its own stack
         # (the BB's call all-in for less plays for the main pot), where everyone played the shortest stack before and

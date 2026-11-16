@@ -124,12 +124,18 @@ MW_FAST_STREETS = {"flop": {"later": "buckets", "buckets": 12, "bucket_river_ste
                    "turn": dict(MW_ACC_TURN)}
 # 4-way flops and turns (nobody all-in): the 4-player solve, the later streets by hand buckets (the root street per combo,
 # card removal pair by pair: MultiwaySolver._term_pw), one bet a street and no raise but the player advised's
-# (root_raise), as the N-player river solve
+# (root_raise), as the N-player river solve. A turn's river buckets split by weight times equity too
+# (MW_BUCKET_POWER): on 12 live 4-way turns (scripts/bench_mw_buckets.py --street turn), the top tenth of the range by
+# value was off by 18.1% of the pot in Accurate's 16 buckets and 32.7% in Fast's 8 against a 24-bucket game split the
+# same way, 3.3 and 7.7 split; against one split by weight 9.0 -> 7.7 and 17.7 -> 7.8, the two references 8.3 apart;
+# mix loss 0.33 -> 0.07 and 0.42 -> 0.13 (by weight 0.08 -> 0.16, 0.24 -> 0.18), 5-12% more time. The 5-way blend
+# (bucket_eq 0.75) did about as well (4.6 / 7.7). 8-handed, four limps, the flop checked through, the BB's 1.5 into 8 on
+# 5hAd2c3s called twice: the SB's nut straight called (Accurate +2.1 bb, raising -5.8) or folded (Fast); now it raises
 MW4_BETS = {"flop": 0.33, "turn": 0.5, "river": 0.5}
 MW4_STREETS = {"flop": {"later": "buckets", "buckets": 8, "bucket_river_step": 3, "bucket_power": MW_BUCKET_POWER},
-               "turn": {"later": "buckets", "buckets": 16}}
+               "turn": {"later": "buckets", "buckets": 16, "bucket_power": MW_BUCKET_POWER}}
 MW4_FAST_STREETS = {"flop": {"later": "buckets", "buckets": 6, "bucket_river_step": 4, "bucket_power": MW_BUCKET_POWER},
-                    "turn": {"later": "buckets", "buckets": 8}}
+                    "turn": {"later": "buckets", "buckets": 8, "bucket_power": MW_BUCKET_POWER}}
 # 5-way flops and turns: the same game for five, in fewer buckets (the tensors are over bucket quintuples: K^5 a class;
 # natively in the compiled core a turn takes 15 ms an iteration in 4 buckets, 38 in 6, a flop 160-230 ms in 3 or 4 on
 # one thread after 2 s of tables), the buckets split by weight times equity (MWConfig.bucket_eq, MW5_EQ): in K equal

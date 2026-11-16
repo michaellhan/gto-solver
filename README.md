@@ -4400,8 +4400,12 @@ their products batched: `core.LEAF_ROWS_BLAS`).
   turn solves' river buckets split the same way (`MW_ACC_TURN`, Fast's and Quick's `MW_QUICK_TURN`): against the 48-bucket
   game on 14 live 3-way turn spots (`bench_mw_buckets.py --street turn`), 16 buckets' top tenth 10.1% -> 4.2% (floor
   5.7%), by value 13.2% -> 6.0%, mix loss 0.07-0.12% -> 0.03-0.06%; Quick's 8 buckets 18.2% -> 6.6%; iterations cost the
-  same. 4-way turn solves' river buckets are unchanged and unmeasured; the 5-way games, turns included, blend the two
-  splits instead (`MWConfig.bucket_eq` 0.75, measured
+  same. 4-way turn solves' river buckets too (`MW4_STREETS`, `MW4_FAST_STREETS`): on 12 live 4-way turn spots against
+  the 24-bucket game split by value, Accurate's 16 buckets' top tenth 18.1% -> 3.3% of the pot and Fast's 8 32.7% ->
+  7.7%, mix loss 0.33% -> 0.07% and 0.42% -> 0.13%; against the one split by weight 9.0% -> 7.7% and 17.7% -> 7.8%
+  (floor 8.3%); an iteration 5-12% more. The SB's nut straight facing the BB's small turn bet and two calls (four limps,
+  the flop checked through, 5hAd2c3s) was called at Accurate (+2.1 bb, raising -5.8) and folded at Fast; now both raise
+  (+14.4 against +8.3, Fast +9.5 against +6.4). The 5-way games, turns included, blend the two splits instead (`MWConfig.bucket_eq` 0.75, measured
   against 5-way turn references: N-player pots in How it works).
 * 4-way flops and turns are solved live in a smaller game than 3-way ones: one bet a street (a third of the pot on
   the flop, half after), no raise but yours, everyone at the shortest stack behind, this street's card removal pair
