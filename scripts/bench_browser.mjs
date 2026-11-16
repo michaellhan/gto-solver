@@ -69,6 +69,9 @@ const SRP = [F("UTG"), F("HJ"), F("CO"), R("BTN", 2.5), F("SB"), C("BB")];
 const MW = [F("UTG"), F("HJ"), R("CO", 2.5), C("BTN"), F("SB"), C("BB")];
 const MW4 = [F("UTG"), R("HJ", 2.5), C("CO"), C("BTN"), F("SB"), C("BB")];
 const MW5 = [F("UTG"), R("HJ", 2.5), C("CO"), C("BTN"), C("SB"), C("BB")];
+// live 9-handed, 200bb: UTG1, LJ, CO and BTN limp, the SB completes, the BB checks (6-way)
+const MW6 = [F("UTG"), C("UTG1"), F("UTG2"), C("LJ"), F("HJ"), C("CO"), C("BTN"), C("SB"), X("BB")];
+const X6 = ["SB", "BB", "UTG1", "LJ", "CO", "BTN"].map((p) => X(p));
 const CO_BB = [F("UTG"), F("HJ"), R("CO", 2.5), F("BTN"), F("SB"), C("BB")];
 const LIMP = [F("UTG"), F("HJ"), F("CO"), F("BTN"), C("SB"), X("BB")];   // (a limped pot: not in the flop library, solved live)
 const BB_3BET = [F("UTG"), F("HJ"), F("CO"), R("BTN", 2.5), F("SB"), R("BB", 10), C("BTN")];
@@ -211,6 +214,10 @@ const SPOTS = {
   "mw4-turn": base({ hero: "BB", hole: "Qh9h", board: "Kh7d2c9s", preflop: MW4, flop: [X("BB"), X("HJ"), X("CO"), X("BTN")] }),
   "mw5-flop": base({ hero: "SB", hole: "Qh9h", board: "Kh7d2c", preflop: MW5 }),               // 5-way, first to act
   "mw5-turn": base({ hero: "SB", hole: "Qh9h", board: "Kh7d2c9s", preflop: MW5, flop: [X("SB"), X("BB"), X("HJ"), X("CO"), X("BTN")] }),
+  "mw6-flop": base({ players: 9, stack: 200, hero: "SB", hole: "Qh9h", board: "Kh7d2c", preflop: MW6 }),   // 6-way, first to act
+  "mw6-turn": base({ players: 9, stack: 200, hero: "SB", hole: "Qh9h", board: "Kh7d2c9s", preflop: MW6, flop: X6 }),
+  "mw6-turn-bet": base({ players: 9, stack: 200, hero: "LJ", hole: "Qh9h", board: "Kh7d2c9s", preflop: MW6, flop: X6,
+                         turn: [X("SB"), X("BB"), B("UTG1", 3)] }),                                   // 6-way, facing a bet
   "exploit": base({ hero: "BB", hole: "QhJh", board: "Ks7d2cTh", flop: SRP_FLOP, opponents: "pool" }),
   "lock": base({ hero: "BB", hole: "QhJh", board: "Ks7d2cTh", flop: SRP_FLOP, locks: { BTN: { fold: 15, bluff: 30 } } }),
   "raked": base({ hero: "BTN", hole: "AsQs", board: "Kc7d4h", flop: [X("BB")], rake: 0.05, rake_cap: 3 }),

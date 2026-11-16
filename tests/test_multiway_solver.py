@@ -40,6 +40,17 @@ def _ranges5():
     return [R[p] for p in ("SB", "BB", "HJ", "CO", "BTN")]
 
 
+PRE6 = [{"pos": "UTG", "action": "fold"}, {"pos": "UTG1", "action": "call"}, {"pos": "UTG2", "action": "fold"},
+        {"pos": "LJ", "action": "call"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "call"},
+        {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "call"}, {"pos": "BB", "action": "check"}]
+SEATS6 = ("SB", "BB", "UTG1", "LJ", "CO", "BTN")    # (9-handed live, 200bb: four limp, SB completes, BB checks)
+
+
+def _ranges6():
+    R = A.preflop_ranges(PRE6, pf.Table(pf.SEATS[9]), 200.0)
+    return [R[p] for p in SEATS6]
+
+
 def _cfg4(**kw):
     """The advisor's 4-way game (advisor.MW4_BETS: one bet a street, no raise but the root player's)."""
     return MWConfig(later="buckets", max_raises=1, root_raise=True, bet=dict(A.MW4_BETS), **kw)
@@ -554,6 +565,28 @@ class TestCore(unittest.TestCase):
                 self.assertEqual(a.np, 5)
                 self._same(a, b)
 
+    def test_six_and_seven_players_agree(self):
+        # 6-way turns and a flop (advisor.MW6_STREETS' game): the kernel over five others' buckets (con6_row); a player
+        # all-in (the five others for a side pot: a third tensor added); stacks short enough that the turn's bet goes
+        # all-in (runouts of six hands); and seven players (conn_row, any number of others). Two buckets an iteration
+        # in: the numpy side takes most of the time
+        rs = _ranges6()
+        for name, board, kw in (("turn", "Kh7d2c9s", dict(pot=6.0, stack=199.0, cfg=_cfg4(buckets=2))),
+                                ("all-in", "Kh7d2c9s", dict(pot=30.0, stack=40.0, bets=[0.0] * 5 + [20.0], to_act=0,
+                                                            pending={0, 1, 2, 3, 4},
+                                                            cfg=_cfg4(buckets=2, allin=(5,), inv0=(5.0,) * 6))),
+                                ("short", "Kh7d2c9s", dict(pot=40.0, stack=15.0, cfg=_cfg4(buckets=2))),
+                                ("flop", "Kh7d2c", dict(pot=6.0, stack=199.0, cfg=_cfg4(buckets=2, bucket_river_step=24,
+                                                                                       bucket_river=False))),
+                                # (seven, three of them all-in: the tree stays small, the tensors over seven players)
+                                ("seven", "Kh7d2c9s", dict(rs=rs + [rs[2]], pot=30.0, stack=40.0, bets=[0.0] * 4 + [20.0] * 3,
+                                                           to_act=0, pending={0, 1, 2, 3},
+                                                           cfg=_cfg4(buckets=2, allin=(4, 5, 6), inv0=(5.0,) * 7)))):
+            with self.subTest(name):
+                a, b = self._pair(board, 1, **{"rs": rs, **kw})
+                self.assertEqual(a.np, len(kw.get("rs", rs)))
+                self._same(a, b)
+
     def test_river_agrees_with_numpy(self):
         # a 3-way river root (no later streets): its showdowns per combo in the core (RSHOW, exact card removal by
         # inclusion-exclusion over the cards two of the others' hands could share), the numpy solver's arithmetic: a
@@ -829,6 +862,55 @@ class TestFourWay(unittest.TestCase):
         r = adv.advise(dict(flop, hole="AsKs"))
         self.assertFalse(r.get("solved"))
         self.assertTrue(any("a 5-way flop is left to the betting rules at this speed" in n for n in r["notes"]), r["notes"])
+
+    def test_advisor_six_way(self):
+        # 6-way flops and turns by the 6-player solve (MW6_STREETS: the flop's river checked through), not the betting
+        # rules, in exploit mode too (the pool lock at every opponent decision); a quick answer's, the rules'
+        adv = A.Advisor(time_budget=1e9)
+        adv.mw_solve_streets = ("flop", "turn", "river")
+        adv.mw_max_iters = 25
+        adv.mw6_street_config = {k: dict(v) for k, v in A.MW6_FAST_STREETS.items()}
+        X6 = [{"pos": p, "action": "check"} for p in SEATS6]
+        turn = {"players": 9, "hero": "LJ", "hole": "AhKd", "board": "Kh7d2c9s", "stack": 200.0, "preflop": PRE6,
+                "flop": X6, "turn": X6[:2] + [{"pos": "UTG1", "action": "bet", "amount": 3.0}]}
+        r = adv.advise(turn)
+        self.assertTrue(r.get("solved"), r["notes"])
+        self.assertEqual(r["players"], 6)
+        self.assertTrue(any(n.startswith("6-way pot solved by 6-player CFR") for n in r["notes"]), r["notes"])
+        self.assertEqual({a["action"].split()[0] for a in r["actions"]}, {"fold", "call", "raise"})
+        r = adv.advise(dict(turn, opponents="live"))
+        self.assertTrue(r.get("solved"), r["notes"])
+        self.assertTrue(all("gto_freq" in a for a in r["actions"]), r["actions"])
+        flop = {k: v for k, v in turn.items() if k != "turn"}
+        flop.update(board="Kh7d2c", flop=X6[:3])
+        r = adv.advise(flop)
+        self.assertTrue(r.get("solved"), r["notes"])
+        self.assertTrue(any("the river checked through" in n for n in r["notes"]), r["notes"])
+        r = adv.advise(dict(flop, quick=True))
+        self.assertFalse(r.get("solved"))
+        self.assertTrue(any("a 6-way flop is left to the betting rules at this speed (Fast and Accurate" in n
+                            for n in r["notes"]), r["notes"])
+        adv.mw6_street_config = None
+        r = adv.advise(flop)
+        self.assertFalse(r.get("solved"))
+
+    def test_six_way_no_jam_over_a_raise(self):
+        # MW6_STREETS' jam_is_raise: 6.6 pots behind facing a flop bet, your raise leaves the others 1.5 pots or less,
+        # and a jam over it from each of them made 334 flop all-ins of up to six hands (1.55 s an iteration natively);
+        # without them no flop all-in but your own, and the raise stays yours to make
+        from gto.multiway_solver import Runout
+        rs = _ranges6()
+        kw = dict(bets=[0.0, 10.0, 0.0, 0.0, 0.0, 0.0], to_act=2, n_raises=1, pending={0, 2, 3, 4, 5})
+        counts = {}
+        for jam in (False, True):
+            cfg = MWConfig(max_raises=1, root_raise=True, bet=dict(A.MW4_BETS),
+                           **{**A.MW6_FAST_STREETS["flop"], "jam_is_raise": jam})
+            s = MultiwaySolver(cards("Kh7d2c"), rs, 30.0, 195.0, cfg=cfg, **kw)
+            counts[jam] = sum(isinstance(t, Runout) for t in s.builder.runouts)
+            self.assertTrue(any(n.startswith("raise") for n in s.root.names), s.root.names)
+        self.assertTrue(A.MW6_STREETS["flop"]["jam_is_raise"] and A.MW6_FAST_STREETS["turn"]["jam_is_raise"])
+        self.assertGreater(counts[False], 100)
+        self.assertEqual(counts[True], 0)
 
     def test_native_fast_five_way_flop_needs_threads(self):
         # native Fast leaves a 5-way flop to the rules on fewer than THREADED_FAST threads (on one its tables and first

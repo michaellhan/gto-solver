@@ -33,19 +33,35 @@ PRES = {
               {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "check"}],
     "limp5": [{"pos": "UTG", "action": "call"}, {"pos": "HJ", "action": "call"}, {"pos": "CO", "action": "fold"},
               {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "call"}, {"pos": "BB", "action": "check"}],
+    # live 9-handed, 200bb: a limped 6-way pot (UTG1, LJ, CO and BTN limp, SB completes, BB checks), 7-way (UTG2 too), and
+    # an isolated 6-way pot (UTG and UTG2 limp, HJ isolates to 5, CO, BTN, BB and both limpers call)
+    "limp6": [{"pos": "UTG", "action": "fold"}, {"pos": "UTG1", "action": "call"}, {"pos": "UTG2", "action": "fold"},
+              {"pos": "LJ", "action": "call"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "call"},
+              {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "call"}, {"pos": "BB", "action": "check"}],
+    "limp7": [{"pos": "UTG", "action": "fold"}, {"pos": "UTG1", "action": "call"}, {"pos": "UTG2", "action": "call"},
+              {"pos": "LJ", "action": "call"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "call"},
+              {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "call"}, {"pos": "BB", "action": "check"}],
+    "iso6": [{"pos": "UTG", "action": "call"}, {"pos": "UTG1", "action": "fold"}, {"pos": "UTG2", "action": "call"},
+             {"pos": "LJ", "action": "fold"}, {"pos": "HJ", "action": "raise", "to": 5}, {"pos": "CO", "action": "call"},
+             {"pos": "BTN", "action": "call"}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"},
+             {"pos": "UTG", "action": "call"}, {"pos": "UTG2", "action": "call"}],
 }
-ORDER = {"srp4": ["BB", "HJ", "CO", "BTN"], "limp4": ["BB", "UTG", "HJ", "BTN"], "limp5": ["SB", "BB", "UTG", "HJ", "BTN"]}
+ORDER = {"srp4": ["BB", "HJ", "CO", "BTN"], "limp4": ["BB", "UTG", "HJ", "BTN"], "limp5": ["SB", "BB", "UTG", "HJ", "BTN"],
+         "limp6": ["SB", "BB", "UTG1", "LJ", "CO", "BTN"], "limp7": ["SB", "BB", "UTG1", "UTG2", "LJ", "CO", "BTN"],
+         "iso6": ["BB", "UTG", "UTG2", "HJ", "CO", "BTN"]}
+TABLE = {"limp6": (9, 200), "limp7": (9, 200), "iso6": (9, 200)}   # (players at the table, stack), else 6-max 100bb
 X = lambda ps: [{"pos": p, "action": "check"} for p in ps]
 def lines_for(pre):
     o = ORDER[pre]
-    bet = {"srp4": 3.5, "limp4": 1.5}.get(pre, 2.5)
+    bet = {"srp4": 3.5, "limp4": 1.5, "limp6": 3.0, "limp7": 3.5, "iso6": 15.0}.get(pre, 2.5)
     return {"first": (o[0], []),
             "last checked to": (o[-1], X(o[:-1])),
             "vs bet": (o[2], X(o[:1]) + [{"pos": o[1], "action": "bet", "amount": bet}]),
             "vs bet+call": (o[3], X(o[:1]) + [{"pos": o[1], "action": "bet", "amount": bet}, {"pos": o[2], "action": "call"}])}
 def mk_state(pre):
     def st(board, hero, hole, acts):
-        s = {"players": 6, "hero": hero, "hole": hole, "board": board, "stack": 100, "preflop": PRES[pre]}
+        n, stack = TABLE.get(pre, (6, 100))
+        s = {"players": n, "hero": hero, "hole": hole, "board": board, "stack": stack, "preflop": PRES[pre]}
         names = ["flop", "turn", "river"][: len(board) // 2 - 2]
         for n in names[:-1]:
             s[n] = X(ORDER[pre])
@@ -60,10 +76,12 @@ def solve_adv(speed, iters=200, game=None):
     """The 4-way (srp4, limp4) or 5-way (limp5) bucket solve the advisor runs, at a speed's game ("quick": a quick
     answer's, advisor.MW4_QUICK_FLOP on a flop), capped by iterations (not time, so the score doesn't move with the
     machine's load)."""
-    r = A.Advisor(time_budget=1e9); r.mw_solve_streets = ("flop", "turn"); r.mw_max_iters = iters
+    r = A.Advisor(time_budget=1e9); r.mw_solve_streets = ("flop", "turn", "river"); r.mw_max_iters = iters
+    r.mw_nway_max = 9         # (a river of up to nine: the N-player solve)
     fast = speed == "fast"
     r.mw4_street_config = {k: dict(v) for k, v in (A.MW4_FAST_STREETS if fast else A.MW4_STREETS).items()}
     r.mw5_street_config = {k: dict(v) for k, v in (A.MW5_FAST_STREETS if fast else A.MW5_STREETS).items()}
+    r.mw6_street_config = {k: dict(v) for k, v in (A.MW6_FAST_STREETS if fast else A.MW6_STREETS).items()}
     if game:     # (--game: the flop's game changed)
         if speed == "quick":
             r.mw4_quick_flop = {**r.mw4_quick_flop, **game}
@@ -79,7 +97,7 @@ def rules_adv(trials):
 def build(a):
     os.makedirs(HERE, exist_ok=True)
     for pre in a.pres.split(","):
-        fn = os.path.join(HERE, f"ref{5 if pre == 'limp5' else 4}{'' if pre in ('srp4', 'limp5') else '_' + pre}_{a.build}"
+        fn = os.path.join(HERE, f"ref{len(ORDER[pre])}{'' if pre in ('srp4', 'limp5') else '_' + pre}_{a.build}"
                           + (f"_r{a.rivers}" if a.rivers and a.rivers != 8 else "") + ".json")
         out = json.load(open(fn)) if os.path.exists(fn) else []
         mk = mk_state(pre); L = lines_for(pre)

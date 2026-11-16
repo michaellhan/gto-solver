@@ -453,6 +453,93 @@ INL void con5_row(const f32 *restrict T0, const f32 *restrict T1, f32 w0, f32 w1
     for (int j = 0; j < k; j++) v[j] = w0 * A0[j] + w1 * B0[j];
 }
 
+/* Six players: the five others' buckets (xs[0] .. xs[4]), T (k, k, k, k, k, k) with p's innermost; one tensor (w0 T0)
+   or two (w1 T1), as con5_row with one more level */
+INL void con6_row(const f32 *restrict T0, const f32 *restrict T1, f32 w0, f32 w1, const f32 *const *xs,
+                  f32 *restrict v, const int k) {
+  int i0[32], i1[32], i2[32], i3[32], i4[32];
+  const f32 *x0 = xs[0], *x1 = xs[1], *x2 = xs[2], *x3 = xs[3], *x4 = xs[4];
+  int m0 = nzlist(x0, i0, k), m1 = nzlist(x1, i1, k), m2 = nzlist(x2, i2, k), m3 = nzlist(x3, i3, k),
+      m4 = nzlist(x4, i4, k);
+  f32 c4[32];
+  for (int e = 0; e < m4; e++) c4[e] = x4[i4[e]];
+  f32 A0[32], B0[32];
+  for (int j = 0; j < k; j++) A0[j] = B0[j] = 0;
+  for (int d = 0; d < m0; d++) {
+    f32 c0 = x0[i0[d]];
+    for (int e1 = 0; e1 < m1; e1++) {
+      f32 c01 = c0 * x1[i1[e1]];
+      size_t o01 = ((size_t)i0[d] * k + i1[e1]) * k;
+      for (int e2 = 0; e2 < m2; e2++) {
+        f32 c012 = c01 * x2[i2[e2]];
+        size_t o012 = (o01 + i2[e2]) * k;
+        for (int e3 = 0; e3 < m3; e3++) {
+          f32 c0123 = c012 * x3[i3[e3]];
+          size_t oabcd = (o012 + i3[e3]) * k * k;
+          if (T1 == 0) {
+            for (int e = 0; e < m4; e++) {
+              f32 c = c0123 * c4[e];
+              const f32 *r = T0 + oabcd + (size_t)i4[e] * k;
+              for (int j = 0; j < k; j++) A0[j] += c * r[j];
+            }
+          } else {
+            for (int e = 0; e < m4; e++) {
+              f32 c = c0123 * c4[e];
+              size_t o = oabcd + (size_t)i4[e] * k;
+              for (int j = 0; j < k; j++) {
+                A0[j] += c * T0[o + j];
+                B0[j] += c * T1[o + j];
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  if (T1 == 0)
+    for (int j = 0; j < k; j++) v[j] = w0 * A0[j];
+  else
+    for (int j = 0; j < k; j++) v[j] = w0 * A0[j] + w1 * B0[j];
+}
+
+/* Seven or more players: the others' buckets xs[0] .. xs[no - 1] (no = NP - 1), T (k, ..., k) with p's innermost; one
+   tensor (w0 T0) or two (w1 T1): each nonzero cell of the first no - 1 others' reaches (walked depth first, its
+   product and offset carried down), then its rows over the last other's. */
+static void conn_rec(const f32 *T0, const f32 *T1, const f32 *const *xs, const int (*idx)[32], const int *m, int j,
+                     int no, size_t off, f32 c, f32 *A0, f32 *B0, const int k) {
+  const f32 *x = xs[j];
+  const int *ix = idx[j];
+  if (j < no - 1) {
+    for (int e = 0; e < m[j]; e++)
+      conn_rec(T0, T1, xs, idx, m, j + 1, no, off * k + ix[e], c * x[ix[e]], A0, B0, k);
+    return;
+  }
+  for (int e = 0; e < m[j]; e++) {
+    f32 ce = c * x[ix[e]];
+    size_t o = (off * k + ix[e]) * k;
+    if (T1 == 0)
+      for (int r = 0; r < k; r++) A0[r] += ce * T0[o + r];
+    else
+      for (int r = 0; r < k; r++) {
+        A0[r] += ce * T0[o + r];
+        B0[r] += ce * T1[o + r];
+      }
+  }
+}
+
+static void conn_row(const f32 *T0, const f32 *T1, f32 w0, f32 w1, const f32 *const *xs, int no, f32 *v, int k) {
+  int idx[16][32], m[16];
+  f32 A0[32], B0[32];
+  for (int r = 0; r < k; r++) A0[r] = B0[r] = 0;
+  int any = 1;
+  for (int j = 0; j < no; j++) any &= (m[j] = nzlist(xs[j], idx[j], k)) > 0;
+  if (any) conn_rec(T0, T1, xs, (const int (*)[32])idx, m, 0, no, 0, 1, A0, B0, k);
+  if (T1 == 0)
+    for (int r = 0; r < k; r++) v[r] = w0 * A0[r];
+  else
+    for (int r = 0; r < k; r++) v[r] = w0 * A0[r] + w1 * B0[r];
+}
+
 /* The tensors summed over a folded player's reach: M (k, k) [the other][p] = sum over f's buckets of xf * T, f the
    first (fo = 0) or the second (fo = 1) of p's two others; J's and a pot's tensor (T1, M1: or none) at once. */
 INL void red_row(const f32 *restrict T0, const f32 *restrict T1, const f32 *restrict xf, int fo, f32 *restrict M0,
@@ -508,9 +595,38 @@ INL void red_row(const f32 *restrict T0, const f32 *restrict T1, const f32 *rest
   default: call(K); break;         \
   }
 
+#define BY_K6(call)                \
+  switch (K) {                     \
+  case 2: call(2); break;          \
+  case 3: call(3); break;          \
+  case 4: call(4); break;          \
+  default: call(K); break;         \
+  }
+
 /* p's values v (C, K) = sum over the others' buckets of w_j T_j times their reaches X (np, C, K) */
 static void contract_add(const f32 *T0, f32 w0, int p, const f32 *X, f32 *v);
 static void contract(const f32 *T0, const f32 *T1, const f32 *T2, f32 w0, f32 w1, f32 w2, int p, const f32 *X, f32 *v) {
+  if (NP >= 6) {
+    size_t blk = 1;
+    for (int j = 0; j < NP; j++) blk *= (size_t)K;
+    int o[16], m = 0;
+    for (int j = 0; j < NP; j++)
+      if (j != p) o[m++] = j;
+    const f32 *xs[16];
+    for (int t = 0; t < C; t++) {
+      size_t off = t * blk;
+      for (int j = 0; j < m; j++) xs[j] = X + ((size_t)o[j] * C + t) * K;
+      if (NP == 6) {
+#define C6(k) con6_row(T0 + off, T1 ? T1 + off : 0, w0, w1, xs, v + (size_t)t * K, k)
+        BY_K6(C6)
+#undef C6
+      } else {
+        conn_row(T0 + off, T1 ? T1 + off : 0, w0, w1, xs, m, v + (size_t)t * K, K);
+      }
+    }
+    if (T2) contract_add(T2, w2, p, X, v);
+    return;
+  }
   if (NP == 5) {
     size_t blk5 = (size_t)K * K * K * K * K;
     int o[4], m = 0;
@@ -566,6 +682,21 @@ static void contract(const f32 *T0, const f32 *T1, const f32 *T2, f32 w0, f32 w1
 /* v (C, K) += w0 times p's contraction of T0 alone (a further side pot's: one class's row of K at a time) */
 static void contract_add(const f32 *T0, f32 w0, int p, const f32 *X, f32 *v) {
   f32 row[32];
+  if (NP >= 6) {
+    size_t blk = 1;
+    for (int j = 0; j < NP; j++) blk *= (size_t)K;
+    int o[16], m = 0;
+    for (int j = 0; j < NP; j++)
+      if (j != p) o[m++] = j;
+    const f32 *xs[16];
+    for (int t = 0; t < C; t++) {
+      for (int j = 0; j < m; j++) xs[j] = X + ((size_t)o[j] * C + t) * K;
+      if (NP == 6) con6_row(T0 + t * blk, 0, w0, 0, xs, row, K);
+      else conn_row(T0 + t * blk, 0, w0, 0, xs, m, row, K);
+      for (int j = 0; j < K; j++) v[(size_t)t * K + j] += row[j];
+    }
+    return;
+  }
   if (NP == 5) {
     size_t blk5 = (size_t)K * K * K * K * K;
     int o[4], m = 0;
@@ -1184,7 +1315,7 @@ static void runout(Lane *L, const i32 *w, const f32 *R, f32 *v, int p) {
       for (int l = 0; l < NP; l++) {
         if (!(mask >> l & 1)) continue;
         f64 *nk = num + ((size_t)k * NP + l) * N, *dk = den + ((size_t)k * NP + l) * N;
-        int o[4], no = 0;
+        int o[16], no = 0;
         for (int j = 0; j < NP; j++)
           if (j != l && (mask >> j & 1)) o[no++] = j;
         const f64 *t0 = T + 3 * (size_t)o[0] * N, *t1 = T + 3 * (size_t)o[1] * N;
@@ -1200,11 +1331,22 @@ static void runout(Lane *L, const i32 *w, const f32 *R, f32 *v, int p) {
             nk[h] += t0[N + h] * t1[N + h] * t2[N + h] * mk[h];
             dk[h] += t0[h] * t1[h] * t2[h] * mk[h];
           }
-        } else {
+        } else if (no == 4) {
           const f64 *t2 = T + 3 * (size_t)o[2] * N, *t3 = T + 3 * (size_t)o[3] * N;
           for (int h = 0; h < N; h++) {
             nk[h] += t0[N + h] * t1[N + h] * t2[N + h] * t3[N + h] * mk[h];
             dk[h] += t0[h] * t1[h] * t2[h] * t3[h] * mk[h];
+          }
+        } else { /* (six or more players: the same products over every other) */
+          for (int h = 0; h < N; h++) {
+            f64 a = mk[h], b = mk[h];
+            for (int j = 0; j < no; j++) {
+              const f64 *tj = T + 3 * (size_t)o[j] * N;
+              a *= tj[N + h];
+              b *= tj[h];
+            }
+            nk[h] += a;
+            dk[h] += b;
           }
         }
       }

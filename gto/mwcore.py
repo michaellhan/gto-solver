@@ -34,6 +34,7 @@ WASM_MT = os.path.join(ROOT, "gto", "mwcore-mt.wasm")
 CHUNK_S = 0.1          # seconds of iterations a call (between the budget and should_stop checks)
 MAX_CHUNK = 256        # iterations a call at most (the discount factors' buffer)
 MAX_K = 32             # hand buckets at most (the kernels' accumulators)
+MAX_NP = 9             # players at most (six or more: core/mwcore.c conn_row, its 16 others' lists)
 ARENA_MAX = 1 << 30
 
 _lib = None
@@ -247,9 +248,9 @@ class Program:
         if self.river:
             if s.np != 3 or s._pw or not cfg.exact or not cfg.alternate or cfg.allin and len(cfg.allin) > 1:
                 raise Unsupported("not a 3-way river")
-        elif (s.tabs is None and not s.builder.runouts) or not cfg.alternate or s.np not in (2, 3, 4, 5) or \
+        elif (s.tabs is None and not s.builder.runouts) or not cfg.alternate or not 2 <= s.np <= MAX_NP or \
                 (s._pw and s.np < 4):
-            raise Unsupported("not a bucketed 2- to 5-player solve")
+            raise Unsupported(f"not a bucketed 2- to {MAX_NP}-player solve")
         elif (s.tabs is not None and s.tabs.K > MAX_K) or len(cfg.allin) > 1 and s.np < 4:
             raise Unsupported("buckets or all-ins")
         self.L, self.s = L, weakref.ref(s)

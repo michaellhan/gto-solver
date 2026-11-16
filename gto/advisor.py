@@ -143,6 +143,21 @@ MW5_STREETS = {"flop": {"later": "buckets", "buckets": 4, "bucket_river_step": 6
                "turn": {"later": "buckets", "buckets": 6, "bucket_eq": MW5_EQ}}
 MW5_FAST_STREETS = {"flop": {"later": "buckets", "buckets": 3, "bucket_river_step": 6, "bucket_eq": MW5_EQ},
                     "turn": {"later": "buckets", "buckets": 4, "bucket_eq": MW5_EQ}}
+# 6-way flops and turns: the same game for six (the compiled core's kernel over five others' buckets, core/mwcore.c
+# con6_row), the flop's river not bet on (MWConfig.bucket_river: with it a 6-way flop's later streets held 11k decisions,
+# 1.6 GB and ~1 s an iteration natively in 3 buckets; without, ~90 ms and ~0.1 GB), and no all-in over a raise
+# (jam_is_raise: 30.5 in the pot 195 deep, UTG bets 10 and UTG2 may raise to 48: the four behind could jam over it, 334
+# flop all-ins of up to six hands, 1.55 s an iteration; without, 0.09 s, and Fast's 5 s run 100 iterations, not 1).
+# Against a richer bucket game (scripts/bench_mw5.py --pres limp6 / iso6; % of the pot the advised player's mix gives
+# up on 60 of its hands, the betting rules' on the same): six turns, the rules 0.43 on average, this game 0.05, Fast's
+# at 40 iterations 0.12; ten flops, the rules 0.82, 0.14 and 0.24. A turn's first decision too (0.26 and 0.76 against
+# 0.05 each; 5-way's stays with the rules). A quick answer: the rules (Advisor.mw6_quick None).
+MW6_STREETS = {"flop": {"later": "buckets", "buckets": 4, "bucket_river_step": 12, "bucket_eq": MW5_EQ,
+                        "bucket_river": False, "jam_is_raise": True},
+               "turn": {"later": "buckets", "buckets": 4, "bucket_eq": MW5_EQ, "jam_is_raise": True}}
+MW6_FAST_STREETS = {"flop": {"later": "buckets", "buckets": 3, "bucket_river_step": 12, "bucket_eq": MW5_EQ,
+                             "bucket_river": False, "jam_is_raise": True},
+                    "turn": {"later": "buckets", "buckets": 3, "bucket_eq": MW5_EQ, "jam_is_raise": True}}
 HU_RESERVE = 1.0   # heads-up solves likewise keep one iteration's time back (the exploitability read after: ~1 iteration)
 OVER_TARGET = 10   # an answer more than this many times its advisor's expl_target from equilibrium is approximate
 # The session analyzer's Quick triage (Advisor.triage, "triage": true): a decision nothing in hand answers at once is
@@ -3226,6 +3241,10 @@ class Advisor:
         # ...but a 5-way turn's first decision (nobody has acted on it yet) goes to the rules unless this is set
         # (MW5_FIRST_TURN_NOTE: there they gave up less than the solve)
         self.mw5_first_turn = False
+        # 6-way flops and turns (_mw4_applies with n 6): the 6-player solve's game per street (MW6_STREETS; Fast
+        # MW6_FAST_STREETS), as the 5-way one's; a quick answer's (mw6_quick: None, the betting rules)
+        self.mw6_street_config: Optional[Dict[str, dict]] = {s: dict(c) for s, c in MW6_STREETS.items()}
+        self.mw6_quick: Optional[Dict[str, dict]] = None
         # an earlier 3-way street with no solve from your advice on it: solve it from its start (prior_budget) to narrow
         # the ranges through (_mw_walk); off: the rules narrow it (native Accurate on: its 12 s settle a flop enough)
         self.mw_prior_solve = False
@@ -5799,6 +5818,11 @@ class Advisor:
         four = not exact3 and self.mw4_street_config is not None and _mw4_applies(remaining, cur, stk, hero)
         # (five: the same game in fewer buckets, MW5_STREETS)
         five = not exact3 and cur.name in (self.mw5_street_config or {}) and _mw4_applies(remaining, cur, stk, hero, 5)
+        # (six: MW6_STREETS; a quick answer's mw6_quick)
+        quick = getattr(self, "_quick", False)
+        six_cfg = (self.mw6_quick if quick and not self._study else self.mw6_street_config) or {}
+        six = not exact3 and cur.name in six_cfg and _mw4_applies(remaining, cur, stk, hero, 6)
+        five = five or six
         four = four or five
         own4 = four and _mw4_own(remaining, cur, stk, hero)
         nway = not exact3 and not four and _nway_applies(remaining, cur, stk, hero, self.mw_nway_max)
@@ -5808,19 +5832,24 @@ class Advisor:
             # THREADED_FAST threads, gto/native.py)
             fallback_notes.append(f"a 5-way {cur.name} is left to the betting rules at this speed (Accurate solves it)")
             return None
+        if not exact3 and not four and self.mw6_street_config is not None and cur.name in ("flop", "turn") \
+                and cur.name in self.mw_solve_streets and _mw4_applies(remaining, cur, stk, hero, 6):
+            fallback_notes.append(f"a 6-way {cur.name} is left to the betting rules at this speed"
+                                  + (" (Fast and Accurate solve it)" if quick and cur.name in self.mw6_street_config
+                                     else ""))
+            return None
         # (the N-player solve off the river is the hand of the only player with chips: nothing to solve but its call)
         if not self.mw_solve_streets or not ((exact3 or four) and cur.name in self.mw_solve_streets
                                              or nway and (cur.name != "river" or "river" in self.mw_solve_streets)):
             return None
         # (quick: rivers and turns (MW_QUICK_TURN), and a pot with a player all-in on any street: two bettors, solved in
         # the browser in 1.4-1.6 s on a flop or turn, 100 iterations, 0.05% of the pot from equilibrium)
-        quick = getattr(self, "_quick", False)
         # (and a 5-way turn: natively in 1.8 s 22-33 iterations first to act, 0.4-0.8% of the pot from equilibrium)
-        if four and quick and (five or cur.name == "flop" and self.mw4_quick_flop is None):
+        if four and quick and not six and (five or cur.name == "flop" and self.mw4_quick_flop is None):
             fallback_notes.append(f"a quick answer leaves a {len(remaining)}-way {cur.name} to the betting rules ("
                                   + ("Accurate solves it)" if five and cur.name == "flop" else "Fast and Accurate solve it)"))
             return None
-        if five and cur.name == "turn" and not cur.acted and not self.mw5_first_turn:
+        if five and not six and cur.name == "turn" and not cur.acted and not self.mw5_first_turn:
             fallback_notes.append(MW5_FIRST_TURN_NOTE)
             return None
         players = [p for p in cur.order if p in remaining]          # postflop acting order
@@ -5876,7 +5905,8 @@ class Advisor:
             # 4-way flops and turns: the later streets by hand buckets (MW4_STREETS), one bet a street, no raises but
             # yours; card removal pairwise on this street, as the N-player solve's
             mcfg = MW.MWConfig(rake_rate=self.cfg.rake_rate, rake_cap=self.cfg.rake_cap, bet=MW4_BETS, max_raises=1,
-                               root_raise=True, **(self.mw5_street_config.get(cur.name, {}) if five else
+                               root_raise=True, **(six_cfg[cur.name] if six else
+                                                   self.mw5_street_config.get(cur.name, {}) if five else
                                                    self.mw4_quick_flop if quick and cur.name == "flop" else
                                                    self.mw4_street_config.get(cur.name, {})))
         elif nway:
@@ -5926,7 +5956,7 @@ class Advisor:
             main = cap * len(remaining) + sum(min(cur.inv_start[q] + cur.bets[q], cap) for q in cur.inv_start
                                               if q not in remaining)
             rest = [q for q in players if q not in (hero, a)]
-            notes.append(f"{a} is all-in: the main pot ({main:.1f} bb) goes to the best of the {['', '', 'two', 'three', 'four', 'five'][len(players)]} hands, "
+            notes.append(f"{a} is all-in: the main pot ({main:.1f} bb) goes to the best of the {['', '', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'][len(players)]} hands, "
                          f"the side pot to the " + (f"better of yours and {rest[0]}'s" if len(rest) == 1 else
                                                    f"best of yours, {', '.join(rest[:-1])}'s and {rest[-1]}'s"))
         inc = () if hi is None or any(r[hi] > 0 for r in rs) else (hi,)    # (a hand nobody's range holds still gets solved)
@@ -6067,7 +6097,10 @@ class Advisor:
             street_note["turn"] = (f"the river bet on too, by {mcfg.buckets} hand buckets a player on each river card "
                                    f"(one card per rank class)")
             street_note["flop"] = (f"the turn and river bet on too, by {mcfg.buckets} hand buckets a player on one turn card "
-                                   f"per rank class, the river played on the turn's boards without its card")
+                                   f"per rank class, the river played on the turn's boards without its card"
+                                   if mcfg.bucket_river else
+                                   f"the turn bet on too, by {mcfg.buckets} hand buckets a player on one turn card per "
+                                   f"rank class, the river checked through (the turn's equity over its rivers)")
         sizes = MW.bet_sizes(mcfg, cur.name)
         if four:
             street_note[cur.name] += ("; card removal between the hands taken pair by pair (each opponent's hand "

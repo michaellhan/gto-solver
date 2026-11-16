@@ -96,6 +96,10 @@ class MWConfig:
     # bucket_eq: a blend of that share (0) and its share times equity (1, as bucket_power 1 from 0: finer at the top,
     # where a 5-way pot's value is): at 0.75 (advisor.MW5_EQ) a set no longer shares its river bucket with top pair
     bucket_eq: float = 0.0
+    # bucket_river: from a flop root the river is bet on too; False: the turn's betting ends in a showdown over every
+    # river (the turn's equity, the tensors the river's showdowns use anyway). A 6-way flop's later streets held 11k
+    # decisions, 1.6 GB and ~1 s an iteration natively in 3 buckets with the river's; the turn's alone a fraction
+    bucket_river: bool = True
     allin_step: int = 11         # from a flop: a three-way root-street all-in's runouts (Runout), every step-th of the
                                  # turn and river cards' spacings (11: ~147 of 1176, even over the cards; 1: every one)
     # allin: the players all-in at the root (their indices; three players: at most one, more is pairwise): they never
@@ -736,7 +740,7 @@ def _template(cfg, npl, street, pot, c, behind, folded):
                 lv2, pot2, c2, b2 = _street_end(npl, pot, behind, nb, nc, nf)
                 if len(lv2) == 1:
                     kid = _TT(lv2, pot2, c2, "fold")
-                elif street == "river" or len(_acting(cfg, lv2, b2)) < 2:
+                elif street == "river" or not cfg.bucket_river or len(_acting(cfg, lv2, b2)) < 2:
                     kid = _TT(lv2, pot2, c2, "show")
                 else:
                     kid = _TX(lv2, frozenset(nf), pot2, c2, b2)
