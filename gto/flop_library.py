@@ -94,10 +94,13 @@ SPOTS = [
     ("3bp_co_hj", "CO 3bet vs HJ", "UTG:f,HJ:r2.5,CO:r7.5,BTN:f,SB:f,BB:f,HJ:c"),
     ("3bp_bb_sb", "BB 3bet vs SB", "UTG:f,HJ:f,CO:f,BTN:f,SB:r3,BB:r10,SB:c"),
     ("lp_sb_bb", "SB vs BB limped pot", "UTG:f,HJ:f,CO:f,BTN:f,SB:c,BB:x"),
+    ("srp_co_btn", "CO vs BTN single-raised pot", "UTG:f,HJ:f,CO:r2.5,BTN:c,SB:f,BB:f"),
 ]
 # Spots above that only other games build (FORMAT_SPOTS): not built in the default game, so all_spots() leaves them
-# out of it (a build of every spot, the index, the coverage scripts' ids). 6-max's limped pot is heads-up's base.
-FORMAT_ONLY = {"lp_sb_bb"}
+# out of it (a build of every spot, the index, the coverage scripts' ids). 6-max's limped pot is heads-up's base; the
+# CO's open flatted by the BTN is 200bb's (at 100bb it reads off the UTG's flatted by the BTN; the HJ's flatted by the
+# BTN is the HJ's flatted by the CO there: the same cold-calling range, so srp_hj_co_200bb serves both).
+FORMAT_ONLY = {"lp_sb_bb", "srp_co_btn"}
 # How many representative flops each spot stores (representative_flops(n); an odd multiple of a set holds it: 552 = 3 x
 # 184, 1656 = 3 x 552; 1755 is every flop): the opens the big blind calls every flop, by coverage per MB
 # (scripts/flop_library_coverage.py --assume; a flop not stored was 53 of the 79 points of heads-up flop decisions the
@@ -176,8 +179,13 @@ DEFAULT_FORMAT = Format()
 # first to act after the flop, the ranges the heads-up charts'; and its limp the big blind checks (SB:c,BB:x: pot 2,
 # 99 behind).
 FORMAT_SPOTS: Dict[str, List[str]] = {
-    "40bb": ["srp_btn_bb", "srp_co_bb", "srp_sb_bb", "srp_hj_bb", "srp_utg_bb", "3bp_bb_btn"],
-    "200bb": ["srp_btn_bb", "srp_co_bb", "srp_sb_bb", "srp_hj_bb", "srp_utg_bb", "3bp_bb_btn"],
+    "40bb": ["srp_btn_bb", "srp_co_bb", "srp_sb_bb", "srp_hj_bb", "srp_utg_bb", "3bp_bb_btn",
+             "3bp_sb_btn", "3bp_bb_co", "3bp_sb_co", "3bp_btn_co", "3bp_bb_sb"],
+    # 50bb: the 3bet pots only (under a stack-to-pot ratio of 3, read off no other depth: NEAR_MIN_SPR); its
+    # single-raised pots read off 40bb's and 100bb's
+    "50bb": ["3bp_bb_btn", "3bp_sb_btn", "3bp_bb_co", "3bp_sb_co", "3bp_btn_co", "3bp_bb_sb"],
+    "200bb": ["srp_btn_bb", "srp_co_bb", "srp_sb_bb", "srp_hj_bb", "srp_utg_bb", "3bp_bb_btn",
+              "3bp_sb_btn", "3bp_btn_co", "srp_hj_co", "srp_co_btn", "srp_utg_btn"],
     "2max": ["srp_sb_bb", "lp_sb_bb"],
 }
 
