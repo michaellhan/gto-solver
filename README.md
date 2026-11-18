@@ -556,7 +556,8 @@ equilibrium, small bets most, where the online player defends as equilibrium (se
 
 Off by default (the page's Rake select: off, 5% capped at 3bb, with stakes 10% capped at $5, or a custom
 percent and cap; the setting is saved with the hand and carried by share links). Rake is taken "no flop, no
-drop": a pot that ends preflop isn't raked, so opens, steals and folds to them are unchanged. A tournament has
+drop": a pot that ends preflop isn't raked, so at any rake opens, steals and folds to them are the charts'. Without
+rake, hero's preflop chart is moved to no rake (see below), opens a little, defences more. A tournament has
 none, whatever the setting: the page sends no rake for a saved hand with payouts or bounties or one imported from a
 tournament (`S.tournament`, its header), and the advisor drops a request's rake when it has `payouts`, `bounties` or `tournament`.
 
@@ -639,9 +640,25 @@ tournament (`S.tournament`, its header), and the advisor drops a request's rake 
   33.8 (to 10bb there), UTG 28.2 / 18.2 / 14.6 (against the LJ). The old flop-pot rake had the big
   blind calling 48.4% against the button. Lower rake does less: 3% capped at 1bb has the big blind
   calling 44.3% against the button and CO calling 30.4% against a BB 3bet; 7% uncapped 28.4% and
-  21.7%. More rake (a higher rate or cap) never adds a call; with no rake the advice is bit-identical.
+  21.7%. More rake (a higher rate or cap) never adds a call; with no rake the calls aren't re-priced and the chart is
+  moved to no rake instead (next).
   A called preflop all-in sees the flop, so its price counts the rake on its pot. The replayed ranges
   going to the flop use the same calls.
+* Preflop without rake (the default), hero's chart is moved from the raked solves it was fit to (gto/pf_norake.py,
+  the Preflop Trainer's method): the share of hero's range that continues is scaled by how much more Lizard's
+  preflop solver (michaellhan/lizard, engine/pf_solve.py) continues at the same node without rake than at 5% capped
+  at 3bb (for a range playing over half its hands, the share it folds), the share that raises by the square root of
+  its ratio; ratios held to 0.67-1.5, shares under 1.5% left alone. The chart keeps its own hands: mixed hands fill
+  up or empty out first, then the no-rake solve's best EVs. The small blind against a button open raises/calls
+  11.0/4.3% of hands at the charts' rake and 11.1/11.9% without; the button against a CO open 12.2/2.9 and 14.2/8.4;
+  heads-up the small blind's open 59.4% raise, 28.9% limp to 56.8/35.4; opens UTG 18.7 to 18.3%, the button 45.1 to
+  44.5%, the small blind 44.7 to 47.2%. Charts written
+  without rake (the big blind against one raise, the opener's in-position calls of a blind's 3bet) stay as they
+  are, as do limped pots at 6-max, a player facing a raise after calling and 5bets; other formats and depths use
+  the 100bb 6-max or heads-up node's ratios. The shares come from Lizard's stored 100bb solves
+  (scripts/build_pf_norake.py writes gto/pf_norake_data.py, 76 spots). Only hero's own advice moves (in exploit
+  mode, hero's range on later streets too): the other players' ranges entering the flop stay the charts', which
+  the flop library's spots are keyed by.
 * Push/fold: the equilibrium behind short-stacked jams (hero's own shove, and the jam range hero
   faces) rakes a called jam's pot, since it runs out a board and so sees the flop, as the call of a
   preflop all-in is priced; a jam that takes the blinds uncalled isn't raked. Rake costs the caller

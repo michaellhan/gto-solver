@@ -33,6 +33,7 @@ import numpy as np
 from .cards import cards as parse_cards, COMBO_INDEX, hand_class, ALL_COMBOS, cards_str, card_str
 from .ranges import N_COMBOS, range_to_text, parse_range
 from . import preflop as pf
+from . import pf_norake
 from .pf_classes import push_fold
 # imported where used (exploit, breakdown, like multiway_solver and pf_game): the browser's worker imports this module
 # before its first answer, and a preflop answer or a library flop needs none of them (tests/test_bundle.py)
@@ -1834,6 +1835,8 @@ def preflop_strategy(p: str, before: List[dict], positions, stack: float, pool: 
 
     def work():
         full = pf.strategy_for(p, before, positions)
+        if pool:   # (hero's own advice moves its chart to no rake, pf_norake: everyone else keeps the chart, which
+            full = pf_norake.chart(full, p, before, positions)   # the flop library's spots are keyed by)
         if "call" in full or getattr(positions, "icm", None) is not None:
             st = replay_hand(positions, stack, {"preflop": before}, 1)[0]
             if not st.closed and st.to_act == p:
@@ -4267,7 +4270,8 @@ class Advisor:
     def _chart_rules(self, hero, hole, preflop, positions, stack, st: "StreetState", t0) -> dict:
         """The catch-all's preflop answer (Advisor._rules): the chart's mix for the hand as the chart has it (no
         re-pricing for the stacks, rake, jams or locks), its raises at the default size held to a legal one."""
-        full = {k: np.asarray(v, dtype=np.float64) for k, v in pf.strategy_for(hero, preflop, positions).items()}
+        full = {k: np.asarray(v, dtype=np.float64) for k, v in
+                pf_norake.chart(pf.strategy_for(hero, preflop, positions), hero, preflop, positions).items()}
         remaining = stack - st.inv_start[hero] - st.bets[hero]
         to_call = max(0.0, min(st.cur_bet - st.bets[hero], remaining))
         passive = "call" if to_call > 1e-9 else "check"
@@ -4599,6 +4603,12 @@ class Advisor:
         if cover:
             from .pf_formats import label
             notes = [f"preflop: the {label(positions, cover)} chart (the 100bb chart moved by solves of this game)"]
+        # no rake: the chart moved from the raked solves it was fit to (pf_norake; hero's advice only: the ranges entering
+        # the flop stay the charts', which the flop library's spots are keyed by)
+        nr = pf_norake.chart(full, hero, preflop, positions)
+        if nr is not full:
+            full = nr
+            notes.append(pf_norake.NOTE)
         if "call" in full:
             full = self._priced(hero, preflop, positions, stack, st, full, notes, pool)
         elif getattr(positions, "icm", None) is not None:

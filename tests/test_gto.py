@@ -3,7 +3,7 @@ import numpy as np
 from gto.cards import cards, ALL_COMBOS, hand_class
 from gto.ranges import parse_range
 from gto.evaluator import eval_board
-from gto import preflop as pf
+from gto import preflop as pf, pf_norake
 from gto.solver import solve, Config, Ctx, Solver, TreeBuilder, MEMBER_FULL, N_FULL, match_action, Decision
 from gto.advisor import Advisor, preflop_investments
 
@@ -558,7 +558,7 @@ class TestAdvisor(unittest.TestCase):
         std = [R("UTG", "raise", 2.5), R("HJ", "fold"), R("CO", "raise", 7.5)] + [R(p, "fold") for p in ("BTN", "SB", "BB")]
         r = adv.advise(dict(st, preflop=std))
         self.assertEqual(r["recommended"], "fold")
-        self.assertEqual(r["notes"], ["preflop: chart approximation"])
+        self.assertEqual(r["notes"], ["preflop: chart approximation", pf_norake.NOTE])
         # a min-3bet with two callers: 2.5bb into 16bb, 66 calls (from a fold at the standard price)
         multi = [R("UTG", "raise", 2.5), R("HJ", "call"), R("CO", "raise", 5), R("BTN", "fold"), R("SB", "call"), R("BB", "fold")]
         r = adv.advise(dict(st, preflop=multi))
@@ -615,8 +615,9 @@ class TestAdvisor(unittest.TestCase):
         self.assertEqual(go("UTG", "5s5d", pre)[0]["recommended"], "fold")
         self.assertEqual(go("UTG", "5s5d", pre, stack=200)[0]["recommended"], "call")
         # the opener calls wider in position (vs the big blind's 3bet) than out of position (vs the button's)
-        ip = go("CO", "6s6d", F("UTG", "HJ") + [R("CO", "raise", 2.5)] + F("BTN", "SB") + [R("BB", "raise", 10)])[1]
-        oop = go("CO", "6s6d", F("UTG", "HJ") + [R("CO", "raise", 2.5), R("BTN", "raise", 7.5)] + F("SB", "BB"))[1]
+        # (55: without rake 66 calls both 3bets every time)
+        ip = go("CO", "5s5d", F("UTG", "HJ") + [R("CO", "raise", 2.5)] + F("BTN", "SB") + [R("BB", "raise", 10)])[1]
+        oop = go("CO", "5s5d", F("UTG", "HJ") + [R("CO", "raise", 2.5), R("BTN", "raise", 7.5)] + F("SB", "BB"))[1]
         self.assertGreater(ip["call"]["freq"], oop["call"]["freq"])
         # heads-up the button defends a 3bet wide (in position postflop)
         r = go("SB", "Qh8h", [R("SB", "raise", 2.5), R("BB", "raise", 8)], players=2)[0]
@@ -657,8 +658,9 @@ class TestAdvisor(unittest.TestCase):
                   + [R("UTG", "raise", 20), R("HJ", "raise", 45)], stack=200)
         self.assertEqual(r["recommended"], "all-in")
         # antes widen opens; a straddle makes HJ first to act and the opens 2.5x the straddle
-        self.assertEqual(go("UTG", "Ah9d", [])[0]["recommended"], "fold")
-        self.assertGreater(go("UTG", "Ah9d", [], ante=1 / 6)[1]["raise"]["freq"], 0)
+        # (QJo: without rake the opens tighten a little, and A9o, the ante chart's last open, drops out)
+        self.assertEqual(go("UTG", "QhJd", [])[0]["recommended"], "fold")
+        self.assertGreater(go("UTG", "QhJd", [], ante=1 / 6)[1]["raise"]["freq"], 0)
         r, a = go("HJ", "AhJd", [], straddle=True)
         self.assertEqual((r["recommended"], a["raise"]["amount_bb"], r["pot_bb"]), ("raise", 5.0, 3.5))
         self.assertIn("error", go("UTG", "AhJd", [], straddle=True)[0])
@@ -2247,9 +2249,11 @@ class TestExploit(unittest.TestCase):
 
     def test_pool_preflop_shows_chart_share(self):
         """Exploit mode preflop plays a chart mix one way (55 flats a CO open 100%, the chart 40%): each
-        action carries the chart's share as gto_freq, as postflop shows GTO mode's answer."""
+        action carries the chart's share as gto_freq, as postflop shows GTO mode's answer. (At the charts' own
+        rake, where the chart is as published: without rake it already flats 55 every time.)"""
         R = lambda p, a, to=None: dict({"pos": p, "action": a}, **({"to": to} if to else {}))
         st = {"players": 6, "hero": "BTN", "hole": "5h5d", "board": "", "stack": 100, "opponents": "pool",
+              "rake": 0.05, "rake_cap": 4,
               "preflop": [R("UTG", "fold"), R("HJ", "fold"), R("CO", "raise", 2.5)]}
         acts = {a["action"]: a for a in Advisor().advise(st)["actions"]}
         gto = {a["action"]: a["freq"] for a in Advisor().advise(dict(st, opponents="gto"))["actions"]}
@@ -3351,13 +3355,14 @@ class TestRake(unittest.TestCase):
                 S.NO_BLAS, s._live, s._trimmed = saved, None, {}
 
     def test_preflop_fold_has_no_rake(self):
-        # pots that end preflop aren't raked: opens, and the steal's folds, are the chart's with rake on
+        # pots that end preflop aren't raked: opens, and the steal's folds, are the chart's at any rake (without
+        # rake the chart is moved to no rake, gto/pf_norake.py)
         adv = Advisor(Config(depth=1), time_budget=0.5, prior_budget=0.3)
         R = self.R
         for hero, hole, pre in (("BTN", "Kd9c", [R("UTG", "fold"), R("HJ", "fold"), R("CO", "fold")]),
                                 ("SB", "Qc5d", [R("UTG", "fold"), R("HJ", "fold"), R("CO", "fold"), R("BTN", "raise", 2.5)])):
             st = {"players": 6, "hero": hero, "hole": hole, "board": "", "stack": 100, "preflop": pre}
-            a, b = adv.advise(st), adv.advise(dict(st, rake=0.05, rake_cap=3))
+            a, b = adv.advise(dict(st, rake=0.05, rake_cap=4)), adv.advise(dict(st, rake=0.05, rake_cap=3))
             self.assertEqual(a["actions"], b["actions"])
             self.assertEqual(a["grid"], b["grid"])
         # a zero rate is no rake
