@@ -1967,13 +1967,15 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   | 6-max, 0.125bb antes | 877.4 | 70.9% | 81.1% | 81.1% | 88.9%, 94.4% |
   | 8-max, 0.125bb antes | 1110.9 | 75.0% | 81.4% | 81.4% | 87.3%, 91.5% |
   | 6-max, UTG straddling | 826.8 | 74.5% | 82.3% | 82.3% | 89.3%, 94.3% |
-  | heads-up 100bb | 487.0 | 41.8% | 55.6% | 55.6% | 73.0%, 85.4% |
+  | heads-up 100bb | 489.1 | 56.2% | 69.1% | 69.1% | 80.9%, 93.2% |
 
   What's left at once: at 6-max 18.3% of the turn decisions follow a library flop no file reads (SB vs BB, the
   flatted opens with the opener out of position, the 3bet pots without files), 20.2% are past a file's two decisions,
   7.0% are 3-way; at 8-max with antes 3-way flops are 20.8% of the turn decisions and 13.5% / 12.7% of the
-  heads-up flop decisions are too far from any spot / too little covered; heads-up, the limped pots (38.8% of its
-  flop decisions) have no spot at all (Precomputed flop library: Next for other games).
+  heads-up flop decisions are too far from any spot / too little covered; heads-up (the open's and the limped pot's
+  spots, each on 552 flops with turn files; measured 2026-11-19 on the current charts with a new 40-turn profile,
+  where the row read 41.8 / 55.6 / 55.6 / 73.0, 85.4 on the old charts without the limped pot) 30.7% of the flop
+  decisions are a stored entry's and 49.7% more read approximately off the stored flops most like theirs.
 * **The street's own solve so far, while it solves** (`Advisor.progress`, `first_look`, `LOOK_MIN_S`; the worker's
   `progress` after `early`; `scripts/bench_browser.mjs --early`'s `looks`). A flop or turn solved live showed at most
   the approximate answer above while its solve ran, read off another solve or a stored file (for CO vs BB's turn a
