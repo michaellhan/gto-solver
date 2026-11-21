@@ -1967,15 +1967,18 @@ identical trees and ranges (BTN open vs BB call, K72r runouts):
   | 6-max, 0.125bb antes | 877.4 | 70.9% | 81.1% | 81.1% | 88.9%, 94.4% |
   | 8-max, 0.125bb antes | 1110.9 | 75.0% | 81.4% | 81.4% | 87.3%, 91.5% |
   | 6-max, UTG straddling | 826.8 | 74.5% | 82.3% | 82.3% | 89.3%, 94.3% |
-  | heads-up 100bb | 489.1 | 56.2% | 69.1% | 69.1% | 80.9%, 93.2% |
+  | heads-up 100bb | 489.2 | 67.1% | 72.7% | 72.7% | 79.4%, 91.6% |
 
   What's left at once: at 6-max 18.3% of the turn decisions follow a library flop no file reads (SB vs BB, the
   flatted opens with the opener out of position, the 3bet pots without files), 20.2% are past a file's two decisions,
   7.0% are 3-way; at 8-max with antes 3-way flops are 20.8% of the turn decisions and 13.5% / 12.7% of the
-  heads-up flop decisions are too far from any spot / too little covered; heads-up (the open's and the limped pot's
-  spots, each on 552 flops with turn files; measured 2026-11-19 on the current charts with a new 40-turn profile,
-  where the row read 41.8 / 55.6 / 55.6 / 73.0, 85.4 on the old charts without the limped pot) 30.7% of the flop
-  decisions are a stored entry's and 49.7% more read approximately off the stored flops most like theirs.
+  heads-up flop decisions are too far from any spot / too little covered; heads-up (the open's spot on every
+  flop and the limped pot's on 552, both with turn files; measured 2026-11-20 on the current charts with a 40-turn
+  profile; with the open on 552 the row read 56.2 / 69.1 / 69.1 / 80.9, 93.2, and 41.8 / 55.6 / 55.6 / 73.0, 85.4
+  on the old charts without the limped pot) 58.5% of the flop decisions are a stored entry's and 21.8% more read
+  approximately off the stored flops most like theirs. The last two columns fall a little as flops are stored: a
+  turn after a live flop solve is read approximately off it at every decision, a turn after a stored flop only at
+  its turn file's (43.1% of turn decisions precomputed, 22.0 before; 81.2% in all, 90.4 before).
 * **The street's own solve so far, while it solves** (`Advisor.progress`, `first_look`, `LOOK_MIN_S`; the worker's
   `progress` after `early`; `scripts/bench_browser.mjs --early`'s `looks`). A flop or turn solved live showed at most
   the approximate answer above while its solve ran, read off another solve or a stored file (for CO vs BB's turn a
@@ -3862,7 +3865,7 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   40bb"). The index carries its game (`"game": {"players", "stack", "ante", "straddle"}`), and Study, the drills
   and the flop reports play its hands in that game. Listed: BTN, CO, HJ, UTG and SB vs BB and BB vs BTN's 3bet pot
   at 40bb and 200bb, and heads-up at 100bb the small blind's (the button's) 3bb open called by the big blind
-  (`srp_sb_bb_2max`, "SB vs BB single-raised pot, heads-up", on 552 flops: the heads-up charts' ranges, wider than
+  (`srp_sb_bb_2max`, "SB vs BB single-raised pot, heads-up", on every flop: the heads-up charts' ranges, wider than
   6-max SB vs BB's, about half of heads-up flop decisions) and its limp the big blind checks (`lp_sb_bb_2max`, "SB
   vs BB limped pot, heads-up", on 552 flops: pot 2, 99 behind, 38.8% of heads-up flop decisions; its base spot,
   6-max's limped pot `lp_sb_bb`, is `FORMAT_ONLY`: not built in the default game, nor listed there by
@@ -3870,7 +3873,11 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   their entries deal the river, as every spot's do). Built: the heads-up open on its 552 flops with turn files,
   rebuilt on 2026-11-17 for the big blind's heads-up charts of 2026-11-16 (the Preflop Trainer's, its calling range
   617 combos to 507): 4.45 MB of entries, 13.0 MB of turn files; 305 iterations an entry on average, 0.113% of the
-  pot from equilibrium, 0.150% at worst (~22 CPU-hours, ~2 min an entry). The limped pot on its 552 flops with turn
+  pot from equilibrium, 0.150% at worst (~22 CPU-hours, ~2 min an entry); its other 1,203 flops with turn files
+  built 2026-11-19 to 20 on the same charts (one-shot stage hu-srp, `--fresh`, two processes; the 552 kept as they
+  were): 306 iterations an entry on average, 0.114% of the pot from equilibrium, 0.150% at worst (none over), ~2.5
+  min an entry (~58 process-hours over 25 hours), the spot now 12.75 MB of entries and 43.85 MB of turn files on all
+  1,755. The limped pot on its 552 flops with turn
   files, built 2026-11-17 to 19 on the same charts (`--fresh`, two processes, briefly three): 4.83 MB of entries,
   13.26 MB of turn files; 409 iterations an entry on average, 0.119% of the pot from equilibrium, 0.150% at worst
   (none over), ~5-6 min an entry (~50 process-hours over 32 hours).
@@ -3891,7 +3898,7 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   worker passed 4.2 GB on its 97th flop, so it builds with `--fresh` (a new worker process for each entry). ~26
   CPU-hours and ~5.8 MB of entries plus ~15 MB of turn files on 552 (built at one process), ~82 CPU-hours and ~67 MB
   on every flop. The heads-up open's other 1,203 flops add 59.3 over its 552 (~35 more CPU-hours, with turn files;
-  not built). With antes at
+  built 2026-11-20: Other games). With antes at
   8-max the heads-up flops left are 13.5% too far from any spot and 12.7% too little covered, 3-way flops 24.5
   decisions a 100 hands (67.5% of them now at once, read off the nearest 3-way spot: Precomputed 3-way flop
   library, 3-way pots no spot holds; a 3-way spot of its own, 8-max with antes UTG's or UTG1's open flatted by UTG1
@@ -3995,7 +4002,7 @@ The commonest flop decisions come from solves made offline (`gto/flop_library.py
   on Kc7d2h and 0.02 at most on the other three, of 100% 0.10 / 0.02 on KcTd6h and ~0 elsewhere. Each costs 32-43%
   more nodes, up to 66% more time and a rebuild of every entry, so the library keeps bets of 33/75% and a 50% raise.
 * **Turns** (`<spot>/<flop>.turn.bin` beside each entry, `encode_turns`, GTOTN1; written by the builds, shipped for
-  BTN vs BB, the 3bet pots, the heads-up open and the heads-up limped pot: 14,082 files, 193.8 MB): the flop solve's own turn strategies, for
+  BTN vs BB, the 3bet pots, the heads-up open and the heads-up limped pot: 15,285 files, 224.7 MB): the flop solve's own turn strategies, for
   an answer at once on the turn after a library flop (`FlopLibrary.turns`, `turn_node`; the advisor's approximate
   answer there, `instant_from_store`: Accuracy vs speed, "The turn after a library flop"). Per flop line that 1% or
   more of the hand pairs take to the turn (BTN vs BB on Kc7d2h: five lines, 66% of the pairs), the turn's first
@@ -4095,7 +4102,7 @@ KcTd9d and AcKdQd) ran to 23-73% of the pot after 1000 iterations, a regret sum 
 (fixed since) gone NaN, and were solved again with `GTO_CORE=0`: an entry the build leaves over `--target` at
 `--max-iters` is worth a second look.
 After changing the charts or the flop model, run it again (stale entries are re-solved). A spot on every flop is
-4.6-6.8 MB (SB vs BB's wide ranges 9.2): the test holds the library's entries (81.93 MB) under 150 MB. The five flatted opens on 552 (2760 entries, their callers'
+4.6-6.8 MB (SB vs BB's wide ranges 9.2): the test holds the library's entries (90.23 MB) under 150 MB. The five flatted opens on 552 (2760 entries, their callers'
 ranges narrow) took 165 minutes on 7 processes, the BTN's flatted by the SB the slowest (its opens' wide range).
 
 ### Precomputed 3-way flop library
