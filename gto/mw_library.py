@@ -54,7 +54,9 @@ SPOTS = [
     ("mw_hj_sb_bb", "HJ open, SB and BB call", "UTG:f,HJ:r2.5,CO:f,BTN:f,SB:c,BB:c"),
     ("mw_utg_sb_bb", "UTG open, SB and BB call", "UTG:r2.5,HJ:f,CO:f,BTN:f,SB:c,BB:c"),
 ]
-REP_FLOPS = 184
+# every spot on all 1,755 flops (canonical under suit isomorphism) since 2026-11-25 (built 11-20 to 11-25; 184 + K72r
+# before)
+REP_FLOPS = 1755
 SPOT_FLOPS: Dict[str, int] = {}
 # stored beside each spot's representative flops: K72 rainbow, the 3-way spots of scripts/bench_browser.mjs and the tests
 EXTRA_FLOPS = ["Kc7d2h"]

@@ -12,6 +12,19 @@ from gto import solver as solver_mod
 from gto.breakdown import draw_category, made_category
 from gto.cards import COMBO_INDEX, cards
 from gto.native import advisor
+from tests.test_mw_library import default_without
+
+_RESTORE = []
+
+
+def setUpModule():
+    """The 3-way library stores every flop of its spots since 2026-11-25: the 3-way tests read Kd8c3h (K83 rainbow) as
+    a flop it doesn't store, so the advisors here get the library with it left out."""
+    _RESTORE.append(default_without(("Kd8c3h",)))
+
+
+def tearDownModule():
+    _RESTORE.pop()()
 
 PRE = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "fold"},
        {"pos": "BTN", "action": "raise", "to": 2.5}, {"pos": "SB", "action": "fold"}, {"pos": "BB", "action": "call"}]

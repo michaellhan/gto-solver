@@ -30,6 +30,45 @@ BOARD = "Kh7s2d"             # the same flop in other suits
 ITERS = 20
 
 
+# a flop the tests read as one the library doesn't store (K83 rainbow): since 2026-11-25 the library stores every flop
+UNSTORED = "Kd8c3h"
+
+
+def library_without(boards=(UNSTORED,)):
+    """The repo's 3-way library with `boards` (any suits) left out of every spot's index: (MWLibrary, its folder:
+    the spots' folders linked, a fresh mw_index.json; shutil.rmtree it when done), or (None, None) without a library.
+    The library stores every flop of its spots, so reading a flop it doesn't store (MWLibrary.near off the stored flops
+    most like it, borrowed or standing in) needs one taken out."""
+    path = os.path.join(ml.DIR, ml.INDEX)
+    if not os.path.exists(path):
+        return None, None
+    with open(path) as f:
+        idx = json.load(f)
+    gone = {fl.flop_name(cards(b)) for b in boards}
+    d = tempfile.mkdtemp()
+    for sp in idx["spots"]:
+        os.symlink(os.path.abspath(os.path.join(ml.DIR, sp["id"])), os.path.join(d, sp["id"]))
+        sp["flops"] = {k: v for k, v in sp["flops"].items() if k not in gone}
+    with open(os.path.join(d, ml.INDEX), "w") as f:
+        json.dump(idx, f)
+    return ml.MWLibrary.from_dir(d), d
+
+
+def default_without(boards=(UNSTORED,)):
+    """mw_library.default_library() (what native advisors get) set to library_without(boards); returns the function
+    that puts the repo's library back (a test module's setUpModule / tearDownModule)."""
+    kept = ml._DEFAULT
+    lib, d = library_without(boards)
+    if lib is not None:
+        ml._DEFAULT = lib
+
+    def restore():
+        ml._DEFAULT = kept
+        if d:
+            shutil.rmtree(d, ignore_errors=True)
+    return restore
+
+
 def _hole_in(r, board, k=0, full=True):
     """The k-th combo with range r's top weight (else one off it) that the board doesn't block."""
     b = set(cards(board))
@@ -42,10 +81,16 @@ class TestNear(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.lib = ml.MWLibrary.from_dir()
+        cls.lib, cls.dir = library_without()
+        if cls.lib is None:
+            raise unittest.SkipTest("no 3-way library built")
         cls.setup = ml.spot_setup(SPOT[2])
         if not cls.lib.spot([fl.range_fp(r) for r in cls.setup["ranges"]], cls.setup["pot"], cls.setup["stack"]):
             raise unittest.SkipTest("the 3-way library doesn't hold the spot")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.dir, ignore_errors=True)
 
     def near(self, board):
         s = self.setup
@@ -312,7 +357,7 @@ class TestShippedMWLibrary(unittest.TestCase):
             self.assertEqual((sp["pot"], sp["stack"], sp["seats"]), (s["pot"], s["stack"], s["seats"]))
             for name in sp["flops"]:
                 total += os.path.getsize(os.path.join(ml.DIR, sp["id"], name + ".bin"))
-        self.assertLess(total, 12e6)   # (eight spots' 1,488 flops: 8.24 MB)
+        self.assertLess(total, 90e6)   # (eight spots on every flop, 14,040 entries: 72.63 MB; 8.24 MB on 1,488 before)
 
 
 if __name__ == "__main__":

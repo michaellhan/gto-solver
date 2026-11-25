@@ -4119,15 +4119,23 @@ betting rules. The commonest 3-way pots' flops are solved offline (`gto/mw_libra
   and, built 2026-11-16, UTG opens, HJ or CO and BB call (one game, as the HJ's), CO opens, SB and BB call, HJ opens,
   SB and BB call, UTG opens, SB and BB call. `mw_index.json` lists the spots built (a spot in `SPOTS` not built yet
   just isn't answered from it). Of the flops seen 3-way (6-max 100bb, the charts' lines) the first four are 63.8%,
-  the next four 10.2, 8.3, 4.3 and 3.9%: the eight 90.5%. With the stored flops 12.8% of flops by weight the library
-  answers ~11.6% of 3-way flops' first decisions (8.2% with the first four); every flop (`--flops 1755`) of the eight
-  spots would answer 90.5%.
+  the next four 10.2, 8.3, 4.3 and 3.9%: the eight 90.5%. Since 2026-11-25 each spot stores every flop, so the
+  library answers the first decisions of 90.5% of the flops seen 3-way at once (~11.6% on the 185-187 flops a spot
+  held before, 12.8% of flops by weight; 8.2% with the first four). `scripts/instant_coverage.py` (every seat by
+  the charts), before -> after: 3-way flop decisions from a stored entry 6.2% -> 47.9% at 6-max (anything facing a
+  bet is live and counts twice), 2.2% -> 17.4% at 8-max and 1.6% -> 12.6% at 9-max (borrowed); every decision of a
+  session 84.3% -> 84.7% (6-max), 85.9% -> 86.1% (8-max), 86.5% -> 86.6% (9-max). With the reads at once, 3-way flop
+  decisions 74.4% -> 59.1% at 6-max (70.0 -> 64.9, 67.4 -> 63.8) and all decisions 92.0% -> 91.7%: a flop answered
+  from an entry has no live solve behind it, so a decision again after a bet waits for its own solve where the flop's
+  live solve read it at once before (as the heads-up open's every-flop build's turns).
   A spot is matched by the three ranges entering the flop (as the charts replay them), the pot and the stack (at 8-
   and 9-max a pot a few combos from a spot's is read as it, and other 3-way pots at once off the nearest spot: 3-way
   pots no spot holds, below); not with rake, custom sizes or ranges, exploit mode, locks or Optimize sizes.
-* **Flops**: the heads-up library's 184 representative canonical flops (`flop_library.representative_flops`), plus
-  K72 rainbow (`EXTRA_FLOPS`), matched up to suits; other flops are solved live. The first four spots also hold 985
-  two-tone and A66, kept from earlier builds (`compare_mw_library.py`'s boards): 187 flops a spot, the new four 185.
+* **Flops**: all 1,755 canonical flops a spot (`REP_FLOPS = 1755`: `flop_library.representative_flops(1755)`, every
+  flop up to suits; `EXTRA_FLOPS`' K72 rainbow among them), 14,040 entries. Until 2026-11-25 a spot held the heads-up
+  library's 184 representative flops plus K72 rainbow (the first four also 985 two-tone and A66), and a flop it didn't
+  store was read at once off its stored flops most like it (`MWLibrary.near`, below) while the live solve ran; that
+  read now serves only pots borrowed or standing in from another game's (none of the 100bb 6-max spots' flops).
 * **What is stored**: one 3-player CFR solve from the flop's start on native Accurate's 3-way game
   (`advisor.MW_ACC_FLOP`: bets of 33 and 75% pot, one raise and all-in, the turn and river bet on by 16 hand buckets a
   player, split by weight times equity: `MWConfig.bucket_power`, Known limits), run to under 0.1% of the pot mean best-response gain (300-700 iterations, 0.077% on average, 24-233 s a
@@ -4135,10 +4143,17 @@ betting rules. The commonest 3-way pots' flops are solved offline (`gto/mw_libra
   solve takes every hand the flop doesn't block (`include`, ~7% more time), so a hand off its player's range (a
   cold call the charts 3bet or fold) gets its current strategy, as a live solve gives it. Per hand: the mix in 1%
   steps and each action's EV, in the heads-up library's entry format (`flop_library.pack`, one mask per player).
-  An entry is 3.1-11.2 KB; a spot's 185-187 flops ~1.0 MB, the eight spots' 1,488 flops 8.24 MB (the value-split
-  rebuild of the first four, 2026-11-16, took 15.0 CPU-hours: two processes at nice 10 for 7 h on a loaded machine;
-  the new four's 740 entries 9.3 CPU-hours the same day, 200-600 iterations, 0.078% of the pot from equilibrium on
-  average, 17-120 s an entry).
+  An entry is 2.1-11.3 KB; a spot on every flop ~9.1 MB, the eight spots' 14,040 entries 72.63 MB (8.24 MB on
+  1,488 flops before). The value-split rebuild of the first four, 2026-11-16, took 15.0 CPU-hours (two processes at
+  nice 10 for 7 h on a loaded machine), the new four's 740 entries 9.3 CPU-hours the same day (200-600 iterations,
+  0.078% of the pot from equilibrium on average, 17-120 s an entry). The other 12,552 (every spot's other 1,567-1,570
+  flops: one-shot stage `mw-all`, `build_mw_library.py --flops 1755`, 2026-11-20 22:34 to 11-25 00:34, two or three
+  processes in a heavy slot) took 200 process-hours of solving, 57 s an entry: 368 iterations on average, 0.077% of
+  the pot from equilibrium (none over 0.10 in the four spots built 2026-11-16). Twelve entries stopped at
+  `--max-iters`' 800 over `--target`, ten of them on paired boards: Tc7h7d 0.29%, TdTc5h 0.15, QdQc9h 0.15 and
+  Jc9c3c 0.28 in CO / BTN / BB; KdKc9c 1.08 and KdKcJc 0.19 in HJ / IP / BB; JdJc9h 0.52 and TdTc9c 0.12 in
+  UTG / BTN / BB; 8d8c7h 0.29, Tc8h8d 0.61, QcJdJc 0.18 and Tc6c3c 0.50 in UTG / IP / BB (worth a second solve at
+  more iterations).
   The index records the game it was solved on (`mw_library.tree_key`: sizes, buckets, the bucket split...); the
   library reads nothing from an index on another game than `library_config()`'s (`MWLibrary.index`), so a changed game
   answers live until the library is rebuilt rather than mixing old entries with live solves of the new game, and
@@ -4161,6 +4176,17 @@ betting rules. The commonest 3-way pots' flops are solved offline (`gto/mw_libra
   CO checked to twice on 755 in CO / SB / BB bets 30% live and 46% in the library), the same most frequent action for
   92% of hands, mixes 9.3 points apart and EVs 3.0% of the pot (0.4-13.2, the most on 755 checked through twice, where
   the live solve's ranges are the betting rules' narrowing).
+  The every-flop build (2026-11-25) on flops none of the spots stored before (KcTd5h, AcQd5h, QcTc3d, JcTd4h,
+  Ac6h6d), priced by the native Accurate advisor's live 30 s solve of each node (library off, 550-1000 iterations,
+  0.01-0.05% of the pot from equilibrium): each combo's mix at the three stored decisions against the live mix, by the
+  live solve's EVs per action, weighted by the acting range (% of the pot given up). UTG / SB / BB (15 nodes) gives
+  up 0.042% of the pot (0.22 at worst), HJ / SB / BB 0.058 (0.35), CO / SB / BB 0.041 (0.25; 3 flops, 9 nodes), where
+  the read off the stored flops most like it that answered those flops at once before gave up 0.154 (0.58), 0.155
+  (0.38) and 0.085 (0.27); mixes 8.8, 10.0 and 8.1 points apart (13.9, 15.1 and 10.9 before), the same most frequent
+  action for 92, 90 and 92% of hands. Most of what remains is at checked to twice, where the live solve's ranges are
+  the betting rules' narrowing (0.07-0.35; first to act and checked to once 0-0.02). (Lizard's own measure, on its
+  charts and game, had HJ / SB / BB and UTG / SB / BB's stored entries behind its live solve on 2026-11-24, UTG's then
+  still the 185 representative flops; on this repo's own game both are as close to a live solve as the others.)
 * **Browser** (`scripts/bench_browser.mjs`, `mw-flop` first to act, `mw-flop-x` checked to twice): answered from the
   library in 0.49-0.57 s at Quick (`BENCH_STATE='{"quick":true}'`), Fast and Accurate alike, most of it the first
   request importing the 3-way solver (Accurate's live solve took its 60 s then, Quick's answer was the rules');
@@ -4246,8 +4272,8 @@ betting rules. The commonest 3-way pots' flops are solved offline (`gto/mw_libra
   off UTG / IP / BB and 6-max antes, CO open, SB and BB call off CO / SB / BB. A spot only joins the candidates each
   gate passes, so no pot that read a spot before reads none now (6-max antes, HJ open, SB and BB call stays out).
   What it answers (`scripts/instant_coverage.py`, Accuracy vs speed: The answer at once in 3-way pots, its table):
-  of the 3-way flop decisions, borrowed and precomputed 1.9% at 8-max and 1.3% at 9-max (the stored flops are 12.8%
-  of flops by weight), read at once off a borrowed spot's stored flops most like it 12.4 / 8.6 points more, and off
+  of the 3-way flop decisions, borrowed and precomputed 1.9% at 8-max and 1.3% at 9-max (the stored flops were 12.8%
+  of flops by weight; on every flop since 2026-11-25, 17.4 and 12.6% on today's charts), read at once off a borrowed spot's stored flops most like it 12.4 / 8.6 points more, and off
   the nearest spot 34.5 / 37.2 at 8- / 9-max, 13.0 at 6-max, 47.8 with antes at 6-max and 41.4 at 8-max, where
   nothing answered the flop's first decisions before the live solve. A build for the commonest of them (8-max with
   antes: UTG's or UTG1's open flatted by UTG1 or the LJ, 31% of its 3-way flops) on every flop would make 4.8

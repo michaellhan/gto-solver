@@ -12,6 +12,20 @@ import unittest
 
 from gto import advisor as A
 from gto.native import advisor
+from tests.test_mw_library import default_without
+
+_RESTORE = []
+
+
+def setUpModule():
+    """The library stores every flop of its spots since 2026-11-25: the tests read Kd8c3h (K83 rainbow) as a flop it
+    doesn't store, so the advisors here get the library with it left out."""
+    _RESTORE.append(default_without(("Kd8c3h",)))
+
+
+def tearDownModule():
+    _RESTORE.pop()()
+
 
 PRE = [{"pos": "UTG", "action": "fold"}, {"pos": "HJ", "action": "fold"}, {"pos": "CO", "action": "fold"},
        {"pos": "BTN", "action": "raise", "to": 2.5}, {"pos": "SB", "action": "call"}, {"pos": "BB", "action": "call"}]

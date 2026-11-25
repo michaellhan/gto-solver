@@ -3,7 +3,7 @@ canonical flops, one 3-player solve from the flop's start on the library's game 
 players' mean best-response gain is under --target % of the pot (checked every --check iterations from --min-iters,
 at most --max-iters).
 
-    python scripts/build_mw_library.py --jobs 8                            # every spot: REP_FLOPS (184) + EXTRA_FLOPS
+    python scripts/build_mw_library.py --jobs 8                            # every spot: REP_FLOPS (1755, every flop) + EXTRA_FLOPS
     python scripts/build_mw_library.py --boards Kh7d2c,9s8s5d              # given flops
     python scripts/build_mw_library.py --index-only                        # rewrite mw_index.json from the entries
     python scripts/build_mw_library.py --verify [--out DIR]                # exit 1 unless the index is whole
