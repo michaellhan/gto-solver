@@ -4150,10 +4150,13 @@ betting rules. The commonest 3-way pots' flops are solved offline (`gto/mw_libra
   flops: one-shot stage `mw-all`, `build_mw_library.py --flops 1755`, 2026-11-20 22:34 to 11-25 00:34, two or three
   processes in a heavy slot) took 200 process-hours of solving, 57 s an entry: 368 iterations on average, 0.077% of
   the pot from equilibrium (none over 0.10 in the four spots built 2026-11-16). Twelve entries stopped at
-  `--max-iters`' 800 over `--target`, ten of them on paired boards: Tc7h7d 0.29%, TdTc5h 0.15, QdQc9h 0.15 and
-  Jc9c3c 0.28 in CO / BTN / BB; KdKc9c 1.08 and KdKcJc 0.19 in HJ / IP / BB; JdJc9h 0.52 and TdTc9c 0.12 in
-  UTG / BTN / BB; 8d8c7h 0.29, Tc8h8d 0.61, QcJdJc 0.18 and Tc6c3c 0.50 in UTG / IP / BB (worth a second solve at
-  more iterations).
+  `--max-iters`' 800 over `--target`, ten of them on paired boards; solved again at `--max-iters 3000` (one-shot
+  stage `mw-fix`, 2026-11-26, one process, 51 min of solving), each closer than before (before -> after, % of the pot):
+  Tc7h7d 0.29 -> 0.209, TdTc5h 0.15 -> 0.094, QdQc9h 0.15 -> 0.089 and Jc9c3c 0.28 -> 0.095 in CO / BTN / BB;
+  KdKc9c 1.08 -> 0.674 and KdKcJc 0.19 -> 0.100 in HJ / IP / BB; JdJc9h 0.52 -> 0.206 and TdTc9c 0.12 -> 0.091 in
+  UTG / BTN / BB; 8d8c7h 0.29 -> 0.099, Tc8h8d 0.61 -> 0.226, QcJdJc 0.18 -> 0.098 and Tc6c3c 0.50 -> 0.091 in
+  UTG / IP / BB. Eight now meet the target; four still stop at the cap (KdKc9c, Tc8h8d, Tc7h7d, JdJc9h: the
+  paired boards' slowest, 247-496 s at 3000 iterations).
   The index records the game it was solved on (`mw_library.tree_key`: sizes, buckets, the bucket split...); the
   library reads nothing from an index on another game than `library_config()`'s (`MWLibrary.index`), so a changed game
   answers live until the library is rebuilt rather than mixing old entries with live solves of the new game, and
